@@ -1,3 +1,4 @@
+# pyright: basic
 """The baseline rule in practice (D8; BENCHMARK-PLAN.md: a baseline above ~5% means the grader is broken): the
 do-nothing and random baselines play every v2 scenario through the matrix runner, the real bridge and the fake mod
 (bg3harness.testing), and every scenario's grader fails them.

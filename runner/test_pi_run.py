@@ -209,6 +209,7 @@ class Cli(unittest.TestCase):
     def test_a_paid_client_needs_a_global_budget(self):  # live3: no runtime/budget.json, no global budget
         import contextlib
         import io
+
         os.environ["DEEPSEEK_API_KEY"] = "sk-test"
         self.addCleanup(os.environ.pop, "DEEPSEEK_API_KEY", None)
         budget = P.RUNTIME / "budget.json"
@@ -222,12 +223,12 @@ class Cli(unittest.TestCase):
             self.assertIn(why, err.getvalue())
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(P.main(argv + ["--budget", "3"]), 0)               # accepted; --plan writes nothing
+            self.assertEqual(P.main(argv + ["--budget", "3"]), 0)  # accepted; --plan writes nothing
         self.assertFalse(budget.exists())
         budget.write_text(json.dumps({"cap": 5.0, "spent": 1.0}))
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.assertEqual(P.main(argv + ["--budget", "3"]), 2)               # another cap than the file's
+            self.assertEqual(P.main(argv + ["--budget", "3"]), 2)  # another cap than the file's
         self.assertIn("edit the file", err.getvalue())
 
 

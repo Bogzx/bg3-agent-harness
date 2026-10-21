@@ -54,8 +54,10 @@ def run_cap(client: str, max_cost: float | None, budget: dict | None) -> tuple[f
     if max_cost is None:
         return None, f"--client {client} spends money: it needs --max-cost USD (a per-run cap)"
     if budget is None:
-        return None, (f"--client {client} spends money: it needs a global budget, runtime/budget.json (pass "
-                      '--budget USD to create it, or write {"cap": USD, "spent": 0})')
+        return None, (
+            f"--client {client} spends money: it needs a global budget, runtime/budget.json (pass "
+            '--budget USD to create it, or write {"cap": USD, "spent": 0})'
+        )
     left = round(budget["cap"] - budget["spent"], 6)
     if left <= 0:
         return None, f"the global budget is used up (${budget['spent']:.2f} of ${budget['cap']:g})"
@@ -73,13 +75,15 @@ def ensure_budget(path: Path, usd: float | None, write: bool = True) -> dict | N
         return b
     if b is not None:
         if b["cap"] != usd:
-            raise BudgetError(f"{path} already caps the spend at ${b['cap']:g} (${b['spent']:.2f} spent); "
-                              f"--budget {usd:g} differs: edit the file to change the cap")
+            raise BudgetError(
+                f"{path} already caps the spend at ${b['cap']:g} (${b['spent']:.2f} spent); "
+                f"--budget {usd:g} differs: edit the file to change the cap"
+            )
         return b
     b = {"cap": float(usd), "spent": 0.0}
     if write:
         with _locked(path):
-            if path.exists():   # another runner created it meanwhile: that one counts
+            if path.exists():  # another runner created it meanwhile: that one counts
                 return ensure_budget(path, usd)
             b["created"] = round(time.time(), 1)
             tmp = path.with_suffix(".tmp")
