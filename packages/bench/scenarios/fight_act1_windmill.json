@@ -1,0 +1,54 @@
+{
+ "schema": 2,
+ "name": "fight_act1_windmill",
+ "title": "Act 1 fight: the windmill goblins",
+ "about": "Fight (family 1), an Act 1 ambush: the goblins and worgs tormenting the gnome at the Blighted Village windmill, nine enemies with archers on high ground. claude-run-2 S014 won it in 7 rounds with one down (111 party HP lost).",
+ "family": "fight",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Blighted Village just east of the windmill, before the goblins there turn hostile (claude-run-2 S014-start, after a long rest): party level 3, full HP and spell slots. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Blighted Village, east of the windmill; goblins and worgs ahead, out of combat.",
+   "objective": "Defeat the goblins at the windmill.",
+   "party": [
+    "Tav (Paladin 3)",
+    "Wyll (Warlock 3)",
+    "Gale (Wizard 3)",
+    "Shadowheart (Cleric 3)"
+   ]
+  }
+ },
+ "goal": {
+  "combats_won": {
+   "gte": 1
+  }
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 1,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1003,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

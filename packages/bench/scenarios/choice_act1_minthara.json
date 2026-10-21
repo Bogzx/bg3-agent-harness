@@ -1,0 +1,61 @@
+{
+ "schema": 2,
+ "name": "choice_act1_minthara",
+ "title": "Act 1 choice: the grove or the goblins",
+ "about": "Choice (family 3, claude-run-2 decisions.md D-09): in the Shattered Sanctum the drow leader asks for the druid grove's location so the goblins can raid it. Recorded and compared, never scored. The goal only ends the run: a fight is won (against the goblin leaders, or the raid on the grove) or the party is back inside the grove. The brief is neutral on purpose (BENCHMARK-PLAN.md: compare with a neutral brief and with a given persona); a persona condition is added once the harness defines persona texts.",
+ "family": "choice",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Shattered Sanctum, in the drow leader's war room before speaking to Minthara, the other two goblin leaders alive and the goblins not hostile (claude-run-2 S017-S018 point, before D-09): party level 4. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Shattered Sanctum, at the drow leader's war room, out of combat, no dialogue open.",
+   "objective": "Speak to the leader of the goblin camp.",
+   "party": [
+    "Tav (Paladin 4)",
+    "Wyll (Warlock 4)",
+    "Gale (Wizard 4)",
+    "Shadowheart (Cleric 4)"
+   ]
+  }
+ },
+ "goal": {
+  "any": [
+   {
+    "combats_won": {
+     "gte": 1
+    }
+   },
+   {
+    "area": "emerald grove(?! environs)|the hollow"
+   }
+  ]
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 0.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1007,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A half-elf paladin with a mind flayer tadpole behind the eyes. Their values are yours to decide: choose as you think this character would, and say why.",
+   "roleplay": "light"
+  }
+ }
+}

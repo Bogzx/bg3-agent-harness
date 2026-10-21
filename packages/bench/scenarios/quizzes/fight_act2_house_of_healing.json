@@ -1,0 +1,42 @@
+{
+ "schema": 1,
+ "scenario": "fight_act2_house_of_healing",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who is the surgeon running the House of Healing in Act 2?",
+   "kind": "text",
+   "answer": "Malus Thorm",
+   "accept": [
+    "\\bmalus\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "His family name is shared with the general who rules Moonrise Towers. What is it?",
+   "kind": "text",
+   "answer": "Thorm",
+   "accept": [
+    "\\bthorm\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Which nurse greets visitors at the House of Healing's entrance?",
+   "kind": "text",
+   "answer": "Sister Sinda",
+   "accept": [
+    "\\bsinda\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "In which shadow-cursed town does the House of Healing stand?",
+   "kind": "text",
+   "answer": "Reithwin",
+   "accept": [
+    "\\breithwin\\b"
+   ]
+  }
+ ]
+}

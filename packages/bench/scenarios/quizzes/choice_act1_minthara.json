@@ -1,0 +1,45 @@
+{
+ "schema": 1,
+ "scenario": "choice_act1_minthara",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who is the drow paladin among the goblin camp's three leaders?",
+   "kind": "text",
+   "answer": "Minthara",
+   "accept": [
+    "\\bminthara\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which archdruid is held captive in the goblin camp?",
+   "kind": "text",
+   "answer": "Halsin",
+   "accept": [
+    "\\bhalsin\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "What does she ask the party for?",
+   "kind": "choice",
+   "choices": [
+    "A prisoner's ransom",
+    "The location of the druid grove",
+    "The Astral Prism",
+    "A tadpole"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q4",
+   "q": "Name the goblin priestess among the three leaders.",
+   "kind": "text",
+   "answer": "Priestess Gut",
+   "accept": [
+    "\\bgut\\b"
+   ]
+  }
+ ]
+}

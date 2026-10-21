@@ -1,0 +1,58 @@
+{
+ "schema": 2,
+ "name": "act1_gold_1000",
+ "title": "Act 1 → 1000 party gold",
+ "about": "Sandbox (BENCHMARK-PLAN.md family 2): any method the game allows; how the gold was made is reported (method attribution: trade, loot, theft, quest rewards), never graded. Target and cap to be calibrated by one pilot run so the strongest model reaches it about half the time.",
+ "family": "sandbox",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Emerald Grove's inner courtyard by the tiefling traders, just after the party first enters the Grove: three companions (Shadowheart, Lae'zel, Gale), party gold under 200, no trader or quest-giver spoken to yet. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Emerald Grove, inner courtyard near the traders, out of combat, no dialogue open.",
+   "objective": "Get the party 1000 gold.",
+   "party": [
+    "Tav (Paladin)",
+    "Shadowheart (Cleric)",
+    "Lae'zel (Fighter)",
+    "Gale (Wizard)"
+   ],
+   "journal": [
+    "Find a Cure"
+   ]
+  }
+ },
+ "goal": {
+  "gold": {
+   "gte": 1000
+  }
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 0.75,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1002,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "methods": true,
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

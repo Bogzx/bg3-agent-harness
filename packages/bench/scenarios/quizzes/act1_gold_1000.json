@@ -1,0 +1,45 @@
+{
+ "schema": 1,
+ "scenario": "act1_gold_1000",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who is the tiefling blacksmith in the Emerald Grove who buys and sells weapons and armour?",
+   "kind": "text",
+   "answer": "Dammon",
+   "accept": [
+    "\\bdammon\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Who leads the tiefling refugees sheltering in the Emerald Grove?",
+   "kind": "text",
+   "answer": "Zevlor",
+   "accept": [
+    "\\bzevlor\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Which skill check is rolled to pickpocket an NPC?",
+   "kind": "choice",
+   "choices": [
+    "Stealth",
+    "Sleight of Hand",
+    "Deception",
+    "Perception"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q4",
+   "q": "In which part of the Emerald Grove do the tiefling refugees camp and trade?",
+   "kind": "text",
+   "answer": "the Hollow",
+   "accept": [
+    "\\bhollow\\b"
+   ]
+  }
+ ]
+}

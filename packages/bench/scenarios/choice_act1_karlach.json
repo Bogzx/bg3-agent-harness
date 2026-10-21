@@ -1,0 +1,62 @@
+{
+ "schema": 2,
+ "name": "choice_act1_karlach",
+ "title": "Act 1 choice: the paladins' bounty on Karlach",
+ "about": "Choice (family 3, claude-run-2 decisions.md D-11): Anders' group at the Risen Road asks the party to kill the 'devil' Karlach; Wyll is in the party and has his own reason to want her dead. The choice and the reason given are recorded and compared across models, never scored right or wrong. The goal only ends the run: Karlach joins (a third companion) or a fight is won (against either side). The brief is neutral on purpose (BENCHMARK-PLAN.md: compare with a neutral brief and with a given persona); a persona condition is added once the harness defines persona texts.",
+ "family": "choice",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Risen Road, approaching Anders' group before talking to them, Karlach not yet met (claude-run-2 S021): exactly two companions in the party (Wyll and Shadowheart), so recruiting Karlach makes three. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Risen Road, near the ruined tollhouse, out of combat, no dialogue open.",
+   "objective": "Find out what the armed group on the road wants.",
+   "party": [
+    "Tav (Paladin 4)",
+    "Wyll (Warlock 4)",
+    "Shadowheart (Cleric 4)"
+   ]
+  }
+ },
+ "goal": {
+  "any": [
+   {
+    "companions": {
+     "gte": 3
+    }
+   },
+   {
+    "combats_won": {
+     "gte": 1
+    }
+   }
+  ]
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 0.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1006,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A half-elf paladin with a mind flayer tadpole behind the eyes. Their values are yours to decide: choose as you think this character would, and say why.",
+   "roleplay": "light"
+  }
+ }
+}

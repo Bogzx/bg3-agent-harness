@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "nautiloid",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who commands the nautiloid's crew of devils and fights the party at the helm?",
+   "kind": "text",
+   "answer": "Commander Zhalk",
+   "accept": [
+    "\\bzhalk\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which future companion is found sealed inside a pod on the nautiloid?",
+   "kind": "choice",
+   "choices": [
+    "Lae'zel",
+    "Shadowheart",
+    "Astarion",
+    "Gale"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q3",
+   "q": "What kind of creature is the party infected with at the start?",
+   "kind": "choice",
+   "choices": [
+    "A vampire spawn's bite",
+    "A mind flayer tadpole",
+    "A devil's brand",
+    "A lycanthrope curse"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q4",
+   "q": "What race is the companion first met fighting imps on the nautiloid?",
+   "kind": "text",
+   "answer": "githyanki",
+   "accept": [
+    "githyanki|\\bgith\\b"
+   ]
+  }
+ ]
+}

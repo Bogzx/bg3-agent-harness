@@ -33,10 +33,14 @@
           "type": "object",
           "required": ["kind", "note"],
           "additionalProperties": false,
+          "if": {"properties": {"save": {"type": "string"}}, "required": ["save"]},
+          "then": {"not": {"required": ["needs_save"]}},
+          "else": {"required": ["needs_save"]},
           "properties": {
             "kind": {"const": "save"},
             "save": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^.+-\\d+__.+$"}]},
             "save_sha1": {"type": ["string", "null"]},
+            "needs_save": {"type": "string", "pattern": "\\S", "description": "Only while save is null: the exact game point the start save must be made at."},
             "note": {
               "type": "object",
               "required": ["where", "objective"],
@@ -95,6 +99,7 @@
       }
     },
     "timing": {"enum": ["realtime", "turn_based"], "description": "D7: realtime = the world runs while the model thinks (there is no think-pause: the ESC menu does not pause BG3); results report thinking time next to wall time. Exploration and sandbox must be realtime; the default is turn_based for fight, realtime otherwise."},
+    "methods": {"type": "boolean", "description": "Report the method attribution with the result (default: true for sandbox)."},
     "requires": {
       "type": "object",
       "additionalProperties": false,

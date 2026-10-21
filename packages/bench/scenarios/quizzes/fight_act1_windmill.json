@@ -1,0 +1,51 @@
+{
+ "schema": 1,
+ "scenario": "fight_act1_windmill",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who is the gnome tied to the windmill in the Blighted Village?",
+   "kind": "text",
+   "answer": "Barcus Wroot",
+   "accept": [
+    "\\bbarcus\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "What kind of gnome is he?",
+   "kind": "choice",
+   "choices": [
+    "A rock gnome",
+    "A forest gnome",
+    "A deep gnome",
+    "A svirfneblin-raised halfling"
+   ],
+   "answer": "C"
+  },
+  {
+   "id": "q3",
+   "q": "Which goblin leads the group tormenting him?",
+   "kind": "choice",
+   "choices": [
+    "Fezzerk",
+    "Lump",
+    "Gribbo",
+    "Wudge"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q4",
+   "q": "How is he saved from the turning sails without a fight?",
+   "kind": "choice",
+   "choices": [
+    "Cut the rope from below",
+    "Stop the windmill's mechanism",
+    "Cast Feather Fall on him",
+    "Pay the goblins"
+   ],
+   "answer": "B"
+  }
+ ]
+}

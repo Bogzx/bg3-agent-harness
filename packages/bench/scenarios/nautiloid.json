@@ -1,0 +1,36 @@
+{
+ "schema": 2,
+ "name": "nautiloid",
+ "title": "New game → Nautiloid escaped (the launch bar)",
+ "about": "The launch-bar series (3/3 clean, 2026-10-13, series naut): a new game, character creation from the brief, the prologue until the Nautiloid crashes. v2: converted from scenarios/nautiloid.json (same start, goal, caps and brief), dice seeded, difficulty fixed to Balanced.",
+ "family": "exploration",
+ "holdout": false,
+ "start": {
+  "kind": "new_game"
+ },
+ "until": "nautiloid_escaped",
+ "runs": 3,
+ "caps": {
+  "run_hours": 4,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "profile": {
+  "character": {
+   "brief": "A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1001,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "conditions": [
+  "rules"
+ ]
+}

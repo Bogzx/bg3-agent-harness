@@ -1,0 +1,45 @@
+{
+ "schema": 1,
+ "scenario": "choice_act1_karlach",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who leads the 'paladins' on the Risen Road who hunt Karlach?",
+   "kind": "text",
+   "answer": "Anders",
+   "accept": [
+    "\\banders\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which archdevil once held Karlach as a soldier in Avernus?",
+   "kind": "choice",
+   "choices": [
+    "Mephistopheles",
+    "Zariel",
+    "Asmodeus",
+    "Baalzebul"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q3",
+   "q": "Which devil is Wyll's patron and wants Karlach dead?",
+   "kind": "text",
+   "answer": "Mizora",
+   "accept": [
+    "\\bmizora\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "Which devil appears near the Risen Road offering a deal to remove the tadpole?",
+   "kind": "text",
+   "answer": "Raphael",
+   "accept": [
+    "\\braphael\\b"
+   ]
+  }
+ ]
+}

@@ -69,6 +69,9 @@ def test_todays_scenarios_convert_unchanged(path):
     assert (loaded["timing"], loaded["conditions"]) == ("realtime", ["rules"])
     assert loaded["game_settings"]["seed"] is None
     assert loaded["requires"] == {"vision": False, "min_context": None}
+    if v1["start"]["kind"] == "save" and v1["start"].get("save") is None:
+        assert loaded["start"]["needs_save"] == v1["start"]["note"]["where"]
+    assert "needs_save" not in v1["start"]
     assert loaded["caps"] == v1["caps"] and loaded["reset"] == scenario.RESETS[v1["start"]["kind"]]
 
 
@@ -115,6 +118,7 @@ BAD = [
     ({"think_pause": True}, "think_pause was dropped"),
     ({"think_pause": False}, "think_pause was dropped"),
     ({"timing": "paused"}, "timing must be"),
+    ({"methods": "on"}, "methods must be"),
     ({"timing": "turn_based"}, "a sandbox scenario is realtime"),
     ({"game_settings": {"seed": -1}}, "seed must be"),
     ({"game_settings": {"seed": 2**31}}, "seed must be"),
@@ -153,6 +157,12 @@ START_BAD = [
     ({"kind": "save", "save": "nofolder", "note": {"where": "w", "objective": "o"}}, "not a save folder"),
     ({"kind": "save", "save": "Tav-1__S004-mine", "note": {"where": "w", "objective": "o"}}, "Sxxx- label"),
     ({"kind": "save", "save_sha1": 5, "note": {"where": "w", "objective": "o"}}, "save_sha1 must be"),
+    ({"kind": "save", "note": {"where": "w", "objective": "o"}}, "needs start.needs_save"),
+    ({"kind": "save", "save": None, "needs_save": " ", "note": {"where": "w", "objective": "o"}}, "needs_save"),
+    (
+        {"kind": "save", "save": "Tav-1__SCN-x", "needs_save": "here", "note": {"where": "w", "objective": "o"}},
+        "only for a start whose save is not made yet",
+    ),
     ({"kind": "save", "note": {"where": "w"}}, "where and objective"),
     ({"kind": "save", "note": {"where": "w", "objective": "o", "mood": "x"}}, "unknown start.note keys"),
     ({"kind": "save", "note": {"where": "w", "objective": "o", "party": "Gale"}}, "party must be a list"),

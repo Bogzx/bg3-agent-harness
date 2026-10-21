@@ -59,3 +59,15 @@ CLIENTS["baseline"] = lambda **kw: BaselineClient(event=Event, **kw)
 
 The agent processes run `uv run --project packages/bench --extra baselines python -m bg3bench.baselines.<agent>`.
 They launch the bg3 server from `play/.mcp.json` and read the deadline from `BG3AI_SESSION_DEADLINE`.
+
+## The first set (packages/bench/scenarios/, 2026-10-21)
+
+Seven v2 files, each with its closed-book quiz in `scenarios/quizzes/<name>.json` (tests/test_scenario_set.py checks
+the whole set): `nautiloid` (exploration, new game, converted from `scenarios/nautiloid.json`), `act1_gold_1000`
+(sandbox, 45 min, method attribution on), three fights picked from claude-run-2 (`fight_act1_windmill`, an Act 1
+ambush; `fight_act2_house_of_healing`, mid-size; `fight_act2_balthazar`, a boss) and two choice scenes from its
+decisions.md (`choice_act1_karlach`, `choice_act1_minthara`, neutral brief). Every save start has `save: null` and
+`start.needs_save` naming the exact game point: make the save there with an avatar named Tav, register it (step 3)
+and draft it (step 4) with the same seed. The draft drops `needs_save`. Delete the placeholder by hand before
+`write_draft`, which never overwrites; that is safe because no series can run on a file that has no save. A choice scene's goal only ends the run; the choice
+itself is read from the trajectory.

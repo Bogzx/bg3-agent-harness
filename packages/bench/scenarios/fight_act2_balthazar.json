@@ -1,0 +1,54 @@
+{
+ "schema": 2,
+ "name": "fight_act2_balthazar",
+ "title": "Act 2 boss: Balthazar in Nightsong's Prison",
+ "about": "Fight (family 1), a boss: the necromancer and his undead guards in the Gauntlet of Shar's prison, up to twenty enemies in waves. claude-run-2 S040-S041 needed three reloads; the winning try took 8 rounds (291 party HP lost, 2 downs).",
+ "family": "fight",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 2, Gauntlet of Shar, Nightsong's Prison, at the top of the stairs before the bridge to Balthazar (claude-run-2 S040-pre-balthazar): party level 6, full HP after a long rest. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "Nightsong's Prison, before the bridge where Balthazar waits, out of combat.",
+   "objective": "Defeat Balthazar and his guards.",
+   "party": [
+    "Tav (Paladin 6)",
+    "Wyll (Warlock 6)",
+    "Karlach (Barbarian 6)",
+    "Shadowheart (Cleric 6)"
+   ]
+  }
+ },
+ "goal": {
+  "combats_won": {
+   "gte": 1
+  }
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 1.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1005,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

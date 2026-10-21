@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "fight_act2_balthazar",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "What is Balthazar?",
+   "kind": "choice",
+   "choices": [
+    "A vampire lord",
+    "A necromancer serving Ketheric Thorm",
+    "A cambion general",
+    "A drow priestess of Lolth"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q2",
+   "q": "Who is the prisoner that Balthazar guards?",
+   "kind": "text",
+   "answer": "the Nightsong (Dame Aylin)",
+   "accept": [
+    "nightsong|aylin"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Which Act 2 temple complex holds the prison Balthazar guards?",
+   "kind": "choice",
+   "choices": [
+    "The Rosymorn Monastery",
+    "The Gauntlet of Shar",
+    "The House of Grief",
+    "The Temple of Bhaal"
+   ],
+   "answer": "B"
+  },
+  {
+   "id": "q4",
+   "q": "Which weapon does Shadowheart receive from her goddess's trials in Act 2, for her final choice?",
+   "kind": "text",
+   "answer": "the Spear of Night",
+   "accept": [
+    "spear of night"
+   ]
+  }
+ ]
+}

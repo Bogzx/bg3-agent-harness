@@ -13,6 +13,9 @@ v2 adds to today's scenarios/*.json (v1, runner/runs.py `validate_scenario`, sce
   time) or `turn_based`. Exploration and sandbox are always realtime; the default is realtime for every family but
   fight. There is no think-pause: the ESC menu does not pause BG3 (research/ovh/live1.md §1), so a `think_pause`
   key is refused.
+- `start.needs_save`: while a save start has no save yet (`save: null`), the exact game point the start save must
+  be made at (docs/SCENARIOS-AUTHORING.md); refused once the save is set.
+- `methods` (default: true for sandbox): report the method attribution (methods.attribute) with the result.
 - `requires` {vision, min_context}: a model that can't meet them is reported as not applicable, never as a failure
   (`applicable`). `conditions`: the condition ids it may run under.
 
@@ -63,7 +66,7 @@ RESETS = {  # runs.RESETS: what every run starts without; not tunable
 }
 KEYS = {
     "schema", "name", "title", "about", "family", "holdout", "start", "goal", "until", "runs", "caps", "profile",
-    "game_settings", "timing", "requires", "conditions", "reset",
+    "game_settings", "timing", "methods", "requires", "conditions", "reset",
 }  # fmt: skip
 GAME_SETTINGS = {
     "difficulty": None, "karmic_dice": False, "seed": None, "resolution": None, "ui_scale": None, "language": None,
@@ -96,9 +99,13 @@ def _check_start(st: Any, name: str, char_name: str | None) -> list[str]:
     if kind == "new_game":
         return ["a new_game start takes no save or note"] if set(st) - {"kind"} else []
     errs = []
-    if unknown := sorted(set(st) - {"kind", "save", "save_sha1", "note"}):
+    if unknown := sorted(set(st) - {"kind", "save", "save_sha1", "note", "needs_save"}):
         errs.append(f"unknown start keys: {', '.join(unknown)}")
     save = st.get("save")
+    if save is None and not _str(st.get("needs_save")):
+        errs.append("a save start without a save needs start.needs_save: the game point to make it at")
+    elif save is not None and "needs_save" in st:
+        errs.append("start.needs_save is only for a start whose save is not made yet (save: null)")
     if save is not None and save_owner(save) is None:
         errs.append(f"start.save {save!r} is not a save folder name (<owner>-<id>__<label>)")
     elif save is not None and AGENT_LABEL_RE.match(SAVE_FOLDER_RE.match(save).group("label")):
@@ -200,6 +207,8 @@ def validate(sc: Any, name: str) -> list[str]:
         errs.append(f"profile.character.roleplay must be one of {', '.join(ROLEPLAYS)}")
     errs += _check_start(sc.get("start"), name, char.get("name"))
     errs += _check_settings(sc.get("game_settings", GAME_SETTINGS))
+    if not isinstance(sc.get("methods", False), bool):
+        errs.append("methods must be true or false")
     if "think_pause" in sc:
         errs.append("think_pause was dropped: the ESC menu does not pause BG3 (D7); use timing instead")
     timing = sc.get("timing", default_timing(sc.get("family")))
@@ -246,6 +255,7 @@ def with_defaults(sc: dict) -> dict:
         },
         game_settings={**GAME_SETTINGS, **sc.get("game_settings", {})},
         timing=sc.get("timing", default_timing(sc["family"])),
+        methods=sc.get("methods", sc["family"] == "sandbox"),
         requires={**REQUIRES, **sc.get("requires", {})},
         conditions=list(sc.get("conditions", DEFAULT_CONDITIONS)),
         reset=RESETS[sc["start"]["kind"]],
@@ -254,11 +264,16 @@ def with_defaults(sc: dict) -> dict:
 
 def from_v1(v1: dict, family: str = "exploration") -> dict:
     """Today's scenarios/*.json (v1) -> v2. All of today's files are exploration legs (BENCHMARK-PLAN.md family 4);
-    `profile.difficulty` moves to `game_settings.difficulty`, `until` stays the shorthand."""
+    `profile.difficulty` moves to `game_settings.difficulty`, `until` stays the shorthand, and a save start
+    without its save gets `needs_save` from its note's `where`."""
     out = {k: v for k, v in v1.items() if k != "profile"}
     profile = dict(v1.get("profile") or {})
     difficulty = profile.pop("difficulty", None)
     out.update(schema=SCHEMA, family=family, profile=profile, game_settings={**GAME_SETTINGS, "difficulty": difficulty})
+    st = out.get("start")
+    if isinstance(st, dict) and st.get("kind") == "save" and st.get("save") is None and "needs_save" not in st:
+        # v1 had no needs_save: a v1 save start without its save is made where its note says
+        out["start"] = {**st, "needs_save": str((st.get("note") or {}).get("where") or "see the v1 file")}
     return out
 
 
