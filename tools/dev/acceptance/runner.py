@@ -26,9 +26,21 @@ from .swap import sec_swap
 from .trade import sec_trade
 from .vis import sec_vis
 
-FUNCS = {"reads": sec_reads, "rest": sec_rest, "trade": sec_trade, "gear": sec_gear, "swap": sec_swap,
-         "nav": sec_nav, "loads": sec_loads, "combat": sec_combat, "se": sec_se, "setup": sec_setup,
-         "strict": sec_strict, "act": sec_act, "vis": sec_vis}
+FUNCS = {
+    "reads": sec_reads,
+    "rest": sec_rest,
+    "trade": sec_trade,
+    "gear": sec_gear,
+    "swap": sec_swap,
+    "nav": sec_nav,
+    "loads": sec_loads,
+    "combat": sec_combat,
+    "se": sec_se,
+    "setup": sec_setup,
+    "strict": sec_strict,
+    "act": sec_act,
+    "vis": sec_vis,
+}
 
 
 def run_section(name: str) -> int:
@@ -42,7 +54,8 @@ def run_section(name: str) -> int:
     os.environ["BG3AI_SESSION"] = "S999"
     (OUT / "memory" / "sessions").mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(REPO / "bridge" / "src"))
-    from server_view import S as server  # noqa: E402, N811
+    from server_view import S as server  # noqa: N811
+
     core.S.bind(server)
     core.LOGF = open(OUT / f"{name}.log", "w")
     log(f"section {name} start {time.strftime('%H:%M:%S')}")
@@ -51,8 +64,9 @@ def run_section(name: str) -> int:
             item(f"section {name}", "FAIL", "the game is not running")
         else:
             FUNCS[name]()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         import traceback
+
         log(traceback.format_exc())
         item(f"section {name}", "FAIL", f"script error {type(e).__name__}: {e}")
     (OUT / f"{name}.json").write_text(json.dumps(RESULTS, indent=1))
@@ -65,7 +79,9 @@ def plan(names: list[str]) -> str:
     rows = []
     for n in names:
         t += EST_S.get(n, 60)
-        rows.append(f"  {n:<7} ~{EST_S.get(n, 60) // 60}m{EST_S.get(n, 60) % 60:02d}s  (done by ~{t // 60}m{t % 60:02d}s)")
+        rows.append(
+            f"  {n:<7} ~{EST_S.get(n, 60) // 60}m{EST_S.get(n, 60) % 60:02d}s  (done by ~{t // 60}m{t % 60:02d}s)"
+        )
     return "\n".join(rows) + f"\n  total ~{t // 60} min (+ waits for {LOCK.name})"
 
 
@@ -83,6 +99,7 @@ def main() -> int:
     if a.check:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import acceptance_check
+
         return acceptance_check.main_check(sys.modules[__name__.rpartition(".")[0]])  # the acceptance package
     if a.section:
         return run_section(a.section)
@@ -95,36 +112,51 @@ def main() -> int:
     print("plan:\n" + plan(names), flush=True)
     rows = []
     died = ""
-    memory = [{"after": "start", "t": round(time.time()), **game_memory()}]   # memory.json: live_window's table
+    memory = [{"after": "start", "t": round(time.time()), **game_memory()}]  # memory.json: live_window's table
     (OUT / "memory.json").write_text(json.dumps(memory, indent=1))
     for name in names:
         if died:  # the game is gone: the rest can't run; say so instead of N "the game is not running" FAILs
-            rows.append({"section": name, "item": f"section {name}", "verdict": "SKIP",
-                         "evidence": f"not run: the game died during section {died} (relaunch, then --only {name},…)"})
+            rows.append(
+                {
+                    "section": name,
+                    "item": f"section {name}",
+                    "verdict": "SKIP",
+                    "evidence": f"not run: the game died during section {died} (relaunch, then --only {name},…)",
+                }
+            )
             continue
-        print(f"--- section {name} (~{EST_S.get(name, 60)} s): waiting for {LOCK.name} ({time.strftime('%H:%M:%S')})",
-              flush=True)
+        print(
+            f"--- section {name} (~{EST_S.get(name, 60)} s): waiting for {LOCK.name} ({time.strftime('%H:%M:%S')})",
+            flush=True,
+        )
         t = time.monotonic()
-        started = time.time() - 1   # a result file older than this is a previous run's
+        started = time.time() - 1  # a result file older than this is a previous run's
         lock = [] if os.environ.get(LOCK_HELD_ENV) == "1" else ["flock", "-w", "1800", str(LOCK)]
         subprocess.run(lock + ["timeout", "900", sys.executable, str(SCRIPT), "--section", name])
         print(f"--- section {name} took {time.monotonic() - t:.0f} s (est. {EST_S.get(name, 60)} s)", flush=True)
         f = OUT / f"{name}.json"
         if f.exists() and f.stat().st_mtime >= started:
             rows += [dict(r, section=name) for r in json.loads(f.read_text())]
-        else:   # killed by the timeout, or crashed before writing: an older file is a previous run's
+        else:  # killed by the timeout, or crashed before writing: an older file is a previous run's
             rows.append({"section": name, "item": f"section {name}", "verdict": "FAIL", "evidence": "no result file"})
         if not alive():
             died = name
-            rows.append({"section": name, "item": f"game alive after section {name}", "verdict": "FAIL",
-                         "evidence": "bg3 is gone: collect runtime/logs/bg3le-*.log (crash: lines) + "
-                                     f"runtime/acceptance/{name}.log"})
+            rows.append(
+                {
+                    "section": name,
+                    "item": f"game alive after section {name}",
+                    "verdict": "FAIL",
+                    "evidence": "bg3 is gone: collect runtime/logs/bg3le-*.log (crash: lines) + "
+                    f"runtime/acceptance/{name}.log",
+                }
+            )
         memory.append({"after": name, "t": round(time.time()), **game_memory()})
         (OUT / "memory.json").write_text(json.dumps(memory, indent=1))
         print(f"--- memory after {name}: {memory[-1]}", flush=True)
     table = ["| item | verdict | evidence |", "|---|---|---|"] + [
-        f"| {r['item']} | {r['verdict']} | {r['evidence'].replace('|', '/')} |" for r in rows]
+        f"| {r['item']} | {r['verdict']} | {r['evidence'].replace('|', '/')} |" for r in rows
+    ]
     (OUT / "table.md").write_text("\n".join(table) + "\n")
-    (OUT / "results.json").write_text(json.dumps(rows, indent=1))   # with each row's section (live_window.py)
+    (OUT / "results.json").write_text(json.dumps(rows, indent=1))  # with each row's section (live_window.py)
     print("\n".join(table))
     return sum(r["verdict"] == "FAIL" for r in rows)

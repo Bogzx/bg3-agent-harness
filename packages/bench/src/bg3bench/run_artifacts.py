@@ -1,3 +1,4 @@
+# pyright: basic
 """A finished run's manifest.json and result.json, written next to its facts.jsonl (the harness calls this at run end).
 
 The run directory is the run's playthrough directory (runtime/sessions/<run name>/, runner/runs.py run_name), where

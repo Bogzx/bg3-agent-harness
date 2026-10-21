@@ -1,3 +1,4 @@
+# pyright: basic
 """A benchmark series' runs and the settings it freezes (moved from runner/runs.py; runs.py re-exports them).
 
 A series is `play.py run --until M --runs N` (or `--scenario`): runs named run_name(base, k), one runs.jsonl record per

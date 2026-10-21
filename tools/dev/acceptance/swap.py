@@ -19,8 +19,11 @@ def sec_swap() -> None:
     out2, dt2 = took("swap_party", into="Gale", out="Wyll")
     p2 = [r.get("name") for r in status().get("party") or []]
     ok2 = "Gale" in p2 and "Wyll" not in p2
-    item("swap_party in/out", "PASS" if ok1 and ok2 else "FAIL",
-         f"in {dt:.1f}s → {p1}; back {dt2:.1f}s → {p2}; {first_line(out)} | {first_line(out2)}")
+    item(
+        "swap_party in/out",
+        "PASS" if ok1 and ok2 else "FAIL",
+        f"in {dt:.1f}s → {p1}; back {dt2:.1f}s → {p2}; {first_line(out)} | {first_line(out2)}",
+    )
     st_full = call("get_status", full=True)
     item("PARTY hint after swaps", "INFO", grab(r"^PARTY:.*$", st_full) or "no PARTY line")
     load_verified(BASE)

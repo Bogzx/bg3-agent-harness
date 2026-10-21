@@ -3,11 +3,14 @@
 # "exempt <path>  # <reason>": the cap doesn't apply (generated data). The target is an empty list.
 # 2026-10-22 00:40 (orchestrator): play.py 5575->5703 and runs.py 1474->1476 re-recorded once: harness wiring merged before
 # this check existed (pi client, spend caps, facts writer). Both shrink in Phase D (harness r3, bench r6).
-5703 runner/play.py
-3480 runner/test_play.py
+# 2026-10-22 (found, orchestrator's "make lint green"): play.py 5703->5788, test_play.py 3480->3523, test_crash.py
+# 1488->1511 re-recorded: main's live fixes (dc8bf81 context_overflow quick failure, 7be20af facts from the referee
+# ring) and cca7a94's import wiring. Not shrunk here: that is moving code, not lint.
+5788 runner/play.py
+3523 runner/test_play.py
 2721 bridge/tests/test_turn_macros.py
 1643 bridge/tests/test_economy.py
-1488 runner/test_crash.py
+1511 runner/test_crash.py
 1326 bridge/src/bg3ai/render.py
 1177 bridge/src/bg3ai/metrics.py
 1158 bridge/tests/test_se_tools.py

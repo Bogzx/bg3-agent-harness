@@ -1,3 +1,4 @@
+# pyright: basic
 """The luck covariate (D9): one number per run from its hidden roll log (schema/rolls.v1.schema.json).
 
 The mod logs every roll out of the agent's sight (mod Server/RollLog.lua, read by the harness through roll.since,

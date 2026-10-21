@@ -35,10 +35,13 @@ def sec_combat() -> None:
     if not load_verified(BASE):
         return
     from bg3ai import jobpush
+
     jp = jobpush.shared(S.game.host, S.game.port)
     jp.ensure()
     ft = call("fast_travel", waypoint="Moonrise Towers")
-    if not need("FAILED" not in ft, "combat_turn on a safe fight", "fast_travel Moonrise Towers failed: " + first_line(ft)):
+    if not need(
+        "FAILED" not in ft, "combat_turn on a safe fight", "fast_travel Moonrise Towers failed: " + first_line(ft)
+    ):
         load_verified(BASE)
         return
     call("travel_to", x=SHADOW_PACK[0] + 18.0, y=SHADOW_PACK[1], z=SHADOW_PACK[2] + 18.0)
@@ -64,16 +67,24 @@ def sec_combat() -> None:
             fh = S.H.get(foes[0]["uuid"], foes[0].get("name"))
             for _ in range(3):
                 ua = call("use_ability", ability="Ranged Attack", target=fh, who="Claude")
-                said = re.search(r"(?m)^(COMBAT: the attack started a fight.*|combat: (NOT started|none|not started).*)$", ua)
+                said = re.search(
+                    r"(?m)^(COMBAT: the attack started a fight.*|combat: (NOT started|none|not started).*)$", ua
+                )
                 if "FAILED" not in first_line(ua):
-                    item("opener says whether combat started", "PASS" if said else "FAIL",
-                         said.group(1)[:160] if said else first_line(ua))
+                    item(
+                        "opener says whether combat started",
+                        "PASS" if said else "FAIL",
+                        said.group(1)[:160] if said else first_line(ua),
+                    )
                 time.sleep(2.0)
                 cs = S.game.try_rpc("state.combat") or {}
-                dbg = S.game.eval(f'local h=Osi.GetHostCharacter() local u="{foes[0]["uuid"]}" return "host combat="'
-                                  '..tostring(Osi.IsInCombat(h)).." foe combat="..tostring(Osi.IsInCombat(u))'
-                                  '.." enemy="..tostring(Osi.IsEnemy(u,h)).." hp="..tostring(Osi.GetHitpoints(u))'
-                                  '.." canfight="..tostring(Osi.CanFight and Osi.CanFight(u))', context="server")
+                dbg = S.game.eval(
+                    f'local h=Osi.GetHostCharacter() local u="{foes[0]["uuid"]}" return "host combat="'
+                    '..tostring(Osi.IsInCombat(h)).." foe combat="..tostring(Osi.IsInCombat(u))'
+                    '.." enemy="..tostring(Osi.IsEnemy(u,h)).." hp="..tostring(Osi.GetHitpoints(u))'
+                    '.." canfight="..tostring(Osi.CanFight and Osi.CanFight(u))',
+                    context="server",
+                )
                 log(f"after the attack: state.combat active={cs.get('active')}; {dbg}")
                 if cs.get("active"):
                     break
@@ -83,9 +94,13 @@ def sec_combat() -> None:
     gc = call("get_combat_state")
     ids = re.findall(r"\((?:Target|Projectile|Shout|Zone|Rush)_\w+\)", gc)
     named = re.findall(r"(?m)^\s*(?:ACTIONS|actions).*$", gc)
-    item("ability names in the action lists", "PASS" if not ids else "FAIL",
-         f"{len(gc)} chars, ids shown={ids[:4]}; {named[0][:160] if named else first_line(gc)}")
+    item(
+        "ability names in the action lists",
+        "PASS" if not ids else "FAIL",
+        f"{len(gc)} chars, ids shown={ids[:4]}; {named[0][:160] if named else first_line(gc)}",
+    )
     from bg3ai import turn as T
+
     played = 0
     bg_ends: list[tuple] = []  # (who, combat_turn s, background end s after it returned, queue text, turn passed)
     rts: list[tuple] = []  # (metrics record, single state.combat RPCs, FAILED lines) per combat_turn (batched checks)
@@ -133,9 +148,18 @@ def sec_combat() -> None:
             call("wait", seconds=3)
             continue
         fh = S.H.get(foe["uuid"], foe.get("name"))
-        plan = json.dumps({"move": {"target": fh, "within": 1.5}, "on_reaction": "skip", "end": True,
-                           "action": [{"ability": "Main Hand Attack", "target": fh},
-                                      {"ability": "Ranged Attack", "target": fh}, "Dash"]})
+        plan = json.dumps(
+            {
+                "move": {"target": fh, "within": 1.5},
+                "on_reaction": "skip",
+                "end": True,
+                "action": [
+                    {"ability": "Main Hand Attack", "target": fh},
+                    {"ability": "Ranged Attack", "target": fh},
+                    "Dash",
+                ],
+            }
+        )
         recs: list[dict] = []
         orig_td = S.METRICS.tool_done
 
@@ -144,6 +168,7 @@ def sec_combat() -> None:
             if tool == "combat_turn" and r and not r.get("nested"):
                 recs.append(r)
             return r
+
         S.METRICS.tool_done = tool_done
         try:
             out, dt, counts = counted("combat_turn", plan=plan, who=S.H.get(who_u))
@@ -159,8 +184,15 @@ def sec_combat() -> None:
                 time.sleep(0.1)
             q = S._last_queue_text(who_u)
             cs2 = S.game.try_rpc("state.combat") or {}
-            bg_ends.append((party[who_u].get("name"), dt, time.monotonic() - b0, q,
-                            who_u not in T.acting(cs2) or not cs2.get("active")))
+            bg_ends.append(
+                (
+                    party[who_u].get("name"),
+                    dt,
+                    time.monotonic() - b0,
+                    q,
+                    who_u not in T.acting(cs2) or not cs2.get("active"),
+                )
+            )
         jobs = sum(v for k, v in counts.items() if k.startswith("act."))
         polls = counts.get("job.poll", 0)
         rpcs = sum(counts.values())
@@ -175,41 +207,73 @@ def sec_combat() -> None:
         range_miss = bool(re.search(r"MainHandAttack \S+: FAILED — target is out of range", out))
         lost_walk = "move " in out and "target is not visible; last seen" in out
         played += 1
-        ok = (not unknown and (moved or hit) and polls <= 2 * jobs + 2 and "EXCEPTION" not in out
-              and "FAILED: it is not" not in out and not range_miss and not lost_walk
-              and "unknown plan key" not in out)  # act 2026-10-11: "end" inside a plan (S041 22:36:18)
+        ok = (
+            not unknown
+            and (moved or hit)
+            and polls <= 2 * jobs + 2
+            and "EXCEPTION" not in out
+            and "FAILED: it is not" not in out
+            and not range_miss
+            and not lost_walk
+            and "unknown plan key" not in out
+        )  # act 2026-10-11: "end" inside a plan (S041 22:36:18)
         if "melee is out of reach" in out or "the plan now aims at" in out:
-            log("round-2 lines: " + " | ".join(l for l in out.splitlines()
-                                               if "melee is out of reach" in l or "now aims" in l or "skipped (" in l))
-        item(f"combat_turn #{played} (melee approach, names, job push)", "PASS" if ok else "FAIL",
-             f"{party[who_u].get('name')} {dt:.1f}s; {rpcs} RPCs ({jobs} act jobs, {polls} job.polls; push heard={jp.seen}); "
-             f"moved={moved} attacked={hit} dash+walk={dashed_on} range_miss={range_miss} lost_walk={lost_walk}; vs {foe.get('name')}; "
-             + " | ".join(l for l in out.splitlines()[:4]))
+            log(
+                "round-2 lines: "
+                + " | ".join(
+                    l for l in out.splitlines() if "melee is out of reach" in l or "now aims" in l or "skipped (" in l
+                )
+            )
+        item(
+            f"combat_turn #{played} (melee approach, names, job push)",
+            "PASS" if ok else "FAIL",
+            f"{party[who_u].get('name')} {dt:.1f}s; {rpcs} RPCs ({jobs} act jobs, {polls} job.polls; push heard={jp.seen}); "
+            f"moved={moved} attacked={hit} dash+walk={dashed_on} range_miss={range_miss} lost_walk={lost_walk}; vs {foe.get('name')}; "
+            + " | ".join(l for l in out.splitlines()[:4]),
+        )
     if not played:
         item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")
     if not probed:
-        item("end_turn after a companion's request (probe)", "SKIP", "no shared turn group with the avatar in the "
-             "turns played (the party's initiatives differed)")
+        item(
+            "end_turn after a companion's request (probe)",
+            "SKIP",
+            "no shared turn group with the avatar in the turns played (the party's initiatives differed)",
+        )
     # latency (2026-10-16): the party's last end before enemy turns runs in the background; it must still end the turn
     # ("end_turn: done", incl. the HUD fallback) and the turn must pass. The numbers = what the agent no longer waits.
     if not bg_ends:
-        item("combat_turn background end", "SKIP", f"no background end (END_ASYNC={S.END_ASYNC}; shared group or "
-             "the next turn ours each time)")
+        item(
+            "combat_turn background end",
+            "SKIP",
+            f"no background end (END_ASYNC={S.END_ASYNC}; shared group or the next turn ours each time)",
+        )
     else:
         ok = all("end_turn" in q and "STOPPED" not in q and ": done" in q and passed for _, _, _, q, passed in bg_ends)
-        item("combat_turn background end", "PASS" if ok else "FAIL",
-             "; ".join(f"{n}: returned {d:.1f}s, end done {b:.1f}s later, passed={p}, {q.splitlines()[-1][:90] if q else '-'}"
-                       for n, d, b, q, p in bg_ends))
+        item(
+            "combat_turn background end",
+            "PASS" if ok else "FAIL",
+            "; ".join(
+                f"{n}: returned {d:.1f}s, end done {b:.1f}s later, passed={p}, {q.splitlines()[-1][:90] if q else '-'}"
+                for n, d, b, q, p in bg_ends
+            ),
+        )
     # act 2026-10-16 "combat_turn serial RPCs": the step checks ride on the watcher's read after each step (one round
     # trip with its events + act.watch); a read nobody can have changed is reused. Single state.combat RPCs left: the
     # end_turn tool's own, the NEXT line's, one after each failed alternative (the start one is in a multi).
     if rts:
         from bg3ai import actq
+
         ok = actq.BATCH_CHECKS and all("rt_n" in r and n <= 3 + f for r, n, f in rts)
-        item("combat_turn batched step checks", "PASS" if ok else "FAIL",
-             f"BATCH_CHECKS={actq.BATCH_CHECKS}; " + "; ".join(
-                 f"rt_n={r.get('rt_n')} rpc_n={r.get('rpc_n')} watch_n={r.get('watch_n', 0)} single state.combat={n} "
-                 f"failed={f} ms-job={r['ms'] - r.get('job_ms', 0):.0f}" for r, n, f in rts))
+        item(
+            "combat_turn batched step checks",
+            "PASS" if ok else "FAIL",
+            f"BATCH_CHECKS={actq.BATCH_CHECKS}; "
+            + "; ".join(
+                f"rt_n={r.get('rt_n')} rpc_n={r.get('rpc_n')} watch_n={r.get('watch_n', 0)} single state.combat={n} "
+                f"failed={f} ms-job={r['ms'] - r.get('job_ms', 0):.0f}"
+                for r, n, f in rts
+            ),
+        )
     combat_compaction_check([gc] + ct_raw)
     melee_probe()
     load_verified(BASE)
@@ -218,7 +282,9 @@ def sec_combat() -> None:
 def combat_compaction_check(raws: list[str]) -> None:
     """vis 2026-10-16 combat compaction (compact.py COMBAT_NARRATIVE .. KIND_GROUP) on this fight's live results:
     0 lost facts (compact_check), smaller, an enemy turn's cast + damage on one line, no @(x,y,z) on move lines."""
-    from bg3ai import compact, compact_check as cc
+    from bg3ai import compact
+    from bg3ai import compact_check as cc
+
     comp, shown, probs, a, b, outs = compact.Compactor(), [], [], 0, 0, []
     for i, raw in enumerate(r for r in raws if r):
         tool = "get_combat_state" if i == 0 else "combat_turn"
@@ -233,9 +299,12 @@ def combat_compaction_check(raws: list[str]) -> None:
     text = "\n".join(outs[1:])
     narr = re.findall(r"(?m)^\s+(?:turn|cast) e\d+[^:\n]*: [^\n]* -> e\d+[^\n]*$", text)
     pos = [ln for ln in text.split("\n") if ln.startswith("move ") and "@(" in ln] if compact.COMBAT_MOVE_POS else []
-    item("vis: combat compaction keeps every fact (live)", "PASS" if not probs and b < a and not pos else "FAIL",
-         f"{len(outs) - 1} combat_turn: tokens ~{a}->~{b} ({(b - a) / max(1, a):+.0%}); narrative lines "
-         f"{len(narr)} e.g. {narr[:2]}; move lines with @: {pos[:1]}; problems {probs[:3]}")
+    item(
+        "vis: combat compaction keeps every fact (live)",
+        "PASS" if not probs and b < a and not pos else "FAIL",
+        f"{len(outs) - 1} combat_turn: tokens ~{a}->~{b} ({(b - a) / max(1, a):+.0%}); narrative lines "
+        f"{len(narr)} e.g. {narr[:2]}; move lines with @: {pos[:1]}; problems {probs[:3]}",
+    )
 
 
 def end_turn_probe(cs: dict, now: list[str], party: dict) -> bool:
@@ -246,6 +315,7 @@ def end_turn_probe(cs: dict, now: list[str], party: dict) -> bool:
     BG3AI_END_HUD_FIRST=1 the end_turn tool itself must press the HUD at once. Decision for the live window:
     ignored -> flip END_HUD_FIRST on (server.END_HUD_FIRST / env), else keep it off. False: no shared group here."""
     from bg3ai.game import JobResult
+
     host = str(S.game.eval("return tostring(Osi.GetHostCharacter())", context="server") or "")[-36:]
     if host not in now:
         log(f"end_turn probe: the group {[party[u].get('name') for u in now]} has no avatar ({host})")
@@ -264,8 +334,11 @@ def end_turn_probe(cs: dict, now: list[str], party: dict) -> bool:
     if S.END_HUD_FIRST:
         out, dt = took("end_turn", who=S.H.get(host), wait=False)
         ok = "the HUD's End Turn at once" in out and "FAILED" not in out
-        item("end_turn after a companion's request (probe)", "PASS" if ok else "FAIL",
-             f"END_HUD_FIRST on; {r1s}; peer seen={bool(peer)}; {an} end_turn {dt:.1f}s: {first_line(out)[:160]}")
+        item(
+            "end_turn after a companion's request (probe)",
+            "PASS" if ok else "FAIL",
+            f"END_HUD_FIRST on; {r1s}; peer seen={bool(peer)}; {an} end_turn {dt:.1f}s: {first_line(out)[:160]}",
+        )
         return True
     t = time.monotonic()
     r2 = S.game.run_job("act.end_turn", {"char": host}, wait_s=15)
@@ -283,12 +356,21 @@ def end_turn_probe(cs: dict, now: list[str], party: dict) -> bool:
         t = time.monotonic()
         rm = S.game.run_job("act.move_to", {"char": host, "pos": [p[0] + 1.5, p[1], p[2]]}, wait_s=8)
         refused = rm.status == "failed" and "turn" in str(rm.error or "")
-        item("no move right after the group's end (guard turn_over)", "PASS" if refused else "FAIL",
-             f"{an} act.move_to {time.monotonic() - t:.1f}s after its end: {rm.status} {rm.error or rm.result}")
-    decision = ("IGNORED: flip END_HUD_FIRST on (BG3AI_END_HUD_FIRST=1), saves ~3 s per such end" if ignored
-                else "not ignored: keep END_HUD_FIRST off")
-    item("end_turn after a companion's request (probe)", "PASS" if r2.status == "done" or ignored else "FAIL",
-         f"{r1s}; peer seen={bool(peer)}; {an} Osiris EndTurn {r2.status} {d2:.1f}s ({r2.error or 'ok'}){hud} -> {decision}")
+        item(
+            "no move right after the group's end (guard turn_over)",
+            "PASS" if refused else "FAIL",
+            f"{an} act.move_to {time.monotonic() - t:.1f}s after its end: {rm.status} {rm.error or rm.result}",
+        )
+    decision = (
+        "IGNORED: flip END_HUD_FIRST on (BG3AI_END_HUD_FIRST=1), saves ~3 s per such end"
+        if ignored
+        else "not ignored: keep END_HUD_FIRST off"
+    )
+    item(
+        "end_turn after a companion's request (probe)",
+        "PASS" if r2.status == "done" or ignored else "FAIL",
+        f"{r1s}; peer seen={bool(peer)}; {an} Osiris EndTurn {r2.status} {d2:.1f}s ({r2.error or 'ok'}){hud} -> {decision}",
+    )
     return True
 
 
@@ -302,6 +384,7 @@ def melee_probe() -> None:
     from the nearest visible hostile (on the line toward it), measure, swing, end the turn. Record-only (PASS when
     measured): the rows say where the engine's reach really ends; set G.radius / A.MELEE_STOP_SLACK from them."""
     from bg3ai import turn as T
+
     rows: list[str] = []
     todo = list(MELEE_PROBE_M)
     end = time.monotonic() + 150
@@ -320,8 +403,11 @@ def melee_probe() -> None:
         who_u, wh = now[0], S.H.get(now[0])
         here = party[who_u].get("pos")
         nb = S.game.try_rpc("state.nearby", {"radius": 30}) or {}
-        foes = [c for c in nb.get("characters") or [] if c.get("relation") == "hostile" and not c.get("dead")
-                and c.get("pos")]
+        foes = [
+            c
+            for c in nb.get("characters") or []
+            if c.get("relation") == "hostile" and not c.get("dead") and c.get("pos")
+        ]
         if not here or not foes:
             call("end_turn", who=wh, wait=False)
             continue
@@ -337,12 +423,21 @@ def melee_probe() -> None:
         dist = sum((a - b) ** 2 for a, b in zip(me or here, fp2)) ** 0.5
         out = call("use_ability", ability="Target_MainHandAttack", target=fh, who=wh)
         first = first_line(out)
-        verdict = ("swung" if ": done" in first or "done —" in first else
-                   "ENGINE-REFUSED" if "no reason given" in out else
-                   "guard-refused" if "out of range" in out else "other: " + first[:80])
+        verdict = (
+            "swung"
+            if ": done" in first or "done —" in first
+            else "ENGINE-REFUSED"
+            if "no reason given" in out
+            else "guard-refused"
+            if "out of range" in out
+            else "other: " + first[:80]
+        )
         rows.append(f"aimed {d}m measured {dist:.2f}m centre → {verdict}")
         log(f"melee probe: {rows[-1]} ({party[who_u].get('name')} vs {foe.get('name')})")
         todo.pop(0)
         call("end_turn", who=wh, wait=False)
-    item("melee reach probe (engine-accepted centre distance, ACT-3)", "PASS" if rows else "SKIP",
-         "; ".join(rows) if rows else "no party turn with a hostile in view")
+    item(
+        "melee reach probe (engine-accepted centre distance, ACT-3)",
+        "PASS" if rows else "SKIP",
+        "; ".join(rows) if rows else "no party turn with a hostile in view",
+    )

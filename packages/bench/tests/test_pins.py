@@ -1,3 +1,4 @@
+# pyright: basic
 """bg3bench.pins: buildinfo, the mod version, the tree digest, the version pins and their drift (moved from
 runner/test_runs.py)."""
 

@@ -4,6 +4,7 @@ server's full tool list dumped once per run, and the tool count each play proces
 
     python3 -m unittest runner/test_client_setup.py
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -16,7 +17,7 @@ from pathlib import Path
 import profiles
 from profiles import Profile
 
-DEFAULT_MODEL = "opus"   # play.py's --model default (claude)
+DEFAULT_MODEL = "opus"  # play.py's --model default (claude)
 
 
 class SetupRefused(ValueError):
@@ -31,8 +32,14 @@ class ClientChoice:
     profile: Profile | None = None
 
 
-def resolve(client: str | None, profile_path: str | None, model: str | None, effort: str | None,
-            fix_model: str | None = None, keeper: bool = False) -> ClientChoice:
+def resolve(
+    client: str | None,
+    profile_path: str | None,
+    model: str | None,
+    effort: str | None,
+    fix_model: str | None = None,
+    keeper: bool = False,
+) -> ClientChoice:
     """--client/--profile/--model/--effort -> the play client. The profile names the client and the model (a
     different --client or --model is refused); --effort wins over the profile's. pi needs a profile, and plays
     without the memory keeper and the fix-notes model (both would start pi with another model)."""
@@ -93,8 +100,24 @@ def dump_server(system: Path, tools: Path, repo: Path, run=subprocess.run) -> No
     """The system text (D2) and the bg3 server's full tool list, offline in the bridge's env (tools/pi/dump_server.py).
     The runner's BG3AI_TOOLS* are left out so the list is the whole registry."""
     env = {k: v for k, v in os.environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
-    run(["uv", "run", "--project", str(repo / "bridge"), "python", str(repo / "tools/pi/dump_server.py"),
-         "--system", str(system), "--tools", str(tools)], check=True, capture_output=True, timeout=300, env=env)
+    run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(repo / "bridge"),
+            "python",
+            str(repo / "tools/pi/dump_server.py"),
+            "--system",
+            str(system),
+            "--tools",
+            str(tools),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=300,
+        env=env,
+    )
 
 
 def sha256(path: Path) -> str:
@@ -110,6 +133,7 @@ def expected_tools(registry: list[str], env: dict) -> int:
     """How many bg3 tools a play process with this session env must get (the server removes the rest at startup:
     bridge/src/bg3ai/capabilities.py). Raises ValueError for an unknown group or name, as the server would."""
     from bg3ai import capabilities
+
     return len(set(registry) - capabilities.disabled(registry, env))
 
 

@@ -1,3 +1,4 @@
+# pyright: basic
 """What every run of a series starts without (moved from runner/runs.py; runs.py re-exports them).
 
 NAV-3: the mod's machine-global navigation files are archived. FAIR-2: play/knowledge is locked (chmod a-w) for a

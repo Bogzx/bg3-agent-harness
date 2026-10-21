@@ -23,11 +23,16 @@ def sec_reads() -> None:
     else:
         mk = S.game.try_rpc("nav.markers") or {}
         forced = S._party_hint_line(st, (mk or {}).get("markers") if isinstance(mk, dict) else None, force=True)
-        item("PARTY hint", "PASS" if forced or not camp else "WARN",
-             f"forced line: {forced!r}; camp={camp}" if forced else f"no PARTY line (camp={camp}; nothing to suggest?)")
+        item(
+            "PARTY hint",
+            "PASS" if forced or not camp else "WARN",
+            f"forced line: {forced!r}; camp={camp}" if forced else f"no PARTY line (camp={camp}; nothing to suggest?)",
+        )
 
     lvl = grab(r"^LEVEL UP.*$", st_full)
-    pend = [(r.get("name"), r.get("level")) for r in (st.get("party") or []) + (st.get("camp") or []) if r.get("level_up")]
+    pend = [
+        (r.get("name"), r.get("level")) for r in (st.get("party") or []) + (st.get("camp") or []) if r.get("level_up")
+    ]
     if lvl:
         item("camp level-up line", "PASS", lvl)
     elif pend:
@@ -38,8 +43,11 @@ def sec_reads() -> None:
     mp = call("get_map", full=True)
     ids = sorted(set(re.findall(r"\b(?:WLD_\w+|WAYP_\w+|[A-Z]{3}_[A-Za-z]+_[A-Za-z_]+)\b", mp)))
     wps = len(re.findall(r"(?im)waypoint", mp))
-    item("get_map names only", "PASS" if not ids and len(mp) > 40 else "FAIL",
-         f"ids={ids[:5]}; {len(mp)} chars; first: {first_line(mp)}")
+    item(
+        "get_map names only",
+        "PASS" if not ids and len(mp) > 40 else "FAIL",
+        f"ids={ids[:5]}; {len(mp)} chars; first: {first_line(mp)}",
+    )
 
     mem = OUT / "memory"
     (mem / "sessions").mkdir(parents=True, exist_ok=True)
@@ -48,7 +56,11 @@ def sec_reads() -> None:
     out, dt = took("note", text="acceptance check line one\n[quest] second line", tag="lesson")
     body = log_path.read_text()
     ok = "[lesson] acceptance check line one" in body and "[quest] second line" in body and dt < 0.5
-    item("note()", "PASS" if ok else "FAIL", f"{first_line(out)} in {dt * 1000:.0f} ms; log tail: {body.strip().splitlines()[-1]}")
+    item(
+        "note()",
+        "PASS" if ok else "FAIL",
+        f"{first_line(out)} in {dt * 1000:.0f} ms; log tail: {body.strip().splitlines()[-1]}",
+    )
 
     scr = ui_screen()
     if need(scr == "game", "ESCAPE guard", f"screen is {scr}, not the plain game view"):
@@ -60,8 +72,11 @@ def sec_reads() -> None:
     out, dt = took("feed_gale", item="Moonlantern")
     after = ui_screen()
     ok = ("FAILED" in out or "REFUSED" in out or "not open" in out.lower()) and after == "game" and dt < 20
-    item("feed_gale dry run (no donation window)", "PASS" if ok else "FAIL",
-         f"{first_line(out)} ({dt:.1f}s); screen after={after} (the window itself only opens from Gale's dialogue)")
+    item(
+        "feed_gale dry run (no donation window)",
+        "PASS" if ok else "FAIL",
+        f"{first_line(out)} ({dt:.1f}s); screen after={after} (the window itself only opens from Gale's dialogue)",
+    )
 
     talk = grab(r"^TALK:.*$", st_full)
     item("TALK line ('!' companion)", "PASS" if talk else "SKIP", talk or "no companion has a '!' in this save")
@@ -91,11 +106,14 @@ def read_cost_probe() -> None:
     """PASS when the filled memos take each read to <= 60 % of its emptied-memo time (or under 15 ms)."""
     try:
         r = json.loads(lua_server(READ_COST_LUA))
-    except Exception as e:  # noqa: BLE001 - a probe error is a result
+    except Exception as e:
         item(READ_COST_ITEM, "FAIL", f"probe error: {e}")
         return
     ok = all(r[w] <= max(0.6 * r[c], 15) for c, w in (("inv_cold", "inv_warm"), ("prep_cold", "prep_warm")))
-    item(READ_COST_ITEM, "PASS" if ok else "FAIL",
-         f"state.inventory rebuild {r['inv_cold']:.0f} -> {r['inv_warm']:.0f} ms ({r['items']} items); "
-         f"prep_info (party) {r['prep_cold']:.0f} -> {r['prep_warm']:.0f} ms ({r['prepared']} prepared rows); "
-         "emptied memo -> filled")
+    item(
+        READ_COST_ITEM,
+        "PASS" if ok else "FAIL",
+        f"state.inventory rebuild {r['inv_cold']:.0f} -> {r['inv_warm']:.0f} ms ({r['items']} items); "
+        f"prep_info (party) {r['prep_cold']:.0f} -> {r['prep_warm']:.0f} ms ({r['prepared']} prepared rows); "
+        "emptied memo -> filled",
+    )

@@ -1,3 +1,4 @@
+# pyright: basic
 """The first scenario set (packages/bench/scenarios/*.json, v2) and its closed-book quizzes (scenarios/quizzes/)."""
 
 import json

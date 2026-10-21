@@ -18,9 +18,10 @@ def hb_slot(spell: str, char: str | None) -> dict:
     """ui.hotbar_slot as the cast route reads it (bridge hotbar._slot: the server's hotbar map when the client has no
     spell ids, live window #1); {} on an error."""
     from bg3ai import hotbar as HB
+
     try:
         return HB._slot(S.game, spell, char) or {}
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
 
 
@@ -42,6 +43,7 @@ def hotbar_probe() -> None:
     hotbar (spends a level-1 slot; sec_se reloads the base save after). PASS = the cast went off on 3 (BLESS on each)
     and nothing is left in hand. Full reads in se.log (PROBE hotbar lines)."""
     from bg3ai import hotbar as HB
+
     st = status()
     sel = st.get("active")
     try:
@@ -64,8 +66,10 @@ def hotbar_probe() -> None:
             "local hb = {} for _, x in ipairs(UI.widgets()) do if x.name == 'HotBar' then "
             "hb[#hb + 1] = tostring(UI.isVisible(x.el)) .. (x.el == w and '*' or '') end end "
             "out[#out + 1] = 'HotBar pages=' .. table.concat(hb, ',') .. ' (* = UI.widget)' "
-            "return table.concat(out, ' | ')", context="client")
-    except Exception as e:  # noqa: BLE001
+            "return table.concat(out, ' | ')",
+            context="client",
+        )
+    except Exception as e:
         tree = f"eval error {e}"
     log(f"PROBE hotbar tree: {tree}")
     # window #1 (10-16 18:32): PrototypeID nil on every slot VM, button DataContext nil, ActiveTask set with nothing
@@ -84,19 +88,25 @@ def hotbar_probe() -> None:
             "if n <= 6 then out[#out + 1] = d .. '#' .. s .. '=' .. id end end end "
             "out[#out + 1] = 'client map: ' .. n .. ' ids, container ' .. tostring(info.container) "
             "else out[#out + 1] = 'client map: none (' .. tostring(info) .. ')' end "
-            "return table.concat(out, ' | ')", context="client")
-    except Exception as e:  # noqa: BLE001
+            "return table.concat(out, ' | ')",
+            context="client",
+        )
+    except Exception as e:
         ids = f"eval error {e}"
     log(f"PROBE hotbar ids: {ids}")
     srv = S.game.try_rpc("hotbar.map", {"char": sel}, context="server") if sel else None
     log(f"PROBE hotbar server map: {server_map_line(srv)}")
     inp = S._inp()
     try:
-        want = HB._slot(S.game, "Target_MainHandAttack", sel)   # = the route's read (server map when ids=none)
-    except Exception as e:  # noqa: BLE001
+        want = HB._slot(S.game, "Target_MainHandAttack", sel)  # = the route's read (server map when ids=none)
+    except Exception as e:
         want = {"error": str(e)}
     cs = HB.cast_state(S.game, sel)
-    pos, last = (None, {}) if not want.get("found") or inp is None else HB.locate_cell(S.game, inp, "Target_MainHandAttack", sel, want)
+    pos, last = (
+        (None, {})
+        if not want.get("found") or inp is None
+        else HB.locate_cell(S.game, inp, "Target_MainHandAttack", sel, want)
+    )
     log(f"PROBE hotbar slot {json.dumps(want)} | cast_state {json.dumps(cs)} | located {pos} {json.dumps(last)[:600]}")
     # window #2: 39 misses and only the last one logged. `seen` = how many probes were on the HUD (IsOverUI), on the
     # decks (Concertina), on a cell, the first spot of each, and the last IsMouseOver chain under the HotBar widget.
@@ -104,15 +114,22 @@ def hotbar_probe() -> None:
     if seen:
         log(f"PROBE hotbar locate seen {json.dumps(seen)}")
     ok = bool(want.get("found")) and want.get("rendered") is not False and pos is not None and cs.get("armed") is False
-    item("hotbar widget tree (ACT-8, read-only)", "PASS" if ok else "FAIL",
-         f"{tree[:120]}; ids={want.get('ids')} from={want.get('ids_from')} map_why={want.get('map_why')}; "
-         f"MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
-         f"cols={want.get('cols')} rows={want.get('rows')} rendered={want.get('rendered')} cell={want.get('cell')}; "
-         f"located at {pos} in {last.get('probes')} probes"
-         + (f" (seen ui={seen.get('over_ui')} decks={seen.get('over_hud')} cells={seen.get('cells')} "
-            f"chain={(seen.get('hover') or {}).get('chain')})" if seen else "")
-         + f"; armed={cs.get('armed')} by={cs.get('armed_by')} "
-         f"preview={cs.get('preview')} spell_task={cs.get('spell_task')}")
+    item(
+        "hotbar widget tree (ACT-8, read-only)",
+        "PASS" if ok else "FAIL",
+        f"{tree[:120]}; ids={want.get('ids')} from={want.get('ids_from')} map_why={want.get('map_why')}; "
+        f"MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
+        f"cols={want.get('cols')} rows={want.get('rows')} rendered={want.get('rendered')} cell={want.get('cell')}; "
+        f"located at {pos} in {last.get('probes')} probes"
+        + (
+            f" (seen ui={seen.get('over_ui')} decks={seen.get('over_hud')} cells={seen.get('cells')} "
+            f"chain={(seen.get('hover') or {}).get('chain')})"
+            if seen
+            else ""
+        )
+        + f"; armed={cs.get('armed')} by={cs.get('armed_by')} "
+        f"preview={cs.get('preview')} spell_task={cs.get('spell_task')}",
+    )
     if not ok:  # the guesses the clicks rely on broke: don't click blind into the world with a spell in hand
         item("hotbar cast: Bless on 3 allies (ACT-8)", "SKIP", "the read-only hotbar item failed (see its PROBE line)")
         return
@@ -120,10 +137,12 @@ def hotbar_probe() -> None:
     party = [r.get("uuid") for r in st.get("party") or []]
     pick, why = pick_hotbar_caster(party, sel)
     caster, spell, status_id, n = pick or (None, None, None, 0)
-    if need(caster is not None and not st.get("in_combat") and inp is not None,
-            "hotbar cast: Bless on 3 allies (ACT-8)",
-            f"caster with a usable ally multi-target spell={caster}, party={len(party)}, "
-            f"in_combat={st.get('in_combat')}; {why}"):
+    if need(
+        caster is not None and not st.get("in_combat") and inp is not None,
+        "hotbar cast: Bless on 3 allies (ACT-8)",
+        f"caster with a usable ally multi-target spell={caster}, party={len(party)}, "
+        f"in_combat={st.get('in_combat')}; {why}",
+    ):
         targets = ([caster] + [u for u in party if u != caster])[:n]
         r = HB.hotbar_cast(S.game, inp, caster, spell, targets)
         time.sleep(2.5)
@@ -131,15 +150,18 @@ def hotbar_probe() -> None:
         for u in targets:
             try:
                 on.append(lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "{status_id}"))') == "1")
-            except Exception:  # noqa: BLE001
+            except Exception:
                 on.append(False)
         cs = HB.cast_state(S.game, caster)
         ok = r.ok and r.picked == len(targets) and all(on) and not cs.get("armed") and ui_screen() == "game"
         if ok:
             HOTBAR_PICK.update(caster=caster, spell=spell, status=status_id, n=n)
-        item("hotbar cast: Bless on 3 allies (ACT-8)", "PASS" if ok else "FAIL",
-             f"{spell} by {S.H.get(caster)} on {len(targets)}: {json.dumps(r.as_dict())[:200]}; {status_id} on {on}; "
-             f"in hand after={cs.get('armed')}; screen={ui_screen()}")
+        item(
+            "hotbar cast: Bless on 3 allies (ACT-8)",
+            "PASS" if ok else "FAIL",
+            f"{spell} by {S.H.get(caster)} on {len(targets)}: {json.dumps(r.as_dict())[:200]}; {status_id} on {on}; "
+            f"in hand after={cs.get('armed')}; screen={ui_screen()}",
+        )
         if not ok:
             close_targeting()
     if sel:
@@ -154,9 +176,14 @@ HOTBAR_ITEM = "use_ability Bless on 3 via the hotbar route (ACT-8 wiring)"
 # Aid / Mass Healing Word are Shouts (an area, no target clicks) and prove nothing about the click route.
 HOTBAR_ALLY_SPELLS = (("Target_Bless", "BLESS", 3),)
 # Seen on the maps only to say what else the party could cast (all hostile: not for an out-of-combat item).
-HOTBAR_MULTI_OTHER = ("Target_Bane", "Projectile_MagicMissile", "Projectile_ScorchingRay", "Projectile_EldritchBlast",
-                      "Target_HoldPerson")
-HOTBAR_PICK: dict = {}   # se's passed pick (caster, spell, status, n): act's wiring item casts the same
+HOTBAR_MULTI_OTHER = (
+    "Target_Bane",
+    "Projectile_MagicMissile",
+    "Projectile_ScorchingRay",
+    "Projectile_EldritchBlast",
+    "Target_HoldPerson",
+)
+HOTBAR_PICK: dict = {}  # se's passed pick (caster, spell, status, n): act's wiring item casts the same
 
 
 # A member's SpellBook / SpellContainer entries whose id contains NEEDLE, with the prepared state the guard reads
@@ -176,7 +203,8 @@ SPELL_STATE_LUA = (
     "pcall(function() for _, m in ipairs(e.SpellContainer.Spells) do local id = s(m.SpellId.OriginatorPrototype) "
     "if id:find(needle, 1, true) then out.container[#out.container + 1] = {id = id, src = s(m.SpellId.SourceType), "
     "prep = s(m.PrepareType), ['in'] = s(m.ContainerSpell), linked = m.LinkedSpellContainer == true} end end end) "
-    "return Ext.Json.Stringify(out)")
+    "return Ext.Json.Stringify(out)"
+)
 
 
 def spell_state(u: str, needle: str) -> dict:
@@ -184,7 +212,7 @@ def spell_state(u: str, needle: str) -> dict:
     try:
         v = json.loads(lua_server(f"local U, NEEDLE = '{u}', '{needle}' " + SPELL_STATE_LUA))
         return v if isinstance(v, dict) else {"why": f"not a table: {v!r}"[:80]}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"why": f"read error {e}"[:120]}
 
 
@@ -200,12 +228,16 @@ def prep_reason(state: dict, spell: str, on_map: bool) -> str:
         return "in the spellbook; the prepared list did not read"
     b = rows[0]
     if b.get("unprepared"):
-        return (f"in the spellbook ({b.get('prep')}), not prepared: not castable, and the game keeps it off the "
-                "hotbar" + ("; yet the map has it" if on_map else ""))
+        return (
+            f"in the spellbook ({b.get('prep')}), not prepared: not castable, and the game keeps it off the "
+            "hotbar" + ("; yet the map has it" if on_map else "")
+        )
     if on_map:
         return f"prepared ({b.get('prep')}) and on the hotbar map"
-    return (f"castable ({b.get('prep')}, prepared={b.get('prepared')}) but not on the server hotbar map: the bar lost "
-            "it or Shared/HotbarMap.lua misses a bar (see PROBE hotbar server map)")
+    return (
+        f"castable ({b.get('prep')}, prepared={b.get('prepared')}) but not on the server hotbar map: the bar lost "
+        "it or Shared/HotbarMap.lua misses a bar (see PROBE hotbar server map)"
+    )
 
 
 def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]:
@@ -214,6 +246,7 @@ def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]
     The selected member first. Then the caster is selected and the HUD read polled until it shows the cell
     (hotbar._slot_after_select). Returns (None, why) with what every member has when nobody fits."""
     from bg3ai import hotbar as HB
+
     order = ([sel] if sel in party else []) + [u for u in party if u != sel]
     seen = []
     for spell, status_id, n in HOTBAR_ALLY_SPELLS:
@@ -226,8 +259,10 @@ def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]
             if u != sel:
                 S.game.run_job("act.select", {"char": u}, wait_s=5)
             r = HB._slot_after_select(S.game, spell, u)
-            log(f"PROBE hotbar caster {S.H.get(u)}: {spell} on the map; HUD read found={r.get('found')} "
-                f"can_use={r.get('can_use')} selected={r.get('selected')} deck={r.get('deck')} index={r.get('index')}")
+            log(
+                f"PROBE hotbar caster {S.H.get(u)}: {spell} on the map; HUD read found={r.get('found')} "
+                f"can_use={r.get('can_use')} selected={r.get('selected')} deck={r.get('deck')} index={r.get('index')}"
+            )
             if r.get("found") and r.get("can_use") is not False:
                 return (u, spell, status_id, n), ""
             seen.append(f"{S.H.get(u)} has {spell} but the HUD read found={r.get('found')} can_use={r.get('can_use')}")
@@ -236,7 +271,7 @@ def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]
         have = [sp for sp in tuple(s for s, _, _ in HOTBAR_ALLY_SPELLS) + HOTBAR_MULTI_OTHER if HB.map_has(m, sp)]
         n_ids = sum(len(v or {}) for v in (m or {}).values())
         line = f"{S.H.get(u)}: {n_ids} ids, multi-target {have or 'none'}" if m else f"{S.H.get(u)}: no map"
-        for spell, _, _ in HOTBAR_ALLY_SPELLS:   # why each ally spell is missing: unprepared, or the map
+        for spell, _, _ in HOTBAR_ALLY_SPELLS:  # why each ally spell is missing: unprepared, or the map
             line += f"; {spell} {prep_reason(spell_state(u, spell), spell, HB.map_has(m, spell))}"
         seen.append(line)
     why = "; ".join(seen)
@@ -251,6 +286,7 @@ def hotbar_use_ability() -> bool:
     all 3, nothing charged by the guard, nothing in hand. Decision for the live window: PASS -> set
     hotbar.HOTBAR_CAST_ENABLED = True. True = it cast (the caller reloads)."""
     from bg3ai import hotbar as HB
+
     se_ok = any(r["item"] == "hotbar cast: Bless on 3 allies (ACT-8)" and r["verdict"] == "PASS" for r in RESULTS)
     if not need(se_ok, HOTBAR_ITEM, "se's 'hotbar cast: Bless on 3 allies (ACT-8)' did not PASS"):
         return False
@@ -258,8 +294,9 @@ def hotbar_use_ability() -> bool:
     party = [r.get("uuid") for r in st.get("party") or []]
     # the spell and caster se's direct item proved (the same reload: the same party and hotbars)
     caster, spell, status_id, n = (HOTBAR_PICK.get(k) for k in ("caster", "spell", "status", "n"))
-    if not need(caster in party and len(party) >= (n or 3), HOTBAR_ITEM,
-                f"caster={caster} (se's pick), party={len(party)}"):
+    if not need(
+        caster in party and len(party) >= (n or 3), HOTBAR_ITEM, f"caster={caster} (se's pick), party={len(party)}"
+    ):
         return False
     targets = ([caster] + [u for u in party if u != caster])[:n]
     saved, HB.HOTBAR_CAST_ENABLED = HB.HOTBAR_CAST_ENABLED, True
@@ -270,11 +307,21 @@ def hotbar_use_ability() -> bool:
     time.sleep(1.0)
     blessed = [lua_server(f'return tostring(Osi.HasActiveStatus("{u}", "{status_id}"))') == "1" for u in targets]
     cs = HB.cast_state(S.game, caster)
-    ok = ("use_ability: done" in out and "via=hotbar" in out and f"hotbar: {n} of {n}" in out and all(blessed)
-          and "charged_by_guard" not in out and not cs.get("armed") and ui_screen() == "game")
-    item(HOTBAR_ITEM, "PASS" if ok else "FAIL",
-         f"{spell} by {S.H.get(caster)}: {dt:.1f}s; {status_id} on {blessed}; in hand={cs.get('armed')}; "
-         + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "targets")))[:200])
+    ok = (
+        "use_ability: done" in out
+        and "via=hotbar" in out
+        and f"hotbar: {n} of {n}" in out
+        and all(blessed)
+        and "charged_by_guard" not in out
+        and not cs.get("armed")
+        and ui_screen() == "game"
+    )
+    item(
+        HOTBAR_ITEM,
+        "PASS" if ok else "FAIL",
+        f"{spell} by {S.H.get(caster)}: {dt:.1f}s; {status_id} on {blessed}; in hand={cs.get('armed')}; "
+        + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "targets")))[:200],
+    )
     if not ok:
         close_targeting()
     return True
@@ -300,21 +347,27 @@ CONTAINER_VM_LUA = (
     "out[#out + 1] = tostring(k) .. '[' .. tostring(UI.count(v)) .. ']' "
     "for j, x in UI.items(v, 4) do out[#out + 1] = '  ' .. tostring(k) .. '#' .. j .. '{' .. dump(x):sub(1, 400) .. '}' "
     "end end end end end end end "
-    "return #out > 0 and table.concat(out, ' | ') or ('no cell ' .. DECK .. ' #' .. INDEX .. ' on the selected HUD')")
+    "return #out > 0 and table.concat(out, ' | ') or ('no cell ' .. DECK .. ' #' .. INDEX .. ' on the selected HUD')"
+)
 
 
 def container_probe(u: str, cell: dict) -> str:
     """What a container cell holds: the server's spell entries for the spell (SpellBook / SpellContainer:
     ContainerSpell, LinkedSpellContainer) and the cell's VMs (CONTAINER_VM_LUA, after selecting `u`). Read-only."""
     from bg3ai import hotbar as HB
+
     srv = spell_state(u, "DimensionDoor")
     try:
         if cell.get("selected") is False:
             S.game.run_job("act.select", {"char": u}, wait_s=5)
             HB._slot_after_select(S.game, DD_SPELL, u)
-        vm = str(S.game.eval(f"local DECK, INDEX = '{cell.get('deck')}', {int(cell.get('index') or 0)} "
-                             + CONTAINER_VM_LUA, context="client"))
-    except Exception as e:  # noqa: BLE001
+        vm = str(
+            S.game.eval(
+                f"local DECK, INDEX = '{cell.get('deck')}', {int(cell.get('index') or 0)} " + CONTAINER_VM_LUA,
+                context="client",
+            )
+        )
+    except Exception as e:
         vm = f"eval error {e}"
     return f"server {json.dumps(srv)[:1500]} | hud {vm[:3000]}"
 
@@ -324,9 +377,11 @@ def floor_point(p0: list, dist: float) -> list | None:
     for k in range(8):
         a = k * math.pi / 4
         q = [p0[0] + dist * math.cos(a), p0[1], p0[2] + dist * math.sin(a)]
-        hs = lua_server(f"local ok,h=pcall(Ext.Level.GetHeightsAt,{q[0]},{q[2]}) "
-                        "if not ok or type(h)~='table' then return '' end local o={} "
-                        "for _,v in ipairs(h) do o[#o+1]=string.format('%.2f',v) end return table.concat(o,',')")
+        hs = lua_server(
+            f"local ok,h=pcall(Ext.Level.GetHeightsAt,{q[0]},{q[2]}) "
+            "if not ok or type(h)~='table' then return '' end local o={} "
+            "for _,v in ipairs(h) do o[#o+1]=string.format('%.2f',v) end return table.concat(o,',')"
+        )
         ys = [float(v) for v in hs.split(",") if v.strip()] if hs and "error" not in hs else []
         y = min(ys, key=lambda v: abs(v - p0[1]), default=None)
         if y is None or abs(y - p0[1]) > 1.0:
@@ -349,6 +404,7 @@ def twostep_dd_probe() -> bool:
     real level. SKIP when nobody has Dimension Door on the hotbar, it is greyed out, or the picker has no usable level.
     True = it cast (the caller reloads)."""
     from bg3ai import hotbar as HB
+
     ro_ok = any(r["item"] == "hotbar widget tree (ACT-8, read-only)" and r["verdict"] == "PASS" for r in RESULTS)
     if not need(ro_ok, TWOSTEP_ITEM, "se's 'hotbar widget tree (ACT-8, read-only)' did not PASS"):
         return False
@@ -374,8 +430,11 @@ def twostep_dd_probe() -> bool:
         caster, cell = u, r
         break
     if caster is None:
-        why = (f"{', '.join(str(S.H.get(u)) for u in greyed)} has {DD_SPELL} greyed out (no level-4+ slot left)"
-               if greyed else f"nobody in the party has {DD_SPELL} on the hotbar (level 7+ Gale, or a save with it)")
+        why = (
+            f"{', '.join(str(S.H.get(u)) for u in greyed)} has {DD_SPELL} greyed out (no level-4+ slot left)"
+            if greyed
+            else f"nobody in the party has {DD_SPELL} on the hotbar (level 7+ Gale, or a save with it)"
+        )
         item(TWOSTEP_ITEM, "SKIP", why + ": run SESSION-WATCH 'two-step by the hotbar' instead")
         return False
     if cell.get("container") or cell.get("upcast"):
@@ -388,6 +447,7 @@ def twostep_dd_probe() -> bool:
     sp = S.game.try_rpc("ui.screen_pos", {"pos": land}, context="client") or {}
     log(f"PROBE twostep landing {land} screen {json.dumps(sp)}")
     from bg3ai import twostep as TS
+
     saved, TS.TWOSTEP_ENABLED = TS.TWOSTEP_ENABLED, True
     try:
         out, dt = took("use_ability", ability=DD_SPELL, x=land[0], y=land[1], z=land[2], who=S.H.get(caster))
@@ -403,21 +463,30 @@ def twostep_dd_probe() -> bool:
         log(f"PROBE twostep result {rows[-1] if rows else '-'}")
         # A17: what the cursor showed at the landing (L8: no landing click was made at all, `one_step`)
         last = json.loads(rows[-1]) if rows else {}
-        land_look = (f"; arm={last.get('command_arm') or 'cursor'} cell={last.get('cell_pos')} "
-                     f"landing looks={last.get('looks')} clicks={last.get('ground_clicks')} "
-                     f"one_step={last.get('one_step')} first_s={last.get('first_s')}")
+        land_look = (
+            f"; arm={last.get('command_arm') or 'cursor'} cell={last.get('cell_pos')} "
+            f"landing looks={last.get('looks')} clicks={last.get('ground_clicks')} "
+            f"one_step={last.get('one_step')} first_s={last.get('first_s')}"
+        )
     except (OSError, ValueError):
         pass
     ok = "use_ability: done" in out and off <= 1.5 and not cs.get("armed") and ui_screen() == "game"
     if not ok and "no spell slot left" in out and not cs.get("armed"):
         # the picker greyed every level (a save without the slot): not a route failure
-        item(TWOSTEP_ITEM, "SKIP", f"{S.H.get(caster)}: the level picker had no usable level (no slot left); "
-             + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar")))[:200])
+        item(
+            TWOSTEP_ITEM,
+            "SKIP",
+            f"{S.H.get(caster)}: the level picker had no usable level (no slot left); "
+            + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar")))[:200],
+        )
         return False
-    item(TWOSTEP_ITEM, "PASS" if ok else "FAIL",
-         f"{dt:.1f}s; now {off:.1f} m from the landing (moved {math.dist(p0, p1):.1f} m); in hand={cs.get('armed')}; "
-         + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "the spell")))[:220]
-         + land_look[:200])
+    item(
+        TWOSTEP_ITEM,
+        "PASS" if ok else "FAIL",
+        f"{dt:.1f}s; now {off:.1f} m from the landing (moved {math.dist(p0, p1):.1f} m); in hand={cs.get('armed')}; "
+        + " | ".join(l for l in out.splitlines() if l.startswith(("use_ability", "hotbar", "the spell")))[:220]
+        + land_look[:200],
+    )
     if not ok:
         close_targeting()
     return True

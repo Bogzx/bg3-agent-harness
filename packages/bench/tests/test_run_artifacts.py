@@ -1,3 +1,4 @@
+# pyright: basic
 import json
 from pathlib import Path
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """runner/spend.py and the live cost meter on pi's events.
 
-    python3 -m unittest runner/test_spend.py
+python3 -m unittest runner/test_spend.py
 """
+
 from __future__ import annotations
 
 import json
@@ -12,10 +13,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import clients as C  # noqa: E402
-import pi_client  # noqa: E402
-import runs  # noqa: E402
-import spend as S  # noqa: E402
+import clients as C
+import pi_client
+import runs
+import spend as S
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 
@@ -36,11 +37,11 @@ class Budget(unittest.TestCase):
         self.assertEqual(S.read_budget(self.path), {"cap": 5.0, "spent": 0.0})
         for bad in ("{", "[]", '{"spent": 1}', '{"cap": -1}', '{"cap": 5, "spent": "x"}', '{"cap": true}'):
             self.path.write_text(bad)
-            with self.assertRaises(S.BudgetError, msg=bad):   # a broken budget stops paid runs
+            with self.assertRaises(S.BudgetError, msg=bad):  # a broken budget stops paid runs
                 S.read_budget(self.path)
 
     def test_run_cap(self):
-        self.assertEqual(S.run_cap("claude", None, None), (None, None))           # subscription clients: as given
+        self.assertEqual(S.run_cap("claude", None, None), (None, None))  # subscription clients: as given
         self.assertIn("needs --max-cost", S.run_cap("pi", None, {"cap": 5.0, "spent": 0.0})[1])
         self.assertEqual(S.run_cap("pi", 2.0, None), (2.0, None))
         self.assertEqual(S.run_cap("pi", 2.0, {"cap": 5.0, "spent": 4.0}), (1.0, None))
@@ -50,7 +51,7 @@ class Budget(unittest.TestCase):
         self.assertIn("used up", why)
 
     def test_add_spend(self):
-        self.assertIsNone(S.add_spend(self.path, 0.5))                          # no budget file: nothing to add to
+        self.assertIsNone(S.add_spend(self.path, 0.5))  # no budget file: nothing to add to
         self.assertFalse(self.path.exists())
         self.path.write_text(json.dumps({"cap": 5, "spent": 1.25, "note": "keep"}))
         b = S.add_spend(self.path, 0.5, now=100.0, session="S001")
@@ -80,10 +81,10 @@ class Meters(unittest.TestCase):
         evs = pi_events("billing.jsonl")
         usage = [e for e in evs if e.kind == "usage"]
         m.on_event(usage[0])
-        self.assertAlmostEqual(m.cost, 1.0125)                  # before any result: not 0 (no rate guess)
+        self.assertAlmostEqual(m.cost, 1.0125)  # before any result: not 0 (no rate guess)
         for e in evs:
             m.on_event(e)
-        self.assertAlmostEqual(m.cost, 1.025)                   # the result's total, counted once
+        self.assertAlmostEqual(m.cost, 1.025)  # the result's total, counted once
 
     def test_claude_meter_unchanged(self):
         m = runs.UsageMeter(1.0, 1000)

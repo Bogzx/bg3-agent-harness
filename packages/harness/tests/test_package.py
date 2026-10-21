@@ -29,11 +29,30 @@ class Package(unittest.TestCase):
 
     def test_leaf_modules_import_without_the_runner(self) -> None:
         # step 5: the moved modules import each other inside the package, never runner/ (its shims alias them)
-        mods = ("clients", "pi_client", "profiles", "sandbox", "display_env", "ramwatch", "host_tuning", "fairness",
-                "triage", "model_time", "events", "facts", "choices", "game_settings")
-        code = "import importlib, sys\n" + "".join(f"importlib.import_module('bg3harness.{m}')\n" for m in mods) + (
-            "bad = sorted(n for n, m in sys.modules.items() if 'runner' in str(getattr(m, '__file__', '') or ''))\n"
-            "assert not bad, bad\n")
+        mods = (
+            "clients",
+            "pi_client",
+            "profiles",
+            "sandbox",
+            "display_env",
+            "ramwatch",
+            "host_tuning",
+            "fairness",
+            "triage",
+            "model_time",
+            "events",
+            "facts",
+            "choices",
+            "game_settings",
+        )
+        code = (
+            "import importlib, sys\n"
+            + "".join(f"importlib.import_module('bg3harness.{m}')\n" for m in mods)
+            + (
+                "bad = sorted(n for n, m in sys.modules.items() if 'runner' in str(getattr(m, '__file__', '') or ''))\n"
+                "assert not bad, bad\n"
+            )
+        )
         subprocess.run([sys.executable, "-I", "-c", code], check=True)
 
     def test_runner_shims_are_the_package_modules(self) -> None:

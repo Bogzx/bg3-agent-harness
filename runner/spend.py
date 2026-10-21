@@ -7,6 +7,7 @@
 
     python3 -m unittest runner/test_spend.py
 """
+
 from __future__ import annotations
 
 import fcntl

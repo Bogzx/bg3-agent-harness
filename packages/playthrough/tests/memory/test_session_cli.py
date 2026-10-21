@@ -1,3 +1,4 @@
+# pyright: basic
 """session.py's status and memlint commands and the CLI dispatch, in process (test_session.py has the rest)."""
 
 import json

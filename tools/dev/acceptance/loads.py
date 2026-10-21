@@ -24,5 +24,8 @@ def sec_loads() -> None:
             item("crash guard (3 reloads)", "FAIL", f"reload {i + 1} not verified")
             return
     crash = grep_crash(lg)
-    item("crash guard (3 reloads)", "PASS" if not crash else "FAIL",
-         f"3 verified reloads {', '.join(f'{x:.0f}s' for x in times)}; game alive; guard cleared count {c0}→{cnt()} ({lg.name if lg else 'no log'}){'; ' + crash if crash else ''}")
+    item(
+        "crash guard (3 reloads)",
+        "PASS" if not crash else "FAIL",
+        f"3 verified reloads {', '.join(f'{x:.0f}s' for x in times)}; game alive; guard cleared count {c0}→{cnt()} ({lg.name if lg else 'no log'}){'; ' + crash if crash else ''}",
+    )

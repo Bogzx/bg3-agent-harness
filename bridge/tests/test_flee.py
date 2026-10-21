@@ -44,6 +44,7 @@ class Flee(unittest.TestCase):
         def restore():
             core.H, core.game, world_tools._inp, combat.FLEE_BOX_S, combat.FLEE_LEFT_S = saved
             hoverclick._hits.clear()
+
         self.addCleanup(restore)
         core.H = Handles()
         combat.FLEE_BOX_S = combat.FLEE_LEFT_S = 0.0
@@ -51,7 +52,7 @@ class Flee(unittest.TestCase):
         self.gob_m = 40.0
         self.commands = [{"widget": "HotBar", "name": "RequestFlee", "can": True}]
         self.command_works = True
-        self.button = None            # {"over_at": (x, y)} when the HUD has a findable Flee button
+        self.button = None  # {"over_at": (x, y)} when the HUD has a findable Flee button
         self.box = False
         self.fled = False
         self.inp = FakeInput()
@@ -61,8 +62,10 @@ class Flee(unittest.TestCase):
             def try_rpc(self, op, args=None, context="server", default=None):
                 test.ops.append((op, dict(args or {})))
                 if op == "state.combat":
-                    order = [{"uuid": P2, "name": "Karlach", "relation": "party"},
-                             {"uuid": GOB, "name": "Goblin", "relation": "hostile", "from": {P1: [test.gob_m, 1]}}]
+                    order = [
+                        {"uuid": P2, "name": "Karlach", "relation": "party"},
+                        {"uuid": GOB, "name": "Goblin", "relation": "hostile", "from": {P1: [test.gob_m, 1]}},
+                    ]
                     if not test.fled:
                         order.insert(0, {"uuid": P1, "name": "Claude", "relation": "party"})
                     return {"active": True, "round": 2, "order": order}
@@ -76,9 +79,16 @@ class Flee(unittest.TestCase):
                 test.ops.append((op, dict(args or {})))
                 if op == "ui.flee_probe":
                     b = test.button
-                    return {"commands": test.commands,
-                            "button": b and {"widget": "HotBar", "name": "FleeBtn", "over": test.inp.at == b["over_at"],
-                                             "enabled": True}}
+                    return {
+                        "commands": test.commands,
+                        "button": b
+                        and {
+                            "widget": "HotBar",
+                            "name": "FleeBtn",
+                            "over": test.inp.at == b["over_at"],
+                            "enabled": True,
+                        },
+                    }
                 if op == "ui.flee":
                     test.box = test.command_works
                     return {"pressed": args["name"]}
@@ -104,6 +114,7 @@ class Flee(unittest.TestCase):
             test.ops.append(("click_box", {"answer": answer}))
             test.fled = test.box
             return {"clicked": "Yes", "closed": True, "tries": 1} if test.box else {"gone": True, "tries": 0}
+
         patcher = mock.patch.object(boxclick, "click_box", click_box)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -114,8 +125,9 @@ class Flee(unittest.TestCase):
     def test_command_then_yes(self):
         out = combat.flee()
         self.assertIn("fled: Claude left the fight and is at camp; still fighting: Karlach", out)
-        self.assertEqual(self.names(), ["state.combat", "ui.flee_probe", "ui.flee", "ui.box_open", "click_box",
-                                        "state.combat"])
+        self.assertEqual(
+            self.names(), ["state.combat", "ui.flee_probe", "ui.flee", "ui.box_open", "click_box", "state.combat"]
+        )
         self.assertEqual(self.inp.clicks, [])
 
     def test_enemy_too_close_is_refused_before_any_ui(self):
@@ -131,7 +143,7 @@ class Flee(unittest.TestCase):
 
     def test_command_does_nothing_then_the_button_is_clicked(self):
         self.command_works = False
-        self.button = {"over_at": (831, 922)}   # under FLEE_SEED
+        self.button = {"over_at": (831, 922)}  # under FLEE_SEED
         with mock.patch.object(hoverclick, "PROBE_GAP_S", 0.0):
             out = combat.flee()
         self.assertIn("fled: Claude", out)
@@ -155,6 +167,7 @@ class Flee(unittest.TestCase):
     def test_yes_but_still_in_the_fight(self):
         def click_box(rpc, inp, answer="yes", **kw):
             return {"clicked": "Yes", "closed": True, "tries": 1}
+
         with mock.patch.object(boxclick, "click_box", click_box):
             out = combat.flee()
         self.assertIn("FAILED: pressed Flee (RequestFlee) and answered Yes, but Claude is still in the fight", out)

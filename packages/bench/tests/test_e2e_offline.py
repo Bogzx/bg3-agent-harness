@@ -1,3 +1,4 @@
+# pyright: basic
 """The offline pipeline end to end (B-tests 3): scenario file -> pi with the scripted stub model -> the real bridge ->
 the fake mod -> facts.jsonl -> grader -> result.json -> stats -> report and leaderboard. No game, no key, no network.
 

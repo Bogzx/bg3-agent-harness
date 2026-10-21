@@ -1,3 +1,4 @@
+# pyright: basic
 """bg3bench.resets: the FAIR-2 knowledge lock (moved from runner/test_runs.py; the series wiring stays there)."""
 
 from __future__ import annotations

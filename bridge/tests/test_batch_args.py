@@ -63,8 +63,7 @@ class SameText(unittest.TestCase):
 
     def test_combat_turn_chain_from_a_list(self):
         chain = [{"who": "Karlach", "plan": PLAN}, {"who": "Gale", "plan": {}}]
-        self.assertEqual(turn_tool._turn_chain(batch._as_json(chain)),
-                         [("Karlach", json.dumps(PLAN)), ("Gale", "{}")])
+        self.assertEqual(turn_tool._turn_chain(batch._as_json(chain)), [("Karlach", json.dumps(PLAN)), ("Gale", "{}")])
         self.assertIsNone(turn_tool._turn_chain(batch._as_json(PLAN)))
 
 

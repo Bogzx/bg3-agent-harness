@@ -17,9 +17,9 @@ REPO = Path(__file__).resolve().parents[3]
 SCRIPT = REPO / "tools" / "dev" / "acceptance.py"  # the entry point; each section runs as `SCRIPT --section <name>`
 OUT = REPO / "runtime" / "acceptance"
 LOCK = REPO / "runtime" / "game.lock"
-BASE = "S027-start"            # the real playthrough state (after S026); loaded, never overwritten
+BASE = "S027-start"  # the real playthrough state (after S026); loaded, never overwritten
 TRADE_SAVE = "S026-dammon-heat"  # Last Light Inn, Quartermaster Talli in view
-DOOR_SAVE = "S050-end"         # Lower City, beside the locked Steel Watch Foundry door (S050 04:12 lockpick hover_miss x4)
+DOOR_SAVE = "S050-end"  # Lower City, beside the locked Steel Watch Foundry door (S050 04:12 lockpick hover_miss x4)
 # The hotbar cast items (ACT-8 Bless x3, ACT-9 Dimension Door): BASE has no Bless on anyone's hotbar (live window #4
 # probe, 2026-10-17: Shadowheart has Healing Word / Blessing of the Trickster, Claude only smites). In S065 Claude the
 # Paladin (L10) cast Target_Bless and hit "a cast takes at most 2 here": the case ACT-8 fixes.
@@ -37,34 +37,79 @@ SCROLL_SAVE = "S066-end"
 # rest, restored in a finally.
 SECTIONS = ["reads", "setup", "act", "vis", "gear", "swap", "rest", "trade", "nav", "combat", "loads", "se", "strict"]
 # Estimated seconds per section (the 2026-10-11/13 full runs, test box: max seen, + today's new items), for the plan.
-EST_S = {"reads": 65, "setup": 30, "act": 140, "vis": 115, "gear": 60, "swap": 85, "rest": 85, "trade": 135,
-         "nav": 195, "combat": 220, "loads": 80, "se": 350, "strict": 150}
+EST_S = {
+    "reads": 65,
+    "setup": 30,
+    "act": 140,
+    "vis": 115,
+    "gear": 60,
+    "swap": 85,
+    "rest": 85,
+    "trade": 135,
+    "nav": 195,
+    "combat": 220,
+    "loads": 80,
+    "se": 350,
+    "strict": 150,
+}
 # Who fixes a section's FAILs (docs/ORCHESTRATOR.md ownership): tools/dev/live_window.py prints the failures per owner.
 # An item dict may carry its own "owner" to override this.
-SECTION_OWNERS = {"reads": "vis", "setup": "setup", "act": "act", "vis": "vis", "gear": "act", "swap": "act",
-                  "rest": "act", "trade": "act", "nav": "vis", "combat": "act", "loads": "se", "se": "se",
-                  "strict": "setup"}
+SECTION_OWNERS = {
+    "reads": "vis",
+    "setup": "setup",
+    "act": "act",
+    "vis": "vis",
+    "gear": "act",
+    "swap": "act",
+    "rest": "act",
+    "trade": "act",
+    "nav": "vis",
+    "combat": "act",
+    "loads": "se",
+    "se": "se",
+    "strict": "setup",
+}
 # tools/dev/live_window.py holds runtime/game.lock for its whole window and sets this: the sections then run without
 # their own flock (a second flock on the same file would wait for the window's hold forever).
 LOCK_HELD_ENV = "BG3AI_GAME_LOCK_HELD"
 # What each save must be for its sections (checked offline by --check from the save's SaveInfo.json).
 SAVE_NEEDS = {
-    BASE: {"level": "SCL_Main_A", "party_has": ["Claude", "Gale", "Shadowheart"], "party_not": ["Wyll"],
-           "party_min": 3, "used_by": "every section (swap: Gale in, Wyll in camp; nav/combat: fast travel to "
-                                     "Moonrise Towers)"},
-    HOTBAR_SAVE: {"level": "CTY_Main_A", "party_has": ["Claude"], "party_min": 3,
-                  "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in); "
-                             "act prepare_spells (Bless prepared and unprepared on Claude, A5); strict (load 2, then camp "
-                             "+ long_rest from Act 3)"},
-    SCROLL_SAVE: {"party_has": ["Karlach"], "party_min": 3,
-                  "used_by": "act point scroll aimed at the ground (A9: Karlach's Scroll of Misty Step)"},
-    TRADE_SAVE: {"level": "SCL_Main_A", "near": ((-26.8, 27.4, 164.8), 8),
-                 "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))"},
-    MYSTRA_SAVE: {"level": "CTY_Main_A", "near": ((103.4, 44.5, -17.8), 8),
-                  "used_by": "vis Mystra statue probe (Stormshore Tabernacle, the statue ~2 m from the party)"},
-    DOOR_SAVE: {"level": "CTY_Main_A", "near": ((-233.0, 4.5, -180.6), 8),
-                "used_by": "se (Lower City, the locked Steel Watch Foundry door ~1.6 m away; the older S050-end "
-                           "folder stands 31 m off: load_game takes the newest, the right one)"},
+    BASE: {
+        "level": "SCL_Main_A",
+        "party_has": ["Claude", "Gale", "Shadowheart"],
+        "party_not": ["Wyll"],
+        "party_min": 3,
+        "used_by": "every section (swap: Gale in, Wyll in camp; nav/combat: fast travel to Moonrise Towers)",
+    },
+    HOTBAR_SAVE: {
+        "level": "CTY_Main_A",
+        "party_has": ["Claude"],
+        "party_min": 3,
+        "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in); "
+        "act prepare_spells (Bless prepared and unprepared on Claude, A5); strict (load 2, then camp "
+        "+ long_rest from Act 3)",
+    },
+    SCROLL_SAVE: {
+        "party_has": ["Karlach"],
+        "party_min": 3,
+        "used_by": "act point scroll aimed at the ground (A9: Karlach's Scroll of Misty Step)",
+    },
+    TRADE_SAVE: {
+        "level": "SCL_Main_A",
+        "near": ((-26.8, 27.4, 164.8), 8),
+        "used_by": "trade (Last Light Inn; Talli ~34 m S at (-31.3, 27.5, 130.2))",
+    },
+    MYSTRA_SAVE: {
+        "level": "CTY_Main_A",
+        "near": ((103.4, 44.5, -17.8), 8),
+        "used_by": "vis Mystra statue probe (Stormshore Tabernacle, the statue ~2 m from the party)",
+    },
+    DOOR_SAVE: {
+        "level": "CTY_Main_A",
+        "near": ((-233.0, 4.5, -180.6), 8),
+        "used_by": "se (Lower City, the locked Steel Watch Foundry door ~1.6 m away; the older S050-end "
+        "folder stands 31 m off: load_game takes the newest, the right one)",
+    },
 }
 
 RESULTS: list[dict] = []
@@ -114,7 +159,7 @@ def call(name: str, **kw) -> str:
     t = time.monotonic()
     try:
         out = fn(**kw)
-    except Exception as e:  # noqa: BLE001 - a tool raising is a result too
+    except Exception as e:
         out = f"EXCEPTION {type(e).__name__}: {e}"
     dt = time.monotonic() - t
     log(f"=== {name}({kw}) {dt:.1f}s\n{out}\n")
@@ -145,8 +190,10 @@ def far_walk_target(p, leads, region: str = "", lo: float = 40.0, hi: float = 16
     first (a route reached it from there: the item stays the same run to run; no distance test, the waypoint sets
     it), else the frontier lead lo-hi m away (flat) from p with a pos nearest 100 m (doors, exits and waypoints
     first: on the walkable mesh) and waypoint None; None when none fits."""
+
     def d(q):
         return math.hypot(q[0] - p[0], q[2] - p[2])
+
     for key, qs in KNOWN_WALK.items():
         if key.lower() in (region or "").lower() and qs:
             q, via = qs[0]
@@ -155,12 +202,24 @@ def far_walk_target(p, leads, region: str = "", lo: float = 40.0, hi: float = 16
     for l in leads or []:
         q = l.get("pos") if isinstance(l, dict) else None
         if isinstance(q, (list, tuple)) and len(q) >= 3 and lo < d(q) < hi:
-            rows.append((l.get("kind") not in ("door", "exit", "waypoint"), abs(d(q) - 100), tuple(float(x) for x in q[:3])))
+            rows.append(
+                (l.get("kind") not in ("door", "exit", "waypoint"), abs(d(q) - 100), tuple(float(x) for x in q[:3]))
+            )
     return (min(rows)[2], None) if rows else None
 
 
-ROUTE_KEYS = ("reachable", "length_m", "needs_jump", "drop", "end_off_m", "unknown_reason", "no_path_reason", "far",
-              "too_far", "ms")
+ROUTE_KEYS = (
+    "reachable",
+    "length_m",
+    "needs_jump",
+    "drop",
+    "end_off_m",
+    "unknown_reason",
+    "no_path_reason",
+    "far",
+    "too_far",
+    "ms",
+)
 
 
 def route_brief(r) -> str:
@@ -211,8 +270,9 @@ def game_memory(proc: Path = Path("/proc"), cgroot: Path = Path("/sys/fs/cgroup"
             if not d.name.isdigit() or (d / "comm").read_text().strip() != "bg3":
                 continue
             status = (d / "status").read_text()
-            cg = cg or next((ln.split("::", 1)[1] for ln in (d / "cgroup").read_text().splitlines()
-                             if ln.startswith("0::")), None)
+            cg = cg or next(
+                (ln.split("::", 1)[1] for ln in (d / "cgroup").read_text().splitlines() if ln.startswith("0::")), None
+            )
         except OSError:
             continue
         for key, name in (("VmRSS", "rss"), ("VmSwap", "swap")):
@@ -224,8 +284,12 @@ def game_memory(proc: Path = Path("/proc"), cgroot: Path = Path("/sys/fs/cgroup"
     base = cgroot / cg.lstrip("/") if cg else None
     if base is not None and "bg3ai-game-" in cg:
         out["scope"] = cg.rsplit("/", 1)[-1]
-        for f, name in (("memory.current", "cg_current"), ("memory.peak", "cg_peak"),
-                        ("memory.swap.current", "cg_swap"), ("memory.swap.peak", "cg_swap_peak")):
+        for f, name in (
+            ("memory.current", "cg_current"),
+            ("memory.peak", "cg_peak"),
+            ("memory.swap.current", "cg_swap"),
+            ("memory.swap.peak", "cg_swap_peak"),
+        ):
             try:
                 out[name] = int((base / f).read_text().split()[0]) // 2**20
             except (OSError, ValueError, IndexError):
@@ -245,7 +309,7 @@ def set_marker() -> None:
 def marker_gone() -> bool:
     try:
         return S.game.eval("return tostring(Mods.BG3AI.BG3AI.__acceptance)", context="server") == "nil"
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -253,7 +317,7 @@ def load_verified(label: str, record: bool = False) -> bool:
     """load_game + independent checks: marker wiped (a new Lua state), party readable, game screen."""
     try:
         set_marker()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log(f"marker not set ({e}): the game may be loading")
     out, dt = took("load_game", save=label)
     ok_tool = "FAILED" not in out and "EXCEPTION" not in out
@@ -282,7 +346,6 @@ def need(cond: bool, name: str, why: str) -> bool:
     return cond
 
 
-
 def bg3le_log() -> Path | None:
     files = sorted(glob.glob(str(REPO / "runtime" / "logs" / "bg3le-*.log.*")), key=os.path.getmtime)
     for f in reversed(files):
@@ -294,13 +357,11 @@ def bg3le_log() -> Path | None:
     return Path(files[-1]) if files else None
 
 
-
 def grep_crash(lg: Path | None) -> str:
     if not lg:
         return ""
     m = re.findall(r".*crash: signal.*", lg.read_text(errors="replace"))
     return m[-1][:120] if m else ""
-
 
 
 def party_pos() -> dict:
@@ -316,13 +377,16 @@ def server_map_line(srv) -> str:
     right where ClassHotBar 5-8 would be, so whether Bless was on the bar was not provable from the log."""
     if not isinstance(srv, dict) or not isinstance(srv.get("map"), dict):
         return json.dumps(srv)[:400]
+
     def key(k):
         return (0, int(k)) if str(k).isdigit() else (1, str(k))
-    decks = [f"{d}[{' '.join(f'{k}={v}' for k, v in sorted((m or {}).items(), key=lambda kv: key(kv[0])))}]"
-             for d, m in sorted(srv["map"].items())]
+
+    decks = [
+        f"{d}[{' '.join(f'{k}={v}' for k, v in sorted((m or {}).items(), key=lambda kv: key(kv[0])))}]"
+        for d, m in sorted(srv["map"].items())
+    ]
     head = " ".join(f"{k}={srv[k]}" for k in ("container", "bars", "slots") if k in srv)
     return (head + " " if head else "") + " ".join(decks)
-
 
 
 def lua_server(code: str) -> str:

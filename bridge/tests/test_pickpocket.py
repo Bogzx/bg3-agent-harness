@@ -84,18 +84,19 @@ class HoverClick(unittest.TestCase):
         res = hoverclick.hover_click(self.probe_for(inp), inp, "k", (0.5, 0.5), clock=clock, sleep=clock.sleep)
         self.assertTrue(res["clicked"])
         self.assertEqual(inp.clicks(), [("click", 512, 500)])
-        self.assertEqual(inp.log[-1], ("move", 500, 200))   # the cursor leaves the button
+        self.assertEqual(inp.log[-1], ("move", 500, 200))  # the cursor leaves the button
         # the hit is tried first next time
         self.assertEqual(hoverclick.candidates((0.5, 0.5), "k")[0], (0.512, 0.5))
 
     def test_never_clicks_without_hover(self):
         inp = FakeInput()
         clock = Clock()
-        res = hoverclick.hover_click(self.probe_for(inp), inp, "k", (0.5, 0.5), budget_s=0.95, clock=clock,
-                                     sleep=clock.sleep)
+        res = hoverclick.hover_click(
+            self.probe_for(inp), inp, "k", (0.5, 0.5), budget_s=0.95, clock=clock, sleep=clock.sleep
+        )
         self.assertIn("no cursor position", res["error"])
         self.assertEqual(inp.clicks(), [])
-        self.assertEqual(res["tries"], 10)   # 0.95 s budget / 0.1 s per probe
+        self.assertEqual(res["tries"], 10)  # 0.95 s budget / 0.1 s per probe
 
     def test_closed_or_greyed_window(self):
         inp = FakeInput(over={(500, 500)})
@@ -108,8 +109,12 @@ class HoverClick(unittest.TestCase):
 class Steal(unittest.TestCase):
     """The UI op sequence of pickpocket(npc, take=...) against a fake mod."""
 
-    POCKETS: ClassVar[dict] = {"items": [{"uuid": _u(31), "name": "Dagger", "price": 2, "chance": 54, "dc": 12},
-                         {"uuid": _u(32), "name": "Ring", "price": 90, "chance": 20, "dc": 18}]}
+    POCKETS: ClassVar[dict] = {
+        "items": [
+            {"uuid": _u(31), "name": "Dagger", "price": 2, "chance": 54, "dc": 12},
+            {"uuid": _u(32), "name": "Ring", "price": 90, "chance": 20, "dc": 18},
+        ]
+    }
 
     def setUp(self):
         saved = (core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S)
@@ -121,9 +126,10 @@ class Steal(unittest.TestCase):
             core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S = saved
             world_tools._pp_open["npc"] = None
             hoverclick._hits.clear()
+
         self.addCleanup(restore)
         self.ops: list[tuple[str, dict]] = []
-        self.window: str | None = None          # the NPC whose window shows
+        self.window: str | None = None  # the NPC whose window shows
         self.roll_after_click: dict | None = {"finished": True, "success": True, "rolled": 15, "dc": 12}
         self.closes_on_click = False
         self.inp = FakeInput(over={(560, 651)})  # Steal under the seed (0.5604, 0.6519) of a 1000x1000 window
@@ -143,9 +149,9 @@ class Steal(unittest.TestCase):
                     it = next(i for i in test.POCKETS["items"] if i["uuid"] == args["take"])
                     if args.get("min_chance", 0) > it["chance"]:
                         return JobResult("failed", {"item": it}, f"{it['name']}: below min_chance; nothing taken")
-                    return JobResult("done", {"item": it, "pending": True})   # the dead press (live2)
+                    return JobResult("done", {"item": it, "pending": True})  # the dead press (live2)
                 if test.window != _u(30):
-                    return JobResult("done", {"items": []})                     # another NPC's empty window
+                    return JobResult("done", {"items": []})  # another NPC's empty window
                 return JobResult("done", test.POCKETS)
 
             def rpc(self, op, args=None, context="server", **k):
@@ -155,8 +161,13 @@ class Steal(unittest.TestCase):
                         return {"open": False}
                     clicked = bool(test.inp.clicks())
                     roll = test.roll_after_click if clicked else {"finished": False}
-                    return {"open": True, "button": True, "enabled": True, "over": test.inp.at in test.inp.over,
-                            "roll": dict(roll or {"finished": False})}
+                    return {
+                        "open": True,
+                        "button": True,
+                        "enabled": True,
+                        "over": test.inp.at in test.inp.over,
+                        "roll": dict(roll or {"finished": False}),
+                    }
                 return {"active": _u(1), "party": [{"uuid": _u(1), "name": "Claude"}]}
 
             def try_rpc(self, op, *a, **k):
@@ -174,6 +185,7 @@ class Steal(unittest.TestCase):
             orig_click(x, y, button, count, sync)
             if test.closes_on_click:
                 test.window = None
+
         self.inp.click = click
 
         def click_act(tool, op, args, wait_s=40.0):
@@ -181,6 +193,7 @@ class Steal(unittest.TestCase):
             test.window = args["target"]
             reporting._batch["last"] = "done"
             return "pickpocket: done — opened pickpocket"
+
         world_tools._click_act = click_act
         world_tools._inp = lambda: self.inp
         world_tools.STEAL_ROLL_S = 0.0
@@ -195,8 +208,8 @@ class Steal(unittest.TestCase):
         self.assertIn("stole e2 Dagger", out)
         self.assertIn("rolled 15 vs DC 12", out)
         take = next(a for op, a in self.ops if op == "ui.pickpocket" and a.get("take"))
-        self.assertEqual(take["min_chance"], world_tools.SELECT_ONLY)   # selected, nothing pressed by the mod
-        self.assertEqual(self.inp.clicks(), [("click", 560, 651)])       # Steal clicked once, where it was hovered
+        self.assertEqual(take["min_chance"], world_tools.SELECT_ONLY)  # selected, nothing pressed by the mod
+        self.assertEqual(self.inp.clicks(), [("click", 560, 651)])  # Steal clicked once, where it was hovered
         i_take = self.names().index("ui.pickpocket", 2)
         self.assertIn("ui.steal_probe", self.names()[i_take:])
 

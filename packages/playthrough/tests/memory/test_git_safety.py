@@ -1,3 +1,4 @@
+# pyright: basic
 """The hooks' git calls in the memory repo must not run anything the repo itself names (FAIR-1).
 
 python3 -m unittest discover -s tools/memory -p 'test_git_safety.py'

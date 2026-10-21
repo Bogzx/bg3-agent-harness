@@ -1,3 +1,4 @@
+# pyright: basic
 """TEMPORARY (with legacy_cli.py, Phase D): what runner/play.py can do for each condition id (conditions.py), read
 from its argparse on 2026-10-21 (play.py run, with --client pi and --profile from the harness worker).
 

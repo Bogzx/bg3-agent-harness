@@ -27,8 +27,11 @@ def sec_trade() -> None:
                 break
         lk = call("look", full=True)
         m = re.search(r"(e\d+) Quartermaster Talli", lk)
-        item("travel_to indoors (Last Light Inn, to Talli)", "PASS" if m else "FAIL",
-             f"{dt:.1f}s to start; {first_line(tr)} | {first_line(w)}; Talli in view={bool(m)}")
+        item(
+            "travel_to indoors (Last Light Inn, to Talli)",
+            "PASS" if m else "FAIL",
+            f"{dt:.1f}s to start; {first_line(tr)} | {first_line(w)}; Talli in view={bool(m)}",
+        )
     if not need(bool(m), "trade names + sell junk", "Talli not in view in " + TRADE_SAVE):
         return
     out = call("talk_to", npc=m.group(1))
@@ -45,15 +48,21 @@ def sec_trade() -> None:
     nameless = re.findall(r"(?m)^\s*-?\s*(?:e\d+ )?price=\d+", wares)
     sup = grab(r"supply=\d+", wares)
     ok = not nameless and bool(sup) and len(wares) < 3500
-    item("trade wares named + compact list", "PASS" if ok else "FAIL",
-         f"{len(wares)} chars, nameless rows={len(nameless)}, {sup or 'no supply=N'}; {first_line(wares)}")
+    item(
+        "trade wares named + compact list",
+        "PASS" if ok else "FAIL",
+        f"{len(wares)} chars, nameless rows={len(nameless)}, {sup or 'no supply=N'}; {first_line(wares)}",
+    )
     junk = call("get_inventory", filter="junk")
     g0 = status().get("gold")
     out, dt = took("trade", sell="junk")
     g1 = status().get("gold")
-    ok = out.startswith("trade: done") and (isinstance(g0, int) and isinstance(g1, int) and g1 > g0
-                                            or "nothing" in out.lower())
-    tail = " ".join(re.findall(r"(?m)^\((?:sold|\d+ barters)[^\n]*", out))   # "(3 barters of up to 25 items)" "(sold N …)"
+    ok = out.startswith("trade: done") and (
+        (isinstance(g0, int) and isinstance(g1, int) and g1 > g0) or "nothing" in out.lower()
+    )
+    tail = " ".join(
+        re.findall(r"(?m)^\((?:sold|\d+ barters)[^\n]*", out)
+    )  # "(3 barters of up to 25 items)" "(sold N …)"
     item("trade sell=junk (one call)", "PASS" if ok else "FAIL", f"{dt:.1f}s; gold {g0}→{g1}; {first_line(out)} {tail}")
     # [act] S067 #125 / S068 #168: the window stayed up after trade(request, confirm=true) and the agent pressed
     # ESCAPE by hand: a confirmed deal closes it now and says so. Buys the cheapest food ware (reloaded after).
@@ -65,9 +74,12 @@ def sec_trade() -> None:
         out, dt = took("trade", request=food[0][1], confirm=True)
         scr = ui_screen()
         ok = "closed the trade window: back in the game" in out and scr == "game"
-        item("trade confirm closes the window", "PASS" if ok else "FAIL",
-             f"{dt:.1f}s; screen={scr}; {first_line(out)} | "
-             + " ".join(re.findall(r"(?m)^\((?:closed|closing) the trade window[^\n]*", out)))
+        item(
+            "trade confirm closes the window",
+            "PASS" if ok else "FAIL",
+            f"{dt:.1f}s; screen={scr}; {first_line(out)} | "
+            + " ".join(re.findall(r"(?m)^\((?:closed|closing) the trade window[^\n]*", out)),
+        )
     else:
         item("trade confirm closes the window", "SKIP", "no food ware in the listing: " + first_line(wares))
     # [act] A13 S069 20:37:23: request 2 wares (one a stack) + confirm went to the barter before the Balance's gold
@@ -80,9 +92,12 @@ def sec_trade() -> None:
             call("trade", npc=m.group(1))
         out, dt = took("trade", request=f"{stack[1]},{single[1]}", confirm=True)
         ok = out.startswith("trade: done") and "refused" not in out and "(no id)" not in out
-        item("trade confirm: 2 wares incl. a stack, even table first (A13)", "PASS" if ok else "FAIL",
-             f"{dt:.1f}s; {stack[1]} {stack[0]}g + {single[1]} {single[0]}g; {first_line(out)} | "
-             + grab(r"^TABLE[^\n]*", out))
+        item(
+            "trade confirm: 2 wares incl. a stack, even table first (A13)",
+            "PASS" if ok else "FAIL",
+            f"{dt:.1f}s; {stack[1]} {stack[0]}g + {single[1]} {single[0]}g; {first_line(out)} | "
+            + grab(r"^TABLE[^\n]*", out),
+        )
     else:
         item("trade confirm: 2 wares incl. a stack, even table first (A13)", "SKIP", "no stack + single ware listed")
     esc = call("press_key", key="ESCAPE") if ui_screen() == "trade" else "(closed already)"
@@ -91,8 +106,15 @@ def sec_trade() -> None:
     out, dt = took("camp")
     if "during a conversation" in out or "camp: done" in out or "at_camp" in out:
         ok = "during a conversation" not in out and "FAILED" not in out
-        item("camp right after closing a trade (goodbye line)", "PASS" if ok else "FAIL",
-             f"{first_line(out)[:200]} ({dt:.1f}s; ESCAPE before: {first_line(esc)[:60]})")
+        item(
+            "camp right after closing a trade (goodbye line)",
+            "PASS" if ok else "FAIL",
+            f"{first_line(out)[:200]} ({dt:.1f}s; ESCAPE before: {first_line(esc)[:60]})",
+        )
     else:
-        item("camp right after closing a trade (goodbye line)", "SKIP", f"camp blocked otherwise: {first_line(out)[:200]}")
+        item(
+            "camp right after closing a trade (goodbye line)",
+            "SKIP",
+            f"camp blocked otherwise: {first_line(out)[:200]}",
+        )
     load_verified(TRADE_SAVE)

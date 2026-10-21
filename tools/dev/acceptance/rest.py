@@ -17,7 +17,11 @@ def sec_rest() -> None:
         hp = grab(r"^HP (unchanged|\w+ \d+→).*$", out)
         item("short_rest (HP before→after)", "PASS" if hp else "FAIL", f"{dt:.1f}s; {hp or first_line(out)}")
     else:
-        item("short_rest (HP before→after)", "FAIL" if "short rest" not in out.lower() else "SKIP", f"{dt:.1f}s; {first_line(out)}")
+        item(
+            "short_rest (HP before→after)",
+            "FAIL" if "short rest" not in out.lower() else "SKIP",
+            f"{dt:.1f}s; {first_line(out)}",
+        )
 
     out, dt = took("camp", action="go")
     if "FAILED" in out and "already at camp" not in out:
@@ -37,7 +41,11 @@ def sec_rest() -> None:
         item("wait_for on the rest screen", "SKIP", "long_rest didn't stop at the supplies check (enough supplies)")
     clicks = len(re.findall(r"(?i)hand.?click|click\(", out))
     ok = ("done" in out or "rested" in out) and "FAILED" not in out
-    item("long_rest no-click", "PASS" if ok else "FAIL", f"{dt:.1f}s; {first_line(out)} {grab(r'(?i)^.*(supplies|partial|full).*$', out)}")
+    item(
+        "long_rest no-click",
+        "PASS" if ok else "FAIL",
+        f"{dt:.1f}s; {first_line(out)} {grab(r'(?i)^.*(supplies|partial|full).*$', out)}",
+    )
     al = grab(r"^ALERTS.*$", call("get_status", full=True))
     item("ALERTS after rest", "PASS" if al else "INFO", al or "no ALERTS (all healthy)")
     rest_texts = out + "\n" + call("look")
@@ -53,10 +61,18 @@ def sec_rest() -> None:
     lead = (party[0].get("pos") if party else None) or [0, 0, 0]
     spread = max((sum((a - b) ** 2 for a, b in zip(r.get("pos") or lead, lead)) ** 0.5 for r in party), default=0)
     ok = "FAILED" not in out and str(ui.get("region", "")).lower() != "campsite" and spread < 25
-    item("fast_travel + camp leave (night camp)", "PASS" if ok else "FAIL",
-         f"{dt:.1f}s; {first_line(out)}; region={ui.get('region')} party spread={spread:.0f} m")
+    item(
+        "fast_travel + camp leave (night camp)",
+        "PASS" if ok else "FAIL",
+        f"{dt:.1f}s; {first_line(out)}; region={ui.get('region')} party spread={spread:.0f} m",
+    )
     # S044 23:50:48 fairness LEAK: `rest_flow step=ready_ok:MOO_Assault_ReadyCheck` in look EVENTS (se/vis 02:5x)
     leak = re.findall(r"rest_flow|\w*ReadyCheck\w*|WaypointTravel_\w+", rest_texts + "\n" + out)
-    item("no ready-check ids in rest/travel results", "PASS" if not leak else "FAIL",
-         f"leaks={sorted(set(leak))[:5]}" if leak else "long_rest, look and fast_travel texts carry no rest_flow line/engine id")
+    item(
+        "no ready-check ids in rest/travel results",
+        "PASS" if not leak else "FAIL",
+        f"leaks={sorted(set(leak))[:5]}"
+        if leak
+        else "long_rest, look and fast_travel texts carry no rest_flow line/engine id",
+    )
     load_verified(BASE)

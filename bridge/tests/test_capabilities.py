@@ -112,8 +112,11 @@ class Server(unittest.TestCase):
         for name in ("memory", "end_session", "session_start", "screenshot", "knowledge/"):
             self.assertNotIn(name, game["instructions"])
         self.assertIn("combat_turn", game["instructions"])
-        self.assertTrue(tools({"BG3AI_TOOLS": "game,memory", "BG3AI_SERVE_RULES": "1"})["instructions"].startswith(
-            full["base"].split("\nUse screenshot")[0] + "\nMemory: "))
+        self.assertTrue(
+            tools({"BG3AI_TOOLS": "game,memory", "BG3AI_SERVE_RULES": "1"})["instructions"].startswith(
+                full["base"].split("\nUse screenshot")[0] + "\nMemory: "
+            )
+        )
 
 
 class Instructions(unittest.TestCase):

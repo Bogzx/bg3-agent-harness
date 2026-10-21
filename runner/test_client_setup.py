@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """runner/client_setup.py: --profile resolution, the API key, the expected tool count.
 
-    python3 -m unittest runner/test_client_setup.py
+python3 -m unittest runner/test_client_setup.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -11,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import client_setup as CS  # noqa: E402
+import client_setup as CS
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
@@ -30,9 +31,13 @@ class Resolve(unittest.TestCase):
     def test_pi_profile(self):
         c = CS.resolve(None, PI, None, None)
         self.assertEqual((c.client, c.model, c.effort), ("pi", "deepseek-flash", "high"))
-        self.assertEqual(CS.resolve("pi", PI, "deepseek-flash", "low").effort, "low")      # --effort wins
-        for args, why in (((PI, "opus", None), "plays deepseek-flash"), ((PI, None, None, None, True), "--no-keeper"),
-                          ((PI, None, None, "other"), "--fix-model"), (("/nope.toml", None, None), "nope")):
+        self.assertEqual(CS.resolve("pi", PI, "deepseek-flash", "low").effort, "low")  # --effort wins
+        for args, why in (
+            ((PI, "opus", None), "plays deepseek-flash"),
+            ((PI, None, None, None, True), "--no-keeper"),
+            ((PI, None, None, "other"), "--fix-model"),
+            (("/nope.toml", None, None), "nope"),
+        ):
             with self.assertRaisesRegex(CS.SetupRefused, why):
                 CS.resolve(None, *args)
         with self.assertRaisesRegex(CS.SetupRefused, "pi profile"):
@@ -67,6 +72,7 @@ class ToolCount(unittest.TestCase):
         self.assertEqual(CS.expected_tools(names, {}), len(names))
         self.assertEqual(CS.expected_tools(names, {"BG3AI_TOOLS_OFF": "wiki"}), len(names) - 2)
         from bg3ai import capabilities
+
         grouped = sum(len(g) for g in capabilities.GROUPS.values())
         self.assertEqual(CS.expected_tools(names, {"BG3AI_TOOLS": "game,saves"}), len(names) - grouped + 2)
         with self.assertRaises(ValueError):
@@ -75,8 +81,10 @@ class ToolCount(unittest.TestCase):
     def test_problem(self):
         self.assertIsNone(CS.tool_count_problem(94, 94, {}))
         self.assertIsNone(CS.tool_count_problem(94, None, {}))
-        self.assertEqual(CS.tool_count_problem(94, 76, {"BG3AI_TOOLS": "game"}),
-                         "the bg3 MCP server gave 94 tools, expected 76 (BG3AI_TOOLS=game)")
+        self.assertEqual(
+            CS.tool_count_problem(94, 76, {"BG3AI_TOOLS": "game"}),
+            "the bg3 MCP server gave 94 tools, expected 76 (BG3AI_TOOLS=game)",
+        )
 
     def test_dump_server_leaves_the_tool_selection_out(self):
         seen = {}
@@ -85,6 +93,7 @@ class ToolCount(unittest.TestCase):
             seen.update(cmd=cmd, env=kw["env"])
 
         import os
+
         os.environ["BG3AI_TOOLS"] = "game"
         self.addCleanup(os.environ.pop, "BG3AI_TOOLS", None)
         CS.dump_server(Path("/s.txt"), Path("/t.json"), REPO, run=run)

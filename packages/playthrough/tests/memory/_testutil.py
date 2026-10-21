@@ -1,3 +1,4 @@
+# pyright: basic
 """Shared helpers for the memory tool tests."""
 
 from __future__ import annotations

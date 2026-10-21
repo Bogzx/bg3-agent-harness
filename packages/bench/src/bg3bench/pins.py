@@ -1,3 +1,4 @@
+# pyright: basic
 """Version pins: what one run plays with (game build, bg3le, the mod, the repo), and their drift within a series
 (moved from runner/runs.py; runs.py re-exports them). A series freezes its first run's pins in series.json and
 refuses a drifted later run unless --allow-version-drift.
