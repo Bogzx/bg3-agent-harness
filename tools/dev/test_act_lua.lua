@@ -36,7 +36,7 @@ Ext = {
     StaticData = { Get = function(uuid) return { Name = uuid } end },
     Loca = { GetTranslatedString = function() return nil end },
     Json = { Parse = function() return nil end, Stringify = function() return "{}" end },
-    Osiris = { RegisterListener = function() end },
+    Osiris = { RegisterListener = function() end }, Require = function(p) return dofile(LUA .. "/" .. p) end, -- + parts
 }
 
 local function key(name, ...)

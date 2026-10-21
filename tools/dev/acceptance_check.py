@@ -58,10 +58,10 @@ def lua_index(root: Path = LUA_ROOT) -> dict:
         txt = f.read_text(errors="replace")
         for m in re.finditer(r'RPC\.register\("([\w.]+)"', txt):
             ops.setdefault(m.group(1), set()).update(ctx)
-        if f.name == "State.lua":
+        if f.name.startswith("State"):  # State.lua and its parts
             for m in re.finditer(r'^\s*timed\("([\w.]+)"', txt, re.M):
                 ops.setdefault(m.group(1), set()).update(ctx)
-        if f.name == "Actions.lua":
+        if f.name.startswith("Actions"):  # Actions.lua and its parts
             for m in re.finditer(r'^\s*reg\("([\w.]+)"', txt, re.M):
                 ops.setdefault("act." + m.group(1), set()).update(ctx)
         aliases: dict[str, str] = {}
