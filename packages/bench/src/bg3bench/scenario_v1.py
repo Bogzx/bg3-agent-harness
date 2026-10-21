@@ -26,7 +26,7 @@ from bg3bench.series import CAP_KEYS
 
 # The format rules v2 kept (bg3bench.scenario): one definition for both.
 SCENARIO_NAME_RE = NAME_RE
-SCENARIO_KEYS = {"name", "title", "about", "start", "until", "runs", "caps", "profile", "reset"}
+SCENARIO_KEYS = {"name", "title", "about", "start", "until", "runs", "caps", "profile", "reset", "game_settings"}
 READY, NEEDS_SAVE, INVALID = "ready", "needs a start save", "invalid"
 
 
@@ -68,6 +68,14 @@ def validate_scenario(sc, name: str, milestone_ids, roleplays, difficulties) -> 
         errs.append(f"name {sc.get('name')!r} must be the file name {name!r}")
     if unknown := sorted(set(sc) - SCENARIO_KEYS):
         errs.append(f"unknown keys: {', '.join(unknown)}")
+    gs = sc.get("game_settings", {})
+    seed = gs.get("seed") if isinstance(gs, dict) else None
+    if (
+        not isinstance(gs, dict)
+        or set(gs) - {"seed"}
+        or not (seed is None or (isinstance(seed, int) and not isinstance(seed, bool) and 0 <= seed <= 2**31 - 1))
+    ):
+        errs.append("game_settings must be an object with only seed (an integer 0..2147483647 or null)")
     if sc.get("until") not in milestone_ids:
         errs.append(f"until {sc.get('until')!r} is not a milestone (bridge/src/bg3ai/milestones.py)")
     runs_n = sc.get("runs", 3)
@@ -250,7 +258,7 @@ def start_note(sc: dict) -> str:
 def scenario_cli_conflicts(sc: dict, cli: dict) -> list[str]:
     """CLI flags that contradict the scenario (run --scenario refuses them; caps go through series_caps): a flag
     left out takes the scenario's value, the same value is fine. cli: until, character_brief, roleplay, difficulty,
-    save_owner (None = not given)."""
+    save_owner, seed (None = not given)."""
     c = sc["profile"]["character"]
     want = {
         "until": ("--until", sc["until"]),
@@ -258,6 +266,7 @@ def scenario_cli_conflicts(sc: dict, cli: dict) -> list[str]:
         "roleplay": ("--roleplay", c.get("roleplay", "strict")),
         "difficulty": ("--difficulty", sc["profile"].get("difficulty")),
         "save_owner": ("--save-owner", c.get("name")),
+        "seed": ("--seed", (sc.get("game_settings") or {}).get("seed")),
     }
     out = []
     for k, (flag, have) in want.items():

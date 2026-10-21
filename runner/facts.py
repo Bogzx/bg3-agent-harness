@@ -6,7 +6,9 @@ plus the party inventory, so it costs one extra eval per poll.
 - events from the difference of two reads: combat, died/downed/revived (party members; other characters' deaths
   from the mod's `died` events), level_up, joined, gold (with delta), item_added (gold: true for a gold stack),
   quest_added/quest_done, region, area;
-- marks: run_start (time zero), load, run_end.
+- marks: run_start (time zero), load, run_end;
+- the referee ring's events (RingFeed: trade, pickpocket, stole, crime, kill, loot and, while it answers, gold,
+  item_added, died and combat exactly per change) and the roll log into rolls.jsonl.
 
 `game_t` is on every record: seconds since run_start. D7 (revised 2026-10-21): BG3 has no pause the harness can
 use, so game time is wall time since run_start (null before it).
@@ -21,9 +23,14 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from bg3ai import referee
+
 VERSION = 1
 SNAPSHOT_S = 300.0
 INVENTORY_OP = "state.inventory"
+# Event kinds the referee ring records exactly per change (bridge/src/bg3ai/referee.py); while it answers, the
+# poll diff doesn't write them too (one source per kind, research/ovh/mod.md).
+REFEREE_KINDS = frozenset({"gold", "item_added", "died", "combat_started", "combat_ended"})
 
 
 def _member(c: dict) -> dict:
@@ -139,6 +146,8 @@ class FactsWriter:
         self.last: dict | None = None        # the last read's snapshot fields
         self.snap_t: float | None = None     # when the last snapshot record was written
         self.areas: list[str] = []
+        self.last_t: float | None = None
+        self.referee_live = False            # the referee ring answered the last poll: it owns REFEREE_KINDS
         self.lock = threading.Lock()
         try:   # a later process of the same run: time zero is the file's run_start
             with open(self.path) as f:
@@ -150,6 +159,9 @@ class FactsWriter:
             pass
 
     def _write(self, rec: dict, now: float) -> dict:
+        if self.last_t is not None and now < self.last_t:   # records stay in t order: an older ring record
+            rec["at"], now = round(now, 2), self.last_t       # keeps its own time in `at`
+        self.last_t = now
         game_t = None if self.t0 is None else round(max(0.0, now - self.t0), 1)
         line = {"v": VERSION, "kind": rec.pop("kind"), "t": round(now, 2), "game_t": game_t, **rec}
         try:
@@ -180,12 +192,63 @@ class FactsWriter:
             snap["quests"] = (self.last or {}).get("quests")
         if not snap["inv"] and self.last and self.last["inv"] and not (isinstance(inv, dict) and "items" in inv):
             snap["inv"] = self.last["inv"]   # likewise a failed inventory read
-        out = [self._write({"kind": "event", **e}, now) for e in events(self.last, snap, got.get("events"))]
+        evs = events(self.last, snap, got.get("events"))
+        if self.referee_live:
+            evs = [e for e in evs if e["ev"] not in REFEREE_KINDS]
+        out = [self._write({"kind": "event", **e}, now) for e in evs]
         self.last = snap
         if self.snap_t is None or now - self.snap_t >= self.snapshot_s:
             self.snap_t = now
             out.append(self._write({"kind": "snapshot", **snap, "quests": snap["quests"] or {}}, now))
         return out
+
+
+    def timed_events(self, facts: list[dict]) -> list[dict]:
+        """Events that carry their own time `t` (referee.to_fact records, choices.choices), in time order; `game_t`
+        is filled like any other record's. A record without a time is written now."""
+        out = []
+        for f in sorted(facts, key=lambda f: f.get("t") or self.clock()):
+            rec = {"kind": "event", **{k: v for k, v in f.items() if k not in ("v", "kind", "t", "game_t")}}
+            out.append(self._write(rec, f.get("t") or self.clock()))
+        return out
+
+
+class RingFeed:
+    """The mod's hidden rings into this run's files: the referee (ref.since) as facts events, the roll log
+    (roll.since) as rolls.jsonl rows. A reader starts at the ring's current end (sync): what happened before this
+    run, or before a runner restart, isn't this run's. A failed poll marks the referee not live, so the poll diff
+    writes REFEREE_KINDS again until it answers."""
+
+    def __init__(self, rpc: referee.Rpc, writer: FactsWriter, rolls_path: Path,
+                 wall: Callable[[], float] = time.time):
+        self.rpc, self.writer, self.rolls_path, self.wall = rpc, writer, Path(rolls_path), wall
+        self.ref: referee.RingReader | None = None
+        self.roll: referee.RingReader | None = None
+
+    def _reader(self, make: Callable) -> referee.RingReader:
+        r = make(self.rpc, self.wall)
+        r.sync()
+        return r
+
+    def poll(self) -> tuple[int, int]:
+        """(facts written, rolls written) for this poll."""
+        n_facts = n_rolls = 0
+        try:
+            self.ref = self.ref or self._reader(referee.referee)
+            n_facts = len(self.writer.timed_events([referee.to_fact(r) for r in self.ref.poll()]))
+            self.writer.referee_live = True
+        except Exception:  # noqa: BLE001 - loading screens, an old mod: the poll diff covers the kinds
+            self.writer.referee_live = False
+        try:
+            self.roll = self.roll or self._reader(referee.rolls)
+            rows = [referee.to_roll(r) for r in self.roll.poll()]
+            if rows:
+                with open(self.rolls_path, "a") as f:
+                    f.writelines(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in rows)
+            n_rolls = len(rows)
+        except Exception:  # noqa: BLE001 - rolls never break a session
+            pass
+        return n_facts, n_rolls
 
 
 def read_inventory(lua_eval: Callable[..., str], combined_code: Callable[[list], str]) -> dict | None:

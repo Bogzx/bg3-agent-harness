@@ -67,6 +67,9 @@ class Format(unittest.TestCase):
         self.assertIn("not a milestone", first(save_scenario(until="moon")))
         self.assertIn("must be the file name", first(save_scenario(), "other"))
         self.assertIn("unknown keys: extra", first(save_scenario(extra=1)))
+        for gs in ({"seed": -1}, {"seed": 2**31}, {"seed": True}, {"seed": "1"}, {"difficulty": "Hard"}, []):
+            self.assertIn("game_settings must be", first(save_scenario(game_settings=gs)))
+        self.assertEqual(problems(save_scenario(game_settings={"seed": 12345}), "beach"), [])
         self.assertIn("run_hours is required", first(save_scenario(caps={"max_cost": 5})))
         self.assertIn("caps must be", first(save_scenario(caps={"run_hours": -1})))
         self.assertIn("runs must be", first(save_scenario(runs=0)))
@@ -142,6 +145,9 @@ class Checks(unittest.TestCase):
         # a new game whose agent names the character: --save-owner would name it, which the scenario doesn't
         naut = dict(sc, start={"kind": "new_game"}, profile={"character": {"brief": "b", "roleplay": "strict"}})
         self.assertEqual(len(R.scenario_cli_conflicts(naut, dict(none, save_owner="Tav"))), 1)
+        seeded = dict(sc, game_settings={"seed": 7})
+        self.assertEqual(R.scenario_cli_conflicts(seeded, dict(none, seed=7)), [])
+        self.assertEqual([b.split()[0] for b in R.scenario_cli_conflicts(seeded, dict(none, seed=8))], ["--seed"])
 
     def test_series_check(self):
         sc = save_scenario()

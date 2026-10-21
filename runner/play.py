@@ -67,6 +67,8 @@ import client_setup  # noqa: E402  (runner/client_setup.py: --profile, API key, 
 import pi_client  # noqa: E402  (runner/pi_client.py: pi's exit problem when it ends before any event)
 import spend  # noqa: E402  (runner/spend.py: paid clients' per-run cap and runtime/budget.json)
 import facts  # noqa: E402  (runner/facts.py: facts.jsonl v1, the graders' game state)
+import choices  # noqa: E402  (runner/choices.py: the agent's dialogue choices as facts events)
+import game_settings  # noqa: E402  (runner/game_settings.py: settings readout, scn.seed / scn.undo)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state, the game's install and Larian profile paths)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
@@ -2167,6 +2169,7 @@ class Options:
     profile: object | None = None      # run --profile: profiles.Profile (pi: endpoint, model, effort)
     system_file: str | None = None     # pi: the system text, dumped once per run (client_setup.dump_server)
     tools_expected: int | None = None  # pi: the bg3 tools every play process must get (else mcp_failed)
+    seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -2439,7 +2442,8 @@ class Runner:
         logf = open(RUNTIME / f"launch-{stamp}.out", "w")
         log(f"launching game: {' '.join(args)}")
         self.game_proc = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                          start_new_session=True, env={**os.environ, "BG3AI_LAUNCH_STAMP": stamp})
+                                          start_new_session=True, env={**os.environ, "BG3AI_LAUNCH_STAMP": stamp,
+                                                                       **self.setup_env()})
         logf.close()  # the game has its own copy of the descriptor
         now = time.time()
         self.watch = LaunchWatch(stamp, RUNTIME / "logs", now)
@@ -3481,6 +3485,8 @@ class Runner:
         jsonl.close()
         self.events_log = evlog.end(reason, proc.returncode, start, detail=detail, fault_at=fault_at,
                                     conversation=seen_session[0])
+        if not self.opt.dry_run:
+            self.write_choices(sid + tag, base)
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
         if spend.is_paid(client.name):
             try:
@@ -3608,7 +3614,10 @@ class Runner:
                 got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
             except Exception:  # noqa: BLE001 - loading screens, crashes: just a failed poll
                 got = None
-            try:   # facts.jsonl: the same read and the party inventory
+            try:   # facts.jsonl: the referee ring, then the same read and the party inventory
+                if got:
+                    self.game_setup()
+                    self.ring_feed().poll()
                 inv = facts.read_inventory(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
                                            story.combined_code) if got else None
                 self.facts_writer().observe(got, inv)
@@ -3641,6 +3650,56 @@ class Runner:
                 w.mark("run_start", {"playthrough": self.opt.playthrough, "client": self.opt.client,
                                      "model": self.opt.model})
         return w
+
+    def setup_env(self) -> dict:
+        """The game's env: the mod's scn.* ops are refused unless a run seeds the dice (game_settings.SETUP_ENV)."""
+        return {game_settings.SETUP_ENV: "1"} if self.opt.seed is not None else {}
+
+    def game_setup(self) -> None:
+        """Once per runner, with the game up: the settings readout (the run record's game_settings, a facts
+        `settings` mark) and, for a seeded run, scn.seed (the mod re-applies it after every load)."""
+        if getattr(self, "game_settings", None) is not None:
+            return
+        call = lambda op, args: rpc(op, args, timeout=EVAL_TIMEOUT)  # noqa: E731
+        sys.path.append(str(REPO / "tools" / "saves"))
+        import lsf
+        got = game_settings.readout(game_settings.profile_files(steam_paths.profile_dir(), steam_paths.manifest(),
+                                                                lsf.attributes), call)
+        if self.opt.seed is not None:
+            try:
+                got["seed"] = {"seed": self.opt.seed, "applied": game_settings.apply_seed(call, self.opt.seed)}
+                self.seeded = True
+            except Exception as e:  # noqa: BLE001 - the run goes on unseeded, and its record says so
+                got["seed"] = {"seed": self.opt.seed, "error": str(e)[:300]}
+                log(f"!!!!! scn.seed {self.opt.seed} failed: {e}; this run's dice are NOT seeded !!!!!")
+        self.game_settings = got
+        self.facts_writer().mark("settings", got)
+
+    def scenario_undo(self) -> None:
+        """scn.undo at the run's end (the seed record would re-seed the next run's loads)."""
+        if not getattr(self, "seeded", False):
+            return
+        try:
+            game_settings.undo(lambda op, args: rpc(op, args, timeout=EVAL_TIMEOUT))
+            self.seeded = False
+        except Exception as e:  # noqa: BLE001
+            log(f"!!!!! scn.undo failed: {e}; BG3AI/scenario.json keeps seeding every load until undone !!!!!")
+
+    def ring_feed(self) -> facts.RingFeed:
+        """The referee ring into facts.jsonl and the roll log into rolls.jsonl (kept across sessions: its cursor)."""
+        f = getattr(self, "_ring_feed", None)
+        if f is None:
+            f = self._ring_feed = facts.RingFeed(lambda op, args: rpc(op, args, timeout=EVAL_TIMEOUT),
+                                                 self.facts_writer(), self.state.dir / "rolls.jsonl")
+        return f
+
+    def write_choices(self, sid: str, base: Path) -> None:
+        """The process's dialogue choices (scene, options, pick, stated reason) into facts.jsonl."""
+        try:
+            evs = events.load_events(base, kinds={"text", "thinking", "tool_call", "tool_result"})
+            self.facts_writer().timed_events(choices.choices(evs))
+        except Exception as e:  # noqa: BLE001 - facts never break a session
+            log(f"{sid}: choices failed: {e}")
 
     def check_until(self, seen: dict | None, session: str | None) -> dict | None:
         """run --until: the milestone, the first time milestones.status() says it's reached (else None). Every run
@@ -3887,6 +3946,11 @@ class Runner:
                 if k.get("agent_edits") or k.get("other_changes"):
                     rec["clean"] = False
                     rec["knowledge_changed"] = True
+        if getattr(self, "game_settings", None) is not None:
+            rec["game_settings"] = self.game_settings
+        if self.opt.seed is not None:
+            rec["seed"] = self.opt.seed
+        self.scenario_undo()
         self.facts_writer().mark("run_end", {"outcome": outcome})
         path = self.runs_path()
         try:
@@ -4704,8 +4768,8 @@ def scenario_status(sc: dict, saves: list[Save] | None = None) -> tuple[str, str
 def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
     """run --scenario: the scenario's values into the parsed args (a flag left out takes the scenario's; one that
     contradicts it is refused). -> (refusal, the start save's sha1)."""
-    conflicts = runs.scenario_cli_conflicts(sc, {"until": a.until, "character_brief": a.character_brief,
-                                                 "roleplay": a.roleplay, "difficulty": a.difficulty,
+    conflicts = runs.scenario_cli_conflicts(sc, {"seed": getattr(a, "seed", None), "until": a.until,
+                                                 "character_brief": a.character_brief, "roleplay": a.roleplay, "difficulty": a.difficulty,
                                                  "save_owner": a.save_owner})
     if conflicts:
         return "; ".join(conflicts) + " (drop the flag: the scenario fixes it)", None
@@ -4714,6 +4778,7 @@ def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
         return f"{status}: {detail}", None
     a.playthrough = a.playthrough or sc["name"]
     a.until, a.runs = sc["until"], a.runs or sc["runs"]
+    a.seed = (sc.get("game_settings") or {}).get("seed")
     a.character_brief = a.roleplay = a.difficulty = None   # profile.json comes from the scenario (prepare_series_run)
     sha1 = None
     if sc["start"]["kind"] == "save":
@@ -4865,7 +4930,8 @@ def cmd_run(a) -> int:
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
                   sandbox_change=sandbox_change, restart_run=a.restart_run,
-                  keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day, profile=choice.profile, **pi_files)
+                  keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day, profile=choice.profile,
+                  seed=getattr(a, "seed", None), **pi_files)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -5662,6 +5728,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--roleplay", choices=ROLEPLAY_MODES,
                    help="how strictly the agent plays its character (profile.json; default strict)")
     r.add_argument("--difficulty", choices=DIFFICULTIES, help="difficulty of a new game (profile.json)")
+    r.add_argument("--seed", type=int, metavar="N",
+                   help="dice seed of the run (D9): the game gets BG3AI_SCENARIO_SETUP=1, the mod's scn.seed once "
+                        "at the run's start (re-applied after every load), scn.undo at its end")
     r.add_argument("--take-over", action="store_true",
                    help="allow using a game that is already in a save the runner didn't load")
     r.add_argument("--keep-game", action="store_true",

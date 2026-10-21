@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 import facts as F  # noqa: E402
 
 SCHEMA = Path(__file__).resolve().parents[1] / "packages" / "harness" / "schemas" / "facts.v1.schema.json"
@@ -31,6 +32,22 @@ READ = {"status": {"party": [member("Tav", active=True), member("Shadowheart")],
         "events": None, "ui": {"screen": "game", "region": "Ruined Battlefield"}}
 INV = {"rev": 7, "gold": 10, "items": [{"uuid": "a", "name": "Gold", "owner": "Tav_0000", "count": 10, "gold": True},
                                        {"uuid": "b", "name": "Torch", "owner": "Tav_0000"}]}
+
+
+class FakeRing:
+    """ref.since / roll.since as the mod answers them: the ring holds records from before the run (seq 1-3)."""
+
+    def __init__(self):
+        self.ref = [{"seq": n, "t": 100 * n, "ev": "crime", "type": "old"} for n in (1, 2, 3)]
+        self.rolls = [{"seq": 1, "t": 50, "roller": "old"}]
+        self.fail = False
+
+    def __call__(self, op, args):
+        if self.fail:
+            raise OSError("no game")
+        ring = self.ref if op == "ref.since" else self.rolls
+        evs = [r for r in ring if r["seq"] > args["seq"]][:args["limit"]]
+        return {"boot": "b1", "now": 10_000, "first": 1, "latest": ring[-1]["seq"], "events": evs}
 
 
 class Facts(unittest.TestCase):
@@ -126,12 +143,47 @@ class Facts(unittest.TestCase):
         self.assertIsNone(F.read_inventory(lambda c, ctx: json.dumps([{"ok": False}]), lambda ops: ""))
         self.assertIsNone(F.read_inventory(lambda c, ctx: 1 / 0, lambda ops: ""))
 
+    def test_ring_feed(self):
+        ring = FakeRing()
+        feed = F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl"), wall=lambda: 2000.0)
+        self.w.mark("run_start", now=1000.0)
+        self.assertEqual(feed.poll(), (0, 0))                      # synced: the ring's earlier records aren't this run's
+        self.assertEqual(self.w.referee_live, True)
+        ring.ref.append({"seq": 4, "t": 9_000, "ev": "trade_end", "npc": "Arron", "sold": [], "gold_in": 5})
+        ring.ref.append({"seq": 5, "t": 9_500, "ev": "gold", "gold": 40, "delta": 5, "holder": None})
+        ring.rolls.append({"seq": 2, "t": 9_800, "roller": "Tav", "party": True, "success": True, "natural": 17})
+        self.w.observe(READ, INV, now=2005.0)
+        self.assertEqual(feed.poll(), (2, 1))
+        # the poll diff no longer writes gold while the referee answers
+        r = copy.deepcopy(READ)
+        r["status"]["gold"] = 40
+        self.assertEqual([x["ev"] for x in self.w.observe(r, INV, now=2010.0)], [])
+        recs = self.records()
+        ev = [x for x in recs if x.get("ev") in ("trade_end", "gold")]
+        self.assertEqual([x["ev"] for x in ev], ["trade_end", "gold"])
+        self.assertEqual(ev[0]["t"], 2005.0)                       # older than the last record: kept in order
+        self.assertEqual(ev[0]["at"], 1999.0)                       # its own time (mod now 10 s, record 9 s)
+        self.assertEqual(ev[0]["game_t"], 1005.0)
+        self.assertNotIn("holder", ev[1])
+        rolls = [json.loads(x) for x in self.path.with_name("rolls.jsonl").read_text().splitlines()]
+        self.assertEqual(rolls, [{"v": 1, "t": 1999.8, "roller": "Tav", "party": True, "success": True,
+                                  "natural": 17}])
+        self.path.with_name("rolls.jsonl").unlink()
+        ring.fail = True                                            # an old mod / a loading screen
+        self.assertEqual(feed.poll(), (0, 0))
+        self.assertFalse(self.w.referee_live)
+        r["status"]["gold"] = 50
+        self.assertEqual([x["ev"] for x in self.w.observe(r, INV, now=2100.0)], ["gold"])
+
     def test_schema(self):
         try:
             import jsonschema
         except ImportError:
             self.skipTest("jsonschema not installed (uv run --with jsonschema python -m unittest runner/test_facts.py)")
         self.play()
+        self.w.mark("settings", {"resolution": "1920x1080"}, now=1501.0)
+        self.w.timed_events([{"t": 1400.0, "ev": "choice", "scene": "Shadowheart: Allow me.",
+                              "options": [{"i": 1, "text": "Go on."}], "picked": 1, "reason": "trust her"}])
         v = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text()))
         for r in self.records():
             v.validate(r)
