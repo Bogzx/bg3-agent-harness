@@ -176,7 +176,6 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "runner/test_sandbox.py" = ["I001", "N812", "RUF059", "RUF100"]
 "runner/test_scenarios.py" = ["E501", "I001", "N812", "RUF005", "RUF100"]
 "runner/triage.py" = ["B905", "RUF001", "RUF005", "RUF007", "RUF100"]
-"tools/bench_preflight.py" = ["E501"]
 "tools/container/egress_proxy.py" = ["SIM105", "UP041"]
 "tools/container/mcp_smoke.py" = ["SIM117"]
 "tools/container/sandbox_smoke.py" = ["E501", "N812"]
@@ -239,7 +238,6 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "tools/memory/test_session.py" = ["E501", "N812", "RUF059"]
 "tools/memory/test_snapshots.py" = ["N812"]
 "tools/steam_paths.py" = ["E501"]
-"tools/test_bench_preflight.py" = ["E501", "N812", "RUF100"]
 "tools/test_bg3le_buildinfo.py" = ["N812", "RUF100"]
 "tools/test_bg3le_static_data.py" = ["E501"]
 "tools/test_pak.py" = ["B007", "B905", "E501", "I001", "RUF007", "RUF059", "RUF100"]
@@ -443,7 +441,6 @@ exclude = [
     "runner/test_sandbox.py",
     "runner/test_scenarios.py",
     "runner/triage.py",
-    "tools/bench_preflight.py",
     "tools/bg3le_buildinfo.py",
     "tools/container/egress_proxy.py",
     "tools/container/mcp_smoke.py",
@@ -508,7 +505,6 @@ exclude = [
     "tools/pak.py",
     "tools/repo_paths.py",
     "tools/steam_paths.py",
-    "tools/test_bench_preflight.py",
     "tools/test_bg3le_buildinfo.py",
     "tools/test_bg3le_patches.py",
     "tools/test_bg3le_static_data.py",

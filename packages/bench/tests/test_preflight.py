@@ -1,22 +1,26 @@
-#!/usr/bin/env python3
-"""Offline tests for tools/bench_preflight.py: fixture Steam libraries, manifests, loginusers.vdf and repo trees in a
-temp dir; the commands (pgrep, claude, docker, nvidia-smi) stubbed. Nothing real is read or run.
-
-    python3 -m unittest tools/test_bench_preflight.py
+"""Offline tests for bg3bench.preflight (CLI: tools/bench_preflight.py): fixture Steam libraries, manifests,
+loginusers.vdf and repo trees in a temp dir; the commands (pgrep, claude, docker, nvidia-smi) stubbed. Nothing real
+is read or run. The checks run with the harness's real tools/steam_paths.py and tools/bg3le_buildinfo.py.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import bench_preflight as P  # noqa: E402
+from bg3bench import preflight as P
+
+REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / "tools"))  # the harness's helpers, not packaged yet
+import bg3le_buildinfo
+import steam_paths
 
 ACF = """"AppState"
 {{
@@ -59,8 +63,11 @@ class Fixture(unittest.TestCase):
         self.addCleanup(env.stop)
         self.addCleanup(self._tmp.cleanup)
         self.cmds: dict[str, tuple[int, str]] = {
-            "pgrep": (0, "1234"), "claude": (0, "2.1.301 (Claude Code)"), "docker": (0, "29.7.2"),
-            "nvidia-smi": (0, "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3888")}
+            "pgrep": (0, "1234"),
+            "claude": (0, "2.1.301 (Claude Code)"),
+            "docker": (0, "29.7.2"),
+            "nvidia-smi": (0, "NVIDIA GeForce RTX 3050 Laptop GPU, 4096, 3888"),
+        }
         self.have = {"claude", "docker", "nvidia-smi"}
         self.write_meminfo(16, 12)
         self.install()
@@ -70,12 +77,14 @@ class Fixture(unittest.TestCase):
         (self.steam / "steamapps").mkdir(parents=True, exist_ok=True)
         (self.steam / "config").mkdir(parents=True, exist_ok=True)
         (self.steam / "config/libraryfolders.vdf").write_text(
-            f'"libraryfolders"\n{{\n "0"\n {{\n  "path" "{self.lib}"\n  "apps"\n  {{\n   "1086940" "1"\n  }}\n }}\n}}\n')
+            f'"libraryfolders"\n{{\n "0"\n {{\n  "path" "{self.lib}"\n  "apps"\n  {{\n   "1086940" "1"\n  }}\n }}\n}}\n'
+        )
         apps = self.lib / "steamapps"
         game = apps / "common/Baldurs Gate 3"
         (game / "bin").mkdir(parents=True, exist_ok=True)
         (apps / "appmanifest_1086940.acf").write_text(
-            ACF.format(flags=flags, build=build, target=build if target is None else target, behavior=behavior))
+            ACF.format(flags=flags, build=build, target=build if target is None else target, behavior=behavior)
+        )
         (game / "bin/bg3").write_bytes(b"\x7fELF\x02\x01\x01" if native else b"MZ\x90\x00")
         if sniper:
             (apps / "common/SteamLinuxRuntime_sniper").mkdir(parents=True, exist_ok=True)
@@ -111,8 +120,17 @@ class Fixture(unittest.TestCase):
     def ctx(self, **env) -> P.Ctx:
         def run(cmd):
             return self.cmds.get(Path(cmd[0]).name, (127, "not found"))
-        return P.Ctx(home=self.home, env=env, repo=self.repo, run=run, meminfo=self.meminfo,
-                     which=lambda n: f"/usr/bin/{n}" if n in self.have else None)
+
+        return P.Ctx(
+            home=self.home,
+            env=env,
+            repo=self.repo,
+            steam=steam_paths,
+            bg3le=bg3le_buildinfo,
+            run=run,
+            meminfo=self.meminfo,
+            which=lambda n: f"/usr/bin/{n}" if n in self.have else None,
+        )
 
     def statuses(self, lines, name=None):
         return [s for s, n, _ in lines if name is None or n == name]
@@ -124,7 +142,7 @@ class TestInstall(Fixture):
 
     def test_no_manifest_fails(self):
         (self.lib / "steamapps/appmanifest_1086940.acf").unlink()
-        (s, _, d), = P.check_install(self.ctx())
+        ((s, _, d),) = P.check_install(self.ctx())
         self.assertEqual(s, P.FAIL)
         self.assertIn("isn't installed through Steam", d)
 
@@ -136,7 +154,7 @@ class TestInstall(Fixture):
 
     def test_pending_update_warns(self):
         self.install(target="26000000")
-        (s, _, d), = P.check_install(self.ctx())
+        ((s, _, d),) = P.check_install(self.ctx())
         self.assertEqual(s, P.WARN)
         self.assertIn("TargetBuildID 26000000", d)
         self.install(flags=4 | 2)
@@ -181,7 +199,7 @@ class TestBuild(Fixture):
         self.assertEqual(self.statuses(P.check_build(self.ctx())), [P.PASS])
 
     def test_real_first_launch_matches_fallback(self):
-        self.assertEqual(P.pinned_build(P.REPO), P.PINNED_BUILD)
+        self.assertEqual(P.pinned_build(REPO), P.PINNED_BUILD)
 
     def series(self, pins):
         d = self.repo / "runtime/sessions/s1"
@@ -207,7 +225,7 @@ class TestBuild(Fixture):
 class TestUpdates(Fixture):
     def test_offline_passes_and_reports_setting(self):
         self.login(offline_log=True, wants="1")
-        (s, _, d), = P.check_updates(self.ctx())
+        ((s, _, d),) = P.check_updates(self.ctx())
         self.assertEqual(s, P.PASS)
         self.assertIn("AutoUpdateBehavior 0 (always keep", d)
         self.assertIn("WantsOfflineMode 1", d)
@@ -216,7 +234,7 @@ class TestUpdates(Fixture):
         self.login(offline_log=False, wants="0")
         for b, word in (("0", "between"), ("1", "launched through Steam"), ("2", "between")):
             self.install(behavior=b)
-            (s, _, d), = P.check_updates(self.ctx())
+            ((s, _, d),) = P.check_updates(self.ctx())
             self.assertEqual(s, P.WARN, b)
             self.assertIn(word, d)
             self.assertIn(P.UPDATE_BEHAVIOR[b], d)
@@ -228,8 +246,9 @@ class TestUpdates(Fixture):
         self.login(offline_log=True, wants="0")
         self.assertFalse(P.wants_offline(self.ctx()))
         (self.steam / "config/loginusers.vdf").write_text(
-            '"users"\n{\n "1"\n {\n  "WantsOfflineMode" "1"\n }\n "2"\n {\n  "WantsOfflineMode" "0"\n }\n}\n')
-        self.assertIsNone(P.wants_offline(self.ctx()))     # two users, none marked MostRecent
+            '"users"\n{\n "1"\n {\n  "WantsOfflineMode" "1"\n }\n "2"\n {\n  "WantsOfflineMode" "0"\n }\n}\n'
+        )
+        self.assertIsNone(P.wants_offline(self.ctx()))  # two users, none marked MostRecent
         (self.steam / "config/loginusers.vdf").unlink()
         self.assertIsNone(P.wants_offline(self.ctx()))
 
@@ -249,9 +268,9 @@ class TestUpdates(Fixture):
 
 class TestRepoChecks(Fixture):
     def test_bg3le(self):
-        self.assertEqual(self.statuses(P.check_bg3le(self.ctx())), [P.FAIL])     # not built
+        self.assertEqual(self.statuses(P.check_bg3le(self.ctx())), [P.FAIL])  # not built
         self.build_bg3le(current=False)
-        (s, _, d), = P.check_bg3le(self.ctx())
+        ((s, _, d),) = P.check_bg3le(self.ctx())
         self.assertEqual(s, P.FAIL)
         self.assertIn("changed a.patch", d)
         self.build_bg3le(current=True)
@@ -260,15 +279,14 @@ class TestRepoChecks(Fixture):
     def test_mod(self):
         self.assertEqual(self.statuses(P.check_mod(self.ctx())), [P.FAIL])
         self.deploy_mod()
-        (s, _, d), = P.check_mod(self.ctx())
+        ((s, _, d),) = P.check_mod(self.ctx())
         self.assertEqual(s, P.PASS)
         self.assertIn("version 1.0.0.0", d)
 
     def test_mod_path_env(self):
         self.deploy_mod()
         self.assertEqual(self.statuses(P.check_mod(self.ctx(BG3AI_MOD_PATH=str(self.tmp / "x")))), [P.FAIL])
-        self.assertEqual(self.statuses(P.check_mod(self.ctx(BG3AI_MOD_PATH=f"{self.tmp}/x:{self.repo}/mod"))),
-                         [P.PASS])
+        self.assertEqual(self.statuses(P.check_mod(self.ctx(BG3AI_MOD_PATH=f"{self.tmp}/x:{self.repo}/mod"))), [P.PASS])
 
 
 class TestTools(Fixture):
@@ -308,11 +326,11 @@ class TestMemory(Fixture):
         self.assertEqual(self.statuses(P.check_ram(self.ctx(BG3AI_GAME_MEMORY_MAX="6G"))), [P.PASS])
 
     def test_vram(self):
-        (s, _, d), = P.check_vram(self.ctx())
+        ((s, _, d),) = P.check_vram(self.ctx())
         self.assertEqual(s, P.PASS)
         self.assertIn("minimum", d)
         self.cmds["nvidia-smi"] = (0, "Small GPU, 2048, 2000\nBig GPU, 8192, 8000")
-        (s, _, d), = P.check_vram(self.ctx())
+        ((s, _, d),) = P.check_vram(self.ctx())
         self.assertEqual((s, "Big GPU" in d, "minimum" in d), (P.PASS, True, False))
         self.cmds["nvidia-smi"] = (0, "Small GPU, 2048, 2000")
         self.assertEqual(self.statuses(P.check_vram(self.ctx())), [P.WARN])
@@ -330,22 +348,50 @@ class TestPreflight(Fixture):
         lines = P.preflight(self.ctx())
         self.assertEqual(set(self.statuses(lines)), {P.PASS}, lines)
         names = [n for _, n, _ in lines]
-        for n in ("install", "native", "sniper", "build", "updates", "steam", "bg3le", "mod", "claude", "docker",
-                  "ram", "vram"):
+        for n in (
+            "install",
+            "native",
+            "sniper",
+            "build",
+            "updates",
+            "steam",
+            "bg3le",
+            "mod",
+            "claude",
+            "docker",
+            "ram",
+            "vram",
+        ):
             self.assertIn(n, names)
 
     def test_crashing_check_is_a_fail_not_an_abort(self):
         with mock.patch.object(P, "check_mod", side_effect=RuntimeError("x")):
             lines = P.preflight(self.ctx())
         self.assertIn(P.FAIL, self.statuses(lines))
-        self.assertIn("vram", [n for _, n, _ in lines])   # later checks still ran
+        self.assertIn("vram", [n for _, n, _ in lines])  # later checks still ran
 
     def test_main_exit(self):
-        with mock.patch.object(P, "preflight", return_value=[(P.PASS, "a", "x"), (P.WARN, "b", "y")]), \
-                mock.patch("sys.stdout"):
-            self.assertEqual(P.main([]), 0)
+        with (
+            mock.patch.object(P, "preflight", return_value=[(P.PASS, "a", "x"), (P.WARN, "b", "y")]),
+            mock.patch("sys.stdout"),
+        ):
+            self.assertEqual(P.main([], self.ctx()), 0)
         with mock.patch.object(P, "preflight", return_value=[(P.FAIL, "a", "x")]), mock.patch("sys.stdout"):
-            self.assertEqual(P.main([]), 1)
+            self.assertEqual(P.main([], self.ctx()), 1)
+
+    def test_the_old_path_is_the_cli_and_the_module(self):
+        import bench_preflight
+
+        self.assertIs(bench_preflight, P)
+        out = subprocess.run(
+            [sys.executable, str(REPO / "tools" / "bench_preflight.py"), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("--series", out.stdout)
 
 
 if __name__ == "__main__":
