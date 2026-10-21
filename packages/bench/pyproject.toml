@@ -5,6 +5,11 @@ description = "The BG3 benchmark: graders over facts.jsonl, statistics, run mani
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+# Inspect AI .eval export (export_inspect.py). Pinned: Inspect moves event classes and the .eval layout between
+# releases; bump the pin and rerun tests/test_export_inspect.py together.
+inspect = ["inspect-ai==0.3.282"]
+
 [dependency-groups]
 dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20"]
 # Optional cross-check of the statistics against scipy; the tests skip it when scipy is absent.
