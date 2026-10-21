@@ -10,10 +10,10 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[5]   # packages/playthrough/src/bg3play/memory
+REPO_ROOT = Path(__file__).resolve().parents[5]  # packages/playthrough/src/bg3play/memory
 TEMPLATE_DIR = REPO_ROOT / "memory-template"
 
 STATE_FILE = ".session.json"
@@ -48,7 +48,7 @@ BUDGETS: dict[str, tuple[int, int | None]] = {
     "quests.md": (300, None),
     "party-build.md": (150, None),
     "inventory-notes.md": (100, None),
-    "lessons.md": (70, 12000),   # optional file; the bridge matches its WHEN lines at fight start
+    "lessons.md": (70, 12000),  # optional file; the bridge matches its WHEN lines at fight start
     "CHARACTER.md": (90, None),  # optional until written; its core has its own budget (lint.check_character)
 }
 CHAPTER_MAX_LINES = 150
@@ -58,8 +58,21 @@ SESSION_LOG_MAX_LINES = 300
 TAGGED_FILES = ["npcs.md", "locations.md", "quests.md", "decisions.md", "hypotheses.md"]
 # Bullets starting with one of these labels are meta/plan lines and need no tag.
 META_LABELS = {
-    "thread", "threads", "last updated", "updated", "see", "status", "test", "plan", "choice",
-    "why", "reversible", "next", "kill criterion", "role", "todo",
+    "thread",
+    "threads",
+    "last updated",
+    "updated",
+    "see",
+    "status",
+    "test",
+    "plan",
+    "choice",
+    "why",
+    "reversible",
+    "next",
+    "kill criterion",
+    "role",
+    "todo",
 }
 # Files guarded against bulk deletion (lines lost vs git HEAD).
 GUARDED_FILES = ["decisions.md", "npcs.md", "CHARACTER.md"]
@@ -67,9 +80,7 @@ ARCHIVE_MARKER = "ARCHIVE:"
 DEFAULT_MAX_DELETED = 10
 
 TAG_RE = re.compile(r"\[(seen|told|wiki|guess)\b[^\]]*\]", re.IGNORECASE)
-BOGUS_TAG_RE = re.compile(
-    r"\[(verified|confirmed|fact|known|assumed|rumou?r|unverified|likely|maybe)\]", re.IGNORECASE
-)
+BOGUS_TAG_RE = re.compile(r"\[(verified|confirmed|fact|known|assumed|rumou?r|unverified|likely|maybe)\]", re.IGNORECASE)
 BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 SESSION_FILE_RE = re.compile(r"^S(\d{3,})\.md$")
@@ -102,7 +113,7 @@ def session_id(n: int) -> str:
 
 
 def now_local() -> datetime:
-    return datetime.now(timezone.utc).astimezone()
+    return datetime.now(UTC).astimezone()
 
 
 def strip_comments(text: str) -> str:
@@ -177,13 +188,13 @@ GIT_FALLBACK_IDENTITY = ["-c", "user.name=bg3-agent", "-c", "user.email=bg3-agen
 # repo is trusted to make git run a program (FAIR-1): the fairness guard keeps the agent out of .git/ and the
 # .git* files, and every call here also overrides what git would execute from repo config or hooks.
 GIT_SAFE_CONFIG = [
-    "core.hooksPath=/dev/null",          # .git/hooks/* (pre-commit, post-commit, post-index-change, ...)
-    "core.fsmonitor=false",              # a fsmonitor command runs on status/add/diff
-    "log.showSignature=false",           # gpg.program on log/show
+    "core.hooksPath=/dev/null",  # .git/hooks/* (pre-commit, post-commit, post-index-change, ...)
+    "core.fsmonitor=false",  # a fsmonitor command runs on status/add/diff
+    "log.showSignature=false",  # gpg.program on log/show
     "commit.gpgsign=false",
-    "gc.auto=0",                         # no auto-gc (pre-auto-gc hook) after commits
+    "gc.auto=0",  # no auto-gc (pre-auto-gc hook) after commits
     "maintenance.auto=false",
-    "submodule.recurse=false",           # a submodule has its own config and hooks
+    "submodule.recurse=false",  # a submodule has its own config and hooks
     "diff.ignoreSubmodules=all",
     "status.submoduleSummary=false",
 ]
@@ -198,9 +209,21 @@ GIT_DIFF_COMMANDS = {"diff", "show", "log"}
 def _git_filter_overrides(mem: Path) -> list[str]:
     """`-c <key>=` for every filter command configured (repo, includes, global): an empty command means no
     filter, so a .gitattributes line can't make add/status/diff run one."""
-    p = subprocess.run(["git", "-C", str(mem), "config", "--null", "--name-only", "--get-regexp",
-                        r"^filter\..+\.(clean|smudge|process)$"],
-                       capture_output=True, text=True, env=dict(os.environ, **GIT_SAFE_ENV))
+    p = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(mem),
+            "config",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\..+\.(clean|smudge|process)$",
+        ],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, **GIT_SAFE_ENV),
+    )
     out = []
     for key in p.stdout.split("\0"):
         if key and _FILTER_CMD_RE.match(key):
@@ -226,8 +249,9 @@ def git_argv(mem: Path, *args: str) -> list[str]:
 
 
 def git(mem: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(git_argv(mem, *args), check=check, capture_output=True, text=True,
-                          env=dict(os.environ, **GIT_SAFE_ENV))
+    return subprocess.run(
+        git_argv(mem, *args), check=check, capture_output=True, text=True, env=dict(os.environ, **GIT_SAFE_ENV)
+    )
 
 
 def git_identity_args(mem: Path) -> list[str]:

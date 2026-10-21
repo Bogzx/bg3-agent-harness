@@ -12,11 +12,12 @@ an unknown line is kept as text, a missing file is an empty part.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 from typing import Any
 
-from . import parse as PARSE
+from . import parse
 
 _CACHE: dict[str, tuple[tuple, Any]] = {}
 
@@ -49,10 +50,11 @@ def _strip_comments(text: str) -> str:
 
 # ---------------------------------------------------------------- decisions
 
-parse_decisions = PARSE.decisions   # single source: the playthrough app
+parse_decisions = parse.decisions  # single source: the playthrough app
 
 
 # ---------------------------------------------------------------- chapters
+
 
 def parse_chapter(name: str, text: str) -> dict:
     title, sections, cur = name, [], None
@@ -81,12 +83,24 @@ def chapters(mem: Path) -> list[dict]:
 
 # ---------------------------------------------------------------- PLAYTHROUGH.md
 
+
 def parse_playthrough(text: str) -> dict:
-    out: dict[str, Any] = {"title": None, "header": [], "now": None, "main_thread": None, "party": [],
-                           "commitments": [], "lessons": []}
+    out: dict[str, Any] = {
+        "title": None,
+        "header": [],
+        "now": None,
+        "main_thread": None,
+        "party": [],
+        "commitments": [],
+        "lessons": [],
+    }
     sec, in_section = None, False
-    want = {"party": "party", "standing commitments": "commitments", "commitments": "commitments",
-            "top lessons": "lessons"}
+    want = {
+        "party": "party",
+        "standing commitments": "commitments",
+        "commitments": "commitments",
+        "top lessons": "lessons",
+    }
     for line in _strip_comments(text).splitlines():
         s = line.strip()
         if not s:
@@ -100,7 +114,7 @@ def parse_playthrough(text: str) -> dict:
         elif sec is None and s.lower().startswith("now:"):
             out["now"] = s[4:].strip()
         elif sec is None and s.lower().startswith("main thread:"):
-            out["main_thread"] = s[len("main thread:"):].strip()
+            out["main_thread"] = s[len("main thread:") :].strip()
         elif sec is None:
             out["header"].append(s)
         elif sec and s.startswith("-"):
@@ -109,6 +123,7 @@ def parse_playthrough(text: str) -> dict:
 
 
 # ---------------------------------------------------------------- snapshots
+
 
 def _snap_time(text: str) -> str | None:
     m = re.search(r"#\s*Snapshot:.*?\((.*?)\)", text)
@@ -128,9 +143,18 @@ def parse_status(text: str) -> dict:
                     out["gold"] = int(g.group(1))
                 elif out["mode"] is None:
                     out["mode"] = p
-    st = PARSE.status_text(text)   # PARTY rows: the app's one parser (names with spaces, +temp HP, flags)
-    out["party"] = [{"name": m["name"], "active": m["active"], "class": m["classes"], "hp": m["hp"],
-                     "max_hp": m["max_hp"], "statuses": m["statuses"]} for m in (st["party"] if st else [])]
+    st = parse.status_text(text)  # PARTY rows: the app's one parser (names with spaces, +temp HP, flags)
+    out["party"] = [
+        {
+            "name": m["name"],
+            "active": m["active"],
+            "class": m["classes"],
+            "hp": m["hp"],
+            "max_hp": m["max_hp"],
+            "statuses": m["statuses"],
+        }
+        for m in (st["party"] if st else [])
+    ]
     return out
 
 
@@ -163,13 +187,16 @@ def parse_inventory(text: str) -> dict:
 
 # ---------------------------------------------------------------- payload
 
+
 def story_payload(mem: Path) -> dict:
-    files = [mem / "decisions.md", mem / "PLAYTHROUGH.md", mem / "snapshots" / "status.md",
-             mem / "snapshots" / "inventory.md"]
-    try:
+    files = [
+        mem / "decisions.md",
+        mem / "PLAYTHROUGH.md",
+        mem / "snapshots" / "status.md",
+        mem / "snapshots" / "inventory.md",
+    ]
+    with contextlib.suppress(OSError):
         files += sorted((mem / "chapters").glob("*.md"))
-    except OSError:
-        pass
     sig = _sig(files)
     hit = _CACHE.get(str(mem))
     if hit and hit[0] == sig:

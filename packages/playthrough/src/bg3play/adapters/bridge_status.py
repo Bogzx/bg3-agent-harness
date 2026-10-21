@@ -26,7 +26,7 @@ class BridgeStatus:
             if self.game is None:
                 self.game = self.factory(self.port)
             st = self.game.rpc("state.status", context="server", timeout=6.0)
-        except Exception:  # noqa: BLE001 - the game is down, loading or restarting: no sample this time
+        except Exception:
             self.close()
             return None
         return st if isinstance(st, dict) else None
@@ -38,18 +38,20 @@ class BridgeStatus:
             self.game = None
 
 
-def bridge_capture(shots: Any, max_width: int = 1280) -> tuple[Callable[[], tuple[bytes, str]] | None, str | None,
-                                                               str | None]:
+def bridge_capture(
+    shots: Any, max_width: int = 1280
+) -> tuple[Callable[[], tuple[bytes, str]] | None, str | None, str | None]:
     """(capture, note, error) for game.ScreenWatch through bg3ai.screen.ScreenCapture, as the retired dashboard
     captured: small JPEGs with Pillow, else full-size PNGs. capture is None when the bridge is missing."""
     try:
         from bg3ai.screen import ScreenCapture  # optional dependency, as above
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return None, None, f"screen capture unavailable: {e}"
     sc = ScreenCapture(shots)
     try:
         import PIL  # noqa: F401
     except ImportError:
+
         def png() -> tuple[bytes, str]:
             path = sc.capture_png()
             data = path.read_bytes()

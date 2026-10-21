@@ -27,7 +27,8 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     anything else                                    the web app (web/dist), index.html for unknown paths
 
 Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|resume (body: the Launcher's fields,
-supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop. GET /api/v1/supervisor (state + client profiles: client_profiles.py),
+supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop.
+GET /api/v1/supervisor (state + client profiles: client_profiles.py),
 GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin, and from anywhere but localhost unless the
 request carries the --token (Authorization: Bearer). Binds 127.0.0.1 by default.
 """
@@ -35,6 +36,7 @@ request carries the --token (Authorization: Bearer). Binds 127.0.0.1 by default.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hmac
 import ipaddress
 import json
@@ -49,9 +51,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import api, replay
-from . import client_profiles as CP
-from . import config as C
+from . import api, client_profiles, config, replay
 from . import game as gm
 from . import positions as pos
 from . import recorder as rec
@@ -129,7 +129,7 @@ class App:
         return None if local else "writes need localhost or the server's --token"
 
     def client_profiles(self) -> list[dict]:
-        return CP.read_profiles(self.profiles)
+        return client_profiles.read_profiles(self.profiles)
 
     def control(self, pt: str, what: str, body: dict) -> tuple[int, dict]:
         """POST start/resume/stop -> (HTTP code, payload)."""
@@ -143,11 +143,11 @@ class App:
                     return 409, {"v": v, "error": f"{pt} is not running"}
                 s.stop()
             else:
-                cfg = sup.launch_config(C.load(self.store.playthroughs_dir / pt), body)
+                cfg = sup.launch_config(config.load(self.store.playthroughs_dir / pt), body)
                 if self.recorder is not None:
                     self.recorder.enabled = cfg.recording.enabled
                 s.start(pt, resume=what == "resume", cfg=cfg)
-        except C.ConfigError as e:
+        except config.ConfigError as e:
             return 400, {"v": v, "error": str(e)}
         except sup.SupervisorError as e:
             return 409, {"v": v, "error": str(e)}
@@ -173,8 +173,8 @@ class App:
         if (cm := CONFIG_ROUTE.match(path)) is not None:
             name = s.check_name(unquote(cm.group(1)))
             try:
-                cfg = C.to_dict(C.load(s.playthroughs_dir / name))
-            except C.ConfigError as e:
+                cfg = config.to_dict(config.load(s.playthroughs_dir / name))
+            except config.ConfigError as e:
                 raise StoreError(f"playthrough.toml: {e}") from e
             played = len(s.session_logs(name))
             if self.supervisor is not None:
@@ -230,10 +230,8 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
         protocol_version = "HTTP/1.1"
 
         def handle(self) -> None:
-            try:
+            with contextlib.suppress(ConnectionResetError):  # a browser dropping an idle keep-alive connection
                 super().handle()
-            except ConnectionResetError:
-                pass  # a browser dropping an idle keep-alive connection
 
         def log_message(self, format: str, *args: object) -> None:
             if verbose:
@@ -270,7 +268,7 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
             try:
                 body = json.loads(raw) if raw else {}
                 if not isinstance(body, dict):
-                    raise ValueError("the body is not a JSON object")  # noqa: TRY004 - a 400, like bad JSON
+                    raise ValueError("the body is not a JSON object")
                 pt = app.store.check_name(unquote(m.group(1)))
             except ValueError as e:  # StoreError is a ValueError
                 return self._json({"v": api.API_VERSION, "error": f"bad request: {e}"}, 400)

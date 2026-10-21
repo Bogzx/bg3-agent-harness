@@ -19,8 +19,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from bg3play.memory import lint as L
-from bg3play.memory import memlib as M
+from bg3play.memory import lint, memlib
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
@@ -29,7 +28,7 @@ class SetupError(Exception):
     pass
 
 
-def create_memory(name: str, dest: Path, template: Path = M.TEMPLATE_DIR) -> str:
+def create_memory(name: str, dest: Path, template: Path = memlib.TEMPLATE_DIR) -> str:
     """Copy the template to dest, fill placeholders, git init + initial commit. Returns the commit hash."""
     if not template.is_dir():
         raise SetupError(f"template not found: {template}")
@@ -37,14 +36,14 @@ def create_memory(name: str, dest: Path, template: Path = M.TEMPLATE_DIR) -> str
         raise SetupError(f"{dest} already exists and is not empty; pick another name or --memory-dir")
     dest.parent.mkdir(parents=True, exist_ok=True)
     # CHARACTER.md is written in the character-creation phase (its format is in the playbook): no stub.
-    shutil.copytree(template, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(L.CHARACTER_FILE))
-    created = M.now_local().strftime("%Y-%m-%d")
+    shutil.copytree(template, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(lint.CHARACTER_FILE))
+    created = memlib.now_local().strftime("%Y-%m-%d")
     for p in dest.rglob("*.md"):
         t = p.read_text()
         if "{{" in t:
             p.write_text(t.replace("{{PLAYTHROUGH_NAME}}", name).replace("{{CREATED}}", created))
-    M.git(dest, "init", "-q")
-    h = M.git_commit_all(dest, f"S000 init {name}")
+    memlib.git(dest, "init", "-q")
+    h = memlib.git_commit_all(dest, f"S000 init {name}")
     return h or ""
 
 
@@ -68,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("name", help="playthrough name (letters, digits, . _ -)")
     ap.add_argument("--memory-dir", help="create the memory here instead of playthroughs/NAME/memory")
     ap.add_argument("--no-link", action="store_true", help="don't create/replace the play/memory symlink")
-    ap.add_argument("--repo-root", default=str(M.REPO_ROOT), help=argparse.SUPPRESS)
+    ap.add_argument("--repo-root", default=str(memlib.REPO_ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     if not NAME_RE.match(args.name):
@@ -87,8 +86,10 @@ def main(argv: list[str] | None = None) -> int:
     except SetupError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    print("next: runner/play.py run --playthrough <name> (it opens session S001); manually, any MCP client on the "
-          "bg3 server in play/ (its first tool call or session_start opens S001)")
+    print(
+        "next: runner/play.py run --playthrough <name> (it opens session S001); manually, any MCP client on the "
+        "bg3 server in play/ (its first tool call or session_start opens S001)"
+    )
     return 0
 
 

@@ -28,43 +28,57 @@ class Shims(unittest.TestCase):
         import new_playthrough
         import session
         import snapshots
-        from bg3play.memory import keeper
-        from bg3play.memory import lint as L
-        from bg3play.memory import memlib as M
-        from bg3play.memory import new_playthrough as NP
-        from bg3play.memory import session as S
-        from bg3play.memory import snapshots as SN
-        self.assertIs(memlib, M)
-        self.assertIs(lint, L)
-        self.assertIs(session, S)
-        self.assertIs(snapshots, SN)
-        self.assertIs(new_playthrough, NP)
-        self.assertIs(memory_keeper, keeper)
-        self.assertEqual(M.REPO_ROOT, REPO)
-        self.assertEqual(keeper.REPO, REPO)
+        from bg3play import memory
+
+        self.assertIs(memlib, memory.memlib)
+        self.assertIs(lint, memory.lint)
+        self.assertIs(session, memory.session)
+        self.assertIs(snapshots, memory.snapshots)
+        self.assertIs(new_playthrough, memory.new_playthrough)
+        self.assertIs(memory_keeper, memory.keeper)
+        self.assertEqual(memlib.REPO_ROOT, REPO)
+        self.assertEqual(memory_keeper.REPO, REPO)
 
     def test_testutil_for_the_runner_tests(self):
         import _testutil
         import new_playthrough
-        self.assertIs(_testutil.NP, new_playthrough)
+
+        self.assertIs(_testutil.new_playthrough, new_playthrough)
         self.assertTrue(callable(_testutil.isolate_git))
 
     def test_scripts_run_from_the_old_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             for script in ("lint.py", "session.py", "snapshots.py", "new_playthrough.py"):
-                p = subprocess.run([sys.executable, str(HERE / script), "--help"], capture_output=True, text=True,
-                                   cwd=tmp, timeout=60, check=False)
+                p = subprocess.run(
+                    [sys.executable, str(HERE / script), "--help"],
+                    capture_output=True,
+                    text=True,
+                    cwd=tmp,
+                    timeout=60,
+                    check=False,
+                )
                 self.assertEqual(p.returncode, 0, script + p.stderr)
                 self.assertIn("usage", p.stdout.lower(), script)
-            p = subprocess.run([sys.executable, str(HERE / "lint.py"), str(Path(tmp) / "nope")],
-                               capture_output=True, text=True, timeout=60, check=False)
+            p = subprocess.run(
+                [sys.executable, str(HERE / "lint.py"), str(Path(tmp) / "nope")],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
             self.assertNotEqual(p.returncode, 0)
             self.assertIn("does not exist", p.stdout + p.stderr)
 
     def test_clock_fast_path_skips_the_package(self):
         env = {**os.environ, "BG3AI_SESSION_DEADLINE": "1"}
-        p = subprocess.run([sys.executable, "-X", "importtime", str(HERE / "session.py"), "clock"],
-                           capture_output=True, text=True, env=env, timeout=60, check=False)
+        p = subprocess.run(
+            [sys.executable, "-X", "importtime", str(HERE / "session.py"), "clock"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+            check=False,
+        )
         self.assertEqual(p.returncode, 0)
         self.assertNotIn("bg3play", p.stderr)
 

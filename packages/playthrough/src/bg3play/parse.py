@@ -1,4 +1,3 @@
-# pyright: basic
 """Pure parsers for the files a playthrough run leaves behind (no I/O; the store reads, these shape).
 
 - Sxxx.log lines ("HH:MM:SS [kind] text", "===== ..." headers) from runner/play.py's stream printer.
@@ -161,7 +160,7 @@ def current_goal(objectives: str, handoff: str) -> str | None:
 
 # ---------------------------------------------------------------- decisions.md
 
-DECISION_RE = re.compile(r"^##\s+(D-\d+[a-z]?)\s+(.*?)\s*(?:\((S[\d\-–, S]+[^)]*)\))?\s*$")
+DECISION_RE = re.compile(r"^##\s+(D-\d+[a-z]?)\s+(.*?)\s*(?:\((S[\d\-\u2013, S]+[^)]*)\))?\s*$")
 FIELD_RE = re.compile(
     r"^-\s+(Choice|Why|Consequence|Expected later|Expected|Reversible|Note)s?:\s*(.*)$", re.IGNORECASE
 )
@@ -281,8 +280,18 @@ def git_log(text: str) -> list[dict]:
     return out
 
 
-DIFF_KINDS = (("+++", "meta"), ("---", "meta"), ("@@", "hunk"), ("+", "add"), ("-", "del"), ("diff ", "meta"),
-              ("index ", "meta"), ("new file", "meta"), ("deleted file", "meta"), ("\\", "meta"))
+DIFF_KINDS = (
+    ("+++", "meta"),
+    ("---", "meta"),
+    ("@@", "hunk"),
+    ("+", "add"),
+    ("-", "del"),
+    ("diff ", "meta"),
+    ("index ", "meta"),
+    ("new file", "meta"),
+    ("deleted file", "meta"),
+    ("\\", "meta"),
+)
 
 
 def diff_lines(patch: str) -> list[dict]:

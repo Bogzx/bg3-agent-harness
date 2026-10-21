@@ -4,7 +4,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from bg3play.store import RunStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "run"

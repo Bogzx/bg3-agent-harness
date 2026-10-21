@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import parse as PARSE
+from . import parse
 from .adapters import legacy_paths
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
@@ -57,14 +57,15 @@ def tail_lines(path: Path | None, n: int = 30, strip_comments: bool = True) -> l
 
 def parse_actions(text: str, result_limit: int = 2500) -> list[dict]:
     """actions.jsonl lines -> feed items. Bad lines are skipped."""
-    return [a for line in text.splitlines() if line.strip() and (a := PARSE.action(line, result_limit))]
+    return [a for line in text.splitlines() if line.strip() and (a := parse.action(line, result_limit))]
 
 
 # ---------------------------------------------------------------- clock
 
 
-def session_clock(runner_status: dict, session_file: dict, mem_state: dict, now: float | None = None,
-                  default_minutes: float = 60.0) -> dict:
+def session_clock(
+    runner_status: dict, session_file: dict, mem_state: dict, now: float | None = None, default_minutes: float = 60.0
+) -> dict:
     """Deadline info from (in order) runner.status.json, runtime/session.json, memory/.session.json."""
     now = now or time.time()
     deadline = None
@@ -91,8 +92,14 @@ def session_clock(runner_status: dict, session_file: dict, mem_state: dict, now:
     left = deadline - now
     wrap_s = 10 * 60
     phase = "over" if left <= 0 else ("wrapup" if left <= wrap_s else "play")
-    return {"deadline": deadline, "left_s": round(left), "source": source, "phase": phase,
-            "started": started, "hard_stop": runner_status.get("hard_stop") if source == "runner" else None}
+    return {
+        "deadline": deadline,
+        "left_s": round(left),
+        "source": source,
+        "phase": phase,
+        "started": started,
+        "hard_stop": runner_status.get("hard_stop") if source == "runner" else None,
+    }
 
 
 # ---------------------------------------------------------------- game state shaping
@@ -123,16 +130,21 @@ def shape_status(st: dict) -> dict:
             continue
         if m.get("uuid"):
             names[str(m["uuid"]).lower()] = m.get("name", "?")
-        party.append({
-            "name": m.get("name", "?"),
-            "classes": ", ".join(class_str(c) for c in (m.get("classes") or [])) or (
-                f"L{m['level']}" if m.get("level") else ""),
-            "hp": m.get("hp"), "max_hp": m.get("max_hp"), "temp_hp": m.get("temp_hp"),
-            "statuses": status_names(m.get("statuses")),
-            "downed": bool(m.get("downed")), "dead": bool(m.get("dead")),
-            "in_combat": bool(m.get("in_combat")),
-            "active": bool(active and m.get("uuid") == active),
-        })
+        party.append(
+            {
+                "name": m.get("name", "?"),
+                "classes": ", ".join(class_str(c) for c in (m.get("classes") or []))
+                or (f"L{m['level']}" if m.get("level") else ""),
+                "hp": m.get("hp"),
+                "max_hp": m.get("max_hp"),
+                "temp_hp": m.get("temp_hp"),
+                "statuses": status_names(m.get("statuses")),
+                "downed": bool(m.get("downed")),
+                "dead": bool(m.get("dead")),
+                "in_combat": bool(m.get("in_combat")),
+                "active": bool(active and m.get("uuid") == active),
+            }
+        )
     combat = st.get("combat") if isinstance(st.get("combat"), dict) else None
     if combat:
         cur = combat.get("current")
@@ -140,9 +152,14 @@ def shape_status(st: dict) -> dict:
             combat = dict(combat, current=names.get(cur.lower(), "?"))
     mode = "combat" if st.get("in_combat") else ("dialogue" if st.get("in_dialogue") else "exploring")
     return {
-        "region": st.get("region"), "subregion": st.get("subregion"), "level": st.get("level"),
-        "gold": st.get("gold"), "mode": mode, "turn_based": bool(st.get("turn_based")),
-        "combat": scrub(combat) if combat else None, "party": party,
+        "region": st.get("region"),
+        "subregion": st.get("subregion"),
+        "level": st.get("level"),
+        "gold": st.get("gold"),
+        "mode": mode,
+        "turn_based": bool(st.get("turn_based")),
+        "combat": scrub(combat) if combat else None,
+        "party": party,
     }
 
 
@@ -230,9 +247,11 @@ def resolve_latency_paths(runtime: Path, runner_status: dict) -> dict:
     pt = runner_status.get("playthrough")
     hist = runtime / "sessions" / pt / "latency_history.jsonl" if pt else None
     m = Path(metrics) if metrics and Path(metrics).exists() else runtime / "metrics.jsonl"
-    return {"metrics": m if m.exists() else None,
-            "turns": Path(turns) if turns and Path(turns).exists() else None,
-            "history": hist if hist and hist.exists() else None}
+    return {
+        "metrics": m if m.exists() else None,
+        "turns": Path(turns) if turns and Path(turns).exists() else None,
+        "history": hist if hist and hist.exists() else None,
+    }
 
 
 def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dict]:
@@ -262,7 +281,7 @@ def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dic
 def latency_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
     """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table."""
     legacy_paths.ensure()
-    from bg3ai import metrics as M
+    from bg3ai import metrics
 
     now = time.time() if now is None else now
     paths = resolve_latency_paths(runtime, runner_status)
@@ -270,10 +289,15 @@ def latency_payload(runtime: Path, runner_status: dict, now: float | None = None
     tools = [r for r in recs if r.get("type") == "tool" and "t0" in r]
     samples = [r for r in recs if r.get("type") == "sample" and "t" in r]
     turns = _tail_jsonl(paths["turns"])
-    live = M.live_view(tools, samples, turns, now) if (tools or samples or turns) else None
+    live = metrics.live_view(tools, samples, turns, now) if (tools or samples or turns) else None
     hist = _tail_jsonl(paths["history"])[-history_rows:]
-    return {"now": now, "live": live, "history": hist, "targets": M.TARGETS,
-            "files": {k: (v.name if v else None) for k, v in paths.items()}}
+    return {
+        "now": now,
+        "live": live,
+        "history": hist,
+        "targets": metrics.TARGETS,
+        "files": {k: (v.name if v else None) for k, v in paths.items()},
+    }
 
 
 # ---------------------------------------------------------------- story progress
@@ -282,7 +306,7 @@ def latency_payload(runtime: Path, runner_status: dict, now: float | None = None
 def progress_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
     """/api/progress: live counter of the running session (bg3ai.progress.live_view) + per-session history."""
     legacy_paths.ensure()
-    from bg3ai import progress as P
+    from bg3ai import progress
 
     now = time.time() if now is None else now
     live_path = runner_status.get("progress")
@@ -293,14 +317,23 @@ def progress_payload(runtime: Path, runner_status: dict, now: float | None = Non
     if live_path is not None:
         started = runner_status.get("started") or now
         ended = runner_status.get("session_ended")
-        live = P.live_view(_tail_jsonl(live_path), float(started), float(ended) if ended else now)
+        live = progress.live_view(_tail_jsonl(live_path), float(started), float(ended) if ended else now)
         live["session"] = runner_status.get("session")
         live["running"] = not ended
     rows = _tail_jsonl(hist if hist and hist.exists() else None)[-history_rows:]
     ms = milestones_payload(runtime / "sessions" / pt) if pt else None
-    return {"now": now, "live": live, "history": rows, "weights": P.WEIGHTS, "stuck_after_min": P.STUCK_MIN,
-            "milestones": ms,
-            "files": {"live": live_path.name if live_path else None, "history": hist.name if hist and hist.exists() else None}}
+    return {
+        "now": now,
+        "live": live,
+        "history": rows,
+        "weights": progress.WEIGHTS,
+        "stuck_after_min": progress.STUCK_MIN,
+        "milestones": ms,
+        "files": {
+            "live": live_path.name if live_path else None,
+            "history": hist.name if hist and hist.exists() else None,
+        },
+    }
 
 
 # ---------------------------------------------------------------- goal scorecard (all sessions)
@@ -345,9 +378,11 @@ def session_ids(d: Path) -> list[str]:
         names = {m.group(1) for f in d.iterdir() if (m := SESSION_FILE_RE.match(f.name))}
     except OSError:
         return []
+
     def order(s: str):
         m = re.match(r"S(\d+)(?:-r(\d+))?", s)
         return (int(m.group(1)), int(m.group(2) or 0))
+
     return sorted(names, key=order)
 
 
@@ -355,12 +390,22 @@ def goal_values(lat: dict | None, prog: dict | None) -> dict:
     """One session's latency + progress summaries → {goal key: value}."""
     lat, prog = lat or {}, prog or {}
     t = lat.get("targets") or {}
-    v = lambda k: (t.get(k) or {}).get("value")
-    return {"idle": v("median_idle_explore_s"),
-            "gaps": v("long_gaps_non_dialogue") if (t.get("long_gaps_non_dialogue") or {}).get("pass") is not None else None,
-            "rt": v("bridge_rt_median_ms"), "apm": lat.get("apm") if lat.get("actions") else None,
-            "busy": lat.get("busy_pct"), "pipe": lat.get("pipelining_pct"),
-            "overlap": lat.get("think_overlap_pct"), "pts": prog.get("per_hour")}
+
+    def v(k):
+        return (t.get(k) or {}).get("value")
+
+    return {
+        "idle": v("median_idle_explore_s"),
+        "gaps": v("long_gaps_non_dialogue")
+        if (t.get("long_gaps_non_dialogue") or {}).get("pass") is not None
+        else None,
+        "rt": v("bridge_rt_median_ms"),
+        "apm": lat.get("apm") if lat.get("actions") else None,
+        "busy": lat.get("busy_pct"),
+        "pipe": lat.get("pipelining_pct"),
+        "overlap": lat.get("think_overlap_pct"),
+        "pts": prog.get("per_hour"),
+    }
 
 
 def goal_pass(op: str, value, target) -> bool | None:
@@ -369,10 +414,11 @@ def goal_pass(op: str, value, target) -> bool | None:
     return {"<": value < target, "==": value == target, ">=": value >= target}[op]
 
 
-def _session_summaries(d: Path, sid: str, live: bool, started: float | None, now: float) -> tuple[dict | None, dict | None]:
+def _session_summaries(
+    d: Path, sid: str, live: bool, started: float | None, now: float
+) -> tuple[dict | None, dict | None]:
     legacy_paths.ensure()
-    from bg3ai import metrics as M
-    from bg3ai import progress as P
+    from bg3ai import metrics, progress
 
     lat_f, met_f, turns_f = d / f"{sid}.latency.json", d / f"{sid}.metrics.jsonl", d / f"{sid}.turns.jsonl"
     prog_f, progl_f = d / f"{sid}.progress.json", d / f"{sid}.progress.jsonl"
@@ -381,18 +427,25 @@ def _session_summaries(d: Path, sid: str, live: bool, started: float | None, now
     elif met_f.exists() or turns_f.exists():
         # the live session, or one that ended without a summary (runner restarted mid-session)
         end = now if live else None
-        lat = _cached(("lat", _sig(met_f), _sig(turns_f), started if live else None, int(now / 15) if live else 0),
-                      lambda: M.summarize_files(met_f if met_f.exists() else None, turns_f if turns_f.exists() else None,
-                                                started if live else None, end))
+        lat = _cached(
+            ("lat", _sig(met_f), _sig(turns_f), started if live else None, int(now / 15) if live else 0),
+            lambda: metrics.summarize_files(
+                met_f if met_f.exists() else None, turns_f if turns_f.exists() else None, started if live else None, end
+            ),
+        )
     else:
         lat = None
     if prog_f.exists() and not live:
         prog = read_json(prog_f)
     elif progl_f.exists():
-        recs = P.load(progl_f)
-        s0 = started if live and started else (lat or {}).get("start") or min((r.get("t", now) for r in recs), default=now)
+        recs = progress.load(progl_f)
+        s0 = (
+            started
+            if live and started
+            else (lat or {}).get("start") or min((r.get("t", now) for r in recs), default=now)
+        )
         s1 = now if live else (lat or {}).get("end") or max((r.get("t", s0) for r in recs), default=s0)
-        prog = P.summarize(recs, float(s0), float(s1))
+        prog = progress.summarize(recs, float(s0), float(s1))
     else:
         prog = None
     return lat, prog
@@ -414,22 +467,46 @@ def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, 
         verdict = {k: goal_pass(op, vals[k], tgt) for k, _l, _u, op, tgt, _d in GOALS}
         judged = [p for p in verdict.values() if p is not None]
         minutes = (lat or prog or {}).get("minutes")
-        sessions.append({"session": sid, "live": live, "minutes": minutes,
-                         "short": not live and (minutes or 0) < 1,  # a runner restart's stub: shown, not counted
-                         "start": (lat or {}).get("start"), "values": vals, "pass": verdict,
-                         "passed": sum(judged), "judged": len(judged),
-                         "points": (prog or {}).get("points")})
+        sessions.append(
+            {
+                "session": sid,
+                "live": live,
+                "minutes": minutes,
+                "short": not live and (minutes or 0) < 1,  # a runner restart's stub: shown, not counted
+                "start": (lat or {}).get("start"),
+                "values": vals,
+                "pass": verdict,
+                "passed": sum(judged),
+                "judged": len(judged),
+                "points": (prog or {}).get("points"),
+            }
+        )
     goals = []
     counted = [s for s in sessions if not s["short"] and not s["live"]]
     for k, label, unit, op, tgt, nd in GOALS:
         done = [s["values"][k] for s in counted if s["values"][k] is not None]
         judged = [s["pass"][k] for s in counted if s["pass"][k] is not None]
-        goals.append({"key": k, "label": label, "unit": unit, "op": op, "target": tgt, "digits": nd,
-                      "series": [None if s["short"] else s["values"][k] for s in sessions],
-                      "best": (min if op in ("<", "==") else max)(done) if done else None,
-                      "pass_rate": round(100 * sum(judged) / len(judged)) if judged else None})
-    return {"now": now, "playthrough": pt, "sessions": sessions, "goals": goals,
-            "milestones": milestones_payload(d), "unattended": unattended_payload(d, runner_status, now)}
+        goals.append(
+            {
+                "key": k,
+                "label": label,
+                "unit": unit,
+                "op": op,
+                "target": tgt,
+                "digits": nd,
+                "series": [None if s["short"] else s["values"][k] for s in sessions],
+                "best": (min if op in ("<", "==") else max)(done) if done else None,
+                "pass_rate": round(100 * sum(judged) / len(judged)) if judged else None,
+            }
+        )
+    return {
+        "now": now,
+        "playthrough": pt,
+        "sessions": sessions,
+        "goals": goals,
+        "milestones": milestones_payload(d),
+        "unattended": unattended_payload(d, runner_status, now),
+    }
 
 
 def _pid_alive(pid) -> bool:
@@ -443,8 +520,9 @@ def _pid_alive(pid) -> bool:
 FAULT_KINDS = ("crash", "hang", "agent_hang", "setup")
 
 
-def unattended_payload(d: Path, runner_status: dict, now: float | None = None, last_n: int = 8,
-                       pid_alive=_pid_alive) -> dict | None:
+def unattended_payload(
+    d: Path, runner_status: dict, now: float | None = None, last_n: int = 8, pid_alive=_pid_alive
+) -> dict | None:
     """Unattended hours and crashes/recoveries from runtime/sessions/<pt>/runner_events.jsonl (play.py Runner.event).
 
     A run = runner_start → runner_stop (or the next start: the runner was killed hard; or now, for the live runner).
@@ -473,43 +551,60 @@ def unattended_payload(d: Path, runner_status: dict, now: float | None = None, l
             beat = max(cur["last"], float(runner_status.get("heartbeat") or 0))
             runs.append({**cur, "end": beat, "why": "no stop event (killed?)"})
     hours = [max(0.0, r["end"] - r["start"]) / 3600 for r in runs]
-    faults = {k: 0 for k in FAULT_KINDS}
+    faults = dict.fromkeys(FAULT_KINDS, 0)
     for e in evs:
         if e.get("kind") == "fault":
             faults[e.get("fault", "crash")] = faults.get(e.get("fault", "crash"), 0) + 1
     rec = [e for e in evs if e.get("kind") == "recovered"]
     secs = sorted(e["seconds"] for e in rec if isinstance(e.get("seconds"), (int, float)))
-    shown = [e for e in evs if e.get("kind") in ("fault", "recovered", "recovery_failed", "steam_refused",
-                                                  "setup_failed", "launch_failed", "launch_gave_up", "runner_stop")]
+    shown = [
+        e
+        for e in evs
+        if e.get("kind")
+        in (
+            "fault",
+            "recovered",
+            "recovery_failed",
+            "steam_refused",
+            "setup_failed",
+            "launch_failed",
+            "launch_gave_up",
+            "runner_stop",
+        )
+    ]
     alert = runner_status.get("alert") if isinstance(runner_status.get("alert"), dict) else None
-    return {"live": live is not None,
-            "current_h": round(hours[-1], 2) if live is not None else None,
-            "longest_h": round(max(hours), 2) if hours else None,
-            "total_h": round(sum(hours), 2), "runs": len(runs),
-            "last_stop": next((r["why"] for r in reversed(runs) if r is not live), None),
-            "faults": faults, "fault_total": sum(faults.values()),
-            "recovered": len(rec), "failed": sum(e.get("kind") == "recovery_failed" for e in evs),
-            "steam_refused": sum(e.get("kind") == "steam_refused" for e in evs),
-            "launch_failed": sum(e.get("kind") == "launch_failed" for e in evs),
-            "alert": alert,
-            "steam_offline": runner_status.get("steam_offline"),
-            "recovery_s_median": secs[len(secs) // 2] if secs else None,
-            "recovery_s_max": secs[-1] if secs else None,
-            "events": shown[-last_n:]}
+    return {
+        "live": live is not None,
+        "current_h": round(hours[-1], 2) if live is not None else None,
+        "longest_h": round(max(hours), 2) if hours else None,
+        "total_h": round(sum(hours), 2),
+        "runs": len(runs),
+        "last_stop": next((r["why"] for r in reversed(runs) if r is not live), None),
+        "faults": faults,
+        "fault_total": sum(faults.values()),
+        "recovered": len(rec),
+        "failed": sum(e.get("kind") == "recovery_failed" for e in evs),
+        "steam_refused": sum(e.get("kind") == "steam_refused" for e in evs),
+        "launch_failed": sum(e.get("kind") == "launch_failed" for e in evs),
+        "alert": alert,
+        "steam_offline": runner_status.get("steam_offline"),
+        "recovery_s_median": secs[len(secs) // 2] if secs else None,
+        "recovery_s_max": secs[-1] if secs else None,
+        "events": shown[-last_n:],
+    }
 
 
 def milestones_payload(d: Path) -> dict | None:
     """Story milestones for the playthrough dir (bg3ai.milestones), with the session that first reached each."""
     legacy_paths.ensure()
-    from bg3ai import milestones as MS
-    from bg3ai import progress as P
+    from bg3ai import milestones, progress
 
     seen = read_json(d / "progress_state.json")
-    sessions = [(sid, P.load(d / f"{sid}.progress.jsonl")) for sid in session_ids(d)]
+    sessions = [(sid, progress.load(d / f"{sid}.progress.jsonl")) for sid in session_ids(d)]
     if not seen and not any(r for _s, r in sessions):
         return None
-    st = MS.status(seen, sessions)
-    st["line"] = MS.line(st)
+    st = milestones.status(seen, sessions)
+    st["line"] = milestones.line(st)
     return st
 
 
@@ -520,12 +615,18 @@ def thermal_view(path: Path) -> dict | None:
     """The last thermal.log line (runner/ramwatch.py or an operator's thermal_log.sh) with its CPU/GPU C and
     the heat-pause limits, or None."""
     legacy_paths.ensure()
-    import ramwatch as RW
+    import ramwatch
 
-    last = RW.last_thermal(path)
+    last = ramwatch.last_thermal(path)
     if not last:
         return None
-    _, cpu, gpu = RW.parse_thermal(last[1])
-    lim = RW.heat_limits()
-    return {"t": last[0], "line": last[1], "cpu": cpu, "gpu": gpu,
-            "pause_cpu_c": lim["pause_cpu_c"], "pause_gpu_c": lim["pause_gpu_c"]}
+    _, cpu, gpu = ramwatch.parse_thermal(last[1])
+    lim = ramwatch.heat_limits()
+    return {
+        "t": last[0],
+        "line": last[1],
+        "cpu": cpu,
+        "gpu": gpu,
+        "pause_cpu_c": lim["pause_cpu_c"],
+        "pause_gpu_c": lim["pause_gpu_c"],
+    }

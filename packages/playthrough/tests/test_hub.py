@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from bg3play.hub import Hub
 from bg3play.store import RunStore
 

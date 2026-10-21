@@ -1,30 +1,30 @@
-from bg3play import parse as P
+from bg3play import parse
 
 
 def test_log_line_kinds_and_newline_marks():
-    assert P.log_line("23:27:44 [say] Dash toward ⏎ the Transponder.") == {
+    assert parse.log_line("23:27:44 [say] Dash toward ⏎ the Transponder.") == {
         "clock": "23:27:44",
         "kind": "say",
         "text": "Dash toward\nthe Transponder.",
     }
-    assert P.log_line('23:27:40 [tool] save_game {"label":"S003-start"}')["kind"] == "tool"
-    assert P.log_line("===== S037 2026-10-10 20:14:00 claude session x") == {
+    assert parse.log_line('23:27:40 [tool] save_game {"label":"S003-start"}')["kind"] == "tool"
+    assert parse.log_line("===== S037 2026-10-10 20:14:00 claude session x") == {
         "clock": None,
         "kind": "header",
         "session": "S037",
         "text": "2026-10-10 20:14:00 claude session x",
     }
-    assert P.log_line("no clock here") is None
+    assert parse.log_line("no clock here") is None
 
 
 def test_end_line():
-    assert P.end_line("success turns=324 duration=25.3min cost=$9.89") == {
+    assert parse.end_line("success turns=324 duration=25.3min cost=$9.89") == {
         "outcome": "success",
         "turns": 324,
         "minutes": 25.3,
         "cost_usd": 9.89,
     }
-    assert P.end_line("error_max_turns") == {
+    assert parse.end_line("error_max_turns") == {
         "outcome": "error_max_turns",
         "turns": None,
         "minutes": None,
@@ -33,7 +33,7 @@ def test_end_line():
 
 
 def test_action_and_tool_kind():
-    a = P.action('{"t": 1.0, "tool": "get_status", "args": {}, "ms": 5, "result": "FAILED: x"}')
+    a = parse.action('{"t": 1.0, "tool": "get_status", "args": {}, "ms": 5, "result": "FAILED: x"}')
     assert a == {
         "t": 1.0,
         "tool": "get_status",
@@ -43,10 +43,10 @@ def test_action_and_tool_kind():
         "ok": False,
         "kind": "read",
     }
-    assert P.action("not json") is None and P.action("[1]") is None
-    assert P.tool_kind("mcp__bg3__screenshot") == "vision" and P.tool_kind("save_game") == "save"
-    assert P.tool_kind("combat_turn") == "act"
-    long = P.action('{"tool": "look", "result": "' + "x" * 3000 + '"}', result_limit=10)
+    assert parse.action("not json") is None and parse.action("[1]") is None
+    assert parse.tool_kind("mcp__bg3__screenshot") == "vision" and parse.tool_kind("save_game") == "save"
+    assert parse.tool_kind("combat_turn") == "act"
+    long = parse.action('{"tool": "look", "result": "' + "x" * 3000 + '"}', result_limit=10)
     assert long["result"] == "x" * 10 + "…"
 
 
@@ -67,7 +67,7 @@ SNAPSHOT = (
 
 
 def test_status_text_from_get_status():
-    st = P.status_text(STATUS)
+    st = parse.status_text(STATUS)
     assert st["where"] == "Self-Same Trial · Shadow-Cursed Lands" and st["mode"] == "exploring" and st["gold"] == 1695
     assert [(m["name"], m["classes"], m["hp"], m["max_hp"], m["active"]) for m in st["party"]] == [
         ("Wyll", "Warlock6(The Fiend)", 90, 90, False),
@@ -77,7 +77,7 @@ def test_status_text_from_get_status():
 
 
 def test_status_text_from_snapshot():
-    st = P.status_text(SNAPSHOT)
+    st = parse.status_text(SNAPSHOT)
     assert st["mode"] == "COMBAT round 14 turn=? turn-based" and st["gold"] == 7166
     names = [m["name"] for m in st["party"]]
     assert names == ["The Emperor", "Wyll", "Gale", "Shadowheart"]
@@ -88,15 +88,15 @@ def test_status_text_from_snapshot():
 
 
 def test_status_text_without_rows_is_none():
-    assert P.status_text("e6 Claude moved 3m NW, HP 82->0/104\nACTIVE e3 Wyll") is None
+    assert parse.status_text("e6 Claude moved 3m NW, HP 82->0/104\nACTIVE e3 Wyll") is None
 
 
 def test_current_goal():
     objectives = "# Objectives\n<!-- NOW: not this -->\n## Main\n1. DONE S055: x\n10. NOW: finish the epilogue\n"
-    assert P.current_goal(objectives, "") == "finish the epilogue"
+    assert parse.current_goal(objectives, "") == "finish the epilogue"
     handoff = "# Handoff\n## Doing right now\n\nFinal fight try 12.\nmore\n## Next steps\n1. x"
-    assert P.current_goal("# Objectives\n", handoff) == "Final fight try 12."
-    assert P.current_goal("", "# Handoff\n## Doing right now\n## Next\n") is None
+    assert parse.current_goal("# Objectives\n", handoff) == "Final fight try 12."
+    assert parse.current_goal("", "# Handoff\n## Doing right now\n## Next\n") is None
 
 
 def test_decisions():
@@ -104,11 +104,11 @@ def test_decisions():
         "## Decisions\n\n## D-07 Exposed Kagha (S013)\n- Choice: showed the letter\n  publicly\n- Why: protect\n"
         "- Consequence: Kagha left [seen S013]\n- Expected later: hostile [wiki]\n- Reversible: no\n"
     )
-    (card,) = P.decisions(text)
+    (card,) = parse.decisions(text)
     assert card["id"] == "D-07" and card["session"] == "S013" and card["choice"] == ["showed the letter publicly"]
     assert card["consequences"] == [{"text": "Kagha left", "tag": "seen S013"}]
     assert card["expected"] == [{"text": "hostile", "tag": "wiki"}] and card["reversible"] == "no"
-    assert P.session_number("S013") == 13 and P.session_number(None) is None
+    assert parse.session_number("S013") == 13 and parse.session_number(None) is None
 
 
 def test_fight_and_git_log():
@@ -122,23 +122,34 @@ def test_fight_and_git_log():
         "enemies": [{"name": "Goblin", "count": 3}, {"name": "Boss"}],
         "party": [{"name": "Wyll", "downed": 1, "died": False}, {"name": "Gale", "downed": 0, "died": True}],
     }
-    f = P.fight(row)
+    f = parse.fight(row)
     assert f["enemies"] == ["Goblin x3", "Boss"] and f["downed"] == 1 and f["died"] == ["Gale"]
-    assert P.fight({"no": "session"}) is None
+    assert parse.fight({"no": "session"}) is None
     log = "abc\t1792312786\tS096 memory-keeper: HANDOFF.md\ndef\t1792311056\tinit\nbroken line\n"
-    assert P.git_log(log) == [
+    assert parse.git_log(log) == [
         {"sha": "abc", "t": 1792312786, "subject": "S096 memory-keeper: HANDOFF.md", "session": "S096"},
         {"sha": "def", "t": 1792311056, "subject": "init", "session": None},
     ]
 
 
 def test_scrub():
-    assert P.scrub("id 306e86eb-9171-40f8-b333-db447c38843f end") == "id … end"
+    assert parse.scrub("id 306e86eb-9171-40f8-b333-db447c38843f end") == "id … end"
 
 
 def test_diff_lines():
-    patch = ("diff --git a/x.md b/x.md\nindex 1..2 100644\n--- a/x.md\n+++ b/x.md\n@@ -1,2 +1,2 @@\n same\n-old\n"
-             "+new\n\\ No newline at end of file\n")
-    assert [d["kind"] for d in P.diff_lines(patch)] == ["meta", "meta", "meta", "meta", "hunk", "ctx", "del", "add",
-                                                          "meta"]
-    assert P.diff_lines("") == []
+    patch = (
+        "diff --git a/x.md b/x.md\nindex 1..2 100644\n--- a/x.md\n+++ b/x.md\n@@ -1,2 +1,2 @@\n same\n-old\n"
+        "+new\n\\ No newline at end of file\n"
+    )
+    assert [d["kind"] for d in parse.diff_lines(patch)] == [
+        "meta",
+        "meta",
+        "meta",
+        "meta",
+        "hunk",
+        "ctx",
+        "del",
+        "add",
+        "meta",
+    ]
+    assert parse.diff_lines("") == []

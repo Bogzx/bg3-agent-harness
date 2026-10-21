@@ -11,8 +11,7 @@ import time
 import unittest
 from pathlib import Path
 
-from bg3play.memory import memlib as M
-from bg3play.memory import new_playthrough as NP
+from bg3play.memory import memlib, new_playthrough
 
 
 def isolate_git() -> None:
@@ -22,18 +21,30 @@ def isolate_git() -> None:
     os.environ["GIT_CONFIG_GLOBAL"] = path
     os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
     os.environ["BG3_SNAPSHOTS"] = "0"  # never touch the live game from unit tests
-    for var in ("BG3_MEMORY_DIR", "CLAUDE_PROJECT_DIR", "BG3_WRAP_MINUTES", "BG3_SESSION_MINUTES",
-                "BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP"):
+    for var in (
+        "BG3_MEMORY_DIR",
+        "CLAUDE_PROJECT_DIR",
+        "BG3_WRAP_MINUTES",
+        "BG3_SESSION_MINUTES",
+        "BG3AI_SESSION_DEADLINE",
+        "BG3AI_SESSION_WRAPUP",
+    ):
         os.environ.pop(var, None)
 
 
-CHARACTER_HEADER = {"Name": "Mira", "Race": "Dwarf / Gold Dwarf", "Class": "Cleric / Life Domain",
-                    "Background": "Acolyte", "Deity": "Moradin", "Roleplay": "strict"}
+CHARACTER_HEADER = {
+    "Name": "Mira",
+    "Race": "Dwarf / Gold Dwarf",
+    "Class": "Cleric / Life Domain",
+    "Background": "Acolyte",
+    "Deity": "Moradin",
+    "Roleplay": "strict",
+}
 
 
 def character_text(dev: tuple[str, ...] = ("- S002: distrusts mind flayers more after the nautiloid [seen]",)) -> str:
     """memory-template/CHARACTER.md filled in (header values and one line per section), like the playbook makes it."""
-    t = (M.TEMPLATE_DIR / "CHARACTER.md").read_text().replace("# Character: (name)", "# Character: Mira")
+    t = (memlib.TEMPLATE_DIR / "CHARACTER.md").read_text().replace("# Character: (name)", "# Character: Mira")
     for key, val in CHARACTER_HEADER.items():
         t = re.sub(rf"^{key}:.*$", f"{key}: {val}", t, flags=re.MULTILINE)
     t = re.sub(r"^(## (?!Character development).+)$", r"\1\nA short line.", t, flags=re.MULTILINE)
@@ -48,7 +59,7 @@ class MemoryTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3mem-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.mem = self.tmp / "memory"
-        NP.create_memory("test-run", self.mem)
+        new_playthrough.create_memory("test-run", self.mem)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -67,20 +78,29 @@ class MemoryTestCase(unittest.TestCase):
         return (self.mem / rel).read_text()
 
     def commit(self, msg: str = "test") -> None:
-        M.git_commit_all(self.mem, msg)
+        memlib.git_commit_all(self.mem, msg)
 
     def git_log(self) -> list[str]:
-        return M.git(self.mem, "log", "--format=%s").stdout.split("\n")[:-1]
+        return memlib.git(self.mem, "log", "--format=%s").stdout.split("\n")[:-1]
 
     def open_session(self, n: int = 1, minutes_ago: float = 0.0) -> None:
-        self.write(f"sessions/{M.session_id(n)}.md", f"# Session {M.session_id(n)}\n\n## Log\n")
-        M.save_state(self.mem, {"current": n, "open": True, "started": "2026-10-09T20:00:00+02:00",
-                                "started_epoch": time.time() - minutes_ago * 60})
+        self.write(f"sessions/{memlib.session_id(n)}.md", f"# Session {memlib.session_id(n)}\n\n## Log\n")
+        memlib.save_state(
+            self.mem,
+            {
+                "current": n,
+                "open": True,
+                "started": "2026-10-09T20:00:00+02:00",
+                "started_epoch": time.time() - minutes_ago * 60,
+            },
+        )
 
     def good_handoff(self, n: int) -> str:
-        return (f"# Handoff {M.session_id(n)} → {M.session_id(n + 1)}\n"
-                f"Save to load: \"{M.session_id(n)}-end\" — at the crash site\n\n"
-                f"## Doing right now\nLooting the pod.\n\n## Next steps\n1. Go north.\n")
+        return (
+            f"# Handoff {memlib.session_id(n)} → {memlib.session_id(n + 1)}\n"
+            f'Save to load: "{memlib.session_id(n)}-end" — at the crash site\n\n'
+            f"## Doing right now\nLooting the pod.\n\n## Next steps\n1. Go north.\n"
+        )
 
     def state(self) -> dict:
         return json.loads(self.read(".session.json"))

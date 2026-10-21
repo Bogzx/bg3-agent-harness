@@ -15,7 +15,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from . import live as L
+from . import live
 
 VIEWER_IDLE_S = 30.0
 EVENTS_KEEP = 150
@@ -69,12 +69,16 @@ class GameWatch:
             st = self.game.rpc("state.status", context="server", timeout=6.0) if "state.status" in self.ops else None
             evs = self._events() if "events.since" in self.ops else []
             with self.lock:
-                self.view = {"reachable": True, "error": None, "t": now,
-                             "status": L.shape_status(st) if isinstance(st, dict) else None,
-                             "note": None if st is not None else "state.status not available yet"}
+                self.view = {
+                    "reachable": True,
+                    "error": None,
+                    "t": now,
+                    "status": live.shape_status(st) if isinstance(st, dict) else None,
+                    "note": None if st is not None else "state.status not available yet",
+                }
                 if evs:
                     self.events = (self.events + evs)[-EVENTS_KEEP:]
-        except Exception as e:  # noqa: BLE001 - the view must survive anything the game does
+        except Exception as e:
             with self.lock:
                 self.view = {"reachable": False, "error": f"{type(e).__name__}: {e}"[:300], "t": now}
             self.close()
@@ -93,7 +97,7 @@ class GameWatch:
             self.event_seq = evs[-1].get("seq", self.event_seq)
         elif res.get("latest", 0) < self.event_seq:
             self.event_seq = res.get("latest", 0)  # ring buffer reset (reload)
-        return [{"t": e.get("t"), "kind": e.get("kind"), "text": L.event_text(e)} for e in evs]
+        return [{"t": e.get("t"), "kind": e.get("kind"), "text": live.event_text(e)} for e in evs]
 
     def close(self) -> None:
         if self.game is not None:
@@ -102,14 +106,20 @@ class GameWatch:
         self.game, self.ops_t = None, float("-inf")
 
 
-Capture = Callable[[], tuple[bytes, str]]   # -> (image bytes, mime)
+Capture = Callable[[], tuple[bytes, str]]  # -> (image bytes, mime)
 
 
 class ScreenWatch:
     """The latest frame from `capture` while someone watches; `poll(now)` -> seconds to wait."""
 
-    def __init__(self, capture: Capture | None, viewers: Viewers, interval: float = 5.0, note: str | None = None,
-                 error: str | None = None):
+    def __init__(
+        self,
+        capture: Capture | None,
+        viewers: Viewers,
+        interval: float = 5.0,
+        note: str | None = None,
+        error: str | None = None,
+    ):
         self.capture, self.viewers, self.interval = capture, viewers, interval
         self.lock = threading.Lock()
         self.frame: bytes | None = None
@@ -125,7 +135,7 @@ class ScreenWatch:
             return 1.0
         try:
             data, mime = self.capture()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             with self.lock:
                 self.view.update(error=f"{type(e).__name__}: {e}"[:200])
             return max(self.interval, 15.0)

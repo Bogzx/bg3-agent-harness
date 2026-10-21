@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import parse as P
-from . import positions as POS
+from . import parse
+from . import positions as pos
 from .store import RunStore
 
 API_VERSION = 1
@@ -65,10 +65,10 @@ def sessions(store: RunStore, pt: str) -> dict:
 def _party(actions: list[dict], snapshot: str) -> dict | None:
     """The newest full status (WHERE/PARTY rows) among the tool results, else memory snapshots/status.md."""
     for a in reversed(actions):
-        st = P.status_text(a["result"])
+        st = parse.status_text(a["result"])
         if st and st["party"]:
             return {**st, "t": a["t"], "source": a["tool"]}
-    st = P.status_text(snapshot)
+    st = parse.status_text(snapshot)
     return {**st, "t": None, "source": "snapshots/status.md"} if st else None
 
 
@@ -96,9 +96,9 @@ def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 1
             "runner": runner_view(store) if pt == store.current() else None,
             "session": log.stem if log else None,
             "log": entries,
-            "actions": [dict(a, result=P.scrub(a["result"])) for a in actions[-action_rows:]],
+            "actions": [dict(a, result=parse.scrub(a["result"])) for a in actions[-action_rows:]],
             "party": _party(actions, store.memory_text(pt, "snapshots/status.md")),
-            "goal": P.current_goal(store.memory_text(pt, "objectives.md"), store.memory_text(pt, "HANDOFF.md")),
+            "goal": parse.current_goal(store.memory_text(pt, "objectives.md"), store.memory_text(pt, "HANDOFF.md")),
             "cost": {
                 "total_usd": round(sum(costs), 2) if costs else None,
                 "last_session_usd": last["cost_usd"] if last else None,
@@ -126,7 +126,7 @@ def memory_diff(store: RunStore, pt: str, rel: str, sha: str) -> dict | None:
     patch = store.memory_diff(pt, rel, sha)
     if patch is None:
         return None
-    return _v({"playthrough": pt, "path": rel, "sha": sha, "lines": P.diff_lines(patch)})
+    return _v({"playthrough": pt, "path": rel, "sha": sha, "lines": parse.diff_lines(patch)})
 
 
 def memory_log(store: RunStore, pt: str, limit: int = 50) -> dict:
@@ -137,9 +137,9 @@ def timeline(store: RunStore, pt: str) -> dict:
     """Choices (decisions.md) and fights per session, with each session's start time for the axis."""
     ss = store.sessions(pt)
     starts: dict[str, Any] = {s["session"]: s["started"] for s in ss}
-    cards = P.decisions(store.memory_text(pt, "decisions.md"))
+    cards = parse.decisions(store.memory_text(pt, "decisions.md"))
     for c in cards:
-        n = P.session_number(c["session"])
+        n = parse.session_number(c["session"])
         c["session_id"] = f"S{n:03d}" if n is not None else None
         c["t"] = starts.get(c["session_id"])
     return _v(
@@ -157,4 +157,4 @@ def timeline(store: RunStore, pt: str) -> dict:
 
 def positions(store: RunStore, pt: str, level: str | None = None) -> dict:
     """The breadcrumb plot's data (positions.tracks) for one level, default the latest."""
-    return _v({"playthrough": pt, **POS.tracks(POS.read(store.positions_path(pt)), level or None)})
+    return _v({"playthrough": pt, **pos.tracks(pos.read(store.positions_path(pt)), level or None)})

@@ -3,8 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
-from bg3play import config as C
+from bg3play import config
 
 BRIEF = (
     "A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps "
@@ -26,30 +25,30 @@ OLD_PROFILES = [
 ]
 
 
-def full_config() -> C.PlaythroughConfig:
-    return C.PlaythroughConfig(
+def full_config() -> config.PlaythroughConfig:
+    return config.PlaythroughConfig(
         name="ilse",
         difficulty="Balanced",
-        agent=C.Agent(profile="or-deepseek", client="pi", model="deepseek/deepseek-v4", effort="high"),
-        character=C.Character(
+        agent=config.Agent(profile="or-deepseek", client="pi", model="deepseek/deepseek-v4", effort="high"),
+        character=config.Character(
             brief='a "pious" dwarf\ncleric \\ with a tab\t', roleplay="light", name="Ilse", constraints="never steal"
         ),
-        session=C.Session(minutes=45.0, hours=8.5),
-        keeper=C.Keeper(enabled=False, model="sonnet", effort="medium", minutes=3.0),
-        recording=C.Recording(enabled=False, fps=10, height=1080),
+        session=config.Session(minutes=45.0, hours=8.5),
+        keeper=config.Keeper(enabled=False, model="sonnet", effort="medium", minutes=3.0),
+        recording=config.Recording(enabled=False, fps=10, height=1080),
     )
 
 
 def test_round_trip_full():
     cfg = full_config()
-    assert C.loads(C.dumps(cfg)) == cfg
+    assert config.loads(config.dumps(cfg)) == cfg
 
 
 def test_round_trip_defaults_and_every_key_written():
-    cfg = C.validate({"v": 1, "name": "naut"})
-    text = C.dumps(cfg)
-    assert C.loads(text) == cfg
-    for section in C.SECTIONS:
+    cfg = config.validate({"v": 1, "name": "naut"})
+    text = config.dumps(cfg)
+    assert config.loads(text) == cfg
+    for section in config.SECTIONS:
         assert f"[{section}]" in text
     assert cfg.recording.enabled and cfg.keeper.enabled and cfg.agent.client == "claude"
 
@@ -58,9 +57,9 @@ def test_save_load_files(tmp_path: Path):
     d = tmp_path / "ilse"
     d.mkdir()
     cfg = replace(full_config(), name="ilse")
-    path = C.save(d, cfg)
+    path = config.save(d, cfg)
     assert path == d / "playthrough.toml"
-    assert C.load(d) == cfg
+    assert config.load(d) == cfg
     assert sorted(p.name for p in d.iterdir()) == ["playthrough.toml"]  # no temp file left behind
 
 
@@ -80,8 +79,8 @@ def test_bad_enum_rejected(key, section, value):
         data[section] = {key: value}
     else:
         data[key] = value
-    with pytest.raises(C.ConfigError, match=key):
-        C.validate(data)
+    with pytest.raises(config.ConfigError, match=key):
+        config.validate(data)
 
 
 @pytest.mark.parametrize(
@@ -107,17 +106,17 @@ def test_bad_enum_rejected(key, section, value):
     ],
 )
 def test_invalid_rejected(data, match):
-    with pytest.raises(C.ConfigError, match=match):
-        C.validate(data)
+    with pytest.raises(config.ConfigError, match=match):
+        config.validate(data)
 
 
 def test_int_minutes_accepted_as_float():
-    assert C.validate({"v": 1, "name": "x", "session": {"minutes": 30}}).session.minutes == 30.0
+    assert config.validate({"v": 1, "name": "x", "session": {"minutes": 30}}).session.minutes == 30.0
 
 
 def test_broken_toml_is_config_error():
-    with pytest.raises(C.ConfigError, match="not valid TOML"):
-        C.loads("v = 1\nname = ")
+    with pytest.raises(config.ConfigError, match="not valid TOML"):
+        config.loads("v = 1\nname = ")
 
 
 @pytest.mark.parametrize("profile", OLD_PROFILES)
@@ -125,43 +124,45 @@ def test_old_profile_loads_equal(tmp_path: Path, profile: dict):
     d = tmp_path / "corran"
     d.mkdir()
     (d / "profile.json").write_text(json.dumps(profile, indent=1))
-    legacy = C.parse_profile_json((d / "profile.json").read_text())
-    cfg = C.load(d)
+    legacy = config.parse_profile_json((d / "profile.json").read_text())
+    cfg = config.load(d)
     assert cfg.name == "corran"
-    assert C.to_profile(cfg) == legacy
-    assert C.migrate(d) == d / "playthrough.toml"
-    assert C.to_profile(C.load(d)) == legacy
+    assert config.to_profile(cfg) == legacy
+    assert config.migrate(d) == d / "playthrough.toml"
+    assert config.to_profile(config.load(d)) == legacy
     assert (d / "profile.json").exists()  # the runner still reads it
 
 
 def test_parse_profile_json_matches_load_profile_contract():
     # the documented load_profile behaviour (runner/play.py:1193), which this copy must keep
-    assert C.parse_profile_json("not json") == {}
-    assert C.parse_profile_json("[1]") == {}
-    assert C.parse_profile_json('{"character": {"brief": "x", "roleplay": "bad"}}') == {
+    assert config.parse_profile_json("not json") == {}
+    assert config.parse_profile_json("[1]") == {}
+    assert config.parse_profile_json('{"character": {"brief": "x", "roleplay": "bad"}}') == {
         "character": {"brief": "x", "roleplay": "strict"}
     }
-    assert C.parse_profile_json('{"character": {"name": "A"}, "difficulty": "Balanced"}') == {"difficulty": "Balanced"}
+    assert config.parse_profile_json('{"character": {"name": "A"}, "difficulty": "Balanced"}') == {
+        "difficulty": "Balanced"
+    }
 
 
 def test_migrate_noop_when_toml_exists_or_nothing_to_migrate(tmp_path: Path):
-    assert C.migrate(tmp_path) is None
+    assert config.migrate(tmp_path) is None
     (tmp_path / "profile.json").write_text('{"character": {"brief": "x"}}')
-    C.save(tmp_path, C.validate({"v": 1, "name": "keep"}))
-    assert C.migrate(tmp_path) is None
-    assert C.load(tmp_path).name == "keep"
+    config.save(tmp_path, config.validate({"v": 1, "name": "keep"}))
+    assert config.migrate(tmp_path) is None
+    assert config.load(tmp_path).name == "keep"
 
 
 def test_profile_with_unknown_keys_is_refused_not_dropped(tmp_path: Path):
     (tmp_path / "profile.json").write_text('{"character": {"brief": "x", "voice": "deep"}}')
-    with pytest.raises(C.ConfigError, match="voice"):
-        C.load(tmp_path)
+    with pytest.raises(config.ConfigError, match="voice"):
+        config.load(tmp_path)
     (tmp_path / "profile.json").write_text('{"character": {"brief": "x"}, "seed": 3}')
-    with pytest.raises(C.ConfigError, match="seed"):
-        C.load(tmp_path)
+    with pytest.raises(config.ConfigError, match="seed"):
+        config.load(tmp_path)
 
 
 def test_defaults_without_files(tmp_path: Path):
-    cfg = C.load(tmp_path)
-    assert cfg == C.PlaythroughConfig(name=tmp_path.name)
-    assert C.to_profile(cfg) == {}
+    cfg = config.load(tmp_path)
+    assert cfg == config.PlaythroughConfig(name=tmp_path.name)
+    assert config.to_profile(cfg) == {}

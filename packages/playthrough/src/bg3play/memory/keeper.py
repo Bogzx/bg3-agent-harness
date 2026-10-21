@@ -42,6 +42,7 @@ unvalidated keeper edits.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
@@ -53,30 +54,41 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bg3play.memory import lint as L
-from bg3play.memory import memlib as M
+from bg3play.memory import lint, memlib
 
-REPO = M.REPO_ROOT
+REPO = memlib.REPO_ROOT
 sys.path.insert(0, str(REPO / "bridge" / "src"))
-from bg3ai import milestones as MS  # noqa: E402  (stdlib only)
-from bg3ai import progress as P  # noqa: E402  (stdlib only)
-sys.path.insert(0, str(REPO / "runner"))   # TEMPORARY: clients.py until the harness package has it
-import clients as C  # noqa: E402
+from bg3ai import milestones  # noqa: E402  (stdlib only)
+from bg3ai import progress as bg3progress  # noqa: E402  (stdlib only)
+
+sys.path.insert(0, str(REPO / "runner"))  # TEMPORARY: clients.py until the harness package has it
+import clients  # noqa: E402
 
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 KNOWLEDGE = REPO / "play" / "knowledge"
 
-KEEPER_MODEL = "sonnet"         # run_keeper's own default; the runner passes the play model (--keeper-model same)
+KEEPER_MODEL = "sonnet"  # run_keeper's own default; the runner passes the play model (--keeper-model same)
 KEEPER_EFFORT = "low"
 KEEPER_MINUTES = 5.0
-FIX_MIN_SECONDS = 45           # less than this left after the pass: no lint-fix retry
-MAX_LOGS = 8                   # session logs named in the prompt (newest first wins)
+FIX_MIN_SECONDS = 45  # less than this left after the pass: no lint-fix retry
+MAX_LOGS = 8  # session logs named in the prompt (newest first wins)
 
 # What the keeper may change. Everything else in the memory dir is restored after the pass.
-WRITABLE_FILES = ["objectives.md", "quests.md", "npcs.md", "locations.md", "party-build.md", "strategy.md",
-                  "decisions.md", "hypotheses.md", "inventory-notes.md", "PLAYTHROUGH.md", "lessons.md"]
+WRITABLE_FILES = [
+    "objectives.md",
+    "quests.md",
+    "npcs.md",
+    "locations.md",
+    "party-build.md",
+    "strategy.md",
+    "decisions.md",
+    "hypotheses.md",
+    "inventory-notes.md",
+    "PLAYTHROUGH.md",
+    "lessons.md",
+]
 WRITABLE_DIRS = ["chapters"]
-SNAPSHOT_DIRS = ["chapters", "sessions"]   # plus every top-level file
+SNAPSHOT_DIRS = ["chapters", "sessions"]  # plus every top-level file
 
 
 # HANDOFF.md: the keeper owns only this last section (the player's own text above it, incl. the "Save to
@@ -85,19 +97,22 @@ SNAPSHOT_DIRS = ["chapters", "sessions"]   # plus every top-level file
 HANDOFF_SECTION = "## From the logs (memory keeper)"
 
 
-GIT_NAMES = {".git", ".gitattributes", ".gitignore", ".gitmodules"}   # never the keeper's (FAIR-1)
+GIT_NAMES = {".git", ".gitattributes", ".gitignore", ".gitmodules"}  # never the keeper's (FAIR-1)
 
 
 def writable(rel: str) -> bool:
     if any(part.lower() in GIT_NAMES for part in rel.split("/")):
         return False
-    return (rel in WRITABLE_FILES or rel in ("HANDOFF.md", L.CHARACTER_FILE)
-            or any(rel.startswith(d + "/") for d in WRITABLE_DIRS))
+    return (
+        rel in WRITABLE_FILES
+        or rel in ("HANDOFF.md", lint.CHARACTER_FILE)
+        or any(rel.startswith(d + "/") for d in WRITABLE_DIRS)
+    )
 
 
 def _handoff_split(text: str) -> tuple[str, str]:
     i = text.find("\n" + HANDOFF_SECTION)
-    return (text, "") if i < 0 else (text[:i], text[i + 1:])
+    return (text, "") if i < 0 else (text[:i], text[i + 1 :])
 
 
 def keep_handoff_head(mem: Path, before: dict[str, bytes]) -> bool:
@@ -121,34 +136,35 @@ def keep_character_core(mem: Path, before: dict[str, bytes]) -> bool:
     """CHARACTER.md (the persona) is the player's, except that lines may be appended to its "## Character
     development" section. Anything else the keeper did to it (a rewritten core or older development lines, a new
     or deleted file) is put back, keeping only the appended lines. True when something had to be put back."""
-    p = mem / L.CHARACTER_FILE
-    old = before.get(L.CHARACTER_FILE)
+    p = mem / lint.CHARACTER_FILE
+    old = before.get(lint.CHARACTER_FILE)
     new = p.read_bytes() if p.is_file() else None
     if new == old:
         return False
-    if old is None:            # written in the character-creation phase only, never by the keeper
+    if old is None:  # written in the character-creation phase only, never by the keeper
         p.unlink()
         return True
     if new is None:
         p.write_bytes(old)
         return True
     old_t, new_t = old.decode("utf-8", "replace"), new.decode("utf-8", "replace")
-    old_core, old_dev = L.character_split(old_t)
-    new_core, new_dev = L.character_split(new_t)
+    old_core, old_dev = lint.character_split(old_t)
+    new_core, new_dev = lint.character_split(new_t)
     old_lines, new_lines = old_dev.splitlines(), new_dev.splitlines()
-    if new_core == old_core and new_lines[:len(old_lines)] == old_lines:
-        return False           # a pure append
+    if new_core == old_core and new_lines[: len(old_lines)] == old_lines:
+        return False  # a pure append
     added = [ln for ln in new_lines[1:] if ln.strip() and ln not in old_lines]
     merged = old_t.rstrip("\n") + "\n"
     if added:
         if not old_dev:
-            merged += f"\n{L.CHARACTER_DEV_HEADING}\n"
+            merged += f"\n{lint.CHARACTER_DEV_HEADING}\n"
         merged += "\n".join(added) + "\n"
     p.write_text(merged, encoding="utf-8")
     return True
 
 
 # ---------------------------------------------------------------- snapshot / restore
+
 
 def snapshot(mem: Path) -> dict[str, bytes]:
     """Contents of the memory files the keeper could touch: top-level files (and the .git* control files, so a
@@ -183,12 +199,32 @@ def restore(mem: Path, before: dict[str, bytes], rels: list[str]) -> None:
 
 # ---------------------------------------------------------------- grounding (MEM-1)
 
-FACT_FILES = [*M.TAGGED_FILES, "lessons.md", "objectives.md", "party-build.md", "strategy.md"]
-_NAME_RE = re.compile(r"[A-Z][A-Za-z'’-]{2,}")
+FACT_FILES = [*memlib.TAGGED_FILES, "lessons.md", "objectives.md", "party-build.md", "strategy.md"]
+_NAME_RE = re.compile(r"[A-Z][A-Za-z'\u2019-]{2,}")
 _SENT_START = re.compile(r"(?:^|[.!?:;]\s+|[(\[]|\*\*|`)$")
 # words the prompt itself asks the keeper to write
-_KEEPER_WORDS = {"when", "note", "retired", "archive", "last", "updated", "done", "died", "ally", "fall", "seen", "told",
-                 "wiki", "guess", "worked", "blocked", "lessons", "party", "main", "now"}
+_KEEPER_WORDS = {
+    "when",
+    "note",
+    "retired",
+    "archive",
+    "last",
+    "updated",
+    "done",
+    "died",
+    "ally",
+    "fall",
+    "seen",
+    "told",
+    "wiki",
+    "guess",
+    "worked",
+    "blocked",
+    "lessons",
+    "party",
+    "main",
+    "now",
+}
 
 
 def corpus(snap: dict[str, bytes], knowledge: Path = KNOWLEDGE, extra: str = "") -> str:
@@ -208,8 +244,8 @@ def ungrounded_names(line: str, text: str) -> list[str]:
     body = re.sub(r"^\s*[-*+]\s+", "", line)
     out = []
     for m in _NAME_RE.finditer(body):
-        w = m.group(0).strip("'’-")
-        if m.start() == 0 or _SENT_START.search(body[:m.start()]) or w.lower() in _KEEPER_WORDS:
+        w = m.group(0).strip("'\u2019-")
+        if m.start() == 0 or _SENT_START.search(body[: m.start()]) or w.lower() in _KEEPER_WORDS:
             continue
         if re.fullmatch(r"S\d+|L\d+|[IVX]+", w) or w.lower() in text:
             continue
@@ -260,17 +296,23 @@ PENDING = "keeper_pending.json"
 
 def save_pending(state_dir: Path, mem: Path, sid: str, snap: dict[str, bytes]) -> Path:
     p = Path(state_dir) / PENDING
-    p.write_text(json.dumps({"sid": sid, "mem": str(mem.resolve()), "t": round(time.time(), 1),
-                             "files": {k: base64.b64encode(v).decode() for k, v in snap.items()}}))
+    p.write_text(
+        json.dumps(
+            {
+                "sid": sid,
+                "mem": str(mem.resolve()),
+                "t": round(time.time(), 1),
+                "files": {k: base64.b64encode(v).decode() for k, v in snap.items()},
+            }
+        )
+    )
     return p
 
 
 def note_pgid(pending: Path | None, pgid: int) -> None:
     if pending is not None:
-        try:
+        with contextlib.suppress(OSError):
             Path(f"{pending}.pgid").write_text(str(pgid))
-        except OSError:
-            pass
 
 
 def clear_pending(pending: Path | None) -> None:
@@ -297,7 +339,9 @@ def recover(mem: Path, state_dir: Path) -> str | None:
         if Path(d.get("mem") or "") != mem.resolve():
             clear_pending(p)
             return f"{sid} keeper snapshot is for another memory dir: dropped"
-        head = M.git(mem, "log", "-1", "--format=%s", check=False).stdout.strip() if M.is_git_repo(mem) else ""
+        head = (
+            memlib.git(mem, "log", "-1", "--format=%s", check=False).stdout.strip() if memlib.is_git_repo(mem) else ""
+        )
         if head.startswith(f"{sid} memory-keeper:"):
             clear_pending(p)
             return f"{sid} keeper pass was committed: nothing to undo"
@@ -306,17 +350,18 @@ def recover(mem: Path, state_dir: Path) -> str | None:
         restore(mem, snap, rels)
         clear_pending(p)
         return f"{sid} keeper pass never finished: put back {', '.join(rels) or 'nothing (no edits)'}"
-    except Exception as e:  # noqa: BLE001 - recovery never stops the runner
+    except Exception as e:
         return f"keeper recovery failed: {type(e).__name__}: {e}"[:300]
 
 
 # ---------------------------------------------------------------- prompt / command
 
+
 def last_keeper_session(mem: Path) -> int | None:
     """The session whose keeper pass was last committed ("Sxxx memory-keeper: ..."), or None."""
-    if not M.is_git_repo(mem) or not M.has_head(mem):
+    if not memlib.is_git_repo(mem) or not memlib.has_head(mem):
         return None
-    out = M.git(mem, "log", "-1", "--format=%s", "--grep=^S[0-9]* memory-keeper:", check=False).stdout.strip()
+    out = memlib.git(mem, "log", "-1", "--format=%s", "--grep=^S[0-9]* memory-keeper:", check=False).stdout.strip()
     m = re.match(r"S(\d+) memory-keeper:", out)
     return int(m.group(1)) if m else None
 
@@ -325,14 +370,14 @@ def logs_to_read(mem: Path, sid_n: int) -> list[int]:
     """Session logs since the stalest curated file was last committed (at most MAX_LOGS, oldest first). MEM-1: never
     from before the last committed keeper pass or the last chapter (those logs are already in the curated files or a
     chapter; one never-touched file used to pull `since` back to S000), and always the session that just ended."""
-    touched = [M.last_touched_session(mem, rel) for rel in M.STALE_AFTER]
+    touched = [memlib.last_touched_session(mem, rel) for rel in memlib.STALE_AFTER]
     known = [t for t in touched if t is not None and t >= 0]
     since = min(known) if known else 0
     kept = last_keeper_session(mem)
     if kept is not None:
         since = max(since, kept + 1)
-    since = min(max(since, M.last_compacted_session(mem) + 1), sid_n)
-    nums = [n for n in M.session_numbers(mem) if since <= n <= sid_n]
+    since = min(max(since, memlib.last_compacted_session(mem) + 1), sid_n)
+    nums = [n for n in memlib.session_numbers(mem) if since <= n <= sid_n]
     return nums[-MAX_LOGS:]
 
 
@@ -350,15 +395,18 @@ def old_debrief_logs(mem: Path, sessions_dir: Path | None, nums: list[int]) -> l
     (the log alone can't show its lines are new)."""
     out = []
     for n in nums:
-        sid = M.session_id(n)
+        sid = memlib.session_id(n)
         try:
             if "[fight]" not in (mem / "sessions" / f"{sid}.md").read_text(encoding="utf-8", errors="replace"):
                 continue
         except OSError:
             continue
         vs = []
-        paths = [sessions_dir / f"{sid}.fights.jsonl", *sorted(sessions_dir.glob(f"{sid}-*.fights.jsonl"))] \
-            if sessions_dir is not None else []
+        paths = (
+            [sessions_dir / f"{sid}.fights.jsonl", *sorted(sessions_dir.glob(f"{sid}-*.fights.jsonl"))]
+            if sessions_dir is not None
+            else []
+        )
         for path in paths:
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -405,8 +453,8 @@ def refused_plans(actions: list[dict]) -> list[dict]:
             continue
         text = rec["result"]
         start = 0
-        for m in _PLAN_NOTE.finditer(text):   # a camp member's result holds one chunk per level: "L4: … (plan: …)"
-            chunk = text[start:m.start()]
+        for m in _PLAN_NOTE.finditer(text):  # a camp member's result holds one chunk per level: "L4: … (plan: …)"
+            chunk = text[start : m.start()]
             start = m.end()
             key = (m.group("name").strip(), int(m.group("lvl")))
             done = "level_up: done" in chunk and not re.search(r"not offered|already known", chunk)
@@ -439,6 +487,7 @@ def done_records(mem: Path) -> list[str]:
             return (mem / rel).read_text(errors="replace").splitlines()
         except OSError:
             return []
+
     for ln in read("objectives.md"):
         if _DONE_IN_OBJECTIVES.search(ln):
             out.append("objectives.md: " + ln.strip().lstrip("-0123456789. ").strip())
@@ -468,25 +517,30 @@ def game_done_records(sessions_dir: Path | None) -> list[str]:
     if sessions_dir is None or not sessions_dir.is_dir():
         return []
 
-    def legs(kind: str) -> list[tuple[str, Path]]:   # (Sxxx, path) per session and crash-resume leg, in play order
+    def legs(kind: str) -> list[tuple[str, Path]]:  # (Sxxx, path) per session and crash-resume leg, in play order
         found = [(m, p) for p in sessions_dir.glob(f"S*.{kind}.jsonl") if (m := _LEG.fullmatch(p.name))]
         return [(m.group(1), p) for m, p in sorted(found, key=lambda x: (x[0].group(1), int(x[0].group(2) or 0)))]
-    progress = [(sid, P.load(p)) for sid, p in legs("progress")]
+
+    progress = [(sid, bg3progress.load(p)) for sid, p in legs("progress")]
     try:
         seen = json.loads((sessions_dir / "progress_state.json").read_text())
     except (OSError, ValueError):
         seen = None
     out = []
     if seen or any(recs for _s, recs in progress):
-        kinds = {mid: kind for mid, _a, _l, kind, _p in MS.MILESTONES}
-        for i in MS.status(seen, progress)["items"]:
+        kinds = {mid: kind for mid, _a, _l, kind, _p in milestones.MILESTONES}
+        for i in milestones.status(seen, progress)["items"]:
             if i["reached"] and kinds.get(i["id"]) == "quest_done":
                 out.append(f"milestone: {i['label']}" + (f" ({i['session']})" if i["session"] else ""))
-    talked_dead = {str(r.get("what")) for _s, recs in progress for r in recs
-                   if r.get("type") == "progress" and r.get("kind") == "story_kill"}
+    talked_dead = {
+        str(r.get("what"))
+        for _s, recs in progress
+        for r in recs
+        if r.get("type") == "progress" and r.get("kind") == "story_kill"
+    }
     killed: dict[str, str] = {}
     for sid, path in legs("fights"):
-        for r in P.load(path):
+        for r in bg3progress.load(path):
             kills = r.get("kills") or []
             if r.get("reloaded") or not isinstance(kills, list):
                 continue
@@ -498,27 +552,43 @@ def game_done_records(sessions_dir: Path | None) -> list[str]:
     return [r[:DONE_MAX_CHARS] for r in out + kills[-GAME_DONE_MAX_LINES:]]
 
 
-def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: float,
-                 refused: list[dict] | None = None, tools: str = "files", sessions_dir: Path | None = None) -> str:
+def build_prompt(
+    mem: Path,
+    sid: str,
+    sid_n: int,
+    lint_report: str,
+    minutes: float,
+    refused: list[dict] | None = None,
+    tools: str = "files",
+    sessions_dir: Path | None = None,
+) -> str:
     """The keeper's task. tools: "files" (Claude Code's Read/Edit/Write/Glob/Grep in the memory dir, today's Claude
     pass) or "mcp" (the bg3 server's memory_* tools in keeper mode, any client): only the tool wording differs.
     sessions_dir: the runner's runtime/sessions/<playthrough> (the fight records, see old_debrief_logs)."""
     mcp = tools == "mcp"
     nums = logs_to_read(mem, sid_n)
-    logs = ", ".join(f"sessions/{M.session_id(n)}.md" for n in nums) or "(none)"
-    stale = L.stale_files(mem, sid_n + 1)
+    logs = ", ".join(f"sessions/{memlib.session_id(n)}.md" for n in nums) or "(none)"
+    stale = lint.stale_files(mem, sid_n + 1)
     stale_txt = ", ".join(f"{rel} ({age} sessions)" for rel, age in stale) or "none"
-    nxt = M.session_id(sid_n + 1)
+    nxt = memlib.session_id(sid_n + 1)
     lines = [
         f"You are the MEMORY KEEPER of an AI's Baldur's Gate 3 playthrough. Session {sid} just ended; {nxt} "
         f"starts after you. You have {minutes:.0f} minutes, "
-        + ("the memory_list/memory_read/memory_search/memory_write/memory_edit/memory_append tools only"
-           if mcp else "Read/Edit/Write/Glob/Grep only") + ", and no game access. "
+        + (
+            "the memory_list/memory_read/memory_search/memory_write/memory_edit/memory_append tools only"
+            if mcp
+            else "Read/Edit/Write/Glob/Grep only"
+        )
+        + ", and no game access. "
         "Work fast: few, targeted reads and edits. No questions: nobody answers.",
         "",
         "JOB: bring the curated memory files up to date from the player's own notes. "
-        + ("Paths are memory/<file> (the memory dir; a bare name means memory/) and knowledge/<file> (read-only). "
-           if mcp else "Your working directory is the memory dir. ") + "Read HANDOFF.md, objectives.md, PLAYTHROUGH.md, then these session logs (newest "
+        + (
+            "Paths are memory/<file> (the memory dir; a bare name means memory/) and knowledge/<file> (read-only). "
+            if mcp
+            else "Your working directory is the memory dir. "
+        )
+        + "Read HANDOFF.md, objectives.md, PLAYTHROUGH.md, then these session logs (newest "
         f"matter most): {logs}. Then edit:",
         "- objectives.md: the current Main goal, its why and its next step, matching HANDOFF.md and the latest "
         "log. Mark finished goals done. Check EVERY next step and side-list item (also ones you copy from HANDOFF.md) "
@@ -549,8 +619,8 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "newest last. A clean fight gives no lesson; a `[lesson]` about a tool or the harness (how to call "
         "combat_turn, a click quirk) is not a fight lesson: it belongs in strategy.md. Only facts from the logs "
         "(fairness).",
-        f"- {L.CHARACTER_FILE} (if it exists: the character the player roleplays): never change it above "
-        f"`{L.CHARACTER_DEV_HEADING}` (reverted). When the logs show the character changed (a vow kept or broken, a "
+        f"- {lint.CHARACTER_FILE} (if it exists: the character the player roleplays): never change it above "
+        f"`{lint.CHARACTER_DEV_HEADING}` (reverted). When the logs show the character changed (a vow kept or broken, a "
         "bond formed, a belief shaken), APPEND one line at the end: `- Sxxx: <what changed and why> [seen]`.",
         "- PLAYTHROUGH.md (it is shown to the player at every session start): keep the `Main thread:` line and "
         "`## Party` current (who is in the active party, in camp, gone). The Main thread's `next …` never names "
@@ -586,8 +656,11 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         "reverted). Never delete facts "
         "from decisions.md or npcs.md: condense them under '## Archive' and add a line 'ARCHIVE: <why>'.",
         "- Keep files within budget (objectives ≤80 lines, quests ≤300, npcs/locations ≤400, party-build ≤150).",
-        ("- Each write's result ends with its lint check ('lint: ok' or the errors): fix errors right away. "
-         if mcp else "- A hook reports lint errors after each edit (silence = clean): fix them right away. ")
+        (
+            "- Each write's result ends with its lint check ('lint: ok' or the errors): fix errors right away. "
+            if mcp
+            else "- A hook reports lint errors after each edit (silence = clean): fix them right away. "
+        )
         + "The runner lints after you and rolls back ALL your edits if you leave new errors.",
     ]
     news = harness_news(knowledge_dir=KNOWLEDGE)
@@ -616,16 +689,16 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
         ]
         for r in refused:
             lines.append(f"- {r['name']} L{r['level']}: {r['problems']}")
-    due = M.compaction_due(mem, sid_n + 1)
+    due = memlib.compaction_due(mem, sid_n + 1)
     if due:
-        last = M.last_compacted_session(mem)
+        last = memlib.last_compacted_session(mem)
         nums = sorted(set(nums) | set(range(last + 1, min(last + 10, sid_n) + 1)))
     old = old_debrief_logs(mem, sessions_dir, nums)
     if old:
         lines += [
             "",
             "OLD FIGHT DEBRIEFS (a harness bug, fixed 2026-10-17 and 2026-10-18): in "
-            + ", ".join(f"sessions/{M.session_id(n)}.md" for n in old)
+            + ", ".join(f"sessions/{memlib.session_id(n)}.md" for n in old)
             + " the `[fight]` lines' `resisted: …` field and every `<Type> did little to <enemy>` fact are WRONG "
             "(before S066: a damage rider or an enemy's per-hit shield was read as a resisted damage type; S066-S077: "
             "'did little' was judged per hit from 2 hits, from killing blows capped by a 1-HP enemy's HP, and "
@@ -634,22 +707,34 @@ def build_prompt(mem: Path, sid: str, sid_n: int, lint_report: str, minutes: flo
             "any file or chapter; the rest of those lines (grade, downs, deaths, damage totals, unused items) stands.",
         ]
     if due:
+        compaction = "knowledge/playbooks/compaction.md" if mcp else KNOWLEDGE / "playbooks" / "compaction.md"
         lines += [
             "",
-            f"COMPACTION DUE (sessions after {M.session_id(last)} are in no chapter): AFTER the curated files, "
-            f"follow {'knowledge/playbooks/compaction.md' if mcp else KNOWLEDGE / 'playbooks' / 'compaction.md'} (step 1 and the pruning in step 2, skip its "
-            f"logging step). Cover {M.session_id(last + 1)}-{M.session_id(min(last + 10, sid_n))} in "
+            f"COMPACTION DUE (sessions after {memlib.session_id(last)} are in no chapter): AFTER the curated files, "
+            f"follow {compaction} (step 1 and the pruning in step 2, skip its logging step). "
+            f"Cover {memlib.session_id(last + 1)}-{memlib.session_id(min(last + 10, sid_n))} in "
             f"chapters/C<nn>_S{last + 1:03d}-S{min(last + 10, sid_n):03d}_<slug>.md; write the chapter in ONE "
-            f"{'memory_write' if mcp else 'Write'} call once you have read those logs (a half-written chapter would be counted as done). "
+            f"{'memory_write' if mcp else 'Write'} call once you have read those logs "
+            "(a half-written chapter would be counted as done). "
             "If a chapter file for these sessions already exists, update it instead of adding a second one.",
         ]
     done = done_records(mem) + game_done_records(sessions_dir)
     if done:
-        lines += ["", ("DONE IN MEMORY (finished per the memory files and the runner's milestones and fight records; "
-                       "no next step, side-list item or 'still pending' claim may name one):"),
-                  *(f"- {r}" for r in done)]
-    lines += ["", "Current lint report:", lint_report[-3000:], "",
-              "End with one line: what you updated (files) and anything you could not do."]
+        lines += [
+            "",
+            (
+                "DONE IN MEMORY (finished per the memory files and the runner's milestones and fight records; "
+                "no next step, side-list item or 'still pending' claim may name one):"
+            ),
+            *(f"- {r}" for r in done),
+        ]
+    lines += [
+        "",
+        "Current lint report:",
+        lint_report[-3000:],
+        "",
+        "End with one line: what you updated (files) and anything you could not do.",
+    ]
     return "\n".join(lines)
 
 
@@ -657,38 +742,56 @@ def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
     m, k = mem.resolve(), knowledge.resolve()
     deny = [f"{tool}(/{p})" for tool in ("Edit", "Write") for p in (f"{m}/sessions/**", f"{k}/**")]
     # The memory repo's git dir and git control files: never read or written (FAIR-1; git runs on them in hooks).
-    deny += [f"{tool}(/{p})" for tool in ("Read", "Edit", "Write") for p in
-             (f"{m}/.git/**", f"{m}/**/.git/**", f"{m}/**/.git*", f"{k}/**/.git*")]
+    deny += [
+        f"{tool}(/{p})"
+        for tool in ("Read", "Edit", "Write")
+        for p in (f"{m}/.git/**", f"{m}/**/.git/**", f"{m}/**/.git*", f"{k}/**/.git*")
+    ]
     return {
         "permissions": {
             "defaultMode": "acceptEdits",
             "allow": ["Read", "Glob", "Grep", f"Edit(/{m}/**)", f"Write(/{m}/**)"],
             "deny": deny,
         },
-        "hooks": {"PostToolUse": [{"matcher": "Edit|Write", "hooks": [{
-            "type": "command",
-            "command": f"{sys.executable} {SESSION_PY} memlint --memory-dir {m}"}]}]},
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "Edit|Write",
+                    "hooks": [
+                        {"type": "command", "command": f"{sys.executable} {SESSION_PY} memlint --memory-dir {m}"}
+                    ],
+                }
+            ]
+        },
     }
 
 
 # ---------------------------------------------------------------- any client: the bg3 server in keeper mode
+
 
 def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = None) -> dict:
     """The bg3 stdio server in keeper mode (bridge server.keeper_server): only the memory tools, the keeper's
     write rules enforced server-side (memtools.KeeperSandbox from WRITABLE_FILES/WRITABLE_DIRS + HANDOFF.md +
     CHARACTER.md, sessions/ and knowledge/ read-only, HANDOFF.md only below HANDOFF_SECTION) and `task` as its
     instructions. play/.mcp.json's command, with its --project made absolute (the client runs in the memory dir)."""
-    s = C.bg3_server()
+    s = clients.bg3_server()
     args = list(s.get("args") or [])
     for i, a in enumerate(args[:-1]):
         if a == "--project":
-            args[i + 1] = str((C.PLAY_DIR / args[i + 1]).resolve())
-    env = {**(s.get("env") or {}), "BG3AI_KEEPER_MODE": "1", "BG3AI_MEMORY_DIR": str(mem.resolve()),
-           "BG3_KNOWLEDGE_DIR": str(knowledge.resolve()),
-           "BG3AI_KEEPER_WRITABLE": ",".join([*WRITABLE_FILES, "HANDOFF.md", L.CHARACTER_FILE,
-                                              *(d + "/" for d in WRITABLE_DIRS)]),
-           "BG3AI_KEEPER_HANDOFF_SECTION": HANDOFF_SECTION, "BG3AI_AUTO_SESSION": "0", "BG3AI_MOVIE_SKIP": "0",
-           "BG3AI_METRICS_SAMPLE_S": "0"}
+            args[i + 1] = str((clients.PLAY_DIR / args[i + 1]).resolve())
+    env = {
+        **(s.get("env") or {}),
+        "BG3AI_KEEPER_MODE": "1",
+        "BG3AI_MEMORY_DIR": str(mem.resolve()),
+        "BG3_KNOWLEDGE_DIR": str(knowledge.resolve()),
+        "BG3AI_KEEPER_WRITABLE": ",".join(
+            [*WRITABLE_FILES, "HANDOFF.md", lint.CHARACTER_FILE, *(d + "/" for d in WRITABLE_DIRS)]
+        ),
+        "BG3AI_KEEPER_HANDOFF_SECTION": HANDOFF_SECTION,
+        "BG3AI_AUTO_SESSION": "0",
+        "BG3AI_MOVIE_SKIP": "0",
+        "BG3AI_METRICS_SAMPLE_S": "0",
+    }
     if task is not None:
         env["BG3AI_KEEPER_TASK"] = str(Path(task).resolve())
     return {"type": "stdio", "command": s["command"], "args": args, "env": env, "timeout": s.get("timeout") or 110_000}
@@ -701,8 +804,8 @@ def keeper_client(name: str, mem: Path, log_base: Path, knowledge: Path = KNOWLE
     if name == "claude":
         cfg = Path(f"{log_base}.mcp.json")
         cfg.write_text(json.dumps({"mcpServers": {"bg3": server}}, indent=1) + "\n")
-        return C.ClaudeClient(mcp_config=cfg, settings={"permissions": {"allow": ["mcp__bg3__*"]}}, **kw)
-    return C.make(name, server=server, cwd=mem, **kw)
+        return clients.ClaudeClient(mcp_config=cfg, settings={"permissions": {"allow": ["mcp__bg3__*"]}}, **kw)
+    return clients.make(name, server=server, cwd=mem, **kw)
 
 
 def _session_from_log(client, log_path: Path) -> str | None:
@@ -719,23 +822,54 @@ def _session_from_log(client, log_path: Path) -> str | None:
     return sid
 
 
-def client_cmd(client, prompt: str, mem: Path, model: str, effort: str | None, session: str | None, resume: bool,
-               log_base: Path) -> tuple[list[str], dict]:
+def client_cmd(
+    client, prompt: str, mem: Path, model: str, effort: str | None, session: str | None, resume: bool, log_base: Path
+) -> tuple[list[str], dict]:
     """(argv, extra env) of one keeper call through `client` (keeper_client)."""
-    req = C.Request(prompt=prompt, model=model, session_dir=Path(log_base).parent, session=session, resume=resume,
-                    effort=effort, tag=Path(log_base).name)
+    req = clients.Request(
+        prompt=prompt,
+        model=model,
+        session_dir=Path(log_base).parent,
+        session=session,
+        resume=resume,
+        effort=effort,
+        tag=Path(log_base).name,
+    )
     client.write_config(req)
     return client.command(req), client.env(req)
 
 
-def keeper_cmd(prompt: str, mem: Path, model: str, effort: str | None, session_uuid: str, resume: bool,
-               claude: str = "claude", knowledge: Path = KNOWLEDGE) -> list[str]:
+def keeper_cmd(
+    prompt: str,
+    mem: Path,
+    model: str,
+    effort: str | None,
+    session_uuid: str,
+    resume: bool,
+    claude: str = "claude",
+    knowledge: Path = KNOWLEDGE,
+) -> list[str]:
     # --restricted: no Bash/web tools, user/project/local settings ignored (none of play/'s settings),
     # file tools confined to cwd (the memory dir) + --add-dir. The keeper still uses Claude Code's file tools.
-    cmd = [claude, "-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose",
-           "--restricted", "--tools", "Read,Edit,Write,Glob,Grep", "--strict-mcp-config",
-           "--disable-slash-commands", "--add-dir", str(knowledge.resolve()),
-           "--settings", json.dumps(keeper_settings(mem, knowledge))]
+    cmd = [
+        claude,
+        "-p",
+        prompt,
+        "--model",
+        model,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--restricted",
+        "--tools",
+        "Read,Edit,Write,Glob,Grep",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--add-dir",
+        str(knowledge.resolve()),
+        "--settings",
+        json.dumps(keeper_settings(mem, knowledge)),
+    ]
     if effort:
         cmd += ["--effort", effort]
     cmd += ["--resume", session_uuid] if resume else ["--session-id", session_uuid]
@@ -744,18 +878,19 @@ def keeper_cmd(prompt: str, mem: Path, model: str, effort: str | None, session_u
 
 # ---------------------------------------------------------------- run
 
+
 @dataclass
 class KeeperResult:
     sid: str
-    status: str = "error"          # ok | no_changes | lint_failed | error
+    status: str = "error"  # ok | no_changes | lint_failed | error
     seconds: float = 0.0
     files: list[str] = field(default_factory=list)
-    reverted: list[str] = field(default_factory=list)   # touched outside the writable set
+    reverted: list[str] = field(default_factory=list)  # touched outside the writable set
     commit: str | None = None
     timed_out: bool = False
     exit_code: int | None = None
     lint_errors: list[str] = field(default_factory=list)
-    ungrounded: list[str] = field(default_factory=list)   # MEM-1: added lines dropped (names not in the memory)
+    ungrounded: list[str] = field(default_factory=list)  # MEM-1: added lines dropped (names not in the memory)
     detail: str = ""
 
     def summary(self) -> str:
@@ -776,28 +911,40 @@ class KeeperResult:
 
 
 def _errors(mem: Path, session: int) -> list[str]:
-    return [f"{k}: {m}" for k, m in L.lint(mem, "any", session).errors]
+    return [f"{k}: {m}" for k, m in lint.lint(mem, "any", session).errors]
 
 
-def _run_claude(cmd: list[str], cwd: Path, log_path: Path, timeout: float,
-                extra_env: dict | None = None, pending: Path | None = None) -> tuple[int | None, bool]:
+def _run_claude(
+    cmd: list[str],
+    cwd: Path,
+    log_path: Path,
+    timeout: float,
+    extra_env: dict | None = None,
+    pending: Path | None = None,
+) -> tuple[int | None, bool]:
     """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
     timeout (the keeper-mode MCP server is in that group too)."""
     env = {**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})}
     for k in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH"):
         env.pop(k, None)
     with open(log_path, "a") as out:
-        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True, text=True)
-        note_pgid(pending, proc.pid)   # its own process group: recover() kills it if the runner dies meanwhile
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            text=True,
+        )
+        note_pgid(pending, proc.pid)  # its own process group: recover() kills it if the runner dies meanwhile
         try:
             return proc.wait(timeout=max(1.0, timeout)), False
         except subprocess.TimeoutExpired:
             for sig, wait in ((signal.SIGINT, 10), (signal.SIGKILL, 10)):
-                try:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(proc.pid, sig)
-                except (ProcessLookupError, PermissionError):
-                    pass
                 try:
                     proc.wait(timeout=wait)
                     break
@@ -810,24 +957,46 @@ def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict, dic
     """(server spec, env) of the keeper-mode bg3 server run over http on the host: the env a stdio server started
     by the client would get (_run_claude's, which drops the play session's deadline and metrics) + its own."""
     server = keeper_server(mem, knowledge, task)
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH")
+    }
     return server, {**env, **server["env"]}
 
 
-def _run_sandboxed(box, cli, text: str, mem: Path, model: str, effort: str | None, sess: str | None, resume: bool,
-                   log_base: Path, knowledge: Path, log_path: Path, timeout: float,
-                   pending: Path | None) -> tuple[int | None, bool]:
+def _run_sandboxed(
+    box,
+    cli,
+    text: str,
+    mem: Path,
+    model: str,
+    effort: str | None,
+    sess: str | None,
+    resume: bool,
+    log_base: Path,
+    knowledge: Path,
+    log_path: Path,
+    timeout: float,
+    pending: Path | None,
+) -> tuple[int | None, bool]:
     """One keeper call in the container sandbox: the keeper-mode server over http on the host for this call, the
     client in a `keeper` container; both gone afterwards, whatever happened."""
     server, env = keeper_server_env(mem, knowledge, Path(f"{log_base}.task.md"))
-    req = C.Request(prompt=text, model=model, session_dir=Path(log_base).parent, session=sess, resume=resume,
-                    effort=effort, tag=Path(log_base).name)
+    req = clients.Request(
+        prompt=text,
+        model=model,
+        session_dir=Path(log_base).parent,
+        session=sess,
+        resume=resume,
+        effort=effort,
+        tag=Path(log_base).name,
+    )
     files = cli.write_config(req)
     name = box.container_name(Path(log_base).name)
     cmd = box.run_argv(name, cli.command(req), cli.env(req), files, role="keeper")
     t0 = time.time()
-    srv = box.start_server(server, env, mem, Path(f"{log_base}.mcp-http.log"))   # SandboxError: run_keeper's error
+    srv = box.start_server(server, env, mem, Path(f"{log_base}.mcp-http.log"))  # SandboxError: run_keeper's error
     try:
         return _run_claude(cmd, mem, log_path, timeout - (time.time() - t0), pending=pending)
     finally:
@@ -837,25 +1006,36 @@ def _run_sandboxed(box, cli, text: str, mem: Path, model: str, effort: str | Non
 
 def commit(mem: Path, rels: list[str], message: str) -> str | None:
     """Commits only `rels` (the keeper's files), never the open session's other changes."""
-    if not rels or not M.is_git_repo(mem):
+    if not rels or not memlib.is_git_repo(mem):
         return None
     # A path that is gone from disk and from the index (someone else deleted and committed it meanwhile, S026)
     # makes `git add -- path` fail with "pathspec did not match": there's nothing of it left to commit.
-    tracked = set(M.git(mem, "ls-files", "--", *rels, check=False).stdout.splitlines())
+    tracked = set(memlib.git(mem, "ls-files", "--", *rels, check=False).stdout.splitlines())
     rels = [r for r in rels if (mem / r).exists() or r in tracked]
     if not rels:
         return None
-    M.git(mem, "add", "-A", "--", *rels)
-    if M.git(mem, "diff", "--cached", "--quiet", "--", *rels, check=False).returncode == 0:
+    memlib.git(mem, "add", "-A", "--", *rels)
+    if memlib.git(mem, "diff", "--cached", "--quiet", "--", *rels, check=False).returncode == 0:
         return None
-    M.git(mem, *M.git_identity_args(mem), "commit", "-q", "--no-verify", "-m", message, "--", *rels)
-    return M.git(mem, "rev-parse", "--short", "HEAD").stdout.strip()
+    memlib.git(mem, *memlib.git_identity_args(mem), "commit", "-q", "--no-verify", "-m", message, "--", *rels)
+    return memlib.git(mem, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
-def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL, effort: str | None = KEEPER_EFFORT,
-               minutes: float = KEEPER_MINUTES, claude: str = "claude", knowledge: Path = KNOWLEDGE,
-               refused: list[dict] | None = None, client: str = "claude", mcp: bool | None = None,
-               binary: str | None = None, sandbox=None) -> KeeperResult:
+def run_keeper(
+    mem: Path,
+    sid_n: int,
+    log_base: Path,
+    model: str = KEEPER_MODEL,
+    effort: str | None = KEEPER_EFFORT,
+    minutes: float = KEEPER_MINUTES,
+    claude: str = "claude",
+    knowledge: Path = KNOWLEDGE,
+    refused: list[dict] | None = None,
+    client: str = "claude",
+    mcp: bool | None = None,
+    binary: str | None = None,
+    sandbox=None,
+) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises.
 
     client: the clients.py client that keeps the memory (the play client, so a benchmark compares one model end to
@@ -863,10 +1043,10 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
     whose default stays today's pass with Claude Code's file tools (keeper_cmd). binary: the client's executable
     (default: `claude` for claude, else the client's own). sandbox: the runner's runner/sandbox.Sandbox (run
     --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP)."""
-    sid = M.session_id(sid_n)
+    sid = memlib.session_id(sid_n)
     via_mcp = client != "claude" if mcp is None else mcp
     if sandbox is not None:
-        via_mcp = True   # no file tools in the container: the keeper-mode server is the only way to the memory
+        via_mcp = True  # no file tools in the container: the keeper-mode server is the only way to the memory
     who = client
     res = KeeperResult(sid)
     snap = pending = None
@@ -874,31 +1054,46 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
     end = t0 + minutes * 60
     try:
         before_errors = set(_errors(mem, sid_n + 1))
-        report = L.lint(mem, "any", sid_n + 1).render(mem)
+        report = lint.lint(mem, "any", sid_n + 1).render(mem)
         snap = snapshot(mem)
         pending = save_pending(Path(log_base).parent, mem, sid, snap)
         log_path = Path(f"{log_base}.jsonl")
         sess = str(uuid.uuid4())
-        prompt = build_prompt(mem, sid, sid_n, report, minutes, refused, tools="mcp" if via_mcp else "files",
-                              sessions_dir=Path(log_base).parent)
+        prompt = build_prompt(
+            mem,
+            sid,
+            sid_n,
+            report,
+            minutes,
+            refused,
+            tools="mcp" if via_mcp else "files",
+            sessions_dir=Path(log_base).parent,
+        )
         grounds = corpus(snap, knowledge, prompt)
         cli = None
         if via_mcp:
-            Path(f"{log_base}.task.md").write_text(prompt + "\n", encoding="utf-8")   # the server's instructions
+            Path(f"{log_base}.task.md").write_text(prompt + "\n", encoding="utf-8")  # the server's instructions
             if sandbox is not None:
-                cli = C.make_http(client, sandbox.url, **({"binary": binary} if binary else {}))
+                cli = clients.make_http(client, sandbox.url, **({"binary": binary} if binary else {}))
             else:
-                cli = keeper_client(client, mem, log_base, knowledge,
-                                    binary or (claude if client == "claude" else None))
+                cli = keeper_client(
+                    client, mem, log_base, knowledge, binary or (claude if client == "claude" else None)
+                )
             sess = sess if cli.assigns_session else None
 
         def call(text: str, resume: bool, left: float) -> tuple[int | None, bool]:
             if cli is None:
-                return _run_claude(keeper_cmd(text, mem, model, effort, sess, resume, claude, knowledge),
-                                   mem, log_path, left, pending=pending)
+                return _run_claude(
+                    keeper_cmd(text, mem, model, effort, sess, resume, claude, knowledge),
+                    mem,
+                    log_path,
+                    left,
+                    pending=pending,
+                )
             if sandbox is not None:
-                return _run_sandboxed(sandbox, cli, text, mem, model, effort, sess, resume, log_base, knowledge,
-                                      log_path, left, pending)
+                return _run_sandboxed(
+                    sandbox, cli, text, mem, model, effort, sess, resume, log_base, knowledge, log_path, left, pending
+                )
             cmd, env = client_cmd(cli, text, mem, model, effort, sess, resume, log_base)
             return _run_claude(cmd, mem, log_path, left, env, pending=pending)
 
@@ -913,7 +1108,7 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
             if keep_handoff_head(mem, snap):
                 res.reverted = sorted(set(res.reverted) | {"HANDOFF.md (player part)"})
             if keep_character_core(mem, snap):
-                res.reverted = sorted(set(res.reverted) | {f"{L.CHARACTER_FILE} (core)"})
+                res.reverted = sorted(set(res.reverted) | {f"{lint.CHARACTER_FILE} (core)"})
             bad = ungrounded_lines(mem, snap, [r for r in changes(mem, snap) if writable(r)], grounds)
             if bad:
                 drop_lines(mem, bad)
@@ -922,10 +1117,12 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
             left = end - time.time()
             if not new or attempt == 1 or left < FIX_MIN_SECONDS or res.timed_out:
                 break
-            fix = ("Memory lint now reports these NEW errors; fix them with minimal edits, then stop:\n"
-                   + "\n".join(new)[-3000:])
+            fix = (
+                "Memory lint now reports these NEW errors; fix them with minimal edits, then stop:\n"
+                + "\n".join(new)[-3000:]
+            )
             if cli is not None and not (cli.supports_resume and sess):
-                break   # no conversation to resume (the client printed no session id)
+                break  # no conversation to resume (the client printed no session id)
             rc, res.timed_out = call(fix, True, left)
             res.exit_code = rc
         files = [r for r in changes(mem, snap) if writable(r)]
@@ -941,15 +1138,15 @@ def run_keeper(mem: Path, sid_n: int, log_base: Path, model: str = KEEPER_MODEL,
             res.files = files
             res.commit = commit(mem, files, f"{sid} memory-keeper: {', '.join(files)}")
             res.status = "ok"
-        clear_pending(pending)   # committed, rolled back or nothing to do: no undo left for recover()
-    except Exception as e:  # noqa: BLE001 - a keeper failure never stops play
+        clear_pending(pending)  # committed, rolled back or nothing to do: no undo left for recover()
+    except Exception as e:
         res.status, res.detail = "error", f"{type(e).__name__}: {e}"[:300]
-        if snap is not None and not res.commit:   # unvalidated edits never reach the next session
+        if snap is not None and not res.commit:  # unvalidated edits never reach the next session
             try:
                 restore(mem, snap, changes(mem, snap))
                 clear_pending(pending)
                 res.detail += "; keeper edits rolled back"
-            except Exception as e2:  # noqa: BLE001 - recover() at the next start retries
+            except Exception as e2:
                 res.detail += f"; rollback failed ({type(e2).__name__}), recover() at the next start"
     res.seconds = round(time.time() - t0, 1)
     return res

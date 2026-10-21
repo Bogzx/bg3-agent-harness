@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import config as C
+from . import config
 
 HISTORY_VERSION = 1
 STUCK_SESSIONS = 2  # runner/play.py STUCK_SESSIONS
@@ -40,7 +40,7 @@ CRASH_NOTE = "The last session ended early ({why}). Load the save from HANDOFF.m
 class SessionRequest:
     playthrough: str
     session: int  # 1-based play session number
-    config: C.PlaythroughConfig
+    config: config.PlaythroughConfig
     resume: bool  # continue an existing playthrough (load its save) rather than a new game
     notes: tuple[str, ...] = ()
     record: bool = True
@@ -96,7 +96,7 @@ def notes_for(history: list[dict]) -> tuple[str, ...]:
     return tuple(out)
 
 
-def budget_left(cfg: C.PlaythroughConfig, started: float, now: float) -> bool:
+def budget_left(cfg: config.PlaythroughConfig, started: float, now: float) -> bool:
     """Hours budget (config [session] hours; 0 = no budget) counted over this run of the loop."""
     return cfg.session.hours <= 0 or now - started < cfg.session.hours * 3600
 
@@ -118,16 +118,16 @@ LAUNCH_KEYS: dict[str, tuple[str | None, str]] = {
 }
 
 
-def launch_config(cfg: C.PlaythroughConfig, body: dict) -> C.PlaythroughConfig:
+def launch_config(cfg: config.PlaythroughConfig, body: dict) -> config.PlaythroughConfig:
     """The config with the Launcher's choices applied and validated (unknown fields are a ConfigError)."""
     unknown = sorted(set(body) - set(LAUNCH_KEYS))
     if unknown:
-        raise C.ConfigError(f"unknown launch field(s) {', '.join(unknown)}")
-    d = C.to_dict(cfg)
+        raise config.ConfigError(f"unknown launch field(s) {', '.join(unknown)}")
+    d = config.to_dict(cfg)
     for k, v in body.items():
         section, key = LAUNCH_KEYS[k]
         (d if section is None else d[section])[key] = v
-    return C.validate(d)
+    return config.validate(d)
 
 
 # ------------------------------------------------------------ history file
@@ -189,7 +189,7 @@ class Supervisor:
             setattr(self, k, v)
         self.on_change(self.view())
 
-    def _claim(self, pt: str, resume: bool, cfg: C.PlaythroughConfig | None) -> C.PlaythroughConfig:
+    def _claim(self, pt: str, resume: bool, cfg: config.PlaythroughConfig | None) -> config.PlaythroughConfig:
         with self.lock:
             if self.state != "idle":
                 raise SupervisorError(f"{self.pt} is {self.state}")
@@ -199,15 +199,17 @@ class Supervisor:
             if not resume and n:
                 raise SupervisorError(f"{pt} already has {n} sessions; resume it")
             if cfg is None:
-                cfg = C.load(self.playthroughs / pt)
+                cfg = config.load(self.playthroughs / pt)
             else:  # the Launcher's choices: written only once the start is accepted
                 (self.playthroughs / pt).mkdir(parents=True, exist_ok=True)
-                C.save(self.playthroughs / pt, cfg)
+                config.save(self.playthroughs / pt, cfg)
             self.stop_event = threading.Event()
             self._set(pt=pt, state="running", detail="", session=None)
             return cfg
 
-    def start(self, pt: str, resume: bool = False, wait: bool = False, cfg: C.PlaythroughConfig | None = None) -> None:
+    def start(
+        self, pt: str, resume: bool = False, wait: bool = False, cfg: config.PlaythroughConfig | None = None
+    ) -> None:
         """Start (resume=False: a playthrough without sessions) or resume (the next session of one with sessions)
         on a thread; wait=True runs it here (tests). `cfg` (the Launcher's) is saved as playthrough.toml first."""
         cfg = self._claim(pt, resume, cfg)
@@ -217,7 +219,7 @@ class Supervisor:
         self.thread = threading.Thread(target=self._run, args=(pt, cfg, resume), daemon=True, name=f"sup-{pt}")
         self.thread.start()
 
-    def resume(self, pt: str, wait: bool = False, cfg: C.PlaythroughConfig | None = None) -> None:
+    def resume(self, pt: str, wait: bool = False, cfg: config.PlaythroughConfig | None = None) -> None:
         self.start(pt, resume=True, wait=wait, cfg=cfg)
 
     def stop(self) -> None:
@@ -228,7 +230,7 @@ class Supervisor:
             self.stop_event.set()
             self._set(state="stopping", detail="finishing the current session")
 
-    def _run(self, pt: str, cfg: C.PlaythroughConfig, resume: bool) -> None:
+    def _run(self, pt: str, cfg: config.PlaythroughConfig, resume: bool) -> None:
         started = self.clock()
         path = history_path(self.runtime, pt)
         end = "stopped"
@@ -260,7 +262,7 @@ class Supervisor:
                 if res.outcome == "error":
                     end = f"session error: {res.detail}"
                     break
-        except Exception as e:  # noqa: BLE001 - shown in the UI; the app keeps serving
+        except Exception as e:
             end = f"{type(e).__name__}: {e}"[:300]
         finally:
             with self.lock:

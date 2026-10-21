@@ -24,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import parse as P
+from . import parse
 
 SESSION_LOG_RE = re.compile(r"^(S\d{3,})\.log$")
 MEMORY_SUFFIXES = (".md", ".json", ".jsonl", ".txt")
@@ -162,9 +162,9 @@ class RunStore:
             sid = log.stem
             end: dict[str, Any] = {"outcome": None, "turns": None, "minutes": None, "cost_usd": None}
             for line in reversed(read_tail(log, 8192)):
-                e = P.log_line(line)
+                e = parse.log_line(line)
                 if e and e["kind"] == "end":
-                    end = P.end_line(e["text"])
+                    end = parse.end_line(e["text"])
                     break
             h = hist.get(sid, {})
             lat = read_json(d / f"{sid}.latency.json")
@@ -186,10 +186,10 @@ class RunStore:
         return rows
 
     def log_entries(self, path: Path, max_bytes: int = 256 * 1024) -> list[dict]:
-        return [e for e in (P.log_line(ln) for ln in read_tail(path, max_bytes)) if e]
+        return [e for e in (parse.log_line(ln) for ln in read_tail(path, max_bytes)) if e]
 
     def recent_actions(self, max_bytes: int = 1024 * 1024) -> list[dict]:
-        return [a for a in (P.action(ln) for ln in read_tail(self.actions_path, max_bytes)) if a]
+        return [a for a in (parse.action(ln) for ln in read_tail(self.actions_path, max_bytes)) if a]
 
     # ------------------------------------------------------------ memory
 
@@ -231,10 +231,10 @@ class RunStore:
         root = self.memory_dir(pt)
         if not (root / ".git").exists():
             return []
-        args = ["log", f"-n{int(limit)}", f"--format={P.GIT_LOG_FORMAT}"]
+        args = ["log", f"-n{int(limit)}", f"--format={parse.GIT_LOG_FORMAT}"]
         if rel:
             args += ["--", self.memory_path(pt, rel).relative_to(root.resolve()).as_posix()]
-        return P.git_log(self.git(root, args))
+        return parse.git_log(self.git(root, args))
 
     def memory_diff(self, pt: str, rel: str, sha: str) -> str | None:
         """One commit's patch of one memory file (`git show`), or None for a commit the repo doesn't have."""
@@ -255,7 +255,7 @@ class RunStore:
         d = self.session_dir(pt)
         rows = []
         for f in sorted(d.glob("S*.fights.jsonl")):
-            rows += [x for x in (P.fight(r) for r in read_jsonl(f)) if x]
+            rows += [x for x in (parse.fight(r) for r in read_jsonl(f)) if x]
         return rows
 
     def latest_screenshot(self) -> Path | None:

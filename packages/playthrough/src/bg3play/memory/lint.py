@@ -26,7 +26,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bg3play.memory import memlib as M
+from bg3play.memory import memlib
 
 SCREENSHOT_WARN_FILES = 60
 SCREENSHOT_WARN_BYTES = 40 * 1024 * 1024
@@ -62,10 +62,10 @@ class Report:
 
 
 def check_structure(mem: Path, r: Report) -> None:
-    for f in M.REQUIRED_FILES:
+    for f in memlib.REQUIRED_FILES:
         if not (mem / f).is_file():
             r.error("missing", f"{f} does not exist (recreate it from memory-template/{f})")
-    for d in M.REQUIRED_DIRS:
+    for d in memlib.REQUIRED_DIRS:
         if not (mem / d).is_dir():
             r.error("missing", f"{d}/ directory does not exist")
     mk = mem / "markers.json"
@@ -85,57 +85,65 @@ def check_structure(mem: Path, r: Report) -> None:
 
 
 def check_budgets(mem: Path, r: Report) -> None:
-    for name, (max_lines, max_chars) in M.BUDGETS.items():
+    for name, (max_lines, max_chars) in memlib.BUDGETS.items():
         p = mem / name
         if not p.is_file():
             continue
-        lines = M.content_lines(p.read_text())
+        lines = memlib.content_lines(p.read_text())
         if len(lines) > max_lines:
-            r.error("budget", f"{name}: {len(lines)} content lines > {max_lines}. Trim or condense it "
-                              f"(move detail to the right file, archive old entries).")
+            r.error(
+                "budget",
+                f"{name}: {len(lines)} content lines > {max_lines}. Trim or condense it "
+                f"(move detail to the right file, archive old entries).",
+            )
         if max_chars is not None:
             chars = sum(len(ln) + 1 for ln in lines)
             if chars > max_chars:
-                r.error("budget", f"{name}: {chars} content chars > {max_chars}. It is injected at "
-                                  f"session start; shorten it.")
+                r.error(
+                    "budget",
+                    f"{name}: {chars} content chars > {max_chars}. It is injected at session start; shorten it.",
+                )
     chapters = mem / "chapters"
     if chapters.is_dir():
         for f in sorted(chapters.glob("*.md")):
-            n = len(M.content_lines(f.read_text()))
-            if n > M.CHAPTER_MAX_LINES:
-                r.error("budget", f"chapters/{f.name}: {n} content lines > {M.CHAPTER_MAX_LINES}")
+            n = len(memlib.content_lines(f.read_text()))
+            if n > memlib.CHAPTER_MAX_LINES:
+                r.error("budget", f"chapters/{f.name}: {n} content lines > {memlib.CHAPTER_MAX_LINES}")
     sessions = mem / "sessions"
     if sessions.is_dir():
         for f in sorted(sessions.glob("S*.md")):
-            n = len(M.content_lines(f.read_text()))
-            if n > M.SESSION_LOG_MAX_LINES:
-                r.warn("budget", f"sessions/{f.name}: {n} lines > {M.SESSION_LOG_MAX_LINES}; log "
-                                 f"events more tersely (one line each)")
+            n = len(memlib.content_lines(f.read_text()))
+            if n > memlib.SESSION_LOG_MAX_LINES:
+                r.warn(
+                    "budget",
+                    f"sessions/{f.name}: {n} lines > {memlib.SESSION_LOG_MAX_LINES}; log "
+                    f"events more tersely (one line each)",
+                )
 
 
 def untagged_bullets(text: str) -> list[tuple[int, str]]:
     """(line number, text) of bullets lacking a provenance tag, outside HTML comments."""
     out = []
     # Keep line numbers stable: blank out comments without removing their newlines.
-    cleaned = M.COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    cleaned = memlib.COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     for i, line in enumerate(cleaned.splitlines(), 1):
-        m = M.BULLET_RE.match(line)
+        m = memlib.BULLET_RE.match(line)
         if not m:
             continue
         body = m.group(1).strip()
-        if not body or M.TAG_RE.search(body):
+        if not body or memlib.TAG_RE.search(body):
             continue
         label = body.split(":", 1)[0].strip().lower() if ":" in body else ""
-        if label in M.META_LABELS:
+        if label in memlib.META_LABELS:
             continue
-        if M.ARCHIVE_MARKER in body:
+        if memlib.ARCHIVE_MARKER in body:
             continue
         out.append((i, body))
     return out
 
 
 def check_provenance(mem: Path, r: Report) -> None:
-    for name in M.TAGGED_FILES:
+    for name in memlib.TAGGED_FILES:
         p = mem / name
         if not p.is_file():
             continue
@@ -146,7 +154,7 @@ def check_provenance(mem: Path, r: Report) -> None:
             r.error("provenance", f"{name}:{lineno}: no [seen]/[told]/[wiki]/[guess] tag: {short!r}")
         if len(missing) > 15:
             r.error("provenance", f"{name}: ... and {len(missing) - 15} more untagged bullets")
-        for m in M.BOGUS_TAG_RE.finditer(M.strip_comments(text)):
+        for m in memlib.BOGUS_TAG_RE.finditer(memlib.strip_comments(text)):
             r.warn("provenance", f"{name}: non-standard tag {m.group(0)}; use [seen]/[told]/[wiki]/[guess]")
 
 
@@ -154,7 +162,7 @@ def handoff_session(mem: Path) -> int | None:
     p = mem / "HANDOFF.md"
     if not p.is_file():
         return None
-    m = M.HANDOFF_RE.search(p.read_text())
+    m = memlib.HANDOFF_RE.search(p.read_text())
     return int(m.group(1)) if m else None
 
 
@@ -162,7 +170,7 @@ def check_handoff(mem: Path, r: Report, phase: str, current: int | None) -> None
     p = mem / "HANDOFF.md"
     if not p.is_file():
         return
-    text = M.strip_comments(p.read_text())
+    text = memlib.strip_comments(p.read_text())
     hs = handoff_session(mem)
     if hs is None:
         r.error("handoff", 'HANDOFF.md must start with a heading like "# Handoff S042 → S043"')
@@ -171,19 +179,25 @@ def check_handoff(mem: Path, r: Report, phase: str, current: int | None) -> None
         return
     if phase == "end":
         if hs != current:
-            r.error("handoff", f"HANDOFF.md was written by {M.session_id(hs)}, not by the current session "
-                               f"{M.session_id(current)}. Rewrite it (heading '# Handoff "
-                               f"{M.session_id(current)} → {M.session_id(current + 1)}').")
+            r.error(
+                "handoff",
+                f"HANDOFF.md was written by {memlib.session_id(hs)}, not by the current session "
+                f"{memlib.session_id(current)}. Rewrite it (heading '# Handoff "
+                f"{memlib.session_id(current)} → {memlib.session_id(current + 1)}').",
+            )
         for needle in ("Save to load:", "## Doing right now", "## Next steps"):
             if needle not in text:
                 r.error("handoff", f"HANDOFF.md is missing the required '{needle}' line/section")
     elif hs < current - 1:
-        r.warn("handoff", f"HANDOFF.md is from {M.session_id(hs)}; sessions since then ended without a "
-                          f"handoff. Reconcile carefully against live state.")
+        r.warn(
+            "handoff",
+            f"HANDOFF.md is from {memlib.session_id(hs)}; sessions since then ended without a "
+            f"handoff. Reconcile carefully against live state.",
+        )
 
 
 def _diff_lines(mem: Path, rel: str) -> tuple[list[str], list[str]]:
-    out = M.git(mem, "diff", "-U0", "--no-color", "--no-ext-diff", "HEAD", "--", rel, check=False).stdout
+    out = memlib.git(mem, "diff", "-U0", "--no-color", "--no-ext-diff", "HEAD", "--", rel, check=False).stdout
     removed, added = [], []
     for line in out.splitlines():
         if line.startswith(("---", "+++")):
@@ -203,7 +217,7 @@ def lost_lines(mem: Path, rel: str) -> tuple[list[str], bool]:
     """Lines present at HEAD but gone now (moved lines don't count), and whether an ARCHIVE: line was added."""
     removed, added = _diff_lines(mem, rel)
     lost = Counter(_meaningful(removed)) - Counter(_meaningful(added))
-    archived = any(M.ARCHIVE_MARKER in a for a in added)
+    archived = any(memlib.ARCHIVE_MARKER in a for a in added)
     return list(lost.elements()), archived
 
 
@@ -215,24 +229,26 @@ def _sample(lines: list[str], n: int = 8) -> str:
 
 
 def tracked_in_head(mem: Path, rel: str) -> bool:
-    return M.git(mem, "cat-file", "-e", f"HEAD:{rel}", check=False).returncode == 0
+    return memlib.git(mem, "cat-file", "-e", f"HEAD:{rel}", check=False).returncode == 0
 
 
 def check_deletions(mem: Path, r: Report, max_deleted: int) -> None:
-    if not M.is_git_repo(mem):
+    if not memlib.is_git_repo(mem):
         r.warn("git", "memory dir is not a git repository; deletion guard skipped")
         return
-    if not M.has_head(mem):
+    if not memlib.has_head(mem):
         return
-    for rel in M.GUARDED_FILES:
+    for rel in memlib.GUARDED_FILES:
         if not tracked_in_head(mem, rel):
             continue
         lost, archived = lost_lines(mem, rel)
         if len(lost) > max_deleted and not archived:
-            r.error("deletion", f"{rel}: {len(lost)} lines removed since the last commit (limit {max_deleted}). "
-                                f"Don't delete facts: put them back (or condensed) under '## Archive', or add "
-                                f"a line 'ARCHIVE: <why>' if condensing is intended. Removed lines:"
-                                + _sample(lost))
+            r.error(
+                "deletion",
+                f"{rel}: {len(lost)} lines removed since the last commit (limit {max_deleted}). "
+                f"Don't delete facts: put them back (or condensed) under '## Archive', or add "
+                f"a line 'ARCHIVE: <why>' if condensing is intended. Removed lines:" + _sample(lost),
+            )
         elif len(lost) > max_deleted:
             r.warn("deletion", f"{rel}: {len(lost)} lines removed (ARCHIVE: marker present)")
     sessions = mem / "sessions"
@@ -242,10 +258,12 @@ def check_deletions(mem: Path, r: Report, max_deleted: int) -> None:
             if tracked_in_head(mem, rel):
                 lost, _ = lost_lines(mem, rel)
                 if lost:
-                    r.error("append-only", f"{rel}: {len(lost)} committed lines were changed or removed; "
-                                           f"session logs are append-only. Restore these lines exactly:"
-                                           + _sample(lost, 20))
-    for rel in M.REQUIRED_FILES:
+                    r.error(
+                        "append-only",
+                        f"{rel}: {len(lost)} committed lines were changed or removed; "
+                        f"session logs are append-only. Restore these lines exactly:" + _sample(lost, 20),
+                    )
+    for rel in memlib.REQUIRED_FILES:
         if tracked_in_head(mem, rel) and not (mem / rel).exists():
             r.error("deletion", f"{rel} was deleted; recreate it (the operator can restore it from git)")
 
@@ -254,11 +272,14 @@ def check_hypotheses(mem: Path, r: Report, current: int | None) -> None:
     p = mem / "hypotheses.md"
     if current is None or not p.is_file():
         return
-    for m in M.OPEN_HYPOTHESIS_RE.finditer(M.strip_comments(p.read_text())):
+    for m in memlib.OPEN_HYPOTHESIS_RE.finditer(memlib.strip_comments(p.read_text())):
         age = current - int(m.group(2))
         if age > HYPOTHESIS_MAX_AGE:
-            r.warn("hypothesis", f"{m.group(1)} has been open since {M.session_id(int(m.group(2)))} "
-                                 f"({age} sessions): test it this session or close it as dropped")
+            r.warn(
+                "hypothesis",
+                f"{m.group(1)} has been open since {memlib.session_id(int(m.group(2)))} "
+                f"({age} sessions): test it this session or close it as dropped",
+            )
 
 
 def check_misc(mem: Path, r: Report, current: int | None) -> None:
@@ -267,11 +288,16 @@ def check_misc(mem: Path, r: Report, current: int | None) -> None:
         files = [f for f in shots.iterdir() if f.is_file() and f.name != ".gitkeep"]
         size = sum(f.stat().st_size for f in files)
         if len(files) > SCREENSHOT_WARN_FILES or size > SCREENSHOT_WARN_BYTES:
-            r.warn("screenshots", f"screenshots/ holds {len(files)} files ({size // 1024} KiB); delete ones "
-                                  f"no note references")
-    if current is not None and M.compaction_due(mem, current):
-        r.warn("compaction", f"compaction due: sessions after S{M.last_compacted_session(mem):03d} are not "
-                             f"in a chapter yet (run the compaction playbook)")
+            r.warn(
+                "screenshots",
+                f"screenshots/ holds {len(files)} files ({size // 1024} KiB); delete ones no note references",
+            )
+    if current is not None and memlib.compaction_due(mem, current):
+        r.warn(
+            "compaction",
+            f"compaction due: sessions after S{memlib.last_compacted_session(mem):03d} are not "
+            f"in a chapter yet (run the compaction playbook)",
+        )
 
 
 # lessons.md: one lesson per bullet, "- WHEN <trigger>, …: <what failed> → <what to do instead> (Sxxx) [seen]"
@@ -286,10 +312,13 @@ def check_lessons(mem: Path, r: Report) -> None:
     p = mem / "lessons.md"
     if not p.is_file():
         return
-    for ln in M.content_lines(p.read_text()):
-        if M.BULLET_RE.match(ln) and not LESSON_RE.match(ln):
-            r.error("lessons", f"lessons.md: not a lesson line (want '- WHEN <trigger>, …: <what failed> → "
-                               f"<what to do instead> (Sxxx) [seen]'): {ln.strip()[:120]}")
+    for ln in memlib.content_lines(p.read_text()):
+        if memlib.BULLET_RE.match(ln) and not LESSON_RE.match(ln):
+            r.error(
+                "lessons",
+                f"lessons.md: not a lesson line (want '- WHEN <trigger>, …: <what failed> → "
+                f"<what to do instead> (Sxxx) [seen]'): {ln.strip()[:120]}",
+            )
 
 
 # CHARACTER.md, the persona written in the character-creation phase (memory-template/CHARACTER.md; interface I6).
@@ -297,31 +326,44 @@ def check_lessons(mem: Path, r: Report) -> None:
 CHARACTER_FILE = "CHARACTER.md"
 CHARACTER_DEV_HEADING = "## Character development"
 CHARACTER_HEADER = ["Name", "Race", "Class", "Background", "Deity", "Roleplay"]
-CHARACTER_SECTIONS = ["Look", "Voice", "Backstory", "Values", "Flaws", "Goals", "Won't do", "How they decide",
-                      "Character development"]
-CHARACTER_CORE_MAX_CHARS = 1600   # above CHARACTER_DEV_HEADING, comments and blank lines excluded
+CHARACTER_SECTIONS = [
+    "Look",
+    "Voice",
+    "Backstory",
+    "Values",
+    "Flaws",
+    "Goals",
+    "Won't do",
+    "How they decide",
+    "Character development",
+]
+CHARACTER_CORE_MAX_CHARS = 1600  # above CHARACTER_DEV_HEADING, comments and blank lines excluded
 ROLEPLAY_RE = re.compile(r"^Roleplay:\s*(strict|light)\s*$", re.MULTILINE | re.IGNORECASE)
 
 
 def character_split(text: str) -> tuple[str, str]:
     """(core, development section incl. its heading) of a CHARACTER.md text."""
     i = text.find("\n" + CHARACTER_DEV_HEADING)
-    return (text, "") if i < 0 else (text[:i + 1], text[i + 1:])
+    return (text, "") if i < 0 else (text[: i + 1], text[i + 1 :])
 
 
 def check_character(mem: Path, r: Report) -> None:
     p = mem / CHARACTER_FILE
     if not p.is_file():
-        if M.is_git_repo(mem) and M.has_head(mem) and tracked_in_head(mem, CHARACTER_FILE):
-            r.error("deletion", f"{CHARACTER_FILE} was deleted; it is who you play: restore it (the operator can "
-                                f"restore it from git)")
+        if memlib.is_git_repo(mem) and memlib.has_head(mem) and tracked_in_head(mem, CHARACTER_FILE):
+            r.error(
+                "deletion",
+                f"{CHARACTER_FILE} was deleted; it is who you play: restore it (the operator can restore it from git)",
+            )
         return
-    text = M.strip_comments(p.read_text())
+    text = memlib.strip_comments(p.read_text())
     for key in CHARACTER_HEADER:
         m = re.search(rf"^{key}:[ \t]*(\S.*)?$", text, re.MULTILINE)
         if not m or not m.group(1) or m.group(1).startswith("("):
-            r.error("character", f"{CHARACTER_FILE}: header line '{key}: …' is missing, empty or still the "
-                                 f"template's placeholder")
+            r.error(
+                "character",
+                f"{CHARACTER_FILE}: header line '{key}: …' is missing, empty or still the template's placeholder",
+            )
     if re.search(r"^Roleplay:", text, re.MULTILINE) and not ROLEPLAY_RE.search(text):
         r.error("character", f"{CHARACTER_FILE}: 'Roleplay:' must be strict or light")
     headings = [h.strip().lower() for h in re.findall(r"^##\s+(.+)$", text, re.MULTILINE)]
@@ -331,15 +373,20 @@ def check_character(mem: Path, r: Report) -> None:
     if headings and headings[-1] != "character development":
         r.error("character", f"{CHARACTER_FILE}: '{CHARACTER_DEV_HEADING}' must be the last section")
     core, _ = character_split(text)
-    chars = sum(len(ln) + 1 for ln in M.content_lines(core))
+    chars = sum(len(ln) + 1 for ln in memlib.content_lines(core))
     if chars > CHARACTER_CORE_MAX_CHARS:
-        r.error("budget", f"{CHARACTER_FILE}: {chars} content chars above '{CHARACTER_DEV_HEADING}' > "
-                          f"{CHARACTER_CORE_MAX_CHARS}. It is injected at every session start; shorten it.")
+        r.error(
+            "budget",
+            f"{CHARACTER_FILE}: {chars} content chars above '{CHARACTER_DEV_HEADING}' > "
+            f"{CHARACTER_CORE_MAX_CHARS}. It is injected at every session start; shorten it.",
+        )
 
 
 LEVEL_COPY_RE = re.compile(
     r"\b(?:(?:Paladin|Cleric|Wizard|Warlock|Fighter|Rogue|Ranger|Bard|Druid|Monk|Sorcerer|Barbarian)\s*\d+"
-    r"|L\d+\b|level \d+)", re.IGNORECASE)
+    r"|L\d+\b|level \d+)",
+    re.IGNORECASE,
+)
 
 
 def stale_files(mem: Path, current: int | None) -> list[tuple[str, int]]:
@@ -347,8 +394,8 @@ def stale_files(mem: Path, current: int | None) -> list[tuple[str, int]]:
     if current is None:
         return []
     out = []
-    for rel, limit in M.STALE_AFTER.items():
-        last = M.last_touched_session(mem, rel)
+    for rel, limit in memlib.STALE_AFTER.items():
+        last = memlib.last_touched_session(mem, rel)
         if last is None or last < 0:
             continue
         age = current - last
@@ -359,31 +406,37 @@ def stale_files(mem: Path, current: int | None) -> list[tuple[str, int]]:
 
 def check_staleness(mem: Path, r: Report, phase: str, current: int | None) -> None:
     for rel, age in stale_files(mem, current):
-        msg = (f"{rel} unchanged for {age} sessions (last changed in {M.session_id(current - age)}) "
-               f"while the session logs moved on. Bring it up to date from the logs and HANDOFF.md")
-        if rel == "objectives.md" and phase == "end" and age >= M.OBJECTIVES_STALE_ERROR:
+        msg = (
+            f"{rel} unchanged for {age} sessions (last changed in {memlib.session_id(current - age)}) "
+            f"while the session logs moved on. Bring it up to date from the logs and HANDOFF.md"
+        )
+        if rel == "objectives.md" and phase == "end" and age >= memlib.OBJECTIVES_STALE_ERROR:
             r.error("stale", msg + ": the current Main goal, its why and its next step (one short Edit).")
         else:
             r.warn("stale", msg + ".")
     p = mem / "PLAYTHROUGH.md"
     if p.is_file():
-        m = re.search(r"^## Party\n(.*?)(?=^## |\Z)", M.strip_comments(p.read_text()), re.MULTILINE | re.DOTALL)
+        m = re.search(r"^## Party\n(.*?)(?=^## |\Z)", memlib.strip_comments(p.read_text()), re.MULTILINE | re.DOTALL)
         if m and LEVEL_COPY_RE.search(m.group(1)):
-            r.warn("copy", "PLAYTHROUGH.md party lines hold class levels, which go stale; the game tracks them "
-                           "(snapshots/status.md, get_party). Keep roles and intentions only.")
+            r.warn(
+                "copy",
+                "PLAYTHROUGH.md party lines hold class levels, which go stale; the game tracks them "
+                "(snapshots/status.md, get_party). Keep roles and intentions only.",
+            )
 
 
 # ---------------------------------------------------------------- driver
 
 
-def lint(mem: Path, phase: str = "any", session: int | None = None,
-         max_deleted: int = M.DEFAULT_MAX_DELETED) -> Report:
+def lint(
+    mem: Path, phase: str = "any", session: int | None = None, max_deleted: int = memlib.DEFAULT_MAX_DELETED
+) -> Report:
     r = Report()
     if not mem.is_dir():
         r.error("missing", f"memory dir {mem} does not exist (create one with tools/memory/new_playthrough.py)")
         return r
     if session is None:
-        st = M.load_state(mem)
+        st = memlib.load_state(mem)
         session = st.get("current") if st.get("open") else None
     check_structure(mem, r)
     check_budgets(mem, r)
@@ -401,12 +454,16 @@ def lint(mem: Path, phase: str = "any", session: int | None = None,
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("memory_dir", nargs="?", help="memory directory (default: $BG3_MEMORY_DIR or ./memory)")
-    ap.add_argument("--phase", choices=["any", "end"], default="any",
-                    help="'end' = session wrap-up: HANDOFF must be from the current session")
+    ap.add_argument(
+        "--phase",
+        choices=["any", "end"],
+        default="any",
+        help="'end' = session wrap-up: HANDOFF must be from the current session",
+    )
     ap.add_argument("--session", type=int, help="current session number (default: from .session.json)")
-    ap.add_argument("--max-deleted", type=int, default=M.DEFAULT_MAX_DELETED)
+    ap.add_argument("--max-deleted", type=int, default=memlib.DEFAULT_MAX_DELETED)
     args = ap.parse_args(argv)
-    mem = M.resolve_memory_dir(args.memory_dir)
+    mem = memlib.resolve_memory_dir(args.memory_dir)
     r = lint(mem, args.phase, args.session, args.max_deleted)
     print(r.render(mem))
     return 0 if r.ok else 1

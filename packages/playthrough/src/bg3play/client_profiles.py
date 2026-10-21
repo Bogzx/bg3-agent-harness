@@ -19,16 +19,22 @@ from .adapters import legacy_paths
 def runner_load(path: Path) -> Any:
     """runner/profiles.py load (raises its ProfileError, a ValueError, for a bad profile)."""
     legacy_paths.ensure()
-    import profiles as RP
+    import profiles
 
-    return RP.load(path)
+    return profiles.load(path)
 
 
 def summary(name: str, p: Any) -> dict:
     ep = p.endpoint
-    return {"name": name, "client": p.client, "model": p.model, "effort": p.effort or "",
-            "provider": ep.provider if ep else None, "api_key_env": ep.api_key_env if ep else None,
-            "error": None}
+    return {
+        "name": name,
+        "client": p.client,
+        "model": p.model,
+        "effort": p.effort or "",
+        "provider": ep.provider if ep else None,
+        "api_key_env": ep.api_key_env if ep else None,
+        "error": None,
+    }
 
 
 def read_profiles(directory: Path | None, load: Callable[[Path], Any] = runner_load) -> list[dict]:
@@ -40,8 +46,17 @@ def read_profiles(directory: Path | None, load: Callable[[Path], Any] = runner_l
         try:
             rows.append(summary(f.stem, load(f)))
         except (OSError, ValueError) as e:
-            rows.append({"name": f.stem, "client": None, "model": None, "effort": "", "provider": None,
-                         "api_key_env": None, "error": str(e).replace(str(f), f.name)})
+            rows.append(
+                {
+                    "name": f.stem,
+                    "client": None,
+                    "model": None,
+                    "effort": "",
+                    "provider": None,
+                    "api_key_env": None,
+                    "error": str(e).replace(str(f), f.name),
+                }
+            )
     return rows
 
 

@@ -22,6 +22,3 @@ packages = ["src/bg3play"]
 testpaths = ["tests"]
 markers = ["unit", "integration", "e2e: browser tests of the built web app (npm run build first; -m e2e)"]
 addopts = "-m 'not e2e'"
-
-[tool.ruff]
-line-length = 120

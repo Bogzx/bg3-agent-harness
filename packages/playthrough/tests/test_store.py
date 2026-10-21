@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from bg3play import api
 from bg3play.store import RunStore, StoreError
 
@@ -71,7 +70,7 @@ def test_memory_diff_per_file(store: RunStore, git_memory: Path):
     keeper = store.memory_log(PT, rel="HANDOFF.md")[0]["sha"]
     patch = store.memory_diff(PT, "HANDOFF.md", keeper)
     assert "+- keeper line" in patch.splitlines()
-    assert store.memory_diff(PT, "objectives.md", keeper) == ""   # that commit didn't touch it
+    assert store.memory_diff(PT, "objectives.md", keeper) == ""  # that commit didn't touch it
     first = store.memory_log(PT, rel="objectives.md")[0]["sha"]
     assert "new file" in store.memory_diff(PT, "objectives.md", first)
     assert store.memory_diff(PT, "HANDOFF.md", "0" * 40) is None

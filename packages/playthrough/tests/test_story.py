@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bg3play import story as ST
+from bg3play import story
 
 DECISIONS = """# Decisions and consequences
 
@@ -76,7 +76,7 @@ Main thread: Cure the tadpole
 
 class StoryParse(unittest.TestCase):
     def test_decisions(self):
-        cards = ST.parse_decisions(DECISIONS)
+        cards = story.parse_decisions(DECISIONS)
         self.assertEqual([c["id"] for c in cards], ["D-01", "D-09"])  # the commented example is not a card
         d1 = cards[0]
         self.assertEqual(d1["title"], "Freed and recruited Shadowheart")
@@ -89,20 +89,35 @@ class StoryParse(unittest.TestCase):
         self.assertEqual(d9["choice"][1], "killed Dror Ragzlin and Minthara (S018) instead of raiding the Grove")
 
     def test_status_party_lines_of_the_current_format(self):
-        st = ST.parse_status("WHERE Upper City | gold 7166\n"
-                             "PARTY * The Emperor L12 HP 122/145 [Aid,Marked for Negation] in_combat\n"
-                             "PARTY Gale Wizard 12 (Evocation) HP 116/177+1 [Aid] in_combat\n")
-        self.assertEqual([(m["name"], m["class"], m["hp"], m["active"]) for m in st["party"]],
-                         [("The Emperor", "L12", 122, True), ("Gale", "Wizard 12 (Evocation)", 116, False)])
+        st = story.parse_status(
+            "WHERE Upper City | gold 7166\n"
+            "PARTY * The Emperor L12 HP 122/145 [Aid,Marked for Negation] in_combat\n"
+            "PARTY Gale Wizard 12 (Evocation) HP 116/177+1 [Aid] in_combat\n"
+        )
+        self.assertEqual(
+            [(m["name"], m["class"], m["hp"], m["active"]) for m in st["party"]],
+            [("The Emperor", "L12", 122, True), ("Gale", "Wizard 12 (Evocation)", 116, False)],
+        )
         self.assertEqual(st["party"][0]["statuses"], ["Aid", "Marked for Negation"])
 
     def test_status_and_inventory(self):
-        st = ST.parse_status(STATUS)
-        self.assertEqual((st["where"], st["mode"], st["gold"], st["when"]),
-                         ("Shadow-Cursed Lands", "exploring", 1093, "2026-10-10 08:50, S025"))
-        self.assertEqual(st["party"][1], {"name": "Claude", "active": True, "class": "Paladin 5 (Oath of Devotion)",
-                                          "hp": 52, "max_hp": 88, "statuses": []})
-        inv = ST.parse_inventory(INVENTORY)
+        st = story.parse_status(STATUS)
+        self.assertEqual(
+            (st["where"], st["mode"], st["gold"], st["when"]),
+            ("Shadow-Cursed Lands", "exploring", 1093, "2026-10-10 08:50, S025"),
+        )
+        self.assertEqual(
+            st["party"][1],
+            {
+                "name": "Claude",
+                "active": True,
+                "class": "Paladin 5 (Oath of Devotion)",
+                "hp": 52,
+                "max_hp": 88,
+                "statuses": [],
+            },
+        )
+        inv = story.parse_inventory(INVENTORY)
         c = inv["Claude"]
         self.assertEqual([i["slot"] for i in c["equipped"]], ["Amulet", "MeleeMainHand"])
         self.assertEqual(c["equipped"][0]["name"], "Moonlantern")
@@ -110,7 +125,7 @@ class StoryParse(unittest.TestCase):
         self.assertEqual(inv["Gale"]["notable"], [])  # plain scrolls are not notable
 
     def test_playthrough(self):
-        p = ST.parse_playthrough(PLAYTHROUGH)
+        p = story.parse_playthrough(PLAYTHROUGH)
         self.assertEqual(p["now"], "ACT 2 · Region: Last Light Inn")
         self.assertEqual(p["main_thread"], "Cure the tadpole")
         self.assertEqual(p["header"], ["Created: 2026-10-09 · Character: Claude"])  # not the "Read when" list
@@ -127,20 +142,23 @@ class StoryParse(unittest.TestCase):
             (mem / "snapshots" / "status.md").write_text(STATUS)
             (mem / "snapshots" / "inventory.md").write_text(INVENTORY)
             (mem / "chapters" / "C01_S001-S010.md").write_text(
-                "# Chapter 1\n## Story so far\n- S001: woke up\n## Lessons\n- kill the leader first\n")
-            p = ST.story_payload(mem)
+                "# Chapter 1\n## Story so far\n- S001: woke up\n## Lessons\n- kill the leader first\n"
+            )
+            p = story.story_payload(mem)
             self.assertEqual(len(p["decisions"]), 2)
             self.assertEqual(p["chapters"][0]["title"], "Chapter 1")
-            self.assertEqual(p["chapters"][0]["sections"][1], {"heading": "Lessons", "items": ["kill the leader first"]})
+            self.assertEqual(
+                p["chapters"][0]["sections"][1], {"heading": "Lessons", "items": ["kill the leader first"]}
+            )
             claude = next(m for m in p["status"]["party"] if m["name"] == "Claude")
             self.assertEqual(len(claude["equipped"]), 2)
             self.assertEqual([o["name"] for o in p["others"]], ["Wyll"])  # in camp: inventory only
-            self.assertIs(ST.story_payload(mem), p)  # unchanged files: cached
+            self.assertIs(story.story_payload(mem), p)  # unchanged files: cached
             (mem / "decisions.md").write_text(DECISIONS.replace("## Archive", "## D-10 Next (S020)\n- Choice: x\n"))
-            self.assertEqual(len(ST.story_payload(mem)["decisions"]), 3)
+            self.assertEqual(len(story.story_payload(mem)["decisions"]), 3)
 
     def test_missing_memory(self):
-        p = ST.story_payload(Path("/nonexistent/memory"))
+        p = story.story_payload(Path("/nonexistent/memory"))
         self.assertFalse(p["exists"])
         self.assertEqual((p["decisions"], p["chapters"], p["status"]["party"]), ([], [], []))
 

@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "packages" / "playthrough" / "src"))
-from bg3play import server
+from bg3play import server  # noqa: E402
 
 
 def translate(argv: list[str] | None = None) -> list[str]:

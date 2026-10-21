@@ -21,6 +21,7 @@ Cost with the game running: ffmpeg ~60 % of one core, RSS ~300 MB, +162 MiB VRAM
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -558,10 +559,8 @@ class Recorder:
         if not drop:
             return
         for s in drop:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 (self.out / s["file"]).unlink()
-            except FileNotFoundError:
-                pass
         gone = {s["file"] for s in drop}
         self.segments = [s for s in self.segments if s["file"] not in gone]
         self._write_index()

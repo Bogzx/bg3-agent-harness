@@ -1,19 +1,16 @@
 """The hooks' git calls in the memory repo must not run anything the repo itself names (FAIR-1).
 
-    python3 -m unittest discover -s tools/memory -p 'test_git_safety.py'
+python3 -m unittest discover -s tools/memory -p 'test_git_safety.py'
 """
 
 from __future__ import annotations
 
 import contextlib
 import io
-import sys
 import unittest
-from pathlib import Path
 
-from bg3play.memory import lint as L
-from bg3play.memory import memlib as M
-from bg3play.memory import session as S
+from bg3play.memory import lint, memlib, session
+
 from tests.memory._testutil import MemoryTestCase
 
 
@@ -27,12 +24,14 @@ class GitSafetyTest(MemoryTestCase):
         (self.elsewhere / "secret.txt").write_text("host file\n")
         mark = lambda name: f"sh -c 'touch {self.pwned}/{name}; cat'"  # noqa: E731
         with (self.mem / ".git" / "config").open("a") as f:
-            f.write(f"[core]\n\tfsmonitor = \"sh -c 'touch {self.pwned}/fsmonitor'\"\n"
-                    f"[filter \"evil\"]\n\tclean = \"{mark('clean')}\"\n\tsmudge = \"{mark('smudge')}\"\n"
-                    f"\trequired = true\n"
-                    f"[diff \"evil\"]\n\ttextconv = \"{mark('textconv')}\"\n"
-                    f"[diff]\n\texternal = \"sh -c 'touch {self.pwned}/extdiff'\"\n"
-                    f"[log]\n\tshowSignature = true\n[gpg]\n\tprogram = \"sh -c 'touch {self.pwned}/gpg'\"\n")
+            f.write(
+                f"[core]\n\tfsmonitor = \"sh -c 'touch {self.pwned}/fsmonitor'\"\n"
+                f'[filter "evil"]\n\tclean = "{mark("clean")}"\n\tsmudge = "{mark("smudge")}"\n'
+                f"\trequired = true\n"
+                f'[diff "evil"]\n\ttextconv = "{mark("textconv")}"\n'
+                f"[diff]\n\texternal = \"sh -c 'touch {self.pwned}/extdiff'\"\n"
+                f"[log]\n\tshowSignature = true\n[gpg]\n\tprogram = \"sh -c 'touch {self.pwned}/gpg'\"\n"
+            )
         hooks = self.mem / ".git" / "hooks"
         hooks.mkdir(exist_ok=True)
         for name in ("pre-commit", "commit-msg", "post-commit", "post-index-change", "reference-transaction"):
@@ -45,38 +44,38 @@ class GitSafetyTest(MemoryTestCase):
 
     def test_commit_lint_and_status_run_nothing_from_the_repo(self):
         self.append("npcs.md", "\n- Zevlor [seen] (S001)\n")
-        h = M.git_commit_all(self.mem, "S001")
+        h = memlib.git_commit_all(self.mem, "S001")
         self.assertTrue(h)
         self.assertEqual(self.git_log()[0], "S001")
-        self.assertIn("npcs.md", M.git(self.mem, "show", "--stat", "--format=", "HEAD").stdout)
+        self.assertIn("npcs.md", memlib.git(self.mem, "show", "--stat", "--format=", "HEAD").stdout)
         self.append("npcs.md", "\n- Alfira [seen] (S002)\n")
-        M.last_touched_session(self.mem, "npcs.md")
-        L.lint(self.mem, "any", 2)
-        M.git(self.mem, "diff", "HEAD", "--", "npcs.md")
-        M.git(self.mem, "log", "-1", "--format=%s")
+        memlib.last_touched_session(self.mem, "npcs.md")
+        lint.lint(self.mem, "any", 2)
+        memlib.git(self.mem, "diff", "HEAD", "--", "npcs.md")
+        memlib.git(self.mem, "log", "-1", "--format=%s")
         self.assert_nothing_ran()
 
     def test_core_worktree_cannot_point_elsewhere(self):
-        M.git(self.mem, "config", "core.worktree", str(self.elsewhere))
+        memlib.git(self.mem, "config", "core.worktree", str(self.elsewhere))
         self.append("npcs.md", "\n- Zevlor [seen] (S001)\n")
-        M.git_commit_all(self.mem, "S001")
-        files = M.git(self.mem, "show", "--stat", "--format=", "HEAD").stdout
+        memlib.git_commit_all(self.mem, "S001")
+        files = memlib.git(self.mem, "show", "--stat", "--format=", "HEAD").stdout
         self.assertIn("npcs.md", files)
-        self.assertNotIn("secret.txt", files)   # host files never get committed into the agent's memory
+        self.assertNotIn("secret.txt", files)  # host files never get committed into the agent's memory
 
     def test_session_end_commits_without_hooks(self):
         self.open_session(1)
         self.write("HANDOFF.md", self.good_handoff(1))
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(S.main(["end", "--memory-dir", str(self.mem), "--human-override"]), 0)
+            self.assertEqual(session.main(["end", "--memory-dir", str(self.mem), "--human-override"]), 0)
         self.assertEqual(self.git_log()[0], "S001")
         self.assert_nothing_ran()
 
     def test_driver_overrides_cover_configured_drivers(self):
-        argv = M.git_argv(self.mem, "status")
+        argv = memlib.git_argv(self.mem, "status")
         self.assertIn("filter.evil.clean=", argv)
         self.assertIn("filter.evil.required=false", argv)
-        self.assertIn("--no-ext-diff", M.git_argv(self.mem, "diff", "HEAD"))
+        self.assertIn("--no-ext-diff", memlib.git_argv(self.mem, "diff", "HEAD"))
         self.assertIn("core.hooksPath=/dev/null", argv)
         self.assertIn(f"--work-tree={self.mem.resolve()}", argv)
 

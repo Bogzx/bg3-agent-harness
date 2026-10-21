@@ -5,7 +5,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
 from bg3play.hub import Hub
 from bg3play.server import App, parser, serve
 from bg3play.store import RunStore
@@ -312,8 +311,16 @@ def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
     s = ("127.0.0.1", srv.server_address[1], hub)
     try:
         assert get_json(s, "/api/v1/supervisor")[1]["profiles"] == [
-            {"name": "codex", "client": None, "model": None, "effort": "", "provider": None, "api_key_env": None,
-             "error": "codex.toml: model must be a non-empty string"}]
+            {
+                "name": "codex",
+                "client": None,
+                "model": None,
+                "effort": "",
+                "provider": None,
+                "api_key_env": None,
+                "error": "codex.toml: model must be a non-empty string",
+            }
+        ]
         code, cfg = get_json(s, "/api/v1/playthroughs/newpt/config")
         assert code == 200 and cfg["config"]["name"] == "newpt" and cfg["sessions"] == 0
         assert get_json(s, f"/api/v1/playthroughs/{PT}/config")[1]["sessions"] == 3  # the runner's S094-S096

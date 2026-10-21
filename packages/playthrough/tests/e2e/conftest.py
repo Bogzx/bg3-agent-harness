@@ -12,7 +12,6 @@ import time
 from collections.abc import Iterator
 
 import pytest
-
 from bg3play.hub import Hub
 from bg3play.recorder import Capture, Recorder, RecordSpec
 from bg3play.server import DEFAULT_WEB, App, serve

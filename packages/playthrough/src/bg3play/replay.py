@@ -1,4 +1,3 @@
-# pyright: basic
 """The Replay screen's data: one session's events on one wall-clock axis, and the recorded video that covers it.
 
     GET /api/v1/playthroughs/<pt>/replay/<session> ->
@@ -17,7 +16,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from . import parse as P
+from . import parse
 from . import recorder as rec
 from .store import RunStore
 
@@ -55,7 +54,7 @@ def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) ->
                 continue
             if not isinstance(t, (int, float)) or not t0 <= t <= t1:
                 continue
-            a = P.action(line, result_limit=600)
+            a = parse.action(line, result_limit=600)
             if a:
                 out.append(
                     {
@@ -65,7 +64,7 @@ def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) ->
                         "args": a["args"],
                         "ms": a["ms"],
                         "ok": a["ok"],
-                        "result": P.scrub(a["result"]),
+                        "result": parse.scrub(a["result"]),
                     }
                 )
                 if len(out) >= limit:
@@ -93,7 +92,7 @@ def replay(store: RunStore, pt: str, session: str, video_dir: Path) -> dict | No
         if e["kind"] in SAY_KINDS and e["clock"]:
             t = clock_to_epoch(e["clock"], t0)
             if t is not None and t <= t1 + 60:
-                events.append({"t": t, "kind": "say", "say": e["kind"], "text": P.scrub(e["text"])})
+                events.append({"t": t, "kind": "say", "say": e["kind"], "text": parse.scrub(e["text"])})
     for c in store.memory_log(pt, 200):
         if t0 <= c["t"] <= t1 + 900:  # the keeper commits after the session
             events.append({"t": c["t"], "kind": "memory", "subject": c["subject"], "sha": c["sha"]})

@@ -21,8 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import api
-from . import parse as P
+from . import api, parse
 from .store import RunStore
 from .tail import Tailer
 
@@ -46,10 +45,10 @@ class ActionsFeed:
         out: list[tuple[str, Any]] = [("actions_reset", {})] if reset and self.started else []
         self.started = True
         for ln in lines:
-            a = P.action(ln)
+            a = parse.action(ln)
             if a:
-                out.append(("action", dict(a, result=P.scrub(a["result"]))))
-                st = P.status_text(a["result"])
+                out.append(("action", dict(a, result=parse.scrub(a["result"]))))
+                st = parse.status_text(a["result"])
                 if st and st["party"]:
                     out.append(("party", dict(st, t=a["t"], source=a["tool"])))
         return out
@@ -75,9 +74,9 @@ class LogFeed:
         lines, _reset = self.tail.lines()
         sid = self.path.stem if self.path else None
         for ln in lines:
-            e = P.log_line(ln)
+            e = parse.log_line(ln)
             if e and e["kind"] in api.LOG_KINDS_SHOWN:
-                out.append(("log", dict(e, text=P.scrub(e["text"]), playthrough=pt, session=sid)))
+                out.append(("log", dict(e, text=parse.scrub(e["text"]), playthrough=pt, session=sid)))
         return out
 
 
@@ -184,7 +183,7 @@ class Hub:
         while not stop.is_set():
             try:
                 self.poll()
-            except Exception as e:  # noqa: BLE001 - shown to viewers as an event; the hub keeps serving
+            except Exception as e:
                 self.publish("hub_error", {"error": f"{type(e).__name__}: {e}"[:300]})
                 stop.wait(10 * interval)
             stop.wait(interval)

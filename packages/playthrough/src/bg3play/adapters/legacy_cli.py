@@ -20,8 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any, Protocol
 
-from .. import client_profiles as CP
-from .. import config as C
+from .. import client_profiles, config
 from ..supervisor import SessionRequest, SessionResult, SupervisorError
 
 CRASH_REASONS = ("crash", "hang", "aborted")
@@ -36,16 +35,20 @@ def spawn(args: list[str], cwd: Path, log: IO[bytes]) -> Proc:
     return subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
 
 
-def profile_agent(directory: Path, name: str, load: Callable[[Path], Any] = CP.runner_load) -> C.Agent:
+def profile_agent(
+    directory: Path, name: str, load: Callable[[Path], Any] = client_profiles.runner_load
+) -> config.Agent:
     """client/model/effort of a client profile (runner/profiles.py checks it)."""
     try:
-        p = CP.load_one(directory, name, load)
+        p = client_profiles.load_one(directory, name, load)
     except (OSError, ValueError) as e:
         raise SupervisorError(f"client profile {name}: {e}") from e
-    return C.Agent(profile=name, client=p.client, model=p.model, effort=p.effort or "")
+    return config.Agent(profile=name, client=p.client, model=p.model, effort=p.effort or "")
 
 
-def play_args(python: str, repo: Path, req: SessionRequest, agent: C.Agent, profiles: Path | None = None) -> list[str]:
+def play_args(
+    python: str, repo: Path, req: SessionRequest, agent: config.Agent, profiles: Path | None = None
+) -> list[str]:
     """The play.py command line for one session (pure). A pi agent runs from its profile file under `profiles`."""
     cfg = req.config
     m = cfg.session.minutes
@@ -125,13 +128,13 @@ class LegacyCli:
         python: str = "python3",
         spawn_fn: Callable[[list[str], Path, IO[bytes]], Proc] = spawn,
         poll_s: float = 1.0,
-        load: Callable[[Path], Any] = CP.runner_load,
+        load: Callable[[Path], Any] = client_profiles.runner_load,
     ):
         self.repo, self.runtime, self.python, self.spawn, self.poll_s = repo, runtime, python, spawn_fn, poll_s
         self.load = load
         self.profiles = profiles if profiles is not None else repo / "profiles"
 
-    def agent(self, cfg: C.PlaythroughConfig) -> C.Agent:
+    def agent(self, cfg: config.PlaythroughConfig) -> config.Agent:
         if cfg.agent.profile:
             return profile_agent(self.profiles, cfg.agent.profile, self.load)
         return cfg.agent

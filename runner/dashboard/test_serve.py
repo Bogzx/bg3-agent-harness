@@ -15,7 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-import serve as SV
+import serve as SV  # noqa: E402
 
 
 def flags(args: list[str]) -> dict:

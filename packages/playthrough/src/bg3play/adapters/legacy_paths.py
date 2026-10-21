@@ -7,7 +7,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[5]   # packages/playthrough/src/bg3play/adapters
+REPO = Path(__file__).resolve().parents[5]  # packages/playthrough/src/bg3play/adapters
 
 
 def ensure() -> None:

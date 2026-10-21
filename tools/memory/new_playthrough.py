@@ -1,5 +1,5 @@
-"""Moved to packages/playthrough: bg3play.memory.new_playthrough. This shim keeps `import new_playthrough` and the old path
-working; the module object is the package's, so mock.patch on it patches the code that runs."""
+"""Moved to packages/playthrough: bg3play.memory.new_playthrough. This shim keeps `import new_playthrough` and the
+old path working; the module object is the package's, so mock.patch on it patches the code that runs."""
 import sys
 from pathlib import Path
 

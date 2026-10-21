@@ -4,10 +4,8 @@ import threading
 from pathlib import Path
 
 import pytest
-
-from bg3play import config as C
-from bg3play import supervisor as S
-from bg3play.adapters import legacy_cli as L
+from bg3play import config, supervisor
+from bg3play.adapters import legacy_cli
 from bg3play.supervisor import SessionRequest, SessionResult, Supervisor, SupervisorError
 
 
@@ -53,10 +51,10 @@ def make(tmp_path: Path, script, hours=3.0, minutes=60.0, keeper=True):
     clock, log, events = Clock(), [], []
     pts = tmp_path / "playthroughs"
     (pts / "ilse").mkdir(parents=True)
-    cfg = C.validate(
+    cfg = config.validate(
         {"v": 1, "name": "ilse", "session": {"minutes": minutes, "hours": hours}, "keeper": {"enabled": keeper}}
     )
-    C.save(pts / "ilse", cfg)
+    config.save(pts / "ilse", cfg)
     runner = FakeRunner(clock, script, log)
     sup = Supervisor(runner, FakeKeeper(log), tmp_path / "runtime", pts, clock, events.append)
     return sup, runner, log, events
@@ -147,8 +145,8 @@ def test_a_runner_exception_is_reported(tmp_path: Path):
 
 def test_launch_config_and_saved_on_start(tmp_path: Path):
     sup, runner, _, _ = make(tmp_path, [("error", None)])
-    cfg = S.launch_config(
-        C.load(tmp_path / "playthroughs" / "ilse"),
+    cfg = supervisor.launch_config(
+        config.load(tmp_path / "playthroughs" / "ilse"),
         {
             "profile": "codex",
             "brief": "a dwarf cleric",
@@ -164,32 +162,34 @@ def test_launch_config_and_saved_on_start(tmp_path: Path):
         45.0,
         False,
     )
-    with pytest.raises(C.ConfigError, match="unknown launch field"):
-        S.launch_config(cfg, {"api_key": "x"})
-    with pytest.raises(C.ConfigError, match="difficulty"):
-        S.launch_config(cfg, {"difficulty": "Nightmare"})
+    with pytest.raises(config.ConfigError, match="unknown launch field"):
+        supervisor.launch_config(cfg, {"api_key": "x"})
+    with pytest.raises(config.ConfigError, match="difficulty"):
+        supervisor.launch_config(cfg, {"difficulty": "Nightmare"})
     sup.start("ilse", wait=True, cfg=cfg)
-    assert C.load(tmp_path / "playthroughs" / "ilse") == cfg and runner.requests[0].record is False
+    assert config.load(tmp_path / "playthroughs" / "ilse") == cfg and runner.requests[0].record is False
 
 
 # ------------------------------------------------------------ the legacy CLI adapter
 
 
 def req(**cfg) -> SessionRequest:
-    return SessionRequest("ilse", 1, C.validate({"v": 1, "name": "ilse", **cfg}), resume=False)
+    return SessionRequest("ilse", 1, config.validate({"v": 1, "name": "ilse", **cfg}), resume=False)
 
 
 def test_play_args():
-    a = L.play_args("python3", Path("/repo"), req(session={"minutes": 45}), C.Agent(client="claude", model="opus"))
+    a = legacy_cli.play_args(
+        "python3", Path("/repo"), req(session={"minutes": 45}), config.Agent(client="claude", model="opus")
+    )
     assert a[:4] == ["python3", "/repo/runner/play.py", "run", "--playthrough"]
     s = " ".join(a)
     assert "--hours 0.75 --session-minutes 45 --client claude --model opus" in s and "--effort" not in a
     assert "--keeper-effort low --keeper-minutes 5" in s
-    a = L.play_args(
+    a = legacy_cli.play_args(
         "py",
         Path("/r"),
         req(difficulty="Balanced", keeper={"enabled": False}, character={"brief": "a bard", "roleplay": "light"}),
-        C.Agent(client="codex", model="gpt", effort="high"),
+        config.Agent(client="codex", model="gpt", effort="high"),
     )
     s = " ".join(a)
     assert "--effort high" in s and "--no-keeper" in a and "--difficulty Balanced" in s
@@ -199,41 +199,44 @@ def test_play_args():
 def test_profile_agent(tmp_path: Path):
     (tmp_path / "codex.toml").write_text('client = "codex"\nmodel = "gpt-5.5"\neffort = "high"\n')
     (tmp_path / "pi.toml").write_text('client = "pi"\nmodel = "x"\n[endpoint]\nprovider = "openrouter"\n')
-    assert L.profile_agent(tmp_path, "codex") == C.Agent("codex", "codex", "gpt-5.5", "high")
-    with pytest.raises(SupervisorError, match="pi.toml"):   # runner/profiles.py: no base_url, no model_info
-        L.profile_agent(tmp_path, "pi")
+    assert legacy_cli.profile_agent(tmp_path, "codex") == config.Agent("codex", "codex", "gpt-5.5", "high")
+    with pytest.raises(SupervisorError, match=r"pi\.toml"):  # runner/profiles.py: no base_url, no model_info
+        legacy_cli.profile_agent(tmp_path, "pi")
     with pytest.raises(SupervisorError, match="missing"):
-        L.profile_agent(tmp_path, "missing")
+        legacy_cli.profile_agent(tmp_path, "missing")
 
 
 def test_pi_profile_runs_from_its_file_with_a_cost_cap():
     repo_profiles = Path(__file__).resolve().parents[3] / "profiles"
-    agent = L.profile_agent(repo_profiles, "deepseek-flash")
+    agent = legacy_cli.profile_agent(repo_profiles, "deepseek-flash")
     assert (agent.client, agent.model, agent.effort) == ("pi", "deepseek-flash", "high")
     with pytest.raises(SupervisorError, match="cost cap"):
-        L.play_args("py", Path("/r"), req(), agent, repo_profiles)
-    a = L.play_args("py", Path("/r"), req(session={"max_cost_usd": 2.5}, keeper={"enabled": True}), agent,
-                    repo_profiles)
+        legacy_cli.play_args("py", Path("/r"), req(), agent, repo_profiles)
+    a = legacy_cli.play_args(
+        "py", Path("/r"), req(session={"max_cost_usd": 2.5}, keeper={"enabled": True}), agent, repo_profiles
+    )
     assert a[a.index("--profile") + 1] == str(repo_profiles / "deepseek-flash.toml")
     assert a[a.index("--max-cost") + 1] == "2.5" and "--no-keeper" in a
     assert "--client" not in a and "--keeper-effort" not in a
     with pytest.raises(SupervisorError, match="pick a pi client profile"):
-        L.play_args("py", Path("/r"), req(session={"max_cost_usd": 1.0}), C.Agent(client="pi", model="x"))
-    claude = L.play_args("py", Path("/r"), req(session={"max_cost_usd": 3.0}), C.Agent())
+        legacy_cli.play_args("py", Path("/r"), req(session={"max_cost_usd": 1.0}), config.Agent(client="pi", model="x"))
+    claude = legacy_cli.play_args("py", Path("/r"), req(session={"max_cost_usd": 3.0}), config.Agent())
     assert claude[claude.index("--max-cost") + 1] == "3" and "--client" in claude
-    assert "--max-cost" not in L.play_args("py", Path("/r"), req(), C.Agent())   # no cap: today's command line
+    assert "--max-cost" not in legacy_cli.play_args(
+        "py", Path("/r"), req(), config.Agent()
+    )  # no cap: today's command line
 
 
 def test_result_from():
     e = {"session": "S004", "reason": "exited", "progress": True, "started": 1.0, "ended": 2.0}
-    assert L.result_from(e, None, 0, False) == SessionResult(
+    assert legacy_cli.result_from(e, None, 0, False) == SessionResult(
         "S004", "ok", True, 1.0, 2.0, detail="reason=exited exit=0"
     )
-    assert L.result_from(e, None, 0, True).outcome == "stopped"
-    assert L.result_from(dict(e, reason="crash"), None, 0, False).outcome == "crash"
-    assert L.result_from(e, None, 3, False).outcome == "crash"
-    assert L.result_from(e, e, 0, False).outcome == "error"  # no new session
-    assert L.result_from(None, None, 2, False).detail == "play.py exited 2 without a session"
+    assert legacy_cli.result_from(e, None, 0, True).outcome == "stopped"
+    assert legacy_cli.result_from(dict(e, reason="crash"), None, 0, False).outcome == "crash"
+    assert legacy_cli.result_from(e, None, 3, False).outcome == "crash"
+    assert legacy_cli.result_from(e, e, 0, False).outcome == "error"  # no new session
+    assert legacy_cli.result_from(None, None, 2, False).detail == "play.py exited 2 without a session"
 
 
 class FakeProc:
@@ -262,14 +265,14 @@ def test_legacy_run_session_soft_stop(tmp_path: Path):
         assert (runtime / "STOP").exists()  # the soft stop reached play.py before it exited
         h = json.loads(rj.read_text())["history"]
         rj.write_text(
-            json.dumps({"history": h + [{"kind": "play", "session": "S002", "reason": "exited", "progress": False}]})
+            json.dumps({"history": [*h, {"kind": "play", "session": "S002", "reason": "exited", "progress": False}]})
         )
 
     def spawn(args, cwd, log):
         spawned.append((args, cwd))
         return FakeProc(finish, timeouts=1)
 
-    cli = L.LegacyCli(tmp_path / "repo", runtime, spawn_fn=spawn, poll_s=0)
+    cli = legacy_cli.LegacyCli(tmp_path / "repo", runtime, spawn_fn=spawn, poll_s=0)
     stop = threading.Event()
     stop.set()
     res = cli.run_session(req(), stop)

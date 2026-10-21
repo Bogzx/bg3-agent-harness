@@ -8,7 +8,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
 from bg3play.dashboard import Dashboard
 from bg3play.game import GameWatch, ScreenWatch, Viewers
 from bg3play.hub import Hub
@@ -27,11 +26,13 @@ def root(tmp_path: Path) -> Path:
     (mem / "sessions" / "S001.md").write_text("# S001\n- 10:00 [quest] hi\n")
     rt.mkdir()
     (rt / "actions.jsonl").write_text(
-        json.dumps({"t": 1, "tool": "get_status", "args": {}, "ms": 5, "result": "WHERE x"}) + "\n")
+        json.dumps({"t": 1, "tool": "get_status", "args": {}, "ms": 5, "result": "WHERE x"}) + "\n"
+    )
     (rt / "runner.status.json").write_text(json.dumps({"playthrough": "run1", "deadline": 4e9}))
     (rt / "thermal.log").write_text(
         "2026-10-17 16:25:39 cpu=51 acpi=51 amdgpu=49 nvme=36 nv=[47,8.09,210,0,0x0000000000000001] "
-        "profile=balanced load=0.21 bg3=down\n")
+        "profile=balanced load=0.21 bg3=down\n"
+    )
     logs = rt / "sessions" / "run1"
     logs.mkdir(parents=True)
     (logs / "S001.log").write_text("[say] I will head north.\n[tool] get_status {}\n")
@@ -80,11 +81,11 @@ def test_state(server):
     assert "Handoff S001" in s["memory"]["handoff"]
     assert s["agent_log"]["path_id"] == "S001.log"
     assert dash.viewers.watching(dash.clock())
-    th = s["thermal"]   # runtime/thermal.log's last line (runner/ramwatch.py or thermal_log.sh)
+    th = s["thermal"]  # runtime/thermal.log's last line (runner/ramwatch.py or thermal_log.sh)
     assert (th["cpu"], th["gpu"], th["pause_cpu_c"], th["pause_gpu_c"]) == (51, 47, 92, 85)
     assert "profile=balanced" in th["line"]
     assert s["game"] == {"reachable": False, "error": "not polled yet"}
-    dash.game.poll(dash.clock())   # what the game thread does while someone watches
+    dash.game.poll(dash.clock())  # what the game thread does while someone watches
     s = get_json(server, "/api/state")
     assert s["game"]["reachable"] and s["game"]["status"]["party"][0]["name"] == STATUS["party"][0]["name"]
 
@@ -105,7 +106,8 @@ def test_agentlog(server):
 
 def test_story(server, root):
     (root / "playthroughs" / "run1" / "memory" / "decisions.md").write_text(
-        "## Decisions\n\n## D-01 Freed Shadowheart (S002)\n- Choice: opened the pod\n")
+        "## Decisions\n\n## D-01 Freed Shadowheart (S002)\n- Choice: opened the pod\n"
+    )
     for path in ("/api/story", "/api/v1/playthroughs/run1/story"):
         r = get_json(server, path)
         assert r["exists"]
@@ -113,7 +115,7 @@ def test_story(server, root):
         assert r["chapters"] == []
     v1 = get_json(server, "/api/v1/playthroughs/run1/story")
     assert (v1["v"], v1["playthrough"]) == (1, "run1")
-    assert v1["overview"] == get_json(server, "/api/story")["playthrough"]   # PLAYTHROUGH.md, renamed in v1
+    assert v1["overview"] == get_json(server, "/api/story")["playthrough"]  # PLAYTHROUGH.md, renamed in v1
 
 
 def test_series_moved(server):

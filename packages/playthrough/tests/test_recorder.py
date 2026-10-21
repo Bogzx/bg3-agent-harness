@@ -6,8 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-
-from bg3play import recorder as R
+from bg3play import recorder
 from bg3play.recorder import Capture, Recorder, RecordSpec
 
 FAKE = str(Path(__file__).parent / "bin" / "fake-ffmpeg")
@@ -25,7 +24,7 @@ class Clock:
 
 
 def test_args_window_capture_nvenc(tmp_path: Path):
-    a = R.ffmpeg_args(RecordSpec(tmp_path), Capture(":1", "0x2a00007"), "rec-100")
+    a = recorder.ffmpeg_args(RecordSpec(tmp_path), Capture(":1", "0x2a00007"), "rec-100")
     s = " ".join(a)
     assert a[0] == "ffmpeg" and "-f x11grab -framerate 15 -draw_mouse 0 -window_id 0x2a00007 -i :1" in s
     assert "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720" in s and "fps=15," in s
@@ -38,7 +37,9 @@ def test_args_window_capture_nvenc(tmp_path: Path):
 
 
 def test_args_full_display_x264_no_live(tmp_path: Path):
-    a = R.ffmpeg_args(RecordSpec(tmp_path, encoder="libx264", live=False, segment_s=60, fps=10), Capture(":0"), "p")
+    a = recorder.ffmpeg_args(
+        RecordSpec(tmp_path, encoder="libx264", live=False, segment_s=60, fps=10), Capture(":0"), "p"
+    )
     s = " ".join(a)
     assert "-window_id" not in a and "-i :0" in s and "-framerate 10" in s
     assert "-c:v libx264 -preset ultrafast" in s and "-segment_time 60" in s
@@ -47,27 +48,27 @@ def test_args_full_display_x264_no_live(tmp_path: Path):
 
 def test_args_source_override_and_bad_encoder(tmp_path: Path):
     spec = RecordSpec(tmp_path, source=("-f", "lavfi", "-i", "testsrc"), duration_s=3)
-    a = R.ffmpeg_args(spec, Capture(), "p")
+    a = recorder.ffmpeg_args(spec, Capture(), "p")
     assert "x11grab" not in a and a[a.index("-t") + 1 : a.index("-t") + 6] == ["3", "-f", "lavfi", "-i", "testsrc"]
     with pytest.raises(ValueError):
-        R.ffmpeg_args(RecordSpec(tmp_path, encoder="vp9"), Capture(), "p")
+        recorder.ffmpeg_args(RecordSpec(tmp_path, encoder="vp9"), Capture(), "p")
 
 
 # ------------------------------------------------------------ index, cap, locate
 
 
 def test_segment_list_and_run_rows():
-    listed = R.parse_segment_list("rec-1-0000.mp4,0.000000,600.000000\n/x/rec-1-0001.mp4,600.0,1200.0\nbad\n")
+    listed = recorder.parse_segment_list("rec-1-0000.mp4,0.000000,600.000000\n/x/rec-1-0001.mp4,600.0,1200.0\nbad\n")
     assert listed == [("rec-1-0000.mp4", 0.0, 600.0), ("rec-1-0001.mp4", 600.0, 1200.0)]
     files = ["rec-1-0002.mp4", "rec-1-0000.mp4", "rec-1-0001.mp4", "rec-2-0000.mp4", "rec-1.csv"]
-    rows = R.run_segments("rec-1", 1000.0, listed, files, {"rec-1-0002.mp4": 7}, None)
+    rows = recorder.run_segments("rec-1", 1000.0, listed, files, {"rec-1-0002.mp4": 7}, None)
     assert [(r["file"], r["start"], r["end"]) for r in rows] == [
         ("rec-1-0000.mp4", 1000.0, 1600.0),
         ("rec-1-0001.mp4", 1600.0, 2200.0),
         ("rec-1-0002.mp4", 2200.0, None),
     ]
     assert rows[2]["bytes"] == 7 and rows[0]["bytes"] == 0
-    crashed = R.run_segments("rec-1", 1000.0, [], ["rec-1-0000.mp4"], {}, 1042.5)
+    crashed = recorder.run_segments("rec-1", 1000.0, [], ["rec-1-0000.mp4"], {}, 1042.5)
     assert crashed[0]["end"] == 1042.5
 
 
@@ -77,16 +78,16 @@ def seg(f: str, start: float, end: float | None, n: int) -> dict:
 
 def test_over_cap_deletes_oldest_finished_only():
     segs = [seg("c", 30, None, 50), seg("a", 10, 20, 40), seg("b", 20, 30, 40)]
-    assert R.over_cap(segs, 200) == []
-    assert [s["file"] for s in R.over_cap(segs, 100)] == ["a"]
-    assert [s["file"] for s in R.over_cap(segs, 10)] == ["a", "b"]  # never the open one
+    assert recorder.over_cap(segs, 200) == []
+    assert [s["file"] for s in recorder.over_cap(segs, 100)] == ["a"]
+    assert [s["file"] for s in recorder.over_cap(segs, 10)] == ["a", "b"]  # never the open one
 
 
 def test_locate():
     segs = [seg("b", 600, None, 1), seg("a", 0, 600, 1)]
-    assert R.locate(segs, -1) is None
-    assert R.locate(segs, 12.5)[0]["file"] == "a" and R.locate(segs, 12.5)[1] == 12.5
-    assert R.locate(segs, 600)[0]["file"] == "b" and R.locate(segs, 9999)[1] == 9399
+    assert recorder.locate(segs, -1) is None
+    assert recorder.locate(segs, 12.5)[0]["file"] == "a" and recorder.locate(segs, 12.5)[1] == 12.5
+    assert recorder.locate(segs, 600)[0]["file"] == "b" and recorder.locate(segs, 9999)[1] == 9399
 
 
 # ------------------------------------------------------------ mjpeg, probe, guard
@@ -95,7 +96,7 @@ def test_locate():
 def test_mjpeg_parser_split_chunks():
     part = b"--ffmpeg\r\nContent-type: image/jpeg\r\nContent-length: %d\r\n\r\n%s\r\n"
     data = part % (3, b"abc") + part % (5, b"hello")
-    p = R.MjpegParser()
+    p = recorder.MjpegParser()
     frames = []
     for i in range(0, len(data), 7):
         frames += p.feed(data[i : i + 7])
@@ -103,7 +104,7 @@ def test_mjpeg_parser_split_chunks():
 
 
 def test_live_frame_wait():
-    lf = R.LiveFrame()
+    lf = recorder.LiveFrame()
     assert lf.get() == (0, None)
     lf.put(b"x")
     assert lf.get(after=0, timeout=5) == (1, b"x")
@@ -117,43 +118,43 @@ def test_find_window():
      0x2a00007 "Baldur's Gate 3 (4.1.1.6758295)": ("bg3" "bg3")  1920x1080+0+0  +0+0
      0x2a00003 "Baldur's Gate 3": ("bg3" "bg3")  10x10+0+0  +0+0
     """
-    assert R.find_window(tree) == "0x2a00007"
-    assert R.find_window('0x1 "Konsole": ()  10x10+0+0') is None
+    assert recorder.find_window(tree) == "0x2a00007"
+    assert recorder.find_window('0x1 "Konsole": ()  10x10+0+0') is None
 
 
 def test_game_probe_modes():
     tree = '0x5 "Baldur\'s Gate 3": ()  1920x1080+0+0'
     up = {"v": False}
-    probe = R.game_probe(":1", "window", running=lambda: up["v"], tree=lambda d: tree)
+    probe = recorder.game_probe(":1", "window", running=lambda: up["v"], tree=lambda d: tree)
     assert probe() is None
     up["v"] = True
     assert probe() == Capture(":1", "0x5")
-    assert R.game_probe(":1", "window", running=lambda: True, tree=lambda d: "")() is None  # window not up yet
-    assert R.game_probe(":2", "display", running=lambda: True, tree=lambda d: "")() == Capture(":2")
+    assert recorder.game_probe(":1", "window", running=lambda: True, tree=lambda d: "")() is None  # window not up yet
+    assert recorder.game_probe(":2", "display", running=lambda: True, tree=lambda d: "")() == Capture(":2")
 
 
 def test_game_running(tmp_path: Path):
     (tmp_path / "123").mkdir()
     (tmp_path / "123" / "comm").write_text("bash\n")
-    assert not R.game_running(tmp_path)
+    assert not recorder.game_running(tmp_path)
     (tmp_path / "456").mkdir()
     (tmp_path / "456" / "comm").write_text("bg3\n")
-    assert R.game_running(tmp_path)
+    assert recorder.game_running(tmp_path)
 
 
 def test_thermal_and_meminfo_parsers():
     line = "2026-10-21 22:44:18 cpu=80 acpi=80 amdgpu=71 nvme=51 nv=[70,34.96,1155,100,0x4] profile=balanced"
-    assert R.thermal_reading(line) == (80, 70)
-    assert R.thermal_reading("2026-10-21 22:44:18 cpu=- acpi=- amdgpu=55 nvme=- nv=[] profile=") == (None, 55)
-    assert R.thermal_reading("garbage") == (None, None)
-    assert R.mem_available_mb("MemTotal: 16000000 kB\nMemAvailable:    2048000 kB\n") == 2000
+    assert recorder.thermal_reading(line) == (80, 70)
+    assert recorder.thermal_reading("2026-10-21 22:44:18 cpu=- acpi=- amdgpu=55 nvme=- nv=[] profile=") == (None, 55)
+    assert recorder.thermal_reading("garbage") == (None, None)
+    assert recorder.mem_available_mb("MemTotal: 16000000 kB\nMemAvailable:    2048000 kB\n") == 2000
 
 
 def test_resource_guard(tmp_path: Path):
     mem, therm = tmp_path / "meminfo", tmp_path / "thermal.log"
     mem.write_text("MemAvailable: 4096000 kB\n")
     clock = Clock(time.time())
-    guard = R.resource_guard(therm, R.GuardLimits(), clock, mem)
+    guard = recorder.resource_guard(therm, recorder.GuardLimits(), clock, mem)
     assert guard() is None  # no thermal log
     therm.write_text("old\n2026-10-21 22:44:18 cpu=91 acpi=80 amdgpu=71 nvme=51 nv=[70,1,1,1,0x4] profile=b\n")
     assert guard() == "heat: cpu 91 C >= 90"
@@ -208,7 +209,7 @@ def test_recorder_follows_the_game_and_indexes(tmp_path: Path, fake_env):
     clock.t = 3000.0
     rec.poll()  # game gone: SIGTERM, the fake lists the last segment like ffmpeg does
     assert rec.run is None and rec.reason == "game not running"
-    assert rec.segments[-1]["end"] == 2205.0 and R.read_index(tmp_path / "video")[-1]["end"] == 2205.0
+    assert rec.segments[-1]["end"] == 2205.0 and recorder.read_index(tmp_path / "video")[-1]["end"] == 2205.0
 
 
 def test_recorder_restarts_a_crashed_ffmpeg_with_backoff(tmp_path: Path, fake_env):
@@ -251,7 +252,7 @@ def test_recorder_disk_cap_deletes_oldest(tmp_path: Path, fake_env):
     rec.poll()
     out = tmp_path / "video"
     assert sorted(f.name for f in out.glob("*.mp4")) == ["rec-1000-0002.mp4", "rec-1000-0003.mp4"]
-    assert [s["file"] for s in R.read_index(out)] == ["rec-1000-0002.mp4", "rec-1000-0003.mp4"]
+    assert [s["file"] for s in recorder.read_index(out)] == ["rec-1000-0002.mp4", "rec-1000-0003.mp4"]
     rec.stop()
 
 
@@ -318,7 +319,7 @@ def test_real_ffmpeg_writes_a_playable_mp4(tmp_path: Path):
     rec.poll()
     assert rec.run.proc.wait(60) == 0
     rec.poll()
-    segs = R.read_index(out)
+    segs = recorder.read_index(out)
     assert [s["file"] for s in segs] == [f"{segs[0]['run']}-0000.mp4", f"{segs[0]['run']}-0001.mp4"]
     assert all(s["end"] is not None for s in segs) and rec.live.seq >= 3
     assert rec.live.data[:2] == b"\xff\xd8"

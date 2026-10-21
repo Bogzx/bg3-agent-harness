@@ -230,8 +230,9 @@ def to_dict(cfg: PlaythroughConfig) -> dict:
 
 
 def parse_profile_json(text: str) -> dict:
-    """runner/play.py load_profile on the file's text (play.py still has a copy: harness-owned): {"character": {"brief", "name"?,
-    "constraints"?, "roleplay"}, "difficulty"?}. Broken JSON, or a character without a brief, means no character."""
+    """runner/play.py load_profile on the file's text (play.py still has a copy: harness-owned):
+    {"character": {"brief", "name"?, "constraints"?, "roleplay"}, "difficulty"?}.
+    Broken JSON, or a character without a brief, means no character."""
     try:
         raw = json.loads(text)
     except ValueError:

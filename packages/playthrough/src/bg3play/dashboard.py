@@ -18,23 +18,37 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import live as L
-from . import story as STORY
+from . import live, story
 from .game import GameWatch, ScreenWatch, Viewers
 from .store import RunStore
 from .tail import read_new
 
 LIVE_V1 = ("/api/v1/latency", "/api/v1/progress", "/api/v1/goals")
 SERIES_MOVED = "The series view moves to the benchmark package (bg3bench); until then run runner/play.py --runs."
-SERIES_HTML = (b"<!doctype html><meta charset=utf-8><title>BG3 AI Series</title>"
-               b"<p>" + SERIES_MOVED.encode() + b"</p>")
-RUNNER_KEYS = ("session", "started", "deadline", "hard_stop", "runner_pid", "run_end", "updated", "claude_session",
-               "check_all")
+SERIES_HTML = b"<!doctype html><meta charset=utf-8><title>BG3 AI Series</title><p>" + SERIES_MOVED.encode() + b"</p>"
+RUNNER_KEYS = (
+    "session",
+    "started",
+    "deadline",
+    "hard_stop",
+    "runner_pid",
+    "run_end",
+    "updated",
+    "claude_session",
+    "check_all",
+)
 
 
 class Dashboard:
-    def __init__(self, store: RunStore, game: GameWatch | None, screen: ScreenWatch | None, viewers: Viewers,
-                 memory_dir: Path | None = None, clock: Callable[[], float] = time.time):
+    def __init__(
+        self,
+        store: RunStore,
+        game: GameWatch | None,
+        screen: ScreenWatch | None,
+        viewers: Viewers,
+        memory_dir: Path | None = None,
+        clock: Callable[[], float] = time.time,
+    ):
         self.store, self.game, self.screen, self.viewers = store, game, screen, viewers
         self.memory_override, self.clock = memory_dir, clock
 
@@ -69,34 +83,37 @@ class Dashboard:
         mem = self.memory()
         game, events = self._game()
         screen, _ = self._screen()
-        log = L.resolve_agent_log(rt, runner)
+        log = live.resolve_agent_log(rt, runner)
         return {
             "now": self.clock(),
             "playthrough": runner.get("playthrough"),
             "runner": {k: runner.get(k) for k in RUNNER_KEYS if k in runner},
-            "clock": L.session_clock(runner, L.read_json(rt / "session.json"), L.read_json(mem / ".session.json"),
-                                     now=self.clock()),
+            "clock": live.session_clock(
+                runner, live.read_json(rt / "session.json"), live.read_json(mem / ".session.json"), now=self.clock()
+            ),
             "game": game,
             "events": events,
             "screen": screen,
-            "memory": L.memory_view(mem),
+            "memory": live.memory_view(mem),
             "agent_log": {"path_id": log.name if log else None},
-            "thermal": L.thermal_view(rt / "thermal.log"),
+            "thermal": live.thermal_view(rt / "thermal.log"),
         }
 
     def live(self) -> dict:
         s = self.state()
-        return {"v": 1, **{k: s[k] for k in ("now", "playthrough", "runner", "clock", "game", "events", "screen",
-                                            "thermal")}}
+        return {
+            "v": 1,
+            **{k: s[k] for k in ("now", "playthrough", "runner", "clock", "game", "events", "screen", "thermal")},
+        }
 
     def stats(self, what: str) -> dict:
         runner, rt = self.store.status(), self.store.runtime
-        fn = {"latency": L.latency_payload, "progress": L.progress_payload, "goals": L.goals_payload}[what]
+        fn = {"latency": live.latency_payload, "progress": live.progress_payload, "goals": live.goals_payload}[what]
         return fn(rt, runner, now=self.clock())
 
     def story(self, pt: str) -> dict:
         """v1: story_payload with its PLAYTHROUGH.md overview under "overview" ("playthrough" is the name here)."""
-        s = dict(STORY.story_payload(self.store.memory_dir(pt)))
+        s = dict(story.story_payload(self.store.memory_dir(pt)))
         return {"v": 1, "playthrough": pt, "overview": s.pop("playthrough"), **s}
 
     def frame(self) -> tuple[bytes | None, str | None]:
@@ -106,10 +123,10 @@ class Dashboard:
 
     def feed(self, after: int) -> dict:
         off, text, reset = read_new(self.store.actions_path, after)
-        return {"offset": off, "reset": reset, "items": L.parse_actions(text)}
+        return {"offset": off, "reset": reset, "items": live.parse_actions(text)}
 
     def agentlog(self, after: int, path_id: str | None) -> dict:
-        log = L.resolve_agent_log(self.store.runtime, self.store.status())
+        log = live.resolve_agent_log(self.store.runtime, self.store.status())
         if log is None:
             return {"offset": 0, "reset": True, "text": "", "path_id": None}
         if path_id != log.name:
@@ -130,7 +147,7 @@ class Dashboard:
         if path in ("/api/latency", "/api/progress", "/api/goals"):
             return self.stats(path.rsplit("/", 1)[1])
         if path == "/api/story":
-            return STORY.story_payload(self.memory())
+            return story.story_payload(self.memory())
         if path == "/api/feed":
             return self.feed(_int(q, "after"))
         if path == "/api/agentlog":

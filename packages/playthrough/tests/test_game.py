@@ -1,7 +1,12 @@
 from bg3play.game import VIEWER_IDLE_S, GameWatch, ScreenWatch, Viewers
 
-STATUS = {"region": "WLD_Main_A", "gold": 12, "in_combat": False, "active": "u-1",
-          "party": [{"uuid": "u-1", "name": "Tav", "hp": 10, "max_hp": 12, "level": 2}]}
+STATUS = {
+    "region": "WLD_Main_A",
+    "gold": 12,
+    "in_combat": False,
+    "active": "u-1",
+    "party": [{"uuid": "u-1", "name": "Tav", "hp": 10, "max_hp": 12, "level": 2}],
+}
 
 
 class FakeGame:
@@ -48,7 +53,7 @@ def test_status_shaped_and_events_from_now_on():
     viewers = Viewers(clock)
     viewers.seen()
     game = FakeGame()
-    game.events = [{"seq": 5, "t": 1, "kind": "old", "data": {}}]   # before the first look: skipped
+    game.events = [{"seq": 5, "t": 1, "kind": "old", "data": {}}]  # before the first look: skipped
     w = GameWatch(lambda: game, viewers, interval=3.0)
     assert w.poll(clock()) == 3.0
     view, events = w.snapshot()
@@ -61,7 +66,7 @@ def test_status_shaped_and_events_from_now_on():
     w.poll(clock())
     assert w.snapshot()[1] == [{"t": 2, "kind": "LevelUp", "text": "LevelUp who=Tav"}]
     w.poll(clock())
-    assert len(w.snapshot()[1]) == 1   # not repeated
+    assert len(w.snapshot()[1]) == 1  # not repeated
 
 
 def test_ring_reset_after_reload_and_missing_ops():
@@ -71,7 +76,7 @@ def test_ring_reset_after_reload_and_missing_ops():
     game = FakeGame()
     w = GameWatch(lambda: game, viewers)
     w.poll(clock())
-    game.latest = 2   # the mod's ring restarted below our cursor
+    game.latest = 2  # the mod's ring restarted below our cursor
     w.poll(clock())
     assert w.event_seq == 2
     bare = FakeGame(ops=())
