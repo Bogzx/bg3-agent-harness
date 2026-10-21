@@ -112,6 +112,41 @@
         "check": {"$ref": "#/$defs/count"},
         "blocks": {"$ref": "#/$defs/count"}
       }
+    },
+    "choices": {
+      "description": "a choice scenario's picks (bg3bench.choices.grade over the facts' choice events; never right or wrong) and their persona fit by the judge (null: not judged). Optional, added 2026-10-22 (still v1).",
+      "type": "object",
+      "required": ["picks", "fit"],
+      "additionalProperties": false,
+      "properties": {
+        "picks": {"type": "array", "items": {
+          "type": "object",
+          "required": ["t", "scene", "options", "picked", "pick", "reason"],
+          "additionalProperties": false,
+          "properties": {
+            "t": {"type": ["number", "null"]},
+            "scene": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}},
+            "picked": {"type": ["integer", "null"]},
+            "pick": {"type": "string"},
+            "reason": {"type": ["string", "null"]}
+          }
+        }},
+        "fit": {"oneOf": [
+          {"type": "null"},
+          {"type": "object", "required": ["status", "score", "judge_model"],
+           "properties": {
+             "status": {"enum": ["ok", "judge_failed", "no_decisions"]},
+             "score": {"type": ["number", "null"], "minimum": 0, "maximum": 10},
+             "judge_model": {"type": ["string", "null"]},
+             "summary": {"type": "string"},
+             "cost_usd": {"type": "number", "minimum": 0},
+             "call_costs": {"type": "array", "items": {"type": "number", "minimum": 0}},
+             "error": {"type": "string"},
+             "items": {"type": "array", "items": {"type": "object"}}
+           }}
+        ]}
+      }
     }
   }
 }

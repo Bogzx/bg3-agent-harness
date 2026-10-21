@@ -7,6 +7,8 @@ run, cost per success, median tokens, median wall time and median time to goal, 
 A family with a realtime scenario (D7: the world runs while the model thinks) is labelled real-time and shows the
 median thinking time next to the wall time.
 Each family has a success-vs-cost plot with the Pareto frontier (cheaper and at least as good).
+Choice scenarios add a cross-model choice table (choices.table): per scene, which option each model picked in how
+many of its valid runs, and the median persona fit when a judge scored the picks. Picks are compared, never scored.
 
     python -m bg3bench.site.build results.json out/index.html [--families scenario_families.json]
         [--manifest-href 'runs/{run_id}/manifest.json']
@@ -21,6 +23,7 @@ from html import escape
 from pathlib import Path
 from statistics import median
 
+from bg3bench import choices as choices_mod
 from bg3bench import results as results_mod
 from bg3bench import stats
 
@@ -219,7 +222,41 @@ figcaption{font-size:.85rem;color:var(--muted)}
 .lbl{fill:var(--fg)}.pt{fill:var(--pt)}.pt.on{fill:var(--accent)}
 .front{fill:none;stroke:var(--accent);stroke-width:1.5}
 h2 .tag{display:inline;font-size:.75rem;font-weight:600;margin-left:6px}
+h3{font-size:1rem;margin:20px 0 6px}h3 small{display:inline;font-weight:400}
 """
+
+
+CHOICES_NOTE = (
+    "Who picked what at each scene: runs that picked the option / valid runs that reached the scene. Picks are "
+    "compared across models, never scored right or wrong."
+)
+
+
+def choices_html(table: Sequence[Mapping]) -> str:
+    """The cross-model choice tables (choices.table), one per scene, or "" when no run made a choice."""
+    if not table:
+        return ""
+    parts = [f'<section id="choices"><h2>Choices</h2><p class="meta">{CHOICES_NOTE}</p>']
+    for t in table:
+        cols = t["columns"]
+        head = '<th scope="col">Pick</th>' + "".join(f'<th scope="col">{escape(c)}</th>' for c in cols)
+        body = [
+            f'<tr><th scope="row">{escape(r["pick"])}</th>'
+            + "".join(f"<td>{r['counts'].get(c, 0)}/{t['runs'][c]}</td>" for c in cols)
+            + "</tr>"
+            for r in t["rows"]
+        ]
+        if any(v is not None for v in t["fit"].values()):
+            body.append(
+                '<tr><th scope="row"><small>persona fit (median, 0-10)</small></th>'
+                + "".join(f"<td>{_fmt(t['fit'][c], '.1f')}</td>" for c in cols)
+                + "</tr>"
+            )
+        parts.append(
+            f"<h3>{escape(t['scenario'])}: <small>{escape(t['scene']) or '(no scene line)'}</small></h3>"
+            f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
+        )
+    return "".join(parts) + "</section>"
 
 
 def render(
@@ -252,7 +289,10 @@ def render(
         f"<title>{escape(title)}</title><style>{CSS}</style></head><body><main>"
         f"<h1>{escape(title)}</h1>"
         f'<p class="meta">Release {escape(tag)} · bootstrap seed {release["seed"]} · valid runs only; '
-        f"invalid runs are counted, never scored.</p>" + "".join(sections) + "</main></body></html>\n"
+        f"invalid runs are counted, never scored.</p>"
+        + "".join(sections)
+        + choices_html(choices_mod.table(release["runs"]))
+        + "</main></body></html>\n"
     )
 
 

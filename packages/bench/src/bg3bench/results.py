@@ -10,7 +10,8 @@ Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when
 
 Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (runner/model_time.py);
 realtime scenarios (D7) report it next to wall time, since the world runs while the model thinks. `luck` is
-luck.summary over the run's roll log (D9), null when the run has none.
+luck.summary over the run's roll log (D9), null when the run has none. A choice scenario's result has `choices`
+(choices.grade: the picks, the persona fit), and its release run the picks and the fit score (choices.table).
 
 `build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs.
 """
@@ -25,6 +26,7 @@ from statistics import median
 
 from bg3harness.judge import same_model
 
+from bg3bench import choices as choices_mod
 from bg3bench import stats
 
 SCHEMA = 1
@@ -46,9 +48,15 @@ def _minutes_to_s(m: float | None) -> float | None:
 
 
 def from_record(
-    record: dict, run_id: str, grade: dict | None = None, methods: dict | None = None, luck: dict | None = None
+    record: dict,
+    run_id: str,
+    grade: dict | None = None,
+    methods: dict | None = None,
+    luck: dict | None = None,
+    choices: dict | None = None,
 ) -> dict:
-    """One runs.jsonl record (+ grader output, + method attribution, + luck.summary) -> result v1."""
+    """One runs.jsonl record (+ grader output, + method attribution, + luck.summary, + the choices grader's
+    picks and fit for a choice scenario) -> result v1."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
     valid, reason = validity(record)
@@ -59,7 +67,7 @@ def from_record(
     tokens = record.get("tokens") or {}
     deaths = record.get("deaths") or {}
     fair = record.get("fairness_flags") or {}
-    return {
+    out = {
         "schema": SCHEMA,
         "run_id": run_id,
         "outcome": record["outcome"],
@@ -79,6 +87,9 @@ def from_record(
         "deaths": {k: int(deaths.get(k) or 0) for k in ("fights", "downs", "deaths", "wipes")},
         "fairness": {k: int(fair.get(k) or 0) for k in ("leak", "check", "blocks")},
     }
+    if choices is not None:
+        out["choices"] = choices
+    return out
 
 
 def _costs(results: list[dict]) -> dict:
@@ -127,6 +138,7 @@ def build_results(
                 "timing": man["scenario"]["timing"],
                 "luck_z": None if res["luck"] is None else res["luck"]["z"],
                 "tokens": res["tokens"],
+                **({"choices": choices_mod.release_entry(res["choices"])} if res.get("choices") else {}),
             }
         )
     if len({r["run_id"] for r in runs}) != len(runs):

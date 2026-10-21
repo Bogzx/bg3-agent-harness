@@ -52,6 +52,17 @@
               "cache_read": {"type": "integer", "minimum": 0},
               "cache_write": {"type": "integer", "minimum": 0}
             }
+          },
+          "choices": {
+            "description": "a choice scenario's picks (scene, picked text) and the persona fit score (null: not judged); optional, added 2026-10-22",
+            "type": "object",
+            "required": ["picks", "fit"],
+            "additionalProperties": false,
+            "properties": {
+              "picks": {"type": "array", "items": {"type": "object", "required": ["scene", "pick"], "additionalProperties": false,
+                        "properties": {"scene": {"type": "string"}, "pick": {"type": "string"}}}},
+              "fit": {"type": ["number", "null"], "minimum": 0, "maximum": 10}
+            }
           }
         }
       }
