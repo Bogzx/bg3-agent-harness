@@ -14,7 +14,8 @@ before you spend time on it.
 
 ## Running the tests
 
-All of these run offline, without the game. The Lua tests run in Docker.
+All of these run offline, without the game. The repo root is a uv workspace with one `uv.lock`; run
+`uv sync --locked` once. The Lua tests run in Docker.
 
 ```bash
 # bridge (the MCP server)
@@ -25,23 +26,37 @@ python3 -m unittest discover -s runner -p 'test_*.py'
 python3 -m unittest discover -s runner/dashboard -p 'test_*.py'
 python3 -m unittest discover -s tools/memory -p 'test_*.py'
 
+# the benchmark and the playthrough app
+(cd packages/bench && uv run pytest -q tests)
+(cd packages/playthrough && uv run pytest -q tests)
+(cd packages/playthrough/web && npm ci && npm run check && npm test)
+
+# the pi client (offline, against a stub model and a stub MCP server)
+python3 -m unittest tools/pi/conformance/test_pi_conformance.py
+
 # the Lua mod
 for t in tools/vis/test_lua.sh tools/dev/test_*.sh; do "$t" || echo "FAILED: $t"; done
 ```
 
 The full set takes a while and some files use a fair amount of RAM, so while you work, run the test files for the
 parts you changed, for example `(cd bridge && uv run python -m unittest discover -s tests -p test_compact.py)`.
+CI runs the rest on every pull request: ruff, pyright, the dependency rule between the packages, the 1000-line cap
+per file, pytest with coverage, the Lua suites and the TypeScript checks.
 
 Changes that need the running game (new tools, actions, UI reading) also need a live check. Say in the pull request
 what you checked live and what you could only test offline.
 
 ## Code style
 
-- Python: match the surrounding code. Lines go up to 120 characters. Check your files with
-  `uvx ruff check --line-length 120 <files>` and format only the files you changed.
+- Python: match the surrounding code. Lines go up to 120 characters, with one ruff config at the root. Check your
+  files with `uv run ruff check <files>` and `uv run ruff format <files>`, and format only the files you changed.
 - Lua: match the style of the file you edit. The mod is loaded as a loose folder, so a syntax error breaks it at
   load; the Lua tests run `luac -p` on the files they cover.
 - Keep changes small and on topic. Don't refactor nearby code in the same pull request.
+- New code goes to its package (`packages/bench`, `packages/playthrough`, or the harness), and no file grows past
+  1000 lines. The benchmark and the app use only the harness, never each other
+  ([docs/TARGET-ARCHITECTURE.md](docs/TARGET-ARCHITECTURE.md)).
+- A change that alters a score or what the agent sees goes into [CHANGELOG.md](CHANGELOG.md) under "Unreleased".
 
 ## The fairness rule
 

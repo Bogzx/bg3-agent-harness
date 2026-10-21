@@ -1,7 +1,8 @@
 # bg3-agent-harness
 
-A harness that lets an LLM agent play Baldur's Gate 3 on the native Linux build: a Lua mod inside the game, an MCP
-server for any MCP client, an autonomous runner, a Markdown memory, and the tooling to run it as a benchmark.
+A harness that lets an LLM agent play Baldur's Gate 3 on the native Linux build, a benchmark built on it, and an app
+for watching an agent play the whole game. The harness is a Lua mod inside the game, an MCP server any MCP client
+can use, and a runner that launches the game, starts the agent and recovers from crashes.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.12-3776AB.svg?logo=python&logoColor=white)](bridge/pyproject.toml)
@@ -13,8 +14,9 @@ The mod runs in the game through [bg3le](https://github.com/lenonk/bg3le), a Lin
 Extender. It hands the agent only what a human player could see at that moment, as compact text, plus a
 screenshot of the real frame when the agent asks for one. The agent acts through the game's own UI commands,
 engine actions, and mouse and keyboard input. It keeps a Markdown memory between sessions of up to an hour, and a
-runner launches the game, recovers from crashes and shows a live dashboard. The agent is an MCP client, and the
-runner drives Claude Code by default.
+runner launches the game, recovers from crashes and shows a live dashboard. The agent is an MCP client. The runner
+drives Claude Code by default, and Codex CLI, Gemini CLI or pi (any OpenAI-compatible endpoint, such as OpenRouter
+or DeepSeek) on request.
 
 This is a research harness and a work in progress. It has finished the game once, and the near goal is to turn it
 into a benchmark that other agents and models can be measured on. Setup needs Linux, a Steam copy of the game and
@@ -47,43 +49,70 @@ harness improved between series. Fights are the harness's own records: one per f
   actions). The agent usually recovered, at a cost in time.
 - Until 2026-10-17 a harness bug let the agent cast spells its characters had not prepared. It is fixed, but the
   run had that advantage before then.
-- Only Claude has played. The Codex and Gemini wiring exists and has not played a live session.
-- The text the agent reads (rules, playbooks, tool descriptions) was tuned on Claude's failures, so it is not a
-  neutral benchmark yet. [docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) lists where.
+- Only Claude through Claude Code has played. The Codex, Gemini and pi clients are tested offline against stubs;
+  none has played a live session yet.
+- Every run so far used the agent text from before the overhaul, which was tuned on Claude's failures. The overhaul
+  splits it into neutral rules and optional coaching, but no run has used the split text yet.
+  [docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) lists where the old text favoured Claude.
 
-## How it works
+## Three packages
+
+The repo is being reorganised into three packages with one-way dependencies
+([docs/TARGET-ARCHITECTURE.md](docs/TARGET-ARCHITECTURE.md)). The benchmark and the app use only the harness, and
+never each other. The work happens on the `overhaul` branch; the results above were measured before it.
+
+| Package | What it is | Where |
+|---|---|---|
+| Harness | puts any agent in the game: the Lua mod, the bg3 MCP server, game launch and recovery, the clients (Claude Code, Codex CLI, Gemini CLI, and pi for any OpenAI-compatible endpoint), the rules text, the container sandbox | `mod/`, `bridge/`, `runner/`, `native/`, `patches/`, `tools/pi/`, `tools/container/`, `packages/harness/` |
+| Benchmark | scenarios, graders over game facts, statistics, the matrix runner, reports and the leaderboard | [`packages/bench/`](packages/bench/README.md) |
+| Playthrough app | plays the whole game for people to watch: launcher, live view, memory browser, timeline, recording, overlay and replay | [`packages/playthrough/`](packages/playthrough/README.md) |
 
 ```mermaid
 flowchart LR
-    client["MCP client<br/>(Claude Code by default)"]
-    bridge["bridge: bg3 MCP server<br/>(Python)"]
+    subgraph bench["benchmark (packages/bench)"]
+        matrix["matrix runner<br/>scenarios, graders, stats"]
+    end
+    subgraph app["playthrough app (packages/playthrough)"]
+        ui["web app + supervisor<br/>recorder, keeper"]
+    end
+    subgraph harness["harness"]
+        runner["runner/play.py<br/>launch, recovery, caps"]
+        client["agent client<br/>Claude Code, Codex, Gemini, pi"]
+        bridge["bg3 MCP server<br/>(bridge, Python)"]
+    end
     memory[("memory/<br/>Markdown, git")]
     subgraph game["Baldur's Gate 3, native Linux build"]
         mod["BG3AI mod (Lua)<br/>via bg3le"]
         shot["Mesa screenshot layer"]
         input["SDL input shim"]
     end
-    runner["runner/play.py<br/>+ dashboard"]
 
+    matrix -- "one run per job" --> runner
+    ui -- "start, stop, resume" --> runner
+    runner -- "launches, recovers" --> game
+    runner -- "starts sessions" --> client
     client -- "MCP tools" --> bridge
     bridge -- "Lua eval over TCP" --> mod
     bridge -- "screenshots" --> shot
     bridge -- "mouse and keys" --> input
     bridge -- "memory tools" --> memory
-    runner -- "launches, recovers" --> game
-    runner -- "starts sessions" --> client
-    runner -- "memory keeper between sessions" --> memory
+    runner -- "events, run records" --> matrix
+    runner -- "sessions, events" --> ui
 ```
 
-- The client's built-in tools are switched off, so its only tools are the bg3 server's (94 of them). Memory, the
-  session's start and end, and a rate-limited bg3.wiki lookup are bg3 tools too, so any MCP client gets the
-  same tools.
-- Between sessions a short memory-keeper pass brings the curated memory files up to date from the session logs.
+- The client's built-in tools are switched off, so its only tools are the bg3 server's. Memory, the session's
+  start and end, and a rate-limited bg3.wiki lookup are bg3 tools too, so any MCP client gets the same tools. A
+  session can switch tool groups off (memory, wiki, reloads, screenshots and others).
+- The benchmark and the app reach the harness through `runner/play.py` for now, behind temporary adapters. They
+  move to a `run_session` API when `play.py` is split (Phase D of [docs/OVERHAUL-PLAN.md](docs/OVERHAUL-PLAN.md)).
+- [docs/QUICKSTART.md](docs/QUICKSTART.md): test your own model, use the MCP server from your own client, start
+  the app.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the design and the reasons behind each choice.
 - [docs/PROTOCOL.md](docs/PROTOCOL.md): the contract between the mod and the bridge.
-- [runner/README.md](runner/README.md): unattended play, recovery, run records and the dashboard.
-- [play/CLAUDE.md](play/CLAUDE.md): the playing agent's rules; [play/knowledge/](play/knowledge/) holds its
-  playbooks.
+- [runner/README.md](runner/README.md): unattended play, recovery, run records and the old dashboard.
+- [play/CLAUDE.md](play/CLAUDE.md): the playing agent's text for Claude Code, generated from
+  `packages/harness/prompts/` (rules, plus coaching in the Claude Code condition).
+- [CHANGELOG.md](CHANGELOG.md): versions, the `bench-v` tags and what changed.
 - [research/](research/): the research notes behind the design.
 
 ## Fair play
@@ -106,26 +135,29 @@ eight enforcement layers, the audit and the judgment calls.
 
 ## Benchmark
 
-The near goal is a suite of short, cheap scenarios that any MCP client can be scored on: success, attempts, time
-to the milestone and cost. The full playthrough stays an occasional showcase.
+The near goal is a suite of short, cheap scenarios that any model can be scored on: success, attempts, time to the
+goal and cost. The full playthrough stays an occasional showcase. The plan is
+[docs/BENCHMARK-PLAN.md](docs/BENCHMARK-PLAN.md), and [docs/BENCHMARK.md](docs/BENCHMARK.md) is the protocol for the
+series that run today.
 
 What exists now:
 
-- Scenarios as JSON files with a start point, an end milestone, caps and a character profile
-  ([scenarios/README.md](scenarios/README.md)). `nautiloid` is ready and is the only one that has run live.
-  `crash_site_grove`, `act1_underdark` and `act2_last_light` each need a start save made once by hand.
-- A series runner that freezes the game build, the mod, bg3le and the harness commit, and refuses a run whose
-  pins differ. Each run writes one record with its outcome, time, cost, tokens and failures.
-- A read-only preflight, `tools/bench_preflight.py`, that checks the machine before a series.
-- `--client claude|codex|gemini`. Only Claude has played live.
-- A container sandbox where the playing client can reach only the bg3 MCP server and its own model API
-  ([tools/container/README.md](tools/container/README.md)). It is built and has not yet run on a real host with
-  the firewall.
+- Scenario files in four families (fights, sandbox goals, choices, exploration), each with a start point, a goal
+  graded from game state, caps and a closed-book quiz for contamination checks
+  ([packages/bench/README.md](packages/bench/README.md)). `nautiloid` is the only one that has run live; the others
+  wait for their start saves.
+- The ranked track runs every model through one frozen client, pi, with the rules text only. Claude Code, Codex
+  and Gemini CLI are a separate "bring your own agent" condition.
+- A series runner that freezes the game build, the mod, bg3le and the harness commit and refuses a run whose pins
+  differ, and a matrix runner on top of it that queues models x scenarios x conditions x repeats under a global
+  budget.
+- A per-run dollar cap from the billed cost, required for pi, and a global budget file.
+- Do-nothing and random baselines, a fairness probe for every tool, statistics with confidence intervals, a series
+  report and a static leaderboard.
+- A container sandbox where the playing client can reach only the bg3 MCP server and its model API
+  ([tools/container/README.md](tools/container/README.md)). It has not yet run on a real host with the firewall.
 
-What comes next: more scenarios with start saves (a boss fight, the invisible-floor Faith-Leap trial, an
-exploration leg), live runs of other clients, and splitting the agent's text into rules and coaching so it stops
-favouring Claude. The protocol is in [docs/BENCHMARK.md](docs/BENCHMARK.md), and
-[docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) is the bar for a fair cross-model result.
+Nothing on the ranked track has been run yet, so there are no benchmark results to show.
 
 ## Requirements
 
@@ -140,7 +172,8 @@ favouring Claude. The protocol is in [docs/BENCHMARK.md](docs/BENCHMARK.md), and
 
 ## Quick start
 
-Full setup and checks are in [docs/SETUP.md](docs/SETUP.md).
+Full setup and checks are in [docs/SETUP.md](docs/SETUP.md). To test your own model, read
+[docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```bash
 git submodule update --init third_party/bg3le
@@ -154,8 +187,7 @@ python3 runner/dashboard/serve.py --port 8765             # watch it play: http:
 ```
 
 For a manual session, run `cd play && claude --tools ToolSearch`. The `bg3` MCP server and the rules are set up
-in that folder. A client in a container reaches the server over HTTP, as described in
-[tools/container/README.md](tools/container/README.md). Runner options are in [runner/README.md](runner/README.md).
+in that folder. Runner options are in [runner/README.md](runner/README.md).
 
 To run a benchmark series:
 
@@ -196,12 +228,16 @@ from `journalctl --user`. Both degrade to a warning without systemd. `runner/lau
 | [`bridge/`](bridge/) | the bg3 MCP server in Python: tools, rendering, memory sandbox, screenshots, input, wiki |
 | [`runner/`](runner/) | game launcher, session runner, recovery, run records, memory keeper, dashboard |
 | [`play/`](play/) | where the playing agent runs: its rules, MCP config and read-only knowledge |
-| [`scenarios/`](scenarios/) | fixed start points for benchmark series |
+| [`packages/harness/`](packages/harness/) | the agent's rules and coaching texts and the event and facts schemas |
+| [`packages/bench/`](packages/bench/README.md) | the benchmark: scenarios v2, graders, statistics, matrix runner, reports |
+| [`packages/playthrough/`](packages/playthrough/README.md) | the playthrough app: API server, web UI, recorder, supervisor |
+| [`profiles/`](profiles/) | client profiles (client, model, endpoint) for `play.py --profile` |
+| [`scenarios/`](scenarios/) | v1 scenario files, the ones `runner/play.py --scenario` reads today |
 | [`memory-template/`](memory-template/) | the layout of a playthrough's memory |
 | [`native/bg3sdl/`](native/bg3sdl/) | the SDL input shim (mouse and keys for the game window only) |
 | [`patches/bg3le/`](patches/bg3le/) | crash fixes applied to bg3le at build time |
 | [`third_party/`](third_party/) | bg3le as a pinned git submodule |
-| [`tools/`](tools/) | build, preflight, memory, log mining, container sandbox and dev checks |
+| [`tools/`](tools/) | build, preflight, pi, memory, log mining, saves, container sandbox, CI and dev checks |
 | [`docs/`](docs/) | architecture, fairness, protocol, setup and benchmark docs |
 | [`research/`](research/) | the research notes behind the design |
 
@@ -209,24 +245,20 @@ from `journalctl --user`. Both degrade to a warning without systemd. `runner/lau
 
 ## Roadmap
 
-Near term, the benchmark:
+The overhaul ([docs/OVERHAUL-PLAN.md](docs/OVERHAUL-PLAN.md)), in order:
 
-- A small suite of short scenarios, each scored on success, attempts, cost and time.
-- Live runs with clients other than Claude Code.
-- The container sandbox run on a real host with the firewall.
-- The agent's text split into rules (how the game, the tools and fairness work) and coaching (advice written after
-  one model's mistakes), with Claude's session anecdotes taken out.
+- Live checks of what is built offline: pi with real models, the seeded dice, the referee and roll logs, the
+  recorder, the container firewall.
+- Split `runner/play.py` behind a `run_session` API, so the benchmark and the app stop going through the CLI.
+- Benchmark content: neutral start saves, the first scenario set with oracle runs and baselines, a Nautiloid pilot
+  on pi with five models, a Claude Code baseline on the same harness version, and a human baseline.
+- A stress-test round over every BG3 situation (movement, combat, dialogue, trade, stealth, inventory, party,
+  puzzles, UI states) through Claude Code and pi.
+- The first tagged release, `bench-v0.1`, after the owner settles the launch gate: Larian's AI clause, publishing
+  start saves, the benchmark's name, and a scrub of personal paths from anything published.
 
-Longer term:
-
-- Roleplay. Each playthrough gets a character brief that the agent turns into a build and a persona at character
-  creation, and its choices are meant to follow it. A judge model can score how well a run's decisions fit the
-  persona (`runner/judge.py`, not yet run live).
-- Harder difficulties, other characters and classes, and held-out starts the prompts were never tuned on.
-- Play at the pace of a skilled human watching the screen. Latency (idle time between actions, long gaps, round
-  trips) is measured every session.
-- A stream overlay built on the dashboard's feeds.
-- Publishing the playthrough data: session transcripts, metrics and memory.
+Later: roleplay scored by a judge model, harder difficulties and held-out starts, play at the pace of a human
+watching the screen, a stream overlay, and publishing claude-run-2's data.
 
 ## Contributing
 

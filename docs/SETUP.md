@@ -12,7 +12,8 @@ Windows build under Proton. Steam installs **Steam Linux Runtime 3.0 (sniper)** 
 Check the game version with `python3 tools/steam_paths.py buildid`. The scripts find the install through
 `$BG3_DIR`, else Steam's `libraryfolders.vdf` (any library), else `~/.local/share/Steam`. Everything here was
 built and tested on buildid **25605617** (v4.76.31.656, Patch 8 Hotfix 10). On another build bg3le may need its
-addresses re-resolved: it logs `WARNING: resolve:` lines on a mismatch.
+addresses re-resolved: it logs `WARNING: resolve:` lines on a mismatch. [GAME-UPDATES.md](GAME-UPDATES.md) is the procedure for
+moving to a new build.
 
 If the same Steam account plays on another machine, keep Steam in offline mode on this one (an online launch
 here kicks the other session). `touch ~/.config/bg3ai/require-steam-offline` (or `BG3AI_REQUIRE_STEAM_OFFLINE=1`)

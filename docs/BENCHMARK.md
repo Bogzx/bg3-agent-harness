@@ -5,6 +5,9 @@ with other models. This file is the protocol; the details live in the files it l
 **only the Nautiloid series has run live** (3/3 clean, Claude Opus); everything marked *(not live-tested)* is built
 and unit-tested but has not played a real run yet.
 
+To run your own model, start with [QUICKSTART.md](QUICKSTART.md). What to do when the game updates is in
+[GAME-UPDATES.md](GAME-UPDATES.md).
+
 The plan for the multi-model suite (pi + OpenRouter client, fight / sandbox-goal / choice / exploration families,
 scoring and phases) is [BENCHMARK-PLAN.md](BENCHMARK-PLAN.md).
 
@@ -49,7 +52,8 @@ A comparison only holds when all of these are equal across the models compared. 
 
 Known bias: the agent-facing text was tuned on Claude's failures. Read
 [docs/BENCHMARK-BIAS.md](BENCHMARK-BIAS.md) before claiming a cross-model result; its "What a fair cross-model
-benchmark should do" list is the bar (the rules/coaching split and anecdote removal are not done yet).
+benchmark should do" list is the bar. On the `overhaul` branch the text is split into rules and coaching with the
+anecdotes removed (`packages/harness/prompts/`), but no live run has used the split text yet.
 
 ## 3. Running a series
 
