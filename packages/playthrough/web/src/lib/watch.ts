@@ -72,7 +72,8 @@ export function applyEvent(s: WatchState, type: string, data: unknown): WatchSta
       const d = data as { playthrough: string | null; session: string | null };
       if (d.playthrough !== s.pt || d.session === s.session) return s;
       const mark: LogEntry = { clock: null, kind: "header", text: `session ${d.session ?? "?"}`, session: d.session };
-      return { ...s, session: d.session, log: appendNew(s.log, mark, logKey, LIMITS.log) };
+      // the tool calls shown are the session's own: a new session starts with none
+      return { ...s, session: d.session, log: appendNew(s.log, mark, logKey, LIMITS.log), actions: [] };
     }
     case "log": {
       const e = data as LogEntry;

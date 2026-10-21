@@ -65,6 +65,7 @@ describe("watch reducer", () => {
     const s = applyEvent(fromSnapshot(snap()), "session", { playthrough: "pt", session: "S002" });
     expect(s.session).toBe("S002");
     expect(s.log.at(-1)).toMatchObject({ kind: "header", text: "session S002" });
+    expect(s.actions).toEqual([]); // the calls shown are the new session's own
   });
 
   it("the [end] line adds the session's cost", () => {

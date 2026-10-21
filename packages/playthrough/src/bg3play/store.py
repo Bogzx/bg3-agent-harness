@@ -149,9 +149,21 @@ class RunStore:
 
     # ------------------------------------------------------------ sessions
 
+    def running_session(self, pt: str) -> tuple[str, float] | None:
+        """(session, start) of the session the runner is playing for `pt` now (runner.status.json), else None."""
+        st = self.status()
+        sid, started = st.get("session"), st.get("started")
+        if st.get("playthrough") != pt or not isinstance(sid, str) or st.get("session_ended") is not None:
+            return None
+        if not isinstance(started, (int, float)):
+            return None
+        return sid.split("-")[0], float(started)
+
     def sessions(self, pt: str) -> list[dict[str, Any]]:
-        """One row per play session: runner.json history joined with the log's [end] line and latency summary."""
+        """One row per play session: runner.json history joined with the log's [end] line and latency summary.
+        The session running now has no history row yet: its start comes from runner.status.json ("running")."""
         d = self.session_dir(pt)
+        running = self.running_session(pt)
         hist = {
             h.get("session"): h
             for h in objs(read_json(d / "runner.json").get("history"))
@@ -167,12 +179,14 @@ class RunStore:
                     end = parse.end_line(e["text"])
                     break
             h = hist.get(sid, {})
+            live = running is not None and running[0] == sid
             lat = read_json(d / f"{sid}.latency.json")
             prog = read_json(d / f"{sid}.progress.json")
             rows.append(
                 {
                     "session": sid,
-                    "started": h.get("started"),
+                    "started": h.get("started") or (running[1] if live and running else None),
+                    "running": live,
                     "ended": h.get("ended"),
                     "model": h.get("model"),
                     "effort": h.get("effort"),

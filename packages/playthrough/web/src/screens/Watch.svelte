@@ -126,7 +126,7 @@
             {/each}
           </ul>
         {:else}
-          <div class="empty">{s.live ? "No tool calls yet." : "Tool calls show while this playthrough runs."}</div>
+          <div class="empty">{s.live ? `Waiting for the first call of ${s.session ?? "the session"}.` : "No tool calls in this session."}</div>
         {/if}
       </section>
     </div>

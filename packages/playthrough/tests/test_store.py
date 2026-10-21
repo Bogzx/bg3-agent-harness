@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -123,3 +124,49 @@ def test_timeline_payload(store: RunStore):
 def test_playthroughs_payload(store: RunStore):
     (row,) = api.playthroughs(store)["playthroughs"]
     assert row["name"] == PT and row["current"] and row["sessions"] == 3 and row["last_session"] == "S096"
+
+
+def _start_s097(store: RunStore, start: float) -> None:
+    """The runner starts S097 of PT now: status names it, there is a log and no history row yet."""
+    st = json.loads(store.status_path.read_text())
+    st.update(session="S097", started=start, session_ended=None, log="/elsewhere/S097.log")
+    store.status_path.write_text(json.dumps(st))
+    (store.session_dir(PT) / "S097.log").write_text("")
+
+
+def test_running_session_row(store: RunStore):
+    _start_s097(store, 1792312800.0)
+    rows = store.sessions(PT)
+    assert [(r["session"], r["running"]) for r in rows][-2:] == [("S096", False), ("S097", True)]
+    assert rows[-1]["started"] == 1792312800.0 and rows[-1]["ended"] is None
+    store.status_path.write_text(json.dumps(dict(json.loads(store.status_path.read_text()), session_ended=1.0)))
+    assert store.sessions(PT)[-1]["running"] is False and store.sessions(PT)[-1]["started"] is None
+
+
+def test_watch_new_session_shows_no_earlier_calls_or_party(store: RunStore):
+    # actions.jsonl and its get_status results are shared: a new session shows none of the earlier ones
+    _start_s097(store, 1792312800.0)
+    w = api.watch(store, PT)
+    assert w["session"] == "S097" and w["actions"] == []
+    assert w["party"]["source"] == "snapshots/status.md"
+    with store.actions_path.open("a") as f:
+        f.write(json.dumps({"t": 1792312830.0, "tool": "look", "args": {}, "ms": 5, "result": "WHERE beach"}) + "\n")
+    assert [a["t"] for a in api.watch(store, PT)["actions"]] == [1792312830.0]
+
+
+def test_watch_current_session_drops_another_runs_calls(store: RunStore):
+    # a call from another playthrough's run before S096 started is not S096's
+    first = "".join(store.actions_path.read_text().splitlines(keepends=True)[:20])  # S096's first calls
+    old = {
+        "t": 1792311000.0,
+        "tool": "get_status",
+        "args": {},
+        "ms": 9,
+        "result": "WHERE Nautiloid | EXPLORING | gold 18\nPARTY *e1 Corwin Thale Fighter1 HP 26/26",
+    }
+    store.actions_path.write_text(json.dumps(old) + "\n" + first)
+    w = api.watch(store, PT)
+    ss = store.sessions(PT)
+    assert w["actions"] and all(a["t"] >= ss[-1]["started"] for a in w["actions"])
+    assert all(m["name"] != "Corwin Thale" for m in w["party"]["party"])
+

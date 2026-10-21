@@ -77,16 +77,14 @@ def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 1
     ss = store.sessions(pt)
     log = store.agent_log(pt)
     entries = [e for e in store.log_entries(log) if e["kind"] in LOG_KINDS_SHOWN][-log_entries:] if log else []
-    actions = store.recent_actions()
-    if pt != store.current() and ss:
-        # actions.jsonl is shared by every playthrough: keep this one's session windows
-        t0 = min((s["started"] for s in ss if s["started"]), default=None)
-        t1 = max((s["ended"] for s in ss if s["ended"]), default=None)
-        actions = [
-            a
-            for a in actions
-            if isinstance(a["t"], (int, float)) and (t0 is None or a["t"] >= t0) and (t1 is None or a["t"] <= t1)
-        ]
+    # actions.jsonl is shared by every playthrough and session: keep the shown session's window (none known: none)
+    row = next((s for s in ss if log and s["session"] == log.stem), None)
+    t0, t1 = (row["started"], row["ended"]) if row else (None, None)
+    actions = [
+        a
+        for a in store.recent_actions()
+        if t0 is not None and isinstance(a["t"], (int, float)) and a["t"] >= t0 and (t1 is None or a["t"] <= t1)
+    ]
     costs = [s["cost_usd"] for s in ss if s["cost_usd"] is not None]
     last = ss[-1] if ss else None
     shot = store.latest_screenshot()
