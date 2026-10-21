@@ -15,6 +15,7 @@ for _, path in ipairs({
     "Client/UISettings.lua",
     "Client/Services.lua",
     "Client/PickpocketOps.lua", -- worker pi: Steal button probe (live2 §1)
+    "Client/FleeOps.lua",   -- worker pi: the HUD's Flee (live2 §2)
     "Client/Pick.lua",      -- worker act: world->screen projection, hover checks
     "Client/Progression.lua", -- worker se: new game, character creation, level up
     "Client/Hotbar.lua",    -- worker se: hotbar cell + targeting reads for the N-target cast route (ACT-8)

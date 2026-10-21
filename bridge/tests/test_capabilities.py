@@ -21,7 +21,7 @@ from bg3ai import capabilities
 from bg3ai.tools import core
 
 BRIDGE = Path(__file__).resolve().parents[1]
-FULL = 94
+FULL = 95
 
 # Prints the tool names and, for a note= call, what do_actions/queue_actions/travel_to answer. Port 1: never a
 # running game.

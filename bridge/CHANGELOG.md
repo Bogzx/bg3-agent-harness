@@ -32,3 +32,12 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - pickpocket(npc) closes a pickpocket window this server didn't open for that NPC before opening theirs (a stale
   window of another NPC was listed as this NPC's pockets).
 - The description and the pockets listing say the shown odds assume nobody sees the thief.
+
+## 2026-10-22: flee tool (research/ovh/live2.md §2)
+
+- New tool `flee(who)`: the HUD's Flee for one character. Refused while a hostile the character can see is closer
+  than 27 m (the button's tooltip rule; state.combat lists only seen combatants). Otherwise it selects the
+  character, runs the HUD's flee command when a page has one (Client/FleeOps.lua ui.flee_probe / ui.flee), or clicks
+  the Flee button hover-checked (hoverclick.py), answers "Do you want to flee from combat?" with Yes (boxclick.py)
+  and checks the character left the fight. The flee command and button names were not read live yet: FleeOps finds
+  them by "flee" in their names. The tool count goes from 94 to 95.

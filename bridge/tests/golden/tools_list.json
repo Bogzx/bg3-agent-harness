@@ -1571,6 +1571,34 @@
   }
  },
  {
+  "name": "flee",
+  "title": null,
+  "description": "Flee the fight with one character, as the HUD's Flee button does: the game sends them to camp and they leave the fight; the rest of the party stays in it (the fight ends when the last member leaves or the enemies die). The game allows it only with every enemy at least 27 m away (the button's tooltip); the result names the nearest enemy you can see when one is closer.",
+  "input_schema": {
+   "properties": {
+    "who": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Who"
+    }
+   },
+   "title": "fleeArguments",
+   "type": "object"
+  },
+  "execution": null,
+  "output_schema": null,
+  "icons": null,
+  "annotations": null,
+  "meta": null
+ },
+ {
   "name": "end_combat_report",
   "title": null,
   "description": "Required after each fight: a short reflection that is appended to your session log.",

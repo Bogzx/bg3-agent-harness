@@ -1,4 +1,4 @@
-"""Combat tools: use_ability (hotbar and two-step casts), end_turn and the end-of-combat report.
+"""Combat tools: use_ability (hotbar and two-step casts), end_turn, flee and the end-of-combat report.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import re
 import time
 from typing import Any, Callable
 
-from .. import hotbar, render, turn, twostep
+from .. import boxclick, hotbar, hoverclick, render, turn, twostep
 from ..game import GameError, JobResult
 from . import core, overview, plumbing, reporting, world_tools
 
@@ -500,6 +500,110 @@ def _wait_for_party_turn(max_s: float) -> str:
             reporting._batch["last"] = "interrupted"
             return "other combatants are still acting (use wait or get_combat_state)"
         time.sleep(turn_tool.TURN_POLL_S)
+
+
+FLEE_MIN_M = 27.0   # live2 §2: the Flee button's tooltip "Enemy too close! (5.5/27m)"; at 47 m it asked
+FLEE_SEED = (0.8313, 0.9222)   # live2 §2: Flee at (798, 498) of a 960x540 window, right of End Turn
+FLEE_BOX_S = 2.0    # the "Do you want to flee from combat?" box shows within this after the press
+FLEE_LEFT_S = 5.0   # FleeFromCombat → LeftCombat took 0.7 s live
+
+
+@core.mcp.tool()
+@reporting._guard
+def flee(who: str | None = None) -> str:
+    """Flee the fight with one character, as the HUD's Flee button does: the game sends them to camp and they leave the fight; the rest of the party stays in it (the fight ends when the last member leaves or the enemies die). The game allows it only with every enemy at least 27 m away (the button's tooltip); the result names the nearest enemy you can see when one is closer."""
+    t0 = time.monotonic()
+    char = plumbing._who(who)
+    name = overview._name_of(char)
+    cs = core.game.try_rpc("state.combat") or {}
+    if not cs.get("active") or not _in_fight(cs, char):
+        return f"REFUSED: {name} is not in a fight"
+    near = _nearest_hostile(cs, char)
+    if near and near[0] < FLEE_MIN_M:
+        return (f"REFUSED: enemy too close: {core.H.get(near[1])} {overview._name_of(near[1])} at {near[0]:.1f} m; "
+                f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip). Get farther first.")
+    rpc = lambda op, a: core.game.rpc(op, a, context="client")  # noqa: E731
+    inp = world_tools._inp()
+    if inp is None:
+        return "FAILED: no mouse input to answer the flee question (the input helper is not running)"
+    with plumbing._InputHeld():
+        if not uitools._hud_has(char):   # the HUD's Flee is the selected character's
+            core.game.run_job("act.select", {"char": char}, wait_s=5)
+        how = _flee_press(rpc, inp)
+        if not how.startswith("pressed"):
+            return f"FAILED: {how}"
+        ans = boxclick.click_box(rpc, inp, "yes")
+    if not ans.get("clicked"):
+        return f"FAILED: {how}, but the flee question wasn't answered: {boxclick.describe(ans)}"
+    end = time.monotonic() + FLEE_LEFT_S
+    while True:
+        cs = core.game.try_rpc("state.combat") or {}
+        if not cs.get("active") or not _in_fight(cs, char):
+            break
+        if time.monotonic() >= end:
+            return f"FAILED: {how} and answered Yes, but {name} is still in the fight"
+        time.sleep(0.2)
+    rest = [overview._name_of(o["uuid"]) for o in cs.get("order") or []
+            if cs.get("active") and o.get("relation") == "party" and o.get("uuid") and not o.get("dead")]
+    return reporting._finish("flee", {"who": name}, f"fled: {name} left the fight and is at camp" + (
+        f"; still fighting: {', '.join(rest)}" if rest else "; the party is out of the fight"), t0)
+
+
+def _in_fight(cs: dict, char: str) -> bool:
+    return any(o.get("uuid") == char for o in cs.get("order") or [])
+
+
+def _nearest_hostile(cs: dict, char: str) -> tuple[float, str] | None:
+    """(metres, uuid) of the nearest living hostile `char` can see (state.combat lists only seen combatants)."""
+    out = []
+    for o in cs.get("order") or []:
+        d = (o.get("from") or {}).get(char)
+        if o.get("relation") == "hostile" and not o.get("dead") and o.get("uuid") and isinstance(d, (list, tuple)) \
+                and d and isinstance(d[0], (int, float)):
+            out.append((float(d[0]), o["uuid"]))
+    return min(out) if out else None
+
+
+def _flee_press(rpc, inp) -> str:
+    """Press the HUD's Flee until the game asks "Do you want to flee from combat?": its command when a page has one
+    (as End Turn's), else a hover-checked click on the button (a command can do nothing, as Steal's did)."""
+    no_ask = "the game didn't ask to flee (an enemy within 27 m, maybe one you can't see)"
+    probe = rpc("ui.flee_probe", {}) or {}
+    ran = False
+    for c in probe.get("commands") or []:
+        if not c.get("can"):
+            continue
+        ran = True
+        rpc("ui.flee", {"name": c["name"], "widget": c.get("widget")})
+        if _box_shows(rpc):
+            return f"pressed Flee ({c['name']})"
+    if not probe.get("button"):
+        if ran:
+            return no_ask
+        if probe.get("commands"):
+            return "the game won't flee now (Flee is greyed out: an enemy within 27 m, maybe one you can't see)"
+        return "no Flee button on the HUD"
+
+    def button() -> dict:
+        b = (rpc("ui.flee_probe", {}) or {}).get("button")
+        return {"open": bool(b), "over": bool(b and b.get("over")), "enabled": bool(b and b.get("enabled") is not False)}
+    click = hoverclick.hover_click(button, inp, "flee", FLEE_SEED)
+    if not click.get("clicked"):
+        return f"couldn't click Flee ({click.get('error') or 'the button went away'})"
+    if _box_shows(rpc):
+        return "pressed Flee (clicked)"
+    return no_ask
+
+
+def _box_shows(rpc) -> bool:
+    end = time.monotonic() + FLEE_BOX_S
+    while True:
+        v = rpc("ui.box_open", {})
+        if isinstance(v, dict) and v.get("box"):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.1)
 
 
 @core.mcp.tool()
