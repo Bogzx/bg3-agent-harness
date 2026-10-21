@@ -20,10 +20,17 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["run_id", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s", "think_s", "timing", "luck_z", "tokens"],
+        "required": ["run_id", "versions", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s", "think_s", "timing", "luck_z", "tokens"],
         "additionalProperties": false,
         "properties": {
           "run_id": {"type": "string", "minLength": 1},
+          "versions": {
+            "type": "object",
+            "description": "the run manifest's versions: harness and bench",
+            "required": ["harness", "bench"],
+            "additionalProperties": false,
+            "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}}
+          },
           "scenario": {"type": "string", "minLength": 1},
           "model": {"type": "string", "minLength": 1},
           "condition": {"$ref": "#/$defs/str_or_null"},

@@ -109,6 +109,7 @@ def build_results(
         runs.append(
             {
                 "run_id": res["run_id"],
+                "versions": man["versions"],
                 "scenario": man["scenario"]["name"],
                 "model": key[0],
                 "condition": key[1],

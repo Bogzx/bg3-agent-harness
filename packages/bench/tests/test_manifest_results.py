@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -72,8 +73,11 @@ def test_manifest_with_the_fields_older_series_lack():
         grader_version="2",
         seed=1729,
         timing="realtime",
+        harness_version="0.1.0",
+        bench_version="0.1.0",
     )
     assert man["run_id"] == "naut2-r002" and man["grader"] == {"version": "2"}
+    assert man["versions"] == {"harness": "0.1.0", "bench": "0.1.0"}
     assert (man["seed"], man["scenario"]["timing"]) == (1729, "realtime")
     assert_valid("manifest.v1.schema.json", man)
     v = validator("manifest.v1.schema.json")
@@ -81,7 +85,19 @@ def test_manifest_with_the_fields_older_series_lack():
     assert not v.is_valid({**man, "price_sheet": {"date": "yesterday", "usd_per_mtok": {}}})
     assert not v.is_valid({**man, "extra": 1})
     assert not v.is_valid({**man, "seed": -1})
+    assert not v.is_valid({k: x for k, x in man.items() if k != "versions"})
+    assert not v.is_valid({**man, "versions": {"harness": "0.1.0", "bench": None}})
     assert not v.is_valid({**man, "scenario": {**man["scenario"], "timing": "paused"}})
+
+
+def test_manifest_cites_the_installed_bench_version_by_default():
+    series, records = load_series()
+    man = manifest.from_series(series, records[0])
+    assert man["versions"] == {"harness": None, "bench": manifest.installed_version()}
+    assert (
+        manifest.installed_version()
+        == tomllib.loads((HERE.parent / "pyproject.toml").read_text())["project"]["version"]
+    )
 
 
 def test_manifest_rejects_mismatched_inputs(tmp_path):
@@ -152,6 +168,9 @@ def test_release_results_round_trip(tmp_path):
     out = results.build_results(pairs, seed=0, created=1792300000.0, bench_tag="bench-v0.1", b=500)
     assert_valid("results.v1.schema.json", out)
     assert [r["run_id"] for r in out["runs"]] == ["naut2-r001", "naut2-r002", "naut2-r003"]
+    assert {tuple(r["versions"].items()) for r in out["runs"]} == {
+        (("harness", None), ("bench", manifest.installed_version()))
+    }
     assert out["runs"][0]["tokens"] == {"input": 186, "output": 15172, "cache_read": 4291143, "cache_write": 80131}
     (group,) = out["groups"]
     assert (group["model"], group["condition"], group["n_runs"], group["n_invalid"]) == ("opus", None, 3, 0)

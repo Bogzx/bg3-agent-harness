@@ -17,6 +17,7 @@ def run(model, scenario, i, passed, cost, *, condition="rules", valid=True, wall
         "run_id": rid,
         "model": {"slug": model},
         "condition": condition,
+        "versions": {"harness": "0.1.0", "bench": "0.1.0"},
         "scenario": {"name": scenario, "timing": timing},
     }
     res = {

@@ -4,7 +4,7 @@
   "title": "Run manifest v1 (manifest.json)",
   "description": "What a benchmark run was set up with, written at its start and never edited. Fields the harness does not record yet are null (older series have no prompt hash, tool allowlist or price sheet). Built by bg3bench.manifest.",
   "type": "object",
-  "required": ["schema", "run_id", "created", "bench_tag", "series", "run", "scenario", "seed", "condition", "client", "model",
+  "required": ["schema", "run_id", "created", "bench_tag", "versions", "series", "run", "scenario", "seed", "condition", "client", "model",
                "caps", "pins", "prompt", "tools", "grader", "facts_schema", "price_sheet", "sandbox"],
   "additionalProperties": false,
   "$defs": {
@@ -17,6 +17,13 @@
     "run_id": {"type": "string", "minLength": 1},
     "created": {"type": "number", "description": "epoch seconds the run started"},
     "bench_tag": {"$ref": "#/$defs/str_or_null"},
+    "versions": {
+      "type": "object",
+      "description": "the harness version (bridge/pyproject.toml until the harness has its own package; null when the runner did not record it) and bg3bench's version",
+      "required": ["harness", "bench"],
+      "additionalProperties": false,
+      "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}}
+    },
     "series": {"type": "string", "minLength": 1},
     "run": {"type": "integer", "minimum": 1},
     "scenario": {
