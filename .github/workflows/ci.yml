@@ -10,9 +10,11 @@ on:
 permissions:
   contents: read
 
+# A pull request cancels its older run. A branch push doesn't: the running run finishes and only the newest waiting
+# one starts after it, so busy branches (overhaul) still get complete runs.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   UV_PYTHON: "3.14"
