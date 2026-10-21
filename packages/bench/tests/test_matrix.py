@@ -1,5 +1,4 @@
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -287,5 +286,5 @@ def test_legacy_cli_without_a_new_record(tmp_path):
     assert run_one(job) == RunResult(None, False, False, None, "no run record (play.py exit 2)")
     assert "--effort" not in run_one.command(job, "s", 1)
     assert legacy_cli.series_name("M", job) == "m-grove-x-y-claude-legacy"
-    assert legacy_cli.REPO == HERE.parents[2] and shutil.which  # the repo root holds runner/play.py
+    assert legacy_cli.REPO == HERE.parents[2]
     assert (legacy_cli.REPO / "runner" / "play.py").is_file()
