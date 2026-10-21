@@ -22,6 +22,7 @@ testpaths = [
     "runner",
     "tools",
     "packages/*/tests",
+    "packages/harness/prompts/tests",
 ]
 python_files = ["test_*.py"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
