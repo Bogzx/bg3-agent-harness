@@ -240,9 +240,12 @@ class CombatTurnBackgroundEnd(Base):
         self.g.combat = combat()
         self.g.watch["combat"] = True
 
+        self.end_sent = threading.Event()  # the queue worker sent act.end_turn (after combat_turn returned, or just before)
+
         def advance(op, args):  # ending the turn hands it to the goblin
             if op == "act.end_turn":
                 self.g.combat["current"] = GOB
+                self.end_sent.set()
         self.g.on_start = advance
         turn_tool.END_ASYNC = True
         self.g.dur["act.end_turn"] = 0.6
@@ -309,6 +312,10 @@ class CombatTurnBackgroundEnd(Base):
     def test_next_combat_turn_waits_for_the_background_end(self):
         self.gate_end()
         turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
+        # The enemies act after the end is sent: flipping the turn back to Claude before the worker sent it let the
+        # end's hand-over to the goblin land last, and the second combat_turn waited 30 s for a turn that never came
+        # (IndexError on the call list, 36 of 200 runs under load). The end itself still runs until the hold.
+        self.assertTrue(self.end_sent.wait(10.0))
         self.g.combat["current"] = P1  # the enemies acted; Claude again
         out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
         self.assertRegex(out, r"waited [\d.]+s for e\d+ Claude's turn end to finish first")
