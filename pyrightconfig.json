@@ -40,6 +40,7 @@
     "bridge/src/bg3ai/party.py",
     "bridge/src/bg3ai/progress.py",
     "bridge/src/bg3ai/render.py",
+    "bridge/src/bg3ai/render_events.py",
     "bridge/src/bg3ai/route.py",
     "bridge/src/bg3ai/screen.py",
     "bridge/src/bg3ai/tools/batch.py",

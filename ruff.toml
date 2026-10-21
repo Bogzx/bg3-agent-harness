@@ -38,7 +38,10 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "bridge/src/bg3ai/offlimits.py" = ["E741"]
 "bridge/src/bg3ai/party.py" = ["E501", "UP035"]
 "bridge/src/bg3ai/progress.py" = ["B905", "E501", "RUF005", "RUF007", "RUF100", "SIM105", "UP035"]
-"bridge/src/bg3ai/render.py" = ["B007", "B905", "E501", "E741", "N803", "RUF012"]
+"bridge/src/bg3ai/render.py" = ["B007", "E501", "N803"]
+"bridge/src/bg3ai/render_base.py" = ["E501", "E741", "N803"]
+"bridge/src/bg3ai/render_events.py" = ["N803", "RUF012"]
+"bridge/src/bg3ai/render_nav.py" = ["B905", "E501", "E741", "N803"]
 "bridge/src/bg3ai/route.py" = ["E501", "E741", "N803"]
 "bridge/src/bg3ai/saver.py" = ["E501", "RUF100", "SIM102", "UP035"]
 "bridge/src/bg3ai/screen.py" = ["B904", "F821", "SIM105", "UP035", "UP037"]
@@ -301,6 +304,9 @@ exclude = [
     "bridge/src/bg3ai/progress.py",
     "bridge/src/bg3ai/reactclick.py",
     "bridge/src/bg3ai/render.py",
+    "bridge/src/bg3ai/render_base.py",
+    "bridge/src/bg3ai/render_events.py",
+    "bridge/src/bg3ai/render_nav.py",
     "bridge/src/bg3ai/route.py",
     "bridge/src/bg3ai/rules.py",
     "bridge/src/bg3ai/saver.py",
