@@ -3653,7 +3653,8 @@ class Runner:
 
     def setup_env(self) -> dict:
         """The game's env: the mod's scn.* ops are refused unless a run seeds the dice (game_settings.SETUP_ENV)."""
-        return {game_settings.SETUP_ENV: "1"} if self.opt.seed is not None else {}
+        seeded = getattr(getattr(self, "opt", None), "seed", None) is not None   # a bare Runner (tests) has no opt
+        return {game_settings.SETUP_ENV: "1"} if seeded else {}
 
     def game_setup(self) -> None:
         """Once per runner, with the game up: the settings readout (the run record's game_settings, a facts
