@@ -115,6 +115,7 @@ def draft_scenario(
     until: str | None = None,
     max_cost: float | None = None,
     difficulty: str | None = "Balanced",
+    seed: int | None = None,
     holdout: bool = False,
     requires: dict | None = None,
     conditions: Sequence[str] = ("rules",),
@@ -139,8 +140,8 @@ def draft_scenario(
         "runs": 3,
         "caps": {"run_hours": run_hours, "max_cost": max_cost, "max_tokens": None},
         "profile": {"character": {"name": registration["owner"], "brief": brief, "roleplay": "strict"}},
-        "game_settings": {**scenario.GAME_SETTINGS, "difficulty": difficulty},
-        "think_pause": True,
+        "game_settings": {**scenario.GAME_SETTINGS, "difficulty": difficulty, "seed": seed},
+        "timing": scenario.default_timing(family),
         "requires": {**scenario.REQUIRES, **(requires or {})},
         "conditions": list(conditions),
     }

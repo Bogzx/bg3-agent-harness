@@ -21,7 +21,10 @@ marked **live**.
    kept for you to look at and registration fails. Whether start saves may be published is still open
    (research/arch/bench.md, open question 3), so keep the store out of the repo until that is decided.
 4. **Draft the scenario file.** `authoring.draft_scenario(registration, title=..., family=..., where=...,
-   objective=..., brief=..., run_hours=..., goal=...)` returns a validated v2 scenario.
+   objective=..., brief=..., run_hours=..., goal=..., seed=...)` returns a validated v2 scenario. `seed` is the
+   dice seed the mod writes after every load (D9), so every run starts from the same rolls; the manifest records it.
+   `timing` follows the family: exploration and sandbox are `realtime` (the world runs while the model thinks;
+   there is no think-pause, D7, and results show thinking time next to wall time), fights default to `turn_based`.
    `authoring.write_draft(sc, "scenarios")` writes `scenarios/<name>.json` and refuses to overwrite one: a series
    freezes the file's digest, so an edit means a new name. The start note holds neutral game facts only (where,
    objective, party, journal), never a playthrough's history.

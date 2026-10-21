@@ -3,6 +3,8 @@
 One table per scenario family (never one number across families): per (model, condition), valid runs only,
 k/n with the Wilson interval, pass^K (K = the fewest valid runs any scenario of the family has), median cost per
 run, cost per success, median tokens, median wall time and median time to goal, and links to every run's manifest.
+A family with a realtime scenario (D7: the world runs while the model thinks) is labelled real-time and shows the
+median thinking time next to the wall time.
 Each family has a success-vs-cost plot with the Pareto frontier (cheaper and at least as good).
 
     python -m bg3bench.site.build results.json out/index.html [--families scenario_families.json]
@@ -65,6 +67,8 @@ def rows(release: Mapping, families: Mapping[str, str] | None = None) -> dict[st
                 "cost_per_success": sum(costs) / k if known_cost and k else None,
                 "tokens": _median([sum(r["tokens"].values()) for r in valid]),
                 "wall_s": _median([r["wall_s"] for r in valid]),
+                "think_s": _median([r["think_s"] for r in valid]),
+                "realtime": any(r["timing"] == "realtime" for r in runs),
                 "t_pass_s": _median([r["t_pass_s"] for r in valid if r["passed"]]),
                 "n_invalid": len(runs) - n,
                 "run_ids": [r["run_id"] for r in runs],
@@ -146,7 +150,7 @@ def plot_svg(fam_rows: Sequence[Mapping]) -> str:
     return "\n".join(parts)
 
 
-def _row_html(row: Mapping, manifest_href: str) -> str:
+def _row_html(row: Mapping, manifest_href: str, realtime: bool) -> str:
     lo, hi = row["wilson"]
     links = " ".join(
         f'<a href="{escape(manifest_href.format(run_id=rid))}">{escape(rid)}</a>' for rid in row["run_ids"]
@@ -163,6 +167,7 @@ def _row_html(row: Mapping, manifest_href: str) -> str:
         f"<td>{_fmt(row['cost_per_success'], '.2f', '$')}</td>",
         f"<td>{_tokens(row['tokens'])}</td>",
         f"<td>{_minutes(row['wall_s'])}</td>",
+        *([f"<td>{_minutes(row['think_s'])}</td>"] if realtime else []),
         f"<td>{_minutes(row['t_pass_s'])}</td>",
         f"<td>{row['n_invalid']}</td>",
         f'<td class="runs">{links}</td>',
@@ -179,9 +184,15 @@ HEAD = (
     "Cost / success",
     "Tokens / run",
     "Wall / run",
+    "Thinking / run",
     "Time to goal",
     "Invalid",
     "Manifests",
+)
+
+REALTIME_NOTE = (
+    ". Real-time: the game keeps running while the model thinks, so a slow model loses game time; thinking time "
+    "is the model's own time per run."
 )
 
 CSS = """
@@ -206,6 +217,7 @@ figcaption{font-size:.85rem;color:var(--muted)}
 .axis{stroke:var(--muted)}.grid{stroke:var(--line);stroke-dasharray:3 3}.tick,.lbl{fill:var(--muted);font-size:11px}
 .lbl{fill:var(--fg)}.pt{fill:var(--pt)}.pt.on{fill:var(--accent)}
 .front{fill:none;stroke:var(--accent);stroke-width:1.5}
+h2 .tag{display:inline;font-size:.75rem;font-weight:600;margin-left:6px}
 """
 
 
@@ -220,11 +232,14 @@ def render(
     sections = []
     for fam, fam_rows in rows(release, families).items():
         scenarios = sorted({s for r in fam_rows for s in r["scenarios"]})
-        body = "\n".join(_row_html(r, manifest_href) for r in fam_rows)
-        head = "".join(f'<th scope="col">{h}</th>' for h in HEAD)
+        realtime = any(r["realtime"] for r in fam_rows)
+        body = "\n".join(_row_html(r, manifest_href, realtime) for r in fam_rows)
+        head = "".join(f'<th scope="col">{h}</th>' for h in HEAD if realtime or h != "Thinking / run")
+        label = ' <small class="tag">real-time</small>' if realtime else ""
+        timing_note = REALTIME_NOTE if realtime else ""
         sections.append(
-            f'<section id="family-{escape(fam)}"><h2>{escape(fam)}</h2>'
-            f'<p class="meta">Scenarios: {escape(", ".join(scenarios)) or "none with a valid run"}</p>'
+            f'<section id="family-{escape(fam)}"><h2>{escape(fam)}{label}</h2>'
+            f'<p class="meta">Scenarios: {escape(", ".join(scenarios)) or "none with a valid run"}{timing_note}</p>'
             f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>\n{body}\n</tbody></table></div>'
             f"<figure>{plot_svg(fam_rows)}<figcaption>Success rate against median cost per run; the line is "
             f"the Pareto frontier (no other entry is both cheaper and at least as successful).</figcaption>"

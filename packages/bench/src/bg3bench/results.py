@@ -7,6 +7,10 @@ milestone verdict is used (`outcome == "reached"`), which is how series before f
 Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when the runner itself failed
 (`runner_error`), a harness failure was classified (runs.py `harness_failures`), or an operator acted on it.
 
+Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (runner/model_time.py);
+realtime scenarios (D7) report it next to wall time, since the world runs while the model thinks. `luck` is
+luck.summary over the run's roll log (D9), null when the run has none.
+
 `build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs.
 """
 
@@ -38,8 +42,10 @@ def _minutes_to_s(m: float | None) -> float | None:
     return None if m is None else round(m * 60, 1)
 
 
-def from_record(record: dict, run_id: str, grade: dict | None = None, methods: dict | None = None) -> dict:
-    """One runs.jsonl record (+ grader output, + method attribution) -> result v1."""
+def from_record(
+    record: dict, run_id: str, grade: dict | None = None, methods: dict | None = None, luck: dict | None = None
+) -> dict:
+    """One runs.jsonl record (+ grader output, + method attribution, + luck.summary) -> result v1."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
     valid, reason = validity(record)
@@ -64,6 +70,8 @@ def from_record(record: dict, run_id: str, grade: dict | None = None, methods: d
         "tokens": {k: int(tokens.get(k) or 0) for k in ("input", "output", "cache_read", "cache_write")},
         "wall_s": _minutes_to_s(record.get("wall_min")),
         "play_s": _minutes_to_s(record.get("play_min")),
+        "think_s": (record.get("model_time") or {}).get("model_s"),
+        "luck": luck,
         "reloads": int(record.get("reloads") or 0),
         "deaths": {k: int(deaths.get(k) or 0) for k in ("fights", "downs", "deaths", "wipes")},
         "fairness": {k: int(fair.get(k) or 0) for k in ("leak", "check", "blocks")},
@@ -109,6 +117,9 @@ def build_results(
                 "t_pass_s": res["t_pass_s"],
                 "cost_usd": res["cost_usd"],
                 "wall_s": res["wall_s"],
+                "think_s": res["think_s"],
+                "timing": man["scenario"]["timing"],
+                "luck_z": None if res["luck"] is None else res["luck"]["z"],
                 "tokens": res["tokens"],
             }
         )
@@ -122,6 +133,7 @@ def build_results(
             by_scenario.setdefault(s, []).append(r["passed"])
         summary = stats.summarize(by_scenario, random.Random(seed), seed=seed, b=b) if valid else None
         walls = [r["wall_s"] for _, r in valid if r["wall_s"] is not None]
+        thinks = [r["think_s"] for _, r in valid if r["think_s"] is not None]
         out_groups.append(
             {
                 "model": model,
@@ -132,6 +144,7 @@ def build_results(
                 "stats": summary,
                 "cost_usd": _costs([r for _, r in valid]),
                 "wall_s": {"median": median(walls) if walls else None},
+                "think_s": {"median": median(thinks) if thinks else None},
             }
         )
     return {

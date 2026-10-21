@@ -91,6 +91,9 @@ def test_draft_and_write(tmp_path):
     assert scenario.validate(sc, NAME) == []
     assert sc["start"]["save"] == FOLDER and sc["start"]["save_sha1"] == reg["lsv_sha1"]
     assert sc["profile"]["character"]["name"] == "Tav" and sc["game_settings"]["karmic_dice"] is False
+    assert (sc["timing"], sc["game_settings"]["seed"], "think_pause" in sc) == ("realtime", None, False)
+    assert draft(reg, family="fight", seed=7)["timing"] == "turn_based"
+    assert draft(reg, family="fight", seed=7)["game_settings"]["seed"] == 7
     path = authoring.write_draft(sc, tmp_path / "scenarios")
     assert scenario.load(path)["goal"] == {"gold": {"gte": 1000}}
     with pytest.raises(authoring.AuthoringError, match="never overwritten"):

@@ -5,10 +5,16 @@ v2 adds to today's scenarios/*.json (v1, runner/runs.py `validate_scenario`, sce
 - `schema: 2`, `family` (fight, sandbox, choice, exploration, puzzle), `holdout` (private: never published).
 - `goal`: a predicate of the goal language (predicates.py, D8 checked), or `until: <milestone id>` as the shorthand
   for `{"milestone": id}`. Exactly one of the two.
-- `game_settings`: difficulty, karmic_dice (always false, D9), resolution, ui_scale, language; null = not fixed by
-  the scenario (the setup check records what the game has). The difficulty moves here from `profile.difficulty`.
-- `think_pause` (D7, default true), `requires` {vision, min_context}: a model that can't meet them is reported as
-  not applicable, never as a failure (`applicable`). `conditions`: the condition ids it may run under.
+- `game_settings`: difficulty, karmic_dice (always false, D9), seed (D9: the dice seed the mod writes after every
+  load, so each run starts from the same rolls; null = the game's own wall-clock seed), resolution, ui_scale,
+  language; null = not fixed by the scenario (the setup check records what the game has). The difficulty moves here
+  from `profile.difficulty`.
+- `timing` (D7): `realtime` (the world runs while the model thinks; results report thinking time next to wall
+  time) or `turn_based`. Exploration and sandbox are always realtime; the default is realtime for every family but
+  fight. There is no think-pause: the ESC menu does not pause BG3 (research/ovh/live1.md §1), so a `think_pause`
+  key is refused.
+- `requires` {vision, min_context}: a model that can't meet them is reported as not applicable, never as a failure
+  (`applicable`). `conditions`: the condition ids it may run under.
 
 `load(path)` reads either version: a file without `schema` is v1 and goes through `from_v1` unchanged on disk.
 """
@@ -38,6 +44,9 @@ AGENT_LABEL_RE = re.compile(r"^S\d{3}-")
 NOTE_HISTORY_RE = re.compile(r"\bS\d{3}\b|claude-run|playthroughs/|runtime/|sessions/", re.IGNORECASE)
 CONDITION_RE = re.compile(r"^[a-z0-9][a-z0-9+@:._-]{0,63}$")
 RESOLUTION_RE = re.compile(r"^\d{3,5}x\d{3,5}$")
+SEED_MAX = 2**31 - 1  # the roll streams' BaseSeed is a unix time today; any 31-bit seed fits
+TIMINGS = ("realtime", "turn_based")
+REALTIME_FAMILIES = ("exploration", "sandbox")  # timing must be realtime (D7)
 RESETS = {  # runs.RESETS: what every run starts without; not tunable
     "new_game": {
         "saves": "after_run_start",
@@ -54,9 +63,11 @@ RESETS = {  # runs.RESETS: what every run starts without; not tunable
 }
 KEYS = {
     "schema", "name", "title", "about", "family", "holdout", "start", "goal", "until", "runs", "caps", "profile",
-    "game_settings", "think_pause", "requires", "conditions", "reset",
+    "game_settings", "timing", "requires", "conditions", "reset",
 }  # fmt: skip
-GAME_SETTINGS = {"difficulty": None, "karmic_dice": False, "resolution": None, "ui_scale": None, "language": None}
+GAME_SETTINGS = {
+    "difficulty": None, "karmic_dice": False, "seed": None, "resolution": None, "ui_scale": None, "language": None,
+}  # fmt: skip
 REQUIRES = {"vision": False, "min_context": None}
 DEFAULT_CONDITIONS = ["rules"]
 
@@ -122,6 +133,9 @@ def _check_settings(gs: Any) -> list[str]:
         errs.append(f"game_settings.difficulty must be one of {', '.join(DIFFICULTIES)} or null")
     if gs.get("karmic_dice", False) is not False:
         errs.append("game_settings.karmic_dice must be false: Karmic Dice is off in every scenario (D9)")
+    seed = gs.get("seed")
+    if seed is not None and not (isinstance(seed, int) and not isinstance(seed, bool) and 0 <= seed <= SEED_MAX):
+        errs.append(f"game_settings.seed must be an integer 0..{SEED_MAX}, or null")
     if gs.get("resolution") is not None and not RESOLUTION_RE.match(str(gs["resolution"])):
         errs.append("game_settings.resolution must look like 1920x1080, or null")
     if gs.get("ui_scale") is not None and not _pos_num(gs["ui_scale"]):
@@ -129,6 +143,10 @@ def _check_settings(gs: Any) -> list[str]:
     if gs.get("language") is not None and not _str(gs["language"]):
         errs.append("game_settings.language must be a non-empty string, or null")
     return errs
+
+
+def default_timing(family: Any) -> str:
+    return "turn_based" if family == "fight" else "realtime"
 
 
 def validate(sc: Any, name: str) -> list[str]:
@@ -142,7 +160,7 @@ def validate(sc: Any, name: str) -> list[str]:
         errs.append(f"file name {name!r}: use a-z, 0-9, '_' or '-'")
     if sc.get("name") != name:
         errs.append(f"name {sc.get('name')!r} must be the file name {name!r}")
-    if unknown := sorted(set(sc) - KEYS):
+    if unknown := sorted(set(sc) - KEYS - {"think_pause"}):
         errs.append(f"unknown keys: {', '.join(unknown)}")
     if not _str(sc.get("title")):
         errs.append("title is required")
@@ -182,8 +200,13 @@ def validate(sc: Any, name: str) -> list[str]:
         errs.append(f"profile.character.roleplay must be one of {', '.join(ROLEPLAYS)}")
     errs += _check_start(sc.get("start"), name, char.get("name"))
     errs += _check_settings(sc.get("game_settings", GAME_SETTINGS))
-    if not isinstance(sc.get("think_pause", True), bool):
-        errs.append("think_pause must be true or false")
+    if "think_pause" in sc:
+        errs.append("think_pause was dropped: the ESC menu does not pause BG3 (D7); use timing instead")
+    timing = sc.get("timing", default_timing(sc.get("family")))
+    if timing not in TIMINGS:
+        errs.append(f"timing must be one of {', '.join(TIMINGS)}")
+    elif sc.get("family") in REALTIME_FAMILIES and timing != "realtime":
+        errs.append(f"a {sc['family']} scenario is realtime: the world runs while the model thinks (D7)")
     req = sc.get("requires", REQUIRES)
     if (
         not isinstance(req, dict)
@@ -222,7 +245,7 @@ def with_defaults(sc: dict) -> dict:
             "character": dict(sc["profile"]["character"], roleplay=sc["profile"]["character"].get("roleplay", "strict"))
         },
         game_settings={**GAME_SETTINGS, **sc.get("game_settings", {})},
-        think_pause=sc.get("think_pause", True),
+        timing=sc.get("timing", default_timing(sc["family"])),
         requires={**REQUIRES, **sc.get("requires", {})},
         conditions=list(sc.get("conditions", DEFAULT_CONDITIONS)),
         reset=RESETS[sc["start"]["kind"]],

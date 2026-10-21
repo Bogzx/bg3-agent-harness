@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/rolls.v1.schema.json",
+  "title": "Roll log record v1 (rolls.jsonl, one per line)",
+  "description": "One die roll from the mod's hidden roll log (Server/RollLog.lua, roll.since), never shown to the agent. Other fields the mod adds (seq, gt, roller, subject, skill, ability, srcs, ...) are kept and ignored. The luck covariate is computed by bg3bench.luck.",
+  "type": "object",
+  "required": ["natural"],
+  "properties": {
+    "t": {"type": "number", "description": "wall-clock epoch seconds"},
+    "natural": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1, "maximum": 20}], "description": "the d20 face; null when the source did not see it"},
+    "result": {"type": ["number", "null"], "description": "the roll's total with modifiers"},
+    "dc": {"type": ["number", "null"]},
+    "success": {"type": ["boolean", "null"]},
+    "party": {"type": ["boolean", "null"], "description": "the roller is in the party; missing counts as the party's"},
+    "advantage": {"type": ["boolean", "null"]},
+    "disadvantage": {"type": ["boolean", "null"]},
+    "stream": {"type": ["string", "null"], "description": "the roll stream (Generic, PlayerDamage:<uuid>, ...)"},
+    "streams": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}, "description": "rolls drawn per stream since the previous record"}
+  }
+}

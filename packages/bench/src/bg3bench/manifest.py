@@ -2,7 +2,7 @@
 
 `from_series` builds one from a series' `series.json` and one `runs.jsonl` record, the files the runner writes today
 (runner/runs.py). What those files don't record yet (prompt hash and parts, tool allowlist, price sheet, provider,
-client version, condition) is passed in, or stays null.
+client version, condition, the dice seed and the scenario's timing) is passed in, or stays null.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ def from_series(
     *,
     bench_tag: str | None = None,
     condition: str | None = None,
+    seed: int | None = None,
+    timing: str | None = None,
     prompt: dict | None = None,
     tools: dict | None = None,
     price_sheet: dict | None = None,
@@ -50,7 +52,9 @@ def from_series(
             "name": scenario["name"],
             "digest": scenario.get("digest"),
             "start_save_sha1": scenario.get("start_save_sha1"),
+            "timing": timing,
         },
+        "seed": seed,
         "condition": condition,
         "client": {"name": record.get("client") or series["client"], "version": client_version},
         "model": {"slug": record["model"], "provider_requested": provider, "reasoning_effort": record.get("effort")},

@@ -20,7 +20,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["run_id", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s", "tokens"],
+        "required": ["run_id", "scenario", "model", "condition", "valid", "passed", "t_pass_s", "cost_usd", "wall_s", "think_s", "timing", "luck_z", "tokens"],
         "additionalProperties": false,
         "properties": {
           "run_id": {"type": "string", "minLength": 1},
@@ -32,6 +32,9 @@
           "t_pass_s": {"$ref": "#/$defs/num_or_null"},
           "cost_usd": {"$ref": "#/$defs/num_or_null"},
           "wall_s": {"$ref": "#/$defs/num_or_null"},
+          "think_s": {"$ref": "#/$defs/num_or_null"},
+          "timing": {"enum": ["realtime", "turn_based", null]},
+          "luck_z": {"type": ["number", "null"]},
           "tokens": {
             "type": "object",
             "required": ["input", "output", "cache_read", "cache_write"],
@@ -50,7 +53,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["model", "condition", "n_runs", "n_invalid", "invalid_rate", "stats", "cost_usd", "wall_s"],
+        "required": ["model", "condition", "n_runs", "n_invalid", "invalid_rate", "stats", "cost_usd", "wall_s", "think_s"],
         "additionalProperties": false,
         "properties": {
           "model": {"type": "string", "minLength": 1},
@@ -104,6 +107,12 @@
             }
           },
           "wall_s": {
+            "type": "object",
+            "required": ["median"],
+            "additionalProperties": false,
+            "properties": {"median": {"$ref": "#/$defs/num_or_null"}}
+          },
+          "think_s": {
             "type": "object",
             "required": ["median"],
             "additionalProperties": false,

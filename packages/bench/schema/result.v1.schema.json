@@ -5,7 +5,7 @@
   "description": "How one run ended, written after it. An invalid run (harness failure, operator action, runner error) is rerun and never scored. `grade` is the grader output over facts.jsonl, null for older series graded by the runner's milestone; `methods` is the sandbox method attribution (reported, never graded). Built by bg3bench.results.",
   "type": "object",
   "required": ["schema", "run_id", "outcome", "valid", "invalid_reason", "passed", "t_pass_s", "grade", "methods",
-               "cost_usd", "tokens", "wall_s", "play_s", "reloads", "deaths", "fairness"],
+               "cost_usd", "tokens", "wall_s", "play_s", "think_s", "luck", "reloads", "deaths", "fairness"],
   "additionalProperties": false,
   "$defs": {
     "count": {"type": "integer", "minimum": 0},
@@ -70,6 +70,27 @@
     },
     "wall_s": {"$ref": "#/$defs/num_or_null"},
     "play_s": {"$ref": "#/$defs/num_or_null"},
+    "think_s": {"$ref": "#/$defs/num_or_null", "description": "the model's own time (model_time.model_s); realtime scenarios report it next to wall_s (D7)"},
+    "luck": {
+      "description": "bg3bench.luck.summary over the run's roll log (D9); null: no roll log",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["n", "z", "party", "other", "skipped", "nat20", "nat1"],
+          "additionalProperties": false,
+          "properties": {
+            "n": {"$ref": "#/$defs/count"},
+            "z": {"type": "number"},
+            "party": {"$ref": "#/$defs/count"},
+            "other": {"$ref": "#/$defs/count"},
+            "skipped": {"$ref": "#/$defs/count"},
+            "nat20": {"$ref": "#/$defs/count"},
+            "nat1": {"$ref": "#/$defs/count"}
+          }
+        }
+      ]
+    },
     "reloads": {"$ref": "#/$defs/count"},
     "deaths": {
       "type": "object",

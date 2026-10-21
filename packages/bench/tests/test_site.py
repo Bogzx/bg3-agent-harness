@@ -6,12 +6,19 @@ from bg3bench import results
 from bg3bench.site import build
 
 FAMILIES = {"nautiloid": "story", "goblin_fight": "fights", "owlbear": "fights", "gold_1000": "sandbox"}
+TIMING = {"nautiloid": "realtime", "gold_1000": "realtime"}  # fights are turn_based
 TOK = {"input": 1000, "output": 20000, "cache_read": 900000, "cache_write": 79000}  # 1.0 M per run
 
 
 def run(model, scenario, i, passed, cost, *, condition="rules", valid=True, wall=600.0):
     rid = f"{model.split('/')[-1]}-{scenario}-{i}"
-    man = {"run_id": rid, "model": {"slug": model}, "condition": condition, "scenario": {"name": scenario}}
+    timing = TIMING.get(scenario, "turn_based")
+    man = {
+        "run_id": rid,
+        "model": {"slug": model},
+        "condition": condition,
+        "scenario": {"name": scenario, "timing": timing},
+    }
     res = {
         "run_id": rid,
         "valid": valid,
@@ -20,6 +27,8 @@ def run(model, scenario, i, passed, cost, *, condition="rules", valid=True, wall
         "t_pass_s": 300.0 if passed else None,
         "cost_usd": cost,
         "wall_s": wall,
+        "think_s": 120.0 if model == "opus" else None,
+        "luck": None,
         "tokens": TOK,
     }
     return man, res
@@ -157,6 +166,12 @@ def test_page_html(tmp_path):
     # deepseek has no known cost in fights, so the plot has one point and no frontier line
     fights = html.split('id="family-fights"')[1].split("</section>")[0]
     assert fights.count("<circle") == 1 and "<polyline" not in fights
+    # thinking time shows only in the realtime families (D7)
+    assert "Thinking / run" not in fights and "real-time" not in fights
+    assert "Thinking / run" in sandbox and '<small class="tag">real-time</small>' in sandbox
+    assert "<td>10.0 min</td><td>2.0 min</td>" in sandbox  # opus: wall, then thinking
+    assert "<td>10.0 min</td><td>–</td>" in sandbox  # the do-nothing baseline has no model time
+    assert build.rows(fixture_release(), FAMILIES)["sandbox"][0]["think_s"] == 120.0
     assert "&lt;" not in build.render(fixture_release(), {"nautiloid": "<x>"}).split("<main>")[0]
 
 

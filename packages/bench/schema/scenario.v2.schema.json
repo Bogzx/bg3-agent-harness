@@ -7,6 +7,12 @@
   "required": ["schema", "name", "title", "family", "start", "caps", "profile"],
   "additionalProperties": false,
   "oneOf": [{"required": ["goal"]}, {"required": ["until"]}],
+  "allOf": [
+    {
+      "if": {"properties": {"family": {"enum": ["exploration", "sandbox"]}}, "required": ["family"]},
+      "then": {"properties": {"timing": {"const": "realtime"}}}
+    }
+  ],
   "$defs": {
     "pos_or_null": {"oneOf": [{"type": "null"}, {"type": "number", "exclusiveMinimum": 0}]},
     "strings": {"type": "array", "items": {"type": "string"}},
@@ -82,12 +88,13 @@
       "properties": {
         "difficulty": {"enum": ["Explorer", "Balanced", "Tactician", "Honour", null]},
         "karmic_dice": {"const": false, "description": "Off in every scenario (D9)."},
+        "seed": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0, "maximum": 2147483647}], "description": "D9: the dice seed the mod writes to ServerRollStreams after every load (null: the game's wall-clock seed). The run manifest records it."},
         "resolution": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^\\d{3,5}x\\d{3,5}$"}]},
         "ui_scale": {"$ref": "#/$defs/pos_or_null"},
         "language": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]}
       }
     },
-    "think_pause": {"type": "boolean", "default": true, "description": "D7: pause the game while the model thinks (never in combat, dialogue or trade)."},
+    "timing": {"enum": ["realtime", "turn_based"], "description": "D7: realtime = the world runs while the model thinks (there is no think-pause: the ESC menu does not pause BG3); results report thinking time next to wall time. Exploration and sandbox must be realtime; the default is turn_based for fight, realtime otherwise."},
     "requires": {
       "type": "object",
       "additionalProperties": false,

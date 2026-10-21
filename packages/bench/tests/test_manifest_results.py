@@ -41,9 +41,14 @@ def naut2_pairs():
 def test_manifest_from_the_naut2_series(tmp_path):
     series, records = load_series()
     man = manifest.from_series(series, records[0], bench_tag="bench-v0.1", condition="rules")
-    assert man["run_id"] == "naut2-r001"
+    assert man["run_id"] == "naut2-r001" and (man["seed"], man["scenario"]["timing"]) == (None, None)
     assert man["created"] == 1792169546.4
-    assert man["scenario"] == {"name": "nautiloid", "digest": "f4db191ceaad1415", "start_save_sha1": None}
+    assert man["scenario"] == {
+        "name": "nautiloid",
+        "digest": "f4db191ceaad1415",
+        "start_save_sha1": None,
+        "timing": None,
+    }
     assert man["client"] == {"name": "claude", "version": None}
     assert man["model"] == {"slug": "opus", "provider_requested": None, "reasoning_effort": "medium"}
     assert man["caps"] == {"run_hours": 4, "max_cost": None, "max_tokens": None}
@@ -65,13 +70,18 @@ def test_manifest_with_the_fields_older_series_lack():
         provider="anthropic",
         client_version="1.3.0",
         grader_version="2",
+        seed=1729,
+        timing="realtime",
     )
     assert man["run_id"] == "naut2-r002" and man["grader"] == {"version": "2"}
+    assert (man["seed"], man["scenario"]["timing"]) == (1729, "realtime")
     assert_valid("manifest.v1.schema.json", man)
     v = validator("manifest.v1.schema.json")
     assert not v.is_valid({**man, "prompt": {"sha256": "short", "parts": []}})
     assert not v.is_valid({**man, "price_sheet": {"date": "yesterday", "usd_per_mtok": {}}})
     assert not v.is_valid({**man, "extra": 1})
+    assert not v.is_valid({**man, "seed": -1})
+    assert not v.is_valid({**man, "scenario": {**man["scenario"], "timing": "paused"}})
 
 
 def test_manifest_rejects_mismatched_inputs(tmp_path):
@@ -191,3 +201,26 @@ def test_release_rejects_bad_pairs(tmp_path):
     (tmp_path / "r.json").write_text('{"schema": 9}')
     with pytest.raises(ValueError):
         results.load(tmp_path / "r.json")
+
+
+def test_thinking_time_timing_and_luck_reach_the_release():
+    series, records = load_series()
+    luck = {"n": 12, "z": -1.25, "party": 9, "other": 3, "skipped": 2, "nat20": 1, "nat1": 2}
+    pairs = []
+    for i, rec in enumerate(records):
+        man = manifest.from_series(series, rec, seed=1729, timing="realtime")
+        rec = {**rec, "model_time": {"model_s": 100.0 + i, "wall_s": 600.0}}
+        res = results.from_record(rec, man["run_id"], luck=luck if i == 0 else None)
+        assert_valid("result.v1.schema.json", res)
+        pairs.append((man, res))
+    assert (pairs[0][1]["think_s"], pairs[0][1]["luck"], pairs[1][1]["luck"]) == (100.0, luck, None)
+    assert results.from_record(records[0], "r")["think_s"] is None  # older records have no model_time
+    out = results.build_results(pairs, seed=0, created=0.0, b=50)
+    assert_valid("results.v1.schema.json", out)
+    assert [(r["think_s"], r["timing"], r["luck_z"]) for r in out["runs"]] == [
+        (100.0, "realtime", -1.25),
+        (101.0, "realtime", None),
+        (102.0, "realtime", None),
+    ]
+    assert out["groups"][0]["think_s"] == {"median": 101.0}
+    assert results.build_results(naut2_pairs(), seed=0, created=0.0, b=10)["groups"][0]["think_s"] == {"median": None}

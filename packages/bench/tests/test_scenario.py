@@ -40,8 +40,14 @@ def gold_save():
         "goal": {"gold": {"gte": 1000}},
         "caps": {"run_hours": 0.75, "max_cost": 30},
         "profile": {"character": {"name": "Tav", "brief": "A neutral fighter."}},
-        "game_settings": {"difficulty": "Balanced", "karmic_dice": False, "resolution": "1920x1080", "ui_scale": 100},
-        "think_pause": True,
+        "game_settings": {
+            "difficulty": "Balanced",
+            "karmic_dice": False,
+            "seed": 1729,
+            "resolution": "1920x1080",
+            "ui_scale": 100,
+        },
+        "timing": "realtime",
         "requires": {"vision": True, "min_context": 128000},
         "conditions": ["rules", "rules+coaching@1a2b3c4d"],
     }
@@ -60,7 +66,8 @@ def test_todays_scenarios_convert_unchanged(path):
     assert loaded["until"] == v1["until"] and scenario.goal_of(loaded) == {"milestone": v1["until"]}
     assert loaded["game_settings"]["difficulty"] == v1["profile"].get("difficulty")
     assert loaded["game_settings"]["karmic_dice"] is False and "difficulty" not in loaded["profile"]
-    assert (loaded["think_pause"], loaded["conditions"]) == (True, ["rules"])
+    assert (loaded["timing"], loaded["conditions"]) == ("realtime", ["rules"])
+    assert loaded["game_settings"]["seed"] is None
     assert loaded["requires"] == {"vision": False, "min_context": None}
     assert loaded["caps"] == v1["caps"] and loaded["reset"] == scenario.RESETS[v1["start"]["kind"]]
 
@@ -105,7 +112,14 @@ BAD = [
     ({"game_settings": {"ui_scale": 0}}, "ui_scale"),
     ({"game_settings": {"language": ""}}, "language"),
     ({"game_settings": {"fov": 90}}, "game_settings must be"),
-    ({"think_pause": "on"}, "think_pause"),
+    ({"think_pause": True}, "think_pause was dropped"),
+    ({"think_pause": False}, "think_pause was dropped"),
+    ({"timing": "paused"}, "timing must be"),
+    ({"timing": "turn_based"}, "a sandbox scenario is realtime"),
+    ({"game_settings": {"seed": -1}}, "seed must be"),
+    ({"game_settings": {"seed": 2**31}}, "seed must be"),
+    ({"game_settings": {"seed": True}}, "seed must be"),
+    ({"game_settings": {"seed": "42"}}, "seed must be"),
     ({"requires": {"vision": "yes"}}, "requires must be"),
     ({"requires": {"min_context": 1.5}}, "requires must be"),
     ({"conditions": []}, "conditions must be"),
@@ -174,3 +188,16 @@ def test_applicable():
     assert scenario.applicable(sc, vision=True, context=64000)[0] is False
     assert scenario.applicable(sc, vision=True, context=None)[0] is False
     assert scenario.applicable({}, vision=False, context=None) == (True, None)
+
+
+def test_timing_defaults_by_family(tmp_path):
+    fight = {k: v for k, v in gold_save().items() if k != "timing"} | {"family": "fight"}
+    assert scenario.validate(fight, "act1_gold_1000") == []
+    (tmp_path / "act1_gold_1000.json").write_text(json.dumps(fight))
+    assert scenario.load(tmp_path / "act1_gold_1000.json")["timing"] == "turn_based"
+    assert scenario.validate({**fight, "timing": "realtime"}, "act1_gold_1000") == []
+    sandbox = {k: v for k, v in gold_save().items() if k != "timing"}
+    (tmp_path / "act1_gold_1000.json").write_text(json.dumps(sandbox))
+    assert scenario.load(tmp_path / "act1_gold_1000.json")["timing"] == "realtime"
+    assert not validator().is_valid({**sandbox, "family": "exploration", "timing": "turn_based"})
+    assert validator().is_valid({**fight, "timing": "turn_based"})
