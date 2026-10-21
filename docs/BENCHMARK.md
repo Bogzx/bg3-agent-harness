@@ -5,6 +5,9 @@ with other models. This file is the protocol; the details live in the files it l
 **only the Nautiloid series has run live** (3/3 clean, Claude Opus); everything marked *(not live-tested)* is built
 and unit-tested but has not played a real run yet.
 
+The plan for the multi-model suite (pi + OpenRouter client, fight / sandbox-goal / choice / exploration families,
+scoring and phases) is [BENCHMARK-PLAN.md](BENCHMARK-PLAN.md).
+
 ## 1. Requirements
 
 - **Own BG3 on Steam**, installed through Steam (the harness never touches Steam's files, and there is no other

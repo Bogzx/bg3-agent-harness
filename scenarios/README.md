@@ -23,6 +23,20 @@ The drafts' caps are guesses from claude-run-2's pace (crash site → grove took
 Lands → Last Light ~50 min) at ~$25 per hour (the launch-bar runs: ~$4.5 per 12-min run). Tune them once, before a
 series starts: a series refuses a changed scenario file.
 
+**Planned, no file yet** ([docs/BENCHMARK-PLAN.md](../docs/BENCHMARK-PLAN.md) has the families and scoring):
+
+| Scenario | Family | Goal | Blocked on |
+|---|---|---|---|
+| `act1_gold_1000` | sandbox goal | party gold ≥ 1000, any method the game allows | a numeric milestone kind, a start save, a pilot run for the target and cap |
+| `act1_level_3` | sandbox goal | party level 3 | a start save |
+| `act1_recruit_3` | sandbox goal | 3 companions recruited | a start save |
+| `act1_goblin_camp_no_fight` | sandbox goal | reach the goblin camp without a fight | a "no fight" check, a start save |
+| `act1_get_item` | sandbox goal | a named item in the party's inventory | an item milestone kind, a start save |
+| `honour_survive_30m` | sandbox goal | nobody dies for 30 minutes on Honour Mode | a survival check, a start save |
+| fights (10-15) | fight | hostiles dead or fled, no wipe | a combat-outcome check, start saves from claude-run-2's fights |
+| choices (~15) | choice | the scene's decision made; choice and reason recorded | start saves before each decision |
+| `faith_leap` | puzzle | Umbral Gem picked up | an item milestone kind, a start save |
+
 ## Format
 
 ```json
