@@ -12,6 +12,10 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     /api/v1/playthroughs/<pt>/memory/log             memory commits
     /api/v1/playthroughs/<pt>/timeline               choices and fights
     /api/v1/screenshot                               the latest capture (image)
+    /api/v1/recorder                                 recorder state (null without --record)
+    /api/v1/video/index                              recorded segments (recorder.py index.json)
+    /api/v1/video/<file>                             one MP4 segment (HTTP Range)
+    /api/v1/screen.mjpg, /api/v1/screen.jpg          the recorder's live view (204 without a frame)
     /api/v1/stream                                   SSE (text/event-stream); Last-Event-ID header or ?last_id=
     anything else                                    the web app (web/dist), index.html for unknown paths
 
@@ -33,17 +37,40 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import api
+from . import recorder as rec
 from .hub import Hub
 from .store import RunStore, StoreError
 
 PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline)$")
+VIDEO_FILE = re.compile(r"^/api/v1/video/(rec-\d+-\d{4}\.mp4)$")
 KEEPALIVE_S = 15.0
 DEFAULT_WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 
+def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """A single "bytes=a-b" / "bytes=a-" / "bytes=-n" Range -> (first, last) inclusive; None = send it all.
+    Raises ValueError for an unsatisfiable range."""
+    m = re.fullmatch(r"bytes=(\d*)-(\d*)", (header or "").strip())
+    if not m or not (m.group(1) or m.group(2)):
+        return None
+    if not m.group(1):
+        n = int(m.group(2))
+        if n == 0:
+            raise ValueError("empty suffix range")
+        return max(0, size - n), size - 1
+    first = int(m.group(1))
+    last = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+    if first >= size or last < first:
+        raise ValueError("range not satisfiable")
+    return first, last
+
+
 class App:
-    def __init__(self, store: RunStore, hub: Hub, web_dir: Path | None, keepalive_s: float = KEEPALIVE_S):
+    def __init__(self, store: RunStore, hub: Hub, web_dir: Path | None, keepalive_s: float = KEEPALIVE_S,
+                 recorder: rec.Recorder | None = None, video_dir: Path | None = None):
         self.store, self.hub, self.web_dir, self.keepalive_s = store, hub, web_dir, keepalive_s
+        self.recorder = recorder
+        self.video_dir = video_dir if video_dir is not None else store.runtime / "video"
 
     def route(self, path: str, q: dict[str, list[str]]) -> dict | None:
         """A JSON API path -> its payload (None: not found). Raises StoreError for a refused request."""
@@ -52,6 +79,10 @@ class App:
             return api.status(s)
         if path == "/api/v1/playthroughs":
             return api.playthroughs(s)
+        if path == "/api/v1/recorder":
+            return {"v": api.API_VERSION, "recorder": self.recorder.state() if self.recorder else None}
+        if path == "/api/v1/video/index":
+            return {"v": api.API_VERSION, "segments": rec.read_index(self.video_dir)}
         m = PT_ROUTE.match(path)
         if not m:
             return None
@@ -127,6 +158,10 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
                         return self._send(204, b"", "text/plain")
                     ctype = mimetypes.guess_type(shot.name)[0] or "application/octet-stream"
                     return self._send(200, shot.read_bytes(), ctype)
+                if url.path in ("/api/v1/screen.mjpg", "/api/v1/screen.jpg"):
+                    return self._screen(url.path.endswith(".mjpg"))
+                if (m := VIDEO_FILE.match(url.path)) is not None:
+                    return self._file_range(app.video_dir / m.group(1), "video/mp4")
                 if url.path.startswith("/api/"):
                     payload = app.route(url.path, q)
                     if payload is None:
@@ -142,6 +177,59 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
                 return None
             except StoreError as e:
                 return self._json({"v": api.API_VERSION, "error": str(e)}, 400)
+
+        def _file_range(self, path: Path, ctype: str) -> None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return self._send(404, b"not found", "text/plain")
+            try:
+                r = byte_range(self.headers.get("Range"), size)
+            except ValueError:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return None
+            first, last = r if r else (0, size - 1)
+            self.send_response(206 if r else 200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(last - first + 1))
+            if r:
+                self.send_header("Content-Range", f"bytes {first}-{last}/{size}")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            if self.command == "HEAD":
+                return None
+            with path.open("rb") as f:
+                f.seek(first)
+                left = last - first + 1
+                while left > 0 and (chunk := f.read(min(left, 256 * 1024))):
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            return None
+
+        def _screen(self, mjpeg: bool) -> None:
+            live = app.recorder.live if app.recorder else None
+            seq, frame = live.get() if live else (0, None)
+            if not mjpeg or frame is None:
+                return self._send(200, frame, "image/jpeg") if frame else self._send(204, b"", "text/plain")
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                while frame is not None and not live.closed and not app.hub.closed:
+                    self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n"
+                                     % len(frame) + frame + b"\r\n")
+                    self.wfile.flush()
+                    seq, frame = live.get(seq, app.keepalive_s)
+            except (BrokenPipeError, ConnectionResetError):
+                return None
+            return None
 
         def _stream(self, last_id: str | None) -> None:
             self.send_response(200)
@@ -184,6 +272,14 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--port", type=int, default=8780)
     ap.add_argument("--web", type=Path, default=DEFAULT_WEB, help="the built web app (web/dist)")
     ap.add_argument("--poll", type=float, default=0.5, help="seconds between file checks")
+    ap.add_argument("--record", action="store_true", help="record the game while it runs (recorder.py)")
+    ap.add_argument("--video", type=Path, help="recording dir (default <runtime>/video)")
+    ap.add_argument("--capture", choices=("window", "display"), default="window",
+                    help="grab the game window (x11grab -window_id) or the whole display (black under rootless "
+                         "Xwayland: research/ovh/live1.md 7)")
+    ap.add_argument("--display", default=os.environ.get("DISPLAY", ":1"))
+    ap.add_argument("--encoder", choices=sorted(rec.ENCODER_ARGS), default="h264_nvenc")
+    ap.add_argument("--video-cap-gb", type=float, default=20.0, help="delete the oldest segments above this")
     ap.add_argument("--verbose", action="store_true")
     return ap
 
@@ -195,7 +291,15 @@ def main(argv: list[str] | None = None) -> int:
     hub = Hub(store, generation=format(time.time_ns(), "x"), pt=opt.playthrough)
     stop = threading.Event()
     threading.Thread(target=hub.run, args=(stop, opt.poll), daemon=True, name="hub").start()
-    srv = serve(App(store, hub, opt.web), opt.host, opt.port, opt.verbose)
+    video = opt.video or opt.runtime / "video"
+    recorder, rec_thread = None, None
+    if opt.record:
+        recorder = rec.Recorder(rec.RecordSpec(video, encoder=opt.encoder), rec.game_probe(opt.display, opt.capture),
+                                time.time, rec.resource_guard(opt.runtime / "thermal.log"),
+                                cap_bytes=int(opt.video_cap_gb * 1024**3))
+        rec_thread = threading.Thread(target=recorder.loop, args=(stop,), daemon=True, name="recorder")
+        rec_thread.start()
+    srv = serve(App(store, hub, opt.web, recorder=recorder, video_dir=video), opt.host, opt.port, opt.verbose)
     print(f"bg3play: http://{opt.host}:{srv.server_address[1]}/  (runtime {opt.runtime})", flush=True)
     try:
         srv.serve_forever()
@@ -203,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         stop.set()
+        if rec_thread:
+            rec_thread.join(15)  # the loop stops ffmpeg so the open segment is closed
         hub.close()
         srv.server_close()
     return 0

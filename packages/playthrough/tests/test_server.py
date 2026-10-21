@@ -151,3 +151,67 @@ def test_sse_stream_live_and_resume(server, store: RunStore):
     assert sse.next() == {"event": "reset", "data": {}}
     assert sse.next()["id"] == "g1-1"
     sse.close()
+
+
+def test_byte_range():
+    from bg3play.server import byte_range
+
+    assert byte_range(None, 100) is None and byte_range("items=1-2", 100) is None
+    assert byte_range("bytes=0-", 100) == (0, 99)
+    assert byte_range("bytes=10-19", 100) == (10, 19)
+    assert byte_range("bytes=90-500", 100) == (90, 99)
+    assert byte_range("bytes=-10", 100) == (90, 99)
+    for bad in ("bytes=100-", "bytes=5-2", "bytes=-0"):
+        with pytest.raises(ValueError):
+            byte_range(bad, 100)
+
+
+def test_video_index_file_ranges_and_no_recorder(server, store: RunStore):
+    video = store.runtime / "video"
+    video.mkdir()
+    (video / "rec-100-0000.mp4").write_bytes(bytes(range(200)))
+    (video / "index.json").write_text(json.dumps({"v": 1, "segments": [
+        {"file": "rec-100-0000.mp4", "run": "rec-100", "start": 100.0, "end": 700.0, "bytes": 200},
+        {"file": "rec-100-0001.mp4", "run": "rec-100", "start": 700.0, "end": None, "bytes": 0}]}))
+    code, idx = get_json(server, "/api/v1/video/index")
+    assert code == 200 and [s["file"] for s in idx["segments"]] == ["rec-100-0000.mp4"]  # missing file dropped
+    code, headers, body = get(server, "/api/v1/video/rec-100-0000.mp4")
+    assert code == 200 and body == bytes(range(200)) and headers["Accept-Ranges"] == "bytes"
+    code, headers, body = get(server, "/api/v1/video/rec-100-0000.mp4", {"Range": "bytes=10-19"})
+    assert code == 206 and body == bytes(range(10, 20)) and headers["Content-Range"] == "bytes 10-19/200"
+    assert get(server, "/api/v1/video/rec-100-0000.mp4", {"Range": "bytes=500-"})[0] == 416
+    assert get(server, "/api/v1/video/rec-100-0009.mp4")[0] == 404
+    assert get(server, "/api/v1/video/..%2Findex.json")[0] == 404
+    assert get_json(server, "/api/v1/recorder") == (200, {"v": 1, "recorder": None})
+    assert get(server, "/api/v1/screen.jpg")[0] == 204 and get(server, "/api/v1/screen.mjpg")[0] == 204
+
+
+def test_live_mjpeg_from_the_recorder(store: RunStore, web: Path):
+    from bg3play.recorder import Recorder, RecordSpec
+
+    rec = Recorder(RecordSpec(store.runtime / "video"), probe=lambda: None, clock=lambda: 1.0)
+    rec.live.put(b"\xff\xd8one")
+    hub = Hub(store, generation="g1")
+    srv = serve(App(store, hub, web, keepalive_s=30, recorder=rec), "127.0.0.1", 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    s = ("127.0.0.1", srv.server_address[1], hub)
+    try:
+        assert get(s, "/api/v1/screen.jpg")[2] == b"\xff\xd8one"
+        assert get_json(s, "/api/v1/recorder")[1]["recorder"]["reason"] == "starting"
+        c = http.client.HTTPConnection(s[0], s[1], timeout=10)
+        c.request("GET", "/api/v1/screen.mjpg")
+        r = c.getresponse()
+        assert r.status == 200 and r.getheader("Content-Type").startswith("multipart/x-mixed-replace")
+        first = r.fp.read(len(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 5\r\n\r\n\xff\xd8one\r\n"))
+        assert first.endswith(b"\xff\xd8one\r\n")
+        rec.live.put(b"\xff\xd8two")
+        assert r.fp.readline() == b"--frame\r\n"
+        while r.fp.readline() != b"\r\n":
+            pass
+        assert r.fp.read(5) == b"\xff\xd8two"
+        c.close()
+    finally:
+        rec.live.close()
+        hub.close()
+        srv.shutdown()
+        srv.server_close()

@@ -1,0 +1,23 @@
+#!/bin/sh
+# A stand-in for ffmpeg in test_recorder.py: writes FAKE_SEGMENTS segment files of FAKE_BYTES each (all but the last
+# listed in the -segment_list csv), one MJPEG frame on stdout, then exits with FAKE_EXIT or, without it, waits for
+# SIGTERM and lists the last segment like a cleanly stopped ffmpeg.
+csv=""; pat=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-segment_list" ] && csv="$a"
+  case "$a" in *-%04d.mp4) pat="$a" ;; esac
+  prev="$a"
+done
+n=${FAKE_SEGMENTS:-2}; size=${FAKE_BYTES:-1000}; seg=${FAKE_SEGMENT_S:-600}
+last=$(printf "$pat" $((n - 1)))
+trap 'echo "$(basename "$last"),$(((n - 1) * seg)).000000,$(((n - 1) * seg + 5)).000000" >> "$csv"; exit 0' TERM
+i=0
+while [ $i -lt "$n" ]; do
+  f=$(printf "$pat" $i)
+  head -c "$size" /dev/zero > "$f"
+  [ $i -lt $((n - 1)) ] && echo "$(basename "$f"),$((i * seg)).000000,$(((i + 1) * seg)).000000" >> "$csv"
+  i=$((i + 1))
+done
+printf -- '--ffmpeg\r\nContent-type: image/jpeg\r\nContent-length: 4\r\n\r\nJPG1\r\n'
+[ -n "$FAKE_EXIT" ] && exit "$FAKE_EXIT"
+while :; do sleep 0.05; done
