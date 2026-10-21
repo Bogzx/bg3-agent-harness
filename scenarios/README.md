@@ -72,6 +72,11 @@ are positive (run_hours set), the profile has a brief (and a valid roleplay/diff
 the profile must match it), a start note with `where` and `objective`, and a save label that isn't an agent `Sxxx-`
 label (re-save it as `SCN-<name>`, see below).
 
+**A resolved v2 scenario.** `python -m bg3bench.scenario resolve packages/bench/scenarios/<name>.json >
+resolved.json` writes a v2 scenario in this shape for `play.py run --scenario-file resolved.json` (and the matrix):
+the v1 keys plus `game_settings` {difficulty (also `profile.difficulty`), karmic_dice (false), seed} and `timing`
+(`realtime` or `turn_based`). A v2 goal that isn't one milestone is refused: this runner stops at `until` only.
+
 **The flags.** `run --scenario` takes `--until`, `--character-brief`, `--roleplay`, `--difficulty`, `--save-owner`
 only when they equal the scenario's (otherwise exit 2: the scenario fixes them); the caps follow the series' caps
 rule (`--run-hours/--max-cost/--max-tokens` different from the scenario's: refused unless `--allow-cap-change`,

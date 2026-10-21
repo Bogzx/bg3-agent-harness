@@ -20,13 +20,19 @@ v2 adds to today's scenarios/*.json (v1, runner/runs.py `validate_scenario`, sce
   (`applicable`). `conditions`: the condition ids it may run under.
 
 `load(path)` reads either version: a file without `schema` is v1 and goes through `from_v1` unchanged on disk.
+
+`python -m bg3bench.scenario resolve <file> > resolved.json` writes the runner-facing file (`resolve`) that
+`play.py run --scenario-file` and the matrix's legacy CLI adapter read.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
+import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -309,3 +315,53 @@ def load(path: str | Path, family: str = "exploration") -> dict:
     if errs := validate(sc, path.stem):
         raise ScenarioError(f"{path}: " + "; ".join(errs))
     return with_defaults(sc)
+
+
+RESOLVED_SETTINGS = ("difficulty", "karmic_dice", "seed")
+
+
+def resolve(sc: dict) -> dict:
+    """A loaded v2 scenario (`load`) as the runner reads it: today's v1 shape (scenario_v1, scenarios/README.md)
+    plus `game_settings` {difficulty, karmic_dice, seed} and `timing`. The difficulty is also `profile.difficulty`,
+    where v1 has it. The legacy runner stops at a milestone only (play.py --until), so a goal other than one milestone
+    is refused. The bench's own fields (family, holdout, methods, requires, conditions) and the settings a run only
+    records (resolution, ui_scale, language) are left out; so is `start.needs_save` (v1: a save start with save null
+    is a placeholder the runner refuses)."""
+    goal = goal_of(sc)
+    if set(goal) != {"milestone"}:
+        raise ScenarioError(
+            f"{sc['name']}: goal {json.dumps(goal)} is not one milestone: the legacy runner stops at a milestone only"
+        )
+    gs = sc["game_settings"]
+    out = {"name": sc["name"], "title": sc["title"]}
+    if "about" in sc:
+        out["about"] = sc["about"]
+    out.update(
+        start={k: v for k, v in sc["start"].items() if k != "needs_save"},
+        until=goal["milestone"],
+        runs=sc["runs"],
+        caps=dict(sc["caps"]),
+        profile={"character": dict(sc["profile"]["character"]), "difficulty": gs["difficulty"]},
+        reset=sc["reset"],
+        game_settings={k: gs[k] for k in RESOLVED_SETTINGS},
+        timing=sc["timing"],
+    )
+    return out
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m bg3bench.scenario", description="Scenario files v2.")
+    sub = ap.add_subparsers(dest="command", required=True)
+    sub.add_parser("resolve", help="print the runner's file (v1 shape + game_settings, timing)").add_argument("file")
+    args = ap.parse_args(argv)
+    try:
+        resolved = resolve(load(args.file))
+    except ScenarioError as e:
+        print(f"refusing: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(json.dumps(resolved, indent=1, ensure_ascii=False) + "\n")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - python -m bg3bench.scenario
+    raise SystemExit(main())

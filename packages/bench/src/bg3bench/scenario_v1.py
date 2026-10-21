@@ -21,12 +21,16 @@ from bg3bench.scenario import (
     RESETS,
     SAVE_FOLDER_RE,
     START_KINDS,
+    TIMINGS,
 )
 from bg3bench.series import CAP_KEYS
 
 # The format rules v2 kept (bg3bench.scenario): one definition for both.
 SCENARIO_NAME_RE = NAME_RE
-SCENARIO_KEYS = {"name", "title", "about", "start", "until", "runs", "caps", "profile", "reset", "game_settings"}
+# game_settings and timing come with a resolved v2 scenario (bg3bench.scenario.resolve, play.py --scenario-file)
+SCENARIO_KEYS = {
+    "name", "title", "about", "start", "until", "runs", "caps", "profile", "reset", "game_settings", "timing",
+}  # fmt: skip
 READY, NEEDS_SAVE, INVALID = "ready", "needs a start save", "invalid"
 
 
@@ -72,10 +76,19 @@ def validate_scenario(sc, name: str, milestone_ids, roleplays, difficulties) -> 
     seed = gs.get("seed") if isinstance(gs, dict) else None
     if (
         not isinstance(gs, dict)
-        or set(gs) - {"seed"}
+        or set(gs) - {"seed", "difficulty", "karmic_dice"}
         or not (seed is None or (isinstance(seed, int) and not isinstance(seed, bool) and 0 <= seed <= 2**31 - 1))
     ):
-        errs.append("game_settings must be an object with only seed (an integer 0..2147483647 or null)")
+        errs.append(
+            "game_settings must be an object with only seed (an integer 0..2147483647 or null), difficulty and "
+            "karmic_dice"
+        )
+    elif gs.get("karmic_dice", False) is not False:
+        errs.append("game_settings.karmic_dice must be false (D9)")
+    elif "difficulty" in gs and gs["difficulty"] != (sc.get("profile") or {}).get("difficulty"):
+        errs.append("game_settings.difficulty must equal profile.difficulty")
+    if sc.get("timing", TIMINGS[0]) not in TIMINGS:
+        errs.append(f"timing must be one of {', '.join(TIMINGS)}")
     if sc.get("until") not in milestone_ids:
         errs.append(f"until {sc.get('until')!r} is not a milestone (bridge/src/bg3ai/milestones.py)")
     runs_n = sc.get("runs", 3)

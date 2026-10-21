@@ -67,9 +67,17 @@ class Format(unittest.TestCase):
         self.assertIn("not a milestone", first(save_scenario(until="moon")))
         self.assertIn("must be the file name", first(save_scenario(), "other"))
         self.assertIn("unknown keys: extra", first(save_scenario(extra=1)))
-        for gs in ({"seed": -1}, {"seed": 2**31}, {"seed": True}, {"seed": "1"}, {"difficulty": "Hard"}, []):
+        for gs in ({"seed": -1}, {"seed": 2**31}, {"seed": True}, {"seed": "1"}, {"resolution": "1920x1080"}, []):
             self.assertIn("game_settings must be", first(save_scenario(game_settings=gs)))
         self.assertEqual(problems(save_scenario(game_settings={"seed": 12345}), "beach"), [])
+        # a resolved v2 scenario (bg3bench.scenario.resolve): the difficulty twice, Karmic Dice off, a timing
+        resolved = {"seed": 7, "difficulty": "Explorer", "karmic_dice": False}
+        self.assertEqual(problems(save_scenario(game_settings=resolved, timing="turn_based")), [])
+        self.assertIn("karmic_dice must be false", first(save_scenario(game_settings=dict(resolved, karmic_dice=True))))
+        self.assertIn(
+            "must equal profile.difficulty", first(save_scenario(game_settings=dict(resolved, difficulty="Balanced")))
+        )
+        self.assertIn("timing must be", first(save_scenario(timing="paused")))
         self.assertIn("run_hours is required", first(save_scenario(caps={"max_cost": 5})))
         self.assertIn("caps must be", first(save_scenario(caps={"run_hours": -1})))
         self.assertIn("runs must be", first(save_scenario(runs=0)))
