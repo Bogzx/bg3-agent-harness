@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import clients  # noqa: E402
+import events  # noqa: E402
 import fairness  # noqa: E402
 import model_time  # noqa: E402
 import triage  # noqa: E402
@@ -707,8 +708,8 @@ def stream_events(lines: list[str], parsers: dict | None = None, name: str | Non
 
 def claude_totals(state_dir: Path, since: float) -> dict:
     """Cost, turns and tokens of every play-agent stream written since `since` (play, resumes, -fix, -keeper; any
-    client): their result events, i.e. the finished processes. A cost a client can't know (codex/gemini model
-    without a price) counts 0."""
+    client): their result events (events.load_events), i.e. the finished processes. A cost a client can't know
+    (codex/gemini model without a price) counts 0."""
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
     try:
         files = list(state_dir.iterdir()) if state_dir.is_dir() else []
@@ -723,14 +724,7 @@ def claude_totals(state_dir: Path, since: float) -> dict:
             continue
     parsers: dict = {}
     for _, _, f in sorted(found):   # in the order written: a resume after the process it resumes
-        try:
-            lines = f.read_text(errors="replace").splitlines()
-        except OSError:
-            continue
-        name = stream_client(lines)
-        for ev in stream_events([ln for ln in lines if any(m in ln for m in RESULT_MARKS[name])], parsers, name):
-            if ev.kind != "result":
-                continue
+        for ev in events.load_events(f.with_name(f.name[:-len(".jsonl")]), kinds={"result"}, parsers=parsers):
             cost += float(ev.cost_usd or 0)
             turns += int(ev.turns or 0)
             for k in clients.TOKEN_KEYS:
@@ -827,8 +821,8 @@ def death_counts(state_dir: Path, since: float, failures: list[dict], until: flo
 
 
 def fairness_flags(streams: list[Path]) -> dict:
-    """runner/fairness.py over the run's play streams: hits per rule (LEAK and CHECK), plus the sandbox/fairness
-    guard's blocks of the agent's own file calls."""
+    """runner/fairness.py over the run's play streams (their events: triage.load_calls): hits per rule (LEAK and
+    CHECK), plus the sandbox/fairness guard's blocks of the agent's own file calls."""
     kinds: Counter = Counter()
     leak = check = blocks = 0
     for s in streams:

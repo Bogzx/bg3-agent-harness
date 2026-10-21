@@ -84,11 +84,12 @@ def _turn_times(path: Path) -> dict:
     return times
 
 
-def load_events(base: Path, kinds: Collection[str] | None = None, parsers: dict | None = None) -> list[Event]:
+def load_events(base: Path, kinds: Collection[str] | None = None, parsers: dict | None = None,
+                turns: Path | None = None) -> list[Event]:
     """The Events of one play process; base is its path without the extension (runtime/sessions/<pt>/S012-r1).
     kinds: only these kinds (the raw fallback skips lines early for kinds={"result"}: streams run to tens of MB).
     parsers: the raw fallback's parser per client, shared across a run's streams in write order (runs.stream_events:
-    codex's resumed threads report running totals)."""
+    codex's resumed threads report running totals). turns: the raw fallback's timing file (default base.turns.jsonl)."""
     base = Path(base)
     log = base.with_name(base.name + ".events.jsonl")
     if log.exists():
@@ -110,7 +111,7 @@ def load_events(base: Path, kinds: Collection[str] | None = None, parsers: dict 
     name = runs.stream_client(lines)
     if kinds and set(kinds) <= {"result"}:
         lines = [ln for ln in lines if any(m in ln for m in runs.RESULT_MARKS[name])]
-    times = _turn_times(base.with_name(base.name + ".turns.jsonl"))
+    times = _turn_times(turns or base.with_name(base.name + ".turns.jsonl"))
     out = []
     for i, ev in enumerate(runs.stream_events(lines, parsers, name)):
         if kinds and ev.kind not in kinds:

@@ -3,8 +3,9 @@
     python3 runner/judge.py <session_dir> [--run K] [--model M] [--dry-run]
 
 Stdlib only. Two halves:
-  extract   a pure function over the files a run leaves behind (its play streams Sxxx.jsonl / Sxxx-rN.jsonl, their
-            Sxxx.turns.jsonl tool-call times, runs.jsonl's run window): the in-character decision points, i.e. each
+  extract   a pure function over the files a run leaves behind (its play sessions' events, runner/events.py: the
+            Sxxx.events.jsonl of Sxxx.jsonl / Sxxx-rN.jsonl, else the raw stream timed by Sxxx.turns.jsonl; runs.jsonl's
+            run window): the in-character decision points, i.e. each
             choose_dialogue (direct or a step of do_actions/queue_actions) with the options that were offered, the
             one chosen and the agent's stated reason (its [say] text right before the call), each "[decision]" note,
             and each line appended to CHARACTER.md's "## Character development". Deduplicated, capped.
@@ -25,6 +26,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import events  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))   # as play.py
@@ -55,11 +59,6 @@ def _clip(s, n: int) -> str:
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def _bare(name: str) -> str:
-    """mcp__bg3__choose_dialogue -> choose_dialogue."""
-    return (name or "").rsplit("__", 1)[-1]
-
-
 def _read_jsonl(path: Path) -> list[dict]:
     out = []
     try:
@@ -74,24 +73,6 @@ def _read_jsonl(path: Path) -> list[dict]:
         if isinstance(v, dict):
             out.append(v)
     return out
-
-
-def _result_text(block: dict) -> str:
-    """Plain text of a tool_result block; unwraps the bridge's {"result": "..."} envelope (as triage.result_text)."""
-    c = block.get("content")
-    if isinstance(c, list):
-        txt = " ".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
-    else:
-        txt = str(c or "")
-    s = txt.strip()
-    if s.startswith("{"):
-        try:
-            v = json.loads(s)
-            if isinstance(v, dict) and isinstance(v.get("result"), str):
-                return v["result"]
-        except ValueError:
-            pass
-    return s
 
 
 # ======================================================================== extract
@@ -157,12 +138,13 @@ def _development_lines(name: str, inp) -> list[str]:
 
 
 def stream_decisions(stream: Path, since: float | None = None, until: float | None = None) -> list[dict]:
-    """The decision points of one play stream, in order. A call counts when its time (Sxxx.turns.jsonl) is in
-    [since, until]; a stream without turns counts whole when its mtime is at or after `since`.
+    """The decision points of one play stream, in order. A call counts when its time (events.load_events: the
+    events log's, or Sxxx.turns.jsonl's for an old stream) is in [since, until]; a stream without call times counts
+    whole when its mtime is at or after `since`.
     Each: {kind: dialogue|note|development, session, t, chosen, reason, [speaker, line, offered, option]}."""
     sid = stream.name[:-len(".jsonl")]
-    times = {r["id"]: r.get("t") for r in _read_jsonl(stream.with_name(sid + ".turns.jsonl"))
-             if r.get("type") == "use" and r.get("id")}
+    evs = events.load_events(stream.with_name(sid))
+    times = any(e.t is not None for e in evs if e.kind == "tool_call")
     if not times and since is not None:
         try:
             if stream.stat().st_mtime < since:
@@ -178,33 +160,26 @@ def stream_decisions(stream: Path, since: float | None = None, until: float | No
     out: list[dict] = []
     offered: dict | None = None       # the last dialogue block with options seen in any tool result
     said: list[str] = []              # assistant text since the last tool result: the stated reason
-    pending: dict[str, dict] = {}     # tool_use id -> the call, until its result
-    for ev in _read_jsonl(stream):
-        typ = ev.get("type")
-        content = (ev.get("message") or {}).get("content")
-        for b in content if isinstance(content, list) else []:
-            if not isinstance(b, dict):
-                continue
-            bt = b.get("type")
-            if typ == "assistant" and bt == "text" and b.get("text", "").strip():
-                said.append(b["text"].strip())
-            elif typ == "assistant" and bt == "tool_use" and b.get("id"):
-                pending[b["id"]] = {"name": _bare(b.get("name", "")), "input": b.get("input"),
-                                    "reason": " ".join(said) or None, "offered": offered}
-            elif bt == "tool_result" and b.get("tool_use_id") in pending:
-                call = pending.pop(b["tool_use_id"])
-                t = times.get(b["tool_use_id"])
-                text = _result_text(b)
-                blocks = [x for x in dialogue_blocks(text) if x["options"]]
-                if in_window(t):
-                    out += _call_decisions(sid, t, call, blocks)
-                said = []
-                if call["name"] in (CHOOSE,) + BATCH_TOOLS or blocks:
-                    # a choice consumes what was offered; the result shows what is offered next (or nothing)
-                    offered = blocks[-1] if blocks else (None if _choice_steps(call["name"], call["input"])
-                                                         else offered)
-                elif "conversation ended" in text or "no dialogue on screen" in text:
-                    offered = None
+    pending: dict[str, dict] = {}     # call id -> the call, until its result
+    for ev in evs:
+        if ev.kind == "text":
+            said.append(ev.text)
+        elif ev.kind == "tool_call" and ev.call_id:
+            pending[ev.call_id] = {"name": ev.tool, "input": ev.args, "t": ev.t, "reason": " ".join(said) or None,
+                                   "offered": offered}
+        elif ev.kind == "tool_result" and ev.call_id in pending:
+            call = pending.pop(ev.call_id)
+            text = events.result_text(ev)
+            blocks = [x for x in dialogue_blocks(text) if x["options"]]
+            if in_window(call["t"]):
+                out += _call_decisions(sid, call["t"], call, blocks)
+            said = []
+            if call["name"] in (CHOOSE,) + BATCH_TOOLS or blocks:
+                # a choice consumes what was offered; the result shows what is offered next (or nothing)
+                offered = blocks[-1] if blocks else (None if _choice_steps(call["name"], call["input"])
+                                                     else offered)
+            elif "conversation ended" in text or "no dialogue on screen" in text:
+                offered = None
     return out
 
 

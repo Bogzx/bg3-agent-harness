@@ -3,7 +3,8 @@
     python runner/triage.py runtime/sessions/<playthrough>/S002     # writes S002.triage.md
 
 Reads the files the runner writes per session (all optional, missing ones are skipped):
-    Sxxx.jsonl          claude stream-json (tool calls with arguments, results, the final summary)
+    Sxxx.events.jsonl   the normalized event log (runner/events.py; any client): tool calls with arguments, results,
+                        the final summary. Older sessions: their raw stream Sxxx.jsonl, timed by Sxxx.turns.jsonl
     Sxxx.turns.jsonl    arrival times of the stream events (bg3ai.metrics.StreamTiming)
     Sxxx.metrics.jsonl  the bridge's per-tool latency records and state samples
     Sxxx.progress.jsonl story progress / stuck records (bg3ai.progress)
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 from bg3ai import metrics as latency  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import events  # noqa: E402
 import fairness  # noqa: E402
 
 FAIL_PREFIXES = ("FAILED", "NOT READY", "REFUSED")  # the bridge's own failure markers (server.py)
@@ -100,38 +102,26 @@ def args_str(inp, limit: int = 160) -> str:
     return s if len(s) <= limit else s[:limit - 1] + "…"
 
 
-def load_calls(stream_path: Path, turns_path: Path) -> tuple[list[dict], str | None]:
-    """Tool calls in order: {id, name, input, t (use arrival), t_res, failed, text}; plus the final summary."""
-    times = {}
-    for r in latency.read_jsonl(turns_path):
-        if r.get("id") and r.get("type") in ("use", "result"):
-            times.setdefault((r["type"], r["id"]), r.get("t"))
+def load_calls(stream_path: Path, turns_path: Path | None = None) -> tuple[list[dict], str | None]:
+    """Tool calls in order: {id, name, input, t (call arrival), t_res, failed, text}; plus the final summary. From the
+    session's events (events.load_events: its events.jsonl, else the raw stream timed by turns_path)."""
     calls: dict[str, dict] = {}
-    order: list[str] = []
     summary = last_text = None
-    for ev in latency.read_jsonl(stream_path):
-        typ = ev.get("type")
-        if typ == "result":
-            summary = ev.get("result") or summary
-            continue
-        content = (ev.get("message") or {}).get("content")
-        for b in content if isinstance(content, list) else []:
-            if not isinstance(b, dict):
-                continue
-            if b.get("type") == "tool_use" and b.get("id"):
-                calls[b["id"]] = {"id": b["id"], "name": bare(b.get("name", "")), "input": b.get("input"),
-                                  "t": times.get(("use", b["id"])), "t_res": None, "failed": False, "text": "",
-                                  "fails": []}
-                order.append(b["id"])
-            elif b.get("type") == "tool_result" and b.get("tool_use_id") in calls:
-                c = calls[b["tool_use_id"]]
-                c["text"] = result_text(b)
-                c["fails"] = failures(c["name"], b, c["text"])
-                c["failed"] = bool(c["fails"])
-                c["t_res"] = times.get(("result", c["id"]))
-            elif b.get("type") == "text" and typ == "assistant" and b.get("text", "").strip():
-                last_text = b["text"].strip()
-    return [calls[i] for i in order], summary or last_text
+    for ev in events.load_events(Path(str(stream_path)[:-len(".jsonl")]), turns=turns_path):
+        if ev.kind == "result":
+            summary = ev.text or summary
+        elif ev.kind == "tool_call" and ev.call_id:
+            calls[ev.call_id] = {"id": ev.call_id, "name": ev.tool, "input": ev.args, "t": ev.t, "t_res": None,
+                                 "failed": False, "text": "", "fails": []}
+        elif ev.kind == "tool_result" and ev.call_id in calls:
+            c = calls[ev.call_id]
+            c["text"] = events.result_text(ev)
+            c["fails"] = failures(c["name"], {"is_error": ev.is_error}, c["text"])
+            c["failed"] = bool(c["fails"])
+            c["t_res"] = ev.t
+        elif ev.kind == "text":
+            last_text = ev.text
+    return list(calls.values()), summary or last_text
 
 
 def hm(t: float | None) -> str:

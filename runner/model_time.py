@@ -5,9 +5,10 @@ reference API speed so runs on different providers / hours / models compare.
     python3 runner/model_time.py <session_dir> [--run K]
 
 Stdlib only (plus the repo's bridge/src/bg3ai/metrics.py, itself stdlib only). Reads what a session leaves behind:
-Sxxx.turns.jsonl (runner arrival times of every assistant block, tool_use and tool_result; else the stream's own
-timestamps), Sxxx.jsonl (the claude stream: thinking_duration_ms per message, the final result event's exact
-duration_api_ms / output_tokens / thinking_tokens) and Sxxx.metrics.jsonl (the bridge's tool records and activity
+Sxxx.turns.jsonl (runner arrival times of every assistant block, tool_use and tool_result; else the claude stream's
+own timestamps), the session's events (runner/events.py: Sxxx.events.jsonl, else the raw stream Sxxx.jsonl; claude's
+thinking_duration_ms per message, the final result event's exact duration_api_ms / output_tokens / thinking_tokens)
+and Sxxx.metrics.jsonl (the bridge's tool records and activity
 samples, for the idle gaps). Play sessions and their resumes only (-fix / -keeper are not the player).
 
 Per session, then summed over the run:
@@ -55,6 +56,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bg3ai import metrics as M  # noqa: E402
+import events  # noqa: E402
 
 REF_OUT_TOK_S = 100.0   # the reference output speed (tokens/s) adjusted model time is normalised to: a fixed yardstick,
 REF_TTFT_S = 0.75       # never changed between runs that are compared (both are recorded in "ref")
@@ -146,23 +148,21 @@ def _iso(s) -> float | None:
 
 
 def stream_info(stream: Path) -> dict:
-    """From the claude stream: thinking_duration_ms per message id, the last result event's exact totals, and
-    turns-like records rebuilt from the events' own timestamps (used when Sxxx.turns.jsonl is missing)."""
+    """From the session's events: the thinking time per message id and the last result event's exact totals; and
+    turns-like records rebuilt from the raw claude stream's own timestamps (used when Sxxx.turns.jsonl is missing;
+    only claude's lines carry timestamps)."""
     think_ms: dict[str, float] = {}
     result, records, t = None, [], None
+    for ev in events.load_events(Path(str(stream)[:-len(".jsonl")]), kinds={"thinking", "result"}):
+        if ev.kind == "thinking" and ev.message_id and ev.think_ms:
+            think_ms[ev.message_id] = think_ms.get(ev.message_id, 0.0) + ev.think_ms
+        elif ev.kind == "result":
+            result = {"api_ms": ev.api_ms, "out": (ev.tokens or {}).get("output"), "think": ev.think_tokens,
+                      "turns": ev.turns, "wall_ms": ev.duration_ms}
     for ev in M.read_jsonl(stream):
         typ = ev.get("type")
         if ev.get("timestamp"):
             t = _iso(ev["timestamp"]) or t
-        if typ == "assistant":
-            mid = (ev.get("message") or {}).get("id")
-            if mid and ev.get("thinking_duration_ms"):
-                think_ms[mid] = think_ms.get(mid, 0.0) + float(ev["thinking_duration_ms"])
-        elif typ == "result":
-            u = ev.get("usage") or {}
-            result = {"api_ms": ev.get("duration_api_ms"), "out": u.get("output_tokens"),
-                      "think": (u.get("output_tokens_details") or {}).get("thinking_tokens"),
-                      "turns": ev.get("num_turns"), "wall_ms": ev.get("duration_ms")}
         if t is not None and typ in ("assistant", "user", "system"):
             records.extend(M.stream_records(ev, t))
     return {"think_ms": think_ms, "result": result, "records": records}
