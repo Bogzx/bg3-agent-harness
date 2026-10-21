@@ -1,0 +1,17 @@
+{
+ "schema": 2,
+ "name": "e2e_sell_idol",
+ "title": "Offline E2E: sell the idol to the trader",
+ "about": "The offline end-to-end test's scenario (tests/test_e2e_offline.py): a trader's dialogue is open; selling the idol brings the party from 100 to 250 gold.",
+ "family": "sandbox",
+ "holdout": false,
+ "start": {"kind": "new_game"},
+ "goal": {"gold": {"gte": 200}},
+ "runs": 2,
+ "caps": {"run_hours": 0.25, "max_cost": 1.0, "max_tokens": null},
+ "game_settings": {"seed": 7},
+ "timing": "realtime",
+ "methods": true,
+ "conditions": ["rules"],
+ "profile": {"character": {"brief": "A careful trader."}}
+}
