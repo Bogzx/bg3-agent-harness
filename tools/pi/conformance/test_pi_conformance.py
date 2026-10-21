@@ -81,7 +81,7 @@ def text_of(content) -> str:
 
 
 class Reader:
-    """pi's stdout read on a thread: its first events carry all 94 schemas (~80 KB each), more than a pipe holds,
+    """pi's stdout read on a thread: its first events carry all the tool schemas (~80 KB each), more than a pipe holds,
     so a test that waits for something else must keep reading or pi blocks."""
 
     def __init__(self, p: subprocess.Popen):
@@ -537,7 +537,8 @@ class Conformance(unittest.TestCase):
             [e.kind for e in events],
             ["init", "tool_call", "tool_call", "usage", "tool_result", "tool_result", "text", "usage", "result"],
         )
-        self.assertEqual((events[0].tools, events[0].mcp, events[0].session_id), (94, ["bg3:connected"], "S001-pi"))
+        init = (events[0].tools, events[0].mcp, events[0].session_id)
+        self.assertEqual(init, (len(TOOLS), ["bg3:connected"], "S001-pi"))
         self.assertEqual(events[2].args.keys(), {"_malformed"})
         res = events[-1]
         self.assertEqual((res.subtype, res.is_error, res.turns, res.cost_usd), ("success", False, 2, 0.025))
