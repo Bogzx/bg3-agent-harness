@@ -1,0 +1,116 @@
+# CI (TARGET-ARCHITECTURE.md "CI pipeline"). No job needs the game, a GPU, Steam or an API key.
+# Report mode until Phase D (OVERHAUL-PLAN.md): import-linter and the boundary test print violations without failing.
+# To enforce them, add --enforce to the import_contracts.py step and BG3AI_BOUNDARIES_ENFORCE: "1" to the env below.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_PYTHON: "3.14"
+  BG3AI_BOUNDARIES_ENFORCE: "0"
+
+jobs:
+  lint:
+    name: Lint and types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - name: ruff check
+        run: uv run ruff check --output-format github .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: Legacy lint lists only shrink
+        run: uv run python tools/ci/legacy_lint.py
+      - name: pyright
+        run: uv run pyright
+      - name: import-linter (report mode)
+        run: uv run python tools/ci/import_contracts.py
+      - name: Package boundaries (report mode)
+        run: uv run python tools/ci/test_boundaries.py
+      - name: 1000-line cap
+        run: uv run python tools/ci/line_cap.py
+
+  test:
+    name: pytest (offline)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - name: pytest -m "not live"
+        run: uv run pytest -m "not live" --cov --cov-report=
+      - name: Coverage per package
+        if: always()
+        run: |
+          for src in bridge/src/bg3ai runner tools packages/*/src; do
+            [ -d "$src" ] || continue
+            echo "== $src"
+            uv run coverage report --include="$src/*" | tail -1
+          done
+
+  lua:
+    name: Lua suites (Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pull the Lua images
+        run: docker pull -q nickblah/lua:5.3 && docker pull -q nickblah/lua:5.4
+      - name: Run the suites
+        run: |
+          fail=0
+          for t in tools/vis/test_lua.sh tools/vis/test_read_cost.sh tools/vis/test_route.sh \
+                   tools/dev/test_act_lua.sh tools/dev/test_autoskip.sh tools/dev/test_nav_lua.sh \
+                   tools/dev/test_guard_dialogue.sh tools/dev/test_confirm.sh tools/dev/test_events_lua.sh \
+                   tools/dev/test_hotbar.sh tools/dev/test_cc_pacing.sh tools/dev/test_cc_name.sh \
+                   tools/dev/test_dialogue_tags.sh tools/dev/test_fairness_lua.sh tools/dev/test_level_up.sh \
+                   tools/dev/test_mem.sh tools/dev/test_save.sh tools/dev/test_ui_children.sh \
+                   tools/dev/test_spellbook.sh tools/dev/test_ui_busy.sh tools/dev/test_ui_selected.sh; do
+            echo "::group::$t"
+            if bash "$t"; then echo "::endgroup::"; else echo "::endgroup::"; echo "::error::$t failed"; fail=1; fi
+          done
+          exit $fail
+
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Find TypeScript packages
+        id: find
+        run: |
+          dirs=$( (find packages -name package.json -not -path '*/node_modules/*' -printf '%h\n' 2>/dev/null || true) | sort | tr '\n' ' ')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          [ -n "$dirs" ] || echo "no packages/**/package.json yet: nothing to check"
+      - uses: actions/setup-node@v4
+        if: steps.find.outputs.dirs != ''
+        with:
+          node-version: 22
+      - name: npm ci, tsc --noEmit, lint, vitest
+        if: steps.find.outputs.dirs != ''
+        run: |
+          for d in ${{ steps.find.outputs.dirs }}; do
+            echo "::group::$d"
+            (cd "$d" && npm ci && npx tsc --noEmit && npm run --if-present lint && npm run --if-present test)
+            echo "::endgroup::"
+          done

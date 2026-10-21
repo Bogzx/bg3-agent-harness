@@ -3,7 +3,8 @@
     "packages",
     "bridge/src",
     "runner",
-    "tools"
+    "tools",
+    "conftest.py"
   ],
   "exclude": [
     "third_party",
@@ -13,7 +14,8 @@
   ],
   "strict": [
     "packages",
-    "tools/ci"
+    "tools/ci",
+    "conftest.py"
   ],
   "typeCheckingMode": "basic",
   "pythonVersion": "3.12",
