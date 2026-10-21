@@ -142,7 +142,8 @@ class PiParser:
         toks = C.tokens(u.get("input"), u.get("output"), u.get("cacheRead"), u.get("cacheWrite"))
         self.tokens = {k: self.tokens[k] + toks[k] for k in C.TOKEN_KEYS}
         self.estimate += float((u.get("cost") or {}).get("total") or 0)
-        out.append(C.Event("usage", session_id=sid, message_id=msg.get("responseId"), tokens=toks))
+        out.append(C.Event("usage", session_id=sid, message_id=msg.get("responseId"), tokens=toks,
+                           cost_usd=self._cost()))   # the process's running cost (spend caps act on it)
         self.last_stop = msg.get("stopReason")
         if self.last_stop == "error":
             self.last_error = str(msg.get("errorMessage") or "")

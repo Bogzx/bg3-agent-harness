@@ -26,6 +26,7 @@ game it didn't start that is already in a loaded save, unless --take-over is giv
 from __future__ import annotations
 
 import argparse
+import collections
 import fcntl
 import hashlib
 import json
@@ -62,6 +63,9 @@ import events  # noqa: E402  (runner/events.py: Sxxx.events.jsonl, the normalize
 import display_env  # noqa: E402  (runner/display_env.py: DISPLAY/XAUTHORITY/... when a shell lacks them)
 import sandbox  # noqa: E402  (runner/sandbox.py: run --sandbox container)
 import model_time  # noqa: E402  (runner/model_time.py: model vs harness time, a run record's `model_time`)
+import client_setup  # noqa: E402  (runner/client_setup.py: --profile, API key, system text, expected tool count)
+import pi_client  # noqa: E402  (runner/pi_client.py: pi's exit problem when it ends before any event)
+import spend  # noqa: E402  (runner/spend.py: paid clients' per-run cap and runtime/budget.json)
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state, the game's install and Larian profile paths)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
@@ -2159,6 +2163,9 @@ class Options:
     restart_run: bool = False          # run --runs --restart-run: start the next run over even after finished sessions
     keep_game: bool = False            # run --until/--runs --keep-game: leave the harness game up when the run/series ends
     max_cost_per_day: float | None = None  # run --max-cost-per-day USD: pause while the trailing 24 h spent this much
+    profile: object | None = None      # run --profile: profiles.Profile (pi: endpoint, model, effort)
+    system_file: str | None = None     # pi: the system text, dumped once per run (client_setup.dump_server)
+    tools_expected: int | None = None  # pi: the bg3 tools every play process must get (else mcp_failed)
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -2170,9 +2177,10 @@ AUTOCOMPACT_MIN, AUTOCOMPACT_MAX = 100_000, 1_000_000
 def make_client(opt: Options) -> clients.Client:
     """The play client: the bg3 stdio server of play/.mcp.json, or with --sandbox container the http one on the
     sandbox network's gateway (the client runs in the container)."""
+    kw = {"profile": opt.profile, "system_file": opt.system_file} if opt.client == "pi" else {}
     if opt.sandbox == "container":
-        return clients.make_http(opt.client, sandbox.URL)
-    return clients.make(opt.client)
+        return clients.make_http(opt.client, sandbox.URL, **kw)
+    return clients.make(opt.client, **kw)
 
 
 def sandbox_server_env(base_env: dict, req: clients.Request) -> dict:
@@ -2210,6 +2218,7 @@ class SessionResult:
     exit_code: int | None
     reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | killed | milestone | dry_run
     #                      | cap | api_limit (RUN-7: usage/rate limit, overload) | mcp_failed (RUN-8)
+    #                      | context_overflow (pi: the conversation is full; the next session starts a new one)
     started: float
     ended: float
     notes: list[str] = field(default_factory=list)
@@ -3157,7 +3166,8 @@ class Runner:
             return self.opt.fix_model or self.opt.model, self.opt.fix_effort
         state = getattr(self, "state", None)
         o = session_overrides(state.dir / "session-config.json") if state else {}
-        return o.get("model", self.opt.model), o.get("effort", self.opt.effort)
+        model = self.opt.model if getattr(self.opt, "profile", None) else o.get("model", self.opt.model)
+        return model, o.get("effort", self.opt.effort)
 
     @property
     def client(self) -> clients.Client:
@@ -3295,11 +3305,14 @@ class Runner:
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
         last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
         meter = None   # --max-cost/--max-tokens: the run's cost and tokens as this stream goes (runs.UsageMeter)
-        if self.has_usage_caps() and self.run_started is not None:
-            done = runs.claude_totals(self.state.dir, self.run_started)
+        since = self.run_started if self.run_started is not None else getattr(self, "run_t0", None)
+        if self.has_usage_caps() and since is not None:
+            done = runs.claude_totals(self.state.dir, since)
             meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]))
         seen_session = [claude_session]   # the conversation id: assigned up front, or the stream's init event's
-        api = {"texts": [], "rejected": False, "resets_at": None, "mcp": None}   # RUN-7/RUN-8, from the stream
+        api = {"texts": [], "rejected": False, "resets_at": None, "mcp": None,   # RUN-7/RUN-8, from the stream
+               "overflow": None, "raw": collections.deque(maxlen=40)}   # pi: its overflow result, stderr tail
+        cost = spend.ProcessCost()
 
         def pump():
             for line in proc.stdout:
@@ -3312,6 +3325,7 @@ class Runner:
                 except json.JSONDecodeError:
                     if line.strip():
                         human.write(f"{stamp} [raw] {line.rstrip()[:500]}\n")
+                        api["raw"].append(line.rstrip())
                     continue
                 try:
                     events = client.parse(line)
@@ -3326,7 +3340,11 @@ class Runner:
                         seen_session[0] = e.session_id
                         write_status(claude_session=e.session_id)
                     if e.kind == "init" and api["mcp"] is None:
-                        api["mcp"] = mcp_problem(e.mcp, client.name == "claude") or ""
+                        api["mcp"] = (mcp_problem(e.mcp, client.name == "claude") or client_setup.tool_count_problem(
+                            e.tools, self.opt.tools_expected, os.environ) or "")
+                    if e.kind == "result" and e.subtype in ("error_context_overflow", "error_overflow_loop"):
+                        api["overflow"] = e.subtype
+                    cost.on_event(e)
                     if e.api_error and e.kind in ("text", "error", "result") and e.text:
                         api["texts"].append(e.text[:300])
                     if e.kind == "rate_limit":
@@ -3397,6 +3415,10 @@ class Runner:
                 reason = "cap"
                 human.write(f"{datetime.now():%H:%M:%S} [runner] {self.cap_hit['why']}; stopping claude\n")
                 hard_stop = min(hard_stop, now)
+            if reason == "exited" and api["overflow"] == "error_overflow_loop":   # pi would go on: stop it
+                reason, detail = "context_overflow", "pi's overflow recovery looped (pi #11161)"
+                human.write(f"{datetime.now():%H:%M:%S} [runner] {detail}; stopping {client.name}\n")
+                hard_stop = min(hard_stop, now)
             if reason == "exited" and api["mcp"]:
                 # RUN-8: a toolless agent would be pushed to its hard stop by the stop check: end it at once
                 reason, detail = "mcp_failed", api["mcp"]
@@ -3430,8 +3452,12 @@ class Runner:
         reader.join(timeout=10)
         self.sandbox_cleanup()
         reason = exit_reason(reason, proc.returncode)
+        if api["mcp"] is None and client.name == "pi":   # pi ended before any event: bg3.ts failed to load?
+            api["mcp"] = pi_client.exit_problem(proc.returncode, "\n".join(api["raw"]))
         if reason in ("exited", "killed") and api["mcp"]:
             reason, detail = "mcp_failed", api["mcp"]   # it exited before the 2 s loop saw the init event
+        if reason == "exited" and api["overflow"]:   # never a backoff-retry or a resume of a full conversation
+            reason, detail = "context_overflow", f"the context is full ({api['overflow']})"
         kind = classify_api_failure(api["texts"], api["rejected"]) if reason == "exited" else None
         if kind == "limit":   # RUN-7: wait it out in the run loop (never a quick failure)
             reason, detail = "api_limit", (api["texts"] or ["rate limit rejected"])[-1]
@@ -3453,6 +3479,13 @@ class Runner:
         self.events_log = evlog.end(reason, proc.returncode, start, detail=detail, fault_at=fault_at,
                                     conversation=seen_session[0])
         log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
+        if spend.is_paid(client.name):
+            try:
+                b = spend.add_spend(RUNTIME / "budget.json", cost.usd, playthrough=self.opt.playthrough,
+                                    session=sid + tag)
+                log(f"{sid}{tag}: cost ${cost.usd:.4f}" + (f"; budget ${b['spent']:.2f} of ${b['cap']:g}" if b else ""))
+            except (OSError, spend.BudgetError) as e:
+                log(f"{sid}{tag}: budget update failed ({e}); cost ${cost.usd:.4f}")
         self.code_moved(sid + tag)
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
@@ -3753,7 +3786,8 @@ class Runner:
         return {"run_hours": self.opt.run_hours, "max_cost": self.opt.max_cost, "max_tokens": self.opt.max_tokens}
 
     def has_usage_caps(self) -> bool:
-        return bool(self.opt.until and (self.opt.max_cost is not None or self.opt.max_tokens is not None))
+        """--max-cost (also without --until: then it caps this runner's run) / --max-tokens (with --until)."""
+        return self.opt.max_cost is not None or bool(self.opt.until and self.opt.max_tokens is not None)
 
     def check_usage_caps(self, cost: float, tokens: int) -> bool:
         """--max-cost / --max-tokens: True (and cap_hit set, an event logged) once the run reached one."""
@@ -3770,6 +3804,21 @@ class Runner:
         log(why + ": the run ends")
         self.event("cap", cap=cap, cost=round(cost, 4), tokens=tokens)
         return True
+
+    def budget_refusal(self) -> str | None:
+        """A paid client (spend.PAID_CLIENTS): why this run can't start, else None with --max-cost cut to what
+        runtime/budget.json has left (every run of a series checks again)."""
+        if not spend.is_paid(self.opt.client) or self.opt.dry_run:
+            return None
+        try:
+            cap, err = spend.run_cap(self.opt.client, self.opt.max_cost, spend.read_budget(RUNTIME / "budget.json"))
+        except spend.BudgetError as e:
+            cap, err = None, str(e)
+        if err:
+            log(f"refusing the run: {err}")
+            return err
+        self.opt = replace(self.opt, max_cost=cap)
+        return None
 
     def runs_path(self) -> Path:
         """runs.jsonl of this run: the series' (runtime/sessions/<base>/) for --runs, else the playthrough's."""
@@ -3796,6 +3845,10 @@ class Runner:
         if self.opt.judge_change:
             rec["judge_change"] = self.opt.judge_change
         rec["client"] = self.opt.client
+        if self.opt.profile is not None:   # the condition: its profile file, and the system text pi got (D2)
+            rec["profile"] = self.opt.profile.source
+        if self.opt.system_file and Path(self.opt.system_file).exists():
+            rec["system_sha256"] = client_setup.sha256(Path(self.opt.system_file))
         if getattr(self, "box", None) is not None:
             rec.update(self.box.record())   # sandbox=container (+ sandbox_unfirewalled)
         if self.opt.client_change:
@@ -4447,6 +4500,9 @@ class Runner:
         outcome = None   # --until: how the run ended, when that ending writes a record (not a stop or a restart)
         restarting = False
         try:
+            if (why := self.budget_refusal()) is not None:
+                stop_why, self.fatal = f"refused: {why}", True
+                return 2
             if self.check_until(read_seen(self.state.dir), None):
                 what = "the game is finished" if self.game_ended() else f"--until {self.opt.until}"
                 log(f"{what}: already reached in this playthrough; nothing to play")
@@ -4677,10 +4733,20 @@ def cmd_run(a) -> int:
     if a.run_hours is not None and (a.run_hours <= 0 or not a.until):
         print("refusing --run-hours: it needs a positive value and --until MILESTONE", file=sys.stderr)
         return 2
-    for flag, v in (("--max-cost", a.max_cost), ("--max-tokens", a.max_tokens)):
-        if v is not None and (v <= 0 or not a.until):
-            print(f"refusing {flag}: it needs a positive value and --until MILESTONE", file=sys.stderr)
-            return 2
+    if a.max_cost is not None and a.max_cost <= 0:
+        print("refusing --max-cost: it needs a positive value", file=sys.stderr)
+        return 2
+    if a.max_tokens is not None and (a.max_tokens <= 0 or not a.until):
+        print("refusing --max-tokens: it needs a positive value and --until MILESTONE", file=sys.stderr)
+        return 2
+    try:   # --profile: the client, model and effort; pi's API key into this process's env (never logged)
+        choice = client_setup.resolve(a.client, a.profile, a.model, a.effort, a.fix_model, not a.no_memory_keeper)
+        os.environ.update(client_setup.api_key_env(choice.profile, os.environ, REPO / ".env"))
+    except client_setup.SetupRefused as e:
+        print(f"refusing: {e}", file=sys.stderr)
+        return 2
+    a.client = a.client or (choice.client if choice.profile else None)
+    a.model, a.effort = choice.model, choice.effort
     if a.max_cost_per_day is not None and a.max_cost_per_day <= 0:
         print("refusing --max-cost-per-day: it needs a positive value", file=sys.stderr)
         return 2
@@ -4712,6 +4778,14 @@ def cmd_run(a) -> int:
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
             return 2
+    try:   # a paid client: a per-run cap, cut to what runtime/budget.json has left
+        cap, err = spend.run_cap(client, caps["max_cost"], spend.read_budget(RUNTIME / "budget.json"))
+    except spend.BudgetError as e:
+        cap, err = None, str(e)
+    if err and spend.is_paid(client):
+        print(f"refusing: {err}", file=sys.stderr)
+        return 2
+    caps = dict(caps, max_cost=cap)
     if use_judge and judge.same_model(judge_model, a.model):
         print(f"refusing --judge: the judge model {judge_model} is the model under test ({a.model}); pick another "
               "with --judge-model (fixed for the whole benchmark) or pass --no-judge", file=sys.stderr)
@@ -4738,6 +4812,13 @@ def cmd_run(a) -> int:
     if a.plan:   # after every refusal above, before the lock: nothing written, nothing launched
         return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client)
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
+    pi_files: dict = {}
+    if choice.profile is not None and client == "pi":   # once per runner: what every pi process gets
+        try:
+            pi_files = pi_run_files(RUNTIME / "sessions" / a.playthrough)
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            print(f"refusing --client pi: the system text / tool list dump failed: {e}", file=sys.stderr)
+            return 2
     if filled:
         log("display env filled from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
     if not os.environ.get("XAUTHORITY"):
@@ -4762,7 +4843,7 @@ def cmd_run(a) -> int:
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
                   sandbox_change=sandbox_change, restart_run=a.restart_run,
-                  keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day)
+                  keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day, profile=choice.profile, **pi_files)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -4812,6 +4893,16 @@ def cmd_run(a) -> int:
         if ram_stop is not None:
             ram_stop.set()
         runs.unlock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK)
+
+
+def pi_run_files(d: Path) -> dict:
+    """pi's system text and the bg3 server's tool list, dumped into the playthrough's dir (Options fields)."""
+    d.mkdir(parents=True, exist_ok=True)
+    system, tools = d / "pi-system.txt", d / "bg3-tools.json"
+    client_setup.dump_server(system, tools, REPO)
+    expected = client_setup.expected_tools(client_setup.tool_names(tools), os.environ)
+    log(f"pi: system text {system} (sha256 {client_setup.sha256(system)[:12]}), {expected} bg3 tools expected")
+    return {"system_file": str(system), "tools_expected": expected}
 
 
 PLAN_PROMPT = "<KICKOFF: built at the session start from the run's memory briefing>"
@@ -5477,7 +5568,9 @@ def main(argv: list[str] | None = None) -> int:
                    help='per-session override, live: session-config.json {"minutes": 60}, re-read before each session')
     r.add_argument("--allow-short-sessions", action="store_true",
                    help=f"allow --session-minutes below {MIN_SESSION_MINUTES} (harness tests only)")
-    r.add_argument("--model", default="opus", help="model for play sessions (claude --model)")
+    r.add_argument("--model", help="model for play sessions (claude --model; default opus, or the --profile's)")
+    r.add_argument("--profile", metavar="TOML", help="profiles/*.toml: client, model and effort (pi: endpoint and "
+                   "model definition; needs --max-cost and --no-keeper, the API key from the env or the repo .env)")
     r.add_argument("--effort", choices=EFFORTS, help="effort for play sessions (claude --effort; default: "
                    "Claude Code's). Per-session override: runtime/sessions/<pt>/session-config.json "
                    '{"model": ..., "effort": ...}, re-read before each session')
@@ -5505,8 +5598,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--run-hours", type=float, metavar="H",
                    help="with --until: cap one run at H hours; then it ends as a timeout (a failure) and the next starts")
     r.add_argument("--max-cost", type=float, metavar="USD",
-                   help="with --until: cap one run's claude cost; past it the run ends over_budget (a failure). A "
-                        "series keeps its first run's caps (series.json)")
+                   help="cap one run's play cost (without --until: this runner's run); past it the run ends "
+                        "over_budget (a failure). Required for a paid client (pi), cut to what runtime/budget.json "
+                        "{cap, spent} has left. A series keeps its first run's caps (series.json)")
     r.add_argument("--max-cost-per-day", type=float, metavar="USD",
                    help="long runs: pause (no new session) while the play agent's spend in the trailing 24 h is at "
                         "least USD; it plays again once old sessions leave the window (checked between sessions)")

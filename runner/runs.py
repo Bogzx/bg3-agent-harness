@@ -672,7 +672,7 @@ def token_total(tokens: dict | None) -> int:
 
 # The first event type of a stream → the client that wrote it (claude: system init; codex: thread.started; gemini:
 # init). A stream from before the client interface is claude's.
-STREAM_CLIENTS = {"system": "claude", "thread.started": "codex", "init": "gemini"}
+STREAM_CLIENTS = {"system": "claude", "thread.started": "codex", "init": "gemini", "session": "pi"}
 # The lines claude_totals needs, per client (a substring test before json: streams run to tens of MB).
 RESULT_MARKS = {"claude": ('"type": "result"', '"type":"result"'),
                 "codex": ("thread.started", "turn.completed", "turn.failed"),
@@ -697,7 +697,9 @@ def stream_events(lines: list[str], parsers: dict | None = None, name: str | Non
     threads report running totals: its parser keeps the last total per thread, so feed streams in write order)."""
     name = name or stream_client(lines)
     parsers = {} if parsers is None else parsers
-    if name not in parsers:   # parsing only: no MCP server config needed (codex/gemini would read play/.mcp.json)
+    if name == "pi" and name not in parsers:   # pi's parser needs no profile
+        parsers[name] = __import__("pi_client").PiParser()
+    elif name not in parsers:   # parsing only: no MCP server config needed (codex/gemini would read play/.mcp.json)
         parsers[name] = clients.make(name, **({} if name == "claude" else {"server": {}}))
     parser = parsers[name]
     out = []
@@ -736,12 +738,14 @@ class UsageMeter:
     """A run's cost and tokens while a play process streams: `base` (the run's finished processes, claude_totals)
     plus this stream's running usage (clients.Event "usage", per message id) until its result event gives the exact
     totals. Claude reports cost only in result events, so the live cost is the live tokens at the run's cost per
-    token so far (none before the run's first result: a cost cap then trips at the end of the first process)."""
+    token so far (none before the run's first result: a cost cap then trips at the end of the first process). A
+    client whose usage events carry the process's running cost (pi: billed, or its estimate) is metered by that."""
 
     def __init__(self, base_cost: float = 0.0, base_tokens: int = 0):
         self.done_cost, self.done_tokens = float(base_cost), int(base_tokens)
         self.msgs: dict = {}
         self.live = 0
+        self.live_cost: float | None = None
 
     def on_event(self, ev) -> None:
         """One clients.Event."""
@@ -750,10 +754,12 @@ class UsageMeter:
             n = token_total(ev.tokens)
             self.live += n - self.msgs.get(mid, 0)
             self.msgs[mid] = n
+            if ev.cost_usd is not None:
+                self.live_cost = float(ev.cost_usd)
         elif ev.kind == "result":
             self.done_cost += float(ev.cost_usd or 0)
             self.done_tokens += token_total(ev.tokens)
-            self.msgs, self.live = {}, 0
+            self.msgs, self.live, self.live_cost = {}, 0, None
 
     @property
     def tokens(self) -> int:
@@ -761,6 +767,8 @@ class UsageMeter:
 
     @property
     def cost(self) -> float:
+        if self.live_cost is not None:
+            return self.done_cost + self.live_cost
         rate = self.done_cost / self.done_tokens if self.done_tokens else 0.0
         return self.done_cost + self.live * rate
 

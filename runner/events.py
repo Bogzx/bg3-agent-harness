@@ -109,7 +109,7 @@ def load_events(base: Path, kinds: Collection[str] | None = None, parsers: dict 
 
     lines = _lines(base.with_name(base.name + ".jsonl"))
     name = runs.stream_client(lines)
-    if kinds and set(kinds) <= {"result"}:
+    if kinds and set(kinds) <= {"result"} and name in runs.RESULT_MARKS:   # pi: its result needs the whole stream
         lines = [ln for ln in lines if any(m in ln for m in runs.RESULT_MARKS[name])]
     times = _turn_times(turns or base.with_name(base.name + ".turns.jsonl"))
     out = []
