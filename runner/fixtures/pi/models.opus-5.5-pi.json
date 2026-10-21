@@ -1,0 +1,42 @@
+{
+ "providers": {
+  "openrouter": {
+   "baseUrl": "https://openrouter.ai/api/v1",
+   "api": "openai-completions",
+   "apiKey": "${OPENROUTER_API_KEY}",
+   "models": [
+    {
+     "id": "anthropic/claude-opus-5.5",
+     "name": "anthropic/claude-opus-5.5",
+     "api": "openai-completions",
+     "reasoning": true,
+     "input": [
+      "text",
+      "image"
+     ],
+     "contextWindow": 1000000,
+     "maxTokens": 32000,
+     "cost": {
+      "input": 4.0,
+      "output": 20.0,
+      "cacheRead": 0.2,
+      "cacheWrite": 5.0
+     },
+     "thinkingLevelMap": {
+      "off": null,
+      "minimal": null
+     },
+     "compat": {
+      "openRouterRouting": {
+       "only": [
+        "anthropic"
+       ],
+       "allow_fallbacks": false,
+       "require_parameters": true
+      }
+     }
+    }
+   ]
+  }
+ }
+}

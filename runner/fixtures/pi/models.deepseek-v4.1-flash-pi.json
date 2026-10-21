@@ -1,0 +1,45 @@
+{
+ "providers": {
+  "openrouter": {
+   "baseUrl": "https://openrouter.ai/api/v1",
+   "api": "openai-completions",
+   "apiKey": "${OPENROUTER_API_KEY}",
+   "models": [
+    {
+     "id": "deepseek/deepseek-v4.1-flash",
+     "name": "deepseek/deepseek-v4.1-flash",
+     "api": "openai-completions",
+     "reasoning": true,
+     "input": [
+      "text",
+      "image"
+     ],
+     "contextWindow": 1048576,
+     "maxTokens": 32000,
+     "cost": {
+      "input": 0.3,
+      "output": 1.2,
+      "cacheRead": 0.006,
+      "cacheWrite": 0.0
+     },
+     "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "medium": null,
+      "xhigh": null
+     },
+     "compat": {
+      "requiresReasoningContentOnAssistantMessages": true,
+      "openRouterRouting": {
+       "only": [
+        "deepseek"
+       ],
+       "allow_fallbacks": false,
+       "require_parameters": true
+      }
+     }
+    }
+   ]
+  }
+ }
+}

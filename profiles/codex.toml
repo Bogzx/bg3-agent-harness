@@ -1,0 +1,4 @@
+# Codex CLI with its own endpoint and login (~/.codex). Example model id.
+client = "codex"
+model = "gpt-5"
+effort = "high"
