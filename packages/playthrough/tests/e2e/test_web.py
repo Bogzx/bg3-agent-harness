@@ -131,6 +131,23 @@ def test_launcher_pi_profile_needs_a_cost_cap(page, site):
     no_overflow(page, 1440)
 
 
+def test_launcher_settings_wait_for_the_playthroughs_config(page, site):
+    # a profile picked before the name's config arrived was overwritten by it (the config fills the form)
+    held = []
+    page.route("**/api/v1/playthroughs/e2e-wait/config", lambda r: held.append(r))
+    page.goto(f"{site['url']}/#/launch")
+    name = page.locator("input[list=pts]")
+    name.fill("e2e-wait")
+    with page.expect_request("**/e2e-wait/config"):
+        name.press("Tab")
+    expect(page.get_by_label("Client profile")).to_be_disabled()
+    expect(page.get_by_role("button", name="Start")).to_be_disabled()
+    held[0].fulfill(status=404, json={"error": "no playthrough e2e-wait"})
+    expect(page.get_by_label("Client profile")).to_be_enabled()
+    page.unroute("**/api/v1/playthroughs/e2e-wait/config")
+    page.errors.clear()  # the 404 is logged as a console error
+
+
 def test_overlay_transparent_and_panel_flags(browser, site):
     ctx = browser.new_context(viewport={"width": 1920, "height": 1080})
     page = ctx.new_page()
