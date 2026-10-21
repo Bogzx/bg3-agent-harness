@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import random
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from pathlib import Path
 from statistics import median
 
@@ -79,14 +79,23 @@ def _costs(results: list[dict]) -> dict:
 
 
 def build_results(
-    pairs: Iterable[tuple[dict, dict]], *, seed: int, created: float, bench_tag: str | None = None, b: int = 10000
+    pairs: Iterable[tuple[dict, dict]],
+    *,
+    seed: int,
+    created: float,
+    bench_tag: str | None = None,
+    b: int = 10000,
+    holdout: Collection[str] = (),
 ) -> dict:
     """(manifest, result) pairs -> results v1. Each group's bootstrap gets a fresh random.Random(seed), so its
-    numbers do not depend on which other groups are in the release."""
+    numbers do not depend on which other groups are in the release. Runs of a `holdout` scenario are left out
+    entirely (a published release never contains them; contamination.holdout_names lists them)."""
     runs, groups = [], {}
     for man, res in pairs:
         if man["run_id"] != res["run_id"]:
             raise ValueError(f"manifest {man['run_id']!r} paired with result {res['run_id']!r}")
+        if man["scenario"]["name"] in holdout:
+            continue
         key = (man["model"]["slug"], man["condition"])
         groups.setdefault(key, []).append((man["scenario"]["name"], res))
         runs.append(

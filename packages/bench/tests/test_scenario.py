@@ -111,6 +111,7 @@ BAD = [
     ({"conditions": []}, "conditions must be"),
     ({"conditions": ["Rules!"]}, "conditions must be"),
     ({"conditions": ["rules", "rules"]}, "duplicates"),
+    ({"conditions": ["rules+wikis"]}, "unknown part"),
     ({"reset": {"saves": "never"}}, "reset must be the standard"),
 ]
 
@@ -126,6 +127,7 @@ def test_invalid_v2(change, msg):
         "D8",
         "needs profile.character.name",
         "must match the start save's character 'Tav'",
+        "unknown part",
     ):
         assert not validator().is_valid(sc), msg
 

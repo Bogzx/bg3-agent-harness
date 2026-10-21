@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from bg3bench import predicates
+from bg3bench import conditions, predicates
 
 SCHEMA = 2
 FAMILIES = ("fight", "sandbox", "choice", "exploration", "puzzle")
@@ -199,6 +199,12 @@ def validate(sc: Any, name: str) -> list[str]:
         errs.append("conditions must be a non-empty list of condition ids")
     elif len(set(conds)) != len(conds):
         errs.append("conditions has duplicates")
+    else:
+        for c in conds:
+            try:
+                conditions.parse(c)
+            except ValueError as e:
+                errs.append(str(e))
     kind = sc["start"]["kind"] if isinstance(sc.get("start"), dict) else None
     if kind in RESETS and sc.get("reset") is not None and sc["reset"] != RESETS[kind]:
         errs.append(f"reset must be the standard one for a {kind} start (or left out)")
