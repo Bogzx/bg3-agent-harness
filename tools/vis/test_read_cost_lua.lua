@@ -68,7 +68,7 @@ Ext = {
     IO = { LoadFile = function() return nil end, SaveFile = function() end },
     Json = { Parse = function() return nil end, Stringify = function() return "{}" end },
     Loca = { GetTranslatedString = function() return nil end, GetTranslatedStringKey = function() return nil end },
-    Require = function() return nil end,
+    Require = function(p) if p:find("^Server/Data/") then return nil end return dofile(LUA .. "/" .. p) end, -- module parts load; data stays out
     StaticData = { Get = function() return nil end },
 }
 Osi = setmetatable({ IsItem = function(u) return items and items[u] and 1 or 0 end },

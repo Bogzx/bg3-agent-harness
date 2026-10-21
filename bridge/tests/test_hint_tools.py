@@ -27,7 +27,7 @@ LUA = REPO / "mod" / "Mods" / "BG3AI" / "ScriptExtender" / "Lua" / "Server"
 PY_FILES = ["server.py", *sorted(f"tools/{p.name}" for p in (SRC / "tools").glob("*.py")), "route.py", "turn.py",
             "render.py", "compact.py", "navhints.py", "macros.py", "actq.py", "longnav.py", "delta.py", "twostep.py",
             "hotbar.py", "clicker.py", "party.py", "economy.py", "saver.py", "spellprep.py"]
-LUA_FILES = ["Guard.lua", "Actions.lua", "Navigation.lua"]
+LUA_FILES = sorted(f.name for m in ("Guard", "Actions", "Navigation") for f in LUA.glob(m + "*.lua"))  # and their parts
 # Prose strings that name an RPC op on purpose (they answer the bridge, not the agent).
 RPC_OK = {"act.note: only queue_* events"}
 

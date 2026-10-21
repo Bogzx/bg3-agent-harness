@@ -64,7 +64,7 @@ Ext = {
     IO = { LoadFile = function() return nil end, SaveFile = function() end },
     Json = { Parse = function() return nil end, Stringify = function() return "{}" end },
     Loca = { GetTranslatedStringKey = function() return nil end },
-    Require = function() return nil end,
+    Require = function(p) if p:find("^Server/Data/") then return nil end return dofile(LUA .. "/" .. p) end, -- module parts load; data stays out
 }
 Osi = {}
 local TILE = Ext.Level.GetTileDebugInfo

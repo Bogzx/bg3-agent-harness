@@ -75,7 +75,7 @@ Ext = {
     },
     Json = { Parse = function() return nil end, Stringify = function() return "{}" end },
     Loca = { GetTranslatedStringKey = function() return nil end, GetTranslatedString = function(h) return "L:" .. h end },
-    Require = function(p) if p:find("JournalMarkers") then return MARKERS end return nil end,
+    Require = function(p) if p:find("JournalMarkers") then return MARKERS end return dofile(LUA .. "/" .. p) end,
 }
 Osi = {
     GetHostCharacter = function() return P1 end,
