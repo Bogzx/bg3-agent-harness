@@ -19,8 +19,9 @@ def test_sessions_join_history_end_line_and_latency(store: RunStore):
     assert [(r["outcome"], r["cost_usd"], r["turns"]) for r in rows] == [
         ("success", 5.33, 179),
         ("success", 8.58, 225),
-        ("error_during_execution", 8.12, 305),
+        ("milestone", 8.12, 305),  # runner.json reason; claude's [end] said error_during_execution (live3 S001)
     ]
+    assert [r["client_outcome"] for r in rows] == ["success", "success", "error_during_execution"]
     for r in rows:
         assert r["started"] < r["ended"] and r["model"] == "opus"
         assert r["latency"]["apm"] is not None and r["points"] is not None
@@ -152,6 +153,22 @@ def test_watch_new_session_shows_no_earlier_calls_or_party(store: RunStore):
     with store.actions_path.open("a") as f:
         f.write(json.dumps({"t": 1792312830.0, "tool": "look", "args": {}, "ms": 5, "result": "WHERE beach"}) + "\n")
     assert [a["t"] for a in api.watch(store, PT)["actions"]] == [1792312830.0]
+
+
+def test_watch_area_follows_a_region_change_after_the_last_full_status(store: RunStore):
+    # live3 run 2: WHERE Nautiloid in the last full status, then only diffs and level_changed region=Wilderness
+    _start_s097(store, 1792312800.0)
+    full = "WHERE Nautiloid | exploring | gold 4\nPARTY *e1 Tav Fighter1 HP 9/12 []"
+    calls = [
+        (1792312810.0, "get_status", full),
+        (1792312820.0, "wait_for", "done\n  level_changed region=Wilderness"),
+        (1792312830.0, "look", "e1 Tav moved 3m"),
+    ]
+    with store.actions_path.open("a") as f:
+        for t, tool, result in calls:
+            f.write(json.dumps({"t": t, "tool": tool, "args": {}, "ms": 5, "result": result}) + "\n")
+    party = api.watch(store, PT)["party"]
+    assert (party["where"], party["source"], party["party"][0]["name"]) == ("Wilderness", "get_status", "Tav")
 
 
 def test_watch_current_session_drops_another_runs_calls(store: RunStore):

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { date, num } from "../lib/format";
-  import { buildRows, fightLabel, hardFight, type Filter } from "../lib/timeline";
+  import { buildRows, fightLabel, goodOutcome, hardFight, type Filter } from "../lib/timeline";
   import type { TimelinePayload } from "../lib/types";
 
   let { pt }: { pt: string } = $props();
@@ -40,7 +40,7 @@
       <div class="head">
         <h3>{r.session}</h3>
         <span class="faint">{date(r.started)}{r.minutes ? ` · ${num(r.minutes, 0)} min` : ""}</span>
-        {#if r.outcome && r.outcome !== "success"}<span class="chip bad">{r.outcome}</span>{/if}
+        {#if r.outcome && r.outcome !== "success"}<span class="chip" class:bad={!goodOutcome(r.outcome)} class:ok={goodOutcome(r.outcome)}>{r.outcome}</span>{/if}
         <div class="track" aria-hidden="true">
           {#each r.items as it, i (i)}
             {#if it.kind === "choice"}
@@ -99,6 +99,7 @@
   .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 2px 6px; }
   .head h3 { margin: 0; font: 600 15px var(--mono); }
   .chip.bad { color: var(--bad); }
+  .chip.ok { color: var(--ok); }
   .track { display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 100%; min-width: 0; }
   .ic { font-size: 12px; line-height: 1; }
   .ic.choice { color: var(--accent-2); }

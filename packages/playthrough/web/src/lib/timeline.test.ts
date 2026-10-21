@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRows, fightLabel, hardFight } from "./timeline";
+import { buildRows, fightLabel, goodOutcome, hardFight } from "./timeline";
 import type { Decision, Fight, TimelinePayload } from "./types";
 
 const decision = (id: string, session: string | null): Decision => ({
@@ -43,5 +43,12 @@ describe("timeline rows", () => {
     expect(hardFight(fight("S1", ""))).toBe(false);
     expect(fightLabel(fight("S1", "", { enemies: ["a", "b", "c", "d", "e"] }))).toBe("a, b, c +2");
     expect(fightLabel(fight("S1", "", { enemies: [] }))).toBe("Grove");
+  });
+
+  it("a session the runner stopped at the milestone is not a failure", () => {
+    expect(goodOutcome("milestone")).toBe(true);
+    expect(goodOutcome("success")).toBe(true);
+    expect(goodOutcome("hang")).toBe(false);
+    expect(goodOutcome("error_during_execution")).toBe(false);
   });
 });

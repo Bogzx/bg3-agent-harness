@@ -28,6 +28,9 @@ const num = (s: string | null | undefined): number | null => {
 
 export const sessionId = (n: number) => `S${String(n).padStart(3, "0")}`;
 
+/** A session outcome that is not a failure: the client finished, or the runner stopped it at the story milestone. */
+export const goodOutcome = (o: string | null) => o === null || o === "success" || o === "milestone";
+
 export function hardFight(f: Fight): boolean {
   return f.downed > 0 || f.died.length > 0 || f.reloaded;
 }

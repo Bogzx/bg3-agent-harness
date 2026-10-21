@@ -163,7 +163,9 @@ class RunStore:
 
     def sessions(self, pt: str) -> list[dict[str, Any]]:
         """One row per play session: runner.json history joined with the log's [end] line and latency summary.
-        The session running now has no history row yet: its start comes from runner.status.json ("running")."""
+        The session running now has no history row yet: its start comes from runner.status.json ("running").
+        outcome: the runner's reason when it ended the session (milestone, cap, hang, ...), else the client's [end]
+        subtype (client_outcome, kept as is)."""
         d = self.session_dir(pt)
         running = self.running_session(pt)
         hist = {
@@ -181,6 +183,11 @@ class RunStore:
                     end = parse.end_line(e["text"])
                     break
             h = hist.get(sid, {})
+            # the runner's reason when the runner ended the session: claude says error_during_execution when stopped
+            reason = h.get("reason")
+            end["client_outcome"] = end["outcome"]
+            if isinstance(reason, str) and reason not in ("", "exited"):
+                end["outcome"] = reason
             live = running is not None and running[0] == sid
             if end["cost_usd"] is None and self.cost is not None:
                 end["cost_usd"] = self.cost(d / sid)
