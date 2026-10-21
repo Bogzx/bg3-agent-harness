@@ -23,7 +23,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import actq, areablock, compact, delta, economy, leveling, macros, metrics, offlimits, party, render, saver, saves, turn
 from . import companions, debrief, lessons, longnav, lore, memtools, naming, navhints, rules
-from . import boxclick, hotbar, spellprep, twostep
+from . import boxclick, capabilities, hotbar, spellprep, twostep
 from . import route as route_text
 from .game import Game, GameError, JobResult, NotReady, hold_client, release_client
 from .render import Handles
@@ -6784,6 +6784,8 @@ def do_actions(actions: str, wait: bool = True, ignore: str = "", note: str = ""
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
     note: memory log line(s) appended to your session log at once, as note() does (no extra turn)."""
     t0 = time.monotonic()
+    if refused := _note_refused(note):
+        return _finish("do_actions", {}, refused, t0)
     if not wait:
         return queue_actions(actions, ignore=ignore, note=note)
     _note_quiet(note)
@@ -6823,6 +6825,8 @@ def queue_actions(actions: str, who: str | None = None, replace: bool = False, i
                   note: str = "") -> str:
     """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
     t0 = time.monotonic()
+    if refused := _note_refused(note):
+        return _finish("queue_actions", {}, refused, t0)
     _note_quiet(note)
     if _session_over():
         return _finish("queue_actions", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -9735,6 +9739,8 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
     note: memory log line(s) appended to your session log at once, as note() does: write notes with the walk, no extra turn.
     An off-limits area the game warned you about (a guard's trespass talk) is walked round; a goal inside it, or a way with no way round, is refused (trespass=true walks in anyway)."""
     t0 = time.monotonic()
+    if refused := _note_refused(note):
+        return _finish("travel_to", {}, refused, t0)
     _note_quiet(note)
     if waypoint:
         return fast_travel(waypoint)
@@ -11025,6 +11031,19 @@ def _mark_results(server: MCPServer = mcp) -> None:
 
 
 _mark_results()
+
+
+# Capabilities (capabilities.py): tools a session's condition switches off are removed here, after the alwaysLoad
+# marks (_mark_always_load reports removed names as missing), so the client never sees them; the batch tools lose
+# them as steps, and note= on an action is refused when the note tool is off (it writes the memory log).
+TOOLS_OFF = capabilities.disabled([t.name for t in mcp._tool_manager.list_tools()], os.environ)
+for _name in sorted(TOOLS_OFF):
+    mcp.remove_tool(_name)
+_BATCHABLE -= TOOLS_OFF
+
+
+def _note_refused(text: str) -> str:
+    return capabilities.NOTE_REFUSED if text and text.strip() and "note" in TOOLS_OFF else ""
 
 
 # ---------------------------------------------------------------------------
