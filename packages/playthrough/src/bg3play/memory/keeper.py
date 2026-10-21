@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import importlib
 import json
 import os
 import re
@@ -53,16 +54,19 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+from bg3play.jsontypes import is_list, is_obj
 from bg3play.memory import lint, memlib
 
 REPO = memlib.REPO_ROOT
 sys.path.insert(0, str(REPO / "bridge" / "src"))
-from bg3ai import milestones  # noqa: E402  (stdlib only)
-from bg3ai import progress as bg3progress  # noqa: E402  (stdlib only)
+# stdlib only; Any to pyright (the bridge and runner/ ship no types)
+milestones: Any = importlib.import_module("bg3ai.milestones")
+bg3progress: Any = importlib.import_module("bg3ai.progress")
 
 sys.path.insert(0, str(REPO / "runner"))  # TEMPORARY: clients.py until the harness package has it
-import clients  # noqa: E402
+clients: Any = importlib.import_module("clients")
 
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 KNOWLEDGE = REPO / "play" / "knowledge"
@@ -242,7 +246,7 @@ def corpus(snap: dict[str, bytes], knowledge: Path = KNOWLEDGE, extra: str = "")
 def ungrounded_names(line: str, text: str) -> list[str]:
     """Capitalised words of a bullet (not starting it or a sentence) that `text` (lower-case corpus) never has."""
     body = re.sub(r"^\s*[-*+]\s+", "", line)
-    out = []
+    out: list[str] = []
     for m in _NAME_RE.finditer(body):
         w = m.group(0).strip("'\u2019-")
         if m.start() == 0 or _SENT_START.search(body[: m.start()]) or w.lower() in _KEEPER_WORDS:
@@ -263,7 +267,7 @@ def ungrounded_lines(mem: Path, before: dict[str, bytes], rels: list[str], text:
         pool: dict[str, int] = {}
         for ln in old:
             pool[ln] = pool.get(ln, 0) + 1
-        bad = []
+        bad: list[str] = []
         for ln in (mem / rel).read_text(encoding="utf-8", errors="replace").splitlines():
             if pool.get(ln):
                 pool[ln] -= 1
@@ -280,7 +284,7 @@ def drop_lines(mem: Path, found: dict[str, list[str]]) -> None:
         p = mem / rel
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines(True)
         left = list(bad)
-        keep = []
+        keep: list[str] = []
         for ln in lines:
             if ln.rstrip("\n") in left:
                 left.remove(ln.rstrip("\n"))
@@ -345,7 +349,8 @@ def recover(mem: Path, state_dir: Path) -> str | None:
         if head.startswith(f"{sid} memory-keeper:"):
             clear_pending(p)
             return f"{sid} keeper pass was committed: nothing to undo"
-        snap = {k: base64.b64decode(v) for k, v in (d.get("files") or {}).items()}
+        files: dict[str, str] = d.get("files") or {}
+        snap = {k: base64.b64decode(v) for k, v in files.items()}
         rels = changes(mem, snap)
         restore(mem, snap, rels)
         clear_pending(p)
@@ -393,7 +398,7 @@ def old_debrief_logs(mem: Path, sessions_dir: Path | None, nums: list[int]) -> l
     """The sessions among nums whose log has [fight] lines written before the v3 debrief: one of the session's
     fight records (sessions_dir/Sxxx[-rN].fights.jsonl, written with each line) lacks v >= DEBRIEF_V, or it has none
     (the log alone can't show its lines are new)."""
-    out = []
+    out: list[int] = []
     for n in nums:
         sid = memlib.session_id(n)
         try:
@@ -401,7 +406,7 @@ def old_debrief_logs(mem: Path, sessions_dir: Path | None, nums: list[int]) -> l
                 continue
         except OSError:
             continue
-        vs = []
+        vs: list[int] = []
         paths = (
             [sessions_dir / f"{sid}.fights.jsonl", *sorted(sessions_dir.glob(f"{sid}-*.fights.jsonl"))]
             if sessions_dir is not None
@@ -417,7 +422,7 @@ def old_debrief_logs(mem: Path, sessions_dir: Path | None, nums: list[int]) -> l
                     r = json.loads(ln)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(r, dict):
+                if is_obj(r):
                     vs.append(int(r.get("v") or 1))
         if not vs or min(vs) < DEBRIEF_V:
             out.append(n)
@@ -442,12 +447,12 @@ _PLAN_FAIL = re.compile(r"not offered|already known|needs -?\d+ more", re.I)
 REFUSED_MAX_CHARS = 1500
 
 
-def refused_plans(actions: list[dict]) -> list[dict]:
+def refused_plans(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """[{name, level, problems}] for stored party-build.md plan lines the game refused this session (level_up
     results, runtime/actions.jsonl) and that no later call completed. level_up's result already carries what the
     game offered ("can pick: …", "options={…}"): the keeper rewrites the line from it, so the next level_up
     completes instead of failing once per refused line (live 12:2x: Wyll L5 "Thirsting Blade: not offered")."""
-    last: dict[tuple[str, int], dict] = {}
+    last: dict[tuple[str, int], dict[str, Any]] = {}
     for rec in actions:
         if rec.get("tool") != "level_up" or not isinstance(rec.get("result"), str):
             continue
@@ -521,12 +526,12 @@ def game_done_records(sessions_dir: Path | None) -> list[str]:
         found = [(m, p) for p in sessions_dir.glob(f"S*.{kind}.jsonl") if (m := _LEG.fullmatch(p.name))]
         return [(m.group(1), p) for m, p in sorted(found, key=lambda x: (x[0].group(1), int(x[0].group(2) or 0)))]
 
-    progress = [(sid, bg3progress.load(p)) for sid, p in legs("progress")]
+    progress: list[tuple[str, list[dict[str, Any]]]] = [(sid, bg3progress.load(p)) for sid, p in legs("progress")]
     try:
         seen = json.loads((sessions_dir / "progress_state.json").read_text())
     except (OSError, ValueError):
         seen = None
-    out = []
+    out: list[str] = []
     if seen or any(recs for _s, recs in progress):
         kinds = {mid: kind for mid, _a, _l, kind, _p in milestones.MILESTONES}
         for i in milestones.status(seen, progress)["items"]:
@@ -540,16 +545,17 @@ def game_done_records(sessions_dir: Path | None) -> list[str]:
     }
     killed: dict[str, str] = {}
     for sid, path in legs("fights"):
-        for r in bg3progress.load(path):
-            kills = r.get("kills") or []
-            if r.get("reloaded") or not isinstance(kills, list):
+        recs: list[dict[str, Any]] = bg3progress.load(path)
+        for r in recs:
+            kills: Any = r.get("kills") or []
+            if r.get("reloaded") or not is_list(kills):
                 continue
             for k in kills:
-                name = str(k.get("name") or "") if isinstance(k, dict) else ""
+                name = str(k.get("name") or "") if is_obj(k) else ""
                 if name in talked_dead and name not in killed:
                     killed[name] = sid
-    kills = [f"fight record: {name} killed in a fight not reloaded ({sid})" for name, sid in killed.items()]
-    return [r[:DONE_MAX_CHARS] for r in out + kills[-GAME_DONE_MAX_LINES:]]
+    lines = [f"fight record: {name} killed in a fight not reloaded ({sid})" for name, sid in killed.items()]
+    return [r[:DONE_MAX_CHARS] for r in out + lines[-GAME_DONE_MAX_LINES:]]
 
 
 def build_prompt(
@@ -558,7 +564,7 @@ def build_prompt(
     sid_n: int,
     lint_report: str,
     minutes: float,
-    refused: list[dict] | None = None,
+    refused: list[dict[str, Any]] | None = None,
     tools: str = "files",
     sessions_dir: Path | None = None,
 ) -> str:
@@ -690,6 +696,7 @@ def build_prompt(
         for r in refused:
             lines.append(f"- {r['name']} L{r['level']}: {r['problems']}")
     due = memlib.compaction_due(mem, sid_n + 1)
+    last = 0  # set when due, and only read then
     if due:
         last = memlib.last_compacted_session(mem)
         nums = sorted(set(nums) | set(range(last + 1, min(last + 10, sid_n) + 1)))
@@ -738,7 +745,7 @@ def build_prompt(
     return "\n".join(lines)
 
 
-def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
+def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict[str, Any]:
     m, k = mem.resolve(), knowledge.resolve()
     deny = [f"{tool}(/{p})" for tool in ("Edit", "Write") for p in (f"{m}/sessions/**", f"{k}/**")]
     # The memory repo's git dir and git control files: never read or written (FAIR-1; git runs on them in hooks).
@@ -769,7 +776,7 @@ def keeper_settings(mem: Path, knowledge: Path = KNOWLEDGE) -> dict:
 # ---------------------------------------------------------------- any client: the bg3 server in keeper mode
 
 
-def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = None) -> dict:
+def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = None) -> dict[str, Any]:
     """The bg3 stdio server in keeper mode (bridge server.keeper_server): only the memory tools, the keeper's
     write rules enforced server-side (memtools.KeeperSandbox from WRITABLE_FILES/WRITABLE_DIRS + HANDOFF.md +
     CHARACTER.md, sessions/ and knowledge/ read-only, HANDOFF.md only below HANDOFF_SECTION) and `task` as its
@@ -779,7 +786,7 @@ def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = No
     for i, a in enumerate(args[:-1]):
         if a == "--project":
             args[i + 1] = str((clients.PLAY_DIR / args[i + 1]).resolve())
-    env = {
+    env: dict[str, Any] = {
         **(s.get("env") or {}),
         "BG3AI_KEEPER_MODE": "1",
         "BG3AI_MEMORY_DIR": str(mem.resolve()),
@@ -797,10 +804,10 @@ def keeper_server(mem: Path, knowledge: Path = KNOWLEDGE, task: Path | None = No
     return {"type": "stdio", "command": s["command"], "args": args, "env": env, "timeout": s.get("timeout") or 110_000}
 
 
-def keeper_client(name: str, mem: Path, log_base: Path, knowledge: Path = KNOWLEDGE, binary: str | None = None):
+def keeper_client(name: str, mem: Path, log_base: Path, knowledge: Path = KNOWLEDGE, binary: str | None = None) -> Any:
     """A clients.py Client whose only tools are the keeper-mode bg3 server's (its config files next to log_base)."""
     server = keeper_server(mem, knowledge, Path(f"{log_base}.task.md"))
-    kw = {"binary": binary} if binary else {}
+    kw: dict[str, Any] = {"binary": binary} if binary else {}
     if name == "claude":
         cfg = Path(f"{log_base}.mcp.json")
         cfg.write_text(json.dumps({"mcpServers": {"bg3": server}}, indent=1) + "\n")
@@ -808,9 +815,9 @@ def keeper_client(name: str, mem: Path, log_base: Path, knowledge: Path = KNOWLE
     return clients.make(name, server=server, cwd=mem, **kw)
 
 
-def _session_from_log(client, log_path: Path) -> str | None:
+def _session_from_log(client: Any, log_path: Path) -> str | None:
     """The conversation id a client that doesn't take one up front (codex, gemini) printed in its init event."""
-    sid = None
+    sid: str | None = None
     try:
         lines = log_path.read_text(errors="replace").splitlines()
     except OSError:
@@ -823,8 +830,15 @@ def _session_from_log(client, log_path: Path) -> str | None:
 
 
 def client_cmd(
-    client, prompt: str, mem: Path, model: str, effort: str | None, session: str | None, resume: bool, log_base: Path
-) -> tuple[list[str], dict]:
+    client: Any,
+    prompt: str,
+    mem: Path,
+    model: str,
+    effort: str | None,
+    session: str | None,
+    resume: bool,
+    log_base: Path,
+) -> tuple[list[str], dict[str, Any]]:
     """(argv, extra env) of one keeper call through `client` (keeper_client)."""
     req = clients.Request(
         prompt=prompt,
@@ -884,13 +898,13 @@ class KeeperResult:
     sid: str
     status: str = "error"  # ok | no_changes | lint_failed | error
     seconds: float = 0.0
-    files: list[str] = field(default_factory=list)
-    reverted: list[str] = field(default_factory=list)  # touched outside the writable set
+    files: list[str] = field(default_factory=list[str])
+    reverted: list[str] = field(default_factory=list[str])  # touched outside the writable set
     commit: str | None = None
     timed_out: bool = False
     exit_code: int | None = None
-    lint_errors: list[str] = field(default_factory=list)
-    ungrounded: list[str] = field(default_factory=list)  # MEM-1: added lines dropped (names not in the memory)
+    lint_errors: list[str] = field(default_factory=list[str])
+    ungrounded: list[str] = field(default_factory=list[str])  # MEM-1: added lines dropped (names not in the memory)
     detail: str = ""
 
     def summary(self) -> str:
@@ -919,7 +933,7 @@ def _run_claude(
     cwd: Path,
     log_path: Path,
     timeout: float,
-    extra_env: dict | None = None,
+    extra_env: dict[str, Any] | None = None,
     pending: Path | None = None,
 ) -> tuple[int | None, bool]:
     """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
@@ -953,7 +967,7 @@ def _run_claude(
             return proc.returncode, True
 
 
-def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict, dict]:
+def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """(server spec, env) of the keeper-mode bg3 server run over http on the host: the env a stdio server started
     by the client would get (_run_claude's, which drops the play session's deadline and metrics) + its own."""
     server = keeper_server(mem, knowledge, task)
@@ -966,8 +980,8 @@ def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict, dic
 
 
 def _run_sandboxed(
-    box,
-    cli,
+    box: Any,
+    cli: Any,
     text: str,
     mem: Path,
     model: str,
@@ -1030,11 +1044,11 @@ def run_keeper(
     minutes: float = KEEPER_MINUTES,
     claude: str = "claude",
     knowledge: Path = KNOWLEDGE,
-    refused: list[dict] | None = None,
+    refused: list[dict[str, Any]] | None = None,
     client: str = "claude",
     mcp: bool | None = None,
     binary: str | None = None,
-    sandbox=None,
+    sandbox: Any = None,
 ) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises.
 
@@ -1070,7 +1084,7 @@ def run_keeper(
             sessions_dir=Path(log_base).parent,
         )
         grounds = corpus(snap, knowledge, prompt)
-        cli = None
+        cli: Any = None
         if via_mcp:
             Path(f"{log_base}.task.md").write_text(prompt + "\n", encoding="utf-8")  # the server's instructions
             if sandbox is not None:
@@ -1083,6 +1097,7 @@ def run_keeper(
 
         def call(text: str, resume: bool, left: float) -> tuple[int | None, bool]:
             if cli is None:
+                assert sess is not None  # only an MCP client's session can be None
                 return _run_claude(
                     keeper_cmd(text, mem, model, effort, sess, resume, claude, knowledge),
                     mem,
@@ -1101,8 +1116,10 @@ def run_keeper(
         if cli is not None and not cli.assigns_session:
             sess = _session_from_log(cli, log_path)
         res.exit_code = rc
+        new: list[str] = []
         for attempt in range(2):
             changed = changes(mem, snap)
+
             res.reverted = sorted(set(res.reverted) | {r for r in changed if not writable(r)})
             restore(mem, snap, [r for r in changed if not writable(r)])
             if keep_handoff_head(mem, snap):

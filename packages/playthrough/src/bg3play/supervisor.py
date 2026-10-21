@@ -20,9 +20,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from . import config
+from .jsontypes import is_list, is_obj
 
 HISTORY_VERSION = 1
 STUCK_SESSIONS = 2  # runner/play.py STUCK_SESSIONS
@@ -81,14 +82,14 @@ class SupervisorError(RuntimeError):
 # ------------------------------------------------------------ pure policy
 
 
-def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
+def is_stuck(history: list[dict[str, Any]], n: int = STUCK_SESSIONS) -> bool:
     """The last n sessions each ended with progress False (runner/play.py is_stuck)."""
     recent = history[-n:]
     return len(recent) == n and all(h.get("progress") is False for h in recent)
 
 
-def notes_for(history: list[dict]) -> tuple[str, ...]:
-    out = []
+def notes_for(history: list[dict[str, Any]]) -> tuple[str, ...]:
+    out: list[str] = []
     if history and history[-1].get("outcome") in ("crash", "error"):
         out.append(CRASH_NOTE.format(why=history[-1].get("detail") or history[-1]["outcome"]))
     if is_stuck(history):
@@ -118,7 +119,7 @@ LAUNCH_KEYS: dict[str, tuple[str | None, str]] = {
 }
 
 
-def launch_config(cfg: config.PlaythroughConfig, body: dict) -> config.PlaythroughConfig:
+def launch_config(cfg: config.PlaythroughConfig, body: dict[str, Any]) -> config.PlaythroughConfig:
     """The config with the Launcher's choices applied and validated (unknown fields are a ConfigError)."""
     unknown = sorted(set(body) - set(LAUNCH_KEYS))
     if unknown:
@@ -137,16 +138,16 @@ def history_path(runtime: Path, pt: str) -> Path:
     return runtime / "sessions" / pt / "supervisor.json"
 
 
-def read_history(path: Path) -> list[dict]:
+def read_history(path: Path) -> list[dict[str, Any]]:
     try:
         v = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    h = v.get("history") if isinstance(v, dict) else None
-    return [x for x in h if isinstance(x, dict)] if isinstance(h, list) else []
+    h = v.get("history") if is_obj(v) else None
+    return [x for x in h if is_obj(x)] if is_list(h) else []
 
 
-def write_history(path: Path, history: list[dict]) -> None:
+def write_history(path: Path, history: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps({"v": HISTORY_VERSION, "history": history}, indent=1), encoding="utf-8")
@@ -163,7 +164,7 @@ class Supervisor:
     runtime: Path
     playthroughs: Path
     clock: Callable[[], float]
-    on_change: Callable[[dict], object] = lambda state: None  # the SSE hub ("supervisor" events)
+    on_change: Callable[[dict[str, Any]], object] = lambda state: None  # the SSE hub ("supervisor" events)
     # sessions played before the supervisor kept a history (the runner's own logs); None = only its history
     played: Callable[[str], int] | None = None
     pt: str | None = None
@@ -174,14 +175,14 @@ class Supervisor:
     thread: threading.Thread | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def history(self, pt: str) -> list[dict]:
+    def history(self, pt: str) -> list[dict[str, Any]]:
         return read_history(history_path(self.runtime, pt))
 
-    def sessions_played(self, pt: str, hist: list[dict] | None = None) -> int:
+    def sessions_played(self, pt: str, hist: list[dict[str, Any]] | None = None) -> int:
         n = len(self.history(pt) if hist is None else hist)
         return max(n, self.played(pt)) if self.played else n
 
-    def view(self) -> dict:
+    def view(self) -> dict[str, Any]:
         return {"playthrough": self.pt, "state": self.state, "detail": self.detail, "session": self.session}
 
     def _set(self, **kw: object) -> None:

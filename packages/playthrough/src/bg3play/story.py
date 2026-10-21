@@ -15,19 +15,20 @@ from __future__ import annotations
 import contextlib
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import parse
+from .jsontypes import Obj
 
-_CACHE: dict[str, tuple[tuple, Any]] = {}
+_CACHE: dict[str, tuple[tuple[Any, ...], Any]] = {}
 
 RARE_RE = re.compile(r"\((uncommon|rare|very rare|legendary)\)", re.IGNORECASE)
 EQUIP_RE = re.compile(r"\[equipped ([^\]]+)\]")
 RARITY_RANK = {"legendary": 4, "very rare": 3, "rare": 2, "uncommon": 1}
 
 
-def _sig(paths: list[Path]) -> tuple:
-    out = []
+def _sig(paths: list[Path]) -> tuple[Any, ...]:
+    out: list[tuple[Any, ...]] = []
     for p in paths:
         try:
             st = p.stat()
@@ -56,8 +57,10 @@ parse_decisions = parse.decisions  # single source: the playthrough app
 # ---------------------------------------------------------------- chapters
 
 
-def parse_chapter(name: str, text: str) -> dict:
-    title, sections, cur = name, [], None
+def parse_chapter(name: str, text: str) -> dict[str, Any]:
+    title = name
+    sections: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
     for line in _strip_comments(text).splitlines():
         if line.startswith("# ") and title == name:
             title = line[2:].strip()
@@ -72,7 +75,7 @@ def parse_chapter(name: str, text: str) -> dict:
     return {"file": name, "title": title, "sections": sections}
 
 
-def chapters(mem: Path) -> list[dict]:
+def chapters(mem: Path) -> list[dict[str, Any]]:
     d = mem / "chapters"
     try:
         files = sorted(f for f in d.iterdir() if f.suffix == ".md")
@@ -84,7 +87,7 @@ def chapters(mem: Path) -> list[dict]:
 # ---------------------------------------------------------------- PLAYTHROUGH.md
 
 
-def parse_playthrough(text: str) -> dict:
+def parse_playthrough(text: str) -> dict[str, Any]:
     out: dict[str, Any] = {
         "title": None,
         "header": [],
@@ -130,7 +133,7 @@ def _snap_time(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def parse_status(text: str) -> dict:
+def parse_status(text: str) -> dict[str, Any]:
     out: dict[str, Any] = {"when": _snap_time(text), "where": None, "mode": None, "gold": None, "party": []}
     for line in text.splitlines():
         s = line.strip()
@@ -153,15 +156,15 @@ def parse_status(text: str) -> dict:
             "max_hp": m["max_hp"],
             "statuses": m["statuses"],
         }
-        for m in (st["party"] if st else [])
+        for m in cast(list[Obj], st["party"] if st else [])
     ]
     return out
 
 
-def parse_inventory(text: str) -> dict:
+def parse_inventory(text: str) -> dict[str, Any]:
     """Per member: equipped (slot, item) and notable bag items (story or uncommon+), rarest first."""
-    out: dict[str, dict] = {}
-    cur = None
+    out: dict[str, dict[str, Any]] = {}
+    cur: dict[str, Any] | None = None
     for line in text.splitlines():
         if line.startswith("## "):
             cur = {"equipped": [], "notable": [], "items": 0}
@@ -175,20 +178,29 @@ def parse_inventory(text: str) -> dict:
         rare = RARE_RE.search(s)
         name = RARE_RE.sub("", EQUIP_RE.sub("", s))
         name = re.sub(r"\s+(usable|unique|story)\b", "", name).strip()
-        item = {"name": name, "rarity": rare.group(1).lower() if rare else None, "story": " story" in f" {s}"}
+        item: dict[str, Any] = {
+            "name": name,
+            "rarity": rare.group(1).lower() if rare else None,
+            "story": " story" in f" {s}",
+        }
         if eq:
             cur["equipped"].append(dict(item, slot=eq.group(1)))
         elif item["rarity"] or item["story"]:
             cur["notable"].append(item)
+
+    def rank(i: Obj) -> tuple[int, bool, str]:
+        return -RARITY_RANK.get(i["rarity"] or "", 0), not i["story"], i["name"]
+
     for v in out.values():
-        v["notable"].sort(key=lambda i: (-RARITY_RANK.get(i["rarity"] or "", 0), not i["story"], i["name"]))
+        v["notable"].sort(key=rank)
+
     return out
 
 
 # ---------------------------------------------------------------- payload
 
 
-def story_payload(mem: Path) -> dict:
+def story_payload(mem: Path) -> dict[str, Any]:
     files = [
         mem / "decisions.md",
         mem / "PLAYTHROUGH.md",

@@ -26,6 +26,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from bg3play.jsontypes import is_list, is_obj
 from bg3play.memory import memlib
 
 SCREENSHOT_WARN_FILES = 60
@@ -35,8 +36,8 @@ HYPOTHESIS_MAX_AGE = 3
 
 @dataclass
 class Report:
-    errors: list[tuple[str, str]] = field(default_factory=list)
-    warnings: list[tuple[str, str]] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+    warnings: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
 
     def error(self, kind: str, msg: str) -> None:
         self.errors.append((kind, msg))
@@ -73,12 +74,12 @@ def check_structure(mem: Path, r: Report) -> None:
         try:
             data = json.loads(mk.read_text())
             # The MCP server (place_marker) writes a bare list; an object with "markers" is accepted too.
-            markers = data if isinstance(data, list) else (data.get("markers") if isinstance(data, dict) else None)
-            if not isinstance(markers, list):
+            markers = data if is_list(data) else (data.get("markers") if is_obj(data) else None)
+            if not is_list(markers):
                 r.error("markers", 'markers.json must be a list of markers (or an object with a "markers" list)')
             else:
                 for i, m in enumerate(markers):
-                    if not isinstance(m, dict) or "id" not in m or "label" not in m:
+                    if not is_obj(m) or "id" not in m or "label" not in m:
                         r.error("markers", f"markers.json entry #{i} needs at least 'id' and 'label'")
         except json.JSONDecodeError as e:
             r.error("markers", f"markers.json is not valid JSON: {e}")
@@ -123,7 +124,7 @@ def check_budgets(mem: Path, r: Report) -> None:
 
 def untagged_bullets(text: str) -> list[tuple[int, str]]:
     """(line number, text) of bullets lacking a provenance tag, outside HTML comments."""
-    out = []
+    out: list[tuple[int, str]] = []
     # Keep line numbers stable: blank out comments without removing their newlines.
     cleaned = memlib.COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     for i, line in enumerate(cleaned.splitlines(), 1):
@@ -198,7 +199,8 @@ def check_handoff(mem: Path, r: Report, phase: str, current: int | None) -> None
 
 def _diff_lines(mem: Path, rel: str) -> tuple[list[str], list[str]]:
     out = memlib.git(mem, "diff", "-U0", "--no-color", "--no-ext-diff", "HEAD", "--", rel, check=False).stdout
-    removed, added = [], []
+    removed: list[str] = []
+    added: list[str] = []
     for line in out.splitlines():
         if line.startswith(("---", "+++")):
             continue
@@ -393,7 +395,7 @@ def stale_files(mem: Path, current: int | None) -> list[tuple[str, int]]:
     """(file, sessions since its last change) for curated files past their M.STALE_AFTER threshold."""
     if current is None:
         return []
-    out = []
+    out: list[tuple[str, int]] = []
     for rel, limit in memlib.STALE_AFTER.items():
         last = memlib.last_touched_session(mem, rel)
         if last is None or last < 0:
@@ -406,6 +408,8 @@ def stale_files(mem: Path, current: int | None) -> list[tuple[str, int]]:
 
 def check_staleness(mem: Path, r: Report, phase: str, current: int | None) -> None:
     for rel, age in stale_files(mem, current):
+        assert current is not None  # stale_files has nothing without it
+
         msg = (
             f"{rel} unchanged for {age} sessions (last changed in {memlib.session_id(current - age)}) "
             f"while the session logs moved on. Bring it up to date from the logs and HANDOFF.md"

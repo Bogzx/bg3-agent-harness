@@ -26,22 +26,22 @@ RUNNER_KEYS = (
 LOG_KINDS_SHOWN = ("say", "tool", "result", "progress", "end", "error", "runner", "init", "header")
 
 
-def _v(payload: dict) -> dict:
+def _v(payload: dict[str, Any]) -> dict[str, Any]:
     return {"v": API_VERSION, **payload}
 
 
-def runner_view(store: RunStore) -> dict:
+def runner_view(store: RunStore) -> dict[str, Any]:
     st = store.status()
     return {"playthrough": store.current(), **{k: st.get(k) for k in RUNNER_KEYS if k in st}}
 
 
-def status(store: RunStore) -> dict:
+def status(store: RunStore) -> dict[str, Any]:
     return _v({"runner": runner_view(store)})
 
 
-def playthroughs(store: RunStore) -> dict:
+def playthroughs(store: RunStore) -> dict[str, Any]:
     cur = store.current()
-    rows = []
+    rows: list[dict[str, Any]] = []
     for pt in store.playthroughs():
         ss = store.sessions(pt)
         costs = [s["cost_usd"] for s in ss if s["cost_usd"] is not None]
@@ -58,11 +58,11 @@ def playthroughs(store: RunStore) -> dict:
     return _v({"playthroughs": rows})
 
 
-def sessions(store: RunStore, pt: str) -> dict:
+def sessions(store: RunStore, pt: str) -> dict[str, Any]:
     return _v({"playthrough": pt, "sessions": store.sessions(pt)})
 
 
-def _party(actions: list[dict], snapshot: str) -> dict | None:
+def _party(actions: list[dict[str, Any]], snapshot: str) -> dict[str, Any] | None:
     """The newest full status (WHERE/PARTY rows) among the tool results, else memory snapshots/status.md."""
     for a in reversed(actions):
         st = parse.status_text(a["result"])
@@ -72,7 +72,7 @@ def _party(actions: list[dict], snapshot: str) -> dict | None:
     return {**st, "t": None, "source": "snapshots/status.md"} if st else None
 
 
-def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 150) -> dict:
+def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 150) -> dict[str, Any]:
     """Everything the Watch screen shows at load; the SSE stream keeps it current afterwards."""
     ss = store.sessions(pt)
     log = store.agent_log(pt)
@@ -110,18 +110,18 @@ def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 1
     )
 
 
-def memory_tree(store: RunStore, pt: str) -> dict:
+def memory_tree(store: RunStore, pt: str) -> dict[str, Any]:
     return _v({"playthrough": pt, "files": store.memory_tree(pt)})
 
 
-def memory_file(store: RunStore, pt: str, rel: str) -> dict | None:
+def memory_file(store: RunStore, pt: str, rel: str) -> dict[str, Any] | None:
     text = store.memory_file(pt, rel)
     if text is None:
         return None
     return _v({"playthrough": pt, "path": rel, "text": text, "history": store.memory_log(pt, 20, rel)})
 
 
-def memory_diff(store: RunStore, pt: str, rel: str, sha: str) -> dict | None:
+def memory_diff(store: RunStore, pt: str, rel: str, sha: str) -> dict[str, Any] | None:
     """What one commit changed in one memory file, line by line (git show)."""
     patch = store.memory_diff(pt, rel, sha)
     if patch is None:
@@ -129,11 +129,11 @@ def memory_diff(store: RunStore, pt: str, rel: str, sha: str) -> dict | None:
     return _v({"playthrough": pt, "path": rel, "sha": sha, "lines": parse.diff_lines(patch)})
 
 
-def memory_log(store: RunStore, pt: str, limit: int = 50) -> dict:
+def memory_log(store: RunStore, pt: str, limit: int = 50) -> dict[str, Any]:
     return _v({"playthrough": pt, "commits": store.memory_log(pt, limit)})
 
 
-def timeline(store: RunStore, pt: str) -> dict:
+def timeline(store: RunStore, pt: str) -> dict[str, Any]:
     """Choices (decisions.md) and fights per session, with each session's start time for the axis."""
     ss = store.sessions(pt)
     starts: dict[str, Any] = {s["session"]: s["started"] for s in ss}
@@ -141,7 +141,8 @@ def timeline(store: RunStore, pt: str) -> dict:
     for c in cards:
         n = parse.session_number(c["session"])
         c["session_id"] = f"S{n:03d}" if n is not None else None
-        c["t"] = starts.get(c["session_id"])
+        c["t"] = starts.get(c["session_id"]) if c["session_id"] is not None else None
+
     return _v(
         {
             "playthrough": pt,
@@ -155,6 +156,6 @@ def timeline(store: RunStore, pt: str) -> dict:
     )
 
 
-def positions(store: RunStore, pt: str, level: str | None = None) -> dict:
+def positions(store: RunStore, pt: str, level: str | None = None) -> dict[str, Any]:
     """The breadcrumb plot's data (positions.tracks) for one level, default the latest."""
     return _v({"playthrough": pt, **pos.tracks(pos.read(store.positions_path(pt)), level or None)})

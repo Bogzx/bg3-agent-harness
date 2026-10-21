@@ -60,6 +60,7 @@ from .adapters import legacy_paths
 from .dashboard import SERIES_HTML, Dashboard
 from .game import GameWatch, ScreenWatch, Viewers
 from .hub import Hub
+from .jsontypes import is_obj
 from .store import RunStore, StoreError
 
 PT_ROUTE = re.compile(
@@ -128,10 +129,10 @@ class App:
             local = False
         return None if local else "writes need localhost or the server's --token"
 
-    def client_profiles(self) -> list[dict]:
+    def client_profiles(self) -> list[dict[str, Any]]:
         return client_profiles.read_profiles(self.profiles)
 
-    def control(self, pt: str, what: str, body: dict) -> tuple[int, dict]:
+    def control(self, pt: str, what: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """POST start/resume/stop -> (HTTP code, payload)."""
         v = api.API_VERSION
         s = self.supervisor
@@ -153,7 +154,7 @@ class App:
             return 409, {"v": v, "error": str(e)}
         return 200, {"v": v, "supervisor": s.view()}
 
-    def route(self, path: str, q: dict[str, list[str]]) -> dict | None:
+    def route(self, path: str, q: dict[str, list[str]]) -> dict[str, Any] | None:
         """A JSON API path -> its payload (None: not found). Raises StoreError for a refused request."""
         s = self.store
         if (d := self.dashboard.route(path, q)) is not None:
@@ -194,7 +195,7 @@ class App:
         pt, what = s.check_name(unquote(m.group(1))), m.group(2)
         if pt not in s.playthroughs():
             return None
-        builders: dict[str, Callable[[], dict | None]] = {
+        builders: dict[str, Callable[[], dict[str, Any] | None]] = {
             "sessions": lambda: api.sessions(s, pt),
             "watch": lambda: self.watch(pt),
             "memory/tree": lambda: api.memory_tree(s, pt),
@@ -207,7 +208,7 @@ class App:
         }
         return builders[what]()
 
-    def watch(self, pt: str) -> dict:
+    def watch(self, pt: str) -> dict[str, Any]:
         """The Watch snapshot plus the stream id taken before it was built: reading the stream from that id gives
         every change since (a line may come twice; the client drops repeats)."""
         stream_id = self.hub.last_id()
@@ -246,7 +247,7 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
             if self.command != "HEAD":
                 self.wfile.write(body)
 
-        def _json(self, obj: dict, code: int = 200) -> None:
+        def _json(self, obj: dict[str, Any], code: int = 200) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode(), "application/json")
 
         def do_POST(self) -> None:
@@ -266,8 +267,8 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
             if not m:
                 return self._json({"v": api.API_VERSION, "error": "not found"}, 404)
             try:
-                body = json.loads(raw) if raw else {}
-                if not isinstance(body, dict):
+                body: Any = json.loads(raw) if raw else {}
+                if not is_obj(body):
                     raise ValueError("the body is not a JSON object")
                 pt = app.store.check_name(unquote(m.group(1)))
             except ValueError as e:  # StoreError is a ValueError
@@ -350,7 +351,7 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
         def _screen(self, mjpeg: bool) -> None:
             live = app.recorder.live if app.recorder else None
             seq, frame = live.get() if live else (0, None)
-            if not mjpeg or frame is None:
+            if not mjpeg or frame is None or live is None:
                 return self._send(200, frame, "image/jpeg") if frame else self._send(204, b"", "text/plain")
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")

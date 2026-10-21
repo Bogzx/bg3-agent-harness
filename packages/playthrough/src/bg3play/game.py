@@ -16,13 +16,16 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from . import live
+from .jsontypes import is_obj
 
 VIEWER_IDLE_S = 30.0
 EVENTS_KEEP = 150
 
 
 class GameRpc(Protocol):
-    def rpc(self, op: str, params: dict | None = None, context: str = "server", timeout: float = 5.0) -> Any: ...
+    def rpc(
+        self, op: str, params: dict[str, Any] | None = None, context: str = "server", timeout: float = 5.0
+    ) -> Any: ...
 
     def close(self) -> None: ...
 
@@ -50,10 +53,10 @@ class GameWatch:
         self.ops: set[str] = set()
         self.ops_t = float("-inf")
         self.event_seq: int | None = None
-        self.view: dict = {"reachable": False, "error": "not polled yet"}
-        self.events: list[dict] = []
+        self.view: dict[str, Any] = {"reachable": False, "error": "not polled yet"}
+        self.events: list[dict[str, Any]] = []
 
-    def snapshot(self, last_events: int = 40) -> tuple[dict, list[dict]]:
+    def snapshot(self, last_events: int = 40) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         with self.lock:
             return dict(self.view), list(self.events[-last_events:])
 
@@ -73,7 +76,7 @@ class GameWatch:
                     "reachable": True,
                     "error": None,
                     "t": now,
-                    "status": live.shape_status(st) if isinstance(st, dict) else None,
+                    "status": live.shape_status(st) if is_obj(st) else None,
                     "note": None if st is not None else "state.status not available yet",
                 }
                 if evs:
@@ -85,14 +88,15 @@ class GameWatch:
             return max(self.interval, 10.0)
         return self.interval
 
-    def _events(self) -> list[dict]:
+    def _events(self) -> list[dict[str, Any]]:
         assert self.game is not None
         if self.event_seq is None:  # start from "now"; history before the first look is skipped
             res = self.game.rpc("events.since", {"seq": 10**12, "limit": 1}, "server", timeout=5.0)
             self.event_seq = res.get("latest", 0)
             return []
         res = self.game.rpc("events.since", {"seq": self.event_seq, "limit": 100}, "server", timeout=5.0)
-        evs = res.get("events") or []
+        evs: list[dict[str, Any]] = res.get("events") or []
+
         if evs:
             self.event_seq = evs[-1].get("seq", self.event_seq)
         elif res.get("latest", 0) < self.event_seq:
@@ -123,10 +127,10 @@ class ScreenWatch:
         self.capture, self.viewers, self.interval = capture, viewers, interval
         self.lock = threading.Lock()
         self.frame: bytes | None = None
-        self.view: dict = {"enabled": capture is not None, "error": error, "t": None, "mime": None}
+        self.view: dict[str, Any] = {"enabled": capture is not None, "error": error, "t": None, "mime": None}
         self.note = note
 
-    def snapshot(self) -> tuple[dict, bytes | None]:
+    def snapshot(self) -> tuple[dict[str, Any], bytes | None]:
         with self.lock:
             return dict(self.view), self.frame
 

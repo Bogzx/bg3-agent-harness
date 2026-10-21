@@ -47,6 +47,8 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
+from .jsontypes import is_obj
+
 VERSION = 1
 FILENAME = "playthrough.toml"
 PROFILE_FILENAME = "profile.json"
@@ -150,7 +152,7 @@ def _typed(key: str, value: Any, default: Any) -> Any:
 
 
 def _section(prefix: str, cls: type, raw: Any) -> Any:
-    if not isinstance(raw, dict):
+    if not is_obj(raw):
         raise ConfigError(f"{prefix}: expected a table, got {raw!r}")
     names = {f.name for f in fields(cls)}
     unknown = sorted(set(raw) - names)
@@ -160,7 +162,7 @@ def _section(prefix: str, cls: type, raw: Any) -> Any:
     return replace(default, **{k: _typed(f"{prefix}.{k}", v, getattr(default, k)) for k, v in raw.items()})
 
 
-def validate(data: dict) -> PlaythroughConfig:
+def validate(data: dict[str, Any]) -> PlaythroughConfig:
     """A parsed TOML document -> a checked config. Missing keys take their defaults; `v` and `name` are required."""
     if data.get("v") != VERSION:
         raise ConfigError(f"v: expected {VERSION}, got {data.get('v')!r}")
@@ -222,14 +224,14 @@ def dumps(cfg: PlaythroughConfig) -> str:
     return "\n".join(lines) + "\n"
 
 
-def to_dict(cfg: PlaythroughConfig) -> dict:
+def to_dict(cfg: PlaythroughConfig) -> dict[str, Any]:
     return asdict(cfg)
 
 
 # ---------------------------------------------------------------- profile.json (migration)
 
 
-def parse_profile_json(text: str) -> dict:
+def parse_profile_json(text: str) -> dict[str, Any]:
     """runner/play.py load_profile on the file's text (play.py still has a copy: harness-owned):
     {"character": {"brief", "name"?, "constraints"?, "roleplay"}, "difficulty"?}.
     Broken JSON, or a character without a brief, means no character."""
@@ -237,11 +239,11 @@ def parse_profile_json(text: str) -> dict:
         raw = json.loads(text)
     except ValueError:
         return {}
-    if not isinstance(raw, dict):
+    if not is_obj(raw):
         return {}
     out = dict(raw)
     c = raw.get("character")
-    if isinstance(c, dict) and isinstance(c.get("brief"), str) and c["brief"].strip():
+    if is_obj(c) and isinstance(c.get("brief"), str) and c["brief"].strip():
         out["character"] = dict(c, roleplay=c.get("roleplay") if c.get("roleplay") in ROLEPLAY_MODES else "strict")
     else:
         out.pop("character", None)
@@ -250,22 +252,23 @@ def parse_profile_json(text: str) -> dict:
     return out
 
 
-def from_profile(profile: dict, name: str) -> PlaythroughConfig:
+def from_profile(profile: dict[str, Any], name: str) -> PlaythroughConfig:
     """A load_profile dict -> a config with that character and difficulty and defaults elsewhere. Keys the config
     has no place for are an error rather than dropped."""
     unknown = sorted(set(profile) - {"character", "difficulty"})
     if unknown:
         raise ConfigError(f"profile.json: unknown key(s) {', '.join(unknown)}")
-    c = profile.get("character") or {}
+    c: dict[str, Any] = profile.get("character") or {}
+
     unknown = sorted(set(c) - {f.name for f in fields(Character)})
     if unknown:
         raise ConfigError(f"profile.json character: unknown key(s) {', '.join(unknown)}")
     return validate({"v": VERSION, "name": name, "difficulty": profile.get("difficulty", ""), "character": c})
 
 
-def to_profile(cfg: PlaythroughConfig) -> dict:
+def to_profile(cfg: PlaythroughConfig) -> dict[str, Any]:
     """The config's character and difficulty in load_profile's shape (what play.py's prompt builders take)."""
-    out: dict = {}
+    out: dict[str, Any] = {}
     c = cfg.character
     if c.brief.strip():
         out["character"] = {"brief": c.brief, "roleplay": c.roleplay}

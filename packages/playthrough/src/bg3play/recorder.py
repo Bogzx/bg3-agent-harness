@@ -31,7 +31,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Protocol
+from typing import IO, Any, Protocol
+
+from .jsontypes import is_obj
 
 INDEX_VERSION = 1
 GAME_COMM = "bg3"
@@ -138,7 +140,7 @@ def ffmpeg_args(spec: RecordSpec, capture: Capture, prefix: str, ffmpeg: str = "
 
 def parse_segment_list(text: str) -> list[tuple[str, float, float]]:
     """ffmpeg's csv segment list -> (file, start s, end s) per finished segment."""
-    out = []
+    out: list[tuple[str, float, float]] = []
     for line in text.splitlines():
         parts = line.strip().rsplit(",", 2)
         if len(parts) != 3:
@@ -157,10 +159,10 @@ def run_segments(
     files: list[str],
     sizes: dict[str, int],
     ended_at: float | None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """One run's index rows: the listed (finished) segments, then files on disk the list doesn't have yet (the one
     being written; after a crash the last one, closed at `ended_at`)."""
-    rows = [
+    rows: list[dict[str, Any]] = [
         {"file": f, "run": prefix, "start": round(t0 + s, 3), "end": round(t0 + e, 3), "bytes": sizes.get(f, 0)}
         for f, s, e in listed
     ]
@@ -179,10 +181,10 @@ def run_segments(
     return rows
 
 
-def over_cap(segments: list[dict], cap_bytes: int) -> list[dict]:
+def over_cap(segments: list[dict[str, Any]], cap_bytes: int) -> list[dict[str, Any]]:
     """The oldest finished segments to delete so the total fits under cap_bytes (the open one is never deleted)."""
     total = sum(s["bytes"] for s in segments)
-    out = []
+    out: list[dict[str, Any]] = []
     for s in sorted(segments, key=lambda s: s["start"]):
         if total <= cap_bytes:
             break
@@ -193,7 +195,7 @@ def over_cap(segments: list[dict], cap_bytes: int) -> list[dict]:
     return out
 
 
-def locate(segments: list[dict], t: float) -> tuple[dict, float] | None:
+def locate(segments: list[dict[str, Any]], t: float) -> tuple[dict[str, Any], float] | None:
     """The segment showing wall-clock time t and the offset into it (s), or None when nothing was recorded then."""
     for s in sorted(segments, key=lambda s: s["start"]):
         end = s["end"] if s["end"] is not None else float("inf")
@@ -214,7 +216,7 @@ class MjpegParser:
 
     def feed(self, data: bytes) -> list[bytes]:
         self.buf += data
-        frames = []
+        frames: list[bytes] = []
         while True:
             head_end = self.buf.find(b"\r\n\r\n")
             if head_end < 0:
@@ -441,7 +443,7 @@ class Recorder:
     last_exit: int | None = None
     next_start: float = 0.0
     guard_until: float = 0.0
-    segments: list[dict] = field(default_factory=list)
+    segments: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def __post_init__(self) -> None:
         self.out.mkdir(parents=True, exist_ok=True)
@@ -544,7 +546,8 @@ class Recorder:
         except OSError:
             listed = []
         files = [f.name for f in self.out.glob(f"{run.prefix}-*.mp4")]
-        sizes = {}
+        sizes: dict[str, int] = {}
+
         for f in files:
             try:
                 sizes[f] = (self.out / f).stat().st_size
@@ -570,7 +573,7 @@ class Recorder:
         tmp.write_text(json.dumps({"v": INDEX_VERSION, "segments": self.segments}, indent=1))
         tmp.replace(self.out / "index.json")
 
-    def state(self) -> dict:
+    def state(self) -> dict[str, Any]:
         return {
             "recording": self.run is not None,
             "enabled": self.enabled,
@@ -591,11 +594,11 @@ class Recorder:
         self.live.close()
 
 
-def read_index(out_dir: Path) -> list[dict]:
+def read_index(out_dir: Path) -> list[dict[str, Any]]:
     """The recorded segments (index.json) whose files still exist, oldest first."""
     try:
         idx = json.loads((out_dir / "index.json").read_text())
-        segs = [s for s in idx.get("segments", []) if isinstance(s, dict) and (out_dir / str(s.get("file"))).exists()]
+        segs = [s for s in idx.get("segments", []) if is_obj(s) and (out_dir / str(s.get("file"))).exists()]
     except (OSError, ValueError, AttributeError):
         return []
     return sorted(segs, key=lambda s: s.get("start") or 0)

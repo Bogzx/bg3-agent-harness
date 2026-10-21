@@ -18,13 +18,10 @@ from .adapters import legacy_paths
 
 def runner_load(path: Path) -> Any:
     """runner/profiles.py load (raises its ProfileError, a ValueError, for a bad profile)."""
-    legacy_paths.ensure()
-    import profiles
-
-    return profiles.load(path)
+    return legacy_paths.load("profiles").load(path)
 
 
-def summary(name: str, p: Any) -> dict:
+def summary(name: str, p: Any) -> dict[str, Any]:
     ep = p.endpoint
     return {
         "name": name,
@@ -37,11 +34,11 @@ def summary(name: str, p: Any) -> dict:
     }
 
 
-def read_profiles(directory: Path | None, load: Callable[[Path], Any] = runner_load) -> list[dict]:
+def read_profiles(directory: Path | None, load: Callable[[Path], Any] = runner_load) -> list[dict[str, Any]]:
     """One row per profiles/*.toml, by name: client/model/effort/provider, or the parse error."""
     if directory is None or not directory.is_dir():
         return []
-    rows = []
+    rows: list[dict[str, Any]] = []
     for f in sorted(directory.glob("*.toml")):
         try:
             rows.append(summary(f.stem, load(f)))

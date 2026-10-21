@@ -22,9 +22,10 @@ import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import parse
+from .jsontypes import Obj, is_obj, objs
 
 SESSION_LOG_RE = re.compile(r"^(S\d{3,})\.log$")
 MEMORY_SUFFIXES = (".md", ".json", ".jsonl", ".txt")
@@ -45,26 +46,26 @@ class StoreError(ValueError):
     """A request for something the store refuses (bad name, path outside the memory dir)."""
 
 
-def read_json(path: Path) -> dict:
+def read_json(path: Path) -> dict[str, Any]:
     try:
         v = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return v if isinstance(v, dict) else {}
+    return v if is_obj(v) else {}
 
 
-def read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    out = []
+    out: list[dict[str, Any]] = []
     for line in text.splitlines():
         try:
             v = json.loads(line)
         except ValueError:
             continue
-        if isinstance(v, dict):
+        if is_obj(v):
             out.append(v)
     return out
 
@@ -114,7 +115,7 @@ class RunStore:
 
     # ------------------------------------------------------------ runner
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         return read_json(self.status_path)
 
     def current(self) -> str | None:
@@ -149,15 +150,15 @@ class RunStore:
 
     # ------------------------------------------------------------ sessions
 
-    def sessions(self, pt: str) -> list[dict]:
+    def sessions(self, pt: str) -> list[dict[str, Any]]:
         """One row per play session: runner.json history joined with the log's [end] line and latency summary."""
         d = self.session_dir(pt)
         hist = {
             h.get("session"): h
-            for h in read_json(d / "runner.json").get("history") or []
-            if isinstance(h, dict) and h.get("kind", "play") == "play"
+            for h in objs(read_json(d / "runner.json").get("history"))
+            if h.get("kind", "play") == "play"
         }
-        rows = []
+        rows: list[dict[str, Any]] = []
         for log in self.session_logs(pt):
             sid = log.stem
             end: dict[str, Any] = {"outcome": None, "turns": None, "minutes": None, "cost_usd": None}
@@ -185,10 +186,10 @@ class RunStore:
             )
         return rows
 
-    def log_entries(self, path: Path, max_bytes: int = 256 * 1024) -> list[dict]:
+    def log_entries(self, path: Path, max_bytes: int = 256 * 1024) -> list[dict[str, Any]]:
         return [e for e in (parse.log_line(ln) for ln in read_tail(path, max_bytes)) if e]
 
-    def recent_actions(self, max_bytes: int = 1024 * 1024) -> list[dict]:
+    def recent_actions(self, max_bytes: int = 1024 * 1024) -> list[dict[str, Any]]:
         return [a for a in (parse.action(ln) for ln in read_tail(self.actions_path, max_bytes)) if a]
 
     # ------------------------------------------------------------ memory
@@ -199,10 +200,10 @@ class RunStore:
         except OSError:
             return ""
 
-    def memory_tree(self, pt: str) -> list[dict]:
+    def memory_tree(self, pt: str) -> list[dict[str, Any]]:
         """Text files in the memory dir (no .git, no hidden files), sorted by path."""
         root = self.memory_dir(pt)
-        out = []
+        out: list[dict[str, Any]] = []
         for f in sorted(root.rglob("*")):
             rel = f.relative_to(root)
             if any(part.startswith(".") for part in rel.parts) or not f.is_file() or f.suffix not in MEMORY_SUFFIXES:
@@ -226,7 +227,7 @@ class RunStore:
         except OSError:
             return None
 
-    def memory_log(self, pt: str, limit: int = 50, rel: str | None = None) -> list[dict]:
+    def memory_log(self, pt: str, limit: int = 50, rel: str | None = None) -> list[dict[str, Any]]:
         """Memory commits, newest first (the memory dir is a git repo); [] when it is not one."""
         root = self.memory_dir(pt)
         if not (root / ".git").exists():
@@ -251,9 +252,9 @@ class RunStore:
 
     # ------------------------------------------------------------ timeline, screen
 
-    def fights(self, pt: str) -> list[dict]:
+    def fights(self, pt: str) -> list[dict[str, Any]]:
         d = self.session_dir(pt)
-        rows = []
+        rows: list[dict[str, Any]] = []
         for f in sorted(d.glob("S*.fights.jsonl")):
             rows += [x for x in (parse.fight(r) for r in read_jsonl(f)) if x]
         return rows
@@ -266,14 +267,18 @@ class RunStore:
         return max(shots, key=lambda f: (f.stat().st_mtime, f.name)) if shots else None
 
 
-def latency_summary(lat: dict) -> dict:
+def latency_summary(lat: dict[str, Any]) -> dict[str, Any]:
     """The few Sxxx.latency.json numbers the cost/latency strip shows."""
-    targets = lat.get("targets") or {}
+    targets: dict[str, Any] = lat.get("targets") or {}
+
+    def value(k: str) -> Any:
+        return cast(Obj, targets.get(k) or {}).get("value")
+
     return {
         "apm": lat.get("apm"),
         "busy_pct": lat.get("busy_pct"),
         "think_overlap_pct": lat.get("think_overlap_pct"),
-        "idle_median_s": (targets.get("median_idle_explore_s") or {}).get("value"),
-        "long_gaps": (targets.get("long_gaps_non_dialogue") or {}).get("value"),
-        "bridge_rt_ms": (targets.get("bridge_rt_median_ms") or {}).get("value"),
+        "idle_median_s": value("median_idle_explore_s"),
+        "long_gaps": value("long_gaps_non_dialogue"),
+        "bridge_rt_ms": value("bridge_rt_median_ms"),
     }

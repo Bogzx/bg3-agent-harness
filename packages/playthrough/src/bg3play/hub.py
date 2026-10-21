@@ -83,7 +83,7 @@ class LogFeed:
 class StatusFeed:
     def __init__(self, store: RunStore):
         self.store = store
-        self.last: dict | None = None
+        self.last: dict[str, Any] | None = None
 
     def poll(self) -> list[tuple[str, Any]]:
         st = {k: v for k, v in self.store.status().items() if k not in STATUS_IGNORED}
@@ -96,7 +96,7 @@ class StatusFeed:
 class MemoryFeed:
     def __init__(self, store: RunStore, pt: str | None = None):
         self.store, self.pt = store, pt
-        self.key: tuple | None = None
+        self.key: tuple[Any, ...] | None = None
         self.seen: set[str] = set()
 
     def poll(self) -> list[tuple[str, Any]]:
@@ -106,7 +106,7 @@ class MemoryFeed:
         head_log = self.store.memory_dir(pt) / ".git" / "logs" / "HEAD"
         try:
             st = head_log.stat()
-            key: tuple | None = (pt, st.st_size, st.st_mtime_ns)
+            key: tuple[Any, ...] | None = (pt, st.st_size, st.st_mtime_ns)
         except OSError:
             key = None
         if key is None or key == self.key:

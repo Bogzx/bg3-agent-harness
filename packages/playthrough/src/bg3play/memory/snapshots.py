@@ -16,6 +16,7 @@ so here entities are referred to by display name only.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import socket
@@ -23,8 +24,9 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from bg3play.jsontypes import Obj, is_list, is_obj
 from bg3play.memory import memlib
 
 BRIDGE_SRC = memlib.REPO_ROOT / "bridge" / "src"
@@ -34,10 +36,8 @@ DEBUG_HOST = "127.0.0.1"
 SNAP_FILES = ("status", "party", "inventory", "journal", "map", "gear")
 
 
-def _render():
-    from bg3ai import render
-
-    return render
+def _render() -> Any:
+    return importlib.import_module("bg3ai.render")  # the bridge ships no types
 
 
 def make_handles():
@@ -56,7 +56,7 @@ _SPACES = re.compile(r"[ \t]{2,}")
 
 def tidy(text: str) -> str:
     """Collapse the gaps left by blank handles; drop trailing spaces and empty bullets."""
-    out = []
+    out: list[str] = []
     for line in text.splitlines():
         indent = line[: len(line) - len(line.lstrip())]
         line = indent + _SPACES.sub(" ", line.lstrip()).rstrip()
@@ -83,24 +83,24 @@ def header(kind: str, session: str | None, now: float | None = None) -> str:
 
 def _class_str(c: Any) -> str:
     """{'class': 'Cleric', 'subclass': 'Trickery Domain', 'level': 6} -> 'Cleric 6 (Trickery Domain)'."""
-    if not isinstance(c, dict):
+    if not is_obj(c):
         return str(c)
     name = c.get("class") or c.get("name") or "?"
     s = f"{name} {c['level']}" if c.get("level") else str(name)
     return s + (f" ({c['subclass']})" if c.get("subclass") else "")
 
 
-def _normalize_member(m: dict) -> dict:
+def _normalize_member(m: dict[str, Any]) -> dict[str, Any]:
     m = dict(m)
-    if isinstance(m.get("classes"), list):
+    if is_list(m.get("classes")):
         m["classes"] = [_class_str(c) for c in m["classes"]]
     return m
 
 
-def render_status(st: dict) -> str:
+def render_status(st: dict[str, Any]) -> str:
     r = _render()
     st = dict(st)
-    st["party"] = [_normalize_member(m) if isinstance(m, dict) else m for m in st.get("party") or []]
+    st["party"] = [_normalize_member(m) if is_obj(m) else m for m in st.get("party") or ()]
     return tidy(r.render_status(st, None, make_handles()))
 
 
@@ -131,18 +131,18 @@ def render_sheet(sheet: Any) -> str:
     """One `- key: value` line per top-level field, most useful fields first."""
     r = _render()
     handles = make_handles()
-    if not isinstance(sheet, dict):
+    if not is_obj(sheet):
         return r.compact(sheet, handles) if not isinstance(sheet, str) else sheet
     keys = [k for k in SHEET_ORDER if k in sheet] + [k for k in sheet if k not in SHEET_ORDER]
-    lines = []
+    lines: list[str] = []
     for k in keys:
         v = sheet[k]
         if k in SHEET_SKIP or v in (None, [], {}, False):
             continue
-        if k == "classes" and isinstance(v, list):
+        if k == "classes" and is_list(v):
             v = ", ".join(_class_str(c) for c in v)
-        elif k in ("statuses", "conditions", "passives", "features") and isinstance(v, list):
-            v = ", ".join(str(x.get("name") or "?") if isinstance(x, dict) else str(x) for x in v)
+        elif k in ("statuses", "conditions", "passives", "features") and is_list(v):
+            v = ", ".join(str(x.get("name") or "?") if is_obj(x) else str(x) for x in v)
         lines.append(f"- {k}: {r.compact(v, handles, 1) if isinstance(v, (dict, list)) else r.compact(v, handles)}")
     return "\n".join(lines)
 
@@ -155,7 +155,7 @@ def render_party(sheets: list[tuple[str, Any]]) -> str:
 COSMETIC_SLOTS = ("Underwear", "Vanity")
 
 
-def item_line(it: dict) -> str:
+def item_line(it: dict[str, Any]) -> str:
     name = str(it.get("name", "?"))
     bits = [name + (f" x{it['count']}" if it.get("count", 1) not in (1, None) else "")]
     if it.get("rarity") and it["rarity"] not in ("common", "Common"):
@@ -174,11 +174,11 @@ def render_inventory(inv: Any, names: dict[str, str] | None = None) -> str:
     """Group items by owner; `names` maps owner uuids to display names (from state.status)."""
     r = _render()
     handles = make_handles()
-    items = inv.get("items") if isinstance(inv, dict) and "items" in inv else inv
-    if isinstance(items, list):
+    items = inv.get("items") if is_obj(inv) and "items" in inv else inv
+    if is_list(items):
         by_owner: dict[str, list[str]] = {}
         for it in items:
-            if not isinstance(it, dict):
+            if not is_obj(it):
                 continue
             if str(it.get("equipped_slot", "")).startswith(COSMETIC_SLOTS):
                 continue
@@ -197,11 +197,16 @@ def render_gear(inv: Any, names: dict[str, str] | None = None) -> str:
     """Between-session gear check (S026: Sentinel Shield left in a bag, Gale in a Simple Robe at L5, bags of
     junk, supplies short): better gear per member, junk to sell, supplies. Injected at the next session start
     (session.py) so the agent equips it first thing (equip_best)."""
-    from bg3ai import economy
+    economy: Any = importlib.import_module("bg3ai.economy")
 
-    if not isinstance(inv, dict) or "items" not in inv:
+    if not is_obj(inv) or "items" not in inv:
         return ""
-    lines = economy.gear_report(inv, lambda u: (names or {}).get(str(u).lower(), "other"))
+
+    def owner(u: Any) -> str:
+        return (names or {}).get(str(u).lower(), "other")
+
+    lines = economy.gear_report(inv, owner)
+
     if not lines:
         return "## Gear check\n- nothing to change\n"
     return "## Gear check (equip_best equips the upgrades; trade sell=junk at a trader)\n" + "\n".join(lines) + "\n"
@@ -212,18 +217,19 @@ JOURNAL_STEPS = 3
 
 def render_journal(j: Any) -> str:
     r = _render()
-    quests = j.get("quests") if isinstance(j, dict) and "quests" in j else j
-    if isinstance(quests, list):
-        active, done = [], []
+    quests = j.get("quests") if is_obj(j) and "quests" in j else j
+    if is_list(quests):
+        active: list[str] = []
+        done: list[str] = []
         for q in quests:
-            if not isinstance(q, dict):
+            if not is_obj(q):
                 continue
             title = q.get("title", "?")
             cat = f" ({q['category']})" if q.get("category") else ""
             if q.get("done"):
                 done.append(f"- {title}{cat}")
                 continue
-            all_steps = q.get("steps") or []
+            all_steps: list[Any] = q.get("steps") or []
             shown = all_steps[-JOURNAL_STEPS:]
             more = (
                 f"\n  - (+{len(all_steps) - len(shown)} earlier entries; get_journal has them)"
@@ -238,11 +244,11 @@ def render_journal(j: Any) -> str:
 
 def render_map(m: Any) -> str:
     r = _render()
-    if isinstance(m, dict):
+    if is_obj(m):
         where = " · ".join(str(m[k]) for k in ("region", "subregion", "level") if m.get(k))
-        wps = m.get("waypoints") or []
+        wps: list[Any] = m.get("waypoints") or []
         lines = [f"Current: {where or '?'}", "", "## Unlocked waypoints"]
-        lines += [f"- {w.get('name', '?') if isinstance(w, dict) else w}" for w in wps] or ["(none)"]
+        lines += [f"- {w.get('name', '?') if is_obj(w) else w}" for w in wps] or ["(none)"]
         rest = {k: v for k, v in m.items() if k not in ("region", "subregion", "level", "waypoints")}
         if rest:
             lines += ["", "## Other", r.compact(rest, make_handles())]
@@ -266,7 +272,7 @@ def collect(rpc: Callable[..., Any], ops: set[str]) -> tuple[dict[str, str], lis
     out: dict[str, str] = {}
     notes: list[str] = []
 
-    def call(op: str, args: dict | None = None) -> Any:
+    def call(op: str, args: dict[str, Any] | None = None) -> Any:
         if op not in ops:
             raise LookupError(f"{op} not implemented by the mod yet")
         return rpc(op, args or {})
@@ -278,8 +284,8 @@ def collect(rpc: Callable[..., Any], ops: set[str]) -> tuple[dict[str, str], lis
     except Exception as e:
         notes.append(f"status: skipped ({e})")
 
-    if status and isinstance(status.get("party"), list):
-        sheets = []
+    if status and is_list(status.get("party")):
+        sheets: list[tuple[Any, Any]] = []
         for member in status["party"]:
             name = member.get("name", "?")
             try:
@@ -295,9 +301,9 @@ def collect(rpc: Callable[..., Any], ops: set[str]) -> tuple[dict[str, str], lis
     else:
         notes.append("party: skipped (no party list in state.status)")
 
-    names = {}
-    for member in (status or {}).get("party") or []:
-        if isinstance(member, dict) and member.get("uuid"):
+    names: dict[str, str] = {}
+    for member in cast(Obj, status or {}).get("party") or ():
+        if is_obj(member) and member.get("uuid"):
             names[str(member["uuid"]).lower()] = member.get("name", "?")
 
     def inventory(inv: Any) -> str:
@@ -321,7 +327,7 @@ def collect(rpc: Callable[..., Any], ops: set[str]) -> tuple[dict[str, str], lis
 def write_snapshots(mem: Path, docs: dict[str, str], session: str | None, now: float | None = None) -> list[str]:
     d = mem / "snapshots"
     d.mkdir(parents=True, exist_ok=True)
-    written = []
+    written: list[str] = []
     for key, body in docs.items():
         p = d / f"{key}.md"
         tmp = p.with_suffix(".tmp")
@@ -343,17 +349,22 @@ def run(mem: Path, port: int = 9998) -> tuple[list[str], list[str]]:
     if not port_open(port):
         return [], [f"game not reachable on {DEBUG_HOST}:{port}; snapshots left as they were"]
     try:
-        from bg3ai.game import Game, GameError
+        from bg3ai.game import Game, GameError  # pyright: ignore[reportMissingTypeStubs]
     except ImportError as e:
         return [], [f"bridge not importable from {BRIDGE_SRC}: {e}"]
-    game = Game(port=port)
+    game: Any = Game(port=port)
     try:
         info = game.rpc("sys.info", context="server", timeout=5.0)
         ops = set(info.get("ops") or [])
     except GameError as e:
         return [], [f"server context not ready ({e}); snapshots left as they were"]
     try:
-        docs, notes = collect(lambda op, args: game.rpc(op, args, "server", timeout=8.0), ops)
+
+        def rpc(op: str, args: Any) -> Any:
+            return game.rpc(op, args, "server", timeout=8.0)
+
+        docs, notes = collect(rpc, ops)
+
     finally:
         game.close()
     return write_snapshots(mem, docs, current_session(mem)), notes

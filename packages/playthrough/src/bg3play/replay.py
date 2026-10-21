@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from . import parse
 from . import recorder as rec
@@ -39,9 +40,9 @@ def clock_to_epoch(clock: str, started: float) -> float | None:
     return float(int(started) + delta)
 
 
-def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) -> list[dict]:
+def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) -> list[dict[str, Any]]:
     """actions.jsonl lines with t0 <= t <= t1, in file order (cheap pre-filter on the "t" value before parsing)."""
-    out = []
+    out: list[dict[str, Any]] = []
     try:
         f = path.open(encoding="utf-8", errors="replace")
     except OSError:
@@ -80,7 +81,7 @@ def session_window(store: RunStore, pt: str, session: str) -> tuple[float, float
     return None
 
 
-def replay(store: RunStore, pt: str, session: str, video_dir: Path) -> dict | None:
+def replay(store: RunStore, pt: str, session: str, video_dir: Path) -> dict[str, Any] | None:
     """The replay payload, or None when the session (or its start time) is unknown."""
     win = session_window(store, pt, session)
     if win is None:

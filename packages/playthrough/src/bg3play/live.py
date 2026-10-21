@@ -12,11 +12,13 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import parse
 from .adapters import legacy_paths
+from .jsontypes import Obj, is_list, is_obj
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -26,10 +28,10 @@ SESSION_LOG_RE = re.compile(r"^S(\d{3,})\.md$")
 # ---------------------------------------------------------------- files
 
 
-def read_json(path: Path) -> dict:
+def read_json(path: Path) -> dict[str, Any]:
     try:
         v = json.loads(path.read_text())
-        return v if isinstance(v, dict) else {}
+        return v if is_obj(v) else {}
     except (OSError, ValueError):
         return {}
 
@@ -55,7 +57,7 @@ def tail_lines(path: Path | None, n: int = 30, strip_comments: bool = True) -> l
     return t.splitlines()[-n:]
 
 
-def parse_actions(text: str, result_limit: int = 2500) -> list[dict]:
+def parse_actions(text: str, result_limit: int = 2500) -> list[dict[str, Any]]:
     """actions.jsonl lines -> feed items. Bad lines are skipped."""
     return [a for line in text.splitlines() if line.strip() and (a := parse.action(line, result_limit))]
 
@@ -64,8 +66,12 @@ def parse_actions(text: str, result_limit: int = 2500) -> list[dict]:
 
 
 def session_clock(
-    runner_status: dict, session_file: dict, mem_state: dict, now: float | None = None, default_minutes: float = 60.0
-) -> dict:
+    runner_status: dict[str, Any],
+    session_file: dict[str, Any],
+    mem_state: dict[str, Any],
+    now: float | None = None,
+    default_minutes: float = 60.0,
+) -> dict[str, Any]:
     """Deadline info from (in order) runner.status.json, runtime/session.json, memory/.session.json."""
     now = now or time.time()
     deadline = None
@@ -106,7 +112,7 @@ def session_clock(
 
 
 def class_str(c: Any) -> str:
-    if not isinstance(c, dict):
+    if not is_obj(c):
         return str(c)
     name = c.get("class") or c.get("name") or "?"
     s = f"{name} {c['level']}" if c.get("level") else str(name)
@@ -114,26 +120,26 @@ def class_str(c: Any) -> str:
 
 
 def status_names(sts: Any) -> list[str]:
-    out = []
-    for s in sts or []:
-        out.append(str(s.get("name") or s.get("id") or "?") if isinstance(s, dict) else str(s))
+    out: list[str] = []
+    for s in sts or ():
+        out.append(str(s.get("name") or s.get("id") or "?") if is_obj(s) else str(s))
     return out
 
 
-def shape_status(st: dict) -> dict:
+def shape_status(st: dict[str, Any]) -> dict[str, Any]:
     """state.status -> a GUID-free summary for the page."""
     active = st.get("active")
-    party = []
-    names = {}
-    for m in st.get("party") or []:
-        if not isinstance(m, dict):
+    party: list[dict[str, Any]] = []
+    names: dict[str, Any] = {}
+    for m in st.get("party") or ():
+        if not is_obj(m):
             continue
         if m.get("uuid"):
             names[str(m["uuid"]).lower()] = m.get("name", "?")
         party.append(
             {
                 "name": m.get("name", "?"),
-                "classes": ", ".join(class_str(c) for c in (m.get("classes") or []))
+                "classes": ", ".join(class_str(c) for c in (m.get("classes") or ()))
                 or (f"L{m['level']}" if m.get("level") else ""),
                 "hp": m.get("hp"),
                 "max_hp": m.get("max_hp"),
@@ -145,7 +151,7 @@ def shape_status(st: dict) -> dict:
                 "active": bool(active and m.get("uuid") == active),
             }
         )
-    combat = st.get("combat") if isinstance(st.get("combat"), dict) else None
+    combat = st.get("combat") if is_obj(st.get("combat")) else None
     if combat:
         cur = combat.get("current")
         if isinstance(cur, str) and UUID_RE.fullmatch(cur):
@@ -165,18 +171,18 @@ def shape_status(st: dict) -> dict:
 
 def scrub(v: Any) -> Any:
     """Remove GUIDs anywhere in a JSON-ish value (dashboard never needs them)."""
-    if isinstance(v, dict):
+    if is_obj(v):
         return {k: scrub(x) for k, x in v.items() if k not in ("uuid", "guid")}
-    if isinstance(v, list):
+    if is_list(v):
         return [scrub(x) for x in v]
     if isinstance(v, str):
         return UUID_RE.sub("…", v)
     return v
 
 
-def event_text(e: dict) -> str:
+def event_text(e: dict[str, Any]) -> str:
     data = e.get("data")
-    if isinstance(data, dict):
+    if is_obj(data):
         parts = [f"{k}={scrub(v)}" for k, v in data.items() if v not in (None, "", [], {}) and k != "uuid"]
         return f"{e.get('kind', '?')} " + " ".join(str(p) for p in parts)
     return f"{e.get('kind', '?')} {scrub(data) if data is not None else ''}".strip()
@@ -196,10 +202,16 @@ def current_session_log(mem: Path) -> Path | None:
         logs = [f for f in d.iterdir() if SESSION_LOG_RE.match(f.name)]
     except OSError:
         return None
-    return max(logs, key=lambda f: int(SESSION_LOG_RE.match(f.name).group(1))) if logs else None
+
+    def number(f: Path) -> int:
+        m = SESSION_LOG_RE.match(f.name)
+        assert m  # logs only holds matching names
+        return int(m.group(1))
+
+    return max(logs, key=number) if logs else None
 
 
-def memory_view(mem: Path, log_lines: int = 25) -> dict:
+def memory_view(mem: Path, log_lines: int = 25) -> dict[str, Any]:
     st = read_json(mem / ".session.json")
     log = current_session_log(mem)
     return {
@@ -214,7 +226,7 @@ def memory_view(mem: Path, log_lines: int = 25) -> dict:
     }
 
 
-def resolve_memory(repo: Path, runner_status: dict, explicit: str | None = None) -> Path:
+def resolve_memory(repo: Path, runner_status: dict[str, Any], explicit: str | None = None) -> Path:
     if explicit:
         return Path(explicit)
     pt = runner_status.get("playthrough") or os.environ.get("BG3AI_PLAYTHROUGH")
@@ -223,7 +235,7 @@ def resolve_memory(repo: Path, runner_status: dict, explicit: str | None = None)
     return repo / "play" / "memory"
 
 
-def resolve_agent_log(runtime: Path, runner_status: dict) -> Path | None:
+def resolve_agent_log(runtime: Path, runner_status: dict[str, Any]) -> Path | None:
     """The agent transcript (.log) the runner is writing, else the newest one for the playthrough."""
     p = runner_status.get("log")
     if p and Path(p).exists():
@@ -240,7 +252,7 @@ def resolve_agent_log(runtime: Path, runner_status: dict) -> Path | None:
 # ---------------------------------------------------------------- latency
 
 
-def resolve_latency_paths(runtime: Path, runner_status: dict) -> dict:
+def resolve_latency_paths(runtime: Path, runner_status: dict[str, Any]) -> dict[str, Any]:
     """The live session's bridge metrics + stream timing files, and the playthrough's history."""
     metrics = runner_status.get("metrics")
     turns = runner_status.get("turns")
@@ -254,7 +266,7 @@ def resolve_latency_paths(runtime: Path, runner_status: dict) -> dict:
     }
 
 
-def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dict]:
+def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dict[str, Any]]:
     if path is None:
         return []
     try:
@@ -267,21 +279,22 @@ def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dic
     lines = data.splitlines()
     if size > max_bytes and lines:
         lines = lines[1:]  # partial first line
-    out = []
+    out: list[dict[str, Any]] = []
     for ln in lines:
         try:
             v = json.loads(ln)
         except ValueError:
             continue
-        if isinstance(v, dict):
+        if is_obj(v):
             out.append(v)
     return out
 
 
-def latency_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
+def latency_payload(
+    runtime: Path, runner_status: dict[str, Any], now: float | None = None, history_rows: int = 30
+) -> dict[str, Any]:
     """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table."""
-    legacy_paths.ensure()
-    from bg3ai import metrics
+    metrics = legacy_paths.load("bg3ai.metrics")
 
     now = time.time() if now is None else now
     paths = resolve_latency_paths(runtime, runner_status)
@@ -303,10 +316,11 @@ def latency_payload(runtime: Path, runner_status: dict, now: float | None = None
 # ---------------------------------------------------------------- story progress
 
 
-def progress_payload(runtime: Path, runner_status: dict, now: float | None = None, history_rows: int = 30) -> dict:
+def progress_payload(
+    runtime: Path, runner_status: dict[str, Any], now: float | None = None, history_rows: int = 30
+) -> dict[str, Any]:
     """/api/progress: live counter of the running session (bg3ai.progress.live_view) + per-session history."""
-    legacy_paths.ensure()
-    from bg3ai import progress
+    progress = legacy_paths.load("bg3ai.progress")
 
     now = time.time() if now is None else now
     live_path = runner_status.get("progress")
@@ -353,10 +367,10 @@ GOALS = [
     ("pts", "story points / hour", "", ">=", 90.0, 0),
 ]
 SESSION_FILE_RE = re.compile(r"^(S\d{3,}(?:-r\d+)?)\.(metrics\.jsonl|latency\.json|progress\.jsonl|progress\.json)$")
-_CACHE: dict[tuple, Any] = {}
+_CACHE: dict[tuple[Any, ...], Any] = {}
 
 
-def _cached(key: tuple, fn):
+def _cached(key: tuple[Any, ...], fn: Callable[[], Any]) -> Any:
     if key not in _CACHE:
         if len(_CACHE) > 200:
             _CACHE.clear()
@@ -364,7 +378,7 @@ def _cached(key: tuple, fn):
     return _CACHE[key]
 
 
-def _sig(p: Path) -> tuple:
+def _sig(p: Path) -> tuple[Any, ...]:
     try:
         st = p.stat()
         return (str(p), st.st_size, st.st_mtime)
@@ -379,26 +393,28 @@ def session_ids(d: Path) -> list[str]:
     except OSError:
         return []
 
-    def order(s: str):
+    def order(s: str) -> tuple[int, int]:
         m = re.match(r"S(\d+)(?:-r(\d+))?", s)
+        assert m  # SESSION_FILE_RE matched it
         return (int(m.group(1)), int(m.group(2) or 0))
 
     return sorted(names, key=order)
 
 
-def goal_values(lat: dict | None, prog: dict | None) -> dict:
+def goal_values(lat: dict[str, Any] | None, prog: dict[str, Any] | None) -> dict[str, Any]:
     """One session's latency + progress summaries → {goal key: value}."""
     lat, prog = lat or {}, prog or {}
-    t = lat.get("targets") or {}
+    t: Obj = lat.get("targets") or {}
 
-    def v(k):
-        return (t.get(k) or {}).get("value")
+    def target(k: str) -> Obj:
+        return cast(Obj, t.get(k) or {})
+
+    def v(k: str) -> Any:
+        return target(k).get("value")
 
     return {
         "idle": v("median_idle_explore_s"),
-        "gaps": v("long_gaps_non_dialogue")
-        if (t.get("long_gaps_non_dialogue") or {}).get("pass") is not None
-        else None,
+        "gaps": v("long_gaps_non_dialogue") if target("long_gaps_non_dialogue").get("pass") is not None else None,
         "rt": v("bridge_rt_median_ms"),
         "apm": lat.get("apm") if lat.get("actions") else None,
         "busy": lat.get("busy_pct"),
@@ -408,17 +424,17 @@ def goal_values(lat: dict | None, prog: dict | None) -> dict:
     }
 
 
-def goal_pass(op: str, value, target) -> bool | None:
+def goal_pass(op: str, value: Any, target: Any) -> bool | None:
     if value is None:
         return None
-    return {"<": value < target, "==": value == target, ">=": value >= target}[op]
+    checks: dict[str, bool] = {"<": value < target, "==": value == target, ">=": value >= target}
+    return checks[op]
 
 
 def _session_summaries(
     d: Path, sid: str, live: bool, started: float | None, now: float
-) -> tuple[dict | None, dict | None]:
-    legacy_paths.ensure()
-    from bg3ai import metrics, progress
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    metrics, progress = legacy_paths.load("bg3ai.metrics"), legacy_paths.load("bg3ai.progress")
 
     lat_f, met_f, turns_f = d / f"{sid}.latency.json", d / f"{sid}.metrics.jsonl", d / f"{sid}.turns.jsonl"
     prog_f, progl_f = d / f"{sid}.progress.json", d / f"{sid}.progress.jsonl"
@@ -451,7 +467,9 @@ def _session_summaries(
     return lat, prog
 
 
-def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, max_sessions: int = 30) -> dict:
+def goals_payload(
+    runtime: Path, runner_status: dict[str, Any], now: float | None = None, max_sessions: int = 30
+) -> dict[str, Any]:
     """/api/goals: every session's goal metrics side by side with PASS/FAIL, plus the trend across sessions."""
     now = time.time() if now is None else now
     pt = runner_status.get("playthrough")
@@ -459,7 +477,7 @@ def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, 
         return {"now": now, "sessions": [], "goals": [], "playthrough": None}
     d = runtime / "sessions" / pt
     live_sid = runner_status.get("session") if not runner_status.get("session_ended") else None
-    sessions = []
+    sessions: list[Obj] = []
     for sid in session_ids(d)[-max_sessions:]:
         live = sid == live_sid
         lat, prog = _session_summaries(d, sid, live, runner_status.get("started"), now)
@@ -481,7 +499,7 @@ def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, 
                 "points": (prog or {}).get("points"),
             }
         )
-    goals = []
+    goals: list[Obj] = []
     counted = [s for s in sessions if not s["short"] and not s["live"]]
     for k, label, unit, op, tgt, nd in GOALS:
         done = [s["values"][k] for s in counted if s["values"][k] is not None]
@@ -509,7 +527,7 @@ def goals_payload(runtime: Path, runner_status: dict, now: float | None = None, 
     }
 
 
-def _pid_alive(pid) -> bool:
+def _pid_alive(pid: Any) -> bool:
     try:
         os.kill(int(pid), 0)
         return True
@@ -521,8 +539,12 @@ FAULT_KINDS = ("crash", "hang", "agent_hang", "setup")
 
 
 def unattended_payload(
-    d: Path, runner_status: dict, now: float | None = None, last_n: int = 8, pid_alive=_pid_alive
-) -> dict | None:
+    d: Path,
+    runner_status: dict[str, Any],
+    now: float | None = None,
+    last_n: int = 8,
+    pid_alive: Callable[[Any], bool] = _pid_alive,
+) -> dict[str, Any] | None:
     """Unattended hours and crashes/recoveries from runtime/sessions/<pt>/runner_events.jsonl (play.py Runner.event).
 
     A run = runner_start → runner_stop (or the next start: the runner was killed hard; or now, for the live runner).
@@ -531,7 +553,9 @@ def unattended_payload(
     evs = _tail_jsonl(d / "runner_events.jsonl")
     if not evs:
         return None
-    runs, cur = [], None
+    runs: list[Obj] = []
+    cur: Obj | None = None
+
     for e in evs:
         if e.get("kind") == "runner_start":
             if cur is not None:
@@ -572,7 +596,7 @@ def unattended_payload(
             "runner_stop",
         )
     ]
-    alert = runner_status.get("alert") if isinstance(runner_status.get("alert"), dict) else None
+    alert = runner_status.get("alert") if is_obj(runner_status.get("alert")) else None
     return {
         "live": live is not None,
         "current_h": round(hours[-1], 2) if live is not None else None,
@@ -594,10 +618,9 @@ def unattended_payload(
     }
 
 
-def milestones_payload(d: Path) -> dict | None:
+def milestones_payload(d: Path) -> dict[str, Any] | None:
     """Story milestones for the playthrough dir (bg3ai.milestones), with the session that first reached each."""
-    legacy_paths.ensure()
-    from bg3ai import milestones, progress
+    milestones, progress = legacy_paths.load("bg3ai.milestones"), legacy_paths.load("bg3ai.progress")
 
     seen = read_json(d / "progress_state.json")
     sessions = [(sid, progress.load(d / f"{sid}.progress.jsonl")) for sid in session_ids(d)]
@@ -611,11 +634,10 @@ def milestones_payload(d: Path) -> dict | None:
 # ---------------------------------------------------------------- machine
 
 
-def thermal_view(path: Path) -> dict | None:
+def thermal_view(path: Path) -> dict[str, Any] | None:
     """The last thermal.log line (runner/ramwatch.py or an operator's thermal_log.sh) with its CPU/GPU C and
     the heat-pause limits, or None."""
-    legacy_paths.ensure()
-    import ramwatch
+    ramwatch = legacy_paths.load("ramwatch")
 
     last = ramwatch.last_thermal(path)
     if not last:

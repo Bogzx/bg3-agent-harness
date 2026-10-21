@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import IO, Any, Protocol
 
 from .. import client_profiles, config
+from ..jsontypes import is_obj
 from ..supervisor import SessionRequest, SessionResult, SupervisorError
 
 CRASH_REASONS = ("crash", "hang", "aborted")
@@ -94,16 +95,20 @@ def play_args(
     return args
 
 
-def last_play(runner_json: Path) -> dict | None:
+def last_play(runner_json: Path) -> dict[str, Any] | None:
     try:
         d = json.loads(runner_json.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    plays = [h for h in d.get("history") or [] if isinstance(h, dict) and h.get("kind", "play") == "play"]
+    history: list[Any] = d.get("history") or []
+    plays = [h for h in history if is_obj(h) and h.get("kind", "play") == "play"]
+
     return plays[-1] if plays else None
 
 
-def result_from(entry: dict | None, before: dict | None, exit_code: int, stopped: bool) -> SessionResult:
+def result_from(
+    entry: dict[str, Any] | None, before: dict[str, Any] | None, exit_code: int, stopped: bool
+) -> SessionResult:
     if entry is None or entry == before:
         return SessionResult(session="?", outcome="error", detail=f"play.py exited {exit_code} without a session")
     reason = str(entry.get("reason") or "")

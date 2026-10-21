@@ -9,9 +9,12 @@ import contextlib
 from collections.abc import Callable
 from typing import Any
 
+from ..jsontypes import is_obj
+
 
 def bridge_game(port: int) -> Any:
-    from bg3ai.game import Game  # optional dependency: imported only when the adapter is used
+    # optional dependency: imported only when the adapter is used; the bridge ships no py.typed
+    from bg3ai.game import Game  # pyright: ignore[reportMissingTypeStubs]
 
     return Game(port=port)
 
@@ -21,7 +24,7 @@ class BridgeStatus:
         self.port, self.factory = port, factory
         self.game: Any = None
 
-    def status(self) -> dict | None:
+    def status(self) -> dict[str, Any] | None:
         try:
             if self.game is None:
                 self.game = self.factory(self.port)
@@ -29,7 +32,7 @@ class BridgeStatus:
         except Exception:
             self.close()
             return None
-        return st if isinstance(st, dict) else None
+        return st if is_obj(st) else None
 
     def close(self) -> None:
         if self.game is not None:
@@ -44,12 +47,12 @@ def bridge_capture(
     """(capture, note, error) for game.ScreenWatch through bg3ai.screen.ScreenCapture, as the retired dashboard
     captured: small JPEGs with Pillow, else full-size PNGs. capture is None when the bridge is missing."""
     try:
-        from bg3ai.screen import ScreenCapture  # optional dependency, as above
+        from bg3ai.screen import ScreenCapture  # pyright: ignore[reportMissingTypeStubs] - optional, as above
     except Exception as e:
         return None, None, f"screen capture unavailable: {e}"
-    sc = ScreenCapture(shots)
+    sc: Any = ScreenCapture(shots)
     try:
-        import PIL  # noqa: F401
+        import PIL  # noqa: F401  # pyright: ignore[reportUnusedImport] - only whether Pillow is there
     except ImportError:
 
         def png() -> tuple[bytes, str]:

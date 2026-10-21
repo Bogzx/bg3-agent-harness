@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 # Fast path for the PostToolUse clock hook, which runs after EVERY bg3 tool call. In runner sessions
 # (BG3AI_SESSION_DEADLINE set) the MCP server already appends a ⏱ line to its results, so the hook has
@@ -40,14 +41,13 @@ if __name__ == "__main__" and sys.argv[1:2] == ["clock"] and os.environ.get("BG3
 
 import argparse
 import json
-import os
 import re
 import subprocess
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 
+from bg3play.jsontypes import is_obj
 from bg3play.memory import lint, memlib
 
 HOOK_CHAR_LIMIT = 9500  # Claude Code caps hook stdout at 10,000 chars
@@ -78,7 +78,7 @@ MAX_KEEP_PLAYING_BLOCKS = 200  # autonomous mode: cap on "keep playing" stop blo
 STOP_GRACE_S = 120
 
 
-def fight_hold() -> dict:
+def fight_hold() -> dict[str, Any]:
     """The MCP server's fight hold for this session (bridge server.py _times: a fight still on at WRAP UP moves WRAP
     UP to its end, bounded), from $BG3AI_FIGHT_HOLD_PATH: {"wrap", "deadline", "held", "cap"}; {} without one."""
     path = os.environ.get("BG3AI_FIGHT_HOLD_PATH")
@@ -88,7 +88,7 @@ def fight_hold() -> dict:
         d = json.loads(Path(path).read_text())
     except (OSError, ValueError):
         return {}
-    return d if isinstance(d, dict) else {}
+    return d if is_obj(d) else {}
 
 
 def session_deadline() -> float | None:
@@ -119,21 +119,21 @@ def wrap_at() -> float | None:
     return max(w, float(fight_hold().get("wrap") or 0))
 
 
-def wrap_due(state: dict, now: float) -> bool:
+def wrap_due(state: dict[str, Any], now: float) -> bool:
     w = wrap_at()
     if w is not None:
         return now >= w
     return elapsed_minutes(state, now) >= wrap_minutes()
 
 
-def overtime(state: dict, now: float) -> bool:
+def overtime(state: dict[str, Any], now: float) -> bool:
     deadline = session_deadline()
     if deadline:
         return now >= deadline
     return elapsed_minutes(state, now) >= session_minutes()
 
 
-def elapsed_minutes(state: dict, now: float | None = None) -> float:
+def elapsed_minutes(state: dict[str, Any], now: float | None = None) -> float:
     start = state.get("started_epoch")
     if not start:
         return 0.0
@@ -403,7 +403,7 @@ def start_session(mem: Path) -> tuple[bool, str]:
     if not mem.is_dir():
         return False, no_memory_message(mem)
     st = memlib.load_state(mem)
-    notes = []
+    notes: list[str] = []
     now = memlib.now_local()
     news_since = st.get("started")
     # Killed seconds after start with nothing logged: reuse its id (runner/play.py next_sid predicts the same).
@@ -480,7 +480,7 @@ def cmd_status(mem: Path) -> int:
         print("No session has been started yet.")
         return 0
     mins = elapsed_minutes(st)
-    flags = []
+    flags: list[str] = []
     if st.get("open") and mins >= wrap_minutes():
         flags.append("WRAP-UP NOW")
     if memlib.compaction_due(mem, cur):
@@ -493,7 +493,7 @@ def cmd_status(mem: Path) -> int:
     return 0
 
 
-def _read_hook_input() -> dict:
+def _read_hook_input() -> dict[str, Any]:
     try:
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
         return json.loads(raw) if raw.strip() else {}
@@ -516,7 +516,7 @@ def cmd_hook(mem: Path) -> int:
     return 0
 
 
-def clock_message(state: dict, now: float) -> str | None:
+def clock_message(state: dict[str, Any], now: float) -> str | None:
     """Wrap-up reminder text if one is due now, else None. Mutates state['warned_epoch']."""
     if not state.get("open"):
         return None
@@ -580,7 +580,7 @@ def refresh_snapshots(mem: Path, timeout: float = 30.0) -> str:
         return f"snapshots: skipped ({e.__class__.__name__})"
 
 
-def _close_and_commit(mem: Path, st: dict, note: str = "", message: str | None = None) -> str | None:
+def _close_and_commit(mem: Path, st: dict[str, Any], note: str = "", message: str | None = None) -> str | None:
     """Refresh snapshots, append the end line to the log, mark the session closed, `git add -A && git commit`."""
     refresh_snapshots(mem)
     n = st["current"]
@@ -594,7 +594,9 @@ def _close_and_commit(mem: Path, st: dict, note: str = "", message: str | None =
     return memlib.git_commit_all(mem, message or memlib.session_id(n)) if memlib.is_git_repo(mem) else None
 
 
-def stop_decision(mem: Path, now: float | None = None, in_combat: Callable[[], bool] | None = None) -> dict | None:
+def stop_decision(
+    mem: Path, now: float | None = None, in_combat: Callable[[], bool] | None = None
+) -> dict[str, Any] | None:
     """Decide what the Stop hook does. Returns hook JSON output, or None to allow the stop silently.
 
     in_combat (the end_session tool): asked only for an early refusal, which then says to finish the fight, with no
@@ -778,7 +780,8 @@ def cmd_memlint(mem: Path) -> int:
     data = _read_hook_input()
     if not mem.is_dir():
         return 0
-    path = (data.get("tool_input") or {}).get("file_path")
+    tool_input: dict[str, Any] = data.get("tool_input") or {}
+    path = tool_input.get("file_path")
     msg = memlint_message(mem, path) if isinstance(path, str) else None
     if msg:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}))

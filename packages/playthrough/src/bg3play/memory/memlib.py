@@ -12,6 +12,7 @@ import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[5]  # packages/playthrough/src/bg3play/memory
 TEMPLATE_DIR = REPO_ROOT / "memory-template"
@@ -140,7 +141,7 @@ def resolve_memory_dir(arg: str | None) -> Path:
 # ---------------------------------------------------------------- session state
 
 
-def load_state(mem: Path) -> dict:
+def load_state(mem: Path) -> dict[str, Any]:
     p = mem / STATE_FILE
     if not p.exists():
         return {}
@@ -150,7 +151,7 @@ def load_state(mem: Path) -> dict:
         return {}
 
 
-def save_state(mem: Path, state: dict) -> None:
+def save_state(mem: Path, state: dict[str, Any]) -> None:
     p = mem / STATE_FILE
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2) + "\n")
@@ -224,7 +225,7 @@ def _git_filter_overrides(mem: Path) -> list[str]:
         text=True,
         env=dict(os.environ, **GIT_SAFE_ENV),
     )
-    out = []
+    out: list[str] = []
     for key in p.stdout.split("\0"):
         if key and _FILTER_CMD_RE.match(key):
             # a "required" filter with no command would fail the add instead
@@ -248,7 +249,7 @@ def git_argv(mem: Path, *args: str) -> list[str]:
     return [*base, *args]
 
 
-def git(mem: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def git(mem: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[Any]:
     return subprocess.run(
         git_argv(mem, *args), check=check, capture_output=True, text=True, env=dict(os.environ, **GIT_SAFE_ENV)
     )
@@ -292,7 +293,7 @@ def last_touched_session(mem: Path, rel: str) -> int | None:
 def git_commit_all(mem: Path, message: str) -> str | None:
     """`git add -A && git commit -m message`. Returns the new short hash, or None if nothing changed."""
     git(mem, "add", "-A")
-    extra = []
+    extra: list[str] = []
     if git(mem, "diff", "--cached", "--quiet", check=False).returncode == 0:
         if has_head(mem):
             return None

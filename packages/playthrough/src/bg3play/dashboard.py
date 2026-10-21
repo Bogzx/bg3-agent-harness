@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from . import live, story
 from .game import GameWatch, ScreenWatch, Viewers
@@ -63,19 +64,19 @@ class Dashboard:
             return self.store.memory_dir(pt)
         return self.store.playthroughs_dir.parent / "play" / "memory"
 
-    def _game(self) -> tuple[dict, list[dict]]:
+    def _game(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         if self.game is None:
             return {"reachable": False, "error": "game polling is off (start the server with --game)"}, []
         return self.game.snapshot()
 
-    def _screen(self) -> tuple[dict, bytes | None]:
+    def _screen(self) -> tuple[dict[str, Any], bytes | None]:
         if self.screen is None:
             return {"enabled": False, "error": None, "t": None, "mime": None}, None
         return self.screen.snapshot()
 
     # ------------------------------------------------------------ payloads
 
-    def state(self) -> dict:
+    def state(self) -> dict[str, Any]:
         """/api/state (legacy) and the base of /api/v1/live."""
         self.viewers.seen()
         rt = self.store.runtime
@@ -99,19 +100,19 @@ class Dashboard:
             "thermal": live.thermal_view(rt / "thermal.log"),
         }
 
-    def live(self) -> dict:
+    def live(self) -> dict[str, Any]:
         s = self.state()
         return {
             "v": 1,
             **{k: s[k] for k in ("now", "playthrough", "runner", "clock", "game", "events", "screen", "thermal")},
         }
 
-    def stats(self, what: str) -> dict:
+    def stats(self, what: str) -> dict[str, Any]:
         runner, rt = self.store.status(), self.store.runtime
         fn = {"latency": live.latency_payload, "progress": live.progress_payload, "goals": live.goals_payload}[what]
         return fn(rt, runner, now=self.clock())
 
-    def story(self, pt: str) -> dict:
+    def story(self, pt: str) -> dict[str, Any]:
         """v1: story_payload with its PLAYTHROUGH.md overview under "overview" ("playthrough" is the name here)."""
         s = dict(story.story_payload(self.store.memory_dir(pt)))
         return {"v": 1, "playthrough": pt, "overview": s.pop("playthrough"), **s}
@@ -121,11 +122,11 @@ class Dashboard:
         view, frame = self._screen()
         return frame, view.get("mime")
 
-    def feed(self, after: int) -> dict:
+    def feed(self, after: int) -> dict[str, Any]:
         off, text, reset = read_new(self.store.actions_path, after)
         return {"offset": off, "reset": reset, "items": live.parse_actions(text)}
 
-    def agentlog(self, after: int, path_id: str | None) -> dict:
+    def agentlog(self, after: int, path_id: str | None) -> dict[str, Any]:
         log = live.resolve_agent_log(self.store.runtime, self.store.status())
         if log is None:
             return {"offset": 0, "reset": True, "text": "", "path_id": None}
@@ -136,7 +137,7 @@ class Dashboard:
 
     # ------------------------------------------------------------ routing
 
-    def route(self, path: str, q: dict[str, list[str]]) -> dict | None:
+    def route(self, path: str, q: dict[str, list[str]]) -> dict[str, Any] | None:
         """A JSON path (v1 live or legacy) -> its payload; None when it isn't one of these."""
         if path == "/api/v1/live":
             return self.live()

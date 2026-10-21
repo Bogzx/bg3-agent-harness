@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from .jsontypes import is_list, is_obj
+
 POSITIONS_VERSION = 1
 MIN_MOVE_M = 0.5
 KEEP_S = 30.0
@@ -29,23 +31,25 @@ GAP_S = 120.0
 MAX_POINTS = 2000
 
 
-def snapshot(t: float, status: dict) -> dict | None:
+def snapshot(t: float, status: dict[str, Any]) -> dict[str, Any] | None:
     """A state.status dict -> a positions row (None without a level or any member position). Members on another
     level (their own "region" differs) are left out: their coordinates are in another space."""
     level = status.get("level")
     if not isinstance(level, str) or not level:
         return None
     active = status.get("active")
-    party = []
-    for m in status.get("party") or []:
-        if not isinstance(m, dict):
+    party: list[dict[str, Any]] = []
+    members: list[Any] = status.get("party") or []
+    for m in members:
+        if not is_obj(m):
             continue
         pos = m.get("pos")
-        if not (isinstance(pos, list) and len(pos) == 3 and all(isinstance(c, (int, float)) for c in pos)):
+        if not (is_list(pos) and len(pos) == 3 and all(isinstance(c, (int, float)) for c in pos)):
             continue
         if m.get("region") not in (None, level):
             continue
-        row = {"name": str(m.get("name") or "?"), "x": pos[0], "y": pos[1], "z": pos[2]}
+        row: dict[str, Any] = {"name": str(m.get("name") or "?"), "x": pos[0], "y": pos[1], "z": pos[2]}
+
         if (active and m.get("uuid") == active) or m.get("active"):
             row["active"] = True
         party.append(row)
@@ -60,7 +64,7 @@ def snapshot(t: float, status: dict) -> dict | None:
     }
 
 
-def moved(a: dict, b: dict) -> float:
+def moved(a: dict[str, Any], b: dict[str, Any]) -> float:
     """The largest distance any member (by name) moved between two rows; inf when the party changed."""
     pa = {m["name"]: m for m in a["party"]}
     pb = {m["name"]: m for m in b["party"]}
@@ -69,22 +73,26 @@ def moved(a: dict, b: dict) -> float:
     return max(math.dist((pa[n]["x"], pa[n]["y"], pa[n]["z"]), (pb[n]["x"], pb[n]["y"], pb[n]["z"])) for n in pa)
 
 
-def keep(last: dict | None, row: dict, min_move: float = MIN_MOVE_M, keep_s: float = KEEP_S) -> bool:
+def keep(
+    last: dict[str, Any] | None, row: dict[str, Any], min_move: float = MIN_MOVE_M, keep_s: float = KEEP_S
+) -> bool:
     if last is None or row["level"] != last["level"] or row["t"] - last["t"] >= keep_s:
         return True
     return moved(last, row) >= min_move
 
 
-def lead(row: dict) -> dict:
+def lead(row: dict[str, Any]) -> dict[str, Any]:
     """The member the breadcrumb follows: the active one, else the first."""
     return next((m for m in row["party"] if m.get("active")), row["party"][0])
 
 
-def tracks(rows: list[dict], level: str | None = None, gap_s: float = GAP_S, max_points: int = MAX_POINTS) -> dict:
+def tracks(
+    rows: list[dict[str, Any]], level: str | None = None, gap_s: float = GAP_S, max_points: int = MAX_POINTS
+) -> dict[str, Any]:
     """The breadcrumb payload: the levels seen, and for `level` (default: the latest row's) the lead's (t, x, z)
     segments, the party's last positions and the bounds."""
     rows = sorted((r for r in rows if r.get("party")), key=lambda r: r["t"])
-    levels: dict[str, dict] = {}
+    levels: dict[str, dict[str, Any]] = {}
     for r in rows:
         lv = levels.setdefault(
             r["level"], {"level": r["level"], "region": r.get("region"), "samples": 0, "first_t": r["t"]}
@@ -94,8 +102,8 @@ def tracks(rows: list[dict], level: str | None = None, gap_s: float = GAP_S, max
     if level is None and rows:
         level = rows[-1]["level"]
     segments: list[list[list[float]]] = []
-    prev: dict | None = None
-    picked = []
+    prev: dict[str, Any] | None = None
+    picked: list[dict[str, Any]] = []
     for r in rows:
         if prev is None or r["level"] != prev["level"] or r["t"] - prev["t"] > gap_s:
             segments.append([])
@@ -124,21 +132,21 @@ def tracks(rows: list[dict], level: str | None = None, gap_s: float = GAP_S, max
     }
 
 
-def read(path: Path) -> list[dict]:
+def read(path: Path) -> list[dict[str, Any]]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    out = []
+    out: list[dict[str, Any]] = []
     for line in text.splitlines():
         try:
             r = json.loads(line)
         except ValueError:
             continue
         if (
-            isinstance(r, dict)
+            is_obj(r)
             and isinstance(r.get("t"), (int, float))
-            and isinstance(r.get("party"), list)
+            and is_list(r.get("party"))
             and isinstance(r.get("level"), str)
         ):
             out.append(r)
@@ -146,7 +154,7 @@ def read(path: Path) -> list[dict]:
 
 
 class StatusSource(Protocol):
-    def status(self) -> dict | None:
+    def status(self) -> dict[str, Any] | None:
         """The game's state.status, or None when the game can't be asked."""
         ...
 
@@ -159,11 +167,11 @@ class Sampler:
     source: StatusSource
     path_for: Callable[[], Path | None]
     clock: Callable[[], float]
-    on_row: Callable[[dict], Any] = lambda row: None
-    last: dict | None = None
+    on_row: Callable[[dict[str, Any]], Any] = lambda row: None
+    last: dict[str, Any] | None = None
     path: Path | None = None
 
-    def poll(self) -> dict | None:
+    def poll(self) -> dict[str, Any] | None:
         path = self.path_for()
         if path is None:
             return None
@@ -171,7 +179,7 @@ class Sampler:
             rows = read(path)
             self.path, self.last = path, rows[-1] if rows else None
         st = self.source.status()
-        row = snapshot(self.clock(), st) if isinstance(st, dict) else None
+        row = snapshot(self.clock(), st) if is_obj(st) else None
         if row is None or not keep(self.last, row):
             return None
         path.parent.mkdir(parents=True, exist_ok=True)

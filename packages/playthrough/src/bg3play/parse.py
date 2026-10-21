@@ -17,6 +17,8 @@ import json
 import re
 from typing import Any
 
+from .jsontypes import is_obj, objs
+
 LOG_LINE_RE = re.compile(r"^(\d\d:\d\d:\d\d) \[([a-z_-]+)\] ?(.*)$")
 LOG_HEADER_RE = re.compile(r"^===== (S\d{3,}\S*) (.*)$")
 END_RE = re.compile(r"^(\w+)(?: turns=(\d+))?(?: duration=([\d.]+)min)?(?: cost=\$([\d.]+))?")
@@ -27,7 +29,7 @@ UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 # ---------------------------------------------------------------- session log
 
 
-def log_line(line: str) -> dict | None:
+def log_line(line: str) -> dict[str, Any] | None:
     """One Sxxx.log line -> {"clock", "kind", "text"}; a "===== " header -> kind "header"; anything else None."""
     m = LOG_LINE_RE.match(line)
     if m:
@@ -38,7 +40,7 @@ def log_line(line: str) -> dict | None:
     return None
 
 
-def end_line(text: str) -> dict:
+def end_line(text: str) -> dict[str, Any]:
     """The `[end]` text ("success turns=324 duration=25.3min cost=$9.89") -> outcome, turns, minutes, cost_usd."""
     m = END_RE.match(text.strip())
     if not m:
@@ -65,13 +67,13 @@ def tool_kind(tool: str) -> str:
     return "act"
 
 
-def action(line: str, result_limit: int = 2500) -> dict | None:
+def action(line: str, result_limit: int = 2500) -> dict[str, Any] | None:
     """One actions.jsonl line -> a feed item, or None for a bad line."""
     try:
         e = json.loads(line)
     except ValueError:
         return None
-    if not isinstance(e, dict):
+    if not is_obj(e):
         return None
     result = str(e.get("result", ""))
     tool = str(e.get("tool", "?"))
@@ -102,11 +104,11 @@ def _split_name(head: str) -> tuple[str, str]:
     return head, ""
 
 
-def status_text(text: str) -> dict | None:
+def status_text(text: str) -> dict[str, Any] | None:
     """A get_status/look result -> {"where", "mode", "gold", "party": [...]}; None when it has no WHERE or PARTY
     rows (a short diff-only status)."""
     where = mode = gold = None
-    party = []
+    party: list[dict[str, Any]] = []
     for line in text.splitlines():
         w = WHERE_RE.match(line)
         if w:
@@ -171,10 +173,10 @@ def _strip_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
 
-def decisions(text: str) -> list[dict]:
+def decisions(text: str) -> list[dict[str, Any]]:
     """D-xx cards in file order. Field lines may repeat (several choices or consequences)."""
-    cards: list[dict] = []
-    cur: dict | None = None
+    cards: list[dict[str, Any]] = []
+    cur: dict[str, Any] | None = None
     field = None
     for raw in _strip_comments(text).splitlines():
         line = raw.rstrip()
@@ -224,7 +226,7 @@ def decisions(text: str) -> list[dict]:
                 field = "notes"
         elif line.startswith(("  ", "\t")) and field and cur[field]:
             last = cur[field][-1]  # a wrapped continuation line
-            if isinstance(last, dict):
+            if is_obj(last):
                 last["text"] += " " + line.strip()
             else:
                 cur[field][-1] = last + " " + line.strip()
@@ -241,12 +243,13 @@ def session_number(s: str | None) -> int | None:
 # ---------------------------------------------------------------- fights.jsonl
 
 
-def fight(row: Any) -> dict | None:
+def fight(row: Any) -> dict[str, Any] | None:
     """A fight record (v1, tools/logs) -> the timeline's summary of it."""
-    if not isinstance(row, dict) or not row.get("session"):
+    if not is_obj(row) or not row.get("session"):
         return None
-    party = [p for p in row.get("party") or [] if isinstance(p, dict)]
-    enemies = [e for e in row.get("enemies") or [] if isinstance(e, dict)]
+    party = objs(row.get("party"))
+    enemies = objs(row.get("enemies"))
+
     return {
         "session": row["session"],
         "t": row.get("t"),
@@ -268,9 +271,9 @@ def fight(row: Any) -> dict | None:
 GIT_LOG_FORMAT = "%H%x09%ct%x09%s"
 
 
-def git_log(text: str) -> list[dict]:
+def git_log(text: str) -> list[dict[str, Any]]:
     """`git log --format=%H%x09%ct%x09%s` output -> [{"sha", "t", "subject", "session"}], newest first."""
-    out = []
+    out: list[dict[str, Any]] = []
     for line in text.splitlines():
         parts = line.split("\t", 2)
         if len(parts) != 3 or not parts[1].isdigit():
@@ -294,9 +297,9 @@ DIFF_KINDS = (
 )
 
 
-def diff_lines(patch: str) -> list[dict]:
+def diff_lines(patch: str) -> list[dict[str, Any]]:
     """A unified diff -> [{"kind": add | del | hunk | ctx | meta, "text"}] for the memory browser."""
-    out = []
+    out: list[dict[str, Any]] = []
     for line in patch.splitlines():
         kind = next((k for prefix, k in DIFF_KINDS if line.startswith(prefix)), "ctx")
         out.append({"kind": kind, "text": line})
