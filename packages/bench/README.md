@@ -50,7 +50,9 @@ PYTHONPATH=src python3 -m bg3bench.publish <release_dir> --tag bench-v0.1 --hf-r
 From the repo root:
 
 ```bash
-# the matrix runner; one job is one runner/play.py run --scenario ... call (the legacy CLI adapter)
+# the runner's file for a v2 scenario (v1 shape + game_settings, timing); a goal that isn't one milestone is refused
+uv run --project packages/bench python -m bg3bench.scenario resolve packages/bench/scenarios/nautiloid.json > resolved.json
+# the matrix runner; one job is one runner/play.py run --scenario-file <resolved> ... call (the legacy CLI adapter)
 uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/<file>.toml
 uv run --project packages/bench python -m bg3bench.matrix run|resume|status --matrix <file>.toml
 

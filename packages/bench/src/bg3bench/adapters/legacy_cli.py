@@ -1,8 +1,9 @@
 # pyright: basic
 """TEMPORARY (remove in Phase D, when the harness has a run API): the matrix's run_one through the legacy CLI.
 
-One job = one more run of a series: `python3 runner/play.py run --scenario S --playthrough <series> --client C
---model M [--effort E] --runs <records + 1> <condition flags>`. play.py's `--runs N` is the series' total (a
+One job = one more run of a series: `python3 runner/play.py run --scenario-file <resolved S> --playthrough <series>
+--client C --model M [--effort E] --runs <records + 1> <condition flags>`, where the resolved file is the v2
+scenario as `python -m bg3bench.scenario resolve` writes it (matrix_cli writes one per scenario). play.py's `--runs N` is the series' total (a
 re-run resumes it), so the adapter counts the series' records first and reads the new one after. The series is per
 (scenario, model, client, effort, condition): every repeat and rerun of a job appends to it.
 
@@ -48,19 +49,21 @@ def _execute(cmd: Sequence[str], env: Mapping[str, str]) -> int:  # pragma: no c
 class LegacyCli:
     """run_one for matrix.Matrix. condition_flags maps each condition id the legacy runner can play to its
     play.py flags (condition_env: its environment); any other condition is refused (today's play.py has no condition
-    switch, adapters/play_flags.py)."""
+    switch, adapters/play_flags.py). scenario_files maps each scenario to its resolved file."""
 
     def __init__(
         self,
         matrix: str,
         condition_flags: Mapping[str, Sequence[str]],
         *,
+        scenario_files: Mapping[str, str | Path],
         condition_env: Mapping[str, Mapping[str, str]] | None = None,
         repo: Path = REPO,
         execute: Callable[[Sequence[str], Mapping[str, str]], int] = _execute,
         python: str = "python3",
     ):
         self.matrix, self.condition_flags, self.repo = matrix, condition_flags, Path(repo)
+        self.scenario_files = {k: Path(v) for k, v in scenario_files.items()}
         self.condition_env = condition_env or {}
         self.execute, self.python = execute, python
         self.sessions = self.repo / "runtime" / "sessions"
@@ -68,7 +71,10 @@ class LegacyCli:
     def command(self, job: Mapping, series: str, runs: int) -> list[str]:
         if job["condition"] not in self.condition_flags:
             raise ValueError(f"the legacy runner can't play condition {job['condition']!r}")
-        cmd = [self.python, str(self.repo / "runner" / "play.py"), "run", "--scenario", job["scenario"]]
+        if job["scenario"] not in self.scenario_files:
+            raise ValueError(f"no resolved file for scenario {job['scenario']!r}")
+        scenario_file = str(self.scenario_files[job["scenario"]])
+        cmd = [self.python, str(self.repo / "runner" / "play.py"), "run", "--scenario-file", scenario_file]
         cmd += ["--playthrough", series, "--client", job["client"], "--model", job["model"], "--runs", str(runs)]
         if job["effort"]:
             cmd += ["--effort", job["effort"]]

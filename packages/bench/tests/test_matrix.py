@@ -289,6 +289,9 @@ def test_records_of_unknown_jobs_and_stray_ends_are_ignored(tmp_path):
 # ---------------------------------------------------------------- the legacy CLI adapter
 
 
+GROVE = {"grove": "grove.resolved.json"}
+
+
 def fake_repo(tmp_path):
     repo = tmp_path / "repo"
     (repo / "runtime" / "sessions").mkdir(parents=True)
@@ -314,6 +317,7 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
     run_one = legacy_cli.LegacyCli(
         "night1",
         {"legacy": ["--no-keeper"]},
+        scenario_files={"nautiloid": tmp_path / "nautiloid.resolved.json"},
         condition_env={"legacy": {"BG3AI_TOOLS_OFF": "x"}},
         repo=repo,
         execute=execute,
@@ -322,7 +326,7 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
     res = run_one(job)
     assert res == RunResult("night1-nautiloid-opus-claude-medium-legacy-r001", True, True, 3.349, None, True)
     assert cmds[0] == [
-        "python3", str(repo / "runner" / "play.py"), "run", "--scenario", "nautiloid",
+        "python3", str(repo / "runner" / "play.py"), "run", "--scenario-file", str(tmp_path / "nautiloid.resolved.json"),
         "--playthrough", "night1-nautiloid-opus-claude-medium-legacy", "--client", "claude", "--model", "opus",
         "--runs", "1", "--effort", "medium", "--no-keeper",
     ]  # fmt: skip
@@ -330,11 +334,13 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
     assert envs == [{"BG3AI_TOOLS_OFF": "x"}] * 2
     with pytest.raises(ValueError, match="condition"):
         run_one({**job, "condition": "rules"})
+    with pytest.raises(ValueError, match="no resolved file for scenario 'grove'"):
+        run_one({**job, "scenario": "grove"})
 
 
 def test_legacy_cli_without_a_new_record(tmp_path):
     repo = fake_repo(tmp_path)
-    run_one = legacy_cli.LegacyCli("m", {"legacy": []}, repo=repo, execute=lambda cmd, env: 2)
+    run_one = legacy_cli.LegacyCli("m", {"legacy": []}, scenario_files=GROVE, repo=repo, execute=lambda cmd, env: 2)
     job = matrix.plan([{"slug": "x/y"}], ["grove"], ["legacy"], 1)[0]
     assert run_one(job) == RunResult(None, False, False, None, "no run record (play.py exit 2)")  # not charged: stops
     assert "--effort" not in run_one.command(job, "s", 1)
@@ -344,7 +350,9 @@ def test_legacy_cli_without_a_new_record(tmp_path):
 
 
 def test_legacy_cli_profile_jobs(tmp_path):
-    run_one = legacy_cli.LegacyCli("m", {"rules": []}, repo=fake_repo(tmp_path), execute=lambda cmd, env: 0)
+    run_one = legacy_cli.LegacyCli(
+        "m", {"rules": []}, scenario_files=GROVE, repo=fake_repo(tmp_path), execute=lambda cmd, env: 0
+    )
     model = {"slug": "anthropic/claude-opus-5.5", "client": "pi", "profile": "profiles/opus-5.5-pi.toml"}
     job = matrix.plan([model], ["grove"], ["rules"], 1, max_cost={"grove": 12.5})[0]
     cmd = run_one.command(job, "s", 1)

@@ -5,20 +5,23 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench import matrix, matrix_cli
+from bg3bench import matrix, matrix_cli, scenario
 from bg3bench.matrix import RunResult
 
 PI = 'client = "pi"\nmodel = "anthropic/claude-opus-5.5"\neffort = "high"\n'
 CLAUDE = 'client = "claude"\nmodel = "claude-opus-5-5"\neffort = "high"\n'
 
 
+NAUTILOID = json.loads((Path(__file__).resolve().parents[1] / "scenarios" / "nautiloid.json").read_text())
+
+
 def fake_repo(tmp_path: Path, spent: float = 0.0) -> Path:
     repo = tmp_path / "repo"
-    (repo / "scenarios").mkdir(parents=True)
+    (repo / "packages" / "bench" / "scenarios").mkdir(parents=True)
     (repo / "profiles").mkdir()
     (repo / "runtime").mkdir()
-    for s in ("nautiloid", "grove"):
-        (repo / "scenarios" / f"{s}.json").write_text("{}")
+    for sc in (NAUTILOID, {**NAUTILOID, "name": "grove", "until": "grove"}):
+        (repo / "packages" / "bench" / "scenarios" / f"{sc['name']}.json").write_text(json.dumps(sc))
     (repo / "profiles" / "pi.toml").write_text(PI)
     (repo / "profiles" / "claude.toml").write_text(CLAUDE)
     (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": spent}))
@@ -143,6 +146,22 @@ def test_run_without_run_one_builds_the_legacy_adapter(tmp_path, monkeypatch):
     # the adapter ran play.py in the fake repo; no run record: an invalid run with an unknown cost stops the matrix
     assert code == 1 and out.rstrip().endswith(f"stopped: {matrix.COST_UNKNOWN}")
     assert seen[0][1] == str(repo / "runner" / "play.py") and "--profile" in seen[0] and "--max-cost" in seen[0]
+    # the job's scenario goes to play.py as its resolved file, written into the matrix folder
+    resolved = repo / "runtime" / "matrix" / "night1" / "scenarios" / "nautiloid.json"
+    assert seen[0][3:5] == ["--scenario-file", str(resolved)]
+    want = scenario.resolve(scenario.load(repo / "packages" / "bench" / "scenarios" / "nautiloid.json"))
+    assert json.loads(resolved.read_text()) == want
+    assert json.loads((resolved.parent / "grove.json").read_text())["until"] == "grove"
+
+
+def test_a_scenario_the_legacy_runner_cant_stop_is_refused(tmp_path, capsys):
+    repo = fake_repo(tmp_path)
+    sc = {**NAUTILOID, "name": "gold", "goal": {"gold": {"gte": 1000}}}
+    del sc["until"]
+    (repo / "packages" / "bench" / "scenarios" / "gold.json").write_text(json.dumps(sc))
+    body = "name = 'm'\nscenarios = ['gold']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
+    code, _ = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, body)))
+    assert code == 2 and "gold: goal" in capsys.readouterr().err
 
 
 def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
@@ -164,7 +183,7 @@ def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
         ("name = 'm'\nscenarios = ['grove']\n[budget]\nmax_cost = { grove = -1 }", "USD > 0"),
         ("name = 'm'\nscenarios = ['grove']\n[budget]\nmax_cost = { nautiloid = 1 }", "not in the matrix"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/none.toml']", "none.toml"),
-        ("name = 'm'\nscenarios = ['grove']\nmodels = ['scenarios/grove.json']", "grove.json"),
+        ("name = 'm'\nscenarios = ['grove']\nmodels = ['packages/bench/scenarios/grove.json']", "grove.json"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/bare.toml']", "needs client and model"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/pi.toml']\nconditions = ['rules']", "spends money"),
         ("name = 'm'\nscenarios = ['grove', 'grove']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']",
