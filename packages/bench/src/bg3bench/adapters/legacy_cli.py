@@ -4,11 +4,16 @@ One job = one more run of a series: `python3 runner/play.py run --scenario S --p
 --model M [--effort E] --runs <records + 1> <condition flags>`. play.py's `--runs N` is the series' total (a
 re-run resumes it), so the adapter counts the series' records first and reads the new one after. The series is per
 (scenario, model, client, effort, condition): every repeat and rerun of a job appends to it.
+
+A job with a `profile` (profiles/*.toml, the pi client) adds `--profile P --max-cost <job max_cost> --no-keeper`, as
+play.py requires for a paid client. Conditions come as play.py flags plus environment (adapters/play_flags.py:
+BG3AI_TOOLS_OFF for the bridge).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -33,24 +38,27 @@ def _records(sessions: Path, series: str) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _execute(cmd: Sequence[str]) -> int:  # pragma: no cover - runs the game
-    return subprocess.run(list(cmd), cwd=REPO, check=False).returncode
+def _execute(cmd: Sequence[str], env: Mapping[str, str]) -> int:  # pragma: no cover - runs the game
+    return subprocess.run(list(cmd), cwd=REPO, check=False, env={**os.environ, **env}).returncode
 
 
 class LegacyCli:
     """run_one for matrix.Matrix. condition_flags maps each condition id the legacy runner can play to its
-    play.py flags; any other condition is refused (today's play.py has no condition switch)."""
+    play.py flags (condition_env: its environment); any other condition is refused (today's play.py has no condition
+    switch, adapters/play_flags.py)."""
 
     def __init__(
         self,
         matrix: str,
         condition_flags: Mapping[str, Sequence[str]],
         *,
+        condition_env: Mapping[str, Mapping[str, str]] | None = None,
         repo: Path = REPO,
-        execute: Callable[[Sequence[str]], int] = _execute,
+        execute: Callable[[Sequence[str], Mapping[str, str]], int] = _execute,
         python: str = "python3",
     ):
         self.matrix, self.condition_flags, self.repo = matrix, condition_flags, Path(repo)
+        self.condition_env = condition_env or {}
         self.execute, self.python = execute, python
         self.sessions = self.repo / "runtime" / "sessions"
 
@@ -61,12 +69,19 @@ class LegacyCli:
         cmd += ["--playthrough", series, "--client", job["client"], "--model", job["model"], "--runs", str(runs)]
         if job["effort"]:
             cmd += ["--effort", job["effort"]]
+        if job.get("profile"):
+            if job["max_cost"] is None:
+                raise ValueError(f"a --profile job needs a max_cost: play.py caps every paid run ({job['id']})")
+            cmd += ["--profile", job["profile"], "--max-cost", f"{job['max_cost']:g}", "--no-keeper"]
         return cmd + list(self.condition_flags[job["condition"]])
+
+    def env(self, job: Mapping) -> dict[str, str]:
+        return dict(self.condition_env.get(job["condition"], {}))
 
     def __call__(self, job: dict) -> RunResult:
         series = series_name(self.matrix, job)
         before = _records(self.sessions, series)
-        code = self.execute(self.command(job, series, len(before) + 1))
+        code = self.execute(self.command(job, series, len(before) + 1), self.env(job))
         after = _records(self.sessions, series)
         if len(after) <= len(before):
             return RunResult(None, False, False, None, f"no run record (play.py exit {code})")

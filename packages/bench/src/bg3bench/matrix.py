@@ -62,7 +62,8 @@ def plan(
     *,
     max_cost: Mapping[str, float | None] | None = None,
 ) -> list[dict]:
-    """The jobs, repeat-major. A model is {"slug", "client"?, "effort"?}; max_cost per scenario is the reserve."""
+    """The jobs, repeat-major. A model is {"slug", "client"?, "effort"?, "profile"?}; max_cost per scenario is the
+    reserve (and a profile job's per-run cap)."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
     max_cost = max_cost or {}
@@ -72,6 +73,7 @@ def plan(
             "model": m["slug"],
             "client": m.get("client", "claude"),
             "effort": m.get("effort"),
+            "profile": m.get("profile"),
             "scenario": s,
             "condition": c,
             "repeat": r,

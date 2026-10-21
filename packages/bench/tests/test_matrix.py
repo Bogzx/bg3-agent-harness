@@ -64,6 +64,7 @@ def test_plan_is_repeat_major_and_unique():
         "model": "opus",
         "client": "claude",
         "effort": "medium",
+        "profile": None,
         "scenario": "nautiloid",
         "condition": "rules",
         "repeat": 1,
@@ -253,10 +254,11 @@ def fake_repo(tmp_path):
 def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
     repo = fake_repo(tmp_path)
     record = json.loads((HERE / "fixtures" / "naut2" / "runs.jsonl").read_text().splitlines()[0])
-    cmds = []
+    cmds, envs = [], []
 
-    def execute(cmd):
+    def execute(cmd, env):
         cmds.append(cmd)
+        envs.append(env)
         series = cmd[cmd.index("--playthrough") + 1]
         d = repo / "runtime" / "sessions" / series
         d.mkdir(exist_ok=True)
@@ -265,7 +267,13 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
             f.write(json.dumps({**record, "series": series, "run": n}) + "\n")
         return 0
 
-    run_one = legacy_cli.LegacyCli("night1", {"legacy": ["--no-keeper"]}, repo=repo, execute=execute)
+    run_one = legacy_cli.LegacyCli(
+        "night1",
+        {"legacy": ["--no-keeper"]},
+        condition_env={"legacy": {"BG3AI_TOOLS_OFF": "x"}},
+        repo=repo,
+        execute=execute,
+    )
     job = matrix.plan([{"slug": "opus", "effort": "medium"}], ["nautiloid"], ["legacy"], 1)[0]
     res = run_one(job)
     assert res == RunResult("night1-nautiloid-opus-claude-medium-legacy-r001", True, True, 3.349, None)
@@ -275,16 +283,29 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
         "--runs", "1", "--effort", "medium", "--no-keeper",
     ]  # fmt: skip
     assert run_one(job).run_id.endswith("-r002") and cmds[1][cmds[1].index("--runs") + 1] == "2"
+    assert envs == [{"BG3AI_TOOLS_OFF": "x"}] * 2
     with pytest.raises(ValueError, match="condition"):
         run_one({**job, "condition": "rules"})
 
 
 def test_legacy_cli_without_a_new_record(tmp_path):
     repo = fake_repo(tmp_path)
-    run_one = legacy_cli.LegacyCli("m", {"legacy": []}, repo=repo, execute=lambda cmd: 2)
+    run_one = legacy_cli.LegacyCli("m", {"legacy": []}, repo=repo, execute=lambda cmd, env: 2)
     job = matrix.plan([{"slug": "x/y"}], ["grove"], ["legacy"], 1)[0]
     assert run_one(job) == RunResult(None, False, False, None, "no run record (play.py exit 2)")
     assert "--effort" not in run_one.command(job, "s", 1)
     assert legacy_cli.series_name("M", job) == "m-grove-x-y-claude-legacy"
     assert legacy_cli.REPO == HERE.parents[2]
     assert (legacy_cli.REPO / "runner" / "play.py").is_file()
+
+
+def test_legacy_cli_profile_jobs(tmp_path):
+    run_one = legacy_cli.LegacyCli("m", {"rules": []}, repo=fake_repo(tmp_path), execute=lambda cmd, env: 0)
+    model = {"slug": "anthropic/claude-opus-5.5", "client": "pi", "profile": "profiles/opus-5.5-pi.toml"}
+    job = matrix.plan([model], ["grove"], ["rules"], 1, max_cost={"grove": 12.5})[0]
+    cmd = run_one.command(job, "s", 1)
+    assert cmd[cmd.index("--client") + 1] == "pi"
+    assert cmd[-5:] == ["--profile", "profiles/opus-5.5-pi.toml", "--max-cost", "12.5", "--no-keeper"]
+    assert run_one.env(job) == {}
+    with pytest.raises(ValueError, match="needs a max_cost"):
+        run_one.command({**job, "max_cost": None}, "s", 1)
