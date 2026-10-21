@@ -29,6 +29,7 @@ SESSION_LOG_RE = re.compile(r"^(S\d{3,})\.log$")
 MEMORY_SUFFIXES = (".md", ".json", ".jsonl", ".txt")
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 GitRunner = Callable[[Path, list[str]], str]  # (repo dir, git args) -> stdout; raises on failure
 
@@ -220,6 +221,19 @@ class RunStore:
         if rel:
             args += ["--", self.memory_path(pt, rel).relative_to(root.resolve()).as_posix()]
         return P.git_log(self.git(root, args))
+
+    def memory_diff(self, pt: str, rel: str, sha: str) -> str | None:
+        """One commit's patch of one memory file (`git show`), or None for a commit the repo doesn't have."""
+        root = self.memory_dir(pt)
+        if not SHA_RE.match(sha):
+            raise StoreError(f"bad commit id {sha!r}")
+        if not (root / ".git").exists():
+            return None
+        path = self.memory_path(pt, rel).relative_to(root.resolve()).as_posix()
+        try:
+            return self.git(root, ["show", "--format=", "--no-color", "--no-ext-diff", sha, "--", path])
+        except subprocess.CalledProcessError:
+            return None
 
     # ------------------------------------------------------------ timeline, screen
 

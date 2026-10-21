@@ -9,6 +9,7 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
     /api/v1/playthroughs/<pt>/watch                  the Watch screen's snapshot
     /api/v1/playthroughs/<pt>/memory/tree            memory files
     /api/v1/playthroughs/<pt>/memory/file?path=P     one file's text and its commits
+    /api/v1/playthroughs/<pt>/memory/diff?path=P&sha=S  what commit S changed in P (git show), line by line
     /api/v1/playthroughs/<pt>/memory/log             memory commits
     /api/v1/playthroughs/<pt>/timeline               choices and fights
     /api/v1/playthroughs/<pt>/positions?level=L      breadcrumb tracks (positions.py)
@@ -60,7 +61,7 @@ from .game import GameWatch, ScreenWatch, Viewers
 from .hub import Hub
 from .store import RunStore, StoreError
 
-PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/log|timeline|positions|story)$")
+PT_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/diff|memory/log|timeline|positions|story)$")
 CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
 REPLAY_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/replay/(S\d{3,})$")
 CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
@@ -185,6 +186,7 @@ class App:
             "watch": lambda: self.watch(pt),
             "memory/tree": lambda: api.memory_tree(s, pt),
             "memory/file": lambda: api.memory_file(s, pt, q.get("path", [""])[0]),
+            "memory/diff": lambda: api.memory_diff(s, pt, q.get("path", [""])[0], q.get("sha", [""])[0]),
             "memory/log": lambda: api.memory_log(s, pt),
             "timeline": lambda: api.timeline(s, pt),
             "positions": lambda: api.positions(s, pt, q.get("level", [""])[0]),

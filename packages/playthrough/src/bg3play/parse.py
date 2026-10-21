@@ -245,6 +245,19 @@ def git_log(text: str) -> list[dict]:
     return out
 
 
+DIFF_KINDS = (("+++", "meta"), ("---", "meta"), ("@@", "hunk"), ("+", "add"), ("-", "del"), ("diff ", "meta"),
+              ("index ", "meta"), ("new file", "meta"), ("deleted file", "meta"), ("\\", "meta"))
+
+
+def diff_lines(patch: str) -> list[dict]:
+    """A unified diff -> [{"kind": add | del | hunk | ctx | meta, "text"}] for the memory browser."""
+    out = []
+    for line in patch.splitlines():
+        kind = next((k for prefix, k in DIFF_KINDS if line.startswith(prefix)), "ctx")
+        out.append({"kind": kind, "text": line})
+    return out
+
+
 def scrub(text: str) -> str:
     """GUIDs out of text shown to viewers (the dashboard never needs them)."""
     return UUID_RE.sub("…", text)

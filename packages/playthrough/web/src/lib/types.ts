@@ -474,3 +474,8 @@ export interface StoryPayload {
   status: { where: string | null; mode: string | null; gold: number | null; when: string | null; party: StoryMember[] };
   others: StoryMember[];
 }
+
+export interface DiffLine {
+  kind: "add" | "del" | "hunk" | "ctx" | "meta";
+  text: string;
+}

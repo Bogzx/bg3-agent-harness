@@ -96,6 +96,14 @@ def memory_file(store: RunStore, pt: str, rel: str) -> dict | None:
     return _v({"playthrough": pt, "path": rel, "text": text, "history": store.memory_log(pt, 20, rel)})
 
 
+def memory_diff(store: RunStore, pt: str, rel: str, sha: str) -> dict | None:
+    """What one commit changed in one memory file, line by line (git show)."""
+    patch = store.memory_diff(pt, rel, sha)
+    if patch is None:
+        return None
+    return _v({"playthrough": pt, "path": rel, "sha": sha, "lines": P.diff_lines(patch)})
+
+
 def memory_log(store: RunStore, pt: str, limit: int = 50) -> dict:
     return _v({"playthrough": pt, "commits": store.memory_log(pt, limit)})
 

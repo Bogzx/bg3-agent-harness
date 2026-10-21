@@ -36,6 +36,10 @@ def test_memory_browser(page, site):
     expect(page.get_by_text("Memory commits")).to_be_visible()
     expect(page.get_by_text("S096 memory-keeper: decisions.md").first).to_be_visible()
     expect(page.locator(".md h1, .md h2").first).to_be_visible()
+    page.locator(".hist button.chip", has_text="S096").click()   # that commit's change to this file
+    expect(page.locator(".diff .add").first).to_be_visible()
+    page.get_by_role("button", name="back to the file").click()
+    expect(page.locator(".md h1, .md h2").first).to_be_visible()
 
 
 def test_stats(page, site):

@@ -68,6 +68,16 @@ def test_json_endpoints(server):
     assert code == 200 and f["text"].startswith("# Handoff")
 
 
+def test_memory_diff(server, git_memory):
+    _, log = get_json(server, f"/api/v1/playthroughs/{PT}/memory/log")
+    sha = log["commits"][0]["sha"]
+    code, d = get_json(server, f"/api/v1/playthroughs/{PT}/memory/diff?path=HANDOFF.md&sha={sha}")
+    assert code == 200 and d["sha"] == sha
+    assert {"kind": "add", "text": "+- keeper line"} in d["lines"]
+    assert get_json(server, f"/api/v1/playthroughs/{PT}/memory/diff?path=HANDOFF.md&sha={'0' * 40}")[0] == 404
+    assert get_json(server, f"/api/v1/playthroughs/{PT}/memory/diff?path=HANDOFF.md&sha=HEAD")[0] == 400
+
+
 def test_errors(server):
     assert get_json(server, "/api/v1/playthroughs/nope/watch")[0] == 404
     assert get_json(server, "/api/v1/nothing")[0] == 404

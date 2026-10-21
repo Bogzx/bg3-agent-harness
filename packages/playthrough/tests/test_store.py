@@ -60,6 +60,24 @@ def test_memory_log_without_and_with_git(store: RunStore, git_memory: Path):
     assert [c["session"] for c in store.memory_log(PT, rel="objectives.md")] == ["S095"]
 
 
+def test_memory_diff_per_file(store: RunStore, git_memory: Path):
+    keeper = store.memory_log(PT, rel="HANDOFF.md")[0]["sha"]
+    patch = store.memory_diff(PT, "HANDOFF.md", keeper)
+    assert "+- keeper line" in patch.splitlines()
+    assert store.memory_diff(PT, "objectives.md", keeper) == ""   # that commit didn't touch it
+    first = store.memory_log(PT, rel="objectives.md")[0]["sha"]
+    assert "new file" in store.memory_diff(PT, "objectives.md", first)
+    assert store.memory_diff(PT, "HANDOFF.md", "0" * 40) is None
+    with pytest.raises(StoreError):
+        store.memory_diff(PT, "HANDOFF.md", "HEAD; rm")
+    with pytest.raises(StoreError):
+        store.memory_diff(PT, "../../runtime/runner.status.json", keeper)
+
+
+def test_memory_diff_without_repo(store: RunStore):
+    assert store.memory_diff(PT, "HANDOFF.md", "abcdef1") is None
+
+
 def test_memory_log_empty_without_repo(store: RunStore):
     assert store.memory_log(PT) == []
 

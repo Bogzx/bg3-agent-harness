@@ -1,5 +1,5 @@
 import type {
-  Commit, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
+  Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
 
@@ -34,6 +34,10 @@ export const api = {
   memoryFile: (name: string, path: string) =>
     getJson<{ v: number; path: string; text: string; history: Commit[] }>(
       `${pt(name)}/memory/file?path=${encodeURIComponent(path)}`,
+    ),
+  memoryDiff: (name: string, path: string, sha: string) =>
+    getJson<{ v: number; path: string; sha: string; lines: DiffLine[] }>(
+      `${pt(name)}/memory/diff?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(sha)}`,
     ),
   memoryLog: (name: string) => getJson<{ v: number; commits: Commit[] }>(`${pt(name)}/memory/log`),
   sessions: (name: string) =>

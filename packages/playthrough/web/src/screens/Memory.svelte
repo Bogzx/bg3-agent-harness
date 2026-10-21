@@ -3,7 +3,7 @@
   import { api } from "../lib/api";
   import { date } from "../lib/format";
   import { groupFiles, renderMarkdown, type Folder } from "../lib/memory";
-  import type { Commit } from "../lib/types";
+  import type { Commit, DiffLine } from "../lib/types";
 
   let { pt, file, onOpen }: { pt: string; file: string | null; onOpen: (path: string) => void } = $props();
 
@@ -13,6 +13,21 @@
   let doc = $state<{ path: string; text: string; history: Commit[] } | null>(null);
   let docError = $state<string | null>(null);
   let raw = $state(false);
+  let diff = $state<{ sha: string; lines: DiffLine[] } | null>(null);
+  let diffError = $state<string | null>(null);
+
+  function showDiff(c: Commit) {
+    if (!doc) return;
+    if (diff?.sha === c.sha) return void (diff = null);
+    const path = doc.path;
+    diffError = null;
+    api
+      .memoryDiff(pt, path, c.sha)
+      .then((d) => {
+        if (path === current) diff = { sha: c.sha, lines: d.lines.filter((l) => l.kind !== "meta") };
+      })
+      .catch((e: Error) => (diffError = e.message));
+  }
 
   onMount(() => {
     api
@@ -31,6 +46,7 @@
     const path = current;
     if (!path) return;
     docError = null;
+    diff = null;
     api
       .memoryFile(pt, path)
       .then((d) => {
@@ -71,6 +87,17 @@
       </h2>
       {#if docError}
         <div class="error">{docError}</div>
+      {:else if diffError}
+        <div class="error">{diffError}</div>
+      {:else if diff}
+        {@const c = doc?.history.find((h) => h.sha === diff?.sha)}
+        <div class="diffhead faint">{c ? `${c.subject} · ${date(c.t)}` : diff.sha.slice(0, 7)}
+          <button class="toggle" onclick={() => (diff = null)}>back to the file</button></div>
+        {#if diff.lines.length}
+          <pre class="body diff">{#each diff.lines as l, i (i)}<span class={l.kind}>{l.text}</span>{"\n"}{/each}</pre>
+        {:else}
+          <div class="empty">This commit didn't change {current}.</div>
+        {/if}
       {:else if !doc}
         <div class="empty">Loading…</div>
       {:else if html !== null}
@@ -80,9 +107,11 @@
       {/if}
       {#if doc?.history.length}
         <div class="hist faint">
-          Edited in:
+          Edited in (click for the change):
           {#each doc.history as c (c.sha)}
-            <span class="chip" title="{c.subject} · {date(c.t)}">{c.session ?? c.sha.slice(0, 7)}</span>
+            <button class="chip" class:on={diff?.sha === c.sha} title="{c.subject} · {date(c.t)}" onclick={() => showDiff(c)}>
+              {c.session ?? c.sha.slice(0, 7)}
+            </button>
           {/each}
         </div>
       {/if}
@@ -120,6 +149,14 @@
     background: none; border: 1px solid var(--line); border-radius: 4px; padding: 0 8px; cursor: pointer; font-size: 11px;
   }
   .hist { padding: 8px 16px 12px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .hist button.chip { cursor: pointer; font: inherit; font-size: 12px; }
+  .hist button.chip.on { color: var(--text); border-color: var(--accent); }
+  .diffhead { display: flex; gap: 8px; align-items: center; padding: 8px 16px 0; font-size: 12.5px; flex-wrap: wrap; }
+  .diff { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
+  .diff .add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .diff .del { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); }
+  .diff .hunk { color: var(--info); }
+  .diff .ctx { color: var(--muted); }
   .commits li { padding: 6px 6px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
   .commits li:last-child { border-bottom: 0; }
   @media (max-width: 1100px) {

@@ -96,3 +96,11 @@ def test_fight_and_git_log():
 
 def test_scrub():
     assert P.scrub("id 306e86eb-9171-40f8-b333-db447c38843f end") == "id … end"
+
+
+def test_diff_lines():
+    patch = ("diff --git a/x.md b/x.md\nindex 1..2 100644\n--- a/x.md\n+++ b/x.md\n@@ -1,2 +1,2 @@\n same\n-old\n"
+             "+new\n\\ No newline at end of file\n")
+    assert [d["kind"] for d in P.diff_lines(patch)] == ["meta", "meta", "meta", "meta", "hunk", "ctx", "del", "add",
+                                                          "meta"]
+    assert P.diff_lines("") == []
