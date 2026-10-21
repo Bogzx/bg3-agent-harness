@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import jobpush
+from . import jobpush, rpc_record
 from .luadebug import LuaDebugClient, LuaDebugError
 
 RPC_EXPR = "return Mods.BG3AI.BG3AI.rpc([{eq}[{payload}]{eq}])"
@@ -75,6 +75,7 @@ def client_held() -> str:
 
 POOL_MAX = max(1, int(os.environ.get("BG3AI_RPC_CONNS", "4")))
 JOB_PUSH = os.environ.get("BG3AI_JOB_PUSH", "1") != "0"  # wait on the mod's job-finished prints (jobpush.py)
+RECORD = rpc_record.from_env()  # BG3AI_RPC_RECORD=<file>: every eval and its answer as a fixture line
 
 
 class Game:
@@ -185,9 +186,12 @@ class Game:
         for attempt in range(2):
             client = self._acquire()
             ok = False
+            t0 = RECORD.now() if RECORD else 0.0
             try:
                 out = client.evaluate(code, context=context, timeout=timeout)
                 ok = True
+                if RECORD:
+                    RECORD.record(code, context, t0, RECORD.now(), result=out)
                 return out
             except ConnectionError:
                 if attempt:
@@ -197,6 +201,8 @@ class Game:
             except LuaDebugError as e:
                 ok = True  # the connection is fine; the Lua failed
                 msg = str(e)
+                if RECORD:
+                    RECORD.record(code, context, t0, RECORD.now(), error=msg)
                 if "not loaded" in msg or "story thread" in msg or "no session" in msg.lower():
                     raise NotReady(msg) from e
                 if _BOOTING.search(msg):
