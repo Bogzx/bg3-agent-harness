@@ -14,6 +14,7 @@ for _, path in ipairs({
     "Server/Navigation.lua",
     "Server/Guard.lua",
     "Server/Actions.lua",
+    "Server/Referee.lua", -- harness only, never an agent tool (B-mod)
 }) do
     U.require(path)
 end
