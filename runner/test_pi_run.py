@@ -206,6 +206,30 @@ class Cli(unittest.TestCase):
             self.assertEqual(P.main(["run", "--playthrough", "x", "--profile", str(PROFILE), "--no-keeper"]), 2)
         self.assertIn("needs --max-cost", err.getvalue())
 
+    def test_a_paid_client_needs_a_global_budget(self):  # live3: no runtime/budget.json, no global budget
+        import contextlib
+        import io
+        os.environ["DEEPSEEK_API_KEY"] = "sk-test"
+        self.addCleanup(os.environ.pop, "DEEPSEEK_API_KEY", None)
+        budget = P.RUNTIME / "budget.json"
+        budget.unlink(missing_ok=True)
+        self.addCleanup(budget.unlink, True)
+        argv = ["run", "--playthrough", "x", "--profile", str(PROFILE), "--no-keeper", "--max-cost", "0.5", "--plan"]
+        for extra, why in (([], "needs a global budget"), (["--budget", "0"], "more than 0 USD")):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(P.main(argv + extra), 2)
+            self.assertIn(why, err.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(P.main(argv + ["--budget", "3"]), 0)               # accepted; --plan writes nothing
+        self.assertFalse(budget.exists())
+        budget.write_text(json.dumps({"cap": 5.0, "spent": 1.0}))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(P.main(argv + ["--budget", "3"]), 2)               # another cap than the file's
+        self.assertIn("edit the file", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

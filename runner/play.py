@@ -1152,8 +1152,8 @@ def build_kickoff(sid: str, playthrough: str, loaded_save: str | None, notes: li
         + "Run the session-start playbook (memory_read knowledge/playbooks/session-start.md), then "
         "play following CLAUDE.md. Your notes are files under memory/: use the memory_* tools and note.",
         "Keep playing until the ⏱ line in tool results says WRAP UP NOW: you'll be told when to wrap up. Then run "
-        "the session-wrapup playbook; its last step is end_session, and you end your turn when that reports the "
-        "commit. Nobody will answer questions: decide yourself and write down why.",
+        "the session-wrapup playbook; its last step is end_session, and you stop (no more tool calls) when that "
+        "reports the commit. Nobody will answer questions: decide yourself and write down why.",
         PACE_PREFLIGHT,
     ]
     if briefing:
@@ -1187,7 +1187,7 @@ def agent_resume_prompt(notes: list[str]) -> str:
 def stop_resume_prompt(reason: str) -> str:
     """The message that resumes a session whose claude ended its turn while the stop check (session.py stop, the old
     Stop hook) still blocks: keep playing, finish the wrap-up, or fix lint errors."""
-    return f"RUNNER: you ended your turn, but this session can't end yet. {reason}"
+    return f"RUNNER: you stopped, but this session can't end yet. {reason}"
 
 
 def new_game_note(owner: str) -> str:
@@ -1296,7 +1296,7 @@ def fix_notes_prompt(lint_report: str) -> str:
     return ("The session is over, but `session.py end` refused to commit your memory because lint "
             "failed. Do NOT play or touch the game. Only fix the memory files so lint passes (memory_read, "
             "memory_edit, memory_write: each result shows the file's remaining lint errors), then call end_session "
-            f"and end your turn. You have {FIX_SESSION_MINUTES} minutes.\n\nLint report:\n{lint_report[-6000:]}")
+            f"and stop (no more tool calls). You have {FIX_SESSION_MINUTES} minutes.\n\nLint report:\n{lint_report[-6000:]}")
 
 
 STUCK_DIRECTIVE = (
@@ -3628,13 +3628,8 @@ class Runner:
                 got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
             except Exception:  # noqa: BLE001 - loading screens, crashes: just a failed poll
                 got = None
-            try:   # facts.jsonl: the referee ring, then the same read and the party inventory
-                if got:
-                    self.game_setup()
-                    self.ring_feed().poll()
-                inv = facts.read_inventory(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
-                                           story.combined_code) if got else None
-                self.facts_writer().observe(got, inv)
+            try:
+                self.facts_poll(got)
             except Exception as e:  # noqa: BLE001 - facts never break a session
                 log(f"{session}: facts poll failed: {e}")
             try:
@@ -3654,6 +3649,32 @@ class Runner:
                                 f"{'the game is finished' if self.game_ended() else '--until stop'}\n")
             except Exception as e:  # noqa: BLE001 - progress never breaks a session
                 log(f"{session}: progress poll failed: {e}")
+
+    def facts_poll(self, got: dict | None) -> None:
+        """One facts.jsonl poll on a progress read: the referee ring, then the read and the party inventory."""
+        if got:
+            self.game_setup()
+            self.ring_feed().poll()
+        inv = facts.read_inventory(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
+                                   story.combined_code) if got else None
+        self.facts_writer().observe(got, inv)
+
+    def end_facts(self, outcome: str) -> None:
+        """facts.jsonl's run_end mark, once per run. When this runner has read a game, one last read first (a
+        snapshot of the end state): the minimap's area lags a region change by 15-30 s, and live3's run stopped
+        24 s after Nautiloid -> Wilderness, so the beach never got its `area` event."""
+        if getattr(self, "_facts_ended", False):
+            return
+        self._facts_ended = True
+        w = self.facts_writer()
+        if w.last is not None and port_open():
+            try:
+                got = story.read_game(lambda code, ctx: lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+                w.snap_t = None
+                self.facts_poll(got)
+            except Exception as e:  # noqa: BLE001 - the mark below is written anyway
+                log(f"facts: the last read failed: {e}")
+        w.mark("run_end", {"outcome": outcome})
 
     def facts_writer(self) -> facts.FactsWriter:
         """This playthrough's facts.jsonl (one per run); the first use writes its run_start mark."""
@@ -3966,7 +3987,7 @@ class Runner:
         if self.opt.seed is not None:
             rec["seed"] = self.opt.seed
         self.scenario_undo()
-        self.facts_writer().mark("run_end", {"outcome": outcome})
+        self.end_facts(outcome)
         path = self.runs_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -4881,8 +4902,12 @@ def cmd_run(a) -> int:
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
             return 2
-    try:   # a paid client: a per-run cap, cut to what runtime/budget.json has left
-        cap, err = spend.run_cap(client, caps["max_cost"], spend.read_budget(RUNTIME / "budget.json"))
+    try:   # a paid client: a global budget (--budget creates it) and a per-run cap, cut to what it has left
+        usd = getattr(a, "budget", None)
+        budget = spend.ensure_budget(RUNTIME / "budget.json", usd, write=False) if spend.is_paid(client) else None
+        cap, err = spend.run_cap(client, caps["max_cost"], budget)
+        if not err and budget is not None and not a.plan:
+            spend.ensure_budget(RUNTIME / "budget.json", usd)   # written only once nothing else refuses it
     except spend.BudgetError as e:
         cap, err = None, str(e)
     if err and spend.is_paid(client):
@@ -4913,7 +4938,7 @@ def cmd_run(a) -> int:
     # a multiplexer/ssh shell has no display env: the game (launch_game.sh inherits os.environ) gets the desktop's
     filled = display_env.fill(os.environ)
     if a.plan:   # after every refusal above, before the lock: nothing written, nothing launched
-        return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client)
+        return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client, choice.profile)
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
     pi_files: dict = {}
     if choice.profile is not None and client == "pi":   # once per runner: what every pi process gets
@@ -5050,7 +5075,7 @@ def resume_preview(pt: str, save_owner: str | None, session_minutes: float, allo
 
 
 def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_judge: bool, judge_model: str,
-             client_name: str) -> int:
+             client_name: str, profile=None) -> int:
     """run --plan: what `run` would do next, read-only (no runner lock, no game, no playthrough/memory/series files;
     the Runner isn't built: its RunnerState makes the session dir and read_handover consumes a pending handover)."""
     base = a.playthrough
@@ -5131,7 +5156,8 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
            "BG3AI_SAVE_PREFIX": prefix, "BG3AI_KEEPER": "0" if a.no_memory_keeper else "1",
            **({"BG3AI_SAVES_EXCLUDE": "\n".join(res["exclude"])} if res and res["exclude"] else {}),
            **({"BG3AI_START_SAVE": scenario["start"]["save"]} if scenario and scenario["start"].get("save") else {})}
-    opt = types.SimpleNamespace(sandbox=a.sandbox, client=client_name)
+    opt = types.SimpleNamespace(sandbox=a.sandbox, client=client_name, profile=profile,   # pi: where pi_run_files
+                                system_file=RUNTIME / "sessions" / pt / "pi-system.txt")  # would write it
     cl = make_client(opt)
     req = clients.Request(PLAN_PROMPT, model, RUNTIME / "sessions" / pt, session=str(uuid.uuid4()), resume=False,
                           effort=effort, fallback_model=a.fallback_model, autocompact=a.autocompact, env=env,
@@ -5705,6 +5731,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="cap one run's play cost (without --until: this runner's run); past it the run ends "
                         "over_budget (a failure). Required for a paid client (pi), cut to what runtime/budget.json "
                         "{cap, spent} has left. A series keeps its first run's caps (series.json)")
+    r.add_argument("--budget", type=float, metavar="USD",
+                   help="a paid client (pi): create the global budget runtime/budget.json {cap: USD, spent: 0} when "
+                        "there is none (a paid run refuses to start without one); one with another cap is refused "
+                        "(edit the file to change it)")
     r.add_argument("--max-cost-per-day", type=float, metavar="USD",
                    help="long runs: pause (no new session) while the play agent's spend in the trailing 24 h is at "
                         "least USD; it plays again once old sessions leave the window (checked between sessions)")

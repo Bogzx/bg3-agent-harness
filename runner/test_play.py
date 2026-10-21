@@ -2904,49 +2904,6 @@ class SeriesRuns(unittest.TestCase):
         self.assertFalse(rec["clean"])
         self.assertTrue(rec["knowledge_changed"])
 
-    def test_seeded_run_sets_up_records_and_undoes(self):  # D9: scn.seed once, scn.undo at the run's end
-        r = P.Runner(P.Options("naut-s", None, 20, "opus", until="nautiloid_escaped", seed=12345))
-        self.assertEqual(r.setup_env(), {"BG3AI_SCENARIO_SETUP": "1"})
-        self.assertEqual(P.Runner(P.Options("naut-u", None, 20, "opus")).setup_env(), {})
-        calls = []
-
-        def rpc(op, args=None, **kw):
-            calls.append(op)
-            return {"mode": "Random"} if op == "roll.snapshot" else {}
-        t0 = time.time() - 5
-        with mock.patch.object(P, "rpc", rpc), \
-                mock.patch.object(P, "run_record", lambda *a, **k: {"clean": True, "milestone": "m", "wall_min": 1,
-                                                                  "sessions": 1, "cost_usd": 0.0, "crashes": 0,
-                                                                  "recoveries": 0, "reloads": 0, "harness_failures": 0,
-                                                                  "agent_failures": 0, "unknown_failures": 0,
-                                                                  "t": time.time()}), \
-                mock.patch.object(P.model_time, "model_time", lambda *a, **k: None), \
-                mock.patch.object(P.runs, "model_time_field", lambda *a, **k: None):
-            r.game_setup()
-            r.game_setup()                                     # once per runner
-            r.opt.judge = False
-            rec = r.write_run_record(t0)
-        self.assertEqual(calls, ["roll.snapshot", "scn.seed", "scn.undo"])
-        self.assertEqual(rec["seed"], 12345)
-        self.assertEqual(rec["game_settings"]["roll_mode"], "Random")
-        self.assertIs(rec["game_settings"]["karmic_dice"], False)
-        self.assertEqual(rec["game_settings"]["seed"], {"seed": 12345, "applied": {}})
-        marks = [json.loads(x) for x in (r.state.dir / "facts.jsonl").read_text().splitlines()]
-        self.assertEqual([m.get("mark") for m in marks], ["run_start", "settings", "run_end"])
-
-    def test_choices_go_into_facts(self):
-        r = P.Runner(P.Options("naut-c", None, 20, "opus"))
-        base = r.state.dir / "S001"
-        log = P.events.EventLog(Path(f"{base}.events.jsonl"))
-        log.write(P.clients.Event("tool_result", text="DIALOGUE Mattis: Buy?\n  1. Yes.\n  2. No.", t=time.time()))
-        log.write(P.clients.Event("text", text="Too pricey.", t=time.time()))
-        log.write(P.clients.Event("tool_call", tool="choose_dialogue", args={"option": 2}, t=time.time()))
-        log.close()
-        r.write_choices("S001", base)
-        recs = [json.loads(x) for x in (r.state.dir / "facts.jsonl").read_text().splitlines()]
-        self.assertEqual([(x.get("ev"), x.get("picked_text"), x.get("reason")) for x in recs if x["kind"] == "event"],
-                         [("choice", "No.", "Too pricey.")])
-
     def test_play_settings_keep_knowledge_unwritable(self):  # FAIR-2: the agent's only file access is the MCP's
         settings = json.loads((Path(P.__file__).resolve().parents[1] / "play" / ".claude" / "settings.json").read_text())
         deny = settings["permissions"]["deny"]

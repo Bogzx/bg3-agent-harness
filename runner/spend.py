@@ -2,8 +2,9 @@
 
 - A paid run needs a per-run USD cap (--max-cost); the runner kills the play process at the cap from the billed
   cost as it streams (runs.UsageMeter) and records cap_hit.
-- runtime/budget.json {"cap": USD, "spent": USD} is the global budget across runs: a paid run refuses to start when
-  it is used up, its per-run cap is cut to what is left, and every paid play process adds its cost when it ends.
+- runtime/budget.json {"cap": USD, "spent": USD} is the global budget across runs: a paid run refuses to start
+  without one (`run --budget USD` creates it) or when it is used up, its per-run cap is cut to what is left, and
+  every paid play process adds its cost when it ends.
 
     python3 -m unittest runner/test_spend.py
 """
@@ -53,11 +54,38 @@ def run_cap(client: str, max_cost: float | None, budget: dict | None) -> tuple[f
     if max_cost is None:
         return None, f"--client {client} spends money: it needs --max-cost USD (a per-run cap)"
     if budget is None:
-        return max_cost, None
+        return None, (f"--client {client} spends money: it needs a global budget, runtime/budget.json (pass "
+                      '--budget USD to create it, or write {"cap": USD, "spent": 0})')
     left = round(budget["cap"] - budget["spent"], 6)
     if left <= 0:
         return None, f"the global budget is used up (${budget['spent']:.2f} of ${budget['cap']:g})"
     return min(max_cost, left), None
+
+
+def ensure_budget(path: Path, usd: float | None, write: bool = True) -> dict | None:
+    """read_budget, and `--budget USD` creates budget.json {"cap": USD, "spent": 0} when there is none (write=False:
+    the budget it would create, nothing written). A budget that is there with another cap raises: a live budget
+    changes by editing the file, never by a flag."""
+    if usd is not None and not usd > 0:
+        raise BudgetError(f"--budget must be more than 0 USD (got {usd:g})")
+    b = read_budget(path)
+    if usd is None:
+        return b
+    if b is not None:
+        if b["cap"] != usd:
+            raise BudgetError(f"{path} already caps the spend at ${b['cap']:g} (${b['spent']:.2f} spent); "
+                              f"--budget {usd:g} differs: edit the file to change the cap")
+        return b
+    b = {"cap": float(usd), "spent": 0.0}
+    if write:
+        with _locked(path):
+            if path.exists():   # another runner created it meanwhile: that one counts
+                return ensure_budget(path, usd)
+            b["created"] = round(time.time(), 1)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(b, indent=1) + "\n")
+            os.replace(tmp, path)
+    return b
 
 
 @contextmanager

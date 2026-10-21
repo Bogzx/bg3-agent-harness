@@ -27,9 +27,7 @@ class Budget(unittest.TestCase):
         self.path = self.d / "budget.json"
 
     def tearDown(self):
-        for p in self.d.iterdir():
-            p.unlink()
-        self.d.rmdir()
+        __import__("shutil").rmtree(self.d, True)
 
     def test_read(self):
         self.assertIsNone(S.read_budget(self.path))
@@ -43,12 +41,31 @@ class Budget(unittest.TestCase):
     def test_run_cap(self):
         self.assertEqual(S.run_cap("claude", None, None), (None, None))  # subscription clients: as given
         self.assertIn("needs --max-cost", S.run_cap("pi", None, {"cap": 5.0, "spent": 0.0})[1])
-        self.assertEqual(S.run_cap("pi", 2.0, None), (2.0, None))
+        cap, why = S.run_cap("pi", 2.0, None)                                    # live3: no global budget
+        self.assertIsNone(cap)
+        self.assertIn("needs a global budget", why)
+        self.assertIn("--budget USD", why)
         self.assertEqual(S.run_cap("pi", 2.0, {"cap": 5.0, "spent": 4.0}), (1.0, None))
         self.assertEqual(S.run_cap("pi", 0.5, {"cap": 5.0, "spent": 4.0}), (0.5, None))
         cap, why = S.run_cap("pi", 2.0, {"cap": 5.0, "spent": 5.0})
         self.assertIsNone(cap)
         self.assertIn("used up", why)
+
+    def test_ensure_budget(self):
+        self.assertIsNone(S.ensure_budget(self.path, None))                    # no flag: what is there
+        self.assertEqual(S.ensure_budget(self.path, 3.0, write=False), {"cap": 3.0, "spent": 0.0})
+        self.assertFalse(self.path.exists())                                    # --plan writes nothing
+        self.assertEqual(S.ensure_budget(self.path, 3.0)["cap"], 3.0)
+        self.assertEqual(S.read_budget(self.path)["spent"], 0.0)
+        S.add_spend(self.path, 1.0)
+        self.assertEqual(S.ensure_budget(self.path, 3.0)["spent"], 1.0)        # the same cap again: kept as is
+        with self.assertRaises(S.BudgetError) as e:                             # another cap: edit the file
+            S.ensure_budget(self.path, 10.0)
+        self.assertIn("edit the file", str(e.exception))
+        self.assertEqual(S.read_budget(self.path)["cap"], 3.0)
+        for bad in (0.0, -1.0):
+            with self.assertRaises(S.BudgetError):
+                S.ensure_budget(self.d / "other.json", bad)
 
     def test_add_spend(self):
         self.assertIsNone(S.add_spend(self.path, 0.5))  # no budget file: nothing to add to
