@@ -4,6 +4,7 @@
 `from_series` builds one from a series' `series.json` and one `runs.jsonl` record, the files the runner writes today
 (runner/runs.py). What those files don't record yet (prompt hash and parts, tool allowlist, price sheet, provider,
 client version, condition, the dice seed, the scenario's timing and the harness version) is passed in, or stays null.
+`judge` names the LLM judge that scored the run (the persona judge's model), which must not be a contestant.
 Every manifest cites the harness version and this package's version (CHANGELOG.md: results cite both).
 """
 
@@ -77,7 +78,13 @@ def from_series(
         "facts_schema": FACTS_SCHEMA,
         "price_sheet": price_sheet,
         "sandbox": series.get("sandbox"),
+        "judge": {"model": judge} if (judge := judge_model(series, record)) else None,
     }
+
+
+def judge_model(series: dict, record: dict) -> str | None:
+    """The judge that scored the run: its persona's judge_model, else the series' frozen one."""
+    return (record.get("persona") or {}).get("judge_model") or series.get("judge_model")
 
 
 def write(manifest: dict, path: str | Path) -> None:

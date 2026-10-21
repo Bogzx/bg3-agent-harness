@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for runner/judge.py: the decision extractor over fixture streams (dialogue options and choices, batched
 choices, [decision] notes, CHARACTER.md appends, the run window, dedup, the cap), the run/dir/character lookup, the
-judge's prompt, JSON parsing, retry and failure results, with a fake client. Never launches claude or the game.
+judge run with a fake client and the CLI (--profile, --dry-run). The judge itself (prompt, parsing, retries, clients,
+the cost cap) is tested in packages/harness/tests/test_llm_judge.py. Never launches claude or the game.
 
     python3 -m unittest runner/test_judge.py
 """
@@ -18,6 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import judge as J  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[1]
 
 T0 = 1_000_000.0
 CHARACTER = """# Character: Orsen Vale
@@ -251,68 +254,31 @@ class RunLookup(TmpDir):
             self.assertEqual(J.main([str(self.base), "--run", "9", "--dry-run"]), 2)
 
 
-# ======================================================================== judge
+# ======================================================================== the shim's wiring (the judge itself:
+# packages/harness/tests/test_llm_judge.py)
 
-class Judge(unittest.TestCase):
-    DECISIONS = [{"id": 1, "kind": "dialogue", "speaker": "A", "line": "l", "offered": ["1. x", "2. y"],
-                  "chosen": "x", "reason": "because", "n": 2},
-                 {"id": 2, "kind": "note", "chosen": "spared him", "reason": None}]
+class Shim(TmpDir):
+    def test_default_client_is_claude_with_the_pinned_model(self):
+        self.assertIs(J.ClaudeCLI, J._core.ClaudeCLI)
+        seen = []
+        res = J.judge_run(self.tmp, {"model": J.DEFAULT_MODEL}, call=lambda c, p: seen.append(c))
+        self.assertIn("model under test", res["error"])
+        self.assertEqual(res["judge_model"], J.DEFAULT_MODEL)
 
-    def test_prompt(self):
-        p = J.build_prompt("# Me", self.DECISIONS, dropped=3)
-        self.assertIn("DECISIONS (2 of the run; 3 more not shown)", p)
-        self.assertIn('"stated_reason": "because"', p)
-        self.assertIn('"times": 2', p)
-        self.assertIn('"said_to_you": "A: l"', p)
-
-    def test_parse_verdict(self):
-        v = J.parse_verdict("Sure!\n```json\n" + _verdict(6.5, {1: 7, 2: 6, 9: 1}) + "\n```", [1, 2])
-        self.assertEqual(v["score"], 6.5)
-        self.assertEqual(sorted(v["decisions"]), [1, 2])     # unknown id 9 dropped
-        # no overall score: the mean of the decisions
-        v = J.parse_verdict('{"score": "n/a", "decisions": [{"id": 1, "score": 4}, {"id": 2, "score": 8}]}', [1, 2])
-        self.assertEqual(v["score"], 6.0)
-        for bad in ("no json here", '{"score": 11, "decisions": []}', '{"other": 1}'):
-            with self.assertRaises(ValueError):
-                J.parse_verdict(bad, [1, 2])
-
-    def test_retry_then_ok(self):
-        fake = FakeClient([RuntimeError("exit 1: overloaded"), _verdict(7, {1: 7, 2: 7})])
-        v = J.judge_chunk(None, "# Me", self.DECISIONS, call=fake)
-        self.assertEqual((v["score"], v["attempts"]), (7.0, 2))
-
-    def test_judge_failed_after_retries(self):
-        fake = FakeClient(["garbage", "still garbage"])
-        res = J.judge_decisions(None, "# Me", self.DECISIONS, call=fake)
-        self.assertEqual(res["status"], "judge_failed")
-        self.assertIn("ValueError", res["error"])
-        self.assertEqual(len(fake.prompts), 2)
-
-    def test_chunks_weighted(self):
-        ds = [dict(self.DECISIONS[1], id=i) for i in range(1, 4)]
-        fake = FakeClient([_verdict(9, {1: 9, 2: 9}), _verdict(3, {3: 3})])
-        res = J.judge_decisions(None, "# Me", ds, chunk=2, call=fake)
-        self.assertEqual((res["status"], res["score"], res["calls"]), ("ok", 7.0, 2))
-        self.assertEqual([i["score"] for i in res["items"]], [9, 9, 3])
-        self.assertEqual(J.persona_field(res)["out_of_character"][0].split(":")[0], "? #3 spared him")
-
-    def test_same_model(self):
-        self.assertTrue(J.same_model("opus", "claude-opus-5-5"))
-        self.assertTrue(J.same_model("claude-sonnet-5-5", "claude-sonnet-5-5"))
-        self.assertFalse(J.same_model("claude-sonnet-5-5", "opus"))
-        self.assertFalse(J.same_model("gpt-x", None))
-
-    def test_claude_cli(self):
-        c = J.ClaudeCLI("claude-sonnet-5-5")
-        cmd = c.command()
-        self.assertEqual(cmd[:6], ["claude", "-p", "--model", "claude-sonnet-5-5", "--output-format", "json"])
-        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
-        self.assertEqual(c.parse(json.dumps({"type": "result", "result": "{}", "total_cost_usd": 0.02})),
-                         ("{}", {"cost_usd": 0.02}))
-        with self.assertRaises(ValueError):
-            c.parse(json.dumps({"is_error": True, "result": "API Error"}))
-        with self.assertRaises(ValueError):
-            c.parse("not json")
+    def test_cli_profile(self):
+        prof = REPO / "profiles" / "deepseek-flash.toml"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(J.main([str(self.tmp), "--profile", str(prof), "--dry-run"]), 2)
+        self.assertIn("needs a cost cap", err.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(J.main([str(self.tmp), "--profile", str(prof), "--max-cost", "1", "--dry-run"]), 0)
+        self.assertIn("judge deepseek-flash run None", out.getvalue())
+        bad = self.tmp / "bad.toml"
+        bad.write_text("client = 'nope'")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(J.main([str(self.tmp), "--profile", str(bad)]), 2)
 
 
 if __name__ == "__main__":

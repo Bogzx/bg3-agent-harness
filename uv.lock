@@ -305,6 +305,9 @@ requires-dist = [
 name = "bg3bench"
 version = "0.1.0"
 source = { editable = "packages/bench" }
+dependencies = [
+    { name = "bg3-agent-harness" },
+]
 
 [package.optional-dependencies]
 baselines = [
@@ -326,6 +329,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "bg3-agent-harness", editable = "packages/harness" },
     { name = "inspect-ai", marker = "extra == 'inspect'", specifier = "==0.3.282" },
     { name = "mcp", marker = "extra == 'baselines'", specifier = ">=2.3,<3" },
 ]

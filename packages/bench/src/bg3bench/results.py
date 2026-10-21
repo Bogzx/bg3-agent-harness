@@ -23,6 +23,8 @@ from collections.abc import Collection, Iterable
 from pathlib import Path
 from statistics import median
 
+from bg3harness.judge import same_model
+
 from bg3bench import stats
 
 SCHEMA = 1
@@ -97,14 +99,16 @@ def build_results(
     holdout: Collection[str] = (),
 ) -> dict:
     """(manifest, result) pairs -> results v1. Each group's bootstrap gets a fresh random.Random(seed), so its
-    numbers do not depend on which other groups are in the release. Runs of a `holdout` scenario are left out
-    entirely (a published release never contains them; contamination.holdout_names lists them)."""
-    runs, groups = [], {}
+        numbers do not depend on which other groups are in the release. Runs of a `holdout` scenario are left out
+        entirely (a published release never contains them; contamination.holdout_names lists them). A release whose
+    judge (manifest `judge`) is the same model or family as a contestant is refused: the judge never scores itself."""
+    runs, groups, pairs_kept = [], {}, []
     for man, res in pairs:
         if man["run_id"] != res["run_id"]:
             raise ValueError(f"manifest {man['run_id']!r} paired with result {res['run_id']!r}")
         if man["scenario"]["name"] in holdout:
             continue
+        pairs_kept.append((man, res))
         key = (man["model"]["slug"], man["condition"])
         groups.setdefault(key, []).append((man["scenario"]["name"], res))
         runs.append(
@@ -127,6 +131,15 @@ def build_results(
         )
     if len({r["run_id"] for r in runs}) != len(runs):
         raise ValueError("a run_id appears twice")
+    contestants = {model for model, _ in groups}
+    for man, _ in pairs_kept:
+        judge = (man.get("judge") or {}).get("model")
+        clash = sorted(m for m in contestants if same_model(judge, m))
+        if clash:
+            raise ValueError(
+                f"run {man['run_id']}: its judge {judge} is a contestant ({', '.join(clash)}): "
+                "pick a judge outside the comparison"
+            )
     out_groups = []
     for (model, condition), members in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
         valid = [(s, r) for s, r in members if r["valid"]]

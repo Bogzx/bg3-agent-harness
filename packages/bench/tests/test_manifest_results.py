@@ -244,3 +244,24 @@ def test_thinking_time_timing_and_luck_reach_the_release():
     ]
     assert out["groups"][0]["think_s"] == {"median": 101.0}
     assert results.build_results(naut2_pairs(), seed=0, created=0.0, b=10)["groups"][0]["think_s"] == {"median": None}
+
+
+def test_manifest_names_the_judge():
+    series, records = load_series()
+    rec = {**records[0], "persona": {"judge_model": "deepseek-flash"}}
+    assert manifest.from_series(series, rec)["judge"] == {"model": "deepseek-flash"}
+    assert manifest.from_series({**series, "judge_model": "j"}, records[0])["judge"] == {"model": "j"}
+    man = manifest.from_series({**series, "judge_model": None}, {**records[0], "persona": None})
+    assert man["judge"] is None
+    assert_valid("manifest.v1.schema.json", man)
+
+
+def test_release_refuses_a_judge_that_is_a_contestant():
+    pairs = naut2_pairs()  # the contestant is opus
+    judged = [({**m, "judge": {"model": "claude-sonnet-5-5"}}, r) for m, r in pairs]
+    assert results.build_results(judged, seed=0, created=0.0, b=10)["runs"]
+    clash = [({**m, "judge": {"model": "claude-opus-5-5"}}, r) for m, r in pairs]
+    with pytest.raises(ValueError, match="its judge claude-opus-5-5 is a contestant"):
+        results.build_results(clash, seed=0, created=0.0, b=10)
+    # a held-out scenario's run is not in the release, so its judge is not checked
+    assert results.build_results(clash, seed=0, created=0.0, b=10, holdout={"nautiloid"})["runs"] == []

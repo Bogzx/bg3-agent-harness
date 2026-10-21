@@ -119,6 +119,14 @@
         }
       ]
     },
-    "sandbox": {"$ref": "#/$defs/str_or_null"}
+    "sandbox": {"$ref": "#/$defs/str_or_null"},
+    "judge": {
+      "description": "the LLM judge that scored the run (persona, choices), optional (added 2026-10-22, still v1). It is never a model under test in the same comparison: results.build_results refuses a release where it is.",
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["model"], "additionalProperties": false,
+         "properties": {"model": {"type": "string", "minLength": 1}}}
+      ]
+    }
   }
 }

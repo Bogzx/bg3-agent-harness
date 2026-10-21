@@ -4,6 +4,7 @@
     scripted.GameModel   scripted game state (party, gold, items, fight, dialogue, area, referee/roll/scenario rings)
     fixtures.FixtureStore  replays files recorded with BG3AI_RPC_RECORD (bridge/src/bg3ai/rpc_record.py)
     mcp_bridge           starts bg3ai-mcp against a fake mod and calls its tools as an MCP client
+    judge.FakeJudge      a judge model that answers from a list (bg3harness.judge's client and transport)
 
 Recorded fixtures live in packages/harness/tests/fixtures/rpc/.
 """
