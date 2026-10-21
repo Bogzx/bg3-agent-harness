@@ -1,0 +1,467 @@
+# ruff for the whole repo (TARGET-ARCHITECTURE.md "Tooling", OVERHAUL-PLAN.md D10).
+# The strict rule set applies to every file. Legacy files are exempt only from what they break today, through the
+# per-file ignores and the format exclude list below. Both lists only shrink: tools/ci/legacy_lint.py fails CI when
+# an entry is no longer needed. No repo-wide reformat.
+line-length = 120
+target-version = "py312"
+extend-exclude = ["third_party"]
+force-exclude = true
+include = ["*.py", "*.pyi"]
+
+[lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
+
+# Legacy files: the codes each one breaks today (2026-10-21). Only shrinks.
+[lint.per-file-ignores]
+"bridge/src/bg3ai/actq.py" = ["B905", "E501", "RUF005", "RUF100", "SIM105", "UP035"]
+"bridge/src/bg3ai/boxclick.py" = ["UP035"]
+"bridge/src/bg3ai/clicker.py" = ["B905", "E501", "RUF021", "RUF046", "RUF059", "RUF100", "SIM102"]
+"bridge/src/bg3ai/compact.py" = ["E501", "RUF005", "RUF021"]
+"bridge/src/bg3ai/compact_check.py" = ["E501", "RUF002"]
+"bridge/src/bg3ai/companions.py" = ["E501", "RUF100", "UP035"]
+"bridge/src/bg3ai/debrief.py" = ["E501", "RUF005"]
+"bridge/src/bg3ai/delta.py" = ["B905", "E501", "N803", "RUF005", "RUF046", "RUF100", "UP037"]
+"bridge/src/bg3ai/economy.py" = ["E501", "E731", "UP035"]
+"bridge/src/bg3ai/game.py" = ["B904", "B905", "E501", "N818", "RUF100", "SIM105", "UP037"]
+"bridge/src/bg3ai/hotbar.py" = ["B023", "E501", "RUF046", "SIM105"]
+"bridge/src/bg3ai/input.py" = ["E501"]
+"bridge/src/bg3ai/jobpush.py" = ["RUF100", "UP035"]
+"bridge/src/bg3ai/leveling.py" = ["E501", "RUF100", "SIM105", "UP035"]
+"bridge/src/bg3ai/longnav.py" = ["E501", "RUF100", "UP035"]
+"bridge/src/bg3ai/luadebug.py" = ["E501", "RUF023", "RUF100", "SIM105"]
+"bridge/src/bg3ai/macros.py" = ["E501", "SIM102"]
+"bridge/src/bg3ai/memtools.py" = ["E501", "F541", "N812", "N818", "RUF100", "UP035", "UP037"]
+"bridge/src/bg3ai/metrics.py" = ["B905", "E501", "RUF007", "RUF100", "SIM102", "SIM105", "UP035", "UP037"]
+"bridge/src/bg3ai/milestones.py" = ["E501"]
+"bridge/src/bg3ai/naming.py" = ["B007", "RUF046", "UP035"]
+"bridge/src/bg3ai/navhints.py" = ["E501"]
+"bridge/src/bg3ai/offlimits.py" = ["E741"]
+"bridge/src/bg3ai/party.py" = ["E501", "UP035"]
+"bridge/src/bg3ai/progress.py" = ["B905", "E501", "RUF005", "RUF007", "RUF100", "SIM105", "UP035"]
+"bridge/src/bg3ai/render.py" = ["B007", "B905", "E501", "E741", "N803", "RUF012"]
+"bridge/src/bg3ai/route.py" = ["E501", "E741", "N803"]
+"bridge/src/bg3ai/saver.py" = ["E501", "RUF100", "SIM102", "UP035"]
+"bridge/src/bg3ai/screen.py" = ["B904", "F821", "SIM105", "UP035", "UP037"]
+"bridge/src/bg3ai/server.py" = ["B007", "B905", "C401", "E501", "E741", "F541", "I001", "N806", "RUF002", "RUF003", "RUF005", "RUF021", "RUF059", "RUF100", "SIM102", "SIM105", "UP035", "UP037"]
+"bridge/src/bg3ai/skipper.py" = ["SIM115", "UP035"]
+"bridge/src/bg3ai/spellprep.py" = ["E501"]
+"bridge/src/bg3ai/turn.py" = ["B023", "E501", "RUF002", "RUF005", "RUF100", "UP035"]
+"bridge/src/bg3ai/twostep.py" = ["B023"]
+"bridge/src/bg3ai/wiki.py" = ["B905", "E501"]
+"bridge/tests/fake_bg3le.py" = ["B023", "RUF023", "RUF100", "SIM105", "UP037"]
+"bridge/tests/test_ability_names.py" = ["E501", "I001"]
+"bridge/tests/test_actq.py" = ["F401", "RUF059", "UP031"]
+"bridge/tests/test_answer_numbers.py" = ["I001"]
+"bridge/tests/test_boxclick.py" = ["I001", "RUF100"]
+"bridge/tests/test_cc_saves.py" = ["E501", "I001", "RUF059", "SIM117"]
+"bridge/tests/test_clicker.py" = ["E501", "RUF005", "RUF059"]
+"bridge/tests/test_climb_settle.py" = ["E501", "RUF012", "RUF059", "RUF100"]
+"bridge/tests/test_clock.py" = ["E501", "I001", "RUF100"]
+"bridge/tests/test_combat_tools.py" = ["F401"]
+"bridge/tests/test_compact.py" = ["E501", "I001", "RUF100"]
+"bridge/tests/test_companions.py" = ["E501", "N806", "RUF002", "RUF005", "RUF012"]
+"bridge/tests/test_connections.py" = ["I001", "RUF100", "SIM105"]
+"bridge/tests/test_container_close.py" = ["I001"]
+"bridge/tests/test_debrief.py" = ["E501", "N806", "RUF005"]
+"bridge/tests/test_debrief_server.py" = ["E501", "F401"]
+"bridge/tests/test_delta.py" = ["E501", "E702", "F401", "I001", "N802", "N806", "RUF002"]
+"bridge/tests/test_disabled.py" = ["I001"]
+"bridge/tests/test_economy.py" = ["C416", "E402", "E501", "E702", "E731", "E741", "F841", "RUF003", "RUF005", "RUF012", "RUF059", "RUF100"]
+"bridge/tests/test_event_backlog.py" = ["I001", "RUF100"]
+"bridge/tests/test_event_echo.py" = ["E501", "N806"]
+"bridge/tests/test_fair_render.py" = ["E501", "N806", "RUF012"]
+"bridge/tests/test_far_moves.py" = ["E501", "I001", "RUF002", "RUF100"]
+"bridge/tests/test_frontier_ways.py" = ["E501", "E731", "N806"]
+"bridge/tests/test_game_moved.py" = ["I001", "RUF059"]
+"bridge/tests/test_hazards.py" = ["E501", "E702", "I001", "RUF100"]
+"bridge/tests/test_hint_tools.py" = ["I001", "RUF100"]
+"bridge/tests/test_hotbar.py" = ["B905", "C416", "E501", "RUF059"]
+"bridge/tests/test_hotbar_route.py" = ["I001", "RUF100"]
+"bridge/tests/test_item_ref.py" = ["F841", "RUF100"]
+"bridge/tests/test_keeper_mode.py" = ["I001", "RUF100"]
+"bridge/tests/test_layout.py" = ["E501", "E741", "I001", "RUF100"]
+"bridge/tests/test_lessons.py" = ["E501", "E741", "I001", "RUF100"]
+"bridge/tests/test_leveling.py" = ["E501", "E702", "N812", "RUF003"]
+"bridge/tests/test_load_loading.py" = ["E501", "N812"]
+"bridge/tests/test_longnav.py" = ["E501", "I001", "RUF012"]
+"bridge/tests/test_lore.py" = ["I001"]
+"bridge/tests/test_memtools.py" = ["I001", "N812", "RUF100"]
+"bridge/tests/test_metrics.py" = ["E501", "F401", "I001", "N812", "RUF005", "RUF012"]
+"bridge/tests/test_milestones.py" = ["E501", "N812"]
+"bridge/tests/test_naming.py" = ["B905", "I001", "RUF007", "SIM117"]
+"bridge/tests/test_nav_audit.py" = ["I001", "RUF100"]
+"bridge/tests/test_note.py" = ["I001", "RUF100"]
+"bridge/tests/test_objectives.py" = ["E501", "F401", "RUF005", "RUF015"]
+"bridge/tests/test_offlimits.py" = ["I001"]
+"bridge/tests/test_party.py" = ["E501", "N806"]
+"bridge/tests/test_pipelining.py" = ["E501", "E741", "I001", "RUF012", "RUF100"]
+"bridge/tests/test_plates.py" = ["I001"]
+"bridge/tests/test_prepare_spells.py" = ["E501", "I001", "RUF015", "RUF100"]
+"bridge/tests/test_progress.py" = ["E501", "F401", "N812", "RUF012"]
+"bridge/tests/test_queue_stop_reason.py" = ["RUF012", "RUF100"]
+"bridge/tests/test_reactclick.py" = ["I001", "RUF100"]
+"bridge/tests/test_read_latency.py" = ["I001", "N812", "RUF059", "RUF100"]
+"bridge/tests/test_result_size.py" = ["E501", "N806", "RUF012", "RUF100"]
+"bridge/tests/test_revive.py" = ["RUF100"]
+"bridge/tests/test_route.py" = ["E501", "I001", "N806", "RUF100"]
+"bridge/tests/test_rules.py" = ["E501", "I001", "N812", "RUF100"]
+"bridge/tests/test_saver.py" = ["E501", "I001", "RUF100"]
+"bridge/tests/test_se_tools.py" = ["E501", "I001", "N806", "RUF002", "RUF005", "RUF012", "RUF100", "SIM105", "SIM117"]
+"bridge/tests/test_skipper.py" = ["I001"]
+"bridge/tests/test_talk_stale.py" = ["I001"]
+"bridge/tests/test_think_acting.py" = ["I001", "RUF003", "RUF100"]
+"bridge/tests/test_tool_docs.py" = ["E501", "I001", "RUF100"]
+"bridge/tests/test_travel_legs.py" = ["C416", "E501"]
+"bridge/tests/test_travel_party.py" = ["E501", "E731", "I001"]
+"bridge/tests/test_turn_based.py" = ["I001", "RUF100"]
+"bridge/tests/test_turn_chain.py" = ["E501", "RUF012", "RUF059"]
+"bridge/tests/test_turn_group.py" = ["I001", "RUF005"]
+"bridge/tests/test_turn_limit.py" = ["E501", "I001"]
+"bridge/tests/test_turn_macros.py" = ["E501", "E741", "F841", "I001", "N803", "RUF003", "RUF005", "RUF012", "RUF015", "RUF021"]
+"bridge/tests/test_turn_rpcs.py" = ["N802", "N812"]
+"bridge/tests/test_twostep.py" = ["E501", "I001", "RUF059", "RUF100"]
+"bridge/tests/test_ui_confirm.py" = ["E501", "I001", "RUF100"]
+"native/bg3sdl/test/test_shim.py" = ["E501", "E741"]
+"runner/clients.py" = ["B905"]
+"runner/dashboard/feeds.py" = ["C420", "E501", "N812", "RUF100"]
+"runner/dashboard/seriesview.py" = ["N812"]
+"runner/dashboard/serve.py" = ["E501", "N812", "RUF100", "SIM105"]
+"runner/dashboard/story.py" = ["E702", "RUF001", "SIM105"]
+"runner/dashboard/test_feeds.py" = ["E501", "N812", "RUF100"]
+"runner/dashboard/test_seriesview.py" = ["B905", "N812"]
+"runner/dashboard/test_serve.py" = ["E501", "N812", "RUF059"]
+"runner/dashboard/test_story.py" = ["E501", "N812", "RUF100"]
+"runner/fairness.py" = ["E501", "RUF001", "RUF005", "RUF100", "SIM102"]
+"runner/judge.py" = ["E501", "RUF005"]
+"runner/memory_keeper.py" = ["E501", "I001", "N812", "RUF001", "RUF100", "SIM105"]
+"runner/model_time.py" = ["B905", "C420", "I001", "N812", "RUF007"]
+"runner/play.py" = ["C408", "E501", "F541", "I001", "N812", "N818", "RUF001", "RUF005", "RUF100", "SIM103", "SIM105", "SIM108", "SIM114", "SIM115", "UP031", "UP037"]
+"runner/ramwatch.py" = ["E501", "RUF100", "SIM105", "SIM115"]
+"runner/runs.py" = ["B023", "B905", "E501", "RUF001", "RUF100", "SIM105", "SIM114"]
+"runner/sandbox.py" = ["E501", "RUF005", "SIM105", "SIM115"]
+"runner/test_clients.py" = ["B905", "E501", "I001", "N812", "RUF100"]
+"runner/test_crash.py" = ["C416", "E501", "I001", "N812", "RUF005", "RUF012", "RUF100", "UP031"]
+"runner/test_display_env.py" = ["N812"]
+"runner/test_fairness.py" = ["E501", "N812", "RUF100"]
+"runner/test_host_tuning.py" = ["E501", "N812", "RUF100"]
+"runner/test_judge.py" = ["N812", "RUF012", "RUF100"]
+"runner/test_memory_keeper.py" = ["E401", "E501", "F401", "I001", "N812"]
+"runner/test_model_time.py" = ["B905", "C416", "C420", "N812", "RUF100", "UP017"]
+"runner/test_play.py" = ["E501", "E731", "I001", "N805", "N812", "RUF001", "RUF005", "RUF012", "RUF015", "RUF059", "RUF100", "SIM117"]
+"runner/test_ramwatch.py" = ["E501", "N812", "RUF005", "RUF100"]
+"runner/test_runs.py" = ["E501", "I001", "N812", "RUF005", "RUF012", "RUF059", "RUF100"]
+"runner/test_sandbox.py" = ["I001", "N812", "RUF059", "RUF100"]
+"runner/test_scenarios.py" = ["E501", "I001", "N812", "RUF005", "RUF100"]
+"runner/triage.py" = ["B905", "RUF001", "RUF005", "RUF007", "RUF100"]
+"tools/bench_preflight.py" = ["E501"]
+"tools/container/egress_proxy.py" = ["SIM105", "UP041"]
+"tools/container/mcp_smoke.py" = ["SIM117"]
+"tools/container/sandbox_smoke.py" = ["E501", "N812"]
+"tools/dev/acceptance.py" = ["B023", "B905", "E501", "E731", "E741", "F401", "F541", "F841", "I001", "N812", "RUF002", "RUF003", "RUF005", "RUF021", "RUF059", "RUF100", "SIM105", "SIM115"]
+"tools/dev/acceptance_check.py" = ["B007", "C416", "E501", "N803", "N806", "N812", "RUF005", "RUF100", "SIM105", "SIM108"]
+"tools/dev/check_act.py" = ["E501", "E702", "N812", "RUF100", "UP031"]
+"tools/dev/check_all.py" = ["C401", "E501", "I001", "N812", "RUF001", "RUF100", "UP035"]
+"tools/dev/check_levelup.py" = ["E501", "I001", "RUF100"]
+"tools/dev/check_plans.py" = ["E501"]
+"tools/dev/check_reads.py" = ["B007", "E501", "I001", "N812", "SIM105"]
+"tools/dev/check_route.py" = ["E501", "E741", "N812", "RUF100"]
+"tools/dev/check_se.py" = ["E501", "I001", "RUF005", "RUF021", "SIM105"]
+"tools/dev/check_session.py" = ["E501", "E741", "RUF059", "SIM105"]
+"tools/dev/check_setup.py" = ["E501"]
+"tools/dev/check_vis.py" = ["E501", "I001", "N812", "RUF100"]
+"tools/dev/combat_review.py" = ["B007", "C408", "E401", "E501", "E701", "E702", "E731", "E741", "I001", "SIM105", "SIM108", "SIM115"]
+"tools/dev/gap_causes.py" = ["B007", "C408", "E401", "E402", "E501", "E701", "E702", "E741", "F401", "I001", "N812", "SIM115"]
+"tools/dev/smoke.py" = ["N812", "RUF005", "RUF100"]
+"tools/dev/test_acceptance_check.py" = ["N812"]
+"tools/dev/test_acceptance_memory.py" = ["N812", "RUF100"]
+"tools/dev/test_acceptance_se.py" = ["E501", "I001", "N806", "N812", "RUF012", "RUF059"]
+"tools/dev/test_acceptance_strict.py" = ["N812"]
+"tools/dev/test_acceptance_targets.py" = ["N812", "RUF100"]
+"tools/dev/test_cc_watch.py" = ["RUF100"]
+"tools/dev/test_check_all.py" = ["E501", "I001", "N812", "RUF005", "RUF059", "RUF100"]
+"tools/dev/test_check_levelup.py" = ["E501", "N812", "RUF100"]
+"tools/dev/test_check_plans.py" = ["E501", "N812", "RUF012", "RUF100"]
+"tools/dev/test_check_route.py" = ["N812"]
+"tools/dev/test_check_se.py" = ["N812", "RUF100"]
+"tools/dev/test_check_session.py" = ["E501", "I001", "N812", "RUF100"]
+"tools/dev/test_check_setup.py" = ["N812", "RUF100"]
+"tools/dev/test_live_window.py" = ["E501", "F401", "N812", "RUF005", "RUF015", "RUF059", "RUF100", "SIM115"]
+"tools/dev/test_new_game.py" = ["E501", "RUF100", "SIM102"]
+"tools/dev/test_splash.py" = ["N812", "RUF100"]
+"tools/dev/think_classes.py" = ["C408", "E402", "E501", "E701", "E702", "E741", "F841", "I001", "SIM105", "SIM115"]
+"tools/logs/context_cost.py" = ["E401", "E501", "I001", "SIM115"]
+"tools/logs/context_model.py" = ["B007", "E401", "E501", "E702", "F401", "I001", "N806", "SIM115"]
+"tools/logs/fights.py" = ["B007", "E401", "E501", "E741", "F841", "I001", "RUF005", "SIM105"]
+"tools/logs/gap_mix.py" = ["E401", "E501", "E741", "I001", "SIM115"]
+"tools/logs/hand_clicks.py" = ["E401", "E501", "F401", "I001", "SIM115"]
+"tools/logs/live_tests.py" = ["B023", "E401", "E501", "E731", "F401", "I001"]
+"tools/logs/mine_session.py" = ["E401", "E501", "F401", "I001", "SIM115"]
+"tools/logs/review_session.py" = ["B905", "E501", "E741", "I001", "N812", "RUF001", "RUF005"]
+"tools/logs/session_watch.py" = ["E401", "E501", "E741", "I001", "N806", "RUF001", "RUF005", "SIM105", "SIM115"]
+"tools/logs/story_stalls.py" = ["B905", "E401", "E501", "E741", "I001", "RUF001", "RUF007", "SIM115"]
+"tools/logs/test_fights.py" = ["E401", "E501", "I001"]
+"tools/logs/test_review_session.py" = ["E501", "E741", "I001", "N812", "RUF001", "RUF005", "SIM115"]
+"tools/logs/think_by_situation.py" = ["E401", "I001", "SIM115"]
+"tools/logs/tool_latency.py" = ["E401", "E501", "E702", "I001", "SIM115"]
+"tools/logs/trim_estimate.py" = ["E401", "E501", "I001", "SIM105", "SIM115"]
+"tools/memory/_testutil.py" = ["N812"]
+"tools/memory/lint.py" = ["N812", "RUF100"]
+"tools/memory/memlib.py" = ["UP017"]
+"tools/memory/new_playthrough.py" = ["N812", "RUF100"]
+"tools/memory/session.py" = ["E501", "E741", "N812", "RUF005", "RUF100"]
+"tools/memory/snapshots.py" = ["N806", "N812", "RUF100", "UP035"]
+"tools/memory/test_git_safety.py" = ["N812", "RUF100"]
+"tools/memory/test_lint.py" = ["I001", "N812"]
+"tools/memory/test_new_playthrough.py" = ["N812", "RUF059"]
+"tools/memory/test_session.py" = ["E501", "N812", "RUF059"]
+"tools/memory/test_snapshots.py" = ["N812"]
+"tools/steam_paths.py" = ["E501"]
+"tools/test_bench_preflight.py" = ["E501", "N812", "RUF100"]
+"tools/test_bg3le_buildinfo.py" = ["N812", "RUF100"]
+"tools/test_bg3le_static_data.py" = ["E501"]
+"tools/test_pak.py" = ["B007", "B905", "E501", "I001", "RUF007", "RUF059", "RUF100"]
+"tools/test_repo_paths.py" = ["E501", "N812"]
+"tools/test_steam_paths.py" = ["RUF059", "RUF100"]
+"tools/vis/gen_marker_index.py" = ["SIM115", "UP031"]
+"tools/vis/obs_size.py" = ["B905", "E501"]
+"tools/vis/overlap.py" = ["B905", "C408", "I001"]
+"tools/vis/series_report.py" = ["B905", "C408", "E501", "N812", "RUF005", "RUF007"]
+"tools/vis/test_overlap.py" = ["E401", "I001", "RUF059"]
+"tools/vis/test_series_report.py" = ["C402", "N812"]
+
+[format]
+# Legacy files not yet in ruff format (2026-10-21). Only shrinks; format a file only when you own it.
+exclude = [
+    "bridge/src/bg3ai/__init__.py",
+    "bridge/src/bg3ai/actq.py",
+    "bridge/src/bg3ai/areablock.py",
+    "bridge/src/bg3ai/boxclick.py",
+    "bridge/src/bg3ai/clicker.py",
+    "bridge/src/bg3ai/compact.py",
+    "bridge/src/bg3ai/compact_check.py",
+    "bridge/src/bg3ai/companions.py",
+    "bridge/src/bg3ai/debrief.py",
+    "bridge/src/bg3ai/delta.py",
+    "bridge/src/bg3ai/economy.py",
+    "bridge/src/bg3ai/game.py",
+    "bridge/src/bg3ai/hotbar.py",
+    "bridge/src/bg3ai/input.py",
+    "bridge/src/bg3ai/jobpush.py",
+    "bridge/src/bg3ai/lessons.py",
+    "bridge/src/bg3ai/leveling.py",
+    "bridge/src/bg3ai/longnav.py",
+    "bridge/src/bg3ai/lore.py",
+    "bridge/src/bg3ai/luadebug.py",
+    "bridge/src/bg3ai/macros.py",
+    "bridge/src/bg3ai/memtools.py",
+    "bridge/src/bg3ai/metrics.py",
+    "bridge/src/bg3ai/milestones.py",
+    "bridge/src/bg3ai/naming.py",
+    "bridge/src/bg3ai/navhints.py",
+    "bridge/src/bg3ai/offlimits.py",
+    "bridge/src/bg3ai/party.py",
+    "bridge/src/bg3ai/progress.py",
+    "bridge/src/bg3ai/reactclick.py",
+    "bridge/src/bg3ai/render.py",
+    "bridge/src/bg3ai/route.py",
+    "bridge/src/bg3ai/rules.py",
+    "bridge/src/bg3ai/saver.py",
+    "bridge/src/bg3ai/server.py",
+    "bridge/src/bg3ai/skipper.py",
+    "bridge/src/bg3ai/spellprep.py",
+    "bridge/src/bg3ai/turn.py",
+    "bridge/src/bg3ai/twostep.py",
+    "bridge/src/bg3ai/wiki.py",
+    "bridge/tests/fake_bg3le.py",
+    "bridge/tests/test_ability_names.py",
+    "bridge/tests/test_actq.py",
+    "bridge/tests/test_answer_numbers.py",
+    "bridge/tests/test_boxclick.py",
+    "bridge/tests/test_cc_saves.py",
+    "bridge/tests/test_click_replay.py",
+    "bridge/tests/test_clicker.py",
+    "bridge/tests/test_climb_settle.py",
+    "bridge/tests/test_clock.py",
+    "bridge/tests/test_combat_tools.py",
+    "bridge/tests/test_compact.py",
+    "bridge/tests/test_companions.py",
+    "bridge/tests/test_connections.py",
+    "bridge/tests/test_container_close.py",
+    "bridge/tests/test_debrief.py",
+    "bridge/tests/test_debrief_server.py",
+    "bridge/tests/test_delta.py",
+    "bridge/tests/test_disabled.py",
+    "bridge/tests/test_drain_bounded.py",
+    "bridge/tests/test_economy.py",
+    "bridge/tests/test_event_backlog.py",
+    "bridge/tests/test_event_echo.py",
+    "bridge/tests/test_fair_render.py",
+    "bridge/tests/test_far_moves.py",
+    "bridge/tests/test_frontier_ways.py",
+    "bridge/tests/test_game_moved.py",
+    "bridge/tests/test_hazards.py",
+    "bridge/tests/test_hint_tools.py",
+    "bridge/tests/test_hotbar.py",
+    "bridge/tests/test_hotbar_route.py",
+    "bridge/tests/test_item_ref.py",
+    "bridge/tests/test_keeper_mode.py",
+    "bridge/tests/test_layout.py",
+    "bridge/tests/test_lessons.py",
+    "bridge/tests/test_leveling.py",
+    "bridge/tests/test_load_loading.py",
+    "bridge/tests/test_longnav.py",
+    "bridge/tests/test_lore.py",
+    "bridge/tests/test_memtools.py",
+    "bridge/tests/test_metrics.py",
+    "bridge/tests/test_milestones.py",
+    "bridge/tests/test_naming.py",
+    "bridge/tests/test_nav_audit.py",
+    "bridge/tests/test_note.py",
+    "bridge/tests/test_objectives.py",
+    "bridge/tests/test_offlimits.py",
+    "bridge/tests/test_party.py",
+    "bridge/tests/test_pipelining.py",
+    "bridge/tests/test_plates.py",
+    "bridge/tests/test_prepare_spells.py",
+    "bridge/tests/test_progress.py",
+    "bridge/tests/test_queue_stop_reason.py",
+    "bridge/tests/test_reactclick.py",
+    "bridge/tests/test_read_latency.py",
+    "bridge/tests/test_result_size.py",
+    "bridge/tests/test_revive.py",
+    "bridge/tests/test_route.py",
+    "bridge/tests/test_rules.py",
+    "bridge/tests/test_saver.py",
+    "bridge/tests/test_saves.py",
+    "bridge/tests/test_se_tools.py",
+    "bridge/tests/test_select.py",
+    "bridge/tests/test_skipper.py",
+    "bridge/tests/test_talk_stale.py",
+    "bridge/tests/test_think_acting.py",
+    "bridge/tests/test_tool_docs.py",
+    "bridge/tests/test_travel_legs.py",
+    "bridge/tests/test_travel_party.py",
+    "bridge/tests/test_triage_live.py",
+    "bridge/tests/test_turn_based.py",
+    "bridge/tests/test_turn_chain.py",
+    "bridge/tests/test_turn_group.py",
+    "bridge/tests/test_turn_limit.py",
+    "bridge/tests/test_turn_macros.py",
+    "bridge/tests/test_turn_rpcs.py",
+    "bridge/tests/test_twostep.py",
+    "bridge/tests/test_ui_confirm.py",
+    "bridge/tests/test_wiki_format.py",
+    "native/bg3sdl/test/test_shim.py",
+    "runner/clients.py",
+    "runner/dashboard/feeds.py",
+    "runner/dashboard/seriesview.py",
+    "runner/dashboard/serve.py",
+    "runner/dashboard/story.py",
+    "runner/dashboard/test_feeds.py",
+    "runner/dashboard/test_seriesview.py",
+    "runner/dashboard/test_serve.py",
+    "runner/dashboard/test_story.py",
+    "runner/display_env.py",
+    "runner/fairness.py",
+    "runner/host_tuning.py",
+    "runner/judge.py",
+    "runner/memory_keeper.py",
+    "runner/model_time.py",
+    "runner/play.py",
+    "runner/ramwatch.py",
+    "runner/runs.py",
+    "runner/sandbox.py",
+    "runner/test_clients.py",
+    "runner/test_crash.py",
+    "runner/test_display_env.py",
+    "runner/test_fairness.py",
+    "runner/test_host_tuning.py",
+    "runner/test_judge.py",
+    "runner/test_memory_keeper.py",
+    "runner/test_model_time.py",
+    "runner/test_play.py",
+    "runner/test_ramwatch.py",
+    "runner/test_runs.py",
+    "runner/test_sandbox.py",
+    "runner/test_scenarios.py",
+    "runner/triage.py",
+    "tools/bench_preflight.py",
+    "tools/bg3le_buildinfo.py",
+    "tools/container/egress_proxy.py",
+    "tools/container/mcp_smoke.py",
+    "tools/container/sandbox_smoke.py",
+    "tools/dev/acceptance.py",
+    "tools/dev/acceptance_check.py",
+    "tools/dev/check_act.py",
+    "tools/dev/check_all.py",
+    "tools/dev/check_levelup.py",
+    "tools/dev/check_plans.py",
+    "tools/dev/check_reads.py",
+    "tools/dev/check_route.py",
+    "tools/dev/check_se.py",
+    "tools/dev/check_session.py",
+    "tools/dev/check_setup.py",
+    "tools/dev/check_vis.py",
+    "tools/dev/combat_review.py",
+    "tools/dev/gap_causes.py",
+    "tools/dev/test_acceptance_check.py",
+    "tools/dev/test_acceptance_memory.py",
+    "tools/dev/test_acceptance_se.py",
+    "tools/dev/test_acceptance_strict.py",
+    "tools/dev/test_acceptance_targets.py",
+    "tools/dev/test_cc_watch.py",
+    "tools/dev/test_check_all.py",
+    "tools/dev/test_check_levelup.py",
+    "tools/dev/test_check_plans.py",
+    "tools/dev/test_check_se.py",
+    "tools/dev/test_check_session.py",
+    "tools/dev/test_check_setup.py",
+    "tools/dev/test_live_window.py",
+    "tools/dev/test_new_game.py",
+    "tools/dev/test_ui_named_reads.py",
+    "tools/dev/think_classes.py",
+    "tools/logs/context_cost.py",
+    "tools/logs/context_model.py",
+    "tools/logs/fights.py",
+    "tools/logs/gap_mix.py",
+    "tools/logs/hand_clicks.py",
+    "tools/logs/live_tests.py",
+    "tools/logs/mine_session.py",
+    "tools/logs/review_session.py",
+    "tools/logs/session_watch.py",
+    "tools/logs/story_stalls.py",
+    "tools/logs/test_fights.py",
+    "tools/logs/test_review_session.py",
+    "tools/logs/test_wait_new_session.py",
+    "tools/logs/think_by_situation.py",
+    "tools/logs/tool_latency.py",
+    "tools/logs/trim_estimate.py",
+    "tools/memory/_testutil.py",
+    "tools/memory/lint.py",
+    "tools/memory/memlib.py",
+    "tools/memory/new_playthrough.py",
+    "tools/memory/session.py",
+    "tools/memory/snapshots.py",
+    "tools/memory/test_git_safety.py",
+    "tools/memory/test_lint.py",
+    "tools/memory/test_new_playthrough.py",
+    "tools/memory/test_session.py",
+    "tools/memory/test_snapshots.py",
+    "tools/pak.py",
+    "tools/repo_paths.py",
+    "tools/steam_paths.py",
+    "tools/test_bench_preflight.py",
+    "tools/test_bg3le_buildinfo.py",
+    "tools/test_bg3le_patches.py",
+    "tools/test_bg3le_static_data.py",
+    "tools/test_pak.py",
+    "tools/test_repo_paths.py",
+    "tools/test_steam_paths.py",
+    "tools/vis/gen_marker_index.py",
+    "tools/vis/obs_size.py",
+    "tools/vis/overlap.py",
+    "tools/vis/pak.py",
+    "tools/vis/series_report.py",
+    "tools/vis/test_overlap.py",
+    "tools/vis/test_series_report.py",
+]

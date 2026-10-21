@@ -2,3 +2,43 @@
 # Members: the MCP bridge (bg3ai) and the packages under packages/ (bg3harness, bg3bench, bg3play).
 [tool.uv.workspace]
 members = ["bridge", "packages/*"]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "lz4>=4.0",
+    "pyright[nodejs]>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.1",
+    "zstandard>=0.22",
+]
+
+# One pytest run over every test directory; the unittest tests run under it unchanged (prepend import mode puts each
+# test file's directory on sys.path, as `python -m unittest discover -s <dir>` does). CI runs `-m "not live"`.
+[tool.pytest.ini_options]
+testpaths = [
+    "bridge/tests",
+    "runner",
+    "tools",
+    "packages/*/tests",
+]
+python_files = ["test_*.py"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "unit: pure logic, no I/O beyond tmp dirs",
+    "integration: one real component against fakes or recorded fixtures",
+    "e2e: the whole offline pipeline (fake mod, scripted model)",
+    "live: needs the real game, Steam or a paid model; never in CI",
+]
+
+# Coverage per package: CI prints one `coverage report --include=<package>/*` per entry of `source`.
+# No thresholds yet (2026-10-21 baseline in research/ovh/found.md); they only go up.
+[tool.coverage.run]
+branch = true
+source = ["bridge/src/bg3ai", "runner", "tools", "packages"]
+omit = ["*/test_*.py", "*/tests/*"]
+
+[tool.coverage.report]
+skip_empty = true
+precision = 1

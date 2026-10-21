@@ -48,3 +48,10 @@ CLAUDE.local.md
 *.webm
 # pi is installed per repo from the lockfile (tools/pi/README.md)
 /tools/pi/node_modules/
+
+# Tool caches and coverage data
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
