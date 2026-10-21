@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # isort: off
-from test_se_tools import InsertFake  # sets BG3AI_RUNTIME before importing the server
+from test_se_tools_world import InsertFake  # sets BG3AI_RUNTIME before importing the server (via test_se_tools)
 from bg3ai.game import JobResult
 from bg3ai.tools import core, inventory
 # isort: on
