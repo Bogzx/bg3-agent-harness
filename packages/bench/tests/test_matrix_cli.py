@@ -171,6 +171,10 @@ def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
          "duplicate"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/claude.toml']\nconditions = ['nope']", "nope"),
         ("not toml =", "night1.toml"),
+        ("name = 'm'\nscenarios = ['grove']\n[[group]]\nscenarios = ['grove']", "either [[group]]"),
+        ("name = 'm'\n[[group]]\nscenarios = ['nope']", "no scenario 'nope'"),
+        ("name = 'm'\n" + "[[group]]\nscenarios = ['grove']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']\n" * 2,
+         "two groups share"),
     ],
 )  # fmt: skip
 def test_bad_matrix_files_are_refused(tmp_path, capsys, body, why):
@@ -185,3 +189,45 @@ def test_plan_with_an_unreadable_budget(tmp_path):
     (repo / "runtime" / "budget.json").unlink()
     code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path)))
     assert code == 0 and "unreadable" in out and "stops before its first job" in out
+
+
+GROUPS = """
+name = "pilot"
+allow_gaps = true
+
+[[group]]
+models = ["profiles/pi.toml"]
+scenarios = ["nautiloid"]
+conditions = ["rules", "rules+coaching@1a2b3c4d"]
+repeats = 2
+
+[[group]]
+models = ["profiles/claude.toml"]
+scenarios = ["nautiloid"]
+conditions = ["rules+coaching@1a2b3c4d"]
+
+[budget]
+max_cost = { nautiloid = 0.25 }
+"""
+
+
+def test_groups_merge_repeat_major(tmp_path):
+    m = matrix_cli.load(matrix_file(tmp_path, GROUPS), fake_repo(tmp_path))
+    assert [(j["model"], j["condition"], j["repeat"]) for j in m["jobs"]] == [
+        ("anthropic/claude-opus-5.5", "rules", 1),
+        ("anthropic/claude-opus-5.5", "rules+coaching@1a2b3c4d", 1),
+        ("claude-opus-5-5", "rules+coaching@1a2b3c4d", 1),
+        ("anthropic/claude-opus-5.5", "rules", 2),
+        ("anthropic/claude-opus-5.5", "rules+coaching@1a2b3c4d", 2),
+    ]
+    assert m["conditions"] == ["rules", "rules+coaching@1a2b3c4d"]
+    code, out = cli(fake_repo(tmp_path / "b"), "plan", "--matrix", str(matrix_file(tmp_path, GROUPS)))
+    assert code == 0 and "5 jobs (4 paid), reserve $1.00" in out
+
+
+def test_the_pilot_matrix_loads_in_this_repo():
+    repo = Path(__file__).resolve().parents[3]
+    m = matrix_cli.load(repo / "packages" / "bench" / "matrices" / "pilot-2026-10-22.toml", repo)
+    paid = [j for j in m["jobs"] if j["client"] in matrix.PAID_CLIENTS]
+    assert len(paid) == 6 and sum(j["max_cost"] for j in paid) <= 1.5  # the DeepSeek budget
+    assert [j["client"] for j in m["jobs"]].count("claude") == 1

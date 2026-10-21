@@ -13,6 +13,10 @@ The matrix file (paths relative to the repo):
     file = "runtime/budget.json"                      # the machine's shared budget (the default)
     max_cost = { nautiloid = 5.0 }                    # USD per run of a scenario: the reserve and a paid run's cap
 
+Cells that differ by model (e.g. 3 paid runs × 2 conditions plus 1 subscription run) go in `[[group]]` tables, each
+with its own models, scenarios, conditions and repeats, instead of the top-level four. The groups' jobs merge
+repeat-major (every group's repeat 1 first).
+
 - plan: a dry run. The jobs as a table, the reserve, the budget left and what play.py lacks for each condition;
   writes nothing.
 - run: writes the plan (or keeps the same one) and runs it through the legacy CLI adapter until done or a stop.
@@ -34,6 +38,7 @@ from bg3bench import matrix
 from bg3bench.adapters import legacy_cli, play_flags
 
 BUDGET = "runtime/budget.json"
+GROUP_KEYS = ("models", "scenarios", "conditions", "repeats")
 
 
 class MatrixFileError(ValueError):
@@ -58,6 +63,32 @@ def load_profile(path: Path) -> dict:
     return {"slug": raw["model"], "client": raw["client"], "effort": raw.get("effort"), "profile": str(path)}
 
 
+def _scenarios(raw: dict, path: Path, repo: Path) -> list[str]:
+    """One grid's (the top level's or a [[group]]'s) repeats and scenarios, checked; its scenarios."""
+    repeats = raw.get("repeats", 1)
+    if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
+        raise MatrixFileError(f"{path}: repeats must be an integer >= 1")
+    scenarios = _list(raw, "scenarios", path)
+    for s in scenarios:
+        if not (repo / "scenarios" / f"{s}.json").is_file():
+            raise MatrixFileError(f"{path}: no scenario {s!r} (scenarios/{s}.json)")
+    return scenarios
+
+
+def _group(raw: dict, path: Path, repo: Path, max_cost: dict) -> tuple[list[dict], list[str]]:
+    """One grid's jobs and conditions (after _scenarios checked it)."""
+    scenarios, repeats = raw["scenarios"], raw.get("repeats", 1)
+    models = [load_profile(repo / p) for p in _list(raw, "models", path)]
+    conds = _list(raw, "conditions", path)
+    for c in conds:
+        play_flags.entry(c)  # a malformed condition id raises here
+    try:
+        jobs = matrix.plan(models, scenarios, conds, repeats, max_cost={k: float(v) for k, v in max_cost.items()})
+    except ValueError as e:
+        raise MatrixFileError(f"{path}: {e}") from None
+    return jobs, conds
+
+
 def load(path: str | Path, repo: Path) -> dict:
     """The matrix file -> {"name", "jobs", "budget", "conditions", "allow_gaps"}; checks profiles and scenarios."""
     path = Path(path)
@@ -68,29 +99,33 @@ def load(path: str | Path, repo: Path) -> dict:
     name = raw.get("name")
     if not isinstance(name, str) or not name or name != matrix._slug(name):
         raise MatrixFileError(f"{path}: name must be a non-empty slug")
-    repeats = raw.get("repeats", 1)
-    if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
-        raise MatrixFileError(f"{path}: repeats must be an integer >= 1")
-    scenarios = _list(raw, "scenarios", path)
-    for s in scenarios:
-        if not (repo / "scenarios" / f"{s}.json").is_file():
-            raise MatrixFileError(f"{path}: no scenario {s!r} (scenarios/{s}.json)")
     budget = raw.get("budget", {})
     max_cost = budget.get("max_cost", {})
     if not isinstance(max_cost, dict) or not all(
         isinstance(v, int | float) and not isinstance(v, bool) and v > 0 for v in max_cost.values()
     ):
         raise MatrixFileError(f"{path}: budget.max_cost maps scenarios to USD > 0")
-    if unknown := sorted(set(max_cost) - set(scenarios)):
+    groups = raw.get("group")
+    if groups is None:
+        groups = [raw]
+    elif (
+        not isinstance(groups, list)
+        or not groups
+        or any(k in raw for k in GROUP_KEYS)
+        or not all(isinstance(g, dict) for g in groups)
+    ):
+        raise MatrixFileError(f"{path}: give either [[group]] tables or top-level {', '.join(GROUP_KEYS)}")
+    named = {s for g in groups for s in _scenarios(g, path, repo)}
+    if unknown := sorted(set(max_cost) - named):
         raise MatrixFileError(f"{path}: budget.max_cost names scenarios not in the matrix: {unknown}")
-    models = [load_profile(repo / p) for p in _list(raw, "models", path)]
-    conds = _list(raw, "conditions", path)
-    for c in conds:
-        play_flags.entry(c)  # a malformed condition id raises here
-    try:
-        jobs = matrix.plan(models, scenarios, conds, repeats, max_cost={k: float(v) for k, v in max_cost.items()})
-    except ValueError as e:
-        raise MatrixFileError(f"{path}: {e}") from None
+    jobs, conds = [], []
+    for g in groups:
+        g_jobs, g_conds = _group(g, path, repo, max_cost)
+        jobs += g_jobs
+        conds += [c for c in g_conds if c not in conds]
+    if len({j["id"] for j in jobs}) != len(jobs):
+        raise MatrixFileError(f"{path}: duplicate jobs: two groups share a model, scenario and condition")
+    jobs.sort(key=lambda j: j["repeat"])  # stable: repeat-major across groups
     for j in jobs:
         if j["client"] in matrix.PAID_CLIENTS and j["max_cost"] is None:
             raise MatrixFileError(f"{path}: {j['client']} spends money: give budget.max_cost for {j['scenario']}")

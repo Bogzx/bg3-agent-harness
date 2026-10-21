@@ -1,0 +1,23 @@
+# Tonight's pilot (2026-10-22): nautiloid, DeepSeek V4.1 Flash through pi x 3 runs in two conditions, and Claude Code
+# (account 2's subscription: run the matrix with CLAUDE_CONFIG_DIR=~/.claude-2, no USD cost) x 1 run.
+# A pilot: play.py can't play rules-only or a frozen coaching bundle yet (allow_gaps), so these runs are labelled,
+# never published. coaching@edaa24f8 = sha256 of packages/harness/prompts/coaching/*.md (assemble.py's COACHING order,
+# stripped, joined by a blank line, trailing newline), first 8 hex.
+# DeepSeek budget: USD 1.5 max = 6 paid runs x max_cost 0.25 (the reserve); runtime/budget.json's cap must allow it.
+name = "pilot-2026-10-22"
+allow_gaps = true
+
+[[group]]
+models = ["profiles/deepseek-flash.toml"]
+scenarios = ["nautiloid"]
+conditions = ["rules", "rules+coaching@edaa24f8"]
+repeats = 3
+
+[[group]]
+models = ["profiles/opus-5.5-claude-code.toml"]
+scenarios = ["nautiloid"]
+conditions = ["rules+coaching@edaa24f8"]
+repeats = 1
+
+[budget]
+max_cost = { nautiloid = 0.25 }
