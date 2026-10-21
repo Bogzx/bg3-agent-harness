@@ -1,11 +1,12 @@
 # Human baseline
 
 How the owner plays the benchmark scenarios through the normal game, what to record, and how the attempts become
-the leaderboard row **human (owner)**. The reader is `bg3bench.human` (packages/bench), the file format is
+the leaderboard row "human (owner)". The reader is `bg3bench.human` (packages/bench), the file format is
 `packages/bench/schema/human.v1.schema.json`.
 
-The row is a reference point, not a contestant like the others: the owner knows BG3 and may have seen these scenes
-before, so it shows what an experienced player does with the same start, goal and cap. It is scored exactly like a model's headline: first try, no reload, inside the scenario's cap.
+The row is a reference point. The owner knows BG3 and may have seen these scenes before, so it shows what an
+experienced player does with the same start, goal and cap. It is scored exactly like a model's headline: first try,
+no reload, inside the scenario's cap.
 
 ## Before a session
 
@@ -121,4 +122,4 @@ to goal; the cost columns show "–" and the row has no point on the success-vs-
 (`publish.py` doesn't yet).
 
 Time comparisons are rough: a model's wall time includes its own latency, and in the fights a human's turn takes
-seconds where a model's takes minutes. Success rates are the comparison that counts.
+seconds where a model's takes minutes. Compare success rates first.
