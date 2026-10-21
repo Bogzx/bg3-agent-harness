@@ -1,6 +1,6 @@
 # CI (TARGET-ARCHITECTURE.md "CI pipeline"). No job needs the game, a GPU, Steam or an API key.
 # Report mode until Phase D (OVERHAUL-PLAN.md): import-linter and the boundary test print violations without failing.
-# To enforce them, add --enforce to the import_contracts.py step and BG3AI_BOUNDARIES_ENFORCE: "1" to the env below.
+# To enforce both, set enforce-boundaries = true under [tool.bg3ci] in pyproject.toml (tools/ci/import_contracts.py).
 name: CI
 
 on:
@@ -18,7 +18,6 @@ concurrency:
 
 env:
   UV_PYTHON: "3.14"
-  BG3AI_BOUNDARIES_ENFORCE: "0"
 
 jobs:
   lint:

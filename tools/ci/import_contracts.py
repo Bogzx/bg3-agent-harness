@@ -5,9 +5,10 @@ import-linter refuses a root package it can't import, so this drops the missing 
 every contract that has nothing left to compare, then runs lint-imports on what remains.
 
 Report mode (the default until Phase D): broken contracts are printed and the exit code is 0. Only a run that
-didn't get to check the contracts (bad config, import-linter crash) fails. To enforce, run with --enforce: the CI
-step in .github/workflows/ci.yml then fails on a broken contract. When all packages exist, the CI step can call
-`uv run lint-imports` directly and this wrapper can go.
+didn't get to check the contracts (bad config, import-linter crash) fails. The one switch to enforce is
+`enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml: this check (in CI and locally) then fails on a
+broken contract, and tools/ci/test_boundaries.py fails on a boundary violation. --enforce forces it for one run.
+When all packages exist, the CI step can call `uv run lint-imports` directly and this wrapper can go.
 
     uv run python tools/ci/import_contracts.py [--enforce]
 """
@@ -76,11 +77,21 @@ def _importable(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def enforced(pyproject: Mapping[str, Any]) -> bool:
+    """The Phase D switch: [tool.bg3ci] enforce-boundaries (default false); anything but a bool is an error."""
+    flag = pyproject.get("tool", {}).get("bg3ci", {}).get("enforce-boundaries", False)
+    if not isinstance(flag, bool):
+        raise ValueError(f"[tool.bg3ci] enforce-boundaries must be true or false, got {flag!r}")
+    return flag
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--enforce", action="store_true", help="exit 1 on a broken contract (Phase D on)")
+    ap.add_argument("--enforce", action="store_true", help="exit 1 on a broken contract, whatever pyproject says")
     args = ap.parse_args(argv)
-    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["importlinter"]
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    enforce = args.enforce or enforced(pyproject)
+    cfg = pyproject["tool"]["importlinter"]
     filtered, dropped = filter_config(cfg, _importable)
     missing = sorted(set(cfg["root_packages"]) - set(filtered["root_packages"]))
     if missing:
@@ -97,8 +108,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "Contracts: " not in out.stdout:
         print("import-linter did not check the contracts")
         return 2
-    if out.returncode and not args.enforce:
-        print("REPORT MODE: broken contracts above don't fail the build until Phase D (--enforce)")
+    if out.returncode and not enforce:
+        print(
+            "REPORT MODE: broken contracts above don't fail the build until Phase D ([tool.bg3ci] enforce-boundaries)"
+        )
         return 0
     return out.returncode
 

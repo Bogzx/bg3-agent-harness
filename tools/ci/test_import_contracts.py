@@ -102,3 +102,26 @@ def test_enforce_fails_on_a_broken_contract(tree: Path) -> None:
 def test_enforce_passes_a_kept_contract(tree: Path) -> None:
     (tree / "ilt_core" / "bad.py").write_text("")
     assert import_contracts.main(["--enforce"]) == 0
+
+
+@pytest.mark.unit
+def test_enforced_reads_the_bg3ci_switch() -> None:
+    assert import_contracts.enforced({}) is False
+    assert import_contracts.enforced({"tool": {"bg3ci": {"enforce-boundaries": True}}}) is True
+    with pytest.raises(ValueError, match="true or false"):
+        import_contracts.enforced({"tool": {"bg3ci": {"enforce-boundaries": "yes"}}})
+
+
+@pytest.mark.integration
+def test_the_pyproject_switch_alone_enforces(tree: Path) -> None:
+    pyproject = tree / "pyproject.toml"
+    pyproject.write_text("[tool.bg3ci]\nenforce-boundaries = true\n" + pyproject.read_text())
+    assert import_contracts.main([]) == 1
+
+
+@pytest.mark.unit
+def test_the_repo_is_in_report_mode_until_phase_d() -> None:
+    import tomllib
+
+    pyproject = tomllib.loads((import_contracts.ROOT / "pyproject.toml").read_text())
+    assert import_contracts.enforced(pyproject) is False, "Phase D flipped the switch: drop this test"

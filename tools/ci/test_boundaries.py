@@ -8,8 +8,9 @@ reports:
 - any string literal, or `"a" / "b"` chain of literals, that names a path owned by a package the source must not
   depend on (FORBIDDEN below). Docstrings are not scanned.
 
-REPORT MODE until Phase D (ENFORCE = False): the test prints the violations as a warning and passes. To enforce,
-set ENFORCE = True (or BG3AI_BOUNDARIES_ENFORCE=1 in the CI step); then any violation fails the test.
+REPORT MODE until Phase D: the test prints the violations as a warning and passes. The one switch to enforce is
+`enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml (it enforces the import-linter contracts too, see
+tools/ci/import_contracts.py); then any violation fails the test. BG3AI_BOUNDARIES_ENFORCE=1 forces it for one run.
 
     uv run python tools/ci/test_boundaries.py      # print the violations
 """
@@ -19,14 +20,18 @@ from __future__ import annotations
 import ast
 import os
 import sys
+import tomllib
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
 
+import import_contracts
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-ENFORCE = os.environ.get("BG3AI_BOUNDARIES_ENFORCE") == "1"
+ENFORCE = os.environ.get("BG3AI_BOUNDARIES_ENFORCE") == "1" or import_contracts.enforced(
+    tomllib.loads((ROOT / "pyproject.toml").read_text())
+)
 
 # Paths each side owns (TARGET-ARCHITECTURE.md, research/arch/harness.md 3.3).
 APP = ("playthroughs/", "memory-template/", "tools/memory", "tools/logs", "packages/app")
