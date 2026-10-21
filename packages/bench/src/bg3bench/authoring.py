@@ -8,14 +8,22 @@
    for a trivial scenario) as `<oracle_dir>/<name>.json`, with the trajectory file's sha256.
 4. `run_baselines`: do-nothing × n and random × n seeds through the matrix runner, on a budget of $0, and the
    baseline rule: each must pass in under 5% of at least 5 valid runs.
+
+Step 1 from the shell, with tools/saves/inspect.py as the inspector:
+
+    uv run --project packages/bench python -m bg3bench.authoring register <save folder> <store> <name>
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
+import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -32,6 +40,7 @@ NOT_NEUTRAL = (
 )  # fmt: skip
 BASELINE_RULE = 0.05
 BASELINE_MIN_RUNS = 5
+REPO = Path(__file__).resolve().parents[4]
 
 
 class AuthoringError(ValueError):
@@ -236,3 +245,45 @@ def run_baselines(
         out[a]["n"] >= BASELINE_MIN_RUNS and out[a]["k"] / out[a]["n"] < BASELINE_RULE for a in ("donothing", "random")
     )
     return out
+
+
+def save_inspector(repo: Path = REPO) -> Callable[[Path], list[str]]:
+    """tools/saves/inspect.py (the harness's, not packaged) as register_save's inspector: one line per finding."""
+    tools = str(repo / "tools" / "saves")
+    if tools not in sys.path:
+        sys.path.append(tools)  # its `import lsf`; appended so its inspect.py never shadows the stdlib's
+    spec = importlib.util.spec_from_file_location("bg3_save_inspect", repo / "tools" / "saves" / "inspect.py")
+    if spec is None or spec.loader is None:
+        raise AuthoringError(f"no save inspector at {repo / 'tools' / 'saves' / 'inspect.py'}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def inspect(folder: Path) -> list[str]:
+        return [
+            f"{h['kind']} {h['value']} in {', '.join(h['members'])}"
+            for lsv in sorted(folder.glob("*.lsv"))
+            for h in mod.inspect_save(lsv)["findings"]
+        ]
+
+    return inspect
+
+
+def main(argv: Sequence[str] | None = None, *, inspector: Callable[[Path], list[str]] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m bg3bench.authoring", description="Register a start save (step 1).")
+    sub = ap.add_subparsers(dest="command", required=True)
+    reg = sub.add_parser("register", help="copy and register a SCN-<name> save folder")
+    reg.add_argument("save", type=Path, help="the save folder <owner>-<id>__SCN-<name> (never modified)")
+    reg.add_argument("store", type=Path, help="the start-save store (outside the repo)")
+    reg.add_argument("name", help="the scenario name")
+    args = ap.parse_args(argv)
+    try:
+        got = register_save(args.save, args.store, args.name, inspector=inspector or save_inspector(), now=time.time)
+    except AuthoringError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    print(f"registered {got['name']}: {args.store / got['name'] / got['folder']} (lsv sha1 {got['lsv_sha1']})")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - python -m bg3bench.authoring
+    raise SystemExit(main())

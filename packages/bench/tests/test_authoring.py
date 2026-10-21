@@ -175,3 +175,20 @@ def test_a_paid_baseline_run_stops_at_the_zero_budget(tmp_path):
 
     out = authoring.run_baselines(tmp_path / "bl", NAME, run_one, now=Clock().now, sleep=Clock().sleep)
     assert out["stop"] == matrix.BUDGET and out["donothing"]["n"] == 1 and out["ok"] is False
+
+
+def test_register_cli(tmp_path, capsys):
+    src = make_save(tmp_path)
+    store = tmp_path / "store"
+    assert authoring.main(["register", str(src), str(store), NAME], inspector=lambda p: []) == 0
+    assert f"registered {NAME}: {store / NAME / FOLDER}" in capsys.readouterr().out
+    assert authoring.main(["register", str(src), str(store), NAME], inspector=lambda p: []) == 2
+    assert "registered once" in capsys.readouterr().err
+
+
+def test_the_save_inspector_is_the_harness_tool(tmp_path):
+    inspect = authoring.save_inspector()
+    assert inspect(tmp_path) == []  # no .lsv, no finding; the module loaded
+    import inspect as stdlib_inspect
+
+    assert hasattr(stdlib_inspect, "signature")  # tools/saves/inspect.py did not shadow it
