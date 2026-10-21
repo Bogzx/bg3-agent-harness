@@ -56,16 +56,53 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked
-      - name: pytest -m "not live"
-        run: uv run pytest -m "not live" --cov --cov-report=
-      - name: Coverage per package
-        if: always()
+      - name: pytest -m "not live and not e2e"
+        run: uv run pytest -m "not live and not e2e" --cov --cov-report=
+      - name: Coverage per package, with the floors of pyproject [tool.bg3ci.coverage-min]
+        run: uv run python tools/ci/coverage_gate.py
+
+  e2e:
+    name: e2e (web app in Playwright, bench offline pipeline)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/playthrough/web/package-lock.json
+            tools/pi/package-lock.json
+      - run: uv sync --locked
+      - name: Build the web app
+        working-directory: packages/playthrough/web
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
+      - name: Install pi (the bench e2e runs it)
+        working-directory: tools/pi
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(uv run python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - name: Cache the Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium
+      - name: Install chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: uv run playwright install chromium
+      - name: Install chromium's system libraries and ffmpeg (the recorder test encodes with libx264)
         run: |
-          for src in bridge/src/bg3ai runner tools packages/*/src; do
-            [ -d "$src" ] || continue
-            echo "== $src"
-            uv run coverage report --include="$src/*" | tail -1
-          done
+          uv run playwright install-deps chromium
+          command -v ffmpeg || sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: pytest -m e2e
+        run: uv run pytest -m "e2e and not live"
 
   lua:
     name: Lua suites (Docker)

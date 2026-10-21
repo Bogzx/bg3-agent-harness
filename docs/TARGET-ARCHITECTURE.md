@@ -121,12 +121,15 @@ Where this conflicts with how the code is today, the code moves toward this; new
 - **ruff** for lint and format (one config at the root), **pyright** for types (strict on the new packages,
   basic on legacy code until it is touched), **import-linter** for the dependency rule.
 - **pytest** as the runner (existing `unittest` tests keep working under it), with markers `unit`, `integration`,
-  `e2e`, `live`. Coverage is measured per package; thresholds only go up.
+  `e2e`, `live`. Coverage is measured per package; the floors are in the root `pyproject.toml`
+  (`[tool.bg3ci.coverage-min]`, checked by `tools/ci/coverage_gate.py`) and only go up.
 - TypeScript (pi extension, app frontend): `npm ci`, `tsc --noEmit`, eslint, vitest; Playwright for browser
   tests. Lua: the existing Docker suites (`tools/dev/test_*.sh`).
 - Pinned versions everywhere: pi via `tools/pi/package.json` + lockfile, bg3le by submodule, the game by buildid.
-- **The offline suite** is two commands from the repo root, the same ones CI runs: `uv run pytest -m "not live"`
-  (bridge, runner, tools, every package; about 9 minutes on dev2) and `bash tools/ci/lua_suites.sh` (every
+- **The offline suite** is three commands from the repo root, the same ones CI runs: `uv run pytest -m "not live
+  and not e2e"` (bridge, runner, tools, every package; about 10 minutes on dev2), `uv run pytest -m "e2e and not
+  live"` (the web app in Playwright after `npm run build` in `packages/playthrough/web`, and the bench pipeline
+  through pi after `npm ci` in `tools/pi`; its own CI job) and `bash tools/ci/lua_suites.sh` (every
   `tools/dev/test_*.sh` and `tools/vis/test_*.sh` under Docker; known-broken suites are listed in it with the
   reason). TypeScript is checked per package (`npm ci --ignore-scripts`, `tsc --noEmit`, `npm run check`, `npm test`)
   in `packages/playthrough/web` and `tools/pi`. Tests that need something a fresh clone lacks (a local file, the

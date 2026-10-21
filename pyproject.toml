@@ -33,8 +33,8 @@ markers = [
     "live: needs the real game, Steam or a paid model; never in CI",
 ]
 
-# Coverage per package: CI prints one `coverage report --include=<package>/*` per entry of `source`.
-# No thresholds yet (2026-10-21 baseline in research/ovh/found.md); they only go up.
+# Coverage per package: tools/ci/coverage_gate.py prints the total of each entry of `source` and of
+# [tool.bg3ci.coverage-min], and fails CI when a floored package is below its floor.
 [tool.coverage.run]
 branch = true
 source = ["bridge/src/bg3ai", "runner", "tools", "packages"]
@@ -43,6 +43,14 @@ omit = ["*/test_*.py", "*/tests/*"]
 [tool.coverage.report]
 skip_empty = true
 precision = 1
+
+# Coverage floors (percent, line + branch) of the offline run, `pytest -m "not live and not e2e"`. Each is the
+# measured value minus 1 (2026-10-22: bridge 88.3, harness 88.8, bench 99.8, playthrough 90.5). Ratchet only up.
+[tool.bg3ci.coverage-min]
+"bridge/src/bg3ai" = 87.3
+"packages/harness" = 87.8
+"packages/bench/src" = 98.8
+"packages/playthrough/src" = 89.5
 
 [tool.importlinter]
 root_packages = ["bg3ai", "bg3harness", "bg3bench", "bg3play"]
