@@ -60,13 +60,19 @@ class App:
             return None
         builders: dict[str, Callable[[], dict | None]] = {
             "sessions": lambda: api.sessions(s, pt),
-            "watch": lambda: api.watch(s, pt),
+            "watch": lambda: self.watch(pt),
             "memory/tree": lambda: api.memory_tree(s, pt),
             "memory/file": lambda: api.memory_file(s, pt, q.get("path", [""])[0]),
             "memory/log": lambda: api.memory_log(s, pt),
             "timeline": lambda: api.timeline(s, pt),
         }
         return builders[what]()
+
+    def watch(self, pt: str) -> dict:
+        """The Watch snapshot plus the stream id taken before it was built: reading the stream from that id gives
+        every change since (a line may come twice; the client drops repeats)."""
+        stream_id = self.hub.last_id()
+        return dict(api.watch(self.store, pt), stream_id=stream_id)
 
     def static(self, path: str) -> Path | None:
         if self.web_dir is None or not self.web_dir.is_dir():
@@ -83,6 +89,12 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
     class Handler(BaseHTTPRequestHandler):
         server_version = "bg3play/1"
         protocol_version = "HTTP/1.1"
+
+        def handle(self) -> None:
+            try:
+                super().handle()
+            except ConnectionResetError:
+                pass  # a browser dropping an idle keep-alive connection
 
         def log_message(self, format: str, *args: object) -> None:
             if verbose:

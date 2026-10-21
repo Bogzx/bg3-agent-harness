@@ -62,6 +62,8 @@ def test_json_endpoints(server):
     for what in ("sessions", "watch", "memory/tree", "memory/log", "timeline"):
         code, body = get_json(server, f"/api/v1/playthroughs/{PT}/{what}")
         assert code == 200 and body["v"] == 1 and body["playthrough"] == PT, what
+    _, _, hub = server
+    assert get_json(server, f"/api/v1/playthroughs/{PT}/watch")[1]["stream_id"] == hub.last_id()
     code, f = get_json(server, f"/api/v1/playthroughs/{PT}/memory/file?path=HANDOFF.md")
     assert code == 200 and f["text"].startswith("# Handoff")
 

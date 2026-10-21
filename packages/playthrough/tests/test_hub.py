@@ -171,3 +171,17 @@ def test_wait_returns_on_publish_and_close(rt: Path):
 def test_generation_without_dash_required(rt: Path):
     with pytest.raises(ValueError):
         Hub(RunStore(rt, rt), generation="a-b")
+
+
+def test_full_status_result_also_emits_party(rt: Path):
+    hub = make_hub(rt)
+    hub.poll()
+    status = "WHERE Grove | exploring | gold 5\nPARTY *e1 Tav Fighter1 HP 9/12 []"
+    append(rt / "actions.jsonl", json.dumps({"t": 5.0, "tool": "get_status", "args": {}, "ms": 2, "result": status}),
+           json.dumps({"t": 6.0, "tool": "look", "args": {}, "ms": 2, "result": "e1 Tav moved 3m"}))
+    hub.poll()
+    events, _, last = hub.read("g1-3")
+    assert types(events) == ["action", "party", "action"]
+    party = events[1].data
+    assert party["where"] == "Grove" and party["party"][0]["hp"] == 9 and party["source"] == "get_status"
+    assert hub.last_id() == last

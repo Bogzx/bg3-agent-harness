@@ -1,7 +1,8 @@
 """The SSE hub: feeds turn file changes into numbered events; viewers read them with Last-Event-ID resume.
 
 Feeds (each `poll()` returns the new (type, data) pairs since its last call):
-- actions: new actions.jsonl lines -> "action" (a tool call with ms and result); a truncated file -> "actions_reset"
+- actions: new actions.jsonl lines -> "action" (a tool call with ms and result), then "party" when its result is a
+  full status (WHERE/PARTY rows); a truncated file -> "actions_reset"
 - log: the followed playthrough's agent log -> "log" entries; a new log file -> "session" first
 - status: runner.status.json changed (heartbeat/updated ignored) -> "status"
 - memory: a new commit in the memory repo -> "memory" (checked only when .git/logs/HEAD changes)
@@ -47,6 +48,9 @@ class ActionsFeed:
             a = P.action(ln)
             if a:
                 out.append(("action", dict(a, result=P.scrub(a["result"]))))
+                st = P.status_text(a["result"])
+                if st and st["party"]:
+                    out.append(("party", dict(st, t=a["t"], source=a["tool"])))
         return out
 
 
@@ -128,6 +132,10 @@ class Hub:
 
     def event_id(self, seq: int) -> str:
         return f"{self.generation}-{seq}"
+
+    def last_id(self) -> str:
+        with self.cond:
+            return self.event_id(self.seq)
 
     def publish(self, type_: str, data: Any) -> None:
         with self.cond:
