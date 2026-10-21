@@ -9,6 +9,8 @@ dependencies = []
 # Inspect AI .eval export (export_inspect.py). Pinned: Inspect moves event classes and the .eval layout between
 # releases; bump the pin and rerun tests/test_export_inspect.py together.
 inspect = ["inspect-ai==0.3.282"]
+# The baseline agents speak MCP to the bg3 server (the bridge pins the same range).
+baselines = ["mcp>=2.3,<3"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20"]
