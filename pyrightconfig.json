@@ -25,7 +25,7 @@
     "bridge/src/bg3ai/actq.py",
     "bridge/src/bg3ai/boxclick.py",
     "bridge/src/bg3ai/clicker.py",
-    "bridge/src/bg3ai/compact.py",
+    "bridge/src/bg3ai/compact_rules.py",
     "bridge/src/bg3ai/companions.py",
     "bridge/src/bg3ai/debrief.py",
     "bridge/src/bg3ai/economy.py",
