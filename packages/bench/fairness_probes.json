@@ -1,0 +1,982 @@
+{
+ "schema": 1,
+ "about": "Per-tool fairness probes (research/arch/bench.md 2.5). Each tool of the bg3 server has probes or an exemption. A probe calls the tool on a start save with {hidden} = one of that save's hidden facts of the kind (listed when the save is made) and {visible} = a visible handle; expect absent: the hidden thing's name and handle do not appear in the result (plus runner/fairness.py's LEAK rules); expect refusal: the call is refused (not visible). The live half runs them per start save.",
+ "hidden_kinds": {
+  "creature": "a character the party cannot perceive: invisible, behind a wall, out of sight, not yet revealed",
+  "object": "an item, container, trap or lever not yet discovered (failed Perception, hidden stash, unread text)",
+  "place": "an area, exit or map region the party has not seen or explored",
+  "dice": "a roll's outcome or DC before the game shows it, and the hidden roll log"
+ },
+ "tools": [
+  {
+   "tool": "ability_preview",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}",
+      "ability": "Target_MainHandAttack"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "camp",
+   "probes": [
+    {
+     "args": {
+      "action": "go"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "cancel_queue",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "character_creation_options",
+   "exempt": "character creation screen: no world state"
+  },
+  {
+   "tool": "choose_dialogue",
+   "probes": [
+    {
+     "args": {
+      "option": 1
+     },
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "click",
+   "probes": [
+    {
+     "args": {
+      "x": 0.5,
+      "y": 0.5,
+      "button": "none"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "click_on",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "combat_turn",
+   "probes": [
+    {
+     "args": {
+      "plan": "{\"action\": [{\"ability\": \"Target_MainHandAttack\", \"target\": \"{hidden}\"}]}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "confirm",
+   "probes": [
+    {
+     "args": {
+      "answer": "no"
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "create_character",
+   "exempt": "character creation screen: no world state"
+  },
+  {
+   "tool": "delete_marker",
+   "exempt": "the agent's own map marker"
+  },
+  {
+   "tool": "dialogue_advance",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "disarm",
+   "probes": [
+    {
+     "args": {
+      "trap": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "dismiss_popups",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "do_actions",
+   "probes": [
+    {
+     "args": {
+      "actions": "[]"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "end_combat_report",
+   "exempt": "appends the agent's own text to its session log"
+  },
+  {
+   "tool": "end_session",
+   "exempt": "checks the wrap-up and commits memory; returns no game state"
+  },
+  {
+   "tool": "end_turn",
+   "probes": [
+    {
+     "args": {
+      "wait": false
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "equip_best",
+   "exempt": "the party's own gear"
+  },
+  {
+   "tool": "fast_travel",
+   "probes": [
+    {
+     "args": {
+      "waypoint": "{visible}"
+     },
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "feed_gale",
+   "exempt": "a party item into Gale's donation window"
+  },
+  {
+   "tool": "get_actions",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_character",
+   "probes": [
+    {
+     "args": {
+      "who": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "get_combat_state",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_dialogue",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_events",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    },
+    {
+     "args": {},
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_explored",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_frontier",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    },
+    {
+     "args": {},
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_inventory",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_journal",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_layout",
+   "probes": [
+    {
+     "args": {
+      "radius": 40
+     },
+     "hidden": "object",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "radius": 40
+     },
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_level_up_options",
+   "exempt": "the party member's own build options"
+  },
+  {
+   "tool": "get_map",
+   "probes": [
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "place",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_nearby",
+   "probes": [
+    {
+     "args": {
+      "radius": 60
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "radius": 60
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_party",
+   "probes": [
+    {
+     "args": {
+      "camp": true
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "get_status",
+   "probes": [
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "object",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "insert_item",
+   "probes": [
+    {
+     "args": {
+      "into": "{hidden}",
+      "item": "{visible}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "interact",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "jump_to",
+   "probes": [
+    {
+     "args": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "level_up",
+   "exempt": "the party member's own build"
+  },
+  {
+   "tool": "list_saves",
+   "exempt": "the agent's own save folders"
+  },
+  {
+   "tool": "load_game",
+   "exempt": "off in the main track (BENCHMARK-PLAN: no reloads); after a load the state is read through probed tools"
+  },
+  {
+   "tool": "lockpick",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "long_rest",
+   "probes": [
+    {
+     "args": {
+      "confirm": false
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "look",
+   "probes": [
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "object",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "full": true
+     },
+     "hidden": "place",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "look_at",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "loot",
+   "probes": [
+    {
+     "args": {
+      "take": "all"
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "loot_area",
+   "probes": [
+    {
+     "args": {
+      "radius": 30
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "loot_corpse",
+   "probes": [
+    {
+     "args": {
+      "corpse": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "manage_inventory",
+   "exempt": "moves the party's own items"
+  },
+  {
+   "tool": "memory_append",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "memory_edit",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "memory_list",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "memory_read",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "memory_search",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "memory_write",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "move_to",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "new_game",
+   "exempt": "main menu only: no world exists yet"
+  },
+  {
+   "tool": "note",
+   "exempt": "the agent's own memory files (memory/, knowledge/): nothing from the game world"
+  },
+  {
+   "tool": "path_preview",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "pick_up",
+   "probes": [
+    {
+     "args": {
+      "item": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "pickpocket",
+   "probes": [
+    {
+     "args": {
+      "npc": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "place_marker",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}",
+      "label": "probe"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "prepare_spells",
+   "exempt": "the party member's own spell list"
+  },
+  {
+   "tool": "press_key",
+   "probes": [
+    {
+     "args": {
+      "key": "TAB"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "key": "TAB"
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "queue_actions",
+   "probes": [
+    {
+     "args": {
+      "actions": "[]"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "react",
+   "probes": [
+    {
+     "args": {
+      "use": false
+     },
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "read_all",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "recall",
+   "probes": [
+    {
+     "args": {
+      "query": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "regroup",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "rest_if_needed",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "roll_check",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "route",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "save_game",
+   "exempt": "returns at once with the save label; no game state"
+  },
+  {
+   "tool": "screenshot",
+   "exempt": "pixels the player sees; image fairness is the renderer's, checked by the live screenshot audit"
+  },
+  {
+   "tool": "session_clock",
+   "exempt": "the wall clock line only"
+  },
+  {
+   "tool": "session_start",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "set_party",
+   "probes": [
+    {
+     "args": {
+      "action": "sneak_on"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "set_reactions",
+   "exempt": "the party member's own reaction settings"
+  },
+  {
+   "tool": "short_rest",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "stay",
+   "probes": [
+    {
+     "args": {
+      "who": "{visible}"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "swap_party",
+   "probes": [
+    {
+     "args": {
+      "into": "{visible}"
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "talk_to",
+   "probes": [
+    {
+     "args": {
+      "npc": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "trade",
+   "probes": [
+    {
+     "args": {
+      "npc": "{visible}"
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "travel_to",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "object",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "ui_action",
+   "probes": [
+    {
+     "args": {
+      "command": "noop"
+     },
+     "hidden": "object",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "ui_dump",
+   "probes": [
+    {
+     "args": {},
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {},
+     "hidden": "object",
+     "expect": "absent"
+    },
+    {
+     "args": {},
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "use_ability",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}",
+      "ability": "Target_MainHandAttack"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "wait",
+   "probes": [
+    {
+     "args": {
+      "seconds": 5
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    },
+    {
+     "args": {
+      "seconds": 5
+     },
+     "hidden": "dice",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "wait_for",
+   "probes": [
+    {
+     "args": {
+      "target": "queue",
+      "timeout_s": 5
+     },
+     "hidden": "creature",
+     "expect": "absent"
+    }
+   ]
+  },
+  {
+   "tool": "walk_toward",
+   "probes": [
+    {
+     "args": {
+      "target": "{hidden}"
+     },
+     "hidden": "creature",
+     "expect": "refusal"
+    }
+   ]
+  },
+  {
+   "tool": "wiki_page",
+   "exempt": "public game knowledge, on or off by condition (contamination tooling), never the save's state"
+  },
+  {
+   "tool": "wiki_search",
+   "exempt": "public game knowledge, on or off by condition (contamination tooling), never the save's state"
+  },
+  {
+   "tool": "zoom",
+   "exempt": "a crop of the last screenshot"
+  }
+ ]
+}
