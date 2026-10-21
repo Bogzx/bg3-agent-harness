@@ -217,7 +217,7 @@ def run_baselines(
     root.mkdir(parents=True, exist_ok=True)
     budget = root / "budget.json"
     if not budget.exists():
-        budget.write_text(json.dumps({"cap_usd": 0.0, "spent_usd": 0.0}) + "\n", encoding="utf-8")
+        budget.write_text(json.dumps({"cap": 0.0, "spent": 0.0}) + "\n", encoding="utf-8")
     m = matrix.Matrix(root / "matrix", run_one, budget, now=now, sleep=sleep, guard=guard)
     m.create(f"baselines-{name}", baseline_jobs(name, runs))
     stop = m.run()

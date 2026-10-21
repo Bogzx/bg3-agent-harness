@@ -5,6 +5,8 @@ One job = one more run of a series: `python3 runner/play.py run --scenario S --p
 re-run resumes it), so the adapter counts the series' records first and reads the new one after. The series is per
 (scenario, model, client, effort, condition): every repeat and rerun of a job appends to it.
 
+The returned result is `charged`: play.py adds a paid run's cost to runtime/budget.json itself.
+
 A job with a `profile` (profiles/*.toml, the pi client) adds `--profile P --max-cost <job max_cost> --no-keeper`, as
 play.py requires for a paid client. Conditions come as play.py flags plus environment (adapters/play_flags.py:
 BG3AI_TOOLS_OFF for the bridge).
@@ -87,4 +89,6 @@ class LegacyCli:
             return RunResult(None, False, False, None, f"no run record (play.py exit {code})")
         rec = after[len(before)]
         res = results.from_record(rec, run_id(series, rec["run"]))
-        return RunResult(res["run_id"], res["valid"], res["passed"], res["cost_usd"], res["invalid_reason"])
+        # play.py settles the budget itself: a paid run adds its cost to runtime/budget.json, a subscription run
+        # isn't billed
+        return RunResult(res["run_id"], res["valid"], res["passed"], res["cost_usd"], res["invalid_reason"], True)

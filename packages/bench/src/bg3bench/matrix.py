@@ -8,10 +8,13 @@ Files in the matrix folder (runtime/matrix/<name>/):
   attempt that started and never ended is closed as invalid (`interrupted`) and the job is run again.
 - `progress.json`: rewritten after every change, for the dashboard.
 
-The budget file (global, may be shared by several matrices) is `{"cap_usd": X, "spent_usd": Y}`; each run's billed
-cost is added as it ends. A job does not start when `spent + its reserve > cap` (reserve = the scenario's per-run
-`max_cost`, 0 when it has none: then the overshoot is at most one run). A run whose cost is unknown stops the
-matrix: the budget can't be enforced past it until a person fixes `spent_usd`.
+The budget file is the harness's (runner/spend.py): one per machine, runtime/budget.json `{"cap": USD, "spent": USD}`,
+shared by every matrix and every paid play.py run, updated under the same lock (`budget.json.lock`). A job does not
+start when `spent + its reserve > cap` (reserve = the scenario's per-run `max_cost`, 0 when it has none: then the
+overshoot is at most one run); a missing or broken file stops the matrix. A run's cost is added as it ends unless
+the runner already settled it (`RunResult.charged`: play.py adds a paid run's cost itself, and subscription runs
+aren't billed). A run whose cost is unknown stops the matrix: the budget can't be enforced past it until a person
+fixes `spent`.
 
 Invalid runs (results.validity: runner error, harness failure, operator) are rerun, at most `max_reruns` (2) times
 per job; then the job is `gave_up`. Order: repeat 1 of every (model, scenario, condition) first, then repeat 2, ...
@@ -20,10 +23,12 @@ so a stopped matrix has even coverage. `run_one(job) -> RunResult` does one run 
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
@@ -40,6 +45,7 @@ class RunResult:
     passed: bool
     cost_usd: float | None
     invalid_reason: str | None = None
+    charged: bool = False  # the runner already settled cost_usd with the budget file (or it isn't billed)
 
 
 class RunOne(Protocol):
@@ -96,10 +102,37 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def read_budget(path: Path) -> dict:
+    """The harness's budget.json as {"cap", "spent", ...} (spent defaults to 0); missing or broken raises."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data.get("cap_usd"), int | float) or not isinstance(data.get("spent_usd"), int | float):
-        raise ValueError(f"{path}: needs numbers cap_usd and spent_usd")  # noqa: TRY004 - bad file content
-    return data
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: not a JSON object")  # noqa: TRY004 - bad file content
+    for k in ("cap", "spent"):
+        v = data.get(k, 0.0 if k == "spent" else None)
+        if not isinstance(v, int | float) or isinstance(v, bool) or v < 0:
+            raise ValueError(f"{path}: {k} must be a number >= 0")
+    return {**data, "cap": float(data["cap"]), "spent": float(data.get("spent", 0.0))}
+
+
+@contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    # the lock file runner/spend.py takes, so a play.py run and the matrix never lose each other's spend
+    with open(path.with_name(path.name + ".lock"), "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lk, fcntl.LOCK_UN)
+
+
+def add_spend(path: Path, usd: float, now: float, **what) -> dict:
+    """runner/spend.add_spend's update: spent += usd, `updated` and `last` set, locked and atomic."""
+    with _locked(path):
+        b = read_budget(path)
+        b["spent"] = round(b["spent"] + usd, 6)
+        b["updated"] = round(now, 1)
+        b["last"] = {"usd": round(usd, 6), **what}
+        _write_json(path, b)
+        return b
 
 
 class Matrix:
@@ -184,7 +217,7 @@ class Matrix:
         try:
             budget = read_budget(self.budget)
         except (OSError, ValueError):
-            budget = {"cap_usd": None, "spent_usd": None}
+            budget = {"cap": None, "spent": None}
         counts = {s: sum(1 for st in jobs.values() if st["status"] == s) for s in ("done", "pending", "gave_up")}
         _write_json(
             self.progress_path,
@@ -200,19 +233,15 @@ class Matrix:
                 "runs": len(results),
                 "invalid_runs": sum(1 for r in results if not r["valid"]),
                 "passed": sum(1 for r in results if r["valid"] and r["passed"]),
-                "cap_usd": budget["cap_usd"],
-                "spent_usd": budget["spent_usd"],
+                "cap_usd": budget["cap"],
+                "spent_usd": budget["spent"],
             },
         )
 
-    def _charge(self, cost: float) -> None:
-        budget = read_budget(self.budget)
-        _write_json(self.budget, {**budget, "spent_usd": round(budget["spent_usd"] + cost, 6)})
-
     def _end(self, job: dict, attempt: int, result: RunResult) -> None:
         self._append({"type": "end", "job": job["id"], "attempt": attempt, "t": self.now(), "result": asdict(result)})
-        if result.cost_usd is not None:
-            self._charge(result.cost_usd)
+        if result.cost_usd and not result.charged:
+            add_spend(self.budget, result.cost_usd, self.now(), matrix=self._plan()["name"], job=job["id"])
 
     def _wait_for_guard(self, jobs: dict, job: dict) -> str | None:
         if self.guard is None:
@@ -247,8 +276,12 @@ class Matrix:
                 return FINISHED
             st = todo[0]
             job = st["job"]
-            budget = read_budget(self.budget)
-            if budget["spent_usd"] + (job["max_cost"] or 0.0) > budget["cap_usd"]:
+            try:
+                budget = read_budget(self.budget)
+            except (OSError, ValueError):
+                self._progress(jobs, "stopped", stop=BUDGET)
+                return BUDGET
+            if budget["spent"] + (job["max_cost"] or 0.0) > budget["cap"]:
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET
             if (why := self._wait_for_guard(jobs, job)) is not None:
@@ -262,6 +295,6 @@ class Matrix:
             except Exception as e:  # noqa: BLE001 - any adapter failure is an invalid attempt, cost unknown
                 result = RunResult(None, False, False, None, f"error: {type(e).__name__}: {e}")
             self._end(job, attempt, result)
-            if result.cost_usd is None:
+            if result.cost_usd is None and not result.charged:
                 self._progress(self.state(), "stopped", stop=COST_UNKNOWN)
                 return COST_UNKNOWN

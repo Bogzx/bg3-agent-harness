@@ -44,7 +44,7 @@ class FakeRun:
 def make(tmp_path, run_one, cap=100.0, spent=0.0, jobs=None, clock=None, **kw):
     budget = tmp_path / "budget.json"
     if not budget.exists():
-        budget.write_text(json.dumps({"cap_usd": cap, "spent_usd": spent}))
+        budget.write_text(json.dumps({"cap": cap, "spent": spent}))
     clock = clock or Clock()
     m = matrix.Matrix(tmp_path / "m", run_one, budget, now=clock.now, sleep=clock.sleep, **kw)
     m.create("night1", jobs if jobs is not None else matrix.plan(MODELS, ["nautiloid", "grove"], ["rules"], 2))
@@ -83,7 +83,8 @@ def test_runs_every_job_once_and_charges_the_budget(tmp_path):
     m, budget, _ = make(tmp_path, run)
     assert m.run() == matrix.FINISHED
     assert len(run.calls) == 8 and len(set(run.calls)) == 8
-    assert json.loads(budget.read_text()) == {"cap_usd": 100.0, "spent_usd": 8.0}
+    b = json.loads(budget.read_text())
+    assert (b["cap"], b["spent"], b["last"]) == (100.0, 8.0, {"usd": 1.0, "matrix": "night1", "job": run.calls[-1]})
     p = progress(tmp_path)
     assert (p["state"], p["done"], p["pending"], p["runs"], p["passed"], p["spent_usd"]) == (
         "finished",
@@ -108,7 +109,7 @@ def test_invalid_runs_are_rerun_at_most_twice(tmp_path):
     assert st[first]["status"] == "done" and st[second]["status"] == "gave_up"
     p = progress(tmp_path)
     assert (p["done"], p["gave_up"], p["invalid_runs"], p["runs"]) == (7, 1, 4, 11)
-    assert json.loads(budget.read_text())["spent_usd"] == 7 * 1.0 + 4 * 0.5  # invalid runs still cost money
+    assert json.loads(budget.read_text())["spent"] == 7 * 1.0 + 4 * 0.5  # invalid runs still cost money
 
 
 def test_stops_at_the_budget_with_the_reserve(tmp_path):
@@ -119,7 +120,7 @@ def test_stops_at_the_budget_with_the_reserve(tmp_path):
     assert m.run() == matrix.BUDGET
     assert run.calls == ["opus~nautiloid~rules~r1", "opus~grove~rules~r1", "opus~nautiloid~rules~r2"]
     assert progress(tmp_path)["stop_reason"] == "budget" and progress(tmp_path)["pending"] == 3
-    budget.write_text(json.dumps({"cap_usd": 50.0, "spent_usd": 3.0}))  # a person raises the cap
+    budget.write_text(json.dumps({"cap": 50.0, "spent": 3.0}))  # a person raises the cap
     assert m.run() == matrix.FINISHED and len(run.calls) == 6
 
 
@@ -128,7 +129,7 @@ def test_unknown_cost_stops_the_matrix(tmp_path):
     run = FakeRun({(first, 1): RunResult("a", True, False, None)})
     m, budget, _ = make(tmp_path, run)
     assert m.run() == matrix.COST_UNKNOWN and run.calls == [first]
-    assert json.loads(budget.read_text())["spent_usd"] == 0.0
+    assert json.loads(budget.read_text())["spent"] == 0.0
     assert m.state()[first]["status"] == "done"
     assert m.run() == matrix.FINISHED  # after a person checked it, the rest runs
 
@@ -160,7 +161,7 @@ def test_resumes_after_its_own_crash(tmp_path):
     atts = m2.state()[crash]["attempts"]
     assert [a["result"]["invalid_reason"] for a in atts] == ["interrupted", None]
     # the interrupted run is charged its reserve; then the rerun's $1
-    assert json.loads(budget.read_text())["spent_usd"] == 1.0 + 2.5 + 1.0
+    assert json.loads(budget.read_text())["spent"] == 1.0 + 2.5 + 1.0
 
 
 def test_an_interrupted_run_without_a_reserve_stops_once(tmp_path):
@@ -221,9 +222,12 @@ def test_plan_files(tmp_path):
     (tmp_path / "m" / "queue.jsonl").write_text('{"type": "start"}\n')
     with pytest.raises(ValueError, match="no v1 plan"):
         m.state()
-    budget.write_text('{"cap_usd": "lots", "spent_usd": 0}')
-    with pytest.raises(ValueError, match="cap_usd"):
-        matrix.read_budget(budget)
+    for bad in ('{"cap": "lots", "spent": 0}', '{"spent": 1}', '{"cap": -1}', '{"cap": true}', "[]"):
+        budget.write_text(bad)
+        with pytest.raises(ValueError):
+            matrix.read_budget(budget)
+    budget.write_text('{"cap": 5}')
+    assert matrix.read_budget(budget) == {"cap": 5.0, "spent": 0.0}
 
 
 def test_progress_without_a_readable_budget(tmp_path):
@@ -231,6 +235,46 @@ def test_progress_without_a_readable_budget(tmp_path):
     budget.unlink()
     assert m.run() == matrix.FINISHED
     assert progress(tmp_path)["cap_usd"] is None
+
+
+def test_runs_the_runner_charged_are_not_added_again(tmp_path):
+    # play.py added the paid run's cost itself (or the run isn't billed): no double count, no cost-unknown stop
+    jobs = matrix.plan(MODELS[:1], ["nautiloid", "grove"], ["rules"], 1)
+    run = FakeRun({(j["id"], 1): RunResult("r", True, True, c, None, True) for j, c in zip(jobs, (2.0, None))})
+    m, budget, _ = make(tmp_path, run, spent=1.5, jobs=jobs)
+    assert m.run() == matrix.FINISHED and len(run.calls) == 2
+    assert json.loads(budget.read_text()) == {"cap": 100.0, "spent": 1.5}
+
+
+def test_a_missing_or_broken_budget_stops_before_a_job(tmp_path):
+    run = FakeRun()
+    m, budget, _ = make(tmp_path, run)
+    budget.unlink()
+    assert m.run() == matrix.BUDGET and run.calls == []
+    budget.write_text('{"cap": "lots"}')
+    assert m.run() == matrix.BUDGET and progress(tmp_path)["stop_reason"] == "budget"
+
+
+def test_shares_the_harness_budget_file(tmp_path):
+    spend = _load_spend()
+    run = FakeRun()
+    m, budget, _ = make(tmp_path, run, cap=10.0, spent=0.25)
+    budget.write_text(json.dumps({"cap": 10, "spent": 0.25, "note": "keep"}))
+    spend.add_spend(budget, 0.5, now=1.0, session="S001")  # a paid play.py run on the same machine
+    assert m.run() == matrix.FINISHED
+    b = spend.read_budget(budget)  # the harness still reads what the matrix wrote
+    assert (b["spent"], b["note"], spend.run_cap("pi", 5.0, b)) == (8.75, "keep", (1.25, None))
+    assert (budget.parent / "budget.json.lock").exists()
+
+
+def _load_spend():
+    import importlib.util
+
+    path = HERE.parents[2] / "runner" / "spend.py"
+    spec = importlib.util.spec_from_file_location("runner_spend", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def test_records_of_unknown_jobs_and_stray_ends_are_ignored(tmp_path):
@@ -276,7 +320,7 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
     )
     job = matrix.plan([{"slug": "opus", "effort": "medium"}], ["nautiloid"], ["legacy"], 1)[0]
     res = run_one(job)
-    assert res == RunResult("night1-nautiloid-opus-claude-medium-legacy-r001", True, True, 3.349, None)
+    assert res == RunResult("night1-nautiloid-opus-claude-medium-legacy-r001", True, True, 3.349, None, True)
     assert cmds[0] == [
         "python3", str(repo / "runner" / "play.py"), "run", "--scenario", "nautiloid",
         "--playthrough", "night1-nautiloid-opus-claude-medium-legacy", "--client", "claude", "--model", "opus",
@@ -292,7 +336,7 @@ def test_legacy_cli_without_a_new_record(tmp_path):
     repo = fake_repo(tmp_path)
     run_one = legacy_cli.LegacyCli("m", {"legacy": []}, repo=repo, execute=lambda cmd, env: 2)
     job = matrix.plan([{"slug": "x/y"}], ["grove"], ["legacy"], 1)[0]
-    assert run_one(job) == RunResult(None, False, False, None, "no run record (play.py exit 2)")
+    assert run_one(job) == RunResult(None, False, False, None, "no run record (play.py exit 2)")  # not charged: stops
     assert "--effort" not in run_one.command(job, "s", 1)
     assert legacy_cli.series_name("M", job) == "m-grove-x-y-claude-legacy"
     assert legacy_cli.REPO == HERE.parents[2]

@@ -156,7 +156,7 @@ def test_run_baselines_through_the_matrix(tmp_path):
     out = authoring.run_baselines(tmp_path / "bl", NAME, run_one, now=Clock().now, sleep=Clock().sleep)
     assert out == {"stop": matrix.FINISHED, "donothing": {"n": 5, "k": 0}, "random": {"n": 5, "k": 0}, "ok": True}
     assert len(calls) == 10
-    assert json.loads((tmp_path / "bl" / "budget.json").read_text()) == {"cap_usd": 0.0, "spent_usd": 0.0}
+    assert json.loads((tmp_path / "bl" / "budget.json").read_text()) == {"cap": 0.0, "spent": 0.0}
     assert json.loads((tmp_path / "bl" / "matrix" / "progress.json").read_text())["done"] == 10
 
 
