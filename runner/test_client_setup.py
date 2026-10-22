@@ -30,7 +30,7 @@ class Resolve(unittest.TestCase):
 
     def test_pi_profile(self):
         c = CS.resolve(None, PI, None, None)
-        self.assertEqual((c.client, c.model, c.effort), ("pi", "deepseek-flash", "high"))
+        self.assertEqual((c.client, c.model, c.effort), ("pi", "deepseek-flash", "medium"))
         self.assertEqual(CS.resolve("pi", PI, "deepseek-flash", "low").effort, "low")  # --effort wins
         for args, why in (
             ((PI, "opus", None), "plays deepseek-flash"),
