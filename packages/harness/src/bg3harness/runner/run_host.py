@@ -40,6 +40,7 @@ from bg3harness.runner import state as rstate
 from bg3harness.session import SessionHooks, SessionOutcome
 
 SID = "S001"  # a bench run is one session
+NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
 
@@ -263,10 +264,17 @@ class LiveRunHost:
         return client_setup.run_files(d, client, seed, timing, renv.REPO, renv.log)
 
     def _setup(self, job: Json, sc: Json, run_dir: Path) -> tuple[Json, str, str | None]:
-        """The job's client env (condition, API key, tools) and run files; the kickoff's pace pre-flight."""
+        """The job's client env (condition, API key, tools) and run files; the kickoff's pace pre-flight.
+
+        A bench run sees no playthrough memory (knowledge contamination, live7: session_start served play/memory's
+        briefing): the memory tool group is off and the server's memory dir is the run's own `memory/`, which
+        nothing fills, so no tool reads another playthrough's notes. job["tools_off"]: the condition's removed
+        tools (the bench's conditions.removed_tools: wiki, load_game)."""
         choice = client_setup.resolve(job["client"], job.get("profile"), job["model"], job.get("effort"), None, False)
         self.env.update(client_setup.api_key_env(choice.profile, self.env, renv.REPO / ".env"))
         self.env["BG3AI_PROMPT_CONDITION"] = job["condition"]
+        self.env["BG3AI_MEMORY_DIR"] = str(run_dir / "memory")
+        self.env["BG3AI_TOOLS_OFF"] = ",".join([NO_MEMORY, *job.get("tools_off", ())])  # the profile's go on top
         self.env.update(client_setup.session_env(choice.client, choice.profile, True, self.env))
         files: Json = {"profile": choice.profile, "pace": client_setup.kickoff_pace(choice.client, self.env)}
         if choice.client == "claude" or (choice.profile is not None and choice.client == "pi"):

@@ -139,6 +139,15 @@ def test_a_clean_run_is_one_session_and_its_artifacts(tmp_path):
     assert [m["run_id"] for m, _ in report.load_runs(tmp_path / "sessions")] == [f"{series}-r001"]
 
 
+def test_the_host_gets_the_tools_the_condition_removes(tmp_path):
+    # the session runner served wiki and load_game under "rules" (live7): the condition's tools go to the host
+    host = Host([[("exited", 5)], [("exited", 5)]])
+    one = run_one(tmp_path, host)
+    one(job())
+    one(job(condition="rules+wiki+reloads:2"))
+    assert [j["tools_off"] for j, _, _ in host.started] == [["wiki_search", "wiki_page", "load_game"], []]
+
+
 def test_a_crash_ends_the_run_invalid_without_a_resume(tmp_path):
     host = Host([[("crash", 3)], [("exited", 5)]])
     one = run_one(tmp_path, host)

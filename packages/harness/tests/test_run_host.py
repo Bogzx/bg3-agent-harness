@@ -7,8 +7,10 @@ the harness can tell (live7: the SE folder stayed empty after a bench run)."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,11 @@ from bg3harness.runner import run_host as H  # noqa: N812
 from bg3harness.runner import state as rstate
 from bg3harness.runner.checks_side import ChecksSide
 from bg3harness.session import SessionOutcome
+from bg3harness.testing.fakemod import FakeMod
+from bg3harness.testing.mcp_bridge import bridge_env, call
+from bg3harness.testing.scripted import FakeClock, GameModel
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 SAVE_SC: dict[str, Any] = {
     "name": "grove_fight",
@@ -225,6 +232,55 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     assert st.prompt == H.scenario_kickoff(SAVE_SC, "S001", "SCN-grove_fight")  # rules: no pace pre-flight
     assert st.prompt_sha == hashlib.sha256(st.prompt.encode()).hexdigest() and st.harness_version
     assert isinstance(st.hooks, rstate.RunnerSessionHooks) and (st.hooks.sid, st.hooks.minutes) == ("S001", 30.0)
+
+
+def test_a_bench_run_serves_no_memory_tools_and_its_own_empty_memory_dir(rig: Rig):
+    # live7: session_start served play/memory's briefing (another playthrough's notes) to a bench run
+    rig.h.start({**JOB, "tools_off": ["wiki_search", "wiki_page"]}, SAVE_SC, run_dir("m-grove"))
+    assert rig.env["BG3AI_MEMORY_DIR"] == str(run_dir("m-grove") / "memory")
+    assert rig.env["BG3AI_TOOLS_OFF"] == "memory,wiki_search,wiki_page"
+    rig.h.start(JOB, NEW_SC, run_dir("m-idol"))  # the next job's env replaces the last one's
+    assert rig.env["BG3AI_TOOLS_OFF"] == "memory"
+    assert rig.env["BG3AI_MEMORY_DIR"] == str(run_dir("m-idol") / "memory")
+
+
+def plant_memory(mem: Path) -> None:
+    """Another playthrough's memory where the bridge looks by default (play/memory)."""
+    mem.mkdir(parents=True)
+    for name in ("PLAYTHROUGH.md", "HANDOFF.md", "CHARACTER.md", "lessons.md"):
+        (mem / name).write_text(f"# {name}\nLEAKED-NOTE from {name}\n")
+
+
+async def served(home: Path, env: dict[str, str], calls: list[str]) -> tuple[str, set[str], list[str]]:
+    """The real bridge (over the fake mod) with this env: its instructions, its tools and the first results."""
+    with FakeMod(GameModel(clock=FakeClock())) as fake:
+        params = StdioServerParameters(
+            command=sys.executable, args=["-m", "bg3ai.server"], env=bridge_env(fake.port, home, env), cwd=str(home)
+        )
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as s:
+            init = await s.initialize()
+            tools = {t.name for t in (await s.list_tools()).tools}
+            return init.instructions or "", tools, [await call(s, name) for name in calls]
+
+
+@pytest.mark.integration
+def test_a_bench_run_sees_no_playthrough_memory_through_the_real_bridge(rig: Rig, tmp_path: Path):
+    plant_memory(tmp_path / "home" / "play" / "memory")
+    playthrough = {"BG3AI_SESSION": "S001"}  # the runner's env for a session it opened
+    _, tools, (briefing,) = asyncio.run(
+        asyncio.wait_for(served(tmp_path / "home", playthrough, ["session_start"]), 120)
+    )
+    assert "LEAKED-NOTE" in briefing and "memory_read" in tools  # the leak live7 saw: the fixture serves it
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    bench = {k: v for k, v in rig.env.items() if k.startswith("BG3AI_")} | playthrough
+    text, tools, results = asyncio.run(
+        asyncio.wait_for(served(tmp_path / "home", bench, ["get_status", "get_party", "get_journal"]), 99)
+    )
+    assert not tools & {"session_start", "memory_read", "memory_search", "recall", "note", "end_session"}
+    assert "get_status" in tools and "Memory:" not in text
+    for out in (text, *results):
+        assert "LEAKED-NOTE" not in out and "PLAYTHROUGH MEMORY" not in out and "HARNESS CHANGES" not in out
+    assert not (run_dir("m-grove") / "memory").exists()  # nothing filled the run's own memory dir
 
 
 def test_a_coaching_condition_gets_the_pace_preflight(rig: Rig):

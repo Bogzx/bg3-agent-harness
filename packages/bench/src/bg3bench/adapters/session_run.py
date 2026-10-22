@@ -6,8 +6,9 @@ SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=
 runs.jsonl line (its pins carry the harness, bench and suite versions: pins.versions, the host's harness version
 first) and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
 `start` puts the game at the scenario's start and returns the kickoff and the session hooks (the agent process, the
-game, the clock), `record` returns the run's record fields once the session is over (facts.jsonl closed). The
-harness never imports the bench: the scenario reaches the host as the v2 dict (scenario.load: with defaults).
+game, the clock; the job it gets carries "tools_off", the tools its condition removes), `record` returns the run's
+record fields once the session is over (facts.jsonl closed). The harness never imports the bench: the scenario
+reaches the host as the v2 dict (scenario.load: with defaults).
 
 A fault (game crash or hang, agent hang) ends the session at once (run_session's `invalid`): the run counts one more
 harness failure, so results.validity makes it invalid and the matrix reruns the job. A host whose `start` fails ran
@@ -31,7 +32,7 @@ from typing import Any, Protocol
 
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
-from bg3bench import pins, run_artifacts, scenario, series
+from bg3bench import conditions, pins, run_artifacts, scenario, series
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 NO_RESUME = Recovery(max_resumes=0)
@@ -89,7 +90,7 @@ class SessionRun:
         run_dir = self.sessions / series.run_name(name, k)
         run_dir.mkdir(parents=True, exist_ok=True)
         try:
-            st = self.host.start(job, sc, run_dir)
+            st = self.host.start({**job, "tools_off": conditions.parse(job["condition"]).removed_tools()}, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
             why = f"start failed: {type(e).__name__}: {e}"
             failed: JSON = {"series": name, "playthrough": run_dir.name, "run": k, "client": job["client"]}
