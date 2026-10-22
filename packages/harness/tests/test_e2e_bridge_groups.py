@@ -57,7 +57,7 @@ GROUPS: dict[str, list[Step]] = {
         ("status_again", "get_status", {}, 4, None),
     ],
     "combat": [
-        ("combat", "get_combat_state", {}, 8, lambda m: m.start_fight(["Goblin", "Goblin Archer"])),
+        ("combat", "get_combat_state", {}, 7, lambda m: m.start_fight(["Goblin", "Goblin Archer"])),
         ("status_fight", "get_status", {}, 4, None),
         ("events_kill", "get_events", {}, 4, lambda m: (m.kill("Goblin"), m.end_fight())),
     ],

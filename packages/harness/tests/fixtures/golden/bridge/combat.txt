@@ -1,4 +1,4 @@
-=== combat (client:ui.story_timer server:state.actions server:state.combat server:state.status server:state.status)
+=== combat (client:ui.story_timer server:state.actions server:state.combat server:state.status)
 COMBAT round=1 current=e1 turn_group=[e1]
   e1 Tav party init 20 hp 100% current @(10,0,10)
   e2 Shadowheart party init 19 hp 100% @(11,0,10)

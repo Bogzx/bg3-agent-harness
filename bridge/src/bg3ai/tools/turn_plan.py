@@ -60,12 +60,15 @@ _party_memo: dict = {"t": -1e9, "uuids": None}
 
 def _party_cached(ttl_s: float = 30.0) -> set | None:
     """The party's uuids, re-read at most every ttl_s (the EVENTS crowd mute needs them; one RPC per 30 s)."""
-    now = time.monotonic()
-    if now - _party_memo["t"] > ttl_s:
-        st = core.game.try_rpc("state.status")
-        if isinstance(st, dict) and st.get("party"):
-            _party_memo.update(t=now, uuids={c.get("uuid") for c in st["party"] if isinstance(c, dict)})
+    if time.monotonic() - _party_memo["t"] > ttl_s:
+        _remember_party(core.game.try_rpc("state.status"))
     return _party_memo["uuids"]
+
+
+def _remember_party(st: Any) -> None:
+    """Keep the party of a state.status read for _party_cached (a tool that just read it saves its result a read)."""
+    if isinstance(st, dict) and st.get("party"):
+        _party_memo.update(t=time.monotonic(), uuids={c.get("uuid") for c in st["party"] if isinstance(c, dict)})
 
 
 def _party_set() -> set:

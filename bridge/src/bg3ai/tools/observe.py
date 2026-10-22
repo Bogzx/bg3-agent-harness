@@ -493,6 +493,7 @@ def _combat_state_text() -> str:
         body += "\n" + limit
     # One read should be enough to plan the whole turn: add the acting party member's actions.
     st = core.game.try_rpc("state.status") or {}
+    turn_plan._remember_party(st)  # the result's events text reads the party from it, not from a second read
     party = {c.get("uuid") for c in st.get("party") or []}
     hint = reporting._fight_hint(res, party)
     if hint:
