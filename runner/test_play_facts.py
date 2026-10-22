@@ -116,6 +116,11 @@ class FactsWiring(unittest.TestCase):
         self.assertEqual([x["name"] for x in recs if x.get("ev") == "area"], ["Ravaged Beach"])
         self.assertEqual(recs[-1]["mark"], "run_end")
 
+    def test_the_run_record_carries_the_manifest(self):  # client_setup.run_files' fields (pi, claude)
+        manifest = {"client": {"name": "claude", "version": "9.9"}, "tools": {"count": 95}}
+        r = P.Runner(P.Options("naut-m", None, 20, "opus", manifest=manifest))
+        self.assertEqual(self.record(r, port_open=lambda *a, **k: False)["manifest"], manifest)
+
     def test_no_last_read_when_the_game_is_gone_or_was_never_read(self):
         for read_before, port in ((True, False), (False, True)):
             r = P.Runner(P.Options(f"naut-{read_before}-{port}", None, 20, "opus", until="nautiloid_escaped"))

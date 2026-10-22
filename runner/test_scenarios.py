@@ -216,6 +216,7 @@ class Cli(TmpDir):
             p.start()
             self.addCleanup(p.stop)
         for p in (mock.patch("bg3ai.skipper.start_background", return_value=None),
+                  mock.patch.object(P.client_setup, "run_files", lambda *a: {}),   # no tool dump (uv, the bridge)
                   mock.patch.object(P.ramwatch, "start_background", return_value=None),
                   mock.patch.object(P.signal, "signal")):
             p.start()

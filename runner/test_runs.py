@@ -35,6 +35,9 @@ class TmpDir(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-runs-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        p = mock.patch.object(P.client_setup, "run_files", lambda *a: {})   # main(): no tool dump (uv, the bridge)
+        p.start()
+        self.addCleanup(p.stop)
 
 
 # ======================================================================== the bench re-exports

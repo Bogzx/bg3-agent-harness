@@ -89,6 +89,8 @@ from bg3harness.game.saves import (  # noqa: E402, F401  (the save choice's pure
 from bg3harness.game import oom  # noqa: E402  (OOM kills of the game: journal, ramwatch records, streak)
 from bg3harness.game.oom import (  # noqa: E402, F401  (re-exported for the runner and tests)
     OOM_SAVE_LIMIT, find_game_oom, last_loaded_save, oom_streak_update)
+from bg3harness.session import (  # noqa: E402  (one session's processes: stop resumes, fault recovery)
+    FAULTS, GAME_FAULTS, RecoverFailure, Recovery, SessionSpec, run_session)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -135,8 +137,6 @@ GAME_MAX_AGE_H = float(os.environ.get("BG3AI_GAME_MAX_AGE_H", "2"))
 # a session never starts with a game already holding this much RAM+swap (anon incl. swapped out; 0 = no RAM check).
 RELAUNCH_RAM_MB = int(os.environ.get("BG3AI_RELAUNCH_RAM_MB", "7000"))
 READY_FAIL_RE = re.compile(r"\b(?:ready_failed|end_day_failed)\b(?::\w+)?")
-GAME_FAULTS = ("crash", "hang")
-FAULTS = GAME_FAULTS + ("agent_hang",)
 JUDGE_TIMEOUT_S = 15 * 60      # the persona judge's whole budget after a run (two chunks, a retry each, fit)
 KILLED_EXITS = (-2, -9, -15, 130, 137, 143)   # claude ended by a signal (SIGINT/KILL/TERM, raw or as 128+n)
 
@@ -1447,7 +1447,8 @@ class Options:
     max_cost_per_day: float | None = None  # run --max-cost-per-day USD: pause while the trailing 24 h spent this much
     profile: object | None = None      # run --profile: profiles.Profile (pi: endpoint, model, effort)
     system_file: str | None = None     # pi: the system text, dumped once per run (client_setup.dump_server)
-    tools_expected: int | None = None  # pi: the bg3 tools every play process must get (else mcp_failed)
+    tools_expected: int | None = None  # pi, claude: the bg3 tools every play process must get (else mcp_failed)
+    manifest: dict | None = None       # pi, claude: run_manifest.manifest_fields (the run record's "manifest")
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
     scenario_settings: dict | None = None  # run --scenario-file: {difficulty, karmic_dice, timing} (check_settings)
 
@@ -1512,6 +1513,62 @@ class SessionResult:
     fault_at: float | None = None
     resets_at: float | None = None   # api_limit: when the client said the limit resets
     tool_calls: int = 0              # the process's tool calls (a context_overflow without any: at the kickoff)
+
+
+class RunnerSessionHooks:
+    """bg3harness.session.SessionHooks for one of a Runner's sessions."""
+
+    def __init__(self, runner: Runner, sid: str, minutes: float):
+        self.r, self.sid, self.minutes = runner, sid, minutes
+
+    def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool,
+                  tag: str) -> SessionResult:
+        res = self.r.run_claude(self.sid, prompt, minutes, client_session, resume=resume, tag=tag)
+        if not tag and res.reason not in FAULTS and self.r.state["oom_streak"]:
+            self.r.state["oom_streak"] = None   # a whole session from that save without dying: not an OOM loop
+        return res
+
+    def session_end(self, planned_end: float) -> float:   # a fight on at WRAP UP held the clock
+        return held_deadline(fight_hold_path(self.r.state.dir, self.sid), planned_end)
+
+    def stop_check(self, session_end: float) -> str | None:
+        return self.r.stop_check(self.sid, session_end, self.minutes)
+
+    def game_ok(self) -> bool:
+        return self.r.game_alive() and game.game_state(HEALTH_EVAL_TIMEOUT) is not None
+
+    def recover(self, why: str) -> RecoverFailure | None:
+        try:
+            self.r.recover(why)
+        except LaunchGaveUp as e:
+            return RecoverFailure(e, fatal=True)
+        except SETUP_ERRORS as e:
+            return RecoverFailure(e, fatal=False)
+        return None
+
+    def loaded(self) -> str | None:
+        return self.r.state["loaded_save"]
+
+    def aborted(self) -> bool:
+        return self.r.abort
+
+    def stop_requested(self) -> bool:
+        return self.r.stop_requested or (RUNTIME / "STOP").exists()
+
+    def notes(self) -> list[str]:
+        notes = list(self.r.pending_notes)
+        self.r.pending_notes.clear()
+        return notes
+
+    def event(self, kind: str, **fields) -> None:
+        self.r.event(kind, **fields)
+
+    # play's globals looked up on each call (tests patch them)
+    resume_prompt = staticmethod(lambda why, notes: resume_prompt(why, notes))
+    agent_resume_prompt = staticmethod(lambda notes: agent_resume_prompt(notes))
+    stop_resume_prompt = staticmethod(lambda why: stop_resume_prompt(why))
+    log = staticmethod(lambda msg: log(msg))
+    now = staticmethod(lambda: time.time())
 
 
 class RunnerGameHost:
@@ -2285,7 +2342,7 @@ class Runner:
                 **({"BG3AI_SAVES_EXCLUDE": "\n".join(foreign)} if foreign else {}),
                 **({"BG3AI_START_SAVE": start} if (start := getattr(self.opt, "start_save", None)) else {})}
 
-    def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str,
+    def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str | None,
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> SessionResult:
         """needs_game=False (the fix-notes pass edits memory only): a game crash meanwhile doesn't stop it (S027-fix
         was killed 30 s in by the OOM kill of the game); the next session's setup relaunches the game."""
@@ -3044,6 +3101,8 @@ class Runner:
         rec["client"] = self.opt.client
         if self.opt.profile is not None:   # the condition: its profile file, and the system text pi got (D2)
             rec["profile"] = self.opt.profile.source
+        if self.opt.manifest:
+            rec["manifest"] = self.opt.manifest
         if self.opt.system_file and Path(self.opt.system_file).exists():
             rec["system_sha256"] = client_setup.sha256(Path(self.opt.system_file))
         if getattr(self, "box", None) is not None:
@@ -3492,71 +3551,13 @@ class Runner:
         if opened and opened != predicted:
             log(f"session.py start opened {opened} (predicted {predicted})")
         prompt = build_kickoff(sid, self.opt.playthrough, loaded, notes, briefing, self.loaded_why(loaded))
-        res = self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
+        out = run_session(SessionSpec(sid, prompt, minutes, str(uuid.uuid4()), Recovery(
+            MAX_RESUMES, RESUME_MIN_MINUTES, MAX_STOP_RESUMES, HARD_STOP_GRACE)), RunnerSessionHooks(self, sid, minutes))
+        res, resumes, stop_resumes, gave_up = out.result, out.resumes, out.stop_resumes, out.gave_up
         if res.reason == "dry_run":
             return res
-        session_start, session_end = res.started, res.started + minutes * 60
-        if res.reason not in FAULTS and self.state["oom_streak"]:
-            self.state["oom_streak"] = None   # a whole session from that save without dying: not an OOM loop
-
-        # Game crash or hang mid-session: relaunch, load the latest save, and resume the SAME claude conversation
-        # for the time left (an hour-long session that crashes at minute 10 keeps its context and its 50 min).
-        # Agent hang (claude silent too long): the game is fine, so only claude is restarted (resumed).
-        # Claude ended its turn on its own: the stop check (session.py stop, which was the Stop hook) may send it back
-        # (keep playing until wrap-up, write the handoff, fix lint) by resuming the conversation with the reason.
-        resumes = stop_resumes = 0
-        gave_up: LaunchGaveUp | None = None
-        planned_end = session_end
-        while True:
-            # a fight on at WRAP UP held the clock: the stop check, resumes and the hard-stop test use the moved end
-            session_end = held_deadline(fight_hold_path(self.state.dir, sid), planned_end)
-            if res.reason not in FAULTS:
-                if (res.reason != "exited" or res.exit_code != 0 or stop_resumes >= MAX_STOP_RESUMES or self.abort
-                        or time.time() > session_end + HARD_STOP_GRACE - 60):
-                    break
-                why = self.stop_check(sid, session_end, minutes)
-                if not why:
-                    break
-                stop_resumes += 1
-                left = (session_end - time.time()) / 60
-                log(f"{sid}: claude ended its turn but the session can't end yet ({left:.0f} min left); resuming it "
-                    f"(-c{stop_resumes}): {why[:160]}")
-                res = self.run_claude(sid, stop_resume_prompt(why), left, res.claude_session, resume=True,
-                                      tag=f"-c{stop_resumes}")
-                continue
-            fault, fault_at = res.reason, res.fault_at or res.ended
-            game_ok = fault == "agent_hang" and self.game_alive() and game.game_state(HEALTH_EVAL_TIMEOUT) is not None
-            why = {"crash": "crashed", "hang": "stopped responding"}.get(fault, "was unreachable after the agent hang")
-            how = "claude restarted, game untouched"
-            if not game_ok:
-                try:
-                    self.recover(why)
-                except LaunchGaveUp as e:
-                    self.event("recovery_failed", fault=fault, session=sid, error=str(e)[:300])
-                    gave_up = e
-                    break
-                except SETUP_ERRORS as e:
-                    log(f"recovery after {sid} failed: {e}; the next session setup retries")
-                    self.event("recovery_failed", fault=fault, session=sid, error=str(e)[:300])
-                    break
-                how = f"game relaunched, loaded {self.state['loaded_save'] or 'main menu'}"
-            left = (session_end - time.time()) / 60
-            if (resumes >= MAX_RESUMES or left < RESUME_MIN_MINUTES or self.abort or self.stop_requested
-                    or (RUNTIME / "STOP").exists()):
-                log(f"{sid}: not resuming after the {res.reason} ({left:.0f} min left, {resumes} resume(s) so far); "
-                    "the next session picks up")
-                self.event("recovered", fault=fault, session=sid, seconds=round(time.time() - fault_at),
-                           how=how + "; session ended, the next one picks up")
-                break
-            resumes += 1
-            notes = list(self.pending_notes)
-            self.pending_notes.clear()
-            log(f"{sid}: resuming claude after the {res.reason} ({left:.0f} min left, resume {resumes}; "
-                f"{time.time() - fault_at:.0f} s after the fault)")
-            self.event("recovered", fault=fault, session=sid, seconds=round(time.time() - fault_at),
-                       how=how + f"; claude resumed (-r{resumes})")
-            prompt = agent_resume_prompt(notes) if game_ok else resume_prompt(why, notes)
-            res = self.run_claude(sid, prompt, left, res.claude_session, resume=True, tag=f"-r{resumes}")
+        session_start, session_end = out.started, held_deadline(fight_hold_path(self.state.dir, sid),
+                                                                  out.started + minutes * 60)
         crashed = res.reason in GAME_FAULTS
         res = replace(res, started=session_start)
         if not crashed:
@@ -4060,11 +4061,12 @@ def cmd_run(a) -> int:
         return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client, choice.profile)
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
     pi_files: dict = {}
-    if choice.profile is not None and client == "pi":   # once per runner: what every pi process gets
+    if client == "claude" or (choice.profile is not None and client == "pi"):   # once per runner
         try:
-            pi_files = pi_run_files(RUNTIME / "sessions" / a.playthrough)
+            pi_files = client_setup.run_files(RUNTIME / "sessions" / a.playthrough, client, getattr(a, "seed", None),
+                                              (scenario_settings or {}).get("timing"), REPO, log)
         except (OSError, ValueError, subprocess.SubprocessError) as e:
-            print(f"refusing --client pi: the system text / tool list dump failed: {e}", file=sys.stderr)
+            print(f"refusing --client {client}: the system text / tool list dump failed: {e}", file=sys.stderr)
             return 2
     if filled:
         log("display env filled from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
@@ -4141,16 +4143,6 @@ def cmd_run(a) -> int:
         if ram_stop is not None:
             ram_stop.set()
         runs.unlock_tree(KNOWLEDGE_DIR, KNOWLEDGE_LOCK)
-
-
-def pi_run_files(d: Path) -> dict:
-    """pi's system text and the bg3 server's tool list, dumped into the playthrough's dir (Options fields)."""
-    d.mkdir(parents=True, exist_ok=True)
-    system, tools = d / "pi-system.txt", d / "bg3-tools.json"
-    client_setup.dump_server(system, tools, REPO)
-    expected = client_setup.expected_tools(client_setup.tool_names(tools), os.environ)
-    log(f"pi: system text {system} (sha256 {client_setup.sha256(system)[:12]}), {expected} bg3 tools expected")
-    return {"system_file": str(system), "tools_expected": expected}
 
 
 PLAN_PROMPT = "<KICKOFF: built at the session start from the run's memory briefing>"
@@ -4275,7 +4267,7 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
            "BG3AI_SAVE_PREFIX": prefix, "BG3AI_KEEPER": "0" if a.no_memory_keeper else "1",
            **({"BG3AI_SAVES_EXCLUDE": "\n".join(res["exclude"])} if res and res["exclude"] else {}),
            **({"BG3AI_START_SAVE": scenario["start"]["save"]} if scenario and scenario["start"].get("save") else {})}
-    opt = types.SimpleNamespace(sandbox=a.sandbox, client=client_name, profile=profile,   # pi: where pi_run_files
+    opt = types.SimpleNamespace(sandbox=a.sandbox, client=client_name, profile=profile,   # pi: where run_files
                                 system_file=RUNTIME / "sessions" / pt / "pi-system.txt")  # would write it
     cl = make_client(opt)
     req = clients.Request(PLAN_PROMPT, model, RUNTIME / "sessions" / pt, session=str(uuid.uuid4()), resume=False,

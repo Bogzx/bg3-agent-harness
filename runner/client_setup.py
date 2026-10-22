@@ -1,6 +1,7 @@
 """What a run needs before its first play process for a profile-driven client (pi; research/ovh/pi.md "play.py
 wiring patch"): the profile resolved against the CLI flags, the API key in the env, the system text and the bg3
-server's full tool list dumped once per run, and the tool count each play process must get.
+server's full tool list dumped once per run, the tool count each play process must get (pi, claude) and the run
+manifest's fields.
 
     python3 -m unittest runner/test_client_setup.py
 """
@@ -11,6 +12,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,6 +122,48 @@ def dump_server(system: Path, tools: Path, repo: Path, run=subprocess.run) -> No
     )
 
 
+def run_files(
+    d: Path,
+    client: str,
+    seed: int | None,
+    timing: str | None,
+    repo: Path,
+    log: Callable[[str], None],
+    dump: Callable[[Path, Path, Path], None] = dump_server,
+    version: Callable[[str], str | None] | None = None,
+) -> dict:
+    """play.py's Options fields every play process of a pi or claude run shares, from the system text and the bg3
+    server's tool list dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools the init must count
+    (claude: its mcp__bg3__* tools) and the run manifest's fields. The condition is the text the client is served:
+    claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION (default rules). A condition
+    the tools can't serve (coaching with a group off) leaves the manifest's error instead of its prompt."""
+    from bg3harness import run_manifest
+
+    d.mkdir(parents=True, exist_ok=True)
+    system, tools = d / "pi-system.txt", d / "bg3-tools.json"
+    dump(system, tools, repo)
+    served = served_tools(tool_names(tools), os.environ)
+    condition = "rules+coaching" if client == "claude" else os.environ.get("BG3AI_PROMPT_CONDITION", "rules")
+    try:
+        manifest = run_manifest.manifest_fields(
+            client,
+            (version or run_manifest.client_version)(client),
+            condition,
+            served,
+            {"game_settings": {"seed": seed}, "timing": timing},
+        )
+        prompt = f"prompt {condition} sha256 {manifest['prompt']['sha256'][:12]}"
+    except ValueError as e:
+        manifest, prompt = {"condition": condition, "error": str(e)}, f"NO manifest prompt hash: {e}"
+    log(
+        f"{client}: {len(served)} bg3 tools expected, {prompt}"
+        + (f"; system text {system} (sha256 {sha256(system)[:12]})" if client == "pi" else "")
+    )
+    return {"tools_expected": len(served), "manifest": manifest} | (
+        {"system_file": str(system)} if client == "pi" else {}
+    )
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -129,12 +173,17 @@ def tool_names(path: Path) -> list[str]:
     return [t["name"] for t in json.loads(path.read_text())]
 
 
-def expected_tools(registry: list[str], env: dict) -> int:
-    """How many bg3 tools a play process with this session env must get (the server removes the rest at startup:
+def served_tools(registry: list[str], env: dict) -> list[str]:
+    """The bg3 tools a play process with this session env gets, sorted (the server removes the rest at startup:
     bridge/src/bg3ai/capabilities.py). Raises ValueError for an unknown group or name, as the server would."""
     from bg3ai import capabilities
 
-    return len(set(registry) - capabilities.disabled(registry, env))
+    return sorted(set(registry) - capabilities.disabled(registry, env))
+
+
+def expected_tools(registry: list[str], env: dict) -> int:
+    """How many bg3 tools a play process with this session env must get (served_tools)."""
+    return len(served_tools(registry, env))
 
 
 def tool_count_problem(got: int | None, expected: int | None, env: dict) -> str | None:

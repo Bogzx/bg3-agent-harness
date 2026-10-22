@@ -16,6 +16,7 @@ import client_setup as CS
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
 PI = str(REPO / "profiles" / "deepseek-flash.toml")
 CLAUDE = str(REPO / "profiles" / "opus-5.5-claude-code.toml")
 TOOLS = REPO / "tools" / "pi" / "conformance" / "tools.json"
@@ -117,6 +118,50 @@ class ToolCount(unittest.TestCase):
         CS.dump_server(Path("/s.txt"), Path("/t.json"), REPO, run=run)
         self.assertNotIn("BG3AI_TOOLS", seen["env"])
         self.assertEqual(seen["cmd"][-4:], ["--system", "/s.txt", "--tools", "/t.json"])
+
+
+class RunFiles(unittest.TestCase):
+    """run_files: what a pi or claude run's play processes share (tool count, manifest; pi: the system text)."""
+
+    def run_files(self, client: str, env: dict[str, str]) -> tuple[dict, list[str]]:
+        import json
+        import os
+        from unittest import mock
+
+        d = Path(tempfile.mkdtemp(prefix="bg3ai-runfiles-")) / "pt"
+        logs: list[str] = []
+
+        def dump(system: Path, tools: Path, repo: Path) -> None:
+            system.write_text("SYSTEM")
+            tools.write_text(TOOLS.read_text())
+
+        with mock.patch.dict(os.environ, env):
+            got = CS.run_files(d, client, 1001, "realtime", REPO, logs.append, dump=dump, version=lambda c: "9.9")
+        json.dumps(got)  # the run record takes it as is
+        return got, logs
+
+    def test_claude_gets_the_tool_count_and_the_manifest(self):
+        got, logs = self.run_files("claude", {})
+        n = len(CS.tool_names(TOOLS))
+        self.assertEqual(set(got), {"tools_expected", "manifest"})   # no system file: claude reads play/CLAUDE.md
+        self.assertEqual(got["tools_expected"], n)
+        m = got["manifest"]
+        self.assertEqual((m["seed"], m["timing"], m["client"], m["condition"], m["tools"]["count"]),
+                         (1001, "realtime", {"name": "claude", "version": "9.9"}, "rules+coaching", n))
+        self.assertIn(f"claude: {n} bg3 tools expected, prompt rules+coaching sha256 ", logs[0])
+
+    def test_pi_gets_its_system_text_and_the_served_condition(self):
+        got, _ = self.run_files("pi", {"BG3AI_TOOLS_OFF": "wiki"})
+        self.assertTrue(got["system_file"].endswith("pi-system.txt"))
+        self.assertEqual(got["tools_expected"], len(CS.tool_names(TOOLS)) - 2)
+        self.assertEqual((got["manifest"]["condition"], got["manifest"]["tools"]["count"]),
+                         ("rules", got["tools_expected"]))
+
+    def test_coaching_with_a_group_off_records_the_error(self):
+        got, logs = self.run_files("claude", {"BG3AI_TOOLS_OFF": "wiki"})
+        self.assertEqual(got["manifest"]["condition"], "rules+coaching")
+        self.assertIn("error", got["manifest"])
+        self.assertIn("NO manifest prompt hash", logs[0])
 
 
 if __name__ == "__main__":
