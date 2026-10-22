@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from typing import ClassVar
@@ -169,23 +170,42 @@ class RollsTest(unittest.TestCase):
         self.assertNotIn("seq", rows[0])
 
 
+def hidden_op_offenders(src: Path) -> list[str]:
+    """Every module under `src` (subpackages too) except the top-level referee.py that names a hidden op or
+    imports referee."""
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        if path == src / "referee.py":
+            continue
+        text = path.read_text()
+        rel = path.relative_to(src).as_posix()
+        for op in HIDDEN_OPS:
+            if re.search(r"""["']""" + re.escape(op), text):
+                offenders.append(f"{rel}: {op}")
+        if re.search(r"\breferee\b", text) and re.search(r"import[^\n]*\breferee\b", text):
+            offenders.append(f"{rel}: imports referee")
+    return offenders
+
+
 class FairnessTest(unittest.TestCase):
     """The hidden rings reach the harness only: no other bridge module names their ops or imports this reader, so no
     MCP tool can return them. (A tool that needs them is a fairness bug: route it through the harness instead.)"""
 
     def test_no_bridge_module_reaches_the_hidden_ops(self):
-        src = BRIDGE / "src" / "bg3ai"
-        offenders = []
-        for path in sorted(src.glob("*.py")):
-            if path.name == "referee.py":
-                continue
-            text = path.read_text()
-            for op in HIDDEN_OPS:
-                if re.search(r"""["']""" + re.escape(op), text):
-                    offenders.append(f"{path.name}: {op}")
-            if re.search(r"\breferee\b", text) and re.search(r"import[^\n]*\breferee\b", text):
-                offenders.append(f"{path.name}: imports referee")
-        self.assertEqual(offenders, [])
+        self.assertEqual(hidden_op_offenders(BRIDGE / "src" / "bg3ai"), [])
+
+    def test_the_scan_reaches_subpackages(self):
+        # bg3ai.tools.* holds the MCP tools: a planted offender there must be caught, as one at the top level is
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td)
+            (src / "tools").mkdir()
+            (src / "referee.py").write_text('OP = "ref.since"\n')
+            (src / "tools" / "referee.py").write_text('OP = "roll.since"\n')
+            (src / "tools" / "sneaky.py").write_text('from bg3ai import referee\nx = game.rpc("ref.since", {})\n')
+            self.assertEqual(
+                hidden_op_offenders(src),
+                ["tools/referee.py: roll.since", "tools/sneaky.py: ref.since", "tools/sneaky.py: imports referee"],
+            )
 
     def test_no_tool_is_named_for_them(self):
         from bg3ai.tools import core
