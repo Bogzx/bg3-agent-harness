@@ -743,7 +743,7 @@ def _pocket(it: dict, h: Callable[[dict], str]) -> str:
         s += f" x{_count(it)}"
     if it.get("price") is not None:
         s += f" {it['price']}g"
-    if _odds_unread(it):
+    if odds_unread(it):
         s += " odds ?"
     elif it.get("chance") is not None:
         s += f" {it['chance']}%" + (f" DC{it['dc']}" if it.get("dc") is not None else "")
@@ -752,7 +752,7 @@ def _pocket(it: dict, h: Callable[[dict], str]) -> str:
     return s
 
 
-def _odds_unread(it: dict) -> bool:
+def odds_unread(it: dict) -> bool:
     """DC 0 is no check the game shows: the roll fields weren't filled when the item was read (live 12:4x,
     Shadowheart's window: 16 of 20 items '0% DC0' next to 45% DC12 ones)."""
     return it.get("dc") == 0 and not it.get("chance")
@@ -763,11 +763,13 @@ def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
     items = [it for it in (res or {}).get("items") or [] if isinstance(it, dict)]
     if not items:
         return "POCKETS: nothing to steal (pickpocket(npc, leave=true) closes the window)"
-    items.sort(key=lambda it: (-(it.get("chance") if isinstance(it.get("chance"), (int, float)) and not _odds_unread(it)
+    items.sort(key=lambda it: (-(it.get("chance") if isinstance(it.get("chance"), (int, float)) and not odds_unread(it)
                                  else -1), -_price(it)))
     more = (res or {}).get("more")
     return ("POCKETS (the game's chance to steal, DC; best odds first): " + " | ".join(_pocket(it, h) for it in items)
             + (f" | +{more} more" if more else "")
+            + (" (odds ?: the window had not shown that item's odds when it was read)"
+               if any(odds_unread(it) for it in items) else "")
             + ' → pickpocket(npc, take="<name or id>"); pickpocket(npc, leave=true) leaves with nothing. The odds assume'
             + " nobody sees the thief: in the owner's sight a steal fails whatever they say")
 

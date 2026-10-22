@@ -12,7 +12,9 @@ Run: cd bridge && uv run python -m unittest discover -s tests -p test_pickpocket
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
@@ -23,6 +25,8 @@ from bg3ai import economy, hoverclick
 from bg3ai.game import JobResult
 from bg3ai.render import Handles
 from bg3ai.tools import core, reporting, world_tools
+
+FIXTURE = Path(__file__).resolve().parents[2] / "packages/harness/tests/fixtures/rpc/pickpocket_live4.jsonl"
 
 
 def _u(n: int) -> str:
@@ -148,6 +152,7 @@ class Steal(unittest.TestCase):
         self.closes_on_click = False
         self.close_lag = 0  # polls a closed window stays up (the game closes it frames later)
         self.closing = 0
+        self.unread = 0  # listings after the open whose odds the game hadn't filled yet (live5 S3#0)
         self.stolen: set[str] = set()
         self.inp = FakeInput(over={(560, 651)})  # Steal under the seed (0.5604, 0.6519) of a 1000x1000 window
         test = self
@@ -175,7 +180,11 @@ class Steal(unittest.TestCase):
                     return JobResult("done", {"item": it, "pending": True})  # the dead press (live2)
                 if test.window != _u(30):
                     return JobResult("done", {"items": []})  # another NPC's empty window
-                return JobResult("done", {"items": [i for i in test.POCKETS["items"] if i["uuid"] not in test.stolen]})
+                items = [i for i in test.POCKETS["items"] if i["uuid"] not in test.stolen]
+                if test.unread:
+                    test.unread -= 1
+                    items = [dict(i, chance=0, dc=0) for i in items]
+                return JobResult("done", {"items": items})
 
             def rpc(self, op, args=None, context="server", **k):
                 test.ops.append((op, dict(args or {})))
@@ -299,6 +308,27 @@ class Steal(unittest.TestCase):
         pockets = next(line for line in out.splitlines() if line.startswith("POCKETS"))
         self.assertIn("Ring", pockets)
         self.assertNotIn("Dagger", pockets)
+
+    def test_odds_unread_right_after_the_open_are_read_again(self):
+        # live5 S3#0: the first listing after the open read Tumeril's Gold x15 as 'odds ?' (DC 0, chance 0); live4,
+        # listing ~1 s after the open, read 95% DC -10 for the same pocket
+        self.unread = 2
+        out = world_tools.pickpocket(self.npc)
+        self.assertIn("Dagger 2g 54% DC12", out)
+        self.assertNotIn("odds ?", out)
+        self.assertEqual(self.names().count("act.pickpocket"), 1)
+        self.assertEqual(self.unread, 0)
+
+    def test_odds_still_unread_are_explained(self):
+        # the recorded live4 reply for Tumeril's pockets, and the same pocket as live5 read it
+        rec = next(json.loads(line) for line in FIXTURE.read_text().splitlines() if '"Gold","count":15' in line)
+        res = rec["replies"][0]["result"]["result"]
+        self.assertIn("Gold x15 95% DC-10", economy.pockets_text(res, lambda it: ""))
+        self.assertNotIn("odds ?", economy.pockets_text(res, lambda it: ""))
+        live5 = {"items": [dict(it, chance=0, dc=0) for it in res["items"]]}
+        text = economy.pockets_text(live5, lambda it: "")
+        self.assertIn("Gold x15 odds ?", text)
+        self.assertIn("the window had not shown that item's odds when it was read", text)
 
     def test_leave_forgets_the_window(self):
         world_tools.pickpocket(self.npc)

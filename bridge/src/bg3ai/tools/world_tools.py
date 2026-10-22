@@ -370,8 +370,9 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
         deadline = time.monotonic() + 3.0
         listing = _pockets(args)
         def early(r: JobResult) -> bool:   # widget not up yet, or up with its slots not filled yet (live 12:5x)
-            if r.status == "done":
-                return not (r.result or {}).get("items")
+            if r.status == "done":   # or its odds not filled yet (live5 S3#0: Gold x15 'odds ?', live4 read 95%)
+                items = (r.result or {}).get("items") or []
+                return not items or any(economy.odds_unread(it) for it in items if isinstance(it, dict))
             return "no pickpocket window" in str(r.error or "")
         while early(listing) and time.monotonic() < deadline:
             time.sleep(PP_POLL_S)
