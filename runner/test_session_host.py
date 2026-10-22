@@ -1,7 +1,7 @@
 """`play.py bench run --matrix <file>` offline: bg3bench's matrix CLI with the harness's LiveRunHost, one job played
 as one run_session by a SessionRunner whose game and agent process are stubs (no game, no client, no uv dump).
 
-The job's run dir gets the runner's files (runner.json, the reset's nav files) and the bench's (runs.jsonl,
+The job's run dir gets the runner's files (runner.json) and the bench's (runs.jsonl,
 manifest.json, result.json); `bench plan` needs no lock.
 
     python3 -m unittest runner/test_session_host.py
@@ -156,8 +156,8 @@ class Bench(unittest.TestCase):
         self.assertEqual((play["sid"], play["minutes"]), ("S001", 15.0))
         self.assertIn("benchmark run of the scenario 'Sell the idol'", play["prompt"])
         self.assertIn('{"gold": {"gte": 200}}', play["prompt"])
-        self.assertEqual([p.name for p in (run_dir / "reset").iterdir()], ["nav_guard_x.json"])
-        self.assertEqual(list(self.se.iterdir()), [])
+        self.assertFalse((run_dir / "reset").exists())  # a new game's host is a new uuid: no nav file moved
+        self.assertEqual([p.name for p in self.se.iterdir()], ["nav_guard_x.json"])
         rec = json.loads((run_dir / "runs.jsonl").read_text())
         self.assertEqual((rec["outcome"], rec["client"], rec["sessions"]), ("timeout", "claude", 1))
         self.assertTrue((run_dir / "manifest.json").is_file() and (run_dir / "result.json").is_file())

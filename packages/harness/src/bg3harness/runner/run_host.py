@@ -5,13 +5,16 @@ bg3bench.adapters.session_run.SessionRun calls `start(job, sc, run_dir)` before 
 HostStart has session_run.Start's fields). `sc` is the v2 scenario dict with its defaults (bg3bench.scenario.load).
 
 start: a SessionRunner for the run directory (make_runner: the entry point's Runner, which brings the LSF reader),
-the client's run files (pi's system text, the bg3 tool count, the manifest), the reset (saves from now on only; the
-mod's nav_*.json moved into <run_dir>/reset/), the game at the scenario's start (its start save loaded, or a new
-game), the settings check and seed, and the kickoff for the job's condition. The session's hooks are the runner's
+the client's run files (pi's system text, the bg3 tool count, the manifest), the reset (saves from now on only; for a
+save start the mod's nav_*.json moved into <run_dir>/reset/, a new game's host is a new uuid that has none), the game
+at the scenario's start (its start save loaded, or a new game), the settings check and seed, and the kickoff for the
+job's condition. The session's hooks are the runner's
 own (RunnerSessionHooks), so crashes, hangs and caps behave as in a playthrough; SessionRun's Recovery(max_resumes=0)
 makes a fault end the run invalid.
 
-record: facts.jsonl's run_end, the game stopped (the next run starts a fresh process), and the run's fields: the
+record: facts.jsonl's run_end, the game stopped (the next run starts a fresh process), the moved nav files put back
+(the run's own versions kept in <run_dir>/reset/run/; a failed start puts them back too, and a marker,
+runtime/nav-reset.json, lets the next start restore what a run that died left moved), and the run's fields: the
 outcome (the bench grades facts.jsonl; the harness decides no goal), cost and tokens of every play process, wall
 time, the settings readout, the manifest fields and the reset.
 """
@@ -103,6 +106,48 @@ def archive_nav_state(se_bg3ai: Path, dest: Path) -> list[str]:
         except OSError:
             continue
     return moved
+
+
+def isolate_nav(se_bg3ai: Path, dest: Path, marker: Path) -> list[str]:
+    """A save start's nav reset: every nav_*.json moved into dest (archive_nav_state), the marker written first so
+    restore_nav can put them back even after a crash. The decision of 2026-10-22 03:30 is to move only the start
+    host's two (bg3bench.resets.isolate_nav); that needs the save's host uuid, which tools/saves/inspect.py doesn't
+    report yet, so all of them go (and all come back). Returns the moved names."""
+    try:
+        names = sorted(p.name for p in se_bg3ai.glob("nav_*.json") if p.is_file())
+    except OSError:
+        return []
+    if not names:
+        return []
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"se": str(se_bg3ai), "dest": str(dest), "files": names}))
+    return archive_nav_state(se_bg3ai, dest)
+
+
+def restore_nav(marker: Path) -> list[str]:
+    """After the run (or a failed start, or at the next start after a crash): the marker's files go back from dest;
+    a file of the same name the run wrote meanwhile is kept in <dest>/run/. Idempotent; the marker goes last. No
+    marker: nothing was moved, []."""
+    try:
+        m = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return []
+    se, dest = Path(m["se"]), Path(m["dest"])
+    back: list[str] = []
+    for n in m["files"]:
+        if not (dest / n).is_file():
+            continue
+        if (se / n).exists():
+            (dest / "run").mkdir(parents=True, exist_ok=True)
+            shutil.move(str(se / n), str(dest / "run" / n))
+        shutil.move(str(dest / n), str(se / n))
+        back.append(n)
+    marker.unlink(missing_ok=True)
+    return back
+
+
+def nav_marker() -> Path:
+    return renv.RUNTIME / "nav-reset.json"
 
 
 def owner_of(sc: Json) -> str:
@@ -228,7 +273,7 @@ class LiveRunHost:
         stops the game it brought up and raises RuntimeError (the runner's SystemExits too: an operator refusal
         such as ensure_game's foreign game would otherwise end the process), so SessionRun records one invalid
         attempt and the matrix reruns. A save start whose save didn't load (missing, or --take-over playing on
-        from another) fails before the kickoff."""
+        from another) fails before the kickoff. The nav files a failed start moved are put back."""
         want = renv.RUNTIME / "sessions" / run_dir.name
         if Path(run_dir).resolve() != want.resolve():  # facts.jsonl and the streams must land in the run dir
             raise ValueError(f"run dir {run_dir}: the runner writes runtime/sessions/<run> under {renv.RUNTIME}")
@@ -239,9 +284,12 @@ class LiveRunHost:
             r = self.make_runner(opt)
             return self._begin(r, opt, sc, run_dir)
         except (Exception, SystemExit) as e:
-            if r is not None:
-                self.runs.pop(run_dir, None)
-                r.end_run_game("start failed", "the rerun launches a new one")
+            try:
+                if r is not None:
+                    self.runs.pop(run_dir, None)
+                    r.end_run_game("start failed", "the rerun launches a new one")
+            finally:
+                restore_nav(nav_marker())
             if isinstance(e, SystemExit):
                 raise RuntimeError(f"start failed: {e.code}") from e
             raise
@@ -251,7 +299,9 @@ class LiveRunHost:
         r.run_started = t0
         r.settles_budget = False  # the matrix settles a paid run's cost (once): the runner must not add it too
         r.state["saves_after"] = t0  # reset.saves: only saves from now on (and the start save) are the run's
-        moved = archive_nav_state(renv.SE_BG3AI_DIR, run_dir / "reset") if sc["reset"]["nav_state"] == "archive" else []
+        restore_nav(nav_marker())  # what a run that died between start and record left moved
+        archive = sc["reset"]["nav_state"] == "archive" and sc["start"]["kind"] == "save"
+        moved = isolate_nav(renv.SE_BG3AI_DIR, run_dir / "reset", nav_marker()) if archive else []
         r.event("run_reset", nav_files=moved)
         self.runs[run_dir] = (r, t0, moved)
         try:
@@ -288,7 +338,10 @@ class LiveRunHost:
         try:
             r.end_facts(name)
         finally:
-            r.end_run_game("run end", "the next run launches a new one")
+            try:
+                r.end_run_game("run end", "the next run launches a new one")
+            finally:
+                back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return {
             "outcome": name,
@@ -301,6 +354,6 @@ class LiveRunHost:
             "cap_hit": r.cap_hit,
             "game_settings": getattr(r, "game_settings", None),
             "manifest": r.opt.manifest,
-            "reset": {"nav_files": moved},
+            "reset": {"nav_files": moved, "restored": back},
             "loaded_save": r.state["loaded_save"],
         }

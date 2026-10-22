@@ -1,8 +1,9 @@
 """bg3harness.runner.run_host: the bench's live RunHost with a fake runner (no game, no client process).
 
-A save start and a new-game start become their Options and kickoff; start resets the run (saves from now, the mod's
-nav files moved into the run dir), puts the game at the start in order and hands back the runner's session hooks;
-record ends facts.jsonl, stops the game and returns the run's fields with the outcome the harness can tell."""
+A save start and a new-game start become their Options and kickoff; start resets the run (saves from now, a save
+start's nav files moved into the run dir), puts the game at the start in order and hands back the runner's session
+hooks; record ends facts.jsonl, stops the game, puts the nav files back and returns the run's fields with the outcome
+the harness can tell (live7: the SE folder stayed empty after a bench run)."""
 
 from __future__ import annotations
 
@@ -229,6 +230,8 @@ def test_a_failed_start_forgets_the_run_stops_the_game_and_raises_runtime_error(
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     assert not isinstance(e.value, SystemExit) and rig.h.runs == {}
     assert rig.calls[-1] == "end_run_game(start failed)"
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]  # put back
+    assert not H.nav_marker().exists()
     rig.prepare = None  # the rerun in a fresh dir starts clean
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove-r2"))
     assert list(rig.h.runs) == [run_dir("m-grove-r2")]
@@ -258,7 +261,8 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
     assert calls == ["end_facts(timeout)", "end_run_game(run end)"]
     assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)
-    assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": ["nav_aa.json", "nav_guard_aa.json"]})
+    moved = ["nav_aa.json", "nav_guard_aa.json"]
+    assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved})
     assert (rec["game_settings"], rec["manifest"], rec["loaded_save"]) == (
         {"difficulty": "Balanced"},
         {"m": 1},
@@ -279,6 +283,54 @@ def test_record_outcomes_and_the_game_stops_even_when_the_facts_fail(rig: Rig):
     with pytest.raises(RuntimeError):
         h.record(JOB, SAVE_SC, run_dir("c"), outcome())
     assert calls == ["end_facts(timeout)", "end_run_game(run end)"]
+
+
+def se_names() -> list[str]:
+    return sorted(p.name for p in renv.SE_BG3AI_DIR.iterdir())
+
+
+def test_record_puts_the_nav_files_back_and_keeps_the_runs_own(rig: Rig):
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert H.nav_marker().exists() and se_names() == ["other.json"]
+    (renv.SE_BG3AI_DIR / "nav_aa.json").write_text('{"run": 1}')  # the run's game wrote its host's file again
+    rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
+    assert (renv.SE_BG3AI_DIR / "nav_aa.json").read_text() == "{}"
+    assert (run_dir("m-grove") / "reset" / "run" / "nav_aa.json").read_text() == '{"run": 1}'
+    assert not H.nav_marker().exists()
+
+
+def test_the_nav_files_come_back_when_the_game_stop_fails(rig: Rig):
+    def prepare(r: FakeRunner) -> None:
+        def boom(when: str = "", after: str = "") -> None:
+            raise RuntimeError("kill failed")
+
+        r.end_run_game = boom  # pyright: ignore[reportAttributeAccessIssue]
+
+    rig.prepare = prepare
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    with pytest.raises(RuntimeError, match="kill failed"):
+        rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
+
+
+def test_a_new_game_moves_no_nav_file(rig: Rig):  # its host is a new uuid: no file is its own
+    rig.h.start(JOB, NEW_SC, run_dir("m-idol"))
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
+    assert rig.runners[-1].events == [("run_reset", {"nav_files": []})]
+    assert rig.h.record(JOB, NEW_SC, run_dir("m-idol"), outcome())["reset"] == {"nav_files": [], "restored": []}
+
+
+def test_the_next_start_restores_what_a_dead_run_left_moved(rig: Rig):
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))  # the process dies here: no record
+
+    def no_files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
+        return {}
+
+    host = H.LiveRunHost(lambda opt: FakeRunner(opt, []), run_files=no_files, env={}, clock=lambda: 2000.0)
+    host.start(JOB, NEW_SC, run_dir("m-idol"))
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
+    assert not H.nav_marker().exists()
 
 
 def test_archive_moves_only_the_nav_files(tmp_path: Path):
