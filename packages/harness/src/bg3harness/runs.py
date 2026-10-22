@@ -356,7 +356,9 @@ def stream_events(lines: list[str], parsers: dict | None = None, name: str | Non
     name = name or stream_client(lines)
     parsers = {} if parsers is None else parsers
     if name == "pi" and name not in parsers:  # pi's parser needs no profile
-        parsers[name] = __import__("pi_client").PiParser()
+        from . import pi_client
+
+        parsers[name] = pi_client.PiParser()
     elif name not in parsers:  # parsing only: no MCP server config needed (codex/gemini would read play/.mcp.json)
         parsers[name] = clients.make(name, **({} if name == "claude" else {"server": {}}))
     parser = parsers[name]

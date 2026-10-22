@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 GAME_APPID = "1086940"
@@ -118,7 +119,7 @@ def find_app(appid: str, dirname: str, home: Path) -> Path | None:
     return None
 
 
-def game_dir(env=os.environ, home: Path | None = None) -> Path:
+def game_dir(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
     home = home or Path.home()
     for var in ("BG3_DIR", "BG3AI_GAME_DIR"):
         if env.get(var):
@@ -126,7 +127,7 @@ def game_dir(env=os.environ, home: Path | None = None) -> Path:
     return find_app(GAME_APPID, GAME_DIRNAME, home) or home / ".local/share/Steam/steamapps/common" / GAME_DIRNAME
 
 
-def sniper_dir(env=os.environ, home: Path | None = None) -> Path:
+def sniper_dir(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
     home = home or Path.home()
     if env.get("BG3AI_SNIPER_DIR"):
         return Path(env["BG3AI_SNIPER_DIR"])
@@ -134,11 +135,11 @@ def sniper_dir(env=os.environ, home: Path | None = None) -> Path:
     return found or game_dir(env, home).parent / SNIPER_DIRNAME
 
 
-def manifest(env=os.environ, home: Path | None = None) -> Path:
+def manifest(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
     return game_dir(env, home).parent.parent / f"appmanifest_{GAME_APPID}.acf"
 
 
-def buildid(env=os.environ, home: Path | None = None) -> str:
+def buildid(env: Mapping[str, str] = os.environ, home: Path | None = None) -> str:
     try:
         return parse_vdf(manifest(env, home).read_text(errors="replace")).get("AppState", {}).get("buildid", "")
     except OSError:
@@ -149,21 +150,21 @@ PROFILE_REL = Path(".local/share/Larian Studios/Baldur's Gate 3")
 SAVES_REL = Path("PlayerProfiles/Public/Savegames/Story")
 
 
-def profile_dir(env=os.environ, home: Path | None = None) -> Path:
+def profile_dir(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
     """The game's Larian profile folder: $BG3AI_PROFILE_DIR, else ~/.local/share/Larian Studios/Baldur's Gate 3."""
     if env.get("BG3AI_PROFILE_DIR"):
         return Path(env["BG3AI_PROFILE_DIR"])
     return (home or Path.home()) / PROFILE_REL
 
 
-def saves_dir(env=os.environ, home: Path | None = None) -> Path:
+def saves_dir(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
     """The Story save folders: $BG3AI_SAVE_DIR, else <profile>/PlayerProfiles/Public/Savegames/Story."""
     if env.get("BG3AI_SAVE_DIR"):
         return Path(env["BG3AI_SAVE_DIR"])
     return profile_dir(env, home) / SAVES_REL
 
 
-def se_dir(env=os.environ, home: Path | None = None) -> Path:
+def se_dir(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
     """Script Extender's per-profile folder (the mod's Ext.IO files are in BG3AI/): $BG3AI_SE_DIR, else
     <profile>/Script Extender."""
     if env.get("BG3AI_SE_DIR"):

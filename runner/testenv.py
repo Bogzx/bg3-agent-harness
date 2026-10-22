@@ -2,24 +2,20 @@
 
 bg3harness.runner.env reads SAVE_DIR and SE_BG3AI_DIR (steam_paths: $BG3AI_SAVE_DIR / $BG3AI_SE_DIR, else the real
 Larian profile) once, at import. A test that reached the run reset with the real ones moved the live game's Script
-Extender BG3AI/nav_*.json files away (live5 §0.4). Forced, not setdefault: a shell that exports the real folders
-must not leak them into a test. test_play_isolation.RealDirs checks every runner test module imports this before
-play, the legacy runner or bg3harness.runner. It also puts packages/harness/src and bridge/src on sys.path
-(runner/_harness.py), so a test module can import bg3harness.runner without importing play first.
+Extender BG3AI/nav_*.json files away (live5 §0.4). bg3harness.testing.profile sets them (forced: a shell that
+exports the real folders must not leak them into a test). test_play_isolation.RealDirs checks every runner test
+module imports this before play, the legacy runner or bg3harness.runner. It also puts packages/harness/src and
+bridge/src on sys.path (runner/_harness.py), so a test module can import bg3harness.runner without importing play first.
 """
 
-import os
-import tempfile
 from pathlib import Path
 
-ROOT = Path(tempfile.mkdtemp(prefix="bg3ai-test-profile-"))
+import _harness  # noqa: F401  (first: bg3harness on sys.path; nothing it imports reads the profile folders)
+from bg3harness.testing.profile import temp_profile
+
+ROOT = temp_profile()  # the same dir as packages/harness/tests/conftest.py's when both run in one process
 SAVE_DIR = ROOT / "saves"
 SE_DIR = ROOT / "se"
-os.environ["BG3AI_SAVE_DIR"] = str(SAVE_DIR)
-os.environ["BG3AI_SE_DIR"] = str(SE_DIR)
-os.environ["BG3AI_PROFILE_DIR"] = str(ROOT / "profile")
-
-import _harness  # noqa: E402, F401  (after the env: nothing it imports reads the profile folders)
 
 
 def home(name: str):

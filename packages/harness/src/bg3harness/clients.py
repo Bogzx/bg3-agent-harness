@@ -569,8 +569,12 @@ class GeminiClient:
         return []
 
 
-CLIENTS = {"claude": ClaudeClient, "codex": CodexClient, "gemini": GeminiClient,
-           "pi": lambda **kw: __import__("pi_client").PiClient(**kw)}   # bg3harness/pi_client.py imports this module
+def _pi(**kw) -> Client:
+    from . import pi_client  # pi_client imports this module
+    return pi_client.PiClient(**kw)
+
+
+CLIENTS = {"claude": ClaudeClient, "codex": CodexClient, "gemini": GeminiClient, "pi": _pi}
 
 
 def make(name: str, **kw) -> Client:

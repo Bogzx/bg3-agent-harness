@@ -508,7 +508,7 @@ def model_time(state_dir, since: float | None = None, until: float | None = None
 # ======================================================================== CLI
 
 def main(argv: list[str] | None = None) -> int:
-    import judge  # legacy runner/judge.py: the run lookup (runs.jsonl, run k > 1 beside the series dir)
+    from . import judge  # the run lookup (runs.jsonl, run k > 1 beside the series dir)
     ap = argparse.ArgumentParser(description="Split a run's live-feel time into harness and model time, with the "
                                              "model time normalised to a reference API speed.")
     ap.add_argument("session_dir", type=Path, help="runtime/sessions/<playthrough> (the series or the run's dir)")
