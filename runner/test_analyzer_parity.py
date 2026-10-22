@@ -275,7 +275,9 @@ class Fixtures(Base):
                     n += 1
                 plays = self.streams(d, play_only=True)
                 self.assertEqual(R.fairness_flags(plays), legacy_fairness_flags(self.streams(src, play_only=True)))
-                self.assertEqual(R.claude_totals(d, 0), legacy_claude_totals(src, 0), f"{how} {src.name}")
+                totals = R.claude_totals(d, 0)
+                self.assertIs(totals.pop("cost_unknown"), False)  # every process here reported its cost
+                self.assertEqual(totals, legacy_claude_totals(src, 0), f"{how} {src.name}")
         self.assertEqual(n, 8)
 
     def test_fixtures_have_what_the_analyzers_read(self):

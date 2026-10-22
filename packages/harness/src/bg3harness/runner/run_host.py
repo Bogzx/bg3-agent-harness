@@ -476,22 +476,26 @@ class LiveRunHost:
         why, cap = getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
         failures = run_failures(r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap)
         counts = {cls: sum(int(f.get("n") or 1) for f in failures if f["class"] == cls) for cls in runs.CLASSES}
-        return {
-            "outcome": name,
-            "reason": res.reason,
-            "cost_usd": totals["cost_usd"],
-            "tokens": totals["tokens"],
-            "turns": totals["turns"],
-            "wall_min": round((res.ended - outcome.started) / 60, 2),
-            "sessions": 1,
-            "cap_hit": r.cap_hit,
-            "milestone": hit and hit["id"],
-            "game_settings": getattr(r, "game_settings", None),
-            "manifest": r.opt.manifest,
-            "reset": {"nav_files": moved, "restored": back},
-            "loaded_save": r.state["loaded_save"],
-            "harness_failures": counts[runs.HARNESS],
-            "agent_failures": counts[runs.AGENT],
-            "unknown_failures": counts[runs.UNKNOWN],
-            "failures": failures,
-        } | ({"operator": "stop"} if stopped else {})
+        return (
+            {
+                "outcome": name,
+                "reason": res.reason,
+                "cost_usd": None if totals["cost_unknown"] else totals["cost_usd"],  # unknown is not $0
+                "tokens": totals["tokens"],
+                "turns": totals["turns"],
+                "wall_min": round((res.ended - outcome.started) / 60, 2),
+                "sessions": 1,
+                "cap_hit": r.cap_hit,
+                "milestone": hit and hit["id"],
+                "game_settings": getattr(r, "game_settings", None),
+                "manifest": r.opt.manifest,
+                "reset": {"nav_files": moved, "restored": back},
+                "loaded_save": r.state["loaded_save"],
+                "harness_failures": counts[runs.HARNESS],
+                "agent_failures": counts[runs.AGENT],
+                "unknown_failures": counts[runs.UNKNOWN],
+                "failures": failures,
+            }
+            | ({"operator": "stop"} if stopped else {})
+            | ({"cost_unknown": True} if totals["cost_unknown"] else {})
+        )

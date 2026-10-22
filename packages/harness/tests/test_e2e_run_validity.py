@@ -242,3 +242,25 @@ def test_a_play_process_that_cant_start_is_recorded_invalid_and_the_matrix_goes_
     assert sorted(p.name for p in renv.SE_BG3AI_DIR.iterdir()) == nav and not H.nav_marker().exists()
     rec = bench_run(rig, Play("exited"), sc=sc)  # the matrix's rerun plays
     assert (rec["run"], rec["outcome"], rec["_result"]["valid"]) == (2, "timeout", True)
+
+
+def test_a_claude_run_stopped_before_its_result_has_an_unknown_cost_not_zero(rig: Rig):
+    # H4: the hard stop ended the run's one claude process before its result; the record said cost_usd 0
+    from bg3harness import clients, events
+
+    def stopped_stream(r: ScriptedRunner) -> None:
+        play = r.run_claude
+
+        def run_claude(sid: str, *a: Any, **k: Any) -> rstate.SessionResult:
+            res = play(sid, *a, **k)
+            log = events.EventLog(r.state.dir / f"{sid}.events.jsonl")
+            log.write(clients.Event("usage", message_id="m1", tokens=clients.tokens(208000, 900, 0, 0)))
+            log.end("hard_stop", -2, res.ended)
+            return res
+
+        r.run_claude = run_claude  # pyright: ignore[reportAttributeAccessIssue]
+
+    rec = bench_run(rig, Play("hard_stop", 18, None, stream=(init(),)), stopped_stream)
+    assert (rec["cost_usd"], rec["cost_unknown"], rec["turns"]) == (None, True, 1)
+    assert sum(rec["tokens"].values()) == 208900
+    assert rec["_result"]["cost_usd"] is None and rec["_result"]["valid"]  # graded; its cost unknown, not free

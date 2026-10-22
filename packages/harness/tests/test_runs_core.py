@@ -138,6 +138,32 @@ class Caps(TmpDir):
         self.assertEqual(tot["tokens"]["input"], 27990 + 1000 + 110)
         self.assertAlmostEqual(tot["cost_usd"], 0.500185 + 1.0 + 200 * rate * (0.500185 + 1.0))
 
+    def test_a_first_claude_process_stopped_before_its_result_has_an_unknown_cost(self):
+        # H4: claude reports cost only in its result; a bench run (one process) stopped at the hard stop, a cap or a
+        # crash read cost 0 with 208k tokens
+        _stream(self.tmp / "S001.jsonl", {"type": "system", "subtype": "init"})
+        log = runs.events.EventLog(self.tmp / "S001.events.jsonl")
+        log.write(runs.clients.Event("usage", message_id="m1", tokens=runs.clients.tokens(208000, 900, 0, 0)))
+        log.end("hard_stop", -2, time.time())
+        tot = runs.claude_totals(self.tmp, 0)
+        self.assertEqual((tot["cost_usd"], tot["cost_unknown"], tot["turns"]), (0.0, True, 1))
+        self.assertEqual(runs.token_total(tot["tokens"]), 208900)
+        ev = runs.unfinished_result(runs.stopped_usage(self.tmp / "S001") or [], 0.0, 0)
+        self.assertIsNone(ev.cost_usd)  # nothing priced a token yet: no rate to price it at
+
+    def test_a_result_without_a_price_has_an_unknown_cost(self):
+        # a codex model with no known price: its result carries tokens and no cost
+        _stream(
+            self.tmp / "S001.jsonl",
+            {"type": "thread.started", "thread_id": "t1"},
+            {"type": "turn.completed", "usage": {"input_tokens": 5000, "cached_input_tokens": 0, "output_tokens": 50}},
+        )
+        tot = runs.claude_totals(self.tmp, 0)
+        self.assertEqual((tot["cost_usd"], tot["cost_unknown"]), (0.0, True))
+        self.assertGreater(runs.token_total(tot["tokens"]), 0)
+        _stream(self.tmp / "S001.jsonl", {"type": "result", "total_cost_usd": 0.5, "usage": {"input_tokens": 10}})
+        self.assertIs(runs.claude_totals(self.tmp, 0)["cost_unknown"], False)
+
     def test_a_cap_is_the_agents_failure_like_a_timeout(self):
         f = runs.outcome_failure("over_budget", "", 9, [], "tokens")
         self.assertEqual([(x["kind"], x["class"]) for x in f], [("tokens_cap", "agent")])

@@ -396,9 +396,11 @@ def claude_totals(state_dir: Path, since: float) -> dict:
     client): their result events (events.load_events). A process stopped before its result (a cap, a hang, a crash: no
     result event, its events log's session_end; stopped_usage) counts its usage events, UsageMeter's way: the tokens per
     message id, one turn per message, the cost its client reported as running (pi), else its tokens at the run's cost
-    per token so far (claude reports cost only in its result). A cost a client can't know (codex/gemini model without a
-    price) counts 0."""
+    per token so far (claude reports cost only in its result). A process whose cost can't be known (a codex/gemini
+    model without a price, a first process stopped before any result priced a token) adds no cost and sets
+    cost_unknown: the cost_usd is then a lower bound, never a run's true cost (H4: it read $0 with 208k tokens)."""
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
+    unknown = False
     try:
         files = list(state_dir.iterdir()) if state_dir.is_dir() else []
     except OSError:
@@ -417,11 +419,12 @@ def claude_totals(state_dir: Path, since: float) -> dict:
         if not evs and (usage := stopped_usage(base)) is not None:
             evs = [unfinished_result(usage, cost, token_total(tokens))]
         for ev in evs:
+            unknown = unknown or (ev.cost_usd is None and token_total(ev.tokens) > 0)
             cost += float(ev.cost_usd or 0)
             turns += int(ev.turns or 0)
             for k in clients.TOKEN_KEYS:
                 tokens[k] += int((ev.tokens or {}).get(k) or 0)
-    return {"cost_usd": cost, "turns": turns, "tokens": tokens}
+    return {"cost_usd": cost, "turns": turns, "tokens": tokens, "cost_unknown": unknown}
 
 
 def stopped_usage(base: Path) -> list | None:
@@ -436,7 +439,7 @@ def stopped_usage(base: Path) -> list | None:
 def unfinished_result(usage: list, done_cost: float, done_tokens: int):
     """The result a process stopped before its own would have reported, from its usage events (claude_totals): the
     last tokens per message id, one turn per message, the last running cost (pi), else the tokens at done_cost per
-    done_token (UsageMeter's live rate)."""
+    done_token (UsageMeter's live rate); no cost (None) when nothing priced a token yet."""
     msgs: dict = {}
     running = None
     for ev in usage:
@@ -444,8 +447,8 @@ def unfinished_result(usage: list, done_cost: float, done_tokens: int):
         if ev.cost_usd is not None:
             running = float(ev.cost_usd)
     tokens = {k: sum(int(t.get(k) or 0) for t in msgs.values()) for k in clients.TOKEN_KEYS}
-    if running is None:
-        running = token_total(tokens) * (done_cost / done_tokens if done_tokens else 0.0)
+    if running is None and done_tokens:
+        running = token_total(tokens) * done_cost / done_tokens
     return clients.Event("result", turns=len(msgs), cost_usd=running, tokens=tokens)
 
 
