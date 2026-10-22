@@ -52,9 +52,11 @@ From the repo root:
 ```bash
 # the runner's file for a v2 scenario (v1 shape + game_settings, timing); a goal that isn't one milestone is refused
 uv run --project packages/bench python -m bg3bench.scenario resolve packages/bench/scenarios/nautiloid.json > resolved.json
-# the matrix runner; one job is one runner/play.py run --scenario-file <resolved> ... call (the legacy CLI adapter)
+# the matrix runner; one job is one bg3harness run_session (adapters/session_run.py, no resume: a crash is an invalid
+# run, rerun), with the harness's RunHost passed to matrix_cli.main(host=...); --runner legacy (until Phase D) plays
+# each job as one runner/play.py run --scenario-file <resolved> ... call instead
 uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/<file>.toml
-uv run --project packages/bench python -m bg3bench.matrix run|resume|status --matrix <file>.toml
+uv run --project packages/bench python -m bg3bench.matrix run|resume|status --matrix <file>.toml --runner legacy
 
 # the series view on http://127.0.0.1:8766/series, with the live row (the recorded rows only: python -m bg3bench.seriesview)
 python3 runner/dashboard/seriesview.py

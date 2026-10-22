@@ -1,5 +1,6 @@
 # pyright: basic
-"""TEMPORARY (remove in Phase D, when the harness has a run API): the matrix's run_one through the legacy CLI.
+"""TEMPORARY (remove in Phase D): the matrix's fallback run_one through the legacy CLI (`--runner legacy`; the
+default is adapters/session_run.py on run_session).
 
 One job = one more run of a series: `python3 runner/play.py run --scenario-file <resolved S> --playthrough <series>
 --client C --model M [--effort E] --runs <records + 1> <condition flags>`, where the resolved file is the v2
@@ -18,21 +19,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from bg3bench import results
+from bg3bench.adapters.session_run import series_name
 from bg3bench.manifest import run_id
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 REPO = Path(__file__).resolve().parents[5]
-
-
-def series_name(matrix: str, job: Mapping) -> str:
-    parts = [matrix, job["scenario"], job["model"], job["client"], job["effort"] or "", job["condition"]]
-    return re.sub(r"[^a-z0-9_-]+", "-", "-".join(p for p in parts if p).lower()).strip("-")[:100]
 
 
 def _records(sessions: Path, series: str) -> list[dict]:

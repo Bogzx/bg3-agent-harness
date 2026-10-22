@@ -1,4 +1,4 @@
-"""The matrix CLI: `python -m bg3bench.matrix plan|run|status|resume --matrix <file.toml>`.
+"""The matrix CLI: `python -m bg3bench.matrix plan|run|status|resume --matrix <file.toml> [--runner session|legacy]`.
 
 The matrix file (paths relative to the repo):
 
@@ -19,11 +19,12 @@ repeat-major (every group's repeat 1 first).
 
 - plan: a dry run. The jobs as a table, the reserve, the budget left and what play.py lacks for each condition;
   writes nothing.
-Each scenario is resolved (bg3bench.scenario.resolve: the runner's v1 shape plus game_settings and timing; a goal
-that isn't one milestone is refused) when the file loads.
-
-- run: writes the plan (or keeps the same one) and each scenario's resolved file (runtime/matrix/<name>/scenarios/,
-  for play.py run --scenario-file) and runs the plan through the legacy CLI adapter until done or a stop.
+- run: writes the plan (or keeps the same one) and runs it until done or a stop. `--runner session` (the default):
+  each job is one run_session (adapters/session_run.py; the v2 scenario goes to the RunHost the caller passes in as
+  `main(host=...)`: the harness has none to offer yet, so the CLI alone refuses it). `--runner legacy` (the fallback
+  until Phase D): each scenario is resolved (bg3bench.scenario.resolve: the runner's v1 shape plus game_settings and
+  timing; a goal that isn't one milestone is refused), written to runtime/matrix/<name>/scenarios/ and played by
+  play.py run --scenario-file (adapters/legacy_cli.py); a condition play.py lacks is refused unless allow_gaps.
 - resume: run, for a matrix that already has a queue (refused otherwise).
 - status: the jobs' state from the queue: status, attempts, the last result.
 """
@@ -40,9 +41,10 @@ from pathlib import Path
 from typing import TextIO
 
 from bg3bench import matrix, scenario
-from bg3bench.adapters import legacy_cli, play_flags
+from bg3bench.adapters import legacy_cli, play_flags, session_run
 
 BUDGET = "runtime/budget.json"
+SESSIONS = Path("runtime/sessions")
 SCENARIOS = Path("packages/bench/scenarios")  # the v2 set
 GROUP_KEYS = ("models", "scenarios", "conditions", "repeats")
 
@@ -81,11 +83,19 @@ def _scenarios(raw: dict, path: Path, repo: Path) -> list[str]:
     return scenarios
 
 
-def _resolve(name: str, path: Path, repo: Path) -> dict:
+def _load(name: str, path: Path, repo: Path) -> dict:
     try:
-        return scenario.resolve(scenario.load(repo / SCENARIOS / f"{name}.json"))
+        return scenario.load(repo / SCENARIOS / f"{name}.json")
     except scenario.ScenarioError as e:
         raise MatrixFileError(f"{path}: {e}") from None
+
+
+def resolved(m: dict) -> dict[str, dict]:
+    """Each scenario as the legacy runner reads it (scenario.resolve); a goal it can't stop at raises."""
+    try:
+        return {s: scenario.resolve(sc) for s, sc in m["scenarios"].items()}
+    except scenario.ScenarioError as e:
+        raise MatrixFileError(f"{m['path']}: {e}") from None
 
 
 def _group(raw: dict, path: Path, repo: Path, max_cost: dict) -> tuple[list[dict], list[str]]:
@@ -103,8 +113,8 @@ def _group(raw: dict, path: Path, repo: Path, max_cost: dict) -> tuple[list[dict
 
 
 def load(path: str | Path, repo: Path) -> dict:
-    """The matrix file -> {"name", "jobs", "budget", "conditions", "allow_gaps", "scenarios"} (scenarios: name ->
-    resolved scenario); checks profiles and scenarios."""
+    """The matrix file -> {"name", "path", "jobs", "budget", "conditions", "allow_gaps", "scenarios"} (scenarios:
+    name -> the v2 scenario, scenario.load); checks profiles and scenarios."""
     path = Path(path)
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -132,7 +142,7 @@ def load(path: str | Path, repo: Path) -> dict:
     named = {s for g in groups for s in _scenarios(g, path, repo)}
     if unknown := sorted(set(max_cost) - named):
         raise MatrixFileError(f"{path}: budget.max_cost names scenarios not in the matrix: {unknown}")
-    resolved = {s: _resolve(s, path, repo) for s in sorted(named)}
+    loaded = {s: _load(s, path, repo) for s in sorted(named)}
     jobs, conds = [], []
     for g in groups:
         g_jobs, g_conds = _group(g, path, repo, max_cost)
@@ -146,11 +156,12 @@ def load(path: str | Path, repo: Path) -> dict:
             raise MatrixFileError(f"{path}: {j['client']} spends money: give budget.max_cost for {j['scenario']}")
     return {
         "name": name,
+        "path": path,
         "jobs": jobs,
         "budget": repo / budget.get("file", BUDGET),
         "conditions": conds,
         "allow_gaps": bool(raw.get("allow_gaps", False)),
-        "scenarios": resolved,
+        "scenarios": loaded,
     }
 
 
@@ -190,8 +201,13 @@ def print_plan(m: dict, out: TextIO) -> None:
     for c in m["conditions"]:
         gaps = play_flags.entry(c).gaps
         if gaps:
-            how = "a pilot (allow_gaps)" if m["allow_gaps"] else "refused by run"
+            how = "a pilot (allow_gaps)" if m["allow_gaps"] else "refused by run --runner legacy"
             print(f"condition {c}: {how}; play.py lacks " + "; ".join(gaps), file=out)
+    for name, sc in m["scenarios"].items():
+        try:
+            scenario.resolve(sc)
+        except scenario.ScenarioError as e:
+            print(f"scenario {name}: refused by run --runner legacy ({e})", file=out)
 
 
 def print_status(mx: matrix.Matrix, out: TextIO) -> None:
@@ -217,6 +233,7 @@ def main(
     *,
     repo: Path = legacy_cli.REPO,
     run_one: matrix.RunOne | None = None,
+    host: session_run.RunHost | None = None,
     now: Callable[[], float] = time.time,
     sleep: Callable[[float], None] = time.sleep,
     out: TextIO = sys.stdout,
@@ -224,6 +241,7 @@ def main(
     ap = argparse.ArgumentParser(prog="python -m bg3bench.matrix", description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("plan", "run", "status", "resume"))
     ap.add_argument("--matrix", required=True, metavar="TOML")
+    ap.add_argument("--runner", choices=("session", "legacy"), default="session")
     args = ap.parse_args(argv)
     try:
         m = load(args.matrix, repo)
@@ -240,13 +258,18 @@ def main(
     if args.command == "status":
         print_status(matrix.Matrix(root, _no_run, m["budget"], now=now, sleep=sleep), out)
         return 0
-    if run_one is None:
+    if run_one is None and args.runner == "session":
+        if host is None:
+            print("refusing: no run_session host (the harness has none yet): use --runner legacy", file=sys.stderr)
+            return 2
+        run_one = session_run.SessionRun(m["name"], host, scenarios=m["scenarios"], sessions=repo / SESSIONS)
+    elif run_one is None:
         try:
             flags, env = play_flags.table(m["conditions"], allow_gaps=m["allow_gaps"])
+            files = write_scenarios(root, resolved(m))
         except ValueError as e:
             print(f"refusing: {e}", file=sys.stderr)
             return 2
-        files = write_scenarios(root, m["scenarios"])
         run_one = legacy_cli.LegacyCli(m["name"], flags, scenario_files=files, condition_env=env, repo=repo)
     mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep)
     try:

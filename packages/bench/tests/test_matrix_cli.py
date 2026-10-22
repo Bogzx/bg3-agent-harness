@@ -57,9 +57,9 @@ class Clock:
         self.t += s
 
 
-def cli(repo, *argv, run_one=None):
+def cli(repo, *argv, run_one=None, host=None):
     out, clock = io.StringIO(), Clock()
-    code = matrix_cli.main(list(argv), repo=repo, run_one=run_one, now=clock.now, sleep=clock.sleep, out=out)
+    code = matrix_cli.main(list(argv), repo=repo, run_one=run_one, host=host, now=clock.now, sleep=clock.sleep, out=out)
     return code, out.getvalue()
 
 
@@ -130,10 +130,26 @@ def test_the_budget_stop_is_exit_1(tmp_path):
 def test_run_refuses_a_condition_play_py_lacks(tmp_path, capsys):
     repo = fake_repo(tmp_path)
     body = matrix_file(tmp_path).read_text().replace("allow_gaps = true", "")
-    code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)))
+    code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), "--runner", "legacy")
     assert code == 2 and "play.py can't play 'rules' yet" in capsys.readouterr().err
     code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, body)))
-    assert code == 0 and "condition rules: refused by run" in out
+    assert code == 0 and "condition rules: refused by run --runner legacy" in out
+
+
+def test_run_without_run_one_plays_run_session_on_the_host(tmp_path, capsys):
+    from test_session_run import Host
+
+    repo = fake_repo(tmp_path)
+    body = "name = 'm'\nscenarios = ['nautiloid']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
+    code, _ = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)))
+    assert code == 2 and "no run_session host" in capsys.readouterr().err  # the CLI alone has no host yet
+    host = Host([[("exited", 5)]], cost=None)
+    code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), host=host)
+    assert code == 0 and out.rstrip().endswith(f"stopped: {matrix.FINISHED}")
+    ((_job, sc, run_dir),) = host.started
+    assert sc == scenario.load(repo / "packages" / "bench" / "scenarios" / "nautiloid.json")  # v2, not resolved
+    assert run_dir.parent == repo / "runtime" / "sessions" and (run_dir / "result.json").is_file()
+    assert not (repo / "runtime" / "matrix" / "m" / "scenarios").exists()  # resolved files are the legacy path's
 
 
 def test_run_without_run_one_builds_the_legacy_adapter(tmp_path, monkeypatch):
@@ -142,7 +158,7 @@ def test_run_without_run_one_builds_the_legacy_adapter(tmp_path, monkeypatch):
     kwdefaults = matrix_cli.legacy_cli.LegacyCli.__init__.__kwdefaults__
     monkeypatch.setitem(kwdefaults, "execute", lambda cmd, env: seen.append(cmd) or 2)
     path = matrix_file(tmp_path)
-    code, out = cli(repo, "run", "--matrix", str(path))
+    code, out = cli(repo, "run", "--matrix", str(path), "--runner", "legacy")
     # the adapter ran play.py in the fake repo; no run record: an invalid run with an unknown cost stops the matrix
     assert code == 1 and out.rstrip().endswith(f"stopped: {matrix.COST_UNKNOWN}")
     assert seen[0][1] == str(repo / "runner" / "play.py") and "--profile" in seen[0] and "--max-cost" in seen[0]
@@ -160,7 +176,10 @@ def test_a_scenario_the_legacy_runner_cant_stop_is_refused(tmp_path, capsys):
     del sc["until"]
     (repo / "packages" / "bench" / "scenarios" / "gold.json").write_text(json.dumps(sc))
     body = "name = 'm'\nscenarios = ['gold']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
-    code, _ = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, body)))
+    code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, body)))
+    assert code == 0 and "scenario gold: refused by run --runner legacy" in out  # run_session plays any goal
+    gaps = matrix_file(tmp_path, body + "\nallow_gaps = true")
+    code, _ = cli(repo, "run", "--matrix", str(gaps), "--runner", "legacy")
     assert code == 2 and "gold: goal" in capsys.readouterr().err
 
 
@@ -169,7 +188,7 @@ def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
     path = matrix_file(tmp_path)
     cli(repo, "run", "--matrix", str(path), run_one=lambda job: RunResult("r", True, True, 0.0, None, True))
     changed = path.read_text().replace("repeats = 2", "repeats = 3")
-    code, _ = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, changed)))
+    code, _ = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, changed)), "--runner", "legacy")
     assert code == 2 and "another plan" in capsys.readouterr().err
 
 

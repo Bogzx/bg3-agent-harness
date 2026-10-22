@@ -1,11 +1,13 @@
 # pyright: basic
-"""The offline pipeline end to end (B-tests 3): scenario file -> pi with the scripted stub model -> the real bridge ->
-the fake mod -> facts.jsonl -> grader -> result.json -> stats -> report and leaderboard. No game, no key, no network.
+"""The offline pipeline end to end (B-tests 3): scenario file -> the matrix -> run_session -> pi with the scripted stub
+model -> the real bridge -> the fake mod -> facts.jsonl -> grader -> result.json -> stats -> report and leaderboard.
+No game, no key, no network.
 
-Two runs of e2e_sell_idol (fixtures/e2e): a trader's dialogue is open; the stub model sells the idol in run 1
-(gold 100 -> 250: the goal is gold >= 200) and leaves in run 2. The harness side is a direct call, as the runner's
-progress poller does it: runner/facts.py over bridge progress.read_game and the party inventory, read from the fake
-mod before and after the pi process, with a fake clock.
+Two runs of e2e_sell_idol (fixtures/e2e), one matrix job with 2 repeats played by adapters/session_run.SessionRun:
+a trader's dialogue is open; the stub model sells the idol in run 1 (gold 100 -> 250: the goal is gold >= 200) and
+leaves in run 2. The harness side is a RunHost whose run_session hooks run pi; its facts come from the runner's
+progress poller read (runner/facts.py over bridge progress.read_game and the party inventory), from the fake mod
+before and after the pi process, with a fake clock.
 
 TODO(fake mod merged): bg3harness.testing (ovh/mod) brings the fake mod and the bridge's rpc_record. Until it is in
 this tree, the tool calls go to the pi conformance stub MCP (tools/pi/conformance/stub_mcp.py), and the game state is
@@ -26,8 +28,10 @@ import time
 from pathlib import Path
 
 import pytest
+from test_session_run import Hooks, Result
 
-from bg3bench import report, results, run_artifacts, scenario
+from bg3bench import matrix, report, results, scenario
+from bg3bench.adapters.session_run import SessionRun, Start, series_name
 from bg3bench.site import build as site
 
 pytestmark = pytest.mark.e2e
@@ -214,55 +218,82 @@ def play_stub_mcp(ws: Path, steps: list[dict], writer) -> tuple[list[dict], list
     return events, [r["tool"] for r in calls]
 
 
+# ------------------------------------------------------------------------------------------------ the harness side
+
+
+class PiHooks(Hooks):
+    """run_session's hooks for one run: the agent process is pi on the stub model (`option`: the sale or not)."""
+
+    def __init__(self, ws: Path, option: int, writer, clock: list[float]):
+        super().__init__([], clock)
+        self.ws, self.option, self.writer = ws, option, writer
+        self.events_out: list[dict] = []
+        self.called: list[str] = []
+
+    def run_agent(self, prompt, minutes, client_session, resume, tag):
+        assert (prompt, resume) == ("Play.", False)
+        play = play_fake_mod if FAKE_MOD else play_stub_mcp
+        self.events_out, self.called = play(self.ws, script(self.option), self.writer)
+        return Result("exited", 0, T0, T0 + 62, client_session or "e2e-0001")
+
+
+class PiHost:
+    """bench.adapters.session_run.RunHost: run 1 sells the idol, run 2 leaves; facts.jsonl in the run directory."""
+
+    def __init__(self, tmp: Path):
+        self.tmp, self.clock, self.hooks = tmp, [T0], []
+
+    def start(self, job, sc, run_dir):
+        writer = facts_w.FactsWriter(run_dir / "facts.jsonl", clock=lambda: T0)  # every record passes its time
+        writer.mark("run_start", {"playthrough": run_dir.name}, now=T0)
+        self.hooks.append(PiHooks(self.tmp / f"ws{len(self.hooks) + 1}", len(self.hooks) + 1, writer, self.clock))
+        sha = hashlib.sha256(SYSTEM.encode()).hexdigest()
+        return Start("Play.", self.hooks[-1], None, sha, (), "0.1.0")
+
+    def record(self, job, sc, run_dir, outcome):
+        hooks = self.hooks[-1]
+        hooks.writer.mark("run_end", "gave_up", now=T0 + 62)
+        assert ("ui.dialogue_choose" if FAKE_MOD else "choose_dialogue") in hooks.called  # the model's call got there
+        cost, tokens = usage(hooks.events_out)
+        assert cost > 0  # billed from the stub's usage at the profile's prices
+        return {"outcome": "gave_up", "cost_usd": cost, "tokens": tokens, "wall_min": 1.0, "play_min": 1.0}
+
+
 # ------------------------------------------------------------------------------------------------ the test
 
 
 def test_scenario_to_leaderboard(tmp_path):
     sc = scenario.load(SCENARIO)
     sessions = tmp_path / "runtime" / "sessions"
-    series = {
-        "series": "e2e",
-        "client": "pi",
-        "scenario": {"name": sc["name"], "digest": scenario.digest(sc), "start_save_sha1": None, "spec": sc},
-        "caps": sc["caps"],
-        "pins": {"game_build": "fake"},
-    }
-    play = play_fake_mod if FAKE_MOD else play_stub_mcp
-    for run, option in ((1, 1), (2, 2)):
-        run_dir = sessions / ("e2e" if run == 1 else f"e2e-r{run}")  # runner/runs.py run_name
-        run_dir.mkdir(parents=True)
-        writer = facts_w.FactsWriter(run_dir / "facts.jsonl", clock=lambda: T0)  # every record passes its time
-        writer.mark("run_start", {"playthrough": run_dir.name}, now=T0)
-        events, called = play(tmp_path / f"ws{run}", script(option), writer)
-        writer.mark("run_end", "gave_up", now=T0 + 62)
-        assert ("ui.dialogue_choose" if FAKE_MOD else "choose_dialogue") in called  # the model's call got there
-        cost, tokens = usage(events)
-        assert cost > 0  # billed from the stub's usage at the profile's prices
-        record = {
-            "series": "e2e",
-            "run": run,
-            "started": T0,
-            "client": "pi",
-            "model": MODEL,
-            "effort": "high",
-            "outcome": "gave_up",
-            "cost_usd": cost,
-            "tokens": tokens,
-            "wall_min": 1.0,
-            "play_min": 1.0,
-        }
-        sha = hashlib.sha256(SYSTEM.encode()).hexdigest()
-        _, res = run_artifacts.write_run_artifacts(run_dir, series, record, "0.1.0", sha, condition="rules")
-        assert res["passed"] is (option == 1) and res["grade"]["progress"] is None
-        assert (res["t_pass_s"] == 61.0) is (option == 1)  # game time of the poll after the sale
+    budget = tmp_path / "runtime" / "budget.json"
+    budget.parent.mkdir()
+    budget.write_text(json.dumps({"cap": 5.0, "spent": 0.0}))
+    host = PiHost(tmp_path)
+    model = {"slug": MODEL, "client": "pi", "effort": "high"}
+    jobs = matrix.plan([model], [sc["name"]], ["rules"], 2, max_cost={sc["name"]: sc["caps"]["max_cost"]})
+    run_one = SessionRun("e2e", host, scenarios={sc["name"]: sc}, sessions=sessions)
+    mx = matrix.Matrix(tmp_path / "runtime" / "matrix" / "e2e", run_one, budget, now=lambda: T0, sleep=lambda s: 0)
+    mx.create("e2e", jobs)
+    assert mx.run() == matrix.FINISHED
+    series = series_name("e2e", jobs[0])
+    ends = [a["result"] for st in mx.state().values() for a in st["attempts"]]
+    assert [(r["run_id"], r["valid"], r["passed"]) for r in ends] == [
+        (f"{series}-r001", True, True),
+        (f"{series}-r002", True, False),
+    ]
+    assert json.loads(budget.read_text())["spent"] == round(sum(r["cost_usd"] for r in ends), 6)  # the matrix billed
+    for k, run_dir in ((1, sessions / series), (2, sessions / f"{series}-r2")):  # series.run_name
+        res = results.load(run_dir / "result.json")
+        assert res["passed"] is (k == 1) and res["grade"]["progress"] is None
+        assert (res["t_pass_s"] == 61.0) is (k == 1)  # game time of the poll after the sale
         assert res["methods"] is not None
 
     pairs = report.load_runs(sessions)
-    assert [m["run_id"] for m, _ in pairs] == ["e2e-r001", "e2e-r002"]
+    assert [m["run_id"] for m, _ in pairs] == [f"{series}-r001", f"{series}-r002"]
     out = tmp_path / "report"
     assert report.main([str(sessions), str(out)]) == 0
     md = (out / "report.md").read_text()
-    assert "e2e-r001" in md and "e2e-r002" in md
+    assert f"{series}-r001" in md and f"{series}-r002" in md
 
     rel = results.build_results(pairs, seed=1, created=T0, b=200)
     (group,) = rel["groups"]
@@ -271,4 +302,4 @@ def test_scenario_to_leaderboard(tmp_path):
     results.write(rel, tmp_path / "results.json")
     assert site.main([str(tmp_path / "results.json"), str(tmp_path / "site" / "index.html")]) == 0
     page = (tmp_path / "site" / "index.html").read_text()
-    assert MODEL in page and "e2e-r001" in page
+    assert MODEL in page and f"{series}-r001" in page
