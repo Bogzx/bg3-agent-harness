@@ -383,10 +383,11 @@ do
     local stringParam = "parameter is a string (CloseGameMenu); bg3le can only pass Noesis objects"
     BG3AI.UI.press = function() return false, stringParam end
     local props = { CommandParameter = "CloseGameMenu" }
-    BG3AI.UI.get = function(el, k) return props[k] end
+    BG3AI.UI.get = function(_, k) return props[k] end
     keys = {}
     local okp, how = A.pressButton({ name = "ResumeBtn" }, false)
-    ok(okp and how == "key:ESCAPE" and keys[#keys] == "ESCAPE", "Resume (CloseGameMenu) presses ESCAPE: " .. tostring(how))
+    ok(okp and how == "key:ESCAPE" and keys[#keys] == "ESCAPE",
+        "Resume (CloseGameMenu) presses ESCAPE: " .. tostring(how))
     keys = {}
     okp, how = A.pressButton({ name = "ResumeBtn" }, true)
     ok(okp and how == "key:ESCAPE" and #keys == 0, "a dry Resume names the key and presses nothing")
