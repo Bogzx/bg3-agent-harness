@@ -194,7 +194,10 @@ def load_session(run, sid):
     calls = [c for c in calls.values() if c["t"]]
     calls.sort(key=lambda c: c["t"])
     spans, cur, last_t = [], None, 0.0
-    with open(sd / f"{sid}.metrics.jsonl") as f:
+    metrics = sd / f"{sid}.metrics.jsonl"
+    if not metrics.exists():  # a resume process (S001-c1) that made no tool calls wrote none: no fights
+        return calls, spans, last_t
+    with open(metrics) as f:
         for line in f:
             try:
                 e = json.loads(line)

@@ -65,6 +65,8 @@ GROUP_WORDS = {
     "screenshots": r"screenshot",
     "raw_input": r"\bclick\b|press_key",
 }
+# The results' coaching nudges (bridge reporting.py, batch.py): served, and explained, only in rules+coaching.
+COACHING_MARKERS = ("NEXT:", "PACE:", "NOTES WINDOW")
 MAX_PART = 6000
 MAX_RULES = 10000
 MAX_COACHED = 30000
@@ -158,6 +160,16 @@ class Assembly(unittest.TestCase):
     def test_rules_is_a_prefix_of_rules_plus_coaching(self):
         # the shared prompt-cache prefix, and the coaching only adds
         self.assertTrue(A.assemble("rules+coaching").text.startswith(A.assemble("rules").text.rstrip("\n") + "\n\n"))
+
+    def test_rules_only_has_no_coaching_markers(self):
+        # the server's coaching nudges (bridge rules.coaching) come only in rules+coaching, and so does their text
+        for client in A.CLIENTS:
+            text = A.assemble("rules", client).text
+            for marker in COACHING_MARKERS:
+                self.assertNotIn(marker, text, client)
+        coached = A.assemble("rules+coaching").text
+        for marker in COACHING_MARKERS:
+            self.assertIn(marker, coached)
 
     def test_a_coaching_edit_changes_the_hash(self):
         with tempfile.TemporaryDirectory() as d:

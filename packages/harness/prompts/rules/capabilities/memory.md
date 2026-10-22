@@ -9,7 +9,6 @@ Every tool and its arguments: `memory_read("knowledge/tools.md")`.
   (`lint: ok` when there are none).
 - `note("[tag] …")` appends one line to this session's log at once; `travel_to`, `queue_actions` and `do_actions`
   take `note="…"` to do the same as they start. A path without `memory/` or `knowledge/` means `memory/`.
-- A result that says `NOTES WINDOW: ~20s of walking left` marks a stretch with nothing to wait for.
 - `memory/` is a git repo. `session_start` shows the memory briefing; `end_session` lints the memory and commits it
   (when it returns lint errors or says keep playing, the session isn't over).
 - Report anything a tool reveals that the player couldn't see with `note("[note] fairness leak: …")`.

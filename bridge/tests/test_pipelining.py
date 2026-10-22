@@ -18,7 +18,8 @@ from unittest import mock
 from test_turn_macros import CHEST, P1, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import metrics  # noqa: E402
-from bg3ai.tools import core, plumbing, observe, world_tools, batch, queueing, travel_macro, session  # noqa: E402
+from bg3ai.tools import (core, plumbing, observe, world_tools, batch, queueing, reporting,  # noqa: E402
+                         travel_macro, session)
 
 
 def who() -> str:
@@ -119,6 +120,7 @@ class AsyncTravel(Base):
 
     def test_wait_true_does_not_block_and_shows_progress(self):
         plumbing.SETTLE_S = 0.2
+        self.enterContext(mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules+coaching"}))  # NEXT: is coaching
         self.g.dur["act.move_to"] = 1.0
         self.g.watch["party"][0]["pos"] = [0.0, 0.0, 0.0]
         t0 = time.monotonic()
@@ -524,6 +526,12 @@ class SettleAndPace(Base):
         world_tools.move_to(x=9.0, y=0.0, z=0.0)
         batch.wait_for("idle", timeout_s=0.1)  # right after issuing: nudged
         self.assertIn("NEXT:", world_tools.move_to(x=10.0, y=0.0, z=0.0))
+
+    def test_rules_only_condition_has_no_next_hint(self):
+        self.enterContext(mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules"}))
+        self.g.dur["act.move_to"] = 5.0
+        self.assertNotIn("NEXT:", world_tools.move_to(x=5.0, y=0.0, z=0.0))
+        self.assertEqual(reporting._pace["next_shown"], 0)  # the 3 showings stay for a coaching session
 
     def test_queue_result_shows_what_runs(self):
         self.g.dur["act.interact"] = 2.0

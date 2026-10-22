@@ -45,8 +45,7 @@
 - `talk_to`: the opening lines and the first real choice;
 - an action that starts a fight: `COMBAT STARTED` with the turn order and your actions;
 - EVENTS: items gained, gold, statuses, damage, deaths, approvals, level-ups.
-A result may end with `RUNNING …` (still walking or queued), `NEXT: …` (what can be done while it runs) and
-`PACE: …` (a wait came before there was nothing else to do).
+A result may end with `RUNNING …` (still walking or queued).
 
 **Dialogue and cutscenes.** Cutscenes are skipped automatically and spoken lines are fast-forwarded; each line still
 arrives as a `dialogue_line` event (speaker: text). Opening and in-between filler is clicked for you: `talk_to` and

@@ -534,8 +534,9 @@ def _with_statuses(rows: list[dict]) -> list[dict]:
 
 
 def _next_walk_hint() -> str:
-    """The NEXT line after a walk that is still running: the first 3 times, then only after a PACE nudge."""
-    if _pace["next_shown"] >= 3 and not _pace["nudge"]:
+    """The NEXT line after a walk that is still running: the first 3 times, then only after a PACE nudge.
+    Coaching like PACE: (rules.coaching): rules-only gets none."""
+    if not rules.coaching() or (_pace["next_shown"] >= 3 and not _pace["nudge"]):
         return ""
     _pace["next_shown"] += 1
     _pace["nudge"] = False

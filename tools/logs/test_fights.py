@@ -278,5 +278,20 @@ class S080GameOver(unittest.TestCase):
         self.assertEqual(f["outcome"], "reload")
 
 
+class NoMetrics(unittest.TestCase):
+    def test_a_process_without_a_metrics_file_has_no_fights(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        sd = Path(tmp.name) / "run"
+        sd.mkdir()
+        (sd / "S001-c1.turns.jsonl").write_text("")   # a stop-check resume that made no tool calls
+        (sd / "S001-c1.jsonl").write_text("")
+        old = fights.SESSIONS
+        fights.SESSIONS = Path(tmp.name)
+        self.addCleanup(setattr, fights, "SESSIONS", old)
+        self.assertEqual(fights.mine("run", "S001-c1"), [])   # old code: FileNotFoundError, the review exits 1
+
+
 if __name__ == "__main__":
     unittest.main()

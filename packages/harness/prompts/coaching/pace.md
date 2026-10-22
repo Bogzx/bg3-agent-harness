@@ -24,3 +24,5 @@ character whose queue is running (a direct action supersedes the queue: append i
 purpose); make one tool call per step of a plan you already know. In combat use `combat_turn`; in dialogue,
 `dialogue_advance` for filler. Follow a result's `RUNNING …` (append, don't wait), `NEXT: …` and `PACE: …`. After
 `stopped short of ≤Nm`, plan from the distance it gives, not from the move being `done`.
+Results carry two pace hints: `NEXT: …` after a walk that still runs (what can be done while it runs) and `PACE: …`
+(a wait came before there was nothing else to do).

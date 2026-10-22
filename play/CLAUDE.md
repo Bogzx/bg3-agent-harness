@@ -55,8 +55,7 @@ Nobody will answer questions while you play: decide yourself.
 - `talk_to`: the opening lines and the first real choice;
 - an action that starts a fight: `COMBAT STARTED` with the turn order and your actions;
 - EVENTS: items gained, gold, statuses, damage, deaths, approvals, level-ups.
-A result may end with `RUNNING …` (still walking or queued), `NEXT: …` (what can be done while it runs) and
-`PACE: …` (a wait came before there was nothing else to do).
+A result may end with `RUNNING …` (still walking or queued).
 
 **Dialogue and cutscenes.** Cutscenes are skipped automatically and spoken lines are fast-forwarded; each line still
 arrives as a `dialogue_line` event (speaker: text). Opening and in-between filler is clicked for you: `talk_to` and
@@ -92,7 +91,6 @@ Every tool and its arguments: `memory_read("knowledge/tools.md")`.
   (`lint: ok` when there are none).
 - `note("[tag] …")` appends one line to this session's log at once; `travel_to`, `queue_actions` and `do_actions`
   take `note="…"` to do the same as they start. A path without `memory/` or `knowledge/` means `memory/`.
-- A result that says `NOTES WINDOW: ~20s of walking left` marks a stretch with nothing to wait for.
 - `memory/` is a git repo. `session_start` shows the memory briefing; `end_session` lints the memory and commits it
   (when it returns lint errors or says keep playing, the session isn't over).
 - Report anything a tool reveals that the player couldn't see with `note("[note] fairness leak: …")`.
@@ -152,6 +150,8 @@ character whose queue is running (a direct action supersedes the queue: append i
 purpose); make one tool call per step of a plan you already know. In combat use `combat_turn`; in dialogue,
 `dialogue_advance` for filler. Follow a result's `RUNNING …` (append, don't wait), `NEXT: …` and `PACE: …`. After
 `stopped short of ≤Nm`, plan from the distance it gives, not from the move being `done`.
+Results carry two pace hints: `NEXT: …` after a walk that still runs (what can be done while it runs) and `PACE: …`
+(a wait came before there was nothing else to do).
 
 ## Efficiency (hard rule)
 - Read what the engine can tell you as text, and do what it can do with an action tool. For a screen no tool covers,

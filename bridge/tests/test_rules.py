@@ -26,7 +26,7 @@ class Served(unittest.TestCase):
         env = mock.patch.dict(os.environ)
         env.start()
         self.addCleanup(env.stop)
-        for k in ("BG3AI_RULES_PATH", "BG3AI_PROMPT_CONDITION"):
+        for k in ("BG3AI_RULES_PATH", "BG3AI_PROMPT_CONDITION", "BG3AI_SERVE_RULES"):
             os.environ.pop(k, None)
 
     def test_the_default_is_the_assembled_rules(self):
@@ -66,6 +66,16 @@ class Served(unittest.TestCase):
         self.assertTrue(rules.coaching({"BG3AI_PROMPT_CONDITION": "rules+coaching"}))
         os.environ["BG3AI_PROMPT_CONDITION"] = "rules+coaching"
         self.assertTrue(rules.coaching())
+
+    def test_manual_claude_code_playthrough_is_coached(self):
+        # play/.mcp.json (BG3AI_SERVE_RULES=0, no condition): Claude Code without the runner reads play/CLAUDE.md
+        manual = {"BG3AI_SERVE_RULES": "0"}
+        self.assertEqual(rules.default_condition(manual), "rules+coaching")
+        self.assertTrue(rules.coaching(manual))
+        self.assertFalse(rules.coaching({**manual, "BG3AI_PROMPT_CONDITION": "rules"}))  # a runner session's own
+        self.assertFalse(rules.coaching({"BG3AI_SERVE_RULES": "1"}))
+        os.environ["BG3AI_SERVE_RULES"] = "0"
+        self.assertEqual(rules.load(), rules.prompts().assemble("rules+coaching").text.strip())
 
     def test_every_tool_the_rules_name_is_a_server_tool(self):
         # bench.md §2.6 test c against the live registry (the prompts' own lint uses tools/pi's dump of it)
