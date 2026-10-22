@@ -1,0 +1,296 @@
+{
+ "version": 1,
+ "warnings": {
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/AutoSkip.lua": {
+   "W211": 1,
+   "W421": 1,
+   "W631": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/Hotbar.lua": {
+   "W431": 1,
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/Progression.lua": {
+   "W211": 1,
+   "W631": 4
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ProgressionCC.lua": {
+   "W211": 1,
+   "W212": 1,
+   "W631": 14
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ProgressionLevelUp.lua": {
+   "W431": 1,
+   "W631": 24
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/Services.lua": {
+   "W211": 1,
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ServicesItems.lua": {
+   "W211": 1,
+   "W212": 2,
+   "W631": 12
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ServicesRest.lua": {
+   "W311": 1,
+   "W631": 2
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ServicesWaypoints.lua": {
+   "W212": 5,
+   "W631": 5
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/Spellbook.lua": {
+   "W631": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UI.lua": {
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActions.lua": {
+   "W421": 1,
+   "W631": 4
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActionsMenu.lua": {
+   "W631": 11
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActionsPrompts.lua": {
+   "W241": 1,
+   "W631": 2
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UISettings.lua": {
+   "W211": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIState.lua": {
+   "W631": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Actions.lua": {
+   "W631": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsCast.lua": {
+   "W431": 1,
+   "W631": 5
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsClick.lua": {
+   "W631": 2
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsInteract.lua": {
+   "W542": 1,
+   "W631": 2
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsMove.lua": {
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsParty.lua": {
+   "W212": 1,
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Events.lua": {
+   "W212": 1,
+   "W631": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Guard.lua": {
+   "W631": 6
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/GuardCast.lua": {
+   "W431": 1,
+   "W631": 2
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/GuardSpells.lua": {
+   "W431": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Navigation.lua": {
+   "W211": 1,
+   "W421": 1,
+   "W631": 12
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/NavigationOps.lua": {
+   "W212": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/NavigationReach.lua": {
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/NavigationRoute.lua": {
+   "W212": 1,
+   "W631": 7
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/NavigationTerrain.lua": {
+   "W421": 1,
+   "W631": 4
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/RollLog.lua": {
+   "W542": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/State.lua": {
+   "W211": 1,
+   "W212": 1,
+   "W421": 1,
+   "W631": 3
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/StateOps.lua": {
+   "W631": 6
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/StateWorld.lua": {
+   "W631": 12
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Visibility.lua": {
+   "W212": 1,
+   "W631": 1
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Server/VisibilityObjects.lua": {
+   "W631": 6
+  },
+  "mod/Mods/BG3AI/ScriptExtender/Lua/Shared/HotbarMap.lua": {
+   "W512": 1,
+   "W631": 1
+  },
+  "tools/dev/test_act_lua.lua": {
+   "W212": 1,
+   "W631": 2
+  },
+  "tools/dev/test_act_lua_cast.lua": {
+   "W311": 1,
+   "W631": 27
+  },
+  "tools/dev/test_act_lua_move.lua": {
+   "W631": 17
+  },
+  "tools/dev/test_act_lua_prep.lua": {
+   "W311": 2,
+   "W631": 28
+  },
+  "tools/dev/test_act_lua_think.lua": {
+   "W211": 1,
+   "W631": 23
+  },
+  "tools/dev/test_act_lua_turns.lua": {
+   "W311": 1,
+   "W631": 10
+  },
+  "tools/dev/test_autoskip.lua": {
+   "W212": 2,
+   "W411": 2,
+   "W631": 8
+  },
+  "tools/dev/test_cc_name.lua": {
+   "W212": 2,
+   "W311": 4,
+   "W631": 1
+  },
+  "tools/dev/test_cc_pacing.lua": {
+   "W211": 1,
+   "W212": 3,
+   "W311": 4,
+   "W631": 6
+  },
+  "tools/dev/test_confirm.lua": {
+   "W212": 3
+  },
+  "tools/dev/test_confirm_boxes.lua": {
+   "W212": 2,
+   "W311": 2,
+   "W411": 1,
+   "W431": 1,
+   "W631": 12
+  },
+  "tools/dev/test_confirm_map.lua": {
+   "W211": 1,
+   "W421": 4,
+   "W631": 14
+  },
+  "tools/dev/test_confirm_panels.lua": {
+   "W212": 2,
+   "W213": 1,
+   "W311": 1,
+   "W631": 19
+  },
+  "tools/dev/test_dialogue_tags.lua": {
+   "W212": 5,
+   "W631": 11
+  },
+  "tools/dev/test_events_lua.lua": {
+   "W631": 7
+  },
+  "tools/dev/test_fairness_lua.lua": {
+   "W212": 2,
+   "W631": 5
+  },
+  "tools/dev/test_flee_ops.lua": {
+   "W212": 1
+  },
+  "tools/dev/test_guard_dialogue.lua": {
+   "W631": 1
+  },
+  "tools/dev/test_hotbar.lua": {
+   "W213": 1,
+   "W311": 1,
+   "W411": 1,
+   "W431": 1,
+   "W631": 22
+  },
+  "tools/dev/test_level_up.lua": {
+   "W311": 1,
+   "W631": 41
+  },
+  "tools/dev/test_mem.lua": {
+   "W631": 2
+  },
+  "tools/dev/test_nav_lua.lua": {
+   "W212": 2,
+   "W631": 2
+  },
+  "tools/dev/test_nav_lua_guard.lua": {
+   "W212": 5,
+   "W631": 21
+  },
+  "tools/dev/test_nav_lua_reach.lua": {
+   "W212": 3,
+   "W631": 9
+  },
+  "tools/dev/test_nav_lua_ways.lua": {
+   "W211": 1,
+   "W212": 12,
+   "W631": 7
+  },
+  "tools/dev/test_pick.lua": {
+   "W311": 1,
+   "W631": 3
+  },
+  "tools/dev/test_referee_lua.lua": {
+   "W631": 2
+  },
+  "tools/dev/test_save.lua": {
+   "W211": 1,
+   "W212": 3,
+   "W311": 1,
+   "W631": 7
+  },
+  "tools/dev/test_scenario.lua": {
+   "W212": 1,
+   "W311": 2,
+   "W631": 1
+  },
+  "tools/dev/test_spellbook.lua": {
+   "W311": 4,
+   "W631": 8
+  },
+  "tools/dev/test_steal_probe.lua": {
+   "W212": 1
+  },
+  "tools/dev/test_ui_busy.lua": {
+   "W212": 1
+  },
+  "tools/dev/test_ui_children.lua": {
+   "W212": 4
+  },
+  "tools/dev/test_ui_named_reads.lua": {
+   "W631": 1
+  },
+  "tools/dev/test_ui_selected.lua": {
+   "W212": 4,
+   "W631": 3
+  },
+  "tools/dev/test_vis_lua.lua": {
+   "W631": 4
+  }
+ }
+}
