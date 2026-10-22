@@ -1,20 +1,19 @@
-# pyright: basic
 import json
 
 import pytest
-from playwright.sync_api import expect
+from playwright.sync_api import Browser, Page, Route, expect
 
 from ..conftest import PT
-from .conftest import VIDEO_AT
+from .conftest import VIDEO_AT, Site
 
 pytestmark = pytest.mark.e2e
 
 
-def no_overflow(page, width: int) -> None:
+def no_overflow(page: Page, width: int) -> None:
     assert page.evaluate("document.documentElement.scrollWidth") <= width
 
 
-def test_watch_snapshot_map_and_live_stream(page, site):
+def test_watch_snapshot_map_and_live_stream(page: Page, site: Site):
     page.goto(f"{site['url']}/#/watch/{PT}")
     expect(page.get_by_text("Agent says")).to_be_visible()
     expect(page.locator(".party").get_by_text("Shadowheart")).to_be_visible()
@@ -32,11 +31,11 @@ def test_watch_snapshot_map_and_live_stream(page, site):
     no_overflow(page, 1440)
 
 
-def test_watch_game_panel_shows_the_recorder_after_a_missing_screenshot(page, site):
+def test_watch_game_panel_shows_the_recorder_after_a_missing_screenshot(page: Page, site: Site, errors: list[str]):
     # live run 2: no agent screenshot (404) failed first, the recorder answered "recording" after: the panel stayed
     # "No capture yet" with live frames on /api/v1/screen.mjpg
     frame = (site["store"].runtime / "shots" / "shot_000001.jpg").read_bytes()
-    held = []
+    held: list[Route] = []
     page.route("**/api/v1/screenshot*", lambda r: r.fulfill(status=404, body="not found"))
     page.route("**/api/v1/recorder", lambda r: held.append(r))
     page.route("**/api/v1/screen.mjpg", lambda r: r.fulfill(status=200, body=frame, content_type="image/jpeg"))
@@ -47,10 +46,10 @@ def test_watch_game_panel_shows_the_recorder_after_a_missing_screenshot(page, si
     held[0].fulfill(status=200, json={"v": 1, "recorder": {"recording": True}})
     expect(page.locator(".screen img")).to_have_attribute("src", "/api/v1/screen.mjpg")
     expect(page.locator(".screen img")).to_be_visible()
-    page.errors.clear()  # the 404 screenshot is logged as a console error by design here
+    errors.clear()  # the 404 screenshot is logged as a console error by design here
 
 
-def test_memory_browser(page, site):
+def test_memory_browser(page: Page, site: Site):
     page.goto(f"{site['url']}/#/memory/{PT}/decisions.md")
     expect(page.get_by_text("Memory commits")).to_be_visible()
     expect(page.get_by_text("S096 memory-keeper: decisions.md").first).to_be_visible()
@@ -61,7 +60,7 @@ def test_memory_browser(page, site):
     expect(page.locator(".md h1, .md h2").first).to_be_visible()
 
 
-def test_stats(page, site):
+def test_stats(page: Page, site: Site):
     page.goto(f"{site['url']}/#/stats/{PT}")
     expect(page.get_by_text("Goal scorecard")).to_be_visible()
     expect(page.locator("table.goals th").get_by_text("S096")).to_be_visible()
@@ -69,7 +68,7 @@ def test_stats(page, site):
     no_overflow(page, 1440)
 
 
-def test_story_party_from_the_snapshot(page, site):
+def test_story_party_from_the_snapshot(page: Page, site: Site):
     page.goto(f"{site['url']}/#/story/{PT}")
     expect(page.get_by_text("2 chapters")).to_be_visible()
     page.get_by_role("button", name="Party").click()
@@ -77,7 +76,7 @@ def test_story_party_from_the_snapshot(page, site):
     no_overflow(page, 1440)
 
 
-def test_timeline(page, site):
+def test_timeline(page: Page, site: Site):
     page.goto(f"{site['url']}/#/timeline/{PT}")
     expect(page.get_by_text("choices", exact=False).first).to_be_visible()
     row = page.locator("button.row").first
@@ -85,7 +84,7 @@ def test_timeline(page, site):
     expect(row).to_have_attribute("aria-expanded", "true")
 
 
-def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
+def test_launcher_resume_offer_and_start_a_new_playthrough(page: Page, site: Site):
     page.goto(f"{site['url']}/#/launch/{PT}")
     expect(page.get_by_role("button", name="Resume")).to_be_visible()  # the runner's 3 sessions count
     name = page.locator("input[list=pts]")
@@ -96,10 +95,11 @@ def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
     page.locator("textarea").fill("a nervous halfling bard")
     page.get_by_label("Tactician").check()
     page.get_by_label("Record video").uncheck()
-    name.dispatch_event("change")  # a repeated change of the same name keeps the picks
+    # a repeated change of the same name keeps the picks (playwright types event_init as a bare Dict)
+    name.dispatch_event("change")  # pyright: ignore[reportUnknownMemberType]
     # CI 39683490769: the start reply, built while the session ran, landed after the stream's "idle" and the page
     # stayed "running · e2e-new · S001 · playing". Hold the reply until the stream's idle shows, then answer stale.
-    held = []
+    held: list[Route] = []
     page.route("**/api/v1/playthroughs/e2e-new/start", lambda r: held.append(r))
     with page.expect_request("**/e2e-new/start"):
         page.get_by_role("button", name="Start").click()
@@ -124,7 +124,7 @@ def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
     assert (site["store"].playthroughs_dir / "e2e-new" / "playthrough.toml").exists()
 
 
-def test_launcher_pi_profile_needs_a_cost_cap(page, site):
+def test_launcher_pi_profile_needs_a_cost_cap(page: Page, site: Site):
     page.goto(f"{site['url']}/#/launch")
     name = page.locator("input[list=pts]")
     name.fill("e2e-pi")
@@ -142,9 +142,9 @@ def test_launcher_pi_profile_needs_a_cost_cap(page, site):
     no_overflow(page, 1440)
 
 
-def test_launcher_settings_wait_for_the_playthroughs_config(page, site):
+def test_launcher_settings_wait_for_the_playthroughs_config(page: Page, site: Site, errors: list[str]):
     # a profile picked before the name's config arrived was overwritten by it (the config fills the form)
-    held = []
+    held: list[Route] = []
     page.route("**/api/v1/playthroughs/e2e-wait/config", lambda r: held.append(r))
     page.goto(f"{site['url']}/#/launch")
     name = page.locator("input[list=pts]")
@@ -156,10 +156,10 @@ def test_launcher_settings_wait_for_the_playthroughs_config(page, site):
     held[0].fulfill(status=404, json={"error": "no playthrough e2e-wait"})
     expect(page.get_by_label("Client profile")).to_be_enabled()
     page.unroute("**/api/v1/playthroughs/e2e-wait/config")
-    page.errors.clear()  # the 404 is logged as a console error
+    errors.clear()  # the 404 is logged as a console error
 
 
-def test_overlay_transparent_and_panel_flags(browser, site):
+def test_overlay_transparent_and_panel_flags(browser: Browser, site: Site):
     ctx = browser.new_context(viewport={"width": 1920, "height": 1080})
     page = ctx.new_page()
     page.goto(f"{site['url']}/overlay?pt={PT}")
@@ -177,7 +177,7 @@ def test_overlay_transparent_and_panel_flags(browser, site):
     ctx.close()
 
 
-def test_replay_steps_events_and_plays_the_recording(page, site):
+def test_replay_steps_events_and_plays_the_recording(page: Page, site: Site):
     page.goto(f"{site['url']}/#/replay/{PT}/S096")
     expect(page.get_by_text("At the playhead")).to_be_visible()
     expect(page.get_by_text("Not recorded at this time")).to_be_visible()

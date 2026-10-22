@@ -1,13 +1,15 @@
-# pyright: basic
 """The Bench panel (Stats, Timeline) over the recorded bench runs (tests/fixtures/bench), and their payloads."""
 
 import json
 import shutil
+from pathlib import Path
+from typing import Any
 
 import pytest
-from playwright.sync_api import expect
+from playwright.sync_api import Page, expect
 
 from ..conftest import FIXTURE
+from .conftest import Site
 from .contract import payloads, type_errors
 from .test_web import no_overflow
 
@@ -17,7 +19,7 @@ BENCH = FIXTURE.parent / "bench"
 
 
 @pytest.fixture(scope="module")
-def benched(site):
+def benched(site: Site) -> list[str]:
     """The two recorded bench runs as playthroughs of the e2e server, and a third with its manifest only."""
     runs = site["store"].runtime / "sessions"
     for run in sorted(BENCH.iterdir()):
@@ -30,7 +32,7 @@ def benched(site):
     return names
 
 
-def test_stats_shows_a_graded_benchmark_run(page, site, benched):
+def test_stats_shows_a_graded_benchmark_run(page: Page, site: Site, benched: list[str]):
     page.goto(f"{site['url']}/#/stats/e2e-naut-claude-r001")
     grade = page.get_by_label("Benchmark grade")
     expect(grade.locator(".verdict")).to_have_text("pass")
@@ -44,15 +46,15 @@ def test_stats_shows_a_graded_benchmark_run(page, site, benched):
     no_overflow(page, 1440)
 
 
-def test_a_failed_bench_run_and_an_unreadable_one(page, site, benched):
+def test_a_failed_bench_run_and_an_unreadable_one(page: Page, site: Site, benched: list[str]):
     page.goto(f"{site['url']}/#/stats/e2e-naut-pi-r001")
     expect(page.get_by_label("Benchmark grade").locator(".verdict")).to_have_text("fail (over budget)")
     page.goto(f"{site['url']}/#/timeline/e2e-naut-ungraded")
     expect(page.get_by_label("Benchmark grade").locator(".error")).to_contain_text("result.json is missing")
 
 
-def test_the_bench_runs_payloads_match_the_clients_types(site, benched, tmp_path):
-    found = {}
+def test_the_bench_runs_payloads_match_the_clients_types(site: Site, benched: list[str], tmp_path: Path):
+    found: dict[str, tuple[str, Any]] = {}
     for name in benched:
         found |= {f"{name} {k}": v for k, v in payloads(site["url"], name).items()}
     assert "manifest" in found["e2e-naut-claude-r001 bench"][1]["bench"]

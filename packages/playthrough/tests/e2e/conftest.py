@@ -10,13 +10,16 @@ import shutil
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from bg3play.hub import Hub
 from bg3play.recorder import Capture, Recorder, RecordSpec
 from bg3play.server import DEFAULT_WEB, App, serve
 from bg3play.store import RunStore
-from bg3play.supervisor import SessionResult, Supervisor
+from bg3play.supervisor import NoKeeper, SessionRequest, SessionResult, Supervisor
+from playwright.sync_api import Browser, ConsoleMessage, Error, Page
 
 from ..conftest import FIXTURE, PT, git
 
@@ -28,20 +31,24 @@ class InstantRunner:
     """A SessionRunner that plays nothing: it records the request and reports a stopped session."""
 
     def __init__(self):
-        self.requests = []
+        self.requests: list[SessionRequest] = []
 
-    def run_session(self, req, stop):
+    def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         self.requests.append(req)
         return SessionResult(f"S{req.session:03d}", "stopped", None)
 
 
-class NoKeeper:
-    def run_keeper(self, pt, result):
-        pass
+class Site(TypedDict):
+    url: str
+    store: RunStore
+    hub: Hub
+    runner: InstantRunner
+    sup: Supervisor
+    video: Path
 
 
 @pytest.fixture(scope="module")
-def site(tmp_path_factory) -> Iterator[dict]:
+def site(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Site]:
     if not (DEFAULT_WEB / "index.html").is_file():
         pytest.fail(f"no built web app at {DEFAULT_WEB}: run `npm ci && npm run build` in packages/playthrough/web")
     root = tmp_path_factory.mktemp("e2e")
@@ -67,7 +74,7 @@ def site(tmp_path_factory) -> Iterator[dict]:
         clock=lambda: VIDEO_AT,
     )
     rec.poll()
-    assert rec.run.proc.wait(60) == 0
+    assert rec.run is not None and rec.run.proc.wait(60) == 0
     rec.poll()
     store = RunStore(run / "runtime", run / "playthroughs")
     hub = Hub(store, generation="e2e")
@@ -104,7 +111,7 @@ def site(tmp_path_factory) -> Iterator[dict]:
 
 
 @pytest.fixture(scope="module")
-def browser():
+def browser() -> Iterator[Browser]:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -114,14 +121,26 @@ def browser():
 
 
 @pytest.fixture
-def page(browser):
+def errors() -> list[str]:
+    """The page's console errors and uncaught exceptions; a test clears the ones it causes on purpose."""
+    return []
+
+
+@pytest.fixture
+def page(browser: Browser, errors: list[str]) -> Iterator[Page]:
     ctx = browser.new_context(viewport={"width": 1440, "height": 950}, color_scheme="dark")
     pg = ctx.new_page()
     pg.set_default_timeout(10000)
-    errors: list[str] = []
-    pg.on("console", lambda m: m.type == "error" and errors.append(m.text))
-    pg.on("pageerror", lambda e: errors.append(str(e)))
-    pg.errors = errors
+
+    def console(m: ConsoleMessage) -> None:
+        if m.type == "error":
+            errors.append(m.text)
+
+    def pageerror(e: Error) -> None:
+        errors.append(str(e))
+
+    pg.on("console", console)
+    pg.on("pageerror", pageerror)
     yield pg
     ctx.close()
     assert errors == []

@@ -1,4 +1,3 @@
-# pyright: basic
 """Who may write (POST start/resume/stop) to the real server: another site's page, a DNS-rebound one, a token, and
 the Launcher of a token server opened with and without ?token=."""
 
@@ -9,7 +8,9 @@ from urllib.parse import urlparse
 import pytest
 from bg3play.hub import Hub
 from bg3play.server import DEFAULT_WEB, App, serve
-from playwright.sync_api import expect
+from playwright.sync_api import Page, expect
+
+from .conftest import Site
 
 pytestmark = pytest.mark.e2e
 
@@ -23,7 +24,7 @@ def post(url: str, path: str, headers: dict[str, str]) -> int:
     return code
 
 
-def test_writes_from_another_site_are_refused(site):
+def test_writes_from_another_site_are_refused(site: Site):
     port = urlparse(site["url"]).port
     stop = "/api/v1/playthroughs/nobody-runs-this/stop"  # allowed: 409 (not running); refused: 403
     assert post(site["url"], stop, {}) == 409
@@ -34,7 +35,7 @@ def test_writes_from_another_site_are_refused(site):
     assert post(site["url"], stop, {"Host": f"localhost:{port}", "Origin": f"http://localhost:{port}"}) == 409
 
 
-def test_writes_with_a_token_server(site):
+def test_writes_with_a_token_server(site: Site):
     hub = Hub(site["store"], generation="tok")
     srv = serve(App(site["store"], hub, None, supervisor=site["sup"], token="s3cret"), "127.0.0.1", 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -50,7 +51,7 @@ def test_writes_with_a_token_server(site):
         srv.server_close()
 
 
-def test_the_launcher_sends_the_token_it_was_opened_with(page, site):
+def test_the_launcher_sends_the_token_it_was_opened_with(page: Page, site: Site, errors: list[str]):
     hub = Hub(site["store"], generation="tokui")
     srv = serve(App(site["store"], hub, DEFAULT_WEB, supervisor=site["sup"], token="s3 cret"), "127.0.0.1", 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -70,14 +71,15 @@ def test_the_launcher_sends_the_token_it_was_opened_with(page, site):
         start()
         expect(page.locator(".error")).to_have_text("bad or missing token")
         assert len(runner.requests) == played
-        assert [e for e in page.errors if "403" in e]  # the refused POST's own console line
-        page.errors.clear()
+        assert [e for e in errors if "403" in e]  # the refused POST's own console line
+        errors.clear()
         page.goto(f"{url}/?token=s3%20cret#/launch")
         expect(page).to_have_url(f"{url}/#/launch")  # the address bar (and history) lose it, the tab keeps it
         page.reload()
         start()
         expect(page.locator(".state")).to_contain_text("e2e-token")
         expect(page.locator(".error")).to_have_count(0)
+        assert site["sup"].thread is not None
         site["sup"].thread.join(10)  # the accepted start's session (the instant runner's) has run
         assert (runner.requests[-1].playthrough, runner.requests[-1].session) == ("e2e-token", 1)
     finally:

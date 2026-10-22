@@ -1,19 +1,21 @@
-# pyright: basic
 """The screens under the control paths the fixture run alone doesn't reach: Stop on a running playthrough, and a
 server restart under an open Watch page (the stream's reset)."""
 
 import json
 import shutil
 import threading
+from pathlib import Path
+from typing import Any
 
 import pytest
 from bg3play.hub import Hub
 from bg3play.server import DEFAULT_WEB, App, serve
 from bg3play.store import RunStore
-from bg3play.supervisor import SessionResult
-from playwright.sync_api import expect
+from bg3play.supervisor import SessionRequest, SessionResult
+from playwright.sync_api import Page, expect
 
 from ..conftest import FIXTURE, PT
+from .conftest import Site
 
 pytestmark = pytest.mark.e2e
 
@@ -25,14 +27,14 @@ class HeldRunner:
     def __init__(self):
         self.playing, self.release = threading.Event(), threading.Event()
 
-    def run_session(self, req, stop):
+    def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         self.playing.set()
         assert stop.wait(30), "Stop never reached the runner"
         assert self.release.wait(30), "the test never released the session"
         return SessionResult(f"S{req.session:03d}", "stopped", None)
 
 
-def test_stop_from_the_launcher_ends_the_session_and_offers_resume(page, site):
+def test_stop_from_the_launcher_ends_the_session_and_offers_resume(page: Page, site: Site):
     sup, held = site["sup"], HeldRunner()
     instant, sup.runner = sup.runner, held
     try:
@@ -62,7 +64,7 @@ def test_stop_from_the_launcher_ends_the_session_and_offers_resume(page, site):
         sup.runner = instant
 
 
-def test_watch_reloads_after_a_server_restart(page, tmp_path):
+def test_watch_reloads_after_a_server_restart(page: Page, tmp_path: Path):
     """A restart starts a new stream generation: the page's EventSource reconnects with an id the new server
     doesn't know, gets `reset`, reloads its snapshot and follows the new stream (no manual reload)."""
     run = tmp_path / "run"
@@ -86,7 +88,13 @@ def test_watch_reloads_after_a_server_restart(page, tmp_path):
         srv.server_close()
         expect(page.get_by_text("offline", exact=True)).to_be_visible()
         # S096 ended at 1792312705.6 and the snapshot keeps the session's window
-        line = {"t": 1792312703.0, "tool": "mcp__bg3__after_restart", "args": {}, "ms": 3, "result": "new server"}
+        line: dict[str, Any] = {
+            "t": 1792312703.0,
+            "tool": "mcp__bg3__after_restart",
+            "args": {},
+            "ms": 3,
+            "result": "new server",
+        }
         with store.actions_path.open("a") as f:  # written while the server was down: only the new snapshot has it
             f.write(json.dumps(line) + "\n")
         with page.expect_request(f"**/playthroughs/{PT}/watch", timeout=30000):  # EventSource retries on its own

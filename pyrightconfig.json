@@ -110,7 +110,6 @@
     "packages/playthrough/src/bg3play/runner/loop.py",
     "packages/playthrough/src/bg3play/runner/memory_side.py",
     "packages/playthrough/src/bg3play/runner/session_side.py",
-    "packages/playthrough/tests/e2e/conftest.py",
     "packages/playthrough/tests/memory/test_keeper.py",
     "packages/playthrough/tests/memory/test_session.py",
     "packages/playthrough/tests/memory/test_snapshots.py",
