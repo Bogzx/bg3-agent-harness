@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import collections
 import json
-import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -39,7 +38,7 @@ UI_EVERY_S = 1.0  # ui.state (client) poll: kept slow, Noesis reads are the risk
 # A check's reads (events of both contexts, act.watch, ui.state, the caller's post_ops) in one round trip: the
 # server ops in one eval, the client ops in another, both in the same tick (Game.read). Off: one RPC each, in order
 # (combat_turn made 20-110 serial RPCs between its steps, ~25 ms each: impl-act "combat_turn serial RPCs").
-BATCH_CHECKS = os.environ.get("BG3AI_BATCH_CHECKS", "1") != "0"
+BATCH_CHECKS = True
 
 # Prompt screens and the steps that are meant to answer them.
 PROMPTS = {

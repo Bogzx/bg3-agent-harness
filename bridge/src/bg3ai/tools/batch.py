@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from typing import Any
@@ -402,8 +401,8 @@ def _quiet(scr: str | None, view: dict) -> bool:
 # walk arrives (_hold_for_early_walks), never cancelling it. Not in combat (the turn needs the real arrival).
 # ACT-P4 (naut2 runs 1-2): of 5 early wakes, 1 was used as meant (loot steps queued for the arrival) and 4 were
 # followed at once by wait_for(lead_s=0): one more model turn each (~10 s lost). Off by default now; lead_s=2 opts
-# in per call. BG3AI_LEAD_S=2 brings the old default back.
-LEAD_S = max(0.0, float(os.environ.get("BG3AI_LEAD_S", "0")))  # default lead (0 = wait for the arrival)
+# in per call. LEAD_S = 2.0 brings the old default back.
+LEAD_S = 0.0  # default lead (0 = wait for the arrival)
 EARLY_CHECK_S = 0.25  # how often wait_for looks at the remaining ETA (one act.watch per trip)
 EARLY_HOLD_S = 8.0    # an action issued after an early wake waits at most this long for the walk to end
 _early: dict[str, dict] = {}  # key -> {"char", "job"|"queue"} of walks whose early wake fired (hold their followers)

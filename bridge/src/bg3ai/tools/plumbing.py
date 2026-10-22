@@ -645,7 +645,7 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
 # How long an action call waits on a just-started job before returning "started": refusals come back from the start
 # RPC itself, so this only catches jobs that end at once. 1.0 s blocked the agent ~45-60 s/session (logs review
 # 2026-10-10); a later failure still arrives as a job_finished event on the next result.
-SETTLE_S = float(os.environ.get("BG3AI_SETTLE_S", "0.3") or 0)
+SETTLE_S = 0.3
 _WALKS = ("move_to", "walk_toward", "travel_to")
 
 

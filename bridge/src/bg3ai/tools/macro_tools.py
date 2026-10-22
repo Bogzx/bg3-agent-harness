@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
@@ -157,22 +156,22 @@ def loot_area(radius: float = macros.LOOT_RADIUS, who: str | None = None, corpse
 
 # A voiced or cinematic line still playing: wait this long for the next prompt before handing back (every return
 # here costs a model turn; S003's Helm cinematic took 6 empty advance/wait turns at the old 8 s).
-DIALOGUE_LINE_WAIT_S = float(os.environ.get("BG3AI_DIALOGUE_LINE_WAIT_S", "15"))
+DIALOGUE_LINE_WAIT_S = 15.0
 # dialogue_advance with no conversation on screen: when the game says no party member is in one (nav.activity), wait
 # only this long for one to open instead of open_s (2.5 s). naut series: 2-3 calls a run after a conversation had
 # already ended ("0 filler line(s), STOPPED: conversation ended" at 2.7 s each). 2.5 reverts it.
-DIALOGUE_IDLE_OPEN_S = float(os.environ.get("BG3AI_DIALOGUE_IDLE_OPEN_S", "0.5"))
+DIALOGUE_IDLE_OPEN_S = 0.5
 # naut series (helm): "*The helm's alien transponder…*" played in the party's combat turn, AutoSkip (then) skipped
 # nothing there, and 2 dialogue_advance + 1 get_combat_state sat the whole 15 s on it, ~30-45 s a run. A line AutoSkip
 # says it can't skip (autoskip.status line.blocked: "our turn" with its switch off, or its tries used up; or AutoSkip
 # off) hands back once it has played this long, saying so. 0 = off (wait the full DIALOGUE_LINE_WAIT_S).
-DIALOGUE_STUCK_EXIT_S = float(os.environ.get("BG3AI_DIALOGUE_STUCK_EXIT_S", "2"))
+DIALOGUE_STUCK_EXIT_S = 2.0
 # The bridge's own autopilot after a read tool (get_combat_state, look, …: a dialogue_started event in its result)
 # waits at most this long on a playing line: a read is not a wait (naut-r2: get_combat_state 15.4 s).
-AUTO_DIALOGUE_READ_LINE_S = float(os.environ.get("BG3AI_AUTO_DIALOGUE_READ_LINE_S", "3"))
+AUTO_DIALOGUE_READ_LINE_S = 3.0
 # Autopilot (fast reflexes): the bridge clicks through filler itself after choose_dialogue and when a
-# conversation opens, so the agent sees the next real choice at once. BG3AI_AUTO_DIALOGUE=0 turns it off.
-AUTO_DIALOGUE = os.environ.get("BG3AI_AUTO_DIALOGUE", "1") != "0"
+# conversation opens, so the agent sees the next real choice at once. AUTO_DIALOGUE = False turns it off.
+AUTO_DIALOGUE = True
 
 
 def _line_stuck(waited_s: float) -> str | None:

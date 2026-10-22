@@ -372,8 +372,8 @@ def _wedged_hint(char: str | None, goal: list | None = None) -> str:
 
 
 # ACT-P3: in a fight, a walk_toward longer than the movement left walks as far as it goes (says so) instead of failing.
-# BG3AI_WALK_CLIP_MOVEMENT=0 reverts.
-WALK_CLIP_MOVEMENT = os.environ.get("BG3AI_WALK_CLIP_MOVEMENT", "1") != "0"
+# WALK_CLIP_MOVEMENT = False reverts.
+WALK_CLIP_MOVEMENT = True
 
 
 @core.mcp.tool()

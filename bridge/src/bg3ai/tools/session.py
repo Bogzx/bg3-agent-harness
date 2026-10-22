@@ -199,8 +199,8 @@ if os.environ.get("BG3AI_ALWAYS_LOAD", "1") != "0":  # 0: everything deferred (A
 # steps do_actions runs inside itself (direct calls) do not. The session briefing on the first result stays as is.
 BRIEFING_SEP = "\n\n=== the result of your call ===\n"
 # str tools return plain text, not structured {"result": "..."}: Claude Code showed the model the JSON form
-# (escaped newlines and quotes on every line). BG3AI_PLAIN_RESULTS=0 restores the SDK default.
-PLAIN_RESULTS = os.environ.get("BG3AI_PLAIN_RESULTS", "1") != "0"
+# (escaped newlines and quotes on every line). PLAIN_RESULTS = False restores the SDK default.
+PLAIN_RESULTS = True
 
 
 def _compacted(name: str, fn: Callable) -> Callable:

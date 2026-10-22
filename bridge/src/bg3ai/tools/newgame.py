@@ -189,7 +189,7 @@ def create_character(plan: dict[str, Any] | str) -> str:
     return reporting._finish("create_character", {"plan": p}, body, t0)
 
 
-CC_FIRST_LOOK = os.environ.get("BG3AI_CC_FIRST_LOOK", "1").strip() not in ("0", "")
+CC_FIRST_LOOK = True
 
 
 def _cc_first_look() -> str:
@@ -197,7 +197,7 @@ def _cc_first_look() -> str:
     full first look (look(full=True): the status read-back of name/race/class, objectives, what's nearby), so the
     first move needs no more calls. naut2 (2026-10-17): 12-14 s idle in every run right after creation, 8-9 calls
     (get_status, save_game, memory_edit, note, memory_read, look, get_frontier, get_map) before the first move.
-    BG3AI_CC_FIRST_LOOK=0: the bare result of before."""
+    CC_FIRST_LOOK = False: the bare result of before."""
     if not CC_FIRST_LOOK:
         return ""
     out = []

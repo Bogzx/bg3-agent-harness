@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 import time
@@ -128,8 +127,8 @@ CHAIN_BUDGET_S = 80.0  # a list of member plans: total time the later members ma
 # enemies or the next turn group act): the agent plans the next turn while the game ends this one. naut series (3
 # runs): every end blocked 1.6-5.3 s (a game-ignored EndTurn → HUD End Turn: 3.5 s, 9x), ~35 s a run with the model
 # idle. The end runs as the character's queue step (RUNNING line, queue_done / queue_interrupted event); anything
-# sent for the party meanwhile first waits for it (END_BG_HOLD_S). BG3AI_END_ASYNC=0 reverts (blocking end).
-END_ASYNC = os.environ.get("BG3AI_END_ASYNC", "1") != "0"
+# sent for the party meanwhile first waits for it (END_BG_HOLD_S). END_ASYNC = False reverts (blocking end).
+END_ASYNC = True
 END_BG_HOLD_S = 16.0  # Lua fails an ignored end at 3 s, the HUD fallback takes ≤ ~10 s more (select + press + 9 s watch)
 _bg_ends: dict[str, float] = {}  # char -> when its background end started
 # The first (or only) plan: extra wait past wait_turn while enemy turns still progress. 30 s until S080 02:31:45:
@@ -139,7 +138,7 @@ TURN_STILL_ACTING = "enemies still acting"  # _wait_turn's why when the extensio
 TURN_NOT_YET = "combat_turn: NOT PLAYED YET — "  # combat_turn's answer then (nothing played)
 # How often a wait for a party turn (combat_turn sent ahead, end_turn wait) reads state.combat (~10-20 ms): the turn's
 # start reaches the agent this much late at most (0.3 / 0.5 s until 2026-10-16: ~0.2 s mean per turn, 8-15 a run).
-TURN_POLL_S = float(os.environ.get("BG3AI_TURN_POLL_S", "0.15"))
+TURN_POLL_S = 0.15
 TURN_PROGRESS_S = 10.0  # ... "progress" = the acting combatant changed this recently
 
 

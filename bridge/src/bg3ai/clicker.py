@@ -21,7 +21,6 @@ with small pixel offsets and different aim heights.
 
 from __future__ import annotations
 
-import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -69,7 +68,7 @@ CENTER_KEY = "Home"
 CENTER_WAIT_S = 1.5
 
 # The faster search (naut-r2 S001 16:54-16:55: click_on off_screen x2 at 7 s each, then 83 tries in 12.6 s). Revert
-# with BG3AI_HOVER_V2=0 (or clicker.HOVER_V2 = False):
+# with clicker.HOVER_V2 = False:
 #  - each try settles on the picking helper's own cursor (hover_check `cursor` == the point moved to) instead of a
 #    fixed 2-frame wait: ~2 frames a try instead of ~4 (the 83 tries were ~135 ms each, RPCs only 1.1 s of 12.6 s);
 #  - the first aim's 9 points (61/77 hits in the log are within them), then every other aim's centre (5 more hits
@@ -79,7 +78,7 @@ CENTER_WAIT_S = 1.5
 #  - a rotation that carried a point behind the camera across to the other side (or from the front to behind) was
 #    the wrong way: the drag direction flips and is remembered (the off_screen calls: left,left,right,left,right,left
 #    with the target behind, where the |x| check never fires).
-HOVER_V2 = os.environ.get("BG3AI_HOVER_V2", "1") != "0"
+HOVER_V2 = True
 PROBE_OCCLUDED_FRAC = 0.75   # share of the probe's tries that hovered something else for "occluded: turn now"
 PROBE_MIN_TRIES = 6
 DEDUPE_PX = 3                # a point this close to one already tried is skipped (aims that project together)

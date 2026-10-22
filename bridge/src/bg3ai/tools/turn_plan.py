@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import time
 from typing import Any
@@ -79,7 +78,7 @@ def _party_set() -> set:
 # combat_turn's own state.combat read, reused by the first step check (no step ran in between): one round
 # trip instead of two at the start of every turn.
 _turn_cs: dict = {}
-# actq.BATCH_CHECKS (env BG3AI_BATCH_CHECKS=0 reverts): the read is also taken from the watcher's check after each
+# actq.BATCH_CHECKS (False reverts): the read is also taken from the watcher's check after each
 # finished step (the same round trip as its events + act.watch) and kept until the next step starts (_run_one
 # clears it) instead of one read per check: the turn can't change while no step of ours runs. A read older than
 # this is read again anyway.
@@ -244,8 +243,8 @@ def _turn_run(watcher: actq.Watcher, who: str, step: actq.Step) -> tuple[actq.Re
 # ACT-P1 (naut2 run 1 19:59:07): combat_turn {"move":"o3"} (the Transponder, 35 m off) was REFUSED "o3 is the objective
 # marker …", then 27 calls / 56 s of route + Dash + walk_toward + wait_for + end_turn per member per round followed. A
 # move to an objective whose name is nothing in view walks toward its marker like a position move, with the turn's
-# partial rule (as far as the movement left goes; a Dash with then_move walks on). BG3AI_TURN_MOVE_OBJECTIVE=0 reverts.
-TURN_MOVE_OBJECTIVE = os.environ.get("BG3AI_TURN_MOVE_OBJECTIVE", "1") != "0"
+# partial rule (as far as the movement left goes; a Dash with then_move walks on). TURN_MOVE_OBJECTIVE = False reverts.
+TURN_MOVE_OBJECTIVE = True
 TURN_OBJECTIVE_MAX_M = 40.0  # the walkable spot toward the marker is picked this far out at most (then partial)
 
 
