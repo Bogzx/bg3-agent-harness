@@ -249,7 +249,13 @@ class Headers(dict):
 def test_authorize_writes(store: RunStore):
     app = App(store, Hub(store, generation="g"), None)
     assert app.authorize("127.0.0.1", Headers(Host="127.0.0.1:8780")) is None
-    assert app.authorize("::1", Headers(Host="x", Origin="http://x")) is None
+    assert app.authorize("::1", Headers(Host="[::1]:8780", Origin="http://[::1]:8780")) is None
+    assert app.authorize("127.0.0.1", Headers(Host="localhost")) is None
+    # DNS rebinding: a page on evil.test, rebound to 127.0.0.1, sends its own name as Origin and Host
+    rebound = Headers(Host="evil.test:8780", Origin="http://evil.test:8780")
+    assert "localhost URL" in app.authorize("127.0.0.1", rebound)
+    assert "localhost URL" in app.authorize("127.0.0.1", Headers(Host="box.test:8780"))
+    assert "localhost URL" in app.authorize("127.0.0.1", Headers())
     assert "cross-origin" in app.authorize("127.0.0.1", Headers(Host="127.0.0.1:8780", Origin="http://evil.test"))
     assert "localhost" in app.authorize("192.0.2.7", Headers(Host="box.test:8780"))
     tok = App(store, Hub(store, generation="g"), None, token="s3cret")

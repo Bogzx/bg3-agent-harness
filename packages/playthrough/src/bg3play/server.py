@@ -30,7 +30,8 @@ Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|re
 supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop.
 GET /api/v1/supervisor (state + client profiles: client_profiles.py),
 GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin, and from anywhere but localhost unless the
-request carries the --token (Authorization: Bearer). Binds 127.0.0.1 by default.
+request carries the --token (Authorization: Bearer); a write without the token must also name a localhost address
+in its Host (a DNS-rebound page's Host is the attacker's name). Binds 127.0.0.1 by default.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from . import api, client_profiles, config, replay
 from . import game as gm
@@ -94,6 +95,20 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
     return first, last
 
 
+def is_local_host(host: str | None) -> bool:
+    """A Host header that names this machine's loopback: localhost, 127.x.x.x or [::1], with or without a port."""
+    try:
+        name = urlsplit(f"//{host}").hostname if host else None
+    except ValueError:
+        return False
+    if name == "localhost":
+        return True
+    try:
+        return name is not None and ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
 class App:
     def __init__(
         self,
@@ -117,8 +132,9 @@ class App:
         self.clock = clock
 
     def authorize(self, client_ip: str, headers: Any) -> str | None:
-        """Why a write is refused (None: allowed): another site's page (Origin not this host), or a client off
-        localhost without the token."""
+        """Why a write is refused (None: allowed): another site's page (Origin not this host), a client off
+        localhost without the token, or a request to a name other than localhost without the token (DNS rebinding:
+        evil.example resolved to 127.0.0.1 makes the page's Origin and Host both evil.example)."""
         origin, host = headers.get("Origin"), headers.get("Host")
         if origin and origin not in (f"http://{host}", f"https://{host}"):
             return "cross-origin write refused"
@@ -129,7 +145,9 @@ class App:
             local = ipaddress.ip_address(client_ip).is_loopback
         except ValueError:
             local = False
-        return None if local else "writes need localhost or the server's --token"
+        if not local:
+            return "writes need localhost or the server's --token"
+        return None if is_local_host(host) else "writes without the --token need a localhost URL"
 
     def client_profiles(self) -> list[dict[str, Any]]:
         return client_profiles.read_profiles(self.profiles)
