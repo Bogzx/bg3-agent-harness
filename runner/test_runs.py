@@ -27,7 +27,7 @@ os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runti
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: E402
 import runs as R  # noqa: E402
-from test_play import _res, _stream, _use  # noqa: E402
+from test_play_series import _res, _stream, _use  # noqa: E402
 import test_judge as TJ  # noqa: E402  (its stream builders and CHARACTER.md fixture)
 
 

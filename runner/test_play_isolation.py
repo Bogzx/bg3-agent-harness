@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_play as TP  # noqa: N812
+import test_play_saves as TP  # noqa: N812
 
 import play as P  # noqa: N812
 
