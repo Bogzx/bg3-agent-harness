@@ -18,6 +18,7 @@ from pathlib import Path
 from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
 from bg3harness.game import io as G  # noqa: N812

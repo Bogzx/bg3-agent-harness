@@ -18,8 +18,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
-sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
+import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 from bg3harness import clients as C
 from bg3harness import pi_client as PC

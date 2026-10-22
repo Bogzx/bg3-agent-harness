@@ -543,9 +543,9 @@ class TestHelpers(Base):
 
     def test_real_play_harness_logic_is_used(self):
         p = LW.Procs()
-        io = LW.load_game_io()
-        with mock.patch.object(io, "all_bg3_pids", return_value=[11, 22]), \
-                mock.patch.object(io, "is_harness_pid", side_effect=lambda pid: pid == 11):
+        gio = LW.load_game_io()
+        with mock.patch.object(gio, "all_bg3_pids", return_value=[11, 22]), \
+                mock.patch.object(gio, "is_harness_pid", side_effect=lambda pid: pid == 11):
             self.assertEqual((p.game(), p.foreign()), ([11], [22]))
 
     def test_every_process_name_procs_uses_resolves(self):
@@ -554,13 +554,13 @@ class TestHelpers(Base):
         import re
         names = set(re.findall(r"self\.p\.(\w+)", Path(LW.__file__).read_text()))
         self.assertEqual(names, {"pids_of_game", "foreign_bg3_pids", "crash_reporter_pids"})
-        io = LW.Procs().p
+        gio = LW.Procs().p
         for name in names:
-            self.assertTrue(callable(getattr(io, name, None)), name)
-        with mock.patch.object(io, "all_bg3_pids", return_value=[]):
+            self.assertTrue(callable(getattr(gio, name, None)), name)
+        with mock.patch.object(gio, "all_bg3_pids", return_value=[]):
             p = LW.Procs()
             self.assertEqual((p.game(), p.foreign()), ([], []))
-        with mock.patch.object(io.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")):
+        with mock.patch.object(gio.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")):
             self.assertEqual(LW.Procs().reporters(), [])
 
 

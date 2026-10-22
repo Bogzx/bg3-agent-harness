@@ -38,6 +38,7 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: E402, F401, I001  (first: the game's profile folders are a temp dir before play)
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
@@ -712,8 +713,8 @@ class Series(NautiloidBase):
 
     def setUp(self):
         super().setUp()
-        for n in ("PLAY_DIR", "KNOWLEDGE_DIR", "SE_BG3AI_DIR", "current_pins"):
-            self.saved[n] = getattr(home(n), n)
+        for n in ("PLAY_DIR", "KNOWLEDGE_DIR", "SE_BG3AI_DIR", "current_pins"):   # setdefault: the base saved
+            self.saved.setdefault(n, getattr(home(n), n))                     # SE_BG3AI_DIR before it set a tmp one
         pins = P.current_pins()   # frozen: other workers editing the shared tree mid-test read as version drift
         P.current_pins = lambda: json.loads(json.dumps(pins))
         P.PLAY_DIR = self.tmp / "play"                  # check_memory links play/memory here, not in the repo
