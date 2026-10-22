@@ -277,7 +277,6 @@ class Client(unittest.TestCase):
         self.assertEqual((c.name, c.supports_resume, c.assigns_session), ("pi", True, True))
 
     def test_command(self):
-        d = self.tmp / "S007.pi"
         self.assertEqual(
             self.client.command(self.req),
             [
