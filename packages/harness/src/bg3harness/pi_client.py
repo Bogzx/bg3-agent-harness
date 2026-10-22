@@ -1,4 +1,3 @@
-# pyright: basic
 """PiClient: any model behind an OpenAI-compatible endpoint plays through pi 1.3.0 (tools/pi) and its bg3.ts
 extension, behind the runner's Client interface (clients.py). research/arch/pi-client.md §3.4 is the design and
 tools/pi/conformance/ the offline evidence; runner/fixtures/pi/*.jsonl are streams captured from those runs.
@@ -31,17 +30,18 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
-from . import clients as C
-from . import deepseek_bill
+from . import clients, deepseek_bill
 from .profiles import Profile, ProfileError, models_json, tool_env
 
-PI_DIR = C.REPO / "tools" / "pi"
+Json = dict[str, Any]
+PI_DIR = clients.REPO / "tools" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
 PI_EFFORTS = {e: e for e in ("low", "medium", "high", "xhigh", "max")}  # --thinking; pi clamps per model
 # compaction off: no summary replaces the history (it also stops the compact-and-retry on overflow); cache warming
 # off: it sends extra billed requests; no built-in tools; pi's own retries for transient API errors.
-PI_SETTINGS = {
+PI_SETTINGS: Json = {
     "compaction": {"enabled": False},
     "cacheWarming": "off",
     "enableInstallTelemetry": False,
@@ -59,7 +59,12 @@ OVERFLOW_RE = re.compile(
 EXTENSION_FAILED_RE = re.compile(r"Failed to load extension .*bg3\.ts", re.DOTALL)
 
 
-def write_system_text(path: Path, repo: Path = C.REPO) -> Path:
+def _obj(v: object) -> Json:
+    """v when it is a JSON object, else {} (pi's lines are parsed, not trusted)."""
+    return cast(Json, v) if isinstance(v, dict) else {}
+
+
+def write_system_text(path: Path, repo: Path = clients.REPO) -> Path:
     """The system text pi gets (D2): the bg3 server's instructions with the rules, dumped offline in the bridge's
     env by tools/pi/dump_server.py."""
     subprocess.run(
@@ -92,7 +97,7 @@ def exit_problem(returncode: int | None, stderr: str) -> str | None:
 class PiParser:
     """pi --mode json lines -> Events (one parser per process)."""
 
-    def __init__(self, model: str | None = None, deepseek_prices: dict | None = None):
+    def __init__(self, model: str | None = None, deepseek_prices: dict[str, float] | None = None):
         self.model = model
         self.deepseek_prices = deepseek_prices  # the profile's USD rates when DeepSeek's API serves it
         self.session: str | None = None
@@ -101,7 +106,7 @@ class PiParser:
         # system message, a resumed session keeps the declared tools)
         self.init_sent = False
         self.turns = 0
-        self.tokens = dict.fromkeys(C.TOKEN_KEYS, 0)
+        self.tokens: dict[str, int] = dict.fromkeys(clients.TOKEN_KEYS, 0)
         # bg3.ts appends a response's bg3.billing entry before pi ends its assistant message: a message with a
         # bill since the previous one costs the bill, one without costs pi's estimate from the profile's prices
         self.cost = 0.0
@@ -124,20 +129,20 @@ class PiParser:
             return f"bg3:tools {self.model_tools or 0}/{self.server_tools}"
         return "bg3:connected"
 
-    def _init(self) -> list[C.Event]:
+    def _init(self) -> list[clients.Event]:
         if self.init_sent:
             return []
         self.init_sent = True
         n = self.model_tools if self.model_tools is not None else self.server_tools
-        return [C.Event("init", session_id=self.session, model=self.model, tools=n or 0, mcp=[self.mcp_status()])]
+        return [clients.Event("init", session_id=self.session, model=self.model, tools=n or 0, mcp=[self.mcp_status()])]
 
-    def _stamp(self, msg: dict) -> None:
+    def _stamp(self, msg: Json) -> None:
         ts = msg.get("timestamp")
         if isinstance(ts, (int, float)):
             self.first_ts = ts if self.first_ts is None else min(self.first_ts, ts)
             self.last_ts = ts if self.last_ts is None else max(self.last_ts, ts)
 
-    def _served(self) -> dict | None:
+    def _served(self) -> dict[str, list[str]] | None:
         """What the endpoint served so far, each value once in first-seen order (usage and result events)."""
         served = {"effort": list(dict.fromkeys(self.efforts)), "providers": list(dict.fromkeys(self.providers))}
         return served if any(served.values()) else None
@@ -145,10 +150,10 @@ class PiParser:
     def _cost(self) -> float:
         return round(self.cost + (self.unsettled_bill or 0.0), 6)
 
-    def _result(self, subtype: str, text: str, api_error: bool) -> C.Event:
+    def _result(self, subtype: str, text: str, api_error: bool) -> clients.Event:
         self.done = True
-        duration = None if self.first_ts is None else float(self.last_ts - self.first_ts)
-        return C.Event(
+        duration = None if self.first_ts is None or self.last_ts is None else float(self.last_ts - self.first_ts)
+        return clients.Event(
             "result",
             subtype=subtype,
             text=text,
@@ -163,7 +168,7 @@ class PiParser:
             served=self._served(),
         )
 
-    def _recover(self, what: str) -> list[C.Event]:
+    def _recover(self, what: str) -> list[clients.Event]:
         self.recovery += 1
         if self.recovery <= MAX_RECOVERY or self.done:
             return []
@@ -175,7 +180,7 @@ class PiParser:
             )
         ]
 
-    def _assistant(self, msg: dict) -> list[C.Event]:
+    def _assistant(self, msg: Json) -> list[clients.Event]:
         out = self._init()
         self._stamp(msg)
         self.turns += 1
@@ -183,30 +188,30 @@ class PiParser:
         if msg.get("thinkingLevel"):
             self.efforts.append(str(msg["thinkingLevel"]))
         sid = self.session
-        for c in msg.get("content") or []:
+        for c in map(_obj, msg.get("content") or ()):
             if c.get("type") == "text" and str(c.get("text") or "").strip():
-                out.append(C.Event("text", text=c["text"].strip(), session_id=sid))
+                out.append(clients.Event("text", text=c["text"].strip(), session_id=sid))
             elif c.get("type") == "toolCall":
-                args = c.get("arguments") if isinstance(c.get("arguments"), dict) else {}
+                args = _obj(c.get("arguments"))
                 if c.get("argumentsError"):
                     self.malformed += 1
                     args = {"_malformed": str(c["argumentsError"])}
                 out.append(
-                    C.Event(
+                    clients.Event(
                         "tool_call",
-                        tool=C.bare_tool(c.get("name") or "?"),
+                        tool=clients.bare_tool(c.get("name") or "?"),
                         args=args,
                         call_id=c.get("id") or "",
                         session_id=sid,
                     )
                 )
-        u = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
-        toks = C.tokens(u.get("input"), u.get("output"), u.get("cacheRead"), u.get("cacheWrite"))
-        self.tokens = {k: self.tokens[k] + toks[k] for k in C.TOKEN_KEYS}
+        u = _obj(msg.get("usage"))
+        toks = clients.tokens(u.get("input"), u.get("output"), u.get("cacheRead"), u.get("cacheWrite"))
+        self.tokens = {k: self.tokens[k] + toks[k] for k in clients.TOKEN_KEYS}
         bill, self.unsettled_bill = self.unsettled_bill, None
-        self.cost += bill if bill is not None else float((u.get("cost") or {}).get("total") or 0)
+        self.cost += bill if bill is not None else float(_obj(u.get("cost")).get("total") or 0)
         out.append(
-            C.Event(
+            clients.Event(
                 "usage",
                 session_id=sid,
                 message_id=msg.get("responseId"),
@@ -220,35 +225,36 @@ class PiParser:
             self.last_error = str(msg.get("errorMessage") or "")
             overflow = bool(OVERFLOW_RE.search(self.last_error))
             out.append(
-                C.Event(
+                clients.Event(
                     "error",
                     text=self.last_error,
                     session_id=sid,
-                    api_error=not overflow and bool(C.API_ERROR_RE.search(self.last_error)),
+                    api_error=not overflow and bool(clients.API_ERROR_RE.search(self.last_error)),
                 )
             )
             if overflow:
                 out += self._recover("overflow recovery")
         return out
 
-    def parse(self, line: str) -> list[C.Event]:
+    def parse(self, line: str) -> list[clients.Event]:
         try:
-            ev = json.loads(line)
+            raw: object = json.loads(line)
         except (json.JSONDecodeError, TypeError):
             return []
-        if not isinstance(ev, dict):
+        if not isinstance(raw, dict):
             return []
+        ev = cast(Json, raw)
         t = ev.get("type")
         if t == "session":
             self.session = ev.get("id")
             return []
         if t == "entry_appended":
-            entry = ev.get("entry") or {}
-            data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
+            entry = _obj(ev.get("entry"))
+            data = _obj(entry.get("data"))
             if entry.get("customType") == "bg3.tools":
                 self.server_tools = int(data.get("n") or 0)
             elif entry.get("customType") == "bg3.billing":
-                usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                usage = _obj(data.get("usage"))
                 cost = usage.get("cost")
                 if not isinstance(cost, (int, float)) or isinstance(cost, bool):
                     cost = None
@@ -263,7 +269,7 @@ class PiParser:
                     self.generations.append(str(data["id"]))
             return []
         if t == "message_end":
-            msg = ev.get("message") or {}
+            msg = _obj(ev.get("message"))
             if msg.get("role") == "system":
                 self.model_tools = len(msg.get("toolsAdded") or [])
                 return self._init() if self.server_tools is not None else []
@@ -274,12 +280,12 @@ class PiParser:
                 return self._assistant(msg)
             return []
         if t == "tool_execution_end" and not ev.get("parentToolCallId"):
-            res = ev.get("result") or {}
+            res = _obj(ev.get("result"))
             return [
-                C.Event(
+                clients.Event(
                     "tool_result",
-                    tool=C.bare_tool(ev.get("toolName") or "?"),
-                    text=C._json_text(res.get("content")),
+                    tool=clients.bare_tool(ev.get("toolName") or "?"),
+                    text=clients.json_text(res.get("content")),
                     call_id=ev.get("toolCallId") or "",
                     is_error=bool(ev.get("isError")),
                     duration_ms=ev.get("durationMs"),
@@ -287,10 +293,10 @@ class PiParser:
                 )
             ]
         if t == "compaction_start":
-            return [C.Event("compact", session_id=self.session), *self._recover("compaction")]
+            return [clients.Event("compact", session_id=self.session), *self._recover("compaction")]
         if t == "auto_retry_start":
             return [
-                C.Event(
+                clients.Event(
                     "error",
                     text=f"retry {ev.get('attempt')}/{ev.get('maxAttempts')}: {ev.get('errorMessage') or ''}",
                     session_id=self.session,
@@ -309,7 +315,7 @@ class PiParser:
                     self._result(
                         "error_context_overflow" if overflow else "error_during_execution",
                         self.last_error,
-                        api_error=not overflow and bool(C.API_ERROR_RE.search(self.last_error)),
+                        api_error=not overflow and bool(clients.API_ERROR_RE.search(self.last_error)),
                     ),
                 ]
             return [*out, self._result("success", "", api_error=False)]
@@ -332,16 +338,16 @@ class PiClient:
         self,
         profile: Profile,
         system_file: Path | str,
-        server: dict | None = None,
-        cwd: Path = C.PLAY_DIR,
+        server: Json | None = None,
+        cwd: Path = clients.PLAY_DIR,
         binary: Path | str | None = None,
-        settings: dict | None = None,
+        settings: Json | None = None,
         extension: Path | str | None = None,
     ):
         if profile.client != "pi":
             raise ProfileError(f"{profile.source}: PiClient needs a pi profile (client = {profile.client!r})")
         self.p, self.system_file = profile, Path(system_file)
-        self.server = server if server is not None else C.bg3_server()
+        self.server = server if server is not None else clients.bg3_server()
         self.cwd, self.settings = cwd, settings if settings is not None else PI_SETTINGS
         self.binary = Path(binary) if binary else PI_DIR / "node_modules" / ".bin" / "pi"
         self.extension = Path(extension) if extension else EXTENSION  # the container sandbox: the image's copy
@@ -354,30 +360,30 @@ class PiClient:
         rates = deepseek and all(k in cost for k in deepseek_bill.RATES)  # else pi's estimate (or the bill)
         return PiParser(p.model, dict(cost) if rates else None)
 
-    def agent_dir(self, req: C.Request) -> Path:
+    def agent_dir(self, req: clients.Request) -> Path:
         return Path(req.session_dir) / f"{req.tag or 'session'}.pi"
 
-    def sessions_dir(self, req: C.Request) -> Path:
+    def sessions_dir(self, req: clients.Request) -> Path:
         """pi's session files, shared by every process of the session dir: a resume (S001-c1, S001-r1) has its
         own agent dir but must find the conversation its first process wrote (the ids are unique)."""
         return Path(req.session_dir) / "pi-sessions"
 
-    def bg3_config(self, req: C.Request) -> dict:
+    def bg3_config(self, req: clients.Request) -> Json:
         s = self.server
-        if C.is_http(s):  # the container sandbox: the host runs the server with the session env
+        if clients.is_http(s):  # the container sandbox: the host runs the server with the session env
             server = {"url": s["url"]}
         else:
-            env = {
-                **(s.get("env") or {}),
+            env: Json = {
+                **_obj(s.get("env")),
                 "BG3AI_SERVE_RULES": "0",  # the system text carries the rules (D2)
-                **{k: str(req.env[k]) for k in C.session_env_names(req.env)},
+                **{k: str(req.env[k]) for k in clients.session_env_names(req.env)},
             }
             env = tool_env(self.p, env)  # no screenshots for a model without image input
             server = {"command": s["command"], "args": list(s.get("args") or []), "cwd": str(self.cwd), "env": env}
         server["timeout"] = (s.get("timeout") or 110_000) / 1000  # bg3.ts takes seconds
         return {"server": server, "systemPromptFile": str(self.system_file)}
 
-    def write_config(self, req: C.Request) -> list[Path]:
+    def write_config(self, req: clients.Request) -> list[Path]:
         d = self.agent_dir(req)
         d.mkdir(parents=True, exist_ok=True)
         files = {"settings.json": self.settings, "models.json": models_json(self.p), "bg3.json": self.bg3_config(req)}
@@ -385,11 +391,11 @@ class PiClient:
             (d / name).write_text(json.dumps(obj, indent=1) + "\n")
         return [d / n for n in files]
 
-    def env(self, req: C.Request) -> dict:
+    def env(self, req: clients.Request) -> dict[str, str]:
         d = self.agent_dir(req)
         return {"PI_CODING_AGENT_DIR": str(d), "BG3_PI_CONFIG": str(d / "bg3.json"), "PI_OFFLINE": "1"}
 
-    def command(self, req: C.Request) -> list[str]:
+    def command(self, req: clients.Request) -> list[str]:
         if not req.session:
             raise ValueError("pi needs the session id up front (--session-id)")
         if req.model and req.model != self.p.model:
@@ -421,5 +427,5 @@ class PiClient:
             cmd += ["--thinking", PI_EFFORTS[effort]]
         return [*cmd, req.prompt]
 
-    def parse(self, line: str) -> list[C.Event]:
+    def parse(self, line: str) -> list[clients.Event]:
         return self.parser.parse(line)

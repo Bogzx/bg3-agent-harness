@@ -89,7 +89,6 @@
     "packages/harness/src/bg3harness/facts.py",
     "packages/harness/src/bg3harness/fairness.py",
     "packages/harness/src/bg3harness/model_time.py",
-    "packages/harness/src/bg3harness/pi_client.py",
     "packages/harness/src/bg3harness/ramwatch.py",
     "packages/harness/src/bg3harness/runner/agent_side.py",
     "packages/harness/src/bg3harness/runner/checks_side.py",

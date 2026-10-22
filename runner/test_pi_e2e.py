@@ -402,8 +402,10 @@ class DeepSeekCap(PiE2EBase):
         ):
             res = self.play([step], raw=raw, max_cost=2.5 * self.BILL)
         self.assertEqual(res.reason, "cap")
-        self.assertEqual(self.r.cap_hit["cap"], "cost")
-        self.assertGreaterEqual(self.r.cap_hit["cost"], 2.5 * self.BILL)
+        cap = self.r.cap_hit
+        assert cap is not None
+        self.assertEqual(cap["cap"], "cost")
+        self.assertGreaterEqual(cap["cost"], 2.5 * self.BILL)
         billed = round((self.spent() - 1.0) / self.BILL)
         self.assertGreaterEqual(billed, 3)  # mid-way: the scripted model never stops by itself
         self.assertAlmostEqual(self.spent(), 1.0 + billed * self.BILL)

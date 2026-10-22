@@ -25,7 +25,7 @@ import os
 import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 REPO = Path(__file__).resolve().parents[4]
 PLAY_DIR = REPO / "play"
@@ -50,7 +50,8 @@ class Request:
     effort: str | None = None          # play.EFFORTS; None = the CLI's default
     fallback_model: str | None = None
     autocompact: int | None = None     # claude --autocompact; the runner leaves it None for the fix pass
-    env: dict = field(default_factory=dict)   # the session env (BG3AI_*), also set on the process by the runner
+    # the session env (BG3AI_*), also set on the process by the runner
+    env: dict[str, Any] = field(default_factory=dict[str, Any])
     tag: str = ""                      # the session's file stem (S012, S012-fix): names per-session config files
 
 
@@ -68,7 +69,7 @@ class Event:
     kind: str
     text: str = ""
     tool: str = ""                     # bare bg3 tool name (other servers' tools keep their prefix)
-    args: dict | None = None
+    args: dict[str, Any] | None = None
     call_id: str = ""
     is_error: bool = False
     api_error: bool = False            # an API, auth or usage-limit failure (not the game's or a tool's)
@@ -80,14 +81,15 @@ class Event:
     turns: int | None = None
     duration_ms: float | None = None
     cost_usd: float | None = None      # result: the process's cost (None when the client can't know it)
-    tokens: dict | None = None
+    tokens: dict[str, int] | None = None
     message_id: str | None = None      # usage: the message a running token count belongs to
     resets_at: float | None = None     # rate_limit: when the limit resets (epoch s), if the client says
     think_ms: float | None = None      # thinking: the CLI's thinking time for this block (claude thinking_duration_ms)
     api_ms: float | None = None        # result: API time of the process (claude duration_api_ms)
     think_tokens: int | None = None    # result: output tokens spent thinking (claude output_tokens_details)
-    served: dict | None = None         # usage, result: what the endpoint served so far (pi: {"effort", "providers"})
-    detail: dict | None = None         # harness kinds: what happened (reason, fault, exit, ...)
+    # usage, result: what the endpoint served so far (pi: {"effort", "providers"})
+    served: dict[str, list[str]] | None = None
+    detail: dict[str, Any] | None = None  # harness kinds: what happened (reason, fault, exit, ...)
     v: int = EVENTS_VERSION
     t: float | None = None             # when the runner read the line (epoch s)
     seq: int | None = None             # position in the process's events.jsonl
@@ -122,7 +124,7 @@ class Client(Protocol):
     def parse(self, line: str) -> list[Event]: ...
 
 
-def tokens(input_=0, output=0, cache_read=0, cache_write=0) -> dict:
+def tokens(input_: Any = 0, output: Any = 0, cache_read: Any = 0, cache_write: Any = 0) -> dict[str, int]:
     return dict(zip(TOKEN_KEYS, (int(input_ or 0), int(output or 0), int(cache_read or 0), int(cache_write or 0))))
 
 
@@ -130,28 +132,28 @@ def bare_tool(name: str) -> str:
     return (name or "?").removeprefix(MCP_PREFIX)
 
 
-def bg3_server(path: Path = MCP_CONFIG) -> dict:
+def bg3_server(path: Path = MCP_CONFIG) -> dict[str, Any]:
     """The bg3 stdio server of play/.mcp.json (the one claude gets), for clients that take their own config."""
     return json.loads(path.read_text())["mcpServers"]["bg3"]
 
 
-def http_server(url: str, timeout: int = 110_000) -> dict:
+def http_server(url: str, timeout: int = 110_000) -> dict[str, Any]:
     """The bg3 server over streamable HTTP (`bg3ai-mcp --transport http`), for a client in the container sandbox
     (bg3harness/sandbox.py): the server runs on the host with the session env, so the client passes none."""
     return {"type": "http", "url": url, "timeout": timeout}
 
 
-def is_http(server: dict) -> bool:
+def is_http(server: dict[str, Any]) -> bool:
     return bool(server.get("url"))
 
 
-def session_env_names(env: dict) -> list[str]:
+def session_env_names(env: dict[str, Any]) -> list[str]:
     """The session env the MCP server reads (BG3AI_*, BG3_*): clients that don't pass their whole env to an MCP
     server forward these by name."""
     return sorted(k for k in env if k.startswith(("BG3AI_", "BG3_")))
 
 
-def _json_text(value) -> str:
+def json_text(value: Any) -> str:
     """A tool result body as play.format_stream_event shows it: text blocks joined, other values as JSON."""
     if isinstance(value, list):
         value = " ".join(b.get("text", f"<{b.get('type')}>") for b in value if isinstance(b, dict))
@@ -277,7 +279,7 @@ class ClaudeClient:
             return out
         if t == "user":
             content = (ev.get("message") or {}).get("content")
-            return [Event("tool_result", text=_json_text(c.get("content")), call_id=c.get("tool_use_id") or "",
+            return [Event("tool_result", text=json_text(c.get("content")), call_id=c.get("tool_use_id") or "",
                           is_error=bool(c.get("is_error")), session_id=sid)
                     for c in (content if isinstance(content, list) else []) if c.get("type") == "tool_result"]
         if t == "result":
@@ -459,7 +461,7 @@ class CodexClient:
                 return [Event("tool_call", tool=name, args=args if isinstance(args, dict) else {"arguments": args},
                               call_id=item.get("id") or "")]
             err = item.get("error") or {}
-            body = _json_text((item.get("result") or {}).get("content")) or err.get("message") or ""
+            body = json_text((item.get("result") or {}).get("content")) or err.get("message") or ""
             return [Event("tool_result", tool=name, text=body, call_id=item.get("id") or "",
                           is_error=bool(err) or item.get("status") == "failed")]
         if it == "command_execution":   # disabled; shown if a build of codex still runs one
@@ -552,7 +554,7 @@ class GeminiClient:
                           call_id=ev.get("tool_id") or "")]
         if t == "tool_result":
             err = ev.get("error") or {}
-            return [Event("tool_result", text=_json_text(ev.get("output")) or str(err.get("message") or ""),
+            return [Event("tool_result", text=json_text(ev.get("output")) or str(err.get("message") or ""),
                           call_id=ev.get("tool_id") or "", is_error=ev.get("status") == "error")]
         if t == "error":
             return [Event("error", text=str(ev.get("message") or ""), api_error=True)]
