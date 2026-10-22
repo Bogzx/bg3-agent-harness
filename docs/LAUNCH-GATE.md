@@ -97,7 +97,7 @@ No API key, `.env` value, personal home path or real e-mail address in any old v
 
 - the machine name in older versions of the same docs and tests as above (conftest.py, BENCHMARK-PLAN.md,
   HUMAN-BASELINE.md, TARGET-ARCHITECTURE.md, packages/playthrough/tests/test_server.py,
-  tools/logs/test_review_session.py), and the test's 100.64.0.7 address;
+  tools/logs/test_review_session.py), and the test's old Tailscale-shaped address;
 - the owner's name in old versions of authoring.py and in the first version of `research/05-screen-input.md`
   (initial commit);
 - false positives only otherwise: systemd unit names in old `runner/test_play.py`, a made-up SteamID64 in the old
