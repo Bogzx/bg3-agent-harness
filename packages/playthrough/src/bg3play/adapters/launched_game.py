@@ -114,8 +114,11 @@ def write_state(path: Path, **fields: Any) -> None:
     tmp.replace(path)
 
 
-def choose_save(saves: list[Save], state: dict[str, Any], handoff: str, sdir: Path) -> tuple[Save | None, str]:
-    """The save a recovery loads, and why (play.py choose_save + own_saves; the OOM-blocked saves left out)."""
+def choose_save(
+    saves: list[Save], state: dict[str, Any], handoff: str, sdir: Path, running: tuple[float, float] | None = None
+) -> tuple[Save | None, str]:
+    """The save a recovery loads, and why (play.py choose_save + own_saves; the OOM-blocked saves left out).
+    `running`: the running session's start..now, a play window too (its saves count)."""
     owner = state.get("save_owner")
     if not owner:
         return None, "no save owner known for this playthrough (runner.json save_owner): any save could be another's"
@@ -125,7 +128,7 @@ def choose_save(saves: list[Save], state: dict[str, Any], handoff: str, sdir: Pa
     own = [s for s in saves if s.folder not in blocked and not (after and s.mtime < after)]
     raw: object = state.get("history")
     history: list[dict[str, Any]] = [h for h in raw if is_obj(h)] if is_list(raw) else []
-    windows = hsaves.play_windows(history, sdir)  # pyright: ignore[reportUnknownMemberType]
+    windows = hsaves.play_windows(history, sdir, running)  # pyright: ignore[reportUnknownMemberType]
     ends = hsaves.session_ends(history, sdir)  # pyright: ignore[reportUnknownMemberType]
     return pick_save_why(own, parse_handoff_save(handoff), owner, ours, windows=windows,
                          handoff_session=handoff_session(handoff), ends=ends)  # fmt: skip
@@ -136,12 +139,15 @@ class NoSaveYetError(RuntimeError):
     launches a new game instead (LaunchedGame.new_game); mid-session there is nothing to relaunch into."""
 
 
-def learn_owner(saves: list[Save], state: dict[str, Any], sdir: Path) -> str | None:
+def learn_owner(
+    saves: list[Save], state: dict[str, Any], sdir: Path, running: tuple[float, float] | None = None
+) -> str | None:
     """No save owner yet: the owner of the newest agent save written while this playthrough played (its sessions'
-    windows), as play.py adopts it from the session's own saves (I3). None: it has none."""
+    windows, `running` the running session's), as play.py adopts it from the session's own saves (I3). None: it has
+    none."""
     raw: object = state.get("history")
     history: list[dict[str, Any]] = [h for h in raw if is_obj(h)] if is_list(raw) else []
-    windows = hsaves.play_windows(history, sdir)  # pyright: ignore[reportUnknownMemberType]
+    windows = hsaves.play_windows(history, sdir, running)  # pyright: ignore[reportUnknownMemberType]
     mine = [s for s in saves if hsaves.is_ai_save(s) and hsaves.in_windows(s.mtime, windows)]  # pyright: ignore[reportUnknownMemberType]
     return max(mine, key=lambda s: s.mtime).owner if mine else None
 
@@ -170,10 +176,15 @@ class LaunchedGame:
         self.save_ops, self.clock, self.sleep, self.actions = save_ops, clock, sleep, actions
         self.sdir: Path | None = None
         self.mem: Path | None = None
+        self.began = 0.0
 
     def begin(self, sdir: Path, mem: Path) -> None:
-        self.sdir, self.mem = sdir, mem
+        self.sdir, self.mem, self.began = sdir, mem, self.clock()
         self.host.begin(sdir)
+
+    def running(self) -> tuple[float, float]:
+        """The running session's play window: from begin (its start) to now."""
+        return self.began, self.clock()
 
     def ok(self) -> bool:
         ok = self.reads.ok()
@@ -204,13 +215,13 @@ class LaunchedGame:
             text = ""
         saves, state = self.saves(), read_state(self.sdir / "runner.json")
         if not state.get("save_owner"):
-            owner = learn_owner(saves, state, self.sdir)
+            owner = learn_owner(saves, state, self.sdir, self.running())
             if owner is None:
                 raise NoSaveYetError("this playthrough has no save yet (no save owner known)")
             self.log(f"save owner {owner}: learned from this playthrough's own saves")
             write_state(self.sdir / "runner.json", save_owner=owner)
             state["save_owner"] = owner
-        save, how = choose_save(saves, state, text, self.sdir)
+        save, how = choose_save(saves, state, text, self.sdir, self.running())
         self.log(f"recovering (the game {why}): save choice {save.folder if save else 'none'}: {how}")
         if save is None:
             raise RuntimeError(f"no save to load: {how}")

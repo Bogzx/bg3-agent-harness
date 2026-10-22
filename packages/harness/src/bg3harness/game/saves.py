@@ -84,9 +84,13 @@ def _first_last_t(path: Path) -> tuple[float, float] | None:
     return (min(ts), max(ts)) if ts else None
 
 
-def play_windows(history: list[dict] | None, state_dir: Path | None) -> list[tuple[float, float]]:
-    """When this playthrough was being played: its play sessions' [started, ended] (runner.json history) and each
-    Sxxx*.turns.jsonl's first..last event (a session the runner never recorded: it crashed mid-session). pick_save
+def play_windows(
+    history: list[dict] | None, state_dir: Path | None, running: tuple[float, float] | None = None
+) -> list[tuple[float, float]]:
+    """When this playthrough was being played: its play sessions' [started, ended] (runner.json history), each
+    Sxxx*.turns.jsonl's first..last event (a session the runner never recorded: it crashed mid-session) and `running`,
+    the session still playing (its start..now: the app writes no turns.jsonl, and a mid-session recovery must take
+    the saves it made; live9 S002 loaded S001's save over its own S002-passage). pick_save
     takes an `Sxxx-` save of the owner only when it was written in one of these: the owner (the character's name) is
     shared by other playthroughs (replay-hoh saved S027-end / S028-lastlight-prep as "Claude" on 10-15, after
     claude-run-2's S065-end), and a worker's savetest (S999-savetest) is no playthrough's."""
@@ -103,6 +107,8 @@ def play_windows(history: list[dict] | None, state_dir: Path | None) -> list[tup
         except OSError:
             files = []
         out += [w for w in (_first_last_t(f) for f in files) if w]
+    if running is not None:
+        out.append(running)
     return sorted(out)
 
 

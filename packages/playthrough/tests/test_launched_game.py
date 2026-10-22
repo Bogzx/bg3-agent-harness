@@ -179,6 +179,43 @@ def test_no_owner_is_learned_from_the_playthroughs_own_saves(tmp_path: Path):
     assert "save owner Vessa: learned from this playthrough's own saves" in logs
 
 
+def test_a_crash_mid_session_recovers_to_the_save_that_session_made(tmp_path: Path):
+    # live9 S002: the running session has no history entry yet, so its S002-passage sat outside every play window
+    # and the recovery loaded S001's save. The running session's window (begin..now) counts; a save of the same name
+    # written between the sessions (another playthrough had the game) or another owner's save in the session never
+    now = [5000.0]
+    sdir, mem = tmp_path / "sessions" / "ilse", tmp_path / "ilse" / "memory"
+    sdir.mkdir(parents=True)
+    mem.mkdir(parents=True)
+    (sdir / "runner.json").write_text(json.dumps(PLAYED))
+    (mem / "HANDOFF.md").write_text('# Handoff S001 → S002\n\nSave to load: "S001-end"\n')
+    saves = [save(OWNER, 1, "S001-end", 2900), save(OWNER, 2, "S027-end", 4000)]
+    ctl = FakeCtl()
+    g = lg.LaunchedGame(FakeReads(), ctl, FakeHost(), lambda: saves, lambda: None, clock=lambda: now[0])
+    g.begin(sdir, mem)  # S002 starts at 5000
+    saves += [save(OWNER, 3, "S002-passage", 5600), save("Karlach", 4, "S009-end", 5700)]
+    now[0] = 6000.0  # the crash
+    assert g.recover("crashed") == "S002-passage"
+    assert ctl.calls == ["kill", f"launch {OWNER}-3__S002-passage"]
+    saves.pop(2)  # without the session's own save: the previous session's, never the foreign ones
+    assert g.recover("crashed") == "S001-end"
+
+
+def test_a_new_playthroughs_crash_after_its_first_save_learns_the_owner_from_it(tmp_path: Path):
+    now = [5000.0]
+    sdir, mem = tmp_path / "sessions" / "ilse", tmp_path / "ilse" / "memory"
+    sdir.mkdir(parents=True)
+    mem.mkdir(parents=True)
+    (sdir / "runner.json").write_text(json.dumps({"history": []}))
+    saves = [save("Karlach", 1, "S004-end", 4000)]
+    g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: saves, lambda: None, clock=lambda: now[0])
+    g.begin(sdir, mem)
+    saves.append(save("Vessa", 2, "S001-start", 5500))
+    now[0] = 6000.0
+    assert g.recover("crashed") == "S001-start"
+    assert json.loads((sdir / "runner.json").read_text())["save_owner"] == "Vessa"
+
+
 def test_a_playthrough_without_saves_is_new_and_launches_to_the_main_menu(tmp_path: Path):
     ctl = FakeCtl(alive=False)
     g, sdir, _ = setup(tmp_path, {"history": []}, [save("Karlach", 2, "S004-end", 5000)], ctl=ctl)
