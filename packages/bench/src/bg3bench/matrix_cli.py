@@ -300,7 +300,8 @@ def main(
             print(f"refusing: {e}", file=sys.stderr)
             return 2
         run_one = legacy_cli.LegacyCli(m["name"], flags, scenario_files=files, condition_env=env, repo=repo)
-    mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep)
+    stopped = (lambda: getattr(host, "stopped", False) is True) if host is not None else None  # the live host's stop
+    mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep, stopped=stopped)
     try:
         mx.create(m["name"], m["jobs"])
     except ValueError as e:

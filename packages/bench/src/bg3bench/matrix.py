@@ -21,6 +21,8 @@ not even one that crashed or was interrupted.
 Invalid runs (results.validity: runner error, harness failure, operator) are rerun, at most `max_reruns` (2) times
 per job; then the job is `gave_up`. Order: repeat 1 of every (model, scenario, condition) first, then repeat 2, ...
 so a stopped matrix has even coverage. `run_one(job) -> RunResult` does one run (adapters/legacy_cli.py today).
+`stopped()` (the host's operator stop: a signal or runtime/STOP) is asked before each run: once it says so, no new
+run starts and the matrix stops (`stopped`); the run it interrupted is recorded by its own result.
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ from typing import Any, Protocol
 SCHEMA = 1
 MAX_RERUNS = 2
 PAID_CLIENTS = ("pi",)  # runner/spend.py's: the clients billed per token (the others run on subscriptions)
-FINISHED, BUDGET, GUARD, COST_UNKNOWN = "finished", "budget", "guard", "cost unknown"
+FINISHED, BUDGET, GUARD, COST_UNKNOWN, STOPPED = "finished", "budget", "guard", "cost unknown", "stopped"
 
 
 @dataclass(frozen=True)
@@ -153,12 +155,13 @@ class Matrix:
         now: Callable[[], float],
         sleep: Callable[[float], None],
         guard: Callable[[], str | None] | None = None,
+        stopped: Callable[[], bool] | None = None,
         max_reruns: int = MAX_RERUNS,
         guard_poll_s: float = 60.0,
         guard_max_wait_s: float = 3600.0,
     ):
         self.root, self.run_one, self.budget = Path(root), run_one, Path(budget)
-        self.now, self.sleep, self.guard = now, sleep, guard
+        self.now, self.sleep, self.guard, self.stopped = now, sleep, guard, stopped
         self.max_reruns, self.guard_poll_s, self.guard_max_wait_s = max_reruns, guard_poll_s, guard_max_wait_s
         self.queue = self.root / "queue.jsonl"
         self.progress_path = self.root / "progress.json"
@@ -265,7 +268,7 @@ class Matrix:
 
     # ------------------------------------------------------------------ the loop
     def run(self) -> str:
-        """Run until every job is done or gave up, or a stop: returns FINISHED, BUDGET, COST_UNKNOWN or
+        """Run until every job is done or gave up, or a stop: returns FINISHED, BUDGET, COST_UNKNOWN, STOPPED or
         'guard: <why>'."""
         jobs = self.state()
         for st in jobs.values():
@@ -284,6 +287,9 @@ class Matrix:
             if not todo:
                 self._progress(jobs, "finished", stop=FINISHED)
                 return FINISHED
+            if self.stopped is not None and self.stopped():  # an operator stop: no new run (each would fail its start)
+                self._progress(jobs, "stopped", stop=STOPPED)
+                return STOPPED
             st = todo[0]
             job = st["job"]
             try:

@@ -156,6 +156,17 @@ def test_run_without_run_one_plays_run_session_on_the_host(tmp_path, capsys):
     assert not (repo / "runtime" / "matrix" / "m" / "scenarios").exists()  # resolved files are the legacy path's
 
 
+def test_run_stops_when_the_host_says_stopped(tmp_path):
+    from test_session_run import Host
+
+    repo = fake_repo(tmp_path)
+    body = "name = 'm'\nscenarios = ['nautiloid']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
+    host = Host([[("exited", 5)]], cost=None)
+    host.stopped = True  # LiveRunHost.stopped: a signal or runtime/STOP
+    code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), host=host)
+    assert code == 1 and out.rstrip().endswith(f"stopped: {matrix.STOPPED}") and host.started == []
+
+
 def test_run_without_run_one_builds_the_legacy_adapter(tmp_path, monkeypatch):
     repo = fake_repo(tmp_path)
     seen = []

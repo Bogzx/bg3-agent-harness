@@ -192,6 +192,25 @@ def test_an_interrupted_subscription_run_is_not_charged(tmp_path, max_cost):
     assert json.loads(budget.read_text())["spent"] == 0.0
 
 
+def test_an_operator_stop_starts_no_new_run(tmp_path):
+    # harness 07ca610: after a stop each host.start raises, and session_run returns that as an invalid, charged run;
+    # without the check the matrix swept every job to gave_up in seconds and reported finished
+    stop = []
+    first = "opus~nautiloid~rules~r1"
+    run = FakeRun({(first, 1): RunResult(None, False, False, 0.0, "operator: stop", charged=True)})
+
+    def run_one(job):
+        stop.append(True)  # the operator stops during the first run
+        return run(job)
+
+    m, _, _ = make(tmp_path, run_one, stopped=lambda: bool(stop))
+    assert m.run() == matrix.STOPPED
+    assert run.calls == [first] and progress(tmp_path)["stop_reason"] == matrix.STOPPED
+    assert m.state()[first]["status"] == "pending"  # rerun on resume, like any invalid run
+    m2, _, _ = make(tmp_path, FakeRun(), stopped=lambda: False)
+    assert m2.run() == matrix.FINISHED
+
+
 def test_resumes_after_its_own_crash(tmp_path):
     jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 1, max_cost={"grove": 2.5})
     crash = f"{PI}~grove~rules~r1"
