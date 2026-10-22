@@ -76,6 +76,9 @@ def client_held() -> str:
 POOL_MAX = max(1, int(os.environ.get("BG3AI_RPC_CONNS", "4")))
 JOB_PUSH = os.environ.get("BG3AI_JOB_PUSH", "1") != "0"  # wait on the mod's job-finished prints (jobpush.py)
 RECORD = rpc_record.from_env()  # BG3AI_RPC_RECORD=<file>: every eval and its answer as a fixture line
+# After a refused connect the pool stays at the connections that worked for this long, then tries to grow again
+# (a load or the game's boot refuses connections for a while; bg3se takes one for good and refuses again).
+POOL_RETRY_S = 30.0
 
 
 class Game:
@@ -92,7 +95,9 @@ class Game:
     def __init__(self, host: str = "127.0.0.1", port: int = 9998, pool_max: int | None = None):
         self.host = host
         self.port = port
-        self.pool_max = pool_max or POOL_MAX
+        self.pool_max = self.pool_cap = pool_max or POOL_MAX
+        self._shrunk_at: float | None = None  # when a refused connect lowered pool_max below pool_cap
+        self.now = time.monotonic  # the pool's clock (tests pass a fake one)
         self._idle: list[LuaDebugClient] = []
         self._open_n = 0
         self._closed = False  # after close(): connections still in flight are closed when released
@@ -132,6 +137,8 @@ class Game:
         while True:
             with self._cond:
                 self._closed = False
+                if self._shrunk_at is not None and self.now() - self._shrunk_at >= POOL_RETRY_S:
+                    self.pool_max, self._shrunk_at = self.pool_cap, None
                 while True:
                     while self._idle:
                         c = self._idle.pop()
@@ -150,7 +157,7 @@ class Game:
                     self._cond.notify()
                     if self._open_n > 0:
                         # The game takes fewer connections than we wanted (bg3se allows one): use those.
-                        self.pool_max = self._open_n
+                        self.pool_max, self._shrunk_at = self._open_n, self.now()
                         continue
                 raise NotReady(f"game not reachable on {self.host}:{self.port} ({e}); is it running?") from e
 

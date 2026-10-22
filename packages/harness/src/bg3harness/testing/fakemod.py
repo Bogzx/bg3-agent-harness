@@ -49,6 +49,8 @@ class FakeMod:
         self.responders = list(responders)
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
         self.evals = 0
+        self.refuse_connects = 0  # the next N LuaDebug handshakes are dropped (a game refusing connections)
+        self.connects = 0  # handshakes answered
         self._lock = threading.Lock()
         self._conns: list[socket.socket] = []
         self._stop = threading.Event()
@@ -151,6 +153,12 @@ class FakeMod:
                     return
                 req = wire.parse_request(body)
                 if req.kind == "connect":
+                    with self._lock:
+                        refuse = self.refuse_connects > 0
+                        self.refuse_connects -= refuse
+                        self.connects += not refuse
+                    if refuse:
+                        return
                     fd.sendall(wire.frame(wire.connect_response(req.seq)))
                 elif req.kind == "evaluate":
                     try:
