@@ -21,7 +21,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from . import config
 from .jsontypes import is_list, is_obj
@@ -29,6 +29,7 @@ from .jsontypes import is_list, is_obj
 HISTORY_VERSION = 1
 STUCK_SESSIONS = 2  # runner/play.py STUCK_SESSIONS
 MAX_CRASHES = 3  # crashed sessions in a row before the loop gives up
+OOM_STREAK = 2  # game deaths in a row by running out of memory before the loop gives up (no 3rd relaunch)
 # Coaching text (the app's, not the harness's: app.md §5.7); moves to kit/prompts.py with A1.
 STUCK_NUDGE = (
     "CHANGE APPROACH: the last {n} sessions ended with no measurable progress. What you've been doing "
@@ -46,6 +47,7 @@ class SessionRequest:
     resume: bool  # continue an existing playthrough (load its save) rather than a new game
     notes: tuple[str, ...] = ()
     record: bool = True
+    oom_streak: int = 0  # the game deaths by OOM in a row before this session (oom_streak)
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,8 @@ class SessionResult:
     ended: float | None = None
     cost_usd: float | None = None
     detail: str = ""
+    game_deaths: tuple[str, ...] = ()  # each game death the session recovered from (or refused to): its OOM cause, "" =
+    # not out of memory
 
 
 class SessionRunner(Protocol):
@@ -96,6 +100,21 @@ def notes_for(history: list[dict[str, Any]]) -> tuple[str, ...]:
     if is_stuck(history):
         out.append(STUCK_NUDGE.format(n=STUCK_SESSIONS))
     return tuple(out)
+
+
+def oom_streak(history: list[dict[str, Any]]) -> tuple[int, str]:
+    """The game deaths by OOM in a row at the end of the history, and the last one's cause. A death that wasn't an
+    OOM ends the streak, and so does a session without a game death."""
+    n, why = 0, ""
+    for h in reversed(history):
+        deaths: object = h.get("game_deaths")  # a list read from the file, a tuple fresh from a SessionResult
+        if not isinstance(deaths, list | tuple) or not deaths:
+            break
+        for d in reversed(cast("list[object] | tuple[object, ...]", deaths)):
+            if not d:
+                return n, why
+            n, why = n + 1, why or str(d)
+    return n, why
 
 
 def budget_left(cfg: config.PlaythroughConfig, started: float, now: float) -> bool:
@@ -244,7 +263,13 @@ class Supervisor:
                     break
                 n = self.sessions_played(pt, hist) + 1
                 req = SessionRequest(
-                    pt, n, cfg, resume=resume or n > 1, notes=notes_for(hist), record=cfg.recording.enabled
+                    pt,
+                    n,
+                    cfg,
+                    resume=resume or n > 1,
+                    notes=notes_for(hist),
+                    record=cfg.recording.enabled,
+                    oom_streak=oom_streak(hist)[0],
                 )
                 self._set(session=f"S{n:03d}", detail="playing" + (" (stuck nudge)" if is_stuck(hist) else ""))
                 res = self.runner.run_session(req, self.stop_event)
@@ -257,6 +282,10 @@ class Supervisor:
                     end = "the story is finished"
                     break
                 if res.outcome == "stopped":  # also a stop from outside (play.py stop / runtime/STOP)
+                    break
+                ooms, why = oom_streak(hist)
+                if ooms >= OOM_STREAK:
+                    end = f"the game ran out of memory {ooms} times in a row (last: {why}); not relaunching it"
                     break
                 if len(hist) >= MAX_CRASHES and all(h["outcome"] == "crash" for h in hist[-MAX_CRASHES:]):
                     end = f"{MAX_CRASHES} sessions crashed in a row"

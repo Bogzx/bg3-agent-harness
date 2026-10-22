@@ -15,9 +15,15 @@ stop event) lets the session play out and resumes nothing after a fault. The pro
 condition, default rules+coaching for a playthrough) goes to the agent and the bg3 server as BG3AI_PROMPT_CONDITION.
 What runs between sessions (the memory keeper) is the Supervisor's Keeper: keeper_client gives it every client.
 
-The game is attached, not launched: AttachedGame reads it over the bridge; it can't relaunch the game, so a game
-fault ends the session (the next one starts if the game answers again). Launching and loading saves stay with the
-legacy CLI (adapters/legacy_cli.py, `--session-runner legacy`) until Phase D moves them into the harness.
+A session never ends mid-fight (S078): the bg3 MCP server holds the session's clock while a fight that was on at WRAP
+UP lasts and writes the moved times to $BG3AI_FIGHT_HOLD_PATH (Sxxx.hold.json, also read by session.py's stop
+check); the session's end and hard stop move with it, at most FIGHT_HOLD_S past the planned end (play.py
+held_deadline).
+
+The game: AttachedGame reads a running game over the bridge and can't relaunch it, so a game fault ends the session.
+adapters/launched_game.py LaunchedGame relaunches it and loads the playthrough's newest save (also when it is down at
+a session start). A game death by OOM counts toward the Supervisor's OOM streak: at OOM_STREAK in a row the game is
+not relaunched and the run ends. `--session-runner legacy` (adapters/legacy_cli.py) runs play.py, which launches it.
 """
 
 from __future__ import annotations
@@ -38,11 +44,12 @@ from bg3harness.session import RecoverFailure, Recovery, SessionOutcome, Session
 from .. import config
 from ..jsontypes import is_obj
 from ..memory import memlib
-from ..supervisor import SessionRequest, SessionResult, SupervisorError
+from ..supervisor import OOM_STREAK, SessionRequest, SessionResult, SupervisorError
 from .agent_process import AgentCall, AgentRun, ClientAgent
 
 WRAPUP_MINUTES = 3.0  # runner/play.py WRAPUP_MINUTES
 POS_KEYS = ("pos", "pos_name", "party_pos")  # runner/play.py POS_KEYS: a step is not progress
+FIGHT_HOLD_S = 15 * 60  # runner/play.py FIGHT_HOLD_S (the bg3 MCP server's own bound)
 
 
 class Agent(Protocol):
@@ -53,8 +60,10 @@ class Agent(Protocol):
 
 
 class Game(Protocol):
+    def begin(self, sdir: Path, mem: Path) -> None: ...  # the session's playthrough (its runner.json dir, memory)
     def ok(self) -> bool: ...  # alive and answering
     def progress(self) -> dict[str, Any] | None: ...  # the save signature (bg3harness.game.io.progress_signature)
+    def oom(self) -> str | None: ...  # the dead game's OOM cause (None: alive, or it died otherwise)
     def recover(self, why: str) -> str | None: ...  # relaunch and load the latest save; its name; raises if it can't
 
 
@@ -106,6 +115,23 @@ def kickoff(req: SessionRequest, sid: str, briefing: str) -> str:
     return "\n\n".join(lines)
 
 
+def fight_hold_path(sdir: Path, sid: str) -> Path:
+    return sdir / f"{sid}.hold.json"
+
+
+def held_deadline(path: Path, deadline: float) -> float:
+    """The session end with the MCP server's fight hold applied (bounded), or `deadline` (play.py held_deadline)."""
+    try:
+        held = float(json.loads(path.read_text(encoding="utf-8")).get("deadline") or 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return deadline
+    return max(deadline, min(held, deadline + FIGHT_HOLD_S))
+
+
+class OomStreakError(RuntimeError):
+    """The game ran out of memory OOM_STREAK times in a row: not relaunched (the Supervisor ends the run)."""
+
+
 def made_progress(start: dict[str, Any] | None, end: dict[str, Any] | None) -> bool | None:
     """runner/play.py made_progress: None when a signature is missing; the position left out."""
     if start is None or end is None:
@@ -145,11 +171,14 @@ class AppSessionHooks:
         grace_s: float,
         max_cost_usd: float,
         log: Callable[[str], None],
+        oom_streak: int = 0,
     ):
         self.agent, self.game, self.memory, self.sdir, self.sid, self.env = agent, game, memory, sdir, sid, env
         self.stop, self.clock, self.grace_s, self.max_cost_usd, self._log = stop, clock, grace_s, max_cost_usd, log
         self.save: str | None = None
         self.runs: list[AgentRun] = []
+        self.oom_streak = oom_streak  # OOM deaths in a row so far (the request's, then this session's)
+        self.deaths: list[str] = []
 
     def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> AgentRun:
         spent = sum(r.cost_usd or 0.0 for r in self.runs)
@@ -162,7 +191,7 @@ class AppSessionHooks:
         return res
 
     def session_end(self, planned_end: float) -> float:
-        return planned_end
+        return held_deadline(fight_hold_path(self.sdir, self.sid), planned_end)
 
     def stop_check(self, session_end: float) -> str | None:
         return self.memory.stop_check(self.env)
@@ -172,7 +201,9 @@ class AppSessionHooks:
 
     def recover(self, why: str) -> RecoverFailure | None:
         try:
-            self.save = self.game.recover(why)
+            self.save = recover_game(self.game, why, self)
+        except OomStreakError as e:
+            return RecoverFailure(e, fatal=True)
         except Exception as e:  # the session ends; the Supervisor decides on the next
             return RecoverFailure(e, fatal=False)
         return None
@@ -208,6 +239,20 @@ class AppSessionHooks:
         return self.clock()
 
 
+def recover_game(game: Game, why: str, hooks: AppSessionHooks) -> str | None:
+    """A game death counted (its OOM cause, the streak), then the game recovered; OomStreakError at OOM_STREAK."""
+    oom = game.oom()
+    hooks.deaths.append(oom or "")
+    hooks.oom_streak = hooks.oom_streak + 1 if oom else 0
+    if oom:
+        hooks.log(f"{hooks.sid}: the game ran out of memory ({oom}), {hooks.oom_streak} in a row")
+    if hooks.oom_streak >= OOM_STREAK:
+        raise OomStreakError(
+            f"the game ran out of memory {hooks.oom_streak} times in a row ({oom}); not relaunching it"
+        )
+    return game.recover(why)
+
+
 # ------------------------------------------------------------ the runner
 
 
@@ -230,22 +275,30 @@ class HarnessRunner:
             agent = self.agent_for(cfg, sdir)
         except SupervisorError as e:
             return SessionResult("?", "error", detail=str(e))
-        if not self.game.ok():
-            return SessionResult("?", "error", detail="the game doesn't answer (the app attaches to a running game)")
-        start = self.clock()
         predicted = f"S{req.session:03d}"
+        self.game.begin(sdir, self.playthroughs / pt / "memory")
+        hooks = AppSessionHooks(
+            agent, self.game, self.memory_for(self.playthroughs / pt / "memory"), sdir, predicted, {}, stop,
+            self.clock, self.recovery.hard_stop_grace_s, cfg.session.max_cost_usd, self.log, req.oom_streak,
+        )  # fmt: skip
+        if not self.game.ok():
+            try:
+                hooks.save = recover_game(self.game, "wasn't answering at the session start", hooks)
+            except Exception as e:
+                outcome = "crash" if isinstance(e, OomStreakError) else "error"
+                return SessionResult("?", outcome, detail=f"the game doesn't answer and wasn't recovered: {e}",
+                                     game_deaths=tuple(hooks.deaths))  # fmt: skip
+        start = self.clock()
         env = session_env(req, predicted, start, self.runtime, self.playthroughs, cfg.keeper.enabled)
-        memory = self.memory_for(self.playthroughs / pt / "memory")
+        memory = hooks.memory
         opened, briefing = memory.start(env)
         sid = opened or predicted
         env["BG3AI_SESSION"] = sid
+        env["BG3AI_FIGHT_HOLD_PATH"] = str(fight_hold_path(sdir, sid))
+        hooks.sid, hooks.env = sid, env
         start_sig = self.game.progress()
         write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
                      started=start, log=str(sdir / f"{sid}.log"), session_ended=None, updated=start)  # fmt: skip
-        hooks = AppSessionHooks(
-            agent, self.game, memory, sdir, sid, env, stop, self.clock, self.recovery.hard_stop_grace_s,
-            cfg.session.max_cost_usd, self.log,
-        )  # fmt: skip
         spec = SessionSpec(sid, kickoff(req, sid, briefing), cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         try:
             out = run_session(spec, hooks)
@@ -275,7 +328,9 @@ class HarnessRunner:
         detail = f"reason={out.result.reason} exit={out.result.exit_code}"
         if out.invalid or out.gave_up:
             detail += f" ({out.invalid or out.gave_up})"
-        return SessionResult(sid, outcome_of(out, stop.is_set()), progress, out.started, ended, cost, detail)
+        return SessionResult(
+            sid, outcome_of(out, stop.is_set()), progress, out.started, ended, cost, detail, tuple(hooks.deaths)
+        )
 
 
 def write_status(runtime: Path, **fields: Any) -> None:
@@ -313,6 +368,12 @@ class AttachedGame:
 
     def __init__(self, game: Any):
         self.g = game
+
+    def begin(self, sdir: Path, mem: Path) -> None:
+        return None
+
+    def oom(self) -> str | None:
+        return None
 
     def ok(self) -> bool:
         try:

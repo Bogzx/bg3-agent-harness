@@ -45,12 +45,21 @@ class FakeAgent:
 
 
 class FakeGame:
-    def __init__(self, sigs: list[dict | None], recover_to: str | None = None, ok: bool = True):
-        self.sigs, self.recover_to, self.is_ok = list(sigs), recover_to, ok
+    """`ooms`: each death's OOM cause in turn (None = not an OOM); recover() brings the game back up."""
+
+    def __init__(self, sigs: list[dict | None], recover_to: str | None = None, ok: bool = True, ooms=()):
+        self.sigs, self.recover_to, self.is_ok, self.ooms = list(sigs), recover_to, ok, list(ooms)
         self.recovered: list[str] = []
+        self.began: list[tuple[Path, Path]] = []
+
+    def begin(self, sdir: Path, mem: Path) -> None:
+        self.began.append((sdir, mem))
 
     def ok(self) -> bool:
         return self.is_ok
+
+    def oom(self) -> str | None:
+        return self.ooms.pop(0) if self.ooms else None
 
     def progress(self):
         return self.sigs.pop(0) if self.sigs else {"level": "TUT"}
@@ -59,6 +68,7 @@ class FakeGame:
         self.recovered.append(why)
         if self.recover_to is None:
             raise RuntimeError("can't relaunch")
+        self.is_ok = True
         return self.recover_to
 
 
@@ -89,7 +99,8 @@ class FakeKeeper:
         self.ran.append(result.session)
 
 
-def make(tmp_path: Path, agent_script=(), sigs=(), blocks=(), hours=1.0, recover_to=None, during=None, **cfg_kw):
+def make(tmp_path: Path, agent_script=(), sigs=(), blocks=(), hours=1.0, recover_to=None, during=None, ooms=(),
+         **cfg_kw):  # fmt: skip
     clock = Clock()
     pts, runtime = tmp_path / "playthroughs", tmp_path / "runtime"
     (pts / PT).mkdir(parents=True)
@@ -97,7 +108,7 @@ def make(tmp_path: Path, agent_script=(), sigs=(), blocks=(), hours=1.0, recover
     config.save(pts / PT, cfg)
     agent, game, memory = (
         FakeAgent(clock, list(agent_script), during),
-        FakeGame(list(sigs), recover_to),
+        FakeGame(list(sigs), recover_to, ooms=ooms),
         FakeMemory(list(blocks)),
     )
     runner = hr.HarnessRunner(runtime, pts, lambda c, d: agent, game, lambda mem: memory, clock)
@@ -213,6 +224,67 @@ def test_no_game_or_an_unplayable_config_is_a_session_error(tmp_path: Path):
     cfg = config.load(tmp_path / "playthroughs" / PT)
     res = runner.run_session(SessionRequest(PT, 2, cfg, resume=True), threading.Event())
     assert (res.outcome, res.detail) == ("error", "client pi: pick a pi client profile")
+
+
+def test_a_fight_hold_moves_the_session_end_and_the_stop_resume_gets_the_held_time(tmp_path: Path):
+    sdir = tmp_path / "runtime" / "sessions" / PT
+
+    def during(n):  # the bg3 MCP server: a fight was on at WRAP UP, the clock held 10 min
+        if n == 1:
+            (sdir / "S001.hold.json").write_text(json.dumps({"deadline": 1000 + 40 * 60}))
+
+    sup, agent, *_ = make(tmp_path, [("exited", 30), ("exited", 10)], blocks=["Finish the fight first."],
+                          hours=0.5, during=during)  # fmt: skip
+    sup.start(PT, wait=True)
+    a, b = agent.calls
+    assert a.env["BG3AI_FIGHT_HOLD_PATH"] == str(sdir / "S001.hold.json")  # the MCP server and session.py hold
+    assert b.resume and b.cap_s == 10 * 60 + Recovery().hard_stop_grace_s  # the held 10 min, not 0
+
+
+def test_the_fight_hold_is_bounded(tmp_path: Path):
+    path = tmp_path / "S001.hold.json"
+    assert hr.held_deadline(path, 5000.0) == 5000.0  # no hold
+    path.write_text(json.dumps({"deadline": 5000 + 3600}))
+    assert hr.held_deadline(path, 5000.0) == 5000 + hr.FIGHT_HOLD_S
+    path.write_text(json.dumps({"deadline": 4000}))
+    assert hr.held_deadline(path, 5000.0) == 5000.0  # never earlier
+    path.write_text("{")
+    assert hr.held_deadline(path, 5000.0) == 5000.0
+
+
+def test_two_oom_deaths_in_a_session_end_the_run_without_a_second_relaunch(tmp_path: Path):
+    sup, agent, game, *_ = make(tmp_path, [("crash", 5), ("crash", 5)], hours=5.0, recover_to="S001-end",
+                                ooms=["oom A", "oom B"])  # fmt: skip
+    sup.start(PT, wait=True)
+    assert game.recovered == ["crashed"] and len(agent.calls) == 2  # relaunched after the 1st, not the 2nd
+    (h,) = sup.history(PT)
+    assert h["outcome"] == "crash" and h["game_deaths"] == ["oom A", "oom B"]
+    assert sup.detail == "the game ran out of memory 2 times in a row (last: oom B); not relaunching it"
+
+
+def test_the_oom_streak_spans_sessions_and_a_death_by_something_else_breaks_it(tmp_path: Path):
+    # S001: an OOM, then a crash that wasn't one (both resumed). S002: an OOM, recovered too late to resume.
+    # S003: another OOM: 2 in a row (S001's OOM doesn't count), the run ends without relaunching.
+    script = [("crash", 5), ("crash", 5), ("exited", 20), ("crash", 25), ("crash", 5)]
+    sup, _, game, *_ = make(tmp_path, script, hours=5.0, recover_to="S-end", ooms=["oom 1", None, "oom 3", "oom 4"])
+    sup.start(PT, wait=True)
+    hist = sup.history(PT)
+    assert [(h["outcome"], h["game_deaths"]) for h in hist] == [
+        ("ok", ["oom 1", ""]),
+        ("crash", ["oom 3"]),
+        ("crash", ["oom 4"]),
+    ]
+    assert len(game.recovered) == 3 and sup.detail.startswith("the game ran out of memory 2 times in a row (last: oom")
+
+
+def test_a_game_down_at_the_session_start_is_recovered_first(tmp_path: Path):
+    sup, agent, game, *_ = make(tmp_path, hours=0.5, recover_to="S000-end")
+    game.is_ok = False
+    sup.start(PT, wait=True)
+    assert game.recovered == ["wasn't answering at the session start"] and len(agent.calls) == 1
+    assert game.began == [(tmp_path / "runtime" / "sessions" / PT, tmp_path / "playthroughs" / PT / "memory")]
+    (h,) = sup.history(PT)
+    assert h["outcome"] == "ok" and h["game_deaths"] == [""]
 
 
 def test_kickoff_and_progress_are_pure():

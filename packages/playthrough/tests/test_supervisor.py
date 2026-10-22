@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from bg3play import config, supervisor
 from bg3play.adapters import legacy_cli
-from bg3play.supervisor import SessionRequest, SessionResult, Supervisor, SupervisorError
+from bg3play.supervisor import SessionRequest, SessionResult, Supervisor, SupervisorError, oom_streak
 
 
 class Clock:
@@ -310,3 +310,11 @@ def test_legacy_keeper_client_is_pis_only(tmp_path: Path):
     assert client == "pi" and profile.model == "deepseek-flash"
     assert cli.keeper_client(req().config) is None  # claude: play.py runs its own keeper
     assert cli.keeper_client(req(agent={"profile": "deepseek-flash"}, keeper={"enabled": False}).config) is None
+
+
+def test_the_oom_streak_counts_game_deaths_by_oom_in_a_row():
+    assert oom_streak([]) == (0, "")
+    assert oom_streak([{"game_deaths": ["a"]}, {"game_deaths": ("b", "c")}]) == (3, "c")
+    assert oom_streak([{"game_deaths": ["a"]}, {"game_deaths": ["", "b"]}]) == (1, "b")  # a crash that wasn't one
+    assert oom_streak([{"game_deaths": ["a"]}, {"game_deaths": []}, {"game_deaths": ["b"]}]) == (1, "b")
+    assert oom_streak([{"game_deaths": ["a"]}, {"outcome": "ok"}]) == (0, "")  # a history from before the field
