@@ -100,7 +100,10 @@ class Game:
         self.now = time.monotonic  # the pool's clock (tests pass a fake one)
         self._idle: list[LuaDebugClient] = []
         self._open_n = 0
-        self._closed = False  # after close(): connections still in flight are closed when released
+        # close() starts a new generation: a connection opened before it (in flight at the close) is closed when
+        # released, also after a later RPC reopened the pool. id(client) -> its generation.
+        self._gen = 0
+        self._gen_of: dict[int, int] = {}
         self._cond = threading.Condition()
         # Last event seq consumed per context, so every tool can report "what happened since".
         self.event_seq = {"server": 0, "client": 0}
@@ -136,7 +139,6 @@ class Game:
     def _acquire(self) -> LuaDebugClient:
         while True:
             with self._cond:
-                self._closed = False
                 if self._shrunk_at is not None and self.now() - self._shrunk_at >= POOL_RETRY_S:
                     self.pool_max, self._shrunk_at = self.pool_cap, None
                 while True:
@@ -145,12 +147,14 @@ class Game:
                         if c.connected:
                             return c
                         self._open_n -= 1
+                        self._gen_of.pop(id(c), None)
                     if self._open_n < self.pool_max:
                         self._open_n += 1
+                        gen = self._gen  # a close() while it connects makes this one stale too
                         break
                     self._cond.wait()
             try:
-                return self._new_client()
+                c = self._new_client()
             except OSError as e:
                 with self._cond:
                     self._open_n -= 1
@@ -160,6 +164,9 @@ class Game:
                         self.pool_max, self._shrunk_at = self._open_n, self.now()
                         continue
                 raise NotReady(f"game not reachable on {self.host}:{self.port} ({e}); is it running?") from e
+            with self._cond:
+                self._gen_of[id(c)] = gen
+            return c
 
     @property
     def open_connections(self) -> int:
@@ -169,19 +176,22 @@ class Game:
 
     def _release(self, client: LuaDebugClient, ok: bool = True) -> None:
         with self._cond:
-            if ok and client.connected and not self._closed:
+            if ok and client.connected and self._gen_of.get(id(client)) == self._gen:
                 self._idle.append(client)
             else:
                 self._open_n -= 1
+                self._gen_of.pop(id(client), None)
                 client.close()
             self._cond.notify()
 
     def close(self) -> None:
         """Close every connection (in-flight ones as they finish). A later RPC reopens the pool."""
         with self._cond:
-            self._closed = True
+            self._gen += 1
             idle, self._idle = self._idle, []
             self._open_n -= len(idle)
+            for c in idle:
+                self._gen_of.pop(id(c), None)
         for c in idle:
             c.close()
 

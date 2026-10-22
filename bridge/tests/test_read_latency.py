@@ -386,6 +386,28 @@ class Pool(unittest.TestCase):
             g.close()
             fake.stop()
 
+    def test_a_connection_in_flight_at_close_is_not_reused(self):
+        # close() closes in-flight connections as they come back, also when another RPC reopened the pool meanwhile
+        # (it used to clear the closed flag, so the pre-close connection went back to the idle list).
+        class Conn:
+            def __init__(self) -> None:
+                self.connected = True
+
+            def close(self) -> None:
+                self.connected = False
+
+        g = Game(pool_max=4)
+        g._new_client = Conn  # type: ignore[method-assign,assignment]
+        a = g._acquire()
+        g.close()
+        b = g._acquire()
+        g._release(a)
+        self.assertFalse(a.connected)
+        g._release(b)
+        self.assertTrue(b.connected)
+        self.assertIs(g._acquire(), b)
+        self.assertEqual(g.open_connections, 1)
+
     def test_metrics_count_only_the_tools_own_rpcs(self):
         fake = _fake()
         g = Game(port=fake.port)
