@@ -43,7 +43,9 @@ def run(*argv: str, env: dict[str, str] | None = None, cwd: Path | None = None) 
 
 @pytest.fixture(scope="module")
 def venv(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
-    """(the built wheel, the venv's python) with the wheel and pytest installed, offline."""
+    """(the built wheel, the venv's python) with the wheel and pytest installed, offline. pytest and the harness's
+    other dependencies come from uv.lock (exported as a pylock.toml: wheel URLs, no index lookup), so they install from
+    the cache `uv sync --locked` filled; a bare `pytest` needs the registry's index, which a cold CI cache lacks."""
     if UV is None:
         pytest.skip("uv is not on PATH")
     d = tmp_path_factory.mktemp("wheel")
@@ -52,7 +54,10 @@ def venv(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
     run(UV, "venv", "--offline", "--python", sys.executable, str(d / "venv"))
     py = d / "venv" / "bin" / "python"
     run(UV, "pip", "install", "--offline", "--python", str(py), "--no-deps", str(wheel))  # bg3ai: not on PyPI
-    run(UV, "pip", "install", "--offline", "--python", str(py), "pytest")
+    lock = d / "pylock.toml"
+    export = ("--frozen", "--format", "pylock.toml", "--package", "bg3-agent-harness", "--extra", "testing")
+    run(UV, "export", *export, "--no-emit-workspace", "--no-dev", "-q", "-o", str(lock), cwd=PACKAGE)
+    run(UV, "pip", "install", "--offline", "--python", str(py), "-r", str(lock))
     return wheel, py
 
 
