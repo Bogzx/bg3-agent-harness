@@ -47,6 +47,7 @@ from bg3harness.runner import state as rstate
 from bg3harness.session import SessionHooks, SessionOutcome
 
 SID = "S001"  # a bench run is one session
+SCENARIO_DIFFICULTY = "BG3AI_SCENARIO_DIFFICULTY"  # bg3ai.tools.newgame.SCENARIO_DIFFICULTY_ENV
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -383,6 +384,11 @@ class LiveRunHost:
         self.env["BG3AI_TOOLS_OFF"] = ",".join([NO_MEMORY, *job.get("tools_off", ())])  # the profile's go on top
         # the scenario's autoskip (default on): the runner's ui.config each session, and the play server's skipper
         self.env["BG3AI_AUTOSKIP"] = "0" if sc["game_settings"].get("autoskip", True) is False else "1"
+        difficulty = sc["game_settings"].get("difficulty") if sc["start"]["kind"] == "new_game" else None
+        if difficulty:  # the bridge's new_game starts it, whatever the agent picks (live7: Explorer, not Balanced)
+            self.env[SCENARIO_DIFFICULTY] = difficulty
+        else:
+            self.env.pop(SCENARIO_DIFFICULTY, None)
         self.env.update(client_setup.session_env(choice.client, choice.profile, True, self.env))
         files: Json = {"profile": choice.profile, "pace": client_setup.kickoff_pace(choice.client, self.env)}
         if choice.client == "claude" or (choice.profile is not None and choice.client == "pi"):

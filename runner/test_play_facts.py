@@ -202,7 +202,7 @@ class FactsWiring(unittest.TestCase):
             r.game_setup()  # once per runner
             r.opt.judge = False
             rec = r.write_run_record(t0)
-        self.assertEqual(calls, ["sys.ping", "roll.snapshot", "scn.seed", "scn.undo"])
+        self.assertEqual(calls, ["sys.ping", "roll.snapshot", "scn.difficulty", "scn.seed", "scn.undo"])  # the readout
         self.assertEqual(rec["seed"], 12345)
         self.assertEqual(rec["game_settings"]["roll_mode"], "Random")
         self.assertIs(rec["game_settings"]["karmic_dice"], False)

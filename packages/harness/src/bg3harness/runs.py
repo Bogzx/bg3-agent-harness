@@ -43,6 +43,9 @@ HARNESS_EVENTS = {
     "bg3le_stale": "bg3le_stale",
     "steam_refused": "steam_refused",
     "oom_save_refused": "oom_save_refused",
+    # the game's settings contradict the scenario, or the readout can't confirm one it fixes: not the run it claims
+    "settings_mismatch": "settings_mismatch",
+    "settings_unverified": "settings_unverified",
 }
 FAULT_KINDS = {"crash": ("game_crash", HARNESS), "hang": ("game_hang", HARNESS), "agent_hang": ("agent_hang", UNKNOWN)}
 

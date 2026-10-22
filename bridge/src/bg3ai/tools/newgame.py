@@ -24,8 +24,11 @@ def new_game(difficulty: str = "Explorer") -> str:
     """From the main menu: start a new game at the given difficulty (Explorer | Balanced | Tactician) and open character creation."""
     if not saving.PLAYTHROUGH:
         raise GameError("new_game is only available in an AI playthrough session")
+    difficulty, fixed = scenario_difficulty(difficulty)
     if not NEW_GAME_ASYNC:
-        return plumbing._act("new_game", "ui.new_game", {"difficulty": difficulty}, context="client", wait_s=NEW_GAME_WAIT_S)
+        out = plumbing._act("new_game", "ui.new_game", {"difficulty": difficulty}, context="client",
+                            wait_s=NEW_GAME_WAIT_S)
+        return f"{fixed}\n{out}" if fixed else out
     t0 = time.monotonic()
     if core._session_over():
         return reporting._finish("new_game", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
@@ -34,9 +37,24 @@ def new_game(difficulty: str = "Explorer") -> str:
     _new_game.update(thread=th, result=None, t0=t0)
     th.start()
     return reporting._finish("new_game", args, (
-        f"new_game ({difficulty}): loading character creation in the background (~10 s). Write CHARACTER.md and "
+        (f"{fixed}\n" if fixed else "") + f"new_game ({difficulty}): loading character creation in the background (~10 s). Write CHARACTER.md and "
         "party-build.md now (memory tools don't wait); the next game tool (character_creation_options) waits for "
         "the screen and says how it went."), t0, events=False)
+
+
+# A benchmark run's scenario fixes the difficulty (the harness sets it for a new-game start): new_game plays that one,
+# whatever the agent asks (live7: nautiloid says Balanced, the agent picked Explorer and nothing stopped it).
+SCENARIO_DIFFICULTY_ENV = "BG3AI_SCENARIO_DIFFICULTY"
+
+
+def scenario_difficulty(asked: str) -> tuple[str, str]:
+    """(the difficulty to start, a note for the agent when the scenario's replaced its pick, else "")."""
+    fixed = os.environ.get(SCENARIO_DIFFICULTY_ENV, "").strip()
+    if not fixed:
+        return asked, ""
+    if asked.strip().lower() == fixed.lower():
+        return fixed, ""
+    return fixed, f"NOTE: this run's scenario fixes the difficulty: {fixed} (not {asked})."
 
 
 # vis's proposal (2026-10-17): new_game returns at once, so the agent writes CHARACTER.md / party-build.md during the

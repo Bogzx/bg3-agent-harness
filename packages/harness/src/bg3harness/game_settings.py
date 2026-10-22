@@ -5,7 +5,8 @@ BG3AI_SCENARIO_SETUP=1).
 Sources, each read-only: the resolution from the Larian profile's graphicSettings.lsx, the UI scale from its
 PlayerProfiles/Public/config.lsf (the game writes only non-default entries: null = the default), the language from
 Steam's app manifest (UserConfig.language), Karmic Dice from the mod's roll.snapshot (RollManager.RollModeType:
-WeightedRandom = karmic). The difficulty has no reader yet (it lives in the save; null).
+WeightedRandom = karmic), the difficulty from the mod's scn.difficulty (the loaded game's Ruleset, as its Options name:
+bg3ai.difficulty; null at the main menu or without the scn.* switch).
 
     python3 -m unittest runner/test_game_settings.py
 """
@@ -16,6 +17,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol, cast
+
+from bg3ai.difficulty import option_name
 
 SETUP_ENV = "BG3AI_SCENARIO_SETUP"  # the game process's env switch for every scn.* op
 _ENTRY = re.compile(
@@ -79,6 +82,21 @@ def karmic(rpc: Rpc) -> tuple[str | None, bool | None]:
     return (str(mode), str(mode) == "WeightedRandom") if mode else (None, None)
 
 
+def difficulty(rpc: Rpc) -> str | None:
+    """The loaded game's difficulty as its Options name (Balanced) from scn.difficulty's ruleset name
+    (DIFFICULTY_MEDIUM); a ruleset name the table doesn't know is returned as is; None when the mod doesn't answer."""
+    try:
+        name = _obj(rpc("scn.difficulty", {})).get("difficulty")
+    except Exception:  # no level loaded, an old mod, or no scn.* switch: unknown
+        return None
+    return (option_name(name) or str(name)) if name else None
+
+
+def apply_karmic(rpc: Rpc, karmic: bool) -> dict[str, Any]:
+    """scn.karmic {set}: Karmic Dice on or off for the run (scn.undo puts the player's back)."""
+    return _obj(rpc("scn.karmic", {"set": bool(karmic)}))
+
+
 def readout(files: dict[str, Callable[[], Any]], rpc: Rpc) -> dict[str, Any]:
     """{resolution, ui_scale, language, difficulty, roll_mode, karmic_dice}. files: "graphics" -> the lsx text,
     "config" -> config.lsf's attributes, "manifest" -> the parsed app manifest; a reader that fails gives null."""
@@ -94,7 +112,7 @@ def readout(files: dict[str, Callable[[], Any]], rpc: Rpc) -> dict[str, Any]:
         "resolution": get("graphics", lambda t: resolution(graphic_entries(t))),
         "ui_scale": get("config", lambda a: ui_scale(config_entries(a))),
         "language": get("manifest", language),
-        "difficulty": None,
+        "difficulty": difficulty(rpc),
         "roll_mode": mode,
         "karmic_dice": is_karmic,
     }

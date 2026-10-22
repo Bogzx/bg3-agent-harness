@@ -157,9 +157,12 @@ class ChecksSide:
         return w
 
     def setup_env(self) -> dict:
-        """The game's env: the mod's scn.* ops are refused unless a run seeds the dice (game_settings.SETUP_ENV)."""
-        seeded = getattr(getattr(self, "opt", None), "seed", None) is not None   # a bare Runner (tests) has no opt
-        return ghost.setup_env(seeded)
+        """The game's env: the mod's scn.* ops are refused unless a run seeds the dice or its scenario fixes a setting
+        the scn.* ops read or set (difficulty, karmic dice; game_settings.SETUP_ENV)."""
+        opt = getattr(self, "opt", None)   # a bare Runner (tests) has no opt
+        want = getattr(opt, "scenario_settings", None) or {}
+        fixed = any(want.get(k) is not None for k in scenario_file.CHECKED)
+        return ghost.setup_env(getattr(opt, "seed", None) is not None or fixed)
 
     def game_setup(self) -> bool:
         """Once per runner, with a level loaded: the settings readout (the run record's game_settings, a facts
@@ -171,6 +174,13 @@ class ChecksSide:
         if not game.server_ready():
             return False
         call = lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT)
+        karmic = (self.opt.scenario_settings or {}).get("karmic_dice")
+        if karmic is not None:   # the scenario's Karmic Dice, set before the readout reads it back (scn.undo restores)
+            try:
+                game_settings.apply_karmic(call, karmic)
+                self.karmic_set = True
+            except Exception as e:
+                renv.log(f"!!!!! scn.karmic {karmic} failed: {e}; the settings check reads what the game has !!!!!")
         got = game_settings.readout(game_settings.profile_files(steam_paths.profile_dir(), steam_paths.manifest(),
                                                                 self.lsf_attributes(), steam_paths.parse_vdf), call)
         if self.opt.seed is not None:
@@ -213,12 +223,13 @@ class ChecksSide:
             raise SettingsMismatch(msg)
 
     def scenario_undo(self) -> None:
-        """scn.undo at the run's end (the seed record would re-seed the next run's loads)."""
-        if not getattr(self, "seeded", False):
+        """scn.undo at the run's end (the seed record would re-seed the next run's loads; a set Karmic Dice goes back
+        to the player's)."""
+        if not (getattr(self, "seeded", False) or getattr(self, "karmic_set", False)):
             return
         try:
             game_settings.undo(lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT))
-            self.seeded = False
+            self.seeded = self.karmic_set = False
         except Exception as e:
             renv.log(f"!!!!! scn.undo failed: {e}; BG3AI/scenario.json keeps seeding every load until undone !!!!!")
 

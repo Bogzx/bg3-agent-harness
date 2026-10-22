@@ -524,6 +524,11 @@ class GameModel:
         out = {"mode": self.roll_mode, "karmic": self.roll_mode == "WeightedRandom", "component_mode": self.roll_mode}
         return out if want is None else {**out, "before": before}
 
+    def op_new_game(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """ui.new_game: a new game at the difficulty the bridge asked for (the Options name); character creation."""
+        self.difficulty = str(args.get("difficulty") or "Explorer")
+        return self._job("ui.new_game", {"screen": "character_creation", "difficulty": self.difficulty})
+
     def op_scn_difficulty(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         self._scn()
         if args.get("set") is not None:
@@ -595,6 +600,7 @@ _OPS: dict[str, OpFn] = {
     "ui.rest_info": lambda m, c, a: {"short_rests_left": 2, "short_rests_max": 2},
     "ui.story_timer": lambda m, c, a: {"none": True},
     "ui.dialogue_choose": GameModel.op_choose,
+    "ui.new_game": GameModel.op_new_game,
     "ref.since": lambda m, c, a: m.ring_reply(m.ref, a),
     "ref.snapshot": GameModel.op_ref_snapshot,
     "roll.since": lambda m, c, a: m.ring_reply(m.rolls, a),
