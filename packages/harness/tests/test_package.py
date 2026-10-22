@@ -15,6 +15,7 @@ REPO = Path(__file__).resolve().parents[3]
 
 class Package(unittest.TestCase):
     def test_paths_are_the_source_tree(self) -> None:
+        self.assertTrue(bg3harness.SOURCE_TREE)  # an installed wheel reads its copies: tests/test_wheel_install.py
         self.assertEqual(bg3harness.PROMPTS, REPO / "packages" / "harness" / "prompts")
         self.assertEqual(bg3harness.SCHEMAS, REPO / "packages" / "harness" / "schemas")
 

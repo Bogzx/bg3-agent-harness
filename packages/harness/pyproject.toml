@@ -1,13 +1,20 @@
 [project]
 name = "bg3-agent-harness"
 version = "0.1.0"
-description = "The BG3 agent harness: prompt assembly and the facts/events data contracts (more modules land here)"
+description = "The BG3 agent harness: sessions on the live game, play clients, prompts and the facts/events contracts"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["bg3ai-bridge"]  # the game I/O, metrics and milestones (bg3ai); it brings mcp
 
-# Every pytest run in the workspace venv gets a temp game profile first (bg3harness/testing/profile.py)
+[project.optional-dependencies]
+testing = ["pytest>=8"]  # bg3harness.testing's pytest plugin and fixtures
+
+# Every pytest run in the workspace venv gets a temp game profile first (bg3harness/testing/profile.py); from an
+# installed wheel only when asked (BG3HARNESS_TEMP_PROFILE=1, testing/pytest_profile.py)
 [project.entry-points.pytest11]
 bg3harness-profile = "bg3harness.testing.pytest_profile"
+
+[tool.uv.sources]
+bg3ai-bridge = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -15,6 +22,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bg3harness"]
+
+# The prompt files and the schemas go into the wheel inside the package (bg3harness.PROMPTS / SCHEMAS read them there);
+# prompts/tests stays out (force-include ignores excludes, hence one entry per folder)
+[tool.hatch.build.targets.wheel.force-include]
+"prompts/assemble.py" = "bg3harness/prompts/assemble.py"
+"prompts/clients" = "bg3harness/prompts/clients"
+"prompts/coaching" = "bg3harness/prompts/coaching"
+"prompts/rules" = "bg3harness/prompts/rules"
+"schemas" = "bg3harness/schemas"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "prompts/tests"]

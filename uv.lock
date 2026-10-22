@@ -286,6 +286,21 @@ wheels = [
 name = "bg3-agent-harness"
 version = "0.1.0"
 source = { editable = "packages/harness" }
+dependencies = [
+    { name = "bg3ai-bridge" },
+]
+
+[package.optional-dependencies]
+testing = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bg3ai-bridge", editable = "bridge" },
+    { name = "pytest", marker = "extra == 'testing'", specifier = ">=8" },
+]
+provides-extras = ["testing"]
 
 [[package]]
 name = "bg3ai-bridge"

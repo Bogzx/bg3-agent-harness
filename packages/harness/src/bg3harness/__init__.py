@@ -6,8 +6,9 @@ The prompt files and the data contracts stay where their owners keep them, next 
                                  by path)
     packages/harness/schemas/    facts.v1 / events.v1 JSON Schemas
 
-`PROMPTS` and `SCHEMAS` locate them, `schema(name)` loads one, and `assemble` is prompts/assemble.py's function. The
-paths hold for the workspace's editable install, which is the only install today.
+`PROMPTS` and `SCHEMAS` locate them, `schema(name)` loads one, and `assemble` is prompts/assemble.py's function. In the
+source tree (the workspace's editable install, SOURCE_TREE) they are those folders; a wheel carries copies inside the
+package (bg3harness/prompts, bg3harness/schemas: pyproject's force-include), and an installed package reads those.
 
 `__version__` is the harness version (pyproject.toml's, the one source; CHANGELOG.md says when it bumps): run records,
 manifests and results cite it.
@@ -25,10 +26,22 @@ from types import ModuleType
 from typing import Any
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-PROMPTS = PACKAGE_ROOT / "prompts"
-SCHEMAS = PACKAGE_ROOT / "schemas"
+SOURCE_TREE = (PACKAGE_ROOT / "src" / "bg3harness" / "__init__.py").resolve() == Path(__file__).resolve()
+_DATA = PACKAGE_ROOT if SOURCE_TREE else Path(__file__).resolve().parent  # a wheel: the copies inside the package
+PROMPTS = _DATA / "prompts"
+SCHEMAS = _DATA / "schemas"
 
-__all__ = ["PACKAGE_ROOT", "PROMPTS", "SCHEMAS", "__version__", "assemble", "package_version", "prompts", "schema"]
+__all__ = [
+    "PACKAGE_ROOT",
+    "PROMPTS",
+    "SCHEMAS",
+    "SOURCE_TREE",
+    "__version__",
+    "assemble",
+    "package_version",
+    "prompts",
+    "schema",
+]
 
 
 def package_version(dist: str, root: Path) -> str:
