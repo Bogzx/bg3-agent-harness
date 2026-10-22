@@ -51,8 +51,10 @@ def test_the_apps_files_after_two_sessions(tmp_path: Path):
 
 def test_a_session_that_never_started_and_one_with_game_deaths(tmp_path: Path):
     path = sup.history_path(tmp_path, PT)
-    rows = [SessionResult("?", "error", detail="no client"), SessionResult("S001-r1", "crash", None, 1.0, 2.0, 0.3,
-                                                                               game_deaths=("oom", ""))]  # fmt: skip
+    rows = [
+        SessionResult("?", "error", detail="no client"),
+        SessionResult("S001-r1", "crash", None, 1.0, 2.0, 0.3, game_deaths=("oom", ""), loaded="S001-x"),
+    ]
     sup.write_history(path, [asdict(r) for r in rows])
     assert errors("supervisor.v1.schema.json", load(path)) == []
 

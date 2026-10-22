@@ -116,6 +116,9 @@ def session_env(
     }
 
 
+LOADED_AFTER_FAULT = "after the last session's fault; nobody has played since"
+
+
 def kickoff(
     req: SessionRequest,
     sid: str,
@@ -123,6 +126,7 @@ def kickoff(
     loaded: str | None = None,
     client: str = "claude",
     game_notes: Sequence[str] = (),
+    save_why: str = "",
 ) -> str:
     """The runner's kickoff (prompts.build_kickoff) for an app session: the request's notes and the character, the
     save the game was recovered to and the recovery's notes, the pace pre-flight when the condition has coaching."""
@@ -131,7 +135,7 @@ def kickoff(
     if cfg.character.brief:
         notes.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
     pace = client_setup.kickoff_pace(client, {"BG3AI_PROMPT_CONDITION": cfg.agent.condition})
-    return prompts.build_kickoff(sid, req.playthrough, loaded, notes, briefing.strip(), pace=pace)
+    return prompts.build_kickoff(sid, req.playthrough, loaded, notes, briefing.strip(), save_why, pace=pace)
 
 
 def session_cap(client: str, max_cost: float, budget: Path) -> tuple[float, str | None]:
@@ -192,6 +196,7 @@ class AppSessionHooks:
         self.budget = budget  # runtime/budget.json each process's cost is added to (a paid client); None = unpaid
         self._aborted = aborted
         self.phase: Callable[[str], object] = lambda detail: None  # SessionRequest.phase once the session plays
+        self.recovered_last = False  # the game was recovered and no agent has played since
 
     def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> AgentRun:
         spent = sum(r.cost_usd or 0.0 for r in self.runs)
@@ -201,6 +206,7 @@ class AppSessionHooks:
         )  # fmt: skip
         res = self.agent.run(call)
         self.runs.append(res)
+        self.recovered_last = False
         if res.reason in ("crash", "hang", "agent_hang"):
             self.event("fault", fault=res.reason, session=self.sid + tag)
         if self.budget is not None and res.cost_usd:
@@ -234,6 +240,7 @@ class AppSessionHooks:
         except Exception as e:  # the session ends; the Supervisor decides on the next
             return RecoverFailure(e, fatal=False)
         self.phase("playing")
+        self.recovered_last = True
         return None
 
     def loaded(self) -> str | None:
@@ -361,7 +368,8 @@ class HarnessRunner:
         start_sig = self.game.progress()
         write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
                      started=start, log=str(sdir / f"{sid}.log"), session_ended=None, updated=start)  # fmt: skip
-        prompt = kickoff(req, sid, briefing, hooks.save, agent.client_name, self.game.notes())
+        loaded, why = (hooks.save, "") if hooks.save else (req.loaded, LOADED_AFTER_FAULT if req.loaded else "")
+        prompt = kickoff(req, sid, briefing, loaded, agent.client_name, self.game.notes(), why)
         spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         try:
             out = run_session(spec, hooks)
@@ -394,7 +402,10 @@ class HarnessRunner:
         if out.invalid or out.gave_up:
             detail += f" ({out.invalid or out.gave_up})"
         outcome = "stopped" if self._abort.is_set() else outcome_of(out, stop.is_set())
-        return SessionResult(sid, outcome, progress, out.started, ended, cost, detail, tuple(hooks.deaths))
+        loaded_after = hooks.save if hooks.recovered_last else None
+        return SessionResult(
+            sid, outcome, progress, out.started, ended, cost, detail, tuple(hooks.deaths), loaded_after
+        )
 
 
 def write_status(runtime: Path, **fields: Any) -> None:

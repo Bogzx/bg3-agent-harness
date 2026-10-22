@@ -332,6 +332,19 @@ def test_a_game_down_at_the_session_start_is_recovered_first(tmp_path: Path):
     assert h["outcome"] == "ok" and h["game_deaths"] == [""]
 
 
+def test_after_a_fault_that_ended_the_session_the_next_continues_from_the_recovered_save(tmp_path: Path):
+    # live7 d4b2: S001 ended on a crash after the app relaunched the game; S002 was told to load HANDOFF.md's save,
+    # which was still the template, while the game sat on the newest save
+    sup, agent, game, *_ = make(tmp_path, [("crash", 25), ("exited", 30)], hours=0.9, recover_to="S001-x")
+    sup.start(PT, wait=True)
+    assert game.recovered == ["crashed"] and len(agent.calls) == 2
+    first, second = sup.history(PT)
+    assert (first["outcome"], first["loaded"], second["loaded"]) == ("crash", "S001-x", None)
+    prompt = agent.calls[1].prompt
+    assert 'already loaded save "S001-x" (after the last session\'s fault; nobody has played since)' in prompt
+    assert "The last session ended early (reason=crash" in prompt and "Load the save from HANDOFF.md" not in prompt
+
+
 def test_the_supervisors_detail_says_launching_and_relaunching_not_playing(tmp_path: Path):
     # live7 D.4b: /api/v1/supervisor said "playing S001" for the 2.5 minutes the app was launching the game
     sup, _, game, *_ = make(tmp_path, [("crash", 5), ("exited", 20)], hours=0.4, recover_to="S000-end")

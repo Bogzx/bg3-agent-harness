@@ -33,6 +33,7 @@ HISTORY_VERSION = 1
 MAX_CRASHES = 3  # crashed sessions in a row before the loop gives up
 OOM_STREAK = 2  # game deaths in a row by running out of memory before the loop gives up (no 3rd relaunch)
 CRASH_NOTE = "The last session ended early ({why}). Load the save from HANDOFF.md and continue from there."
+ENDED_EARLY_NOTE = "The last session ended early ({why})."  # the kickoff names the save the game is on (loaded)
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class SessionRequest:
     # what the session is doing now, for the supervisor's detail (the harness runner: launching or relaunching the
     # game, then playing again); a runner that never calls it shows "playing" throughout
     phase: Callable[[str], object] = field(default=lambda detail: None, compare=False)
+    loaded: str | None = None  # the save the game sits on after the last session (its SessionResult.loaded)
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class SessionResult:
     detail: str = ""
     game_deaths: tuple[str, ...] = ()  # each game death the session recovered from (or refused to): its OOM cause, "" =
     # not out of memory
+    loaded: str | None = None  # the save the runner recovered the game to when no agent played after it (the
+    # session ended on the fault): the next session continues from it, not from HANDOFF.md's save
 
 
 class SessionRunner(Protocol):
@@ -97,12 +101,21 @@ def is_stuck(history: list[dict[str, Any]]) -> bool:
 def notes_for(history: list[dict[str, Any]]) -> tuple[str, ...]:
     out: list[str] = []
     if history and history[-1].get("outcome") in ("crash", "error"):
-        out.append(CRASH_NOTE.format(why=history[-1].get("detail") or history[-1]["outcome"]))
+        note = ENDED_EARLY_NOTE if last_loaded(history) else CRASH_NOTE
+        out.append(note.format(why=history[-1].get("detail") or history[-1]["outcome"]))
     if is_stuck(history):
         from .runner import prompts
 
         out.append(prompts.stuck_directive(history))
     return tuple(out)
+
+
+def last_loaded(history: list[dict[str, Any]]) -> str | None:
+    """The save the last session left the game on after a fault (SessionResult.loaded), if it ended on one."""
+    if not history or history[-1].get("outcome") not in ("crash", "error"):
+        return None
+    loaded = history[-1].get("loaded")
+    return loaded if isinstance(loaded, str) and loaded else None
 
 
 def oom_streak(history: list[dict[str, Any]]) -> tuple[int, str]:
@@ -290,6 +303,7 @@ class Supervisor:
                     notes=notes_for(hist),
                     record=cfg.recording.enabled,
                     oom_streak=oom_streak(hist)[0],
+                    loaded=last_loaded(hist),
                     phase=lambda what, nudge=nudge: self._set(detail=what + nudge),
                 )
                 self._set(session=f"S{n:03d}", detail="playing" + nudge)

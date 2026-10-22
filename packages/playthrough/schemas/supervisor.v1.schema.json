@@ -26,6 +26,10 @@
           "type": "array",
           "items": {"type": "string"},
           "description": "each game death the session recovered from (or refused to): its OOM cause, \"\" = not out of memory"
+        },
+        "loaded": {
+          "type": ["string", "null"],
+          "description": "added 2026-10-22, still v1 (optional): the save the runner recovered the game to when no agent played after it; the next session continues from it"
         }
       }
     }
