@@ -36,6 +36,7 @@ from typing import Any, Protocol
 from bg3harness.game import saves as hsaves
 from bg3harness.game.io import Save
 from bg3harness.game.saves import parse_handoff_save, pick_save_why
+from bg3harness.runner import policy
 
 from ..jsontypes import is_list, is_obj
 from ..memory import memlib
@@ -163,9 +164,10 @@ class LaunchedGame:
         save_ops: SaveOps | None = None,  # None: ensure_save makes no save
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
+        actions: Callable[[float], list[dict[str, Any]]] = lambda since: [],  # the MCP server's tool log since t
     ):
         self.reads, self.ctl, self.host, self.saves, self.leader, self.log = reads, controller, host, saves, leader, log
-        self.save_ops, self.clock, self.sleep = save_ops, clock, sleep
+        self.save_ops, self.clock, self.sleep, self.actions = save_ops, clock, sleep, actions
         self.sdir: Path | None = None
         self.mem: Path | None = None
 
@@ -245,13 +247,18 @@ class LaunchedGame:
         path = self.sdir / "runner.json"
         owner = read_state(path).get("save_owner")
         new = hsaves.saves_since(self.saves(), since, owner)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if new and not owner:
+            owner = new[-1].owner
+            write_state(path, save_owner=owner)
+            self.log(f"save owner {owner}: learned from the session's save")
+        quick = self.record_agent_saves(since, owner)
         if new:
             last: Save = new[-1]
-            if not owner:
-                write_state(path, save_owner=last.owner)
-                self.log(f"save owner {last.owner}: learned from the session's save")
             self.log(f"session saved: {last.folder}")
             return last.folder
+        if quick:
+            self.log(f"session saved: the agent's quicksave {quick[-1]}")
+            return quick[-1]
         ops = self.save_ops
         if ops is None or not self.ctl.alive() or not ops.ready():
             self.log("no save this session and the game isn't ready for one")
@@ -283,6 +290,21 @@ class LaunchedGame:
                 self.log(f"quicksave didn't appear within {QUICKSAVE_WAIT_S} s")
                 return None
             self.sleep(2)
+
+    def record_agent_saves(self, since: float, owner: str | None) -> list[str]:
+        """play.py record_agent_saves: the owner's quicksaves the MCP server wrote since `since` (save_game.bg lines
+        in actions.jsonl) -> runner.json agent_saves (the last AGENT_SAVES_KEPT), so a recovery may load them
+        (choose_save takes a quicksave only when it is the runner's or the agent's)."""
+        if self.sdir is None:
+            return []
+        found: list[str] = policy.agent_quicksaves(self.actions(since), owner)  # pyright: ignore[reportUnknownMemberType]
+        if found:
+            path = self.sdir / "runner.json"
+            raw: object = read_state(path).get("agent_saves")
+            kept = [f for f in (raw if is_list(raw) else []) if f not in found] + found
+            write_state(path, agent_saves=kept[-policy.AGENT_SAVES_KEPT :])
+            self.log(f"the agent's quicksave(s) {', '.join(found)} are this playthrough's saves too")
+        return found
 
     def notes(self) -> list[str]:
         return self.host.take_notes()

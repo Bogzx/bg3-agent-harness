@@ -544,6 +544,7 @@ def launched_game(opt: argparse.Namespace, reads: Any, log: Callable[[str], None
     from bg3harness.game import io as gio
     from bg3harness.game.host import AppHost
     from bg3harness.game.saves import save_lsv
+    from bg3harness.runner import policy
 
     from .adapters.launched_game import IoSaveOps, LaunchedGame
 
@@ -551,6 +552,7 @@ def launched_game(opt: argparse.Namespace, reads: Any, log: Callable[[str], None
     return LaunchedGame(
         reads, gctl.GameController(host), host, lambda: gctl.list_saves(host.save_dir, save_lsv),
         gio.host_character_name, log=log, save_ops=IoSaveOps(),
+        actions=lambda since: policy.read_actions_since(since, opt.runtime / "actions.jsonl"),  # pyright: ignore[reportUnknownMemberType, reportUnknownLambdaType]
     )  # fmt: skip
 
 

@@ -209,7 +209,14 @@ class FakeSaveOps:
             self.saves.append(self.write)
 
 
-def saving_game(tmp_path: Path, state: dict[str, Any], saves: list[Save], ops: FakeSaveOps, clock: list[float]):
+def saving_game(
+    tmp_path: Path,
+    state: dict[str, Any],
+    saves: list[Save],
+    ops: FakeSaveOps,
+    clock: list[float],
+    actions: list[dict[str, Any]] | None = None,
+):
     sdir, mem = tmp_path / "sessions" / "ilse", tmp_path / "ilse" / "memory"
     sdir.mkdir(parents=True)
     mem.mkdir(parents=True)
@@ -219,8 +226,9 @@ def saving_game(tmp_path: Path, state: dict[str, Any], saves: list[Save], ops: F
     def sleep(s: float) -> None:
         clock[0] += s
 
+    acts = actions or []
     g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: saves, lambda: None, logs.append, ops,
-                        lambda: clock[0], sleep)  # fmt: skip
+                        lambda: clock[0], sleep, lambda since: [a for a in acts if a["t"] > since])  # fmt: skip
     g.begin(sdir, mem)
     return g, sdir, logs
 
@@ -258,3 +266,24 @@ def test_a_quicksave_that_never_appears_or_a_game_not_ready_records_nothing(tmp_
     )
     ops.is_ready = False
     assert g.ensure_save(4000) is None and ops.calls == 1  # not asked again
+
+
+def test_the_agents_quicksaves_are_recorded_and_count_as_the_sessions_save(tmp_path: Path):
+    # play.py record_agent_saves: choose_save takes a quicksave only when it is the runner's or the agent's
+    clock = [5000.0]
+    saves = [save(OWNER, 1, "S001-end", 3100), save(OWNER, 7, "QuickSave_3", 4500)]
+    acts = [
+        {"t": 3500, "tool": "save_game.bg", "ok": True, "folder": "Ilse-6__QuickSave_2"},  # before the session
+        {"t": 4500, "tool": "save_game.bg", "ok": True, "folder": "Ilse-7__QuickSave_3"},
+        {"t": 4600, "tool": "save_game.bg", "ok": True, "folder": "Karlach-8__QuickSave_1"},  # not this owner's
+        {"t": 4700, "tool": "save_game.bg", "ok": False, "folder": "Ilse-9__QuickSave_4"},
+    ]
+    ops = FakeSaveOps(saves, clock, None)
+    state = {"save_owner": OWNER, "agent_saves": ["Ilse-7__QuickSave_3", "Ilse-5__QuickSave_1"]}
+    g, sdir, logs = saving_game(tmp_path, state, saves, ops, clock, acts)
+    assert g.ensure_save(4000) == "Ilse-7__QuickSave_3" and ops.calls == 0  # no runner quicksave on top
+    assert json.loads((sdir / "runner.json").read_text())["agent_saves"] == [
+        "Ilse-5__QuickSave_1",
+        "Ilse-7__QuickSave_3",
+    ]
+    assert "the agent's quicksave(s) Ilse-7__QuickSave_3 are this playthrough's saves too" in logs
