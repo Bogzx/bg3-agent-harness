@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from bg3harness import profiles as PR
+from bg3harness import profiles as pr
 
 REPO = Path(__file__).resolve().parents[3]
 EXAMPLES = REPO / "profiles"
@@ -57,7 +57,7 @@ def pi(**changes: Any) -> dict[str, Any]:
 class Examples(unittest.TestCase):
     def test_every_example_loads(self):
         paths = sorted(EXAMPLES.glob("*.toml"))
-        self.assertEqual({PR.load(p).client for p in paths}, set(PR.CLIENT_NAMES))
+        self.assertEqual({pr.load(p).client for p in paths}, set(pr.CLIENT_NAMES))
 
     def test_examples_hold_no_key(self):
         for p in EXAMPLES.glob("*.toml"):
@@ -65,10 +65,10 @@ class Examples(unittest.TestCase):
             self.assertNotRegex(text, r"sk-[A-Za-z0-9]|api_key\s*=", p.name)
 
     def test_golden_models_json(self):
-        pi = [p for p in sorted(EXAMPLES.glob("*.toml")) if PR.load(p).client == "pi"]
+        pi = [p for p in sorted(EXAMPLES.glob("*.toml")) if pr.load(p).client == "pi"]
         self.assertEqual(len(pi), 4)
         for p in pi:
-            got = json.dumps(PR.models_json(PR.load(p)), indent=1) + "\n"
+            got = json.dumps(pr.models_json(pr.load(p)), indent=1) + "\n"
             golden = GOLDEN / f"models.{p.stem}.json"
             if os.environ.get("BG3AI_UPDATE_GOLDEN"):
                 golden.write_text(got)
@@ -77,27 +77,27 @@ class Examples(unittest.TestCase):
 
 class Parse(unittest.TestCase):
     def err(self, raw: dict[str, Any], pattern: str) -> None:
-        with self.assertRaisesRegex(PR.ProfileError, pattern):
-            PR.parse(raw, "t.toml")
+        with self.assertRaisesRegex(pr.ProfileError, pattern):
+            pr.parse(raw, "t.toml")
 
     def test_pi_profile(self):
-        p = PR.parse(pi(), "t.toml")
+        p = pr.parse(pi(), "t.toml")
         self.assertEqual(
             (p.client, p.model, p.effort, p.pi_model), ("pi", "vendor/model-1", "medium", "openrouter/vendor/model-1")
         )
-        self.assertEqual(p.endpoint, PR.Endpoint("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"))
+        self.assertEqual(p.endpoint, pr.Endpoint("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"))
         # the pin's defaults: no fallback to another provider, no endpoint that ignores a parameter
         self.assertEqual(p.routing, {"only": ["vendor"], "allow_fallbacks": False, "require_parameters": True})
 
     def test_other_clients(self):
         for client in ("claude", "codex", "gemini"):
-            p = PR.parse({"client": client, "model": "m", "effort": "high"}, "t.toml")
+            p = pr.parse({"client": client, "model": "m", "effort": "high"}, "t.toml")
             self.assertEqual((p.client, p.endpoint, p.routing, p.model_info), (client, None, None, None))
-        self.assertEqual(PR.parse({"client": "claude", "model": "m", "fallback_model": "f"}).fallback_model, "f")
+        self.assertEqual(pr.parse({"client": "claude", "model": "m", "fallback_model": "f"}).fallback_model, "f")
 
     def test_endpoint_keys_rejected_on_non_pi_clients(self):
         for client in ("claude", "codex", "gemini"):
-            for key in PR.PI_ONLY:
+            for key in pr.PI_ONLY:
                 self.err({"client": client, "model": "m", key: PI[key]}, f'{key} only apply to client "pi"')
 
     def test_fallback_model_is_claude_only(self):
@@ -120,17 +120,17 @@ class Parse(unittest.TestCase):
         self.err(pi(endpoint__provider="Open Router"), "not a pi provider id")
         # pi turns on Anthropic cache_control for provider id "openrouter" only
         self.err(pi(endpoint__provider="bench"), 'OpenRouter base_url needs provider = "openrouter"')
-        self.assertEqual(PR.parse(pi(endpoint__api="openai-completions")).endpoint, PR.parse(pi()).endpoint)
+        self.assertEqual(pr.parse(pi(endpoint__api="openai-completions")).endpoint, pr.parse(pi()).endpoint)
 
     def test_routing_validation(self):
         local = pi(endpoint__provider="bench", endpoint__base_url="http://127.0.0.1:8080/v1")
         self.err(local, "is not OpenRouter")
         local.pop("routing")
-        self.assertIsNone(PR.parse(local).routing)
+        self.assertIsNone(pr.parse(local).routing)
         self.err(pi(routing={"only": []}), "only must be a non-empty list")
         self.err(pi(routing={"order": ["a"]}), "unknown key.*order")
         self.err(pi(routing={"only": ["a"], "allow_fallbacks": "no"}), "allow_fallbacks must be true or false")
-        routing = PR.parse(pi(routing={"only": ["a"], "allow_fallbacks": True})).routing
+        routing = pr.parse(pi(routing={"only": ["a"], "allow_fallbacks": True})).routing
         self.assertTrue(routing is not None and routing["allow_fallbacks"])
 
     def test_model_info_validation(self):
@@ -152,7 +152,7 @@ class Parse(unittest.TestCase):
         other = {"provider": "acme", "base_url": "https://llm.acme.example/v1", "api_key_env": "ACME_KEY"}
         self.err(pi(routing=None, endpoint=other, model_info__cost=None), "cost needs input, output, cache_read")
         self.err(pi(model_info__cost={"input": 1, "output": 2}), "cost needs cache_read")
-        mi = PR.parse(pi(model_info__cost={"input": 1, "output": 2, "cache_read": 0})).model_info
+        mi = pr.parse(pi(model_info__cost={"input": 1, "output": 2, "cache_read": 0})).model_info
         assert mi is not None
         self.assertEqual(mi.cost, {"input": 1.0, "output": 2.0, "cache_read": 0.0})  # cache_write: 0 in models.json
 
@@ -160,21 +160,21 @@ class Parse(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "bad.toml"
             path.write_text("client = \n")
-            with self.assertRaisesRegex(PR.ProfileError, "bad.toml: not valid TOML"):
-                PR.load(path)
+            with self.assertRaisesRegex(pr.ProfileError, "bad.toml: not valid TOML"):
+                pr.load(path)
 
 
 class Status(unittest.TestCase):
     def test_offline_unless_the_profile_says(self):
-        self.assertEqual(PR.parse(pi()).status, "offline")
+        self.assertEqual(pr.parse(pi()).status, "offline")
         for client in ("claude", "pi"):
             raw = pi(status="verified") if client == "pi" else {"client": client, "model": "m", "status": "verified"}
-            self.assertEqual(PR.parse(raw).status, "verified")
-        with self.assertRaisesRegex(PR.ProfileError, "t.toml: status must be one of verified, offline, unsupported"):
-            PR.parse(pi(status="tested"), "t.toml")
+            self.assertEqual(pr.parse(raw).status, "verified")
+        with self.assertRaisesRegex(pr.ProfileError, "t.toml: status must be one of verified, offline, unsupported"):
+            pr.parse(pi(status="tested"), "t.toml")
 
     def test_the_examples_say_what_has_run_live(self):
-        got = {p.name: PR.load(p).status for p in EXAMPLES.glob("*.toml")}
+        got = {p.name: pr.load(p).status for p in EXAMPLES.glob("*.toml")}
         self.assertEqual(got["deepseek-flash.toml"], "verified")  # research/ovh live3, live4
         self.assertEqual(got["opus-5.5-claude-code.toml"], "verified")
         self.assertEqual(got["gemini-cli.toml"], "unsupported")  # D14
@@ -183,10 +183,10 @@ class Status(unittest.TestCase):
 
 class OffRoute(unittest.TestCase):
     def test_providers_outside_the_pin_by_name_or_slug(self):
-        pinned = PR.parse(pi(routing={"only": ["deepseek", "amazon-bedrock"]}))
+        pinned = pr.parse(pi(routing={"only": ["deepseek", "amazon-bedrock"]}))
         served = ["DeepSeek", "Amazon Bedrock", "deepseek", "Novita", "amazon_bedrock"]
-        self.assertEqual(PR.off_route(pinned, served), ["Novita"])
-        self.assertEqual(PR.off_route(PR.parse(pi(routing=None)), ["Novita"]), [])  # no pin: nothing is off it
+        self.assertEqual(pr.off_route(pinned, served), ["Novita"])
+        self.assertEqual(pr.off_route(pr.parse(pi(routing=None)), ["Novita"]), [])  # no pin: nothing is off it
 
 
 class Readme(unittest.TestCase):
@@ -196,33 +196,33 @@ class Readme(unittest.TestCase):
             cells = [c.strip(" `") for c in line.strip("|").split("|")]
             if cells[0].endswith(".toml"):
                 rows[cells[0]] = (cells[1], cells[2])
-        want = {p.name: (PR.load(p).client, PR.load(p).status) for p in EXAMPLES.glob("*.toml")}
+        want = {p.name: (pr.load(p).client, pr.load(p).status) for p in EXAMPLES.glob("*.toml")}
         self.assertEqual(rows, want)
 
 
 class Digest(unittest.TestCase):
     def test_what_a_profile_sets_not_where_it_came_from(self):
-        base = PR.digest(PR.parse(pi(), "a.toml"))
+        base = pr.digest(pr.parse(pi(), "a.toml"))
         self.assertRegex(base, r"^[0-9a-f]{64}$")
-        self.assertEqual(PR.digest(PR.parse(pi(), "elsewhere/b.toml")), base)
+        self.assertEqual(pr.digest(pr.parse(pi(), "elsewhere/b.toml")), base)
         for changed in (pi(model_info__cost={"input": 1.0, "output": 4.0, "cache_read": 0.2}), pi(effort="low")):
-            self.assertNotEqual(PR.digest(PR.parse(changed)), base)
-        self.assertEqual(PR.digest(PR.parse(pi(status="verified"))), base)  # what it played, not how far it's checked
+            self.assertNotEqual(pr.digest(pr.parse(changed)), base)
+        self.assertEqual(pr.digest(pr.parse(pi(status="verified"))), base)  # what it played, not how far it's checked
 
 
 class ToolsOff(unittest.TestCase):
     def test_a_text_only_pi_model_gets_no_screenshots(self):
-        text_only = PR.parse(pi(model_info__input=["text"]))
-        self.assertEqual(PR.tools_off(text_only), ("screenshots",))
-        self.assertEqual(PR.tool_env(text_only, {"X": "1"}), {"X": "1", "BG3AI_TOOLS_OFF": "screenshots"})
-        self.assertEqual(PR.tool_env(text_only, {"BG3AI_TOOLS_OFF": "wiki"})["BG3AI_TOOLS_OFF"], "wiki,screenshots")
-        self.assertEqual(PR.tool_env(text_only, {"BG3AI_TOOLS_OFF": "screenshots"})["BG3AI_TOOLS_OFF"], "screenshots")
+        text_only = pr.parse(pi(model_info__input=["text"]))
+        self.assertEqual(pr.tools_off(text_only), ("screenshots",))
+        self.assertEqual(pr.tool_env(text_only, {"X": "1"}), {"X": "1", "BG3AI_TOOLS_OFF": "screenshots"})
+        self.assertEqual(pr.tool_env(text_only, {"BG3AI_TOOLS_OFF": "wiki"})["BG3AI_TOOLS_OFF"], "wiki,screenshots")
+        self.assertEqual(pr.tool_env(text_only, {"BG3AI_TOOLS_OFF": "screenshots"})["BG3AI_TOOLS_OFF"], "screenshots")
 
     def test_image_models_and_the_clis_keep_every_tool(self):
-        self.assertEqual(PR.tools_off(PR.parse(pi())), ())
-        self.assertEqual(PR.tools_off(PR.parse({"client": "codex", "model": "m"})), ())
-        self.assertEqual(PR.tool_env(PR.parse(pi()), {"BG3AI_TOOLS_OFF": "wiki"}), {"BG3AI_TOOLS_OFF": "wiki"})
-        self.assertEqual(PR.tool_env(PR.parse(pi()), {}), {})
+        self.assertEqual(pr.tools_off(pr.parse(pi())), ())
+        self.assertEqual(pr.tools_off(pr.parse({"client": "codex", "model": "m"})), ())
+        self.assertEqual(pr.tool_env(pr.parse(pi()), {"BG3AI_TOOLS_OFF": "wiki"}), {"BG3AI_TOOLS_OFF": "wiki"})
+        self.assertEqual(pr.tool_env(pr.parse(pi()), {}), {})
 
 
 class ModelsJson(unittest.TestCase):
@@ -233,7 +233,7 @@ class ModelsJson(unittest.TestCase):
             model_info__compat={"requiresReasoningContentOnAssistantMessages": True},
         )
         self.assertEqual(
-            PR.models_json(PR.parse(raw)),
+            pr.models_json(pr.parse(raw)),
             {
                 "providers": {
                     "openrouter": {
@@ -268,13 +268,13 @@ class ModelsJson(unittest.TestCase):
 
     def test_no_routing_no_compat(self):
         raw = pi(endpoint__provider="deepseek", endpoint__base_url="https://api.deepseek.com", routing=None)
-        model = PR.models_json(PR.parse(raw))["providers"]["deepseek"]["models"][0]
+        model = pr.models_json(pr.parse(raw))["providers"]["deepseek"]["models"][0]
         self.assertNotIn("compat", model)
         self.assertNotIn("thinkingLevelMap", model)
 
     def test_only_for_pi(self):
-        with self.assertRaisesRegex(PR.ProfileError, "pi profiles only"):
-            PR.models_json(PR.parse({"client": "codex", "model": "m"}))
+        with self.assertRaisesRegex(pr.ProfileError, "pi profiles only"):
+            pr.models_json(pr.parse({"client": "codex", "model": "m"}))
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
-from bg3harness import client_setup as CS  # noqa: E402
+from bg3harness import client_setup as cs  # noqa: E402
 
 PI = str(REPO / "profiles" / "deepseek-flash.toml")
 CLAUDE = str(REPO / "profiles" / "opus-5.5-claude-code.toml")
@@ -23,66 +23,66 @@ TOOLS = REPO / "tools" / "pi" / "conformance" / "tools.json"
 
 class Resolve(unittest.TestCase):
     def test_without_profile(self):
-        self.assertEqual(CS.resolve(None, None, None, None), CS.ClientChoice("claude", "opus", None))
-        self.assertEqual(CS.resolve("codex", None, "gpt", "low"), CS.ClientChoice("codex", "gpt", "low"))
-        with self.assertRaisesRegex(CS.SetupRefused, "needs --profile"):
-            CS.resolve("pi", None, None, None)
+        self.assertEqual(cs.resolve(None, None, None, None), cs.ClientChoice("claude", "opus", None))
+        self.assertEqual(cs.resolve("codex", None, "gpt", "low"), cs.ClientChoice("codex", "gpt", "low"))
+        with self.assertRaisesRegex(cs.SetupRefused, "needs --profile"):
+            cs.resolve("pi", None, None, None)
 
     def test_pi_profile(self):
-        c = CS.resolve(None, PI, None, None)
+        c = cs.resolve(None, PI, None, None)
         self.assertEqual((c.client, c.model, c.effort), ("pi", "deepseek-flash", "medium"))
-        self.assertEqual(CS.resolve("pi", PI, "deepseek-flash", "low").effort, "low")  # --effort wins
+        self.assertEqual(cs.resolve("pi", PI, "deepseek-flash", "low").effort, "low")  # --effort wins
         for args, why in (
             ((PI, "opus", None), "plays deepseek-flash"),
             ((PI, None, None, None, True), "--no-keeper"),
             ((PI, None, None, "other"), "--fix-model"),
             (("/nope.toml", None, None), "nope"),
         ):
-            with self.assertRaisesRegex(CS.SetupRefused, why):
-                CS.resolve(None, *args)
-        with self.assertRaisesRegex(CS.SetupRefused, "pi profile"):
-            CS.resolve("claude", PI, None, None)
+            with self.assertRaisesRegex(cs.SetupRefused, why):
+                cs.resolve(None, *args)
+        with self.assertRaisesRegex(cs.SetupRefused, "pi profile"):
+            cs.resolve("claude", PI, None, None)
 
     def test_claude_profile(self):
-        c = CS.resolve(None, CLAUDE, None, None, keeper=True)
+        c = cs.resolve(None, CLAUDE, None, None, keeper=True)
         self.assertEqual(c.client, "claude")
 
 
 class ApiKey(unittest.TestCase):
     def setUp(self):
-        self.prof = CS.resolve(None, PI, None, None).profile
+        self.prof = cs.resolve(None, PI, None, None).profile
         self.dotenv = Path(tempfile.mkdtemp(prefix="bg3ai-env-")) / ".env"
         self.addCleanup(lambda: (self.dotenv.unlink(missing_ok=True), self.dotenv.parent.rmdir()))
 
     def test_from_env_or_dotenv(self):
-        self.assertEqual(CS.api_key_env(self.prof, {"DEEPSEEK_API_KEY": "x"}, self.dotenv), {})
+        self.assertEqual(cs.api_key_env(self.prof, {"DEEPSEEK_API_KEY": "x"}, self.dotenv), {})
         self.dotenv.write_text('# keys\nexport DEEPSEEK_API_KEY="sk-1"\nOTHER=2\n')
-        self.assertEqual(CS.api_key_env(self.prof, {}, self.dotenv), {"DEEPSEEK_API_KEY": "sk-1"})
-        self.assertEqual(CS.api_key_env(None, {}, self.dotenv), {})
+        self.assertEqual(cs.api_key_env(self.prof, {}, self.dotenv), {"DEEPSEEK_API_KEY": "sk-1"})
+        self.assertEqual(cs.api_key_env(None, {}, self.dotenv), {})
 
     def test_missing_is_refused_without_the_value(self):
         self.dotenv.write_text("DEEPSEEK_API_KEY=\n")
-        with self.assertRaisesRegex(CS.SetupRefused, "DEEPSEEK_API_KEY"):
-            CS.api_key_env(self.prof, {}, self.dotenv)
+        with self.assertRaisesRegex(cs.SetupRefused, "DEEPSEEK_API_KEY"):
+            cs.api_key_env(self.prof, {}, self.dotenv)
 
 
 class ToolCount(unittest.TestCase):
     def test_expected(self):
-        names = CS.tool_names(TOOLS)
-        self.assertEqual(CS.expected_tools(names, {}), len(names))
-        self.assertEqual(CS.expected_tools(names, {"BG3AI_TOOLS_OFF": "wiki"}), len(names) - 2)
+        names = cs.tool_names(TOOLS)
+        self.assertEqual(cs.expected_tools(names, {}), len(names))
+        self.assertEqual(cs.expected_tools(names, {"BG3AI_TOOLS_OFF": "wiki"}), len(names) - 2)
         from bg3ai import capabilities
 
         grouped = sum(len(g) for g in capabilities.GROUPS.values())
-        self.assertEqual(CS.expected_tools(names, {"BG3AI_TOOLS": "game,saves"}), len(names) - grouped + 2)
+        self.assertEqual(cs.expected_tools(names, {"BG3AI_TOOLS": "game,saves"}), len(names) - grouped + 2)
         with self.assertRaises(ValueError):
-            CS.expected_tools(names, {"BG3AI_TOOLS": "nope"})
+            cs.expected_tools(names, {"BG3AI_TOOLS": "nope"})
 
     def test_problem(self):
-        self.assertIsNone(CS.tool_count_problem(94, 94, {}))
-        self.assertIsNone(CS.tool_count_problem(94, None, {}))
+        self.assertIsNone(cs.tool_count_problem(94, 94, {}))
+        self.assertIsNone(cs.tool_count_problem(94, None, {}))
         self.assertEqual(
-            CS.tool_count_problem(94, 76, {"BG3AI_TOOLS": "game"}),
+            cs.tool_count_problem(94, 76, {"BG3AI_TOOLS": "game"}),
             "the bg3 MCP server gave 94 tools, expected 76 (BG3AI_TOOLS=game)",
         )
 
@@ -97,10 +97,10 @@ class ToolCount(unittest.TestCase):
         self.assertEqual(len(fx["init"]["tools"]), 95)
         (init,) = clients.ClaudeClient().parse(json.dumps(fx["init"]))
         self.assertEqual(init.tools, 94)
-        self.assertIsNone(CS.tool_count_problem(init.tools, CS.expected_tools(fx["registry"], {}), {}))
+        self.assertIsNone(cs.tool_count_problem(init.tools, cs.expected_tools(fx["registry"], {}), {}))
         off = {"BG3AI_TOOLS_OFF": "wiki"}
         self.assertEqual(
-            CS.tool_count_problem(init.tools, CS.expected_tools(fx["registry"], off), off),
+            cs.tool_count_problem(init.tools, cs.expected_tools(fx["registry"], off), off),
             "the bg3 MCP server gave 94 tools, expected 92 (BG3AI_TOOLS_OFF=wiki)",
         )
 
@@ -114,7 +114,7 @@ class ToolCount(unittest.TestCase):
 
         os.environ["BG3AI_TOOLS"] = "game"
         self.addCleanup(os.environ.pop, "BG3AI_TOOLS", None)
-        CS.dump_server(Path("/s.txt"), Path("/t.json"), Path("/i.txt"), REPO, run=run)
+        cs.dump_server(Path("/s.txt"), Path("/t.json"), Path("/i.txt"), REPO, run=run)
         (lst, lst_env), (txt, txt_env) = seen
         self.assertEqual(lst[-2:], ["--tools", "/t.json"])
         self.assertNotIn("BG3AI_TOOLS", lst_env)  # the whole registry, for the count
@@ -126,7 +126,7 @@ class SessionEnv(unittest.TestCase):
     """session_env / kickoff_pace: coaching (PACE:/NOTES WINDOW, the pace pre-flight) in playthroughs and claude."""
 
     def test_the_condition_default(self):
-        cond = lambda client, scenario, env={}: CS.session_env(client, None, scenario, env).get(  # noqa: E731
+        cond = lambda client, scenario, env={}: cs.session_env(client, None, scenario, env).get(  # noqa: E731
             "BG3AI_PROMPT_CONDITION"
         )
         self.assertEqual(cond("pi", False), "rules+coaching")
@@ -137,17 +137,17 @@ class SessionEnv(unittest.TestCase):
     def test_a_text_only_profile_turns_screenshots_off(self):
         from dataclasses import replace
 
-        prof = CS.profiles.load(Path(PI))
+        prof = cs.profiles.load(Path(PI))
         text_only = replace(prof, model_info=replace(prof.model_info, input=("text",)))
-        self.assertNotIn("BG3AI_TOOLS_OFF", CS.session_env("pi", prof, True, {}))
-        got = CS.session_env("pi", text_only, True, {"BG3AI_TOOLS_OFF": "wiki"})
+        self.assertNotIn("BG3AI_TOOLS_OFF", cs.session_env("pi", prof, True, {}))
+        got = cs.session_env("pi", text_only, True, {"BG3AI_TOOLS_OFF": "wiki"})
         self.assertEqual(got["BG3AI_TOOLS_OFF"], "wiki,screenshots")
 
     def test_kickoff_pace_follows_the_condition(self):
-        self.assertEqual(CS.kickoff_pace("pi", {}), "")
-        self.assertEqual(CS.kickoff_pace("pi", {"BG3AI_PROMPT_CONDITION": "rules"}), "")
-        pi = CS.kickoff_pace("pi", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
-        claude = CS.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
+        self.assertEqual(cs.kickoff_pace("pi", {}), "")
+        self.assertEqual(cs.kickoff_pace("pi", {"BG3AI_PROMPT_CONDITION": "rules"}), "")
+        pi = cs.kickoff_pace("pi", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
+        claude = cs.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
         self.assertIn("PACE PRE-FLIGHT", pi)
         self.assertNotIn("mcp__bg3__", pi)  # claude's tool-name line only for claude
         self.assertIn("mcp__bg3__", claude)
@@ -170,7 +170,7 @@ class RunFiles(unittest.TestCase):
             instructions.write_text("INSTRUCTIONS\n")
 
         with mock.patch.dict(os.environ, env):
-            got = CS.run_files(
+            got = cs.run_files(
                 d,
                 client,
                 1001,
@@ -185,7 +185,7 @@ class RunFiles(unittest.TestCase):
 
     def test_claude_gets_the_tool_count_and_the_manifest(self):
         got, logs = self.run_files("claude", {})
-        n = len(CS.tool_names(TOOLS))
+        n = len(cs.tool_names(TOOLS))
         self.assertEqual(set(got), {"tools_expected", "manifest"})  # no system file: claude reads play/CLAUDE.md
         self.assertEqual(got["tools_expected"], n)
         m = got["manifest"]
@@ -199,7 +199,7 @@ class RunFiles(unittest.TestCase):
     def test_pi_gets_its_system_text_and_the_served_condition(self):
         got, _ = self.run_files("pi", {"BG3AI_TOOLS_OFF": "wiki"})
         self.assertTrue(got["system_file"].endswith("pi-system.txt"))
-        self.assertEqual(got["tools_expected"], len(CS.tool_names(TOOLS)) - 2)
+        self.assertEqual(got["tools_expected"], len(cs.tool_names(TOOLS)) - 2)
         self.assertEqual(
             (got["manifest"]["condition"], got["manifest"]["tools"]["count"]), ("rules", got["tools_expected"])
         )

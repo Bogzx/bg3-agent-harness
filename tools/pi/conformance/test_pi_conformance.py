@@ -32,9 +32,9 @@ BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
 NEED_PI = os.environ.get("CI") == "true"  # GitHub Actions: a missing pi is a broken job, not a skip
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
-from bg3harness import clients as C
-from bg3harness import pi_client as PC
-from bg3harness import profiles as PR
+from bg3harness import clients as cl
+from bg3harness import pi_client as pc
+from bg3harness import profiles as pr
 
 sys.path.insert(0, str(HERE))
 import stub_mcp
@@ -203,7 +203,7 @@ class Conformance(unittest.TestCase):
         port = self.start_stub(script)
         raw = json.loads(json.dumps(PROFILE))
         raw["model_info"].update(model_info or {})
-        models = PR.models_json(PR.parse(raw))
+        models = pr.models_json(pr.parse(raw))
         models["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"  # the stub, as OpenRouter
         (self.ws / "agent" / "models.json").write_text(json.dumps(models))
         (self.ws / "agent" / "settings.json").write_text(json.dumps(settings or SETTINGS))
@@ -530,10 +530,10 @@ class Conformance(unittest.TestCase):
             "timeout": 110_000,
             "env": {"STUB_MCP_LOG": str(self.ws / "mcp.jsonl")},
         }
-        client = PC.PiClient(
-            PR.parse(PROFILE), self.ws / "system.txt", server=server, cwd=self.ws / "cwd", settings=SETTINGS
+        client = pc.PiClient(
+            pr.parse(PROFILE), self.ws / "system.txt", server=server, cwd=self.ws / "cwd", settings=SETTINGS
         )
-        req = C.Request(
+        req = cl.Request(
             prompt="play",
             model=MODEL,
             session_dir=self.ws / "sessions-root",

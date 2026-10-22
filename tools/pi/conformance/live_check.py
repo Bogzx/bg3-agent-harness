@@ -27,9 +27,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
-from bg3harness import clients as C
-from bg3harness import pi_client as PC
-from bg3harness import profiles as PR
+from bg3harness import clients as cl
+from bg3harness import pi_client as pc
+from bg3harness import profiles as pr
 
 PROMPT = (
     "This is a harness test, not a game. Do exactly this, one tool call per step: 1) call get_status; "
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--system", type=Path, help="system text (default: dump the real one with tools/pi/dump_server.py)")
     ap.add_argument("--out", type=Path, required=True, help="keeps the stream, requests' usage and the report")
     a = ap.parse_args(argv)
-    profile = PR.load(a.profile)
+    profile = pr.load(a.profile)
     key = os.environ.get(profile.endpoint.api_key_env) if profile.endpoint else None
     if not key:
         print(
@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     price = tuple(float(x) for x in a.price.split(",")) if a.price else None
     a.out.mkdir(parents=True, exist_ok=True)
-    system = a.system or PC.write_system_text(a.out / "system.txt")
+    system = a.system or pc.write_system_text(a.out / "system.txt")
     before = balance(profile.endpoint.base_url, key)
     with tempfile.TemporaryDirectory(prefix="bg3-pi-live-") as tmp:
         ws = Path(tmp)
@@ -86,9 +86,9 @@ def main(argv: list[str] | None = None) -> int:
             "timeout": 110_000,
             "env": {"STUB_MCP_LOG": str(a.out / "mcp.jsonl")},
         }
-        settings = {**PC.PI_SETTINGS, "retry": {"enabled": True, "maxRetries": 1}}
-        client = PC.PiClient(profile, system, server=server, cwd=ws, settings=settings)
-        req = C.Request(prompt=PROMPT, model=profile.model, session_dir=ws, session="live-check-0001", tag="live")
+        settings = {**pc.PI_SETTINGS, "retry": {"enabled": True, "maxRetries": 1}}
+        client = pc.PiClient(profile, system, server=server, cwd=ws, settings=settings)
+        req = cl.Request(prompt=PROMPT, model=profile.model, session_dir=ws, session="live-check-0001", tag="live")
         client.write_config(req)
         env = {**os.environ, **client.env(req)}
         p = subprocess.Popen(

@@ -21,14 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-from bg3harness import clients as C
-from bg3harness import pi_client as PC
-from bg3harness import profiles as PR
+from bg3harness import clients as cl
+from bg3harness import pi_client as pc
+from bg3harness import profiles as pr
 from bg3harness.runner import env as renv
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 STREAMS = ("sequential", "overflow", "malformed", "tool_error", "abort", "resume", "billing", "retries", "image")
-PROFILE = PR.parse(
+PROFILE = pr.parse(
     {
         "client": "pi",
         "model": "vendor/model-1",
@@ -54,12 +54,12 @@ def lines(name: str) -> list[str]:
     return (FIXTURES / f"{name}.jsonl").read_text().splitlines()
 
 
-def parse(stream: list[str]) -> tuple[PC.PiParser, list[C.Event]]:
-    p = PC.PiParser("anthropic/stub-model")
+def parse(stream: list[str]) -> tuple[pc.PiParser, list[cl.Event]]:
+    p = pc.PiParser("anthropic/stub-model")
     return p, [e for line in stream for e in p.parse(line)]
 
 
-def result(events: list[C.Event]) -> C.Event:
+def result(events: list[cl.Event]) -> cl.Event:
     res = [e for e in events if e.kind == "result"]
     assert len(res) == 1, res
     return res[0]
@@ -90,7 +90,7 @@ SYSTEM = ev("message_end", message={"role": "system", "toolsAdded": [{"name": f"
 class Streams(unittest.TestCase):
     def test_golden_log_lines(self):
         for name in STREAMS:
-            got = "".join(line + "\n" for e in parse(lines(name))[1] for line in C.format_event(e))
+            got = "".join(line + "\n" for e in parse(lines(name))[1] for line in cl.format_event(e))
             golden = FIXTURES / f"{name}.log"
             if os.environ.get("BG3AI_UPDATE_GOLDEN"):
                 golden.write_text(got)
@@ -190,7 +190,7 @@ class Guards(unittest.TestCase):
         self.assertIsNotNone(renv.mcp_problem(events[0].mcp, False))
 
     def test_init_waits_for_both_and_comes_once(self):
-        p = PC.PiParser("m")
+        p = pc.PiParser("m")
         self.assertEqual(p.parse(SYSTEM), [])  # the server's count not known yet
         self.assertEqual([e.kind for e in p.parse(TOOLS)], [])
         self.assertEqual([e.kind for e in p.parse(assistant())], ["init", "usage"])
@@ -198,12 +198,12 @@ class Guards(unittest.TestCase):
 
     def test_overflow_loop_is_cut(self):
         compact = ev("compaction_start")
-        _, events = parse([TOOLS, SYSTEM] + [compact] * (PC.MAX_RECOVERY + 3) + [ev("agent_settled", aborted=False)])
-        self.assertEqual([e.kind for e in events].count("compact"), PC.MAX_RECOVERY + 3)
+        _, events = parse([TOOLS, SYSTEM] + [compact] * (pc.MAX_RECOVERY + 3) + [ev("agent_settled", aborted=False)])
+        self.assertEqual([e.kind for e in events].count("compact"), pc.MAX_RECOVERY + 3)
         res = result(events)  # one result: the loop's, not a second one at agent_settled
         self.assertEqual((res.subtype, res.is_error, res.api_error), ("error_overflow_loop", True, False))
         overflow = assistant("error", "400: maximum context length is 200000 tokens")
-        _, events = parse([TOOLS, SYSTEM] + [overflow] * (PC.MAX_RECOVERY + 1))
+        _, events = parse([TOOLS, SYSTEM] + [overflow] * (pc.MAX_RECOVERY + 1))
         self.assertEqual(result(events).subtype, "error_overflow_loop")
 
     def test_api_error_classes(self):
@@ -259,12 +259,12 @@ class Guards(unittest.TestCase):
             ev("agent_settled", aborted=False),
         ]
         rates = {"input": 0.3, "output": 1.2, "cache_read": 0.006}
-        p = PC.PiParser("deepseek-flash", rates)
+        p = pc.PiParser("deepseek-flash", rates)
         res = result([e for line in stream for e in p.parse(line)])
         peak = 0.006 + 0.03 + 0.012
         self.assertAlmostEqual(res.cost_usd, peak / 2 + peak)  # off-peak (05:16 Beijing) + peak (10:00)
         # a billed usage.cost (OpenRouter) still wins; no DeepSeek rates: pi's estimate
-        p = PC.PiParser("deepseek-flash", rates)
+        p = pc.PiParser("deepseek-flash", rates)
         res = result(
             [
                 e
@@ -276,7 +276,7 @@ class Guards(unittest.TestCase):
         self.assertEqual(result(parse(stream)[1]).cost_usd, 0.25)
 
     def test_garbage_lines(self):
-        p = PC.PiParser()
+        p = pc.PiParser()
         for line in ("", "not json", "[1]", "null", ev("message_update")):
             self.assertEqual(p.parse(line), [])
 
@@ -285,9 +285,9 @@ class Guards(unittest.TestCase):
             'Error: Failed to load extension "/x/tools/pi/bg3.ts": Failed to load extension: spawn uv ENOENT\n'
             'Hint: Start without extensions using "pi -ne".\n'
         )
-        self.assertIn("spawn uv ENOENT", PC.exit_problem(1, err))
-        self.assertIsNone(PC.exit_problem(0, err))
-        self.assertIsNone(PC.exit_problem(1, "Error: something else"))
+        self.assertIn("spawn uv ENOENT", pc.exit_problem(1, err))
+        self.assertIsNone(pc.exit_problem(0, err))
+        self.assertIsNone(pc.exit_problem(1, "Error: something else"))
 
 
 class Client(unittest.TestCase):
@@ -299,10 +299,10 @@ class Client(unittest.TestCase):
             "env": {"BG3AI_SERVE_RULES": "1"},
             "timeout": 110_000,
         }
-        self.client = PC.PiClient(
+        self.client = pc.PiClient(
             PROFILE, self.tmp / "system.txt", server=self.server, cwd=self.tmp / "play", binary="/opt/pi"
         )
-        self.req = C.Request(
+        self.req = cl.Request(
             prompt="go",
             model="vendor/model-1",
             session_dir=self.tmp,
@@ -312,8 +312,8 @@ class Client(unittest.TestCase):
         )
 
     def test_registered(self):
-        c = C.make("pi", profile=PROFILE, system_file=self.tmp / "s.txt", server=self.server)
-        self.assertIsInstance(c, PC.PiClient)
+        c = cl.make("pi", profile=PROFILE, system_file=self.tmp / "s.txt", server=self.server)
+        self.assertIsInstance(c, pc.PiClient)
         self.assertEqual((c.name, c.supports_resume, c.assigns_session), ("pi", True, True))
 
     def test_command(self):
@@ -330,7 +330,7 @@ class Client(unittest.TestCase):
                 "-np",
                 "--offline",
                 "-e",
-                str(PC.EXTENSION),
+                str(pc.EXTENSION),
                 "--tools",
                 "mcp__bg3__*",
                 "--session-dir",
@@ -364,13 +364,13 @@ class Client(unittest.TestCase):
         self.req.session, self.req.model = "S", "other/model"
         with self.assertRaisesRegex(ValueError, "not the profile's"):
             self.client.command(self.req)
-        with self.assertRaisesRegex(PR.ProfileError, "needs a pi profile"):
-            PC.PiClient(PR.parse({"client": "codex", "model": "m"}), self.tmp / "s.txt", server=self.server)
+        with self.assertRaisesRegex(pr.ProfileError, "needs a pi profile"):
+            pc.PiClient(pr.parse({"client": "codex", "model": "m"}), self.tmp / "s.txt", server=self.server)
 
     def test_deepseek_rates_only_for_deepseeks_api(self):
         self.assertIsNone(self.client.new_parser().deepseek_prices)  # OpenRouter bills usage.cost itself
-        prof = PR.load(C.REPO / "profiles" / "deepseek-flash.toml")
-        c = PC.PiClient(prof, self.tmp / "s.txt", server=self.server)
+        prof = pr.load(cl.REPO / "profiles" / "deepseek-flash.toml")
+        c = pc.PiClient(prof, self.tmp / "s.txt", server=self.server)
         self.assertEqual(c.parser.deepseek_prices, {"input": 0.3, "output": 1.2, "cache_read": 0.006})
 
     def test_deepseek_profiles_bill_at_deepseeks_price_sheet(self):
@@ -381,15 +381,15 @@ class Client(unittest.TestCase):
             "deepseek-v4-pro": (0.044, 1.32, 3.96),
         }
         usage = {"prompt_cache_hit_tokens": 2_000_000, "prompt_cache_miss_tokens": 300_000, "completion_tokens": 40_000}
-        for path in sorted((C.REPO / "profiles").glob("deepseek-*.toml")):
-            prof = PR.load(path)
+        for path in sorted((cl.REPO / "profiles").glob("deepseek-*.toml")):
+            prof = pr.load(path)
             if prof.endpoint is None or prof.endpoint.provider != "deepseek":
                 continue  # through OpenRouter: its usage.cost is the bill
             hit, miss, out = sheet.pop(prof.model)
             peak = (2_000_000 * hit + 300_000 * miss + 40_000 * out) / 1e6
             for ts, want in (("2026-10-22T02:00:00Z", peak), ("2026-10-22T12:00:00Z", peak / 2)):
                 entry = {"customType": "bg3.billing", "data": {"usage": usage}, "timestamp": ts}
-                parser = PC.PiClient(prof, self.tmp / "s.txt", server=self.server).new_parser()
+                parser = pc.PiClient(prof, self.tmp / "s.txt", server=self.server).new_parser()
                 stream = [TOOLS, SYSTEM, ev("entry_appended", entry=entry), assistant(cost=9.0)]
                 res = result([e for line in [*stream, ev("agent_settled", aborted=False)] for e in parser.parse(line)])
                 self.assertAlmostEqual(res.cost_usd, want, msg=f"{path.name} at {ts}")
@@ -399,8 +399,8 @@ class Client(unittest.TestCase):
         paths = self.client.write_config(self.req)
         d = self.tmp / "S007.pi"
         self.assertEqual(paths, [d / "settings.json", d / "models.json", d / "bg3.json"])
-        self.assertEqual(json.loads(paths[0].read_text()), PC.PI_SETTINGS)
-        self.assertEqual(json.loads(paths[1].read_text()), PR.models_json(PROFILE))
+        self.assertEqual(json.loads(paths[0].read_text()), pc.PI_SETTINGS)
+        self.assertEqual(json.loads(paths[1].read_text()), pr.models_json(PROFILE))
         self.assertEqual(
             json.loads(paths[2].read_text()),
             {
@@ -417,7 +417,7 @@ class Client(unittest.TestCase):
         self.assertNotIn("OTHER", paths[2].read_text())
 
     def test_a_text_only_model_gets_a_server_without_screenshots(self):
-        raw = PR.parse(
+        raw = pr.parse(
             {
                 "client": "pi",
                 "model": "vendor/model-1",
@@ -435,8 +435,8 @@ class Client(unittest.TestCase):
                 },
             }
         )
-        c = PC.PiClient(raw, self.tmp / "s.txt", server=self.server, cwd=self.tmp / "play")
-        req = C.Request(
+        c = pc.PiClient(raw, self.tmp / "s.txt", server=self.server, cwd=self.tmp / "play")
+        req = cl.Request(
             prompt="go",
             model="vendor/model-1",
             session_dir=self.tmp,
@@ -448,7 +448,7 @@ class Client(unittest.TestCase):
         self.assertEqual(env["BG3AI_TOOLS_OFF"], "wiki,screenshots")
 
     def test_config_http(self):
-        c = PC.PiClient(PROFILE, self.tmp / "s.txt", server=C.http_server("http://h:1/mcp", 60_000))
+        c = pc.PiClient(PROFILE, self.tmp / "s.txt", server=cl.http_server("http://h:1/mcp", 60_000))
         self.assertEqual(c.bg3_config(self.req)["server"], {"url": "http://h:1/mcp", "timeout": 60.0})
 
     def test_env(self):
@@ -459,8 +459,8 @@ class Client(unittest.TestCase):
         )
 
     def test_settings_keep_compaction_off(self):
-        self.assertEqual(PC.PI_SETTINGS["compaction"], {"enabled": False})
-        self.assertEqual(PC.PI_SETTINGS["cacheWarming"], "off")
+        self.assertEqual(pc.PI_SETTINGS["compaction"], {"enabled": False})
+        self.assertEqual(pc.PI_SETTINGS["cacheWarming"], "off")
 
 
 if __name__ == "__main__":
