@@ -15,6 +15,9 @@
   let busy = $state(false);
   let loaded = ""; // the name whose config fills the form: a second change event must not wipe the user's picks
   let loading = $state(false); // the settings wait for that config: a pick made before it lands would be overwritten
+  // supervisor events heard on the stream, which carries every change in order: a reply to a request sent before
+  // one of them is older than it (CI: the start reply "running · S001" landed after the stream's "idle")
+  let heard = 0;
 
   async function loadConfig(name: string) {
     if (!name || name === loaded) return;
@@ -33,9 +36,10 @@
   }
 
   onMount(() => {
+    const h = heard;
     api.supervisor().then(
       (r) => {
-        sup = r.supervisor;
+        if (heard === h) sup = r.supervisor;
         enabled = r.supervisor !== null;
         profiles = r.profiles;
       },
@@ -44,7 +48,10 @@
     form.name = pt ?? "";
     void loadConfig(form.name);
     return openStream(null, (type, data) => {
-      if (type === "supervisor") sup = data as SupervisorView;
+      if (type === "supervisor") {
+        sup = data as SupervisorView;
+        heard++;
+      }
     }, () => {}, () => {});
   });
 
@@ -58,9 +65,10 @@
       return;
     }
     busy = true;
+    const h = heard;
     try {
       const r = await api.control(form.name, what, what === "stop" ? {} : b.body);
-      sup = r.supervisor;
+      if (heard === h) sup = r.supervisor;
       error = null;
       if (what === "resume") onWatch(form.name); // a new playthrough has nothing to watch until its runner writes
     } catch (e) {

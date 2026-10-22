@@ -21,7 +21,7 @@ from types import ModuleType
 
 from bg3bench import facts as bfacts
 from bg3bench.scenario_v1 import save_digest
-from stress_exec import AccOutcome, LockBusyError, ProbeOutcome, SaveError, SessionOutcome
+from stress_exec import AccOutcome, LockBusyError, ProbeOutcome, SaveError, SessionOutcome, wait_loaded
 
 REPO = Path(__file__).resolve().parents[2]
 SAVE_FOLDER_RE = re.compile(r"^(?P<owner>.+)-(?P<num>\d+)__(?P<label>.+)$")
@@ -85,7 +85,9 @@ class ProcHost:
 
 class DirSaves:
     """The Story save folder. copy() makes `<owner>-<id>__SCN-stress_<row>` from the newest folder with the label
-    (as load_game picks), checked byte-equal (.lsv sha1) to it; the original is only read."""
+    (as load_game picks), checked byte-equal (.lsv sha1) to it; the original is only read. The copy's .lsv and .WebP
+    are renamed after its label, as the game names them (scenario_v1.save_lsv): BG3 sits at 0 % on the loading
+    screen for good on a folder whose .lsv keeps the source's label (live5 §0.3)."""
 
     def __init__(self, save_dir: Path):
         self.dir = save_dir
@@ -114,6 +116,9 @@ class DirSaves:
             shutil.rmtree(dst)  # our own older copy of another start (the name is checked above)
         if not dst.exists():
             shutil.copytree(src, dst)
+        for f in list(dst.iterdir()):
+            if f.suffix in (".lsv", ".WebP") and f.stem != new_label:
+                f.rename(dst / f"{new_label}{f.suffix}")
         if save_digest(self.dir, dst.name) != want:
             raise SaveError(f"the copy {dst.name} differs from {src.name}")
         return dst.name, m.group("owner")
@@ -158,11 +163,16 @@ class JsonStore:
         os.replace(tmp, self.path)
 
 
-def run_logged(argv: list[str], log: Path, cwd: Path, env: dict, timeout_s: float) -> tuple[int | None, str]:
-    """argv with its output in log; (exit code or None on a timeout, output). The whole process group is killed on
-    a timeout."""
+def run_logged(
+    argv: list[str], log: Path, cwd: Path, env: dict, timeout_s: float, header: str = ""
+) -> tuple[int | None, str]:
+    """argv with its output in log (after the header line, if any); (exit code or None on a timeout, the log). The
+    whole process group is killed on a timeout."""
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "w") as lf:
+        if header:
+            lf.write(header + "\n")
+            lf.flush()
         p = subprocess.Popen(
             argv,
             cwd=cwd,
@@ -214,7 +224,9 @@ class LiveWindowAcc:
 
 class WindowProbe:
     """A probe script against a game started on the save copy by live_window's own steps (display, Steam
-    offline, bg3le, ramwatch, launch), then stopped the same way. The caller holds game.lock."""
+    offline, bg3le, ramwatch, launch), then stopped the same way. The launch returns at the main menu, so the probe
+    starts once the save is in play (stress_exec.wait_loaded; the wait is the probe log's first line). The caller
+    holds game.lock."""
 
     def __init__(self, repo: Path, runtime: Path):
         self.repo, self.runtime = repo, runtime
@@ -244,10 +256,16 @@ class WindowProbe:
             w.stop()
             bad = [r for r in w.rows if r["verdict"] == "FAIL"]
             return ProbeOutcome(None, "", str(w.dir), f"game not up: {bad[-1]['evidence'] if bad else 'no Steam'}")
+        from bg3harness.game import io as gio
+
+        loaded, waited = wait_loaded(gio.server_ready, gio.ui_screen, SystemClock())
+        if not loaded:
+            w.stop()
+            return ProbeOutcome(None, "", str(w.dir), f"game up, but {waited}")
         env = dict(w.env, PYTHONPATH=str(path.parent), BG3AI_STRESS_SAVE=save_folder or "")
         runner = ["bash"] if path.suffix == ".sh" else ["uv", "run", "--project", str(self.repo / "bridge"), "python"]
         try:
-            rc, text = run_logged([*runner, str(path), *args], log, out, env, timeout_s)
+            rc, text = run_logged([*runner, str(path), *args], log, out, env, timeout_s, header=f"stress: {waited}")
         finally:
             w.stop()
         return ProbeOutcome(rc, text, str(log))

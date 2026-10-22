@@ -73,6 +73,32 @@ class SessionOutcome:
     error: str = ""
 
 
+LOAD_WAIT_S, LOAD_POLL_S = 300.0, 3.0
+NOT_LOADED_SCREENS = (None, "main_menu", "loading")  # the mod's ui.state screen before a save is in play
+
+
+def wait_loaded(
+    server_ready: Callable[[], bool],
+    screen: Callable[[], str | None],
+    clock: Clock,
+    timeout_s: float = LOAD_WAIT_S,
+    poll_s: float = LOAD_POLL_S,
+) -> tuple[bool, str]:
+    """Until the launch's save is in play: the server context answers and the screen is no longer the main menu
+    or the loading one (first_launch's READY is the menu: the -loadSaveGame load is still running). -> (loaded,
+    what was seen and after how long)."""
+    t0 = clock.now()
+    while True:
+        ready, scr = server_ready(), screen()
+        waited = clock.now() - t0
+        if ready and scr not in NOT_LOADED_SCREENS:
+            return True, f"save loaded after {waited:.0f} s (server context up, screen {scr})"
+        if waited >= timeout_s:
+            seen = f"server context {'up' if ready else 'down'}, screen {scr}"
+            return False, f"no save loaded after {timeout_s:.0f} s ({seen})"
+        clock.sleep(poll_s)
+
+
 class AccRunner(Protocol):
     def run(self, sections: tuple[str, ...]) -> AccOutcome: ...
 

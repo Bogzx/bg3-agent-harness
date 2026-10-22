@@ -97,9 +97,19 @@ def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
     page.get_by_label("Tactician").check()
     page.get_by_label("Record video").uncheck()
     name.dispatch_event("change")  # a repeated change of the same name keeps the picks
-    page.get_by_role("button", name="Start").click()
-    expect(page.locator(".state")).to_contain_text("e2e-new")
-    expect(page.locator(".state")).to_contain_text("idle")  # the instant runner's session ended at once
+    # CI 39683490769: the start reply, built while the session ran, landed after the stream's "idle" and the page
+    # stayed "running · e2e-new · S001 · playing". Hold the reply until the stream's idle shows, then answer stale.
+    held = []
+    page.route("**/api/v1/playthroughs/e2e-new/start", lambda r: held.append(r))
+    with page.expect_request("**/e2e-new/start"):
+        page.get_by_role("button", name="Start").click()
+    reply = held[0].fetch()  # the server starts it; the instant runner's session ends at once
+    expect(page.locator(".state")).to_contain_text("idle · e2e-new")
+    stale = {"playthrough": "e2e-new", "state": "running", "detail": "playing", "session": "S001"}
+    held[0].fulfill(response=reply, json=dict(reply.json(), supervisor=stale))
+    expect(page.get_by_role("button", name="Start")).to_be_enabled()  # the reply was handled (busy is over)
+    expect(page.locator(".state")).to_contain_text("idle · e2e-new")
+    page.unroute("**/api/v1/playthroughs/e2e-new/start")
     req = site["runner"].requests[-1]
     cfg = req.config
     assert (

@@ -123,8 +123,9 @@ def clip(s: str, n: int = EVIDENCE_MAX) -> str:
 
 def acc_verdicts(checks: tuple[Check, ...], items: list[dict], where: str) -> dict[str, tuple[str, str]]:
     """Each acc check's (verdict, evidence) from acceptance results.json rows ({section, item, verdict,
-    evidence}): the items of its section whose name starts with the check's item, combined. None found: ERROR
-    (the section died before it, or the item was renamed: the section's own FAIL line is quoted)."""
+    evidence}): the items of its section whose name starts with the check's item, combined. None found: FAIL when
+    the section aborted (its `section <name>` FAIL row: a script error, no game, no result file) with that reason,
+    else ERROR (the item was renamed or never ran: the section's FAIL lines are quoted)."""
     out = {}
     for c in checks:
         sec, name = c.spec["section"], c.spec["item"]
@@ -133,6 +134,11 @@ def acc_verdicts(checks: tuple[Check, ...], items: list[dict], where: str) -> di
             verdict = combine([r.get("verdict", "") for r in hits])
             ev = "; ".join(f"{r['item']}={r.get('verdict')}: {r.get('evidence', '')}" for r in hits)
             out[c.key] = (verdict or "INFO", clip(f"acc {where}: {ev}"))
+            continue
+        abort = next((r for r in items if r.get("item") == f"section {sec}" and r.get("verdict") == "FAIL"), None)
+        if abort:
+            ev = f"no item {name!r}: section {sec} aborted before it: {abort.get('evidence', '')}"
+            out[c.key] = ("FAIL", clip(f"acc {where}: {ev}"))
             continue
         why = [r for r in items if r.get("section") == sec and r.get("verdict") == "FAIL"]
         tail = f" (section FAILs: {'; '.join(r['item'] + ': ' + r.get('evidence', '') for r in why)})" if why else ""

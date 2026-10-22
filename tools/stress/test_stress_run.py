@@ -161,8 +161,20 @@ def test_acc_verdicts_match_by_prefix_and_say_why_an_item_is_missing(m):
     out = core.acc_verdicts(checks, ITEMS, "runtime/live/x")
     assert out["A1#0"][0] == "PASS" and "new Lua state" in out["A1#0"][1]
     assert out["A2#0"][0] == "PASS"
-    assert out["A2#1"][0] == "ERROR"
-    assert "no item 'ALERTS line'" in out["A2#1"][1] and "script error KeyError" in out["A2#1"][1]
+    assert out["A2#1"][0] == "FAIL"  # reads aborted: the item never ran, the section's abort is the reason
+    assert "no item 'ALERTS line'" in out["A2#1"][1] and "section reads aborted" in out["A2#1"][1]
+    assert "script error KeyError" in out["A2#1"][1]
+
+
+def test_a_missing_item_is_an_error_only_when_its_section_did_not_abort(m):
+    items = [*ITEMS, {"section": "trade", "item": "trade open", "verdict": "FAIL", "evidence": "UI busy"}]
+    out = core.acc_verdicts(m.by_id["A1"].checks, [r for r in items if r["section"] != "se"], "w")
+    assert out["A1#0"][0] == "ERROR"  # no se rows at all: the section never ran
+    renamed = [{"section": "se", "item": "load_game check v2", "verdict": "PASS", "evidence": ""}]
+    assert core.acc_verdicts(m.by_id["A1"].checks, renamed, "w")["A1#0"][0] == "ERROR"
+    aborted = [{"section": "se", "item": "section se", "verdict": "FAIL", "evidence": "script error GameError: busy"}]
+    got = core.acc_verdicts(m.by_id["A1"].checks, aborted, "w")["A1#0"]
+    assert got[0] == "FAIL" and "section se aborted before it: script error GameError: busy" in got[1]
 
 
 @pytest.mark.parametrize(
@@ -409,7 +421,7 @@ def test_a_full_run_records_every_check(m):
     assert got == {
         "A1#0": "PASS",
         "A2#0": "PASS",
-        "A2#1": "ERROR",
+        "A2#1": "FAIL",
         "B1#0": "PASS",
         "B2#0": "SKIP",
         "C1#0": "PASS",
