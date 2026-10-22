@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/playthrough/schemas/supervisor.v1.schema.json",
+  "title": "supervisor.json v1: the app's session history of one playthrough",
+  "description": "<runtime>/sessions/<playthrough>/supervisor.json, written by bg3play.supervisor (write_history) after each session it ran: one row per SessionResult. A row with session \"?\" is a session that never started (no agent, no game, refused spend): it is in the history but doesn't count as played. Readers skip fields they don't know.",
+  "type": "object",
+  "required": ["v", "history"],
+  "properties": {
+    "v": {"const": 1},
+    "history": {"type": "array", "items": {"$ref": "#/$defs/row"}}
+  },
+  "$defs": {
+    "time": {"type": ["number", "null"]},
+    "row": {
+      "type": "object",
+      "required": ["session", "outcome", "progress", "started", "ended", "cost_usd", "detail", "game_deaths"],
+      "properties": {
+        "session": {"type": "string", "pattern": "^(S\\d{3,}(-r\\d+)?|\\?)$"},
+        "outcome": {"enum": ["ok", "stopped", "crash", "error", "finished"]},
+        "progress": {"type": ["boolean", "null"], "description": "null: unknown (doesn't count as stuck)"},
+        "started": {"$ref": "#/$defs/time"},
+        "ended": {"$ref": "#/$defs/time"},
+        "cost_usd": {"type": ["number", "null"], "minimum": 0},
+        "detail": {"type": "string"},
+        "game_deaths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "each game death the session recovered from (or refused to): its OOM cause, \"\" = not out of memory"
+        }
+      }
+    }
+  }
+}

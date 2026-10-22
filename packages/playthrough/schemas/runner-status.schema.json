@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/playthrough/schemas/runner-status.schema.json",
+  "title": "runner.status.json: what the runner is playing now (unversioned)",
+  "description": "<runtime>/runner.status.json, merged field by field (write_status) by play.py's runner (bg3harness.runner.state) and by the app (bg3play.adapters.harness_runner.write_status). A session is running while `session_ended` is null. Paths are absolute on the machine that wrote them; readers use only their file names. No `v` field yet, for the same reason as runner.json. Other keys are free.",
+  "type": "object",
+  "properties": {
+    "playthrough": {"type": "string"},
+    "session": {"type": ["string", "null"]},
+    "started": {"type": ["number", "null"]},
+    "session_ended": {"type": ["number", "null"]},
+    "updated": {"type": ["number", "null"]},
+    "log": {"type": ["string", "null"]},
+    "model": {"type": ["string", "null"]},
+    "effort": {"type": ["string", "null"]},
+    "runner_pid": {"type": ["integer", "null"]},
+    "deadline": {"type": ["number", "null"]},
+    "session_minutes": {"type": ["number", "null"]},
+    "status_line": {"type": "string"},
+    "alert": {
+      "type": "object",
+      "required": ["t", "kind", "msg"],
+      "properties": {"t": {"type": "number"}, "kind": {"type": "string"}, "msg": {"type": "string"}}
+    }
+  }
+}

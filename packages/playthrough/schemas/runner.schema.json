@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/playthrough/schemas/runner.schema.json",
+  "title": "runner.json: one playthrough's runner state and play history (unversioned)",
+  "description": "<runtime>/sessions/<playthrough>/runner.json. Written by play.py's runner (bg3harness.runner.state.RunnerState: save owner, quicksaves, loaded save, mod hashes ...) and by the app (bg3play.adapters.harness_runner.append_history: one play row per session; bg3harness.game.host.AppHost: loaded_save). Every writer keeps the keys it doesn't own. No `v` field yet: play.py and the app share the file until Phase D retires play.py, and old files must keep parsing. This schema pins what the readers use (bg3play.store, the runner's policy); other keys are free.",
+  "type": "object",
+  "properties": {
+    "history": {"type": "array", "items": {"$ref": "#/$defs/entry"}},
+    "save_owner": {"type": ["string", "null"]},
+    "loaded_save": {"type": ["string", "null"]},
+    "runner_saves": {"type": "array"},
+    "agent_saves": {"type": "array"}
+  },
+  "$defs": {
+    "time": {"type": ["number", "null"]},
+    "entry": {
+      "type": "object",
+      "required": ["session", "started", "ended"],
+      "properties": {
+        "kind": {"type": "string", "description": "absent = \"play\" (old files); readers use only play rows"},
+        "session": {"type": "string", "pattern": "^S\\d{3,}(-r\\d+)?$"},
+        "started": {"$ref": "#/$defs/time"},
+        "ended": {"$ref": "#/$defs/time"},
+        "reason": {"type": ["string", "null"], "description": "why it ended: exited, milestone, cap, hang, crash, aborted ..."},
+        "exit": {"type": ["integer", "null"]},
+        "claude_session": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "effort": {"type": ["string", "null"]},
+        "condition": {"type": ["string", "null"]},
+        "minutes": {"type": "number"},
+        "progress": {"type": ["boolean", "null"]},
+        "resumes": {"type": "integer", "minimum": 0},
+        "stop_resumes": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
