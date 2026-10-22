@@ -81,8 +81,8 @@ class SettingsCheck(T.TmpDir):
         r = P.Runner.__new__(P.Runner)
         r.opt = P.Options("beach", None, 60, "opus", scenario_settings=want)
         r.game_settings = got  # game_setup's readout, done
-        r.events = []
-        r.event = lambda kind, **f: r.events.append((kind, f))
+        self.events: list[tuple[str, dict]] = []
+        r.event = lambda kind, **f: self.events.append((kind, f))
         return r
 
     def test_a_contradiction_stops_the_run(self):
@@ -95,7 +95,7 @@ class SettingsCheck(T.TmpDir):
             self.assertRaisesRegex(P.SettingsMismatch, "karmic_dice is True, the scenario needs False"),
         ):
             r.check_settings()
-        self.assertEqual([k for k, _ in r.events], ["settings_unverified", "settings_mismatch"])
+        self.assertEqual([k for k, _ in self.events], ["settings_unverified", "settings_mismatch"])
         self.assertEqual(status.call_args.kwargs["alert"]["kind"], "settings_mismatch")
 
     def test_a_matching_or_unknown_game_plays(self):
@@ -103,13 +103,13 @@ class SettingsCheck(T.TmpDir):
             {"difficulty": "Balanced", "karmic_dice": False, "timing": None}, {"difficulty": None, "karmic_dice": False}
         )
         r.check_settings()  # difficulty unknown to the readout: logged, not refused
-        self.assertEqual(r.events, [("settings_unverified", {"keys": ["difficulty"]})])
+        self.assertEqual(self.events, [("settings_unverified", {"keys": ["difficulty"]})])
         self.runner(None, {"karmic_dice": True}).check_settings()  # no scenario file: no check
 
 
 class RunRecord(T.TmpDir):
     def test_the_run_record_carries_timing_and_settings(self):
-        r = T.Wiring.runner(self, T.save_scenario())
+        r = T.Wiring.runner(self, T.save_scenario())  # pyright: ignore[reportArgumentType]  (Wiring's helper, not its tests)
         r.opt.scenario_settings = {"difficulty": None, "karmic_dice": False, "timing": "turn_based"}
         t0 = time.time() - 60
         r.begin_run(t0)

@@ -44,8 +44,11 @@ class Validation(unittest.TestCase):
 
     def test_plan_and_settings_args_take_an_object_or_a_string(self):
         build = {"class": "Wizard", "name": "Ilse"}
-        for tool, arg, value in (("level_up", "plan", {"spells": ["Shield"]}), ("create_character", "plan", build),
-                                 ("set_reactions", "settings", {"Shield": "ask"})):
+        for tool, arg, value in (
+            ("level_up", "plan", {"spells": ["Shield"]}),
+            ("create_character", "plan", build),
+            ("set_reactions", "settings", {"Shield": "ask"}),
+        ):
             self.assertEqual(validated(tool, {arg: value})[arg], value, tool)
             self.assertEqual(validated(tool, {arg: json.dumps(value)})[arg], value, tool)  # pre-parsed, as above
             types = {o["type"] for o in core.mcp._tool_manager.get_tool(tool).parameters["properties"][arg]["anyOf"]}
@@ -84,17 +87,21 @@ class ObjectArgs(unittest.TestCase):
 
     def test_set_reactions(self):
         sent = []
-        with mock.patch.object(uitools, "_reactions_rpc", lambda char, args: sent.append(args) or {"ok": True}), \
-                mock.patch.object(uitools.plumbing, "_who", lambda who: "u1"):
+        with (
+            mock.patch.object(uitools, "_reactions_rpc", lambda char, args: sent.append(args) or {"ok": True}),
+            mock.patch.object(uitools.plumbing, "_who", lambda who: "u1"),
+        ):
             uitools.set_reactions(settings={"Shield": "ask"})
             uitools.set_reactions(settings='{"Shield": "ask"}')
         self.assertEqual(sent, [{"char": "u1", "set": {"Shield": "ask"}}] * 2)
 
     def test_level_up(self):
         got = []
-        with mock.patch.object(core.game, "try_rpc", lambda *a, **k: {}), \
-                mock.patch.object(progression.plumbing, "_who", lambda who: "u1"), \
-                mock.patch.object(progression, "_level_up", lambda uuid, plan: got.append(plan) or "level_up: done"):
+        with (
+            mock.patch.object(core.game, "try_rpc", lambda *a, **k: {}),
+            mock.patch.object(progression.plumbing, "_who", lambda who: "u1"),
+            mock.patch.object(progression, "_level_up", lambda uuid, plan: got.append(plan) or "level_up: done"),
+        ):
             progression.level_up(plan={"spells": ["Shield"]})
             progression.level_up(plan='{"spells": ["Shield"]}')
             progression.level_up()
@@ -108,9 +115,12 @@ class ObjectArgs(unittest.TestCase):
             sent.append(args["plan"])
             return JobResult("failed", None, "stop here")
 
-        with mock.patch.object(saving, "PLAYTHROUGH", "pt"), mock.patch.object(saving, "SAVE_OWNER", ""), \
-                mock.patch.object(core, "_session_over", lambda: False), \
-                mock.patch.object(core.game, "run_job", run_job):
+        with (
+            mock.patch.object(saving, "PLAYTHROUGH", "pt"),
+            mock.patch.object(saving, "SAVE_OWNER", ""),
+            mock.patch.object(core, "_session_over", lambda: False),
+            mock.patch.object(core.game, "run_job", run_job),
+        ):
             newgame.create_character({"class": "Wizard", "name": "Ilse"})
             newgame.create_character('{"class": "Wizard", "name": "Ilse"}')
         self.assertEqual(sent, [{"class": "Wizard", "name": "Ilse"}] * 2)

@@ -152,7 +152,7 @@ def test_the_set_covers_the_plan():
     assert 20 <= len(FAMILIES) <= 30 and fams.count("fight") == 10 and fams.count("fight") > len(fams) / 3
     assert fams.count("sandbox") == 5 and fams.count("choice") == 5 and fams.count("exploration") == 3
     fights = [n for n, f in FAMILIES.items() if f == "fight"]
-    assert {re.match(r"fight_act(\d)_", n)[1] for n in fights} == {"1", "2", "3"}
+    assert {re.match(r"fight_act(\d)_", n)[1] for n in fights} == {"1", "2", "3"}  # pyright: ignore[reportOptionalSubscript]
 
 
 def test_the_holdout_is_about_a_fifth_and_spans_the_families():

@@ -21,8 +21,11 @@ from bg3ai.tools import core
 TOOLS = json.loads((Path(__file__).resolve().parent / "golden" / "tools_list.json").read_text(encoding="utf-8"))
 # S023, claude-run-2 ...; a session log's path (memory/sessions/S012.md) is a file name, not a story
 ANECDOTE_RE = re.compile(r"(?<!sessions/)\bS\d{3}\b|claude-run|runtime/|playthroughs/")
-CLIENT_ONLY_RE = re.compile(r"mcp__|ToolSearch|alwaysLoad|end(s)? your turn|text-only|context compaction|Claude Code"
-                            r"|CLAUDE\.md", re.IGNORECASE)
+CLIENT_ONLY_RE = re.compile(
+    r"mcp__|ToolSearch|alwaysLoad|end(s)? your turn|text-only|context compaction|Claude Code"
+    r"|CLAUDE\.md",
+    re.IGNORECASE,
+)
 # coaching that used to open the instructions (packages/harness/prompts/coaching/pace.md and efficiency.md have it)
 COACHING_RE = re.compile(r"clicking ahead|keep planning|(wait_for|screenshot) only when", re.IGNORECASE)
 

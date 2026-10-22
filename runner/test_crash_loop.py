@@ -15,6 +15,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -32,7 +33,7 @@ G_FUNCS = {
 
 
 CTL_NAMES = ("KILL_GRACE", "KILL_CONFIRM", "LAUNCH_BACKOFF", "MENU_POLL", "SPLASH_LOADMENU_S")
-MOVED = dict.fromkeys(CTL_NAMES, C) | dict.fromkeys(("user_journal", "read_spikes"), O)
+MOVED: dict[str, ModuleType] = {**dict.fromkeys(CTL_NAMES, C), **dict.fromkeys(("user_journal", "read_spikes"), O)}
 
 
 def home(name: str):

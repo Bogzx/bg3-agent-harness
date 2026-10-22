@@ -117,15 +117,27 @@ class Steal(unittest.TestCase):
     }
 
     def setUp(self):
-        saved = (core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S,
-                 world_tools.PP_POLL_S)
+        saved = (
+            core.H,
+            core.game,
+            world_tools._click_act,
+            world_tools._inp,
+            world_tools.STEAL_ROLL_S,
+            world_tools.PP_POLL_S,
+        )
         core.H = Handles()
         world_tools._pp_open["npc"] = None
         hoverclick._hits.clear()
 
         def restore():
-            (core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S,
-             world_tools.PP_POLL_S) = saved
+            (
+                core.H,
+                core.game,
+                world_tools._click_act,
+                world_tools._inp,
+                world_tools.STEAL_ROLL_S,
+                world_tools.PP_POLL_S,
+            ) = saved
             world_tools._pp_open["npc"] = None
             hoverclick._hits.clear()
 
@@ -134,7 +146,7 @@ class Steal(unittest.TestCase):
         self.window: str | None = None  # the NPC whose window shows
         self.roll_after_click: dict | None = {"finished": True, "success": True, "rolled": 15, "dc": 12}
         self.closes_on_click = False
-        self.close_lag = 0      # polls a closed window stays up (the game closes it frames later)
+        self.close_lag = 0  # polls a closed window stays up (the game closes it frames later)
         self.closing = 0
         self.stolen: set[str] = set()
         self.inp = FakeInput(over={(560, 651)})  # Steal under the seed (0.5604, 0.6519) of a 1000x1000 window

@@ -1,3 +1,4 @@
+# pyright: basic
 import copy
 import json
 import shutil
