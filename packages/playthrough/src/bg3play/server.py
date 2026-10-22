@@ -630,6 +630,7 @@ def main(argv: list[str] | None = None) -> int:
             lambda view: hub.publish("supervisor", view),
             played=lambda pt: len(store.session_logs(pt)),
             abort=abort,
+            on_run=getattr(runner, "run_event", lambda pt, kind, fields: None),  # play.py writes its own
         )
     viewers = Viewers(time.time)
     game = screen = None

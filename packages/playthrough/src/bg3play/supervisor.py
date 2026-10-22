@@ -204,6 +204,9 @@ class Supervisor:
     # sessions played before the supervisor kept a history (the runner's own logs); None = only its history
     played: Callable[[str], int] | None = None
     abort: Callable[[], None] = lambda: None  # ends the running session's agent now (HarnessRunner.abort)
+    # (pt, kind, fields) at a run's start ("runner_start") and end ("runner_stop", why): the harness runner's
+    # runner_events.jsonl rows (the dashboard's unattended hours); the legacy CLI's play.py writes its own
+    on_run: Callable[[str, str, dict[str, Any]], object] = lambda pt, kind, fields: None
     pt: str | None = None
     state: str = "idle"  # idle | running | stopping
     detail: str = ""
@@ -287,6 +290,7 @@ class Supervisor:
         started = self.clock()
         path = history_path(self.runtime, pt)
         end = "stopped"
+        self.on_run(pt, "runner_start", {})
         try:
             while not self.stop_event.is_set():
                 hist = read_history(path)
@@ -331,5 +335,6 @@ class Supervisor:
         except Exception as e:
             end = f"{type(e).__name__}: {e}"[:300]
         finally:
+            self.on_run(pt, "runner_stop", {"why": end})
             with self.lock:
                 self._set(state="idle", detail=end)

@@ -227,6 +227,28 @@ def test_faults_and_recoveries_reach_the_dashboards_event_log(tmp_path: Path):
     assert u is not None and u["faults"]["hang"] == 1 and u["faults"]["crash"] == 1 and u["recovered"] == 2
 
 
+def test_a_run_is_one_unattended_run_on_the_dashboard(tmp_path: Path):
+    # the app wrote no runner_start / runner_stop, so the dashboard showed no unattended hours for an app run
+    import os
+
+    from bg3play.live import unattended_payload
+
+    sup, *_, runtime = make(tmp_path, hours=1.0)
+    sup.on_run = sup.runner.run_event  # type: ignore[attr-defined]  # as serve wires it
+    seen: list[dict[str, Any]] = []
+    st = runtime / "runner.status.json"
+    sup.on_change = lambda view: seen.append(json.loads(st.read_text()) if st.exists() else {})
+    sup.start(PT, wait=True)
+    assert seen[1]["runner_pid"] == os.getpid()  # while the run plays (S001 starting)
+    status = json.loads((runtime / "runner.status.json").read_text())
+    assert status["runner_pid"] is None
+    sdir = runtime / "sessions" / PT
+    evs = [json.loads(ln) for ln in (sdir / "runner_events.jsonl").read_text().splitlines()]
+    assert [e["kind"] for e in evs] == ["runner_start", "runner_stop"] and evs[1]["why"] == "hours budget spent"
+    u = unattended_payload(sdir, status, now=evs[1]["t"])
+    assert u is not None and u["runs"] == 1 and u["last_stop"] == "hours budget spent" and not u["live"]
+
+
 def test_a_fault_the_app_cant_recover_ends_the_session_and_the_next_gets_the_crash_note(tmp_path: Path):
     sup, agent, game, *_ = make(tmp_path, [("crash", 5)], hours=0.5)
     sup.start(PT, wait=True)

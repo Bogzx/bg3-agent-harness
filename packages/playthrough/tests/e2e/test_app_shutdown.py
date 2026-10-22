@@ -151,6 +151,9 @@ def test_ctrl_c_ends_the_running_session_and_its_agent(tmp_path: Path):
     play = json.loads((runtime / "sessions" / PT / "runner.json").read_text())["history"]
     assert [p["reason"] for p in play] == ["aborted"]
     assert "ended before wrap-up" in (mem / "sessions" / "S001.md").read_text()  # session.py session-end ran
+    evs = [json.loads(ln) for ln in (runtime / "sessions" / PT / "runner_events.jsonl").read_text().splitlines()]
+    assert [(e["kind"], e.get("why")) for e in evs] == [("runner_start", None), ("runner_stop", "stopped")]
+    assert status["runner_pid"] is None
 
 
 def test_ctrl_c_during_the_keeper_pass_ends_its_client(tmp_path: Path):

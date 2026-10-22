@@ -315,6 +315,16 @@ class HarnessRunner:
         if (agent := self._agent) is not None:
             agent.kill()
 
+    def run_event(self, pt: str, kind: str, fields: dict[str, Any]) -> None:
+        """Supervisor.on_run: a run's runner_start / runner_stop in the playthrough's runner_events.jsonl and this
+        process as runner.status.json's runner_pid while it runs, as play.py writes them (the dashboard's unattended
+        hours: live.unattended_payload)."""
+        sdir = self.runtime / "sessions" / pt
+        sdir.mkdir(parents=True, exist_ok=True)
+        start = kind == "runner_start"
+        append_event(sdir, kind, {**fields, "pid": os.getpid()} if start else fields, self.log)
+        write_status(self.runtime, playthrough=pt, runner_pid=os.getpid() if start else None, updated=self.clock())
+
     def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         cfg, pt = req.config, req.playthrough
         sdir = self.runtime / "sessions" / pt
