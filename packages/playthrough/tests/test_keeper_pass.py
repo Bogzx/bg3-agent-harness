@@ -1,12 +1,13 @@
 # pyright: basic
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
 from bg3play import config
 from bg3play.keeper_pass import MemoryKeeper
 from bg3play.memory.keeper import KeeperResult
-from bg3play.supervisor import SessionResult
+from bg3play.supervisor import SessionRequest, SessionResult, Supervisor, SupervisorError
 
 
 class FakeRun:
@@ -59,6 +60,38 @@ def test_nothing_when_the_runner_keeps_the_memory_or_no_session(tmp_path: Path):
     k2.run_keeper("ilse", SessionResult("?", "error"))
     assert run.calls == [] and run2.calls == []
     assert not (tmp_path / "runtime" / "sessions" / "ilse" / "keeper_history.jsonl").exists()
+
+
+def profile_gone(cfg):
+    raise SupervisorError("no client profile pi-or")
+
+
+def test_a_pass_that_cant_start_is_an_error_row_not_an_exception(tmp_path: Path):
+    # the client profile vanished between sessions: client_for raised out of run_keeper and the Supervisor ended
+    # the whole run on it
+    k, run = make(tmp_path, profile_gone)
+    k.run_keeper("ilse", SessionResult("S002", "ok"))
+    (row,) = [
+        json.loads(ln) for ln in (tmp_path / "runtime/sessions/ilse/keeper_history.jsonl").read_text().splitlines()
+    ]
+    assert run.calls == [] and row["sid"] == "S002" and row["status"] == "error"
+    assert row["detail"] == "SupervisorError: no client profile pi-or" and row["t"] == 1234.5
+
+
+def test_the_run_plays_on_after_a_keeper_that_cant_start(tmp_path: Path):
+    k, _ = make(tmp_path, profile_gone)
+    played: list[int] = []
+
+    class Runner:
+        def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
+            played.append(req.session)
+            if req.session == 2:
+                stop.set()
+            return SessionResult(f"S{req.session:03d}", "ok")
+
+    sup = Supervisor(Runner(), k, tmp_path / "runtime", tmp_path / "playthroughs", lambda: 0.0)
+    sup.start("ilse", wait=True)
+    assert played == [1, 2] and sup.detail == "stopped"
 
 
 def test_the_keepers_pi_spend_needs_no_runner_on_sys_path(tmp_path: Path):

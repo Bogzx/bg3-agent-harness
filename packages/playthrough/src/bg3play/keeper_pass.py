@@ -41,10 +41,27 @@ class MemoryKeeper:
         )
 
     def run_keeper(self, pt: str, result: SessionResult) -> None:
+        """Never raises (as keeper.run_keeper): a pass that can't even start (the playthrough's config or client
+        profile gone) is an error row, and the next session plays on the memory as the player left it."""
+        sid = result.session.split("-")[0]
+        if not sid[1:].isdigit():  # "?": the runner reported no session
+            return
+        try:
+            self._run(pt, sid)
+        except Exception as e:
+            r = keeper.KeeperResult(sid, detail=f"{type(e).__name__}: {e}"[:300])
+            self._log(pt, {"t": round(self.clock(), 1), **r.__dict__})
+
+    def _log(self, pt: str, row: dict[str, Any]) -> None:
+        d = self.runtime / "sessions" / pt
+        d.mkdir(parents=True, exist_ok=True)
+        with (d / "keeper_history.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+
+    def _run(self, pt: str, sid: str) -> None:
         cfg = config.load(self.playthroughs / pt)
         who = self.client_for(cfg)
-        sid = result.session.split("-")[0]
-        if who is None or not sid[1:].isdigit():  # "?": the runner reported no session
+        if who is None:
             return
         client, profile = who
         d = self.runtime / "sessions" / pt
@@ -63,5 +80,4 @@ class MemoryKeeper:
             budget=self.runtime / "budget.json",
         )
         row = {"t": round(self.clock(), 1), "client": client, "model": model, "effort": cfg.keeper.effort}
-        with (d / "keeper_history.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps({**row, **r.__dict__}) + "\n")
+        self._log(pt, {**row, **r.__dict__})
