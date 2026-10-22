@@ -180,7 +180,6 @@
     "tools/memory/test_shims.py",
     "tools/pi/conformance/live_check.py",
     "tools/pi/conformance/test_pi_conformance.py",
-    "tools/saves/lspk.py",
     "tools/saves/test_inspect.py",
     "tools/vis/obs_size.py",
     "tools/vis/overlap.py",

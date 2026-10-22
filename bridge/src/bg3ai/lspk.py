@@ -14,7 +14,7 @@ import zlib
 from dataclasses import dataclass
 
 try:
-    from compression import zstd  # Python 3.14+
+    from compression import zstd  # pyright: ignore[reportMissingImports]  (Python 3.14+)
 except ImportError:  # pragma: no cover - depends on the interpreter
     zstd = None
 
@@ -181,7 +181,7 @@ def build(members: list[tuple[str, bytes, str]]) -> bytes:
         "none": lambda b: b,
         "zlib": zlib.compress,
         "lz4": lz4_literals,
-        "zstd": lambda b: zstd.compress(b),
+        "zstd": lambda b: zstd.compress(b),  # pyright: ignore[reportOptionalMemberAccess]  (tests skip it without)
     }
     codes = {v: k for k, v in METHODS.items()}
     body = bytearray()

@@ -23,8 +23,8 @@ REPO = HERE.parents[1]
 sys.path[:0] = [str(REPO / "bridge" / "src"), str(REPO / "packages" / "harness" / "src")]
 sys.path.append(str(HERE))
 
-import lspk  # noqa: E402
 import make_start_save as mss  # noqa: E402
+from bg3ai import lspk  # noqa: E402
 from bg3ai.game import Game, GameError  # noqa: E402
 from bg3harness.testing.fakemod import FakeMod, Ops  # noqa: E402
 from bg3harness.testing.scripted import FakeClock, GameModel  # noqa: E402

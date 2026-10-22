@@ -12,13 +12,11 @@ the mtime order by one and every load of an older save timed out.
 from __future__ import annotations
 
 import struct
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-# The save readers (LSPK, LSF) live with the save inspector, outside the bridge package.
-SAVE_TOOLS = Path(__file__).resolve().parents[3] / "tools" / "saves"
+from bg3ai import lsf, lspk
 
 
 def owner_of(folder: str) -> str:
@@ -44,15 +42,8 @@ def _mtime(d: Path) -> float:
 
 
 def read_meta(lsv: Path) -> tuple[str, float] | None:
-    """(LeaderName, SaveTime) from the save's meta.lsf, or None when it can't be read (no readers, zstd before
-    Python 3.14, not a v18 package, no such fields). Reads the header, the file list and that one member only."""
-    try:
-        if str(SAVE_TOOLS) not in sys.path:
-            sys.path.append(str(SAVE_TOOLS))
-        import lsf
-        import lspk
-    except ImportError:
-        return None
+    """(LeaderName, SaveTime) from the save's meta.lsf, or None when it can't be read (zstd before Python 3.14,
+    not a v18 package, no such fields). Reads the header, the file list and that one member only."""
     try:
         with lsv.open("rb") as f:
             head = f.read(lspk.HEADER.size)

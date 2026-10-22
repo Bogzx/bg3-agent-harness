@@ -1,16 +1,11 @@
 import os
 import struct
-import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-from bg3ai import saves
-
-sys.path.append(str(saves.SAVE_TOOLS))
-import lspk
-from test_inspect import lsf_bytes
+from bg3ai import lsf, lspk, saves
 
 
 def at(y, mo, d, h, mi) -> float:
@@ -19,7 +14,7 @@ def at(y, mo, d, h, mi) -> float:
 
 def meta_lsf(leader: str, saved: float) -> bytes:
     """meta.lsf as BG3 writes it: LeaderName and SaveTime (u64 epoch) on MetaData/MetaData."""
-    return lsf_bytes(
+    return lsf.build(
         [("MetaData", -1), ("MetaData", 0)],
         [("TimeStamp", 5, 1, struct.pack("<I", 10490)), ("LeaderName", 23, 1, leader.encode() + b"\0"),
          ("SaveTime", 24, 1, struct.pack("<Q", int(saved)))],
@@ -90,7 +85,7 @@ class SavesTest(unittest.TestCase):
             self.assertEqual(saves.read_meta(saves.save_file(d)), ("Claude", saved))
             self.assertIsNone(saves.read_meta(saves.save_file(make_save(root, "Claude-2__junk", 0))))
             self.assertIsNone(saves.read_meta(root / "Claude-9__gone" / "gone.lsv"))
-            no_leader = lsf_bytes([("MetaData", -1), ("MetaData", 0)], [("SaveTime", 24, 1, struct.pack("<Q", 5))])
+            no_leader = lsf.build([("MetaData", -1), ("MetaData", 0)], [("SaveTime", 24, 1, struct.pack("<Q", 5))])
             self.assertIsNone(saves.read_meta(saves.save_file(make_save(root, "Claude-3__x", 0, no_leader))))
             if lspk.zstd is not None:  # BG3 4.x stores meta.lsf with zstd
                 z = make_save(root, "Claude-4__z", 0, meta_lsf("Tav", at(2026, 10, 1, 1, 1)), "zstd")

@@ -224,7 +224,7 @@ def read_terms(path: Path) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     ap.add_argument("--root", type=Path, default=ROOT, help="git repo to scan (default: this repo)")
     ap.add_argument("--artifacts", type=Path, help="also scan every file under this release directory")
     ap.add_argument("--allowlist", type=Path, default=ALLOWLIST)

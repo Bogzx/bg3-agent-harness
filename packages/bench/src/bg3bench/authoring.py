@@ -249,9 +249,6 @@ def run_baselines(
 
 def save_inspector(repo: Path = REPO) -> Callable[[Path], list[str]]:
     """tools/saves/inspect.py (the harness's, not packaged) as register_save's inspector: one line per finding."""
-    tools = str(repo / "tools" / "saves")
-    if tools not in sys.path:
-        sys.path.append(tools)  # its `import lsf`; appended so its inspect.py never shadows the stdlib's
     spec = importlib.util.spec_from_file_location("bg3_save_inspect", repo / "tools" / "saves" / "inspect.py")
     if spec is None or spec.loader is None:
         raise AuthoringError(f"no save inspector at {repo / 'tools' / 'saves' / 'inspect.py'}")

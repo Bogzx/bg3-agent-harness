@@ -14,10 +14,10 @@ Run with -I (or from another directory): this file is named inspect.py, like the
 import os
 import sys
 
-# The script's own folder first on sys.path would shadow the stdlib `inspect` for everything imported below.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _HERE]
-sys.path.append(_HERE)
+# Run as a script, its own folder first on sys.path would shadow the stdlib `inspect` for everything imported below.
+if __name__ == "__main__":
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _HERE]
 
 import argparse
 import hashlib
@@ -25,8 +25,7 @@ import json
 import re
 from pathlib import Path
 
-import lsf
-import lspk
+from bg3ai import lsf, lspk
 
 PATTERNS = {
     "steam_id": re.compile(rb"7656119\d{10}"),
