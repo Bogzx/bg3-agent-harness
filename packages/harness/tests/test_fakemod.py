@@ -15,7 +15,7 @@ from bg3ai import referee, rpc_record
 from bg3ai.game import Game, GameError, NotReady
 from bg3ai.luadebug import LuaDebugClient
 from bg3harness.testing import wire
-from bg3harness.testing.fakemod import FakeMod, Ops
+from bg3harness.testing.fakemod import FakeMod, LuaError, Ops
 from bg3harness.testing.fixtures import FixtureStore
 from bg3harness.testing.scripted import FakeClock, GameModel
 
@@ -239,6 +239,15 @@ def test_store_errors_raw_and_validation(tmp_path: Path) -> None:
     assert store.reply("server", "x", {}) == {"lua_error": "boom"}
     assert store.eval_raw("client", "return 1") == "1"
     assert store.reply("server", "y", {}) is None
+    failed = FixtureStore(
+        [
+            {"v": 1, "ctx": "server", "code": "return 1", "error": "the server context runs once a save is loaded"},
+            {"v": 1, "ctx": "server", "code": "return 1", "reply": "1"},
+        ]
+    )
+    with pytest.raises(LuaError, match="once a save is loaded"):
+        failed.eval_raw("server", "return 1")
+    assert failed.eval_raw("server", "return 1") == "1"
     probe = [{"v": 1, "ctx": "client", "code": "return g()", "reply": r} for r in ("Running", "UnloadLevel", "Running")]
     probes = FixtureStore(probe)
     assert [probes.eval_raw("client", "return g()") for _ in range(4)] == [

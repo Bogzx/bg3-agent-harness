@@ -1,0 +1,70 @@
+{"v":1,"t":0.742,"ms":22.9,"ctx":"server","calls":[{"op":"events.since","args":{"seq":1000000000000,"limit":1}}],"replies":[{"result":{"events":[],"latest":3},"ok":true}]}
+{"v":1,"t":0.765,"ms":1.4,"ctx":"client","calls":[{"op":"events.since","args":{"seq":1000000000000,"limit":1}}],"replies":[{"ok":true,"result":{"events":[],"latest":0}}]}
+{"v":1,"t":0.767,"ms":16.5,"ctx":"client","calls":[{"op":"ui.menu","args":{"action":"load","name":"PROBE-49111260919__S049-end","owner":"Claude","index":271,"date":{"y":2026,"m":10,"d":11,"H":3,"M":49}}}],"replies":[{"ok":true,"result":{"job":1}}]}
+{"v":1,"t":0.786,"ms":15.3,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":18,"id":1}}]}
+{"v":1,"t":0.902,"ms":13.2,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":131,"id":1}}]}
+{"v":1,"t":1.015,"ms":305.7,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":537,"id":1}}]}
+{"v":1,"t":1.421,"ms":62.7,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":700,"id":1}}]}
+{"v":1,"t":1.585,"ms":110.8,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":911,"id":1}}]}
+{"v":1,"t":1.796,"ms":1.8,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":1014,"id":1}}]}
+{"v":1,"t":1.898,"ms":36.5,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":1151,"id":1}}]}
+{"v":1,"t":2.035,"ms":204.6,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":1456,"id":1}}]}
+{"v":1,"t":2.34,"ms":114.0,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":1670,"id":1}}]}
+{"v":1,"t":2.555,"ms":99.3,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":1870,"id":1}}]}
+{"v":1,"t":2.754,"ms":157.3,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":2128,"id":1}}]}
+{"v":1,"t":3.012,"ms":74.0,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":2302,"id":1}}]}
+{"v":1,"t":3.186,"ms":60.7,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":2463,"id":1}}]}
+{"v":1,"t":3.348,"ms":167.3,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":2731,"id":1}}]}
+{"v":1,"t":3.615,"ms":98.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":2930,"id":1}}]}
+{"v":1,"t":3.814,"ms":65.9,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":3096,"id":1}}]}
+{"v":1,"t":3.98,"ms":158.3,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":3355,"id":1}}]}
+{"v":1,"t":4.239,"ms":71.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":3526,"id":1}}]}
+{"v":1,"t":4.411,"ms":62.5,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":3689,"id":1}}]}
+{"v":1,"t":4.573,"ms":156.5,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":3946,"id":1}}]}
+{"v":1,"t":4.83,"ms":71.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":4118,"id":1}}]}
+{"v":1,"t":5.002,"ms":69.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":4287,"id":1}}]}
+{"v":1,"t":5.171,"ms":153.9,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":4542,"id":1}}]}
+{"v":1,"t":5.426,"ms":88.0,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":4730,"id":1}}]}
+{"v":1,"t":5.614,"ms":65.9,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":4896,"id":1}}]}
+{"v":1,"t":5.78,"ms":152.8,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":5150,"id":1}}]}
+{"v":1,"t":6.034,"ms":68.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":5318,"id":1}}]}
+{"v":1,"t":6.202,"ms":78.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":5497,"id":1}}]}
+{"v":1,"t":6.381,"ms":74.6,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":5672,"id":1}}]}
+{"v":1,"t":6.556,"ms":152.3,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":5924,"id":1}}]}
+{"v":1,"t":6.808,"ms":5.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":6030,"id":1}}]}
+{"v":1,"t":6.914,"ms":5.4,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":6135,"id":1}}]}
+{"v":1,"t":7.02,"ms":19.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"status":"running","kind":"ui.menu.load","elapsed_ms":6255,"id":1}}]}
+{"v":1,"t":7.139,"ms":8.1,"ctx":"client","calls":[{"op":"job.poll","args":{"id":1}}],"replies":[{"ok":true,"result":{"result":{"pane":"11/10/2026 03:49","picked":275,"name":"PROBE-49111260919__S049-end","loading":true,"state":"Running"},"status":"done","kind":"ui.menu.load","elapsed_ms":6296,"id":1}}]}
+{"v":1,"t":10.148,"ms":13.9,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"UnloadSession"}
+{"v":1,"t":11.162,"ms":16.1,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"UnloadSession"}
+{"v":1,"t":12.179,"ms":2.7,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":13.182,"ms":14.4,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":14.196,"ms":15.8,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":15.212,"ms":1.3,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":16.214,"ms":15.9,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":17.23,"ms":28.2,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":18.259,"ms":42.6,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":19.301,"ms":7.3,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":20.309,"ms":1.4,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":21.311,"ms":23.9,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":22.335,"ms":9.0,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":23.344,"ms":56.6,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":24.401,"ms":27.3,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":25.429,"ms":70.2,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":26.5,"ms":26.0,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":27.526,"ms":109.6,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":28.636,"ms":16.7,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":29.653,"ms":15.5,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":30.669,"ms":12.1,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":31.681,"ms":15.3,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":32.697,"ms":378.2,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"LoadLevel"}
+{"v":1,"t":34.075,"ms":7.8,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"SwapLevel"}
+{"v":1,"t":35.084,"ms":3.9,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"SwapLevel"}
+{"v":1,"t":36.088,"ms":21.1,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"SwapLevel"}
+{"v":1,"t":37.11,"ms":235.1,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"PrepareRunning"}
+{"v":1,"t":38.345,"ms":25.9,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"PrepareRunning"}
+{"v":1,"t":39.372,"ms":13.4,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"PrepareRunning"}
+{"v":1,"t":40.385,"ms":9.4,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"PrepareRunning"}
+{"v":1,"t":41.395,"ms":3.0,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"PrepareRunning"}
+{"v":1,"t":42.399,"ms":21.9,"ctx":"client","code":"return tostring(Ext.Utils.GetGameState())","reply":"Running"}
+{"v":1,"t":42.421,"ms":16.4,"ctx":"server","calls":[{"op":"sys.ping","args":{}}],"replies":[{"result":{"boot":"68798471-674836756","version":"0.1.0","t":68807738,"context":"server"},"ok":true}]}

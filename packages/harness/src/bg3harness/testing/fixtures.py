@@ -1,9 +1,10 @@
 """Recorded fixtures as a fake mod responder: replay the bridge's recorder files (bg3ai/rpc_record.py) by request.
 
 A fixture line holds one eval: its calls ([{op, args}]) and replies (one per call), or a Lua `error`, or for a non-RPC
-eval its `code` and raw `reply`. Replies are indexed per op by (context, op, args), raw replies by (context, code);
-the same request answers with its recorded replies in order and then keeps repeating the last one (a session polls
-the same op many times; a load's GetGameState probes go Running, UnloadLevel, ..., Running).
+eval its `code` and raw `reply` (or the Lua `error` it raised). Replies are indexed per op by (context, op, args),
+raw replies by (context, code); the same request answers with its recorded replies in order and then keeps repeating
+the last one (a session polls the same op many times; a load's GetGameState probes go Running, UnloadLevel, ...,
+Running).
 `match="op"` also answers a request whose args were never recorded with that op's replies (any args).
 """
 
@@ -14,7 +15,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from .fakemod import Reply
+from .fakemod import LuaError, Reply
 
 VERSION = 1
 
@@ -41,7 +42,7 @@ class FixtureStore:
         self.match = match
         self._exact: dict[tuple[str, str, str], _Queue[Reply]] = {}
         self._by_op: dict[tuple[str, str], _Queue[Reply]] = {}
-        self._raw: dict[tuple[str, str], _Queue[str]] = {}
+        self._raw: dict[tuple[str, str], _Queue[str | LuaError]] = {}
         for line in lines:
             self.add(line)
 
@@ -63,8 +64,9 @@ class FixtureStore:
         ctx = line.get("ctx", "server")
         calls = line.get("calls")
         if calls is None:
-            if "code" in line and "reply" in line:
-                self._raw.setdefault((ctx, line["code"]), _Queue()).replies.append(line["reply"])
+            if "code" in line and ("reply" in line or "error" in line):
+                raw = line["reply"] if "reply" in line else LuaError(line["error"])
+                self._raw.setdefault((ctx, line["code"]), _Queue()).replies.append(raw)
             return
         if "error" in line:
             replies: list[Reply] = [{"lua_error": line["error"]}] * len(calls)
@@ -91,5 +93,11 @@ class FixtureStore:
         return q.take() if q is not None else None
 
     def eval_raw(self, ctx: str, code: str) -> str | None:
+        """The recorded raw reply; raises the recorded LuaError for an eval that failed."""
         q = self._raw.get((ctx, code))
-        return q.take() if q is not None else None
+        if q is None:
+            return None
+        out = q.take()
+        if isinstance(out, LuaError):
+            raise LuaError(str(out))  # a fresh one each time: the queue repeats its last entry
+        return out

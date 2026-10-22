@@ -1,0 +1,4 @@
+{"v":1,"t":0.284,"ms":5.3,"ctx":"server","calls":[{"op":"events.since","args":{"seq":1000000000000,"limit":1}}],"replies":[{"result":{"latest":2,"events":[]},"ok":true}]}
+{"v":1,"t":0.29,"ms":11.6,"ctx":"client","calls":[{"op":"events.since","args":{"seq":1000000000000,"limit":1}}],"replies":[{"result":{"events":[],"latest":0},"ok":true}]}
+{"v":1,"t":0.302,"ms":18.5,"ctx":"client","calls":[{"op":"ui.key","args":{"key":"ESCAPE"}}],"replies":[{"result":{"key":"ESCAPE"},"ok":true}]}
+{"v":1,"t":1.841,"ms":22.9,"ctx":"client","calls":[{"op":"ui.press","args":{"button":"Resume","widget":"GameMenu"}}],"replies":[{"error":"parameter is a string (CloseGameMenu); bg3le can only pass Noesis objects","ok":false}]}
