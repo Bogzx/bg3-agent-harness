@@ -364,6 +364,20 @@ ok(S.state({}).popup ~= nil, "the in-game menu still reports its content")
 hide("GameMenu")
 S.popup = popup
 
+-- load_game: the saves to try, hint first then outward (live5: an off-by-one hint scanned 376 items from the top)
+local function same(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    return true
+end
+ok(same(A.loadOrder(4, 7), { 4, 5, 3, 6, 2, 7, 1 }), "loadOrder: outward from the hint")
+ok(same(A.loadOrder(1, 4), { 1, 2, 3, 4 }), "loadOrder: hint 1 = top down")
+ok(same(A.loadOrder(9, 4), { 4, 3, 2, 1 }), "loadOrder: a hint past the end starts at the last item")
+ok(same(A.loadOrder(0, 3), { 1, 2, 3 }), "loadOrder: a hint below 1 starts at the first")
+ok(same(A.loadOrder(2, 0), {}), "loadOrder: no items, nothing to try")
+local o = A.loadOrder(376, 494)
+ok(#o == 494 and o[1] == 376 and o[2] == 377, "loadOrder: live5's 376 hint reaches 377 on the second try")
+
 local tally = string.format("%d passed, %d failed", passes, fails)
 print(tally)
 if fails > 0 then os.exit(1) end

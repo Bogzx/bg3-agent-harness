@@ -59,11 +59,25 @@ end
 --   2. expand the playthrough(s) named `owner` (folder prefix before "-")
 --   3. select a save (LSListBoxItem.IsSelected): `index` (1 = newest of that
 --      playthrough) first, then, if `date` is given, verify the info pane's
---      date ("9/10/2026 22:45") against it, scanning the others on mismatch
+--      date ("9/10/2026 22:45") against it, scanning outward from the hint
+--      on mismatch (A.loadOrder)
 --   4. RETURN (= UIAccept = LoadSaveBtn); a confirm box gets RETURN too
 --   5. done once the page closes or the game state leaves Running. The load
 --      itself resets this Lua state; the caller waits for Running again.
 -- args: name (folder), owner?, index?, date? = {y, m, d, H, M} (local time).
+-- The order to try a playthrough's n saves in: the hinted index first (clamped to the list), then outward from it
+-- (h+1, h-1, h+2, h-2, ...). live5: a hint off by one on a 494-save page scanned from item 1 at ~0.4 s per item and
+-- ran out of the 30 s job; outward, an off-by-few hint costs a few items.
+function A.loadOrder(index, n)
+    local h = math.max(1, math.min(index, n))
+    local out = n > 0 and { h } or {}
+    for d = 1, n do
+        if h + d <= n then out[#out + 1] = h + d end
+        if h - d >= 1 then out[#out + 1] = h - d end
+    end
+    return out
+end
+
 -- The playthrough groups on the load page: { {el, hdr}, ... } in display order.
 function A.loadGroups(w)
     local out = {}
@@ -233,10 +247,8 @@ function MENU.load(args)
                 return nil -- expanding: items appear on the next frames
             end
             if stage == "select" then
-                -- candidates: the hinted index first, then the rest in order
                 if not cand then
-                    cand = { math.min(index, #items) }
-                    for i = 1, #items do if i ~= cand[1] then cand[#cand + 1] = i end end
+                    cand = A.loadOrder(index, #items)
                     job.n_items = #items
                 end
                 local i = table.remove(cand, 1)
