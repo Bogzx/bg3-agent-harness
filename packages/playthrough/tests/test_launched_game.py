@@ -1,7 +1,9 @@
 """adapters/launched_game.py: the recovering game over a fake GameController, fake bridge reads and a save list."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from bg3harness.game.io import Save
@@ -37,7 +39,7 @@ class FakeReads:
     def ok(self) -> bool:
         return self.is_ok
 
-    def progress(self):
+    def progress(self) -> dict[str, Any] | None:
         return {"level": "TUT"}
 
 
@@ -45,7 +47,15 @@ def save(owner: str, n: int, label: str, mtime: float) -> Save:
     return Save(f"{owner}-{n}__{label}", owner, label, mtime)
 
 
-def setup(tmp_path: Path, state: dict, saves: list[Save], handoff: str = "", ctl=None, reads=None, leader=None):
+def setup(
+    tmp_path: Path,
+    state: dict[str, Any],
+    saves: list[Save],
+    handoff: str = "",
+    ctl: FakeCtl | None = None,
+    reads: FakeReads | None = None,
+    leader: Callable[[], str | None] | None = None,
+) -> tuple[lg.LaunchedGame, Path, list[str]]:
     sdir, mem = tmp_path / "sessions" / "ilse", tmp_path / "ilse" / "memory"
     sdir.mkdir(parents=True)
     mem.mkdir(parents=True)
