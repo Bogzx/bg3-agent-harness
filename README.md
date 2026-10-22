@@ -44,9 +44,9 @@ result:
 
 - Claude Code (Opus 5.5) escaped the Nautiloid in 15.2 minutes of play, and again in 12.1 minutes through the
   benchmark runner. That second run had unseeded dice and didn't stop at the goal, so it doesn't count.
-- DeepSeek Flash through the pi client was stopped by a $0.50 cost cap after 40 minutes, in the Nautiloid's final
-  fight. DeepSeek billed $0.24 for it. A second run, from the crash site to the Emerald Grove, reached the goal in
-  33 minutes of play for $0.18.
+- DeepSeek Flash through the pi client escaped the Nautiloid in 24.6 minutes of play, billed $0.19. An earlier
+  attempt hit a $0.50 cost cap after 40 minutes in the final fight ($0.24 billed), and a run from the crash site to
+  the Emerald Grove reached it in 33 minutes for $0.18.
 - A new playthrough at Balanced difficulty played one 48-minute session from character creation into Act 1 (the
   Emerald Grove and beyond) with no party deaths.
 - Through the app, an existing playthrough played two sessions and came back from two forced game crashes, the
@@ -110,7 +110,9 @@ uv sync --locked
 `uv sync --locked --package <name>` installs one package and what it needs (`bg3ai-bridge`, `bg3-agent-harness`,
 `bg3bench` or `bg3play`).
 
-**Harness.** With the game running and the mod loaded, the bg3 MCP server serves the game to your own client over
+### Harness
+
+With the game running and the mod loaded, the bg3 MCP server serves the game to your own client over
 stdio, or over HTTP at `/mcp`:
 
 ```bash
@@ -126,14 +128,18 @@ python3 runner/play.py run --scenario nautiloid --runs 3 --playthrough naut-demo
 
 Drop `--plan` to play it. To run your own model through pi instead, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-**Benchmark.** The matrix runner queues models x scenarios x conditions x repeats under one budget. `plan` prints the
+### Benchmark
+
+The matrix runner queues models x scenarios x conditions x repeats under one budget. `plan` prints the
 jobs and the budget reserve and runs nothing:
 
 ```bash
 uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/pilot-2026-10-22.toml
 ```
 
-**Playthrough app.** Build the web app once (`cd packages/playthrough/web && npm ci && npm run build`), then from the
+### Playthrough app
+
+Build the web app once (`cd packages/playthrough/web && npm ci && npm run build`), then from the
 repo root:
 
 ```bash
@@ -222,8 +228,8 @@ enforcement layers, the audit and the judgment calls.
   time.
 - Until 2026-10-17 a harness bug let the agent cast spells its characters had not prepared. It is fixed, but
   claude-run-2 had that advantage before then.
-- Claude through Claude Code is the only client that has played the full game. pi with DeepSeek Flash has played two
-  short runs. The Codex and Gemini clients are tested offline against stubs only.
+- Claude through Claude Code is the only client that has played the full game. pi with DeepSeek Flash has played
+  three short runs. The Codex and Gemini clients are tested offline against stubs only.
 - The agent text was tuned on Claude's failures. It is now split into neutral rules and optional coaching, but no
   scored run has used the split yet. [docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) lists where the old text
   favoured Claude.
