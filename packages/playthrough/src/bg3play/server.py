@@ -29,9 +29,9 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
 Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|resume (body: the Launcher's fields,
 supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop.
 GET /api/v1/supervisor (state + client profiles: client_profiles.py),
-GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin, and from anywhere but localhost unless the
-request carries the --token (Authorization: Bearer); a write without the token must also name a localhost address
-in its Host (a DNS-rebound page's Host is the attacker's name). Binds 127.0.0.1 by default.
+GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin; with --token every write needs it
+(Authorization: Bearer), from localhost too; without it a write must come from localhost and name a localhost
+address in its Host (a DNS-rebound page's Host is the attacker's name). Binds 127.0.0.1 by default.
 """
 
 from __future__ import annotations
@@ -76,6 +76,7 @@ KEEPALIVE_S = 15.0
 SHUTDOWN_S = 180.0  # Ctrl-C waits this long for the running session to end (session.py session-end: up to 120 s)
 DEFAULT_WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
 REPO = Path(__file__).resolve().parents[4]
+SSE_RETRY_MS = 2000  # the browser's reconnect delay after the stream drops (its default took ~10 s in the e2e restart)
 
 
 def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
@@ -401,6 +402,8 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
+            self.wfile.write(f"retry: {SSE_RETRY_MS}\n\n".encode())  # reconnect soon after a server restart
+            self.wfile.flush()
             timeout = 0.0
             try:
                 while not app.hub.closed:

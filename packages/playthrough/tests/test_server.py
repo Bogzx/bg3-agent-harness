@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 from bg3play.hub import Hub
-from bg3play.server import App, parser, serve
+from bg3play.server import SSE_RETRY_MS, App, parser, serve
 from bg3play.store import RunStore
 
 from .conftest import PT
@@ -110,6 +110,7 @@ class Sse:
         self.conn.request("GET", "/api/v1/stream", headers={"Last-Event-ID": last_id} if last_id else {})
         self.resp = self.conn.getresponse()
         assert self.resp.status == 200 and self.resp.getheader("Content-Type") == "text/event-stream"
+        assert self.next() == {"retry": str(SSE_RETRY_MS)}  # the browser reconnects in 2 s, not after its back-off
 
     def next(self) -> dict:
         ev: dict = {}
