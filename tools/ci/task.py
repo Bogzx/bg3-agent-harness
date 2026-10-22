@@ -1,5 +1,6 @@
 """Run what CI runs (.github/workflows/ci.yml), job by job, before you open a pull request.
 
+    uv run tools/ci/task.py quick       # seconds, before a commit: ruff, ruff format, pytest's collection of CI's run
     uv run tools/ci/task.py ci          # every job below, in CI order; keeps going and prints a summary
     uv run tools/ci/task.py check       # job "lint": ruff, ruff format, legacy lists, pyright, import rules, line cap
     uv run tools/ci/task.py test        # job "test": pytest -m "not live and not e2e" with the coverage floors
@@ -8,7 +9,9 @@
     uv run tools/ci/task.py ts          # job "typescript": npm ci, tsc --noEmit, check, lint, vitest per package
     uv run tools/ci/task.py --list [job...]   # print the commands without running them
 
-Each command is the one in ci.yml (tools/ci/test_task.py fails when the two drift apart). Not run here: CI's
+`quick` is no CI job: it runs the cheap steps that break CI most often (an unformatted file; two test files pytest
+imports under one module name, which stops the whole root run at collection while per-directory runs pass). Every
+other task runs the commands of ci.yml (tools/ci/test_task.py fails when the two drift apart). Not run here: CI's
 `playwright install-deps chromium` and the ffmpeg install (system packages that need sudo; the e2e job's tests say
 what is missing). The test and e2e jobs are heavy: on a shared machine cap them, for example
 `systemd-run --user --scope -p MemoryMax=8G nice -n 15 uv run tools/ci/task.py test`.
@@ -72,6 +75,13 @@ JOBS: dict[str, tuple[Step, ...]] = {
     "lua": (Step(("bash", "tools/ci/lua_suites.sh")),),
 }
 
+# Not a CI job: the "check" job's ruff steps and the "test" job's pytest run, collected only (seconds, no tests run).
+QUICK: tuple[Step, ...] = (
+    uv("ruff", "check", "."),
+    uv("ruff", "format", "--check", "."),
+    uv("pytest", "--collect-only", "-q", "-m", "not live and not e2e"),
+)
+
 # CI job id (ci.yml) of each task; "ts" steps are built per package (ts_steps).
 CI_JOB = {"check": "lint", "test": "test", "e2e": "e2e", "lua": "lua", "ts": "typescript"}
 TS_CHECKS: tuple[tuple[str, ...], ...] = (
@@ -99,6 +109,8 @@ def ts_steps(root: Path) -> tuple[Step, ...]:
 
 
 def steps(task: str, root: Path = ROOT) -> tuple[Step, ...]:
+    if task == "quick":
+        return QUICK
     return ts_steps(root) if task == "ts" else JOBS[task]
 
 
@@ -137,7 +149,9 @@ def expand(names: Sequence[str]) -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("tasks", nargs="*", choices=[*TASKS, "ci"], metavar="task", help="check, test, e2e, lua, ts, ci")
+    ap.add_argument(
+        "tasks", nargs="*", choices=[*TASKS, "ci", "quick"], metavar="task", help="check, test, e2e, lua, ts, ci, quick"
+    )
     ap.add_argument("--list", action="store_true", help="print the commands instead of running them")
     args = ap.parse_args(argv)
     tasks = expand(args.tasks)

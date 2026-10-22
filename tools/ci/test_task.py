@@ -110,6 +110,18 @@ def test_e2e_leaves_out_only_the_sudo_install_of_system_libraries(ci: dict[str, 
 
 
 @pytest.mark.integration
+def test_quick_is_the_check_jobs_ruff_steps_and_the_test_jobs_pytest_collected(
+    ci: dict[str, list[tuple[str, str]]],
+) -> None:
+    check = single_commands("lint", ci["lint"])
+    pytest_run = next(argv for _, argv in single_commands("test", ci["test"]) if "pytest" in argv)
+    marker = pytest_run[pytest_run.index("-m") : pytest_run.index("-m") + 2]
+    assert [(s.cwd, s.argv) for s in task.QUICK[:2]] == check[1:3]
+    assert task.QUICK[2].argv == ("uv", "run", "pytest", "--collect-only", "-q", *marker)
+    assert task.steps("quick") == task.QUICK and "quick" not in task.expand(["ci"])
+
+
+@pytest.mark.integration
 def test_ts_runs_each_ci_check_in_every_package(ci: dict[str, list[tuple[str, str]]]) -> None:
     script = block(ci["typescript"], "npx tsc --noEmit")
     for argv in task.TS_CHECKS:
