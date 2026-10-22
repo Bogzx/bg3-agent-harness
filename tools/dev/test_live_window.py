@@ -543,10 +543,25 @@ class TestHelpers(Base):
 
     def test_real_play_harness_logic_is_used(self):
         p = LW.Procs()
-        play = LW.load_play()
-        with mock.patch.object(play, "all_bg3_pids", return_value=[11, 22]), \
-                mock.patch.object(play, "is_harness_pid", side_effect=lambda pid: pid == 11):
+        io = LW.load_game_io()
+        with mock.patch.object(io, "all_bg3_pids", return_value=[11, 22]), \
+                mock.patch.object(io, "is_harness_pid", side_effect=lambda pid: pid == 11):
             self.assertEqual((p.game(), p.foreign()), ([11], [22]))
+
+    def test_every_process_name_procs_uses_resolves(self):
+        # live5 §0.1: Procs called play.<name> after the names moved to bg3harness.game.io, so every live window
+        # died at launch with an AttributeError the fakes never saw. Every self.p.<name> must exist on the module.
+        import re
+        names = set(re.findall(r"self\.p\.(\w+)", Path(LW.__file__).read_text()))
+        self.assertEqual(names, {"pids_of_game", "foreign_bg3_pids", "crash_reporter_pids"})
+        io = LW.Procs().p
+        for name in names:
+            self.assertTrue(callable(getattr(io, name, None)), name)
+        with mock.patch.object(io, "all_bg3_pids", return_value=[]):
+            p = LW.Procs()
+            self.assertEqual((p.game(), p.foreign()), ([], []))
+        with mock.patch.object(io.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")):
+            self.assertEqual(LW.Procs().reporters(), [])
 
 
 if __name__ == "__main__":

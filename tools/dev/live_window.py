@@ -26,7 +26,7 @@ Steps (each one a row of the final PASS/FAIL/SKIP table; the first FAIL before t
              swap peak, anon vs file cache)
   collect    on a game death: the last bg3le/game log lines, crash lines, ram.log / ram_kills / ram_spikes tails,
              journalctl OOM lines, the launcher log
-  stop       SIGTERM then SIGKILL this harness's bg3 + crash reporters only (runner/play.py is_harness_pid, RUN-4);
+  stop       SIGTERM then SIGKILL this harness's bg3 + crash reporters only (bg3harness.game.io is_harness_pid, RUN-4);
              a user's own BG3 is never signalled. Skipped with --keep-game
 
 Everything goes to runtime/live/<stamp>/: window.log (all output), launch.log, acceptance.log, acceptance/ (the
@@ -74,11 +74,10 @@ def load_acceptance():
     return acceptance
 
 
-def load_play():
-    """runner/play.py's module, for its harness-only process logic (RUN-4)."""
-    sys.path.insert(0, str(REPO / "runner"))
-    import play
-    return play
+def load_game_io():
+    """bg3harness.game.io, the runner's harness-only process logic (RUN-4)."""
+    from bg3harness.game import io
+    return io
 
 
 class Procs:
@@ -90,7 +89,7 @@ class Procs:
     @property
     def p(self):
         if self._p is None:
-            self._p = load_play()
+            self._p = load_game_io()
         return self._p
 
     def game(self) -> list[int]:
