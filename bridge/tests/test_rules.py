@@ -49,6 +49,13 @@ class Served(unittest.TestCase):
             os.environ["BG3AI_RULES_PATH"] = str(f)
             self.assertEqual(rules.load(), "MY RULES")
 
+    def test_coaching_nudges_only_in_a_coaching_condition(self):
+        self.assertFalse(rules.coaching())  # default: rules
+        self.assertFalse(rules.coaching({"BG3AI_PROMPT_CONDITION": "rules"}))
+        self.assertTrue(rules.coaching({"BG3AI_PROMPT_CONDITION": "rules+coaching"}))
+        os.environ["BG3AI_PROMPT_CONDITION"] = "rules+coaching"
+        self.assertTrue(rules.coaching())
+
     def test_every_tool_the_rules_name_is_a_server_tool(self):
         # bench.md §2.6 test c against the live registry (the prompts' own lint uses tools/pi's dump of it)
         import asyncio

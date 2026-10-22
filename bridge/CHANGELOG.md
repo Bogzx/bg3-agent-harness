@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-22: coaching nudges only in a coaching condition
+
+- The `PACE: you waited right after issuing…` and `NOTES WINDOW: ~Ns of walking left…` (with its PARTY PLAN line)
+  result nudges are coaching: served only when `$BG3AI_PROMPT_CONDITION` is `rules+coaching` (rules.coaching).
+  Rules-only sessions (the default, benchmark ranked runs) get neither. Playthroughs set rules+coaching (runner;
+  play/.mcp.json for Claude Code).
+
 ## 2026-10-22: live4 §2/§5 fixes (pickpocket, summon attack, flee, trade table)
 
 - pickpocket: a window it didn't open is closed and then waited for (≤2 s) before this NPC's is opened; the open

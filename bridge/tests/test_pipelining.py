@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 import unittest
+from unittest import mock
 
 from test_turn_macros import CHEST, P1, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
@@ -466,6 +468,9 @@ class SettleAndPace(Base):
     def setUp(self) -> None:
         super().setUp()
         plumbing.SETTLE_S = 0.3
+        env = mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules+coaching"})  # PACE: is coaching
+        env.start()
+        self.addCleanup(env.stop)
 
     def test_quick_walk_reports_its_result(self):
         self.g.dur["act.move_to"] = 0.05
@@ -502,6 +507,12 @@ class SettleAndPace(Base):
         world_tools.move_to(x=6.0, y=0.0, z=0.0)
         observe.get_events()  # independent work in between: no nudge
         self.assertNotIn("PACE:", batch.wait_for("j2", timeout_s=2))
+
+    def test_rules_only_condition_has_no_pace_hint(self):
+        os.environ["BG3AI_PROMPT_CONDITION"] = "rules"
+        self.g.dur["act.move_to"] = 0.6
+        world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        self.assertNotIn("PACE:", batch.wait_for("j1", timeout_s=2))
 
     def test_next_hint_three_times_then_after_a_nudge(self):
         self.g.dur["act.move_to"] = 5.0

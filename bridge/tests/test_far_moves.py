@@ -7,9 +7,11 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import unittest
+from unittest import mock
 
 from test_turn_macros import P1, P2, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
@@ -220,6 +222,9 @@ class NotesWindow(Base):
         super().setUp()
         batch._trips.clear()
         batch._notes_shown.clear()
+        env = mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules+coaching"})  # the hint is coaching
+        env.start()
+        self.addCleanup(env.stop)
 
     def test_long_trip_says_once_it_is_time_for_notes(self):
         self.g.dur["act.move_to"] = 5.0
@@ -244,6 +249,16 @@ class NotesWindow(Base):
         self.g.jobs[1] = {"status": "running", "end": time.monotonic() + 5, "op": "act.move_to", "args": {}}
         self.assertIn("NOTES WINDOW: ~20s", batch._notes_window())
         self.assertEqual(batch._notes_window(), "")
+
+    def test_rules_only_condition_has_no_hint(self):
+        plumbing._async["j9"] = {"ctx": "server", "id": 1, "tool": "move_to", "t0": time.monotonic(), "eta": 20.0}
+        self.addCleanup(plumbing._async.pop, "j9", None)
+        self.g.jobs[1] = {"status": "running", "end": time.monotonic() + 5, "op": "act.move_to", "args": {}}
+        for cond in ("rules", ""):
+            os.environ["BG3AI_PROMPT_CONDITION"] = cond
+            self.assertEqual(batch._notes_window(), "")
+        os.environ["BG3AI_PROMPT_CONDITION"] = "rules+coaching"
+        self.assertIn("NOTES WINDOW: ~20s", batch._notes_window())  # not marked shown while off
 
 
 class Preload(unittest.TestCase):

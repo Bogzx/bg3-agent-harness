@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 
@@ -49,6 +50,13 @@ def load(path: Path | None = None, condition: str | None = None) -> str:
         return prompts().assemble(condition or os.environ.get("BG3AI_PROMPT_CONDITION") or "rules").text.strip()
     except OSError:
         return ""
+
+
+def coaching(env: Mapping[str, str] | None = None) -> bool:
+    """The session's condition has coaching ($BG3AI_PROMPT_CONDITION=rules+coaching): only then do results carry
+    the coaching nudges (PACE:, NOTES WINDOW). Rules-only (the default, benchmark ranked runs) gets none."""
+    cond = (os.environ if env is None else env).get("BG3AI_PROMPT_CONDITION") or "rules"
+    return "coaching" in cond.strip().lower().split("+")
 
 
 def serve_enabled() -> bool:

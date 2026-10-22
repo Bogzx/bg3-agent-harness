@@ -419,7 +419,7 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     finally:
         queueing._running_memo["on"] = False
     if tool == "wait_for" and _pace["calls_since"] == 0 and _pace["issued_at"] \
-            and t0 - _pace["issued_at"] < PACE_GAP_S:
+            and t0 - _pace["issued_at"] < PACE_GAP_S and rules.coaching():
         out.append("PACE: you waited right after issuing. Next time first do independent work (queue the arrival "
                    "steps, look, plan, notes): the character acts while you think.")
         _pace["nudge"] = True

@@ -9,7 +9,7 @@ import re
 import time
 from typing import Any
 
-from .. import actq, delta, longnav, macros, render, turn
+from .. import actq, delta, longnav, macros, render, rules, turn
 from ..game import GameError, JobResult, NotReady
 from . import combat, core, memory, overview, plumbing, reporting, travel
 
@@ -288,7 +288,10 @@ def _long_running() -> tuple[str, float] | None:
 
 
 def _notes_window() -> str:
-    """'NOTES WINDOW: ~20s of walking left ...' once per long job/trip ('' otherwise)."""
+    """'NOTES WINDOW: ~20s of walking left ...' once per long job/trip ('' otherwise, and in a condition without
+    coaching: rules.coaching)."""
+    if not rules.coaching():
+        return ""
     lr = _long_running()
     if lr is None or lr[1] < NOTES_MIN_S or lr[0] in _notes_shown:
         return ""
