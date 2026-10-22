@@ -10,8 +10,8 @@ no reload, inside the scenario's cap.
 
 ## Before a session
 
-- Play on the machine and game build the models use (dev2, Steam in Offline Mode). Note the game version from the
-  main menu.
+- Play on the machine and game build the models use (the test machine, Steam in Offline Mode). Note the game version
+  from the main menu.
 - Settings as the scenario says (`game_settings` in `packages/bench/scenarios/<name>.json`): Balanced, Karmic Dice
   off. Leave everything else at your normal settings and write down anything unusual in `notes`.
 - The dice seed (`game_settings.seed`) is not applied to human attempts: it needs the mod's setup call, which only

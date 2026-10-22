@@ -2,7 +2,8 @@
 
     uv run tools/ci/task.py quick       # seconds, before a commit: ruff, ruff format, pytest's collection of CI's run
     uv run tools/ci/task.py ci          # every job below, in CI order; keeps going and prints a summary
-    uv run tools/ci/task.py check       # job "lint": ruff, ruff format, legacy lists, pyright, import rules, line cap
+    uv run tools/ci/task.py check       # job "lint": ruff, ruff format, legacy lists, pyright, import rules, line cap,
+                                        # scrub
     uv run tools/ci/task.py test        # job "test": pytest -m "not live and not e2e" with the coverage floors
     uv run tools/ci/task.py e2e         # job "e2e": builds the web app, installs pi, pytest -m "e2e and not live"
     uv run tools/ci/task.py lua         # job "lua": the Lua suites in Docker
@@ -58,6 +59,8 @@ JOBS: dict[str, tuple[Step, ...]] = {
         uv("python", "tools/ci/import_contracts.py"),
         uv("python", "tools/ci/test_boundaries.py"),
         uv("python", "tools/ci/line_cap.py"),
+        # without $USER and the hostname: on GitHub's runner they are "runner" and a random name, not the owner's
+        uv("python", "tools/ci/scrub.py", "--no-local-terms"),
     ),
     "test": (
         SYNC,

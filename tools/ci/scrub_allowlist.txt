@@ -13,3 +13,5 @@ email runner/test_play_oom.py app-term@b676.service  # a systemd unit name, not 
 email tools/dev/test_acceptance_memory.py user@1000.service  # a systemd unit name, not an address
 term LICENSE  # the copyright line: the authorship line, like git's author
 term CITATION.cff  # the citation's author entry: the authorship line, like git's author
+term packages/bench/src/bg3bench/authoring.py  # owner decision pending (LAUNCH-GATE.md §4): the forbidden-name list
+term packages/harness/tests/test_fixtures_live4.py  # owner decision pending (LAUNCH-GATE.md §4): the fixtures' scrub regex

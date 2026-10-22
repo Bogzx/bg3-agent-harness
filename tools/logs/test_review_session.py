@@ -106,7 +106,7 @@ def body(text: str) -> str:
 
 def pin_tz(tz):
     """Set the process's local zone; returns the undo. The runner's log lines carry naive local times, and the
-    fixture's were written at +03:00 (dev2), so its review reads them in that zone on any machine (CI runs in UTC)."""
+    fixture's were written at +03:00 (the test machine), so its review reads them in that zone on any machine (CI runs in UTC)."""
     old = os.environ.get("TZ")
     os.environ["TZ"] = tz
     time.tzset()

@@ -149,4 +149,4 @@ Each paid phase pilots on one or two models first and does not scale without the
   rename) to measure memorisation? Unverified.
 - Does pi's `compaction.enabled: false` also stop its one-time compact-and-retry on context overflow?
 - Can BG3 save files be published with the benchmark?
-- Throughput: one game per machine, about 5 Nautiloid runs an hour on dev2.
+- Throughput: one game per machine, about 5 Nautiloid runs an hour on the test machine.

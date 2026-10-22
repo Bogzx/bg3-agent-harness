@@ -251,10 +251,10 @@ def test_authorize_writes(store: RunStore):
     assert app.authorize("127.0.0.1", Headers(Host="127.0.0.1:8780")) is None
     assert app.authorize("::1", Headers(Host="x", Origin="http://x")) is None
     assert "cross-origin" in app.authorize("127.0.0.1", Headers(Host="127.0.0.1:8780", Origin="http://evil.test"))
-    assert "localhost" in app.authorize("100.64.0.7", Headers(Host="dev2:8780"))
+    assert "localhost" in app.authorize("192.0.2.7", Headers(Host="box.test:8780"))
     tok = App(store, Hub(store, generation="g"), None, token="s3cret")
-    assert tok.authorize("100.64.0.7", Headers(Host="dev2", Authorization="Bearer s3cret")) is None
-    assert "token" in tok.authorize("127.0.0.1", Headers(Host="dev2", Authorization="Bearer nope"))
+    assert tok.authorize("192.0.2.7", Headers(Host="box.test", Authorization="Bearer s3cret")) is None
+    assert "token" in tok.authorize("127.0.0.1", Headers(Host="box.test", Authorization="Bearer nope"))
 
 
 def post(server, path: str, body: object = None, headers: dict | None = None) -> tuple[int, dict]:

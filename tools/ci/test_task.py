@@ -23,6 +23,8 @@ CI_ONLY = {
     # prefetches the images; docker run pulls them when missing
     "lua": {"docker pull -q nickblah/lua:5.3", "docker pull -q nickblah/lua:5.4"},
 }
+# Commands the runner has before ci.yml does (appended to that job's commands); drop an entry once ci.yml runs it.
+AHEAD_OF_CI = {"lint": ("uv run python tools/ci/scrub.py --no-local-terms",)}
 # Flags CI adds only for GitHub's output.
 CI_FLAGS = (" --output-format github",)
 
@@ -99,7 +101,14 @@ def test_every_ci_job_has_a_task(ci: dict[str, list[tuple[str, str]]]) -> None:
 @pytest.mark.parametrize("name", ["check", "test", "lua"])
 def test_task_runs_exactly_the_ci_jobs_commands(ci: dict[str, list[tuple[str, str]]], name: str) -> None:
     job = task.CI_JOB[name]
-    assert table(name) == single_commands(job, ci[job])
+    ahead = [(".", tuple(shlex.split(cmd))) for cmd in AHEAD_OF_CI.get(job, ())]
+    assert table(name) == single_commands(job, ci[job]) + ahead
+
+
+@pytest.mark.integration
+def test_ahead_of_ci_lists_only_commands_ci_yml_lacks(ci: dict[str, list[tuple[str, str]]]) -> None:
+    for job, cmds in AHEAD_OF_CI.items():
+        assert not set(cmds) & {body for _, body in ci[job]}, f"ci.yml runs it now: drop it from AHEAD_OF_CI[{job!r}]"
 
 
 @pytest.mark.integration

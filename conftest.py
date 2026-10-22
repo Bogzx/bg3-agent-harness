@@ -1,8 +1,8 @@
 """Root pytest hooks: tests that can't run on a clean checkout (CI's GitHub-hosted runner) are skipped with a reason.
 
 Each entry is a test that needs something a fresh clone doesn't have. The condition is checked, not assumed: on a
-machine that has the thing (dev2 with its local files) the test runs. Fix the dependency and drop the entry; never
-add a test here to hide a failure that happens with the dependency present.
+machine that has the thing (the test machine with its local files) the test runs. Fix the dependency and drop the
+entry; never add a test here to hide a failure that happens with the dependency present.
 """
 
 from __future__ import annotations

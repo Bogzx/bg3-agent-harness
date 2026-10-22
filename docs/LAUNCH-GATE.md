@@ -77,7 +77,31 @@ uv run python tools/ci/scrub.py --artifacts <out_dir> --env-file <your .env>    
 Exit 0: clean. 1: hits, listed on stdout (key and `.env` hits show the kind only, never the value). 2: a usage or
 config error.
 
-Known (2026-10-22, on `overhaul` 2174f13): 16 hits, all listed in research/ovh/mod.md "r14". No key, `.env` value,
-e-mail or personal home path; the hits are the machine name in docs and tests, the owner's name in two word lists,
-and a Tailscale-shaped test address. The allowlist treats LICENSE and CITATION.cff as authorship lines. Whether the
-name may stay there is the owner's call.
+CI runs it in the lint job as `uv run python tools/ci/scrub.py --no-local-terms` (`tools/ci/task.py check`): on
+GitHub's runner `$USER` and the hostname aren't the owner's and there is no terms file, so CI catches paths, keys,
+e-mails, Tailscale addresses and Steam IDs; the machine names and the owner's name are only caught by a local run.
+
+Known (2026-10-22, on `overhaul` d907be6 plus the mod r15 edits): the tree scans clean with the local terms and the
+main checkout's `.env`. The machine name in docs and tests now reads "the test machine", and the test address is a
+documentation IP (192.0.2.7). Two hits are allowlisted until the owner decides, by path only so the allowlist
+doesn't repeat the name:
+
+- [ ] `packages/bench/src/bg3bench/authoring.py` (the forbidden-name list) and
+  `packages/harness/tests/test_fixtures_live4.py` (the fixtures' scrub regex) spell out the owner's name, to keep
+  it out. Keep them (and the allowlist entries), or read the names from the local terms file instead.
+- [ ] LICENSE and CITATION.cff carry the owner's name as authorship lines (allowlisted).
+
+Git history (2026-10-22, report only, nothing rewritten): every blob reachable from `overhaul`, `main` and
+`origin/main` (485 commits on `overhaul`) and every commit message, scanned with the same rules, terms and `.env`.
+No API key, `.env` value, personal home path or real e-mail address in any old version. What old versions hold:
+
+- the machine name in older versions of the same docs and tests as above (conftest.py, BENCHMARK-PLAN.md,
+  HUMAN-BASELINE.md, TARGET-ARCHITECTURE.md, packages/playthrough/tests/test_server.py,
+  tools/logs/test_review_session.py), and the test's 100.64.0.7 address;
+- the owner's name in old versions of authoring.py and in the first version of `research/05-screen-input.md`
+  (initial commit);
+- false positives only otherwise: systemd unit names in old `runner/test_play.py`, a made-up SteamID64 in the old
+  `tools/test_bench_preflight.py`.
+
+So publishing the history as is publishes the machine name and the owner's name in old blobs (the name is in
+every commit's author line anyway). Squashing removes them; that choice is the owner's.

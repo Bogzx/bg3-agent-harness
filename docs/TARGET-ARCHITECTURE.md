@@ -127,9 +127,9 @@ Where this conflicts with how the code is today, the code moves toward this; new
   tests. Lua: the existing Docker suites (`tools/dev/test_*.sh`).
 - Pinned versions everywhere: pi via `tools/pi/package.json` + lockfile, bg3le by submodule, the game by buildid.
 - **The offline suite** is three commands from the repo root, the same ones CI runs: `uv run pytest -m "not live
-  and not e2e"` (bridge, runner, tools, every package; about 10 minutes on dev2), `uv run pytest -m "e2e and not
-  live"` (the web app in Playwright after `npm run build` in `packages/playthrough/web`, and the bench pipeline
-  through pi after `npm ci` in `tools/pi`; its own CI job) and `bash tools/ci/lua_suites.sh` (every
+  and not e2e"` (bridge, runner, tools, every package; about 10 minutes on the test machine), `uv run pytest -m
+  "e2e and not live"` (the web app in Playwright after `npm run build` in `packages/playthrough/web`, and the bench
+  pipeline through pi after `npm ci` in `tools/pi`; its own CI job) and `bash tools/ci/lua_suites.sh` (every
   `tools/dev/test_*.sh` and `tools/vis/test_*.sh` under Docker; known-broken suites are listed in it with the
   reason). TypeScript is checked per package (`npm ci --ignore-scripts`, `tsc --noEmit`, `npm run check`, `npm test`)
   in `packages/playthrough/web` and `tools/pi`. Tests that need something a fresh clone lacks (a local file, the
@@ -147,7 +147,7 @@ clocks instead of sleeps, no timing races, no network.
 | **Unit** | pure functions: graders, stats (against known values), event parsing per client, prompt assembly, schema validation, config, milestone predicates | none | CI, every push; seconds |
 | **Integration** | one real component against fakes: the bridge MCP server against a fake mod (a TCP endpoint replaying recorded Lua replies); each client (pi, Claude Code, Codex, Gemini) against a stub MCP server and a scripted model (pi's offline `faux` provider, fake CLI streams); `run_session` with a fake client and a fake game process (deadline, wrap-up, kill, crash ⇒ invalid, caps); graders on recorded `facts.jsonl` from real runs; the app API on recorded run data; the Lua mod in the Docker suites | stub MCP, fake mod, faux model, recorded fixtures | CI, every push; minutes |
 | **E2E, offline** | the whole pipeline with no game and no paid model: scenario file → `run_session` → pi with a scripted faux model → real bridge → fake mod → `facts.jsonl` → grader → `result.json` → stats → report and leaderboard build; plus the app in a browser (Playwright) against the same run's output | fake mod, faux model | CI, every push; a few minutes |
-| **E2E, live** (later, not in the target CI for now) | real BG3 on dev2: a scripted oracle agent through a short scenario; the existing `tools/dev/acceptance.py` checks | none | by hand under `runtime/game.lock` for now; the stress-test round (BACKLOG) covers it |
+| **E2E, live** (later, not in the target CI for now) | real BG3 on the test machine: a scripted oracle agent through a short scenario; the existing `tools/dev/acceptance.py` checks | none | by hand under `runtime/game.lock` for now; the stress-test round (BACKLOG) covers it |
 
 - **Golden fixtures:** real sessions recorded once (raw client streams, Lua replies, `facts.jsonl`) and checked in
   small, so parsers, graders and the fake mod are tested against what the game actually produces.
@@ -168,9 +168,9 @@ Work happens on branches (one per worker or task) and is merged by PR. Active si
 `protect-main` (no bypass, 0 approvals, squash or rebase merge); the CI checks are added as required once CI
 exists.
 
-Live E2E is left out of CI for now. If it is added later, it runs only on a self-hosted dev2 runner, triggered by
-hand or on a schedule from `main` and never from pull requests: the repo is public, and a fork's pull request must
-not be able to run code on a machine with the game and keys.
+Live E2E is left out of CI for now. If it is added later, it runs only on a self-hosted runner on the test machine,
+triggered by hand or on a schedule from `main` and never from pull requests: the repo is public, and a fork's pull
+request must not be able to run code on a machine with the game and keys.
 
 ## Rules for getting there
 
