@@ -87,9 +87,11 @@ def rolls(rpc: Rpc, wall: Callable[[], float] = time.time) -> RingReader:
 
 def to_roll(rec: dict) -> dict:
     """One roll log record (already through RingReader) as a rolls.jsonl row: {v, t, srcs: [...], roller, party,
-    success, active, crit, natural, dc, streams, ...}; fields a source did not give are left out."""
+    success, active, crit, natural, dc, streams, ...}; fields a source did not give are left out, except `natural`,
+    which rolls.v1 requires: null when the source didn't see the d20 face (a saving throw's, live9)."""
     row = {"v": ROLLS_V, "t": rec["t"]}
     row.update({k: v for k, v in rec.items() if k not in _RING_FIELDS and v is not None})
+    row.setdefault("natural", None)
     return row
 
 

@@ -169,6 +169,14 @@ class RollsTest(unittest.TestCase):
         self.assertNotIn("crit", rows[0])
         self.assertNotIn("seq", rows[0])
 
+    def test_a_roll_without_a_face_keeps_natural_null(self):
+        # live9: a GAMEPLAY_SpellSavingThrowSave record came without natural; rolls.v1 needs the key (null)
+        ring = FakeRing()
+        ring.add("", roller="14e6", party=True, success=False, natural=None, srcs=["requested"])
+        [row] = [referee.to_roll(r) for r in referee.rolls(ring, wall=lambda: 100.0).poll()]
+        self.assertIn("natural", row)
+        self.assertIsNone(row["natural"])
+
 
 def hidden_op_offenders(src: Path) -> list[str]:
     """Every module under `src` (subpackages too) except the top-level referee.py that names a hidden op or
