@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import debrief, delta, lessons, lore, memtools, offlimits, render, rules
+from .. import busywait, debrief, delta, lessons, lore, memtools, offlimits, render, rules
 from ..game import GameError, NotReady
 from . import core
 
@@ -592,6 +592,9 @@ def _guard(fn):
                 out = out + "\n" + plumbing._who_tl.note           # a result's own first word (FAILED, done) stays first
             if waited and isinstance(out, str):
                 out = waited + "\n" + out
+            busy = busywait.note(getattr(core.game, "busy_waited", lambda: 0.0)())
+            if busy and isinstance(out, str):  # the calls waited out bg3le's busy UI (busywait.py): say how long
+                out = out + "\n" + busy
             if core.LIFE.pending and isinstance(out, str):  # the briefing rides on the first text result
                 out = core.RULES.wrap(core.LIFE.take_pending(), memory._session_key()) + "\n\n=== the result of your call ===\n" + out
             return out

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import jobpush, rpc_record
+from . import busywait, jobpush, rpc_record
 from .luadebug import LuaDebugClient, LuaDebugError
 
 RPC_EXPR = "return Mods.BG3AI.BG3AI.rpc([{eq}[{payload}]{eq}])"
@@ -254,7 +254,24 @@ class Game:
 
     # ---- rpc ----
 
+    # bg3le's busy UI (busywait.py): a client op is asked again after the mod's cooldown; injectable for tests
+    _busy_clock = staticmethod(time.monotonic)
+    _busy_sleep = staticmethod(time.sleep)
+
     def rpc(self, op: str, args: dict | None = None, context: str = "server", timeout: float = 12.0) -> Any:
+        if context != "client" or op not in busywait.RETRY_OPS:
+            return self._rpc_once(op, args, context, timeout)
+        res, waited = busywait.call(lambda: self._rpc_once(op, args, context, timeout), self._busy_clock,
+                                    self._busy_sleep, GameError)
+        if waited > 0:
+            self._tl.busy_s = getattr(self._tl, "busy_s", 0.0) + waited
+        return res
+
+    def busy_waited(self) -> float:
+        """Seconds this thread's client calls waited for a busy UI since the tool call began (begin_tool)."""
+        return getattr(self._tl, "busy_s", 0.0)
+
+    def _rpc_once(self, op: str, args: dict | None, context: str, timeout: float) -> Any:
         payload = json.dumps({"op": op, "args": args or {}}, separators=(",", ":"))
         t0 = time.time()
         try:
@@ -366,6 +383,7 @@ class Game:
     def begin_tool(self) -> None:
         """A new tool call on this thread: forget which contexts an earlier read() drained."""
         self._tl.fresh = set()
+        self._tl.busy_s = 0.0
 
     def _fresh(self) -> set:
         if getattr(self._tl, "fresh", None) is None:
