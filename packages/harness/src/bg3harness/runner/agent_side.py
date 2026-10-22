@@ -28,6 +28,10 @@ from bg3harness.runner import state as rstate
 
 
 class AgentSide:
+    # a paid process's cost goes into runtime/budget.json as it ends (play.py run); a bench run's host turns this
+    # off: the matrix settles the run's cost (bg3bench.adapters.session_run), so it is added once
+    settles_budget = True
+
     def model_for(self, tag: str = "") -> tuple[str, str | None]:
         """(model, effort) for a session: CLI options < session-config.json; the fix pass has its own."""
         if tag == "-fix":
@@ -353,12 +357,7 @@ class AgentSide:
             self.write_choices(sid + tag, base)
         renv.log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
         if spend.is_paid(client.name):
-            try:
-                b = spend.add_spend(renv.RUNTIME / "budget.json", cost.usd, playthrough=self.opt.playthrough,
-                                    session=sid + tag)
-                renv.log(f"{sid}{tag}: cost ${cost.usd:.4f}" + (f"; budget ${b['spent']:.2f} of ${b['cap']:g}" if b else ""))
-            except (OSError, spend.BudgetError) as e:
-                renv.log(f"{sid}{tag}: budget update failed ({e}); cost ${cost.usd:.4f}")
+            self.settle_cost(sid + tag, cost.usd)
         self.code_moved(sid + tag)
         self.write_latency(f"{sid}{tag}", base, start, end)
         self.write_progress(f"{sid}{tag}", base, start, end)
@@ -366,6 +365,17 @@ class AgentSide:
         return rstate.SessionResult(sid, seen_session[0], proc.returncode, reason, start, end, model=model, effort=effort,
                              detail=detail, fault_at=fault_at, resets_at=api["resets_at"],
                              tool_calls=api["tool_calls"])
+
+    def settle_cost(self, stem: str, usd: float) -> None:
+        """One paid process's cost into runtime/budget.json, unless the run's host settles it (settles_budget)."""
+        if not self.settles_budget:
+            renv.log(f"{stem}: cost ${usd:.4f} (the bench settles the budget)")
+            return
+        try:
+            b = spend.add_spend(renv.RUNTIME / "budget.json", usd, playthrough=self.opt.playthrough, session=stem)
+            renv.log(f"{stem}: cost ${usd:.4f}" + (f"; budget ${b['spent']:.2f} of ${b['cap']:g}" if b else ""))
+        except (OSError, spend.BudgetError) as e:
+            renv.log(f"{stem}: budget update failed ({e}); cost ${usd:.4f}")
 
     def sandbox_cleanup(self) -> None:
         """--sandbox container: the play process's container (a SIGKILL to the docker CLI doesn't reach it) and

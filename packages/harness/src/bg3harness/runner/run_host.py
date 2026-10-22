@@ -53,6 +53,7 @@ class RunRunner(Protocol):
     """What the host drives of a SessionRunner (make_runner's result)."""
 
     run_started: float | None
+    settles_budget: bool  # False here: SessionRun's matrix adds the run's cost to budget.json
 
     @property
     def opt(self) -> rstate.Options: ...
@@ -220,6 +221,7 @@ class LiveRunHost:
         r = self.make_runner(opt)
         t0 = self.clock()
         r.run_started = t0
+        r.settles_budget = False  # the matrix settles a paid run's cost (once): the runner must not add it too
         r.state["saves_after"] = t0  # reset.saves: only saves from now on (and the start save) are the run's
         moved = archive_nav_state(renv.SE_BG3AI_DIR, run_dir / "reset") if sc["reset"]["nav_state"] == "archive" else []
         r.event("run_reset", nav_files=moved)

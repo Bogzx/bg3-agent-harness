@@ -68,8 +68,12 @@ def test_plan_is_a_dry_run_table(tmp_path):
     code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path)))
     assert code == 0
     lines = out.splitlines()
-    assert lines[0].split() == ["job", "client", "effort", "max_cost"]
-    assert lines[1].split() == ["anthropic_claude-opus-5.5~nautiloid~rules~r1", "pi", "high", "$2.50"]
+    head = ["job", "client", "effort", "profile", "scenario", "condition", "max_cost", "reserve"]
+    assert lines[0].split() == head
+    pi = ["anthropic_claude-opus-5.5~nautiloid~rules~r1", "pi", "high", "pi.toml", "nautiloid", "rules"]
+    assert lines[1].split() == [*pi, "$2.50", "$2.50"]
+    claude = next(ln.split() for ln in lines if ln.startswith("claude-opus-5-5~grove~rules~r1"))
+    assert claude[1:] == ["claude", "high", "claude.toml", "grove", "rules", "$4.00", "-"]  # never charged
     assert "8 jobs (4 paid), reserve $13.00" in out
     assert "spent: $1.50 of $20.00" not in out and "$1.50 of $20.00 spent" in out
     assert "condition rules: a pilot (allow_gaps); play.py lacks a rules-only prompt" in out

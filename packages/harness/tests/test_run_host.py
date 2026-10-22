@@ -59,6 +59,7 @@ class FakeRunner:
         self.cap_hit: dict[str, Any] | None = None
         self.mod_rev: str | None = None
         self.run_started: float | None = None
+        self.settles_budget = True
         self.game_settings = {"difficulty": "Balanced"}
         self.facts_fail = False
 
@@ -169,6 +170,7 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     (r,) = runners
     assert calls == ["snapshot", "ensure_game(True)", "reload", "settings", "check_settings"]
     assert (r.state["saves_after"], r.run_started) == (1000.0, 1000.0)
+    assert not r.settles_budget  # the matrix adds the run's cost to budget.json, not the runner
     assert sorted(p.name for p in (run_dir("m-grove") / "reset").iterdir()) == ["nav_aa.json", "nav_guard_aa.json"]
     assert [p.name for p in renv.SE_BG3AI_DIR.iterdir()] == ["other.json"]
     assert r.events == [("run_reset", {"nav_files": ["nav_aa.json", "nav_guard_aa.json"]})]

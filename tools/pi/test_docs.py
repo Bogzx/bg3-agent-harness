@@ -128,6 +128,8 @@ class QuickstartCommand(unittest.TestCase):
 
 if UV_ENV and PI.exists():
     import pytest
+
+    sys.path.insert(0, str(REPO / "runner"))  # test_pi_e2e and its test_crash, testenv
     import test_pi_e2e as T  # noqa: N812  runner/: the real Runner.play_session of pi on the stub model and the fake mod
 
     @pytest.mark.e2e

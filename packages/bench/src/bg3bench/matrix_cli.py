@@ -187,10 +187,23 @@ def _usd(x: float | None) -> str:
 
 def print_plan(m: dict, out: TextIO) -> None:
     jobs = m["jobs"]
-    rows = [["job", "client", "effort", "max_cost"]]
-    rows += [[j["id"], j["client"], j["effort"] or "-", _usd(j["max_cost"])] for j in jobs]
-    _table(rows, out)
     paid = [j for j in jobs if j["client"] in matrix.PAID_CLIENTS]
+    # max_cost: the run's cap; reserve: what the budget holds back for it (a subscription run is never charged)
+    rows = [["job", "client", "effort", "profile", "scenario", "condition", "max_cost", "reserve"]]
+    rows += [
+        [
+            j["id"],
+            j["client"],
+            j["effort"] or "-",
+            Path(j["profile"]).name if j["profile"] else "-",
+            j["scenario"],
+            j["condition"],
+            _usd(j["max_cost"]),
+            _usd(j["max_cost"]) if j in paid else "-",
+        ]
+        for j in jobs
+    ]
+    _table(rows, out)
     reserve = sum(j["max_cost"] for j in paid)
     print(f"\n{len(jobs)} jobs ({len(paid)} paid), reserve {_usd(reserve)}", file=out)
     try:

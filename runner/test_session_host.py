@@ -28,7 +28,8 @@ import legacy_cli as lcli
 import legacy_playthrough as lpt
 import play as P  # noqa: N812
 
-from bg3harness import client_setup, ramwatch
+from bg3harness import client_setup, ramwatch, spend
+from bg3harness import events as E  # noqa: N812
 from bg3harness.runner import core as rcore
 from bg3harness.runner import env as renv
 from bg3harness.runner import state as rstate
@@ -47,6 +48,8 @@ SCENARIO = {
     "conditions": ["rules"],
     "profile": {"character": {"brief": "A careful trader."}},
 }
+PAID_USD = 0.3
+PI = (Path(__file__).resolve().parents[1] / "profiles" / "deepseek-flash.toml").read_text()  # DeepSeek's rates
 
 
 class StubRunner(lpt.Runner):
@@ -77,6 +80,14 @@ class StubRunner(lpt.Runner):
 
     def run_claude(self, sid, prompt, minutes, claude_session, resume=False, tag="", needs_game=True):
         StubRunner.played.append({"sid": sid, "prompt": prompt, "minutes": minutes, "dir": self.state.dir})
+        if spend.is_paid(self.opt.client):  # the process's result, and the runner's spend step as run_claude ends
+            base = self.state.dir / f"{sid}{tag}"
+            stream = base.with_name(base.name + ".jsonl")
+            stream.write_text("")
+            os.utime(stream, (self.run_started + 1, self.run_started + 1))  # after the run's start (coarse mtimes)
+            result = E.Event("result", subtype="success", turns=3, cost_usd=PAID_USD, tokens={"output": 10})
+            base.with_name(base.name + ".events.jsonl").write_text(result.to_json() + "\n")
+            self.settle_cost(sid + tag, PAID_USD)
         now = time.time()
         return rstate.SessionResult(sid, claude_session or "", 0, "exited", now, now + 1)
 
@@ -147,6 +158,34 @@ class Bench(unittest.TestCase):
         self.assertEqual((rec["outcome"], rec["client"], rec["sessions"]), ("timeout", "claude", 1))
         self.assertTrue((run_dir / "manifest.json").is_file() and (run_dir / "result.json").is_file())
         self.assertEqual(os.environ["BG3AI_PROMPT_CONDITION"], "rules")
+
+    def test_a_paid_run_is_charged_once_by_the_matrix(self):
+        (self.repo / "profiles" / "pi.toml").write_text(PI)
+        self.matrix.write_text(
+            "name = 'm'\nscenarios = ['host_idol']\nmodels = ['profiles/pi.toml']\nconditions = ['rules']\n"
+            "[budget]\nmax_cost = { host_idol = 1.0 }\n"
+        )
+        os.environ["DEEPSEEK_API_KEY"] = "test-key"  # api_key_env: no .env read
+        dumped = {"system_file": str(self.tmp / "system.txt")}  # pi's run file (no uv dump)
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(client_setup, "run_files", lambda *a: dumped))
+        rc, out = self.bench("run")
+        self.assertEqual(rc, 0, out)
+        [play] = StubRunner.played
+        rec = json.loads((play["dir"] / "runs.jsonl").read_text())
+        self.assertEqual((rec["client"], rec["cost_usd"]), ("pi", PAID_USD))
+        budget = json.loads((self.repo / "runtime" / "budget.json").read_text())
+        self.assertAlmostEqual(budget["spent"], PAID_USD)  # the matrix's add, not the runner's too
+        self.assertEqual(budget["last"]["job"], "deepseek-flash~host_idol~rules~r1")
+
+    def test_a_runner_outside_the_bench_still_charges(self):
+        r = StubRunner(rstate.Options("pt", None, 15.0, "opus"))  # play.py run's runner
+        self.assertTrue(r.settles_budget)
+        r.settle_cost("S001", PAID_USD)
+        budget = json.loads((self.repo / "runtime" / "budget.json").read_text())
+        self.assertAlmostEqual(budget["spent"], PAID_USD)
+        self.assertEqual(budget["last"]["session"], "S001")
 
     def test_the_composed_runner_is_a_session_runner(self):
         self.assertTrue(issubclass(StubRunner, rcore.SessionRunner))

@@ -16,7 +16,8 @@ rerun plays in a fresh run directory (the failed start may have left a facts.jso
 run of an edited scenario is refused.
 
 Budget: a paid client's (matrix.PAID_CLIENTS) cost is settled by the matrix (`charged` False), so the host must not
-add it to runtime/budget.json itself; a subscription run isn't billed (`charged`).
+add it to runtime/budget.json itself (LiveRunHost turns its runner's settles_budget off); a subscription run isn't
+billed (`charged`).
 """
 
 from __future__ import annotations
