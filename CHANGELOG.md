@@ -5,21 +5,29 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `bridge/pyproject.toml` (`bg3ai-bridge`), until the harness has its own package | 0.1.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`) | 0.1.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.1.0 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.1.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.1 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
+
+The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
+installed package).
 
 How versions and tags work:
 
 - A benchmark release is a git tag `bench-vX.Y` on the commit it was run from, and `bg3bench`'s version is `X.Y.0`
   at that commit. Before 1.0, anything that changes a score bumps Y: the scenario set or a scenario file, a grader,
   the conditions, the statistics, the invalid-run rule. Fixes that change no score bump only the patch number and
-  get no new tag.
+  get no new tag. `packages/bench/suite.json` pins a digest of those files (scenarios, graders, predicates, the
+  choice grader, conditions, statistics, `results.py`) per suite version, and `tests/test_suite.py` fails when they
+  change without one: bump the minor version and pin the new digest under the new `bench-vX.Y`, or, for a change
+  that moves no score, append the digest to the current version's list. Entries are never edited.
 - The harness version bumps its minor number for any change to what the agent sees or can do (tools, tool
   descriptions, rules text, fairness filters), and its patch number for fixes that change none of that.
-- Every result cites both versions: `bench_tag` and the harness and bench versions in the run manifest, plus the
-  pins (game build, bg3le, mod tree, repo commit). Results from different `bench-v` tags are not compared on one
-  leaderboard.
+- Every result cites the versions: each run record's `pins.versions` (harness, bench, suite), the run manifest's
+  `versions`, each release run's `versions`, the release's `suite` and each leaderboard row's harness versions,
+  plus the pins (game build, bg3le, mod tree, repo commit). A release holds runs of one suite version only (and its
+  `bench_tag` must be that version), so results from different `bench-v` tags are never on one leaderboard.
 
 Dates are when the work landed on the `overhaul` branch.
 
@@ -57,6 +65,7 @@ game unless it says so.
 - Scenario setup RPCs (dice seed, Karmic Dice, renames, undo), refused unless the game runs with
   `BG3AI_SCENARIO_SETUP=1`; the seed and renames are applied again after every load.
 - A save inspector (`tools/saves/inspect.py`) that lists what a save embeds and flags anything personal.
+- The harness version is `packages/harness/pyproject.toml`'s, exposed as `bg3harness.__version__`.
 
 ### Benchmark (`packages/bench`)
 
@@ -64,7 +73,12 @@ game unless it says so.
 - Goal predicates and graders over `facts.jsonl` v1, the do-nothing check and the progress curve.
 - Sandbox method attribution (trade, pickpocket, loot, quest), reported beside the verdict and never graded.
 - Run manifest, run result and release results as versioned JSON Schemas with builders. Every manifest and every run in
-  `results.json` cites the harness and bench versions (the harness one is null until the runner passes it).
+  `results.json` cites the harness, bench and suite versions (the harness one is null when neither the runner nor
+  the record's pins give it).
+- Versions: `bg3bench.__version__` from the pyproject, the suite version `bench-vX.Y` derived from it with its files
+  pinned in `suite.json`, and the versions in every run record's pins (a series refuses a run of another harness or
+  suite version unless `--allow-version-drift`). A release refuses runs of two suite versions or of a suite other
+  than its `bench_tag`; the leaderboard shows the suite and each row's harness versions.
 - Scenario schema v2 (family, holdout, goal or until, game settings, dice seed, realtime or turn-based timing,
   requires, conditions) and a loader that converts the v1 files. The think-pause is gone: the ESC menu does not
   pause BG3 (D7).

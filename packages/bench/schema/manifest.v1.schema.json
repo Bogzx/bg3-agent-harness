@@ -19,10 +19,10 @@
     "bench_tag": {"$ref": "#/$defs/str_or_null"},
     "versions": {
       "type": "object",
-      "description": "the harness version (bridge/pyproject.toml until the harness has its own package; null when the runner did not record it) and bg3bench's version",
+      "description": "the harness version (bg3harness.__version__, packages/harness/pyproject.toml; null when the runner did not record it), bg3bench's version and the suite version (bench-vX.Y of bench; manifests before it have none)",
       "required": ["harness", "bench"],
       "additionalProperties": false,
-      "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}}
+      "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}, "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"}}
     },
     "series": {"type": "string", "minLength": 1},
     "run": {"type": "integer", "minimum": 1},

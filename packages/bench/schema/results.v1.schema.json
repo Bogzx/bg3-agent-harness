@@ -8,11 +8,13 @@
   "additionalProperties": false,
   "$defs": {
     "num_or_null": {"type": ["number", "null"], "minimum": 0},
-    "str_or_null": {"type": ["string", "null"]}
+    "str_or_null": {"type": ["string", "null"]},
+    "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"}
   },
   "properties": {
     "schema": {"const": 1},
     "bench_tag": {"$ref": "#/$defs/str_or_null"},
+    "suite": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/suite"}], "description": "the suite version (bench-vX.Y) of every run in the release; null: no runs"},
     "created": {"type": "number"},
     "seed": {"type": "integer"},
     "b": {"type": "integer", "minimum": 1},
@@ -26,10 +28,10 @@
           "run_id": {"type": "string", "minLength": 1},
           "versions": {
             "type": "object",
-            "description": "the run manifest's versions: harness and bench",
+            "description": "the run manifest's versions: harness, bench and the suite (bench-vX.Y of bench)",
             "required": ["harness", "bench"],
             "additionalProperties": false,
-            "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}}
+            "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}, "suite": {"$ref": "#/$defs/suite"}}
           },
           "scenario": {"type": "string", "minLength": 1},
           "model": {"type": "string", "minLength": 1},
@@ -79,6 +81,7 @@
           "n_runs": {"type": "integer", "minimum": 1},
           "n_invalid": {"type": "integer", "minimum": 0},
           "invalid_rate": {"type": "number", "minimum": 0, "maximum": 1},
+          "harness": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true, "description": "the harness versions the group's runs played with (sorted; unknown ones left out)"},
           "stats": {
             "oneOf": [
               {"type": "null"},

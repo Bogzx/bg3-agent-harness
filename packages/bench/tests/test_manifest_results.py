@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench import facts, graders, manifest, methods, results, stats
+from bg3bench import facts, graders, manifest, methods, results, stats, suite
 
 HERE = Path(__file__).resolve().parent
 SCHEMAS = HERE.parent / "schema"
@@ -78,7 +78,7 @@ def test_manifest_with_the_fields_older_series_lack():
         bench_version="0.1.0",
     )
     assert man["run_id"] == "naut2-r002" and man["grader"] == {"version": "2"}
-    assert man["versions"] == {"harness": "0.1.0", "bench": "0.1.0"}
+    assert man["versions"] == {"harness": "0.1.0", "bench": "0.1.0", "suite": "bench-v0.1"}
     assert (man["seed"], man["scenario"]["timing"]) == (1729, "realtime")
     assert_valid("manifest.v1.schema.json", man)
     v = validator("manifest.v1.schema.json")
@@ -94,11 +94,26 @@ def test_manifest_with_the_fields_older_series_lack():
 def test_manifest_cites_the_installed_bench_version_by_default():
     series, records = load_series()
     man = manifest.from_series(series, records[0])
-    assert man["versions"] == {"harness": None, "bench": manifest.installed_version()}
+    assert man["versions"] == {
+        "harness": None,
+        "bench": manifest.installed_version(),
+        "suite": suite.suite_version(manifest.installed_version()),
+    }
     assert (
         manifest.installed_version()
         == tomllib.loads((HERE.parent / "pyproject.toml").read_text())["project"]["version"]
     )
+
+
+def test_manifest_takes_the_versions_the_run_recorded():
+    """A record's pins (pins.version_pins) carry the versions it played with; arguments override them."""
+    series, records = load_series()
+    rec = {**records[0], "pins": {**(records[0].get("pins") or {}), "versions": {"harness": "0.2.1", "bench": "0.3.4"}}}
+    man = manifest.from_series(series, rec)
+    assert man["versions"] == {"harness": "0.2.1", "bench": "0.3.4", "suite": "bench-v0.3"}
+    assert_valid("manifest.v1.schema.json", man)
+    man = manifest.from_series(series, rec, harness_version="0.5.0", bench_version="1.0.2")
+    assert man["versions"] == {"harness": "0.5.0", "bench": "1.0.2", "suite": "bench-v1.0"}
 
 
 def test_manifest_rejects_mismatched_inputs(tmp_path):
@@ -170,8 +185,9 @@ def test_release_results_round_trip(tmp_path):
     assert_valid("results.v1.schema.json", out)
     assert [r["run_id"] for r in out["runs"]] == ["naut2-r001", "naut2-r002", "naut2-r003"]
     assert {tuple(r["versions"].items()) for r in out["runs"]} == {
-        (("harness", None), ("bench", manifest.installed_version()))
+        (("harness", None), ("bench", manifest.installed_version()), ("suite", "bench-v0.1"))
     }
+    assert out["suite"] == "bench-v0.1"
     assert out["runs"][0]["tokens"] == {"input": 186, "output": 15172, "cache_read": 4291143, "cache_write": 80131}
     (group,) = out["groups"]
     assert (group["model"], group["condition"], group["n_runs"], group["n_invalid"]) == ("opus", None, 3, 0)
@@ -185,6 +201,23 @@ def test_release_results_round_trip(tmp_path):
     results.write(out, tmp_path / "results.json")
     assert results.load(tmp_path / "results.json") == out
     assert out == results.build_results(pairs, seed=0, created=1792300000.0, bench_tag="bench-v0.1", b=500)
+
+
+def test_release_is_of_one_suite_version_and_lists_harness_versions():
+    pairs = naut2_pairs()
+    (m1, r1), (m2, r2), (m3, r3) = pairs
+    old = {**m1, "versions": {"harness": None, "bench": m1["versions"]["bench"]}}  # a manifest before the suite field
+    mixed = [(old, r1), ({**m2, "versions": {**m2["versions"], "harness": "0.2.0"}}, r2), (m3, r3)]
+    out = results.build_results(mixed, seed=0, created=1.0, bench_tag="bench-v0.1", b=20)
+    assert_valid("results.v1.schema.json", out)
+    assert (out["suite"], out["runs"][0]["versions"]["suite"]) == ("bench-v0.1", "bench-v0.1")
+    assert out["groups"][0]["harness"] == ["0.2.0"]
+    newer = {**m3, "versions": {"harness": "0.2.0", "bench": "0.2.0", "suite": "bench-v0.2"}}
+    with pytest.raises(ValueError, match="2 suite versions"):
+        results.build_results([(m1, r1), (newer, r3)], seed=0, created=1.0, b=20)
+    with pytest.raises(ValueError, match="release bench-v0.2 holds runs of bench-v0.1"):
+        results.build_results(pairs, seed=0, created=1.0, bench_tag="bench-v0.2", b=20)
+    assert results.build_results([], seed=0, created=1.0, b=20)["suite"] is None
 
 
 def test_release_groups_invalid_runs_and_missing_costs():

@@ -5,14 +5,17 @@
 (runner/runs.py). What those files don't record yet (prompt hash and parts, tool allowlist, price sheet, provider,
 client version, condition, the dice seed, the scenario's timing and the harness version) is passed in, or stays null.
 `judge` names the LLM judge that scored the run (the persona judge's model), which must not be a contestant.
-Every manifest cites the harness version and this package's version (CHANGELOG.md: results cite both).
+Every manifest cites the harness version, this package's version and the suite version (`bench-vX.Y`,
+bg3bench.suite; CHANGELOG.md: results cite them). The record's pins carry the versions the run played with
+(pins.version_pins); the arguments override them, and the installed ones fill in what neither gives.
 """
 
 from __future__ import annotations
 
 import json
-from importlib import metadata
 from pathlib import Path
+
+from bg3bench import __version__, suite
 
 SCHEMA = 1
 FACTS_SCHEMA = 1
@@ -20,8 +23,8 @@ GRADER_VERSION = "1"
 
 
 def installed_version() -> str:
-    """bg3bench's installed version (pyproject.toml); raises PackageNotFoundError when it is not installed."""
-    return metadata.version("bg3bench")
+    """bg3bench's version (pyproject.toml: bg3bench.__version__)."""
+    return __version__
 
 
 def run_id(series: str, run: int) -> str:
@@ -45,7 +48,8 @@ def from_series(
     harness_version: str | None = None,
     bench_version: str | None = None,
 ) -> dict:
-    """series.json + one runs.jsonl record -> manifest v1. `bench_version` defaults to the installed bg3bench's."""
+    """series.json + one runs.jsonl record -> manifest v1. The versions: the arguments, else the record's pins
+    (`versions`), else (bench and suite only) the installed bg3bench's; the harness stays null when neither says."""
     if record.get("series") != series["series"]:
         raise ValueError(f"run record of series {record.get('series')!r}, not {series['series']!r}")
     scenario = series.get("scenario") or {}
@@ -57,7 +61,7 @@ def from_series(
         "run_id": run_id(series["series"], record["run"]),
         "created": record["started"],
         "bench_tag": bench_tag,
-        "versions": {"harness": harness_version, "bench": bench_version or installed_version()},
+        "versions": versions(record, harness_version, bench_version),
         "series": series["series"],
         "run": record["run"],
         "scenario": {
@@ -80,6 +84,13 @@ def from_series(
         "sandbox": series.get("sandbox"),
         "judge": {"model": judge} if (judge := judge_model(series, record)) else None,
     }
+
+
+def versions(record: dict, harness_version: str | None = None, bench_version: str | None = None) -> dict:
+    """The manifest's versions: {harness, bench, suite (bench's bench-vX.Y)}."""
+    pinned = (record.get("pins") or {}).get("versions") or {}
+    bench = bench_version or pinned.get("bench") or installed_version()
+    return {"harness": harness_version or pinned.get("harness"), "bench": bench, "suite": suite.suite_version(bench)}
 
 
 def judge_model(series: dict, record: dict) -> str | None:

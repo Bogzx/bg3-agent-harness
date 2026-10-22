@@ -13,7 +13,9 @@ realtime scenarios (D7) report it next to wall time, since the world runs while 
 luck.summary over the run's roll log (D9), null when the run has none. A choice scenario's result has `choices`
 (choices.grade: the picks, the persona fit), and its release run the picks and the fit score (choices.table).
 
-`build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs.
+`build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs. A
+release is of one suite version (`suite`, bench-vX.Y: its runs' bench versions; its `bench_tag` when tagged), and
+each group lists the harness versions its runs played with.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from statistics import median
 from bg3harness.judge import same_model
 
 from bg3bench import choices as choices_mod
-from bg3bench import stats
+from bg3bench import stats, suite
 
 SCHEMA = 1
 OUTCOMES = ("reached", "timeout", "over_budget", "gave_up", "runner_error")
@@ -112,7 +114,8 @@ def build_results(
     """(manifest, result) pairs -> results v1. Each group's bootstrap gets a fresh random.Random(seed), so its
         numbers do not depend on which other groups are in the release. Runs of a `holdout` scenario are left out
         entirely (a published release never contains them; contamination.holdout_names lists them). A release whose
-    judge (manifest `judge`) is the same model or family as a contestant is refused: the judge never scores itself."""
+    judge (manifest `judge`) is the same model or family as a contestant is refused: the judge never scores itself.
+    So is one whose runs are of more than one suite version, or of another suite than its `bench_tag`."""
     runs, groups, pairs_kept = [], {}, []
     for man, res in pairs:
         if man["run_id"] != res["run_id"]:
@@ -125,7 +128,7 @@ def build_results(
         runs.append(
             {
                 "run_id": res["run_id"],
-                "versions": man["versions"],
+                "versions": {**man["versions"], "suite": suite.suite_version(man["versions"]["bench"])},
                 "scenario": man["scenario"]["name"],
                 "model": key[0],
                 "condition": key[1],
@@ -143,6 +146,11 @@ def build_results(
         )
     if len({r["run_id"] for r in runs}) != len(runs):
         raise ValueError("a run_id appears twice")
+    suites = sorted({r["versions"]["suite"] for r in runs})
+    if len(suites) > 1:
+        raise ValueError(f"runs of {len(suites)} suite versions ({', '.join(suites)}): scores don't compare")
+    if bench_tag is not None and suites and suites != [bench_tag]:
+        raise ValueError(f"release {bench_tag} holds runs of {suites[0]}")
     contestants = {model for model, _ in groups}
     for man, _ in pairs_kept:
         judge = (man.get("judge") or {}).get("model")
@@ -152,6 +160,7 @@ def build_results(
                 f"run {man['run_id']}: its judge {judge} is a contestant ({', '.join(clash)}): "
                 "pick a judge outside the comparison"
             )
+    harness_of = {r["run_id"]: r["versions"]["harness"] for r in runs}
     out_groups = []
     for (model, condition), members in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
         valid = [(s, r) for s, r in members if r["valid"]]
@@ -172,11 +181,13 @@ def build_results(
                 "cost_usd": _costs([r for _, r in valid]),
                 "wall_s": {"median": median(walls) if walls else None},
                 "think_s": {"median": median(thinks) if thinks else None},
+                "harness": sorted({v for _, r in members if (v := harness_of[r["run_id"]]) is not None}),
             }
         )
     return {
         "schema": SCHEMA,
         "bench_tag": bench_tag,
+        "suite": suites[0] if suites else None,
         "created": created,
         "seed": seed,
         "b": b,

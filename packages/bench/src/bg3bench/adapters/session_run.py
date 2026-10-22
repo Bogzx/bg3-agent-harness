@@ -3,7 +3,8 @@
 The bench builds the run: the series (`series_name`: one per scenario, model, client, effort and condition), the run
 number (one after the series' last runs.jsonl record), the run directory (runtime/sessions/<series.run_name>/), the
 SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=0)) and, at the end, the record, its
-runs.jsonl line and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
+runs.jsonl line (its pins carry the harness, bench and suite versions: pins.versions, the host's harness version
+first) and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
 `start` puts the game at the scenario's start and returns the kickoff and the session hooks (the agent process, the
 game, the clock), `record` returns the run's record fields once the session is over (facts.jsonl closed). The
 harness never imports the bench: the scenario reaches the host as the v2 dict (scenario.load: with defaults).
@@ -28,7 +29,7 @@ from typing import Protocol
 
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
-from bg3bench import run_artifacts, scenario, series
+from bg3bench import pins, run_artifacts, scenario, series
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 NO_RESUME = Recovery(max_resumes=0)
@@ -93,6 +94,8 @@ class SessionRun:
         rec.update(series=name, playthrough=run_dir.name, run=k, client=job["client"], model=job["model"])
         rec.setdefault("effort", job["effort"])
         rec.setdefault("started", out.started)
+        versions = {**pins.versions(), **({"harness": st.harness_version} if st.harness_version else {})}
+        rec["pins"] = {"versions": versions, **(rec.get("pins") or {})}
         if out.invalid:
             rec["harness_failures"] = int(rec.get("harness_failures") or 0) + 1
             rec["session_invalid"] = out.invalid

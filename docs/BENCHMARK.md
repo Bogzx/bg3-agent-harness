@@ -42,6 +42,7 @@ A comparison only holds when all of these are equal across the models compared. 
 |---|---|---|
 | Game build | Steam buildid `25605617` (Patch 8 Hotfix 10; `tools/dev/first_launch.sh` `WANT_BUILD`) | preflight; series pins |
 | bg3le, mod, harness code | `series.json` `pins`: bg3le sha256 + source, mod tree sha1, repo commit + dirty diff ([runner/README.md](../runner/README.md), "Fixed per series") | the runner refuses a run whose pins differ (`--allow-version-drift` records it) |
+| Harness, bench and suite versions | `pins.versions`: `bg3harness.__version__`, `bg3bench.__version__` and the suite `bench-vX.Y` (from each package's pyproject; [CHANGELOG.md](../CHANGELOG.md) says when each bumps) | a harness or suite change drifts the pins like the repo commit; a release holds one suite version (`results.build_results`); `packages/bench/tests/test_suite.py` fails when scenarios, graders or conditions change without a suite version |
 | Steam updates | Steam in offline mode for the whole series | preflight WARN; the runner refuses to launch with Steam online where the machine requires offline (`~/.config/bg3ai/require-steam-offline` or `BG3AI_REQUIRE_STEAM_OFFLINE=1`) |
 | Scenarios | `scenarios/<name>.json`: start, `until` milestone, caps, profile, resets ([scenarios/README.md](../scenarios/README.md)) | `series.json` `scenario.digest` + the start save's sha1 |
 | Caps | per scenario (`run_hours`, `max_cost`, `max_tokens`) | `series.json` `caps` (`--allow-cap-change` records a change) |
@@ -110,7 +111,8 @@ One line per run in `runtime/sessions/<series>/runs.jsonl`; the fields are liste
 - `latency` (idle median/p90, gaps over 10 s, bridge read round trip) and `model_time` (harness vs model time, the
   model part normalised to the reference speeds) *(model_time in records: not live-tested)*
 - `persona` (the judge's 0-10 adherence to CHARACTER.md) *(not live-tested)*
-- `pins`, `caps`, `scenario`, `model`, `effort`, `keeper_model`, `version_drift`, `cap_changes`
+- `pins` (with `versions`: harness, bench, suite), `caps`, `scenario`, `model`, `effort`, `keeper_model`,
+  `version_drift`, `cap_changes`
 
 ## 5. Reading `play.py runs`
 

@@ -8,13 +8,18 @@ The prompt files and the data contracts stay where their owners keep them, next 
 
 `PROMPTS` and `SCHEMAS` locate them, `schema(name)` loads one, and `assemble` is prompts/assemble.py's function. The
 paths hold for the workspace's editable install, which is the only install today.
+
+`__version__` is the harness version (pyproject.toml's, the one source; CHANGELOG.md says when it bumps): run records,
+manifests and results cite it.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import tomllib
 from functools import cache
+from importlib import metadata
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -23,7 +28,21 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS = PACKAGE_ROOT / "prompts"
 SCHEMAS = PACKAGE_ROOT / "schemas"
 
-__all__ = ["PACKAGE_ROOT", "PROMPTS", "SCHEMAS", "assemble", "prompts", "schema"]
+__all__ = ["PACKAGE_ROOT", "PROMPTS", "SCHEMAS", "__version__", "assemble", "package_version", "prompts", "schema"]
+
+
+def package_version(dist: str, root: Path) -> str:
+    """A package's version: its pyproject.toml's under `root` when the source tree is there (the runner imports the
+    packages by path, uninstalled; an editable install's metadata keeps the version of its last sync), else the
+    installed distribution's."""
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file():
+        version: str = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+        return version
+    return metadata.version(dist)
+
+
+__version__ = package_version("bg3-agent-harness", PACKAGE_ROOT)
 
 
 def schema(name: str) -> dict[str, Any]:

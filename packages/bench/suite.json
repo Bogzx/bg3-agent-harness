@@ -1,0 +1,6 @@
+{
+ "about": "The suite file digests (bg3bench.suite.digest) of each benchmark-suite version. Append only: see bg3bench/suite.py.",
+ "versions": {
+  "bench-v0.1": ["ffd6cb5dc706d8e8efe726af89d14c715bf0504cd5868a4f1bae23cb8ee2b546"]
+ }
+}

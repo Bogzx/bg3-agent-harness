@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from bg3bench import matrix, report, scenario
+from bg3bench import matrix, pins, report, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
 from bg3bench.matrix import Matrix, RunResult
 
@@ -126,6 +126,7 @@ def test_a_clean_run_is_one_session_and_its_artifacts(tmp_path):
     assert hooks.runs == [{"prompt": "KICKOFF", "minutes": 15.0, "session": "conv-1", "resume": False}]  # run_hours
     rec = json.loads((run_dir / "runs.jsonl").read_text())
     assert (rec["series"], rec["playthrough"], rec["run"], rec["started"]) == (series, series, 1, T0)
+    assert rec["pins"]["versions"] == {**pins.versions(), "harness": "0.1"}  # the host's harness version
     meta = json.loads((run_dir / "series.json").read_text())
     assert meta["scenario"]["spec"] == SC and meta["scenario"]["digest"] == scenario.digest(SC)
     man = json.loads((run_dir / "manifest.json").read_text())

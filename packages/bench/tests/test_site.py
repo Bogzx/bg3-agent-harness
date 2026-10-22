@@ -157,7 +157,9 @@ def test_page_html(tmp_path):
     # one table row per (model, condition) per family
     assert html.count('<tr><th scope="row">') == 6
     first = re.search(r"<tr><th scope=\"row\">(.*?)</tr>", html).group(1)
-    assert re.sub(r"<[^>]+>", "|", first).split("|")[:4] == ["opus", "rules", "", ""]
+    # the row names the harness version(s) its runs played with; the header the release's suite version
+    assert re.sub(r"<[^>]+>", "|", first).split("|")[:6] == ["opus", "rules", "", "harness 0.1.0", "", ""]
+    assert "Release bench-v0.1 · suite bench-v0.1 ·" in html
     # pass^3: goblin_fight 2/4 -> 0, owlbear 3/3 -> 1, mean 50%
     assert "<td>5/7</td><td>71% <small>[36%, 92%]</small></td><td>50% <small>k=3</small></td>" in first
     assert "<td>$2.00</td><td>$2.80</td><td>1.00 M</td><td>10.0 min</td><td>5.0 min</td><td>1</td>" in first

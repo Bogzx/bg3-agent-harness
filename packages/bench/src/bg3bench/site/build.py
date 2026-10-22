@@ -76,6 +76,7 @@ def rows(release: Mapping, families: Mapping[str, str] | None = None) -> dict[st
                 "t_pass_s": _median([r["t_pass_s"] for r in valid if r["passed"]]),
                 "n_invalid": len(runs) - n,
                 "run_ids": [r["run_id"] for r in runs],
+                "harness": sorted({h for r in runs if (h := r["versions"].get("harness"))}),
             }
         )
     for fam_rows in out.values():
@@ -160,10 +161,11 @@ def _row_html(row: Mapping, manifest_href: str, realtime: bool) -> str:
         f'<a href="{escape(manifest_href.format(run_id=rid))}">{escape(rid)}</a>' for rid in row["run_ids"]
     )
     links = f"<details><summary>{len(row['run_ids'])} runs</summary>{links}</details>"
+    harness = f"<small>harness {escape(', '.join(row['harness']))}</small>" if row["harness"] else ""
     rate = "–" if row["rate"] is None else f"{row['rate']:.0%}"
     pass_hat = "–" if row["pass_hat"] is None else f"{row['pass_hat']:.0%} <small>k={row['pass_k']}</small>"
     cells = [
-        f'<th scope="row">{escape(row["model"])}<small>{escape(row["condition"] or "")}</small></th>',
+        f'<th scope="row">{escape(row["model"])}<small>{escape(row["condition"] or "")}</small>{harness}</th>',
         f"<td>{row['k']}/{row['n']}</td>",
         f"<td>{rate} <small>[{lo:.0%}, {hi:.0%}]</small></td>",
         f"<td>{pass_hat}</td>",
@@ -288,7 +290,7 @@ def render(
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{escape(title)}</title><style>{CSS}</style></head><body><main>"
         f"<h1>{escape(title)}</h1>"
-        f'<p class="meta">Release {escape(tag)} · bootstrap seed {release["seed"]} · valid runs only; '
+        f'<p class="meta">Release {escape(tag)} · suite {escape(release.get("suite") or "unknown")} · bootstrap seed {release["seed"]} · valid runs only; '
         f"invalid runs are counted, never scored.</p>"
         + "".join(sections)
         + choices_html(choices_mod.table(release["runs"]))

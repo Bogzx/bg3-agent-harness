@@ -10,7 +10,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import bg3harness
+
+import bg3bench
 from bg3bench import pins as R
+from bg3bench import suite
 
 
 def _git(answers: dict):
@@ -63,6 +67,10 @@ class Pins(TmpDir):
         self.assertEqual(pins["mod"]["version"], "1.0.0.0")
         self.assertEqual((pins["repo"]["commit"], pins["repo"]["dirty"]), ("92634f4", True))
         self.assertEqual(len(pins["repo"]["diff"]), 16)
+        self.assertEqual(
+            pins["versions"],
+            {"harness": bg3harness.__version__, "bench": bg3bench.__version__, "suite": suite.suite_version()},
+        )
         # another edit → another diff hash; a clean tree has none
         other = R.repo_pin(
             self.tmp, _git({"rev-parse": "92634f4", "status": " M runner/runs.py\n", "diff": "something else"})
@@ -95,4 +103,13 @@ class Pins(TmpDir):
         self.assertEqual(
             R.pin_drift(first, now),
             ["game_build: 1 → 2", "repo.commit: c1 → c2", "repo.dirty: False → True", "repo.diff: None → d"],
+        )
+        # another harness or suite version drifts; a series from before the versions pin drifts from None
+        now = {**first, "versions": {"harness": "0.1.0", "bench": "0.1.1", "suite": "bench-v0.1"}}
+        later = {**now, "versions": {"harness": "0.2.0", "bench": "0.2.0", "suite": "bench-v0.2"}}
+        self.assertEqual(
+            R.pin_drift(now, later), ["versions.harness: 0.1.0 → 0.2.0", "versions.suite: bench-v0.1 → bench-v0.2"]
+        )
+        self.assertEqual(
+            R.pin_drift(first, now), ["versions.harness: None → 0.1.0", "versions.suite: None → bench-v0.1"]
         )

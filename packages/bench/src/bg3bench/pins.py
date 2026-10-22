@@ -1,5 +1,6 @@
 # pyright: basic
-"""Version pins: what one run plays with (game build, bg3le, the mod, the repo), and their drift within a series
+"""Version pins: what one run plays with (game build, bg3le, the mod, the repo, the harness and benchmark versions),
+and their drift within a series
 (moved from runner/runs.py; runs.py re-exports them). A series freezes its first run's pins in series.json and
 refuses a drifted later run unless --allow-version-drift.
 """
@@ -11,10 +12,25 @@ import re
 import subprocess
 from pathlib import Path
 
+import bg3harness
+
+import bg3bench
+from bg3bench import suite
+
 # Repo paths whose working-tree state a run plays with (runtime/, playthroughs/ and docs are not code).
 CODE_PATHS = ("runner", "bridge", "mod", "play", "tools", "patches", "memory-template")
 # The pins compared between the runs of a series (dotted paths into version_pins()).
-DRIFT_KEYS = ("game_build", "bg3le.sha256", "bg3le.source", "mod.sha1", "repo.commit", "repo.dirty", "repo.diff")
+DRIFT_KEYS = (
+    "game_build",
+    "bg3le.sha256",
+    "bg3le.source",
+    "mod.sha1",
+    "repo.commit",
+    "repo.dirty",
+    "repo.diff",
+    "versions.harness",
+    "versions.suite",
+)
 
 
 def _git(cwd: Path, *args: str) -> str | None:
@@ -94,7 +110,8 @@ def bg3le_pin(dist: Path, source: Path, git=_git) -> dict:
 
 
 def version_pins(repo: Path, game_build: str, dist: Path, mod_meta: Path, mod_hashes: dict[str, str], git=_git) -> dict:
-    """What one run plays with: the BG3 Steam buildid, bg3le, the mod (version + tree sha1) and the repo."""
+    """What one run plays with: the BG3 Steam buildid, bg3le, the mod (version + tree sha1), the repo and the
+    versions (versions())."""
     try:
         ver = mod_version(mod_meta.read_text(errors="replace"))
     except OSError:
@@ -104,6 +121,16 @@ def version_pins(repo: Path, game_build: str, dist: Path, mod_meta: Path, mod_ha
         "bg3le": bg3le_pin(dist, repo / "third_party" / "bg3le", git),
         "mod": {"version": ver, "sha1": tree_digest(mod_hashes) if mod_hashes else None},
         "repo": repo_pin(repo, git),
+        "versions": versions(),
+    }
+
+
+def versions() -> dict:
+    """The harness, bg3bench and suite versions of the running code (CHANGELOG.md: every result cites them)."""
+    return {
+        "harness": bg3harness.__version__,
+        "bench": bg3bench.__version__,
+        "suite": suite.suite_version(bg3bench.__version__),
     }
 
 
