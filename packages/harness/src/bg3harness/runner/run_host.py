@@ -143,6 +143,12 @@ def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Optio
     )
 
 
+def goal_of(sc: Json) -> Json:
+    """The scenario's goal predicate: an `until` milestone (nautiloid) is {"milestone": it} (as bg3bench.scenario's
+    goal_of; the harness never imports the bench)."""
+    return {"milestone": sc["until"]} if "until" in sc else sc["goal"]
+
+
 def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> str:
     """A bench run's first message: the scenario, its start (`loaded`: the label of the save the harness loaded),
     the goal and how it is graded (graders.grade: passed at the first instant it holds, failed by a "never" that
@@ -165,7 +171,7 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     since = "the start save" if start["kind"] == "save" else "the new game"
     lines.append(
         f'The run passes the first moment this goal holds, from {since} on; anything under "never" fails it if '
-        f"it happens first: {json.dumps(sc['goal'], sort_keys=True)}."
+        f"it happens first: {json.dumps(goal_of(sc), sort_keys=True)}."
     )
     if char.get("brief"):
         lines.append("Character brief:\n> " + char["brief"].strip().replace("\n", "\n> "))

@@ -177,6 +177,13 @@ def test_the_kickoff_names_the_start_the_goal_and_the_character_and_no_memory_st
     assert "PACE" not in H.scenario_kickoff(NEW_SC, "S001", None)
 
 
+def test_the_kickoff_of_an_until_scenario_names_its_milestone():
+    # live7: nautiloid has `until`, no `goal`; the kickoff read sc["goal"] -> KeyError at every start
+    until = {k: v for k, v in NEW_SC.items() if k != "goal"} | {"until": "nautiloid_escaped"}
+    text = H.scenario_kickoff(until, "S001", None)
+    assert json.dumps({"milestone": "nautiloid_escaped"}, sort_keys=True) in text
+
+
 def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     h, calls, runners, dumped, env = rig.h, rig.calls, rig.runners, rig.dumped, rig.env
     st = h.start(JOB, SAVE_SC, run_dir("m-grove"))
