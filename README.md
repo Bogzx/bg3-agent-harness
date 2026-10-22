@@ -68,6 +68,32 @@ never each other. The work happens on the `overhaul` branch; the results above w
 | Benchmark | scenarios, graders over game facts, statistics, the matrix runner, reports and the leaderboard | [`packages/bench/`](packages/bench/README.md) |
 | Playthrough app | plays the whole game for people to watch: launcher, live view, memory browser, timeline, recording, overlay and replay | [`packages/playthrough/`](packages/playthrough/README.md) |
 
+The repo root is a [uv](https://docs.astral.sh/uv/) workspace with one lock file. `uv sync --locked` at the root
+installs all of it with the dev tools; `uv sync --locked --package <name>` installs one package and what it needs.
+
+**Harness** (`bg3-agent-harness` with `bg3harness`, and the MCP server `bg3ai-bridge` with `bg3ai`). The bg3 MCP
+server is what any MCP client plays through. With the game running, it serves the game over stdio, or over HTTP
+for a client elsewhere ([docs/MCP-SERVER.md](docs/MCP-SERVER.md)):
+
+```bash
+uv run --project bridge bg3ai-mcp --transport http --host 127.0.0.1 --port 8770
+```
+
+**Benchmark** (`bg3bench`). The matrix runner plans, runs and resumes models x scenarios x conditions x repeats
+under one budget. `plan` prints the jobs and the reserve without running anything
+([docs/BENCHMARK.md](docs/BENCHMARK.md)):
+
+```bash
+uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/pilot-2026-10-22.toml
+```
+
+**Playthrough app** (`bg3play`). The web app and its server; build the web app once with
+`cd packages/playthrough/web && npm ci && npm run build`, then from the repo root:
+
+```bash
+uv run --project packages/playthrough bg3play-serve --runtime runtime --playthroughs playthroughs
+```
+
 ```mermaid
 flowchart LR
     subgraph bench["benchmark (packages/bench)"]
@@ -108,6 +134,12 @@ flowchart LR
   move to a `run_session` API when `play.py` is split (Phase D of [docs/OVERHAUL-PLAN.md](docs/OVERHAUL-PLAN.md)).
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): test your own model, use the MCP server from your own client, start
   the app.
+- [docs/MCP-SERVER.md](docs/MCP-SERVER.md): the bg3 MCP server on its own, for your own client: start it, its
+  settings, the rules it serves and which tools it offers.
+- [docs/BENCHMARK.md](docs/BENCHMARK.md), [docs/FAIRNESS.md](docs/FAIRNESS.md) and
+  [docs/STRESS-TEST.md](docs/STRESS-TEST.md): the benchmark protocol, what the agent may see, and the stress-test
+  round over every kind of game situation.
+- [docs/RELEASING.md](docs/RELEASING.md): how a version is bumped and a release tagged.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the design and the reasons behind each choice.
 - [docs/PROTOCOL.md](docs/PROTOCOL.md): the contract between the mod and the bridge.
 - [runner/README.md](runner/README.md): unattended play, recovery, run records and the old dashboard.
