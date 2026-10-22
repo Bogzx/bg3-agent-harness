@@ -579,6 +579,29 @@ class PlayWiring(unittest.TestCase):
         self.assertIn("ended: exited, exit 0", log)
         self.assertIsNone(r._sandbox_live)
 
+    def test_pi_in_the_container_writes_its_session_files(self):
+        """pi.md round 10: the container's root is read-only, so pi's agent dir and its session files (shared by the
+        session's resumes) are mounted read-write at their own path; the configs it only reads stay read-only."""
+        import profiles
+        docker = fake_docker(self.d, [])
+        system = self.d / "system.txt"
+        system.write_text("rules\n")
+        with mock.patch.multiple(P, RUNTIME=self.d / "rt", log=lambda m: None), \
+                mock.patch.dict(os.environ, {"BG3AI_DOCKER": str(docker), "DEEPSEEK_API_KEY": "sk-test"}), \
+                mock.patch.object(S, "start_server", lambda *a, **k: FakeServer()):
+            (self.d / "rt").mkdir()
+            box = S.Sandbox("pi", None, auth_env=("DEEPSEEK_API_KEY",))
+            prof = profiles.load(Path(__file__).resolve().parents[1] / "profiles" / "deepseek-flash.toml")
+            r = P.Runner(P.Options("sbx-pi", None, 60, "deepseek-flash", keeper=False, sandbox="container", box=box,
+                                   client="pi", profile=prof, system_file=str(system)))
+            r.progress_loop = lambda *a, **k: None
+            r.run_claude("S001", "go", 60, "11111111-1111-1111-1111-111111111111", needs_game=False)
+        run = next(a for a in calls(self.d) if a[0] == "run")
+        mounts = [run[i + 1] for i, a in enumerate(run) if a == "-v"]
+        for d in (r.state.dir / "S001.pi", r.state.dir / "pi-sessions"):
+            self.assertIn(f"{d.resolve()}:{d.resolve()}", mounts)
+            self.assertTrue(d.is_dir())
+
     def test_server_failure_is_a_setup_failure(self):
         def start_server(*a, **k):
             raise S.SandboxError("172.30.99.1:8770 is already taken")

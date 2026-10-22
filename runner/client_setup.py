@@ -189,6 +189,14 @@ def run_files(
     )
 
 
+def container_writable(client, req) -> list[Path]:
+    """The dirs a client in the --sandbox container writes (its root is read-only): pi's agent dir and its session
+    files (pi_client.sessions_dir, shared by the session's resumes). Other clients write only under HOME."""
+    if client.name != "pi":
+        return []
+    return [client.agent_dir(req), client.sessions_dir(req)]
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
