@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime
+from typing import Any
 
 from bg3harness import deepseek_bill as D  # noqa: N812
 
@@ -15,6 +16,12 @@ FLASH = {"input": 0.3, "output": 1.2, "cache_read": 0.006}  # profiles/deepseek-
 # run 1's totals (research/ovh/live3.md, S001 bg3.billing entries): 53,296,640 hit, 165,340 miss, 109,003 out
 RUN1 = {"prompt_cache_hit_tokens": 53296640, "prompt_cache_miss_tokens": 165340, "completion_tokens": 109003}
 RUN1_START = datetime(2026, 10, 21, 21, 16, 7, tzinfo=UTC)  # Thursday 05:16 in Beijing
+
+
+def usd(*args: Any) -> float:
+    c = D.cost(*args)
+    assert c is not None
+    return c
 
 
 class Bill(unittest.TestCase):
@@ -30,11 +37,11 @@ class Bill(unittest.TestCase):
 
     def test_run1_lands_on_the_balance_delta(self):
         # DeepSeek balance 7.58 -> 7.34; pi's catalog estimate (peak at all hours) said 0.5002
-        self.assertAlmostEqual(D.cost(RUN1, FLASH, RUN1_START), 0.2501, places=4)
-        self.assertAlmostEqual(D.cost(RUN1, FLASH, datetime(2026, 10, 22, 2, 0, tzinfo=UTC)), 0.5002, places=4)
+        self.assertAlmostEqual(usd(RUN1, FLASH, RUN1_START), 0.2501, places=4)
+        self.assertAlmostEqual(usd(RUN1, FLASH, datetime(2026, 10, 22, 2, 0, tzinfo=UTC)), 0.5002, places=4)
 
     def test_unknown_time_counts_as_peak(self):
-        self.assertAlmostEqual(D.cost(RUN1, FLASH, None), 0.5002, places=4)
+        self.assertAlmostEqual(usd(RUN1, FLASH, None), 0.5002, places=4)
 
     def test_not_deepseek_usage(self):
         self.assertIsNone(D.cost({"prompt_tokens": 10, "completion_tokens": 5}, FLASH, RUN1_START))

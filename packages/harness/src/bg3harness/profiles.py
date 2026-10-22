@@ -1,4 +1,3 @@
-# pyright: basic
 """Client profiles: one TOML file per model condition, one format for all four clients (claude, codex, gemini, pi).
 
 A profile names the client, the model and the reasoning effort. For pi it also names the endpoint (provider id,
@@ -52,6 +51,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 
 CLIENT_NAMES = ("claude", "codex", "gemini", "pi")
@@ -66,6 +66,7 @@ ROUTING_KEYS = ("only", "allow_fallbacks", "require_parameters")
 PI_ONLY = ("endpoint", "routing", "model_info")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+Json = dict[str, Any]  # a TOML table
 
 
 class ProfileError(ValueError):
@@ -85,9 +86,11 @@ class ModelInfo:
     reasoning: bool
     context_window: int
     max_tokens: int
-    thinking_level_map: dict = field(default_factory=dict)  # pi level -> provider value (None: unsupported)
-    cost: dict = field(default_factory=dict)  # USD per M tokens, COST_KEYS: pi's estimate of an unbilled response
-    compat: dict = field(default_factory=dict)  # pi's model compat flags, as written
+    # pi level -> provider value (None: unsupported)
+    thinking_level_map: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    # USD per M tokens, COST_KEYS: pi's estimate of an unbilled response
+    cost: dict[str, float] = field(default_factory=dict[str, float])
+    compat: Json = field(default_factory=Json)  # pi's model compat flags, as written
 
 
 @dataclass(frozen=True)
@@ -97,7 +100,7 @@ class Profile:
     effort: str | None = None
     fallback_model: str | None = None
     endpoint: Endpoint | None = None
-    routing: dict | None = None  # compat.openRouterRouting, as sent
+    routing: Json | None = None  # compat.openRouterRouting, as sent
     model_info: ModelInfo | None = None
     status: str = "offline"  # STATUSES
     source: str = ""
@@ -109,31 +112,34 @@ class Profile:
         return f"{self.endpoint.provider}/{self.model}"
 
 
-def _take(table: dict, where: str, allowed: tuple[str, ...]) -> dict:
+def _table(v: object) -> Json | None:
+    return cast(Json, v) if isinstance(v, dict) else None
+
+
+def _take(table: Json, where: str, allowed: tuple[str, ...]) -> Json:
     extra = sorted(set(table) - set(allowed))
     if extra:
         raise ProfileError(f"{where}: unknown key(s) {', '.join(extra)} (allowed: {', '.join(allowed)})")
     return table
 
 
-def _str(table: dict, key: str, where: str, required: bool = True) -> str | None:
+def _str(table: Json, key: str, where: str) -> str:
     v = table.get(key)
-    if v is None and not required:
-        return None
     if not isinstance(v, str) or not v.strip():
         raise ProfileError(f"{where}: {key} must be a non-empty string")
     return v
 
 
-def _int(table: dict, key: str, where: str) -> int:
+def _int(table: Json, key: str, where: str) -> int:
     v = table.get(key)
     if not isinstance(v, int) or isinstance(v, bool) or v <= 0:
         raise ProfileError(f"{where}: {key} must be a positive integer")
     return v
 
 
-def _endpoint(t: object, where: str) -> Endpoint:
-    if not isinstance(t, dict):
+def _endpoint(raw: object, where: str) -> Endpoint:
+    t = _table(raw)
+    if t is None:
         raise ProfileError(f"{where}: pi needs an [endpoint] table (provider, base_url, api_key_env)")
     w = f"{where} [endpoint]"
     _take(t, w, ("provider", "base_url", "api", "api_key_env"))
@@ -157,20 +163,21 @@ def is_openrouter(base_url: str) -> bool:
     return host == "openrouter.ai" or host.endswith(".openrouter.ai")
 
 
-def _routing(t: object, where: str, endpoint: Endpoint) -> dict:
+def _routing(raw: object, where: str, endpoint: Endpoint) -> Json:
     w = f"{where} [routing]"
-    if not isinstance(t, dict):
+    t = _table(raw)
+    if t is None:
         raise ProfileError(f"{w}: must be a table")
     _take(t, w, ROUTING_KEYS)
     if not is_openrouter(endpoint.base_url):
         raise ProfileError(
             f"{w}: routing is OpenRouter's provider pin; base_url {endpoint.base_url!r} is not OpenRouter"
         )
-    only = t.get("only")
-    if not isinstance(only, list) or not only or not all(isinstance(x, str) and x for x in only):
+    only = _strings(t.get("only"))
+    if not only or not all(only):
         raise ProfileError(f"{w}: only must be a non-empty list of provider names")
-    out = {
-        "only": list(only),
+    out: Json = {
+        "only": only,
         "allow_fallbacks": t.get("allow_fallbacks", False),
         "require_parameters": t.get("require_parameters", True),
     }
@@ -180,23 +187,32 @@ def _routing(t: object, where: str, endpoint: Endpoint) -> dict:
     return out
 
 
-def _model_info(t: object, where: str) -> ModelInfo:
+def _strings(v: object) -> list[str] | None:
+    """v as a list of strings, None when it is not one."""
+    if not isinstance(v, list):
+        return None
+    items = cast(list[object], v)
+    return [x for x in items if isinstance(x, str)] if all(isinstance(x, str) for x in items) else None
+
+
+def _model_info(raw: object, where: str) -> ModelInfo:
     w = f"{where} [model_info]"
-    if not isinstance(t, dict):
+    t = _table(raw)
+    if t is None:
         raise ProfileError(f"{where}: pi needs a [model_info] table (input, reasoning, context_window, max_tokens)")
     _take(t, w, ("input", "reasoning", "context_window", "max_tokens", "thinking_level_map", "cost", "compat"))
-    inp = t.get("input")
-    if not isinstance(inp, list) or "text" not in inp or not set(inp) <= set(INPUTS) or len(set(inp)) != len(inp):
+    inp = _strings(t.get("input"))
+    if inp is None or "text" not in inp or not set(inp) <= set(INPUTS) or len(set(inp)) != len(inp):
         raise ProfileError(f'{w}: input must list {INPUTS} without repeats and include "text"')
     if not isinstance(t.get("reasoning"), bool):
         raise ProfileError(f"{w}: reasoning must be true or false")
     ctx, max_tokens = _int(t, "context_window", w), _int(t, "max_tokens", w)
     if max_tokens >= ctx:
         raise ProfileError(f"{w}: max_tokens ({max_tokens}) must be below context_window ({ctx})")
-    tlm = _take(t.get("thinking_level_map") or {}, f"{w} thinking_level_map", THINKING_LEVELS)
+    tlm = _take(_table(t.get("thinking_level_map")) or {}, f"{w} thinking_level_map", THINKING_LEVELS)
     if not all(isinstance(v, str) or v is False for v in tlm.values()):
         raise ProfileError(f"{w}: thinking_level_map values must be strings, or false for an unsupported level")
-    cost = _take(t.get("cost") or {}, f"{w} cost", tuple(COST_KEYS))
+    cost = _take(_table(t.get("cost")) or {}, f"{w} cost", tuple(COST_KEYS))
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in cost.values()):
         raise ProfileError(f"{w}: cost values must be non-negative numbers (USD per million tokens)")
     missing = [k for k in COST_REQUIRED if k not in cost]
@@ -205,8 +221,8 @@ def _model_info(t: object, where: str) -> ModelInfo:
             f"{w}: cost needs {', '.join(missing)} (USD per million tokens): a response the endpoint doesn't bill is "
             "priced from it, and a run without it would count $0 against its cost cap"
         )
-    compat = t.get("compat") or {}
-    if not isinstance(compat, dict) or "openRouterRouting" in compat:
+    compat = _table(t.get("compat") or {})
+    if compat is None or "openRouterRouting" in compat:
         raise ProfileError(f"{w}: compat must be a table of pi compat flags; the provider pin goes in [routing]")
     return ModelInfo(
         tuple(inp),
@@ -219,7 +235,7 @@ def _model_info(t: object, where: str) -> ModelInfo:
     )
 
 
-def parse(raw: dict, source: str = "<profile>") -> Profile:
+def parse(raw: Json, source: str = "<profile>") -> Profile:
     """A profile from its TOML table; ProfileError says what is wrong and where."""
     client = raw.get("client")
     if client not in CLIENT_NAMES:
@@ -237,7 +253,7 @@ def parse(raw: dict, source: str = "<profile>") -> Profile:
     effort = raw.get("effort")
     if effort is not None and effort not in EFFORTS:
         raise ProfileError(f"{source}: effort must be one of {', '.join(EFFORTS)} (got {effort!r})")
-    fallback = _str(raw, "fallback_model", source, required=False)
+    fallback = None if raw.get("fallback_model") is None else _str(raw, "fallback_model", source)
     status = raw.get("status", "offline")
     if status not in STATUSES:
         raise ProfileError(f"{source}: status must be one of {', '.join(STATUSES)} (got {status!r})")
@@ -282,7 +298,7 @@ def _provider_key(name: str) -> str:
 def off_route(p: Profile, providers: list[str]) -> list[str]:
     """The served providers outside the profile's [routing].only (OpenRouter names them as "DeepSeek" or "Amazon
     Bedrock", the pin as slugs: compared lower-case, spaces as dashes); [] when it pins none."""
-    only = {_provider_key(s) for s in (p.routing or {}).get("only") or ()}
+    only = {_provider_key(s) for s in _strings((p.routing or {}).get("only")) or ()}
     return [x for x in providers if only and _provider_key(x) not in only]
 
 
@@ -301,13 +317,13 @@ def tool_env(p: Profile, env: Mapping[str, str]) -> dict[str, str]:
     return {**env, "BG3AI_TOOLS_OFF": ",".join(names)} if names else dict(env)
 
 
-def models_json(p: Profile) -> dict:
+def models_json(p: Profile) -> Json:
     """pi's models.json for a pi profile: one provider with the profile's endpoint and one full model definition
     (it replaces a catalog model of the same id). The key stays an env reference."""
     if p.client != "pi" or p.endpoint is None or p.model_info is None:
         raise ProfileError(f"{p.source}: models.json is for pi profiles only")
     mi = p.model_info
-    model: dict = {
+    model: Json = {
         "id": p.model,
         "name": p.model,
         "api": API,

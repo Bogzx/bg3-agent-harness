@@ -1,4 +1,3 @@
-# pyright: basic
 """Spend safety for paid clients (pi through an API key; claude, codex and gemini run on subscriptions).
 
 - A paid run needs a per-run USD cap (--max-cost); the runner kills the play process at the cap from the billed
@@ -16,10 +15,15 @@ import fcntl
 import json
 import os
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, cast
+
+from .clients import Event
 
 PAID_CLIENTS = ("pi",)
+Budget = dict[str, Any]  # budget.json: {"cap", "spent", "created"?, "updated"?, "last"?}
 
 
 class BudgetError(ValueError):
@@ -30,7 +34,7 @@ def is_paid(client: str) -> bool:
     return client in PAID_CLIENTS
 
 
-def read_budget(path: Path) -> dict | None:
+def read_budget(path: Path) -> Budget | None:
     """budget.json as {"cap", "spent", ...}, None when there is none. A file that is there but unreadable raises:
     a broken budget must stop paid runs, not lift the cap."""
     try:
@@ -41,6 +45,7 @@ def read_budget(path: Path) -> dict | None:
         raise BudgetError(f"{path}: unreadable ({e})") from None
     if not isinstance(raw, dict):
         raise BudgetError(f"{path}: not a JSON object")
+    raw = cast(Budget, raw)
     for k in ("cap", "spent"):
         v = raw.get(k, 0.0 if k == "spent" else None)
         if not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0:
@@ -48,7 +53,7 @@ def read_budget(path: Path) -> dict | None:
     return {**raw, "spent": float(raw.get("spent", 0.0)), "cap": float(raw["cap"])}
 
 
-def run_cap(client: str, max_cost: float | None, budget: dict | None) -> tuple[float | None, str | None]:
+def run_cap(client: str, max_cost: float | None, budget: Budget | None) -> tuple[float | None, str | None]:
     """(the run's cost cap, refusal). A paid client needs --max-cost; the global budget's remainder cuts it."""
     if not is_paid(client):
         return max_cost, None
@@ -59,13 +64,13 @@ def run_cap(client: str, max_cost: float | None, budget: dict | None) -> tuple[f
             f"--client {client} spends money: it needs a global budget, runtime/budget.json (pass "
             '--budget USD to create it, or write {"cap": USD, "spent": 0})'
         )
-    left = round(budget["cap"] - budget["spent"], 6)
+    left: float = round(budget["cap"] - budget["spent"], 6)
     if left <= 0:
         return None, f"the global budget is used up (${budget['spent']:.2f} of ${budget['cap']:g})"
     return min(max_cost, left), None
 
 
-def ensure_budget(path: Path, usd: float | None, write: bool = True) -> dict | None:
+def ensure_budget(path: Path, usd: float | None, write: bool = True) -> Budget | None:
     """read_budget, and `--budget USD` creates budget.json {"cap": USD, "spent": 0} when there is none (write=False:
     the budget it would create, nothing written). A budget that is there with another cap raises: a live budget
     changes by editing the file, never by a flag."""
@@ -81,20 +86,20 @@ def ensure_budget(path: Path, usd: float | None, write: bool = True) -> dict | N
                 f"--budget {usd:g} differs: edit the file to change the cap"
             )
         return b
-    b = {"cap": float(usd), "spent": 0.0}
+    new: Budget = {"cap": float(usd), "spent": 0.0}
     if write:
         with _locked(path):
             if path.exists():  # another runner created it meanwhile: that one counts
                 return ensure_budget(path, usd)
-            b["created"] = round(time.time(), 1)
+            new["created"] = round(time.time(), 1)
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(b, indent=1) + "\n")
+            tmp.write_text(json.dumps(new, indent=1) + "\n")
             os.replace(tmp, path)
-    return b
+    return new
 
 
 @contextmanager
-def _locked(path: Path):
+def _locked(path: Path) -> Generator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path.with_name(path.name + ".lock"), "a") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
@@ -104,7 +109,7 @@ def _locked(path: Path):
             fcntl.flock(lk, fcntl.LOCK_UN)
 
 
-def add_spend(path: Path, usd: float, now: float | None = None, **what) -> dict | None:
+def add_spend(path: Path, usd: float, now: float | None = None, **what: Any) -> Budget | None:
     """Adds one paid process's cost to budget.json (locked, atomic); None when there is no budget file."""
     if usd <= 0:
         return read_budget(path)
@@ -126,9 +131,9 @@ class ProcessCost:
     reports it), then the result's exact total. What add_spend gets when the process ends, also when it was killed
     before its result."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.usd = 0.0
 
-    def on_event(self, ev) -> None:
+    def on_event(self, ev: Event) -> None:
         if ev.kind in ("usage", "result") and ev.cost_usd is not None:
             self.usd = max(self.usd, float(ev.cost_usd))

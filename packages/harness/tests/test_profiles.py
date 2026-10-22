@@ -13,6 +13,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from bg3harness import profiles as PR
 
@@ -40,9 +41,9 @@ PI = {
 }
 
 
-def pi(**changes) -> dict:
+def pi(**changes: Any) -> dict[str, Any]:
     """PI with top-level keys replaced (None removes one) and dotted keys ("endpoint.provider") set inside."""
-    raw = json.loads(json.dumps(PI))
+    raw: dict[str, Any] = json.loads(json.dumps(PI))
     for k, v in changes.items():
         table, _, key = k.replace("__", ".").rpartition(".")
         target = raw[table] if table else raw
@@ -75,7 +76,7 @@ class Examples(unittest.TestCase):
 
 
 class Parse(unittest.TestCase):
-    def err(self, raw: dict, pattern: str):
+    def err(self, raw: dict[str, Any], pattern: str) -> None:
         with self.assertRaisesRegex(PR.ProfileError, pattern):
             PR.parse(raw, "t.toml")
 
@@ -119,7 +120,7 @@ class Parse(unittest.TestCase):
         self.err(pi(endpoint__provider="Open Router"), "not a pi provider id")
         # pi turns on Anthropic cache_control for provider id "openrouter" only
         self.err(pi(endpoint__provider="bench"), 'OpenRouter base_url needs provider = "openrouter"')
-        self.assertEqual(PR.parse(pi(endpoint__api="openai-completions")).endpoint.provider, "openrouter")
+        self.assertEqual(PR.parse(pi(endpoint__api="openai-completions")).endpoint, PR.parse(pi()).endpoint)
 
     def test_routing_validation(self):
         local = pi(endpoint__provider="bench", endpoint__base_url="http://127.0.0.1:8080/v1")
@@ -129,7 +130,8 @@ class Parse(unittest.TestCase):
         self.err(pi(routing={"only": []}), "only must be a non-empty list")
         self.err(pi(routing={"order": ["a"]}), "unknown key.*order")
         self.err(pi(routing={"only": ["a"], "allow_fallbacks": "no"}), "allow_fallbacks must be true or false")
-        self.assertTrue(PR.parse(pi(routing={"only": ["a"], "allow_fallbacks": True})).routing["allow_fallbacks"])
+        routing = PR.parse(pi(routing={"only": ["a"], "allow_fallbacks": True})).routing
+        self.assertTrue(routing is not None and routing["allow_fallbacks"])
 
     def test_model_info_validation(self):
         self.err(pi(model_info=None), r"pi needs a \[model_info\]")

@@ -1,4 +1,3 @@
-# pyright: basic
 """What DeepSeek bills for one response, from DeepSeek's own usage fields (no endpoint cost field to read).
 
 DeepSeek's usage has prompt_cache_hit_tokens, prompt_cache_miss_tokens and completion_tokens (reasoning included).
@@ -16,6 +15,7 @@ at all hours, which is why run 1 (research/ovh/live3.md, off-peak) showed $0.50 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -46,13 +46,16 @@ def parse_ts(ts: object) -> datetime | None:
     return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
-def cost(usage: dict, prices: dict, when: datetime | None) -> float | None:
+def cost(usage: Mapping[str, object], prices: Mapping[str, float], when: datetime | None) -> float | None:
     """USD for one response: usage is DeepSeek's raw usage, prices the profile's peak USD per M tokens (input,
     cache_read, output). None when usage lacks DeepSeek's cache fields; an unknown time counts as peak."""
     fields = ("prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "completion_tokens")
-    n = [usage.get(k) for k in fields]
-    if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in n):
-        return None
+    n: list[int] = []
+    for k in fields:
+        v = usage.get(k)
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+            return None
+        n.append(v)
     hit, miss, out = n
     usd = (hit * prices["cache_read"] + miss * prices["input"] + out * prices["output"]) / 1e6
     return usd * OFF_PEAK if when is not None and off_peak(when) else usd
