@@ -21,7 +21,7 @@ import bg3harness
 from bg3harness import clients, ramwatch, runs
 from bg3harness.game import io as game
 from bg3harness.game.io import Save
-from bg3harness.game.saves import SAVE_PREFIX, is_ai_save, is_autosave
+from bg3harness.game.saves import SAVE_PREFIX, foreign_saves, is_ai_save, is_autosave
 from bg3harness.runner import env as renv
 from bg3harness.runner.profile import (  # noqa: F401  (re-exported)
     DIFFICULTIES,
@@ -583,6 +583,21 @@ def save_identity(owner: str | None, env_prefix: str = SAVE_PREFIX) -> tuple[str
     character creation): both empty, and the server adopts the name create_character typed."""
     owner = (owner or "").strip()
     return owner, env_prefix or (f"{owner}-" if owner else "")
+
+
+def save_env(owner: str | None, saves: list[Save] | None, ours: set[str], windows: list[tuple[float, float]],
+             saves_after: float | None = None, start_save: str | None = None, gates: bool | None = None,
+             env_prefix: str = SAVE_PREFIX) -> dict[str, str]:
+    """The MCP server's save identity and gates (bg3ai.settings.SaveIdentity), for play.py's session and the app's:
+    BG3AI_SAVE_OWNER/PREFIX (save_identity), BG3AI_SAVE_GATES (gates_env), a --runs run's BG3AI_SAVES_AFTER, a
+    scenario's BG3AI_START_SAVE (older than the run, still its save), and BG3AI_SAVES_EXCLUDE: the owner's saves
+    another playthrough or a worker wrote (foreign_saves over `saves`, newline-separated; None: not listed)."""
+    owner, prefix = save_identity(owner, env_prefix)
+    foreign = foreign_saves(saves, owner, ours, windows, prefix) if saves is not None and owner and not saves_after else []
+    return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **gates_env(gates),
+            **({"BG3AI_SAVES_AFTER": str(int(saves_after))} if saves_after else {}),
+            **({"BG3AI_SAVES_EXCLUDE": "\n".join(foreign)} if foreign else {}),
+            **({"BG3AI_START_SAVE": start_save} if start_save else {})}  # fmt: skip
 
 
 def gates_env(allow: bool | None) -> dict:

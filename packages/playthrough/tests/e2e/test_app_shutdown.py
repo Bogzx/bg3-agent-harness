@@ -88,6 +88,9 @@ class UpGame:
     def is_new(self) -> bool:
         return False
 
+    def save_env(self) -> dict[str, str]:
+        return {}
+
     def notes(self) -> list[str]:
         return []
 

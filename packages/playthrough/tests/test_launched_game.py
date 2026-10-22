@@ -1,11 +1,15 @@
 """adapters/launched_game.py: the recovering game over a fake GameController, fake bridge reads and a save list."""
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
+from bg3ai import settings
+from bg3ai.tools import core, saving
 from bg3harness.game.io import Save
 from bg3play.adapters import launched_game as lg
 
@@ -324,3 +328,62 @@ def test_the_agents_quicksaves_are_recorded_and_count_as_the_sessions_save(tmp_p
         "Ilse-7__QuickSave_3",
     ]
     assert "the agent's quicksave(s) Ilse-7__QuickSave_3 are this playthrough's saves too" in logs
+
+
+# An app session's save identity reaches the bg3 server: save_env (policy.save_env, play.py's builder) read by the
+# bridge (bg3ai.settings.save_identity) decides which folders its list_saves / load_game offer (_my_saves). live9
+# S002: the app passed none, so list_saves was empty and load_game refused S002-passage-won.
+VESSA = "Vessa Thornquill"
+VESSA_HISTORY = [{"kind": "play", "session": "S001", "started": 1000, "ended": 3000}]
+
+
+def bridge_saves(env: dict[str, str], save_dir: Path, runtime: Path) -> list[str]:
+    """The folders the bridge's list_saves / load_game take under `env` (the server reads it once at start)."""
+    ident = settings.save_identity(env)
+    with (
+        mock.patch.multiple(saving, SAVE_OWNER=ident.owner, SAVE_PREFIX=ident.prefix, PLAYTHROUGH=ident.playthrough,
+                            SAVES_AFTER=ident.after, START_SAVE=ident.start_save, SAVES_EXCLUDE=ident.exclude),
+        mock.patch.multiple(core, SAVE_DIR=save_dir, RUNTIME=runtime),
+    ):  # fmt: skip
+        return [d.name for d in saving._my_saves()] if saving.SAVE_PREFIX else []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_an_app_sessions_bridge_offers_the_playthroughs_own_saves_and_never_anothers(tmp_path: Path):
+    save_dir, sdir, mem = tmp_path / "saves", tmp_path / "sessions" / "vessa", tmp_path / "vessa" / "memory"
+    for d in (save_dir, sdir, mem):
+        d.mkdir(parents=True)
+    (sdir / "runner.json").write_text(json.dumps({"save_owner": VESSA, "history": VESSA_HISTORY}))
+    saves = [
+        Save(f"{VESSA}-1__S001-sazza-escape", VESSA, "S001-sazza-escape", 2000),  # S001's
+        Save(f"{VESSA}-2__S027-end", VESSA, "S027-end", 4000),  # same name, another playthrough between sessions
+        Save("Karlach-3__S009-end", "Karlach", "S009-end", 5200),  # another character
+    ]
+    for s in saves:
+        (save_dir / s.folder).mkdir()
+        os.utime(save_dir / s.folder, (s.mtime, s.mtime))
+    now = [5000.0]
+    g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: saves, lambda: None, clock=lambda: now[0])
+    g.begin(sdir, mem)
+    env = {"BG3AI_PLAYTHROUGH": "vessa", **g.save_env()}  # the session env's playthrough and save identity
+    assert (env["BG3AI_SAVE_OWNER"], env["BG3AI_SAVE_PREFIX"]) == (VESSA, f"{VESSA}-")
+    assert env["BG3AI_SAVES_EXCLUDE"] == f"{VESSA}-2__S027-end"
+    # the session saves after the passage fight; its bridge offers that save and S001's, never the others
+    (save_dir / f"{VESSA}-4__S002-passage-won").mkdir()
+    os.utime(save_dir / f"{VESSA}-4__S002-passage-won", (5600, 5600))
+    assert bridge_saves(env, save_dir, tmp_path / "runtime") == [
+        f"{VESSA}-4__S002-passage-won",
+        f"{VESSA}-1__S001-sazza-escape",
+    ]
+    # live9 S002's env (no identity): the bridge offered nothing
+    assert bridge_saves({"BG3AI_PLAYTHROUGH": "vessa"}, save_dir, tmp_path / "runtime") == []
+
+
+def test_a_new_playthrough_has_no_identity_yet_and_before_a_session_none(tmp_path: Path):
+    sdir, mem = tmp_path / "sessions" / "new", tmp_path / "new" / "memory"
+    g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: [], lambda: None)
+    assert g.save_env() == {}
+    sdir.mkdir(parents=True)
+    (sdir / "runner.json").write_text(json.dumps({"history": []}))
+    g.begin(sdir, mem)
+    # the server adopts the name create_character types (as under play.py)
+    assert g.save_env() == {"BG3AI_SAVE_OWNER": "", "BG3AI_SAVE_PREFIX": ""}

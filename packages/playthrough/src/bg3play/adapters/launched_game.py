@@ -8,6 +8,7 @@
                         (runner.json loaded_save = its folder: the controller's check_oom and previous_good_save
                         read it)
     new_game            a playthrough without a save: launched to the main menu (the agent starts the new game)
+    save_env            the MCP server's save identity for the session (policy.save_env, play.py's builder)
     ensure_save(since)  at a session's end (play.py ensure_save): the session's newest save, else a runner quicksave
                         recorded in runner.json runner_saves (SaveOps: IoSaveOps over the debug port)
     notes               the controller's RUNNER NOTEs since the last call (the host's take_notes)
@@ -185,6 +186,21 @@ class LaunchedGame:
     def running(self) -> tuple[float, float]:
         """The running session's play window: from begin (its start) to now."""
         return self.began, self.clock()
+
+    def save_env(self) -> dict[str, str]:
+        """The MCP server's save identity for this session (policy.save_env, as play.py's): the playthrough's owner
+        and prefix, its saves-after, and the owner's saves written outside its play windows (excluded). Without it
+        the server's list_saves is empty and load_game refuses the playthrough's own saves (live9 S002)."""
+        if self.sdir is None:
+            return {}
+        state = read_state(self.sdir / "runner.json")
+        owner, after = state.get("save_owner"), state.get("saves_after")
+        ours = set(state.get("runner_saves") or []) | set(state.get("agent_saves") or [])
+        raw: object = state.get("history")
+        history: list[dict[str, Any]] = [h for h in raw if is_obj(h)] if is_list(raw) else []
+        windows = hsaves.play_windows(history, self.sdir, self.running())  # pyright: ignore[reportUnknownMemberType]
+        listed = self.saves() if owner and not after else None
+        return policy.save_env(owner, listed, ours, windows, after)  # pyright: ignore[reportUnknownMemberType]
 
     def ok(self) -> bool:
         ok = self.reads.ok()

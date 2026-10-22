@@ -91,6 +91,7 @@ class Game(Protocol):
     def new_game(self) -> None: ...  # launch to the main menu for a playthrough without a save; raises if it can't
     def ensure_save(self, since: float) -> str | None: ...  # at a session's end: its save, else a runner quicksave
     def is_new(self) -> bool: ...  # the playthrough has no save of its own yet (its first game is still to be made)
+    def save_env(self) -> dict[str, str]: ...  # the MCP server's save identity (BG3AI_SAVE_OWNER, ...) for the session
     def notes(self) -> list[str]: ...  # RUNNER NOTEs from the recoveries since the last call
 
 
@@ -392,6 +393,7 @@ class HarnessRunner:
         hooks.phase = req.phase
         start = self.clock()
         env = session_env(req, predicted, start, self.runtime, self.playthroughs, cfg.keeper.enabled)
+        env |= self.game.save_env()
         memory = hooks.memory
         opened, briefing = memory.start(env)
         sid = opened or predicted
@@ -514,6 +516,9 @@ class AttachedGame:
 
     def is_new(self) -> bool:
         return False  # the game is yours: whatever it runs is the playthrough's
+
+    def save_env(self) -> dict[str, str]:
+        return {}  # the game is yours: the app keeps no save identity for it
 
     def notes(self) -> list[str]:
         return []

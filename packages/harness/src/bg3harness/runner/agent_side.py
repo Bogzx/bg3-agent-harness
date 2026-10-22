@@ -19,7 +19,7 @@ from bg3ai import metrics as latency
 from bg3harness import client_setup, clients, events, pi_client, runs, sandbox, spend, triage
 from bg3harness.game import io as game
 from bg3harness.game.io import DEBUG_PORT
-from bg3harness.game.saves import foreign_saves
+from bg3harness.game.saves import foreign_saves  # noqa: F401  (re-exported: test_play_saves)
 from bg3harness.runner import agent_group
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
@@ -76,14 +76,12 @@ class AgentSide:
         a --runs run's BG3AI_SAVES_AFTER, a scenario's BG3AI_START_SAVE (older than the run, still its save), and
         BG3AI_SAVES_EXCLUDE: the owner's saves another playthrough or a worker wrote (foreign_saves, newline-separated)."""
         state = getattr(self, "state", None)
-        owner, prefix = rpolicy.save_identity(self.opt.save_owner or (state["save_owner"] if state else None))
+        owner = self.opt.save_owner or (state["save_owner"] if state else None)
         after = state["saves_after"] if state else None   # a --runs run: the server's saves start at the run
-        foreign = (foreign_saves(rcode.list_saves(), owner, self.ours(), self.play_windows(), prefix)
-                   if state and owner and not after else [])
-        return {"BG3AI_SAVE_OWNER": owner, "BG3AI_SAVE_PREFIX": prefix, **rpolicy.gates_env(getattr(self, "gates", None)),
-                **({"BG3AI_SAVES_AFTER": str(int(after))} if after else {}),
-                **({"BG3AI_SAVES_EXCLUDE": "\n".join(foreign)} if foreign else {}),
-                **({"BG3AI_START_SAVE": start} if (start := getattr(self.opt, "start_save", None)) else {})}
+        listed = state and owner and not after
+        return rpolicy.save_env(owner, rcode.list_saves() if listed else None, self.ours() if listed else set(),
+                                self.play_windows() if listed else [], after, getattr(self.opt, "start_save", None),
+                                getattr(self, "gates", None))
 
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str | None,
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> rstate.SessionResult:

@@ -105,6 +105,9 @@ class FakeGame:
     def is_new(self) -> bool:
         return self.new
 
+    def save_env(self) -> dict[str, str]:
+        return {"BG3AI_SAVE_OWNER": "Ilse", "BG3AI_SAVE_PREFIX": "Ilse-"}
+
     def notes(self) -> list[str]:
         out, self.pending_notes = self.pending_notes, []
         return out
@@ -181,6 +184,8 @@ def test_two_sessions_with_the_keeper_between_and_the_files_the_store_reads(tmp_
     # the condition and the clock reach the agent and the bg3 server; the memory's sid names the session
     assert first.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching" and first.env["BG3AI_SESSION"] == "S001"
     assert first.env["BG3AI_SESSION_DEADLINE"] == str(1000 + 30 * 60) and first.env["BG3_WRAP_MINUTES"] == "27.0"
+    # the game's save identity reaches the bg3 server (live9 S002: without it list_saves was empty)
+    assert (first.env["BG3AI_SAVE_OWNER"], first.env["BG3AI_SAVE_PREFIX"]) == ("Ilse", "Ilse-")
     assert [k for k, _ in memory.log] == ["start", "stop", "end", "start", "stop", "end"]
     rj = json.loads((runtime / "sessions" / PT / "runner.json").read_text())["history"]
     assert [(h["kind"], h["session"], h["reason"], h["progress"], h["condition"]) for h in rj] == [
