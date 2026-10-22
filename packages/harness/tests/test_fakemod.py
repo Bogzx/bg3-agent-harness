@@ -239,6 +239,14 @@ def test_store_errors_raw_and_validation(tmp_path: Path) -> None:
     assert store.reply("server", "x", {}) == {"lua_error": "boom"}
     assert store.eval_raw("client", "return 1") == "1"
     assert store.reply("server", "y", {}) is None
+    probe = [{"v": 1, "ctx": "client", "code": "return g()", "reply": r} for r in ("Running", "UnloadLevel", "Running")]
+    probes = FixtureStore(probe)
+    assert [probes.eval_raw("client", "return g()") for _ in range(4)] == [
+        "Running",
+        "UnloadLevel",
+        "Running",
+        "Running",
+    ]
     with pytest.raises(ValueError, match="version"):
         FixtureStore([{"v": 2}])
     with pytest.raises(ValueError, match="2 calls but 1 replies"):

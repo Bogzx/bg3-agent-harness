@@ -1,8 +1,9 @@
 """Recorded fixtures as a fake mod responder: replay the bridge's recorder files (bg3ai/rpc_record.py) by request.
 
 A fixture line holds one eval: its calls ([{op, args}]) and replies (one per call), or a Lua `error`, or for a non-RPC
-eval its `code` and raw `reply`. Replies are indexed per op by (context, op, args); the same request answers with its
-recorded replies in order and then keeps repeating the last one (a session polls the same op many times).
+eval its `code` and raw `reply`. Replies are indexed per op by (context, op, args), raw replies by (context, code);
+the same request answers with its recorded replies in order and then keeps repeating the last one (a session polls
+the same op many times; a load's GetGameState probes go Running, UnloadLevel, ..., Running).
 `match="op"` also answers a request whose args were never recorded with that op's replies (any args).
 """
 
@@ -22,12 +23,12 @@ def _key(ctx: str, op: str, args: dict[str, Any]) -> tuple[str, str, str]:
     return ctx, op, json.dumps(args or {}, sort_keys=True, separators=(",", ":"))
 
 
-class _Queue:
+class _Queue[T]:
     def __init__(self) -> None:
-        self.replies: list[Reply] = []
+        self.replies: list[T] = []
         self.next = 0
 
-    def take(self) -> Reply:
+    def take(self) -> T:
         rep = self.replies[min(self.next, len(self.replies) - 1)]
         self.next += 1
         return rep
@@ -38,9 +39,9 @@ class FixtureStore:
         if match not in ("exact", "op"):
             raise ValueError("match is 'exact' or 'op'")
         self.match = match
-        self._exact: dict[tuple[str, str, str], _Queue] = {}
-        self._by_op: dict[tuple[str, str], _Queue] = {}
-        self._raw: dict[tuple[str, str], str] = {}
+        self._exact: dict[tuple[str, str, str], _Queue[Reply]] = {}
+        self._by_op: dict[tuple[str, str], _Queue[Reply]] = {}
+        self._raw: dict[tuple[str, str], _Queue[str]] = {}
         for line in lines:
             self.add(line)
 
@@ -63,7 +64,7 @@ class FixtureStore:
         calls = line.get("calls")
         if calls is None:
             if "code" in line and "reply" in line:
-                self._raw[(ctx, line["code"])] = line["reply"]
+                self._raw.setdefault((ctx, line["code"]), _Queue()).replies.append(line["reply"])
             return
         if "error" in line:
             replies: list[Reply] = [{"lua_error": line["error"]}] * len(calls)
@@ -90,4 +91,5 @@ class FixtureStore:
         return q.take() if q is not None else None
 
     def eval_raw(self, ctx: str, code: str) -> str | None:
-        return self._raw.get((ctx, code))
+        q = self._raw.get((ctx, code))
+        return q.take() if q is not None else None
