@@ -24,7 +24,7 @@ sys.path[:0] = [str(REPO / "bridge" / "src"), str(REPO / "packages" / "harness" 
 sys.path.append(str(HERE))
 
 import make_start_save as mss  # noqa: E402
-from bg3ai import lspk  # noqa: E402
+from bg3ai import difficulty, lspk  # noqa: E402
 from bg3ai.game import Game, GameError  # noqa: E402
 from bg3harness.testing.fakemod import FakeMod, Ops  # noqa: E402
 from bg3harness.testing.scripted import FakeClock, GameModel  # noqa: E402
@@ -101,6 +101,20 @@ class Make(unittest.TestCase):
     def test_refused_difficulty(self) -> None:
         self.model.difficulty = "Explorer"
         self.refused("'Explorer'.*Options > Gameplay")
+        self.model.difficulty = "DIFFICULTY_HARD"
+        self.refused("'DIFFICULTY_HARD'.*set Balanced")
+
+    def test_balanced_by_its_ruleset_name_live6(self) -> None:
+        # live6 §2: the mod reads the ruleset's name; Balanced set read DIFFICULTY_MEDIUM and every save was refused
+        self.model.difficulty = "DIFFICULTY_MEDIUM"
+        self.assertEqual(self.make().name, "Tav-123__SCN-fight_act1_windmill")
+
+    def test_difficulty_names(self) -> None:
+        for name in ("Balanced", "DIFFICULTY_MEDIUM", "DifficultyMedium", "difficultymedium"):
+            self.assertEqual(difficulty.option_name(name), "Balanced")
+        self.assertEqual(difficulty.option_name("DIFFICULTY_EASY"), "Explorer")
+        for name in ("RulesetLarian", "", None, 2):
+            self.assertIsNone(difficulty.option_name(name))
 
     def test_refused_without_the_switch(self) -> None:
         self.model.scenario_setup = False

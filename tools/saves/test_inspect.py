@@ -50,6 +50,7 @@ SAVEINFO = json.dumps(
         "Save Name": "S007",
         "Game Version": "4.1.1.7631656",
         "Platform": "Steam",
+        "Difficulty": ["DifficultyMedium", "RulesetLarian"],  # live6's Balanced saves
         "Active Party": {"Characters": [{"Origin": "Gale", "Race": "Human", "Level": 1, "Classes": []}]},
         "Contact": "someone@example.org",
     }
@@ -86,6 +87,8 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(r["meta"]["game_versions"], ["4.1.1.7631656"])
         self.assertEqual(r["save_info"]["Game Version"], "4.1.1.7631656")
         self.assertEqual(r["save_info"]["party"][0]["Origin"], "Gale")
+        self.assertEqual(r["save_info"]["difficulty"], "Balanced")  # live6: DifficultyMedium is Balanced
+        self.assertIsNone(inspect_mod.save_info(b'{"Difficulty": ["RulesetLarian"]}')["difficulty"])
         kinds = {(h["kind"], h["value"]): h["members"] for h in r["findings"]}
         self.assertEqual(kinds[("steam_id", "7656***********42")], ["StorySave.bin"])  # masked story string
         self.assertEqual(kinds[("user_path", "/home/<user>")], ["Globals.lsf"])

@@ -33,6 +33,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from bg3ai.difficulty import option_name
+
 REPO = Path(__file__).resolve().parents[2]
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,35}$")  # SCN-<name> stays within the bridge's 40-char save label
 OWNER_RE = re.compile(r"^[A-Z][a-z]{1,15}$")  # bg3bench.authoring.neutral_name_problems: one capitalised word
@@ -59,7 +61,7 @@ def check_ready(rpc: Rpc) -> None:
     if screen != "game":
         raise RefusedError(f"{screen!r} on screen: close it so the game screen is up")
     diff = rpc("scn.difficulty")
-    if diff.get("difficulty") != DIFFICULTY:
+    if option_name(diff.get("difficulty")) != DIFFICULTY:  # the mod reads the ruleset name (DIFFICULTY_MEDIUM)
         raise RefusedError(
             f"difficulty is {diff.get('difficulty')!r} ({diff.get('rulesets')}): set {DIFFICULTY} in Options > "
             "Gameplay (the mod can't set it)"

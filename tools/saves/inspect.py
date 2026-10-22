@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 
 from bg3ai import lsf, lspk
+from bg3ai.difficulty import option_name
 
 PATTERNS = {
     "steam_id": re.compile(rb"7656119\d{10}"),
@@ -99,7 +100,9 @@ def save_info(data: bytes) -> dict:
         for c in (info.get("Active Party") or {}).get("Characters") or []
     ]
     keep = ("Save Name", "Game Version", "Platform", "Current Level", "Difficulty")
-    return dict({k: info.get(k) for k in keep}, party=party, keys=sorted(info))
+    names = info.get("Difficulty") if isinstance(info.get("Difficulty"), list) else [info.get("Difficulty")]
+    picked = next((d for d in map(option_name, names) if d), None)  # ["DifficultyMedium", "RulesetLarian"]
+    return dict({k: info.get(k) for k in keep}, difficulty=picked, party=party, keys=sorted(info))
 
 
 def inspect_save(path: Path, show: bool = False, deep: bool = True) -> dict:
