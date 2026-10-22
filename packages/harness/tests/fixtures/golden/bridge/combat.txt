@@ -1,0 +1,16 @@
+=== combat (client:ui.story_timer server:state.actions server:state.combat server:state.status server:state.status)
+COMBAT round=1 current=e1 turn_group=[e1]
+  e1 Tav party init 20 hp 100% current @(10,0,10)
+  e2 Shadowheart party init 19 hp 100% @(11,0,10)
+  e5 Goblin enemy init 5 hp 100% hp=7 @(15,0,12)
+  e6 Goblin Archer (Goblin) enemy init 4 hp 100% hp=7 @(16,0,12)
+EVENTS
+  combat_started
+  round 1
+  turn e1
+=== status_fight (client:ui.rest_info client:ui.state server:act.prepared server:nav.markers server:nav.set_subregion server:state.inventory server:state.status)
+MODE exploring -> COMBAT turn-based (round 1 turn=e1 Tav)
+=== events_kill (server:state.status)
+EVENTS
+  died e5 Goblin
+  combat_ended

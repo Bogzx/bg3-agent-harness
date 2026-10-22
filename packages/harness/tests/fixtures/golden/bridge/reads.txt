@@ -1,0 +1,28 @@
+=== status (client:ui.rest_info client:ui.state server:act.prepared server:nav.markers server:nav.set_subregion server:state.inventory server:state.status)
+No change since your last look (full=true shows everything).
+=== party (server:act.prepared server:state.character server:state.character server:state.status)
+*e1 Tav Fighter1 HP 12/12
+   race=Human abilities={Strength=16 Dexterity=12 Constitution=14 Intelligence=10 Wisdom=12 Charisma=8} ac=16 xp={current=0 next_level=300 total=0}
+e2 Shadowheart Cleric1 HP 10/10
+   race=Human abilities={Strength=16 Dexterity=12 Constitution=14 Intelligence=10 Wisdom=12 Charisma=8} ac=16 xp={current=0 next_level=300 total=0}
+=== character (server:state.character)
+e1 Tav level=1 hp=12/12 Fighter1 race=Human abilities={Strength=16 Dexterity=12 Constitution=14 Intelligence=10 Wisdom=12 Charisma=8} ac=16 xp={current=0 next_level=300 total=0}
+=== inventory (server:state.inventory server:state.status)
+GOLD 100 · CAMP SUPPLIES 0/40 (0 carried + 0 in the camp chest)
+== e1 Tav
+  equipped: MeleeMainHand=e3 Longsword
+  e4 Potion of Healing x2 50g
+=== nearby (server:state.nearby)
+CHAR e5 Arron neutral 5m can_talk @(12,0,12)
+(+0 more items, 1 scenery objects not listed; narrow with radius= or kinds=)
+=== journal (server:state.journal)
+ACTIVE (1)
+- Find the Nightsong []: Look for her in the Shadow-Cursed Lands.
+(get_journal quest=<title words> for all steps of one quest)
+=== events_loot (server:state.status)
+EVENTS
+  gold_changed gold=125 delta=25
+  item_added e1 Tav: e7 Ring of Protection
+=== status_again (client:ui.rest_info client:ui.state server:act.prepared server:nav.markers server:nav.set_subregion server:state.inventory server:state.status)
+GOLD 100->125
+ALERTS camp supplies 0/40 (0 carried + 0 in the camp chest) (pick up/buy food before a long rest) | gold 125 < 200 reserve

@@ -1,0 +1,15 @@
+=== dialogue (client:ui.state server:state.status)
+DIALOGUE Arron: What do you want?
+  1. Trade.
+  2. No.
+UI screen=dialogue page=Dialogue blocking
+EVENTS
+  dialogue_started speakers=[name=Arron] party=[Tav]
+  dialogue_line speaker=Arron text=What do you want? options=2
+=== choose (client:ui.dialogue_choose client:ui.state client:ui.state client:ui.state client:ui.state)
+choose_dialogue: done — screen=game ended
+STOPPED: conversation ended
+EVENTS
+  dialogue_ended
+=== status_after (client:ui.rest_info client:ui.state server:act.prepared server:nav.markers server:nav.set_subregion server:state.inventory server:state.status)
+No change since your last look (full=true shows everything).
