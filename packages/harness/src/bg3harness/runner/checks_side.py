@@ -115,9 +115,15 @@ class ChecksSide:
                 renv.log(f"{session}: progress poll failed: {e}")
 
     def facts_poll(self, got: dict | None) -> None:
-        """One facts.jsonl poll on a progress read: the referee ring, then the read and the party inventory."""
+        """One facts.jsonl poll on a progress read: the referee ring, then the read and the party inventory. A
+        settings check that a new game deferred at the main menu runs on the first poll with the server up; a
+        contradiction then stops the session (abort), as it would have at the start."""
         if got:
-            self.game_setup()
+            if self.game_setup() and getattr(self, "settings_deferred", False):
+                try:
+                    self.check_settings()
+                except SettingsMismatch:
+                    self.abort = True
             self.ring_feed().poll()
         inv = facts.read_inventory(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT),
                                    story.combined_code) if got else None
@@ -155,11 +161,15 @@ class ChecksSide:
         seeded = getattr(getattr(self, "opt", None), "seed", None) is not None   # a bare Runner (tests) has no opt
         return ghost.setup_env(seeded)
 
-    def game_setup(self) -> None:
-        """Once per runner, with the game up: the settings readout (the run record's game_settings, a facts
-        `settings` mark) and, for a seeded run, scn.seed (the mod re-applies it after every load)."""
+    def game_setup(self) -> bool:
+        """Once per runner, with a level loaded: the settings readout (the run record's game_settings, a facts
+        `settings` mark) and, for a seeded run, scn.seed (the mod re-applies it after every load). At the main menu
+        (a new game before its first load) the server context, where scn.* and roll.snapshot run, doesn't exist yet:
+        nothing is done and the next call tries again (live7). True once done."""
         if getattr(self, "game_settings", None) is not None:
-            return
+            return True
+        if not game.server_ready():
+            return False
         call = lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT)
         got = game_settings.readout(game_settings.profile_files(steam_paths.profile_dir(), steam_paths.manifest(),
                                                                 self.lsf_attributes(), steam_paths.parse_vdf), call)
@@ -172,15 +182,22 @@ class ChecksSide:
                 renv.log(f"!!!!! scn.seed {self.opt.seed} failed: {e}; this run's dice are NOT seeded !!!!!")
         self.game_settings = got
         self.facts_writer().mark("settings", got)
+        return True
 
     def check_settings(self) -> None:
         """run --scenario-file: the game's settings readout (game_setup) against the scenario's difficulty and karmic
         dice, once per runner. A contradiction stops the run (SettingsMismatch); a setting the readout can't tell is
-        logged and recorded (settings_unverified)."""
+        logged and recorded (settings_unverified). At the main menu (a new game) it is deferred (settings_deferred):
+        facts_poll runs it, with the seed, once the new game's first level has loaded."""
         want = self.opt.scenario_settings
         if not want or getattr(self, "settings_checked", False):
             return
-        self.game_setup()
+        if not self.game_setup():
+            if not getattr(self, "settings_deferred", False):
+                self.settings_deferred = True
+                renv.log("settings check and seed: no level loaded yet (main menu); they run once the game has loaded one")
+                self.event("settings_deferred")
+            return
         self.settings_checked = True
         bad, unknown = scenario_file.mismatches(want, getattr(self, "game_settings", None) or {})
         if unknown:

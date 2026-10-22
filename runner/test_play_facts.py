@@ -23,11 +23,13 @@ os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runti
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
 import legacy_playthrough as lpt
 import legacy_series as lser
+from bg3ai.luadebug import LuaDebugClient
 from bg3harness import clients, events
 from bg3harness.game import io as G  # noqa: N812
 from bg3harness.runner import checks_side as rchecks
 from bg3harness.runner import env as renv
 from bg3harness.runner import state as rstate
+from bg3harness.testing.fakemod import FakeMod
 
 RECORD = {
     "clean": True,
@@ -51,6 +53,24 @@ def game(region: str, area: str | None) -> dict:
         "ui": {"screen": "game", "region": area},
         "journal": {"quests": []},
     }
+
+
+class MenuMod:
+    """The fake mod's responder: the server context errors until a level is loaded (bg3le's main-menu answer)."""
+
+    MENU = "the server context runs once a save is loaded; at the main menu, use the client context"
+
+    def __init__(self):
+        self.loaded = False
+
+    def reply(self, ctx, op, args):
+        if ctx == "server" and not self.loaded:
+            return {"lua_error": self.MENU}
+        result = {"roll.snapshot": {"mode": "Random"}, "scn.seed": {"seed": args.get("seed")}}.get(op, {})
+        return {"ok": True, "result": result}
+
+    def eval_raw(self, ctx, code):
+        return None
 
 
 class FactsWiring(unittest.TestCase):
@@ -182,13 +202,64 @@ class FactsWiring(unittest.TestCase):
             r.game_setup()  # once per runner
             r.opt.judge = False
             rec = r.write_run_record(t0)
-        self.assertEqual(calls, ["roll.snapshot", "scn.seed", "scn.undo"])
+        self.assertEqual(calls, ["sys.ping", "roll.snapshot", "scn.seed", "scn.undo"])
         self.assertEqual(rec["seed"], 12345)
         self.assertEqual(rec["game_settings"]["roll_mode"], "Random")
         self.assertIs(rec["game_settings"]["karmic_dice"], False)
         self.assertEqual(rec["game_settings"]["seed"], {"seed": 12345, "applied": {}})
         marks = [json.loads(x) for x in (r.state.dir / "facts.jsonl").read_text().splitlines()]
         self.assertEqual([m.get("mark") for m in marks], ["run_start", "settings", "run_end"])
+
+    def menu_runner(self, karmic: bool) -> tuple[lpt.Runner, list]:
+        """A seeded scenario run on a new game, at the main menu of a fake mod (FakeMod: the bridge's wire) whose
+        server context refuses every eval until `menu.loaded`, as the real game's does (live7)."""
+        r = lpt.Runner(rstate.Options("new-s", None, 20, "opus", seed=1001,
+                                      scenario_settings={"difficulty": "Balanced", "karmic_dice": karmic}))
+        events_: list = []
+        r.event = lambda kind, **f: events_.append((kind, f))
+        r.ring_feed = lambda: mock.Mock()
+        self.menu = MenuMod()
+        fake = FakeMod(self.menu).start()
+        self.addCleanup(fake.stop)
+        self.fake = fake
+
+        def lua_eval(code, context="client", timeout=G.EVAL_TIMEOUT):
+            with LuaDebugClient(port=fake.port, connect_timeout=5.0) as lua:
+                return lua.evaluate(code, context=context, timeout=timeout)
+
+        for patch in (mock.patch.object(G, "lua_eval", lua_eval), mock.patch.object(rstate, "write_status"),
+                      mock.patch.object(rchecks.facts, "read_inventory", lambda *a, **k: None)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        return r, events_
+
+    def test_a_new_game_seeds_and_checks_after_its_first_load(self):  # live7: not at the main menu
+        r, events_ = self.menu_runner(karmic=False)
+        r.check_settings()  # LiveRunHost's start, at the main menu
+        r.check_settings()
+        self.assertEqual(events_, [("settings_deferred", {})])
+        self.assertIsNone(getattr(r, "game_settings", None))
+        self.assertNotIn("scn.seed", self.fake.ops())
+        r.facts_poll(game("Nautiloid", None))  # still at the menu: deferred again, nothing seeded
+        self.assertNotIn("scn.seed", self.fake.ops())
+        self.menu.loaded = True  # the new game's first level
+        r.facts_poll(game("Nautiloid", None))
+        r.facts_poll(game("Nautiloid", None))
+        self.assertEqual(self.fake.ops().count("scn.seed"), 1)
+        self.assertEqual(r.game_settings["seed"], {"seed": 1001, "applied": {"seed": 1001}})
+        self.assertIs(r.game_settings["karmic_dice"], False)
+        self.assertEqual(events_[1:], [("settings_unverified", {"keys": ["difficulty"]})])
+        self.assertFalse(r.abort)
+        marks = [m.get("mark") for m in self.facts(r)]
+        self.assertEqual(marks.count("settings"), 1)
+
+    def test_a_contradiction_found_after_the_load_stops_the_session(self):
+        r, events_ = self.menu_runner(karmic=True)
+        r.check_settings()
+        self.menu.loaded = True
+        r.facts_poll(game("Nautiloid", None))
+        self.assertTrue(r.abort)
+        self.assertEqual([k for k, _ in events_], ["settings_deferred", "settings_unverified", "settings_mismatch"])
 
     def test_choices_go_into_facts(self):
         r = lpt.Runner(rstate.Options("naut-c", None, 20, "opus"))
