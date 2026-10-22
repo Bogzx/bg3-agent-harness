@@ -187,6 +187,17 @@ class OffRoute(unittest.TestCase):
         self.assertEqual(PR.off_route(PR.parse(pi(routing=None)), ["Novita"]), [])  # no pin: nothing is off it
 
 
+class Readme(unittest.TestCase):
+    def test_the_table_lists_every_profile_with_its_client_and_status(self):
+        rows = {}
+        for line in (EXAMPLES / "README.md").read_text().splitlines():
+            cells = [c.strip(" `") for c in line.strip("|").split("|")]
+            if cells[0].endswith(".toml"):
+                rows[cells[0]] = (cells[1], cells[2])
+        want = {p.name: (PR.load(p).client, PR.load(p).status) for p in EXAMPLES.glob("*.toml")}
+        self.assertEqual(rows, want)
+
+
 class Digest(unittest.TestCase):
     def test_what_a_profile_sets_not_where_it_came_from(self):
         base = PR.digest(PR.parse(pi(), "a.toml"))

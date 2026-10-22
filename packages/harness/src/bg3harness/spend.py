@@ -7,7 +7,7 @@
   without one (`run --budget USD` creates it) or when it is used up, its per-run cap is cut to what is left, and
   every paid play process adds its cost when it ends.
 
-    python3 -m unittest runner/test_spend.py
+    uv run pytest packages/harness/tests/test_spend.py
 """
 
 from __future__ import annotations

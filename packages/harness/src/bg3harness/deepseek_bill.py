@@ -11,7 +11,7 @@ The peak USD rates are the profile's cost table (pi 1.3.0's catalog numbers: dee
 cache_read 0.006 = cache hit, output 1.2; the same 1 : 0.02 : 4 ratio as the CNY sheet). pi's own estimate uses them
 at all hours, which is why run 1 (research/ovh/live3.md, off-peak) showed $0.50 for a $0.24 bill.
 
-    python3 -m unittest runner/test_deepseek_bill.py
+    uv run pytest packages/harness/tests/test_deepseek_bill.py
 """
 
 from __future__ import annotations
