@@ -1,4 +1,5 @@
-"""Root pytest hooks: tests that can't run on a clean checkout (CI's GitHub-hosted runner) are skipped with a reason.
+"""Root pytest hooks: a temp game profile for the run, and tests that can't run on a clean checkout (CI's
+GitHub-hosted runner) are skipped with a reason.
 
 Each entry is a test that needs something a fresh clone doesn't have. The condition is checked, not assumed: on a
 machine that has the thing (the test machine with its local files) the test runs. Fix the dependency and drop the
@@ -10,6 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bg3harness.testing.profile import temp_profile
+
+# Also set by the bg3harness pytest11 plugin (bg3harness/testing/pytest_profile.py) before any conftest; here too for a
+# run with plugin autoload off (PYTEST_DISABLE_PLUGIN_AUTOLOAD): no test reaches the live game's saves or SE files.
+temp_profile()
 
 ROOT = Path(__file__).resolve().parent
 

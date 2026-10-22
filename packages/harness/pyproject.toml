@@ -5,6 +5,10 @@ description = "The BG3 agent harness: prompt assembly and the facts/events data 
 requires-python = ">=3.12"
 dependencies = []
 
+# Every pytest run in the workspace venv gets a temp game profile first (bg3harness/testing/profile.py)
+[project.entry-points.pytest11]
+bg3harness-profile = "bg3harness.testing.pytest_profile"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
