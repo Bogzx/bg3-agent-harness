@@ -38,11 +38,19 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: E402, F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import play as P  # noqa: E402
+from bg3harness.runner import checks_side as rchecks
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import env as renv
+from bg3harness.runner import game_side as rgame
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
+import legacy_cli as lcli
+import legacy_playthrough as lpt
+import legacy_series as lser
 from bg3harness.game import io as G  # noqa: E402  (the game's I/O, moved out of play.py)
 from bg3harness.game import controller as C  # noqa: E402, N812  (the GameController and its timings)
 from bg3harness.game import oom as O  # noqa: E402, N812  (the OOM check's journal and ramwatch reads)
@@ -58,7 +66,7 @@ MOVED = dict.fromkeys(CTL_NAMES, C) | dict.fromkeys(("user_journal", "read_spike
 def home(name: str):
     """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io, the GameController's
     timings to bg3harness.game.controller and the OOM check's reads to bg3harness.game.oom."""
-    return MOVED.get(name) or (G if name in G_FUNCS else P)
+    return MOVED.get(name) or (G if name in G_FUNCS else testenv.home(name))
 
 FAKE_LAUNCH = """#!/bin/sh
 # stand-in for runner/launch_game.sh: just a process that lives until killed
@@ -114,7 +122,7 @@ print(json.dumps({"type": "result", "subtype": "success", "result": "done", "num
 class FakeGame:
     """Simulated answers of the game launched by the runner (alive = the stub process is alive)."""
 
-    def __init__(self, runner: P.Runner, saves: list[P.Save]):
+    def __init__(self, runner: lpt.Runner, saves: list[rpolicy.Save]):
         self.r = runner
         self.saves = list(saves)
         self.hung_pid: int | None = None   # a hang belongs to one game process; a relaunch answers again
@@ -132,7 +140,7 @@ class FakeGame:
             return False
         self.crash_loads[folder] -= 1
         self.load_crashed.add(pid)
-        logs = P.RUNTIME / "logs"
+        logs = renv.RUNTIME / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / f"bg3le-{self.r.state['game']['stamp']}.log.{pid}").write_text(
             "[ 1.0] bg3le loaded\n[ 9.1] crash: signal 11 at (nil) on tid 7\n[ 9.1] crash:   pc bg3+0x55cf2e6\n")
@@ -156,30 +164,30 @@ class FakeGame:
     def port_open(self, *a, **k) -> bool:
         return self.alive() and self.r.game_proc.pid != self.port_lost_pid and not self.load_crashes()
 
-    def game_state(self, timeout: float = P.EVAL_TIMEOUT):
+    def game_state(self, timeout: float = rgame.EVAL_TIMEOUT):
         try:
             self.lua_eval("return tostring(Ext.Utils.GetGameState())", "client", timeout)
         except Exception:  # noqa: BLE001 - like play.game_state
             return None
         return "Running" if self.loaded() else "Menu"
 
-    def lua_eval(self, code: str, context: str = "client", timeout: float = P.EVAL_TIMEOUT) -> str:
+    def lua_eval(self, code: str, context: str = "client", timeout: float = rgame.EVAL_TIMEOUT) -> str:
         if not self.port_open():
             raise ConnectionError("fake game: connection refused")
         if self.hung:
             time.sleep(timeout)            # the port accepts, the eval never answers
             raise TimeoutError("fake game: eval timed out")
-        if code == P.MOD_READY_LUA:
+        if code == rgame.MOD_READY_LUA:
             return "false" if self.r.game_proc is not None and self.r.game_proc.pid == self.mod_gone_pid else "true"
         if "F5" in code:  # the runner's quicksave fallback
-            self.saves.append(P.Save(f"Claude-{900 + len(self.saves)}__QuickSave_1", "Claude", "QuickSave_1", time.time()))
+            self.saves.append(rpolicy.Save(f"Claude-{900 + len(self.saves)}__QuickSave_1", "Claude", "QuickSave_1", time.time()))
         return "{}"
 
     def rpc(self, op: str, args=None, context: str = "server", timeout: float = 0):
         if not self.alive() or self.hung:
-            raise P.RpcError(f"{op}: fake game down")
+            raise rgame.RpcError(f"{op}: fake game down")
         if context == "server" and not self.loaded():
-            raise P.RpcError(f"{op}: no server context at the menu")
+            raise rgame.RpcError(f"{op}: no server context at the menu")
         return {}
 
     def crash(self) -> None:
@@ -211,36 +219,36 @@ class FakeRunBase(unittest.TestCase):
         for k in ("FAKE_CLAUDE_HANG", "FAKE_CLAUDE_MCP", "FAKE_CLAUDE_LIMIT", "FAKE_CLAUDE_RESET", "FAKE_CLAUDE_HOLD_S"):
             os.environ.pop(k, None)
             self.addCleanup(os.environ.pop, k, None)
-        P.RUNTIME = self.tmp / "runtime"
-        P.LAUNCH_SH = launch
-        P.HEALTH_INTERVAL = 1
-        P.HEALTH_RETRY_INTERVAL = 0.5
-        P.HEALTH_EVAL_TIMEOUT = 0.5
-        P.AGENT_SILENT_MINUTES = 2               # the fake claude idles silently; test_agent_hang sets 3 s
-        P.SIGINT_GRACE, P.SIGTERM_GRACE, C.KILL_GRACE = 2, 2, 2
-        P.steam_ready = lambda: (True, "test: offline")
+        renv.RUNTIME = self.tmp / "runtime"
+        renv.LAUNCH_SH = launch
+        renv.HEALTH_INTERVAL = 1
+        renv.HEALTH_RETRY_INTERVAL = 0.5
+        renv.HEALTH_EVAL_TIMEOUT = 0.5
+        renv.AGENT_SILENT_MINUTES = 2               # the fake claude idles silently; test_agent_hang sets 3 s
+        renv.SIGINT_GRACE, renv.SIGTERM_GRACE, C.KILL_GRACE = 2, 2, 2
+        rcode.steam_ready = lambda: (True, "test: offline")
         G.crash_reporter_pids = lambda: []   # never a real reporter (kill_game would kill it)
         C.LAUNCH_BACKOFF = (0.2, 0.2)
-        P.PLAYTHROUGHS = self.tmp / "playthroughs"     # profile.json
+        renv.PLAYTHROUGHS = self.tmp / "playthroughs"     # profile.json
         G.press_menu_key = lambda log=None: "fake key"         # never the real input shim
-        P.bg3le_problems = lambda: []                  # the real dist may be stale on a dev machine (UI-1)
+        rcode.bg3le_problems = lambda: []                  # the real dist may be stale on a dev machine (UI-1)
         C.MENU_POLL = 0.05
         O.user_journal = lambda since: ""              # recover's OOM check: never the real journalctl (up to 20 s)
-        P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"     # a hang's recover marks nav_guard*.json: never the live game's
+        renv.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"     # a hang's recover marks nav_guard*.json: never the live game's
         for name, fake in (("fill", lambda env: {}), ("problem", lambda env: None)):  # CI has no X server: the
-            patch = mock.patch.object(P.display_env, name, fake)                       # stub game needs no display
+            patch = mock.patch.object(lcli.display_env, name, fake)                       # stub game needs no display
             patch.start()
             self.addCleanup(patch.stop)
 
         self.claude = claude
         now = time.time()
-        self.wire(P.Options("crash-test", None, 20, "opus", save_owner="Claude"),
-                  [P.Save("Claude-1__S001-start", "Claude", "S001-start", now - 300),
-                   P.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100),
-                   P.Save("Tav-3__my own game", "Tav", "my own game", now - 10)])   # newer, not ours
+        self.wire(rstate.Options("crash-test", None, 20, "opus", save_owner="Claude"),
+                  [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", now - 300),
+                   rpolicy.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100),
+                   rpolicy.Save("Tav-3__my own game", "Tav", "my own game", now - 10)])   # newer, not ours
 
-    def wire(self, opt: P.Options, saves: list[P.Save]) -> None:
-        r = P.Runner(opt)
+    def wire(self, opt: rstate.Options, saves: list[rpolicy.Save]) -> None:
+        r = lpt.Runner(opt)
         r.next_sid = lambda: "S001"
         r.close_memory_session = lambda res: None
         r.between_sessions_check = lambda: None   # tools/dev/check_all.py would probe the real port 9998
@@ -259,7 +267,7 @@ class FakeRunBase(unittest.TestCase):
         G.read_progress = lambda log=None: None
         G.pids_of_game = lambda: []          # never a real bg3 pid; the stub dies with its process group
         G.all_bg3_pids = lambda: []          # nor a user's own BG3 (RUN-4: one would block every launch)
-        P.list_saves = lambda: list(g.saves)
+        rcode.list_saves = lambda: list(g.saves)
         self.r, self.g = r, g
 
     def tearDown(self):
@@ -332,8 +340,8 @@ class AgentFailures(FakeRunBase):
 
     def test_mod_gone_is_a_hang(self):
         # RUN-8: the game answers but Mods.BG3AI is nil: recover (relaunch + load) and resume, not a toolless session
-        P.MOD_GONE_S = 2
-        P.HEALTH_INTERVAL = 1
+        renv.MOD_GONE_S = 2
+        renv.HEALTH_INTERVAL = 1
 
         def go():
             time.sleep(3)
@@ -367,7 +375,7 @@ class CrashRecovery(FakeRunBase):
         self.assertEqual((h["session"], h["reason"], h["resumes"]), ("S001", "exited", 1))
         self.assertGreater(h["minutes"], 0.05)                                  # whole session, both legs
         self.assertEqual(self.r.pending_notes, [])                              # the note went to the resume
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("recovering: crashed", log)
         self.assertIn("resuming claude after the crash", log)
         self.assertTrue((self.r.state.dir / "S001-r1.log").exists())
@@ -382,7 +390,7 @@ class CrashRecovery(FakeRunBase):
         res = self.r.play_session(20, first=True)
         self.assertEqual(res.reason, "exited")
         self.assertEqual(self.g.loaded(), "Claude-2__S001-before-imps")
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("game died while waiting for", log)
         self.assertIn("bg3le logged crash: signal 11", log)
         self.assertIn("launch 1/3 with Claude-2__S001-before-imps failed", log)
@@ -401,11 +409,11 @@ class CrashRecovery(FakeRunBase):
         prompt = self.claude_runs()[1][self.claude_runs()[1].index("-p") + 1]
         self.assertIn('"S001-before-imps" crashed the game on load 2 times', prompt)
         self.assertIn('save "S001-start"', prompt)                                  # recover()'s note: the real one
-        self.assertIn("retrying in 0.2 s with Claude-1__S001-start", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("retrying in 0.2 s with Claude-1__S001-start", (renv.RUNTIME / "runner.log").read_text())
 
     def test_three_load_crashes_stop_the_runner_loudly(self):
         self.crash_after(3, load_crashes={"Claude-2__S001-before-imps": 9, "Claude-1__S001-start": 9})
-        with self.assertRaises(P.LaunchGaveUp) as cm:
+        with self.assertRaises(rstate.LaunchGaveUp) as cm:
             self.r.play_session(20, first=True)
         self.assertIn("3 launches in a row died", str(cm.exception))
         self.assertEqual([e["save"] for e in self.events() if e["kind"] == "launch_failed"],
@@ -419,7 +427,7 @@ class CrashRecovery(FakeRunBase):
         res = self.r.play_session(20, first=True)
         self.assertEqual(res.reason, "exited")
         self.assertEqual(len(self.claude_runs()), 2)
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("FAULT crash: debug port 9998 stopped answering (game process still alive)", log)
         self.assertNotEqual(self.r.game_proc.pid, self.g.port_lost_pid)       # the deaf game was killed
         self.assertTrue(self.g.port_open())
@@ -430,15 +438,15 @@ class CrashRecovery(FakeRunBase):
         self.r.play_session(20, first=True)
         hung_pid = self.g.hung_pid
         self.assertEqual(len(self.claude_runs()), 2)
-        self.assertIn("recovering: stopped responding", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("recovering: stopped responding", (renv.RUNTIME / "runner.log").read_text())
         self.assertNotEqual(self.r.game_proc.pid, hung_pid)                   # the hung game was replaced
         self.assertFalse(self.g.hung)
-        self.assertIn("liveness evals in a row failed or timed out", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("liveness evals in a row failed or timed out", (renv.RUNTIME / "runner.log").read_text())
         self.assert_recovered("hang", 25)
 
     def test_agent_hang_restarts_claude_only(self):
         os.environ["FAKE_CLAUDE_HANG"] = "1"
-        P.AGENT_SILENT_MINUTES = 3 / 60
+        renv.AGENT_SILENT_MINUTES = 3 / 60
         res = self.r.play_session(20, first=True)
         game_pid = self.r.game_proc.pid
         runs = self.claude_runs()
@@ -447,7 +455,7 @@ class CrashRecovery(FakeRunBase):
         self.assertIn("produced no output", prompt)                           # agent_resume_prompt, not a crash note
         self.assertEqual(runs[1][runs[1].index("--resume") + 1], runs[0][runs[0].index("--session-id") + 1])
         self.assertEqual(res.reason, "exited")
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("FAULT agent_hang: no claude output", log)
         self.assertNotIn("recovering:", log)                                  # the game was left alone
         self.assertEqual(self.r.game_proc.pid, game_pid)
@@ -457,7 +465,7 @@ class CrashRecovery(FakeRunBase):
         self.assertEqual(self.r.state["history"][-1]["resumes"], 1)
 
     def test_too_little_time_left_ends_the_session_and_keeps_the_note(self):
-        P.RESUME_MIN_MINUTES = 30                     # a 20-min session never has 30 left
+        renv.RESUME_MIN_MINUTES = 30                     # a 20-min session never has 30 left
         self.crash_after(3)
         self.r.play_session(20, first=True)
         self.assertEqual(len(self.claude_runs()), 1)
@@ -474,8 +482,8 @@ class StopCheck(FakeRunBase):
         super().setUp()
         os.environ["FAKE_CLAUDE_FIRST_S"] = "1"
         os.environ["FAKE_CLAUDE_RESUME_S"] = "0.5"
-        saved = P.MAX_STOP_RESUMES
-        self.addCleanup(setattr, P, "MAX_STOP_RESUMES", saved)
+        saved = renv.MAX_STOP_RESUMES
+        self.addCleanup(setattr, testenv.home("MAX_STOP_RESUMES"), "MAX_STOP_RESUMES", saved)
 
     def test_keep_playing_resumes_the_same_conversation(self):
         reasons = ["Keep playing: 18 minutes left in this session.", None]
@@ -506,7 +514,7 @@ class StopCheck(FakeRunBase):
         os.environ.update(FAKE_CLAUDE_FIRST_S="10", FAKE_CLAUDE_HOLD_S="20")
         calls = []
         self.r.stop_check = lambda sid, deadline, minutes: calls.append(deadline) and None
-        with mock.patch.object(P, "deadlines", lambda start, m: (start + m * 60, start + m * 60 + 1)):
+        with mock.patch.object(rpolicy, "deadlines", lambda start, m: (start + m * 60, start + m * 60 + 1)):
             t0 = time.time()
             res = self.r.play_session(0.05, first=True)
         self.assertEqual(res.reason, "exited")   # not hard_stop
@@ -518,17 +526,17 @@ class StopCheck(FakeRunBase):
 
     def test_the_fight_hold_is_bounded(self):
         hold = self.tmp / "S001.hold.json"
-        self.assertEqual(P.held_deadline(hold, 1000.0), 1000.0)   # no file
+        self.assertEqual(rpolicy.held_deadline(hold, 1000.0), 1000.0)   # no file
         hold.write_text(json.dumps({"deadline": 1300, "held": True}))
-        self.assertEqual(P.held_deadline(hold, 1000.0), 1300.0)
-        hold.write_text(json.dumps({"deadline": 1000 + P.FIGHT_HOLD_S + 600}))
-        self.assertEqual(P.held_deadline(hold, 1000.0), 1000.0 + P.FIGHT_HOLD_S)   # never past the bound
+        self.assertEqual(rpolicy.held_deadline(hold, 1000.0), 1300.0)
+        hold.write_text(json.dumps({"deadline": 1000 + rpolicy.FIGHT_HOLD_S + 600}))
+        self.assertEqual(rpolicy.held_deadline(hold, 1000.0), 1000.0 + rpolicy.FIGHT_HOLD_S)   # never past the bound
         for bad in ("", "[1]", "{\"deadline\": \"x\"}", json.dumps({"deadline": 900})):
             hold.write_text(bad)
-            self.assertEqual(P.held_deadline(hold, 1000.0), 1000.0)   # never earlier
+            self.assertEqual(rpolicy.held_deadline(hold, 1000.0), 1000.0)   # never earlier
 
     def test_capped(self):
-        P.MAX_STOP_RESUMES = 2
+        renv.MAX_STOP_RESUMES = 2
         self.r.stop_check = lambda *a: "Keep playing: 10 minutes left in this session."
         self.r.play_session(20, first=True)
         self.assertEqual(len(self.claude_runs()), 3)
@@ -540,10 +548,10 @@ class NautiloidBase(FakeRunBase):
 
     def setUp(self):
         super().setUp()
-        self.saved_story = (P.story.read_game, P.story.POLL_S)
-        self.addCleanup(lambda: (setattr(P.story, "read_game", self.saved_story[0]),
-                                 setattr(P.story, "POLL_S", self.saved_story[1])))
-        P.story.POLL_S = 0.3
+        self.saved_story = (rchecks.story.read_game, rchecks.story.POLL_S)
+        self.addCleanup(lambda: (setattr(rchecks.story, "read_game", self.saved_story[0]),
+                                 setattr(rchecks.story, "POLL_S", self.saved_story[1])))
+        rchecks.story.POLL_S = 0.3
         self.escaped = False
 
         def feed(_lua):   # the progress poller's journal/status read: the Nautiloid, then its quest done
@@ -552,9 +560,9 @@ class NautiloidBase(FakeRunBase):
             return {"status": {"region": "Nautiloid", "party": [{"name": "Claude", "level": 1}]},
                     "journal": {"quests": [{"title": "Escape the Nautiloid", "done": self.escaped,
                                             "steps": ["Get off the nautiloid"]}]}}
-        P.story.read_game = feed
+        rchecks.story.read_game = feed
 
-    def quiet(self, r: P.Runner) -> None:
+    def quiet(self, r: lpt.Runner) -> None:
         r.check_memory = lambda: None
         r.code_update_check = lambda: None          # other workers edit the tree meanwhile: no self-restart here
         r.between_sessions_check = lambda: None     # no tools/dev/check_all.py, check_plans.py
@@ -587,17 +595,17 @@ class NewRuns(NautiloidBase):
         self.assertEqual((rec["sessions"], rec["crashes"], rec["recoveries"]), (1, 0, 0))
         self.assertEqual((rec["cost_usd"], rec["turns"], rec["tokens"]["output"]), (0.25, 7, 50))   # the [end] event
         self.assertGreater(rec["wall_min"], 0)
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("milestone nautiloid_escaped (Nautiloid escaped) reached: stopping (--until)", log)
         self.assertIn("runner stopped (--until nautiloid_escaped: reached in S001)", log)
         self.assertIn("[runner] milestone nautiloid_escaped reached; stopping claude",
                       (r.state.dir / "S001.log").read_text())
         # a second run of the same playthrough doesn't play past it
-        r2 = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped"))
+        r2 = lpt.Runner(rstate.Options("crash-test", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped"))
         r2.check_memory = lambda: None
         self.assertEqual(r2.run(), 0)
         self.assertEqual(len(self.claude_runs()), 1)
-        self.assertIn("already reached in this playthrough", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("already reached in this playthrough", (renv.RUNTIME / "runner.log").read_text())
 
     def test_game_end_stops_a_playthrough_run_with_a_record(self):
         # playthrough mode (no --until): the end credits after the finale end the run; no relaunch, no next session
@@ -612,7 +620,7 @@ class NewRuns(NautiloidBase):
                 return {"status": None, "ui": {"screen": "credits", "page": "Credits"}}
             return {"status": {"region": "Upper City", "party": [{"name": "Claude", "level": 12}]},
                     "ui": {"screen": "game", "region": "High Hall"}}
-        P.story.read_game = feed
+        rchecks.story.read_game = feed
 
         def roll():
             time.sleep(4)
@@ -625,7 +633,7 @@ class NewRuns(NautiloidBase):
         self.assertEqual(r.state["history"][-1]["reason"], "milestone")
         rec = json.loads((r.state.dir / "runs.jsonl").read_text().splitlines()[-1])
         self.assertEqual((rec["outcome"], rec["milestone"], rec["reached_in"]), ("reached", "game_end", "S001"))
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("milestone game_end (The end (credits / epilogue)) reached: stopping (the game is finished)", log)
         self.assertIn("runner stopped (the game is finished: The end (credits / epilogue) in S001)", log)
         evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
@@ -634,11 +642,11 @@ class NewRuns(NautiloidBase):
         seen = json.loads((r.state.dir / "progress_state.json").read_text())
         self.assertEqual(seen["game_end"]["how"], "the end credits after the finale")
         # the next runner start has nothing to play
-        r2 = P.Runner(P.Options("crash-test", None, 20, "opus", save_owner="Claude"))
+        r2 = lpt.Runner(rstate.Options("crash-test", None, 20, "opus", save_owner="Claude"))
         r2.check_memory = lambda: None
         self.assertEqual(r2.run(), 0)
         self.assertEqual(len(self.claude_runs()), 1)
-        self.assertIn("the game is finished: already reached in this playthrough", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("the game is finished: already reached in this playthrough", (renv.RUNTIME / "runner.log").read_text())
 
     def test_crash_loop_stops_a_long_run(self):
         # playthrough mode, many hours unattended: a game that dies every session ends the run instead of relaunching
@@ -651,31 +659,31 @@ class NewRuns(NautiloidBase):
             played.append(now)
             for _ in range(2):   # two crashes recovered inside each session
                 r.event("fault", fault="crash", session="S%03d" % len(played), detail="test")
-            return P.SessionResult("S%03d" % len(played), "c", 0, "exited", now - 300, now)
+            return rstate.SessionResult("S%03d" % len(played), "c", 0, "exited", now - 300, now)
         r.play_session = session
         self.assertEqual(r.run(), 1)
         self.assertEqual(len(played), 3)   # 6 faults after the 3rd session: no 4th
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("crash loop: 6 game crashes/hangs/setup failures in", log)
         self.assertIn("runner stopped (gave up: crash loop", log)
-        line = (P.RUNTIME / P.STATUS_LINE).read_text()
+        line = (renv.RUNTIME / renv.STATUS_LINE).read_text()
         self.assertIn("crash-test: STOPPED (gave up: crash loop", line)
         self.assertIn("6 game fault(s) in 60 min (stop at 6)", line)
-        self.assertEqual(json.loads((P.RUNTIME / "runner.status.json").read_text())["alert"]["kind"], "crash_loop")
+        self.assertEqual(json.loads((renv.RUNTIME / "runner.status.json").read_text())["alert"]["kind"], "crash_loop")
 
     def test_new_playthrough_with_a_brief_runs_phase_0_and_adopts_the_created_name(self):
         brief = "a pious, short-tempered dwarf cleric who distrusts mind flayers"
         os.environ["FAKE_CLAUDE_FIRST_S"] = "4"
-        self.wire(P.Options("brief-test", None, 20, "opus", character_brief=brief, roleplay="light",
+        self.wire(rstate.Options("brief-test", None, 20, "opus", character_brief=brief, roleplay="light",
                             difficulty="Balanced"), [])
         r = self.r
         self.quiet(r)   # a real check_all before the session took ~5 s: the "mid-session" save came before it
-        prof = json.loads((P.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
+        prof = json.loads((renv.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
         self.assertEqual(prof, {"character": {"brief": brief, "roleplay": "light"}, "difficulty": "Balanced"})
 
         def first_save():   # the agent's create_character + first save, mid-session
             time.sleep(2)
-            self.g.saves.append(P.Save("Mira-4810126690__S001-start", "Mira", "S001-start", time.time()))
+            self.g.saves.append(rpolicy.Save("Mira-4810126690__S001-start", "Mira", "S001-start", time.time()))
         threading.Thread(target=first_save, daemon=True).start()
         self.r.play_session(20, first=True)
 
@@ -692,15 +700,15 @@ class NewRuns(NautiloidBase):
                                                  "BG3AI_SAVE_GATES": "1", "BG3AI_SESSION": "S001"})   # new game: gates open
         # I3: the created name is the save owner from now on, persisted, and the prefix follows
         self.assertEqual(r.state["save_owner"], "Mira")
-        self.assertEqual(P.RunnerState("brief-test")["save_owner"], "Mira")
+        self.assertEqual(rstate.RunnerState("brief-test")["save_owner"], "Mira")
         self.assertEqual((r.save_env()["BG3AI_SAVE_OWNER"], r.save_env()["BG3AI_SAVE_PREFIX"]), ("Mira", "Mira-"))
-        prof = json.loads((P.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
+        prof = json.loads((renv.PLAYTHROUGHS / "brief-test" / "profile.json").read_text())
         self.assertEqual(prof["character"]["name"], "Mira")
         self.assertEqual(r.choose_save().folder, "Mira-4810126690__S001-start")
 
     def test_new_game_without_a_brief_keeps_todays_forced_name(self):
         os.environ["FAKE_CLAUDE_FIRST_S"] = "2"
-        self.wire(P.Options("nobrief-test", None, 20, "opus", save_owner="Claude"), [])
+        self.wire(rstate.Options("nobrief-test", None, 20, "opus", save_owner="Claude"), [])
         self.r.play_session(20, first=True)
         prompt = self.claude_runs()[0][self.claude_runs()[0].index("-p") + 1]
         self.assertIn('Name your character exactly "Claude"', prompt)
@@ -715,15 +723,15 @@ class Series(NautiloidBase):
         super().setUp()
         for n in ("PLAY_DIR", "KNOWLEDGE_DIR", "SE_BG3AI_DIR", "current_pins"):   # setdefault: the base saved
             self.saved.setdefault(n, getattr(home(n), n))                     # SE_BG3AI_DIR before it set a tmp one
-        pins = P.current_pins()   # frozen: other workers editing the shared tree mid-test read as version drift
-        P.current_pins = lambda: json.loads(json.dumps(pins))
-        P.PLAY_DIR = self.tmp / "play"                  # check_memory links play/memory here, not in the repo
-        P.KNOWLEDGE_DIR = P.PLAY_DIR / "knowledge"
-        P.KNOWLEDGE_DIR.mkdir(parents=True)
-        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
-        P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
-        P.SE_BG3AI_DIR.mkdir(parents=True)
-        (P.SE_BG3AI_DIR / "nav_guard.json").write_text('{"slow":{"TUT_Avernus_C":{}}}')
+        pins = lser.current_pins()   # frozen: other workers editing the shared tree mid-test read as version drift
+        lser.current_pins = lambda: json.loads(json.dumps(pins))
+        renv.PLAY_DIR = self.tmp / "play"                  # check_memory links play/memory here, not in the repo
+        renv.KNOWLEDGE_DIR = renv.PLAY_DIR / "knowledge"
+        renv.KNOWLEDGE_DIR.mkdir(parents=True)
+        (renv.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
+        renv.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
+        renv.SE_BG3AI_DIR.mkdir(parents=True)
+        (renv.SE_BG3AI_DIR / "nav_guard.json").write_text('{"slow":{"TUT_Avernus_C":{}}}')
         os.environ["FAKE_CLAUDE_FIRST_S"] = "60"
 
         def feed(_lua):   # every game escapes the Nautiloid 3 s after it was launched (a new game included)
@@ -733,8 +741,8 @@ class Series(NautiloidBase):
             return {"status": {"region": "Nautiloid", "party": [{"name": "Claude", "level": 1}]},
                     "journal": {"quests": [{"title": "Escape the Nautiloid", "done": done,
                                             "steps": ["Get off the nautiloid"]}]}}
-        P.story.read_game = feed
-        test, orig = self, P.Runner.__init__
+        rchecks.story.read_game = feed
+        test, orig = self, lpt.Runner.__init__
 
         def init(r, opt):   # every Runner the series makes plays on the fake game with the fake claude
             orig(r, opt)
@@ -746,26 +754,26 @@ class Series(NautiloidBase):
             r.between_sessions_check = lambda: None
             r.check_plan_lines = lambda *a, **k: []
             test.g.r = test.r = r
-        P.Runner.__init__ = init
-        self.addCleanup(setattr, P.Runner, "__init__", orig)
+        lpt.Runner.__init__ = init
+        self.addCleanup(setattr, lpt.Runner, "__init__", orig)
 
     def test_two_runs_in_a_row(self):
-        opt = P.Options("naut", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped", keeper=False,
+        opt = rstate.Options("naut", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped", keeper=False,
                         character_brief="a dwarf cleric", series="naut")
         self.r.game_proc = None
         t0 = time.time()
-        self.assertEqual(P.run_series(opt, 2, {"runner": None, "stop": False}), 0)
+        self.assertEqual(lser.run_series(opt, 2, {"runner": None, "stop": False}), 0)
         self.assertLess(time.time() - t0, 90)
         self.assertEqual(len(self.claude_runs()), 2)
-        recs = [json.loads(ln) for ln in (P.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()]
+        recs = [json.loads(ln) for ln in (renv.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()]
         self.assertEqual([(r["run"], r["playthrough"], r["outcome"]) for r in recs],
                          [(1, "naut", "reached"), (2, "naut-r2", "reached")])
         self.assertTrue(all(r["clean"] for r in recs), [r["failures"] for r in recs])
         self.assertEqual(recs[0]["reset"]["nav_files"], ["nav_guard.json"])     # the kill list moved aside, once
         self.assertEqual(recs[1]["reset"]["nav_files"], [])
         for pt in ("naut", "naut-r2"):
-            self.assertTrue((P.PLAYTHROUGHS / pt / "memory" / "HANDOFF.md").is_file())
-            prof = json.loads((P.PLAYTHROUGHS / pt / "profile.json").read_text())
+            self.assertTrue((renv.PLAYTHROUGHS / pt / "memory" / "HANDOFF.md").is_file())
+            prof = json.loads((renv.PLAYTHROUGHS / pt / "profile.json").read_text())
             self.assertEqual(prof["character"]["brief"], "a dwarf cleric")
         # run 2 started a new game: no --load of run 1's saves (same character name), and its own MCP save window
         launches = [e for e in self.claude_envs()]
@@ -773,11 +781,11 @@ class Series(NautiloidBase):
         prompt2 = self.claude_runs()[1][self.claude_runs()[1].index("-p") + 1]
         self.assertIn("PHASE 0, CHARACTER CREATION", prompt2)
         self.assertNotIn("--load", self.g.r.game_proc.args if self.g.r.game_proc else [])
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("between runs: game stopped", log)
         self.assertIn("series naut: 2/2 run(s) recorded, 2 clean, 2 clean in a row", log)
         # re-running the finished series plays nothing
-        self.assertEqual(P.run_series(opt, 2, {"runner": None, "stop": False}), 0)
+        self.assertEqual(lser.run_series(opt, 2, {"runner": None, "stop": False}), 0)
         self.assertEqual(len(self.claude_runs()), 2)
 
 
@@ -785,19 +793,19 @@ class StaleBg3le(FakeRunBase):
     """UI-1: a bg3le build without every patches/bg3le patch is never launched, and the runner stops (no retry)."""
 
     def test_stale_build_stops_the_runner_before_any_launch(self):
-        P.bg3le_problems = lambda: ["missing 0009-noesis-uaf.patch"]
+        rcode.bg3le_problems = lambda: ["missing 0009-noesis-uaf.patch"]
         r = self.r
         r.check_memory = lambda: None
         r.code_update_check = lambda: None
         self.assertEqual(r.run(), 1)
         self.assertIsNone(r.game_proc)                                         # nothing launched
         self.assertFalse(self.claude_log.exists())
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("REFUSING TO LAUNCH BG3: stale bg3le build (missing 0009-noesis-uaf.patch)", log)
         self.assertIn("tools/build_bg3le.sh", log)
         self.assertIn("runner stopped (stale bg3le build", log)
         self.assertNotIn("setup failed", log)
-        st = json.loads((P.RUNTIME / "runner.status.json").read_text())
+        st = json.loads((renv.RUNTIME / "runner.status.json").read_text())
         self.assertEqual((st["bg3le_stale"], st["alert"]["kind"]), (["missing 0009-noesis-uaf.patch"], "bg3le_stale"))
         self.assertIn("bg3le_stale", [e["kind"] for e in self.events()])
 
@@ -805,12 +813,12 @@ class StaleBg3le(FakeRunBase):
         stale = self.tmp / "launch_stale.sh"
         stale.write_text("#!/bin/sh\necho 'launch_game: REFUSING TO LAUNCH: STALE bg3le build'\nexit 4\n")
         stale.chmod(0o755)
-        P.LAUNCH_SH = stale
+        renv.LAUNCH_SH = stale
         r = self.r
         r.check_memory = lambda: None
         r.code_update_check = lambda: None
         self.assertEqual(r.run(), 1)
-        log = (P.RUNTIME / "runner.log").read_text()
+        log = (renv.RUNTIME / "runner.log").read_text()
         self.assertIn("launch_game.sh exited 4", log)
         self.assertNotIn("launch 1/3", log)                                    # not retried as a crash
         self.assertEqual([e["kind"] for e in self.events()].count("bg3le_stale"), 1)
@@ -827,7 +835,7 @@ class Watch(unittest.TestCase):
         G.pids_of_game = lambda: list(self.pids)
         G.crash_reporter_pids = lambda: list(self.reporters)
         G.port_open = lambda *a, **k: self.port
-        self.w = P.LaunchWatch("20261010-020143", self.tmp, started=100.0)
+        self.w = rgame.LaunchWatch("20261010-020143", self.tmp, started=100.0)
 
     def tearDown(self):
         for n, v in self.saved.items():
@@ -846,7 +854,7 @@ class Watch(unittest.TestCase):
         (self.tmp / "bg3le-20261010-020143.log.383698").write_text(
             "[ 1.0] bg3le loaded\n[ 1.0] host is LinuxCrashReporter, not bg3 -- bg3le stays inactive\n")
         self.assertIn("LinuxCrashReporter started", self.w.check(now=101))
-        w = P.LaunchWatch("other", self.tmp, started=100.0)
+        w = rgame.LaunchWatch("other", self.tmp, started=100.0)
         self.reporters = [4242]
         self.assertEqual(w.check(now=101), "LinuxCrashReporter is running (pid 4242)")
 
@@ -862,7 +870,7 @@ class Watch(unittest.TestCase):
         self.assertIsNone(self.w.check(now=110))
         self.assertIsNone(self.w.check(now=169))
         self.assertIn("refused for 61 s", self.w.check(now=171))
-        w = P.LaunchWatch("x", self.tmp, started=100.0)  # open, then closed: counted from the last open
+        w = rgame.LaunchWatch("x", self.tmp, started=100.0)  # open, then closed: counted from the last open
         self.port = True
         self.assertIsNone(w.check(now=110))
         self.port = False
@@ -880,34 +888,34 @@ class MemoryAfterCrash(unittest.TestCase):
     def runner(self, report: str):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-mem-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        P.RUNTIME = self.tmp / "runtime"
-        r = P.Runner(P.Options("mem-test", None, 20, "opus"))
+        renv.RUNTIME = self.tmp / "runtime"
+        r = lpt.Runner(rstate.Options("mem-test", None, 20, "opus"))
         r.memory_state = lambda: {"open": True, "current": 14}
-        r.session_py = lambda *a: P.subprocess.CompletedProcess(a, 1, report, "")
+        r.session_py = lambda *a: rcode.subprocess.CompletedProcess(a, 1, report, "")
         self.fix_runs = []
         r.run_claude = lambda *a, **k: self.fix_runs.append(a)
         return r
 
     def setUp(self):
-        self.saved_rt = P.RUNTIME
+        self.saved_rt = renv.RUNTIME
 
     def tearDown(self):
-        P.RUNTIME = self.saved_rt
+        renv.RUNTIME = self.saved_rt
 
     def res(self, reason):
-        return P.SessionResult("S014", "c", 0, reason, time.time() - 400, time.time())
+        return rstate.SessionResult("S014", "c", 0, reason, time.time() - 400, time.time())
 
     def test_lint_error_lines(self):
-        self.assertEqual(P.memory_lint_errors(self.S014, skip=("handoff",)),
+        self.assertEqual(rcode.memory_lint_errors(self.S014, skip=("handoff",)),
                          ["ERROR  stale       objectives.md unchanged for 3 sessions"])
-        self.assertEqual(len(P.memory_lint_errors(self.S014)), 2)
+        self.assertEqual(len(rcode.memory_lint_errors(self.S014)), 2)
 
     def test_crash_with_only_the_handoff_error_leaves_no_note(self):
         r = self.runner("ERROR  handoff     HANDOFF.md was written by S013, not by the current session S014.\n")
         r.close_memory_session(self.res("crash"))
         self.assertEqual((r.pending_notes, self.fix_runs), ([], []))
-        self.assertIn("memory left open for the next session", (P.RUNTIME / "runner.log").read_text())
-        self.assertNotIn("fix-notes session", (P.RUNTIME / "runner.log").read_text())  # none runs after a crash
+        self.assertIn("memory left open for the next session", (renv.RUNTIME / "runner.log").read_text())
+        self.assertNotIn("fix-notes session", (renv.RUNTIME / "runner.log").read_text())  # none runs after a crash
 
     def test_crash_passes_on_other_errors_only(self):
         r = self.runner(self.S014)
@@ -932,14 +940,14 @@ class MemoryAfterCrash(unittest.TestCase):
 
     def test_killed_session_is_treated_like_a_crash(self):
         # S027: an outside SIGTERM (exit 143) 3 min in was taken for a clean exit → fix-notes pass for the handoff
-        self.assertEqual(P.exit_reason("exited", 143), "killed")
-        self.assertEqual(P.exit_reason("exited", -15), "killed")
-        self.assertEqual(P.exit_reason("exited", 0), "exited")
-        self.assertEqual(P.exit_reason("hard_stop", 143), "hard_stop")   # the runner's own signals
+        self.assertEqual(renv.exit_reason("exited", 143), "killed")
+        self.assertEqual(renv.exit_reason("exited", -15), "killed")
+        self.assertEqual(renv.exit_reason("exited", 0), "exited")
+        self.assertEqual(renv.exit_reason("hard_stop", 143), "hard_stop")   # the runner's own signals
         r = self.runner("ERROR  handoff     HANDOFF.md was written by S013, not by the current session S014.\n")
         r.close_memory_session(self.res("killed"))
         self.assertEqual((r.pending_notes, self.fix_runs), ([], []))
-        self.assertIn("ended by claude killed", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("ended by claude killed", (renv.RUNTIME / "runner.log").read_text())
 
     def test_no_fix_pass_once_a_stop_was_requested(self):
         r = self.runner(self.S014)
@@ -953,19 +961,19 @@ class LiveSessionLength(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-len-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.saved_rt = P.RUNTIME
-        P.RUNTIME = self.tmp / "runtime"
+        self.saved_rt = renv.RUNTIME
+        renv.RUNTIME = self.tmp / "runtime"
 
     def tearDown(self):
-        P.RUNTIME = self.saved_rt
+        renv.RUNTIME = self.saved_rt
 
     def test_minutes_from_session_config_each_session(self):
-        r = P.Runner(P.Options("len-test", None, 20, "opus"))
+        r = lpt.Runner(rstate.Options("len-test", None, 20, "opus"))
         cfg = r.state.dir / "session-config.json"
         self.assertEqual(r.session_minutes(), 20)                          # no file: --session-minutes
         cfg.write_text(json.dumps({"minutes": 60, "effort": "low"}))
         self.assertEqual(r.session_minutes(), 60)
-        self.assertIn("session length now 60 min", (P.RUNTIME / "runner.log").read_text())
+        self.assertIn("session length now 60 min", (renv.RUNTIME / "runner.log").read_text())
         cfg.write_text(json.dumps({"minutes": 5}))                          # too short without --allow-short-sessions
         self.assertEqual(r.session_minutes(), 20)
         cfg.write_text(json.dumps({"minutes": "60"}))                       # bad type: ignored
@@ -975,7 +983,7 @@ class LiveSessionLength(unittest.TestCase):
         r.opt.allow_short = True
         cfg.write_text(json.dumps({"minutes": 5}))
         self.assertEqual(r.session_minutes(), 5)
-        self.assertEqual(json.loads((P.RUNTIME / "runner.status.json").read_text())["session_minutes"], 5)
+        self.assertEqual(json.loads((renv.RUNTIME / "runner.status.json").read_text())["session_minutes"], 5)
 
 
 if __name__ == "__main__":

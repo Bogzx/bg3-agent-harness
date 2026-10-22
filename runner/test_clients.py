@@ -20,16 +20,18 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: E402, F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 from bg3harness import clients as C  # noqa: E402
-import play as P  # noqa: E402
+from bg3harness.runner import env as renv
+from bg3harness.runner import state as rstate
+import legacy_playthrough as lpt
 import runs as R  # noqa: E402
 import test_play as TP  # noqa: E402  (the frozen pre-client claude_cmd / format_stream_event)
 
-SESSIONS = P.REPO / "runtime" / "sessions"
+SESSIONS = renv.REPO / "runtime" / "sessions"
 NAUT = SESSIONS / "naut"
 STREAM_RE = re.compile(r"^S\d{3,}(?:-[\w-]+)?\.jsonl$")   # runs.CLAUDE_STREAM_RE: play, resumes, -fix, -keeper
 
@@ -67,13 +69,13 @@ def _streams(root: Path):
     return sorted(f for f in root.glob("*/S*.jsonl") if STREAM_RE.match(f.name)) if root.is_dir() else []
 
 
-def _runner(**opt) -> P.Runner:
-    r = P.Runner.__new__(P.Runner)
-    r.opt = P.Options("pt", None, 60, "opus", **opt)
+def _runner(**opt) -> lpt.Runner:
+    r = lpt.Runner.__new__(lpt.Runner)
+    r.opt = rstate.Options("pt", None, 60, "opus", **opt)
     return r
 
 
-def _req(r: P.Runner, prompt: str, sid: str, resume: bool, tag: str = "") -> C.Request:
+def _req(r: lpt.Runner, prompt: str, sid: str, resume: bool, tag: str = "") -> C.Request:
     """The Request the runner would build for play.py's claude_cmd(prompt, sid, resume, tag)."""
     model, effort = r.model_for(tag)
     return C.Request(prompt, model, Path("/tmp"), session=sid, resume=resume, effort=effort,
@@ -86,10 +88,10 @@ def _events(client, lines) -> list[C.Event]:
 
 class ClaudeDropIn(unittest.TestCase):
     def test_constants_match_play_and_runs(self):
-        self.assertEqual(C.CLAUDE_FLAGS, P.CLAUDE_FLAGS)
-        self.assertEqual(C.PLAY_TOOLS, P.PLAY_TOOLS)
+        self.assertEqual(C.CLAUDE_FLAGS, renv.CLAUDE_FLAGS)
+        self.assertEqual(C.PLAY_TOOLS, renv.PLAY_TOOLS)
         self.assertEqual(C.API_ERROR_RE.pattern, R.API_ERROR_RE.pattern)
-        self.assertEqual(C.MCP_CONFIG, P.PLAY_DIR / ".mcp.json")
+        self.assertEqual(C.MCP_CONFIG, renv.PLAY_DIR / ".mcp.json")
         self.assertEqual(C.TOKEN_KEYS, tuple(k for k, _ in R.TOKEN_FIELDS))
 
     def test_same_command_as_play(self):
@@ -220,7 +222,7 @@ class Codex(unittest.TestCase):
         server = C.bg3_server()
         self.assertEqual(cfg["mcp_servers.bg3.command"], server["command"])
         self.assertEqual(cfg["mcp_servers.bg3.args"], server["args"])
-        self.assertEqual(cfg["mcp_servers.bg3.cwd"], str(P.PLAY_DIR))   # .mcp.json's args are relative to play/
+        self.assertEqual(cfg["mcp_servers.bg3.cwd"], str(renv.PLAY_DIR))   # .mcp.json's args are relative to play/
         self.assertEqual(cfg["mcp_servers.bg3.env"]["BG3AI_SERVE_RULES"], "1")   # the server sends the rules
         self.assertEqual(cfg["mcp_servers.bg3.env_vars"],
                          ["BG3AI_SESSION", "BG3AI_SESSION_DEADLINE", "BG3_SESSION_MINUTES"])

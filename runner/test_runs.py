@@ -21,12 +21,19 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: E402, F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: E402
+from bg3harness.runner import agent_side as ragent
+from bg3harness.runner import env as renv
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
+import legacy_cli as lcli
+import legacy_playthrough as lpt
+import legacy_series as lser
 import runs as R  # noqa: E402
 from test_play_series import _res, _stream, _use  # noqa: E402
 import test_judge as TJ  # noqa: E402  (its stream builders and CHARACTER.md fixture)
@@ -36,7 +43,7 @@ class TmpDir(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-runs-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        for p in (mock.patch.object(P.client_setup, "run_files", lambda *a: {}),   # main(): no tool dump (uv, the bridge)
+        for p in (mock.patch.object(ragent.client_setup, "run_files", lambda *a: {}),   # main(): no tool dump (uv, the bridge)
                   mock.patch.dict(os.environ)):   # main(): session_env sets BG3AI_PROMPT_CONDITION
             p.start()
             self.addCleanup(p.stop)
@@ -95,14 +102,14 @@ class KnowledgeLock(TmpDir):
         def fake_series(*a, **kw):
             seen.append(self.modes(k))
             return 0
-        with mock.patch.object(P, "KNOWLEDGE_DIR", k), mock.patch.object(P, "KNOWLEDGE_LOCK", rec), \
-                mock.patch.object(P, "run_series", side_effect=fake_series), \
-                mock.patch.object(P, "current_pins", return_value={}), \
-                mock.patch.object(P, "series_meta", return_value={}), \
+        with mock.patch.object(renv, "KNOWLEDGE_DIR", k), mock.patch.object(renv, "KNOWLEDGE_LOCK", rec), \
+                mock.patch.object(lser, "run_series", side_effect=fake_series), \
+                mock.patch.object(lser, "current_pins", return_value={}), \
+                mock.patch.object(lser, "series_meta", return_value={}), \
                 mock.patch.dict(os.environ, {"BG3AI_KNOWLEDGE_LOCK": "1"}), \
                 mock.patch("bg3ai.skipper.start_background", return_value=None), \
-                mock.patch.object(P.ramwatch, "start_background", return_value=None), \
-                mock.patch.object(P.signal, "signal"), \
+                mock.patch.object(rpolicy.ramwatch, "start_background", return_value=None), \
+                mock.patch.object(ragent.signal, "signal"), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             rc = P.main(["run", "--playthrough", "naut", "--until", "nautiloid_escaped", "--runs", "2"])
         self.assertEqual((rc, len(seen)), (0, 1))
@@ -132,54 +139,54 @@ class Summary(unittest.TestCase):
 class Wiring(TmpDir):
     def setUp(self):
         super().setUp()
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "read_actions_since", "current_pins")}
-        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
-        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
-        P.read_actions_since = lambda t, path=None: []
+        self.saved = {n: getattr(testenv.home(n), n) for n in ("RUNTIME", "PLAYTHROUGHS", "read_actions_since", "current_pins")}
+        self.addCleanup(lambda: [setattr(testenv.home(n), n, v) for n, v in self.saved.items()])
+        renv.RUNTIME, renv.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        rpolicy.read_actions_since = lambda t, path=None: []
 
     PINS = {"game_build": "25605617", "bg3le": {"sha256": "a", "source": "v0.3.6-dirty"}, "mod": {"sha1": "m"},
             "repo": {"commit": "c1", "dirty": False, "diff": None}}
 
-    def runner(self, pt="naut-r2", k=2, **kw) -> P.Runner:
-        return P.Runner(P.Options(pt, None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
+    def runner(self, pt="naut-r2", k=2, **kw) -> lpt.Runner:
+        return lpt.Runner(rstate.Options(pt, None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
                                   series="naut", run_index=k, **kw))
 
     def test_series_json_freezes_pins_and_caps_once(self):
         caps = {"run_hours": 4, "max_cost": 30.0, "max_tokens": None}
-        P.freeze_series("naut", 3, "nautiloid_escaped", {"p": 1}, self.PINS, caps)
-        P.freeze_series("naut", 3, "nautiloid_escaped", {"p": 2}, {"other": 1}, {"max_cost": 1})
-        meta = P.series_meta("naut")
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {"p": 1}, self.PINS, caps)
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {"p": 2}, {"other": 1}, {"max_cost": 1})
+        meta = lser.series_meta("naut")
         self.assertEqual((meta["profile"], meta["pins"], meta["caps"]), ({"p": 1}, self.PINS, caps))
         # a series from before pins and caps gets them from its next run, the rest untouched
-        (P.RUNTIME / "sessions" / "old").mkdir(parents=True)
-        (P.RUNTIME / "sessions" / "old" / "series.json").write_text(json.dumps({"series": "old", "profile": {"p": 0}}))
-        P.freeze_series("old", 3, "nautiloid_escaped", {"p": 9}, self.PINS, caps)
-        meta = P.series_meta("old")
+        (renv.RUNTIME / "sessions" / "old").mkdir(parents=True)
+        (renv.RUNTIME / "sessions" / "old" / "series.json").write_text(json.dumps({"series": "old", "profile": {"p": 0}}))
+        lser.freeze_series("old", 3, "nautiloid_escaped", {"p": 9}, self.PINS, caps)
+        meta = lser.series_meta("old")
         self.assertEqual((meta["profile"], meta["pins"], meta["caps"]), ({"p": 0}, self.PINS, caps))
 
     def test_a_drifted_run_is_refused_unless_allowed(self):
-        P.freeze_series("naut", 3, "nautiloid_escaped", {}, self.PINS, {})
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {}, self.PINS, {})
         same = json.loads(json.dumps(self.PINS))
         r = self.runner()
-        self.assertIsNone(P.gate_series_run("naut", r, same, False))
+        self.assertIsNone(lser.gate_series_run("naut", r, same, False))
         self.assertEqual((r.opt.pins, r.opt.version_drift), (same, None))
         drifted = json.loads(json.dumps(self.PINS))
         drifted["repo"]["commit"] = "c2"
-        msg = P.gate_series_run("naut", self.runner(), drifted, False)
+        msg = lser.gate_series_run("naut", self.runner(), drifted, False)
         self.assertIn("REFUSING run 2", msg)
         self.assertIn("repo.commit: c1 → c2", msg)
         r = self.runner()
-        self.assertIsNone(P.gate_series_run("naut", r, drifted, True))
+        self.assertIsNone(lser.gate_series_run("naut", r, drifted, True))
         self.assertEqual(r.opt.version_drift, ["repo.commit: c1 → c2"])
         r.begin_run(time.time())
         self.assertEqual(r.state["run"]["version_drift"], ["repo.commit: c1 → c2"])
         # a run under way (a self-restart on changed code) keeps the pins it started with: never refused mid-run
         r2 = self.runner()
-        self.assertIsNone(P.gate_series_run("naut", r2, {"repo": {"commit": "c3"}}, False))
+        self.assertIsNone(lser.gate_series_run("naut", r2, {"repo": {"commit": "c3"}}, False))
         self.assertEqual(r2.opt.pins, drifted)
 
     def test_cli_refuses_a_cap_change_in_a_series(self):
-        P.freeze_series("naut", 3, "nautiloid_escaped", {}, self.PINS,
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {}, self.PINS,
                         {"run_hours": 4, "max_cost": 30.0, "max_tokens": None})
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(P.main(["run", "--playthrough", "naut", "--until", "nautiloid_escaped", "--runs", "3",
@@ -227,19 +234,19 @@ class Wiring(TmpDir):
         self.assertEqual((rec["result_tokens"]["n"], rec["result_tokens"]["source"]), (1, "stream"))   # S001.jsonl
         self.assertEqual(rec["milestones_reached"], 0)
         self.assertNotIn("sandbox_change", rec)
-        line = json.loads((P.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()[-1])
+        line = json.loads((renv.RUNTIME / "sessions" / "naut" / "runs.jsonl").read_text().splitlines()[-1])
         self.assertEqual((line["series"], line["run"], line["cap"]), ("naut", 2, "tokens"))
         # the time cap: outcome timeout, cap "time"; reached: time to the milestone
-        rec = P.run_record(d, t0, t0 + 600, {}, "naut-r2", [], "timeout", "time cap used up")
+        rec = lser.run_record(d, t0, t0 + 600, {}, "naut-r2", [], "timeout", "time cap used up")
         self.assertEqual(rec["cap"], "time")
         self.assertIn("timeout", [f["kind"] for f in rec["failures"]])
-        rec = P.run_record(d, t0, t0 + 600, {"id": "nautiloid_escaped", "t": t0 + 450.0}, "naut-r2", [])
+        rec = lser.run_record(d, t0, t0 + 600, {"id": "nautiloid_escaped", "t": t0 + 450.0}, "naut-r2", [])
         self.assertEqual((rec["outcome"], rec["cap"], rec["time_to_milestone_s"]), ("reached", None, 450.0))
         r.opt.sandbox_change = "sandbox: container → none"                  # --allow-sandbox-change
         self.assertEqual(r.write_run_record(t0, "timeout")["sandbox_change"], "sandbox: container → none")
 
     def test_runs_command_prints_the_summary(self):
-        d = P.RUNTIME / "sessions" / "naut"
+        d = renv.RUNTIME / "sessions" / "naut"
         d.mkdir(parents=True)
         (d / "runs.jsonl").write_text("".join(json.dumps({"series": "naut", **r}) + "\n" for r in Summary.RECS))
         buf = io.StringIO()
@@ -251,7 +258,7 @@ class Wiring(TmpDir):
 
 # ======================================================================== persona judge + model time in the record
 
-REAL_CLAUDE_CLI = P.judge.ClaudeCLI   # its output parser; the tests patch judge.ClaudeCLI with FakeJudgeCLI
+REAL_CLAUDE_CLI = lser.judge.ClaudeCLI   # its output parser; the tests patch judge.ClaudeCLI with FakeJudgeCLI
 
 
 class FakeJudgeCLI:
@@ -278,18 +285,18 @@ class Judging(TmpDir):
 
     def setUp(self):
         super().setUp()
-        self.saved = {n: getattr(P, n) for n in ("RUNTIME", "PLAYTHROUGHS", "read_actions_since")}
-        self.addCleanup(lambda: [setattr(P, n, v) for n, v in self.saved.items()])
-        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
-        P.read_actions_since = lambda t, path=None: []
-        for name, value in (("PLAYTHROUGHS", P.PLAYTHROUGHS), ("DEFAULT_MODEL", "judge-x")):
-            patcher = mock.patch.object(P.judge, name, value)
+        self.saved = {n: getattr(testenv.home(n), n) for n in ("RUNTIME", "PLAYTHROUGHS", "read_actions_since")}
+        self.addCleanup(lambda: [setattr(testenv.home(n), n, v) for n, v in self.saved.items()])
+        renv.RUNTIME, renv.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        rpolicy.read_actions_since = lambda t, path=None: []
+        for name, value in (("PLAYTHROUGHS", renv.PLAYTHROUGHS), ("DEFAULT_MODEL", "judge-x")):
+            patcher = mock.patch.object(lser.judge, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
         self.calls = self.tmp / "judge-calls.log"
-        (P.PLAYTHROUGHS / "naut" / "memory").mkdir(parents=True)
-        (P.PLAYTHROUGHS / "naut" / "memory" / "CHARACTER.md").write_text(TJ.CHARACTER)
-        self.dir = P.RUNTIME / "sessions" / "naut"
+        (renv.PLAYTHROUGHS / "naut" / "memory").mkdir(parents=True)
+        (renv.PLAYTHROUGHS / "naut" / "memory" / "CHARACTER.md").write_text(TJ.CHARACTER)
+        self.dir = renv.RUNTIME / "sessions" / "naut"
         self.dir.mkdir(parents=True)
 
     def play(self, t0: float) -> None:
@@ -302,10 +309,10 @@ class Judging(TmpDir):
 
     def fake(self, **kw):
         kw.setdefault("verdict", self.VERDICT)
-        return mock.patch.object(P.judge, "ClaudeCLI", lambda model: FakeJudgeCLI(model, log=self.calls, **kw))
+        return mock.patch.object(lser.judge, "ClaudeCLI", lambda model: FakeJudgeCLI(model, log=self.calls, **kw))
 
-    def runner(self, **kw) -> P.Runner:
-        return P.Runner(P.Options("naut", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
+    def runner(self, **kw) -> lpt.Runner:
+        return lpt.Runner(rstate.Options("naut", None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
                                   series="naut", **{"run_index": 1, **kw}))
 
     def n_calls(self) -> int:
@@ -349,8 +356,8 @@ class Judging(TmpDir):
         self.assertIn("boom", rec["persona"]["error"])
         self.assertGreater(rec["persona"]["cost_usd"], 0.0)         # an is_error answer's cost is still counted
         self.assertEqual(R.series_records(self.dir / "runs.jsonl", "naut")[-1]["persona"], rec["persona"])
-        with mock.patch.object(P.judge, "judge_run", side_effect=RuntimeError("bug")):
-            p = P.judge_record(self.dir, rec, "judge-x")
+        with mock.patch.object(lser.judge, "judge_run", side_effect=RuntimeError("bug")):
+            p = lser.judge_record(self.dir, rec, "judge-x")
         self.assertEqual((p["status"], p["error"]), ("judge_failed", "RuntimeError: bug"))
 
     def test_the_judge_has_an_overall_timeout(self):
@@ -359,12 +366,12 @@ class Judging(TmpDir):
         rec = {"playthrough": "naut", "started": t0, "t": time.time(), "model": "opus"}
         t = time.time()
         with self.fake(sleep=5):
-            p = P.judge_record(self.dir, rec, "judge-x", timeout=1.5)
+            p = lser.judge_record(self.dir, rec, "judge-x", timeout=1.5)
         self.assertLess(time.time() - t, 4.8)  # before the 5 s judge could answer (4 s was a tight margin under load)
         self.assertEqual(p["status"], "judge_failed")
         self.assertIn("timed out", p["error"])
         with self.fake():
-            p = P.judge_record(self.dir, rec, "judge-x", stop=lambda: True)
+            p = lser.judge_record(self.dir, rec, "judge-x", stop=lambda: True)
         self.assertIn("interrupted", p["error"])
         self.assertEqual(self.n_calls(), 0)
 
@@ -393,7 +400,7 @@ class Judging(TmpDir):
         self.assertEqual((recs[0]["persona"]["score"], recs[0]["cost_usd"]), (7.5, 4.0))
         self.assertIn("model_time", recs[0])
         self.assertNotIn("persona", recs[1])
-        self.assertEqual(P.series_meta("naut")["judge_model"], "judge-x")          # frozen from now on
+        self.assertEqual(lser.series_meta("naut")["judge_model"], "judge-x")          # frozen from now on
         # no --run: only the runs without a score; another judge model is refused
         with self.fake():
             rc, out, _ = self.cli("judge", "--playthrough", "naut")
@@ -411,16 +418,16 @@ class Judging(TmpDir):
 
     def test_run_flags(self):
         calls = []
-        patches = [mock.patch.object(P, "acquire_lock", lambda: None), mock.patch.object(P, "current_pins", dict),
-                   mock.patch.object(P, "run_series", lambda *a: calls.append(a) or 0),
-                   mock.patch.object(P, "Runner", lambda opt: mock.Mock(run=lambda: calls.append((opt,)) or 0)),
+        patches = [mock.patch.object(lcli, "acquire_lock", lambda: None), mock.patch.object(lser, "current_pins", dict),
+                   mock.patch.object(lser, "run_series", lambda *a: calls.append(a) or 0),
+                   mock.patch.object(lpt, "Runner", lambda opt: mock.Mock(run=lambda: calls.append((opt,)) or 0)),
                    mock.patch("bg3ai.skipper.start_background", return_value=None),
-                   mock.patch.object(P.ramwatch, "start_background", return_value=None),
-                   mock.patch.object(P.signal, "signal"), mock.patch.dict(P.os.environ, {}, clear=False)]
+                   mock.patch.object(rpolicy.ramwatch, "start_background", return_value=None),
+                   mock.patch.object(ragent.signal, "signal"), mock.patch.dict(renv.os.environ, {}, clear=False)]
         for pt in patches:
             pt.start()
             self.addCleanup(pt.stop)
-        P.os.environ.pop("BG3AI_JUDGE_MODEL", None)
+        renv.os.environ.pop("BG3AI_JUDGE_MODEL", None)
         series = ("run", "--playthrough", "naut", "--until", "nautiloid_escaped", "--runs", "3")
         self.assertEqual(self.cli(*series)[0], 0)
         self.assertEqual((calls[-1][0].judge, calls[-1][0].judge_model), (True, "judge-x"))   # on for a series
@@ -438,17 +445,17 @@ class Judging(TmpDir):
             self.assertEqual(rc, 2, args)
             self.assertIn(want, err)
         # a series' judge model is frozen like its caps
-        P.freeze_series("naut", 3, "nautiloid_escaped", {}, judge_model="judge-x")
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {}, judge_model="judge-x")
         rc, _, err = self.cli(*series, "--judge-model", "j2")
         self.assertEqual(rc, 2)
         self.assertIn("judge_model: judge-x → j2", err)
-        with mock.patch.dict(P.os.environ, {"BG3AI_JUDGE_MODEL": "j3"}):
+        with mock.patch.dict(renv.os.environ, {"BG3AI_JUDGE_MODEL": "j3"}):
             self.assertIn("judge_model: judge-x → j3", self.cli(*series)[2])
         self.assertEqual(len(calls), n)
         self.assertEqual(self.cli(*series, "--judge-model", "j2", "--allow-judge-change")[0], 0)
         self.assertEqual((calls[-1][0].judge_model, calls[-1][0].judge_change), ("j2", "judge_model: judge-x → j2"))
-        P.freeze_series("naut", 3, "nautiloid_escaped", {}, judge_model="other")
-        self.assertEqual(P.series_meta("naut")["judge_model"], "judge-x")                  # written once
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {}, judge_model="other")
+        self.assertEqual(lser.series_meta("naut")["judge_model"], "judge-x")                  # written once
 
 
 if __name__ == "__main__":

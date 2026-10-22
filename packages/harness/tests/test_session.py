@@ -222,3 +222,26 @@ class RunSession(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FightHold(unittest.TestCase):
+    """held_deadline: the MCP server's fight hold moves the deadline, bounded by FIGHT_HOLD_S, never earlier."""
+
+    def test_the_hold_file_moves_the_deadline_within_the_bound(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from bg3harness.session import FIGHT_HOLD_S, fight_hold_path, held_deadline
+
+        with tempfile.TemporaryDirectory() as d:
+            hold = fight_hold_path(Path(d), "S004")
+            self.assertEqual(hold, Path(d) / "S004.hold.json")
+            self.assertEqual(held_deadline(hold, 1000.0), 1000.0)  # no file
+            hold.write_text(json.dumps({"deadline": 1300}))
+            self.assertEqual(held_deadline(hold, 1000.0), 1300.0)
+            hold.write_text(json.dumps({"deadline": 1000 + FIGHT_HOLD_S + 600}))
+            self.assertEqual(held_deadline(hold, 1000.0), 1000.0 + FIGHT_HOLD_S)  # never past the bound
+            for bad in ('{"deadline": 900}', "[1]", "not json"):
+                hold.write_text(bad)
+                self.assertEqual(held_deadline(hold, 1000.0), 1000.0)  # never earlier, never an error

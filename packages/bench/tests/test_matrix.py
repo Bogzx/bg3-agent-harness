@@ -268,13 +268,9 @@ def test_shares_the_harness_budget_file(tmp_path):
 
 
 def _load_spend():
-    import importlib.util
+    from bg3harness import spend  # runner/spend.py moved into the harness (Phase D.3)
 
-    path = HERE.parents[2] / "runner" / "spend.py"
-    spec = importlib.util.spec_from_file_location("runner_spend", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return spend
 
 
 def test_records_of_unknown_jobs_and_stray_ends_are_ignored(tmp_path):

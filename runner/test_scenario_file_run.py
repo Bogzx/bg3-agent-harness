@@ -18,7 +18,14 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
 import test_scenarios as T  # noqa: N812  (first: it sets the test runtime before play is imported)
-import play as P  # noqa: N812
+from bg3harness.runner import agent_side as ragent
+from bg3harness.runner import checks_side as rchecks
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
+import legacy_cli as lcli
+import legacy_playthrough as lpt
+import legacy_series as lser
 
 RESOLVED = dict(
     T.save_scenario(), game_settings={"seed": 1002, "difficulty": "Balanced", "karmic_dice": False}, timing="realtime"
@@ -30,12 +37,12 @@ class Cli(T.TmpDir):
         super().setUp()
         self.calls = []
         for p in (
-            mock.patch.object(P, "acquire_lock", lambda: None),
-            mock.patch.object(P, "current_pins", dict),
-            mock.patch.object(P, "run_series", lambda *a: self.calls.append(a) or 0),
+            mock.patch.object(lcli, "acquire_lock", lambda: None),
+            mock.patch.object(lser, "current_pins", dict),
+            mock.patch.object(lser, "run_series", lambda *a: self.calls.append(a) or 0),
             mock.patch("bg3ai.skipper.start_background", return_value=None),
-            mock.patch.object(P.ramwatch, "start_background", return_value=None),
-            mock.patch.object(P.signal, "signal"),
+            mock.patch.object(rpolicy.ramwatch, "start_background", return_value=None),
+            mock.patch.object(ragent.signal, "signal"),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -49,7 +56,7 @@ class Cli(T.TmpDir):
 
     def test_a_resolved_scenario_runs_like_a_named_one(self):
         self.make_save()
-        P.list_saves = lambda: [P.Save(T.START, "Claude", "SCN-beach", 1.0)]
+        rcode.list_saves = lambda: [rpolicy.Save(T.START, "Claude", "SCN-beach", 1.0)]
         self.assertEqual(self.run_cli("--scenario-file", self.resolved(RESOLVED), "--hours", "5"), (0, ""))
         opt, n, _current, _drift, got, _sha1 = self.calls[-1]
         self.assertEqual(
@@ -61,7 +68,7 @@ class Cli(T.TmpDir):
 
     def test_refusals(self):
         self.make_save()
-        P.list_saves = lambda: [P.Save(T.START, "Claude", "SCN-beach", 1.0)]
+        rcode.list_saves = lambda: [rpolicy.Save(T.START, "Claude", "SCN-beach", 1.0)]
         bad = dict(RESOLVED, game_settings={"karmic_dice": "off"})
         cases = [
             (("--scenario-file", self.resolved(bad, "bad.json")), "karmic_dice must be true, false or null"),
@@ -78,9 +85,9 @@ class Cli(T.TmpDir):
 
 
 class SettingsCheck(T.TmpDir):
-    def runner(self, want: dict | None, got: dict) -> P.Runner:
-        r = P.Runner.__new__(P.Runner)
-        r.opt = P.Options("beach", None, 60, "opus", scenario_settings=want)
+    def runner(self, want: dict | None, got: dict) -> lpt.Runner:
+        r = lpt.Runner.__new__(lpt.Runner)
+        r.opt = rstate.Options("beach", None, 60, "opus", scenario_settings=want)
         r.game_settings = got  # game_setup's readout, done
         self.events: list[tuple[str, dict]] = []
         r.event = lambda kind, **f: self.events.append((kind, f))
@@ -92,8 +99,8 @@ class SettingsCheck(T.TmpDir):
             {"difficulty": None, "karmic_dice": True},
         )
         with (
-            mock.patch.object(P, "write_status") as status,
-            self.assertRaisesRegex(P.SettingsMismatch, "karmic_dice is True, the scenario needs False"),
+            mock.patch.object(rstate, "write_status") as status,
+            self.assertRaisesRegex(rchecks.SettingsMismatch, "karmic_dice is True, the scenario needs False"),
         ):
             r.check_settings()
         self.assertEqual([k for k, _ in self.events], ["settings_unverified", "settings_mismatch"])

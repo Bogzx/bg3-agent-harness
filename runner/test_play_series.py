@@ -16,12 +16,20 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: I001  (first: the game's profile folders are a temp dir before play)
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: I001  (play puts packages/harness/src on sys.path)
+from bg3harness.runner import checks_side as rchecks
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import env as renv
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
+import legacy_cli as lcli
+import legacy_playthrough as lpt
+import legacy_series as lser
 from bg3harness.game import io as G
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
@@ -30,7 +38,7 @@ G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module
 
 def home(name: str):
     """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io."""
-    return G if name in G_FUNCS else P
+    return G if name in G_FUNCS else testenv.home(name)
 
 
 
@@ -77,8 +85,8 @@ class LongRun(unittest.TestCase):
         self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
         self.saved = {n: getattr(home(n), n) for n in ("RUNTIME", "PLAYTHROUGHS", "COST_PAUSE_CHECK_S", "day_cost")}
         self.addCleanup(lambda: [setattr(home(n), n, v) for n, v in self.saved.items()])
-        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
-        P.RUNTIME.mkdir(parents=True)
+        renv.RUNTIME, renv.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        renv.RUNTIME.mkdir(parents=True)
         self.ui = FakeUI()   # never the real game's UI (the heat pause presses ESCAPE in it)
         for name in ("ui_state", "ui_screen", "rpc"):
             p = mock.patch.object(home(name), name, getattr(self.ui, name))
@@ -87,68 +95,68 @@ class LongRun(unittest.TestCase):
 
     def test_crash_loop(self):
         ev = [{"t": 1000.0 + 60 * k, "kind": "fault", "fault": "crash"} for k in range(5)]
-        self.assertIsNone(P.crash_loop(ev, 1300.0, 0.0))
+        self.assertIsNone(rpolicy.crash_loop(ev, 1300.0, 0.0))
         ev.append({"t": 1310.0, "kind": "setup_failed"})
-        self.assertEqual(P.crash_loop(ev, 1320.0, 0.0), "crash loop: 6 game crashes/hangs/setup failures in 5 min")
-        self.assertIsNone(P.crash_loop(ev, 1320.0, 1100.0))                 # an operator restart counts from its start
-        self.assertIsNone(P.crash_loop(ev, 1000.0 + 3600 + 61, 0.0))        # the first one left the hour
+        self.assertEqual(rpolicy.crash_loop(ev, 1320.0, 0.0), "crash loop: 6 game crashes/hangs/setup failures in 5 min")
+        self.assertIsNone(rpolicy.crash_loop(ev, 1320.0, 1100.0))                 # an operator restart counts from its start
+        self.assertIsNone(rpolicy.crash_loop(ev, 1000.0 + 3600 + 61, 0.0))        # the first one left the hour
         agent = [{"t": 1000.0 + k, "kind": "fault", "fault": "agent_hang"} for k in range(9)]
-        self.assertIsNone(P.crash_loop(agent, 1100.0, 0.0))                 # the agent's hangs aren't the game's
+        self.assertIsNone(rpolicy.crash_loop(agent, 1100.0, 0.0))                 # the agent's hangs aren't the game's
 
     def test_status_line(self):
         seen = {"regions": ["Lower City"], "areas": ["Lower City|Bhaal Temple"]}
-        line = P.status_line(1_000_000.0, "claude-run-2", "playing S070 (until 16:30)", 1_000_000.0 - 5400, 3, seen,
+        line = rpolicy.status_line(1_000_000.0, "claude-run-2", "playing S070 (until 16:30)", 1_000_000.0 - 5400, 3, seen,
                              12.345, 40.0, 1)
         self.assertRegex(line, r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d claude-run-2: playing S070 \(until 16:30\) \| up 1.5 h, "
                                r"3 session\(s\) \| milestones \d+/\d+ \(Act 3\), next .+ \| \$12.35 in 24 h \(cap \$40\) \| "
                                r"1 game fault\(s\) in 60 min \(stop at 6\)$")
-        line = P.status_line(1.0, "pt", "STOPPED (x)", 0.0, 0, dict(seen, game_end={"t": 1}), 0.0, None, 0)
+        line = rpolicy.status_line(1.0, "pt", "STOPPED (x)", 0.0, 0, dict(seen, game_end={"t": 1}), 0.0, None, 0)
         self.assertIn("THE GAME IS FINISHED", line)
         self.assertNotIn("cap", line)
 
     def test_cost_pause_waits_and_resumes(self):
-        r = P.Runner(P.Options("long", None, 30, "opus", max_cost_per_day=20.0))
-        P.COST_PAUSE_CHECK_S = 0.05
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus", max_cost_per_day=20.0))
+        renv.COST_PAUSE_CHECK_S = 0.05
         spent = {"usd": 25.0}
-        P.day_cost = lambda d, now: spent["usd"]
+        rpolicy.day_cost = lambda d, now: spent["usd"]
         self.assertTrue(r.cost_paused())
-        self.assertIn("PAUSED: $25.00 in 24 h >= --max-cost-per-day $20", (P.RUNTIME / P.STATUS_LINE).read_text())
+        self.assertIn("PAUSED: $25.00 in 24 h >= --max-cost-per-day $20", (renv.RUNTIME / renv.STATUS_LINE).read_text())
         self.assertTrue(r.cost_paused())   # still over: one pause event, not one per check
         spent["usd"] = 19.5
         self.assertFalse(r.cost_paused())
         evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
         self.assertEqual([(e["kind"], e["spent"]) for e in evs], [("cost_pause", 25.0), ("cost_resume", 19.5)])
-        r2 = P.Runner(P.Options("long", None, 30, "opus"))
+        r2 = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         self.assertFalse(r2.cost_paused())   # no cap: never
 
     def thermal(self, temps: list[tuple[int, int]], end: float | None = None) -> None:
         """runtime/thermal.log in thermal_log.sh's format: one line per 5 s ending at `end` (default now)."""
         end = time.time() if end is None else end
         t0 = end - 5 * (len(temps) - 1)
-        (P.RUNTIME / "thermal.log").write_text("".join(
-            f"{P.datetime.fromtimestamp(t0 + 5 * i):%Y-%m-%d %H:%M:%S} cpu={c} acpi={c} amdgpu=50 nvme=40 "
+        (renv.RUNTIME / "thermal.log").write_text("".join(
+            f"{renv.datetime.fromtimestamp(t0 + 5 * i):%Y-%m-%d %H:%M:%S} cpu={c} acpi={c} amdgpu=50 nvme=40 "
             f"nv=[{g},35.0,1500,99,0x0] profile=balanced load=5.0 bg3=up\n" for i, (c, g) in enumerate(temps)))
 
     def test_heat_pause_waits_until_cool(self):
         # the test machine cut its power twice under the naut series load: no session starts while it is too hot
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         self.thermal([(93, 70)] * 14)                                    # 65 s at 93 C (pause at 92 C for 60 s)
         sleeps = []
 
         def sleep(s):   # the next check: cool for a minute
             sleeps.append(s)
             self.thermal([(93, 70)] * 3 + [(80, 70)] * 12 if len(sleeps) == 1 else [(80, 60)] * 14)
-        with mock.patch.object(P.time, "sleep", side_effect=sleep):
+        with mock.patch.object(rcode.time, "sleep", side_effect=sleep):
             self.assertTrue(r.heat_paused())
-        self.assertEqual(sleeps, [P.HEAT_PAUSE_CHECK_S] * 2)              # 1st check: cool for only 55 s
-        self.assertIn("PAUSED: too hot (CPU 80 C, GPU 70 C; limit 92/85 C)", (P.RUNTIME / P.STATUS_LINE).read_text())
+        self.assertEqual(sleeps, [renv.HEAT_PAUSE_CHECK_S] * 2)              # 1st check: cool for only 55 s
+        self.assertIn("PAUSED: too hot (CPU 80 C, GPU 70 C; limit 92/85 C)", (renv.RUNTIME / renv.STATUS_LINE).read_text())
         evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
         self.assertEqual([(e["kind"], e["cpu_c"]) for e in evs], [("heat_pause", 93), ("heat_resume", 80)])
         self.thermal([(80, 86)] * 10)                                    # GPU 86 C for 45 s: not yet
         self.assertFalse(r.heat_paused())
         self.thermal([(99, 99)] * 14, end=time.time() - 120)               # stale log: no pause
         self.assertFalse(r.heat_paused())
-        (P.RUNTIME / "thermal.log").unlink()
+        (renv.RUNTIME / "thermal.log").unlink()
         self.assertFalse(r.heat_paused())                                # no log (no ramwatch): no pause
 
     def _hot_pause(self, r, logs, stop_at=None):
@@ -157,18 +165,18 @@ class LongRun(unittest.TestCase):
         n = []
 
         def sleep(s):
-            if s != P.HEAT_PAUSE_CHECK_S:
+            if s != renv.HEAT_PAUSE_CHECK_S:
                 return
             n.append(s)
             self.assertEqual(self.ui.screen, "game_menu" if self.ui.calls else self.ui.screen)  # open while hot
             if stop_at and len(n) == stop_at:
-                (P.RUNTIME / "STOP").write_text("x")
+                (renv.RUNTIME / "STOP").write_text("x")
             self.thermal([(80, 60)] * 14 if len(n) >= 2 else [(93, 70)] * 14)
-        with mock.patch.object(P.time, "sleep", side_effect=sleep), mock.patch.object(P, "log", logs.append):
+        with mock.patch.object(rcode.time, "sleep", side_effect=sleep), mock.patch.object(renv, "log", logs.append):
             return r.heat_paused()
 
     def test_heat_pause_opens_the_game_menu_and_closes_it_when_cool(self):
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         self.ui.screen, logs = "game", []
         self.assertTrue(self._hot_pause(r, logs))
         self.assertEqual(self.ui.calls, [("ui.key", "ESCAPE"), ("ui.press", "Resume")])   # the player's ESC; Resume
@@ -178,10 +186,10 @@ class LongRun(unittest.TestCase):
         self.assertLess(logs.index("heat: game menu closed"), [i for i, x in enumerate(logs) if "playing again" in x][0])
 
     def test_heat_pause_resume_button_fails_then_escape(self):
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         self.ui.screen, self.ui.resume_works, logs = "game", False, []
-        with mock.patch.object(P, "HEAT_MENU_WAIT_S", 0.0):
-            r.wait_screen = lambda want, timeout=0.0: P.Runner.wait_screen(want, 0.0)
+        with mock.patch.object(renv, "HEAT_MENU_WAIT_S", 0.0):
+            r.wait_screen = lambda want, timeout=0.0: lpt.Runner.wait_screen(want, 0.0)
             self.assertTrue(self._hot_pause(r, logs))
         self.assertEqual(self.ui.calls, [("ui.key", "ESCAPE"), ("ui.press", "Resume"), ("ui.key", "ESCAPE")])
         self.assertEqual(self.ui.screen, "game")
@@ -193,7 +201,7 @@ class LongRun(unittest.TestCase):
                                     ("game", ["Trade"], "the game screen with Trade is up"),
                                     (None, [], "the game's UI doesn't answer")):
             with self.subTest(screen=screen):
-                r = P.Runner(P.Options("long", None, 30, "opus"))
+                r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
                 self.ui.screen, self.ui.panels, self.ui.calls, logs = screen, panels, [], []
                 self.assertTrue(self._hot_pause(r, logs))           # still paused: only the menu is skipped
                 self.assertEqual(self.ui.calls, [])                 # no key pressed
@@ -201,46 +209,46 @@ class LongRun(unittest.TestCase):
                 self.assertTrue(any("playing again" in x for x in logs))
 
     def test_heat_pause_stopped_while_paused_still_closes_the_menu(self):
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         self.ui.screen, logs = "game", []
         self.assertTrue(self._hot_pause(r, logs, stop_at=1))
         self.assertEqual(self.ui.screen, "game")
         self.assertIn("heat: game menu closed", logs)
 
     def test_heat_menu_never_after_a_heat_kill(self):
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         self.ui.screen = "game"   # (a game the kill left would be dead; nothing is pressed either way)
         self.thermal([(98, 70)] * 4 + [(85, 60)] * 3)
-        with mock.patch.object(P.time, "sleep", side_effect=lambda s: self.thermal([(70, 50)] * 14)):
+        with mock.patch.object(rcode.time, "sleep", side_effect=lambda s: self.thermal([(70, 50)] * 14)):
             self.assertTrue(r.heat_paused(after_kill=True))
         self.assertEqual(self.ui.calls, [])
 
     def test_heat_kill_waits_before_the_relaunch(self):
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         r.state["game"] = {"stamp": "s", "launched": time.time() - 600}
         self.assertIsNone(r.heat_killed())
-        (P.RUNTIME / "heat_kills.jsonl").write_text(
+        (renv.RUNTIME / "heat_kills.jsonl").write_text(
             json.dumps({"kind": "heat_kill", "t": time.time() - 900, "why": "old launch"}) + "\n"
             + json.dumps({"kind": "heat_kill", "t": time.time() - 10, "why": "CPU 98 C / GPU 70 C for 20 s"}) + "\n")
         self.assertEqual(r.heat_killed(), "CPU 98 C / GPU 70 C for 20 s")
         self.thermal([(98, 70)] * 4 + [(85, 60)] * 3)                    # cooling, but not for 60 s yet
         self.assertFalse(r.heat_paused())                                # between sessions: not a pause
-        with mock.patch.object(P.time, "sleep", side_effect=lambda s: self.thermal([(70, 50)] * 14)):
+        with mock.patch.object(rcode.time, "sleep", side_effect=lambda s: self.thermal([(70, 50)] * 14)):
             self.assertTrue(r.heat_paused(after_kill=True))              # after the kill: wait for 60 s cool
         self.thermal([(70, 50)] * 14)
         self.assertFalse(r.heat_paused(after_kill=True))                 # already cool: relaunch at once
 
     def test_recover_after_a_heat_kill_names_it_and_waits(self):
-        r = P.Runner(P.Options("long", None, 30, "opus"))
+        r = lpt.Runner(rstate.Options("long", None, 30, "opus"))
         r.state["game"] = {"stamp": "s", "launched": time.time() - 600}
-        (P.RUNTIME / "heat_kills.jsonl").write_text(json.dumps({"kind": "heat_kill", "t": time.time() - 10,
+        (renv.RUNTIME / "heat_kills.jsonl").write_text(json.dumps({"kind": "heat_kill", "t": time.time() - 10,
                                                                 "why": "CPU 98 C / GPU 70 C for 20 s"}) + "\n")
         order = []
         with mock.patch.multiple(r, game_alive=lambda: False, check_game_oom=lambda: None,
                                  kill_game=lambda: order.append("kill"), choose_save=lambda: None,
                                  load_save=lambda s: order.append("relaunch") or "S070-end",
                                  heat_paused=lambda after_kill=False: order.append(("cool", after_kill)) or True), \
-                mock.patch.object(P, "read_actions_since", return_value=[]):
+                mock.patch.object(rpolicy, "read_actions_since", return_value=[]):
             r.recover("crashed")
         self.assertEqual(order, ["kill", ("cool", True), "relaunch"])
         self.assertIn("crashed (the heat guard stopped it: CPU 98 C / GPU 70 C for 20 s)", r.pending_notes[0])
@@ -251,12 +259,12 @@ class LongRun(unittest.TestCase):
         self.thermal([(80, 68)])
         with mock.patch.object(G, "port_open", return_value=False), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
-            P.cmd_status(P.argparse.Namespace(playthrough=None))
+            lcli.cmd_status(P.argparse.Namespace(playthrough=None))
         self.assertRegex(out.getvalue(), r"thermal:  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d cpu=80 .* nv=\[68,")
-        (P.RUNTIME / "thermal.log").unlink()
+        (renv.RUNTIME / "thermal.log").unlink()
         with mock.patch.object(G, "port_open", return_value=False), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
-            P.cmd_status(P.argparse.Namespace(playthrough=None))
+            lcli.cmd_status(P.argparse.Namespace(playthrough=None))
         self.assertIn("thermal:  - (no runtime/thermal.log)", out.getvalue())
 
     def test_cli_refuses_a_bad_day_cap(self):
@@ -277,133 +285,133 @@ class SeriesRuns(unittest.TestCase):
         self.saved = {n: getattr(home(n), n) for n in ("RUNTIME", "PLAYTHROUGHS", "SE_BG3AI_DIR", "KNOWLEDGE_DIR",
                                                  "PLAY_DIR", "list_saves", "read_actions_since")}
         self.addCleanup(lambda: [setattr(home(n), n, v) for n, v in self.saved.items()])
-        P.RUNTIME, P.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
-        P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
-        P.PLAY_DIR = self.tmp / "play"
-        P.KNOWLEDGE_DIR = P.PLAY_DIR / "knowledge"
-        P.read_actions_since = lambda t, path=None: []
+        renv.RUNTIME, renv.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
+        renv.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"
+        renv.PLAY_DIR = self.tmp / "play"
+        renv.KNOWLEDGE_DIR = renv.PLAY_DIR / "knowledge"
+        rpolicy.read_actions_since = lambda t, path=None: []
 
     # ---------------------------------------------------------------- naming, memory, profile
 
     def test_run_names_and_the_next_run(self):
-        self.assertEqual([P.runs.run_name("naut", k) for k in (1, 2, 3)], ["naut", "naut-r2", "naut-r3"])
+        self.assertEqual([lser.runs.run_name("naut", k) for k in (1, 2, 3)], ["naut", "naut-r2", "naut-r3"])
         f = self.tmp / "runs.jsonl"
-        self.assertEqual(P.runs.next_run_index(P.runs.series_records(f, "naut")), 1)    # no file yet
+        self.assertEqual(lser.runs.next_run_index(lser.runs.series_records(f, "naut")), 1)    # no file yet
         f.write_text("".join(json.dumps(r) + "\n" for r in (
             {"playthrough": "naut", "milestone": "nautiloid_escaped"},                   # a plain --until run
             {"series": "naut", "run": 2, "playthrough": "naut-r2", "outcome": "timeout"},
             {"series": "other", "run": 7, "playthrough": "other-r7"})) + "not json\n")
-        recs = P.runs.series_records(f, "naut")
+        recs = lser.runs.series_records(f, "naut")
         self.assertEqual([r["playthrough"] for r in recs], ["naut", "naut-r2"])
-        self.assertEqual(P.runs.next_run_index(recs), 3)
+        self.assertEqual(lser.runs.next_run_index(recs), 3)
 
     def test_each_run_gets_a_fresh_memory_and_the_series_profile(self):
         prof = {"character": {"brief": "a dwarf cleric", "roleplay": "strict"}, "difficulty": "Explorer"}
-        P.freeze_series("naut", 3, "nautiloid_escaped", prof)
-        P.freeze_series("naut", 3, "nautiloid_escaped", {"changed": True})                # frozen once
+        lser.freeze_series("naut", 3, "nautiloid_escaped", prof)
+        lser.freeze_series("naut", 3, "nautiloid_escaped", {"changed": True})                # frozen once
         # run 1 adopted the name its agent chose: run 2 still gets the brief without it
-        (P.PLAYTHROUGHS / "naut").mkdir(parents=True)
-        (P.PLAYTHROUGHS / "naut" / "profile.json").write_text(json.dumps(
+        (renv.PLAYTHROUGHS / "naut").mkdir(parents=True)
+        (renv.PLAYTHROUGHS / "naut" / "profile.json").write_text(json.dumps(
             {**prof, "character": {**prof["character"], "name": "Mira"}}))
-        P.prepare_series_run("naut", "naut", 1)
-        P.prepare_series_run("naut", "naut-r2", 2)
+        lser.prepare_series_run("naut", "naut", 1)
+        lser.prepare_series_run("naut", "naut-r2", 2)
         for pt in ("naut", "naut-r2"):
-            mem = P.PLAYTHROUGHS / pt / "memory"
+            mem = renv.PLAYTHROUGHS / pt / "memory"
             self.assertTrue((mem / "HANDOFF.md").is_file(), pt)
             self.assertTrue((mem / ".git").is_dir(), pt)
             self.assertIn(pt, (mem / "PLAYTHROUGH.md").read_text())
-        self.assertEqual(json.loads((P.PLAYTHROUGHS / "naut-r2" / "profile.json").read_text()), prof)
-        self.assertEqual(P.load_profile(P.PLAYTHROUGHS / "naut-r2" / "profile.json")["character"]["brief"],
+        self.assertEqual(json.loads((renv.PLAYTHROUGHS / "naut-r2" / "profile.json").read_text()), prof)
+        self.assertEqual(rpolicy.load_profile(renv.PLAYTHROUGHS / "naut-r2" / "profile.json")["character"]["brief"],
                          "a dwarf cleric")
         # a resumed run keeps what it has
-        (P.PLAYTHROUGHS / "naut-r2" / "memory" / "lessons.md").write_text("kept\n")
-        P.prepare_series_run("naut", "naut-r2", 2)
-        self.assertEqual((P.PLAYTHROUGHS / "naut-r2" / "memory" / "lessons.md").read_text(), "kept\n")
+        (renv.PLAYTHROUGHS / "naut-r2" / "memory" / "lessons.md").write_text("kept\n")
+        lser.prepare_series_run("naut", "naut-r2", 2)
+        self.assertEqual((renv.PLAYTHROUGHS / "naut-r2" / "memory" / "lessons.md").read_text(), "kept\n")
 
     # ---------------------------------------------------------------- per-run reset
 
-    def _series_runner(self, pt="naut-r2", k=2) -> P.Runner:
-        return P.Runner(P.Options(pt, None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
+    def _series_runner(self, pt="naut-r2", k=2) -> lpt.Runner:
+        return lpt.Runner(rstate.Options(pt, None, 20, "opus", save_owner="Claude", until="nautiloid_escaped",
                                   series="naut", run_index=k))
 
     def test_a_fresh_run_resets_the_nav_kill_list_saves_and_snapshots_knowledge(self):
-        P.SE_BG3AI_DIR.mkdir(parents=True)
-        (P.SE_BG3AI_DIR / "nav_guard.json").write_text('{"slow":{"TUT_Avernus_C":{"why":"slow"}}}')
-        (P.SE_BG3AI_DIR / "nav_1234.json").write_text('{"levels":{}}')
-        (P.SE_BG3AI_DIR / "other.json").write_text("{}")
-        P.KNOWLEDGE_DIR.mkdir(parents=True)
-        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
+        renv.SE_BG3AI_DIR.mkdir(parents=True)
+        (renv.SE_BG3AI_DIR / "nav_guard.json").write_text('{"slow":{"TUT_Avernus_C":{"why":"slow"}}}')
+        (renv.SE_BG3AI_DIR / "nav_1234.json").write_text('{"levels":{}}')
+        (renv.SE_BG3AI_DIR / "other.json").write_text("{}")
+        renv.KNOWLEDGE_DIR.mkdir(parents=True)
+        (renv.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
         r = self._series_runner()
         t0 = time.time()
         self.assertEqual(r.begin_run(t0), t0)
-        self.assertEqual(sorted(p.name for p in P.SE_BG3AI_DIR.iterdir()), ["other.json"])   # only nav state moved
+        self.assertEqual(sorted(p.name for p in renv.SE_BG3AI_DIR.iterdir()), ["other.json"])   # only nav state moved
         self.assertEqual(sorted(p.name for p in (r.state.dir / "reset").iterdir()), ["nav_1234.json", "nav_guard.json"])
         self.assertEqual(json.loads((r.state.dir / "knowledge_snapshot.json").read_text()), {"builds.md": "builds\n"})
         self.assertEqual(r.state["run"]["reset"], {"nav_files": ["nav_1234.json", "nav_guard.json"],
                                                    "knowledge_files": 1})
         self.assertEqual(r.state["saves_after"], t0)
         # saves older than the run (run 1's, same character name) are never this run's
-        P.list_saves = lambda: [P.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60),
-                                P.Save("Claude-2__S001-start", "Claude", "S001-start", t0 + 60)]
+        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60),
+                                rpolicy.Save("Claude-2__S001-start", "Claude", "S001-start", t0 + 60)]
         self.assertEqual(r.choose_save().folder, "Claude-2__S001-start")
         self.assertEqual(r.save_env()["BG3AI_SAVES_AFTER"], str(int(t0)))
-        P.list_saves = lambda: [P.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60)]
+        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60)]
         self.assertIsNone(r.choose_save())                                        # → a new game
         # a restart of the same run keeps its start and doesn't reset again
-        (P.SE_BG3AI_DIR / "nav_guard.json").write_text("{}")
+        (renv.SE_BG3AI_DIR / "nav_guard.json").write_text("{}")
         r2 = self._series_runner()
         self.assertEqual(r2.begin_run(t0 + 500), t0)
-        self.assertTrue((P.SE_BG3AI_DIR / "nav_guard.json").exists())
+        self.assertTrue((renv.SE_BG3AI_DIR / "nav_guard.json").exists())
 
     def test_no_reset_outside_a_series_or_for_a_playthrough_that_already_played(self):
-        P.SE_BG3AI_DIR.mkdir(parents=True)
-        (P.SE_BG3AI_DIR / "nav_guard.json").write_text("{}")
-        r = P.Runner(P.Options("solo", None, 20, "opus", until="nautiloid_escaped"))
+        renv.SE_BG3AI_DIR.mkdir(parents=True)
+        (renv.SE_BG3AI_DIR / "nav_guard.json").write_text("{}")
+        r = lpt.Runner(rstate.Options("solo", None, 20, "opus", until="nautiloid_escaped"))
         r.begin_run(time.time())
         r2 = self._series_runner("played", 1)
         r2.state["history"] = [{"kind": "play", "session": "S001"}]
         r2.begin_run(time.time())
-        self.assertTrue((P.SE_BG3AI_DIR / "nav_guard.json").exists())
+        self.assertTrue((renv.SE_BG3AI_DIR / "nav_guard.json").exists())
         self.assertIsNone(r.state["saves_after"])
         self.assertNotIn("BG3AI_SAVES_AFTER", r.save_env())
 
     def test_agent_knowledge_edits_are_put_back_and_others_reported(self):
-        P.KNOWLEDGE_DIR.mkdir(parents=True)
-        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
-        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools\n")
+        renv.KNOWLEDGE_DIR.mkdir(parents=True)
+        (renv.KNOWLEDGE_DIR / "builds.md").write_text("builds\n")
+        (renv.KNOWLEDGE_DIR / "tools.md").write_text("tools\n")
         r = self._series_runner()
         t0 = time.time() - 5
         r.begin_run(t0)
-        (P.KNOWLEDGE_DIR / "builds.md").write_text("builds\nthe answer to the nautiloid\n")    # the agent
-        (P.KNOWLEDGE_DIR / "new.md").write_text("cached answers\n")                           # the agent
-        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools v2\n")                               # an operator
+        (renv.KNOWLEDGE_DIR / "builds.md").write_text("builds\nthe answer to the nautiloid\n")    # the agent
+        (renv.KNOWLEDGE_DIR / "new.md").write_text("cached answers\n")                           # the agent
+        (renv.KNOWLEDGE_DIR / "tools.md").write_text("tools v2\n")                               # an operator
         _stream(r.state.dir / "S001.jsonl",
-                _use("a", "Edit", {"file_path": str(P.KNOWLEDGE_DIR / "builds.md")}),
+                _use("a", "Edit", {"file_path": str(renv.KNOWLEDGE_DIR / "builds.md")}),
                 _use("b", "Write", {"file_path": "knowledge/new.md"}),                     # relative to play/
                 _use("c", "Edit", {"file_path": "memory/lessons.md"}))
         k = r.restore_knowledge(t0)
         self.assertEqual(k["agent_edits"], ["builds.md (changed)", "new.md (added)"])
         self.assertEqual(k["other_changes"], ["tools.md (changed)"])
-        self.assertEqual((P.KNOWLEDGE_DIR / "builds.md").read_text(), "builds\n")
-        self.assertFalse((P.KNOWLEDGE_DIR / "new.md").exists())
-        self.assertEqual((P.KNOWLEDGE_DIR / "tools.md").read_text(), "tools v2\n")
+        self.assertEqual((renv.KNOWLEDGE_DIR / "builds.md").read_text(), "builds\n")
+        self.assertFalse((renv.KNOWLEDGE_DIR / "new.md").exists())
+        self.assertEqual((renv.KNOWLEDGE_DIR / "tools.md").read_text(), "tools v2\n")
         self.assertIn("nautiloid", (r.state.dir / "knowledge_edits" / "builds.md").read_text())   # kept
         self.assertEqual((r.state.dir / "knowledge_edits" / "new.md").read_text(), "cached answers\n")
 
     def test_knowledge_change_makes_the_run_unclean(self):  # FAIR-2
-        P.KNOWLEDGE_DIR.mkdir(parents=True)
-        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools\n")
+        renv.KNOWLEDGE_DIR.mkdir(parents=True)
+        (renv.KNOWLEDGE_DIR / "tools.md").write_text("tools\n")
         r = self._series_runner()
         t0 = time.time() - 5
         r.begin_run(t0)
-        (P.KNOWLEDGE_DIR / "tools.md").write_text("tools v2\n")   # changed mid-run (by anyone)
-        with mock.patch.object(P, "run_record", lambda *a, **k: {"clean": True, "milestone": "m", "wall_min": 1,
+        (renv.KNOWLEDGE_DIR / "tools.md").write_text("tools v2\n")   # changed mid-run (by anyone)
+        with mock.patch.object(lser, "run_record", lambda *a, **k: {"clean": True, "milestone": "m", "wall_min": 1,
                                                                   "sessions": 1, "cost_usd": 0.0, "crashes": 0,
                                                                   "recoveries": 0, "reloads": 0, "harness_failures": 0,
                                                                   "agent_failures": 0, "unknown_failures": 0,
                                                                   "t": time.time()}), \
-                mock.patch.object(P.model_time, "model_time", lambda *a, **k: None), \
-                mock.patch.object(P.runs, "model_time_field", lambda *a, **k: None):
+                mock.patch.object(lser.model_time, "model_time", lambda *a, **k: None), \
+                mock.patch.object(lser.runs, "model_time_field", lambda *a, **k: None):
             r.opt.judge = False
             rec = r.write_run_record(t0)
         self.assertFalse(rec["clean"])
@@ -421,7 +429,7 @@ class SeriesRuns(unittest.TestCase):
         return [(f["kind"], f["class"]) for f in fails]
 
     def test_runner_events(self):
-        fails, ops = P.runs.event_failures([
+        fails, ops = lser.runs.event_failures([
             {"t": 1, "kind": "runner_start"},
             {"t": 2, "kind": "fault", "fault": "crash", "session": "S001", "detail": "game process exited"},
             {"t": 3, "kind": "recovered", "fault": "crash"},
@@ -446,7 +454,7 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual([o["t"] for o in ops], [13, 14, 15])          # self-restart, operator stop, manual start
 
     def test_session_history(self):
-        fails = P.runs.history_failures([
+        fails = lser.runs.history_failures([
             {"session": "S001", "reason": "exited", "started": 0, "ended": 20, "exit": 1},
             {"session": "S002", "reason": "killed", "started": 100, "ended": 900},
             {"session": "S003", "reason": "exited", "started": 1000, "ended": 3000, "early_exit_min": 12.5},
@@ -474,7 +482,7 @@ class SeriesRuns(unittest.TestCase):
                                                             True),
                     {"type": "assistant", "message": {"content": [{"type": "text", "text": "API Error: 529 overloaded"}]}},
                     {"type": "result", "is_error": True, "result": "Claude AI usage limit reached|1760000000"})
-        fails = P.runs.stream_failures(s)
+        fails = lser.runs.stream_failures(s)
         got = sorted(self.kinds(fails))
         self.assertEqual(got, sorted([
             ("mcp_failed", "harness"), ("claude_api", "harness"), ("claude_api", "harness"),
@@ -492,34 +500,34 @@ class SeriesRuns(unittest.TestCase):
                     _use("3", "mcp__bg3__click", {"x": 0.5, "y": 0.5}), _res("3", "clicked left at 960,540"),
                     _use("4", "mcp__bg3__move_to", {}), _res("4", "FAILED: destination is beyond remaining movement"),
                     _use("5", "mcp__bg3__combat_turn", {}), _res("5", "1. move: FAILED: no path\n2. attack: done"))
-        fails = P.runs.stream_failures(s)
+        fails = lser.runs.stream_failures(s)
         self.assertEqual(sorted(self.kinds(fails)), [("hand_input", "unknown"), ("tool_failed", "unknown")])
         tf = next(f for f in fails if f["kind"] == "tool_failed")
         self.assertEqual((tf["n"], tf["detail"][:21]), (2, "S001: create_characte"))
-        self.assertTrue(P.runs.is_clean("reached", fails, []))   # unknown never breaks "clean"
+        self.assertTrue(lser.runs.is_clean("reached", fails, []))   # unknown never breaks "clean"
 
     def test_stalls_reloads_and_the_outcome(self):
         p = _stream(self.tmp / "S001.progress.jsonl", {"type": "stuck", "t": 50, "idle_min": 12.0, "actions": 40},
                     {"type": "stuck", "t": 200, "idle_min": 15.0, "actions": 60}, {"type": "unstuck", "t": 300})
-        self.assertEqual(self.kinds(P.runs.progress_failures([p], 100)), [("stall", "agent")])
-        self.assertEqual(self.kinds(P.runs.reload_failures([{"t": 1, "tool": "load_game", "args": {"save": "latest"}},
+        self.assertEqual(self.kinds(lser.runs.progress_failures([p], 100)), [("stall", "agent")])
+        self.assertEqual(self.kinds(lser.runs.reload_failures([{"t": 1, "tool": "load_game", "args": {"save": "latest"}},
                                                             {"t": 2, "tool": "look"}])), [("reload", "agent")])
         harness = [{"class": "harness"}]
-        self.assertEqual(self.kinds(P.runs.outcome_failure("timeout", "", 9, [])), [("timeout", "agent")])
-        self.assertEqual(self.kinds(P.runs.outcome_failure("timeout", "", 9, harness)), [("timeout", "unknown")])
-        self.assertEqual(self.kinds(P.runs.outcome_failure("gave_up", "setup", 9, [])), [("gave_up", "harness")])
-        self.assertEqual(self.kinds(P.runs.outcome_failure("runner_error", "x", 9, [])), [("runner_error", "harness")])
-        self.assertEqual(P.runs.outcome_failure("reached", "", 9, harness), [])
+        self.assertEqual(self.kinds(lser.runs.outcome_failure("timeout", "", 9, [])), [("timeout", "agent")])
+        self.assertEqual(self.kinds(lser.runs.outcome_failure("timeout", "", 9, harness)), [("timeout", "unknown")])
+        self.assertEqual(self.kinds(lser.runs.outcome_failure("gave_up", "setup", 9, [])), [("gave_up", "harness")])
+        self.assertEqual(self.kinds(lser.runs.outcome_failure("runner_error", "x", 9, [])), [("runner_error", "harness")])
+        self.assertEqual(lser.runs.outcome_failure("reached", "", 9, harness), [])
 
     def test_clean(self):
         agent = [{"class": "agent", "kind": "reload"}, {"class": "unknown", "kind": "agent_hang"}]
-        self.assertTrue(P.runs.is_clean("reached", agent, []))
-        self.assertFalse(P.runs.is_clean("reached", agent + [{"class": "harness", "kind": "game_crash"}], []))
-        self.assertFalse(P.runs.is_clean("reached", [], [{"what": "runner stopped by the operator"}]))
-        self.assertFalse(P.runs.is_clean("timeout", [], []))
+        self.assertTrue(lser.runs.is_clean("reached", agent, []))
+        self.assertFalse(lser.runs.is_clean("reached", agent + [{"class": "harness", "kind": "game_crash"}], []))
+        self.assertFalse(lser.runs.is_clean("reached", [], [{"what": "runner stopped by the operator"}]))
+        self.assertFalse(lser.runs.is_clean("timeout", [], []))
 
     def test_run_record_tags_the_whole_run(self):
-        d = P.RUNTIME / "sessions" / "naut"
+        d = renv.RUNTIME / "sessions" / "naut"
         d.mkdir(parents=True)
         t0 = time.time() - 3600
         _stream(d / "S001.jsonl", _use("1", "mcp__bg3__look", {}), _res("1", "Error executing tool look: boom", True),
@@ -527,17 +535,17 @@ class SeriesRuns(unittest.TestCase):
         _stream(d / "S001.progress.jsonl", {"type": "stuck", "t": t0 + 60, "idle_min": 11, "actions": 30})
         _stream(d / "runner_events.jsonl", {"t": t0 - 10, "kind": "fault", "fault": "crash"},     # before the run
                 {"t": t0 + 1, "kind": "runner_start"}, {"t": t0 + 5, "kind": "fault", "fault": "crash"})
-        P.read_actions_since = lambda t, path=None: [{"t": t0 + 30, "tool": "load_game", "args": {"save": "latest"}}]
+        rpolicy.read_actions_since = lambda t, path=None: [{"t": t0 + 30, "tool": "load_game", "args": {"save": "latest"}}]
         hist = [{"kind": "play", "session": "S001", "reason": "milestone", "started": t0 + 2, "ended": t0 + 3000,
                  "minutes": 50}]
-        rec = P.run_record(d, t0, t0 + 3600, {"id": "nautiloid_escaped", "label": "Nautiloid escaped",
+        rec = lser.run_record(d, t0, t0 + 3600, {"id": "nautiloid_escaped", "label": "Nautiloid escaped",
                                               "session": "S001"}, "naut", hist)
         self.assertEqual((rec["outcome"], rec["clean"], rec["crashes"], rec["reloads"]), ("reached", False, 1, 1))
         self.assertEqual(sorted(self.kinds(rec["failures"])), [("game_crash", "harness"), ("reload", "agent"),
                                                                ("stall", "agent"), ("tool_exception", "harness")])
         self.assertEqual((rec["harness_failures"], rec["agent_failures"], rec["unknown_failures"]), (2, 2, 0))
         self.assertEqual(rec["operator"], [])
-        rec = P.run_record(d, t0, t0 + 3600, {}, "naut", hist, "timeout", "time cap used up", take_over=True)
+        rec = lser.run_record(d, t0, t0 + 3600, {}, "naut", hist, "timeout", "time cap used up", take_over=True)
         self.assertEqual((rec["outcome"], rec["milestone"], rec["clean"]), ("timeout", None, False))
         self.assertEqual(rec["failures"][-1]["kind"], "timeout")
         self.assertIn("--take-over", rec["operator"][0]["what"])
@@ -553,9 +561,9 @@ class SeriesRuns(unittest.TestCase):
                  "failures": [{"kind": "stall", "class": "agent", "n": 2}]},
                 {"series": "naut", "run": 3, "playthrough": "naut-r3", "outcome": "reached", "clean": True,
                  "wall_min": 55, "sessions": 1, "cost_usd": 8, "failures": []}]
-        self.assertEqual((P.runs.clean_streak(recs), P.runs.best_streak(recs)), (2, 2))
-        self.assertEqual(P.runs.clean_streak(recs + [{"clean": False}]), 0)
-        out = P.runs.runs_table(recs)
+        self.assertEqual((lser.runs.clean_streak(recs), lser.runs.best_streak(recs)), (2, 2))
+        self.assertEqual(lser.runs.clean_streak(recs + [{"clean": False}]), 0)
+        out = lser.runs.runs_table(recs)
         lines = out.splitlines()
         self.assertTrue(lines[0].startswith("run  playthrough  outcome"))
         self.assertIn("naut-r2", lines[3])
@@ -564,7 +572,7 @@ class SeriesRuns(unittest.TestCase):
         self.assertTrue(out.endswith("3 run(s), 2 clean; 2 clean in a row (latest), best streak 2"))
 
     def test_runs_command(self):
-        d = P.RUNTIME / "sessions" / "naut"
+        d = renv.RUNTIME / "sessions" / "naut"
         d.mkdir(parents=True)
         (d / "runs.jsonl").write_text(json.dumps({"series": "naut", "run": 1, "playthrough": "naut",
                                                   "outcome": "timeout", "why": "time cap used up", "clean": False,
@@ -590,19 +598,19 @@ class SeriesRuns(unittest.TestCase):
         from unittest import mock
         pins = {"game_build": "25605617", "repo": {"commit": "abc", "dirty": False, "diff": None}}
         buf = io.StringIO()
-        with mock.patch.object(P, "acquire_lock", side_effect=AssertionError("--plan took the runner lock")), \
-                mock.patch.object(P, "Runner", side_effect=AssertionError("--plan built a Runner")), \
-                mock.patch.object(P, "current_pins", lambda: pins), \
-                mock.patch.object(P.steam_paths, "offline_required", lambda: (True, "marker")), \
-                mock.patch.object(P.steam_paths, "steam_offline", lambda: (False, "last login online")), \
-                mock.patch.object(P.bg3le_buildinfo, "problems", lambda: []), \
+        with mock.patch.object(lcli, "acquire_lock", side_effect=AssertionError("--plan took the runner lock")), \
+                mock.patch.object(lpt, "Runner", side_effect=AssertionError("--plan built a Runner")), \
+                mock.patch.object(lser, "current_pins", lambda: pins), \
+                mock.patch.object(renv.steam_paths, "offline_required", lambda: (True, "marker")), \
+                mock.patch.object(renv.steam_paths, "steam_offline", lambda: (False, "last login online")), \
+                mock.patch.object(rcode.bg3le_buildinfo, "problems", lambda: []), \
                 mock.patch.object(G, "pids_of_game", lambda: []), \
                 mock.patch.object(G, "foreign_bg3_pids", lambda: []), \
-                mock.patch.dict(P.os.environ, env or {}), \
-                mock.patch.object(P.display_env, "pgrep_xwayland", lambda: xwayland), \
+                mock.patch.dict(renv.os.environ, env or {}), \
+                mock.patch.object(lcli.display_env, "pgrep_xwayland", lambda: xwayland), \
                 contextlib.redirect_stdout(buf):
             for k in unset:
-                P.os.environ.pop(k, None)
+                renv.os.environ.pop(k, None)
             self.assertEqual(P.main(["run", *argv, "--plan"]), 0)
         return buf.getvalue()
 
@@ -640,7 +648,7 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual((frozen["series"], frozen["runs"], frozen["until"]), ("np", 3, "nautiloid_escaped"))
         self.assertEqual(frozen["profile"]["character"], {"brief": "A watch sergeant", "roleplay": "strict"})
         self.assertEqual((frozen["client"], frozen["sandbox"], frozen["judge_model"]),
-                         ("claude", "none", P.judge.DEFAULT_MODEL))
+                         ("claude", "none", lser.judge.DEFAULT_MODEL))
         self.assertEqual(frozen["pins"]["game_build"], "25605617")
         self.assertIn("THE RUNNER WOULD REFUSE TO LAUNCH", out)   # Steam online where offline is required
         cmd = json.loads(out[out.index('{\n "cmd"'):])
@@ -648,27 +656,27 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual(cmd["cmd"][cmd["cmd"].index("--effort") + 1], "medium")
         self.assertEqual(cmd["env"]["BG3AI_PLAYTHROUGH"], "np")
         self.assertEqual(cmd["env"]["BG3_SESSION_MINUTES"], "30.0")
-        written = [x for d in (P.RUNTIME, P.PLAYTHROUGHS) if d.exists() for x in d.rglob("*")]
+        written = [x for d in (renv.RUNTIME, renv.PLAYTHROUGHS) if d.exists() for x in d.rglob("*")]
         self.assertEqual(written, [])
 
     def test_plan_of_a_resume_shows_the_next_session_save_and_hidden_saves(self):
         # claude-run-2 resume check (2026-10-17): --plan printed "S001" and no save for a playthrough at S065
         from unittest import mock
-        mem = P.PLAYTHROUGHS / "cr" / "memory"
+        mem = renv.PLAYTHROUGHS / "cr" / "memory"
         (mem / "sessions").mkdir(parents=True)
         for n in (64, 65):
             (mem / "sessions" / f"S{n:03d}.md").write_text(f"# S{n:03d}\n")
         (mem / "HANDOFF.md").write_text('Save to load: "S065-end"\n')
-        d = P.RUNTIME / "sessions" / "cr"
+        d = renv.RUNTIME / "sessions" / "cr"
         d.mkdir(parents=True)
         t = 1_000_000.0
         (d / "runner.json").write_text(json.dumps({"save_owner": "Claude", "history": [
             {"kind": "play", "session": "S065", "started": t, "ended": t + 1800}]}))
         (d / "session-config.json").write_text(json.dumps({"minutes": 30, "effort": "high"}))
-        saves = [P.Save("Claude-1__S065-end", "Claude", "S065-end", t + 1700),
-                 P.Save("Claude-2__S027-end", "Claude", "S027-end", t + 90000),       # another playthrough's
-                 P.Save("Claude-3__S999-savetest", "Claude", "S999-savetest", t + 95000)]
-        with mock.patch.object(P, "list_saves", lambda: saves):
+        saves = [rpolicy.Save("Claude-1__S065-end", "Claude", "S065-end", t + 1700),
+                 rpolicy.Save("Claude-2__S027-end", "Claude", "S027-end", t + 90000),       # another playthrough's
+                 rpolicy.Save("Claude-3__S999-savetest", "Claude", "S999-savetest", t + 95000)]
+        with mock.patch.object(rcode, "list_saves", lambda: saves):
             out = self._plan("--playthrough", "cr", "--save-owner", "Claude", "--session-minutes", "20")
         self.assertIn("resume:         S066; loads Claude-1__S065-end (HANDOFF names S065-end)", out)
         self.assertIn("saves hidden:   Claude-2__S027-end, Claude-3__S999-savetest", out)
@@ -680,20 +688,20 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual(cmd["cmd"][cmd["cmd"].index("--effort") + 1], "high")
 
     def test_plan_of_a_frozen_series_shows_the_next_run_and_drift(self):
-        d = P.RUNTIME / "sessions" / "np"
+        d = renv.RUNTIME / "sessions" / "np"
         d.mkdir(parents=True)
         meta = {"series": "np", "runs": 3, "until": "nautiloid_escaped", "profile": {}, "created": 1.0,
                 "pins": {"game_build": "1"}, "caps": {}, "judge_model": "j", "client": "claude"}
         (d / "series.json").write_text(json.dumps(meta))
         (d / "runs.jsonl").write_text(json.dumps({"series": "np", "run": 1, "playthrough": "np",
                                                   "outcome": "reached"}) + "\n")
-        before = sorted(P.RUNTIME.rglob("*"))
+        before = sorted(renv.RUNTIME.rglob("*"))
         out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--judge-model", "j",
                          "--allow-judge-change")
         self.assertIn("run 2/3 next (np-r2), 1 recorded", out)
         self.assertIn("exists with every key (frozen", out)
         self.assertIn("REFUSED (--allow-version-drift)", out)
-        self.assertEqual(sorted(P.RUNTIME.rglob("*")), before)
+        self.assertEqual(sorted(renv.RUNTIME.rglob("*")), before)
 
     def test_cli_refuses_runs_without_until(self):
         import contextlib
@@ -711,72 +719,72 @@ class SeriesRuns(unittest.TestCase):
         """naut2 run 2 as the machine crash left it: runner.json run start, a S001 stream, the memory session
         open with edits, saves/<pt>.txt and a save since the start; no runs.jsonl record."""
         from unittest import mock
-        d = P.RUNTIME / "sessions" / "np"
+        d = renv.RUNTIME / "sessions" / "np"
         d.mkdir(parents=True, exist_ok=True)
         (d / "series.json").write_text(json.dumps({"series": "np", "runs": 3, "until": "nautiloid_escaped",
                                                    "profile": {"character": {"brief": "a sergeant"}}}))
         (d / "runs.jsonl").write_text("" if k == 1 else json.dumps(
             {"series": "np", "run": 1, "playthrough": "np", "outcome": "reached"}) + "\n")
         (d / "runner_events.jsonl").write_text('{"kind": "runner_start"}\n')
-        P.prepare_series_run("np", pt, k)
-        sd = P.RUNTIME / "sessions" / pt
+        lser.prepare_series_run("np", pt, k)
+        sd = renv.RUNTIME / "sessions" / pt
         sd.mkdir(parents=True, exist_ok=True)
         hist = [{"kind": "play", "session": "S001", "started": 1001.0}] if finished else []
         (sd / "runner.json").write_text(json.dumps({"history": hist, "runner_saves": [], "saves_after": 1000.0,
                                                     "run": {"started": 1000.0, "series": "np", "index": k}}))
         (sd / "S001.jsonl").write_text("{}\n")
-        mem = P.PLAYTHROUGHS / pt / "memory"
+        mem = renv.PLAYTHROUGHS / pt / "memory"
         (mem / ".session.json").write_text(json.dumps({"current": 1, "open": True}))
         (mem / "CHARACTER.md").write_text("# Character: Brannoc Vale\n")
-        (P.RUNTIME / "saves").mkdir(parents=True, exist_ok=True)
-        P._save_record_path(pt).write_text("Brannoc Vale-51612617911__S001-start\n")
-        saves = [P.Save("Brannoc Vale-51612617911__S001-start", "Brannoc Vale", "S001-start", 1100.0),
-                 P.Save("Corran Vell-1__S001-start", "Corran Vell", "S001-start", 900.0)]   # run 1's: older
-        P.list_saves = lambda: saves
+        (renv.RUNTIME / "saves").mkdir(parents=True, exist_ok=True)
+        lser._save_record_path(pt).write_text("Brannoc Vale-51612617911__S001-start\n")
+        saves = [rpolicy.Save("Brannoc Vale-51612617911__S001-start", "Brannoc Vale", "S001-start", 1100.0),
+                 rpolicy.Save("Corran Vell-1__S001-start", "Corran Vell", "S001-start", 900.0)]   # run 1's: older
+        rcode.list_saves = lambda: saves
         self.addCleanup(mock.patch.stopall)
-        mock.patch.object(P, "HANDOVER", self.tmp / "runtime" / "runner-handover.json").start()
+        mock.patch.object(rcode, "HANDOVER", self.tmp / "runtime" / "runner-handover.json").start()
         return sd, mem
 
     def test_half_run_state_reads_what_a_crash_left(self):
-        P.list_saves = lambda: []
-        P.prepare_series_run("np", "np-r2", 2)
-        self.assertIsNone(P.half_run_state("np-r2"))     # a fresh run: template memory only
+        rcode.list_saves = lambda: []
+        lser.prepare_series_run("np", "np-r2", 2)
+        self.assertIsNone(lser.half_run_state("np-r2"))     # a fresh run: template memory only
         sd, mem = self._half_run()
-        h = P.half_run_state("np-r2")
+        h = lser.half_run_state("np-r2")
         self.assertEqual((h["started"], h["finished_sessions"], h["streams"], h["open_session"]),
                          (1000.0, [], ["S001.jsonl"], "S001"))
         self.assertTrue(any("CHARACTER.md" in x for x in h["uncommitted"]))
         self.assertEqual(h["recorded_saves"], ["Brannoc Vale-51612617911__S001-start"])
         self.assertEqual(h["saves_since_start"], ["Brannoc Vale-51612617911__S001-start"])
         self.assertTrue(h["restartable"])
-        lines = "\n".join(P.half_run_lines(h))
+        lines = "\n".join(lser.half_run_lines(h))
         self.assertIn("HALF-PLAYED:    np-r2 started", lines)
         self.assertIn("session S001 open", lines)
         self.assertIn("RESTARTS it (no finished play session)", lines)
         self.assertIn("CONTINUES",
-                      "\n".join(P.half_run_lines({**h, "restartable": False, "finished_sessions": ["S001"]})))
+                      "\n".join(lser.half_run_lines({**h, "restartable": False, "finished_sessions": ["S001"]})))
         self.assertIn("RESTARTS it (--restart-run)",
-                      "\n".join(P.half_run_lines({**h, "restartable": False}, forced=True)))
+                      "\n".join(lser.half_run_lines({**h, "restartable": False}, forced=True)))
         self.assertNotIn(", \n", lines)
-        busy = "\n".join(P.half_run_lines(h, active=True))
+        busy = "\n".join(lser.half_run_lines(h, active=True))
         self.assertIn("a runner holds the lock", busy)
         self.assertNotIn("RESTARTS", busy)
 
     def test_plan_warns_about_a_half_played_run_and_writes_nothing(self):
         self._half_run()
-        before = sorted(x for d in (P.RUNTIME, P.PLAYTHROUGHS) for x in d.rglob("*"))
+        before = sorted(x for d in (renv.RUNTIME, renv.PLAYTHROUGHS) for x in d.rglob("*"))
         out = self._plan("--playthrough", "np", "--until", "nautiloid_escaped", "--runs", "3", "--allow-judge-change")
         self.assertIn("run 2/3 next (np-r2), 1 recorded", out)
         self.assertIn("HALF-PLAYED:    np-r2", out)
         self.assertIn("-> run RESTARTS it", out)
-        self.assertEqual(sorted(x for d in (P.RUNTIME, P.PLAYTHROUGHS) for x in d.rglob("*")), before)
-        self.assertTrue(P.HANDOVER.parent.is_dir())
+        self.assertEqual(sorted(x for d in (renv.RUNTIME, renv.PLAYTHROUGHS) for x in d.rglob("*")), before)
+        self.assertTrue(rcode.HANDOVER.parent.is_dir())
 
     def _restart(self, pt="np-r2", k=2, forced=False):
         logged = []
         from unittest import mock
-        with mock.patch.object(P, "log", logged.append):
-            h = P.restart_half_run(P.Options(pt, None, 20, "opus", until="nautiloid_escaped", series="np",
+        with mock.patch.object(renv, "log", logged.append):
+            h = lser.restart_half_run(rstate.Options(pt, None, 20, "opus", until="nautiloid_escaped", series="np",
                                              run_index=k), "np", pt, k, forced)
         return h, logged
 
@@ -785,18 +793,18 @@ class SeriesRuns(unittest.TestCase):
         h, logged = self._restart()
         self.assertIsNotNone(h)
         self.assertFalse(sd.exists())
-        self.assertFalse((P.PLAYTHROUGHS / "np-r2").exists())
-        self.assertFalse(P._save_record_path("np-r2").exists())
-        arch = [x.name for x in (P.RUNTIME / "sessions").iterdir() if x.name.startswith("np-r2.restarted-")]
+        self.assertFalse((renv.PLAYTHROUGHS / "np-r2").exists())
+        self.assertFalse(lser._save_record_path("np-r2").exists())
+        arch = [x.name for x in (renv.RUNTIME / "sessions").iterdir() if x.name.startswith("np-r2.restarted-")]
         self.assertEqual(len(arch), 1)
-        self.assertTrue((P.RUNTIME / "sessions" / arch[0] / "S001.jsonl").is_file())        # moved, not deleted
-        self.assertTrue((P.PLAYTHROUGHS / arch[0] / "memory" / "CHARACTER.md").is_file())
-        self.assertTrue((P.RUNTIME / "saves" / f"{arch[0]}.txt").is_file())
+        self.assertTrue((renv.RUNTIME / "sessions" / arch[0] / "S001.jsonl").is_file())        # moved, not deleted
+        self.assertTrue((renv.PLAYTHROUGHS / arch[0] / "memory" / "CHARACTER.md").is_file())
+        self.assertTrue((renv.RUNTIME / "saves" / f"{arch[0]}.txt").is_file())
         self.assertIn("RESTARTED from scratch (its runner died without a handover", logged[-1])
         # then run_series' prepare_series_run gives it a template memory and the series' profile again
-        P.prepare_series_run("np", "np-r2", 2)
-        self.assertIsNone(P.half_run_state("np-r2"))
-        self.assertFalse((P.PLAYTHROUGHS / "np-r2" / "memory" / "CHARACTER.md").exists())
+        lser.prepare_series_run("np", "np-r2", 2)
+        self.assertIsNone(lser.half_run_state("np-r2"))
+        self.assertFalse((renv.PLAYTHROUGHS / "np-r2" / "memory" / "CHARACTER.md").exists())
         # and the fresh Runner resets the run (begin_run: saves_after = now, so the crashed saves are old)
         r = self._series_runner("np-r2", 2)
         self.assertIsNone(r.state["run"])
@@ -815,23 +823,23 @@ class SeriesRuns(unittest.TestCase):
 
     def test_never_restarts_its_own_execv_successor(self):
         sd, mem = self._half_run()
-        P.write_handover({"run_started": 1000.0}, P.HANDOVER)   # same pid: this process is the successor
+        rcode.write_handover({"run_started": 1000.0}, rcode.HANDOVER)   # same pid: this process is the successor
         h, _ = self._restart(forced=True)
         self.assertIsNone(h)
         self.assertTrue((sd / "runner.json").is_file())
-        self.assertTrue(P.HANDOVER.exists())                      # peeked, not consumed: the Runner reads it
+        self.assertTrue(rcode.HANDOVER.exists())                      # peeked, not consumed: the Runner reads it
 
     def test_restarting_run_1_keeps_the_series_files_and_profile(self):
         sd, mem = self._half_run(pt="np", k=1)
-        (P.PLAYTHROUGHS / "np" / "profile.json").write_text(json.dumps(
+        (renv.PLAYTHROUGHS / "np" / "profile.json").write_text(json.dumps(
             {"character": {"brief": "a sergeant", "name": "Brannoc Vale"}}))   # the half run adopted its name
         h, _ = self._restart(pt="np", k=1)
         self.assertIsNotNone(h)
         self.assertEqual(sorted(x.name for x in sd.iterdir()), ["runner_events.jsonl", "runs.jsonl", "series.json"])
-        arch = next(x for x in (P.RUNTIME / "sessions").iterdir() if x.name.startswith("np.restarted-"))
+        arch = next(x for x in (renv.RUNTIME / "sessions").iterdir() if x.name.startswith("np.restarted-"))
         self.assertTrue((arch / "runner.json").is_file())
-        P.prepare_series_run("np", "np", 1)
-        self.assertEqual(json.loads((P.PLAYTHROUGHS / "np" / "profile.json").read_text()),
+        lser.prepare_series_run("np", "np", 1)
+        self.assertEqual(json.loads((renv.PLAYTHROUGHS / "np" / "profile.json").read_text()),
                          {"character": {"brief": "a sergeant"}})          # the frozen brief, no half-run name
 
     def test_restart_run_needs_runs(self):
@@ -852,7 +860,7 @@ class SeriesRuns(unittest.TestCase):
                 fr.opt, fr.outcome, fr.fatal, fr.stop_requested, fr.profile = opt, None, False, False, {}
 
             def run(fr):
-                path = P.RUNTIME / "sessions" / "np" / "runs.jsonl"
+                path = renv.RUNTIME / "sessions" / "np" / "runs.jsonl"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "a") as f:
                     f.write(json.dumps({"series": "np", "run": fr.opt.run_index, "playthrough": fr.opt.playthrough,
@@ -866,46 +874,46 @@ class SeriesRuns(unittest.TestCase):
             def event(fr, *a, **k):
                 pass
 
-        opt = P.Options("np", None, 20, "opus", until="nautiloid_escaped", series="np", keep_game=keep_game)
-        with mock.patch.object(P, "Runner", FakeRunner), \
-                mock.patch.object(P, "prepare_series_run", lambda *a, **k: None), \
-                mock.patch.object(P, "freeze_series", lambda *a, **k: None), \
-                mock.patch.object(P, "gate_series_run", lambda *a, **k: None), \
-                mock.patch.object(P, "current_pins", lambda: {}), \
-                mock.patch.object(P, "restart_half_run", lambda *a, **k: None), \
-                mock.patch.object(P, "log"):
-            P.run_series(opt, n, {"runner": None, "stop": False})
+        opt = rstate.Options("np", None, 20, "opus", until="nautiloid_escaped", series="np", keep_game=keep_game)
+        with mock.patch.object(lpt, "Runner", FakeRunner), \
+                mock.patch.object(lser, "prepare_series_run", lambda *a, **k: None), \
+                mock.patch.object(lser, "freeze_series", lambda *a, **k: None), \
+                mock.patch.object(lser, "gate_series_run", lambda *a, **k: None), \
+                mock.patch.object(lser, "current_pins", lambda: {}), \
+                mock.patch.object(lser, "restart_half_run", lambda *a, **k: None), \
+                mock.patch.object(renv, "log"):
+            lser.run_series(opt, n, {"runner": None, "stop": False})
         return calls
 
     def test_a_series_stops_its_last_game_unless_keep_game(self):
         self.assertEqual(self._series_with_fake_runners(), [(1, "between runs"), (2, "series end")])
-        __import__("shutil").rmtree(P.RUNTIME / "sessions" / "np")
+        __import__("shutil").rmtree(renv.RUNTIME / "sessions" / "np")
         self.assertEqual(self._series_with_fake_runners(keep_game=True), [(1, "between runs")])
 
     def test_stop_game_at_end_only_for_until_runs(self):
         from unittest import mock
         r = mock.Mock()
-        until = P.Options("x", None, 20, "opus", until="nautiloid_escaped")
-        self.assertTrue(P.stop_game_at_end(r, until, "run end"))
+        until = rstate.Options("x", None, 20, "opus", until="nautiloid_escaped")
+        self.assertTrue(lser.stop_game_at_end(r, until, "run end"))
         r.end_run_game.assert_called_once_with("run end", "--keep-game leaves it up")
         r.reset_mock()
-        for opt in (P.Options("x", None, 20, "opus"),                                   # continuous play
-                    P.replace(until, keep_game=True), P.replace(until, dry_run=True)):
-            self.assertFalse(P.stop_game_at_end(r, opt, "run end"))
+        for opt in (rstate.Options("x", None, 20, "opus"),                                   # continuous play
+                    rchecks.replace(until, keep_game=True), rchecks.replace(until, dry_run=True)):
+            self.assertFalse(lser.stop_game_at_end(r, opt, "run end"))
         r.end_run_game.assert_not_called()
-        self.assertFalse(P.stop_game_at_end(None, until, "run end"))
+        self.assertFalse(lser.stop_game_at_end(None, until, "run end"))
 
     def test_end_run_game_names_when(self):
         from unittest import mock
         r = self._series_runner()
         logged = []
         with mock.patch.object(G, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: True), \
-                mock.patch.object(r, "kill_game") as kill, mock.patch.object(P, "log", logged.append):
+                mock.patch.object(r, "kill_game") as kill, mock.patch.object(renv, "log", logged.append):
             r.end_run_game("series end", "--keep-game leaves it up")
         kill.assert_called_once()
         self.assertEqual(logged, ["series end: game stopped; --keep-game leaves it up"])
         with mock.patch.object(G, "port_open", lambda: True), mock.patch.object(r, "owns_game", lambda: False), \
-                mock.patch.object(r, "kill_game") as kill, mock.patch.object(P, "log", logged.append):
+                mock.patch.object(r, "kill_game") as kill, mock.patch.object(renv, "log", logged.append):
             r.end_run_game("run end")
         kill.assert_not_called()                                   # not this runner's game: never killed
         self.assertEqual(logged[-1], "run end: the game up is not one this runner launched; left running")
@@ -917,11 +925,11 @@ class SeriesRuns(unittest.TestCase):
     REAL = HANDOFF_ONLY + "ERROR  objectives  objectives.md: o3 has no status\n"
 
     def test_until_stop_handoff_only(self):
-        self.assertTrue(P.until_stop_handoff_only("milestone", True, self.HANDOFF_ONLY))
-        self.assertFalse(P.until_stop_handoff_only("milestone", True, self.REAL))          # a real notes problem
-        self.assertFalse(P.until_stop_handoff_only("milestone", True, "Traceback: boom"))  # session.py failed
-        self.assertFalse(P.until_stop_handoff_only("exited", True, self.HANDOFF_ONLY))     # it had its wrap-up time
-        self.assertFalse(P.until_stop_handoff_only("milestone", False, self.HANDOFF_ONLY))
+        self.assertTrue(rcode.until_stop_handoff_only("milestone", True, self.HANDOFF_ONLY))
+        self.assertFalse(rcode.until_stop_handoff_only("milestone", True, self.REAL))          # a real notes problem
+        self.assertFalse(rcode.until_stop_handoff_only("milestone", True, "Traceback: boom"))  # session.py failed
+        self.assertFalse(rcode.until_stop_handoff_only("exited", True, self.HANDOFF_ONLY))     # it had its wrap-up time
+        self.assertFalse(rcode.until_stop_handoff_only("milestone", False, self.HANDOFF_ONLY))
 
     def _close(self, report: str, reason="milestone"):
         from unittest import mock
@@ -932,7 +940,7 @@ class SeriesRuns(unittest.TestCase):
                 mock.patch.object(r, "session_py", return_value=mock.Mock(returncode=1, stdout=report)), \
                 mock.patch.object(r, "run_claude", side_effect=lambda *a, **k: fixes.append(a)), \
                 mock.patch.object(r, "event", side_effect=lambda kind, **f: events.append(kind)), \
-                mock.patch.object(P, "log"):
+                mock.patch.object(renv, "log"):
             r.close_memory_session(res)
         return fixes, events
 

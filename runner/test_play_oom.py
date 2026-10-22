@@ -14,10 +14,15 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
+
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))  # RUN-9: never the real one
-import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
+import legacy_playthrough as lpt
 from bg3harness.game import oom as O  # noqa: N812  (the OOM check's journal and ramwatch reads)
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import env as renv
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
 
 
 class OomGuard(unittest.TestCase):
@@ -34,33 +39,40 @@ class OomGuard(unittest.TestCase):
     )
 
     def test_find_game_oom(self):
-        self.assertIn("its scope bg3ai-game-20261010-2000.scope", P.find_game_oom(self.J, "20261010-2000", []))
-        self.assertIsNone(P.find_game_oom(self.J, "20261010-2100", []))  # another launch's scope
-        self.assertIsNone(P.find_game_oom(self.OTHER, "x", []))  # a test OOM'd in another unit
+        self.assertIn("its scope bg3ai-game-20261010-2000.scope", O.find_game_oom(self.J, "20261010-2000", []))
+        self.assertIsNone(O.find_game_oom(self.J, "20261010-2100", []))  # another launch's scope
+        self.assertIsNone(O.find_game_oom(self.OTHER, "x", []))  # a test OOM'd in another unit
         spike = {"t": 1791654480.0, "from_mb": 5000, "to_mb": 13300, "seconds": 35}
-        why = P.find_game_oom(self.OTHER, "x", [spike])  # legacy: no scope, but a spike
+        why = O.find_game_oom(self.OTHER, "x", [spike])  # legacy: no scope, but a spike
         self.assertIn("app-term@b676.service", why)
         self.assertIn("5000 → 13300 MB", why)
-        self.assertIsNone(P.find_game_oom("garbage killed by the OOM killer\n", "x", [spike]))
+        self.assertIsNone(O.find_game_oom("garbage killed by the OOM killer\n", "x", [spike]))
 
     def test_streak(self):
-        a = P.oom_streak_update(None, "S038", "oom")
+        a = O.oom_streak_update(None, "S038", "oom")
         self.assertEqual(a["n"], 1)
-        self.assertEqual(P.oom_streak_update(a, "S038", "oom")["n"], 2)
-        self.assertEqual(P.oom_streak_update(a, "S037", "oom")["n"], 1)
-        self.assertIsNone(P.oom_streak_update(a, "S038", None))  # a non-OOM death resets
+        self.assertEqual(O.oom_streak_update(a, "S038", "oom")["n"], 2)
+        self.assertEqual(O.oom_streak_update(a, "S037", "oom")["n"], 1)
+        self.assertIsNone(O.oom_streak_update(a, "S038", None))  # a non-OOM death resets
 
     def _runner(self, d: Path, saves):
-        self.saved = (P.list_saves, P.log, O.user_journal, O.read_spikes, P.write_status, P.read_actions_since)
+        self.saved = (
+            rcode.list_saves,
+            renv.log,
+            O.user_journal,
+            O.read_spikes,
+            rstate.write_status,
+            rpolicy.read_actions_since,
+        )
         self.logs, self.events = [], []
-        P.list_saves = lambda: saves
-        P.log = self.logs.append
+        rcode.list_saves = lambda: saves
+        renv.log = self.logs.append
         O.user_journal = lambda since: self.J
         O.read_spikes = lambda since, path=None: [{"t": 1.0, "tools": ["20:47:41 jump_to {} 12118ms → NOT READY"]}]
-        P.write_status = lambda **f: None
-        P.read_actions_since = lambda t, path=None: []
-        r = P.Runner.__new__(P.Runner)
-        r.opt = P.Options("pt", None, 30, "opus", save_owner="Claude")
+        rstate.write_status = lambda **f: None
+        rpolicy.read_actions_since = lambda t, path=None: []
+        r = lpt.Runner.__new__(lpt.Runner)
+        r.opt = rstate.Options("pt", None, 30, "opus", save_owner="Claude")
         r.mem = d
         r.pending_notes = []
         r.state = type(
@@ -78,12 +90,19 @@ class OomGuard(unittest.TestCase):
 
     def tearDown(self):
         if hasattr(self, "saved"):
-            (P.list_saves, P.log, O.user_journal, O.read_spikes, P.write_status, P.read_actions_since) = self.saved
+            (
+                rcode.list_saves,
+                renv.log,
+                O.user_journal,
+                O.read_spikes,
+                rstate.write_status,
+                rpolicy.read_actions_since,
+            ) = self.saved
 
     def test_second_oom_from_the_same_save_refuses_it(self):
         saves = [
-            P.Save("Claude-1__S037-end", "Claude", "S037-end", 10.0),
-            P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
+            rpolicy.Save("Claude-1__S037-end", "Claude", "S037-end", 10.0),
+            rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
         ]
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), saves)
@@ -104,8 +123,8 @@ class OomGuard(unittest.TestCase):
     def test_oom_line_names_the_save_loaded_last(self):
         # S082: the line named S078-start (the runner's load at the launch), not the agent's later S081-end reload
         saves = [
-            P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
-            P.Save("Claude-3__S039-end", "Claude", "S039-end", 30.0),
+            rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
+            rpolicy.Save("Claude-3__S039-end", "Claude", "S039-end", 30.0),
         ]
         acts = [
             {
@@ -118,26 +137,26 @@ class OomGuard(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), saves)
-            P.read_actions_since = lambda t, path=None: acts
+            rpolicy.read_actions_since = lambda t, path=None: acts
             r.state["game"] = {"stamp": "20261010-2000", "launched": 1.0}
             r.check_game_oom()
             self.assertTrue(any("save loaded before it: Claude-3__S039-end" in m for m in self.logs))
             self.assertEqual(r.state["oom_streak"]["save"], "Claude-3__S039-end")
 
     def test_last_loaded_save(self):
-        saves = [P.Save("Claude-1__S081-end", "Claude", "S081-end", 10.0)]
+        saves = [rpolicy.Save("Claude-1__S081-end", "Claude", "S081-end", 10.0)]
         by_label = [{"t": 20.0, "tool": "load_game", "args": {"save": "S081-end"}, "result": "done loaded=S081-end"}]
-        self.assertEqual(P.last_loaded_save(by_label, saves, "x"), "Claude-1__S081-end")
-        self.assertEqual(P.last_loaded_save([], saves, "Claude-0__S078-start"), "Claude-0__S078-start")
+        self.assertEqual(O.last_loaded_save(by_label, saves, "x"), "Claude-1__S081-end")
+        self.assertEqual(O.last_loaded_save([], saves, "Claude-0__S078-start"), "Claude-0__S078-start")
         failed = [{"t": 20.0, "tool": "load_game", "args": {"save": "S081-end"}, "result": "FAILED: no such save"}]
-        self.assertEqual(P.last_loaded_save(failed, saves, "fallback"), "fallback")
+        self.assertEqual(O.last_loaded_save(failed, saves, "fallback"), "fallback")
 
     def test_refused_with_no_other_save_stops(self):
-        saves = [P.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0)]
+        saves = [rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0)]
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), saves)
             r.state["oom_blocked"] = ["Claude-2__S038-shadowfell"]
-            with self.assertRaises(P.LaunchGaveUp):
+            with self.assertRaises(rstate.LaunchGaveUp):
                 r.choose_save()
 
     def test_ramwatch_kill_counts_as_oom(self):
@@ -163,7 +182,7 @@ class OomGuard(unittest.TestCase):
             },
             {"t": 1791654600.0, "tool": "get_status", "args": {}, "result": "after"},
         ]
-        note = P.crash_tools_note("S038: game gone", acts, 1791654514.7)
+        note = rpolicy.crash_tools_note("S038: game gone", acts, 1791654514.7)
         self.assertIn('jump_to {"x":-408.5,"y":1,"z":-1437}', note)
         self.assertIn("do_actions", note)
         self.assertNotIn("after", note)
@@ -174,7 +193,7 @@ class OomGuard(unittest.TestCase):
         acts = [{"t": 99.0, "tool": "jump_to", "args": {"x": -408.5}, "result": "NOT READY"}]
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), [])
-            P.read_actions_since = lambda t, path=None: acts
+            rpolicy.read_actions_since = lambda t, path=None: acts
             r.state["history"] = [{"kind": "play", "session": "S038", "ended": 100.0}]
             r.note_game_gone(None)
             r.note_game_gone(None)

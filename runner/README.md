@@ -4,6 +4,12 @@
 another, with the game kept alive and the memory committed between sessions. Stdlib only. It uses
 `bridge/src/bg3ai/luadebug.py` to talk to the game and `tools/memory/` for the memory.
 
+`play.py` only parses the command line (Phase D.3). The session runner is `bg3harness.runner`
+(packages/harness: the game, the agent process, the checks, `SessionRunner`); `legacy_playthrough.py` adds the
+playthrough parts (memory session, keeper, the continuous loop: `Runner`), `legacy_series.py` the `--runs` series
+and `legacy_cli.py` the commands. `play.py bench run --matrix M.toml` runs bg3bench's matrix with each job as one
+`run_session` on this machine's game (`bg3harness.runner.run_host`).
+
 ## Quick start
 
 ```bash

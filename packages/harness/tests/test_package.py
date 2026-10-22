@@ -51,6 +51,19 @@ class Package(unittest.TestCase):
             "scenario_file",
             "game.saves",
             "runs",
+            "steam_paths",
+            "bg3le_buildinfo",
+            "spend",
+            "client_setup",
+            "runner.env",
+            "runner.policy",
+            "runner.codewatch",
+            "runner.state",
+            "runner.game_side",
+            "runner.agent_side",
+            "runner.checks_side",
+            "runner.core",
+            "runner.run_host",
         )
         code = (
             "import importlib, sys\n"
@@ -63,6 +76,12 @@ class Package(unittest.TestCase):
             )
         )
         subprocess.run([sys.executable, "-I", "-c", code], check=True)
+
+    def test_each_runner_module_imports_first(self) -> None:
+        # SessionRunner's mixins and state import each other: importing one of them first (a test module that never
+        # imports play) once hit core's class statement on a half-loaded mixin module.
+        for m in ("env", "policy", "codewatch", "state", "game_side", "agent_side", "checks_side", "core", "run_host"):
+            subprocess.run([sys.executable, "-I", "-c", f"import bg3harness.runner.{m}"], check=True)
 
     def test_runner_shims_are_the_package_modules(self) -> None:
         # runner/_harness.py's alias, under a name no shim has (the real shims go one by one, tools/ci/runner_shims.py)

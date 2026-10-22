@@ -17,13 +17,18 @@ from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
+
 sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
 sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 import test_crash as TCR
 from bg3harness import events as E
 from bg3harness import profiles
+from bg3harness.runner import env as renv
+from bg3harness.runner import state as rstate
 
-P = TCR.P
+import play as P
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 PROFILE = Path(__file__).resolve().parents[1] / "profiles" / "deepseek-flash.toml"
 
@@ -66,10 +71,10 @@ class PiRunBase(TCR.FakeRunBase):
         for k in ("FAKE_PI_EXT_FAIL", "FAKE_PI_HOLD_AT", "FAKE_PI_STREAM", "DEEPSEEK_API_KEY"):
             self.addCleanup(os.environ.pop, k, None)
         os.environ.update(FAKE_PI_LOG=str(self.pi_log), DEEPSEEK_API_KEY="sk-test")
-        self.budget = P.RUNTIME / "budget.json"
+        self.budget = renv.RUNTIME / "budget.json"
         self.budget.parent.mkdir(parents=True, exist_ok=True)
         self.budget.write_text(json.dumps({"cap": 5.0, "spent": 1.0}))
-        self.opt = P.Options(
+        self.opt = rstate.Options(
             "pi-test",
             None,
             20,
@@ -81,7 +86,7 @@ class PiRunBase(TCR.FakeRunBase):
             tools_expected=94,
         )
 
-    def run_pi(self, stream: Path | list[str], **opt) -> P.SessionResult:
+    def run_pi(self, stream: Path | list[str], **opt) -> rstate.SessionResult:
         if isinstance(stream, list):
             path = self.tmp / "stream.jsonl"
             path.write_text("\n".join(stream) + "\n")
@@ -134,9 +139,9 @@ class PiRun(PiRunBase):
     def test_context_overflow_ends_the_session_without_retry_or_resume(self):
         res = self.run_pi(FIXTURES / "overflow.jsonl")
         self.assertEqual(res.reason, "context_overflow")
-        self.assertNotIn(res.reason, P.FAULTS)  # play_session: no resume of a full context
+        self.assertNotIn(res.reason, rstate.FAULTS)  # play_session: no resume of a full context
         self.assertEqual(res.tool_calls, 0)  # at the kickoff: a quick failure
-        self.assertTrue(P.quick_failure(res))
+        self.assertTrue(renv.quick_failure(res))
         self.assertEqual(len(self.calls()), 1)
 
     def test_an_overflow_loop_is_stopped(self):
@@ -213,7 +218,7 @@ class Cli(unittest.TestCase):
 
         os.environ["DEEPSEEK_API_KEY"] = "sk-test"
         self.addCleanup(os.environ.pop, "DEEPSEEK_API_KEY", None)
-        budget = P.RUNTIME / "budget.json"
+        budget = renv.RUNTIME / "budget.json"
         budget.unlink(missing_ok=True)
         self.addCleanup(budget.unlink, True)
         argv = ["run", "--playthrough", "x", "--profile", str(PROFILE), "--no-keeper", "--max-cost", "0.5", "--plan"]

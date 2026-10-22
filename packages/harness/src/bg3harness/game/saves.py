@@ -264,3 +264,20 @@ def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SA
         (s for s in saves if s.mtime >= t and is_ai_save(s, prefix) and (owner is None or s.owner == owner)),
         key=lambda s: s.mtime,
     )
+
+
+SAVE_FOLDER_RE = re.compile(r"^(?P<owner>.+)-(?P<num>\d+)__(?P<label>.+)$")  # bg3bench.scenario's too
+
+
+def save_lsv(save_dir: Path, folder: str) -> Path | None:
+    """A save folder's .lsv: the game names it after the label, <owner>-<id>__<label>/<label>.lsv (+ <label>.WebP);
+    else the folder's only .lsv (a label the game rewrote). None when there's none, or several."""
+    d = save_dir / folder
+    m = SAVE_FOLDER_RE.match(folder or "")
+    if m and (d / f"{m.group('label')}.lsv").is_file():
+        return d / f"{m.group('label')}.lsv"
+    try:
+        found = [p for p in d.iterdir() if p.suffix == ".lsv" and p.is_file()]
+    except OSError:
+        return None
+    return found[0] if len(found) == 1 else None

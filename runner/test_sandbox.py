@@ -20,11 +20,19 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: E402, F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
 from bg3harness import clients as C  # noqa: E402
 import play as P  # noqa: E402
+from bg3harness.runner import agent_side as ragent
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import env as renv
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
+import legacy_cli as lcli
+import legacy_playthrough as lpt
+import legacy_series as lser
 from bg3harness import profiles as PR  # noqa: E402
 from bg3harness import sandbox as S  # noqa: E402
 
@@ -242,7 +250,7 @@ class DockerSide(unittest.TestCase):
         self.assertIn("--read-only", argv)
         mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
         self.assertEqual(mounts, [f"{self.d / 'home'}:/home/agent", f"{cfg.resolve()}:{cfg.resolve()}:ro"])
-        self.assertFalse(any(str(P.REPO) in m for m in mounts))   # nothing of the repo, memory or saves
+        self.assertFalse(any(str(renv.REPO) in m for m in mounts))   # nothing of the repo, memory or saves
         envs = [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
         self.assertIn("ANTHROPIC_API_KEY", envs)                   # by name: the value is docker's to copy
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", envs)           # unset/empty: not passed
@@ -289,7 +297,7 @@ class Server(unittest.TestCase):
     def test_argv_from_the_stdio_spec(self):
         argv = S.server_argv(C.bg3_server(), C.PLAY_DIR)
         self.assertEqual(argv[:2], ["uv", "run"])
-        self.assertEqual(argv[argv.index("--project") + 1], str((P.REPO / "bridge").resolve()))
+        self.assertEqual(argv[argv.index("--project") + 1], str((renv.REPO / "bridge").resolve()))
         self.assertEqual(argv[-6:], ["--transport", "http", "--host", S.GW, "--port", str(S.PORT)])
 
     def test_port_taken(self):
@@ -402,28 +410,28 @@ class PlayWiring(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="bg3ai-sandbox-play-"))
         self.addCleanup(shutil.rmtree, self.d, True)
-        for p in (mock.patch.object(P.client_setup, "run_files", lambda *a: {}),   # main(): no uv tool dump
+        for p in (mock.patch.object(ragent.client_setup, "run_files", lambda *a: {}),   # main(): no uv tool dump
                   mock.patch.dict(os.environ)):   # main(): session_env sets BG3AI_PROMPT_CONDITION
             p.start()
             self.addCleanup(p.stop)
 
     def test_options_pick_the_http_client(self):
-        self.assertEqual(P.make_client(P.Options("pt", None, 60, "opus")).mcp_config, C.MCP_CONFIG)
-        c = P.make_client(P.Options("pt", None, 60, "opus", sandbox="container"))
+        self.assertEqual(rstate.make_client(rstate.Options("pt", None, 60, "opus")).mcp_config, C.MCP_CONFIG)
+        c = rstate.make_client(rstate.Options("pt", None, 60, "opus", sandbox="container"))
         self.assertIn(S.URL, c.mcp_config)
 
     def test_flags(self):
-        with mock.patch.object(P, "cmd_run", lambda a: (a.sandbox, a.sandbox_unfirewalled)):
+        with mock.patch.object(lcli, "cmd_run", lambda a: (a.sandbox, a.sandbox_unfirewalled)):
             self.assertEqual(P.main(["run", "--playthrough", "x"]), ("none", False))
             self.assertEqual(P.main(["run", "--playthrough", "x", "--sandbox", "container",
                                      "--sandbox-unfirewalled"]), ("container", True))
 
     def _cmd_run(self, argv: list[str], prepare) -> tuple[int, str]:
         err = []
-        with mock.patch.object(P, "acquire_lock", lambda: None), \
+        with mock.patch.object(lcli, "acquire_lock", lambda: None), \
                 mock.patch.object(S, "prepare", prepare), \
-                mock.patch.object(P, "log", lambda m: None), \
-                mock.patch.object(P, "Runner", side_effect=AssertionError("must not run")), \
+                mock.patch.object(renv, "log", lambda m: None), \
+                mock.patch.object(lpt, "Runner", side_effect=AssertionError("must not run")), \
                 mock.patch("sys.stderr", SimpleNamespace(write=err.append, flush=lambda: None)):
             rc = P.main(["run", "--playthrough", "sbx", *argv])
         return rc, "".join(err)
@@ -449,13 +457,13 @@ class PlayWiring(unittest.TestCase):
         def runner(opt):
             seen["opt"] = opt
             return SimpleNamespace(run=lambda: 0, stop_requested=False)
-        with mock.patch.object(P, "acquire_lock", lambda: None), \
+        with mock.patch.object(lcli, "acquire_lock", lambda: None), \
                 mock.patch.object(S, "prepare", lambda client, home, unf, log, pid: seen.update(unf=unf) or box), \
                 mock.patch.object(S, "shutdown", lambda: seen.update(shutdown=True)), \
-                mock.patch.object(P, "log", lambda m: None), mock.patch.object(P, "Runner", runner), \
+                mock.patch.object(renv, "log", lambda m: None), mock.patch.object(lpt, "Runner", runner), \
                 mock.patch("bg3ai.skipper.start_background", lambda *a: None), \
-                mock.patch.object(P.ramwatch, "start_background", lambda *a: None), \
-                mock.patch.object(P.signal, "signal", lambda *a: None):
+                mock.patch.object(rpolicy.ramwatch, "start_background", lambda *a: None), \
+                mock.patch.object(ragent.signal, "signal", lambda *a: None):
             rc = P.main(["run", "--playthrough", "sbx", "--sandbox", "container", "--sandbox-unfirewalled"])
         self.assertEqual(rc, 0)
         self.assertTrue(seen["unf"])
@@ -472,14 +480,14 @@ class PlayWiring(unittest.TestCase):
         if meta is not None:
             (rt / "sessions" / "sbx" / "series.json").write_text(json.dumps(meta))
         err, logs, seen = [], [], {}
-        with mock.patch.object(P, "RUNTIME", rt), mock.patch.object(P, "acquire_lock", lambda: None), \
+        with mock.patch.object(renv, "RUNTIME", rt), mock.patch.object(lcli, "acquire_lock", lambda: None), \
                 mock.patch.object(S, "prepare", lambda client, home, unf, log, pid: seen.update(prepared=unf)
                                   or S.Sandbox("claude", None, unf)), \
-                mock.patch.object(S, "shutdown", lambda: None), mock.patch.object(P, "log", logs.append), \
-                mock.patch.object(P, "run_series", lambda opt, *a, **k: seen.update(opt=opt) or 0), \
+                mock.patch.object(S, "shutdown", lambda: None), mock.patch.object(renv, "log", logs.append), \
+                mock.patch.object(lser, "run_series", lambda opt, *a, **k: seen.update(opt=opt) or 0), \
                 mock.patch("bg3ai.skipper.start_background", lambda *a: None), \
-                mock.patch.object(P.ramwatch, "start_background", lambda *a: None), \
-                mock.patch.object(P.signal, "signal", lambda *a: None), \
+                mock.patch.object(rpolicy.ramwatch, "start_background", lambda *a: None), \
+                mock.patch.object(ragent.signal, "signal", lambda *a: None), \
                 mock.patch("sys.stderr", SimpleNamespace(write=err.append, flush=lambda: None)):
             rc = P.main(["run", "--playthrough", "sbx", "--until", "nautiloid_escaped", "--runs", "3",
                          "--no-judge", *argv])
@@ -513,20 +521,20 @@ class PlayWiring(unittest.TestCase):
         self.assertEqual(self._series(None, ["--sandbox", "container", "--sandbox-unfirewalled"])[0], 0)
 
     def test_freeze_series_writes_the_mode_once(self):
-        with mock.patch.object(P, "RUNTIME", self.d / "runtime"):
-            P.freeze_series("sbx", 3, "m", {}, {"p": 1}, {}, None, None, "claude",
+        with mock.patch.object(renv, "RUNTIME", self.d / "runtime"):
+            lser.freeze_series("sbx", 3, "m", {}, {"p": 1}, {}, None, None, "claude",
                             {"sandbox": "container", "sandbox_unfirewalled": True})
-            P.freeze_series("sbx", 3, "m", {}, {"p": 1}, {}, None, None, "claude",
+            lser.freeze_series("sbx", 3, "m", {}, {"p": 1}, {}, None, None, "claude",
                             {"sandbox": "none", "sandbox_unfirewalled": False})
-            meta = P.series_meta("sbx")
+            meta = lser.series_meta("sbx")
             self.assertEqual((meta["sandbox"], meta["sandbox_unfirewalled"]), ("container", True))
             # an existing series from before the key never gets one (it played without a sandbox)
             (self.d / "runtime" / "sessions" / "old").mkdir(parents=True)
             (self.d / "runtime" / "sessions" / "old" / "series.json").write_text(json.dumps({"series": "old"}))
-            P.freeze_series("old", 3, "m", {}, {"p": 1}, {}, None, None, "claude",
+            lser.freeze_series("old", 3, "m", {}, {"p": 1}, {}, None, None, "claude",
                             {"sandbox": "container", "sandbox_unfirewalled": False})
-            self.assertNotIn("sandbox", P.series_meta("old"))
-            self.assertEqual(P.series_meta("old")["pins"], {"p": 1})
+            self.assertNotIn("sandbox", lser.series_meta("old"))
+            self.assertEqual(lser.series_meta("old")["pins"], {"p": 1})
 
     def test_series_sandbox_rules(self):
         from runs import sandbox_mode as m, series_sandbox as f
@@ -547,12 +555,12 @@ class PlayWiring(unittest.TestCase):
         def start_server(server, env, cwd, log_path, pid_file=None, **kw):
             servers.append(SimpleNamespace(server=server, env=env, cwd=cwd, log=log_path, srv=FakeServer()))
             return servers[-1].srv
-        with mock.patch.multiple(P, RUNTIME=self.d / "rt", log=lambda m: None), \
+        with mock.patch.multiple(renv, RUNTIME=self.d / "rt", log=lambda m: None), \
                 mock.patch.dict(os.environ, {"BG3AI_DOCKER": str(docker)}), \
                 mock.patch.object(S, "start_server", start_server):
             (self.d / "rt").mkdir()
             box = S.Sandbox("claude", None)
-            r = P.Runner(P.Options("sbx-pt", None, 60, "opus", keeper=False, sandbox="container", box=box))
+            r = lpt.Runner(rstate.Options("sbx-pt", None, 60, "opus", keeper=False, sandbox="container", box=box))
             r.progress_loop = lambda *a, **k: None
             res = r.run_claude("S001", "go", 60, "11111111-1111-1111-1111-111111111111", needs_game=False)
         self.assertEqual(res.reason, "exited", res.detail)
@@ -562,7 +570,7 @@ class PlayWiring(unittest.TestCase):
         self.assertEqual(srv.env["BG3AI_SESSION"], "S001")
         self.assertEqual(srv.env["BG3AI_FIX_NOTES"], "1")
         self.assertIn("BG3AI_SESSION_DEADLINE", srv.env)
-        self.assertEqual(srv.cwd, P.PLAY_DIR)
+        self.assertEqual(srv.cwd, renv.PLAY_DIR)
         self.assertTrue(srv.srv.stopped)
         argvs = calls(self.d)
         run = next(a for a in argvs if a[0] == "run")
@@ -586,13 +594,14 @@ class PlayWiring(unittest.TestCase):
         docker = fake_docker(self.d, [])
         system = self.d / "system.txt"
         system.write_text("rules\n")
-        with mock.patch.multiple(P, RUNTIME=self.d / "rt", log=lambda m: None), \
+        with mock.patch.multiple(renv, RUNTIME=self.d / "rt", log=lambda m: None), \
                 mock.patch.dict(os.environ, {"BG3AI_DOCKER": str(docker), "DEEPSEEK_API_KEY": "sk-test"}), \
                 mock.patch.object(S, "start_server", lambda *a, **k: FakeServer()):
             (self.d / "rt").mkdir()
             box = S.Sandbox("pi", None, auth_env=("DEEPSEEK_API_KEY",))
             prof = profiles.load(Path(__file__).resolve().parents[1] / "profiles" / "deepseek-flash.toml")
-            r = P.Runner(P.Options("sbx-pi", None, 60, "deepseek-flash", keeper=False, sandbox="container", box=box,
+            r = lpt.Runner(rstate.Options("sbx-pi", None, 60, "deepseek-flash", keeper=False, sandbox="container",
+                                          box=box,
                                    client="pi", profile=prof, system_file=str(system)))
             r.progress_loop = lambda *a, **k: None
             r.run_claude("S001", "go", 60, "11111111-1111-1111-1111-111111111111", needs_game=False)
@@ -606,11 +615,11 @@ class PlayWiring(unittest.TestCase):
         def start_server(*a, **k):
             raise S.SandboxError("172.30.99.1:8770 is already taken")
         events = []
-        with mock.patch.multiple(P, RUNTIME=self.d / "rt", log=lambda m: None), \
+        with mock.patch.multiple(renv, RUNTIME=self.d / "rt", log=lambda m: None), \
                 mock.patch.object(S, "start_server", start_server), \
-                mock.patch.object(P.subprocess, "Popen", side_effect=AssertionError("no client without a server")):
+                mock.patch.object(rcode.subprocess, "Popen", side_effect=AssertionError("no client without a server")):
             (self.d / "rt").mkdir()
-            r = P.Runner(P.Options("sbx-pt2", None, 60, "opus", keeper=False, sandbox="container",
+            r = lpt.Runner(rstate.Options("sbx-pt2", None, 60, "opus", keeper=False, sandbox="container",
                                    box=S.Sandbox("claude", None)))
             r.event = lambda kind, **kw: events.append((kind, kw))
             res = r.run_claude("S001", "go", 60, "11111111-1111-1111-1111-111111111111", needs_game=False)
@@ -621,7 +630,7 @@ class PlayWiring(unittest.TestCase):
     def test_record_marks_the_sandbox(self):
         self.assertEqual(S.Sandbox("codex", None, True).record(),
                          {"sandbox": "container", "sandbox_unfirewalled": True})
-        src = Path(P.__file__).read_text()
+        src = Path(lser.__file__).read_text()
         self.assertIn("rec.update(self.box.record())", src)
 
 

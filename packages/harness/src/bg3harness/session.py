@@ -15,11 +15,31 @@ so a fake client and a fake game drive it in tests (packages/harness/tests/test_
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 GAME_FAULTS = ("crash", "hang")
 FAULTS = (*GAME_FAULTS, "agent_hang")
+# A session never ends mid-fight (S078): the bg3 MCP server holds the clock while a fight that was on at WRAP UP lasts,
+# at most FIGHT_HOLD_S (15 min) past the planned WRAP UP, and writes the moved times to $BG3AI_FIGHT_HOLD_PATH
+# (fight_hold_path: <session dir>/Sxxx.hold.json). The caller's SessionHooks.session_end moves its deadline with it
+# (held_deadline), never more than FIGHT_HOLD_S past its own. The legacy runner and the app share this one copy.
+FIGHT_HOLD_S = 15 * 60
+
+
+def fight_hold_path(state_dir: Path, sid: str) -> Path:
+    return state_dir / f"{sid}.hold.json"
+
+
+def held_deadline(path: Path, deadline: float) -> float:
+    """The session deadline with the MCP server's fight hold applied (bounded), or `deadline`."""
+    try:
+        held = float(json.loads(path.read_text()).get("deadline") or 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return deadline
+    return max(deadline, min(held, deadline + FIGHT_HOLD_S))
 
 
 @dataclass(frozen=True)

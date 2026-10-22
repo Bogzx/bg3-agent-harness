@@ -18,12 +18,18 @@ from pathlib import Path
 from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # first: the game's profile folders are a temp dir before play
+
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
+import legacy_playthrough as lpt
+from bg3harness.game import controller as C  # noqa: N812  (the GameController and its timings)
 from bg3harness.game import io as G  # noqa: N812
 from bg3harness.game import oom as O  # noqa: N812  (the OOM check's journal and ramwatch reads)
-from bg3harness.game import controller as C  # noqa: N812  (the GameController and its timings)
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import env as renv
+from bg3harness.runner import game_side as rgame
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
 
 G_FUNCS = {
     n
@@ -39,7 +45,7 @@ MOVED: dict[str, ModuleType] = {**dict.fromkeys(CTL_NAMES, C), **dict.fromkeys((
 def home(name: str):
     """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io, the GameController's
     timings to bg3harness.game.controller and the OOM check's reads to bg3harness.game.oom."""
-    return MOVED.get(name) or (G if name in G_FUNCS else P)
+    return MOVED.get(name) or (G if name in G_FUNCS else testenv.home(name))
 
 
 class FakeMenuGame:
@@ -73,11 +79,11 @@ class FakeMenuGame:
             self.load_gate = args["load_enabled"]
         if op == "ui.menu":
             if self.splash:
-                raise P.RpcError("ui.menu: not at the main menu")
+                raise rgame.RpcError("ui.menu: not at the main menu")
             if self.refuse:
-                raise P.RpcError(self.refuse)
+                raise rgame.RpcError(self.refuse)
             if not self.load_gate:
-                raise P.RpcError("ui.menu: loading is disabled")
+                raise rgame.RpcError("ui.menu: loading is disabled")
             self.loads.append(args)
             self.loading = 3 if self.load_starts else 0
             return {}
@@ -112,8 +118,8 @@ class SplashMenu(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-splash-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.saved = {n: getattr(home(n), n) for n in self.NAMES}
-        P.RUNTIME = self.tmp / "runtime"
-        C.MENU_POLL, C.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
+        renv.RUNTIME = self.tmp / "runtime"
+        C.MENU_POLL, C.SPLASH_LOADMENU_S, renv.LOAD_START_TIMEOUT = 0.01, 0.2, 1
 
     def tearDown(self):
         for n, v in self.saved.items():
@@ -125,13 +131,13 @@ class SplashMenu(unittest.TestCase):
         G.available_ops = lambda ctx: {"ui.state", "ui.menu"}
         G.server_ready = lambda: g.running
         G.host_character_name = lambda: "Claude"
-        P.list_saves = lambda: [P.Save("Claude-1__S014-start", "Claude", "S014-start", time.time() - 60)]
-        r = P.Runner(P.Options("splash-test", None, 20, "opus", save_owner="Claude"))
+        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", time.time() - 60)]
+        r = lpt.Runner(rstate.Options("splash-test", None, 20, "opus", save_owner="Claude"))
         r.mem = self.tmp / "memory"
         r.owns_game = lambda: True
         t0 = time.time()
         label = r.ensure_game(first=True)
-        return r, label, time.time() - t0, (P.RUNTIME / "runner.log").read_text()
+        return r, label, time.time() - t0, (renv.RUNTIME / "runner.log").read_text()
 
     def test_splash_flipping_loadmenu_menu_gets_a_key_then_the_save_loads(self):
         g = FakeMenuGame()
@@ -171,7 +177,7 @@ class SplashMenu(unittest.TestCase):
         g = FakeMenuGame(splash=False)
         g.refuse = "ui.menu: loading is disabled (bg3ai/config.json load_enabled=false)"
         relaunched = []
-        real_runner = P.Runner
+        real_runner = lpt.Runner
 
         class R(real_runner):
             def kill_game(self):
@@ -181,11 +187,11 @@ class SplashMenu(unittest.TestCase):
                 relaunched.append(save.folder)
                 return save
 
-        P.Runner = R
+        lpt.Runner = R
         try:
             r, label, _secs, log = self.run_ensure(g)
         finally:
-            P.Runner = real_runner
+            lpt.Runner = real_runner
         self.assertEqual(label, "S014-start")
         self.assertEqual(relaunched, ["kill", "Claude-1__S014-start"])
         self.assertEqual(r.state["loaded_save"], "Claude-1__S014-start")
@@ -199,7 +205,7 @@ class SplashMenu(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "never started"):
             self.run_ensure(g)
         self.assertLess(time.time() - t0, 5)
-        self.assertNotIn("waiting for game state Running", (P.RUNTIME / "runner.log").read_text())
+        self.assertNotIn("waiting for game state Running", (renv.RUNTIME / "runner.log").read_text())
 
 
 class RestartDrift(unittest.TestCase):
@@ -222,8 +228,8 @@ class RestartDrift(unittest.TestCase):
         names = (*SplashMenu.NAMES, "read_progress")
         self.saved = {n: getattr(home(n), n) for n in names}
         self.addCleanup(lambda: [setattr(home(n), n, v) for n, v in self.saved.items()])
-        P.RUNTIME = self.tmp / "runtime"
-        C.MENU_POLL, C.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
+        renv.RUNTIME = self.tmp / "runtime"
+        C.MENU_POLL, C.SPLASH_LOADMENU_S, renv.LOAD_START_TIMEOUT = 0.01, 0.2, 1
 
     def run_restart(
         self,
@@ -248,15 +254,15 @@ class RestartDrift(unittest.TestCase):
         G.server_ready = lambda: g.running
         G.host_character_name = lambda: "Claude"
         G.read_progress = lambda log=None: now_sig
-        P.list_saves = lambda: saves or [P.Save("Claude-1__S062-end", "Claude", "S062-end", time.time() - 60)]
-        r = P.Runner(P.Options("drift-test", None, 20, "opus", save_owner="Claude", take_over=take_over))
+        rcode.list_saves = lambda: saves or [rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", time.time() - 60)]
+        r = lpt.Runner(rstate.Options("drift-test", None, 20, "opus", save_owner="Claude", take_over=take_over))
         r.state["agent_saves"] = agent_saves
         r.mem = self.tmp / "memory"
         r.owns_game = lambda: owned
         r.state["loaded_save"] = "Claude-1__S062-end" if owned else None
         r.state["history"] = [{"kind": "play", "session": "S062", "ended": time.time() - 600, "end_sig": self.END}]
         label = r.ensure_game(first=True)
-        logf = P.RUNTIME / "runner.log"
+        logf = renv.RUNTIME / "runner.log"
         return g, label, logf.read_text() if logf.exists() else ""
 
     def test_fixture_loaded_in_between_reloads_the_newest_save(self):
@@ -284,9 +290,9 @@ class RestartDrift(unittest.TestCase):
         # RUN-6 (S059): the newest good state was the agent's own quicksave; pick_save used to skip every QuickSave_N
         now = time.time()
         saves = [
-            P.Save("Claude-1__S062-end", "Claude", "S062-end", now - 600),
-            P.Save("Claude-1__QuickSave_7", "Claude", "QuickSave_7", now - 60),  # the agent's (recorded)
-            P.Save("Claude-1__QuickSave_8", "Claude", "QuickSave_8", now - 30),
+            rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", now - 600),
+            rpolicy.Save("Claude-1__QuickSave_7", "Claude", "QuickSave_7", now - 60),  # the agent's (recorded)
+            rpolicy.Save("Claude-1__QuickSave_8", "Claude", "QuickSave_8", now - 30),
         ]  # acceptance's (not)
         act2 = dict(self.END, level="SCL_Main_A")
         g, label, _log = self.run_restart(act2, saves=saves, agent_saves=["Claude-1__QuickSave_7"])
@@ -307,12 +313,12 @@ class RestartDrift(unittest.TestCase):
         g, label, _log = self.run_restart(now)
         self.assertEqual((label, len(g.loads)), (None, 0))
         moved = dict(now, party_pos={"Karlach": [300.0, 46.4, 224.3], "Claude": [90.0, 46.4, 224.3]})
-        self.assertIn("Claude stands 75 m from", P.state_drift(end, moved) or "")
+        self.assertIn("Claude stands 75 m from", rpolicy.state_drift(end, moved) or "")
 
     def test_state_drift(self):
-        self.assertIsNone(P.state_drift(None, self.END))
-        self.assertIn("journal_steps 414", P.state_drift(self.END, dict(self.END, journal_steps=414)) or "")
-        self.assertIn("40 m from", P.state_drift(self.END, dict(self.END, pos=[55.3, 46.4, 224.3])) or "")
+        self.assertIsNone(rpolicy.state_drift(None, self.END))
+        self.assertIn("journal_steps 414", rpolicy.state_drift(self.END, dict(self.END, journal_steps=414)) or "")
+        self.assertIn("40 m from", rpolicy.state_drift(self.END, dict(self.END, pos=[55.3, 46.4, 224.3])) or "")
 
 
 if __name__ == "__main__":

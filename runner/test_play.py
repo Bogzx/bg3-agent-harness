@@ -15,12 +15,22 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: E402, F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")   # never chmod the real play/knowledge (Knowledge tests patch it)
 import play as P  # noqa: E402
+from bg3harness.game import controller as gamectl
+from bg3harness.runner import agent_side as ragent
+from bg3harness.runner import checks_side as rchecks
+from bg3harness.runner import codewatch as rcode
+from bg3harness.runner import env as renv
+from bg3harness.runner import policy as rpolicy
+from bg3harness.runner import state as rstate
+import legacy_cli as lcli
+import legacy_playthrough as lpt
+import legacy_series as lser
 from bg3harness.game import io as G  # noqa: E402  (the game's I/O, moved out of play.py)
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
@@ -34,88 +44,88 @@ def home(name: str):
 
 class SessionNumbering(unittest.TestCase):
     def test_first_session(self):
-        self.assertEqual(P.predict_session_number([], None), 1)
+        self.assertEqual(rpolicy.predict_session_number([], None), 1)
 
     def test_after_logs(self):
-        self.assertEqual(P.predict_session_number([1, 2, 3], 3), 4)
+        self.assertEqual(rpolicy.predict_session_number([1, 2, 3], 3), 4)
 
     def test_state_ahead_of_logs(self):
         # a session whose log was never written still advances the counter (session.py does the same)
-        self.assertEqual(P.predict_session_number([1, 2], 5), 6)
+        self.assertEqual(rpolicy.predict_session_number([1, 2], 5), 6)
 
     def test_gaps(self):
-        self.assertEqual(P.predict_session_number([1, 7, 3], None), 8)
+        self.assertEqual(rpolicy.predict_session_number([1, 7, 3], None), 8)
 
     def test_ids(self):
-        self.assertEqual(P.session_id(7), "S007")
-        self.assertEqual(P.session_id(1234), "S1234")
+        self.assertEqual(rpolicy.session_id(7), "S007")
+        self.assertEqual(rpolicy.session_id(1234), "S1234")
 
 
 class DeadlineMath(unittest.TestCase):
     def test_deadlines(self):
-        d, hard = P.deadlines(1000.0, 60)
+        d, hard = rpolicy.deadlines(1000.0, 60)
         self.assertEqual(d, 1000 + 3600)
         self.assertEqual(hard, d + 600)
-        self.assertEqual(P.deadlines(0, 10, grace=30), (600, 630))
+        self.assertEqual(rpolicy.deadlines(0, 10, grace=30), (600, 630))
 
     def test_wrap_minutes(self):
-        self.assertEqual(P.wrap_minutes(60), 57)
-        self.assertEqual(P.wrap_minutes(30), 27)
-        self.assertEqual(P.wrap_minutes(20), 17)
-        self.assertEqual(P.wrap_minutes(6), 4)  # tiny harness sessions: wrap-up is a third of the session
-        self.assertEqual(P.wrapup_minutes(90), 3)
+        self.assertEqual(rpolicy.wrap_minutes(60), 57)
+        self.assertEqual(rpolicy.wrap_minutes(30), 27)
+        self.assertEqual(rpolicy.wrap_minutes(20), 17)
+        self.assertEqual(rpolicy.wrap_minutes(6), 4)  # tiny harness sessions: wrap-up is a third of the session
+        self.assertEqual(rpolicy.wrapup_minutes(90), 3)
 
     def test_early_exit_minutes(self):
         t0 = 1_000_000.0
         # claude-run-2 S002: exited cleanly after 12.6 of 20 min -> early exit with 7.4 min left
-        self.assertEqual(P.early_exit_minutes("exited", t0, t0 + 12.6 * 60, 20), 7.4)
-        self.assertIsNone(P.early_exit_minutes("exited", t0, t0 + 17.5 * 60, 20))  # normal wrap-up end
-        self.assertIsNone(P.early_exit_minutes("exited", t0, t0 + 25 * 60, 20))    # overtime
+        self.assertEqual(rpolicy.early_exit_minutes("exited", t0, t0 + 12.6 * 60, 20), 7.4)
+        self.assertIsNone(rpolicy.early_exit_minutes("exited", t0, t0 + 17.5 * 60, 20))  # normal wrap-up end
+        self.assertIsNone(rpolicy.early_exit_minutes("exited", t0, t0 + 25 * 60, 20))    # overtime
         for hard in ("crash", "hang", "hard_stop", "aborted"):
-            self.assertIsNone(P.early_exit_minutes(hard, t0, t0 + 60, 20))
+            self.assertIsNone(rpolicy.early_exit_minutes(hard, t0, t0 + 60, 20))
 
     def test_short_sessions_refused(self):
         a = mock.Mock(session_minutes=15, allow_short_sessions=False)
-        with mock.patch.object(P, "acquire_lock") as lock, mock.patch("sys.stderr"):
-            self.assertEqual(P.cmd_run(a), 2)
+        with mock.patch.object(lcli, "acquire_lock") as lock, mock.patch("sys.stderr"):
+            self.assertEqual(lcli.cmd_run(a), 2)
         lock.assert_not_called()
 
     def test_budget_unbounded(self):
-        self.assertEqual(P.session_budget(0, None, 60), 60)
+        self.assertEqual(rpolicy.session_budget(0, None, 60), 60)
 
     def test_budget_clipped_and_exhausted(self):
         now = 10_000.0
-        self.assertEqual(P.session_budget(now, now + 3 * 3600, 60), 60)
-        self.assertEqual(P.session_budget(now, now + 40 * 60, 60), 40)
-        self.assertIsNone(P.session_budget(now, now + 14 * 60, 60))
-        self.assertIsNone(P.session_budget(now, now - 5, 60))
+        self.assertEqual(rpolicy.session_budget(now, now + 3 * 3600, 60), 60)
+        self.assertEqual(rpolicy.session_budget(now, now + 40 * 60, 60), 40)
+        self.assertIsNone(rpolicy.session_budget(now, now + 14 * 60, 60))
+        self.assertIsNone(rpolicy.session_budget(now, now - 5, 60))
 
     def test_kickoff_has_pace_preflight(self):
-        k = P.build_kickoff("S004", "pt1", None, [])
+        k = rpolicy.build_kickoff("S004", "pt1", None, [])
         self.assertIn("PACE PRE-FLIGHT", k)
         self.assertIn("Never pass wait=true", k)
         self.assertIn("stuck.md", k)
-        self.assertNotIn(time.strftime("%Y-%m-%d"), P.PACE_PREFLIGHT)  # static: cache-friendly
+        self.assertNotIn(time.strftime("%Y-%m-%d"), rpolicy.PACE_PREFLIGHT)  # static: cache-friendly
 
     def test_kickoff_names_no_deadline_and_has_the_notes(self):
         # S082: any time shown before WRAP UP NOW was read as a clock to beat (early wrap-up 6 sessions in a row)
-        k = P.build_kickoff("S004", "pt1", "S003-end", ["NOTE A", "NOTE B"])
+        k = rpolicy.build_kickoff("S004", "pt1", "S003-end", ["NOTE A", "NOTE B"])
         self.assertIn("S004", k)
         self.assertNotRegex(k.split("PACE PRE-FLIGHT")[0], r"\d\d:\d\d|deadline|time left")
         self.assertIn("you'll be told when to wrap up", k)
         self.assertIn('"S003-end"', k)
         self.assertTrue(k.index("NOTE A") < k.index("NOTE B"))
-        self.assertNotIn("already loaded", P.build_kickoff("S001", "pt1", None, []))
+        self.assertNotIn("already loaded", rpolicy.build_kickoff("S001", "pt1", None, []))
 
     def test_kickoff_leads_with_the_memory_briefing(self):
-        k = P.build_kickoff("S004", "pt1", None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
+        k = rpolicy.build_kickoff("S004", "pt1", None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
         self.assertTrue(k.startswith("=== BG3 PLAYTHROUGH MEMORY — session S004"))
         self.assertIn("briefing (PLAYTHROUGH.md and HANDOFF.md) is above", k)
         self.assertIn("end_session", k)
-        self.assertIn("First call session_start", P.build_kickoff("S004", "pt1", None, []))
+        self.assertIn("First call session_start", rpolicy.build_kickoff("S004", "pt1", None, []))
 
     def test_a_rules_only_kickoff_has_no_pace_preflight(self):
-        self.assertNotIn("PACE PRE-FLIGHT", P.build_kickoff("S004", "pt1", None, [], pace=""))
+        self.assertNotIn("PACE PRE-FLIGHT", rpolicy.build_kickoff("S004", "pt1", None, [], pace=""))
 
 
 class StuckDetection(unittest.TestCase):
@@ -134,54 +144,54 @@ class StuckDetection(unittest.TestCase):
 
     def test_changes_count_as_progress(self):
         a = G.progress_signature(self.status, self.journal)
-        self.assertFalse(P.made_progress(a, G.progress_signature(self.status, self.journal)))
+        self.assertFalse(rpolicy.made_progress(a, G.progress_signature(self.status, self.journal)))
         moved = dict(self.status, subregion="Reithwin Town")
-        self.assertTrue(P.made_progress(a, G.progress_signature(moved, self.journal)))
+        self.assertTrue(rpolicy.made_progress(a, G.progress_signature(moved, self.journal)))
         more = self.journal + [{"title": "New", "steps": ["s"]}]
-        self.assertTrue(P.made_progress(a, G.progress_signature(self.status, more)))
+        self.assertTrue(rpolicy.made_progress(a, G.progress_signature(self.status, more)))
         xp = dict(self.status, party=[{"level": 6, "xp": 150}, {"level": 6, "xp": 90}])
-        self.assertTrue(P.made_progress(a, G.progress_signature(xp, self.journal)))
-        self.assertIsNone(P.made_progress(None, a))
+        self.assertTrue(rpolicy.made_progress(a, G.progress_signature(xp, self.journal)))
+        self.assertIsNone(rpolicy.made_progress(None, a))
 
     def test_session_progress_counts_points_and_far_moves(self):
         a = G.progress_signature(self.status, self.journal)
         # S040: islands descent + Balthazar (32 pts), wipe, reload: same save signature, still progress
-        self.assertEqual(P.session_progress(a, dict(a), 32), (True, "32 story points"))
-        self.assertEqual(P.session_progress(a, dict(a), 2)[0], False)            # S039: 2 explore points
+        self.assertEqual(rpolicy.session_progress(a, dict(a), 32), (True, "32 story points"))
+        self.assertEqual(rpolicy.session_progress(a, dict(a), 2)[0], False)            # S039: 2 explore points
         here = dict(self.status, party=[{"level": 6, "xp": 100, "pos": [0, 0, 0]}, {"level": 6, "xp": 90}])
         near = dict(here, party=[{"level": 6, "xp": 100, "pos": [20, 0, 0]}, {"level": 6, "xp": 90}])
         far = dict(here, party=[{"level": 6, "xp": 100, "pos": [0, -30, 70]}, {"level": 6, "xp": 90}])
         s0 = G.progress_signature(here, self.journal)
         self.assertEqual(s0["pos"], [0.0, 0.0, 0.0])
-        self.assertFalse(P.made_progress(s0, G.progress_signature(near, self.journal)))   # a step isn't progress
-        self.assertEqual(P.session_progress(s0, G.progress_signature(near, self.journal), 0)[0], False)
-        ok, why = P.session_progress(s0, G.progress_signature(far, self.journal), 0)
+        self.assertFalse(rpolicy.made_progress(s0, G.progress_signature(near, self.journal)))   # a step isn't progress
+        self.assertEqual(rpolicy.session_progress(s0, G.progress_signature(near, self.journal), 0)[0], False)
+        ok, why = rpolicy.session_progress(s0, G.progress_signature(far, self.journal), 0)
         self.assertTrue(ok)
         self.assertIn("moved 76 m", why)
-        ok, why = P.session_progress(a, dict(a, subregion="Reithwin Town"), 0)
+        ok, why = rpolicy.session_progress(a, dict(a, subregion="Reithwin Town"), 0)
         self.assertEqual((ok, why), (True, "changed subregion"))
-        self.assertEqual(P.session_progress(None, a, 12), (True, "12 story points"))   # points alone tell it
-        self.assertEqual(P.session_progress(None, a, 3), (None, "unknown"))
-        self.assertEqual(P.session_progress(a, a, None)[0], False)
+        self.assertEqual(rpolicy.session_progress(None, a, 12), (True, "12 story points"))   # points alone tell it
+        self.assertEqual(rpolicy.session_progress(None, a, 3), (None, "unknown"))
+        self.assertEqual(rpolicy.session_progress(a, a, None)[0], False)
 
     def test_boundary_s(self):
         h = [{"kind": "play", "ended": 1000.0}, {"kind": "fix", "ended": 1100.0}]
-        self.assertEqual(P.boundary_s(h, 1045.0), 45.0)          # fix entries are no play boundary
-        self.assertIsNone(P.boundary_s(h, 1000.0 + P.BOUNDARY_MAX_S + 1))   # the runner was stopped
-        self.assertIsNone(P.boundary_s([], 5.0))
+        self.assertEqual(rpolicy.boundary_s(h, 1045.0), 45.0)          # fix entries are no play boundary
+        self.assertIsNone(rpolicy.boundary_s(h, 1000.0 + rpolicy.BOUNDARY_MAX_S + 1))   # the runner was stopped
+        self.assertIsNone(rpolicy.boundary_s([], 5.0))
 
     def test_is_stuck(self):
         h = lambda p, kind="play": {"progress": p, "kind": kind}  # noqa: E731
-        self.assertFalse(P.is_stuck([]))
-        self.assertFalse(P.is_stuck([h(False)]))
-        self.assertTrue(P.is_stuck([h(True), h(False), h(False)]))
-        self.assertFalse(P.is_stuck([h(False), h(True)]))
-        self.assertFalse(P.is_stuck([h(False), h(None)]))          # unknown (crash) isn't "stuck"
-        self.assertTrue(P.is_stuck([h(False), h(False, "fix"), h(False)]))  # fix sessions don't count
+        self.assertFalse(rpolicy.is_stuck([]))
+        self.assertFalse(rpolicy.is_stuck([h(False)]))
+        self.assertTrue(rpolicy.is_stuck([h(True), h(False), h(False)]))
+        self.assertFalse(rpolicy.is_stuck([h(False), h(True)]))
+        self.assertFalse(rpolicy.is_stuck([h(False), h(None)]))          # unknown (crash) isn't "stuck"
+        self.assertTrue(rpolicy.is_stuck([h(False), h(False, "fix"), h(False)]))  # fix sessions don't count
 
     def test_directive_mentions_location(self):
         sig = G.progress_signature(self.status, self.journal)
-        d = P.stuck_directive([{"progress": False, "end_sig": sig}] * 2)
+        d = rpolicy.stuck_directive([{"progress": False, "end_sig": sig}] * 2)
         self.assertIn("CHANGE APPROACH", d)
         self.assertIn("Last Light Inn", d)
         self.assertNotIn(sig["level"], d)  # audit C24: the level id stays internal
@@ -194,7 +204,7 @@ def legacy_claude_cmd(r, prompt: str, claude_session: str, resume: bool, tag: st
     command a session gets must stay byte-identical (ClaudeClient through Runner.play_request)."""
     model, effort = r.model_for(tag)
     cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "stream-json",
-           "--verbose", "--strict-mcp-config", "--mcp-config", str(P.PLAY_DIR / ".mcp.json"),
+           "--verbose", "--strict-mcp-config", "--mcp-config", str(renv.PLAY_DIR / ".mcp.json"),
            "--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
            "--disable-slash-commands", "--tools", "ToolSearch"]
     if effort:
@@ -203,7 +213,7 @@ def legacy_claude_cmd(r, prompt: str, claude_session: str, resume: bool, tag: st
         cmd += ["--fallback-model", r.opt.fallback_model]
     if tag != "-fix":
         state = getattr(r, "state", None)
-        ac = (P.session_overrides(state.dir / "session-config.json") if state else {}).get(
+        ac = (rstate.session_overrides(state.dir / "session-config.json") if state else {}).get(
             "autocompact", r.opt.autocompact)
         if ac:
             cmd += ["--autocompact", str(ac)]
@@ -264,7 +274,7 @@ def _lines(ev: dict) -> list[str]:
 
 class Misc(unittest.TestCase):
     def test_health_tracker(self):
-        t = P.HealthTracker(3)
+        t = rcode.HealthTracker(3)
         for ok in (False, False):
             t.record(ok)
         self.assertFalse(t.hung)
@@ -293,8 +303,8 @@ class Misc(unittest.TestCase):
         self.assertEqual(_lines({"type": "weird"}), [])
 
     def test_claude_command(self):
-        r = P.Runner.__new__(P.Runner)
-        r.opt = P.Options("pt", None, 60, "opus")
+        r = lpt.Runner.__new__(lpt.Runner)
+        r.opt = rstate.Options("pt", None, 60, "opus")
         cmd = _cmd(r, "go", "1234", resume=False)
         self.assertEqual(cmd[:3], ["claude", "-p", "go"])
         self.assertIn("--session-id", cmd)
@@ -303,7 +313,7 @@ class Misc(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
         self.assertIn("--resume", _cmd(r, "fix", "1234", resume=True))
         self.assertNotIn("--effort", cmd)  # Claude Code's default unless asked
-        for flag in P.CLAUDE_FLAGS:
+        for flag in renv.CLAUDE_FLAGS:
             self.assertIn(flag, cmd)
 
     def test_default_client_command_unchanged(self):
@@ -311,8 +321,8 @@ class Misc(unittest.TestCase):
         cases = [{}, {"effort": "high"}, {"fallback_model": "sonnet"}, {"autocompact": 350_000},
                  {"effort": "max", "fallback_model": "sonnet", "autocompact": 200_000, "fix_model": "haiku"}]
         for kw in cases:
-            r = P.Runner.__new__(P.Runner)
-            r.opt = P.Options("pt", None, 60, "opus", **kw)
+            r = lpt.Runner.__new__(lpt.Runner)
+            r.opt = rstate.Options("pt", None, 60, "opus", **kw)
             self.assertEqual(r.opt.client, "claude")
             for prompt, sid, resume, tag in (("go", "1234", False, ""), ("keep playing", "1234", True, ""),
                                              ("fix", "5678", False, "-fix"), ("fix", "5678", True, "-fix")):
@@ -323,25 +333,25 @@ class Misc(unittest.TestCase):
     def test_builtin_tools_disabled(self):
         # The playing agent gets only the bg3 MCP tools (+ ToolSearch to load their schemas): files, memory and the
         # sandbox are the server's (memtools.py); no built-in file, shell, web or agent tool exists in the session.
-        r = P.Runner.__new__(P.Runner)
-        r.opt = P.Options("pt", None, 60, "opus")
+        r = lpt.Runner.__new__(lpt.Runner)
+        r.opt = rstate.Options("pt", None, 60, "opus")
         for cmd in (_cmd(r, "go", "1", resume=False), _cmd(r, "fix", "1", resume=True, tag="-fix")):
             tools = cmd[cmd.index("--tools") + 1]
             self.assertEqual(tools, "ToolSearch")
             self.assertIn("--strict-mcp-config", cmd)
             self.assertIn("--disable-slash-commands", cmd)
-        settings = json.loads((P.PLAY_DIR / ".claude" / "settings.json").read_text())
+        settings = json.loads((renv.PLAY_DIR / ".claude" / "settings.json").read_text())
         self.assertNotIn("hooks", settings)                  # nothing a client must run for correctness
         self.assertEqual(settings["permissions"]["allow"], ["mcp__bg3__*"])
         for tool in ("Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "Agent"):
             self.assertIn(tool, settings["permissions"]["deny"])
 
     def test_keeper_model_default_is_the_play_model(self):
-        self.assertEqual(P.Options("pt", None, 60, "opus").keeper_model, "same")
-        self.assertEqual(P.keeper_model("same", "opus"), "opus")
-        self.assertEqual(P.keeper_model(None, "fable"), "fable")
-        self.assertEqual(P.keeper_model("sonnet", "opus"), "sonnet")   # an explicit override
-        with mock.patch.object(P, "cmd_run", lambda a: (a.keeper_model, a.no_memory_keeper)):
+        self.assertEqual(rstate.Options("pt", None, 60, "opus").keeper_model, "same")
+        self.assertEqual(rpolicy.keeper_model("same", "opus"), "opus")
+        self.assertEqual(rpolicy.keeper_model(None, "fable"), "fable")
+        self.assertEqual(rpolicy.keeper_model("sonnet", "opus"), "sonnet")   # an explicit override
+        with mock.patch.object(lcli, "cmd_run", lambda a: (a.keeper_model, a.no_memory_keeper)):
             self.assertEqual(P.main(["run", "--playthrough", "x"]), ("same", False))
             self.assertEqual(P.main(["run", "--playthrough", "x", "--no-keeper", "--keeper-model", "haiku"]),
                              ("haiku", True))
@@ -350,8 +360,8 @@ class Misc(unittest.TestCase):
     def test_model_and_effort(self):
         import tempfile
         from types import SimpleNamespace
-        r = P.Runner.__new__(P.Runner)
-        r.opt = P.Options("pt", None, 60, "opus", effort="medium", fix_model="sonnet", fallback_model="sonnet")
+        r = lpt.Runner.__new__(lpt.Runner)
+        r.opt = rstate.Options("pt", None, 60, "opus", effort="medium", fix_model="sonnet", fallback_model="sonnet")
         with tempfile.TemporaryDirectory() as d:
             r.state = SimpleNamespace(dir=Path(d))
             cmd = _cmd(r, "go", "1", resume=False)
@@ -371,12 +381,12 @@ class Misc(unittest.TestCase):
     def test_autocompact(self):
         import tempfile
         from types import SimpleNamespace
-        r = P.Runner.__new__(P.Runner)
-        r.opt = P.Options("pt", None, 30, "opus")
+        r = lpt.Runner.__new__(lpt.Runner)
+        r.opt = rstate.Options("pt", None, 30, "opus")
         with tempfile.TemporaryDirectory() as d:
             r.state = SimpleNamespace(dir=Path(d))
             self.assertNotIn("--autocompact", _cmd(r, "go", "1", resume=False))  # Claude Code's default
-            r.opt = P.Options("pt", None, 30, "opus", autocompact=350_000)
+            r.opt = rstate.Options("pt", None, 30, "opus", autocompact=350_000)
             cmd = _cmd(r, "go", "1", resume=False)
             self.assertEqual(cmd[cmd.index("--autocompact") + 1], "350000")
             self.assertNotIn("--autocompact", _cmd(r, "fix", "1", resume=True, tag="-fix"))
@@ -399,29 +409,29 @@ class ApiAndMcpFailures(unittest.TestCase):
     """RUN-7 / RUN-8 pure parts."""
 
     def test_classify(self):
-        self.assertIsNone(P.classify_api_failure([], False))
-        self.assertEqual(P.classify_api_failure(["Claude AI usage limit reached|1760000000"], False), "limit")
-        self.assertEqual(P.classify_api_failure(["API Error: 529 Overloaded"], False), "limit")
-        self.assertEqual(P.classify_api_failure(["API Error: 500 Internal server error"], False), "limit")
-        self.assertEqual(P.classify_api_failure([], True), "limit")              # rate_limit_event rejected
-        self.assertEqual(P.classify_api_failure(["Invalid API key · Please run /login"], False), "auth")
-        self.assertEqual(P.classify_api_failure(["API Error: 404 model: claude-x not found"], False), "auth")
-        self.assertEqual(P.classify_api_failure(["Credit balance is too low"], True), "auth")
+        self.assertIsNone(renv.classify_api_failure([], False))
+        self.assertEqual(renv.classify_api_failure(["Claude AI usage limit reached|1760000000"], False), "limit")
+        self.assertEqual(renv.classify_api_failure(["API Error: 529 Overloaded"], False), "limit")
+        self.assertEqual(renv.classify_api_failure(["API Error: 500 Internal server error"], False), "limit")
+        self.assertEqual(renv.classify_api_failure([], True), "limit")              # rate_limit_event rejected
+        self.assertEqual(renv.classify_api_failure(["Invalid API key · Please run /login"], False), "auth")
+        self.assertEqual(renv.classify_api_failure(["API Error: 404 model: claude-x not found"], False), "auth")
+        self.assertEqual(renv.classify_api_failure(["Credit balance is too low"], True), "auth")
 
     def test_backoff(self):
         now = 1000.0
-        self.assertEqual(P.api_backoff_s(now + 600, now, 1), 600 + P.API_RESET_SLACK_S)   # its reset time
-        self.assertEqual(P.api_backoff_s(now + 10 ** 6, now, 1), P.API_RESET_MAX_S)
-        self.assertEqual([P.api_backoff_s(None, now, k) for k in (1, 2, 3)], [60, 120, 240])
-        self.assertEqual(P.api_backoff_s(now - 5, now, 99), P.API_BACKOFF_MAX_S)        # a past reset: doubling
+        self.assertEqual(renv.api_backoff_s(now + 600, now, 1), 600 + renv.API_RESET_SLACK_S)   # its reset time
+        self.assertEqual(renv.api_backoff_s(now + 10 ** 6, now, 1), renv.API_RESET_MAX_S)
+        self.assertEqual([renv.api_backoff_s(None, now, k) for k in (1, 2, 3)], [60, 120, 240])
+        self.assertEqual(renv.api_backoff_s(now - 5, now, 99), renv.API_BACKOFF_MAX_S)        # a past reset: doubling
 
     def test_mcp_problem(self):
-        self.assertIsNone(P.mcp_problem(["bg3:connected"], True))
-        self.assertEqual(P.mcp_problem(["bg3:failed"], True), "the bg3 MCP server is failed")
-        self.assertIn("missing", P.mcp_problem([], True))
-        self.assertIsNone(P.mcp_problem([], False))         # codex/gemini: an absent list proves nothing
-        self.assertIsNone(P.mcp_problem(None, True))
-        self.assertEqual(P.mcp_problem(["bg3:pending"], False), "the bg3 MCP server is pending")
+        self.assertIsNone(renv.mcp_problem(["bg3:connected"], True))
+        self.assertEqual(renv.mcp_problem(["bg3:failed"], True), "the bg3 MCP server is failed")
+        self.assertIn("missing", renv.mcp_problem([], True))
+        self.assertIsNone(renv.mcp_problem([], False))         # codex/gemini: an absent list proves nothing
+        self.assertIsNone(renv.mcp_problem(None, True))
+        self.assertEqual(renv.mcp_problem(["bg3:pending"], False), "the bg3 MCP server is pending")
 
 
 class Profile(unittest.TestCase):
@@ -430,27 +440,27 @@ class Profile(unittest.TestCase):
     def test_load(self):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "profile.json"
-            self.assertEqual(P.load_profile(f), {})                                    # missing: today's flow
+            self.assertEqual(rpolicy.load_profile(f), {})                                    # missing: today's flow
             f.write_text("{broken")
-            self.assertEqual(P.load_profile(f), {})
+            self.assertEqual(rpolicy.load_profile(f), {})
             f.write_text(json.dumps({"character": {"brief": "  "}, "difficulty": "Hard"}))
-            self.assertEqual(P.load_profile(f), {})                                    # no brief, bad difficulty
+            self.assertEqual(rpolicy.load_profile(f), {})                                    # no brief, bad difficulty
             f.write_text(json.dumps({"character": {"brief": "a dwarf cleric", "roleplay": "x"}, "rules": {}}))
-            self.assertEqual(P.load_profile(f), {"character": {"brief": "a dwarf cleric", "roleplay": "strict"},
+            self.assertEqual(rpolicy.load_profile(f), {"character": {"brief": "a dwarf cleric", "roleplay": "strict"},
                                                  "rules": {}})                         # strict by default
 
     def test_update(self):
-        p = P.update_profile({}, "a dwarf cleric")
+        p = rpolicy.update_profile({}, "a dwarf cleric")
         self.assertEqual(p, {"character": {"brief": "a dwarf cleric", "roleplay": "strict"}})
-        p = P.update_profile(dict(p, character=dict(p["character"], name="Mira")), roleplay="light",
+        p = rpolicy.update_profile(dict(p, character=dict(p["character"], name="Mira")), roleplay="light",
                              difficulty="Tactician")
         self.assertEqual(p, {"character": {"brief": "a dwarf cleric", "roleplay": "light", "name": "Mira"},
                              "difficulty": "Tactician"})
-        self.assertEqual(P.update_profile({}, roleplay="light"), {})                   # no brief: no character
+        self.assertEqual(rpolicy.update_profile({}, roleplay="light"), {})                   # no brief: no character
 
     def test_note(self):
         prof = {"character": {"brief": "pious\nshort-tempered", "constraints": "no Dark Urge", "roleplay": "strict"}}
-        n = P.character_creation_note(prof, None)
+        n = rpolicy.character_creation_note(prof, None)
         self.assertIn("character-creation.md", n)
         self.assertIn("> pious\n> short-tempered", n)
         self.assertIn("Constraints: no Dark Urge", n)
@@ -461,19 +471,19 @@ class Profile(unittest.TestCase):
         self.assertIn("make the first move at once, with no more reads", n)   # naut2: 12-14 s of reads after CC
         self.assertNotIn("read name/race/class back with get_status", n)
         self.assertIn("Name: yours to choose", n)
-        self.assertIn('Name: exactly "Ilse"', P.character_creation_note(prof, "Ilse"))
+        self.assertIn('Name: exactly "Ilse"', rpolicy.character_creation_note(prof, "Ilse"))
 
 
 class UntilMilestone(unittest.TestCase):
     """RUN-2: run --until <milestone> and its runs.jsonl record."""
 
     def test_until_reached(self):
-        self.assertIsNone(P.until_reached(None, "nautiloid_escaped"))
+        self.assertIsNone(rpolicy.until_reached(None, "nautiloid_escaped"))
         seen = {"regions": ["Nautiloid"], "quests": {"Escape the Nautiloid": {"done": False}}}
-        self.assertIsNone(P.until_reached(seen, "nautiloid_escaped"))
-        self.assertEqual(P.until_reached(seen, "nautiloid")["label"], "Aboard the Nautiloid")
+        self.assertIsNone(rpolicy.until_reached(seen, "nautiloid_escaped"))
+        self.assertEqual(rpolicy.until_reached(seen, "nautiloid")["label"], "Aboard the Nautiloid")
         seen["quests"]["Escape the Nautiloid"]["done"] = True
-        self.assertEqual(P.until_reached(seen, "nautiloid_escaped"),
+        self.assertEqual(rpolicy.until_reached(seen, "nautiloid_escaped"),
                          {"id": "nautiloid_escaped", "label": "Nautiloid escaped"})
 
     def test_run_record(self):
@@ -489,8 +499,8 @@ class UntilMilestone(unittest.TestCase):
                   {"t": 160, "kind": "recovered"}, {"t": 170, "kind": "fault", "fault": "agent_hang"}]
             (d / "runner_events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in ev))
             hist = [{"kind": "play", "started": 90, "minutes": 30}, {"kind": "play", "started": 110, "minutes": 20}]
-            with mock.patch.object(P, "read_actions_since", lambda t: [{"tool": "load_game"}, {"tool": "look"}]):
-                rec = P.run_record(d, 100, 100 + 3600, {"id": "crash_site", "label": "Reached the surface",
+            with mock.patch.object(rpolicy, "read_actions_since", lambda t: [{"tool": "load_game"}, {"tool": "look"}]):
+                rec = lser.run_record(d, 100, 100 + 3600, {"id": "crash_site", "label": "Reached the surface",
                                                         "session": "S004", "t": 3000}, "pt", hist)
         self.assertEqual((rec["milestone"], rec["reached_in"], rec["wall_min"]), ("crash_site", "S004", 60.0))
         self.assertEqual((rec["sessions"], rec["play_min"]), (1, 20))
@@ -508,7 +518,7 @@ class Latency(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             base = d / "S001"
-            timing = P.latency.StreamTiming(Path(f"{base}.turns.jsonl"))
+            timing = rpolicy.latency.StreamTiming(Path(f"{base}.turns.jsonl"))
             t0 = 1_760_000_000.0
             events = [
                 (1.0, {"type": "assistant", "message": {"content": [
@@ -526,7 +536,7 @@ class Latency(unittest.TestCase):
             class FakeRunner:
                 state = type("S", (), {"dir": d})()
 
-            s = P.Runner.write_latency(FakeRunner(), "S001", base, t0, t0 + 60)
+            s = lpt.Runner.write_latency(FakeRunner(), "S001", base, t0, t0 + 60)
             self.assertEqual(s["think_s"]["median"], 1.5)
             self.assertEqual(s["source"], "stream")       # no action records from the bridge: stream fallback
             self.assertEqual(s["idle_s"]["all"]["median"], 1.5)
@@ -537,7 +547,7 @@ class Latency(unittest.TestCase):
             self.assertEqual(json.loads(hist[0])["session"], "S001")
 
     def test_metrics_path_in_env(self):
-        src = Path(P.__file__).read_text()
+        src = Path(ragent.__file__).read_text()
         self.assertIn('env["BG3AI_METRICS_PATH"] = f"{base}.metrics.jsonl"', src)
 
 class Progress(unittest.TestCase):
@@ -572,26 +582,26 @@ class Progress(unittest.TestCase):
                 state = type("S", (), {"dir": d})()
                 check_until = lambda self, seen, session: None   # noqa: E731 - no run --until here
 
-            orig_read, orig_poll = P.story.read_game, P.story.POLL_S
-            P.story.read_game, P.story.POLL_S = fake_read, 0.001
+            orig_read, orig_poll = rchecks.story.read_game, rchecks.story.POLL_S
+            rchecks.story.read_game, rchecks.story.POLL_S = fake_read, 0.001
             try:
                 log = []
                 human = type("H", (), {"write": lambda self, x: log.append(x)})()
-                P.Runner.progress_loop(FakeRunner(), "S004", base, 0.0, stop, human)
+                lpt.Runner.progress_loop(FakeRunner(), "S004", base, 0.0, stop, human)
             finally:
-                P.story.read_game, P.story.POLL_S = orig_read, orig_poll
+                rchecks.story.read_game, rchecks.story.POLL_S = orig_read, orig_poll
             self.assertTrue(any("+15 region: Wilderness" in x for x in log), log)
             self.assertTrue(any("+2 quest_step: Escape: b" in x for x in log), log)
-            s = P.Runner.write_progress(FakeRunner(), "S004", base, 0.0, 1800.0)
+            s = lpt.Runner.write_progress(FakeRunner(), "S004", base, 0.0, 1800.0)
             self.assertEqual(s["points"], 15 + 2 + 3)  # region, quest_step, area (Hold in a new region)
             self.assertEqual(s["per_hour"], 40.0)
-            self.assertEqual(P.story_points(Path(f"{base}.progress.json")), 20)
+            self.assertEqual(rpolicy.story_points(Path(f"{base}.progress.json")), 20)
             row = json.loads((d / "progress_history.jsonl").read_text())
             self.assertEqual(row["session"], "S004")
             self.assertTrue((d / "progress_state.json").exists())
 
     def test_wired_into_run_claude(self):
-        src = Path(P.__file__).read_text()
+        src = Path(ragent.__file__).read_text()
         self.assertIn('progress=f"{base}.progress.jsonl"', src)
         self.assertIn('self.write_progress(f"{sid}{tag}", base, start, end)', src)
 
@@ -622,7 +632,7 @@ class AvatarName(unittest.TestCase):
 class WaitWatchdog(unittest.TestCase):
     def test_reports_after_90s_then_every_30s(self):
         out = []
-        w = P.WaitReporter("game state Running", 600, start=0.0, logf=out.append)
+        w = gamectl.WaitReporter("game state Running", 600, start=0.0, logf=out.append)
         fired = [t for t in range(0, 200, 5) if w.tick(float(t))]
         self.assertEqual(fired, [90, 120, 150, 180])
         self.assertIn("game state Running", out[0])
@@ -630,7 +640,7 @@ class WaitWatchdog(unittest.TestCase):
 
     def test_short_wait_silent(self):
         out = []
-        w = P.WaitReporter("x", 60, start=0.0, logf=out.append)
+        w = gamectl.WaitReporter("x", 60, start=0.0, logf=out.append)
         self.assertFalse(any(w.tick(float(t)) for t in range(0, 61)))
 
 
@@ -641,9 +651,9 @@ class InflightStuck(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "nav_guard.json"
             f.write_text(json.dumps({"strikes": [], "inflight": {"level": "SCL_Main_A", "op": "ways warm"}}))
-            self.assertEqual(P.mark_inflight_stuck(f), "SCL_Main_A")
+            self.assertEqual(rpolicy.mark_inflight_stuck(f), "SCL_Main_A")
             self.assertTrue(json.loads(f.read_text())["inflight"]["stuck"])
-            self.assertIsNone(P.mark_inflight_stuck(f))          # already stuck
+            self.assertIsNone(rpolicy.mark_inflight_stuck(f))          # already stuck
 
     def test_per_playthrough_file_and_per_op_markers(self):  # NAV-3 + NAV-7
         with tempfile.TemporaryDirectory() as d:
@@ -653,19 +663,19 @@ class InflightStuck(unittest.TestCase):
             f = Path(d) / "nav_guard_aaaa.json"
             f.write_text(json.dumps({"inflights": {"jump": {"level": "SCL_Main_A", "op": "jump"},
                                                    "ways warm": {"level": "SCL_Main_A", "op": "ways warm"}}}))
-            self.assertEqual(P.mark_inflight_stuck(Path(d)), "SCL_Main_A")    # the newest file
+            self.assertEqual(rpolicy.mark_inflight_stuck(Path(d)), "SCL_Main_A")    # the newest file
             got = json.loads(f.read_text())["inflights"]
             self.assertTrue(got["ways warm"]["stuck"])
             self.assertNotIn("stuck", got["jump"])                             # a jump marker counts anyway
             self.assertNotIn("stuck", json.loads(old.read_text())["inflight"])
-            self.assertIsNone(P.mark_inflight_stuck(Path(d) / "none"))
+            self.assertIsNone(rpolicy.mark_inflight_stuck(Path(d) / "none"))
 
     def test_nothing_in_flight_or_no_file(self):
         with tempfile.TemporaryDirectory() as d:
             f = Path(d) / "nav_guard.json"
-            self.assertIsNone(P.mark_inflight_stuck(f))
+            self.assertIsNone(rpolicy.mark_inflight_stuck(f))
             f.write_text(json.dumps({"strikes": {}}))
-            self.assertIsNone(P.mark_inflight_stuck(f))
+            self.assertIsNone(rpolicy.mark_inflight_stuck(f))
             self.assertNotIn("inflight", json.loads(f.read_text()))
 
 

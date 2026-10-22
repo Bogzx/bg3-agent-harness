@@ -24,11 +24,12 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import events as E  # noqa: N812
 import test_crash as TCR  # noqa: N812
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 from bg3harness.testing.fakemod import FakeMod
 from bg3harness.testing.scripted import FakeClock, GameModel
 
@@ -45,7 +46,11 @@ try:
 except ImportError:  # plain unittest: BG3AI_E2E=1 runs it (the offline suite leaves e2e out)
     pytest = None
 
-P = TCR.P
+import legacy_playthrough as lpt  # noqa: E402
+from bg3harness.runner import env as renv  # noqa: E402
+from bg3harness.runner import policy as rpolicy  # noqa: E402
+from bg3harness.runner import state as rstate  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 PI = REPO / "tools" / "pi" / "node_modules" / ".bin" / "pi"
 STUB_LLM = REPO / "tools" / "pi" / "conformance" / "stub_llm.py"
@@ -144,7 +149,7 @@ class PiE2EBase(TCR.FakeRunBase):
             else:
                 self.addCleanup(os.environ.pop, k, None)
         os.environ[KEY_ENV] = "stub-key"
-        self.budget = P.RUNTIME / "budget.json"
+        self.budget = renv.RUNTIME / "budget.json"
         self.budget.parent.mkdir(parents=True, exist_ok=True)
         self.budget.write_text(json.dumps({"cap": 5.0, "spent": 1.0}))
         self.llm_log = self.tmp / "llm.jsonl"
@@ -173,7 +178,7 @@ class PiE2EBase(TCR.FakeRunBase):
         stop_check=None,
         raw: dict | None = None,
         **opt,
-    ) -> P.SessionResult:
+    ) -> rstate.SessionResult:
         """One Runner.play_session of pi on the stub model; `expected` adds to the served tool count. `raw`: a
         profile table to play instead of the stub one, its endpoint's base_url pointed at the stub."""
         os.environ["BG3AI_PROMPT_CONDITION"] = condition  # play.py main sets it; the runner forwards it to the server
@@ -197,7 +202,7 @@ class PiE2EBase(TCR.FakeRunBase):
         self.system, self.tools = served(condition, ",".join(profiles.tools_off(profile)))
         system_file = self.tmp / "pi-system.txt"
         system_file.write_text(self.system)
-        o = P.Options(
+        o = rstate.Options(
             "pi-e2e",
             None,
             20,
@@ -208,18 +213,19 @@ class PiE2EBase(TCR.FakeRunBase):
             system_file=str(system_file),
             tools_expected=len(self.tools) + expected,
         )
-        self.wire(replace(o, **opt), [P.Save("Claude-1__S001-start", "Claude", "S001-start", time.time() - 300)])
+        self.wire(replace(o, **opt), [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", time.time() - 300)])
         r = self.r
-        r.agent_cmd = lambda req: P.Runner.agent_cmd(r, req)  # the real pi, not test_crash's fake claude
+        r.agent_cmd = lambda req: lpt.Runner.agent_cmd(r, req)  # the real pi, not test_crash's fake claude
         home = self.tmp / "bridge-home"
-        r.client.server = {
+        client: Any = r.client  # the PiClient: its server and cwd point at the real bridge here
+        client.server = {
             "command": "uv",
             "args": ["run", "--project", str(REPO / "bridge"), "bg3ai-mcp"],
             "env": bridge_env(self.fake.port, home),
             "timeout": 60_000,
         }
-        r.client.cwd = home / "cwd"
-        r.client.cwd.mkdir(parents=True, exist_ok=True)
+        client.cwd = home / "cwd"
+        client.cwd.mkdir(parents=True, exist_ok=True)
         r.stop_check = stop_check or (lambda sid, deadline, minutes: None)
         r.run_t0 = time.time()  # Runner.run's start (the cost meter counts from it)
         return r.play_session(20, first=True)
@@ -299,7 +305,7 @@ class Play(PiE2EBase):
         }
         res = self.play([{"error": 400, "body": body}], stop_check=lambda *a: "Keep playing.")
         self.assertEqual(res.reason, "context_overflow")
-        self.assertTrue(P.quick_failure(res))  # at the kickoff: every new session would overflow the same way
+        self.assertTrue(renv.quick_failure(res))  # at the kickoff: every new session would overflow the same way
         h = self.history()
         self.assertEqual((h["reason"], h["stop_resumes"], h["resumes"]), ("context_overflow", 0, 0))
         self.assertEqual(len(self.requests()), 1)  # no retry, no resume of a full conversation

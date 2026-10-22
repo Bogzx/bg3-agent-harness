@@ -18,13 +18,13 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
+
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 from bg3harness import clients as C
 from bg3harness import pi_client as PC
 from bg3harness import profiles as PR
-
-import play as P
+from bg3harness.runner import env as renv
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 STREAMS = ("sequential", "overflow", "malformed", "tool_error", "abort", "resume", "billing", "retries", "image")
@@ -151,15 +151,15 @@ class Guards(unittest.TestCase):
         short = ev("message_end", message={"role": "system", "toolsAdded": [{"name": "t"}] * 93})
         init = parse([TOOLS, short])[1][0]
         self.assertEqual(init.mcp, ["bg3:tools 93/94"])
-        self.assertEqual(P.mcp_problem(init.mcp, False), "the bg3 MCP server is tools 93/94")
-        self.assertIsNone(P.mcp_problem(parse([TOOLS, SYSTEM])[1][0].mcp, False))
+        self.assertEqual(renv.mcp_problem(init.mcp, False), "the bg3 MCP server is tools 93/94")
+        self.assertIsNone(renv.mcp_problem(parse([TOOLS, SYSTEM])[1][0].mcp, False))
         empty = ev("entry_appended", entry={"customType": "bg3.tools", "data": {"n": 0}})
         self.assertEqual(parse([empty, SYSTEM])[1][0].mcp, ["bg3:tools 94/0"])
 
     def test_no_tools_entry_is_a_failed_server(self):
         _, events = parse([SYSTEM, assistant()])
         self.assertEqual(events[0].mcp, ["bg3:failed"])
-        self.assertIsNotNone(P.mcp_problem(events[0].mcp, False))
+        self.assertIsNotNone(renv.mcp_problem(events[0].mcp, False))
 
     def test_init_waits_for_both_and_comes_once(self):
         p = PC.PiParser("m")
@@ -314,8 +314,9 @@ class Client(unittest.TestCase):
         resume = self.client.command(dataclasses.replace(self.req, tag="S007-c1", resume=True))
         at = first.index("--session-dir") + 1
         self.assertEqual(resume[at], first[at])
-        self.assertNotEqual(self.client.agent_dir(dataclasses.replace(self.req, tag="S007-c1")),
-                            self.client.agent_dir(self.req))
+        self.assertNotEqual(
+            self.client.agent_dir(dataclasses.replace(self.req, tag="S007-c1")), self.client.agent_dir(self.req)
+        )
 
     def test_command_guards(self):
         self.req.session = None
