@@ -29,6 +29,25 @@ Useful options (`bg3play-serve --help` has all of them):
 Screens: Watch (screen, reasoning, party, goal, cost), Memory, Timeline, Launcher, Overlay (`/overlay`, a
 transparent 1920x1080 page for OBS) and Replay (a session's events in step with its recorded video).
 
+The shots below are from a real recorded run (playthrough `e2e-naut-claude`, 2026-10-22: Claude Code on Opus 5.5,
+one 15-minute session through the Nautiloid), served offline from its copied `runtime/`.
+
+Watch, after the session ended (the game capture shows only while a game runs):
+
+![Watch](docs/watch.webp)
+
+Replay, 7 minutes in: the recording next to the tool calls at that moment:
+
+![Replay](docs/replay.webp)
+
+Timeline: the session's fights (choices come from `decisions.md`, which this run left empty):
+
+![Timeline](docs/timeline.webp)
+
+Launcher, on a server started without `--supervise`:
+
+![Launcher](docs/launcher.webp)
+
 The recorder runs ffmpeg against the game window. It needs the same `DISPLAY` and `XAUTHORITY` as the game, stops
 when RAM or heat runs high, and deletes the oldest segments above the disk cap (20 GB by default).
 
