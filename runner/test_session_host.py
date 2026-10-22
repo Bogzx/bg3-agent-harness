@@ -109,7 +109,8 @@ class Bench(unittest.TestCase):
         (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": 0.0}))  # the matrix's
         self.matrix = self.tmp / "m.toml"
         self.matrix.write_text(
-            "name = 'm'\nscenarios = ['host_idol']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']\n"
+            "name = 'm'\nallow_gaps = true\nscenarios = ['host_idol']\nmodels = ['profiles/claude.toml']\n"
+            "conditions = ['rules']\n"  # Claude Code's rules play has gaps (bg3bench.conditions): a pilot
         )
         se = self.tmp / "se" / "BG3AI"
         se.mkdir(parents=True)
