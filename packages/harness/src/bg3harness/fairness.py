@@ -3,7 +3,7 @@
 couldn't have seen (docs/FAIRNESS.md). Text rules over the transcript and the runner's prompts, so it audits what
 actually reached the agent, whatever layer produced it.
 
-    python runner/fairness.py runtime/sessions/<playthrough>/S026 [...]   # prints the section per session
+    uv run python -m bg3harness.fairness runtime/sessions/<playthrough>/S026 [...]   # prints the section per session
 
 triage.py adds the section to every Sxxx.triage.md. Two severities:
     LEAK   information a player can't have (fix the layer that let it through)

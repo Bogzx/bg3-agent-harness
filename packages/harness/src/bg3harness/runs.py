@@ -304,7 +304,7 @@ MODEL_TIME_DOCS = ("measured", "estimated", "not_separable")  # model_time's con
 
 
 def model_time_field(mt: dict) -> dict:
-    """The `model_time` of a run record: runner/model_time.model_time() without its constant documentation lists."""
+    """The `model_time` of a run record: model_time.model_time() without its constant documentation lists."""
     return {k: v for k, v in (mt or {}).items() if k not in MODEL_TIME_DOCS}
 
 
@@ -513,7 +513,7 @@ def death_counts(state_dir: Path, since: float, failures: list[dict], until: flo
 
 
 def fairness_flags(streams: list[Path]) -> dict:
-    """runner/fairness.py over the run's play streams (their events: triage.load_calls): hits per rule (LEAK and
+    """fairness.py over the run's play streams (their events: triage.load_calls): hits per rule (LEAK and
     CHECK), plus the sandbox/fairness guard's blocks of the agent's own file calls."""
     kinds: Counter = Counter()
     leak = check = blocks = 0

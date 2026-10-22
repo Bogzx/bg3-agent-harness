@@ -12,6 +12,7 @@ from datetime import datetime
 
 from bg3ai.luadebug import LuaDebugError
 
+from bg3harness.game import host as ghost
 from bg3harness.game import io as game
 from bg3harness.game.controller import MENU_STATES, GameController
 from bg3harness.game.io import EVAL_TIMEOUT, MOD_READY_LUA, LaunchGaveUp, LaunchWatch, RpcError, Save
@@ -84,9 +85,7 @@ class GameSide:
     def own_saves(self) -> list[Save]:
         """list_saves() minus saves older than this playthrough's run start (runner.json saves_after, set for a
         --runs run): a series reuses one character name, and run 2 must never load run 1's saves."""
-        after = self.state["saves_after"]
-        saves = rcode.list_saves()
-        return [s for s in saves if s.mtime >= after or s.folder == self.opt.start_save] if after else saves
+        return ghost.own_saves(rcode.list_saves(), self.state["saves_after"], self.opt.start_save)
 
     def play_windows(self) -> list[tuple[float, float]]:
         return play_windows(self.state["history"], getattr(self.state, "dir", None))
@@ -95,8 +94,7 @@ class GameSide:
         """Save folders pick_save takes whatever their label: the runner's quicksaves, the agent's own quicksaves
         (agent_saves, RUN-6: S059's newest good state was one) and a scenario's start save (older than every save of
         the run, so the agent's first save supersedes it)."""
-        return (set(self.state["runner_saves"] or []) | set(self.state["agent_saves"] or [])
-                | ({self.opt.start_save} if self.opt.start_save else set()))
+        return ghost.ours(self.state, self.opt.start_save)
 
     def record_agent_saves(self, since: float) -> list[str]:
         """The quicksave folders the play session's MCP server wrote since `since` (its save_game.bg lines in
@@ -283,10 +281,7 @@ class GameSide:
     def previous_good_save(self, failed: set[str]) -> Save | None:
         """The fallback when a save keeps crashing the game on load: the last save the runner loaded successfully,
         else this playthrough's newest other save. None = nothing else to try."""
-        saves = [s for s in self.own_saves() if s.folder not in failed]
-        good = self.state["loaded_save"]
-        hit = next((s for s in saves if s.folder == good), None)
-        return hit or pick_save(saves, None, self.state["save_owner"], self.ours(), windows=self.play_windows())
+        return ghost.previous_good_save(self.own_saves(), failed, self.state, self.ours(), self.play_windows())
 
     def sleep(self, seconds: float) -> None:
         self.gamectl.sleep(seconds)
@@ -447,17 +442,8 @@ class GameSide:
         """At a session boundary (before the relaunch check and the hot reload): MOD_LIVE := the main tree's mod/,
         and mod_rev := the commit it came from, which the session's MCP server (started from the same tree) runs
         too. A merge landing during the copy is copied again. -> the files changed."""
-        changed: list[str] = []
-        for _ in range(3):
-            before = rcode.repo_commit()
-            changed += rcode.sync_tree(rcode.MOD_DIR, rcode.MOD_LIVE)
-            self.mod_rev = rcode.repo_commit()
-            if self.mod_rev == before:
-                break
+        changed, self.mod_rev = ghost.refresh_snapshot(rcode.MOD_DIR, rcode.MOD_LIVE, renv.REPO, renv.log)
         self.moved_to = None
-        shown = ", ".join(changed[:5]) + (" …" if len(changed) > 5 else "")
-        renv.log(f"mod snapshot {rcode.MOD_LIVE} = {self.mod_rev}"
-            + (f" ({len(changed)} files updated: {shown})" if changed else " (unchanged)"))
         return changed
 
     def code_moved(self, label: str) -> None:

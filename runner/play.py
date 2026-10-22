@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument(
         "--client",
         choices=sorted(clients.CLIENTS),
-        help="the CLI that plays (runner/clients.py; default claude). A series keeps its first one "
+        help="the CLI that plays (bg3harness.clients; default claude). A series keeps its first one "
         "(series.json); codex and gemini are offline-tested only",
     )
     r.add_argument(
@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=sandbox.MODES,
         default="none",
         help="container: the client plays from a container that reaches only the bg3 MCP server (served "
-        "over http on the host) and its model API (runner/sandbox.py, tools/container/README.md); "
+        "over http on the host) and its model API (bg3harness.sandbox, tools/container/README.md); "
         "refuses without the host firewall (sudo tools/container/firewall.sh up). Recorded; a series "
         "keeps its first mode (series.json) and refuses a run in another",
     )

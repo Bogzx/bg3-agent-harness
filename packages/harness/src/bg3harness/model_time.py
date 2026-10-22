@@ -3,7 +3,7 @@
 game, MCP transport) and what the model spent (tool result -> its next message), with the model part normalised to a
 reference API speed so runs on different providers / hours / models compare.
 
-    python3 runner/model_time.py <session_dir> [--run K]
+    uv run python -m bg3harness.model_time <session_dir> [--run K]
 
 Stdlib only (plus the repo's bridge/src/bg3ai/metrics.py, itself stdlib only). Reads what a session leaves behind:
 Sxxx.turns.jsonl (runner arrival times of every assistant block, tool_use and tool_result; else the claude stream's

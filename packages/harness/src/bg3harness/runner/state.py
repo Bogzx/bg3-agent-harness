@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bg3harness import bg3le_buildinfo, clients, sandbox
+from bg3harness.game import host as ghost
 from bg3harness.game import io as game
 from bg3harness.game.io import LaunchGaveUp, Save
 from bg3harness.runner import codewatch as rcode
@@ -32,6 +33,7 @@ class RunnerState:
         self.dir = renv.RUNTIME / "sessions" / playthrough
         self.dir.mkdir(parents=True, exist_ok=True)
         self.path = self.dir / "runner.json"
+        self.data: dict[str, Any]
         try:
             self.data = json.loads(self.path.read_text())
         except (OSError, ValueError):
@@ -44,7 +46,7 @@ class RunnerState:
         tmp.write_text(json.dumps(self.data, indent=1))
         tmp.replace(self.path)
 
-    def __getitem__(self, k):
+    def __getitem__(self, k) -> Any:
         return self.data.get(k)
 
     def __setitem__(self, k, v):
@@ -53,16 +55,7 @@ class RunnerState:
 
 
 def write_status(**fields) -> None:
-    path = renv.RUNTIME / "runner.status.json"
-    try:
-        cur = json.loads(path.read_text())
-    except (OSError, ValueError):
-        cur = {}
-    cur.update(fields, updated=time.time())
-    renv.RUNTIME.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cur, indent=1))
-    tmp.replace(path)
+    ghost.write_status(renv.RUNTIME, **fields)
 
 
 @dataclass

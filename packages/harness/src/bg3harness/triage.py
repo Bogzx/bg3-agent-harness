@@ -1,7 +1,7 @@
 # pyright: basic
 """Post-session triage report: what went wrong in one session, for the next round of fixes.
 
-    python runner/triage.py runtime/sessions/<playthrough>/S002     # writes S002.triage.md
+    uv run python -m bg3harness.triage runtime/sessions/<playthrough>/S002     # writes S002.triage.md
 
 Reads the files the runner writes per session (all optional, missing ones are skipped):
     Sxxx.events.jsonl   the normalized event log (bg3harness/events.py; any client): tool calls with arguments, results,

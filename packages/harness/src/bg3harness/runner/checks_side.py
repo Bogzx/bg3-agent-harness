@@ -18,6 +18,7 @@ from bg3ai import milestones
 from bg3ai import progress as story
 
 from bg3harness import choices, events, facts, game_settings, ramwatch, runs, scenario_file, spend, steam_paths
+from bg3harness.game import host as ghost
 from bg3harness.game import io as game
 from bg3harness.game import oom
 from bg3harness.game.io import EVAL_TIMEOUT
@@ -152,7 +153,7 @@ class ChecksSide:
     def setup_env(self) -> dict:
         """The game's env: the mod's scn.* ops are refused unless a run seeds the dice (game_settings.SETUP_ENV)."""
         seeded = getattr(getattr(self, "opt", None), "seed", None) is not None   # a bare Runner (tests) has no opt
-        return {game_settings.SETUP_ENV: "1"} if seeded else {}
+        return ghost.setup_env(seeded)
 
     def game_setup(self) -> None:
         """Once per runner, with the game up: the settings readout (the run record's game_settings, a facts
