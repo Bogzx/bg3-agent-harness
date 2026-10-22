@@ -65,11 +65,12 @@ class Package(unittest.TestCase):
         subprocess.run([sys.executable, "-I", "-c", code], check=True)
 
     def test_runner_shims_are_the_package_modules(self) -> None:
+        # runner/_harness.py's alias, under a name no shim has (the real shims go one by one, tools/ci/runner_shims.py)
         sys.path.insert(0, str(REPO / "runner"))
         self.addCleanup(sys.path.remove, str(REPO / "runner"))
-        events = importlib.import_module("events")
-        self.assertIs(events, importlib.import_module("bg3harness.events"))
-        self.assertIs(importlib.import_module("clients").Event, events.Event)
+        self.addCleanup(sys.modules.pop, "_test_alias_events", None)
+        importlib.import_module("_harness").alias("_test_alias_events", "events")
+        self.assertIs(sys.modules["_test_alias_events"], importlib.import_module("bg3harness.events"))
 
 
 if __name__ == "__main__":

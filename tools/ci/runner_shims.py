@@ -8,13 +8,18 @@ A shim is a runner module that only stands in for code that moved into a package
 A use of shim <name> is one of:
     import     `import <name>` / `from <name> import ...` / `importlib.import_module("<name>")` in a file that has
                runner/ on sys.path: a file under runner/, or one with a `sys.path.insert/append` whose argument
-               mentions runner, unless the importing file's own directory has a <name>.py
+               mentions runner, unless the importing file's own directory has a <name>.py; and the app's
+               `legacy_paths.load("<name>")` (bg3play/adapters/legacy_paths.py puts runner/ on sys.path)
     dotted     `import runner.<name>` / `from runner.<name> import ...` / `from runner import <name>`
     path       a Python string value or path join naming runner/<name>.py (spec_from_file_location, argv, ...)
     mention    runner/<name>.py in a docstring, or in a tracked non-Python text file (docs, shell scripts, configs)
 
+A deleted shim (DELETED) must stay gone: any use of one (an import of it would fail, a mention is stale) fails
+--check and tools/ci/test_runner_shims.py, so CI catches the old name coming back.
+
     uv run python tools/ci/runner_shims.py          # the table: shim -> target, then its uses (file:line kind)
     uv run python tools/ci/runner_shims.py --json   # the same as JSON
+    uv run python tools/ci/runner_shims.py --check  # exit 1 on any use of a deleted shim
 """
 
 from __future__ import annotations
@@ -31,6 +36,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TEXT_SUFFIXES = (".md", ".sh", ".toml", ".yml", ".yaml", ".json", ".txt", ".cfg", ".ini")
+# Shims removed once nothing used them (research/ovh/found.md round 8): name -> the package module to use instead.
+DELETED = {
+    "deepseek_bill": "bg3harness.deepseek_bill",
+    "host_tuning": "bg3harness.host_tuning",
+}
 
 
 @dataclass(frozen=True)
@@ -45,7 +55,7 @@ class Use:
     shim: str
     path: str
     line: int
-    kind: str  # "import", "dotted", "path" or "mention"
+    kind: str  # "import", "dotted", "path", "mention", or "file" (a deleted shim's own file, deleted_uses)
 
 
 def find_shim(name: str, source: str) -> Shim | None:
@@ -90,6 +100,9 @@ def _on_runner_path(path: str, tree: ast.Module, source: str) -> bool:
     return False
 
 
+LOAD = "legacy_paths.load"
+
+
 def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[str] = ()) -> list[Use]:
     """The uses of the shims in one Python file; `local` are the module names of the file's own directory."""
     names, mine = set(shims), set(local)
@@ -117,13 +130,13 @@ def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[st
                 out.extend(Use(a.name, path, node.lineno, "dotted") for a in node.names if a.name in names)
         elif (
             isinstance(node, ast.Call)
-            and ast.unparse(node.func) in ("importlib.import_module", "import_module", "__import__")
+            and (func := ast.unparse(node.func)) in ("importlib.import_module", "import_module", "__import__", LOAD)
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
         ):
             top, _, rest = node.args[0].value.partition(".")
-            if top in names and bare and top not in mine:
+            if top in names and (bare or func == LOAD) and top not in mine:
                 out.append(Use(top, path, node.lineno, "import"))
             elif top == "runner" and rest.split(".")[0] in names:
                 out.append(Use(rest.split(".")[0], path, node.lineno, "dotted"))
@@ -173,6 +186,24 @@ def scan(files: Mapping[str, str]) -> tuple[list[Shim], list[Use]]:
     return shims, uses
 
 
+def deleted_uses(files: Mapping[str, str], deleted: Iterable[str] = DELETED) -> list[Use]:
+    """Uses of deleted shims over {repo path: content}, scanned as if each shim were still there; a deleted shim's
+    file back in runner/ is a use too (kind "file")."""
+    names = list(deleted)
+    own = {f"runner/{n}.py" for n in names}
+    uses = [Use(n, f"runner/{n}.py", 1, "file") for n in names if f"runner/{n}.py" in files]
+    for p, src in sorted(files.items()):
+        if p in own:
+            continue
+        if p.endswith(".py"):
+            here = p.rpartition("/")[0]
+            local = [q.rpartition("/")[2][:-3] for q in files if q.endswith(".py") and q.rpartition("/")[0] == here]
+            uses += python_uses(p, src, names, [] if here == "runner" else local)
+        elif p.endswith(TEXT_SUFFIXES):
+            uses += text_uses(p, src, names)
+    return uses
+
+
 def tracked(root: Path = ROOT) -> dict[str, str]:
     out = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True).stdout.split()
     files: dict[str, str] = {}
@@ -189,8 +220,16 @@ def tracked(root: Path = ROOT) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="every runner/*.py shim and every use of one")
     ap.add_argument("--json", action="store_true", help="print {shims, uses} as JSON")
+    ap.add_argument("--check", action="store_true", help="exit 1 on any use of a deleted shim (DELETED)")
     a = ap.parse_args(argv)
-    shims, uses = scan(tracked())
+    files = tracked()
+    if a.check:
+        gone = deleted_uses(files)
+        for u in gone:
+            print(f"{u.path}:{u.line}: {u.kind} of deleted shim runner/{u.shim}.py: use {DELETED[u.shim]}")
+        print(f"deleted shims: {len(gone)} uses" if gone else f"deleted shims: OK ({len(DELETED)} gone, no uses)")
+        return 1 if gone else 0
+    shims, uses = scan(files)
     if a.json:
         print(json.dumps({"shims": [asdict(s) for s in shims], "uses": [asdict(u) for u in uses]}, indent=1))
         return 0
