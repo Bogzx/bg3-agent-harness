@@ -9,7 +9,7 @@
   "kind": "save",
   "save": null,
   "save_sha1": null,
-  "needs_save": "Act 3, the Lower City, Cazador's Dungeon below Szarr Palace, before the fight with Cazador starts (claude-run-2 S074-start): party level 11, companions (Gale, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "needs_save": "Act 3, the Lower City, Cazador's Dungeon below Szarr Palace, at the top of the stairs before the talk with Cazador that starts the fight (claude-run-2 S075-end, the start of its last tries): party level 11, companions (Gale, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
   "note": {
    "where": "Cazador's Dungeon below Szarr Palace, out of combat.",
    "objective": "Defeat Cazador Szarr.",
