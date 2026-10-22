@@ -5,8 +5,9 @@ model (tools/pi/conformance/stub_llm.py), the real bridge (bg3ai-mcp, started by
 (bg3harness.testing). Covers a short scripted play with a stop-check resume of the same conversation, billing from
 the stub's usage into the budget, the cost cap stopping the run, a context overflow ending the session as a recorded
 failure, the tool-count check, the rules-only vs rules+coaching system text and result nudges, a text-only
-model without the screenshots group, and profiles/deepseek-v4-pro.toml billed from DeepSeek's usage fields until its
-cost cap stops the run. No game, no key, no network; ~2 min.
+model without the screenshots group, profiles/deepseek-v4-pro.toml billed from DeepSeek's usage fields until its
+cost cap stops the run, and a response the endpoint doesn't bill priced from the profile's rates (a profile without
+them refused). No game, no key, no network; ~2 min.
 
     uv run pytest -m e2e runner/test_pi_e2e.py      (or BG3AI_E2E=1 uv run python -m unittest runner/test_pi_e2e.py)
 
@@ -198,6 +199,7 @@ class PiE2EBase(TCR.FakeRunBase):
                     "reasoning": True,
                     "context_window": 200000,
                     "max_tokens": 16000,
+                    "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
                 },
             }
         profile = profiles.parse(raw)
@@ -407,6 +409,62 @@ class DeepSeekCap(PiE2EBase):
         self.assertAlmostEqual(self.spent(), 1.0 + billed * self.BILL)
         self.assertIn(len(self.requests()) - billed, (0, 1))  # at most one request in flight at the stop
         self.assertEqual({r["model"] for r in self.requests()}, {"deepseek-v4-pro"})
+
+
+class UnbilledCost(PiE2EBase):
+    """A response the endpoint doesn't bill costs pi's estimate from the profile's rates, never $0 (research/ovh/
+    pkg-bench-analysis.md C3.1/C3.2: E1, E2)."""
+
+    # one stub response (1000 prompt tokens, 800 of them cached, 50 out) at the base profile's USD per M rates
+    ESTIMATE = (200 * 1.0 + 800 * 0.1 + 50 * 4.0) / 1e6
+    UNBILLED: ClassVar[dict] = {"cost": None}
+
+    def test_a_profile_without_rates_is_refused_before_anything_runs(self):
+        other = ["[endpoint]", 'provider = "acme"', 'base_url = "https://llm.acme.example/v1"']
+        other += ['api_key_env = "ACME_KEY"', "[model_info]", 'input = ["text"]', "reasoning = true"]
+        other += ["context_window = 200000", "max_tokens = 16000"]
+        path = self.tmp / "acme.toml"
+        path.write_text("\n".join(['client = "pi"', 'model = "acme-1"', *other]) + "\n")
+        cmd = [sys.executable, str(REPO / "runner" / "play.py"), "run", "--plan", "--scenario", "nautiloid"]
+        cmd += ["--playthrough", "naut-acme", "--profile", str(path), "--max-cost", "1", "--no-keeper", "--no-judge"]
+        out = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "ACME_KEY": "x"}, timeout=120)
+        self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+        self.assertIn("cost needs input, output, cache_read", out.stdout + out.stderr)
+
+    def test_an_endpoint_that_bills_nothing_is_charged_the_estimate(self):
+        raw = {
+            "client": "pi",
+            "model": "acme-1",
+            "endpoint": {"provider": "acme", "base_url": "http://unused", "api_key_env": KEY_ENV},
+            "model_info": {
+                "input": ["text", "image"],
+                "reasoning": False,
+                "context_window": 200000,
+                "max_tokens": 16000,
+                "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+            },
+        }
+        script = [
+            {"tool_calls": [call("get_status")], "usage": self.UNBILLED},
+            {"text": "Done.", "usage": self.UNBILLED},
+        ]
+        res = self.play(script, raw=raw)
+        self.assertEqual(res.reason, "exited")
+        (result,) = [e for e in self.logged() if e.kind == "result"]
+        self.assertAlmostEqual(result.cost_usd, 2 * self.ESTIMATE)
+        self.assertAlmostEqual(self.spent(), 1.0 + 2 * self.ESTIMATE)
+
+    def test_an_openrouter_response_without_its_cost_counts_its_estimate(self):
+        script = [
+            {"tool_calls": [call("get_status")]},
+            {"tool_calls": [call("get_status")], "usage": self.UNBILLED},  # e.g. an aborted generation
+            {"text": "Done."},
+        ]
+        res = self.play(script)
+        self.assertEqual(res.reason, "exited")
+        (result,) = [e for e in self.logged() if e.kind == "result"]
+        self.assertAlmostEqual(result.cost_usd, 2 * COST + self.ESTIMATE)  # was 2 x COST: the middle one was free
+        self.assertAlmostEqual(self.spent(), 1.0 + 2 * COST + self.ESTIMATE)
 
 
 class QuickstartPlay(PiE2EBase):

@@ -25,7 +25,7 @@ class NoRunnerPath(unittest.TestCase):
             "assert type(parsers['pi']) is pi_client.PiParser, parsers\n"
             "p = profiles.parse({'client': 'pi', 'model': 'm', 'endpoint': {'provider': 'x', "
             "'base_url': 'http://x', 'api_key_env': 'K'}, 'model_info': {'input': ['text'], 'reasoning': False, "
-            "'context_window': 1000, 'max_tokens': 100}})\n"
+            "'context_window': 1000, 'max_tokens': 100, 'cost': {'input': 1.0, 'output': 4.0, 'cache_read': 0.1}}})\n"
             "c = clients.make('pi', profile=p, system_file='s.md', server={})\n"
             "assert type(c) is pi_client.PiClient, c\n"
             "assert 'pi_client' not in sys.modules\n"

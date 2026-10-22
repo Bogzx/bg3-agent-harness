@@ -40,7 +40,8 @@ PI_PROFILE = PR.parse({"client": "pi", "model": "deepseek-flash",
                        "endpoint": {"provider": "deepseek", "base_url": "https://api.deepseek.com",
                                     "api_key_env": "DEEPSEEK_API_KEY"},
                        "model_info": {"input": ["text"], "reasoning": True, "context_window": 1000000,
-                                      "max_tokens": 32000}}, "test")
+                                      "max_tokens": 32000,
+                                      "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1}}}, "test")
 
 CLAUDE_STREAM = [
     {"type": "system", "subtype": "init", "session_id": "c-1", "model": "opus", "tools": ["x"],

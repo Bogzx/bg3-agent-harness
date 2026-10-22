@@ -90,7 +90,13 @@ def _pi_profile():
             "model": "anthropic/stub-model",
             "effort": "low",
             "endpoint": {"provider": "openrouter", "base_url": "http://127.0.0.1:9/v1", "api_key_env": "BG3_STUB_KEY"},
-            "model_info": {"input": ["text"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+            "model_info": {
+                "input": ["text"],
+                "reasoning": True,
+                "context_window": 200000,
+                "max_tokens": 16000,
+                "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+            },
         }
     )
 

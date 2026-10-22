@@ -16,9 +16,10 @@ The parser's guards (pi's exit code is no signal: it is 0 after a final API erro
   transient or account failures, never for a context overflow (a runner that retries an overflow loops forever);
 - an overflow-recovery loop (pi #11161: compaction is off, so it should never start) is cut: after
   MAX_RECOVERY compaction or overflow rounds the parser emits an error result, and the runner stops the process;
-- cost_usd is the billed cost (OpenRouter's usage.cost, from bg3.ts's bg3.billing entries) when the endpoint
-  reports it; for DeepSeek's own API, DeepSeek's usage fields x its price sheet (deepseek_bill.py: the profile's
-  prices at peak, half off-peak); else pi's catalog estimate from the profile's prices;
+- cost_usd sums each response's billed cost (OpenRouter's usage.cost, from bg3.ts's bg3.billing entries) when the
+  endpoint reports it; for DeepSeek's own API, DeepSeek's usage fields x its price sheet (deepseek_bill.py: the
+  profile's prices at peak, half off-peak); else pi's estimate of that response from the profile's prices (a
+  response OpenRouter bills without a cost, e.g. an aborted one, still counts);
 - the init event's mcp status compares the tools the model got with the tools the server listed (bg3.tools).
 
     python3 -m unittest runner/test_pi_client.py
@@ -101,8 +102,10 @@ class PiParser:
         self.init_sent = False
         self.turns = 0
         self.tokens = dict.fromkeys(C.TOKEN_KEYS, 0)
-        self.estimate = 0.0
-        self.billed: float | None = None
+        # bg3.ts appends a response's bg3.billing entry before pi ends its assistant message: a message with a
+        # bill since the previous one costs the bill, one without costs pi's estimate from the profile's prices
+        self.cost = 0.0
+        self.unsettled_bill: float | None = None  # billed since the last assistant message
         self.providers: list[str] = []  # served providers, as the endpoint named them
         self.generations: list[str] = []  # response ids (OpenRouter: /api/v1/generation?id=)
         self.malformed = 0  # tool calls whose arguments pi could not parse
@@ -134,7 +137,7 @@ class PiParser:
             self.last_ts = ts if self.last_ts is None else max(self.last_ts, ts)
 
     def _cost(self) -> float:
-        return round(self.billed if self.billed is not None else self.estimate, 6)
+        return round(self.cost + (self.unsettled_bill or 0.0), 6)
 
     def _result(self, subtype: str, text: str, api_error: bool) -> C.Event:
         self.done = True
@@ -191,7 +194,8 @@ class PiParser:
         u = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
         toks = C.tokens(u.get("input"), u.get("output"), u.get("cacheRead"), u.get("cacheWrite"))
         self.tokens = {k: self.tokens[k] + toks[k] for k in C.TOKEN_KEYS}
-        self.estimate += float((u.get("cost") or {}).get("total") or 0)
+        bill, self.unsettled_bill = self.unsettled_bill, None
+        self.cost += bill if bill is not None else float((u.get("cost") or {}).get("total") or 0)
         out.append(
             C.Event("usage", session_id=sid, message_id=msg.get("responseId"), tokens=toks, cost_usd=self._cost())
         )  # the process's running cost (spend caps act on it)
@@ -236,7 +240,7 @@ class PiParser:
                         when = deepseek_bill.parse_ts(entry.get("timestamp"))
                         cost = deepseek_bill.cost(usage, self.deepseek_prices, when)
                 if cost is not None:
-                    self.billed = (self.billed or 0.0) + float(cost)
+                    self.unsettled_bill = (self.unsettled_bill or 0.0) + float(cost)
                 if data.get("provider"):
                     self.providers.append(str(data["provider"]))
                 if data.get("id"):

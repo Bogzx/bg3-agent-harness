@@ -74,7 +74,7 @@ from bg3play.memory.keeper_spend import KeeperSpend
 assert not any(p.rstrip("/").endswith("runner") for p in sys.path), sys.path
 p = profiles.parse({"client": "pi", "model": "anthropic/stub-model", "effort": "low",
     "endpoint": {"provider": "openrouter", "base_url": "http://127.0.0.1:9/v1", "api_key_env": "BG3_STUB_KEY"},
-    "model_info": {"input": ["text"], "reasoning": True, "context_window": 200000, "max_tokens": 16000}})
+    "model_info": {"input": ["text"], "reasoning": True, "context_window": 200000, "max_tokens": 16000, "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1}}})
 assert clients.make("pi", profile=p, system_file="x.md").name == "pi"
 assert runs.stream_events(['{"type": "session"}'], name="pi") == []
 k = KeeperSpend("pi", 0.05, None)

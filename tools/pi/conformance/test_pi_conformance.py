@@ -57,7 +57,13 @@ PROFILE = {
     "effort": "high",
     "endpoint": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "api_key_env": "BG3_STUB_KEY"},
     "routing": {"only": ["anthropic"]},
-    "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+    "model_info": {
+        "input": ["text", "image"],
+        "reasoning": True,
+        "context_window": 200000,
+        "max_tokens": 16000,
+        "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+    },
 }
 WAIT_S = 30  # upper bound on any one pi process or condition; a pass takes far less
 

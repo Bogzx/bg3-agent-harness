@@ -39,7 +39,13 @@ PROFILE = PR.parse(
             "api_key_env": "OPENROUTER_API_KEY",
         },
         "routing": {"only": ["vendor"]},
-        "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+        "model_info": {
+            "input": ["text", "image"],
+            "reasoning": True,
+            "context_window": 200000,
+            "max_tokens": 16000,
+            "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+        },
     }
 )
 
@@ -197,6 +203,17 @@ class Guards(unittest.TestCase):
         billing = ev("entry_appended", entry={"customType": "bg3.billing", "data": {"usage": {"cost": 0.1}}})
         res = result(parse([TOOLS, SYSTEM, billing, assistant(cost=0.25), ev("agent_settled", aborted=False)])[1])
         self.assertEqual(res.cost_usd, 0.1)
+
+    def test_a_response_billed_without_a_cost_counts_its_estimate(self):
+        # OpenRouter can leave usage.cost out (an aborted generation): that response alone falls back to pi's estimate
+        def billing(cost):
+            return ev("entry_appended", entry={"customType": "bg3.billing", "data": {"usage": {"cost": cost}}})
+
+        stream = [TOOLS, SYSTEM, billing(0.0125), assistant(cost=0.25), billing(None), assistant(cost=0.002)]
+        stream += [billing(0.0125), assistant(cost=0.25), ev("agent_settled", aborted=False)]
+        _, events = parse(stream)
+        self.assertEqual([e.cost_usd for e in events if e.kind == "usage"], [0.0125, 0.0145, 0.027])
+        self.assertEqual(result(events).cost_usd, 0.027)
 
     def test_deepseek_cost_from_its_usage_fields(self):
         # run 1 (research/ovh/live3.md) was off-peak: pi's catalog estimate said 2x DeepSeek's bill
@@ -387,7 +404,13 @@ class Client(unittest.TestCase):
                     "base_url": "https://openrouter.ai/api/v1",
                     "api_key_env": "OPENROUTER_API_KEY",
                 },
-                "model_info": {"input": ["text"], "reasoning": False, "context_window": 9000, "max_tokens": 1000},
+                "model_info": {
+                    "input": ["text"],
+                    "reasoning": False,
+                    "context_window": 9000,
+                    "max_tokens": 1000,
+                    "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+                },
             }
         )
         c = PC.PiClient(raw, self.tmp / "s.txt", server=self.server, cwd=self.tmp / "play")

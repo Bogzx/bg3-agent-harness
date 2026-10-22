@@ -44,7 +44,8 @@ STUB_KEY_ENV = "BG3AI_SMOKE_STUB_KEY"
 PI_PROFILE = {"client": "pi", "model": "stub-model",
               "endpoint": {"provider": "stub", "base_url": f"http://{STUB_IP}:{STUB_PORT}/v1",
                            "api_key_env": STUB_KEY_ENV},
-              "model_info": {"input": ["text"], "reasoning": False, "context_window": 200000, "max_tokens": 8000}}
+              "model_info": {"input": ["text"], "reasoning": False, "context_window": 200000, "max_tokens": 8000,
+                             "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1}}}
 
 NODE_PROBE = r"""
 const net = require('net');

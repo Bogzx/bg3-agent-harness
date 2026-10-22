@@ -41,7 +41,7 @@ input = ["text", "image"]
 reasoning = true
 context_window = 200000
 max_tokens = 32000
-cost = { input = 1.0, output = 4.0, cache_read = 0.1 }   # USD per million tokens, pi's own estimate only
+cost = { input = 1.0, output = 4.0, cache_read = 0.1 }   # USD per M tokens, required: prices unbilled responses
 ```
 
 Put the key in the repo's gitignored `.env` (`OPENROUTER_API_KEY=...`) or in the environment. The runner reads it

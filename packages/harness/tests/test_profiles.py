@@ -30,7 +30,13 @@ PI = {
         "api_key_env": "OPENROUTER_API_KEY",
     },
     "routing": {"only": ["vendor"]},
-    "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 200000, "max_tokens": 16000},
+    "model_info": {
+        "input": ["text", "image"],
+        "reasoning": True,
+        "context_window": 200000,
+        "max_tokens": 16000,
+        "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+    },
 }
 
 
@@ -139,6 +145,15 @@ class Parse(unittest.TestCase):
         self.err(pi(model_info__cost={"reasoning": 1}), "unknown key.*reasoning")
         self.err(pi(model_info__compat={"openRouterRouting": {}}), r"provider pin goes in \[routing\]")
 
+    def test_a_pi_profile_needs_the_rates_to_price_an_unbilled_response(self):
+        # an endpoint that bills nothing (not OpenRouter, not DeepSeek's API) would otherwise run as $0, uncapped
+        other = {"provider": "acme", "base_url": "https://llm.acme.example/v1", "api_key_env": "ACME_KEY"}
+        self.err(pi(routing=None, endpoint=other, model_info__cost=None), "cost needs input, output, cache_read")
+        self.err(pi(model_info__cost={"input": 1, "output": 2}), "cost needs cache_read")
+        mi = PR.parse(pi(model_info__cost={"input": 1, "output": 2, "cache_read": 0})).model_info
+        assert mi is not None
+        self.assertEqual(mi.cost, {"input": 1.0, "output": 2.0, "cache_read": 0.0})  # cache_write: 0 in models.json
+
     def test_load_reports_bad_toml(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "bad.toml"
@@ -166,7 +181,7 @@ class ModelsJson(unittest.TestCase):
     def test_full_definition(self):
         raw = pi(
             model_info__thinking_level_map={"off": "none", "minimal": False},
-            model_info__cost={"input": 1, "output": 2.5},
+            model_info__cost={"input": 1, "output": 2.5, "cache_read": 0},
             model_info__compat={"requiresReasoningContentOnAssistantMessages": True},
         )
         self.assertEqual(

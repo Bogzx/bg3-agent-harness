@@ -23,7 +23,11 @@ docs/OVERHAUL-PLAN.md), Claude included.
     max_tokens = 32000
     thinking_level_map = { minimal = false }   # optional: pi level -> provider value, false = unsupported
     compat = { requiresReasoningContentOnAssistantMessages = true }   # optional: pi's compat flags
-    cost = { input = 4.0, output = 20.0, cache_read = 0.2, cache_write = 5.0 }   # optional: pi's own estimate
+    cost = { input = 4.0, output = 20.0, cache_read = 0.2, cache_write = 5.0 }   # USD per M tokens (below)
+
+cost is required with input, output and cache_read (cache_write defaults to 0): it is what a response costs when
+the endpoint bills nothing (any OpenAI-compatible endpoint but OpenRouter, which reports usage.cost; DeepSeek's own
+API is priced from these rates), so a profile without it would run as a $0 run no cost cap ever stops.
 
 A pi model definition replaces pi's catalog entry of the same id, catalog compat flags included: copy the ones the
 model needs into compat (pi detects the provider's defaults from the provider id and base_url).
@@ -31,7 +35,7 @@ model needs into compat (pi detects the provider's defaults from the provider id
 claude, codex and gemini take only client, model, effort (and fallback_model for claude): their endpoint is the
 CLI's own, so endpoint, routing and model_info are an error there rather than silently meaning nothing.
 
-    python3 -m unittest runner/test_profiles.py
+    uv run pytest packages/harness/tests/test_profiles.py
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ API = "openai-completions"  # the one wire format for pi (D6)
 INPUTS = ("text", "image")
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")  # pi's thinkingLevelMap keys
 COST_KEYS = {"input": "input", "output": "output", "cache_read": "cacheRead", "cache_write": "cacheWrite"}
+COST_REQUIRED = ("input", "output", "cache_read")  # deepseek_bill.RATES: enough to price any response
 ROUTING_KEYS = ("only", "allow_fallbacks", "require_parameters")
 PI_ONLY = ("endpoint", "routing", "model_info")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -73,7 +78,7 @@ class ModelInfo:
     context_window: int
     max_tokens: int
     thinking_level_map: dict = field(default_factory=dict)  # pi level -> provider value (None: unsupported)
-    cost: dict = field(default_factory=dict)  # USD per M tokens, COST_KEYS; pi's estimate only
+    cost: dict = field(default_factory=dict)  # USD per M tokens, COST_KEYS: pi's estimate of an unbilled response
     compat: dict = field(default_factory=dict)  # pi's model compat flags, as written
 
 
@@ -185,6 +190,12 @@ def _model_info(t: object, where: str) -> ModelInfo:
     cost = _take(t.get("cost") or {}, f"{w} cost", tuple(COST_KEYS))
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in cost.values()):
         raise ProfileError(f"{w}: cost values must be non-negative numbers (USD per million tokens)")
+    missing = [k for k in COST_REQUIRED if k not in cost]
+    if missing:
+        raise ProfileError(
+            f"{w}: cost needs {', '.join(missing)} (USD per million tokens): a response the endpoint doesn't bill is "
+            "priced from it, and a run without it would count $0 against its cost cap"
+        )
     compat = t.get("compat") or {}
     if not isinstance(compat, dict) or "openRouterRouting" in compat:
         raise ProfileError(f"{w}: compat must be a table of pi compat flags; the provider pin goes in [routing]")
