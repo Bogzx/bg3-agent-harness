@@ -391,7 +391,11 @@ def fights_section(sessions: Path, run: str, sid: str, store: Path) -> tuple[lis
 def watch(calls: list[dict], ctx: dict) -> tuple[list[str], list[dict]]:
     out = ["## SESSION-WATCH signatures (session_watch.py; series_report.py naut3 rows)", ""]
     issues = []
-    rows = SW.check(calls)
+    if SW.watch_path().exists():
+        rows = SW.check(calls)
+    else:  # docs/SESSION-WATCH.md is a local, untracked list (.gitignore): a fresh clone or CI has none
+        rows = []
+        out.append(f"- no {SW.watch_path()}: its rows aren't checked")
     for name, nt, np_, nf, verdict, ex in rows:
         if verdict in ("FAIL?", "PASS?"):
             out.append(f"- {verdict} {name} (trigger {nt}, pass {np_}, fail {nf}): {ex[:200]}")

@@ -404,6 +404,24 @@ class OlderToolFixes(unittest.TestCase):
         out, _ = RS.watch(nautiloid, {})
         self.assertIn("FAILED helm-", "\n".join(out))
 
+    def test_no_session_watch_list_still_reviews(self):
+        """docs/SESSION-WATCH.md is untracked: without it (a fresh clone, CI) the section says so, the rest runs."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        missing = Path(tmp.name) / "SESSION-WATCH.md"
+        climbs = [call("interact", f"interact: done — used climbed={d}\nWHERE Nautiloid", {"target": "e573"}, k=k)
+                  for k, d in enumerate(("up dy=6.1", "down dy=-6.1"))]
+        for c in climbs:
+            c.update(t0=100.0, t_res=c["t"] + 0.5, session="S1", dur=0.5, think=1.0)
+            c["refusal"] = overlap_refusal(c)
+        old, SW.WATCH_FILE = SW.WATCH_FILE, missing
+        try:
+            out, _ = RS.watch(climbs, {})
+        finally:
+            SW.WATCH_FILE = old
+        self.assertIn(f"- no {missing}: its rows aren't checked", out)
+        self.assertIn("FAILED helm-", "\n".join(out))   # series_report's signatures still ran
+
     def test_context_model_one_session_fit(self):
         s = {"seq": [{"read": 4_000_000, "write": 64_000}], "cost": 1.0}
         r, w = CM.fit_prices([s])
