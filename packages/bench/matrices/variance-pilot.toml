@@ -12,11 +12,11 @@
 # as a pilot and never published.
 #
 # Cost bound, DeepSeek (the only paid client): $0.25 per run for every scenario (the nautiloid's $0.19 is the
-# longest measured run; no other scenario has a longer cap), 60 paid runs, $15.00 at most. runtime/budget.json's cap
-# must allow it. Jobs run repeat-major: stop after repeat 1 (10 paid jobs, at most $2.50) and look at which runs hit
+# longest measured run; no other scenario has a longer cap), 48 paid runs, $12.00 at most. runtime/budget.json's cap
+# must allow it. Jobs run repeat-major: stop after repeat 1 (8 paid jobs, at most $2.00) and look at which runs hit
 # the $0.25 cap; a cap that stops runs makes their failures the cap's, not the model's.
-# Time bound: the caps' sum is 12.25 game hours per model and repeat, 147 h for all 120 runs if none ends early. The
-# Claude Code half (60 runs) also spends account 2's weekly limit.
+# Time bound: the caps of the 8 ready scenarios sum to 10.25 game hours per model and repeat, 123 h for all 96 runs if
+# none ends early. The Claude Code half (48 runs) also spends account 2's weekly limit.
 name = "variance-pilot"
 allow_gaps = true
 
