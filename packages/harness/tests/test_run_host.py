@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,8 @@ class FakeRunner:
         self.settles_budget = True
         self.game_settings = {"difficulty": "Balanced"}
         self.facts_fail = False
+        self.fail_at: dict[str, BaseException] = {}  # a call -> what it raises
+        self.loads: str | None = opt.start_save  # the save folder ensure_game loads
 
     def event(self, kind: str, **fields: Any) -> None:
         self.events.append((kind, fields))
@@ -72,8 +75,10 @@ class FakeRunner:
 
     def ensure_game(self, first: bool) -> str | None:
         self.calls.append(f"ensure_game({first})")
-        self.state["loaded_save"] = self.opt.start_save
-        return "SCN-grove_fight" if self.opt.start_save else None
+        if "ensure_game" in self.fail_at:
+            raise self.fail_at["ensure_game"]
+        self.state["loaded_save"] = self.loads
+        return "SCN-grove_fight" if self.loads else None
 
     def hot_reload_mod(self) -> int:
         self.calls.append("reload")
@@ -84,6 +89,8 @@ class FakeRunner:
 
     def check_settings(self) -> None:
         self.calls.append("check_settings")
+        if "check_settings" in self.fail_at:
+            raise self.fail_at["check_settings"]
 
     def end_facts(self, outcome: str) -> None:
         self.calls.append(f"end_facts({outcome})")
@@ -104,6 +111,7 @@ class Rig:
     runners: list[FakeRunner]
     dumped: list[tuple[Path, str, int | None, str | None]]
     env: dict[str, str]
+    prepare: Callable[[FakeRunner], None] | None  # set up each new runner (failures, the save it loads)
 
 
 @pytest.fixture
@@ -114,10 +122,12 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
     renv.SE_BG3AI_DIR.mkdir(parents=True)
     for name in ("nav_guard_aa.json", "nav_aa.json", "other.json"):
         (renv.SE_BG3AI_DIR / name).write_text("{}")
-    rig = Rig(H.LiveRunHost(lambda opt: FakeRunner(opt, [])), [], [], [], {})
+    rig = Rig(H.LiveRunHost(lambda opt: FakeRunner(opt, [])), [], [], [], {}, None)
 
     def make(opt: rstate.Options) -> FakeRunner:
         rig.runners.append(FakeRunner(opt, rig.calls))
+        if rig.prepare:
+            rig.prepare(rig.runners[-1])
         return rig.runners[-1]
 
     def run_files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
@@ -157,6 +167,9 @@ def test_the_kickoff_names_the_start_the_goal_and_the_character_and_no_memory_st
     assert 'loaded save "SCN-grove_fight"' in text and "Never start a new game" in text
     assert "Objective: Win the fight at the gate" in text and "Where: The grove gate" in text
     assert json.dumps(SAVE_SC["goal"], sort_keys=True) in text and "A githyanki warrior." in text
+    assert "scored on the game state at its end" not in text  # graders.grade latches the first instant
+    assert 'passes the first moment this goal holds, from the start save on; anything under "never" fails it' in text
+    assert "from the new game on" in H.scenario_kickoff(NEW_SC, "S001", None)
     for playthrough_only in ("session_start", "playbook", "memory_", "HANDOFF"):
         assert playthrough_only not in text
     new = H.scenario_kickoff(NEW_SC, "S001", None, pace="PACE: two actions per turn")
@@ -193,6 +206,37 @@ def test_a_run_dir_the_runner_doesnt_write_to_is_refused(rig: Rig, tmp_path: Pat
     with pytest.raises(ValueError, match="runtime/sessions"):
         h.start(JOB, SAVE_SC, tmp_path / "elsewhere" / "m-grove")
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("at", "exc"),
+    [
+        ("ensure_game", SystemExit("the game is running with a save loaded that the runner didn't load")),
+        ("ensure_game", SystemExit("would have to restart a game the runner didn't launch")),
+        ("check_settings", RuntimeError("difficulty Tactician, scenario says Balanced")),
+    ],
+)
+def test_a_failed_start_forgets_the_run_stops_the_game_and_raises_runtime_error(rig: Rig, at: str, exc: BaseException):
+    rig.prepare = lambda r: r.fail_at.update({at: exc})
+    with pytest.raises(RuntimeError, match=str(exc)) as e:
+        rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert not isinstance(e.value, SystemExit) and rig.h.runs == {}
+    assert rig.calls[-1] == "end_run_game(start failed)"
+    rig.prepare = None  # the rerun in a fresh dir starts clean
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove-r2"))
+    assert list(rig.h.runs) == [run_dir("m-grove-r2")]
+
+
+@pytest.mark.parametrize("loads", [None, "Lae'zel-11__other_save"])
+def test_a_save_start_whose_save_didnt_load_fails_before_the_kickoff(rig: Rig, loads: str | None):
+    def prepare(r: FakeRunner) -> None:
+        r.loads = loads
+
+    rig.prepare = prepare
+    with pytest.raises(RuntimeError, match="the start save Lae'zel-12__SCN-grove_fight didn't load"):
+        rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.calls == ["snapshot", "ensure_game(True)", "end_run_game(start failed)"]  # no reload, no kickoff
+    assert rig.h.runs == {}
 
 
 def outcome(invalid: str | None = None) -> SessionOutcome:

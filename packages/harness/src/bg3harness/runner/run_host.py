@@ -144,9 +144,10 @@ def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Optio
 
 
 def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> str:
-    """A bench run's first message: the scenario, its start, the goal it is scored on, the character, how the
-    session ends. No memory or playbook steps (a bench run has no playthrough memory); `pace`: the coaching
-    condition's pre-flight ("" under rules)."""
+    """A bench run's first message: the scenario, its start (`loaded`: the label of the save the harness loaded),
+    the goal and how it is graded (graders.grade: passed at the first instant it holds, failed by a "never" that
+    happened before), the character, how the session ends. No memory or playbook steps (a bench run has no
+    playthrough memory); `pace`: the coaching condition's pre-flight ("" under rules)."""
     char, start = sc["profile"]["character"], sc["start"]
     lines = [
         f"This is a benchmark run of the scenario '{sc.get('title') or sc['name']}' ({sc['name']}), session "
@@ -155,13 +156,17 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     if start["kind"] == "save":
         note: Json = start.get("note") or {}
         lines.append(
-            f'The harness has loaded save "{loaded or start.get("save")}": the character, party, gear and '
+            f'The harness has loaded save "{loaded}": the character, party, gear and '
             "journal are the save's. Don't reload it; verify state with get_status. Never start a new game."
         )
         lines += [f"{k.capitalize()}: {note[k]}" for k in ("where", "objective", "party", "journal") if note.get(k)]
     else:
         lines.append(rpolicy.new_game_note(owner_of(sc)))
-    lines.append(f"The run is scored on the game state at its end: {json.dumps(sc['goal'], sort_keys=True)}.")
+    since = "the start save" if start["kind"] == "save" else "the new game"
+    lines.append(
+        f'The run passes the first moment this goal holds, from {since} on; anything under "never" fails it if '
+        f"it happens first: {json.dumps(sc['goal'], sort_keys=True)}."
+    )
     if char.get("brief"):
         lines.append("Character brief:\n> " + char["brief"].strip().replace("\n", "\n> "))
     lines.append(
@@ -213,12 +218,29 @@ class LiveRunHost:
         return files, choice.model, choice.effort
 
     def start(self, job: Json, sc: Json, run_dir: Path) -> HostStart:
+        """The run's runner, reset, game at the scenario's start and kickoff. A start that fails forgets the run,
+        stops the game it brought up and raises RuntimeError (the runner's SystemExits too: an operator refusal
+        such as ensure_game's foreign game would otherwise end the process), so SessionRun records one invalid
+        attempt and the matrix reruns. A save start whose save didn't load (missing, or --take-over playing on
+        from another) fails before the kickoff."""
         want = renv.RUNTIME / "sessions" / run_dir.name
         if Path(run_dir).resolve() != want.resolve():  # facts.jsonl and the streams must land in the run dir
             raise ValueError(f"run dir {run_dir}: the runner writes runtime/sessions/<run> under {renv.RUNTIME}")
-        files, model, effort = self._setup(job, sc, run_dir)
-        opt = options_for(dict(job, model=model, effort=effort), sc, run_dir.name, files)
-        r = self.make_runner(opt)
+        r: RunRunner | None = None
+        try:
+            files, model, effort = self._setup(job, sc, run_dir)
+            opt = options_for(dict(job, model=model, effort=effort), sc, run_dir.name, files)
+            r = self.make_runner(opt)
+            return self._begin(r, opt, sc, run_dir)
+        except (Exception, SystemExit) as e:
+            if r is not None:
+                self.runs.pop(run_dir, None)
+                r.end_run_game("start failed", "the rerun launches a new one")
+            if isinstance(e, SystemExit):
+                raise RuntimeError(f"start failed: {e.code}") from e
+            raise
+
+    def _begin(self, r: RunRunner, opt: rstate.Options, sc: Json, run_dir: Path) -> HostStart:
         t0 = self.clock()
         r.run_started = t0
         r.settles_budget = False  # the matrix settles a paid run's cost (once): the runner must not add it too
@@ -231,6 +253,14 @@ class LiveRunHost:
         except OSError as e:
             renv.log(f"mod snapshot refresh failed: {e}; the game keeps {r.mod_rev}'s mod")
         loaded = r.ensure_game(first=True)
+        if sc["start"]["kind"] == "save":
+            start_save = sc["start"].get("save")
+            if not start_save or r.state["loaded_save"] != start_save:
+                raise RuntimeError(
+                    f"the start save {start_save} didn't load (loaded: {r.state['loaded_save']}): "
+                    "the run would play from elsewhere"
+                )
+            loaded = loaded or start_save
         r.hot_reload_mod()
         r.apply_play_settings()
         r.check_settings()  # the scenario's difficulty / karmic dice against the readout; the seed

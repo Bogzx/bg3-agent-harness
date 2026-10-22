@@ -56,11 +56,15 @@ class StubRunner(lpt.Runner):
     """The real Runner (SessionRunner + the legacy parts) with the game and the agent process stubbed."""
 
     played: ClassVar[list[dict]] = []
+    refusals: ClassVar[list[str]] = []  # ensure_game's SystemExits, one per start until empty
+    stopped: ClassVar[list[str]] = []
 
     def refresh_mod_snapshot(self) -> list[str]:
         return []
 
     def ensure_game(self, first: bool) -> str | None:
+        if StubRunner.refusals:
+            raise SystemExit(StubRunner.refusals.pop(0))
         return None  # a new game: nothing loaded
 
     def hot_reload_mod(self) -> int:
@@ -76,7 +80,7 @@ class StubRunner(lpt.Runner):
         return True
 
     def end_run_game(self, when: str = "", after: str = "") -> None:
-        pass
+        StubRunner.stopped.append(when)
 
     def run_claude(self, sid, prompt, minutes, claude_session, resume=False, tag="", needs_game=True):
         StubRunner.played.append({"sid": sid, "prompt": prompt, "minutes": minutes, "dir": self.state.dir})
@@ -110,7 +114,7 @@ class Bench(unittest.TestCase):
         se = self.tmp / "se" / "BG3AI"
         se.mkdir(parents=True)
         (se / "nav_guard_x.json").write_text("{}")
-        StubRunner.played = []
+        StubRunner.played, StubRunner.refusals, StubRunner.stopped = [], [], []
         for p in (
             mock.patch.multiple(
                 renv,
@@ -186,6 +190,18 @@ class Bench(unittest.TestCase):
         budget = json.loads((self.repo / "runtime" / "budget.json").read_text())
         self.assertAlmostEqual(budget["spent"], PAID_USD)
         self.assertEqual(budget["last"]["session"], "S001")
+
+    def test_a_start_the_runner_refuses_is_one_invalid_attempt_and_the_job_reruns(self):
+        StubRunner.refusals = ["the game is running with a save loaded that the runner didn't load"]
+        rc, out = self.bench("run")
+        self.assertEqual(rc, 0, out)
+        [play] = StubRunner.played
+        first = self.repo / "runtime" / "sessions" / "m-host_idol-opus-claude-rules"
+        recs = [json.loads(line) for line in (first / "runs.jsonl").read_text().splitlines()]
+        self.assertEqual([r["outcome"] for r in recs], ["runner_error", "timeout"])
+        self.assertIn("start failed: the game is running with a save loaded", recs[0]["reason"])
+        self.assertEqual(play["dir"], first.with_name(first.name + "-r2"))  # the rerun's fresh dir
+        self.assertEqual(StubRunner.stopped, ["start failed", "run end"])
 
     def test_the_composed_runner_is_a_session_runner(self):
         self.assertTrue(issubclass(StubRunner, rcore.SessionRunner))
