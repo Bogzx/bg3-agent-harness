@@ -2,7 +2,8 @@
 """Offline conformance of pi 1.3.0 + bg3.ts (research/arch/pi-client.md §3.5, checks 1-21 and 23; check 22, the
 runner's tool-count check, is in runner/test_pi_client.py). Each test runs the pinned pi against stub_llm.py (a
 scripted OpenAI-compatible model) and stub_mcp.py (the real tool list, no game) with HOME and pi's agent dir in a
-temp dir. No key, no network, no game; ~1 min. Skips when tools/pi/node_modules is missing.
+temp dir. No key, no network, no game; ~1 min. Skips when tools/pi/node_modules is missing, except under CI
+(CI=true) where that fails: marked e2e, it runs in CI's e2e job, which installs tools/pi.
 
     python3 -m unittest tools/pi/conformance/test_pi_conformance.py
 
@@ -29,6 +30,7 @@ PI_DIR = HERE.parent
 REPO = PI_DIR.parents[1]
 BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
+NEED_PI = os.environ.get("CI") == "true"  # GitHub Actions: a missing pi is a broken job, not a skip
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
 from bg3harness import clients as C
 from bg3harness import pi_client as PC
@@ -36,6 +38,13 @@ from bg3harness import profiles as PR
 
 sys.path.insert(0, str(HERE))
 import stub_mcp
+
+try:
+    import pytest
+
+    pytestmark = pytest.mark.e2e
+except ImportError:  # plain unittest (system python3)
+    pytest = None
 
 TOOLS = json.loads((HERE / "tools.json").read_text())
 PREFIX = "mcp__bg3__"
@@ -145,8 +154,15 @@ class Run:
         return [(r["ev"], r["tool"]) for r in self.mcp if r["ev"] in ("start", "end")]
 
 
-@unittest.skipUnless(BINARY.exists(), "tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts")
+@unittest.skipUnless(
+    BINARY.exists() or NEED_PI, "tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts"
+)
 class Conformance(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not BINARY.exists():
+            raise AssertionError(f"{BINARY} missing under CI: the job must run cd tools/pi && npm ci --ignore-scripts")
+
     def setUp(self):
         self.ws = Path(tempfile.mkdtemp(prefix="bg3-pi-conf-"))
         self.addCleanup(shutil.rmtree, self.ws, True)
