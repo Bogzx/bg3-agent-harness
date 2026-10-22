@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "bridge" / "src"))  # bg3play's dependency (bg3ai)
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))  # bg3play's dependency
 sys.path.insert(0, str(REPO / "packages" / "playthrough" / "src"))
 from bg3play import server  # noqa: E402
