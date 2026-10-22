@@ -562,8 +562,19 @@ def record_spec(video: Path, encoder: str, playthroughs: Path, pt: str | None) -
     return rec.sized(spec, cfg.recording.fps, cfg.recording.height) if cfg else spec
 
 
-def main(argv: list[str] | None = None) -> int:
+def options(argv: list[str] | None = None) -> argparse.Namespace:
+    """parser()'s options with every path absolute: the game (launch_game.sh --mod-path <runtime>/mod-live), the
+    agents and session.py run in other directories, where a relative path points nowhere (live7 D.4b: the mod never
+    loaded under `--runtime runtime --repo .`)."""
     opt = parser().parse_args(argv)
+    for name in ("runtime", "playthroughs", "web", "video", "memory_dir", "repo"):
+        if getattr(opt, name) is not None:
+            setattr(opt, name, getattr(opt, name).absolute())
+    return opt
+
+
+def main(argv: list[str] | None = None) -> int:
+    opt = options(argv)
 
     store = RunStore(opt.runtime, opt.playthroughs, cost=session_cost)
     hub = Hub(store, generation=format(time.time_ns(), "x"), pt=opt.playthrough)

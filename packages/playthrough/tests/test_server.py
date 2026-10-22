@@ -518,3 +518,20 @@ def test_a_refused_start_leaves_the_recorder_alone(store: RunStore, web: Path):
     app = App(store, Hub(store, generation="g"), web, recorder=recorder, supervisor=Busy())  # type: ignore[arg-type]
     assert app.control("b", "start", {"recording": False}) == (409, {"v": 1, "error": "a is running"})
     assert recorder.enabled
+
+
+def test_every_path_option_is_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # live7 D.4b: `--runtime runtime --repo .` launched the game with --mod-path runtime/mod-live, relative to the
+    # game's own directory, so the mod never loaded
+    from bg3harness.game.host import AppHost
+    from bg3play import server as srv_mod
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BG3AI_RUNTIME", raising=False)
+    rel = ["--runtime", "runtime", "--repo", ".", "--playthroughs", "pts", "--web", "w", "--video", "v"]
+    opt = srv_mod.options([*rel, "--memory-dir", "m"])
+    assert (opt.runtime, opt.repo, opt.playthroughs) == (tmp_path / "runtime", tmp_path, tmp_path / "pts")
+    assert (opt.web, opt.video, opt.memory_dir) == (tmp_path / "w", tmp_path / "v", tmp_path / "m")
+    assert srv_mod.options([]).runtime == tmp_path / "runtime"  # the default too
+    host = AppHost(opt.runtime, opt.repo, log=lambda m: None)
+    assert host.mod_live.is_absolute() and host.launch_sh.is_absolute()
