@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 import pytest
+from test_run_artifacts import readout
 from test_session_run import Hooks, Result
 
 from bg3bench import matrix, report, results, scenario
@@ -256,7 +257,8 @@ class PiHost:
         assert ("ui.dialogue_choose" if FAKE_MOD else "choose_dialogue") in hooks.called  # the model's call got there
         cost, tokens = usage(hooks.events_out)
         assert cost > 0  # billed from the stub's usage at the profile's prices
-        return {"outcome": "gave_up", "cost_usd": cost, "tokens": tokens, "wall_min": 1.0, "play_min": 1.0}
+        rec = {"outcome": "gave_up", "cost_usd": cost, "tokens": tokens, "wall_min": 1.0, "play_min": 1.0}
+        return rec | readout(sc["game_settings"].get("seed"))
 
 
 # ------------------------------------------------------------------------------------------------ the test

@@ -27,6 +27,13 @@ def write_facts(run_dir: Path) -> None:
     (run_dir / "facts.jsonl").write_text("".join(json.dumps({**r, "game_t": round(r["t"] - t0, 1)}) + "\n" for r in tl))
 
 
+def readout(seed: int | None) -> dict:
+    """A run record's settings readout (bg3harness ChecksSide.game_setup) after the mod applied `seed`; {} unseeded."""
+    if seed is None:
+        return {}
+    return {"game_settings": {"seed": {"seed": seed, "applied": {"seed": seed, "base_seed": seed, "streams": 6}}}}
+
+
 def assert_valid(name, data):
     jsonschema = pytest.importorskip("jsonschema")
     v = jsonschema.Draft202012Validator(json.loads((SCHEMAS / name).read_text()))
@@ -71,10 +78,11 @@ def test_without_facts_the_milestone_verdict_and_a_sandbox_gets_methods_and_luck
     rolls = [{"v": 1, "t": 1.0, "natural": 20, "sides": 20, "party": True}]
     (tmp_path / "rolls.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rolls))
     sandbox = {**series["scenario"]["spec"], "schema": 2, "family": "sandbox", "game_settings": {"seed": 7}}
-    man, res = run_artifacts.write_run_artifacts(tmp_path, series, records[0], None, None, scenario_spec=sandbox)
+    rec = records[0] | readout(7)
+    man, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=sandbox)
     assert man["seed"] == 7 and res["methods"] is not None and res["luck"]["n"] == 1
     no_skip = {**sandbox, "game_settings": {"seed": 7, "autoskip": False}}
-    man, _ = run_artifacts.write_run_artifacts(tmp_path, series, records[0], None, None, scenario_spec=no_skip)
+    man, _ = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=no_skip)
     assert man["autoskip"] is False  # the run's wall time had the cutscenes in it
     assert_valid("manifest.v1.schema.json", man)
 
@@ -89,3 +97,26 @@ def test_bad_inputs_raise(tmp_path):
         run_artifacts.series_scenario({"series": "x", "scenario": {"name": "x"}})
     with pytest.raises(scenario.ScenarioError):
         run_artifacts.series_scenario({"series": "x", "scenario": {"spec": {"name": "x"}}})
+
+
+@pytest.mark.parametrize(
+    "game_settings",
+    [
+        None,  # no readout: the runner never seeded
+        {"seed": {"seed": 7, "error": "the server context runs once a save is loaded"}},  # live7's nautiloid
+        {"seed": {"seed": 7, "applied": {"seed": 8}}},  # another seed
+    ],
+)
+def test_a_seeded_scenario_whose_seed_didnt_apply_is_invalid(tmp_path, game_settings):
+    series, records = load_series()
+    write_facts(tmp_path)
+    spec = {**series["scenario"]["spec"], "schema": 2, "family": "exploration", "game_settings": {"seed": 7}}
+    rec = {**records[0], "game_settings": game_settings}
+    man, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=spec)
+    assert (res["valid"], res["invalid_reason"], res["passed"]) == (False, "unseeded", True)  # graded, not scored
+    assert man["seed"] == (8 if game_settings and "applied" in game_settings["seed"] else None)  # what the game had
+    assert_valid("result.v1.schema.json", res)
+    assert_valid("manifest.v1.schema.json", man)
+    unseeded_scenario = {**spec, "game_settings": {}}
+    _, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=unseeded_scenario)
+    assert res["valid"] is True  # a scenario that fixes no seed needs none

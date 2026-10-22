@@ -6,7 +6,9 @@ and the method attribution (methods.attribute) when the run has a facts.jsonl. W
 milestone verdict is used (`outcome == "reached"`), which is how series before facts.jsonl were scored.
 
 Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when the runner itself failed
-(`runner_error`), a harness failure was classified (runs.py `harness_failures`), or an operator acted on it.
+(`runner_error`), a harness failure was classified (runs.py `harness_failures`), an operator acted on it, or its
+scenario fixes a dice seed the game didn't apply (`unseeded`: the record's settings readout, game_settings.seed, has
+no applied seed or another one; live7 played its nautiloid unseeded).
 
 Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (bg3harness/model_time.py);
 realtime scenarios (D7) report it next to wall time, since the world runs while the model thinks. `luck` is
@@ -35,13 +37,23 @@ SCHEMA = 1
 OUTCOMES = ("reached", "timeout", "over_budget", "gave_up", "runner_error")
 
 
-def validity(record: dict) -> tuple[bool, str | None]:
+def applied_seed(record: dict) -> int | None:
+    """The dice seed the game applied (the readout's game_settings.seed.applied.seed, from the mod's scn.seed), None
+    when the run wasn't seeded or the seeding failed."""
+    entry = (record.get("game_settings") or {}).get("seed") or {}
+    return (entry.get("applied") or {}).get("seed") if isinstance(entry, dict) else None
+
+
+def validity(record: dict, seed: int | None = None) -> tuple[bool, str | None]:
+    """(valid, reason) of a record; `seed`: the scenario's dice seed, None when it fixes none."""
     if record["outcome"] == "runner_error":
         return False, "runner_error"
     if record.get("harness_failures"):
         return False, "harness_failure"
     if record.get("operator"):
         return False, "operator"
+    if seed is not None and applied_seed(record) != seed:
+        return False, "unseeded"
     return True, None
 
 
@@ -57,12 +69,14 @@ def from_record(
     luck: dict | None = None,
     choices: dict | None = None,
     pilot: Sequence[str] | None = None,
+    seed: int | None = None,
 ) -> dict:
     """One runs.jsonl record (+ grader output, + method attribution, + luck.summary, + the choices grader's
-    picks and fit for a choice scenario, + what a pilot run didn't play of its condition) -> result v1."""
+    picks and fit for a choice scenario, + what a pilot run didn't play of its condition) -> result v1. `seed`: the
+    scenario's dice seed (validity)."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
-    valid, reason = validity(record)
+    valid, reason = validity(record, seed)
     if grade is None:
         passed, t_pass = record["outcome"] == "reached", record.get("time_to_milestone_s")
     else:

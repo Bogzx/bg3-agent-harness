@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from bg3harness import run_manifest
-from test_run_artifacts import assert_valid, load_series
+from test_run_artifacts import assert_valid, load_series, readout
 
 from bg3bench import run_artifacts
 
@@ -18,7 +18,12 @@ def test_manifest_records_the_harness_fields(tmp_path):
     series, records = load_series()
     fields = run_manifest.manifest_fields("claude", "2.1.301", "rules+coaching", REGISTRY, NAUT, "instructions")
     man, _ = run_artifacts.write_run_artifacts(
-        tmp_path, series, records[0], "0.1.0", **run_manifest.artifact_kwargs(fields), scenario_spec=NAUT
+        tmp_path,
+        series,
+        records[0] | readout(NAUT["game_settings"]["seed"]),
+        "0.1.0",
+        **run_manifest.artifact_kwargs(fields),
+        scenario_spec=NAUT,
     )
     assert (
         (man["seed"], man["scenario"]["timing"])

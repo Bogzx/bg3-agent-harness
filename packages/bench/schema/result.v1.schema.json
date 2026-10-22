@@ -16,7 +16,7 @@
     "run_id": {"type": "string", "minLength": 1},
     "outcome": {"enum": ["reached", "timeout", "over_budget", "gave_up", "runner_error"]},
     "valid": {"type": "boolean"},
-    "invalid_reason": {"enum": [null, "runner_error", "harness_failure", "operator"]},
+    "invalid_reason": {"enum": [null, "runner_error", "harness_failure", "operator", "unseeded"]},
     "passed": {"type": "boolean"},
     "t_pass_s": {"$ref": "#/$defs/num_or_null"},
     "grade": {

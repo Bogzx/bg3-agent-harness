@@ -14,7 +14,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from test_run_artifacts import assert_valid
+from test_run_artifacts import assert_valid, readout
 from test_session_run import T0, Hooks
 
 from bg3bench import matrix, report, results, scenario
@@ -50,8 +50,15 @@ def claude_job() -> dict:
     return matrix.plan([model], ["nautiloid"], ["rules"], 1)[0]
 
 
+def live7_settings() -> dict:
+    """live7's settings readout (facts.jsonl's settings mark): scn.seed failed at the main menu, the dice unseeded."""
+    marks = [json.loads(line) for line in (LIVE7 / "facts.jsonl").read_text().splitlines()]
+    return next(m["detail"] for m in marks if m.get("mark") == "settings")
+
+
 def test_the_live7_nautiloid_run_grades_passed_at_its_escape(tmp_path):
     rec = {"outcome": "reached", "milestone": "nautiloid_escaped", "reason": "milestone", "cost_usd": 0.0}
+    rec |= readout(NAUT["game_settings"]["seed"])
     host = Replay(rec | {"tokens": {}, "turns": 40, "sessions": 1, "cap_hit": None})
     res = SessionRun("live7", host, scenarios={"nautiloid": NAUT}, sessions=tmp_path / "sessions")(claude_job())
     name = series_name("live7", claude_job())
@@ -70,9 +77,19 @@ def test_the_live7_nautiloid_run_grades_passed_at_its_escape(tmp_path):
     assert [(r["run_id"], report.verdict(r)) for r in rows] == [(f"{name}-r001", "pass")]
 
 
+def test_live7_as_it_played_is_graded_but_invalid_unseeded(tmp_path):
+    rec = {"outcome": "reached", "milestone": "nautiloid_escaped", "cost_usd": 0.0, "game_settings": live7_settings()}
+    host = Replay(rec)
+    res = SessionRun("live7", host, scenarios={"nautiloid": NAUT}, sessions=tmp_path / "sessions")(claude_job())
+    assert (res.valid, res.passed, res.invalid_reason) == (False, True, "unseeded")  # the matrix reruns it
+    man = json.loads((host.started[0][1] / "manifest.json").read_text())
+    assert man["seed"] is None  # the seed the game applied, not the scenario's 1001
+
+
 def test_the_grade_not_the_record_decides(tmp_path):
     # a record that says timeout (the session ran out) still passes on the facts: the grader latches 727.7 s
-    host = Replay({"outcome": "timeout", "reason": "exited", "cost_usd": 0.0, "tokens": {}, "sessions": 1})
+    rec = {"outcome": "timeout", "reason": "exited", "cost_usd": 0.0, "tokens": {}, "sessions": 1}
+    host = Replay(rec | readout(NAUT["game_settings"]["seed"]))
     res = SessionRun("live7", host, scenarios={"nautiloid": NAUT}, sessions=tmp_path / "sessions")(claude_job())
     assert res.valid and res.passed
     result = results.load(host.started[0][1] / "result.json")
@@ -90,7 +107,7 @@ def test_a_roll_log_the_bench_refuses_makes_the_run_invalid_not_the_matrix_stop(
     # stopped on "cost unknown"; now the run is invalid with its cost and rerun
     (tmp_path / "budget.json").write_text(json.dumps({"cap": 1.0, "spent": 0.0}))
     rec = {"outcome": "reached", "reason": "milestone", "cost_usd": 0.19, "tokens": {}, "sessions": 1}
-    host = Replay(rec)
+    host = Replay(rec | readout(NAUT["game_settings"]["seed"]))
     one = SessionRun("live7", host, scenarios={"nautiloid": NAUT}, sessions=tmp_path / "sessions")
     logs = iter([("facts.jsonl", "rolls.jsonl"), ("facts.jsonl",)])  # the rerun's roll log is clean
 
