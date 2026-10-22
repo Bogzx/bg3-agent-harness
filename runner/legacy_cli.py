@@ -122,13 +122,11 @@ def cmd_run(a) -> int:
         print("refusing --max-cost-per-day: it needs a positive value", file=sys.stderr)
         return 2
     caps = {"run_hours": a.run_hours, "max_cost": a.max_cost, "max_tokens": a.max_tokens}
-    cap_changes: list[str] = []
-    if a.runs:   # a series' caps are fixed by its first run (series.json), a scenario's by the scenario
-        frozen = lser.series_meta(a.playthrough).get("caps") or (scenario["caps"] if scenario else None)
-        caps, err, cap_changes = runs.series_caps(frozen, caps, a.allow_cap_change)
-        if err:
-            print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
-            return 2
+    frozen = (lser.series_meta(a.playthrough).get("caps") or (scenario["caps"] if scenario else None)) if a.runs else None
+    caps, spend_cap, err, cap_changes = runs.series_caps(frozen, caps, a.allow_cap_change)   # run 1's or the scenario's
+    if err:
+        print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
+        return 2
     use_judge = bool(a.runs) if a.judge is None else a.judge   # on for a series (--runs / --scenario)
     if use_judge and not a.until:
         print("refusing --judge: it scores a run's record, which needs --until MILESTONE", file=sys.stderr)
@@ -152,7 +150,7 @@ def cmd_run(a) -> int:
     try:   # a paid client: a global budget (--budget creates it) and a per-run cap, cut to what it has left
         usd = getattr(a, "budget", None)
         budget = spend.ensure_budget(renv.RUNTIME / "budget.json", usd, write=False) if spend.is_paid(client) else None
-        cap, err = spend.run_cap(client, caps["max_cost"], budget)
+        cap, err = spend.run_cap(client, spend_cap or caps["max_cost"], budget)
         if not err and budget is not None and not a.plan:
             spend.ensure_budget(renv.RUNTIME / "budget.json", usd)   # written only once nothing else refuses it
     except spend.BudgetError as e:
@@ -160,7 +158,7 @@ def cmd_run(a) -> int:
     if err and spend.is_paid(client):
         print(f"refusing: {err}", file=sys.stderr)
         return 2
-    caps = dict(caps, max_cost=cap)
+    caps, spend_cap = (caps, cap) if spend_cap else (dict(caps, max_cost=cap), None)
     if use_judge and judge.same_model(judge_model, a.model):
         print(f"refusing --judge: the judge model {judge_model} is the model under test ({a.model}); pick another "
               "with --judge-model (fixed for the whole benchmark) or pass --no-judge", file=sys.stderr)
@@ -219,7 +217,7 @@ def cmd_run(a) -> int:
                   cap_changes=cap_changes or None, pins=lser.current_pins() if a.until and not a.runs else None,
                   judge=use_judge, judge_model=judge_model if use_judge else None, judge_change=judge_change,
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
-                  sandbox_change=sandbox_change, restart_run=a.restart_run,
+                  sandbox_change=sandbox_change, restart_run=a.restart_run, spend_cap=spend_cap,
                   keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day, profile=choice.profile,
                   seed=getattr(a, "seed", None), scenario_settings=scenario_settings, **pi_files)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
@@ -375,6 +373,7 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
     print(f"play:           client {client_name}, model {a.model}, effort {a.effort or 'default'}, "
           f"{a.session_minutes:g}-min sessions, keeper {keeper}, judge {judge_model if use_judge else 'off'}, "
           f"sandbox {a.sandbox}, caps {caps}, --hours {a.hours or 'none (until stopped or the game ends)'}"
+          + (f", spend cap ${a.max_cost:g}" if a.max_cost and a.max_cost != caps["max_cost"] else "")
           + (f", --max-cost-per-day ${a.max_cost_per_day:g}" if a.max_cost_per_day else ""))
     sid, minutes, model, effort = "S001", a.session_minutes, a.model, a.effort
     res = resume_preview(pt, a.save_owner or os.environ.get("BG3AI_SAVE_OWNER"), a.session_minutes,

@@ -54,7 +54,7 @@ OpenRouter, so no `[routing]`).
 ```bash
 python3 tools/bench_preflight.py
 python3 runner/play.py run --scenario nautiloid --runs 3 --playthrough naut-my-model \
-    --profile profiles/my-model.toml --max-cost 5 --allow-cap-change --budget 20 --no-keeper --no-judge
+    --profile profiles/my-model.toml --max-cost 5 --budget 20 --no-keeper --no-judge
 python3 runner/play.py runs --playthrough naut-my-model
 ```
 
@@ -63,8 +63,9 @@ python3 runner/play.py runs --playthrough naut-my-model
 - `--scenario nautiloid` plays the opening chapter from a new game until the party escapes the Nautiloid. It is
   the only scenario with a live history; `python3 runner/play.py scenarios` lists which others are ready.
 - `--max-cost` is required for pi: the runner kills the play process when the billed cost reaches it and records
-  the run as over budget. The nautiloid scenario sets no cost cap, so a per-run cap is a change from the scenario
-  and needs `--allow-cap-change`, which records it in `series.json`. A series keeps the caps of its first run.
+  the run as over budget. A `--max-cost` at or under the scenario's cost cap (nautiloid sets none) is your spend
+  cap: the run record keeps it as `spend_cap`, and the scenario's caps stay what the series measures. A looser one
+  changes the caps and needs `--allow-cap-change`, which records it in `series.json`.
 - `--budget 20` creates the global budget `runtime/budget.json` (below) when there is none; a paid run refuses
   to start without one. Once it exists, pass the same value or leave the flag out.
 - The rules served are the `rules` condition, the ranked one. `BG3AI_PROMPT_CONDITION=rules+coaching` in the

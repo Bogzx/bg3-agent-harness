@@ -378,23 +378,22 @@ class ChecksSide:
             renv.log(f"heat: game menu not closed: {e!r}")
 
     def caps(self) -> dict:
-        """The run's caps as recorded (runs.CAP_KEYS)."""
-        return {"run_hours": self.opt.run_hours, "max_cost": self.opt.max_cost, "max_tokens": self.opt.max_tokens}
+        """The caps this run stops at (runs.CAP_KEYS): max_cost is the spend cap when there is one (opt.spend_cap)."""
+        return {"run_hours": self.opt.run_hours, "max_cost": self.opt.spend_cap or self.opt.max_cost,
+                "max_tokens": self.opt.max_tokens}
 
     def has_usage_caps(self) -> bool:
         """--max-cost (also without --until: then it caps this runner's run) / --max-tokens (with --until)."""
-        return self.opt.max_cost is not None or bool(self.opt.until and self.opt.max_tokens is not None)
+        return self.caps()["max_cost"] is not None or bool(self.opt.until and self.opt.max_tokens is not None)
 
     def check_usage_caps(self, cost: float, tokens: int) -> bool:
         """--max-cost / --max-tokens: True (and cap_hit set, an event logged) once the run reached one."""
         if self.cap_hit:
             return True
-        if not self.has_usage_caps():
+        caps = self.caps()
+        if not (cap := runs.cap_exceeded(caps, cost, tokens) if self.has_usage_caps() else None):
             return False
-        cap = runs.cap_exceeded(self.caps(), cost, tokens)
-        if not cap:
-            return False
-        limit = f"--max-cost ${self.opt.max_cost:g}" if cap == "cost" else f"--max-tokens {self.opt.max_tokens}"
+        limit = f"--max-cost ${caps['max_cost']:g}" if cap == "cost" else f"--max-tokens {self.opt.max_tokens}"
         why = f"{cap} cap used up: ${cost:.2f}, {tokens} tokens ({limit})"
         self.cap_hit = {"cap": cap, "cost": round(cost, 4), "tokens": tokens, "why": why}
         renv.log(why + ": the run ends")
@@ -402,16 +401,17 @@ class ChecksSide:
         return True
 
     def budget_refusal(self) -> str | None:
-        """A paid client (spend.PAID_CLIENTS): why this run can't start, else None with --max-cost cut to what
-        runtime/budget.json has left (every run of a series checks again)."""
+        """A paid client (spend.PAID_CLIENTS): why this run can't start, else None with its cost cap (self.caps())
+        cut to what runtime/budget.json has left (every run of a series checks again)."""
         if not spend.is_paid(self.opt.client) or self.opt.dry_run:
             return None
         try:
-            cap, err = spend.run_cap(self.opt.client, self.opt.max_cost, spend.read_budget(renv.RUNTIME / "budget.json"))
+            cap, err = spend.run_cap(self.opt.client, self.caps()["max_cost"],
+                                     spend.read_budget(renv.RUNTIME / "budget.json"))
         except spend.BudgetError as e:
             cap, err = None, str(e)
         if err:
             renv.log(f"refusing the run: {err}")
             return err
-        self.opt = replace(self.opt, max_cost=cap)
+        self.opt = replace(self.opt, **{"spend_cap" if self.opt.spend_cap else "max_cost": cap})
         return None

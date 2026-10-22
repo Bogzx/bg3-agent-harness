@@ -290,6 +290,9 @@ class Cli(TmpDir):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.run_cli("--scenario", "beach", "--max-cost", "60", "--allow-cap-change")[0], 0)
         self.assertEqual(self.calls[-1][0].cap_changes, ["max_cost: 40 → 60.0"])
+        self.assertEqual(self.run_cli("--scenario", "beach", "--max-cost", "20")[0], 0)  # stricter: the spend cap
+        o = self.calls[-1][0]
+        self.assertEqual((o.max_cost, o.spend_cap, o.cap_changes), (40, 20.0, None))
         # a series that belongs to another scenario, or whose scenario file changed, is refused
         lser.freeze_series("beach", 2, "grove", {}, None, None, {"name": "other"})
         rc, err = self.run_cli("--scenario", "beach")

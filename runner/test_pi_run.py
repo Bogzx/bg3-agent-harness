@@ -169,6 +169,9 @@ class PiRun(PiRunBase):
         self.assertIsNone(self.r.budget_refusal())
         self.assertEqual(self.r.opt.max_cost, 0.5)
         self.assertTrue(self.r.has_usage_caps())  # also without --until
+        self.wire(replace(self.opt, max_cost=None, spend_cap=1.0), [])  # a spend cap is cut, the caps stay
+        self.assertIsNone(self.r.budget_refusal())
+        self.assertEqual((self.r.opt.spend_cap, self.r.opt.max_cost), (0.5, None))
 
 
 class RawStream(unittest.TestCase):

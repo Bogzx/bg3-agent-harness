@@ -207,6 +207,15 @@ class Wiring(TmpDir):
         self.assertTrue(r.check_usage_caps(0, 0))                   # once hit, stays hit
         self.assertFalse(self.runner("naut-r3", 3).has_usage_caps())
 
+    def test_a_spend_cap_ends_the_run_but_the_record_keeps_the_series_caps(self):
+        r = self.runner(max_cost=None, spend_cap=5.0, run_hours=1.0)   # --max-cost 5 on a scenario with no cost cap
+        self.assertTrue(r.has_usage_caps())
+        self.assertFalse(r.check_usage_caps(4.99, 10))
+        self.assertTrue(r.check_usage_caps(5.0, 10))
+        self.assertIn("--max-cost $5", r.cap_hit["why"])
+        rec = r.write_run_record(time.time() - 60, "over_budget", r.cap_hit["why"])
+        self.assertEqual((rec["caps"]["max_cost"], rec["spend_cap"], rec["cap_changes"]), (None, 5.0, None))
+
     def test_the_run_record_carries_the_benchmark_fields(self):
         r = self.runner(max_tokens=1000, run_hours=4.0)
         r.opt.pins = self.PINS

@@ -21,17 +21,30 @@ class TmpDir(unittest.TestCase):
 class Series(TmpDir):
     def test_series_caps(self):
         cli = {"run_hours": 4, "max_cost": 30.0, "max_tokens": None}
-        self.assertEqual(R.series_caps(None, cli, False), (cli, None, []))  # the first run sets them
+        self.assertEqual(R.series_caps(None, cli, False), (cli, None, None, []))  # the first run sets them
         frozen = {"run_hours": 4, "max_cost": 30.0, "max_tokens": 9_000_000}
         self.assertEqual(
-            R.series_caps(frozen, {"run_hours": None, "max_cost": None, "max_tokens": None}, False), (frozen, None, [])
+            R.series_caps(frozen, {"run_hours": None, "max_cost": None, "max_tokens": None}, False),
+            (frozen, None, None, []),
         )  # later runs take series.json's
-        self.assertEqual(R.series_caps(frozen, cli, False)[1], None)  # same values, one left out
-        caps, err, changes = R.series_caps(frozen, {**cli, "max_cost": 50.0}, False)
+        self.assertEqual(R.series_caps(frozen, cli, False)[2], None)  # same values, one left out
+        caps, _, err, changes = R.series_caps(frozen, {**cli, "max_cost": 50.0}, False)
         self.assertIn("--allow-cap-change", err)
         self.assertEqual(changes, ["max_cost: 30.0 → 50.0"])
-        caps, err, changes = R.series_caps(frozen, {**cli, "max_cost": 50.0}, True)
-        self.assertEqual((caps["max_cost"], err, changes), (50.0, None, ["max_cost: 30.0 → 50.0"]))
+        caps, spend, err, changes = R.series_caps(frozen, {**cli, "max_cost": 50.0}, True)
+        self.assertEqual((caps["max_cost"], spend, err, changes), (50.0, None, None, ["max_cost: 30.0 → 50.0"]))
+
+    def test_a_stricter_max_cost_is_the_operators_spend_cap_not_a_cap_change(self):
+        frozen = {"run_hours": 1, "max_cost": None, "max_tokens": None}  # nautiloid.json: no cost cap
+        cli = {"run_hours": None, "max_cost": 5.0, "max_tokens": None}
+        self.assertEqual(R.series_caps(frozen, cli, False), (frozen, 5.0, None, []))
+        frozen = {**frozen, "max_cost": 10.0}
+        self.assertEqual(R.series_caps(frozen, cli, False), (frozen, 5.0, None, []))
+        caps, spend, err, changes = R.series_caps(frozen, {**cli, "max_cost": 12.0}, False)  # looser: refused
+        self.assertEqual((spend, changes), (None, ["max_cost: 10.0 → 12.0"]))
+        self.assertIn("--allow-cap-change", err)
+        caps, spend, err, _ = R.series_caps(frozen, {**cli, "run_hours": 2, "max_cost": 5.0}, True)
+        self.assertEqual((caps, spend, err), ({**frozen, "run_hours": 2}, 5.0, None))
 
     def test_update_record_in_place(self):
         path = self.tmp / "runs.jsonl"

@@ -115,7 +115,8 @@ class QuickstartCommand(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("nothing launched or written", out.stdout)
         self.assertIn("client pi, model vendor/model-id, effort high", out.stdout)
-        self.assertIn("'max_cost': 5.0", out.stdout)
+        self.assertIn("'max_cost': None", out.stdout)  # nautiloid's caps: --max-cost 5 is the spend cap
+        self.assertIn("spend cap $5", out.stdout)
         self.assertIn('"openrouter/vendor/model-id"', out.stdout)  # the pi command's --model
         self.assertNotIn(KEY, out.stdout + out.stderr)
         self.assertFalse(rt.exists())  # no series.json, no budget.json

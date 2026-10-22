@@ -90,6 +90,7 @@ class Options:
     pins: dict | None = None           # version pins this run plays with (runs.version_pins), recorded in runs.jsonl
     version_drift: list | None = None  # --allow-version-drift: the pins that differ from the series' first run
     cap_changes: list | None = None    # --allow-cap-change: the caps that differ from series.json
+    spend_cap: float | None = None     # run --max-cost below the series' max_cost: where the run stops, not a cap
     scenario: str | None = None        # run --scenario NAME: scenarios/<name>.json (frozen in series.json)
     start_save: str | None = None      # its start save folder: loaded for the first session, kept out of saves_after
     judge: bool = False                # run --judge (default with --runs): score the run's persona after its record

@@ -75,30 +75,35 @@ def next_run_index(records: list[dict[str, Any]]) -> int:
 CAP_KEYS = ("run_hours", "max_cost", "max_tokens")  # --run-hours, --max-cost USD, --max-tokens N
 
 
-def series_caps(frozen: dict | None, cli: dict, allow_change: bool) -> tuple[dict, str | None, list[str]]:
-    """(caps for this run, error, changes): series.json's caps rule a series; a CLI cap left out takes the frozen
-    one, a different CLI value is an error unless allow_change (then it is used and listed). No frozen caps (the
-    first run, or a series from before caps): the CLI's."""
+def series_caps(frozen: dict | None, cli: dict, allow_change: bool) -> tuple[dict, float | None, str | None, list[str]]:
+    """(caps for this run, spend cap, error, changes): series.json's caps rule a series; a CLI cap left out takes the
+    frozen one, a different CLI value is an error unless allow_change (then it is used and listed). A --max-cost
+    below the frozen max_cost (or under none) is the operator's spend cap instead: the run stops there, but the
+    caps (what a run may use, what is measured) stay the series' and it is no change. No frozen caps (the first
+    run, or a series from before caps): the CLI's, no spend cap."""
     if frozen is None:
-        return {k: cli.get(k) for k in CAP_KEYS}, None, []
-    caps, changes = {}, []
+        return {k: cli.get(k) for k in CAP_KEYS}, None, None, []
+    caps, changes, spend_cap = {}, [], None
     for k in CAP_KEYS:
         want, have = cli.get(k), frozen.get(k)
         if want is None or want == have:
             caps[k] = have
+        elif k == "max_cost" and (have is None or want < have):
+            caps[k], spend_cap = have, want
         else:
             changes.append(f"{k}: {have} → {want}")
             caps[k] = want
     if changes and not allow_change:
         return (
             caps,
+            spend_cap,
             (
                 "the series' caps are fixed in series.json (" + "; ".join(changes) + "): drop the flag, or "
                 "pass --allow-cap-change to record the change"
             ),
             changes,
         )
-    return caps, None, changes
+    return caps, spend_cap, None, changes
 
 
 def series_judge_model(

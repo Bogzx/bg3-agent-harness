@@ -518,9 +518,9 @@ class SeriesSide:
         rec.update(model=play, effort=self.model_for()[1],
                    keeper_model=rpolicy.keeper_model(self.opt.keeper_model, play) if self.opt.keeper else None)
         cur = self.state["run"] or {}
-        rec.update(caps=self.caps(), pins=cur.get("pins") or self.opt.pins,
+        rec.update(caps=dict(self.caps(), max_cost=self.opt.max_cost), pins=cur.get("pins") or self.opt.pins,
                    version_drift=cur.get("version_drift", self.opt.version_drift) or None,
-                   cap_changes=self.opt.cap_changes or None)
+                   cap_changes=self.opt.cap_changes or None, spend_cap=self.opt.spend_cap)
         if self.opt.scenario:
             rec["scenario"] = self.opt.scenario
         if self.opt.scenario_settings:
