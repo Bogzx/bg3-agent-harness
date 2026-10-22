@@ -1,12 +1,16 @@
 # pyright: basic
 """The baseline rule in practice (D8; BENCHMARK-PLAN.md: a baseline above ~5% means the grader is broken): the
 do-nothing and random baselines play every v2 scenario through the matrix runner, the real bridge and the fake mod
-(bg3harness.testing), and every scenario's grader fails them.
+(bg3harness.testing), and every scenario's grader fails them. The oracle check (Phase E.2) is the other half: a
+scripted solve (ORACLE: the fake world steps a solve would cause, one per progress read) through the same bridge and
+facts path passes every scenario's grader, so a grader that fails everything is caught too.
 
 The fake mod hosts each scenario's start as its needs_save describes it (party, area, gold, quests, who is near);
 it has no combat, trade, travel or dialogue engine, so these runs prove that the grader and the start state don't
 pass a run that makes no progress, not that the real game can't hand a random agent the goal. LIVE says, per
-scenario, what only a live baseline series can show.
+scenario, what only a live baseline series can show. Likewise the oracle proves the grader passes the end state a
+solve leaves (read as the real game reports it), not that the scenario can be solved from its start save: that is
+the live oracle run (D12).
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -256,6 +260,98 @@ BROKEN: dict[str, str] = {
 }
 
 
+def fight(*enemies: str) -> list[Callable]:
+    """A fight the party wins: it starts at one read and every enemy is dead and the combat over at the next."""
+
+    def end(m) -> None:
+        for e in enemies:
+            m.kill(e)
+        m.end_fight()
+
+    return [lambda m: m.start_fight(list(enemies)), end]
+
+
+def recruit(*names: str) -> Callable:
+    """Companions join the party (each at the party's level)."""
+
+    def step(m) -> None:
+        from bg3harness.testing.scripted import Member
+
+        for n in names:
+            i = len(m.party)
+            m.party.append(
+                Member(f"00000000-0000-0000-0000-{i + 1:012d}", n, level=m.party[0].level, pos=(10.0 + i, 0.0, 10.0))
+            )
+
+    return step
+
+
+def finish_quest(title: str) -> Callable:
+    """The journal shows the quest done (added first if the start doesn't have it)."""
+
+    def step(m) -> None:
+        if not any(q["title"] == title for q in m.journal):
+            m.add_quest(title, f"{title}.")
+        next(q for q in m.journal if q["title"] == title)["done"] = True
+        m.push("quest_done", {"title": title})
+
+    return step
+
+
+def area(region: str, level: str = "WLD_Main_A") -> Callable:
+    return lambda m: m.change_area(region, level)
+
+
+def levels(n: int) -> Callable:
+    def step(m) -> None:
+        for p in m.party:
+            p.level = n
+
+    return step
+
+
+# name -> the scripted solve: the fake world's steps, one per progress read, ending in the state the goal asks for.
+ORACLE: dict[str, list[Callable]] = {
+    "nautiloid": [finish_quest("Escape the Nautiloid")],
+    "act1_gold_1000": [lambda m: m.add_gold(1000 - m.gold)],
+    "act1_get_item": [lambda m: m.add_item("Idol of Silvanus")],
+    "act1_level_3": [*fight("Bandit"), levels(3)],
+    "act1_recruit_3": [recruit("Gale"), recruit("Karlach")],
+    "act1_goblin_camp_no_fight": [area("Shattered Sanctum")],
+    "act2_last_light": [area("Last Light Inn", "SCL_Main_A")],
+    "crash_site_grove": [area("Emerald Grove")],
+    "choice_act1_karlach": [recruit("Karlach")],
+    "choice_act1_minthara": [area("Emerald Grove")],
+    "choice_act1_arabella": [finish_quest("Save Arabella")],
+    "choice_act2_nightsong": [finish_quest("The Chosen of Shar")],
+    "choice_act3_wyll_pact": [finish_quest("Rescue the Grand Duke")],
+    "fight_act1_windmill": fight("Goblin", "Worg"),
+    "fight_act1_grove_gate": fight("Goblin"),
+    "fight_act1_dror_ragzlin": fight("Dror Ragzlin", "Goblin"),
+    "fight_act1_gith_patrol": fight("Githyanki Warrior"),
+    "fight_act2_balthazar": fight("Balthazar", "Flesh Golem"),
+    "fight_act2_house_of_healing": fight("Malus Thorm", "Nurse"),
+    "fight_act2_moonrise_assault": fight("Moonrise Guard"),
+    "fight_act2_ketheric": [*fight("Ketheric Thorm"), finish_quest("Defeat Ketheric Thorm")],
+    "fight_act3_sarevok": fight("Sarevok Anchev"),
+    "fight_act3_cazador": fight("Cazador Szarr", "Predator Werewolf"),
+}
+
+# Ends one step short of the goal, which the grader must fail: (name, the steps).
+NEAR_MISS: dict[str, list[Callable]] = {
+    "act1_recruit_3": [recruit("Gale")],  # one companion recruited, the goal wants two more
+    "fight_act1_windmill": fight("Goblin", "Worg")[:1],  # the fight started, never won
+    "act1_gold_1000": [lambda m: m.add_gold(999 - m.gold)],
+    "fight_act2_ketheric": fight("Ketheric Thorm"),  # the fight won, the quest still open
+}
+
+# Near misses the grader passes today, and why: strict, as BROKEN.
+NEAR_MISS_BROKEN: dict[str, str] = {
+    "act1_recruit_3": "BROKEN['choice_act1_karlach']'s cause: Tav + Shadowheart + Gale = 3 meets companions >= 3 "
+    "after one recruit of the two the goal wants",
+}
+
+
 class Clock:
     def __init__(self, on_tick: Callable[[float], None]):
         self.t, self.on_tick, self.next_poll = T0, on_tick, T0 + POLL_S
@@ -306,8 +402,9 @@ class Avatar:
         return None
 
 
-def play_job(job: dict, sessions: Path) -> matrix.RunResult:
-    """One baseline run of a matrix job: fake mod at the scenario's start, the real bridge, facts, the grade."""
+def play_job(job: dict, sessions: Path, solve: Sequence[Callable] = ()) -> matrix.RunResult:
+    """One baseline run of a matrix job: fake mod at the scenario's start, the real bridge, facts, the grade. `solve`:
+    world steps applied one per progress read (ORACLE), the do-nothing agent playing meanwhile."""
     from bg3ai import progress
     from bg3ai.luadebug import LuaDebugClient
     from bg3harness import facts as facts_w
@@ -332,9 +429,16 @@ def play_job(job: dict, sessions: Path) -> matrix.RunResult:
                 progress.read_game(lua_eval), facts_w.read_inventory(lua_eval, progress.combined_code), now=now
             )
 
+        steps = list(solve)
+
+        def tick(now: float) -> None:
+            if steps:
+                steps.pop(0)(model)
+            poll(now)
+
         writer.mark("run_start", {"playthrough": job["id"]}, now=T0)
         poll(T0)
-        clock = Clock(poll)
+        clock = Clock(tick)
 
         async def play() -> None:
             async with bridge_session(fake.port, run_dir / "bridge") as client:
@@ -350,6 +454,7 @@ def play_job(job: dict, sessions: Path) -> matrix.RunResult:
                     )  # fmt: skip
 
         asyncio.run(play())
+        assert not steps, f"the run ended before the solve's last {len(steps)} steps"
         poll(clock.t)
         writer.mark("run_end", "gave_up", now=clock.t)
     calls = [json.loads(line) for line in out.getvalue().splitlines() if '"type": "call"' in line]
@@ -383,7 +488,8 @@ def play_job(job: dict, sessions: Path) -> matrix.RunResult:
 
 def test_every_scenario_has_a_fake_start_and_a_live_note():
     names = sorted(p.stem for p in SCENARIOS.glob("*.json"))
-    assert sorted(START) == names and sorted(LIVE) == names
+    assert sorted(START) == names and sorted(LIVE) == names and sorted(ORACLE) == names
+    assert set(NEAR_MISS) <= set(names)
     assert set(BROKEN) <= set(names)
 
 
@@ -415,3 +521,28 @@ def test_baselines_fail_every_grader(tmp_path, name):
     assert len(ends) == 2 and all(r["valid"] for r in ends.values()), ends
     passed = sorted(jid for jid, r in ends.items() if r["passed"])
     assert passed == [], f"a baseline passed {name}: {passed}"
+
+
+def solve_job(tmp_path: Path, name: str, solve: Sequence[Callable]) -> dict:
+    """The scripted solve's run (the do-nothing agent plays while the world takes the steps); its result.json."""
+    job = {"id": f"{name}-oracle", "scenario": name, "model": "baseline:donothing", "condition": "rules"}
+    play_job(job, tmp_path / "sessions", solve)
+    return json.loads((tmp_path / "sessions" / job["id"] / run_artifacts.RESULT).read_text())
+
+
+@pytest.mark.parametrize("name", sorted(ORACLE))
+def test_the_scripted_solve_passes_every_grader(tmp_path, name):
+    res = solve_job(tmp_path, name, ORACLE[name])
+    assert res["passed"] is True, res["grade"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(n, marks=pytest.mark.xfail(strict=True, reason=NEAR_MISS_BROKEN[n])) if n in NEAR_MISS_BROKEN else n
+        for n in sorted(NEAR_MISS)
+    ],
+)  # fmt: skip
+def test_a_solve_one_step_short_fails(tmp_path, name):
+    res = solve_job(tmp_path, name, NEAR_MISS[name])
+    assert res["passed"] is False, res["grade"]
