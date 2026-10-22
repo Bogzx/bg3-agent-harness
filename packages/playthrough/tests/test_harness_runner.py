@@ -1,6 +1,7 @@
 """adapters/harness_runner.py: whole playthroughs through the Supervisor and bg3harness run_session, with a fake
 agent, game and memory on a fake clock."""
 
+import dataclasses
 import json
 import subprocess
 import threading
@@ -73,6 +74,7 @@ class FakeGame:
         self.began: list[tuple[Path, Path]] = []
         self.pending_notes: list[str] = []  # the controller's RUNNER NOTEs, taken by notes()
         self.ensured: list[float] = []  # ensure_save calls (each session's start)
+        self.new = False  # is_new: the playthrough has no save yet
 
     def begin(self, sdir: Path, mem: Path) -> None:
         self.began.append((sdir, mem))
@@ -99,6 +101,9 @@ class FakeGame:
     def ensure_save(self, since: float) -> str | None:
         self.ensured.append(since)
         return None
+
+    def is_new(self) -> bool:
+        return self.new
 
     def notes(self) -> list[str]:
         out, self.pending_notes = self.pending_notes, []
@@ -537,6 +542,20 @@ def test_a_new_playthroughs_first_session_launches_a_new_game_and_the_second_its
     assert 'already loaded save "S001-start"' in second and "PHASE 0" not in second
     rj = json.loads((sdir / "runner.json").read_text())
     assert rj["save_owner"] == "Vessa" and rj["loaded_save"] == "Vessa-1__S001-start"
+
+
+def test_a_new_playthrough_whose_game_is_already_up_gets_the_new_game_notes(tmp_path: Path):
+    # the bridge answers at the main menu, so the session start launches nothing: the kickoff still needs phase 0
+    sup, agent, game, *_ = make(tmp_path, hours=0.5)
+    cfg = config.load(tmp_path / "playthroughs" / PT)
+    config.save(tmp_path / "playthroughs" / PT, dataclasses.replace(cfg, character=dataclasses.replace(
+        cfg.character, brief="a half-orc bard")))  # fmt: skip
+    game.new = True
+    sup.start(PT, wait=True)
+    assert game.recovered == [] and "PHASE 0, CHARACTER CREATION" in agent.calls[0].prompt
+    game.new = False
+    sup.resume(PT, wait=True)
+    assert "PHASE 0" not in agent.calls[1].prompt
 
 
 def test_the_kickoff_is_the_runners():

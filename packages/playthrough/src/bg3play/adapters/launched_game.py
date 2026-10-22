@@ -217,6 +217,13 @@ class LaunchedGame:
         write_state(self.sdir / "runner.json", loaded_save=loaded.folder)
         return loaded.label
 
+    def is_new(self) -> bool:
+        """No save owner known or learnable from this playthrough's saves: its first game is still to be made."""
+        if self.sdir is None:
+            return False
+        state = read_state(self.sdir / "runner.json")
+        return not state.get("save_owner") and learn_owner(self.saves(), state, self.sdir) is None
+
     def new_game(self) -> None:
         """A playthrough without a save: the game launched to the main menu, where the agent starts a new game (and
         creates the character, whose name becomes the save owner)."""

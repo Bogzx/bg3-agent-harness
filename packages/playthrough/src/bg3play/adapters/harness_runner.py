@@ -90,6 +90,7 @@ class Game(Protocol):
     # (NoSaveYetError: the playthrough has no save yet)
     def new_game(self) -> None: ...  # launch to the main menu for a playthrough without a save; raises if it can't
     def ensure_save(self, since: float) -> str | None: ...  # at a session's end: its save, else a runner quicksave
+    def is_new(self) -> bool: ...  # the playthrough has no save of its own yet (its first game is still to be made)
     def notes(self) -> list[str]: ...  # RUNNER NOTEs from the recoveries since the last call
 
 
@@ -386,6 +387,8 @@ class HarnessRunner:
                 return SessionResult("?", outcome, detail=f"the game doesn't answer and wasn't recovered: {e}",
                                      game_deaths=tuple(hooks.deaths))  # fmt: skip
             req.phase("playing")
+        elif self.game.is_new():  # up already (at the main menu, or a new game started by hand) with no save of its own
+            new_game = new_game_notes(cfg)
         hooks.phase = req.phase
         start = self.clock()
         env = session_env(req, predicted, start, self.runtime, self.playthroughs, cfg.keeper.enabled)
@@ -508,6 +511,9 @@ class AttachedGame:
 
     def ensure_save(self, since: float) -> str | None:
         return None  # the game is yours: the app never saves it
+
+    def is_new(self) -> bool:
+        return False  # the game is yours: whatever it runs is the playthrough's
 
     def notes(self) -> list[str]:
         return []

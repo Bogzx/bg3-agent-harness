@@ -173,6 +173,7 @@ def test_no_owner_is_learned_from_the_playthroughs_own_saves(tmp_path: Path):
     saves = [save("Vessa", 1, "S001-start", 1500), save("Karlach", 2, "S004-end", 5000)]
     ctl = FakeCtl()
     g, sdir, logs = setup(tmp_path, hist, saves, ctl=ctl)
+    assert not g.is_new()
     assert g.recover("crashed") == "S001-start" and ctl.calls == ["kill", "launch Vessa-1__S001-start"]
     assert json.loads((sdir / "runner.json").read_text())["save_owner"] == "Vessa"
     assert "save owner Vessa: learned from this playthrough's own saves" in logs
@@ -181,6 +182,7 @@ def test_no_owner_is_learned_from_the_playthroughs_own_saves(tmp_path: Path):
 def test_a_playthrough_without_saves_is_new_and_launches_to_the_main_menu(tmp_path: Path):
     ctl = FakeCtl(alive=False)
     g, sdir, _ = setup(tmp_path, {"history": []}, [save("Karlach", 2, "S004-end", 5000)], ctl=ctl)
+    assert g.is_new()  # another playthrough's save makes it no less new
     with pytest.raises(lg.NoSaveYetError):
         g.recover("wasn't answering at the session start")
     g.new_game()

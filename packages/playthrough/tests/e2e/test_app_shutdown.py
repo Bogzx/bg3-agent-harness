@@ -85,6 +85,9 @@ class UpGame:
     def ensure_save(self, since: float) -> str | None:
         return None
 
+    def is_new(self) -> bool:
+        return False
+
     def notes(self) -> list[str]:
         return []
 
