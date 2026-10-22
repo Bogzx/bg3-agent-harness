@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -36,7 +37,9 @@ FOE = "00000000-0000-0000-0000-000000000450"
 class Extra:
     """Answers what GameModel doesn't: raw Lua by a substring, and ops by name (fn(args) or a value)."""
 
-    def __init__(self, evals: list[tuple[str, Any]] | None = None, ops: dict[str, Any] | None = None):
+    def __init__(
+        self, evals: list[tuple[str, str | Callable[[str, str], str]]] | None = None, ops: dict[str, Any] | None = None
+    ):
         self.evals, self.ops = list(evals or []), dict(ops or {})
 
     def reply(self, ctx: str, op: str, args: dict[str, Any]) -> dict | None:

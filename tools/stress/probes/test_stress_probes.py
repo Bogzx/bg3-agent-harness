@@ -57,7 +57,9 @@ class Clock:
 class FakeGame:
     """ops: op -> value or fn(args); evals: (substring of the Lua, answer or fn(code, ctx)), first match wins."""
 
-    def __init__(self, ops: dict[str, Any] | None = None, evals: list[tuple[str, Any]] | None = None):
+    def __init__(
+        self, ops: dict[str, Any] | None = None, evals: list[tuple[str, str | Callable[[str, str], str]]] | None = None
+    ):
         self.ops = dict(ops or {})
         self.evals = list(evals or [])
         self.calls: list[tuple[str, Any]] = []
@@ -86,6 +88,9 @@ class FakeGame:
 
 
 class FakeServer:
+    trade: Callable[..., str]
+    pickpocket: Callable[..., str]
+
     def __init__(self, **tools: Callable[..., str]):
         self.H = Handles()
         self.called: list[tuple[str, dict]] = []
@@ -335,7 +340,7 @@ def test_trade_entries_read_the_tools_own_text():
     assert mine["Eldritch Tablet"]["flags"] == ["story"] and trade.party_gold(text) == 40
 
 
-def trade_world() -> tuple[FakeGame, FakeServer, Ring]:
+def trade_world() -> tuple[FakeGame, FakeServer, dict[str, Any]]:
     ring = Ring()
     near = {"characters": [{"uuid": MATTIS, "name": "Mattis", "dist": 3.0, "relation": "neutral", "can_trade": True}]}
     g = FakeGame({"state.nearby": near, "ref.since": ring.since})
@@ -415,7 +420,8 @@ def pp_world(outcome: list[dict]) -> tuple[FakeGame, FakeServer]:
 
 
 def test_pickpocket_best_is_the_first_listed():
-    assert pickpocket.best(pockets(Handles()))[1] == "Gold x12 81% DC8"
+    top = pickpocket.best(pockets(Handles()))
+    assert top is not None and top[1] == "Gold x12 81% DC8"
     assert pickpocket.best(economy.pockets_text({}, lambda it: "")) is None
 
 
@@ -598,7 +604,8 @@ def test_rec_fps_stats_and_judge():
 
 def test_rec_fps_finds_the_game_window():
     tree = '  0x1400002 "Baldur\'s Gate 3 (1920x1080) - (Vulkan) - (6 + 6 WT)": ("bg3" "bg3")  1920x1080+0+0'
-    assert u13_rec_fps.WINDOW_RE.search("xx\n" + tree).group(1) == "0x1400002"
+    m = u13_rec_fps.WINDOW_RE.search("xx\n" + tree)
+    assert m is not None and m.group(1) == "0x1400002"
 
 
 # ---- P7 level-up offers ----
