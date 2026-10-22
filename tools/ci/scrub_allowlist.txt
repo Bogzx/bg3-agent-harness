@@ -11,6 +11,9 @@ steam_id packages/bench/tests/test_preflight.py 76561190000000001  # made-up Ste
 steam_id tools/saves/test_inspect.py 76561198000000042  # made-up SteamID64 in a test
 email runner/test_play_oom.py app-term@b676.service  # a systemd unit name, not an address
 email tools/dev/test_acceptance_memory.py user@1000.service  # a systemd unit name, not an address
+email tools/saves/*.py hB@j.rD  # float bytes of a save's Translate vec3 (live6), the save inspector's false positive
+email tools/saves/test_inspect.py xfehB@j.rD  # the same float bytes after an escaped \xfe in the inspector's test input
+email tools/saves/test_inspect.py x@y.org  # made-up address the save inspector's test must find
 term LICENSE  # the copyright line: the authorship line, like git's author
 term CITATION.cff  # the citation's author entry: the authorship line, like git's author
 term packages/bench/src/bg3bench/authoring.py  # owner decision pending (LAUNCH-GATE.md §4): the forbidden-name list
