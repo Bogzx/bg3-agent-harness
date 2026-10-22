@@ -332,6 +332,25 @@ def test_a_game_down_at_the_session_start_is_recovered_first(tmp_path: Path):
     assert h["outcome"] == "ok" and h["game_deaths"] == [""]
 
 
+def test_the_supervisors_detail_says_launching_and_relaunching_not_playing(tmp_path: Path):
+    # live7 D.4b: /api/v1/supervisor said "playing S001" for the 2.5 minutes the app was launching the game
+    sup, _, game, *_ = make(tmp_path, [("crash", 5), ("exited", 20)], hours=0.4, recover_to="S000-end")
+    game.is_ok = False
+    details: list[str] = []
+    sup.on_change = lambda view: details.append(view["detail"])
+    sup.start(PT, wait=True)
+    assert details == [
+        "",
+        "playing",
+        "launching the game",
+        "playing",
+        "relaunching the game (it crashed)",
+        "playing",
+        "memory keeper",
+        "hours budget spent",
+    ]
+
+
 class FakeController:
     """bg3harness's GameController over the real AppHost: the game dies when the agent crashes; launch_and_load
     falls back to the older save with the controller's note (as when the newest crashed on load)."""

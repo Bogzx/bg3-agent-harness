@@ -191,6 +191,7 @@ class AppSessionHooks:
         self.deaths: list[str] = []
         self.budget = budget  # runtime/budget.json each process's cost is added to (a paid client); None = unpaid
         self._aborted = aborted
+        self.phase: Callable[[str], object] = lambda detail: None  # SessionRequest.phase once the session plays
 
     def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> AgentRun:
         spent = sum(r.cost_usd or 0.0 for r in self.runs)
@@ -225,12 +226,14 @@ class AppSessionHooks:
         return self.game.ok()
 
     def recover(self, why: str) -> RecoverFailure | None:
+        self.phase(f"relaunching the game (it {why})")
         try:
             self.save = recover_game(self.game, why, self)
         except OomStreakError as e:
             return RecoverFailure(e, fatal=True)
         except Exception as e:  # the session ends; the Supervisor decides on the next
             return RecoverFailure(e, fatal=False)
+        self.phase("playing")
         return None
 
     def loaded(self) -> str | None:
@@ -338,12 +341,15 @@ class HarnessRunner:
             self._abort.is_set,
         )  # fmt: skip
         if not self.game.ok():
+            req.phase("launching the game")
             try:
                 hooks.save = recover_game(self.game, "wasn't answering at the session start", hooks)
             except Exception as e:
                 outcome = "crash" if isinstance(e, OomStreakError) else "error"
                 return SessionResult("?", outcome, detail=f"the game doesn't answer and wasn't recovered: {e}",
                                      game_deaths=tuple(hooks.deaths))  # fmt: skip
+            req.phase("playing")
+        hooks.phase = req.phase
         start = self.clock()
         env = session_env(req, predicted, start, self.runtime, self.playthroughs, cfg.keeper.enabled)
         memory = hooks.memory

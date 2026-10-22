@@ -44,6 +44,9 @@ class SessionRequest:
     notes: tuple[str, ...] = ()
     record: bool = True
     oom_streak: int = 0  # the game deaths by OOM in a row before this session (oom_streak)
+    # what the session is doing now, for the supervisor's detail (the harness runner: launching or relaunching the
+    # game, then playing again); a runner that never calls it shows "playing" throughout
+    phase: Callable[[str], object] = field(default=lambda detail: None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -278,6 +281,7 @@ class Supervisor:
                     end = "hours budget spent"
                     break
                 n = self.sessions_played(pt, hist) + 1
+                nudge = " (stuck nudge)" if is_stuck(hist) else ""
                 req = SessionRequest(
                     pt,
                     n,
@@ -286,8 +290,9 @@ class Supervisor:
                     notes=notes_for(hist),
                     record=cfg.recording.enabled,
                     oom_streak=oom_streak(hist)[0],
+                    phase=lambda what, nudge=nudge: self._set(detail=what + nudge),
                 )
-                self._set(session=f"S{n:03d}", detail="playing" + (" (stuck nudge)" if is_stuck(hist) else ""))
+                self._set(session=f"S{n:03d}", detail="playing" + nudge)
                 res = self.runner.run_session(req, self.stop_event)
                 hist.append(asdict(res))
                 write_history(path, hist)
