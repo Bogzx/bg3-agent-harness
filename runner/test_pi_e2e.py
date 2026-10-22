@@ -409,5 +409,24 @@ class DeepSeekCap(PiE2EBase):
         self.assertEqual({r["model"] for r in self.requests()}, {"deepseek-v4-pro"})
 
 
+class QuickstartPlay(PiE2EBase):
+    """docs/QUICKSTART.md "Test your own model": its profile, as written, plays through pi (tools/pi/test_docs.py
+    checks the rest of that section)."""
+
+    def test_the_documented_profile_plays_through_pi(self):
+        self.addCleanup(os.environ.pop, "OPENROUTER_API_KEY", None)
+        os.environ["OPENROUTER_API_KEY"] = "not-a-real-key"
+        doc = (REPO / "docs" / "QUICKSTART.md").read_text().split("\n## Test your own model\n", 1)[1]
+        raw = tomllib.loads(doc.split("```toml\n", 1)[1].split("```", 1)[0])
+        del raw["routing"]  # OpenRouter's provider pin: refused for a base_url that isn't openrouter.ai
+        res = self.play([{"tool_calls": [call("get_status")]}, {"text": "Done."}], raw=raw)
+        self.assertEqual(res.reason, "exited")
+        self.assertIn("gold 100", self.results()["get_status"])
+        req = self.requests()[0]
+        self.assertEqual(req["model"], "vendor/model-id")
+        self.assertEqual(text_of(req["messages"][0]["content"]), self.system)  # the rules condition
+        self.assertAlmostEqual(self.spent(), 1.0 + 2 * COST)
+
+
 if __name__ == "__main__":
     unittest.main()

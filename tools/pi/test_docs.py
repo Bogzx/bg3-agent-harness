@@ -2,15 +2,13 @@
 """The documented commands, run as written, so the docs can't rot. No game, no key, no network.
 
 - docs/QUICKSTART.md "Test your own model": the profile parses, and the `play.py run` line with `--plan` (as the
-  doc tells you to try first) plans a pi series on it; the e2e class plays that profile through pi on the scripted
-  stub model, the real bridge and the fake mod (runner/test_pi_e2e.py's harness).
+  doc tells you to try first) plans a pi series on it; runner/test_pi_e2e.py's QuickstartPlay plays that profile
+  through pi on the scripted stub model, the real bridge and the fake mod.
 - docs/MCP-SERVER.md: the group table is capabilities.GROUPS; the client config and the Python client start the
   server and read the game state from the fake mod; the memory command, the typo refusal, BG3AI_TOOLS_OFF, the
   conditions, BG3AI_SERVE_RULES=0 and the HTTP transport behave as the page says.
 
-    uv run pytest tools/pi/test_docs.py               (the e2e class: uv run pytest -m e2e tools/pi/test_docs.py)
-
-The e2e class needs tools/pi/node_modules (cd tools/pi && npm ci --ignore-scripts); skipped without it.
+    uv run pytest tools/pi/test_docs.py
 """
 
 from __future__ import annotations
@@ -37,7 +35,6 @@ from bg3harness import profiles  # noqa: E402
 
 QUICKSTART = REPO / "docs" / "QUICKSTART.md"
 MCP_DOC = REPO / "docs" / "MCP-SERVER.md"
-PI = REPO / "tools" / "pi" / "node_modules" / ".bin" / "pi"
 KEY = "not-a-real-key"
 WAIT_S = 60
 
@@ -124,28 +121,6 @@ class QuickstartCommand(unittest.TestCase):
         runs = next(c for c in cmds if c[1:3] == ["runner/play.py", "runs"])
         out = subprocess.run(runs, cwd=REPO, env=env, capture_output=True, text=True, timeout=60)
         self.assertIn("no run records for naut-my-model", out.stdout)
-
-
-if UV_ENV and PI.exists():
-    import pytest
-
-    sys.path.insert(0, str(REPO / "runner"))  # test_pi_e2e and its test_crash, testenv
-    import test_pi_e2e as T  # noqa: N812  runner/: the real Runner.play_session of pi on the stub model and the fake mod
-
-    @pytest.mark.e2e
-    class QuickstartPlay(T.PiE2EBase):
-        def test_the_documented_profile_plays_through_pi(self):
-            self.addCleanup(os.environ.pop, "OPENROUTER_API_KEY", None)
-            os.environ["OPENROUTER_API_KEY"] = KEY
-            raw = doc_profile()
-            del raw["routing"]  # OpenRouter's provider pin: refused for a base_url that isn't openrouter.ai
-            res = self.play([{"tool_calls": [T.call("get_status")]}, {"text": "Done."}], raw=raw)
-            self.assertEqual(res.reason, "exited")
-            self.assertIn("gold 100", self.results()["get_status"])
-            req = self.requests()[0]
-            self.assertEqual(req["model"], "vendor/model-id")
-            self.assertEqual(T.text_of(req["messages"][0]["content"]), self.system)  # the rules condition
-            self.assertAlmostEqual(self.spent(), 1.0 + 2 * T.COST)
 
 
 async def _serve(env: dict[str, str], tool: str | None = "get_status") -> dict:
