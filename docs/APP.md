@@ -140,7 +140,7 @@ difficulty = ""                  # "" (the game's default) | Explorer | Balanced
 profile = ""                     # a client profile (profiles/<name>.toml); "" = client and model below
 client = "claude"                # claude | codex | gemini | pi
 model = "opus"
-effort = ""                      # "" = the client's default | low | medium | high | xhigh | max
+effort = "medium"                # "" = the client's default | low | medium | high | xhigh | max
 condition = "rules+coaching"     # rules | rules+coaching
 
 [character]

@@ -1,6 +1,6 @@
 # Claude Opus 5.5 through Claude Code: a labelled condition, not the ranked track (D6). The endpoint is the CLI's own.
 client = "claude"
 model = "claude-opus-5-5"
-effort = "high"
+effort = "medium"
 fallback_model = "claude-sonnet-5-5"
 status = "verified"  # played live through the game (bg3harness/profiles.py)

@@ -2,5 +2,5 @@
 # Codex CLI with its own endpoint and login (~/.codex). Example model id.
 client = "codex"
 model = "gpt-5"
-effort = "high"
+effort = "medium"
 status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)

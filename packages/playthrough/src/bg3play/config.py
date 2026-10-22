@@ -7,7 +7,7 @@
     profile = ""                       # a client profile by name (profiles/<name>.toml); "" = client/model below
     client = "claude"                  # claude | codex | gemini | pi
     model = "opus"
-    effort = ""                        # "" = the client's default | low | medium | high | xhigh | max
+    effort = "medium"                  # "" = the client's default | low | medium | high | xhigh | max (user: medium)
     condition = "rules+coaching"       # the text the agent is served: rules | rules+coaching (BG3AI_PROMPT_CONDITION)
     [character]                        # today's profile.json "character", same keys
     brief = "a pious, short-tempered dwarf cleric"   # "" = no character phase
@@ -75,7 +75,7 @@ class Agent:
     profile: str = ""
     client: str = "claude"
     model: str = "opus"
-    effort: str = ""
+    effort: str = "medium"
     condition: str = "rules+coaching"
 
 

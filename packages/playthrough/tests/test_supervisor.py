@@ -183,7 +183,8 @@ def test_play_args():
     )
     assert a[:4] == ["python3", "/repo/runner/play.py", "run", "--playthrough"]
     s = " ".join(a)
-    assert "--hours 0.75 --session-minutes 45 --client claude --model opus" in s and "--effort" not in a
+    # the default effort is medium (user 2026-10-22: medium for all)
+    assert "--hours 0.75 --session-minutes 45 --client claude --model opus" in s and "--effort medium" in s
     assert "--keeper-effort low --keeper-minutes 5" in s
     a = legacy_cli.play_args(
         "py",
@@ -209,7 +210,7 @@ def test_profile_agent(tmp_path: Path):
 def test_pi_profile_runs_from_its_file_with_a_cost_cap():
     repo_profiles = Path(__file__).resolve().parents[3] / "profiles"
     agent = legacy_cli.profile_agent(repo_profiles, "deepseek-flash")
-    assert (agent.client, agent.model, agent.effort) == ("pi", "deepseek-flash", "high")
+    assert (agent.client, agent.model, agent.effort) == ("pi", "deepseek-flash", "medium")
     with pytest.raises(SupervisorError, match="cost cap"):
         legacy_cli.play_args("py", Path("/r"), req(), agent, repo_profiles)
     a = legacy_cli.play_args(

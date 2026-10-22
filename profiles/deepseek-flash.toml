@@ -2,7 +2,7 @@
 # Example: model numbers from pi 1.3.0's catalog (2026-10-21); pi detects DeepSeek's compat from the provider id.
 client = "pi"
 model = "deepseek-flash"
-effort = "high"
+effort = "medium"
 status = "verified"  # played live through the game (bg3harness/profiles.py)
 
 [endpoint]
