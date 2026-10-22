@@ -252,12 +252,7 @@ LIVE: dict[str, str] = {
 }
 
 # Scenarios the baselines pass today, and why: strict, so the fix shows as XPASS and this entry must go.
-BROKEN: dict[str, str] = {
-    "choice_act1_karlach": (
-        "bg3harness.facts._member drops the mod's `avatar` flag (StateOps.lua), so State.companions() counts Tav: "
-        "Tav + Wyll + Shadowheart = 3 meets companions >= 3 at the start"
-    ),
-}
+BROKEN: dict[str, str] = {}
 
 
 def fight(*enemies: str) -> list[Callable]:
@@ -346,10 +341,7 @@ NEAR_MISS: dict[str, list[Callable]] = {
 }
 
 # Near misses the grader passes today, and why: strict, as BROKEN.
-NEAR_MISS_BROKEN: dict[str, str] = {
-    "act1_recruit_3": "BROKEN['choice_act1_karlach']'s cause: Tav + Shadowheart + Gale = 3 meets companions >= 3 "
-    "after one recruit of the two the goal wants",
-}
+NEAR_MISS_BROKEN: dict[str, str] = {}
 
 
 class Clock:

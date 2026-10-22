@@ -220,6 +220,13 @@ class Facts(unittest.TestCase):
     def fail(self, _s):
         raise AssertionError("no wait")
 
+    def test_snapshot_keeps_the_avatar_and_summon_flags(self):  # the bench's companions count skips the avatar
+        read = copy.deepcopy(READ)
+        read["status"]["party"] = [member("Tav", avatar=True), member("Shadowheart"), member("Scratch", summon=True)]
+        party = F.snapshot(read, INV, [])["party"]
+        flags = [(m.get("avatar"), m.get("summon")) for m in party]
+        self.assertEqual(flags, [(True, None), (None, None), (None, True)])
+
     def test_read_inventory(self):
         self.assertEqual(
             F.read_inventory(lambda c, ctx: json.dumps([{"ok": True, "result": INV}]), lambda ops: ""), INV

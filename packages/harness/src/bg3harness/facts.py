@@ -43,8 +43,9 @@ def _member(c: dict) -> dict:
     for k in ("hp", "max_hp"):
         if isinstance(c.get(k), (int, float)):
             m[k] = c[k]
-    if c.get("summon"):
-        m["summon"] = True
+    for k in ("avatar", "summon"):
+        if c.get(k):
+            m[k] = True
     return m
 
 
