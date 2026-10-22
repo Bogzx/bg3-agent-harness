@@ -496,6 +496,8 @@ class Game:
                 return [None] * len(jobs[c]), [None] * len(jobs[c]), False
 
         got = dict(zip(ctxs, self.parallel(*[(lambda c=c: one(c)) for c in ctxs])))
+        if "client" in got:
+            self._busy_reask(jobs["client"], *got["client"][:2])
         for c, (_, _, complete) in got.items():
             if complete:
                 self._mark_fresh(c)
@@ -506,6 +508,16 @@ class Game:
                     raise GameError(err)
         return (got["server"][0] if "server" in got else [None] * len(jobs["server"]),
                 got["client"][0] if "client" in got else [None] * len(jobs["client"]))
+
+    def _busy_reask(self, ops: list[tuple[str, dict]], res: list[Any], errs: list[Any]) -> None:
+        """A client op of a read() that met the busy UI is asked again the way rpc() asks it (busywait.py), in
+        place: without this a busy ui.state left get_status with no screen line and no word of why."""
+        for i, (op, args) in enumerate(ops):
+            if errs[i] and op in busywait.RETRY_OPS and busywait.is_busy(str(errs[i])):
+                try:
+                    res[i], errs[i] = self.rpc(op, args, "client"), None
+                except GameError as e:
+                    errs[i] = str(e)
 
     def read1(self, op: str, args: dict | None = None, context: str = "server") -> Any:
         """rpc(op) plus both contexts' events in the same game tick (see read()); raises like rpc()."""
