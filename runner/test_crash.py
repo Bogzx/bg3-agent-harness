@@ -226,6 +226,10 @@ class FakeRunBase(unittest.TestCase):
         C.MENU_POLL = 0.05
         O.user_journal = lambda since: ""              # recover's OOM check: never the real journalctl (up to 20 s)
         P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"     # a hang's recover marks nav_guard*.json: never the live game's
+        for name, fake in (("fill", lambda env: {}), ("problem", lambda env: None)):  # CI has no X server: the
+            patch = mock.patch.object(P.display_env, name, fake)                       # stub game needs no display
+            patch.start()
+            self.addCleanup(patch.stop)
 
         self.claude = claude
         now = time.time()
