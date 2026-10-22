@@ -11,11 +11,11 @@ Files in the matrix folder (runtime/matrix/<name>/):
 
 The budget file is the harness's (runner/spend.py): one per machine, runtime/budget.json `{"cap": USD, "spent": USD}`,
 shared by every matrix and every paid play.py run, updated under the same lock (`budget.json.lock`). A job does not
-start when `spent + its reserve > cap` (reserve = the scenario's per-run `max_cost`, 0 when it has none: then the
-overshoot is at most one run); a missing or broken file stops the matrix. A run's cost is added as it ends unless
-the runner already settled it (`RunResult.charged`: play.py adds a paid run's cost itself, and subscription runs
-aren't billed). A run whose cost is unknown stops the matrix: the budget can't be enforced past it until a person
-fixes `spent`.
+start when `spent + its reserve > cap` (reserve = a paid client's per-run `max_cost` for the scenario, 0 when it has
+none: then the overshoot is at most one run; 0 for a subscription client, never charged); a missing or broken file
+stops the matrix. A run's cost is added as it ends unless the runner already settled it (`RunResult.charged`:
+play.py adds a paid run's cost itself, and subscription runs aren't billed). A run whose cost is unknown stops the
+matrix: the budget can't be enforced past it until a person fixes `spent`.
 
 Invalid runs (results.validity: runner error, harness failure, operator) are rerun, at most `max_reruns` (2) times
 per job; then the job is `gave_up`. Order: repeat 1 of every (model, scenario, condition) first, then repeat 2, ...
@@ -95,6 +95,11 @@ def plan(
     if len({j["id"] for j in jobs}) != len(jobs):
         raise ValueError("duplicate jobs: a model, scenario or condition is listed twice")
     return jobs
+
+
+def reserve(job: Mapping) -> float:
+    """What the budget holds back before the job starts: its max_cost for a paid client, 0 for a subscription one."""
+    return (job["max_cost"] or 0.0) if job["client"] in PAID_CLIENTS else 0.0
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -283,7 +288,7 @@ class Matrix:
             except (OSError, ValueError):
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET
-            if budget["spent"] + (job["max_cost"] or 0.0) > budget["cap"]:
+            if budget["spent"] + reserve(job) > budget["cap"]:
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET
             if (why := self._wait_for_guard(jobs, job)) is not None:

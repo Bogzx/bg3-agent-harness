@@ -113,15 +113,34 @@ def test_invalid_runs_are_rerun_at_most_twice(tmp_path):
 
 
 def test_stops_at_the_budget_with_the_reserve(tmp_path):
-    jobs = matrix.plan(MODELS[:1], ["nautiloid", "grove"], ["rules"], 3, max_cost={"grove": 4.0})
+    jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 3, max_cost={"grove": 4.0})
     run = FakeRun()
     m, budget, _ = make(tmp_path, run, cap=5.0, jobs=jobs)
     # naut r1 ($1) -> grove r1 (1 + 4 <= 5: runs, $1) -> naut r2 ($1, spent 3) -> grove r2: 3 + 4 > 5: stop
     assert m.run() == matrix.BUDGET
-    assert run.calls == ["opus~nautiloid~rules~r1", "opus~grove~rules~r1", "opus~nautiloid~rules~r2"]
+    ds = "openrouter_deepseek_v4"
+    assert run.calls == [f"{ds}~nautiloid~rules~r1", f"{ds}~grove~rules~r1", f"{ds}~nautiloid~rules~r2"]
     assert progress(tmp_path)["stop_reason"] == "budget" and progress(tmp_path)["pending"] == 3
     budget.write_text(json.dumps({"cap": 50.0, "spent": 3.0}))  # a person raises the cap
     assert m.run() == matrix.FINISHED and len(run.calls) == 6
+
+
+def test_a_subscription_job_holds_back_no_reserve(tmp_path):
+    # pi's grove run spends 4 of 5: Claude Code's grove run (never charged) still starts, though its max_cost of 4
+    # would be over the cap as a reserve; pi's next one doesn't
+    jobs = matrix.plan(MODELS[::-1], ["grove"], ["rules"], 2, max_cost={"grove": 4.0})
+    pi, claude = "openrouter_deepseek_v4~grove~rules", "opus~grove~rules"
+    run = FakeRun(
+        {
+            (f"{pi}~r1", 1): RunResult("p", True, True, 4.0),
+            (f"{claude}~r1", 1): RunResult("c", True, True, 0.0, charged=True),
+        }
+    )
+    m, budget, _ = make(tmp_path, run, cap=5.0, jobs=jobs)
+    assert m.run() == matrix.BUDGET
+    assert run.calls == [f"{pi}~r1", f"{claude}~r1"]
+    assert json.loads(budget.read_text())["spent"] == 4.0
+    assert matrix.reserve(jobs[0]) == 4.0 and matrix.reserve(jobs[1]) == 0.0
 
 
 def test_unknown_cost_stops_the_matrix(tmp_path):
