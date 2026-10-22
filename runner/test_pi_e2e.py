@@ -171,22 +171,28 @@ class PiE2EBase(TCR.FakeRunBase):
         text_only: bool = False,
         expected: int = 0,
         stop_check=None,
+        raw: dict | None = None,
         **opt,
     ) -> P.SessionResult:
-        """One Runner.play_session of pi on the stub model; `expected` adds to the served tool count."""
+        """One Runner.play_session of pi on the stub model; `expected` adds to the served tool count. `raw`: a
+        profile table to play instead of the stub one, its endpoint's base_url pointed at the stub."""
         os.environ["BG3AI_PROMPT_CONDITION"] = condition  # play.py main sets it; the runner forwards it to the server
-        raw = {
-            "client": "pi",
-            "model": MODEL,
-            "effort": "high",
-            "endpoint": {"provider": "openrouter", "base_url": self.start_stub(script), "api_key_env": KEY_ENV},
-            "model_info": {
-                "input": ["text"] if text_only else ["text", "image"],
-                "reasoning": True,
-                "context_window": 200000,
-                "max_tokens": 16000,
-            },
-        }
+        url = self.start_stub(script)
+        if raw is not None:
+            raw = {**raw, "endpoint": {**raw["endpoint"], "base_url": url}}
+        else:
+            raw = {
+                "client": "pi",
+                "model": MODEL,
+                "effort": "high",
+                "endpoint": {"provider": "openrouter", "base_url": url, "api_key_env": KEY_ENV},
+                "model_info": {
+                    "input": ["text"] if text_only else ["text", "image"],
+                    "reasoning": True,
+                    "context_window": 200000,
+                    "max_tokens": 16000,
+                },
+            }
         profile = profiles.parse(raw)
         self.system, self.tools = served(condition, ",".join(profiles.tools_off(profile)))
         system_file = self.tmp / "pi-system.txt"
@@ -195,7 +201,7 @@ class PiE2EBase(TCR.FakeRunBase):
             "pi-e2e",
             None,
             20,
-            MODEL,
+            profile.model,
             save_owner="Claude",
             client="pi",
             profile=profile,
