@@ -490,3 +490,83 @@ export interface ClientProfile {
   api_key_env: string | null;
   error: string | null;
 }
+
+// A benchmark run's grade (bench.py): manifest.json and result.json as bg3bench wrote them
+// (packages/bench/schema/{manifest,result}.v1.schema.json), only the fields the screens read.
+
+export interface CurvePoint {
+  at_s: number;
+  value: number | null;
+  peak: number | null;
+}
+
+export interface GoldChange {
+  t: number;
+  delta: number;
+  method: string;
+}
+
+export interface Methods {
+  gold_by_method: Record<string, number>;
+  spent: number;
+  lost: number;
+  crimes: number;
+  kills: number;
+  traders_killed: number;
+  pickpockets: number;
+  pickpockets_failed: number;
+  changes: GoldChange[];
+}
+
+export interface ChoicePick {
+  t: number | null;
+  scene: string;
+  options: string[];
+  picked: number | null;
+  pick: string;
+  reason: string | null;
+}
+
+export interface BenchResult {
+  run_id: string;
+  outcome: "reached" | "timeout" | "over_budget" | "gave_up" | "runner_error";
+  valid: boolean;
+  invalid_reason: string | null;
+  passed: boolean;
+  t_pass_s: number | null;
+  grade: { violations: { t_s: number; node?: unknown }[]; curve: { fact: string; points: CurvePoint[] }; progress: number | null } | null;
+  methods: Methods | null;
+  cost_usd: number | null;
+  tokens: { input: number; output: number; cache_read: number; cache_write: number };
+  wall_s: number | null;
+  play_s: number | null;
+  think_s: number | null;
+  luck: { n: number; z: number; party: number; other: number; skipped: number; nat20: number; nat1: number } | null;
+  reloads: number;
+  deaths: { fights: number; downs: number; deaths: number; wipes: number };
+  fairness: { leak: number; check: number; blocks: number };
+  choices?: {
+    picks: ChoicePick[];
+    fit: { status: "ok" | "judge_failed" | "no_decisions"; score: number | null; judge_model: string | null; summary?: string } | null;
+  };
+}
+
+export interface BenchManifest {
+  run_id: string;
+  created: number;
+  series: string;
+  run: number;
+  scenario: { name: string; digest: string | null; start_save_sha1: string | null; timing: string | null };
+  client: { name: string; version: string | null };
+  model: { slug: string; provider_requested: string | null; reasoning_effort: string | null };
+  caps: { run_hours: number | null; max_cost: number | null; max_tokens: number | null };
+  sandbox: string;
+}
+
+export type BenchGrade = { manifest: BenchManifest; result: BenchResult } | { error: string };
+
+export interface BenchPayload {
+  v: number;
+  playthrough: string;
+  bench: BenchGrade | null;
+}

@@ -65,7 +65,7 @@ from .jsontypes import is_obj
 from .store import RunStore, StoreError
 
 PT_ROUTE = re.compile(
-    r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/diff|memory/log|timeline|positions|story)$"
+    r"^/api/v1/playthroughs/([^/]+)/(sessions|watch|memory/tree|memory/file|memory/diff|memory/log|timeline|positions|story|bench)$"
 )
 CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
 REPLAY_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/replay/(S\d{3,})$")
@@ -208,6 +208,7 @@ class App:
             "timeline": lambda: api.timeline(s, pt),
             "positions": lambda: api.positions(s, pt, q.get("level", [""])[0]),
             "story": lambda: self.dashboard.story(pt),
+            "bench": lambda: api.bench_grade(s, pt),
         }
         return builders[what]()
 

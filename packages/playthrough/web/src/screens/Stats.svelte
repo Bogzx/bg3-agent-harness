@@ -4,12 +4,16 @@
   import { api } from "../lib/api";
   import { clock, hpPct, mmss, num } from "../lib/format";
   import { checkAllLine, eventLine, hours, OP_TEXT, passClass, spark, thermalLine } from "../lib/stats";
-  import type { GoalsPayload, LatencyPayload, LivePayload, Milestones, ProgressPayload } from "../lib/types";
+  import type { BenchGrade, GoalsPayload, LatencyPayload, LivePayload, Milestones, ProgressPayload } from "../lib/types";
+  import Bench from "./Bench.svelte";
+
+  let { pt }: { pt: string } = $props();
 
   let live = $state.raw<LivePayload | null>(null);
   let lat = $state.raw<LatencyPayload | null>(null);
   let prog = $state.raw<ProgressPayload | null>(null);
   let goals = $state.raw<GoalsPayload | null>(null);
+  let bench = $state.raw<BenchGrade | null>(null);
   let error = $state<string | null>(null);
   let frameRev = $state(0);
 
@@ -28,6 +32,7 @@
   }
 
   onMount(() => {
+    api.bench(pt).then((b) => (bench = b.bench), (e: Error) => (error = e.message));
     const stops = [
       every(2000, async () => {
         live = await api.live();
@@ -66,6 +71,8 @@
 {#snippet kpi(label: string, value: string, cls = "")}
   <div class="kpi {cls}"><div class="v">{value}</div><div class="l">{label}</div></div>
 {/snippet}
+
+{#if bench}<Bench grade={bench} />{/if}
 
 {#if error && !live}
   <div class="error">{error}</div>

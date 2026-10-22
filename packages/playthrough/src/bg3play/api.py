@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import parse
+from . import bench, parse
 from . import positions as pos
 from .store import RunStore
 
@@ -160,3 +160,8 @@ def timeline(store: RunStore, pt: str) -> dict[str, Any]:
 def positions(store: RunStore, pt: str, level: str | None = None) -> dict[str, Any]:
     """The breadcrumb plot's data (positions.tracks) for one level, default the latest."""
     return _v({"playthrough": pt, **pos.tracks(pos.read(store.positions_path(pt)), level or None)})
+
+
+def bench_grade(store: RunStore, pt: str) -> dict[str, Any]:
+    """The benchmark grade of the playthrough's run (bench.grade; null: not a graded benchmark run)."""
+    return _v({"playthrough": pt, "bench": bench.grade(store.session_dir(pt))})

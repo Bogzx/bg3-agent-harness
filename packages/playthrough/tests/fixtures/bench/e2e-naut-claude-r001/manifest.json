@@ -1,0 +1,61 @@
+{
+ "bench_tag": null,
+ "caps": {
+  "max_cost": null,
+  "max_tokens": null,
+  "run_hours": 2.0
+ },
+ "client": {
+  "name": "claude",
+  "version": null
+ },
+ "condition": null,
+ "created": 1792619697.6,
+ "facts_schema": 1,
+ "grader": {
+  "version": "1"
+ },
+ "model": {
+  "provider_requested": null,
+  "reasoning_effort": "high",
+  "slug": "claude-opus-5-5"
+ },
+ "pins": {
+  "bg3le": {
+   "commit": "3728a68ef4a98fe0d25e3dac9b7d1f89d96f40ec",
+   "local_changes": false,
+   "patches": 10,
+   "sha256": "5032557f0c179f621afac14c918cd750bfec035547485cd7b5ad8078e730e4d8",
+   "source": "b2a576d"
+  },
+  "game_build": "25605617",
+  "mod": {
+   "sha1": "64d1fb69b79755b8abe0665fb302671d85160eaf",
+   "version": "1.0.0.0"
+  },
+  "repo": {
+   "commit": "b2a576d2115c3b6cd07ad6218cc6348d2b29367c",
+   "diff": null,
+   "dirty": false
+  }
+ },
+ "price_sheet": null,
+ "prompt": null,
+ "run": 1,
+ "run_id": "e2e-naut-claude-r001",
+ "sandbox": "none",
+ "scenario": {
+  "digest": "f4db191ceaad1415",
+  "name": "nautiloid",
+  "start_save_sha1": null,
+  "timing": null
+ },
+ "schema": 1,
+ "seed": null,
+ "series": "e2e-naut-claude",
+ "tools": null,
+ "versions": {
+  "bench": "0.1.0",
+  "harness": null
+ }
+}

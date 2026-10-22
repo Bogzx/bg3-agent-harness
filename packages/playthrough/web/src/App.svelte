@@ -103,7 +103,7 @@
       {#if route.screen === "watch"}
         <Watch pt={route.pt} />
       {:else if route.screen === "stats"}
-        <Stats />
+        <Stats pt={route.pt} />
       {:else if route.screen === "story"}
         <Story pt={route.pt} />
       {:else if route.screen === "memory"}

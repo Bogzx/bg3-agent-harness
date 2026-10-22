@@ -2,14 +2,17 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { argLine, clock, date, mmss } from "../lib/format";
+  import { marks as benchMarks } from "../lib/bench";
   import { coverage, locate, recent, step, ticks } from "../lib/replay";
-  import type { ReplayPayload } from "../lib/types";
+  import type { BenchGrade, ReplayPayload } from "../lib/types";
+  import Bench from "./Bench.svelte";
 
   let { pt, session, onSession }: { pt: string; session: string | null; onSession: (s: string) => void } = $props();
 
   const SPEEDS = [1, 4, 16, 64];
   let sessions = $state<{ session: string; started: number | null; minutes: number | null }[]>([]);
   let data = $state.raw<ReplayPayload | null>(null);
+  let bench = $state.raw<BenchGrade | null>(null);
   let error = $state<string | null>(null);
   let t = $state(0);
   let playing = $state(false);
@@ -27,6 +30,7 @@
       },
       (e: Error) => (error = e.message),
     );
+    api.bench(pt).then((b) => (bench = b.bench), (e: Error) => (error = e.message));
     const tick = setInterval(() => {
       // the clock runs here only while no video drives it (a gap, or a session without recording)
       if (!playing || !data || (video && src && !video.paused)) return;
@@ -97,6 +101,8 @@
   const covered = $derived(data ? coverage(data.segments, data.started, data.ended) : []);
   const hasVideo = $derived(Boolean(data?.segments.length));
   const inGap = $derived(data ? !locate(data.segments, t) : true);
+  const graded = $derived(bench && "result" in bench ? bench : null);
+  const gradeMarks = $derived(data && graded ? benchMarks(graded.manifest, graded.result, data.started, data.ended) : []);
 </script>
 
 {#if error}
@@ -117,13 +123,25 @@
     {/if}
   </section>
 
+  {#if bench}<Bench grade={bench} compact />{/if}
+
   {#if data}
     <div class="scrub" role="presentation">
       {#each covered as [a, b], i (i)}<div class="cov" style="left: {a}%; width: {b - a}%"></div>{/each}
       {#each marks as m, i (i)}<div class="tick k-{m.kind}" style="left: {m.pct}%"></div>{/each}
+      {#each gradeMarks as m, i (i)}<div class="tick g-{m.kind}" style="left: {m.pct}%"></div>{/each}
       <input type="range" aria-label="Playhead" min={data.started} max={data.ended} step="1" value={t}
              oninput={(e) => seekTo(Number((e.currentTarget as HTMLInputElement).value))} />
     </div>
+    {#if gradeMarks.length}
+      <div class="gmarks">
+        {#each gradeMarks as m, i (i)}
+          <button class="g-{m.kind}" onclick={() => seekTo(m.t)} title={m.kind === "pass" ? "t_pass is on the scenario's clock (game time): approximate here" : ""}>
+            {m.kind === "pass" ? "★" : m.kind === "gold" ? "◎" : "◆"} {clock(m.t)} {m.label}
+          </button>
+        {/each}
+      </div>
+    {/if}
 
     <div class="grid">
       <section class="panel screen">
@@ -180,6 +198,12 @@
   .cov { position: absolute; top: 10px; height: 6px; background: var(--save); opacity: 0.35; border-radius: 3px; }
   .tick { position: absolute; top: 4px; width: 2px; height: 18px; opacity: 0.7; }
   .tick.k-say { background: var(--info); } .tick.k-memory { background: var(--vision); }
+  .tick.g-pass { background: var(--ok); width: 3px; opacity: 1; } .tick.g-gold { background: var(--accent); }
+  .tick.g-choice { background: var(--accent-2); }
+  .gmarks { display: flex; flex-wrap: wrap; gap: 4px; margin: -4px 0 12px; }
+  .gmarks button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px;
+    font-size: 12px; cursor: pointer; }
+  .gmarks .g-pass { color: var(--ok); } .gmarks .g-gold { color: var(--accent); } .gmarks .g-choice { color: var(--accent-2); }
   .grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; }
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 0 0 8px 8px; }
   video.hidden { display: none; }

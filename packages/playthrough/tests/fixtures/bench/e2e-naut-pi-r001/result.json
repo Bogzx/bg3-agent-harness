@@ -1,0 +1,84 @@
+{
+ "cost_usd": 0.0,
+ "deaths": {
+  "deaths": 0,
+  "downs": 3,
+  "fights": 2,
+  "wipes": 1
+ },
+ "fairness": {
+  "blocks": 0,
+  "check": 0,
+  "leak": 0
+ },
+ "grade": {
+  "curve": {
+   "fact": "gold",
+   "points": [
+    {
+     "at_s": 600,
+     "peak": 0,
+     "value": 0
+    },
+    {
+     "at_s": 1200,
+     "peak": 0,
+     "value": 0
+    },
+    {
+     "at_s": 1800,
+     "peak": 18,
+     "value": 18
+    }
+   ]
+  },
+  "progress": null,
+  "violations": []
+ },
+ "invalid_reason": null,
+ "luck": null,
+ "methods": {
+  "changes": [
+   {
+    "delta": 14,
+    "method": "looted",
+    "t": 1792618629.79
+   },
+   {
+    "delta": 4,
+    "method": "looted",
+    "t": 1792618644.85
+   }
+  ],
+  "crimes": 0,
+  "gold_by_method": {
+   "looted": 18,
+   "other": 0,
+   "quest": 0,
+   "sold": 0,
+   "stolen": 0
+  },
+  "kills": 0,
+  "lost": 0,
+  "pickpockets": 0,
+  "pickpockets_failed": 0,
+  "spent": 0,
+  "traders_killed": 0
+ },
+ "outcome": "over_budget",
+ "passed": false,
+ "play_s": 2268.0,
+ "reloads": 1,
+ "run_id": "e2e-naut-pi-r001",
+ "schema": 1,
+ "t_pass_s": null,
+ "think_s": 1117.08,
+ "tokens": {
+  "cache_read": 0,
+  "cache_write": 0,
+  "input": 0,
+  "output": 0
+ },
+ "valid": true,
+ "wall_s": 2406.0
+}

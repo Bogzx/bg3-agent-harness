@@ -1,5 +1,5 @@
 import type {
-  ClientProfile, Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
+  BenchPayload, ClientProfile, Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
 
@@ -47,6 +47,7 @@ export const api = {
   replay: (name: string, session: string) => getJson<ReplayPayload>(`${pt(name)}/replay/${encodeURIComponent(session)}`),
   timeline: (name: string) => getJson<TimelinePayload>(`${pt(name)}/timeline`),
   story: (name: string) => getJson<StoryPayload>(`${pt(name)}/story`),
+  bench: (name: string) => getJson<BenchPayload>(`${pt(name)}/bench`),
   live: () => getJson<LivePayload>("/api/v1/live"),
   latency: () => getJson<LatencyPayload>("/api/v1/latency"),
   progress: () => getJson<ProgressPayload>("/api/v1/progress"),

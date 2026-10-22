@@ -1,0 +1,79 @@
+{
+ "cost_usd": 4.5169,
+ "deaths": {
+  "deaths": 0,
+  "downs": 0,
+  "fights": 2,
+  "wipes": 0
+ },
+ "fairness": {
+  "blocks": 0,
+  "check": 0,
+  "leak": 0
+ },
+ "grade": {
+  "curve": {
+   "fact": "gold",
+   "points": [
+    {
+     "at_s": 600,
+     "peak": 4,
+     "value": 4
+    },
+    {
+     "at_s": 1200,
+     "peak": null,
+     "value": null
+    },
+    {
+     "at_s": 1800,
+     "peak": null,
+     "value": null
+    }
+   ]
+  },
+  "progress": null,
+  "violations": []
+ },
+ "invalid_reason": null,
+ "luck": null,
+ "methods": {
+  "changes": [
+   {
+    "delta": 4,
+    "method": "looted",
+    "t": 1792620165.25
+   }
+  ],
+  "crimes": 0,
+  "gold_by_method": {
+   "looted": 4,
+   "other": 0,
+   "quest": 0,
+   "sold": 0,
+   "stolen": 0
+  },
+  "kills": 0,
+  "lost": 0,
+  "pickpockets": 0,
+  "pickpockets_failed": 0,
+  "spent": 0,
+  "traders_killed": 0
+ },
+ "outcome": "reached",
+ "passed": true,
+ "play_s": 912.0,
+ "reloads": 0,
+ "run_id": "e2e-naut-claude-r001",
+ "schema": 1,
+ "t_pass_s": 1042.7,
+ "think_s": 451.36,
+ "tokens": {
+  "cache_read": 14683826,
+  "cache_write": 126474,
+  "input": 378,
+  "output": 28342
+ },
+ "valid": true,
+ "wall_s": 1050.0
+}

@@ -3,11 +3,13 @@
   import { api } from "../lib/api";
   import { date, num } from "../lib/format";
   import { buildRows, fightLabel, goodOutcome, hardFight, type Filter } from "../lib/timeline";
-  import type { TimelinePayload } from "../lib/types";
+  import type { BenchGrade, TimelinePayload } from "../lib/types";
+  import Bench from "./Bench.svelte";
 
   let { pt }: { pt: string } = $props();
 
   let data = $state.raw<TimelinePayload | null>(null);
+  let bench = $state.raw<BenchGrade | null>(null);
   let error = $state<string | null>(null);
   let filter = $state<Filter>({ choices: true, fights: true, hardOnly: false });
   let open = $state<string | null>(null);
@@ -17,6 +19,7 @@
       .timeline(pt)
       .then((t) => (data = t))
       .catch((e: Error) => (error = e.message));
+    api.bench(pt).then((b) => (bench = b.bench), (e: Error) => (error = e.message));
   });
 
   const rows = $derived(data ? buildRows(data, filter) : []);
@@ -28,6 +31,7 @@
 {:else if !data}
   <div class="empty">Loading…</div>
 {:else}
+  {#if bench}<Bench grade={bench} />{/if}
   <div class="filters panel">
     <label><input type="checkbox" bind:checked={filter.choices} /> <span class="ic choice">◆</span> choices</label>
     <label><input type="checkbox" bind:checked={filter.fights} /> <span class="ic fight">●</span> fights</label>

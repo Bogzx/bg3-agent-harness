@@ -351,6 +351,7 @@ source = { editable = "packages/playthrough" }
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "playwright" },
     { name = "pytest" },
 ]
@@ -359,6 +360,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.20" },
     { name = "playwright", specifier = "==1.64.0" },
     { name = "pytest", specifier = ">=8" },
 ]

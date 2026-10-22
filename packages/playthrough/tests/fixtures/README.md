@@ -15,3 +15,8 @@ epilogue), as the runner, bridge and memory left them on 2026-10-18.
 
 Scrubbed: repo and home paths (`<repo>`, `~`), session UUIDs (zeros), the numeric save-owner id. The memory text
 mentions only game content.
+
+`bench/` is the real e2e run's benchmark output (2026-10-22, live3: runtime/probes/live3/bench/<run_id>/), copied
+unchanged: `manifest.json` and `result.json` of e2e-naut-claude-r001 (passed, t_pass 1042.7 s) and e2e-naut-pi-r001
+(over_budget; its cost and tokens are 0 because runs.jsonl dropped pi's usage then). No paths in them.
+test_bench.py validates them against packages/bench/schema/{manifest,result}.v1.schema.json.

@@ -9,7 +9,7 @@ dependencies = []
 bg3play-serve = "bg3play.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "playwright==1.64.0"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
+dev = ["pytest>=8", "playwright==1.64.0", "jsonschema>=4.20"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
 
 [build-system]
 requires = ["hatchling"]

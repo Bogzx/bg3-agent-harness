@@ -59,7 +59,7 @@ def test_json_endpoints(server):
     assert code == 200 and st["v"] == 1 and st["runner"]["playthrough"] == PT
     code, pts = get_json(server, "/api/v1/playthroughs")
     assert [p["name"] for p in pts["playthroughs"]] == [PT]
-    for what in ("sessions", "watch", "memory/tree", "memory/log", "timeline"):
+    for what in ("sessions", "watch", "memory/tree", "memory/log", "timeline", "bench"):
         code, body = get_json(server, f"/api/v1/playthroughs/{PT}/{what}")
         assert code == 200 and body["v"] == 1 and body["playthrough"] == PT, what
     _, _, hub = server
