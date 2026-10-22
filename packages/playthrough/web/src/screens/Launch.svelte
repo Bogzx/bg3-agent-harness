@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, openStream } from "../lib/api";
-  import { actions, DIFFICULTIES, formFrom, launchBody, profileLabel, type Action, type LaunchForm } from "../lib/launcher";
+  import { actions, DIFFICULTIES, formFrom, launchBody, missingProfile, profileLabel, type Action, type LaunchForm } from "../lib/launcher";
   import type { ClientProfile, SupervisorView } from "../lib/types";
 
   let { pt, known, onWatch }: { pt: string | null; known: string[]; onWatch: (name: string) => void } = $props();
 
   let sup = $state.raw<SupervisorView | null>(null);
   let enabled = $state(true); // the server runs a supervisor (--supervise)
-  let profiles = $state<ClientProfile[]>([]);
+  let profiles = $state<ClientProfile[] | null>(null); // null until the server answers
   let form = $state<LaunchForm>({ name: "", profile: "", brief: "", difficulty: "Explorer", minutes: 60, maxCost: 0, recording: true });
   let sessions = $state(0);
   let error = $state<string | null>(null);
@@ -56,7 +56,8 @@
   });
 
   const can = $derived(actions(form.name, sessions, sup));
-  const picked = $derived(profiles.find((p) => p.name === form.profile) ?? null);
+  const picked = $derived(profiles?.find((p) => p.name === form.profile) ?? null);
+  const missing = $derived(missingProfile(form.profile, profiles));
 
   async function act(what: Action) {
     const b = launchBody(form, profiles);
@@ -101,7 +102,8 @@
         <span>Client profile</span>
         <select bind:value={form.profile}>
           <option value="">from playthrough.toml (client and model)</option>
-          {#each profiles as p (p.name)}<option value={p.name} disabled={p.error !== null}>{profileLabel(p)}</option>{/each}
+          {#if missing}<option value={missing} disabled>{missing}: not in the server's profiles/</option>{/if}
+          {#each profiles ?? [] as p (p.name)}<option value={p.name} disabled={p.error !== null}>{profileLabel(p)}</option>{/each}
         </select>
         {#if picked?.client === "pi"}
           <small class="faint">pi plays through {picked.provider}; the key comes from ${picked.api_key_env} in the machine's

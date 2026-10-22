@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actions, formFrom, launchBody, profileLabel } from "./launcher";
+import { actions, formFrom, launchBody, missingProfile, profileLabel } from "./launcher";
 import type { ClientProfile, PlaythroughConfig, SupervisorView } from "./types";
 
 const cfg: PlaythroughConfig = {
@@ -39,6 +39,12 @@ describe("launcher", () => {
     expect(launchBody({ ...f, profile: "cc" }, all)).toHaveProperty("body.profile", "cc");
     expect(launchBody({ ...f, profile: "bad" }, all)).toHaveProperty("error");
     expect(launchBody({ ...f, maxCost: -1 }, all)).toHaveProperty("error");
+    // a playthrough.toml naming a profile the server doesn't have (renamed, another machine's): said, not sent
+    expect(missingProfile("stub-pi", all)).toBe("stub-pi");
+    expect(missingProfile("cc", all)).toBeNull();
+    expect(missingProfile("stub-pi", null)).toBeNull();
+    expect(missingProfile("", all)).toBeNull();
+    expect(launchBody({ ...f, profile: "stub-pi" }, all)).toEqual({ error: "Client profile stub-pi: no profiles/stub-pi.toml on the server" });
   });
 
   it("offers start, resume or stop", () => {

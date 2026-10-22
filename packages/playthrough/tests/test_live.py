@@ -112,6 +112,15 @@ class ClockTest(unittest.TestCase):
         self.assertEqual((c["source"], c["left_s"]), ("memory", 3000))
         self.assertEqual(live_mod.session_clock({}, {}, {}, now=now)["phase"], "idle")
 
+    def test_idle_after_the_runner_session_ended(self):
+        now = 10000.0
+        mem = {"open": True, "started_epoch": now - 600}  # left open: the session ended before its wrap-up
+        c = live_mod.session_clock({"session": "S002", "session_ended": now - 60}, {}, mem, now=now)
+        self.assertEqual((c["phase"], c["left_s"]), ("idle", None))
+        runner = {"session": "S002", "deadline": now + 600, "session_ended": now - 1}
+        c = live_mod.session_clock(runner, {}, mem, now=now)
+        self.assertEqual(c["phase"], "idle")
+
 
 class StatusShapeTest(unittest.TestCase):
     def test_shape_and_no_guids(self):

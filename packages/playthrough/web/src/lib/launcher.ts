@@ -27,13 +27,21 @@ export function profileLabel(p: ClientProfile): string {
   return `${p.name}: ${p.client} · ${p.model}${p.provider ? ` via ${p.provider}` : ""}${p.effort ? ` · ${p.effort}` : ""}`;
 }
 
-/** The body for POST start/resume (supervisor.LAUNCH_KEYS), or the first problem with the form. */
-export function launchBody(f: LaunchForm, profiles: ClientProfile[] = []): { body: Record<string, unknown> } | { error: string } {
+/** The form's profile when the server's profiles/ has no such file (null: none picked, or the list isn't known). */
+export function missingProfile(profile: string, profiles: ClientProfile[] | null): string | null {
+  return profile && profiles && !profiles.some((p) => p.name === profile) ? profile : null;
+}
+
+/** The body for POST start/resume (supervisor.LAUNCH_KEYS), or the first problem with the form. `profiles`: the
+ * server's client profiles (null: not known yet). */
+export function launchBody(f: LaunchForm, profiles: ClientProfile[] | null = null): { body: Record<string, unknown> } | { error: string } {
   if (!NAME_RE.test(f.name)) return { error: "Name: letters, digits, . _ - (max 64)" };
   if (!(f.minutes > 0 && f.minutes <= 600)) return { error: "Session minutes: 1-600" };
   if (!(DIFFICULTIES as readonly string[]).includes(f.difficulty)) return { error: "Pick a difficulty" };
   if (!(f.maxCost >= 0)) return { error: "Cost cap: 0 (none) or more" };
-  const p = profiles.find((x) => x.name === f.profile);
+  const gone = missingProfile(f.profile, profiles);
+  if (gone) return { error: `Client profile ${gone}: no profiles/${gone}.toml on the server` };
+  const p = profiles?.find((x) => x.name === f.profile);
   if (p?.error) return { error: `Client profile ${p.name}: ${p.error}` };
   if (p?.client === "pi" && !(f.maxCost > 0)) return { error: "A pi profile needs a cost cap (USD per session)" };
   return {

@@ -75,8 +75,11 @@ def session_clock(
     now: float | None = None,
     default_minutes: float = 60.0,
 ) -> dict[str, Any]:
-    """Deadline info from (in order) runner.status.json, runtime/session.json, memory/.session.json."""
+    """Deadline info from (in order) runner.status.json, runtime/session.json, memory/.session.json. Idle once the
+    runner says its session ended (a memory session left open without a wrap-up is no clock)."""
     now = now or time.time()
+    if runner_status.get("session_ended"):
+        return {"deadline": None, "left_s": None, "source": None, "phase": "idle"}
     deadline = None
     source = None
     started = None
