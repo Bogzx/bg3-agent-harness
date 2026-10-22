@@ -611,15 +611,22 @@ def main(argv: list[str] | None = None) -> int:
         from .keeper_pass import MemoryKeeper
 
         runner, keeper_client = session_runner(opt)
+        mem_keeper = MemoryKeeper(opt.runtime, opt.playthroughs, keeper_client, time.time)
+        runner_abort = getattr(runner, "abort", lambda: None)  # the legacy CLI's play.py gets the terminal's Ctrl-C
+
+        def abort() -> None:  # the agent and a running keeper pass
+            runner_abort()
+            mem_keeper.abort()
+
         supervisor = sup.Supervisor(
             runner,
-            MemoryKeeper(opt.runtime, opt.playthroughs, keeper_client, time.time),
+            mem_keeper,
             opt.runtime,
             opt.playthroughs,
             time.time,
             lambda view: hub.publish("supervisor", view),
             played=lambda pt: len(store.session_logs(pt)),
-            abort=getattr(runner, "abort", lambda: None),  # the legacy CLI's play.py gets the terminal's Ctrl-C
+            abort=abort,
         )
     viewers = Viewers(time.time)
     game = screen = None

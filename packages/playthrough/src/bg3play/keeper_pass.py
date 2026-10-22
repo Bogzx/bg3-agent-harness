@@ -11,6 +11,7 @@ log is <runtime>/sessions/<pt>/Sxxx-keeper.* and its result a keeper_history.jso
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,11 @@ class MemoryKeeper:
             clock,
             run,
         )
+        self._abort = threading.Event()
+
+    def abort(self) -> None:
+        """The app is shutting down: a running pass's client call ends now, and no later pass runs one."""
+        self._abort.set()
 
     def run_keeper(self, pt: str, result: SessionResult) -> None:
         """Never raises (as keeper.run_keeper): a pass that can't even start (the playthrough's config or client
@@ -78,6 +84,7 @@ class MemoryKeeper:
             profile=profile,
             max_cost=cfg.keeper.max_cost_usd,
             budget=self.runtime / "budget.json",
+            stop=self._abort,
         )
         row = {"t": round(self.clock(), 1), "client": client, "model": model, "effort": cfg.keeper.effort}
         self._log(pt, {**row, **r.__dict__})

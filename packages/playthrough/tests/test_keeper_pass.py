@@ -40,7 +40,10 @@ def test_runs_the_pass_with_the_runners_client_and_logs_it(tmp_path: Path):
     d = tmp_path / "runtime" / "sessions" / "ilse"
     assert a == (tmp_path / "playthroughs" / "ilse" / "memory", 4, d / "S004-keeper", "opus", "medium", 3.0)
     budget = tmp_path / "runtime" / "budget.json"
-    assert kw == {"client": "pi", "profile": profile, "max_cost": 0.05, "budget": budget}
+    assert kw == {"client": "pi", "profile": profile, "max_cost": 0.05, "budget": budget, "stop": k._abort}
+    assert not kw["stop"].is_set()
+    k.abort()
+    assert kw["stop"].is_set()
     (row,) = [json.loads(ln) for ln in (d / "keeper_history.jsonl").read_text().splitlines()]
     assert row["t"] == 1234.5 and row["client"] == "pi" and row["status"] == "ok" and row["commit"] == "abc1234"
 

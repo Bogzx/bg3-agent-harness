@@ -257,6 +257,8 @@ def keeper_cmd(
 
 # ---------------------------------------------------------------- run
 
+STOP_POLL_S = 0.5  # how soon a set `stop` ends the client call
+
 
 @dataclass
 class KeeperResult:
@@ -302,10 +304,11 @@ def _run_claude(
     extra_env: dict[str, Any] | None = None,
     pending: Path | None = None,
     watch: Callable[[str], bool] | None = None,
+    stop: threading.Event | None = None,
 ) -> tuple[int | None, bool]:
     """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
-    timeout (the keeper-mode MCP server is in that group too), or when `watch` (each stream line; the cost cap,
-    keeper_spend.py) returns True."""
+    timeout (the keeper-mode MCP server is in that group too), once `stop` is set (as a timeout), or when `watch`
+    (each stream line; the cost cap, keeper_spend.py) returns True."""
     env = {**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})}
     for k in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH"):
         env.pop(k, None)
@@ -326,13 +329,26 @@ def _run_claude(
             reader = threading.Thread(target=_pump, args=(proc, out, watch), daemon=True, name="keeper-stream")
             reader.start()
         try:
-            return proc.wait(timeout=max(1.0, timeout)), False
+            return _wait(proc, max(1.0, timeout), stop), False
         except subprocess.TimeoutExpired:
             _kill_group(proc)
             return proc.returncode, True
         finally:
             if reader is not None:
                 reader.join(10)
+
+
+def _wait(proc: subprocess.Popen[str], timeout: float, stop: threading.Event | None) -> int:
+    """proc.wait(timeout), also raising TimeoutExpired once `stop` is set (checked every STOP_POLL_S)."""
+    if stop is None:
+        return proc.wait(timeout=timeout)
+    end = time.monotonic() + timeout
+    while True:
+        try:
+            return proc.wait(timeout=max(0.0, min(STOP_POLL_S, end - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            if stop.is_set() or time.monotonic() >= end:
+                raise
 
 
 def _kill_group(proc: subprocess.Popen[str]) -> None:
@@ -443,6 +459,7 @@ def run_keeper(
     profile: Any = None,
     max_cost: float | None = None,
     budget: Path | None = None,
+    stop: threading.Event | None = None,
 ) -> KeeperResult:
     """One keeper pass for the session that just ended (number sid_n). Never raises.
 
@@ -452,7 +469,8 @@ def run_keeper(
     (default: `claude` for claude, else the client's own). sandbox: the runner's bg3harness.sandbox.Sandbox (run
     --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP).
     profile: pi's client profile (profiles.Profile; its model is the keeper's). max_cost, budget: a paid client's
-    cap for this pass and runtime/budget.json (keeper_spend.py): refused without them, killed at the cap."""
+    cap for this pass and runtime/budget.json (keeper_spend.py): refused without them, killed at the cap. stop: set
+    (the app shutting down) ends the client call now, as its timeout would (not in the sandbox: its own timeout)."""
     sid = memlib.session_id(sid_n)
     via_mcp = client != "claude" if mcp is None else mcp
     if sandbox is not None:
@@ -506,6 +524,7 @@ def run_keeper(
                     log_path,
                     left,
                     pending=pending,
+                    stop=stop,
                 )
             if sandbox is not None:
                 return _run_sandboxed(
@@ -525,7 +544,7 @@ def run_keeper(
                     spend.watcher(cli),
                 )
             cmd, env = client_cmd(cli, text, mem, model, effort, sess, resume, log_base)
-            return _run_claude(cmd, mem, log_path, left, env, pending=pending, watch=spend.watcher(cli))
+            return _run_claude(cmd, mem, log_path, left, env, pending=pending, watch=spend.watcher(cli), stop=stop)
 
         rc, res.timed_out = call(prompt, False, end - time.time())
         if cli is not None and not cli.assigns_session:
@@ -580,6 +599,8 @@ def run_keeper(
                 res.detail += "; keeper edits rolled back"
             except Exception as e2:
                 res.detail += f"; rollback failed ({type(e2).__name__}), recover() at the next start"
+    if stop is not None and stop.is_set():
+        res.detail = "; ".join(x for x in (res.detail, "cut short: the app shut down") if x)
     if spend.paid:
         res.cost_usd = round(spend.cost, 6)
         notes = [f"cost cap ${spend.cap:g} hit" if spend.cap_hit else "", spend.record(mem.parent.name, sid)]

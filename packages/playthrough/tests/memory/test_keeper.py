@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import unittest
 from pathlib import Path
@@ -758,3 +759,16 @@ class KeeperTest(MemoryTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_set_stop_ends_the_client_call_like_a_timeout(tmp_path):
+    # Ctrl-C on bg3play-serve during the keeper pass: the client (its own process group) played on after the app
+    import threading
+
+    stop = threading.Event()
+    stop.set()
+    t0 = time.monotonic()
+    rc, timed_out = keeper._run_claude(
+        [sys.executable, "-c", "import time; time.sleep(60)"], tmp_path, tmp_path / "k.jsonl", 60, stop=stop
+    )
+    assert timed_out and rc is not None and time.monotonic() - t0 < 30

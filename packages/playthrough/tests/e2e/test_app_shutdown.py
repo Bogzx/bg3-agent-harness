@@ -151,3 +151,59 @@ def test_ctrl_c_ends_the_running_session_and_its_agent(tmp_path: Path):
     play = json.loads((runtime / "sessions" / PT / "runner.json").read_text())["history"]
     assert [p["reason"] for p in play] == ["aborted"]
     assert "ended before wrap-up" in (mem / "sessions" / "S001.md").read_text()  # session.py session-end ran
+
+
+def test_ctrl_c_during_the_keeper_pass_ends_its_client(tmp_path: Path):
+    # B6: the keeper's client runs in its own process group; on Ctrl-C the app waited SHUTDOWN_S for it and left it
+    # running (a paid pass kept spending)
+    from bg3play.memory import keeper
+
+    runtime, pts = tmp_path / "runtime", tmp_path / "playthroughs"
+    runtime.mkdir()
+    create_memory(PT, pts / PT / "memory")
+    config.save(pts / PT, config.validate({"v": 1, "name": PT}))
+    pidfile = tmp_path / "keeper.pid"
+
+    class OneSession:
+        def run_session(self, req: sup.SessionRequest, stop) -> sup.SessionResult:
+            stop.set()  # one session, then the keeper
+            return sup.SessionResult(f"S{req.session:03d}", "ok")
+
+    def keeper_cmd(*a: Any, **kw: Any) -> list[str]:
+        code = f"import os, time\nopen({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(600)\n"
+        return [sys.executable, "-c", code]
+
+    class CtrlCServer:
+        server_address = ("127.0.0.1", 0)
+
+        def __init__(self, app: srv_mod.App):
+            self.app = app
+
+        def serve_forever(self) -> None:
+            assert self.app.control(PT, "start", {})[0] == 200
+            wait_until(lambda: pidfile.exists() and pidfile.read_text(), "the keeper's client")
+            raise KeyboardInterrupt
+
+        def server_close(self) -> None:
+            pass
+
+    served: list[CtrlCServer] = []
+
+    def fake_serve(app: srv_mod.App, host: str, port: int, verbose: bool = False) -> CtrlCServer:
+        served.append(CtrlCServer(app))
+        return served[-1]
+
+    t0 = time.monotonic()
+    with (
+        mock.patch.object(srv_mod, "serve", fake_serve),
+        mock.patch.object(srv_mod, "SHUTDOWN_S", 20),
+        mock.patch.object(srv_mod, "session_runner", lambda opt: (OneSession(), lambda cfg: ("claude", None))),
+        mock.patch.object(keeper, "keeper_cmd", keeper_cmd),
+    ):
+        rc = srv_mod.main(["--runtime", str(runtime), "--playthroughs", str(pts), "--port", "0", "--supervise"])
+    assert rc == 0 and time.monotonic() - t0 < 20
+    assert served[0].app.supervisor is not None and served[0].app.supervisor.state == "idle"
+    assert not alive(int(pidfile.read_text()))
+    hist = (runtime / "sessions" / PT / "keeper_history.jsonl").read_text().splitlines()
+    (row,) = [json.loads(ln) for ln in hist]
+    assert row["sid"] == "S001" and row["timed_out"] and "the app shut down" in row["detail"]
