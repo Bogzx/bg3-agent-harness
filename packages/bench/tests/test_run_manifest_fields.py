@@ -16,7 +16,7 @@ NAUT = json.loads((REPO / "packages" / "bench" / "scenarios" / "nautiloid.json")
 
 def test_manifest_records_the_harness_fields(tmp_path):
     series, records = load_series()
-    fields = run_manifest.manifest_fields("claude", "2.1.301", "rules+coaching", REGISTRY, NAUT)
+    fields = run_manifest.manifest_fields("claude", "2.1.301", "rules+coaching", REGISTRY, NAUT, "instructions")
     man, _ = run_artifacts.write_run_artifacts(
         tmp_path, series, records[0], "0.1.0", **run_manifest.artifact_kwargs(fields), scenario_spec=NAUT
     )

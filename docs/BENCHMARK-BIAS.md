@@ -136,7 +136,7 @@ alike. "Rules" below is the harness default condition (packages/harness/prompts/
 | Stop policy tuned on Claude's early stops | n/a in a D5 benchmark run | packages/playthrough/src/bg3play/memory/session.py `stop_decision`; a benchmark run has no memory session; the server-side stop (rules.py) is the same for all |
 | 9.5 KB briefing (Claude Code's hook cap), prompt-cache-stable prefix | n/a | briefings come from the server for every client now; the byte-stable text helps every cached API |
 | Memory keeper on another model | fixed | `--keeper-model same` default (runner/play.py:1770); D5: no keeper in benchmark runs |
-| Prompt hash in the manifest | **incomplete** (owner: harness, run_manifest.py) | `prompt.sha256` hashes assemble() only; pi's system text is the server instructions + the rules (tools/pi/dump_server.py:32), and Claude Code also gets the instructions. Hash what the client is actually given (the dumped system file for pi; CLAUDE.md + instructions for Claude) |
+| Prompt hash in the manifest | fixed in the harness (2026-10-22, round 9); the runner's wiring pending | `manifest_fields(..., instructions)` hashes `served_text(instructions, rules)` = the server instructions + the assembled rules, parts `server:instructions` + assemble's (packages/harness/src/bg3harness/run_manifest.py); `tools/pi/dump_server.py --instructions` dumps the served instructions in the session env. Test test_run_manifest.py `test_the_hash_is_pis_system_text` (equal to the dumped pi system text with screenshots off). Patch for play.py in research/ovh/pi.md round 9 |
 
 ## What a fair cross-model benchmark should do
 

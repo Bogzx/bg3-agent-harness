@@ -3,7 +3,7 @@
 docs/OVERHAUL-PLAN.md: for now the server's instructions with the rules, i.e. what BG3AI_SERVE_RULES=1 serves) and
 the tool list (`tools/list`, wire form). Runs in the bridge's env:
 
-    uv run --project bridge python tools/pi/dump_server.py --system <file> [--tools <file>]
+    uv run --project bridge python tools/pi/dump_server.py --system <file> [--tools <file>] [--instructions <file>]
 
 The conformance stub MCP server serves tools/pi/conformance/tools.json, made with --tools.
 """
@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("--system", type=Path, help="write the system text here")
     ap.add_argument("--tools", type=Path, help="write the tools/list result here (JSON)")
+    ap.add_argument("--instructions", type=Path, help="write the server's own instructions (no rules) here")
     a = ap.parse_args(argv)
     with tempfile.TemporaryDirectory(prefix="bg3ai-dump-") as rt:
         os.environ["BG3AI_RUNTIME"] = rt  # importing the server must not touch the real runtime/
@@ -30,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if a.system:
             a.system.write_text(rules.instructions(server.INSTRUCTIONS, server.RULES.rules) + "\n", encoding="utf-8")
+        if a.instructions:  # for the served tool set (BG3AI_TOOLS*): bg3harness.run_manifest hashes them
+            a.instructions.write_text(server.INSTRUCTIONS + "\n", encoding="utf-8")
         if a.tools:
             # the wire form, as tools/list sends it
             tools = [
