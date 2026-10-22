@@ -82,6 +82,9 @@ class UpGame:
     def new_game(self) -> None:
         raise RuntimeError("no game")
 
+    def ensure_save(self, since: float) -> str | None:
+        return None
+
     def notes(self) -> list[str]:
         return []
 

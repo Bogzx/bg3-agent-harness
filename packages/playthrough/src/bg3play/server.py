@@ -545,12 +545,12 @@ def launched_game(opt: argparse.Namespace, reads: Any, log: Callable[[str], None
     from bg3harness.game.host import AppHost
     from bg3harness.game.saves import save_lsv
 
-    from .adapters.launched_game import LaunchedGame
+    from .adapters.launched_game import IoSaveOps, LaunchedGame
 
     host = AppHost(opt.runtime, opt.repo, log=log)
     return LaunchedGame(
         reads, gctl.GameController(host), host, lambda: gctl.list_saves(host.save_dir, save_lsv),
-        gio.host_character_name, log=log,
+        gio.host_character_name, log=log, save_ops=IoSaveOps(),
     )  # fmt: skip
 
 

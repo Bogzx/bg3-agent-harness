@@ -72,6 +72,7 @@ class FakeGame:
         self.recovered: list[str] = []
         self.began: list[tuple[Path, Path]] = []
         self.pending_notes: list[str] = []  # the controller's RUNNER NOTEs, taken by notes()
+        self.ensured: list[float] = []  # ensure_save calls (each session's start)
 
     def begin(self, sdir: Path, mem: Path) -> None:
         self.began.append((sdir, mem))
@@ -94,6 +95,10 @@ class FakeGame:
 
     def new_game(self) -> None:
         raise RuntimeError("FakeGame: no new game")
+
+    def ensure_save(self, since: float) -> str | None:
+        self.ensured.append(since)
+        return None
 
     def notes(self) -> list[str]:
         out, self.pending_notes = self.pending_notes, []
@@ -179,6 +184,14 @@ def test_two_sessions_with_the_keeper_between_and_the_files_the_store_reads(tmp_
     ]
     status = json.loads((runtime / "runner.status.json").read_text())
     assert status["playthrough"] == PT and status["session"] == "S002" and status["session_ended"] == 1000 + 3600
+
+
+def test_each_session_that_didnt_end_on_a_game_fault_ensures_a_save(tmp_path: Path):
+    # play.py ensure_save: the session's save or a runner quicksave since the session's start; not after a game
+    # crash (nothing to save), so S001 (crashed, not resumed) gets none and S002 does
+    sup, _, game, *_ = make(tmp_path, [("crash", 25), ("exited", 30)], hours=0.9, recover_to="S001-x")
+    sup.start(PT, wait=True)
+    assert [h["outcome"] for h in sup.history(PT)] == ["crash", "ok"] and game.ensured == [1000 + 25 * 60]
 
 
 def test_the_stuck_nudge_reaches_the_kickoff(tmp_path: Path):
@@ -515,7 +528,7 @@ def test_a_new_playthroughs_first_session_launches_a_new_game_and_the_second_its
     sdir = runtime / "sessions" / PT
     (h,) = sup.history(PT)
     assert h["session"] == "S001" and h["outcome"] == "ok"
-    assert json.loads((sdir / "runner.json").read_text()).get("save_owner") is None
+    assert json.loads((sdir / "runner.json").read_text())["save_owner"] == "Vessa"  # from S001's own save
 
     ctl.is_alive = reads.is_ok = False  # the game is gone before S002
     sup.resume(PT, wait=True)

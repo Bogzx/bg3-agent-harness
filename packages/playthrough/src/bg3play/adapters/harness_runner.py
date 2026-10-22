@@ -89,6 +89,7 @@ class Game(Protocol):
     def recover(self, why: str) -> str | None: ...  # relaunch and load the latest save; its name; raises if it can't
     # (NoSaveYetError: the playthrough has no save yet)
     def new_game(self) -> None: ...  # launch to the main menu for a playthrough without a save; raises if it can't
+    def ensure_save(self, since: float) -> str | None: ...  # at a session's end: its save, else a runner quicksave
     def notes(self) -> list[str]: ...  # RUNNER NOTEs from the recoveries since the last call
 
 
@@ -402,6 +403,8 @@ class HarnessRunner:
         spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         try:
             out = run_session(spec, hooks)
+            if out.result.reason not in ("crash", "hang") and not self._abort.is_set():
+                self.game.ensure_save(out.started)  # before the memory's session end, as play.py
         finally:
             memory.end(env)
         progress = (
@@ -502,6 +505,9 @@ class AttachedGame:
 
     def new_game(self) -> None:
         raise RuntimeError("no game is running and the app can't launch one (bg3play-serve without --attach can)")
+
+    def ensure_save(self, since: float) -> str | None:
+        return None  # the game is yours: the app never saves it
 
     def notes(self) -> list[str]:
         return []

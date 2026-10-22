@@ -186,3 +186,73 @@ def test_a_playthrough_without_saves_is_new_and_launches_to_the_main_menu(tmp_pa
     g.new_game()
     assert ctl.calls == ["kill", "launch None", "main menu"]
     assert json.loads((sdir / "runner.json").read_text())["loaded_save"] is None
+
+
+class FakeSaveOps:
+    """The game's quicksave: adds `write` (the folder the game makes; None: none appears) to the save list."""
+
+    def __init__(self, saves: list[Save], clock: list[float], write: Save | None, ready: bool = True):
+        self.saves, self.clock, self.write, self.is_ready = saves, clock, write, ready
+        self.calls = 0
+
+    def ready(self) -> bool:
+        return self.is_ready
+
+    def in_combat(self) -> bool | None:
+        return True
+
+    def quicksave(self) -> None:
+        self.calls += 1
+        if self.write is not None:
+            self.saves.append(self.write)
+
+
+def saving_game(tmp_path: Path, state: dict[str, Any], saves: list[Save], ops: FakeSaveOps, clock: list[float]):
+    sdir, mem = tmp_path / "sessions" / "ilse", tmp_path / "ilse" / "memory"
+    sdir.mkdir(parents=True)
+    mem.mkdir(parents=True)
+    (sdir / "runner.json").write_text(json.dumps(state))
+    logs: list[str] = []
+
+    def sleep(s: float) -> None:
+        clock[0] += s
+
+    g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: saves, lambda: None, logs.append, ops,
+                        lambda: clock[0], sleep)  # fmt: skip
+    g.begin(sdir, mem)
+    return g, sdir, logs
+
+
+def test_ensure_save_takes_the_sessions_own_save_and_learns_a_new_owner(tmp_path: Path):
+    clock = [5000.0]
+    saves = [save("Vessa", 1, "S000-old", 2000), save("Vessa", 2, "S001-start", 3100)]
+    ops = FakeSaveOps(saves, clock, None)
+    g, sdir, _ = saving_game(tmp_path, {}, saves, ops, clock)
+    assert g.ensure_save(3000) == "Vessa-2__S001-start" and ops.calls == 0
+    assert json.loads((sdir / "runner.json").read_text())["save_owner"] == "Vessa"
+
+
+def test_without_a_session_save_the_runner_quicksaves_and_records_it(tmp_path: Path):
+    # play.py ensure_save: a session that ended without the agent's save would send the next one back to an older save
+    clock = [5000.0]
+    saves = [save(OWNER, 1, "S001-end", 3100)]
+    ops = FakeSaveOps(saves, clock, save(OWNER, 2, "QuickSave_1", 5000))
+    g, sdir, logs = saving_game(tmp_path, {"save_owner": OWNER, "runner_saves": ["Ilse-0__QuickSave_0"]}, saves, ops,
+                                clock)  # fmt: skip
+    assert g.ensure_save(4000) == "Ilse-2__QuickSave_1" and ops.calls == 1
+    rj = json.loads((sdir / "runner.json").read_text())
+    assert rj["runner_saves"] == ["Ilse-0__QuickSave_0", "Ilse-2__QuickSave_1"]
+    assert rj["runner_save_combat"] == {"Ilse-2__QuickSave_1": True}
+    assert "quicksave written: Ilse-2__QuickSave_1 (mid-fight)" in logs
+
+
+def test_a_quicksave_that_never_appears_or_a_game_not_ready_records_nothing(tmp_path: Path):
+    clock = [5000.0]
+    ops = FakeSaveOps([], clock, None)
+    g, sdir, logs = saving_game(tmp_path, {"save_owner": OWNER}, [], ops, clock)
+    assert g.ensure_save(4000) is None and clock[0] >= 5000 + lg.QUICKSAVE_WAIT_S
+    assert "quicksave didn't appear within 60 s" in logs and "runner_saves" not in json.loads(
+        (sdir / "runner.json").read_text()
+    )
+    ops.is_ready = False
+    assert g.ensure_save(4000) is None and ops.calls == 1  # not asked again

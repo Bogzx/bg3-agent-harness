@@ -7,6 +7,9 @@
     recover(why)        kill what is left, choose the save, GameController.launch_and_load; the loaded save's label
                         (runner.json loaded_save = its folder: the controller's check_oom and previous_good_save
                         read it)
+    new_game            a playthrough without a save: launched to the main menu (the agent starts the new game)
+    ensure_save(since)  at a session's end (play.py ensure_save): the session's newest save, else a runner quicksave
+                        recorded in runner.json runner_saves (SaveOps: IoSaveOps over the debug port)
     notes               the controller's RUNNER NOTEs since the last call (the host's take_notes)
 
 The save choice (choose_save) is runner/play.py Runner.choose_save over bg3harness.game.saves: the newest save of
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -60,6 +64,37 @@ class Reads(Protocol):
 
     def ok(self) -> bool: ...
     def progress(self) -> dict[str, Any] | None: ...
+
+
+class SaveOps(Protocol):
+    """Saving the running game (IoSaveOps: bg3harness.game.io over the debug port)."""
+
+    def ready(self) -> bool: ...  # a game is loaded (the server context answers): a save can be made
+    def in_combat(self) -> bool | None: ...  # the party is in a fight (None: unknown)
+    def quicksave(self) -> None: ...  # asks the game to quicksave; raises when the request fails
+
+
+class IoSaveOps:
+    def ready(self) -> bool:
+        from bg3harness.game import io
+
+        return io.server_ready()
+
+    def in_combat(self) -> bool | None:
+        from bg3harness.game import io
+
+        return io.party_in_combat()
+
+    def quicksave(self) -> None:
+        from bg3harness.game import io
+
+        if "ui.menu" in io.available_ops("client"):
+            io.rpc("ui.menu", {"action": "quicksave"}, context="client", timeout=30)  # pyright: ignore[reportUnknownMemberType]
+        else:
+            io.lua_eval('Ext.Input.InjectKeyPress("F5") return 1')  # the default quicksave binding
+
+
+QUICKSAVE_WAIT_S = 60  # how long ensure_save waits for the quicksave's folder
 
 
 def read_state(path: Path) -> dict[str, Any]:
@@ -125,8 +160,12 @@ class LaunchedGame:
         saves: Callable[[], list[Save]],  # the save folder (bg3harness.game.controller.list_saves)
         leader: Callable[[], str | None],  # the running game's character (bg3harness.game.io.host_character_name)
         log: Callable[[str], None] = lambda msg: None,
+        save_ops: SaveOps | None = None,  # None: ensure_save makes no save
+        clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self.reads, self.ctl, self.host, self.saves, self.leader, self.log = reads, controller, host, saves, leader, log
+        self.save_ops, self.clock, self.sleep = save_ops, clock, sleep
         self.sdir: Path | None = None
         self.mem: Path | None = None
 
@@ -189,6 +228,54 @@ class LaunchedGame:
         if not self.ctl.wait_menu():
             raise RuntimeError("the main menu never came up")
         write_state(self.sdir / "runner.json", loaded_save=None)
+
+    def ensure_save(self, since: float) -> str | None:
+        """play.py ensure_save at a session's end: the newest save this session wrote (the first one names the save
+        owner of a new playthrough), else a quicksave the runner asks for and records (runner.json runner_saves, its
+        fight state in runner_save_combat), so the next session doesn't go back to an older save. None: no save."""
+        if self.sdir is None:
+            return None
+        path = self.sdir / "runner.json"
+        owner = read_state(path).get("save_owner")
+        new = hsaves.saves_since(self.saves(), since, owner)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if new:
+            last: Save = new[-1]
+            if not owner:
+                write_state(path, save_owner=last.owner)
+                self.log(f"save owner {last.owner}: learned from the session's save")
+            self.log(f"session saved: {last.folder}")
+            return last.folder
+        ops = self.save_ops
+        if ops is None or not self.ctl.alive() or not ops.ready():
+            self.log("no save this session and the game isn't ready for one")
+            return None
+        self.log("the agent didn't save this session; quicksaving")
+        before = {s.folder for s in self.saves()}
+        combat = ops.in_combat()  # recorded with the save: a relaunch never lands mid-fight by choice
+        t0 = self.clock()
+        try:
+            ops.quicksave()
+        except Exception as e:
+            self.log(f"quicksave request failed: {e}")
+            return None
+        while True:
+            fresh = [s for s in self.saves() if s.folder not in before and s.mtime >= t0 - 1]
+            if fresh:
+                s = max(fresh, key=lambda x: x.mtime)
+                if owner and s.owner != owner:
+                    self.log(f"quicksave {s.folder} has an unexpected owner; not recording it")
+                    return None
+                st = read_state(path)
+                saved: object = st.get("runner_saves")
+                fights: object = st.get("runner_save_combat")
+                write_state(path, runner_saves=[*(saved if is_list(saved) else []), s.folder],
+                            runner_save_combat={**(fights if is_obj(fights) else {}), s.folder: combat})  # fmt: skip
+                self.log(f"quicksave written: {s.folder}" + (" (mid-fight)" if combat else ""))
+                return s.folder
+            if self.clock() - t0 >= QUICKSAVE_WAIT_S:
+                self.log(f"quicksave didn't appear within {QUICKSAVE_WAIT_S} s")
+                return None
+            self.sleep(2)
 
     def notes(self) -> list[str]:
         return self.host.take_notes()
