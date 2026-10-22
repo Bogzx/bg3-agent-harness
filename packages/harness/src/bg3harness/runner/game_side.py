@@ -5,7 +5,6 @@ after a crash or hang, and the save at a session's end.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 from datetime import datetime
@@ -403,7 +402,7 @@ class GameSide:
     def apply_play_settings(self) -> None:
         """Best effort, never fatal: autoskip, no tutorials, dismiss popups, then the save/load gates."""
         self.gates = None
-        for op, args in rpolicy.play_settings(os.environ):
+        for op, args in rpolicy.play_settings(self.environ):
             try:
                 game.rpc(op, args, context="client")
             except Exception as e:
@@ -430,7 +429,7 @@ class GameSide:
         """BG3AI_UI_STRICT=1/0: bg3le's strict frame lock (patch 0010) on/off in the running game, so a game kept
         across sessions follows the switch without a relaunch (launch_game.sh passes BG3LE_UI_STRICT=1 for the
         launch itself). Unset: left as it is. Logs the lock counters it reads back."""
-        on = rpolicy.ui_strict_wanted(os.environ)
+        on = rpolicy.ui_strict_wanted(self.environ)
         if on is None:
             return
         try:

@@ -86,6 +86,7 @@ class FakeRunner:
         self.settles_budget = True
         self.stop_ends_session = False
         self.stop_requested = False
+        self.run_env: dict[str, str] | None = None
         self.game_settings: dict[str, Any] = {"difficulty": "Balanced"}  # game_setup's readout
         if opt.seed is not None:  # the mod applied the run's seed
             self.game_settings["seed"] = {"seed": opt.seed, "applied": {"seed": opt.seed}}
@@ -241,7 +242,7 @@ def test_the_kickoff_of_an_until_scenario_names_its_milestone():
 
 
 def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
-    h, calls, runners, dumped, env = rig.h, rig.calls, rig.runners, rig.dumped, rig.env
+    h, calls, runners, dumped = rig.h, rig.calls, rig.runners, rig.dumped
     st = h.start(JOB, SAVE_SC, run_dir("m-grove"))
     (r,) = runners
     assert calls == ["snapshot", "ensure_game(True)", "reload", "settings", "check_settings"]
@@ -250,7 +251,7 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     assert sorted(p.name for p in (run_dir("m-grove") / "reset").iterdir()) == ["nav_aa.json", "nav_guard_aa.json"]
     assert [p.name for p in renv.SE_BG3AI_DIR.iterdir()] == ["other.json"]
     assert r.events == [("run_reset", {"nav_files": ["nav_aa.json", "nav_guard_aa.json"]})]
-    assert env["BG3AI_PROMPT_CONDITION"] == "rules" and (r.opt.tools_expected, r.opt.manifest) == (90, {"m": 1})
+    assert h.env["BG3AI_PROMPT_CONDITION"] == "rules" and (r.opt.tools_expected, r.opt.manifest) == (90, {"m": 1})
     assert dumped == [(run_dir("m-grove"), "claude", 7, "turn_based")]
     assert st.prompt == H.scenario_kickoff(SAVE_SC, "S001", "SCN-grove_fight")  # rules: no pace pre-flight
     assert st.prompt_sha == hashlib.sha256(st.prompt.encode()).hexdigest() and st.harness_version
@@ -261,11 +262,11 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
 def test_a_bench_run_serves_no_memory_tools_and_its_own_empty_memory_dir(rig: Rig):
     # live7: session_start served play/memory's briefing (another playthrough's notes) to a bench run
     rig.h.start({**JOB, "tools_off": ["wiki_search", "wiki_page"]}, SAVE_SC, run_dir("m-grove"))
-    assert rig.env["BG3AI_MEMORY_DIR"] == str(run_dir("m-grove") / "memory")
-    assert rig.env["BG3AI_TOOLS_OFF"] == "memory,wiki_search,wiki_page"
+    assert rig.h.env["BG3AI_MEMORY_DIR"] == str(run_dir("m-grove") / "memory")
+    assert rig.h.env["BG3AI_TOOLS_OFF"] == "memory,wiki_search,wiki_page"
     rig.h.start(JOB, NEW_SC, run_dir("m-idol"))  # the next job's env replaces the last one's
-    assert rig.env["BG3AI_TOOLS_OFF"] == "memory"
-    assert rig.env["BG3AI_MEMORY_DIR"] == str(run_dir("m-idol") / "memory")
+    assert rig.h.env["BG3AI_TOOLS_OFF"] == "memory"
+    assert rig.h.env["BG3AI_MEMORY_DIR"] == str(run_dir("m-idol") / "memory")
 
 
 def plant_memory(mem: Path) -> None:
@@ -296,7 +297,7 @@ def test_a_bench_run_sees_no_playthrough_memory_through_the_real_bridge(rig: Rig
     )
     assert "LEAKED-NOTE" in briefing and "memory_read" in tools  # the leak live7 saw: the fixture serves it
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
-    bench = {k: v for k, v in rig.env.items() if k.startswith("BG3AI_")} | playthrough
+    bench = {k: v for k, v in rig.h.env.items() if k.startswith("BG3AI_")} | playthrough
     text, tools, results = asyncio.run(
         asyncio.wait_for(served(tmp_path / "home", bench, ["get_status", "get_party", "get_journal"]), 99)
     )
@@ -311,10 +312,10 @@ def test_the_scenario_autoskip_reaches_the_runner_env(rig: Rig):
     """On by default; a scenario's game_settings.autoskip = false turns it off for the runner's ui.config and the
     play server's skipper (BG3AI_AUTOSKIP)."""
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
-    assert rig.env["BG3AI_AUTOSKIP"] == "1"
+    assert rig.h.env["BG3AI_AUTOSKIP"] == "1"
     off = {**SAVE_SC, "game_settings": {**SAVE_SC["game_settings"], "autoskip": False}}
     rig.h.start(JOB, off, run_dir("m-grove2"))
-    assert rig.env["BG3AI_AUTOSKIP"] == "0"
+    assert rig.h.env["BG3AI_AUTOSKIP"] == "0"
 
 
 @pytest.mark.integration
@@ -352,7 +353,7 @@ def test_a_coaching_condition_gets_the_pace_preflight(rig: Rig):
     st = h.start(job, NEW_SC, run_dir("m-idol"))
     pace = client_setup.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
     assert pace and st.prompt.endswith(pace)
-    assert rig.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching"
+    assert rig.h.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching"
 
 
 def test_a_run_dir_the_runner_doesnt_write_to_is_refused(rig: Rig, tmp_path: Path):

@@ -84,7 +84,9 @@ class StubRunner(lpt.Runner):
         StubRunner.stopped.append(when)
 
     def run_claude(self, sid, prompt, minutes, claude_session, resume=False, tag="", needs_game=True):
-        StubRunner.played.append({"sid": sid, "prompt": prompt, "minutes": minutes, "dir": self.state.dir})
+        StubRunner.played.append(
+            {"sid": sid, "prompt": prompt, "minutes": minutes, "dir": self.state.dir, "env": dict(self.environ)}
+        )  # what the play process and its bg3 server get
         if spend.is_paid(self.opt.client):  # the process's result, and the runner's spend step as run_claude ends
             base = self.state.dir / f"{sid}{tag}"
             stream = base.with_name(base.name + ".jsonl")
@@ -127,7 +129,7 @@ class Bench(unittest.TestCase):
                 log=lambda m: None,
             ),
             mock.patch.object(lpt, "Runner", StubRunner),
-            mock.patch.object(client_setup, "run_files", lambda *a: {}),  # no uv dump of the bg3 server
+            mock.patch.object(client_setup, "run_files", lambda *a, **k: {}),  # no uv dump of the bg3 server
             mock.patch.object(lcli, "acquire_lock", lambda: None),
             mock.patch("bg3ai.skipper.start_background", return_value=None),
             mock.patch.object(ramwatch, "start_background", return_value=None),
@@ -163,7 +165,9 @@ class Bench(unittest.TestCase):
         rec = json.loads((run_dir / "runs.jsonl").read_text())
         self.assertEqual((rec["outcome"], rec["client"], rec["sessions"]), ("timeout", "claude", 1))
         self.assertTrue((run_dir / "manifest.json").is_file() and (run_dir / "result.json").is_file())
-        self.assertEqual(os.environ["BG3AI_PROMPT_CONDITION"], "rules")
+        self.assertEqual(play["env"]["BG3AI_PROMPT_CONDITION"], "rules")  # the job's env, not os.environ (H1)
+        self.assertEqual(play["env"]["BG3AI_MEMORY_DIR"], str(run_dir / "memory"))
+        self.assertNotEqual(os.environ.get("BG3AI_MEMORY_DIR"), str(run_dir / "memory"))
 
     def test_a_paid_run_is_charged_once_by_the_matrix(self):
         (self.repo / "profiles" / "pi.toml").write_text(PI)
@@ -175,7 +179,7 @@ class Bench(unittest.TestCase):
         dumped = {"system_file": str(self.tmp / "system.txt")}  # pi's run file (no uv dump)
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
-        stack.enter_context(mock.patch.object(client_setup, "run_files", lambda *a: dumped))
+        stack.enter_context(mock.patch.object(client_setup, "run_files", lambda *a, **k: dumped))
         rc, out = self.bench("run")
         self.assertEqual(rc, 0, out)
         [play] = StubRunner.played

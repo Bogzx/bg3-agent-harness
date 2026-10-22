@@ -57,19 +57,19 @@ def agent_new_game(env: dict[str, str], home: Path, asked: str) -> tuple[GameMod
 
 def test_a_new_game_run_starts_the_scenarios_difficulty_whatever_the_agent_picks(rig: Rig, tmp_path: Path):
     rig.h.start(JOB, NEW_SC, run_dir("m-idol"))  # NEW_SC: Balanced, karmic dice off
-    assert rig.env[H.SCENARIO_DIFFICULTY] == "Balanced"
-    model, text = agent_new_game(rig.env, tmp_path / "home", "Explorer")
+    assert rig.h.env[H.SCENARIO_DIFFICULTY] == "Balanced"
+    model, text = agent_new_game(rig.h.env, tmp_path / "home", "Explorer")
     assert model.difficulty == "Balanced"
     assert "this run's scenario fixes the difficulty: Balanced (not Explorer)" in text
-    model, text = agent_new_game(rig.env, tmp_path / "home2", "balanced")  # the same pick: no note
+    model, text = agent_new_game(rig.h.env, tmp_path / "home2", "balanced")  # the same pick: no note
     assert model.difficulty == "Balanced" and "fixes the difficulty" not in text
 
 
 def test_a_save_start_or_a_scenario_without_a_difficulty_leaves_the_pick_alone(rig: Rig, tmp_path: Path):
     rig.h.start(JOB, NEW_SC, run_dir("m-idol"))
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))  # the next job: a save start (its save fixes the difficulty)
-    assert H.SCENARIO_DIFFICULTY not in rig.env
-    model, _ = agent_new_game(rig.env, tmp_path / "home", "Tactician")
+    assert H.SCENARIO_DIFFICULTY not in rig.h.env
+    model, _ = agent_new_game(rig.h.env, tmp_path / "home", "Tactician")
     assert model.difficulty == "Tactician"
 
 

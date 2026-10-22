@@ -12,6 +12,7 @@ claude that exited at once were all graded as the model's failures."""
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -267,18 +268,30 @@ def test_a_claude_run_stopped_before_its_result_has_an_unknown_cost_not_zero(rig
     assert rec["_result"]["cost_usd"] is None and rec["_result"]["valid"]  # graded; its cost unknown, not free
 
 
-def test_a_text_only_profile_doesnt_take_the_screenshots_from_the_next_job(rig: Rig):
+def test_a_jobs_env_never_reaches_the_next_job_nor_os_environ(
+    rig: Rig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # H1: profiles.tool_env only ever added to BG3AI_TOOLS_OFF, so an image model run after deepseek-v4-pro (text only)
-    # in one `bg3bench run` played without screenshots
+    # in one `bg3bench run` played without screenshots; and every job wrote its vars (API key, condition, tools) into
+    # os.environ, where the next job (and its bg3 server) still saw them
     profiles_dir = Path(__file__).resolve().parents[3] / "profiles"
-    seen: list[str] = []
-    rig.env |= {"DEEPSEEK_API_KEY": "test-key", "OPENROUTER_API_KEY": "test-key"}  # never the repo's .env
+    monkeypatch.setattr(renv, "REPO", tmp_path)  # the keys come from this .env, never the repo's
+    (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=key-ds\nOPENROUTER_API_KEY=key-or\n")
+    before = dict(os.environ)
+    seen: list[dict[str, str]] = []
 
     def files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
-        seen.append(rig.env["BG3AI_TOOLS_OFF"])  # what the client's run files (manifest, tool count) are dumped with
+        seen.append(dict(host.env))  # what the client's run files (manifest, tool count) are dumped with
         return {}
 
-    host = H.LiveRunHost(lambda opt: ScriptedRunner(opt, rig.calls), run_files=files, env=rig.env, clock=lambda: T0)
+    runners: list[ScriptedRunner] = []
+
+    def make(opt: rstate.Options) -> ScriptedRunner:
+        runners.append(ScriptedRunner(opt, rig.calls))
+        return runners[-1]
+
+    base = {"PATH": "/usr/bin"}
+    host = H.LiveRunHost(make, run_files=files, env=base, clock=lambda: T0)
     for name in ("deepseek-v4-pro.toml", "opus-5.5-pi.toml"):
         model = profiles.load(profiles_dir / name).model
         job = {
@@ -286,10 +299,14 @@ def test_a_text_only_profile_doesnt_take_the_screenshots_from_the_next_job(rig: 
             "client": "pi",
             "effort": None,
             "condition": "rules",
-            "prompt_condition": "rules",  # the matrix sets it (conditions.Condition.prompt_condition)
+            "prompt_condition": "rules",  # the condition as the session runner plays it (9500d78)
             "profile": str(profiles_dir / name),
         }
         d = run_dir(f"m-{name}")
         host.start(job, SC, d)
+        assert runners[-1].run_env is host.env  # the play process and its bg3 server get this job's env
         host.record(job, SC, d, outcome())
-    assert seen == ["memory,screenshots", "memory"]
+    assert [e["BG3AI_TOOLS_OFF"] for e in seen] == ["memory,screenshots", "memory"]
+    assert ("DEEPSEEK_API_KEY" in seen[0], "OPENROUTER_API_KEY" in seen[0]) == (True, False)
+    assert ("DEEPSEEK_API_KEY" in seen[1], "OPENROUTER_API_KEY" in seen[1]) == (False, True)
+    assert dict(os.environ) == before and base == {"PATH": "/usr/bin"}

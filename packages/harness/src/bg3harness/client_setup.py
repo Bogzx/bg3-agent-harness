@@ -137,14 +137,21 @@ def _dump(args: list[str], repo: Path, env: dict[str, str], run) -> None:
     )
 
 
-def dump_server(system: Path, tools: Path, instructions: Path, repo: Path, run=subprocess.run) -> None:
+def dump_server(
+    system: Path,
+    tools: Path,
+    instructions: Path,
+    repo: Path,
+    run=subprocess.run,
+    environ: Mapping[str, str] = os.environ,
+) -> None:
     """The bg3 server's full tool list, then the system text (D2) and the server's own instructions, offline in the
     bridge's env (tools/pi/dump_server.py). The list leaves the runner's BG3AI_TOOLS* out so it is the whole
     registry; the texts keep the session env (BG3AI_TOOLS*, BG3AI_PROMPT_CONDITION), as the play processes' server
-    words them for the tools it serves."""
-    env = {k: v for k, v in os.environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
+    words them for the tools it serves. environ: the session's env (a bench job's own, LiveRunHost)."""
+    env = {k: v for k, v in environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
     _dump(["--tools", str(tools)], repo, env, run)
-    _dump(["--system", str(system), "--instructions", str(instructions)], repo, dict(os.environ), run)
+    _dump(["--system", str(system), "--instructions", str(instructions)], repo, dict(environ), run)
 
 
 def run_files(
@@ -154,22 +161,27 @@ def run_files(
     timing: str | None,
     repo: Path,
     log: Callable[[str], None],
-    dump: Callable[[Path, Path, Path, Path], None] = dump_server,
+    dump: Callable[[Path, Path, Path, Path], None] | None = None,
     version: Callable[[str], str | None] | None = None,
+    environ: Mapping[str, str] = os.environ,
 ) -> dict[str, Any]:
     """play.py's Options fields every play process of a pi or claude run shares, from the system text, the bg3
     server's tool list and its instructions dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools
     the init must count (claude: its mcp__bg3__* tools) and the run manifest's fields. The condition is the text the
     client is served: claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION (default
     rules). A condition the tools can't serve (coaching with a group off) leaves the manifest's error instead of
-    its prompt."""
+    its prompt. environ: the session's env (its tools and condition; a bench job's own, LiveRunHost); dump: the
+    server dump (dump_server in that env)."""
     from bg3harness import run_manifest
 
     d.mkdir(parents=True, exist_ok=True)
     system, tools, instructions = d / "pi-system.txt", d / "bg3-tools.json", d / "bg3-instructions.txt"
-    dump(system, tools, instructions, repo)
-    served = served_tools(tool_names(tools), os.environ)
-    condition = "rules+coaching" if client == "claude" else os.environ.get("BG3AI_PROMPT_CONDITION", "rules")
+    if dump is None:
+        dump_server(system, tools, instructions, repo, environ=environ)
+    else:
+        dump(system, tools, instructions, repo)
+    served = served_tools(tool_names(tools), environ)
+    condition = "rules+coaching" if client == "claude" else environ.get("BG3AI_PROMPT_CONDITION", "rules")
     try:
         manifest = run_manifest.manifest_fields(
             client,

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import collections
 import json
-import os
 import signal
 import subprocess
 import threading
@@ -96,7 +95,7 @@ class AgentSide:
                            BG3_WRAP_MINUTES=str(rpolicy.wrap_minutes(minutes)),
                            # when the MCP clock line switches to WRAP UP (epoch seconds); play until then
                            BG3AI_SESSION_WRAPUP=str(int(start + rpolicy.wrap_minutes(minutes) * 60)))
-        base_env = dict(os.environ)
+        base_env = dict(self.environ)
         base_env.pop("BG3AI_SAVE_GATES", None)
         session_env.update(self.save_env())
         base = self.state.dir / f"{sid}{tag}"
@@ -218,7 +217,7 @@ class AgentSide:
                         rstate.write_status(claude_session=e.session_id)
                     if e.kind == "init" and api["mcp"] is None:
                         api["mcp"] = (renv.mcp_problem(e.mcp, client.name == "claude") or client_setup.tool_count_problem(
-                            e.tools, self.opt.tools_expected, os.environ) or "")
+                            e.tools, self.opt.tools_expected, self.environ) or "")
                     if e.kind == "tool_call":
                         api["tool_calls"] += 1
                     if e.kind == "result" and e.subtype in ("error_context_overflow", "error_overflow_loop"):

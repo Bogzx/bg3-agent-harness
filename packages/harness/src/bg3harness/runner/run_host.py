@@ -36,7 +36,7 @@ import signal
 import threading
 import time
 import uuid
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -74,6 +74,7 @@ class RunRunner(Protocol):
     stop_ends_session: bool  # True here: an operator stop ends the run's one session at the next check
     stop_requested: bool
     until_hit: Json | None  # GoalWatch sets it: the agent loop stops on it as on an until milestone
+    run_env: dict[str, str] | None  # the job's env (the play process, its bg3 server, the play settings)
 
     @property
     def opt(self) -> rstate.Options: ...
@@ -376,19 +377,22 @@ class LiveRunHost:
 
     make_runner(opt) builds the run's runner (runner/play.py passes its Runner: SessionRunner with the
     playthrough parts, whose LSF reader the settings readout needs); run_files(run_dir, client, seed, timing)
-    dumps the client's files (client_setup.run_files by default); env is the process env the MCP server and the
-    client inherit (the job's condition goes there)."""
+    dumps the client's files (client_setup.run_files by default); env is the base env (this process's, read once):
+    each job's env is a fresh copy with the job's vars (condition, API key, tools, memory dir), handed to its runner
+    (run_env: the play process, its bg3 server and the play settings read it), so nothing of one job reaches the next
+    and os.environ is never changed (H1)."""
 
     def __init__(
         self,
         make_runner: Callable[[rstate.Options], RunRunner],
         *,
         run_files: Callable[[Path, str, int | None, str | None], Json] | None = None,
-        env: MutableMapping[str, str] | None = None,
+        env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.time,
     ):
         self.make_runner, self.clock = make_runner, clock
-        self.env = os.environ if env is None else env
+        self.base = dict(os.environ if env is None else env)
+        self.env: dict[str, str] = dict(self.base)  # the current job's (_setup)
         self.run_files = run_files or self._run_files
         self.runs: dict[Path, tuple[RunRunner, float, list[str]]] = {}
         self.watches: dict[Path, GoalWatch] = {}  # a goal scenario's live verdict while its run plays
@@ -419,9 +423,8 @@ class LiveRunHost:
             finally:
                 restore_nav(nav_marker())
 
-    @staticmethod
-    def _run_files(d: Path, client: str, seed: int | None, timing: str | None) -> Json:
-        return client_setup.run_files(d, client, seed, timing, renv.REPO, renv.log)
+    def _run_files(self, d: Path, client: str, seed: int | None, timing: str | None) -> Json:
+        return client_setup.run_files(d, client, seed, timing, renv.REPO, renv.log, environ=self.env)
 
     def _setup(self, job: Json, sc: Json, run_dir: Path) -> tuple[Json, str, str | None]:
         """The job's client env (condition, API key, tools) and run files; the kickoff's pace pre-flight.
@@ -432,6 +435,7 @@ class LiveRunHost:
         tools (the bench's conditions.removed_tools: wiki, load_game); job["prompt_condition"]: the prompt condition
         the bench's id maps to (conditions.Condition.prompt_condition)."""
         choice = client_setup.resolve(job["client"], job.get("profile"), job["model"], job.get("effort"), None, False)
+        self.env = dict(self.base)
         self.env.update(client_setup.api_key_env(choice.profile, self.env, renv.REPO / ".env"))
         self.env["BG3AI_PROMPT_CONDITION"] = job["prompt_condition"]  # rules | rules+coaching, not the bench's id
         self.env["BG3AI_MEMORY_DIR"] = str(run_dir / "memory")
@@ -441,8 +445,6 @@ class LiveRunHost:
         difficulty = sc["game_settings"].get("difficulty") if sc["start"]["kind"] == "new_game" else None
         if difficulty:  # the bridge's new_game starts it, whatever the agent picks (live7: Explorer, not Balanced)
             self.env[SCENARIO_DIFFICULTY] = difficulty
-        else:
-            self.env.pop(SCENARIO_DIFFICULTY, None)
         self.env.update(client_setup.session_env(choice.client, choice.profile, True, self.env))
         files: Json = {"profile": choice.profile, "pace": client_setup.kickoff_pace(choice.client, self.env)}
         if choice.client == "claude" or (choice.profile is not None and choice.client == "pi"):
@@ -466,6 +468,7 @@ class LiveRunHost:
             files, model, effort = self._setup(job, sc, run_dir)
             opt = options_for(dict(job, model=model, effort=effort), sc, run_dir.name, files)
             r = self.make_runner(opt)
+            r.run_env = self.env
             st = self._begin(r, opt, sc, run_dir)
             if job.get("verdict") is not None:
                 self.watches[run_dir] = GoalWatch(r, job["verdict"])

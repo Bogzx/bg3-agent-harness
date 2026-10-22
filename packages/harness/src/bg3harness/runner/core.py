@@ -65,6 +65,9 @@ class SessionRunner(rgame.GameSide, ragent.AgentSide, rchecks.ChecksSide):
         self.abort = False
         self.stop_ends_session = False   # a bench run (run_host): an operator stop ends the session it is in
         self.agent_proc: subprocess.Popen | None = None   # the play process while a session runs
+        # the env the play process, its bg3 server and the play settings read; None: this process's (a bench run's
+        # host passes the job's own, so nothing of one job's env reaches the next through os.environ)
+        self.run_env: dict[str, str] | None = None
         self.pending_notes: list[str] = []
         self.relaunch_save: Save | None = None   # maybe_relaunch -> ensure_game: the save the relaunch loads
         self.quick_failures = 0
@@ -120,6 +123,12 @@ class SessionRunner(rgame.GameSide, ragent.AgentSide, rchecks.ChecksSide):
         c = self.profile.get("character")
         if c and not c.get("name"):
             self.set_profile(dict(self.profile, character=dict(c, name=owner)))
+
+    @property
+    def environ(self) -> dict[str, str] | os._Environ[str]:
+        """run_env, or this process's env (also for a bare Runner a test builds without __init__)."""
+        env = getattr(self, "run_env", None)
+        return os.environ if env is None else env
 
     def event(self, kind: str, **fields) -> None:
         """runtime/sessions/<pt>/runner_events.jsonl: runner start/stop, faults, recoveries, refused launches
