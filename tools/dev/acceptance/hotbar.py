@@ -29,10 +29,16 @@ def game_error_fails(*names: str):
                 done = {r["item"] for r in RESULTS}
                 todo = [n for n in names if n not in done]
                 for i, n in enumerate(todo):
-                    item(n, "FAIL" if i == 0 else "SKIP", f"game error: {e}" if i == 0 else "an earlier step's game error")
+                    item(
+                        n,
+                        "FAIL" if i == 0 else "SKIP",
+                        f"game error: {e}" if i == 0 else "an earlier step's game error",
+                    )
                 close_targeting()
                 return True
+
         return wrapper
+
     return deco
 
 
