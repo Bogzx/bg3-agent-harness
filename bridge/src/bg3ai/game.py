@@ -259,10 +259,10 @@ class Game:
     _busy_sleep = staticmethod(time.sleep)
 
     def rpc(self, op: str, args: dict | None = None, context: str = "server", timeout: float = 12.0) -> Any:
-        if context != "client" or op not in busywait.RETRY_OPS:
+        if context != "client":
             return self._rpc_once(op, args, context, timeout)
         res, waited = busywait.call(lambda: self._rpc_once(op, args, context, timeout), self._busy_clock,
-                                    self._busy_sleep, GameError)
+                                    self._busy_sleep, GameError, after_press_ok=op in busywait.RETRY_OPS)
         if waited > 0:
             self._tl.busy_s = getattr(self._tl, "busy_s", 0.0) + waited
         return res

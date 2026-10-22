@@ -52,6 +52,10 @@ RPC.QUIET_OPS = {
     ["sys.info"] = true, ["sys.mem"] = true, ["batch"] = true,
 }
 
+-- The busy answer says which: the bridge (busywait.py BEFORE_MARK) asks any op again when it reads BUSY_BEFORE.
+RPC.BUSY_BEFORE = "refused before its first UI call, nothing was done"
+RPC.BUSY_AFTER = "met it after a UI call ran"
+
 function BG3AI.rpc(json)
     local ok, req = pcall(Ext.Json.Parse, json)
     if not ok or type(req) ~= "table" then
@@ -70,7 +74,7 @@ function BG3AI.rpc(json)
             .. (a.target and (" " .. tostring(a.target)) or ""))
     end
     local UI = BG3AI.UI
-    local hits, job0 = UI and UI.busyHits, RPC.nextJob
+    local hits, calls, job0 = UI and UI.busyHits, UI and UI.calls, RPC.nextJob
     local ok2, res = pcall(fn, req.args or {})
     if hits and UI.busyHits ~= hits then
         -- a UI read met the busy UI (Client/UI.lua UI.busy): no answer built from refused reads; a job the op
@@ -79,8 +83,13 @@ function BG3AI.rpc(json)
             local j = RPC.jobs[id]
             if j then RPC.finish_job(j, "interrupted", nil, UI.BUSY_ERR) end
         end
+        -- refused at the gate of its first UI call and that one refusal ended the op: nothing read, nothing pressed,
+        -- so any op may be asked again (the bridge's busywait.py does). After a call ran, or when the op caught a
+        -- refusal and went on (a raw Ext.Input press isn't gated), a press may have happened before this answer.
+        local before = UI.calls == calls and UI.busyHits == hits + 1 and not ok2
+            and tostring(res):find(UI.BUSY_ERR, 1, true) ~= nil
         return encode({ ok = false, error = UI.BUSY_ERR .. ": the game's UI is busy (a rest/travel/load transition); "
-            .. "retry in a moment" })
+            .. (before and RPC.BUSY_BEFORE or RPC.BUSY_AFTER) .. "; retry in a moment" })
     end
     if not ok2 then
         return encode({ ok = false, error = tostring(res) })

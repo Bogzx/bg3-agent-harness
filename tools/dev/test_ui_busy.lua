@@ -116,5 +116,67 @@ ok(not oke and pressed == 0, "no command pressed while busy")
 clock = clock + UI.BUSY_COOLDOWN_MS
 ok(UI.execute(cmd) == true and pressed == 1, "pressed once the UI is free")
 
+-- 6. The busy answer says whether the op was refused before its first UI call (nothing pressed: any op may be asked
+--    again) or met the busy UI after a call ran (a press may have happened: only reads are asked again).
+local presses = 0
+RPC.register("t.choose", function()
+    local w = UI.prop(el, "Answers")
+    assert(UI.execute(cmd))
+    presses = presses + 1
+    return { w = w }
+end)
+pressed = 0
+mode.cost = 50
+pcall(UI.prop, el, "x") -- a load's slow read starts the cooldown
+r = call("t.choose")
+ok(r.ok == false and r.error:find(RPC.BUSY_BEFORE, 1, true) and not r.error:find(RPC.BUSY_AFTER, 1, true),
+    "refused at its first read: busy BEFORE (" .. tostring(r.error) .. ")")
+ok(pressed == 0 and presses == 0, "and nothing was pressed")
+clock = clock + UI.BUSY_COOLDOWN_MS
+r = call("t.choose")
+ok(r.ok == false and r.error:find(RPC.BUSY_AFTER, 1, true) and not r.error:find(RPC.BUSY_BEFORE, 1, true),
+    "its first read ran and was slow: busy AFTER (" .. tostring(r.error) .. ")")
+clock = clock + UI.BUSY_COOLDOWN_MS
+mode.cost = 0
+RPC.register("t.press_then_read", function()
+    assert(UI.execute(cmd))
+    mode.cost = 50
+    return { v = UI.prop(el, "x") }
+end)
+pressed = 0
+r = call("t.press_then_read")
+ok(pressed == 1 and r.ok == false and r.error:find(RPC.BUSY_AFTER, 1, true),
+    "pressed, then a read met the busy UI: busy AFTER")
+clock = clock + UI.BUSY_COOLDOWN_MS
+mode.cost = 0
+-- an op that catches the gate's refusal and goes on (a raw Ext.Input press isn't gated) is no BEFORE
+local raw = 0
+RPC.register("t.swallow", function()
+    local okr = pcall(UI.prop, el, "x")
+    raw = raw + 1 -- stands for pcall(Ext.Input.InjectKeyPress, "ESCAPE")
+    if not okr then return { v = UI.prop(el, "y") } end
+    return {}
+end)
+mode.cost = 50
+pcall(UI.prop, el, "x")
+r = call("t.swallow")
+ok(raw == 1 and r.ok == false and r.error:find(RPC.BUSY_AFTER, 1, true), "a caught refusal then a raw press: AFTER")
+r = call("t.swallow")
+ok(r.ok == true or r.error:find(RPC.BUSY_AFTER, 1, true), "caught refusal, op answers: never BEFORE")
+-- a job started before the refusal is dropped in the BEFORE case too
+RPC.register("t.start2", function()
+    local j = RPC.start_job("t", { timeout_ms = 10000, on_tick = function() end })
+    UI.prop(el, "Name")
+    return { job = j.id }
+end)
+local id = RPC.nextJob
+r = call("t.start2")
+ok(r.error:find(RPC.BUSY_BEFORE, 1, true) and RPC.jobs[id].status == "interrupted", "BEFORE drops its job")
+clock = clock + UI.BUSY_COOLDOWN_MS
+mode.cost = 0
+-- a free UI: no busy answer at all
+r = call("t.choose")
+ok(r.ok == true, "free UI: the op runs")
+
 print(string.format("%d/%d passed", pass, pass + fail))
 if fail > 0 then os.exit(1) end

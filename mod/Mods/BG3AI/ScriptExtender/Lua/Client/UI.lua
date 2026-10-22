@@ -95,6 +95,9 @@ UI.BUSY_CALL_MS = 40
 UI.BUSY_COOLDOWN_MS = 200
 UI.busyUntil = UI.busyUntil or -1
 UI.busyHits = UI.busyHits or 0 -- calls that met a busy UI (RPC.lua compares it around a job tick / an op)
+-- UI calls that passed the gate (a read ran, or a command got past checkBusy): an op that met the busy UI with this
+-- unchanged since it began was refused before its first UI call, so it did nothing and is safe to ask again (RPC.lua)
+UI.calls = UI.calls or 0
 
 local function mono() return Ext.Utils.MonotonicTime() end
 
@@ -108,11 +111,13 @@ end
 -- The gate for code that reads a Noesis object itself (not through these helpers): raises while the UI is busy.
 function UI.checkBusy()
     if mono() < UI.busyUntil then busyRaise() end
+    UI.calls = UI.calls + 1
 end
 
 local function try(f, ...)
     local t0 = mono()
     if t0 < UI.busyUntil then busyRaise() end
+    UI.calls = UI.calls + 1
     local ok, v = pcall(f, ...)
     local t1 = mono()
     if t1 - t0 >= UI.BUSY_CALL_MS or (not ok and tostring(v):find("UI busy", 1, true)) then

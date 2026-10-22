@@ -8,8 +8,10 @@ and the calls failed at once (the acceptance's se section aborted on the hotbar 
 from __future__ import annotations
 
 import json
+import re
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing the server)
@@ -19,7 +21,10 @@ from bg3ai import busywait, hotbar, rpc_record
 from bg3ai.game import Game, GameError
 from bg3ai.tools import core, uitools
 
-BUSY = "bg3le: UI busy: the game's UI is busy (a rest/travel/load transition); retry in a moment"
+RPC_LUA = Path(__file__).resolve().parents[2] / "mod/Mods/BG3AI/ScriptExtender/Lua/Shared/RPC.lua"
+_HEAD = "bg3le: UI busy: the game's UI is busy (a rest/travel/load transition); "
+BUSY = _HEAD + "met it after a UI call ran; retry in a moment"  # RPC.BUSY_AFTER
+BUSY_BEFORE = _HEAD + "refused before its first UI call, nothing was done; retry in a moment"  # RPC.BUSY_BEFORE
 
 
 class FakeClock:
@@ -135,11 +140,53 @@ class GameRpc(unittest.TestCase):
                 self.g.rpc(op, {}, context="client")
             self.assertEqual(len(seen), 1, op)
 
+    def test_presses_refused_before_any_ui_call_are_asked_again(self):
+        """trade(npc)'s ui.dialogue_choose right after the dialogue built the trade screen: refused at the gate,
+        nothing pressed, so it is asked again once the cooldown is over and presses once."""
+        for op in ("ui.dialogue_choose", "ui.key", "ui.press", "ui.command", "ui.waypoints"):
+            self.g.eval, seen = scripted({op: [BUSY_BEFORE, BUSY_BEFORE, {"ok": True}]})
+            self.assertEqual(self.g.rpc(op, {}, context="client"), {"ok": True}, op)
+            self.assertEqual(len(seen), 3, op)
+
+    def test_before_then_after_stops_at_the_after_answer_for_a_press(self):
+        self.g.eval, seen = scripted({"ui.dialogue_choose": [BUSY_BEFORE, BUSY, {"ok": True}]})
+        with self.assertRaisesRegex(GameError, "after a UI call ran"):
+            self.g.rpc("ui.dialogue_choose", {"answer": 1}, context="client")
+        self.assertEqual(len(seen), 2)
+
+    def test_reads_are_asked_again_on_either_answer(self):
+        self.g.eval, seen = scripted({"ui.state": [BUSY, BUSY_BEFORE, {"mode": "explore"}]})
+        self.assertEqual(self.g.rpc("ui.state", {}, context="client"), {"mode": "explore"})
+        self.assertEqual(len(seen), 3)
+
+    def test_before_is_bounded_too(self):
+        self.g.eval, _ = scripted({"ui.dialogue_choose": [BUSY_BEFORE]})
+        with self.assertRaisesRegex(GameError, "still busy after waiting"):
+            self.g.rpc("ui.dialogue_choose", {}, context="client")
+        self.assertLessEqual(sum(self.clock.sleeps), busywait.BUDGET_S)
+
     def test_server_context_is_not_retried(self):
         self.g.eval, seen = scripted({"state.status": [BUSY, {}]})
         with self.assertRaises(GameError):
             self.g.rpc("state.status")
         self.assertEqual(len(seen), 1)
+
+
+class LuaContract(unittest.TestCase):
+    """The marks busywait.py reads are the ones Shared/RPC.lua writes."""
+
+    def test_marks_match_rpc_lua(self):
+        lua = RPC_LUA.read_text()
+        before = re.search(r'RPC\.BUSY_BEFORE = "([^"]+)"', lua)
+        after = re.search(r'RPC\.BUSY_AFTER = "([^"]+)"', lua)
+        self.assertIsNotNone(before)
+        self.assertIsNotNone(after)
+        self.assertIn(busywait.BEFORE_MARK, before.group(1))
+        self.assertNotIn(busywait.BEFORE_MARK, after.group(1))
+        self.assertIn(before.group(1), BUSY_BEFORE)
+        self.assertIn(after.group(1), BUSY)
+        ui_lua = (RPC_LUA.parent.parent / "Client/UI.lua").read_text()
+        self.assertIn('UI.BUSY_ERR = "' + busywait.BUSY_MARK + '"', ui_lua)
 
 
 class SetReactionsTool(unittest.TestCase):

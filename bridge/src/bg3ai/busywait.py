@@ -17,11 +17,16 @@ BUSY_MARK = "bg3le: UI busy"
 BUDGET_S = 5.0  # a load's frame-lock timeouts come in bursts of a few cooldowns; past this the busy answer stands
 STEP_S = 0.25  # one cooldown (0.2 s) and a frame
 
-# The client ops asked again: reads, and ops that move the game toward a stated target (ui.reactions sets modes,
-# ui.trade sets Barter mode only when it isn't and moves items in its job, which RPC.lua drops on a busy answer).
-# Not the others: a busy answer can come after the op's own press ran (the press was the slow call), and asking again
-# would press twice (ui.dialogue_choose would pick an answer of the next line; tools/dev/check_all.py busy_retry
-# keeps presses out for the same reason). Their callers see the busy answer.
+# Shared/RPC.lua RPC.BUSY_BEFORE: the op was refused at the gate of its first UI call and did nothing (no read, no
+# press), so any op is asked again, presses included (trade(npc)'s ui.dialogue_choose right after a screen change).
+BEFORE_MARK = "refused before its first UI call"
+
+# The client ops also asked again after a busy answer that came once a UI call ran (RPC.BUSY_AFTER): reads, and ops
+# that move the game toward a stated target (ui.reactions sets modes, ui.trade sets Barter mode only when it isn't and
+# moves items in its job, which RPC.lua drops on a busy answer). Not the others: that answer can come after the op's
+# own press ran (the press was the slow call), and asking again would press twice (ui.dialogue_choose would pick an
+# answer of the next line; tools/dev/check_all.py busy_retry keeps presses out for the same reason). Their callers
+# see the busy answer.
 RETRY_OPS = frozenset({"ui.state", "ui.selected", "ui.trade", "ui.reactions", "ui.hotbar_slot", "ui.cast_state"})
 
 
@@ -37,6 +42,12 @@ def is_busy(message: str) -> bool:
     return BUSY_MARK in message
 
 
+def retryable(message: str, after_press_ok: bool) -> bool:
+    """A busy answer that may be asked again: refused before anything was done, or any busy answer for an op that is
+    safe to repeat (after_press_ok: a read or target-state op, RETRY_OPS)."""
+    return is_busy(message) and (after_press_ok or BEFORE_MARK in message)
+
+
 def call[T](
     fn: Callable[[], T],
     clock: Clock,
@@ -44,16 +55,17 @@ def call[T](
     error: type[Exception],
     budget_s: float = BUDGET_S,
     step_s: float = STEP_S,
+    after_press_ok: bool = True,
 ) -> tuple[T, float]:
-    """fn() and the seconds spent waiting for a busy UI before it answered. An `error` whose message is the busy
-    answer is retried every step_s until budget_s has passed; then it is raised with the wait appended. Any other
-    error is raised at once."""
+    """fn() and the seconds spent waiting for a busy UI before it answered. An `error` whose message is a retryable
+    busy answer (see retryable) is retried every step_s until budget_s has passed; then it is raised with the wait
+    appended. Any other error, and a busy answer after a UI call when not after_press_ok, is raised at once."""
     t0 = asked = clock()  # the wait is the time before the last ask, not the ask itself (a slow answer isn't one)
     while True:
         try:
             return fn(), asked - t0
         except error as e:
-            if not is_busy(str(e)):
+            if not retryable(str(e), after_press_ok):
                 raise
             waited = clock() - t0
             if waited + step_s > budget_s:
