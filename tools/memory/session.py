@@ -8,6 +8,7 @@ from pathlib import Path
 if __name__ == "__main__" and sys.argv[1:2] == ["clock"] and os.environ.get("BG3AI_SESSION_DEADLINE"):
     sys.exit(0)
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "src"))  # bg3play's dependency (bg3ai)
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "playthrough" / "src"))
 from bg3play.memory import session as _m
 

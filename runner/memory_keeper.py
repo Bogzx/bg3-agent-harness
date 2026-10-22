@@ -3,6 +3,7 @@ working; the module object is the package's, so mock.patch on it patches the cod
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))  # bg3play's dependency (bg3ai)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))  # bg3play's dependency
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "playthrough" / "src"))
 from bg3play.memory import keeper as _m

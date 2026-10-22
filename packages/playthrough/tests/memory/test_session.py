@@ -711,6 +711,16 @@ class RefreshSnapshotsTest(MemoryTestCase):
             line = session.refresh_snapshots(self.mem)
         self.assertTrue(line.startswith("snapshots: wrote"), line)
 
+    def test_the_subprocess_gets_this_processs_import_path(self):
+        # under plain python3 (the tools/memory shims) bg3ai is importable only through the shim's sys.path entry;
+        # the child must get it too, or bg3play.memory.snapshots can't import bg3ai.render
+        extra = str(self.tmp / "bridge-src")
+        with mock.patch.object(sys, "path", [*sys.path, extra]), mock.patch.object(session.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "snapshots: wrote 0\n", "")
+            with mock.patch.dict(os.environ, {"BG3_SNAPSHOTS": "1", "PYTHONPATH": ""}):
+                session.refresh_snapshots(self.mem)
+        self.assertIn(extra, run.call_args.kwargs["env"]["PYTHONPATH"].split(os.pathsep))
+
 
 if __name__ == "__main__":
     unittest.main()

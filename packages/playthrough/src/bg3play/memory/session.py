@@ -565,8 +565,9 @@ def refresh_snapshots(mem: Path, timeout: float = 30.0) -> str:
     """
     if os.environ.get("BG3_SNAPSHOTS", "1") == "0":
         return "snapshots: disabled"
-    src = str(Path(__file__).resolve().parents[2])  # the bg3play source root, for `-m` without an install
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [src, os.environ.get("PYTHONPATH")]))}
+    # this process's import path, for `-m` without an install (the bg3play source root, bg3ai from a shim's path)
+    src = [str(Path(__file__).resolve().parents[2]), *(p for p in sys.path if p)]
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [*src, os.environ.get("PYTHONPATH")]))}
     try:
         p = subprocess.run(
             [sys.executable, "-m", "bg3play.memory.snapshots", "--memory-dir", str(mem)],
