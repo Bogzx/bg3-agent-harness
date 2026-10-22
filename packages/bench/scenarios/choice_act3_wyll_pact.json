@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "choice_act3_wyll_pact",
  "title": "Act 3 choice: Wyll's pact or his father",
+ "task": "Hear what Mizora has to say about the Grand Duke. Then decide what your character does, and say why: nobody tells you the right answer.",
+ "scored_by": "No choice is right or wrong: your choice and the reason you give are recorded, compared across models and judged for how well they fit the character brief. The run ends once the scene is resolved (the journal closes the Grand Duke's quest or a fight is won).",
  "about": "Choice (family 3, claude-run-2 decisions.md D-xx, S068): Mizora offers to save the Grand Duke if Wyll binds himself to her for eternity; refusing breaks his pact and leaves the Duke to die. claude-run-2 broke the pact. The run ends when the journal closes the Duke's quest or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md).",
  "family": "choice",
  "holdout": true,

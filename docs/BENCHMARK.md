@@ -56,6 +56,21 @@ Known bias: the agent-facing text was tuned on Claude's failures. Read
 benchmark should do" list is the bar. On the `overhaul` branch the text is split into rules and coaching with the
 anecdotes removed (`packages/harness/prompts/`), but no live run has used the split text yet.
 
+### What a bench run is told (decision, user 2026-10-22)
+
+- The kickoff leads with the scenario's task and how it is scored, in plain words (scenario v2 `task` and
+  `scored_by`, e.g. nautiloid: "Escape the Nautiloid as fast as you can ... Nothing else counts toward the score").
+  The text says what the grader checks and nothing it doesn't: the score is pass/fail on the goal; time, downs,
+  deaths and cost are reported next to it, never added to it. `tests/test_scenario_set.py` checks every scenario's
+  task against its goal and that the kickoff opens with both lines.
+- The run ends once it is decided (an `until` milestone, or a goal scenario's live verdict: passed, or a fired
+  "never" that leaves the goal unreachable) or at the scenario's time cap, and the kickoff says so with the cap in
+  minutes. It no longer says "keep playing until WRAP UP NOW".
+- The character brief is neutral and the roleplay `light` in every scenario but the choice scenes: a persona with
+  values ("protects the weak, keeps promises") pulled live7's speed run into optional content (rescuing
+  Shadowheart on the Nautiloid). Choice scenes keep their own neutral brief, since their picks are judged against it.
+- These changed what is measured: suite bench-v0.6 (bg3bench 0.6.0).
+
 ## 3. Running a series
 
 ```bash

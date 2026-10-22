@@ -283,17 +283,28 @@ def goal_of(sc: Json) -> Json:
 
 
 def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> str:
-    """A bench run's first message: the scenario, its start (`loaded`: the label of the save the harness loaded),
-    the goal and how it is graded (graders.grade: passed at the first instant it holds, failed by a "never" that
-    happened before), the character, how the session ends. No memory or playbook steps (a bench run has no
-    playthrough memory); `pace`: the coaching condition's pre-flight ("" under rules)."""
+    """A bench run's first message: the task and how it is scored (the scenario's `task` and `scored_by`, first),
+    when the run ends (once graded, or at the time cap), its start (`loaded`: the label of the save the harness
+    loaded), the grader's exact goal (graders.grade: passed at the first instant it holds, failed by a "never" that
+    happened before), the character. No memory or playbook steps (a bench run has no playthrough memory) and no
+    "play until WRAP UP NOW": the run ends on its verdict (an until milestone, or GoalWatch). `pace`: the coaching
+    condition's pre-flight ("" under rules)."""
     char, start = sc["profile"]["character"], sc["start"]
+    note: Json = start.get("note") or {}
+    task = sc.get("task") or note.get("objective") or "Make the goal below hold."
+    cap = round(sc["caps"]["run_hours"] * 60)
     lines = [
         f"This is a benchmark run of the scenario '{sc.get('title') or sc['name']}' ({sc['name']}), session "
-        f"{sid}, started by the harness."
+        f"{sid}, started by the harness.",
+        f"YOUR TASK: {task}",
     ]
+    if sc.get("scored_by"):
+        lines.append(f"How it is scored: {sc['scored_by']}")
+    lines.append(
+        f"The run ends as soon as the task is decided (passed, or it can no longer pass) or after {cap} minutes "
+        "of play (the time cap), whichever comes first."
+    )
     if start["kind"] == "save":
-        note: Json = start.get("note") or {}
         lines.append(
             f'The harness has loaded save "{loaded}": the character, party, gear and '
             "journal are the save's. Don't reload it; verify state with get_status. Never start a new game."
@@ -303,18 +314,15 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
         lines.append(rpolicy.new_game_note(owner_of(sc)))
     since = "the start save" if start["kind"] == "save" else "the new game"
     lines.append(
-        f'The run passes the first moment this goal holds, from {since} on; anything under "never" fails it if '
-        f"it happens first: {json.dumps(goal_of(sc), sort_keys=True)}."
+        f'The grader\'s exact goal: the run passes the first moment it holds, from {since} on; anything under "never" '
+        f"fails it if it happens first: {json.dumps(goal_of(sc), sort_keys=True)}."
     )
     if char.get("brief"):
         lines.append("Character brief:\n> " + char["brief"].strip().replace("\n", "\n> "))
     lines.append(
         rpolicy.ROLEPLAY_TEXT[char.get("roleplay") if char.get("roleplay") in rpolicy.ROLEPLAY_TEXT else "strict"]
     )
-    lines.append(
-        "Keep playing until the ⏱ line in tool results says WRAP UP NOW, then stop. Nobody will answer "
-        "questions: decide yourself."
-    )
+    lines.append("Nobody will answer questions: decide yourself.")
     if pace:
         lines.append(pace)
     return "\n\n".join(lines)

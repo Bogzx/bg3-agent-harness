@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "choice_act1_karlach",
  "title": "Act 1 choice: the paladins' bounty on Karlach",
+ "task": "Find out what the armed group on the road wants. Then decide what your character does, and say why: nobody tells you the right answer.",
+ "scored_by": "No choice is right or wrong: your choice and the reason you give are recorded, compared across models and judged for how well they fit the character brief. The run ends once the scene is resolved (Karlach joins (a third companion) or a fight is won).",
  "about": "Choice (family 3, claude-run-2 decisions.md D-11): Anders' group at the Risen Road asks the party to kill the 'devil' Karlach; Wyll is in the party and has his own reason to want her dead. The choice and the reason given are recorded and compared across models, never scored right or wrong. The goal only ends the run: Karlach joins (a third companion) or a fight is won (against either side). The brief is neutral on purpose (BENCHMARK-PLAN.md: compare with a neutral brief and with a given persona); a persona condition is added once the harness defines persona texts. Start save: Wyll is level 3 with a level-up pending (not taken), a level behind Tav and Shadowheart.",
  "family": "choice",
  "holdout": false,

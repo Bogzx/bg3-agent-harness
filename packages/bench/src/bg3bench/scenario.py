@@ -3,6 +3,9 @@
 v2 adds to today's scenarios/*.json (v1, runner/runs.py `validate_scenario`, scenarios/README.md):
 
 - `schema: 2`, `family` (fight, sandbox, choice, exploration, puzzle), `holdout` (private: never published).
+- `task` and `scored_by`: the agent's task and how the run is scored, in plain words, first in the run's kickoff
+  (bg3harness.runner.run_host.scenario_kickoff). They must say what the grader does (graders.grade over the goal) and
+  nothing it doesn't; every scenario in packages/bench/scenarios has both.
 - `goal`: a predicate of the goal language (predicates.py, D8 checked), or `until: <milestone id>` as the shorthand
   for `{"milestone": id}`. Exactly one of the two.
 - `game_settings`: difficulty, karmic_dice (always false, D9), seed (D9: the dice seed the mod writes after every
@@ -73,8 +76,8 @@ RESETS = {  # runs.RESETS: what every run starts without; not tunable
     },
 }
 KEYS = {
-    "schema", "name", "title", "about", "family", "holdout", "start", "goal", "until", "runs", "caps", "profile",
-    "game_settings", "timing", "methods", "requires", "conditions", "reset",
+    "schema", "name", "title", "task", "scored_by", "about", "family", "holdout", "start", "goal", "until", "runs",
+    "caps", "profile", "game_settings", "timing", "methods", "requires", "conditions", "reset",
 }  # fmt: skip
 GAME_SETTINGS = {
     "difficulty": None, "karmic_dice": False, "seed": None, "resolution": None, "ui_scale": None, "language": None,
@@ -184,6 +187,7 @@ def validate(sc: Any, name: str) -> list[str]:
         errs.append(f"unknown keys: {', '.join(unknown)}")
     if not _str(sc.get("title")):
         errs.append("title is required")
+    errs += [f"{k} must be a non-empty text" for k in ("task", "scored_by") if k in sc and not _str(sc[k])]
     if sc.get("family") not in FAMILIES:
         errs.append(f"family must be one of {', '.join(FAMILIES)}")
     if not isinstance(sc.get("holdout", False), bool):

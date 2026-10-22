@@ -14,8 +14,8 @@
  },
  "profile": {
   "character": {
-   "brief": "A level-headed half-elf fighter, once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf fighter, once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   },
   "difficulty": "Balanced"
  },

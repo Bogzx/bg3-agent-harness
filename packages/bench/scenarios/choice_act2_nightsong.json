@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "choice_act2_nightsong",
  "title": "Act 2 choice: Shadowheart and the Nightsong",
+ "task": "Go to the Nightsong with Shadowheart. Then decide what your character does, and say why: nobody tells you the right answer.",
+ "scored_by": "No choice is right or wrong: your choice and the reason you give are recorded, compared across models and judged for how well they fit the character brief. The run ends once the scene is resolved (the journal closes Shadowheart's choice or a fight is won).",
  "about": "Choice (family 3, claude-run-2 quests.md, S041-S042): with Balthazar dead, Shadowheart stands before the Nightsong and her goddess demands its death. claude-run-2 spared it (Persuasion DC 14). The run ends when the journal closes the choice or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md).",
  "family": "choice",
  "holdout": false,

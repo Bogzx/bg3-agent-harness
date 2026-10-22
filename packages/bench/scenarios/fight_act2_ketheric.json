@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "fight_act2_ketheric",
  "title": "Act 2 boss: Ketheric Thorm under Moonrise",
+ "task": "Defeat Ketheric Thorm.",
+ "scored_by": "Passed the moment the journal marks 'Defeat Ketheric Thorm' done (the whole encounter, not one phase of it). Party members downed or killed, game time and cost are reported next to it.",
  "about": "Fight (family 1), a boss: Ketheric Thorm and his undead in the Mind Flayer Colony beneath Moonrise Towers, with the freed Nightsong (Aylin) fighting beside the party. claude-run-2 S045 lost the first try (Aylin killed); the retry freed her in round 3 and Ketheric died in S046 (round 7). The goal is the journal quest, not a won combat, so a phase change can't end the run early.",
  "family": "fight",
  "holdout": false,
@@ -49,8 +51,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

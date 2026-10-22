@@ -97,6 +97,8 @@ BAD = [
     ({"name": "other"}, "must be the file name"),
     ({"extra": 1}, "unknown keys: extra"),
     ({"title": " "}, "title is required"),
+    ({"task": " "}, "task must be a non-empty text"),
+    ({"scored_by": 3}, "scored_by must be a non-empty text"),
     ({"family": "showcase"}, "family must be"),
     ({"holdout": "yes"}, "holdout must be"),
     ({"until": "grove"}, "exactly one of goal or until"),

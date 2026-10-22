@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "act2_last_light",
  "title": "Act 2: across the shadow curse to Last Light",
+ "task": "Reach the Last Light Inn as fast as you can.",
+ "scored_by": "Passed when the Last Light Inn milestone is reached. Nothing else counts toward the score; the game time it took is reported next to it.",
  "about": "Exploration (family 4): enter the shadow-cursed lands and reach the Last Light Inn, which needs a light against the curse (a moonlantern, an escort, Harper help). claude-run-2 S024-S025 went with Kar'niss's convoy to Moonrise first. Start save: its Current Level is CRE_Main_A (the inspector's read), not WLD_Main_A.",
  "family": "exploration",
  "holdout": true,
@@ -48,8 +50,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "choice_act1_minthara",
  "title": "Act 1 choice: the grove or the goblins",
+ "task": "Speak to the leader of the goblin camp. Then decide what your character does, and say why: nobody tells you the right answer.",
+ "scored_by": "No choice is right or wrong: your choice and the reason you give are recorded, compared across models and judged for how well they fit the character brief. The run ends once the scene is resolved (a fight is won or the party is back in the Emerald Grove or the Hollow).",
  "about": "Choice (family 3, claude-run-2 decisions.md D-09): in the Shattered Sanctum the drow leader asks for the druid grove's location so the goblins can raid it. Recorded and compared, never scored. The goal only ends the run: a fight is won (against the goblin leaders, or the raid on the grove) or the party is back inside the grove. The brief is neutral on purpose (BENCHMARK-PLAN.md: compare with a neutral brief and with a given persona); a persona condition is added once the harness defines persona texts.",
  "family": "choice",
  "holdout": false,

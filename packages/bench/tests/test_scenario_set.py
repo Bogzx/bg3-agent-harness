@@ -159,8 +159,9 @@ def test_seeds_differ():
 def test_nautiloid_is_the_v1_file_converted():
     v1, v2 = raw(V1 / "nautiloid.json"), scenario.load(SET / "nautiloid.json")
     conv = scenario.with_defaults(scenario.from_v1(v1))
-    same = ("name", "title", "start", "until", "runs", "caps", "profile", "family", "timing", "reset")
+    same = ("name", "title", "start", "until", "runs", "caps", "family", "timing", "reset")
     assert {k: v2[k] for k in same} == {k: conv[k] for k in same}
+    assert v2["profile"]["character"]["roleplay"] == "light"  # v2's bench brief is neutral (BENCHMARK.md §2)
     assert conv["game_settings"]["difficulty"] is None  # v1 left it to the game; v2 fixes it
     assert v2["game_settings"] == {**conv["game_settings"], "seed": 1001, "difficulty": "Balanced"}
     assert scenario.digest(v2) != scenario.digest(conv)  # dice seeded: a new digest, old series stay legacy
@@ -175,6 +176,50 @@ def test_choice_scenes_use_a_neutral_brief():
     for name in (n for n, f in FAMILIES.items() if f == "choice"):
         brief = raw(SET / f"{name}.json")["profile"]["character"]["brief"].lower()
         assert not re.search(r"devotion|protects|good|evil|oath", brief), name
+
+
+def task_matches_the_grader(sc: dict) -> bool:
+    """The task says what the goal checks: its milestone's place, its number, its item, its quest or its fight."""
+    goal, task = scenario.goal_of(sc), sc["task"].lower()
+    words = {
+        "nautiloid_escaped": "escape the nautiloid",
+        "grove": "emerald grove",
+        "last_light": "last light inn",
+    }
+    if "milestone" in goal:
+        return words[goal["milestone"]] in task
+    if sc["family"] == "choice":
+        return sc["start"]["note"]["objective"].lower() in task and "fight is won" in sc["scored_by"]
+    if goal == {"combats_won": {"gte": 1}}:
+        return task.startswith("win the fight") and "a fight is won" in sc["scored_by"]
+    if "quest_done" in goal:
+        return goal["quest_done"] in task
+    if "all" in goal:  # the goblin camp: the Sanctum and never a combat
+        return (
+            "shattered sanctum" in task and "without a single fight" in task and "first combat fails" in sc["scored_by"]
+        )
+    (kind, cmp), number = next(iter(goal.items())), {"gold": "1000", "party_level": "level 3", "companions": "three"}
+    if kind == "item":
+        return cmp["name"].lower() in task
+    return number[kind] in task and cmp["gte"] in (1000, 3)
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
+def test_each_scenario_tells_the_agent_its_task_and_how_it_is_scored(path):
+    sc = scenario.load(path)
+    assert sc["task"].strip() and sc["scored_by"].strip()
+    assert task_matches_the_grader(sc), sc["task"]
+    char = sc["profile"]["character"]
+    if sc["family"] != "choice":  # a neutral persona that doesn't pull against the task (docs/BENCHMARK.md §2)
+        assert char["roleplay"] == "light"
+        assert not re.search(r"protects|promises|distrusts|good|evil", char["brief"].lower()), path.stem
+    from bg3harness.runner.run_host import scenario_kickoff
+
+    text = scenario_kickoff(sc, "S001", sc["start"].get("save"))
+    head = text.split("\n\n")
+    assert head[1] == f"YOUR TASK: {sc['task']}" and head[2] == f"How it is scored: {sc['scored_by']}"
+    assert f"after {round(sc['caps']['run_hours'] * 60)} minutes of play" in head[3]
+    assert "WRAP UP" not in text
 
 
 def test_the_set_covers_the_plan():

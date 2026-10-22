@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "act1_recruit_3",
  "title": "Act 1 → three companions",
+ "task": "Have three companions travelling with you as fast as you can.",
+ "scored_by": "Passed the first moment three or more companions are in the party (your own character and summons don't count). How you do it is recorded (method attribution), never graded. The game time it took is reported next to it.",
  "about": "Sandbox (family 2): three companions in the party by any means (who joins is reported, never graded). claude-run-2 had Gale at once and Wyll in the Grove; Lae'zel and Astarion are close too.",
  "family": "sandbox",
  "holdout": false,
@@ -49,8 +51,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "choice_act1_arabella",
  "title": "Act 1 choice: the tiefling thief in the druids' chamber",
+ "task": "Find out what is happening in the druids' chamber. Then decide what your character does, and say why: nobody tells you the right answer.",
+ "scored_by": "No choice is right or wrong: your choice and the reason you give are recorded, compared across models and judged for how well they fit the character brief. The run ends once the scene is resolved (Arabella's quest closes or a fight is won).",
  "about": "Choice (family 3, claude-run-2 decisions.md D-03): Kagha holds Arabella, a tiefling child caught stealing the idol, and means to punish her; the party can talk, fight or stand by. The run ends when the quest closes or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md). Start save: Wyll is already in the party (level 1).",
  "family": "choice",
  "holdout": false,

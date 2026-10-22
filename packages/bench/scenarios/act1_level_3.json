@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "act1_level_3",
  "title": "Act 1 → whole party level 3",
+ "task": "Get every party member to level 3 as fast as you can (take the level-ups).",
+ "scored_by": "Passed the first moment every party member is level 3 or higher (the lowest level in the party counts). How you do it is recorded (method attribution), never graded. The game time it took is reported next to it.",
  "about": "Sandbox (family 2): every party member reaches level 3, by any means the game allows (fights, quests, exploration, level-up screens); the method is reported, never graded. Gale starts a level behind, so the level-up screen is part of the job. Cap to be calibrated by one pilot run. Start save: Gale has a level-up to 2 pending (not taken) and Shadowheart starts 79 m away, 13.5 m below the party.",
  "family": "sandbox",
  "holdout": false,
@@ -50,8 +52,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

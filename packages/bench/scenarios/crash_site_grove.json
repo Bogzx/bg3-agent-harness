@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "crash_site_grove",
  "title": "Act 1: from the crash site to the Emerald Grove",
+ "task": "Find the Emerald Grove as fast as you can.",
+ "scored_by": "Passed when the Emerald Grove milestone is reached. Nothing else counts toward the score; the game time it took is reported next to it.",
  "about": "Exploration (family 4): find the way from the nautiloid's crash site to the druids' grove. claude-run-2 S005-S007 took about two sessions (forced jumps over the wreck, Gale's portal, the ruins).",
  "family": "exploration",
  "holdout": false,
@@ -46,8 +48,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

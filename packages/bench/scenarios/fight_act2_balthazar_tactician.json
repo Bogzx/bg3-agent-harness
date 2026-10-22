@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "fight_act2_balthazar_tactician",
  "title": "Act 2 boss: Balthazar in Nightsong's Prison (Tactician)",
+ "task": "Win the fight: defeat Balthazar and his guards.",
+ "scored_by": "Passed the first moment a fight is won (a combat that ends with the enemies beaten and the party standing; the one ahead of you is the fight). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
  "about": "The Tactician variant of fight_act2_balthazar: the same fight from the same moment, the same goal and caps, with the game's difficulty at Tactician instead of Balanced (tougher enemies, a smarter enemy AI). Fight (family 1), a boss: the necromancer and his undead guards in the Gauntlet of Shar's prison, up to twenty enemies in waves. claude-run-2 S040-S041 needed three reloads; the winning try took 8 rounds (291 party HP lost, 2 downs).",
  "family": "fight",
  "holdout": false,
@@ -51,8 +53,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "act1_goblin_camp_no_fight",
  "title": "Act 1 → into the Shattered Sanctum without a fight",
+ "task": "Get inside the Shattered Sanctum in the goblin camp without a single fight.",
+ "scored_by": "Passed the moment the party is inside the Shattered Sanctum with no combat since the start. The first combat fails the run at once, even one you would win. How you do it is recorded (method attribution), never graded.",
  "about": "Sandbox (family 2): reach the Shattered Sanctum inside the goblin camp with no combat on the way (talk, stealth, disguise, the tadpole; the method is reported). The positive conjunct is the Sanctum (D8): no combat alone would pass a do-nothing agent. claude-run-2 S015 got in by accepting Olak's war paint.",
  "family": "sandbox",
  "holdout": false,
@@ -56,8 +58,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

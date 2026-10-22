@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "act1_gold_1000",
  "title": "Act 1 → 1000 party gold",
+ "task": "Get the party to 1000 gold as fast as you can, by any method the game allows (honest or not).",
+ "scored_by": "Passed the first moment the party holds 1000 gold or more. How you do it is recorded (method attribution), never graded. The game time it took is reported next to it.",
  "about": "Sandbox (BENCHMARK-PLAN.md family 2): any method the game allows; how the gold was made is reported (method attribution: trade, loot, theft, quest rewards), never graded. Target and cap to be calibrated by one pilot run so the strongest model reaches it about half the time. Start save: party gold 133, Tav and Shadowheart level 2, Gale level 1 with a level-up pending (not taken).",
  "family": "sandbox",
  "holdout": false,
@@ -49,8 +51,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

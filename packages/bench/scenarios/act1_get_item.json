@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "act1_get_item",
  "title": "Act 1 → hold the Idol of Silvanus",
+ "task": "Get the Idol of Silvanus into your party's inventory as fast as you can, by any method the game allows.",
+ "scored_by": "Passed the first moment the Idol of Silvanus is in the party's inventory. How you do it is recorded (method attribution), never graded. The game time it took is reported next to it.",
  "about": "Sandbox (family 2): get the druids' Idol of Silvanus into the party's inventory by any means (theft, trade, a fight; the method is reported, never graded).",
  "family": "sandbox",
  "holdout": true,
@@ -50,8 +52,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }

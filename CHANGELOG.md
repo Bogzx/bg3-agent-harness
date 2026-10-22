@@ -6,8 +6,8 @@ version:
 | Package | Version lives in | Now |
 |---|---|---|
 | harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.1.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.5.0 |
-| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.5 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.6.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.6 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
 
 The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
@@ -93,6 +93,10 @@ game unless it says so.
   `model.served` lists the providers and pi's thinking levels after its clamp.
   bench-v0.5: a run of a seeded scenario whose seed the game didn't apply is invalid (`unseeded`) and rerun, and its
   manifest's `seed` is the one the game applied (null when none).
+  bench-v0.6: every scenario tells the agent its task and how it is scored (`task`, `scored_by`, first in the
+  kickoff), a goal run ends once its live verdict decides it (or at the time cap, which the kickoff names; no "play
+  until WRAP UP NOW"), and every scenario but the choice scenes plays a neutral brief with light roleplay
+  (docs/BENCHMARK.md §2).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

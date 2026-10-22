@@ -23,6 +23,8 @@
     "schema": {"const": 2},
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"},
     "title": {"type": "string", "pattern": "\\S"},
+    "task": {"type": "string", "pattern": "\\S", "description": "the agent's task in plain words, first in the kickoff (added 2026-10-22)"},
+    "scored_by": {"type": "string", "pattern": "\\S", "description": "how the run is scored, in plain words; must say what the grader does (added 2026-10-22)"},
     "about": {"type": "string", "description": "For people; never shown to the agent."},
     "family": {"enum": ["fight", "sandbox", "choice", "exploration", "puzzle"]},
     "holdout": {"type": "boolean", "default": false, "description": "Private holdout: run, never published."},

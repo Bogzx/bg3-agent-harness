@@ -216,13 +216,21 @@ def test_the_kickoff_names_the_start_the_goal_and_the_character_and_no_memory_st
     assert "Objective: Win the fight at the gate" in text and "Where: The grove gate" in text
     assert json.dumps(SAVE_SC["goal"], sort_keys=True) in text and "A githyanki warrior." in text
     assert "scored on the game state at its end" not in text  # graders.grade latches the first instant
-    assert 'passes the first moment this goal holds, from the start save on; anything under "never" fails it' in text
+    assert 'passes the first moment it holds, from the start save on; anything under "never" fails it' in text
+    assert "YOUR TASK: Win the fight at the gate" in text  # no `task`: the start note's objective
+    assert "after 30 minutes of play" in text and "WRAP UP" not in text  # the run ends on its verdict or the cap
     assert "from the new game on" in H.scenario_kickoff(NEW_SC, "S001", None)
     for playthrough_only in ("session_start", "playbook", "memory_", "HANDOFF"):
         assert playthrough_only not in text
     new = H.scenario_kickoff(NEW_SC, "S001", None, pace="PACE: two actions per turn")
     assert 'Name your character exactly "Tav"' in new and new.endswith("PACE: two actions per turn")
     assert "PACE" not in H.scenario_kickoff(NEW_SC, "S001", None)
+
+
+def test_the_kickoff_leads_with_the_task_and_how_it_is_scored():
+    sc = {**SAVE_SC, "task": "Win the fight at the gate.", "scored_by": "Passed once a fight is won."}
+    lines = H.scenario_kickoff(sc, "S001", "SCN-grove_fight").split("\n\n")
+    assert lines[1:3] == ["YOUR TASK: Win the fight at the gate.", "How it is scored: Passed once a fight is won."]
 
 
 def test_the_kickoff_of_an_until_scenario_names_its_milestone():

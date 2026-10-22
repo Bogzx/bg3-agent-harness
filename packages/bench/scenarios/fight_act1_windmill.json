@@ -2,6 +2,8 @@
  "schema": 2,
  "name": "fight_act1_windmill",
  "title": "Act 1 fight: the windmill goblins",
+ "task": "Win the fight: defeat the goblins at the windmill.",
+ "scored_by": "Passed the first moment a fight is won (a combat that ends with the enemies beaten and the party standing; the one ahead of you is the fight). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
  "about": "Fight (family 1), an Act 1 ambush: the goblins and worgs tormenting the gnome at the Blighted Village windmill, nine enemies with archers on high ground. claude-run-2 S014 won it in 7 rounds with one down (111 party HP lost).",
  "family": "fight",
  "holdout": false,
@@ -46,8 +48,8 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
-   "roleplay": "strict"
+   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "roleplay": "light"
   }
  }
 }
