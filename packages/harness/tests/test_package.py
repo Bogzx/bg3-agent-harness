@@ -47,6 +47,8 @@ class Package(unittest.TestCase):
             "game.io",
             "game.oom",
             "game.controller",
+            "scenario_file",
+            "game.saves",
         )
         code = (
             "import importlib, sys\n"

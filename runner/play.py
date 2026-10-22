@@ -37,6 +37,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -69,6 +70,8 @@ import spend  # noqa: E402  (runner/spend.py: paid clients' per-run cap and runt
 import facts  # noqa: E402  (runner/facts.py: facts.jsonl v1, the graders' game state)
 import choices  # noqa: E402  (runner/choices.py: the agent's dialogue choices as facts events)
 import game_settings  # noqa: E402  (runner/game_settings.py: settings readout, scn.seed / scn.undo)
+from bg3harness import scenario_file  # noqa: E402  (run --scenario-file: the resolved scenario's contract)
+from bg3harness.scenario_file import SettingsMismatch  # noqa: E402
 sys.path.insert(0, str(REPO / "tools"))
 import steam_paths  # noqa: E402  (stdlib: Steam's offline state, the game's install and Larian profile paths)
 import bg3le_buildinfo  # noqa: E402  (stdlib: is build/bg3le/dist built with every patches/bg3le patch?)
@@ -79,6 +82,10 @@ from bg3harness.game.io import (  # noqa: E402, F401  (port_open: re-exported fo
 from bg3harness.game import controller as gamectl  # noqa: E402  (the GameController: launch, kill, waits, OOM check)
 from bg3harness.game.controller import (  # noqa: E402, F401  (re-exported: the runner's waits and tests use them)
     MENU_STATES, GameController, WaitReporter)
+from bg3harness.game.saves import (  # noqa: E402, F401  (the save choice's pure policy; re-exported)
+    HANDOFF_SAVE_SLACK_S, SAVE_PREFIX, SAVE_WINDOW_SLACK_S, foreign_saves, in_windows, is_ai_label, is_ai_save,
+    is_autosave, label_matches, parse_handoff_save, pick_save, pick_save_why,
+    play_windows, played_elsewhere, save_candidates, saves_since, session_ends)
 from bg3harness.game import oom  # noqa: E402  (OOM kills of the game: journal, ramwatch records, streak)
 from bg3harness.game.oom import (  # noqa: E402, F401  (re-exported for the runner and tests)
     OOM_SAVE_LIMIT, find_game_oom, last_loaded_save, oom_streak_update)
@@ -93,7 +100,6 @@ REVIEW_PY = REPO / "tools" / "logs" / "review_session.py"
 CHECK_PLANS = REPO / "tools" / "dev" / "check_plans.py"   # party-build.md plan lines vs the game's level-up offers
 CHECK_PLANS_TIMEOUT = 90
 SAVE_DIR = steam_paths.saves_dir()   # $BG3AI_SAVE_DIR, else under $BG3AI_PROFILE_DIR / the default profile
-SAVE_PREFIX = os.environ.get("BG3AI_SAVE_PREFIX", "")
 MEMORY_TEMPLATE = REPO / "memory-template"
 SCENARIOS = Path(os.environ.get("BG3AI_SCENARIOS", REPO / "scenarios"))   # scenarios/<name>.json (run --scenario)
 KNOWLEDGE_DIR = PLAY_DIR / "knowledge"   # agent-writable outside playbooks/ (FAIR-2): snapshot + restore per --runs run
@@ -324,218 +330,11 @@ def session_budget(now: float, run_end: float | None, session_minutes: float,
     return min(session_minutes, left)
 
 
-HANDOFF_SAVE_RE = re.compile(r"^Save to load:\s*(.+)$", re.M)
-
-
-def parse_handoff_save(text: str) -> str | None:
-    """The save label HANDOFF.md asks for ('Save to load: "S042-end" — ...'), or None."""
-    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-    m = HANDOFF_SAVE_RE.search(text)
-    if not m:
-        return None
-    value = m.group(1).strip()
-    q = re.match(r'["“`\']([^"”`\']+)["”`\']', value)
-    label = q.group(1) if q else re.split(r"\s+[—–-]\s+|\s+\(", value)[0]
-    label = label.strip().strip("`")
-    if not label or label.lower().startswith(("(none", "none", "n/a")):
-        return None
-    return label
-
-
-def is_ai_label(label: str, prefix: str = SAVE_PREFIX) -> bool:
-    """Saves the agent makes are labelled Sxxx-<slug>, optionally behind the playthrough's prefix."""
-    return re.match(rf"^{re.escape(prefix)}S\d{{3}}-", label) is not None
-
-
-def is_ai_save(s: Save, prefix: str = SAVE_PREFIX) -> bool:
-    """An `Sxxx-` save of this playthrough. $BG3AI_SAVE_PREFIX is used two ways: as a label prefix
-    (`pt1-S010-end`) and, by the MCP server and docs/SETUP.md (`BG3AI_SAVE_PREFIX=Claude-`), as a folder
-    prefix: the character's name plus the dash the game adds (`Claude-123__S001-end`). The agent's
-    save_game never prefixes the label, so a folder-prefix match takes a plain `Sxxx-` label."""
-    if is_ai_label(s.label, prefix):
-        return True
-    return bool(prefix) and s.folder.startswith(prefix) and is_ai_label(s.label, "")
-
-
-def label_matches(label: str, wanted: str, prefix: str = SAVE_PREFIX) -> bool:
-    return label == wanted or label == prefix + wanted
-
-
-SAVE_WINDOW_SLACK_S = 120.0   # a save this close to one of the playthrough's play windows still counts as written in it
-
-
-def _first_last_t(path: Path) -> tuple[float, float] | None:
-    """The first and last "t" of a jsonl file (a Sxxx.turns.jsonl: the session's first and last stream event), reading
-    only its head and tail; None when unreadable or without times."""
-    try:
-        with open(path, "rb") as f:
-            head = f.readline()
-            f.seek(0, os.SEEK_END)
-            f.seek(max(0, f.tell() - 65536))
-            tail = f.read().splitlines()
-    except OSError:
-        return None
-    ts = []
-    for ln in [head] + list(reversed(tail)):
-        try:
-            t = json.loads(ln).get("t")
-        except (ValueError, AttributeError):
-            continue
-        if isinstance(t, (int, float)):
-            ts.append(float(t))
-            if len(ts) == 2:
-                break
-    return (min(ts), max(ts)) if ts else None
-
-
-def play_windows(history: list[dict] | None, state_dir: Path | None) -> list[tuple[float, float]]:
-    """When this playthrough was being played: its play sessions' [started, ended] (runner.json history) and each
-    Sxxx*.turns.jsonl's first..last event (a session the runner never recorded: it crashed mid-session). pick_save
-    takes an `Sxxx-` save of the owner only when it was written in one of these: the owner (the character's name) is
-    shared by other playthroughs (replay-hoh saved S027-end / S028-lastlight-prep as "Claude" on 10-15, after
-    claude-run-2's S065-end), and a worker's savetest (S999-savetest) is no playthrough's."""
-    out = [(float(h["started"]), float(h["ended"])) for h in history or []
-           if h.get("kind") == "play" and isinstance(h.get("started"), (int, float))
-           and isinstance(h.get("ended"), (int, float))]
-    if state_dir is not None:
-        try:
-            files = sorted(Path(state_dir).glob("S*.turns.jsonl"))
-        except OSError:
-            files = []
-        out += [w for w in (_first_last_t(f) for f in files) if w]
-    return sorted(out)
-
-
-def in_windows(t: float, windows: list[tuple[float, float]], slack: float = SAVE_WINDOW_SLACK_S) -> bool:
-    return any(a - slack <= t <= b + slack for a, b in windows)
-
-
-def played_elsewhere(t: float, windows: list[tuple[float, float]], slack: float = SAVE_WINDOW_SLACK_S) -> bool:
-    """A save time after this playthrough began (its first play window) that falls in none of its windows: written
-    while another playthrough (or a worker) had the game. Older saves are judged as before (the newest wins anyway)."""
-    return bool(windows) and t > windows[0][0] - slack and not in_windows(t, windows, slack)
-
-
-def save_candidates(saves: list[Save], handoff_label: str | None, owner: str | None,
-                    runner_saves: set[str], prefix: str = SAVE_PREFIX,
-                    windows: list[tuple[float, float]] | None = None) -> list[Save]:
-    """The saves of this playthrough.
-
-    Candidates: the folder HANDOFF names, any `Sxxx-` save of the playthrough's owner, and quicksaves the
-    runner itself made for this playthrough (recorded by folder). Never anything else. With `windows`
-    (play_windows: when this playthrough was played; empty for a new one), a labelled save counts only when it was
-    written in one of them or before the first: another playthrough with the same name, or a worker, wrote the rest.
-    """
-    cands = []
-    for s in saves:
-        if s.folder in runner_saves:
-            cands.append(s)
-        elif is_autosave(s.label):
-            continue  # AutoSave_N/QuickSave_N: the game's or a worker's test state (se 18:14 AutoSave_59), never ours
-        elif owner is not None and s.owner != owner:
-            continue
-        elif played_elsewhere(s.mtime, windows or []):
-            continue  # same owner, written while another playthrough (or a worker) played
-        elif handoff_label and label_matches(s.label, handoff_label, prefix):
-            cands.append(s)
-        elif owner is not None and is_ai_save(s, prefix):
-            cands.append(s)
-    return cands
-
-
-def pick_save(saves: list[Save], handoff_label: str | None, owner: str | None,
-              runner_saves: set[str], prefix: str = SAVE_PREFIX,
-              windows: list[tuple[float, float]] | None = None) -> Save | None:
-    """The newest save of this playthrough (save_candidates)."""
-    return max(save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows),
-               key=lambda s: s.mtime, default=None)
-
-
-HANDOFF_SAVE_SLACK_S = 5.0   # a save this soon after the HANDOFF's session ended was still that session's
-
-
 def parse_handoff_session(text: str) -> int | None:
     """The session that wrote HANDOFF.md: N of its '# Handoff SN → SN+1' heading (memlib.HANDOFF_RE), or None."""
     import memlib as M
     m = M.HANDOFF_RE.search(re.sub(r"<!--.*?-->", "", text, flags=re.S))
     return int(m.group(1)) if m else None
-
-
-def session_ends(history: list[dict] | None, state_dir: Path | None) -> dict[int, float]:
-    """When each play session ended: runner.json history "ended", or its Sxxx.turns.jsonl's last event (a session the
-    runner never recorded: it crashed mid-session), whichever is later."""
-    out: dict[int, float] = {}
-
-    def put(sid: str, t: float) -> None:
-        m = re.match(r"S(\d+)", sid or "")
-        if m:
-            n = int(m.group(1))
-            out[n] = max(out.get(n, t), t)
-    for h in history or []:
-        if h.get("kind") == "play" and isinstance(h.get("ended"), (int, float)):
-            put(str(h.get("session") or ""), float(h["ended"]))
-    if state_dir is not None:
-        try:
-            files = sorted(Path(state_dir).glob("S*.turns.jsonl"))
-        except OSError:
-            files = []
-        for f in files:
-            w = _first_last_t(f)
-            if w:
-                put(f.name, w[1])
-    return out
-
-
-def pick_save_why(saves: list[Save], handoff_label: str | None, owner: str | None,
-                  runner_saves: set[str], prefix: str = SAVE_PREFIX,
-                  windows: list[tuple[float, float]] | None = None, handoff_session: int | None = None,
-                  ends: dict[int, float] | None = None) -> tuple[Save | None, str]:
-    """The save a session starts from, and why. HANDOFF's "Save to load" is the agent's decision: it wins over newer
-    saves unless one was written after the session that wrote HANDOFF (`handoff_session`, its heading) ended (`ends`,
-    session_ends): later play HANDOFF doesn't know about (a session that crashed before its wrap-up, a runner
-    quicksave), or HANDOFF's session is unknown. S076 (L8): the newest was S075-fight, saved mid-fight on try 6,
-    HANDOFF (S075's) named S075-end; S076's HANDOFF named S075-end again, its S076-end being a losing fight."""
-    cands = save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows)
-    newest = max(cands, key=lambda s: s.mtime, default=None)
-    if newest is None:
-        return None, "no save of this playthrough"
-    if not handoff_label:
-        return newest, "the newest save (HANDOFF names no save)"
-    named = max((s for s in cands if label_matches(s.label, handoff_label, prefix)), key=lambda s: s.mtime,
-                default=None)
-    if named is None:
-        return newest, f"the newest save (HANDOFF names \"{handoff_label}\": no such save of this playthrough)"
-    if named is newest:
-        return named, "HANDOFF's \"Save to load\", also the newest save"
-    sid = f"S{handoff_session:03d}" if handoff_session is not None else None
-    end = (ends or {}).get(handoff_session) if handoff_session is not None else None
-    if end is None:
-        return newest, (f"the newest save (HANDOFF names \"{handoff_label}\" but "
-                        + (f"{sid} never played here" if sid else "has no '# Handoff Sxxx' heading")
-                        + ": can't tell whether it knew the newer saves)")
-    if newest.mtime > end + HANDOFF_SAVE_SLACK_S:
-        return newest, (f"the newest save (HANDOFF names \"{handoff_label}\", but \"{newest.label}\" was saved "
-                        f"after {sid}, which wrote HANDOFF, ended)")
-    return named, (f"HANDOFF's \"Save to load\" ({sid}'s choice), not the newer \"{newest.label}\" from the same "
-                   "session")
-
-
-def foreign_saves(saves: list[Save], owner: str | None, runner_saves: set[str], windows: list[tuple[float, float]],
-                  prefix: str = SAVE_PREFIX) -> list[str]:
-    """The owner's `Sxxx-` saves written outside this playthrough's play windows: another playthrough with the same
-    character name (replay-hoh's S027-end / S028-lastlight-prep as "Claude"), a worker's S999-savetest. The MCP
-    server's list_saves / load_game("latest") must not offer them (BG3AI_SAVES_EXCLUDE): before claude-run-2's first
-    save after a resume, "latest" was replay-hoh's Act 2 save. [] for a new playthrough (no windows)."""
-    if not windows or not owner:
-        return []
-    return sorted(s.folder for s in saves if s.owner == owner and s.folder not in runner_saves
-                  and is_ai_save(s, prefix) and played_elsewhere(s.mtime, windows))
-
-
-def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SAVE_PREFIX) -> list[Save]:
-    """AI-labelled saves written after t (by this playthrough's owner, when known)."""
-    return sorted((s for s in saves if s.mtime >= t and is_ai_save(s, prefix)
-                   and (owner is None or s.owner == owner)), key=lambda s: s.mtime)
 
 
 def relaunch_reason(started: float | None, now: float, last_log: str | None,
@@ -568,10 +367,6 @@ def game_ram_mb() -> int | None:
     """The running game's RAM+swap (RssAnon + VmSwap of all bg3 processes, ramwatch's kill measure), None if none."""
     pids = ramwatch.game_pids()
     return sum(ramwatch.anon_swap_mb(p) for p in pids) if pids else None
-
-
-def is_autosave(label: str) -> bool:
-    return re.match(r"(?i)^(auto|quick)save_\d+$", label) is not None
 
 
 AGENT_SAVES_KEPT = 50
@@ -1654,6 +1449,7 @@ class Options:
     system_file: str | None = None     # pi: the system text, dumped once per run (client_setup.dump_server)
     tools_expected: int | None = None  # pi: the bg3 tools every play process must get (else mcp_failed)
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
+    scenario_settings: dict | None = None  # run --scenario-file: {difficulty, karmic_dice, timing} (check_settings)
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -2973,6 +2769,28 @@ class Runner:
         self.game_settings = got
         self.facts_writer().mark("settings", got)
 
+    def check_settings(self) -> None:
+        """run --scenario-file: the game's settings readout (game_setup) against the scenario's difficulty and karmic
+        dice, once per runner. A contradiction stops the run (SettingsMismatch); a setting the readout can't tell is
+        logged and recorded (settings_unverified)."""
+        want = self.opt.scenario_settings
+        if not want or getattr(self, "settings_checked", False):
+            return
+        self.game_setup()
+        self.settings_checked = True
+        bad, unknown = scenario_file.mismatches(want, getattr(self, "game_settings", None) or {})
+        if unknown:
+            log(f"settings check: the game doesn't report {', '.join(unknown)}; the scenario's value is not verified")
+            self.event("settings_unverified", keys=unknown)
+        if bad:
+            msg = "; ".join(bad)
+            log(f"!!!!! REFUSING TO PLAY: the game's settings contradict the scenario ({msg}). Change them in the "
+                "game's options, then restart the run. !!!!!")
+            self.event("settings_mismatch", problems=bad)
+            write_status(alert={"t": time.time(), "kind": "settings_mismatch",
+                                "msg": f"runner stopped: game settings contradict the scenario ({msg})"[:600]})
+            raise SettingsMismatch(msg)
+
     def scenario_undo(self) -> None:
         """scn.undo at the run's end (the seed record would re-seed the next run's loads)."""
         if not getattr(self, "seeded", False):
@@ -3216,6 +3034,9 @@ class Runner:
                    cap_changes=self.opt.cap_changes or None)
         if self.opt.scenario:
             rec["scenario"] = self.opt.scenario
+        if self.opt.scenario_settings:
+            rec["scenario_settings"] = self.opt.scenario_settings
+            rec["timing"] = self.opt.scenario_settings.get("timing")
         rec["model_time"] = runs.model_time_field(model_time.model_time(self.state.dir, since=run_started,
                                                                          until=rec["t"]))
         if self.opt.judge_change:
@@ -3652,6 +3473,7 @@ class Runner:
             self.apply_play_settings()
         except Exception as e:  # noqa: BLE001 - never fail a session over settings
             log(f"play settings failed: {e}")
+        self.check_settings()   # run --scenario-file: a contradiction stops the run
         try:
             self.between_sessions_check()  # after the reload: checks the Lua the next session plays with
         except Exception as e:  # noqa: BLE001 - checks never stop play
@@ -4009,6 +3831,10 @@ class Runner:
             stop_why = f"stale bg3le build: run {bg3le_buildinfo.REBUILD} ({e})"[:300]
             outcome, self.fatal = "gave_up", True
             return 1
+        except SettingsMismatch as e:
+            stop_why = f"game settings contradict the scenario: {e}"[:300]
+            outcome, self.fatal = "gave_up", True
+            return 1
         except BaseException as e:
             stop_why = f"died: {type(e).__name__}: {e}"[:300]
             if not isinstance(e, KeyboardInterrupt):
@@ -4058,6 +3884,30 @@ def load_scenario_file(name: str) -> dict:
     return runs.load_scenario(path, [m[0] for m in milestones.MILESTONES], ROLEPLAY_MODES, DIFFICULTIES)
 
 
+def load_scenario_path(path: Path) -> tuple[dict, dict]:
+    """run --scenario-file: a resolved scenario (bg3harness.scenario_file) -> (the v1 scenario, validated and filled
+    like scenarios/<name>.json, its name from the file's content; the expected {difficulty, karmic_dice, timing}).
+    runs.ScenarioError when unreadable or invalid."""
+    try:
+        sc = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise runs.ScenarioError(f"{path}: {e}") from None
+    v1, want, errs = scenario_file.split(sc)
+    if errs:
+        raise runs.ScenarioError(f"{path}: " + "; ".join(errs))
+    name = str(v1.get("name") or "")
+    if not runs.SCENARIO_NAME_RE.fullmatch(name):
+        raise runs.ScenarioError(f"{path}: name {name!r}: use a-z, 0-9, '_' or '-'")
+    with tempfile.TemporaryDirectory(prefix="bg3ai-scenario-") as td:   # runs.load_scenario names it by its file
+        v1_path = Path(td) / f"{name}.json"
+        v1_path.write_text(json.dumps(v1))
+        try:
+            return runs.load_scenario(v1_path, [m[0] for m in milestones.MILESTONES], ROLEPLAY_MODES,
+                                      DIFFICULTIES), want
+        except runs.ScenarioError as e:
+            raise runs.ScenarioError(str(e).replace(str(v1_path), str(path))) from None
+
+
 def scenario_status(sc: dict, saves: list[Save] | None = None) -> tuple[str, str]:
     """runs.scenario_status against the save folder (read only: the start save's .lsv is hashed, never written)."""
     folders = {s.folder for s in (list_saves() if saves is None else saves)}
@@ -4087,16 +3937,23 @@ def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
 
 
 def cmd_run(a) -> int:
-    scenario = save_sha1 = None
-    if a.scenario:
+    scenario = save_sha1 = scenario_settings = None
+    if a.scenario and a.scenario_file:
+        print("refusing --scenario with --scenario-file: one scenario, not both", file=sys.stderr)
+        return 2
+    if a.scenario or a.scenario_file:
+        flag = "--scenario" if a.scenario else "--scenario-file"
         try:
-            scenario = load_scenario_file(a.scenario)
+            if a.scenario:
+                scenario = load_scenario_file(a.scenario)
+            else:
+                scenario, scenario_settings = load_scenario_path(Path(a.scenario_file))
         except runs.ScenarioError as e:
-            print(f"refusing --scenario: {e}", file=sys.stderr)
+            print(f"refusing {flag}: {e}", file=sys.stderr)
             return 2
         refusal, save_sha1 = apply_scenario(a, scenario)
         if refusal:
-            print(f"refusing --scenario {a.scenario}: {refusal}", file=sys.stderr)
+            print(f"refusing {flag} {a.scenario or a.scenario_file}: {refusal}", file=sys.stderr)
             return 2
     elif not a.playthrough:
         print("run needs --playthrough (or --scenario NAME)", file=sys.stderr)
@@ -4234,7 +4091,7 @@ def cmd_run(a) -> int:
                   client=client, client_change=client_change, sandbox=a.sandbox, box=box,
                   sandbox_change=sandbox_change, restart_run=a.restart_run,
                   keep_game=a.keep_game, max_cost_per_day=a.max_cost_per_day, profile=choice.profile,
-                  seed=getattr(a, "seed", None), **pi_files)
+                  seed=getattr(a, "seed", None), scenario_settings=scenario_settings, **pi_files)
     if a.runs:   # --hours is the whole series' budget; each run gets a fresh playthrough
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
@@ -4954,6 +4811,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--scenario", metavar="NAME",
                    help="play scenarios/<NAME>.json as a --runs series: its start (new game or start save), --until "
                         "milestone, caps and profile, frozen in series.json; a flag that contradicts it is refused")
+    r.add_argument("--scenario-file", metavar="PATH",
+                   help="like --scenario, from a resolved scenario file (bg3harness/scenario_file.py: the v1 shape plus "
+                        "game_settings difficulty/karmic_dice, checked against the game, and timing), e.g. the bench's "
+                        "`python -m bg3bench.scenario resolve <v2>`")
     r.add_argument("--hours", type=float, help="total wall-clock budget (default, or 0: until stopped or the game "
                    "ends; every run stops at the end credits / epilogue, milestone game_end)")
     r.add_argument("--session-minutes", type=float, default=60,
