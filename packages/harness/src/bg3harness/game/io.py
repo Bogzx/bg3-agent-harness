@@ -113,7 +113,7 @@ class RpcError(RuntimeError):
     (relaunch and retry), never the runner's death (RUN-3: a refused ui.menu load killed the run)."""
 
 
-class LaunchBlocked(RuntimeError):
+class LaunchBlocked(RuntimeError):  # noqa: N818  (play.py's names)
     """The game can't be launched now for a reason an operator fixes outside the runner: never a give-up, the run
     loop retries every STEAM_RETRY_S."""
 
@@ -132,16 +132,16 @@ class NoDisplay(LaunchBlocked):
     launch; the desktop session coming back fixes it."""
 
 
-class GameDied(RuntimeError):
+class GameDied(RuntimeError):  # noqa: N818  (play.py's names)
     """The game died while the runner waited on it (crash, crash reporter, bg3 gone, dead debug port, launcher exit)."""
 
 
-class Bg3leStale(Exception):
+class Bg3leStale(Exception):  # noqa: N818  (play.py's names)
     """The bg3le build lacks a patches/bg3le patch (UI-1): never launch it. Not a RuntimeError: a stale build never
     fixes itself, so no retry loop may swallow it; the runner stops until tools/build_bg3le.sh is run."""
 
 
-class LaunchGaveUp(Exception):
+class LaunchGaveUp(Exception):  # noqa: N818  (play.py's names)
     """LAUNCH_ATTEMPTS launches in a row died before the save played: the runner stops (not a RuntimeError, so no
     retry loop swallows it)."""
 

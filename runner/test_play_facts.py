@@ -21,7 +21,7 @@ os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runti
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
 import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
 from bg3harness import clients, events
-from bg3harness.game import io as G
+from bg3harness.game import io as G  # noqa: N812
 
 RECORD = {
     "clean": True,
