@@ -1,0 +1,441 @@
+"""The Supervisor's SessionRunner over the harness's run_session (bg3harness.session).
+
+One play session:
+    memory.start                       opens memory/sessions/Sxxx.md (session.py start): the sid and the briefing
+    start_sig = game.progress()
+    run_session(SessionSpec(sid, kickoff, minutes, conversation), AppSessionHooks)
+        the agent process (ClientAgent), resumed by run_session after a fault (game.recover) or when the stop
+        check (memory.stop_check: session.py stop) says the session can't end yet
+    memory.end                         session.py session-end: commits a finished wrap-up
+    end_sig = game.progress()          progress = the save signature changed (runner/play.py made_progress)
+    runner.json + runner.status.json   the files the store reads, as play.py writes them
+
+The kickoff carries the request's notes (the Supervisor's stuck nudge and crash note). A soft stop (the Supervisor's
+stop event) lets the session play out and resumes nothing after a fault. The prompt condition (config [agent]
+condition, default rules+coaching for a playthrough) goes to the agent and the bg3 server as BG3AI_PROMPT_CONDITION.
+What runs between sessions (the memory keeper) is the Supervisor's Keeper: keeper_client gives it every client.
+
+The game is attached, not launched: AttachedGame reads it over the bridge; it can't relaunch the game, so a game
+fault ends the session (the next one starts if the game answers again). Launching and loading saves stay with the
+legacy CLI (adapters/legacy_cli.py, `--session-runner legacy`) until Phase D moves them into the harness.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol
+
+from bg3harness.session import RecoverFailure, Recovery, SessionOutcome, SessionSpec, run_session
+
+from .. import config
+from ..jsontypes import is_obj
+from ..memory import memlib
+from ..supervisor import SessionRequest, SessionResult, SupervisorError
+from .agent_process import AgentCall, AgentRun, ClientAgent
+
+WRAPUP_MINUTES = 3.0  # runner/play.py WRAPUP_MINUTES
+POS_KEYS = ("pos", "pos_name", "party_pos")  # runner/play.py POS_KEYS: a step is not progress
+
+
+class Agent(Protocol):
+    model: str  # what plays (a client profile's model, else the config's)
+    effort: str | None
+
+    def run(self, call: AgentCall) -> AgentRun: ...
+
+
+class Game(Protocol):
+    def ok(self) -> bool: ...  # alive and answering
+    def progress(self) -> dict[str, Any] | None: ...  # the save signature (bg3harness.game.io.progress_signature)
+    def recover(self, why: str) -> str | None: ...  # relaunch and load the latest save; its name; raises if it can't
+
+
+class Memory(Protocol):
+    def start(self, env: dict[str, str]) -> tuple[str | None, str]: ...  # (the opened sid, the briefing)
+    def stop_check(self, env: dict[str, str]) -> str | None: ...  # why the session can't end yet
+    def end(self, env: dict[str, str]) -> None: ...
+
+
+# ------------------------------------------------------------ pure
+
+
+def wrap_minutes(minutes: float) -> float:
+    """Minutes into the session when WRAP UP starts (runner/play.py wrap_minutes)."""
+    return minutes - min(WRAPUP_MINUTES, minutes / 3)
+
+
+def session_env(
+    req: SessionRequest, sid: str, start: float, runtime: Path, playthroughs: Path, keeper: bool
+) -> dict[str, str]:
+    """The session's clock and paths, for the agent, the bg3 server and session.py (runner/play.py session_env)."""
+    m = req.config.session.minutes
+    return {
+        "BG3AI_PLAYTHROUGH": req.playthrough,
+        "BG3AI_SESSION": sid,
+        "BG3AI_RUNTIME": str(runtime),
+        "BG3AI_PLAYTHROUGHS": str(playthroughs),
+        "BG3_MEMORY_DIR": str(playthroughs / req.playthrough / "memory"),
+        "BG3AI_SESSION_DEADLINE": str(int(start + m * 60)),
+        "BG3AI_SESSION_WRAPUP": str(int(start + wrap_minutes(m) * 60)),
+        "BG3_SESSION_MINUTES": f"{m:g}",
+        "BG3_WRAP_MINUTES": f"{wrap_minutes(m):g}",
+        "BG3AI_KEEPER": "1" if keeper else "0",
+        "BG3AI_PROMPT_CONDITION": req.config.agent.condition,
+    }
+
+
+def kickoff(req: SessionRequest, sid: str, briefing: str) -> str:
+    cfg = req.config
+    lines = [briefing.strip()] if briefing.strip() else []
+    lines.append(
+        f"Session {sid} of playthrough {req.playthrough}: play for {cfg.session.minutes:g} minutes. The game is "
+        "running; continue from where it is (HANDOFF.md says what you were doing)."
+    )
+    if cfg.character.brief:
+        lines.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
+    if req.notes:
+        lines.append("Notes from the supervisor:\n" + "\n".join(f"- {n}" for n in req.notes))
+    return "\n\n".join(lines)
+
+
+def made_progress(start: dict[str, Any] | None, end: dict[str, Any] | None) -> bool | None:
+    """runner/play.py made_progress: None when a signature is missing; the position left out."""
+    if start is None or end is None:
+        return None
+
+    def strip(d: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in d.items() if k not in POS_KEYS}
+
+    return strip(start) != strip(end)
+
+
+def outcome_of(out: SessionOutcome, stopped: bool) -> str:
+    """The Supervisor's outcome for a run_session outcome."""
+    if out.invalid or out.gave_up or out.result.reason in ("crash", "hang", "agent_hang"):
+        return "crash"
+    if out.result.reason == "exited" and out.result.exit_code not in (0, None):
+        return "error"
+    return "stopped" if stopped else "ok"
+
+
+# ------------------------------------------------------------ the hooks
+
+
+class AppSessionHooks:
+    """bg3harness.session.SessionHooks for one app session."""
+
+    def __init__(
+        self,
+        agent: Agent,
+        game: Game,
+        memory: Memory,
+        sdir: Path,
+        sid: str,
+        env: dict[str, str],
+        stop: threading.Event,
+        clock: Callable[[], float],
+        grace_s: float,
+        max_cost_usd: float,
+        log: Callable[[str], None],
+    ):
+        self.agent, self.game, self.memory, self.sdir, self.sid, self.env = agent, game, memory, sdir, sid, env
+        self.stop, self.clock, self.grace_s, self.max_cost_usd, self._log = stop, clock, grace_s, max_cost_usd, log
+        self.save: str | None = None
+        self.runs: list[AgentRun] = []
+
+    def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> AgentRun:
+        spent = sum(r.cost_usd or 0.0 for r in self.runs)
+        call = AgentCall(
+            self.sdir, self.sid, prompt, minutes * 60 + self.grace_s, client_session or str(uuid.uuid4()), resume,
+            self.env, max(self.max_cost_usd - spent, 1e-9) if self.max_cost_usd > 0 else 0.0,
+        )  # fmt: skip
+        res = self.agent.run(call)
+        self.runs.append(res)
+        return res
+
+    def session_end(self, planned_end: float) -> float:
+        return planned_end
+
+    def stop_check(self, session_end: float) -> str | None:
+        return self.memory.stop_check(self.env)
+
+    def game_ok(self) -> bool:
+        return self.game.ok()
+
+    def recover(self, why: str) -> RecoverFailure | None:
+        try:
+            self.save = self.game.recover(why)
+        except Exception as e:  # the session ends; the Supervisor decides on the next
+            return RecoverFailure(e, fatal=False)
+        return None
+
+    def loaded(self) -> str | None:
+        return self.save
+
+    def aborted(self) -> bool:
+        return False
+
+    def stop_requested(self) -> bool:
+        return self.stop.is_set()
+
+    def notes(self) -> list[str]:
+        return []
+
+    def resume_prompt(self, why: str, notes: list[str]) -> str:
+        return f"The game {why}; it was recovered ({self.save or 'main menu'}). Continue the session from there."
+
+    def agent_resume_prompt(self, notes: list[str]) -> str:
+        return "Your process stopped answering and was restarted; the game is as you left it. Continue the session."
+
+    def stop_resume_prompt(self, why: str) -> str:
+        return why
+
+    def log(self, msg: str) -> None:
+        self._log(msg)
+
+    def event(self, kind: str, **fields: Any) -> None:
+        self._log(f"{self.sid}: {kind} {json.dumps(fields, default=str)}")
+
+    def now(self) -> float:
+        return self.clock()
+
+
+# ------------------------------------------------------------ the runner
+
+
+@dataclass
+class HarnessRunner:
+    runtime: Path
+    playthroughs: Path
+    agent_for: Callable[[config.PlaythroughConfig, Path], Agent]  # (config, session dir); SupervisorError: can't
+    game: Game
+    memory_for: Callable[[Path], Memory]  # the playthrough's memory dir -> its session lifecycle
+    clock: Callable[[], float]
+    recovery: Recovery = field(default_factory=Recovery)
+    log: Callable[[str], None] = lambda msg: None
+
+    def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
+        cfg, pt = req.config, req.playthrough
+        sdir = self.runtime / "sessions" / pt
+        sdir.mkdir(parents=True, exist_ok=True)
+        try:
+            agent = self.agent_for(cfg, sdir)
+        except SupervisorError as e:
+            return SessionResult("?", "error", detail=str(e))
+        if not self.game.ok():
+            return SessionResult("?", "error", detail="the game doesn't answer (the app attaches to a running game)")
+        start = self.clock()
+        predicted = f"S{req.session:03d}"
+        env = session_env(req, predicted, start, self.runtime, self.playthroughs, cfg.keeper.enabled)
+        memory = self.memory_for(self.playthroughs / pt / "memory")
+        opened, briefing = memory.start(env)
+        sid = opened or predicted
+        env["BG3AI_SESSION"] = sid
+        start_sig = self.game.progress()
+        write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
+                     started=start, log=str(sdir / f"{sid}.log"), session_ended=None, updated=start)  # fmt: skip
+        hooks = AppSessionHooks(
+            agent, self.game, memory, sdir, sid, env, stop, self.clock, self.recovery.hard_stop_grace_s,
+            cfg.session.max_cost_usd, self.log,
+        )  # fmt: skip
+        spec = SessionSpec(sid, kickoff(req, sid, briefing), cfg.session.minutes, str(uuid.uuid4()), self.recovery)
+        try:
+            out = run_session(spec, hooks)
+        finally:
+            memory.end(env)
+        progress = None if out.result.reason in ("crash", "hang") else made_progress(start_sig, self.game.progress())
+        ended = out.result.ended
+        cost = sum(r.cost_usd for r in hooks.runs if r.cost_usd is not None) if hooks.runs else None
+        entry = {
+            "kind": "play",
+            "session": sid,
+            "claude_session": out.result.claude_session,
+            "reason": out.result.reason,
+            "exit": out.result.exit_code,
+            "started": out.started,
+            "ended": ended,
+            "model": agent.model,
+            "effort": agent.effort,
+            "condition": cfg.agent.condition,
+            "minutes": round((ended - out.started) / 60, 1),
+            "progress": progress,
+            "resumes": out.resumes,
+            "stop_resumes": out.stop_resumes,
+        }
+        append_history(sdir / "runner.json", entry)
+        write_status(self.runtime, session_ended=ended, updated=ended)
+        detail = f"reason={out.result.reason} exit={out.result.exit_code}"
+        if out.invalid or out.gave_up:
+            detail += f" ({out.invalid or out.gave_up})"
+        return SessionResult(sid, outcome_of(out, stop.is_set()), progress, out.started, ended, cost, detail)
+
+
+def write_status(runtime: Path, **fields: Any) -> None:
+    """runner.status.json updated with `fields` (runner/play.py write_status)."""
+    path = runtime / "runner.status.json"
+    try:
+        cur: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cur = None
+    cur = (cur if is_obj(cur) else {}) | fields
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def append_history(path: Path, entry: dict[str, Any]) -> None:
+    """runner.json's history + one play entry (the rest of the file kept)."""
+    try:
+        raw: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = None
+    d: dict[str, Any] = raw if is_obj(raw) else {}
+    hist = d.get("history")
+    d["history"] = [*(hist if isinstance(hist, list) else []), entry]
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+# ------------------------------------------------------------ real I/O
+
+
+class AttachedGame:
+    """The running game over the bridge's debug-port client (bg3ai.game.Game); it can't relaunch it."""
+
+    def __init__(self, game: Any):
+        self.g = game
+
+    def ok(self) -> bool:
+        try:
+            return bool(self.g.game_state())
+        except Exception:  # not answering
+            return False
+
+    def progress(self) -> dict[str, Any] | None:
+        from bg3harness.game import io
+
+        sig: dict[str, Any] | None = io.progress_signature(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            self.g.try_rpc("state.status"), self.g.try_rpc("state.journal")
+        )
+        return sig
+
+    def fault(self) -> str | None:
+        """For ClientAgent's game watch: "hang" when the game stopped answering."""
+        return None if self.ok() else "hang"
+
+    def recover(self, why: str) -> str | None:
+        raise RuntimeError(f"the game {why} and the app can't relaunch it (--session-runner legacy can)")
+
+
+class SessionPy:
+    """The playthrough memory's session lifecycle (bg3play.memory.session's start, stop, session-end), run as
+    runner/play.py runs it: a subprocess with the session's clock env, so its env reads are the session's."""
+
+    def __init__(self, mem: Path, python: str = sys.executable):
+        self.mem, self.python = mem, python
+
+    def _run(self, cmd: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [self.python, "-m", "bg3play.memory.session", cmd, "--memory-dir", str(self.mem)],
+            capture_output=True, text=True, env={**os.environ, **env}, stdin=subprocess.DEVNULL, timeout=120,
+        )  # fmt: skip
+
+    def start(self, env: dict[str, str]) -> tuple[str | None, str]:
+        r = self._run("start", env)
+        st = memlib.load_state(self.mem)
+        if r.returncode != 0 or not st.get("open") or not st.get("current"):
+            return None, ""
+        return memlib.session_id(st["current"]), r.stdout.strip()
+
+    def stop_check(self, env: dict[str, str]) -> str | None:
+        r = self._run("stop", env)
+        try:
+            out: object = json.loads(r.stdout) if r.stdout.strip() else {}
+        except ValueError:
+            return None
+        return out.get("reason") if is_obj(out) and out.get("decision") == "block" else None
+
+    def end(self, env: dict[str, str]) -> None:
+        self._run("session-end", env)
+
+
+def dump_system(path: Path, condition: str, repo: Path) -> Path:
+    """pi's system text (D2) for a condition: the bg3 server's instructions and rules, dumped offline in the bridge's
+    env by tools/pi/dump_server.py (runner/client_setup.py dump_server)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
+    subprocess.run(
+        ["uv", "run", "--project", str(repo / "bridge"), "python", str(repo / "tools/pi/dump_server.py"),
+         "--system", str(path)],
+        check=True, capture_output=True, timeout=300, env={**env, "BG3AI_PROMPT_CONDITION": condition},
+    )  # fmt: skip
+    return path
+
+
+@dataclass
+class ClientAgents:
+    """HarnessRunner.agent_for: a ClientAgent for a config's client (a client profile, or client/model/effort).
+    pi plays from its profile with a system text dumped for the config's condition and needs a cost cap, as
+    play.py --profile does."""
+
+    profiles: Path
+    cwd: Path  # where the agent runs (play/: claude reads its CLAUDE.md and .claude/settings.json there)
+    clock: Callable[[], float]
+    fault: Callable[[], str | None] = lambda: None  # the game watch (AttachedGame.fault)
+    server: dict[str, Any] | None = None  # the bg3 MCP server for pi/codex/gemini; None = play/.mcp.json's
+    system_text: Callable[[Path, str], Path] | None = None  # (path, condition) -> pi's system file; None = dump_system
+    repo: Path = Path(__file__).resolve().parents[5]
+
+    def __call__(self, cfg: config.PlaythroughConfig, sdir: Path) -> ClientAgent:
+        from bg3harness import clients, profiles
+        from bg3harness.pi_client import PiClient
+
+        a = cfg.agent
+        profile = None
+        if a.profile:
+            try:
+                profile = profiles.load(self.profiles / f"{a.profile}.toml")
+            except (OSError, ValueError) as e:
+                raise SupervisorError(f"client profile {a.profile}: {e}") from e
+        client_name = profile.client if profile else a.client
+        model = profile.model if profile else a.model
+        effort = (profile.effort if profile else a.effort) or None
+        kw: dict[str, Any] = {} if self.server is None else {"server": self.server}
+        if client_name == "pi":
+            if profile is None:
+                raise SupervisorError("client pi: pick a pi client profile (profiles/*.toml)")
+            if cfg.session.max_cost_usd <= 0:
+                raise SupervisorError(f"client profile {a.profile}: pi needs a cost cap (session.max_cost_usd > 0)")
+            path = sdir / f"pi-system.{a.condition}.txt"
+            system = (
+                self.system_text(path, a.condition) if self.system_text else dump_system(path, a.condition, self.repo)
+            )
+            client: Any = PiClient(profile, system, cwd=self.cwd, **kw)
+        elif client_name == "claude":
+            client = clients.ClaudeClient()
+        else:
+            client = clients.make(client_name, **kw)  # pyright: ignore[reportUnknownMemberType]
+        return ClientAgent(client, model, effort, self.cwd, self.clock, self.fault)
+
+    def keeper_client(self, cfg: config.PlaythroughConfig) -> tuple[str, Any] | None:
+        """keeper_pass.MemoryKeeper's client_for: here nobody else keeps the memory, so every client's keeper runs
+        in the app (pi with the playthrough's profile). None = the keeper is off."""
+        if not cfg.keeper.enabled:
+            return None
+        if not cfg.agent.profile:
+            return cfg.agent.client, None
+        from bg3harness import profiles
+
+        try:
+            p = profiles.load(self.profiles / f"{cfg.agent.profile}.toml")
+        except (OSError, ValueError) as e:
+            raise SupervisorError(f"client profile {cfg.agent.profile}: {e}") from e
+        return p.client, p if p.client == "pi" else None

@@ -8,6 +8,7 @@
     client = "claude"                  # claude | codex | gemini | pi
     model = "opus"
     effort = ""                        # "" = the client's default | low | medium | high | xhigh | max
+    condition = "rules+coaching"       # the text the agent is served: rules | rules+coaching (BG3AI_PROMPT_CONDITION)
     [character]                        # today's profile.json "character", same keys
     brief = "a pious, short-tempered dwarf cleric"   # "" = no character phase
     roleplay = "strict"                # strict | light
@@ -57,6 +58,9 @@ CLIENTS = ("claude", "codex", "gemini", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # runner/play.py EFFORTS
 ROLEPLAY_MODES = ("strict", "light")  # runner/play.py ROLEPLAY_MODES
 DIFFICULTIES = ("Explorer", "Balanced", "Tactician")  # runner/play.py DIFFICULTIES (new_game's)
+# docs/BENCHMARK-BIAS.md: a playthrough plays with the coaching (orchestrator decision 2026-10-22 03:40), a benchmark
+# run with the rules only
+CONDITIONS = ("rules", "rules+coaching")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -70,6 +74,7 @@ class Agent:
     client: str = "claude"
     model: str = "opus"
     effort: str = ""
+    condition: str = "rules+coaching"
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "difficulty": ("", *DIFFICULTIES),
     "agent.client": CLIENTS,
     "agent.effort": ("", *EFFORTS),
+    "agent.condition": CONDITIONS,
     "character.roleplay": ROLEPLAY_MODES,
     "keeper.effort": EFFORTS,
 }

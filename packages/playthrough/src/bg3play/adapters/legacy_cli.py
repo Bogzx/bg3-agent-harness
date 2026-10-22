@@ -5,7 +5,8 @@ with the config's client/model/effort/character/difficulty as flags. A client pr
 by runner/profiles.py) is mapped to --client/--model/--effort; a pi profile is passed whole as --profile with the
 config's cost cap as --max-cost and no keeper (what play.py --profile requires for pi).
 A soft stop writes <runtime>/STOP (`play.py stop`: the session finishes, the runner exits). The result comes from the
-newest play entry of <runtime>/sessions/<pt>/runner.json.
+newest play entry of <runtime>/sessions/<pt>/runner.json. The config's prompt condition goes to play.py as
+$BG3AI_PROMPT_CONDITION.
 
 What play.py does itself here, so the supervisor must not do it again: the memory keeper (but not for pi, which
 play.py runs with --no-keeper: keeper_client gives the app's keeper_pass.MemoryKeeper pi's profile), the stuck
@@ -15,6 +16,7 @@ directive and the crash resume (request.notes are not passed on), the save to lo
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from collections.abc import Callable
@@ -33,8 +35,8 @@ class Proc(Protocol):
     def poll(self) -> int | None: ...
 
 
-def spawn(args: list[str], cwd: Path, log: IO[bytes]) -> Proc:
-    return subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+def spawn(args: list[str], cwd: Path, log: IO[bytes], env: dict[str, str]) -> Proc:
+    return subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
 
 
 def profile_agent(
@@ -96,6 +98,12 @@ def play_args(
     return args
 
 
+def condition_env(cfg: config.PlaythroughConfig) -> dict[str, str]:
+    """play.py's env: the config's prompt condition for the bg3 server and pi's system text (claude's play/CLAUDE.md
+    is rules+coaching whatever it says)."""
+    return {**os.environ, "BG3AI_PROMPT_CONDITION": cfg.agent.condition}
+
+
 def last_play(runner_json: Path) -> dict[str, Any] | None:
     try:
         d = json.loads(runner_json.read_text(encoding="utf-8"))
@@ -132,7 +140,7 @@ class LegacyCli:
         runtime: Path,
         profiles: Path | None = None,
         python: str = "python3",
-        spawn_fn: Callable[[list[str], Path, IO[bytes]], Proc] = spawn,
+        spawn_fn: Callable[[list[str], Path, IO[bytes], dict[str, str]], Proc] = spawn,
         poll_s: float = 1.0,
         load: Callable[[Path], Any] = client_profiles.runner_load,
     ):
@@ -164,7 +172,7 @@ class LegacyCli:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         stopped = False
         with log_path.open("ab") as log:
-            proc = self.spawn(args, self.repo, log)
+            proc = self.spawn(args, self.repo, log, condition_env(req.config))
             code: Any = None
             while code is None:
                 if stop.is_set() and not stopped:

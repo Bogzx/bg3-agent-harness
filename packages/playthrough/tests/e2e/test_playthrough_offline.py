@@ -1,10 +1,12 @@
 # pyright: basic
 """The playthrough path end to end, offline: the app's Launcher starts a pi playthrough, the Supervisor plays two
-sessions through the legacy adapter (adapters/legacy_cli.py) with the memory keeper between them, and the app's API
-and screens show both sessions. No game, no key, no network.
+sessions through bg3harness run_session (adapters/harness_runner.py) with the memory keeper between them, and the
+app's API and screens show both sessions. No game, no key, no network.
 
-    the Launcher's POST /start -> Supervisor -> LegacyCli -> fake_play.py (play.py's argparse and files; play.py run
-    itself needs the game) -> pi on the scripted stub model -> the real bridge -> the fake mod (bg3harness.testing)
+    the Launcher's POST /start -> Supervisor -> HarnessRunner -> run_session -> ClientAgent -> pi on the scripted
+    stub model -> the real bridge -> the fake mod (bg3harness.testing); the game read (progress, health) through
+    AttachedGame over the same fake mod; the memory session through SessionPy (session.py start, stop, session-end):
+    the stop check sends the agent back ("keep playing") until run_session's stop-resume limit
     between sessions: keeper_pass.MemoryKeeper -> memory/keeper.py -> pi on a second stub model -> the keeper-mode
     bridge -> a commit in the playthrough's memory
     then: /playthroughs, /sessions (cost from the events log), /watch (the shown session's calls only), /replay, the
@@ -17,7 +19,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -33,7 +34,6 @@ pytestmark = pytest.mark.e2e
 REPO = Path(__file__).resolve().parents[4]
 PI = REPO / "tools" / "pi" / "node_modules" / ".bin" / "pi"
 STUB_LLM = REPO / "tools" / "pi" / "conformance" / "stub_llm.py"
-FAKE_PLAY = Path(__file__).with_name("fake_play.py")
 PT = "e2e-pi"
 MODEL = "anthropic/stub-model"
 WAIT_S = 300  # upper bound on the whole playthrough; it takes well under a minute
@@ -41,10 +41,13 @@ WAIT_S = 300  # upper bound on the whole playthrough; it takes well under a minu
 if not PI.exists():
     pytest.skip("tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts", allow_module_level=True)
 
+from bg3ai.game import Game  # noqa: E402
+from bg3harness.session import Recovery  # noqa: E402
 from bg3harness.testing.fakemod import FakeMod  # noqa: E402
+from bg3harness.testing.mcp_bridge import bridge_env  # noqa: E402
 from bg3harness.testing.scripted import FakeClock, GameModel  # noqa: E402
 from bg3play import supervisor as sup  # noqa: E402
-from bg3play.adapters.legacy_cli import LegacyCli  # noqa: E402
+from bg3play.adapters.harness_runner import AttachedGame, ClientAgents, HarnessRunner, SessionPy  # noqa: E402
 from bg3play.hub import Hub  # noqa: E402
 from bg3play.keeper_pass import MemoryKeeper  # noqa: E402
 from bg3play.memory.new_playthrough import create_memory  # noqa: E402
@@ -142,35 +145,32 @@ def played(tmp_path_factory):
     keeper_llm = StubLLM(root / "llm-keeper", keeper_script((pts / PT / "memory" / "quests.md").read_text()))
     (profile_dir / "stub-pi.toml").write_text(profile_toml(play_llm.url))
     with FakeMod(model) as fake:
-        env = {
-            **os.environ,
-            "BG3AI_RUNTIME": str(runtime),
-            "BG3AI_PLAYTHROUGHS": str(pts),
-            "E2E_HOME": str(home),
-            "E2E_FAKE_MOD_PORT": str(fake.port),
-            "BG3_STUB_KEY": "stub-key",
+        server = {
+            "command": sys.executable,
+            "args": ["-m", "bg3ai.server"],
+            "env": bridge_env(fake.port, home, {"BG3AI_RUNTIME": str(runtime)}),
+            "timeout": 60_000,
         }
-        spawned: list[list[str]] = []
+        (home / "cwd").mkdir(parents=True)
 
-        def spawn(args, cwd, log):  # play.py run -> its offline stand-in, same arguments
-            assert args[1] == str(REPO / "runner" / "play.py") and cwd == REPO
-            spawned.append(args)
-            return subprocess.Popen(
-                [sys.executable, str(FAKE_PLAY), *args[2:]], cwd=cwd, env=env, stdout=log, stderr=log
-            )
+        def system_text(path, condition):  # the dump needs the bridge's own env: a fixed text with the condition
+            path.write_text(f"Rules of play ({condition}): you are the party on the nautiloid. Use the bg3 tools.\n")
+            return path
 
-        legacy = LegacyCli(REPO, runtime, profiles=profile_dir, python=sys.executable, spawn_fn=spawn, poll_s=0.1)
+        game = AttachedGame(Game(port=fake.port))
+        agents = ClientAgents(profile_dir, home / "cwd", time.time, game.fault, server, system_text)
 
         def keeper_client(cfg):  # the adapter's choice, with the keeper's own stub model behind the same profile
-            client, p = legacy.keeper_client(cfg) or (None, None)
+            client, p = agents.keeper_client(cfg) or (None, None)
             assert client == "pi" and p is not None and p.model == MODEL
             return client, dataclasses.replace(p, endpoint=dataclasses.replace(p.endpoint, base_url=keeper_llm.url))
 
+        runner = HarnessRunner(runtime, pts, agents, game, SessionPy, time.time)
         history = sup.history_path(runtime, PT)
         store = RunStore(runtime, pts)
         hub = Hub(store, generation="e2ept")
         supervisor = sup.Supervisor(
-            legacy,
+            runner,
             MemoryKeeper(runtime, pts, keeper_client, time.time),
             runtime,
             pts,
@@ -190,7 +190,6 @@ def played(tmp_path_factory):
                 "runtime": runtime,
                 "memory": pts / PT / "memory",
                 "ops": [op for _, op, _ in fake.calls],
-                "spawned": spawned,
                 "state": get(f"{url}/api/v1/supervisor")["supervisor"],
             }
         finally:
@@ -202,15 +201,24 @@ def played(tmp_path_factory):
             mp.undo()
 
 
-def test_two_sessions_through_the_legacy_adapter_with_the_keeper_between(played):
+def test_two_sessions_through_run_session_with_the_keeper_between(played):
     assert played["state"]["detail"] == "hours budget spent", played["state"]
     hist = sup.read_history(sup.history_path(played["runtime"], PT))
-    assert [(h["session"], h["outcome"], h["progress"]) for h in hist] == [("S001", "ok", True), ("S002", "ok", True)]
-    a = played["spawned"][0]  # what the adapter asked play.py for: pi from its profile, a cap, no play.py keeper
-    assert a[a.index("--profile") + 1].endswith("stub-pi.toml") and a[a.index("--max-cost") + 1] == "1"
-    assert "--no-keeper" in a and len(played["spawned"]) == 2
+    # the dialogue choice changes nothing the progress signature reads (level, region, party, journal)
+    assert [(h["session"], h["outcome"], h["progress"]) for h in hist] == [("S001", "ok", False), ("S002", "ok", False)]
     assert {"state.status", "ui.dialogue_choose"} <= set(played["ops"])  # the model's calls reached the fake mod
     sdir = played["runtime"] / "sessions" / PT
+    runs = json.loads((sdir / "runner.json").read_text())["history"]
+    # 30 min sessions: session.py's stop check sent the agent back to play until run_session's limit, in the same
+    # conversation; then session-end left the memory session open (no wrap-up) for the next to warn about
+    assert [(r["reason"], r["exit"], r["stop_resumes"]) for r in runs] == [
+        ("exited", 0, Recovery().max_stop_resumes)
+    ] * 2
+    assert "(harness) Claude session ended before wrap-up" in (played["memory"] / "sessions" / "S001.md").read_text()
+    # the playthrough's condition reached the bg3 server pi starts
+    pi_server = json.loads((sdir / "S001.pi" / "bg3.json").read_text())["server"]
+    assert pi_server["env"]["BG3AI_PROMPT_CONDITION"] == "rules+coaching"
+    assert "Rules of play (rules+coaching)" in (sdir / "pi-system.rules+coaching.txt").read_text()
     keeps = [json.loads(ln) for ln in (sdir / "keeper_history.jsonl").read_text().splitlines()]
     assert [(k["sid"], k["status"], k["client"]) for k in keeps] == [("S001", "ok", "pi"), ("S002", "no_changes", "pi")]
     # each keeper pass: 2 stub responses billed $0.0125 each, under the default cap ($0.05), added to the budget

@@ -3,7 +3,7 @@ import { actions, formFrom, launchBody, profileLabel } from "./launcher";
 import type { ClientProfile, PlaythroughConfig, SupervisorView } from "./types";
 
 const cfg: PlaythroughConfig = {
-  name: "ilse", difficulty: "", agent: { profile: "", client: "claude", model: "opus", effort: "" },
+  name: "ilse", difficulty: "", agent: { profile: "", client: "claude", model: "opus", effort: "", condition: "rules+coaching" },
   character: { brief: "a dwarf cleric", roleplay: "strict", name: "", constraints: "" },
   session: { minutes: 60, hours: 0, max_cost_usd: 0 }, keeper: { enabled: true, model: "", effort: "low", minutes: 5 },
   recording: { enabled: true, fps: 15, height: 720 },

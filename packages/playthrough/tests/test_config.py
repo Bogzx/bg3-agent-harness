@@ -30,7 +30,9 @@ def full_config() -> config.PlaythroughConfig:
     return config.PlaythroughConfig(
         name="ilse",
         difficulty="Balanced",
-        agent=config.Agent(profile="or-deepseek", client="pi", model="deepseek/deepseek-v4", effort="high"),
+        agent=config.Agent(
+            profile="or-deepseek", client="pi", model="deepseek/deepseek-v4", effort="high", condition="rules"
+        ),
         character=config.Character(
             brief='a "pious" dwarf\ncleric \\ with a tab\t', roleplay="light", name="Ilse", constraints="never steal"
         ),
@@ -52,6 +54,7 @@ def test_round_trip_defaults_and_every_key_written():
     for section in config.SECTIONS:
         assert f"[{section}]" in text
     assert cfg.recording.enabled and cfg.keeper.enabled and cfg.agent.client == "claude"
+    assert cfg.agent.condition == "rules+coaching"  # a playthrough plays with the coaching (decision 03:40)
 
 
 def test_save_load_files(tmp_path: Path):
@@ -69,6 +72,7 @@ def test_save_load_files(tmp_path: Path):
     [
         ("client", "agent", "copilot"),
         ("effort", "agent", "extreme"),
+        ("condition", "agent", "coaching"),
         ("roleplay", "character", "method"),
         ("effort", "keeper", ""),
         ("difficulty", None, "Honour"),

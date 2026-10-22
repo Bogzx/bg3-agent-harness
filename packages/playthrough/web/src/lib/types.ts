@@ -206,7 +206,7 @@ export interface SupervisorView {
 export interface PlaythroughConfig {
   name: string;
   difficulty: string;
-  agent: { profile: string; client: string; model: string; effort: string };
+  agent: { profile: string; client: string; model: string; effort: string; condition: string };
   character: { brief: string; roleplay: string; name: string; constraints: string };
   session: { minutes: number; hours: number; max_cost_usd: number };
   keeper: { enabled: boolean; model: string; effort: string; minutes: number };

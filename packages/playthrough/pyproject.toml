@@ -3,13 +3,16 @@ name = "bg3play"
 version = "0.1.0"
 description = "The BG3 playthrough app: config, run store, HTTP/SSE API and the web UI"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["bg3-agent-harness"]  # run_session, the clients, the progress signature (adapters/harness_runner.py)
 
 [project.scripts]
 bg3play-serve = "bg3play.server:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "playwright==1.64.0", "jsonschema>=4.20"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
+
+[tool.uv.sources]
+bg3-agent-harness = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

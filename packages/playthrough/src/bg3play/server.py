@@ -470,7 +470,14 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--supervise",
         action="store_true",
-        help="enable start/stop/resume (sessions through adapters/legacy_cli.py: runner/play.py run)",
+        help="enable start/stop/resume (sessions through --session-runner)",
+    )
+    ap.add_argument(
+        "--session-runner",
+        choices=["harness", "legacy"],
+        default="harness",
+        help="harness: bg3harness run_session against the running game (adapters/harness_runner.py); legacy: "
+        "runner/play.py run, which also launches the game and loads saves (adapters/legacy_cli.py, until Phase D)",
     )
     ap.add_argument("--repo", type=Path, default=REPO, help="the bg3-ai checkout play.py runs from (--supervise)")
     ap.add_argument(
@@ -480,6 +487,31 @@ def parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--verbose", action="store_true")
     return ap
+
+
+def session_runner(opt: argparse.Namespace) -> tuple[sup.SessionRunner, Any]:
+    """(the Supervisor's SessionRunner, the keeper's client_for) for --session-runner."""
+    if opt.session_runner == "legacy":
+        from .adapters.legacy_cli import LegacyCli  # TEMPORARY until Phase D
+
+        legacy = LegacyCli(opt.repo, opt.runtime)
+        return legacy, legacy.keeper_client
+    from .adapters.bridge_status import bridge_game  # the bridge's debug-port client
+    from .adapters.harness_runner import AttachedGame, ClientAgents, HarnessRunner, SessionPy
+
+    legacy_paths.ensure()
+    game = AttachedGame(bridge_game(opt.debug_port))
+    agents = ClientAgents(opt.repo / "profiles", opt.repo / "play", time.time, game.fault, repo=opt.repo)
+    runner = HarnessRunner(
+        opt.runtime,
+        opt.playthroughs,
+        agents,
+        game,
+        SessionPy,
+        time.time,
+        log=lambda m: print(f"bg3play: {m}", flush=True),
+    )
+    return runner, agents.keeper_client
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -519,13 +551,12 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=sample_loop, args=(sampler, stop), daemon=True, name="positions").start()
     supervisor = None
     if opt.supervise:
-        from .adapters.legacy_cli import LegacyCli  # temporary until the harness's run_session
         from .keeper_pass import MemoryKeeper
 
-        legacy = LegacyCli(opt.repo, opt.runtime)
+        runner, keeper_client = session_runner(opt)
         supervisor = sup.Supervisor(
-            legacy,
-            MemoryKeeper(opt.runtime, opt.playthroughs, legacy.keeper_client, time.time),
+            runner,
+            MemoryKeeper(opt.runtime, opt.playthroughs, keeper_client, time.time),
             opt.runtime,
             opt.playthroughs,
             time.time,

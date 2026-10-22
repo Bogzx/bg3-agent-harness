@@ -1,6 +1,7 @@
 """The supervisor's Keeper: the memory keeper pass (memory/keeper.py run_keeper) between two sessions.
 
-Which client keeps the memory comes from the session runner (`client_for`): with the legacy CLI, play.py runs the
+Which client keeps the memory comes from the session runner (`client_for`): with the harness runner every client's
+keeper runs here (adapters/harness_runner.py ClientAgents.keeper_client); with the legacy CLI, play.py runs the
 keeper itself for every client but pi (play.py --profile pi needs --no-keeper), so only a pi playthrough's keeper
 runs here, through pi with the playthrough's client profile. The pass's model, effort, minutes and cost cap
 (max_cost_usd; a paid client also needs runtime/budget.json: memory/keeper_spend.py) are the config's [keeper]; its

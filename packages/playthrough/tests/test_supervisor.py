@@ -268,8 +268,8 @@ def test_legacy_run_session_soft_stop(tmp_path: Path):
             json.dumps({"history": [*h, {"kind": "play", "session": "S002", "reason": "exited", "progress": False}]})
         )
 
-    def spawn(args, cwd, log):
-        spawned.append((args, cwd))
+    def spawn(args, cwd, log, env):
+        spawned.append((args, cwd, env))
         return FakeProc(finish, timeouts=1)
 
     cli = legacy_cli.LegacyCli(tmp_path / "repo", runtime, spawn_fn=spawn, poll_s=0)
@@ -278,6 +278,7 @@ def test_legacy_run_session_soft_stop(tmp_path: Path):
     res = cli.run_session(req(), stop)
     assert res.session == "S002" and res.outcome == "stopped" and res.progress is False
     assert spawned[0][1] == tmp_path / "repo" and spawned[0][0][1].endswith("runner/play.py")
+    assert spawned[0][2]["BG3AI_PROMPT_CONDITION"] == "rules+coaching"  # a playthrough's default condition
 
 
 def test_sessions_the_runner_played_before_count(tmp_path: Path):

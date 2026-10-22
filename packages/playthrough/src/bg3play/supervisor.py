@@ -3,8 +3,9 @@
     for each session until stopped or the hours budget is spent:
         request = the playthrough's config + nudges (stuck after STUCK_SESSIONS sessions without progress; resume
                   after a crash)
-        result  = runner.run_session(request, stop)       # SessionRunner: the harness's run_session later; until
-                                                          # then adapters/legacy_cli.py (runner/play.py run)
+        result  = runner.run_session(request, stop)       # SessionRunner: adapters/harness_runner.py (bg3harness
+                                                          # run_session); adapters/legacy_cli.py (runner/play.py
+                                                          # run) until Phase D
         keeper.run_keeper(pt, result)                     # between sessions, joined before the next start
         history += result                                 # <runtime>/sessions/<pt>/supervisor.json
 

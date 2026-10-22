@@ -348,6 +348,9 @@ dev = [
 name = "bg3play"
 version = "0.1.0"
 source = { editable = "packages/playthrough" }
+dependencies = [
+    { name = "bg3-agent-harness" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -357,6 +360,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "bg3-agent-harness", editable = "packages/harness" }]
 
 [package.metadata.requires-dev]
 dev = [
