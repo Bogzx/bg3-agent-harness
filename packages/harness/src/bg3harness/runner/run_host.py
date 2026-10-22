@@ -17,6 +17,11 @@ record: facts.jsonl's run_end, the game stopped (the next run starts a fresh pro
 runtime/nav-reset.json, lets the next start restore what a run that died left moved), and the run's fields: the
 outcome (the bench grades facts.jsonl; the harness decides no goal), cost and tokens of every play process, wall
 time, the settings readout, the manifest fields and the reset.
+
+stop: an operator stop (play.py bench's first SIGINT/SIGTERM, or runtime/STOP, which the runner reads) ends the run's
+session at the runner's next check (reason "stopped"); record then writes it as an invalid run (`operator: stop`) with
+the game stopped, and no new run starts. abort (a second signal, or an exception out of the matrix) kills the play
+process and the game of a run still open and puts its nav files back, without a record.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import time
 import uuid
 from collections.abc import Callable, MutableMapping, Sequence
@@ -58,6 +64,8 @@ class RunRunner(Protocol):
 
     run_started: float | None
     settles_budget: bool  # False here: SessionRun's matrix adds the run's cost to budget.json
+    stop_ends_session: bool  # True here: an operator stop ends the run's one session at the next check
+    stop_requested: bool
 
     @property
     def opt(self) -> rstate.Options: ...
@@ -79,6 +87,7 @@ class RunRunner(Protocol):
     def session_hooks(self, sid: str, minutes: float) -> SessionHooks: ...
     def end_facts(self, outcome: str) -> None: ...
     def end_run_game(self, when: str = ..., after: str = ...) -> None: ...
+    def kill_agent(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -151,6 +160,31 @@ def restore_nav(marker: Path) -> list[str]:
 
 def nav_marker() -> Path:
     return renv.RUNTIME / "nav-reset.json"
+
+
+def stop_file() -> Path:
+    """runtime/STOP: the operator's stop file (a playthrough stops after its session, a bench run at once)."""
+    return renv.RUNTIME / "STOP"
+
+
+def stop_on_signals(host: LiveRunHost, log: Callable[[str], None]) -> None:
+    """SIGINT/SIGTERM for play.py bench: the first one is host.stop() (the run playing now ends and is recorded, no new
+    run starts), a second one raises KeyboardInterrupt (the caller's finally calls host.abort())."""
+    seen: list[int] = []
+
+    def on_signal(signum: int, _frame: object) -> None:
+        seen.append(signum)
+        if len(seen) > 1:
+            log(f"signal {signum} again: exiting now; the open run's game is stopped and the run is not recorded")
+            raise KeyboardInterrupt
+        log(
+            f"signal {signum}: the run playing now ends at its next check and is recorded; no new run starts "
+            "(send again to exit at once)"
+        )
+        host.stop()
+
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
 
 
 def owner_of(sc: Json) -> str:
@@ -258,6 +292,30 @@ class LiveRunHost:
         self.env = os.environ if env is None else env
         self.run_files = run_files or self._run_files
         self.runs: dict[Path, tuple[RunRunner, float, list[str]]] = {}
+        self.stopping = False  # stop(): an operator signal
+
+    @property
+    def stopped(self) -> bool:
+        """An operator stop (a signal, or runtime/STOP): no new run starts."""
+        return self.stopping or stop_file().exists()
+
+    def stop(self) -> None:
+        """An operator stop (play.py bench's first SIGINT/SIGTERM): the run playing now ends its session at the
+        runner's next check and is recorded (operator: invalid); no new run starts."""
+        self.stopping = True
+        for r, _, _ in self.runs.values():
+            r.stop_requested = True
+
+    def abort(self, when: str = "operator exit") -> None:
+        """A hard exit (a second signal, or an exception out of the matrix): every run still open loses its play
+        process and the game it brought up, and its moved nav files go back. Its record is not written."""
+        while self.runs:
+            _, (r, _, _) = self.runs.popitem()
+            try:
+                r.kill_agent()
+                r.end_run_game(when, "the run is not recorded")
+            finally:
+                restore_nav(nav_marker())
 
     @staticmethod
     def _run_files(d: Path, client: str, seed: int | None, timing: str | None) -> Json:
@@ -290,6 +348,8 @@ class LiveRunHost:
         want = renv.RUNTIME / "sessions" / run_dir.name
         if Path(run_dir).resolve() != want.resolve():  # facts.jsonl and the streams must land in the run dir
             raise ValueError(f"run dir {run_dir}: the runner writes runtime/sessions/<run> under {renv.RUNTIME}")
+        if self.stopped:
+            raise RuntimeError("operator stop: no new run starts")
         r: RunRunner | None = None
         try:
             files, model, effort = self._setup(job, sc, run_dir)
@@ -311,6 +371,8 @@ class LiveRunHost:
         t0 = self.clock()
         r.run_started = t0
         r.settles_budget = False  # the matrix settles a paid run's cost (once): the runner must not add it too
+        r.stop_ends_session = True
+        r.stop_requested = self.stopping
         r.state["saves_after"] = t0  # reset.saves: only saves from now on (and the start save) are the run's
         restore_nav(nav_marker())  # what a run that died between start and record left moved
         archive = sc["reset"]["nav_state"] == "archive" and sc["start"]["kind"] == "save"
@@ -333,6 +395,8 @@ class LiveRunHost:
         r.hot_reload_mod()
         r.apply_play_settings()
         r.check_settings()  # the scenario's difficulty / karmic dice against the readout; the seed
+        if self.stopped:  # stopped while the game came up: no agent starts (start's handler stops the game)
+            raise RuntimeError("operator stop before the kickoff")
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
         minutes = opt.session_minutes
         return HostStart(
@@ -348,15 +412,9 @@ class LiveRunHost:
         r, t0, moved = self.runs.pop(run_dir)
         res = outcome.result
         hit = r.until_hit if r.until_hit and r.until_hit.get("id") == sc.get("until") else None
-        name = (
-            "gave_up"
-            if outcome.invalid or outcome.gave_up
-            else "reached"
-            if hit
-            else "over_budget"
-            if r.cap_hit
-            else "timeout"
-        )
+        stopped = res.reason == "stopped"  # an operator stop ended the session: invalid (bench results.validity)
+        invalid = outcome.invalid or outcome.gave_up or stopped
+        name = "gave_up" if invalid else "reached" if hit else "over_budget" if r.cap_hit else "timeout"
         try:
             r.end_facts(name)
         finally:
@@ -379,4 +437,4 @@ class LiveRunHost:
             "manifest": r.opt.manifest,
             "reset": {"nav_files": moved, "restored": back},
             "loaded_save": r.state["loaded_save"],
-        }
+        } | ({"operator": "stop"} if stopped else {})

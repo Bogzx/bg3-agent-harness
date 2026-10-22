@@ -598,20 +598,25 @@ def cmd_bench(argv: list[str]) -> int:
     """play.py bench plan|run|status|resume --matrix <file.toml> [--runner session|legacy]: bg3bench's matrix CLI
     (python -m bg3bench.matrix) with the harness's live RunHost, so `--runner session` plays each job as one
     run_session on this machine's game (bg3harness.runner.run_host). run and resume take runtime/runner.lock like
-    `run`, and the cutscene skipper and the RAM watchdog run meanwhile."""
+    `run`, and the cutscene skipper and the RAM watchdog run meanwhile. runtime/STOP or a first SIGINT/SIGTERM ends
+    the run playing now, recorded (invalid: operator), and starts no new one; a second signal exits at once. Either
+    way the game a run brought up is stopped."""
     from bg3bench import matrix_cli  # _harness puts packages/bench/src on sys.path
-    from bg3harness.runner.run_host import LiveRunHost
+    from bg3harness.runner.run_host import LiveRunHost, stop_file, stop_on_signals
 
     host = LiveRunHost(lpt.Runner)
     if not argv or argv[0] not in ("run", "resume"):
         return matrix_cli.main(argv, repo=renv.REPO, host=host, out=sys.stdout)
     lock = acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
+    stop_file().unlink(missing_ok=True)  # a STOP left from before would stop the first run
+    stop_on_signals(host, renv.log)
     from bg3ai.skipper import start_background
     skip_stop = start_background(DEBUG_PORT, lambda m: renv.log(f"autoskip: {m}"), renv.RUNTIME / "skipper.lock")
     ram_stop = ramwatch.start_background(renv.log)
     try:
         return matrix_cli.main(argv, repo=renv.REPO, host=host, out=sys.stdout)
     finally:
+        host.abort()  # a second signal or an exception left a run open: its play process and game go
         for stop in (skip_stop, ram_stop):
             if stop is not None:
                 stop.set()

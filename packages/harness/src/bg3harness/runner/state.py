@@ -161,7 +161,7 @@ class SessionResult:
     sid: str
     claude_session: str
     exit_code: int | None
-    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | killed | milestone | dry_run
+    reason: str          # exited | hard_stop | crash | hang | agent_hang | aborted | stopped | killed | milestone | dry_run
     #                      | cap | api_limit (RUN-7: usage/rate limit, overload) | mcp_failed (RUN-8)
     #                      | context_overflow (pi: the conversation is full; the next session starts a new one)
     started: float

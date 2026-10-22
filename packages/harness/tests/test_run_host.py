@@ -76,6 +76,8 @@ class FakeRunner:
         self.mod_rev: str | None = None
         self.run_started: float | None = None
         self.settles_budget = True
+        self.stop_ends_session = False
+        self.stop_requested = False
         self.game_settings = {"difficulty": "Balanced"}
         self.facts_fail = False
         self.fail_at: dict[str, BaseException] = {}  # a call -> what it raises
@@ -114,6 +116,9 @@ class FakeRunner:
 
     def end_run_game(self, when: str = "", after: str = "") -> None:
         self.calls.append(f"end_run_game({when})")
+
+    def kill_agent(self) -> None:
+        self.calls.append("kill_agent")
 
     def session_hooks(self, sid: str, minutes: float) -> rstate.RunnerSessionHooks:
         return rstate.RunnerSessionHooks(self, sid, minutes)  # pyright: ignore[reportArgumentType]
@@ -437,3 +442,63 @@ def test_archive_moves_only_the_nav_files(tmp_path: Path):
     assert H.archive_nav_state(se, tmp_path / "dest") == ["nav_guard.json", "nav_x.json"]
     assert [p.name for p in se.iterdir()] == ["keep.json"]
     assert H.archive_nav_state(tmp_path / "missing", tmp_path / "dest") == []
+
+
+def stopped(reason: str = "stopped") -> SessionOutcome:
+    res = rstate.SessionResult("S001", "c-1", None, reason, 1000.0, 1000.0 + 5 * 60)
+    return SessionOutcome(res, 1000.0)
+
+
+def test_a_run_ends_its_session_on_an_operator_stop_and_is_recorded_invalid(rig: Rig):
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    r = rig.runners[-1]
+    assert (r.stop_ends_session, r.stop_requested, rig.h.stopped) == (True, False, False)
+    rig.h.stop()
+    assert r.stop_requested and rig.h.stopped  # the runner's agent loop ends the session on it
+    rig.calls.clear()
+    rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), stopped())
+    assert rig.calls == ["end_facts(gave_up)", "end_run_game(run end)"]
+    assert (rec["outcome"], rec["reason"], rec["operator"]) == ("gave_up", "stopped", "stop")
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"] and not H.nav_marker().exists()
+
+
+def test_a_run_that_ended_on_its_own_has_no_operator_mark(rig: Rig):
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert "operator" not in rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
+
+
+def test_no_run_starts_after_a_stop(rig: Rig):
+    rig.h.stop()
+    with pytest.raises(RuntimeError, match="operator stop: no new run starts"):
+        rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.runners == [] and rig.calls == []  # no runner, no game
+
+
+def test_the_stop_file_stops_new_runs_too(rig: Rig):
+    H.stop_file().parent.mkdir(parents=True, exist_ok=True)
+    H.stop_file().write_text("1")
+    assert rig.h.stopped
+    with pytest.raises(RuntimeError, match="no new run starts"):
+        rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+
+
+def test_a_stop_while_the_game_comes_up_starts_no_agent_and_stops_the_game(rig: Rig):
+    def prepare(r: FakeRunner) -> None:  # after start's own check: runtime/STOP written while the game comes up
+        H.stop_file().parent.mkdir(parents=True, exist_ok=True)
+        H.stop_file().write_text("1")
+
+    rig.prepare = prepare
+    with pytest.raises(RuntimeError, match="operator stop before the kickoff"):
+        rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.calls[-1] == "end_run_game(start failed)" and rig.h.runs == {}
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
+
+
+def test_abort_kills_the_agent_stops_the_game_and_puts_the_nav_files_back(rig: Rig):
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    rig.calls.clear()
+    rig.h.abort()
+    assert rig.calls == ["kill_agent", "end_run_game(operator exit)"] and rig.h.runs == {}
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"] and not H.nav_marker().exists()
+    rig.h.abort()  # nothing open: a no-op
+    assert rig.calls == ["kill_agent", "end_run_game(operator exit)"]

@@ -63,6 +63,8 @@ class SessionRunner(rgame.GameSide, ragent.AgentSide, rchecks.ChecksSide):
                 self.state.data["save_owner"] = owner
         self.stop_requested = False
         self.abort = False
+        self.stop_ends_session = False   # a bench run (run_host): an operator stop ends the session it is in
+        self.agent_proc: subprocess.Popen | None = None   # the play process while a session runs
         self.pending_notes: list[str] = []
         self.relaunch_save: Save | None = None   # maybe_relaunch -> ensure_game: the save the relaunch loads
         self.quick_failures = 0

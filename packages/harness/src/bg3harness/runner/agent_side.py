@@ -173,6 +173,7 @@ class AgentSide:
             jsonl.close()
             self.events_log = evlog.end("setup_failed", None, start, detail=str(e)[:300])
             raise
+        self.agent_proc = proc  # an operator's hard exit kills it (kill_agent): it runs in its own session
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
         last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
@@ -264,6 +265,13 @@ class AgentSide:
             if self.abort and reason == "exited":
                 reason = "aborted"
                 hard_stop = min(hard_stop, now)
+            if reason == "exited" and self.stop_ends_session and (self.stop_requested or (renv.RUNTIME / "STOP").exists()):
+                reason = "stopped"   # a bench run is one session: an operator stop ends it now, and it is recorded
+                human.write(f"{datetime.now():%H:%M:%S} [runner] operator stop (a signal or runtime/STOP); stopping "
+                            f"{client.name}\n")
+                renv.log(f"{sid}{tag}: operator stop; stopping {client.name}")
+                self.event("operator_stop", session=sid + tag)
+                hard_stop = min(hard_stop, now)
             if needs_game and now >= next_health and reason == "exited":
                 alive = self.game_alive()
                 ok = alive and game.game_state(renv.HEALTH_EVAL_TIMEOUT) is not None
@@ -324,6 +332,7 @@ class AgentSide:
             if "term" in signals_sent and "kill" not in signals_sent and now >= kill_at:
                 self._signal(proc, signal.SIGKILL)
                 signals_sent.append("kill")
+        self.agent_proc = None
         reader.join(timeout=10)
         self.sandbox_cleanup()
         reason = renv.exit_reason(reason, proc.returncode)
@@ -365,6 +374,14 @@ class AgentSide:
         return rstate.SessionResult(sid, seen_session[0], proc.returncode, reason, start, end, model=model, effort=effort,
                              detail=detail, fault_at=fault_at, resets_at=api["resets_at"],
                              tool_calls=api["tool_calls"])
+
+    def kill_agent(self) -> None:
+        """An operator's hard exit: SIGKILL the play process a session left running (it has its own session, so the
+        terminal's Ctrl-C never reaches it)."""
+        proc, self.agent_proc = self.agent_proc, None
+        if proc is not None and proc.poll() is None:
+            self._signal(proc, signal.SIGKILL)
+        self.sandbox_cleanup()
 
     def settle_cost(self, stem: str, usd: float) -> None:
         """One paid process's cost into runtime/budget.json, unless the run's host settles it (settles_budget)."""
