@@ -186,6 +186,15 @@ def test_scenario_ops(game: Game, model: GameModel) -> None:
     assert st["reapplied"] == {"seed": {"seed": 12345, "base_seed": 12345, "streams": 4}, "renames": 1}
     assert game.rpc("scn.undo")["restored"][0]["original"] == "Tav"
     assert game.rpc("scn.status")["renames"] == []
+    assert game.rpc("scn.karmic", {"set": True}) == {
+        "mode": "WeightedRandom", "karmic": True, "component_mode": "WeightedRandom", "before": "Random"
+    }  # fmt: skip
+    assert game.rpc("scn.karmic")["karmic"] is True
+    assert game.rpc("scn.difficulty")["difficulty"] == "Balanced"
+    with pytest.raises(GameError, match="read-only"):
+        game.rpc("scn.difficulty", {"set": "Explorer"})
+    assert game.rpc("scn.rename_avatar", {"name": "Ana"})["before"] == "Tav"
+    assert game.rpc("state.status")["party"][0]["name"] == "Ana"
     model.scenario_setup = False
     with pytest.raises(GameError, match="BG3AI_SCENARIO_SETUP=1"):
         game.rpc("scn.status")

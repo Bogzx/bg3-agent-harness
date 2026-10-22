@@ -150,6 +150,8 @@ class GameModel:
         self.scn_renames: list[dict[str, Any]] = []
         self.scn_applied: dict[str, Any] = {}
         self.scn_reapplied: dict[str, Any] = {}
+        self.roll_mode = "Random"  # RollModeType (WeightedRandom = Karmic Dice on)
+        self.difficulty = "Balanced"
         self.names: dict[str, str] = {}
         self.chosen: list[int] = []
 
@@ -514,7 +516,28 @@ class GameModel:
 
     def op_scn_karmic(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         self._scn()
-        return {"mode": "Random", "karmic": False, "component_mode": "Random"}
+        before, want = self.roll_mode, args.get("set")
+        if want is not None:
+            if not isinstance(want, bool):
+                raise RuntimeError("set must be true or false")
+            self.roll_mode = "WeightedRandom" if want else "Random"
+        out = {"mode": self.roll_mode, "karmic": self.roll_mode == "WeightedRandom", "component_mode": self.roll_mode}
+        return out if want is None else {**out, "before": before}
+
+    def op_scn_difficulty(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        self._scn()
+        if args.get("set") is not None:
+            raise RuntimeError("difficulty is read-only here: the game applies it through its Options flow")
+        return {"difficulty": self.difficulty, "rulesets": [{"uuid": _uuid(900), "name": self.difficulty}]}
+
+    def op_scn_rename_avatar(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        self._scn()
+        name = args.get("name")
+        if not isinstance(name, str) or not name:
+            raise RuntimeError("name must be 1..40 letters, digits, spaces, _ or -")
+        host = self.party[0]
+        before, host.name = host.name, name
+        return {"uuid": host.uuid, "original": before, "before": before, "name": name}
 
     def op_scn_rename(self, ctx: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         self._scn()
@@ -579,6 +602,8 @@ _OPS: dict[str, OpFn] = {
     "scn.seed": GameModel.op_scn_seed,
     "scn.karmic": GameModel.op_scn_karmic,
     "scn.rename": GameModel.op_scn_rename,
+    "scn.difficulty": GameModel.op_scn_difficulty,
+    "scn.rename_avatar": GameModel.op_scn_rename_avatar,
     "scn.undo": GameModel.op_scn_undo,
     "scn.status": GameModel.op_scn_status,
 }

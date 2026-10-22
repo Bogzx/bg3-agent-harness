@@ -1,4 +1,5 @@
--- Scenario setup (server context): seeded dice, the Karmic Dice read and rename perturbation for benchmark runs.
+-- Scenario setup (server context): seeded dice, Karmic Dice, the difficulty read, the avatar's name and the rename
+-- perturbation for benchmark runs and start-save authoring (tools/saves/make_start_save.py).
 --
 -- Every op is refused unless the game process runs with BG3AI_SCENARIO_SETUP=1 (a normal playthrough never has it),
 -- and only the harness calls them, never an MCP tool (bridge/tests/test_referee.py). These are not agent actions,
@@ -11,6 +12,9 @@
 --            the system copy is overwritten from it within a tick, §5).
 --   renames: Ext.Loca changes are process-wide and survive loads (§8): the record keeps each original text so
 --            scn.undo restores it even after a load, and re-applies after a game restart.
+--   karmic, avatar name: NOT recorded. Both are state of the loaded game (the save keeps them once saved), so their
+--            originals live in this Lua state only: a load rebuilds it and scn.undo then has nothing to restore
+--            (a recorded original would rename the next save's avatar back at a later run's scn.undo).
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -87,6 +91,67 @@ function S.karmic()
     return { mode = mode, karmic = mode == "WeightedRandom", component_mode = ok and comp or nil }
 end
 
+local function writeMode(mode)
+    Ext.System.ServerRollSave.RollManager.RollModeType = mode
+    streams().RollModeType = mode
+end
+
+-- What leaving Options with the checkbox changed does (live1 §3): RollModeType on the system and on the component
+-- (the one a save keeps). Read back after the write; the first original is kept for scn.undo.
+function S.setKarmic(on)
+    local before = S.karmic()
+    local want = on and "WeightedRandom" or "Random"
+    writeMode(want)
+    local after = S.karmic()
+    if after.mode ~= want or after.component_mode ~= want then
+        error("RollModeType read back " .. tostring(after.mode) .. " / " .. tostring(after.component_mode)
+            .. " after writing " .. want)
+    end
+    if S.karmicOriginal == nil then S.karmicOriginal = before.mode end
+    after.before = before.mode
+    return after
+end
+
+-- The difficulty is the save's Ruleset component (Balanced, Explorer, Tactician, ...). Read only: the game sets it
+-- through its own Options flow (Rulesets, RulesetModifiers, the DifficultyChanged event), not one field write.
+function S.difficulty()
+    local ok, rs = pcall(function()
+        return Ext.Entity.GetAllEntitiesWithComponent("Ruleset")[1].Ruleset.Rulesets
+    end)
+    if not ok or not rs then error("no Ruleset component (no save loaded?)") end
+    local out = {}
+    for _, g in ipairs(rs) do
+        local okr, r = pcall(Ext.StaticData.Get, g, "Ruleset")
+        out[#out + 1] = { uuid = tostring(g), name = okr and r and r.Name or nil }
+    end
+    return { difficulty = out[1] and out[1].name or nil, rulesets = out }
+end
+
+------------------------------------------------------------------------
+-- The avatar's name (CustomName: the party panel, the save folder's owner)
+------------------------------------------------------------------------
+
+local function avatarEntity()
+    local host = Osi.GetHostCharacter()
+    if type(host) ~= "string" or host == "" then error("no host character (no save loaded?)") end
+    host = host:match("%x+%-%x+%-%x+%-%x+%-%x+$") or host
+    local e = Ext.Entity.Get(host)
+    if not e then error("no entity for the host character " .. host) end
+    if not e.CustomName then error("the host character has no CustomName (an origin avatar can't be renamed)") end
+    return e, host
+end
+
+function S.renameAvatar(name)
+    local e, host = avatarEntity()
+    local before = e.CustomName.Name
+    e.CustomName.Name = name
+    pcall(function() e:Replicate("CustomName") end)
+    if e.CustomName.Name ~= name then error("CustomName read back " .. tostring(e.CustomName.Name)) end
+    if not S.avatar or S.avatar.uuid ~= host then S.avatar = { uuid = host, original = before } end
+    S.avatar.name = name
+    return { uuid = host, original = S.avatar.original, before = before, name = name }
+end
+
 ------------------------------------------------------------------------
 -- Renames
 ------------------------------------------------------------------------
@@ -118,7 +183,8 @@ function S.rename(uuid, name)
     return { uuid = uuid, handle = h, original = r.original, name = name }
 end
 
--- Restores every original, newest first, then forgets them.
+-- Restores every original, newest first, then forgets them. Karmic and the avatar's name only when this Lua state
+-- changed them (no load since) and, for the name, only while it is still the one set here.
 function S.undo()
     local restored = {}
     for i = #S.rec.renames, 1, -1 do
@@ -129,7 +195,22 @@ function S.undo()
     S.rec.renames = {}
     S.rec.seed = nil
     save()
-    return restored
+    local out = { restored = restored }
+    if S.karmicOriginal ~= nil then
+        local ok, err = pcall(writeMode, S.karmicOriginal)
+        out.karmic = ok and S.karmicOriginal or ("not restored: " .. tostring(err))
+        S.karmicOriginal = nil
+    end
+    if S.avatar then
+        local ok, e, host = pcall(avatarEntity)
+        if ok and host == S.avatar.uuid and e.CustomName.Name == S.avatar.name then
+            e.CustomName.Name = S.avatar.original
+            pcall(function() e:Replicate("CustomName") end)
+            out.avatar = S.avatar.original
+        end
+        S.avatar = nil
+    end
+    return out
 end
 
 ------------------------------------------------------------------------
@@ -180,7 +261,29 @@ op("scn.seed", function(args)
     return S.applySeed(seed)
 end)
 
-op("scn.karmic", function() return S.karmic() end)
+-- {} reads; {set = false|true} turns Karmic Dice off / on (read back).
+op("scn.karmic", function(args)
+    if args.set == nil then return S.karmic() end
+    if type(args.set) ~= "boolean" then error("set must be true or false") end
+    return S.setKarmic(args.set)
+end)
+
+-- {} reads; a set is refused (S.difficulty: the game's Options flow owns it).
+op("scn.difficulty", function(args)
+    if args.set ~= nil then
+        error("difficulty is read-only here: the game applies it through its Options flow (Rulesets and "
+            .. "modifiers together); change it in Options > Gameplay")
+    end
+    return S.difficulty()
+end)
+
+-- {name}: the host avatar's CustomName.
+op("scn.rename_avatar", function(args)
+    if type(args.name) ~= "string" or not args.name:match("^[%w][%w _-]*$") or #args.name > 40 then
+        error("name must be 1..40 letters, digits, spaces, _ or - (it becomes the save folder's owner)")
+    end
+    return S.renameAvatar(args.name)
+end)
 
 -- {renames = [{uuid, name}]}
 op("scn.rename", function(args)
@@ -194,7 +297,7 @@ op("scn.rename", function(args)
     return out
 end)
 
-op("scn.undo", function() return { restored = S.undo() } end)
+op("scn.undo", function() return S.undo() end)
 
 op("scn.status", function()
     return { seed = S.rec.seed, applied = S.applied, reapplied = S.reapplied, renames = S.rec.renames }

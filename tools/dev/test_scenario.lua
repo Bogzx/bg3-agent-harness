@@ -1,6 +1,7 @@
--- Offline tests for Server/Scenario.lua: scenario setup RPCs (B-mod task 3).
+-- Offline tests for Server/Scenario.lua: scenario setup RPCs (B-mod task 3, mod round 6).
 -- Refused without BG3AI_SCENARIO_SETUP=1; seed writes the ServerRollStreams component and is re-applied after a
--- load; renames are idempotent and undone, also after a load (a fresh Lua state reading the record file).
+-- load; renames are idempotent and undone, also after a load (a fresh Lua state reading the record file); Karmic
+-- set/read back, the difficulty read (set refused) and the avatar's CustomName, undone only in the same Lua state.
 -- Ext, Osi and RPC are stubbed. Run: tools/dev/test_scenario.sh  (Lua 5.3 + 5.4 in Docker)
 
 local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -25,6 +26,21 @@ local function freshStreams()
 end
 freshStreams()
 local systemMode = "Random"
+local modeWrites = true -- false: the engine ignores a RollModeType write (the read-back must catch it)
+local rollManager = setmetatable({}, {
+    __index = function(_, k)
+        if k == "RollModeType" then return setmetatable({}, { __tostring = function() return systemMode end }) end
+    end,
+    __newindex = function(_, k, v) if k == "RollModeType" and modeWrites then systemMode = v end end,
+})
+local BALANCED, EXPLORER = "11111111-0000-0000-0000-000000000001", "11111111-0000-0000-0000-000000000002"
+local rulesets = { BALANCED }
+local TAV = "S_Player_Claude_cccccccc-0000-0000-0000-000000000001"
+local TAV_UUID = "cccccccc-0000-0000-0000-000000000001"
+local replicated = {}
+local avatar = { CustomName = { Name = "Claude" } }
+function avatar:Replicate(c) replicated[#replicated + 1] = c end
+local host = TAV
 
 -- Ext.Json stand-in: Stringify keeps a deep copy under a token string, Parse returns a fresh copy of it, so the
 -- record file round-trips like JSON would (no shared tables between Lua states).
@@ -62,15 +78,24 @@ Ext = {
         SaveFile = function(p, s) files[p] = s return true end,
     },
     Json = { Stringify = function(v) return encode(v) end, Parse = function(s) return decode(s) end },
-    Entity = { GetAllEntitiesWithComponent = function() return { { ServerRollStreams = RS } } end },
-    System = { ServerRollSave = { RollManager = { RollModeType = setmetatable({}, {
-        __tostring = function() return systemMode end }) } } },
+    Entity = {
+        GetAllEntitiesWithComponent = function(c)
+            if c == "Ruleset" then return rulesets and { { Ruleset = { Rulesets = rulesets } } } or {} end
+            return { { ServerRollStreams = RS } }
+        end,
+        Get = function(u) return u == TAV_UUID and avatar or nil end,
+    },
+    StaticData = { Get = function(g, t)
+        if t ~= "Ruleset" then return nil end
+        return ({ [BALANCED] = { Name = "Balanced" }, [EXPLORER] = { Name = "Explorer" } })[g]
+    end },
+    System = { ServerRollSave = { RollManager = rollManager } },
     Loca = {
         GetTranslatedString = function(h) return loca[h] end,
         UpdateTranslatedString = function(h, s) loca[h] = s return true end,
     },
 }
-Osi = { GetDisplayName = function(u) return handles[u] end }
+Osi = { GetDisplayName = function(u) return handles[u] end, GetHostCharacter = function() return host end }
 
 local failures, passed = 0, 0
 local function check(name, cond, extra)
@@ -87,13 +112,16 @@ end
 local S = boot()
 
 -- Refused without the switch: every op, and nothing changes.
-for _, name in ipairs({ "scn.seed", "scn.karmic", "scn.rename", "scn.undo", "scn.status" }) do
-    local ok, err = call(name, { seed = 1, renames = { { uuid = MATTIS, name = "X" } } })
+for _, name in ipairs({ "scn.seed", "scn.karmic", "scn.rename", "scn.undo", "scn.status", "scn.difficulty",
+    "scn.rename_avatar" }) do
+    local ok, err = call(name, { seed = 1, renames = { { uuid = MATTIS, name = "X" } }, set = false, name = "Tav" })
     check("refused " .. name, not ok and tostring(err):find("BG3AI_SCENARIO_SETUP=1", 1, true), err)
 end
 check("refused: no seed written", RS.BaseSeed == 1792610389 and RS.Streams[1].State.NumRolls == 614)
 check("refused: no rename", loca.hMattis == "Mattis")
 check("refused: no record", files[S.RECORD] == nil)
+check("refused: karmic and avatar untouched", systemMode == "Random" and RS.RollModeType == "WeightedRandom"
+    and avatar.CustomName.Name == "Claude")
 env.BG3AI_SCENARIO_SETUP = "0"
 check("switch must be 1", not call("scn.karmic"))
 
@@ -198,6 +226,85 @@ do
     local ok, err = call("scn.seed", { seed = 1 })
     check("no component", not ok and tostring(err):find("ServerRollStreams", 1, true), err)
     Ext.Entity.GetAllEntitiesWithComponent = saved
+end
+
+-- Karmic set: both copies written and read back; the first original is kept; undo restores it.
+do
+    S = boot()
+    systemMode, RS.RollModeType = "WeightedRandom", "WeightedRandom"
+    local res
+    local ok, k = call("scn.karmic", { set = false })
+    check("karmic set off", ok and k.karmic == false and k.mode == "Random" and k.component_mode == "Random"
+        and k.before == "WeightedRandom", k)
+    check("karmic off written", systemMode == "Random" and RS.RollModeType == "Random")
+    ok, k = call("scn.karmic", { set = false })
+    check("karmic off again", ok and k.before == "Random" and S.karmicOriginal == "WeightedRandom")
+    check("karmic bad set", not call("scn.karmic", { set = "no" }))
+    ok, k = call("scn.karmic")
+    check("karmic read still", ok and k.karmic == false and k.before == nil)
+    modeWrites = false
+    local okw, err = call("scn.karmic", { set = true })
+    check("karmic write ignored: refused", not okw and tostring(err):find("read back", 1, true), err)
+    modeWrites = true
+    RS.RollModeType = "Random"
+    ok, res = call("scn.undo")
+    check("undo restores karmic", ok and res.karmic == "WeightedRandom" and systemMode == "WeightedRandom"
+        and RS.RollModeType == "WeightedRandom", res and res.karmic)
+    ok, res = call("scn.undo")
+    check("undo karmic once", ok and res.karmic == nil)
+end
+
+-- Difficulty: read from the Ruleset component; a set is refused and changes nothing.
+do
+    local ok, d = call("scn.difficulty")
+    check("difficulty read", ok and d.difficulty == "Balanced" and d.rulesets[1].uuid == BALANCED, d)
+    rulesets = { EXPLORER, "11111111-0000-0000-0000-00000000dead" }
+    ok, d = call("scn.difficulty")
+    check("difficulty explorer", ok and d.difficulty == "Explorer" and #d.rulesets == 2 and d.rulesets[2].name == nil)
+    local okset, err = call("scn.difficulty", { set = "Balanced" })
+    check("difficulty set refused", not okset and tostring(err):find("read-only", 1, true), err)
+    check("difficulty unchanged", rulesets[1] == EXPLORER)
+    rulesets = nil
+    okset, err = call("scn.difficulty")
+    check("no ruleset component", not okset and tostring(err):find("Ruleset", 1, true), err)
+    rulesets = { BALANCED }
+end
+
+-- Avatar rename: CustomName written, replicated, read back; the first original kept; undo only while it's ours.
+do
+    local res
+    local ok, r = call("scn.rename_avatar", { name = "Tav" })
+    check("avatar renamed", ok and r.uuid == TAV_UUID and r.original == "Claude" and r.name == "Tav"
+        and avatar.CustomName.Name == "Tav" and replicated[#replicated] == "CustomName", r)
+    ok, r = call("scn.rename_avatar", { name = "Tav Two" })
+    check("avatar rename again keeps original", ok and r.original == "Claude" and r.before == "Tav")
+    for _, bad in ipairs({ "", " Tav", "Tav.", ("x"):rep(41), 5 }) do
+        check("bad avatar name " .. tostring(bad), not call("scn.rename_avatar", { name = bad }))
+    end
+    check("bad names change nothing", avatar.CustomName.Name == "Tav Two")
+    ok, res = call("scn.undo")
+    check("undo restores avatar", ok and res.avatar == "Claude" and avatar.CustomName.Name == "Claude", res)
+    -- Someone else renamed it since: undo leaves it.
+    call("scn.rename_avatar", { name = "Tav" })
+    avatar.CustomName.Name = "Other"
+    ok, res = call("scn.undo")
+    check("undo leaves a foreign name", ok and res.avatar == nil and avatar.CustomName.Name == "Other")
+    -- A load (fresh Lua state): the save keeps the name; undo has nothing to restore and the record has no avatar.
+    call("scn.rename_avatar", { name = "Tav" })
+    S = boot()
+    ok, res = call("scn.undo")
+    check("no avatar undo after a load", ok and res.avatar == nil and avatar.CustomName.Name == "Tav")
+    check("avatar not in the record", decode(files[S.RECORD]).avatar == nil)
+    -- No CustomName / no host / no entity.
+    avatar.CustomName = nil
+    local okn, err = call("scn.rename_avatar", { name = "Tav" })
+    check("no CustomName", not okn and tostring(err):find("CustomName", 1, true), err)
+    avatar.CustomName = { Name = "Claude" }
+    host = nil
+    check("no host", not call("scn.rename_avatar", { name = "Tav" }))
+    host = "dddddddd-0000-0000-0000-000000000009"
+    check("no entity", not call("scn.rename_avatar", { name = "Tav" }))
+    host = TAV
 end
 
 print(string.format("scenario: %d passed, %d failed", passed, failures))
