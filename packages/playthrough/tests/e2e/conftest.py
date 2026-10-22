@@ -22,6 +22,7 @@ from bg3play.supervisor import NoKeeper, SessionRequest, SessionResult, Supervis
 from playwright.sync_api import Browser, ConsoleMessage, Error, Page
 
 from ..conftest import FIXTURE, PT, git
+from .webbuild import build_problem
 
 S096_START = 1792311134.6876369
 VIDEO_AT = 1792311194.0  # 60 s into S096
@@ -49,8 +50,8 @@ class Site(TypedDict):
 
 @pytest.fixture(scope="module")
 def site(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Site]:
-    if not (DEFAULT_WEB / "index.html").is_file():
-        pytest.fail(f"no built web app at {DEFAULT_WEB}: run `npm ci && npm run build` in packages/playthrough/web")
+    if problem := build_problem(DEFAULT_WEB.parent):
+        pytest.fail(problem)
     root = tmp_path_factory.mktemp("e2e")
     run = root / "run"
     shutil.copytree(FIXTURE, run)
@@ -113,6 +114,9 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Site]:
 @pytest.fixture(scope="module")
 def browser() -> Iterator[Browser]:
     from playwright.sync_api import sync_playwright
+
+    if problem := build_problem(DEFAULT_WEB.parent):  # every page opens the built app: not an old build of it
+        pytest.fail(problem)
 
     with sync_playwright() as p:
         b = p.chromium.launch(args=["--no-sandbox"])
