@@ -20,10 +20,11 @@ from typing import Any, cast
 import pytest
 from bg3bench import matrix, scenario
 from bg3bench.adapters.session_run import SessionRun, series_name
+from bg3harness import profiles
 from bg3harness.runner import env as renv
 from bg3harness.runner import run_host as H  # noqa: N812
 from bg3harness.runner import state as rstate
-from test_run_host import FakeRunner, Rig, rig  # noqa: F401  (rig: the fixture)
+from test_run_host import FakeRunner, Rig, outcome, rig, run_dir  # noqa: F401  (rig: the fixture)
 
 pytestmark = pytest.mark.e2e
 
@@ -264,3 +265,30 @@ def test_a_claude_run_stopped_before_its_result_has_an_unknown_cost_not_zero(rig
     assert (rec["cost_usd"], rec["cost_unknown"], rec["turns"]) == (None, True, 1)
     assert sum(rec["tokens"].values()) == 208900
     assert rec["_result"]["cost_usd"] is None and rec["_result"]["valid"]  # graded; its cost unknown, not free
+
+
+def test_a_text_only_profile_doesnt_take_the_screenshots_from_the_next_job(rig: Rig):
+    # H1: profiles.tool_env only ever added to BG3AI_TOOLS_OFF, so an image model run after deepseek-v4-pro (text only)
+    # in one `bg3bench run` played without screenshots
+    profiles_dir = Path(__file__).resolve().parents[3] / "profiles"
+    seen: list[str] = []
+    rig.env |= {"DEEPSEEK_API_KEY": "test-key", "OPENROUTER_API_KEY": "test-key"}  # never the repo's .env
+
+    def files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
+        seen.append(rig.env["BG3AI_TOOLS_OFF"])  # what the client's run files (manifest, tool count) are dumped with
+        return {}
+
+    host = H.LiveRunHost(lambda opt: ScriptedRunner(opt, rig.calls), run_files=files, env=rig.env, clock=lambda: T0)
+    for name in ("deepseek-v4-pro.toml", "opus-5.5-pi.toml"):
+        model = profiles.load(profiles_dir / name).model
+        job = {
+            "model": model,
+            "client": "pi",
+            "effort": None,
+            "condition": "rules",
+            "profile": str(profiles_dir / name),
+        }
+        d = run_dir(f"m-{name}")
+        host.start(job, SC, d)
+        host.record(job, SC, d, outcome())
+    assert seen == ["memory,screenshots", "memory"]
