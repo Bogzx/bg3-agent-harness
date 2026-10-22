@@ -189,6 +189,30 @@ class ServerRules(ServerBase):
         self.assertIn("session S001", out)
         self.assertNotIn("RULES TEXT", memory.session_start())   # already shown this session
 
+    def test_no_memory_dir_first_call_still_carries_the_rules(self):
+        # pi r12: with no memory dir no session opens, so no briefing was pending and the first result had no rules
+        core.MEMORY = core.MEMORY.parent / "no-memory-here"
+        for cond in ("rules", "rules+coaching"):
+            text = rules.load(condition=cond)
+            core.RULES = rules.Once(text)
+            out = memory.memory_list("knowledge")
+            self.assertTrue(out.startswith("=== RULES (once per session"), out[:200])
+            self.assertIn(text, out)
+            self.assertIn("=== the result of your call ===", out)
+            self.assertNotIn("=== RULES", memory.memory_list("knowledge"))   # once
+        self.assertFalse(core.MEMORY.exists())   # nothing was opened or written
+
+    def test_no_rules_prefix_outside_the_server_process(self):
+        # the dev checks and the tests import the server and call its tools: no auto session, no rules prefix
+        core.MEMORY = core.MEMORY.parent / "no-memory-here"
+        core.LIFE.auto = False
+        self.assertNotIn("RULES", memory.memory_list("knowledge"))
+
+    def test_no_memory_dir_and_rules_off(self):
+        os.environ["BG3AI_SERVE_RULES"] = "0"
+        core.MEMORY = core.MEMORY.parent / "no-memory-here"
+        self.assertNotIn("RULES", memory.memory_list("knowledge"))
+
     def test_off_for_claude_code(self):
         os.environ["BG3AI_SERVE_RULES"] = "0"
         self.assertNotIn("RULES TEXT", memory.session_start())

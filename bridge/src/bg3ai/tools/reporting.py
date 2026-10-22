@@ -596,8 +596,11 @@ def _guard(fn):
             busy = busywait.note(getattr(core.game, "busy_waited", lambda: 0.0)())
             if busy and isinstance(out, str):  # the calls waited out bg3le's busy UI (busywait.py): say how long
                 out = out + "\n" + busy
-            if core.LIFE.pending and isinstance(out, str):  # the briefing rides on the first text result
-                out = core.RULES.wrap(core.LIFE.take_pending(), memory._session_key()) + "\n\n=== the result of your call ===\n" + out
+            if (core.LIFE.pending or (core.LIFE.auto and core.RULES.due())) and isinstance(out, str):
+                # the briefing rides on the first text result, and the server's rules do with no memory dir too (no
+                # session opens there; pi r12: a client that ignores `instructions` got no rules at all)
+                head = core.RULES.wrap(core.LIFE.take_pending(), memory._session_key()).strip()
+                out = head + "\n\n=== the result of your call ===\n" + out if head else out
             return out
         except memtools.Refused as e:
             return _finish(fn.__name__, kw, str(e), t0, events=False)

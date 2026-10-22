@@ -38,9 +38,8 @@ python3 tools/memory/new_playthrough.py my-run --memory-dir DIR --no-link       
 ```
 
 and point `BG3AI_MEMORY_DIR` at it if it isn't `play/memory`. With a memory, the first tool call opens session
-S001 (`memory/sessions/S001.md`) and its result begins with the rules of play. Without one, no session opens, the
-first result carries no rules, and the client gets them only through the instructions, the prompt and the resource
-below.
+S001 (`memory/sessions/S001.md`) and its result begins with the rules of play. Without one, no session opens, but
+the first result still begins with the same rules.
 
 ## The rules and the server instructions
 
@@ -48,7 +47,7 @@ The server sends the rules of play four ways, so a client needs no files from th
 
 - in the `instructions` of its initialize result: the server's own notes on the tools, then `=== RULES ===` and
   the rules text;
-- at the top of the first tool result of a session (with a memory, see above), once per session.
+- at the top of the first tool result, once per session (per server process when there is no memory).
   `session_start(rules=true)` shows them again;
 - as the MCP prompt `rules`;
 - as the resource `bg3://rules`.

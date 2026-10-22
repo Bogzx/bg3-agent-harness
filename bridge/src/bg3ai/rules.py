@@ -5,8 +5,9 @@ assemble.py: "rules" (how the game, the tools, fairness and the clock line work;
 "rules+coaching" (plus how to play well and the playthrough's memory protocol). Claude Code reads play/CLAUDE.md by
 itself (`claude -p` runs in play/), the generated rules+coaching text for the claude client. Any other client gets
 assemble(default_condition()) from the server: in the initialize result's `instructions`,
-prepended to the first briefing of a session (session_start, or the first tool result in manual mode; a client that
-ignores `instructions` still sees them), and as the `rules` prompt and the bg3://rules resource.
+prepended to the first briefing of a session (session_start, or the first tool result in manual mode, and with no
+memory dir too; a client that ignores `instructions` still sees them), and as the `rules` prompt and the
+bg3://rules resource.
 $BG3AI_RULES_PATH serves that file verbatim instead. $BG3AI_SERVE_RULES=0 turns the instructions and the briefing
 copy off (play/.mcp.json for Claude Code; pi, whose system text carries the rules: D2).
 
@@ -95,6 +96,10 @@ class Once:
     def header(self) -> str:
         return (f"=== RULES (once per session; session_start(rules=true), the `rules` prompt or "
                 f"{URI} give them again) ===\n{self.rules}\n=== end of rules ===")
+
+    def due(self) -> bool:
+        """Not served yet in this process (the first tool result carries them, with a memory session or not)."""
+        return self.sent_for is None and bool(self.rules) and serve_enabled()
 
     def take(self, key: str, force: bool = False) -> str:
         if not self.rules or not (force or serve_enabled()):
