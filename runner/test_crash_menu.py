@@ -48,7 +48,7 @@ class FakeMenuGame:
         self.splash, self.flip, self.load_starts = splash, flip, load_starts
         self.polls, self.presses, self.loads, self.loading, self.running = 0, 0, [], 0, False
         self.load_gate = True  # the mod's persisted load gate (ui.config load_enabled)
-        self.refuse = None  # ui.menu load raises this RpcError text
+        self.refuse: str | None = None  # ui.menu load raises this RpcError text
 
     def game_state(self, timeout: float = 0):
         self.polls += 1
@@ -62,12 +62,12 @@ class FakeMenuGame:
             return ("LoadMenu", "Menu")[self.polls % 2] if self.flip else "LoadMenu"
         return "Menu"
 
-    def rpc(self, op: str, args=None, context: str = "server", timeout: float = 0):
+    def rpc(self, op: str, args: dict | None = None, context: str = "server", timeout: float = 0):
         if op == "ui.state":
             if self.running:
                 return {"screen": "game"}
             return {"screen": "game", "panels_open": ["SplashScreen"]} if self.splash else {"screen": "main_menu"}
-        if op == "ui.config" and "load_enabled" in (args or {}):
+        if op == "ui.config" and args and "load_enabled" in args:
             self.load_gate = args["load_enabled"]
         if op == "ui.menu":
             if self.splash:
@@ -305,12 +305,12 @@ class RestartDrift(unittest.TestCase):
         g, label, _log = self.run_restart(now)
         self.assertEqual((label, len(g.loads)), (None, 0))
         moved = dict(now, party_pos={"Karlach": [300.0, 46.4, 224.3], "Claude": [90.0, 46.4, 224.3]})
-        self.assertIn("Claude stands 75 m from", P.state_drift(end, moved))
+        self.assertIn("Claude stands 75 m from", P.state_drift(end, moved) or "")
 
     def test_state_drift(self):
         self.assertIsNone(P.state_drift(None, self.END))
-        self.assertIn("journal_steps 414", P.state_drift(self.END, dict(self.END, journal_steps=414)))
-        self.assertIn("40 m from", P.state_drift(self.END, dict(self.END, pos=[55.3, 46.4, 224.3])))
+        self.assertIn("journal_steps 414", P.state_drift(self.END, dict(self.END, journal_steps=414)) or "")
+        self.assertIn("40 m from", P.state_drift(self.END, dict(self.END, pos=[55.3, 46.4, 224.3])) or "")
 
 
 if __name__ == "__main__":

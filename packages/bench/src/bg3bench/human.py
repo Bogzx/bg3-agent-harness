@@ -20,7 +20,7 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 SCHEMA = 1
 MODEL_PREFIX = "human"
@@ -37,9 +37,17 @@ def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
 
 
-def _check_attempt(a: Any, where: str, scenarios: Mapping[str, Mapping]) -> list[str]:
-    if not isinstance(a, dict):
+def _pick_ok(obj: Any) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    p = cast(dict[str, Any], obj)
+    return set(p) == {"scene", "pick"} and all(isinstance(v, str) for v in p.values())
+
+
+def _check_attempt(obj: Any, where: str, scenarios: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    if not isinstance(obj, dict):
         return [f"{where}: not an object"]
+    a = cast(dict[str, Any], obj)
     errs = [f"{where}: unknown key {k!r}" for k in sorted(set(a) - _KEYS)]
     if a.get("scenario") not in scenarios:
         errs.append(f"{where}: unknown scenario {a.get('scenario')!r}")
@@ -65,13 +73,10 @@ def _check_attempt(a: Any, where: str, scenarios: Mapping[str, Mapping]) -> list
         errs.append(f"{where}: void must be null or the reason")
     picks = a.get("picks")
     if picks is not None:
-        sc = scenarios.get(a.get("scenario")) or {}
+        sc = scenarios.get(a.get("scenario", "")) or {}
         if sc.get("family") != "choice":
             errs.append(f"{where}: picks only belong to a choice scenario")
-        ok = isinstance(picks, list) and all(
-            isinstance(p, dict) and set(p) == {"scene", "pick"} and all(isinstance(v, str) for v in p.values())
-            for p in picks
-        )
+        ok = isinstance(picks, list) and all(_pick_ok(p) for p in cast(list[Any], picks))
         if not ok:
             errs.append(f"{where}: picks must be a list of {{scene, pick}} strings")
     if a.get("notes") is not None and not isinstance(a["notes"], str):
@@ -79,10 +84,11 @@ def _check_attempt(a: Any, where: str, scenarios: Mapping[str, Mapping]) -> list
     return errs
 
 
-def validate(data: Any, scenarios: Mapping[str, Mapping]) -> list[str]:
+def validate(obj: Any, scenarios: Mapping[str, Mapping[str, Any]]) -> list[str]:
     """Problems with a human results file (empty: valid). `scenarios`: name -> loaded scenario (scenario.load)."""
-    if not isinstance(data, dict):
+    if not isinstance(obj, dict):
         return ["not an object"]
+    data = cast(dict[str, Any], obj)
     errs = [f"unknown key {k!r}" for k in sorted(set(data) - {"schema", "player", "game_version", "attempts"})]
     if data.get("schema") != SCHEMA:
         errs.append(f"schema must be {SCHEMA}")
@@ -94,7 +100,7 @@ def validate(data: Any, scenarios: Mapping[str, Mapping]) -> list[str]:
     if not isinstance(attempts, list):
         return [*errs, "attempts must be a list"]
     seen: dict[str, list[int]] = {}
-    for i, a in enumerate(attempts):
+    for i, a in enumerate(cast(list[Any], attempts)):
         a_errs = _check_attempt(a, f"attempts[{i}]", scenarios)
         errs += a_errs
         if not a_errs:
@@ -105,7 +111,7 @@ def validate(data: Any, scenarios: Mapping[str, Mapping]) -> list[str]:
     return errs
 
 
-def load(path: str | Path, scenarios: Mapping[str, Mapping]) -> dict:
+def load(path: str | Path, scenarios: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     errs = validate(data, scenarios)
     if errs:
@@ -113,21 +119,24 @@ def load(path: str | Path, scenarios: Mapping[str, Mapping]) -> dict:
     return data
 
 
-def headline_pass(attempt: Mapping, scenario: Mapping) -> bool:
+def headline_pass(attempt: Mapping[str, Any], scenario: Mapping[str, Any]) -> bool:
     """Passed as the model headline counts it: reported passed, no reload, goal met inside the run cap."""
     if not attempt["passed"] or attempt["reloads"]:
         return False
-    cap = (scenario.get("caps") or {}).get("run_hours")
+    caps: Mapping[str, Any] = scenario.get("caps") or {}
+    cap = caps.get("run_hours")
     return cap is None or attempt["t_pass_s"] <= cap * 3600
 
 
-def run_id(player: str, attempt: Mapping) -> str:
+def run_id(player: str, attempt: Mapping[str, Any]) -> str:
     return f"human-{player}-{attempt['scenario']}-a{attempt['attempt']:02d}"
 
 
-def pairs(data: Mapping, scenarios: Mapping[str, Mapping], bench_version: str) -> list[tuple[dict, dict]]:
+def pairs(
+    data: Mapping[str, Any], scenarios: Mapping[str, Mapping[str, Any]], bench_version: str
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     """A validated human results file -> (manifest, result) pairs for results.build_results."""
-    out = []
+    out: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for a in data["attempts"]:
         sc = scenarios[a["scenario"]]
         rid = run_id(data["player"], a)

@@ -15,6 +15,7 @@ REAL = HERE.parents[1] / "runtime" / "sessions"
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "bridge" / "src"))
 import seriesview as V  # noqa: E402
+from bg3harness import clients, events  # noqa: E402  (runs.py's `clients`/`events` are shims of these)
 
 NAUT = ("naut", "naut-r2", "naut-r3")
 HAVE_NAUT = all((REAL / n / "runner.json").exists() for n in NAUT) and (REAL / "naut" / "runs.jsonl").exists()
@@ -214,8 +215,8 @@ class Synthetic(unittest.TestCase):
         self.assertEqual((u["tokens_m"], u["running_streams"], u["estimated"]), (round(1500 / 1e6, 2), 1, True))
         self.assertAlmostEqual(u["cost_usd"], 3.0)
         # S002 stopped before its result (a cap: the runner's session_end): a finished process, counted once
-        log = V.R.events.EventLog(d / "S002.events.jsonl")
-        log.write(V.R.clients.Event("usage", message_id="m1", tokens=V.R.clients.tokens(10, 390, 100, 0)))
+        log = events.EventLog(d / "S002.events.jsonl")
+        log.write(clients.Event("usage", message_id="m1", tokens=clients.tokens(10, 390, 100, 0)))
         log.end("cap", -2, time.time())
         u2 = V.live_usage(d, t0)
         self.assertEqual((u2["tokens_m"], u2["running_streams"], u2["cost_usd"]), (u["tokens_m"], 0, 3.0))

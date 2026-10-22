@@ -302,7 +302,7 @@ class RunLoop(unittest.TestCase):
         real_sleep = P.time.sleep
         P.time.sleep = lambda s: None
         self.addCleanup(setattr, P.time, "sleep", real_sleep)
-        r.play_session = lambda m, f: P.SessionResult("S001", "c", 1, "exited", time.time() - 2, time.time())
+        r.play_session = lambda minutes, first: P.SessionResult("S001", "c", 1, "exited", time.time() - 2, time.time())
         self.assertEqual(r.run(), 1)
         self.assertIn("runner stopped (gave up: claude exits at once)", (P.RUNTIME / "runner.log").read_text())
 
@@ -315,7 +315,7 @@ class RunLoop(unittest.TestCase):
         self.addCleanup(setattr, P.time, "sleep", real_sleep)
         calls = []
 
-        def play(m, f):
+        def play(minutes, first):
             calls.append(1)
             r.stop_requested = len(calls) >= 5  # without the rule: sessions go on until stopped
             return P.SessionResult("S001", "c", 0, "context_overflow", time.time() - 300, time.time())
@@ -338,7 +338,7 @@ class RunLoop(unittest.TestCase):
         self.addCleanup(setattr, P.time, "sleep", real_sleep)
         n = []
 
-        def play(m, f):
+        def play(minutes, first):
             n.append(1)
             return P.SessionResult(
                 "S001", "c", 0, "mcp_failed", time.time() - 5, time.time(), detail="the bg3 MCP server is failed"

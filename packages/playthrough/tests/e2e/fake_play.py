@@ -1,3 +1,4 @@
+# pyright: basic
 """Stands in for `runner/play.py run` in the offline playthrough test: one session, no game.
 
     python fake_play.py run --playthrough <pt> ... (the legacy adapter's command line)
@@ -36,7 +37,7 @@ def session(a) -> int:
     assert a.profile and a.max_cost > 0 and a.no_memory_keeper, "pi: --profile, --max-cost and --no-keeper"
     profile = profiles.load(Path(a.profile))
     state = play.RunnerState(a.playthrough)
-    hist = state["history"]
+    hist = state["history"] or []  # RunnerState always has a history list
     sid = f"S{sum(1 for h in hist if h.get('kind', 'play') == 'play') + 1:03d}"
     base = state.dir / sid
     home = Path(os.environ["E2E_HOME"])

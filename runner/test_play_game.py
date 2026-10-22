@@ -69,7 +69,7 @@ class KillGame(unittest.TestCase):
         C.KILL_CONFIRM = 0.01
         self.r = P.Runner.__new__(P.Runner)
         self.r.game_proc = None
-        self.r.state = type(
+        self.r.state = type(  # pyright: ignore[reportAttributeAccessIssue]  (a fake RunnerState)
             "S",
             (),
             {
@@ -185,7 +185,7 @@ class KillGame(unittest.TestCase):
             envs.append(kw["env"])
             return Proc()
 
-        self.r.state = {}
+        self.r.state = {}  # pyright: ignore[reportAttributeAccessIssue]
         self.r.refresh_mod_snapshot = lambda: []
         with (
             mock.patch.object(P, "steam_ready", lambda: (True, "ok")),

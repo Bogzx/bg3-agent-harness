@@ -17,7 +17,9 @@ SCENARIOS = {p.stem: scenario.load(p) for p in (HERE.parent / "scenarios").glob(
 DOC = HERE.parents[2] / "docs" / "HUMAN-BASELINE.md"
 
 
-def attempt(name="fight_act1_windmill", n=1, *, passed=True, time_s=900.0, t_pass_s=840.0, reloads=0, **kw):
+def attempt(
+    name="fight_act1_windmill", n=1, *, passed=True, time_s=900.0, t_pass_s: float | None = 840.0, reloads=0, **kw
+):
     return {
         "scenario": name,
         "attempt": n,
@@ -43,7 +45,9 @@ def schema_errors(data, name):
 
 
 def test_the_doc_example_is_valid():
-    example = json.loads(re.search(r"```json\n(.*?)\n```", DOC.read_text(encoding="utf-8"), re.DOTALL)[1])
+    m = re.search(r"```json\n(.*?)\n```", DOC.read_text(encoding="utf-8"), re.DOTALL)
+    assert m
+    example = json.loads(m[1])
     assert human.validate(example, SCENARIOS) == []
     assert schema_errors(example, "human.v1.schema.json") == []
 

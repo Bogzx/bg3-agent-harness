@@ -101,7 +101,9 @@ def test_needs_save_agrees_with_the_note(path):
     st = raw(path)["start"]
     if st["kind"] == "new_game":
         return
-    party = [re.fullmatch(r"(.+) \((\w+)(?: (\d+))?\)", m).groups() for m in st["note"]["party"]]
+    found = [re.fullmatch(r"(.+) \((\w+)(?: (\d+))?\)", m) for m in st["note"]["party"]]
+    assert all(found), st["note"]["party"]
+    party = [m.groups() for m in found if m]
     assert party[0][0] == "Tav"
     if level := re.search(r"party level (\d+)", st["needs_save"]):
         assert {lv for _, _, lv in party} == {level[1]}, path.stem

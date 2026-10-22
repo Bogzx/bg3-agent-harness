@@ -163,7 +163,7 @@ def played(tmp_path_factory):
 
         def keeper_client(cfg):  # the adapter's choice, with the keeper's own stub model behind the same profile
             client, p = legacy.keeper_client(cfg) or (None, None)
-            assert client == "pi" and p.model == MODEL
+            assert client == "pi" and p is not None and p.model == MODEL
             return client, dataclasses.replace(p, endpoint=dataclasses.replace(p.endpoint, base_url=keeper_llm.url))
 
         history = sup.history_path(runtime, PT)
