@@ -111,9 +111,8 @@ def load_events(
             if not kinds or ev.kind in kinds:
                 out.append(ev)
         return out
-    # the raw parsers' dispatch lives in the legacy runner/runs.py (on sys.path wherever raw streams are read; runs
-    # imports the analyzers that import this module)
-    import runs
+    # the raw parsers' dispatch lives in bg3harness.runs (it imports the analyzers that import this module)
+    from . import runs
 
     lines = _lines(base.with_name(base.name + ".jsonl"))
     name = runs.stream_client(lines)

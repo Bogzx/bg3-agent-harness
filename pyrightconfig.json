@@ -92,6 +92,8 @@
     "packages/harness/src/bg3harness/pi_client.py",
     "packages/harness/src/bg3harness/profiles.py",
     "packages/harness/src/bg3harness/ramwatch.py",
+    "packages/harness/src/bg3harness/runs.py",
+    "packages/harness/tests/test_runs.py",
     "packages/playthrough/tests/e2e/conftest.py",
     "packages/playthrough/tests/memory/test_keeper.py",
     "packages/playthrough/tests/memory/test_session.py",
