@@ -153,10 +153,14 @@ def test_unknown_cost_stops_the_matrix(tmp_path):
     assert m.run() == matrix.FINISHED  # after a person checked it, the rest runs
 
 
+PI = "openrouter_deepseek_v4"  # MODELS[1]'s job id slug: a paid client
+CLAUDE_RUN = RunResult("c", True, True, 0.4, None, charged=True)  # as session_run reports a subscription run
+
+
 def test_an_adapter_exception_is_an_invalid_attempt_and_stops(tmp_path):
-    first = "opus~nautiloid~rules~r1"
+    first = f"{PI}~nautiloid~rules~r1"
     run = FakeRun({(first, 1): RuntimeError("play.py not found")})
-    m, _, _ = make(tmp_path, run)
+    m, _, _ = make(tmp_path, run, jobs=matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 2))
     assert m.run() == matrix.COST_UNKNOWN
     (att,) = m.state()[first]["attempts"]
     assert (
@@ -165,9 +169,32 @@ def test_an_adapter_exception_is_an_invalid_attempt_and_stops(tmp_path):
     assert m.run() == matrix.FINISHED and run.calls.count(first) == 2
 
 
+def test_a_subscription_job_whose_adapter_raises_is_rerun_and_the_matrix_goes_on(tmp_path):
+    first = "opus~nautiloid~rules~r1"
+    run = FakeRun({(first, 1): RuntimeError("claude not found"), (first, 2): CLAUDE_RUN})
+    m, budget, _ = make(tmp_path, run, jobs=matrix.plan(MODELS[:1], ["nautiloid"], ["rules"], 1))
+    assert m.run() == matrix.FINISHED  # a claude run is never charged: its cost is not unknown
+    atts = m.state()[first]["attempts"]
+    assert [a["result"]["invalid_reason"] for a in atts] == ["error: RuntimeError: claude not found", None]
+    assert json.loads(budget.read_text())["spent"] == 0.0
+
+
+@pytest.mark.parametrize("max_cost", [2.0, None])
+def test_an_interrupted_subscription_run_is_not_charged(tmp_path, max_cost):
+    jobs = matrix.plan(MODELS[:1], ["nautiloid"], ["rules"], 1, max_cost={"nautiloid": max_cost})
+    first = "opus~nautiloid~rules~r1"
+    m, budget, _ = make(tmp_path, FakeRun({(first, 1): KeyboardInterrupt()}), jobs=jobs)
+    with pytest.raises(KeyboardInterrupt):
+        m.run()
+    m2, _, _ = make(tmp_path, FakeRun({(first, 1): CLAUDE_RUN}), jobs=jobs)  # a new process: its call 1
+    assert m2.run() == matrix.FINISHED  # no reserve charged (2.0), no cost-unknown stop (None)
+    assert [a["result"]["invalid_reason"] for a in m2.state()[first]["attempts"]] == ["interrupted", None]
+    assert json.loads(budget.read_text())["spent"] == 0.0
+
+
 def test_resumes_after_its_own_crash(tmp_path):
-    jobs = matrix.plan(MODELS[:1], ["nautiloid", "grove"], ["rules"], 1, max_cost={"grove": 2.5})
-    crash = "opus~grove~rules~r1"
+    jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 1, max_cost={"grove": 2.5})
+    crash = f"{PI}~grove~rules~r1"
     run = FakeRun({(crash, 1): KeyboardInterrupt()})
     m, budget, _ = make(tmp_path, run, jobs=jobs)
     with pytest.raises(KeyboardInterrupt):
@@ -184,8 +211,8 @@ def test_resumes_after_its_own_crash(tmp_path):
 
 
 def test_an_interrupted_run_without_a_reserve_stops_once(tmp_path):
-    jobs = matrix.plan(MODELS[:1], ["nautiloid"], ["rules"], 1)
-    m, _, _ = make(tmp_path, FakeRun({("opus~nautiloid~rules~r1", 1): KeyboardInterrupt()}), jobs=jobs)
+    jobs = matrix.plan(MODELS[1:], ["nautiloid"], ["rules"], 1)
+    m, _, _ = make(tmp_path, FakeRun({(f"{PI}~nautiloid~rules~r1", 1): KeyboardInterrupt()}), jobs=jobs)
     with pytest.raises(KeyboardInterrupt):
         m.run()
     m2, _, _ = make(tmp_path, FakeRun(), jobs=jobs)

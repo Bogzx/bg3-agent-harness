@@ -14,8 +14,9 @@ shared by every matrix and every paid play.py run, updated under the same lock (
 start when `spent + its reserve > cap` (reserve = a paid client's per-run `max_cost` for the scenario, 0 when it has
 none: then the overshoot is at most one run; 0 for a subscription client, never charged); a missing or broken file
 stops the matrix. A run's cost is added as it ends unless the runner already settled it (`RunResult.charged`:
-play.py adds a paid run's cost itself, and subscription runs aren't billed). A run whose cost is unknown stops the
-matrix: the budget can't be enforced past it until a person fixes `spent`.
+play.py adds a paid run's cost itself, and subscription runs aren't billed). A paid run whose cost is unknown stops
+the matrix: the budget can't be enforced past it until a person fixes `spent`. A subscription run is never charged,
+not even one that crashed or was interrupted.
 
 Invalid runs (results.validity: runner error, harness failure, operator) are rerun, at most `max_reruns` (2) times
 per job; then the job is `gave_up`. Order: repeat 1 of every (model, scenario, condition) first, then repeat 2, ...
@@ -32,7 +33,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 SCHEMA = 1
 MAX_RERUNS = 2
@@ -51,7 +52,7 @@ class RunResult:
 
 
 class RunOne(Protocol):
-    def __call__(self, job: dict) -> RunResult: ...
+    def __call__(self, job: dict[str, Any]) -> RunResult: ...
 
 
 def _slug(text: str) -> str:
@@ -63,13 +64,13 @@ def job_id(model: str, scenario: str, condition: str, repeat: int) -> str:
 
 
 def plan(
-    models: Sequence[Mapping],
+    models: Sequence[Mapping[str, Any]],
     scenarios: Sequence[str],
     conditions: Sequence[str],
     repeats: int,
     *,
     max_cost: Mapping[str, float | None] | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """The jobs, repeat-major. A model is {"slug", "client"?, "effort"?, "profile"?}; max_cost per scenario is the
     reserve (and a profile job's per-run cap)."""
     if repeats < 1:
@@ -97,7 +98,7 @@ def plan(
     return jobs
 
 
-def reserve(job: Mapping) -> float:
+def reserve(job: Mapping[str, Any]) -> float:
     """What the budget holds back before the job starts: its max_cost for a paid client, 0 for a subscription one."""
     return (job["max_cost"] or 0.0) if job["client"] in PAID_CLIENTS else 0.0
 
@@ -163,7 +164,7 @@ class Matrix:
         self.progress_path = self.root / "progress.json"
 
     # ------------------------------------------------------------------ the queue file
-    def create(self, name: str, jobs: Iterable[dict]) -> None:
+    def create(self, name: str, jobs: Iterable[dict[str, Any]]) -> None:
         """Write the plan. An existing queue with the same jobs is kept (resume); a different one is refused."""
         jobs = list(jobs)
         if self.queue.exists():
@@ -195,7 +196,7 @@ class Matrix:
             raise ValueError(f"{self.queue}: no v{SCHEMA} plan on line 1")
         return recs[0]
 
-    def state(self) -> dict[str, dict]:
+    def state(self) -> dict[str, dict[str, Any]]:
         """job id -> {"job", "attempts": [{"attempt", "result" or None}], "status"}."""
         recs = self._records()
         jobs = {j["id"]: {"job": j, "attempts": []} for j in self._plan()["jobs"]}
@@ -269,10 +270,12 @@ class Matrix:
         jobs = self.state()
         for st in jobs.values():
             if st["status"] == "interrupted":
-                # the matrix runner died mid-run: what that run spent is unknown unless the job has a reserve
-                att = st["attempts"][-1]["attempt"]
-                self._end(st["job"], att, RunResult(None, False, False, st["job"]["max_cost"], "interrupted"))
-                if st["job"]["max_cost"] is None:
+                # the matrix runner died mid-run: what a paid run spent is unknown unless the job has a reserve
+                job, att = st["job"], st["attempts"][-1]["attempt"]
+                paid = job["client"] in PAID_CLIENTS
+                cost = job["max_cost"] if paid else None
+                self._end(job, att, RunResult(None, False, False, cost, "interrupted", charged=not paid))
+                if paid and cost is None:
                     self._progress(self.state(), "stopped", stop=COST_UNKNOWN)
                     return COST_UNKNOWN
         while True:
@@ -299,8 +302,9 @@ class Matrix:
             self._progress(jobs, "running", current={**job, "attempt": attempt})
             try:
                 result = self.run_one(job)
-            except Exception as e:  # noqa: BLE001 - any adapter failure is an invalid attempt, cost unknown
-                result = RunResult(None, False, False, None, f"error: {type(e).__name__}: {e}")
+            except Exception as e:  # noqa: BLE001 - any adapter failure is an invalid attempt, a paid one's cost unknown
+                why = f"error: {type(e).__name__}: {e}"
+                result = RunResult(None, False, False, None, why, charged=job["client"] not in PAID_CLIENTS)
             self._end(job, attempt, result)
             if result.cost_usd is None and not result.charged:
                 self._progress(self.state(), "stopped", stop=COST_UNKNOWN)
