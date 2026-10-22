@@ -167,7 +167,10 @@ def played(tmp_path_factory):
             assert client == "pi" and p is not None and p.model == MODEL
             return client, dataclasses.replace(p, endpoint=dataclasses.replace(p.endpoint, base_url=keeper_llm.url))
 
-        runner = HarnessRunner(runtime, pts, agents, game, SessionPy, time.time)
+        # one stop resume a session, not the default 6: each is a pi process and a bridge start (~2 s), the most of
+        # this fixture's time; one is enough to show the stop check sending the agent back in the same conversation
+        recovery = Recovery(max_stop_resumes=1)
+        runner = HarnessRunner(runtime, pts, agents, game, SessionPy, time.time, recovery)
         history = sup.history_path(runtime, PT)
         store = RunStore(runtime, pts)
         hub = Hub(store, generation="e2ept")
@@ -213,9 +216,7 @@ def test_two_sessions_through_run_session_with_the_keeper_between(played):
     runs = json.loads((sdir / "runner.json").read_text())["history"]
     # 30 min sessions: session.py's stop check sent the agent back to play until run_session's limit, in the same
     # conversation; then session-end left the memory session open (no wrap-up) for the next to warn about
-    assert [(r["reason"], r["exit"], r["stop_resumes"]) for r in runs] == [
-        ("exited", 0, Recovery().max_stop_resumes)
-    ] * 2
+    assert [(r["reason"], r["exit"], r["stop_resumes"]) for r in runs] == [("exited", 0, 1)] * 2
     assert "(harness) Claude session ended before wrap-up" in (played["memory"] / "sessions" / "S001.md").read_text()
     # the playthrough's condition reached the bg3 server pi starts
     pi_server = json.loads((sdir / "S001.pi" / "bg3.json").read_text())["server"]
