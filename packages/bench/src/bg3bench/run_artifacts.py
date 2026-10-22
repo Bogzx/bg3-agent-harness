@@ -1,7 +1,7 @@
 # pyright: basic
 """A finished run's manifest.json and result.json, written next to its facts.jsonl (the harness calls this at run end).
 
-The run directory is the run's playthrough directory (runtime/sessions/<run name>/, runner/runs.py run_name), where
+The run directory is the run's playthrough directory (runtime/sessions/<run name>/, bg3bench.series.run_name), where
 the harness writes facts.jsonl (and rolls.jsonl when the mod logs rolls). `write_run_artifacts` grades facts.jsonl
 with the scenario's goal (graders.grade, on the scenario's clock), adds the method attribution when the scenario asks
 for it, the choices grader's picks for a choice scenario (and their persona fit, given a judge client) and the

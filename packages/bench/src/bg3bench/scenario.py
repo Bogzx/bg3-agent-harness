@@ -1,6 +1,6 @@
 """Scenario files v2 (schema/scenario.v2.schema.json): a fixed start point, a goal, caps and the game settings.
 
-v2 adds to today's scenarios/*.json (v1, runner/runs.py `validate_scenario`, scenarios/README.md):
+v2 adds to the root scenarios/*.json (v1, bg3bench.scenario_v1 `validate_scenario`, scenarios/README.md):
 
 - `schema: 2`, `family` (fight, sandbox, choice, exploration, puzzle), `holdout` (private: never published).
 - `task` and `scored_by`: the agent's task and how the run is scored, in plain words, first in the run's kickoff

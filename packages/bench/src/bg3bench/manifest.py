@@ -2,7 +2,7 @@
 """Run manifests (schema/manifest.v1.schema.json): what a run was set up with.
 
 `from_series` builds one from a series' `series.json` and one `runs.jsonl` record, the files the runner writes today
-(runner/runs.py). What those files don't record yet (prompt hash and parts, tool allowlist, price sheet, provider,
+(bg3bench.series, bg3harness.runs). What those files don't record yet (prompt hash and parts, tool allowlist, price sheet, provider,
 client version, condition, the dice seed, the scenario's timing, the client profile ({"name", "sha256"}:
 bg3harness.profiles.digest) and the harness version) is passed in, or stays null.
 `judge` names the LLM judge that scored the run (the persona judge's model), which must not be a contestant.

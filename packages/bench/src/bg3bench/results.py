@@ -1,7 +1,7 @@
 # pyright: basic
 """Per-run results (schema/result.v1.schema.json) and the release file (schema/results.v1.schema.json).
 
-`from_record` turns one runs.jsonl record (runner/runs.py) into a result, with the grader output (graders.grade)
+`from_record` turns one runs.jsonl record (bg3harness.runs) into a result, with the grader output (graders.grade)
 and the method attribution (methods.attribute) when the run has a facts.jsonl. Without a grade, the runner's own
 milestone verdict is used (`outcome == "reached"`), which is how series before facts.jsonl were scored.
 

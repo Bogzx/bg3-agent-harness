@@ -1,11 +1,12 @@
 # bg3bench: the BG3 benchmark
 
-Measures models playing Baldur's Gate 3 through the harness. It reads what the harness writes (the event log,
-`facts.jsonl`, run records) and never reaches into harness internals. It imports neither the harness's Python code
-nor the playthrough app; import-linter checks that.
+Measures models playing Baldur's Gate 3 through the harness. It grades what the harness writes (`facts.jsonl`, the
+roll log, run records) and drives runs through the harness's public API (`bg3harness.session.run_session`, a
+`RunHost`). It imports the harness, never the playthrough app, and the harness never imports it; import-linter
+checks both (`pyproject.toml` at the root).
 
-Version: `pyproject.toml` (0.1.0). A results release is the tag `bench-vX.Y` with this package at `X.Y.0`
-([CHANGELOG.md](../../CHANGELOG.md)).
+Version: `pyproject.toml` (the version table in [CHANGELOG.md](../../CHANGELOG.md) says which). A results release
+is the tag `bench-vX.Y` with this package at `X.Y.0`; `suite.json` pins the files each suite version was made of.
 
 ## What is here
 
@@ -21,11 +22,11 @@ Version: `pyproject.toml` (0.1.0). A results release is the tag `bench-vX.Y` wit
 | `methods.py` | how a sandbox goal was reached (trade, pickpocket, loot, quest): reported, never graded |
 | `stats.py`, `luck.py` | Wilson intervals, pass^k, two-level bootstrap, paired differences, the luck covariate |
 | `manifest.py`, `results.py` | run manifest, run result and release `results.json` builders |
-| `conditions.py`, `contamination.py` | condition ids (`rules`, `rules+coaching@<hash8>`, `+wiki`, ...), quizzes, holdouts |
+| `conditions.py`, `contamination.py` | condition ids (`rules`, `rules+coaching@<hash8>`, `+wiki`, ...): the tools each removes, the harness prompt condition it plays and what a session run can't play exactly (a pilot); quizzes, holdouts |
 | `matrix.py`, `matrix_cli.py`, `matrices/` | the matrix runner: models x scenarios x conditions x repeats, resumable, under a global budget; its command line and matrix files |
 | `series.py`, `resets.py`, `pins.py`, `records.py` | a series' runs: naming, runs.jsonl records, frozen caps/judge/client/sandbox, per-run resets and the FAIR-2 knowledge lock, version pins, the runs table and summary (moved from runner/runs.py, which re-exports them) |
 | `preflight.py` | can this machine run the benchmark (CLI: `python3 tools/bench_preflight.py`) |
-| `adapters/` | temporary: the matrix runs jobs through `runner/play.py` until the harness has `run_session` |
+| `adapters/` | `session_run.py`: one matrix job = one `run_session` through a `RunHost` (the live one is `bg3harness.runner.run_host.LiveRunHost`); `legacy_cli.py` and `play_flags.py`: the `--runner legacy` fallback through `runner/play.py run`, until Phase D |
 | `baselines/` | do-nothing and seeded random agents that speak MCP to the bg3 server |
 | `fairness_probes.py` | every bg3 tool has a hidden-fact probe or a written exemption (`fairness_probes.json`) |
 | `human.py` | the human baseline: reads a player's results file and adds the `human (<player>)` row ([docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md)) |
@@ -52,11 +53,13 @@ From the repo root:
 ```bash
 # the runner's file for a v2 scenario (v1 shape + game_settings, timing); a goal that isn't one milestone is refused
 uv run --project packages/bench python -m bg3bench.scenario resolve packages/bench/scenarios/nautiloid.json > resolved.json
-# the matrix runner; one job is one bg3harness run_session (adapters/session_run.py, no resume: a crash is an invalid
-# run, rerun), with the harness's RunHost passed to matrix_cli.main(host=...); --runner legacy (until Phase D) plays
-# each job as one runner/play.py run --scenario-file <resolved> ... call instead
-uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/<file>.toml
-uv run --project packages/bench python -m bg3bench.matrix run|resume|status --matrix <file>.toml --runner legacy
+# the matrix runner on this machine's game: one job is one bg3harness run_session (adapters/session_run.py, no
+# resume: a crash is an invalid run, rerun) through the harness's LiveRunHost; runtime/STOP or Ctrl-C ends the run
+# playing now (recorded invalid) and starts no new one
+python3 runner/play.py bench plan --matrix packages/bench/matrices/<file>.toml
+python3 runner/play.py bench run|resume|status --matrix packages/bench/matrices/<file>.toml
+# --runner legacy (until Phase D) plays each job as one runner/play.py run --scenario-file <resolved> call instead
+uv run --project packages/bench python -m bg3bench.matrix run --matrix <file>.toml --runner legacy
 
 # the series view on http://127.0.0.1:8766/series, with the live row (the recorded rows only: python -m bg3bench.seriesview)
 python3 runner/dashboard/seriesview.py
@@ -65,8 +68,15 @@ python3 runner/dashboard/seriesview.py
 uv run --project packages/bench python -m bg3bench.authoring register <save folder> <store> <name>
 ```
 
-`plan` is a dry run: the jobs, the budget reserve, and what play.py can't play exactly yet for each condition. A
-paid job needs `runtime/budget.json` (`{"cap": ..., "spent": ...}`); without it `run` stops before its first job.
+`plan` is a dry run: the jobs, the budget reserve, and what a session run (per condition and client) and play.py
+can't play exactly yet. A job with such a gap is refused unless the matrix file sets `allow_gaps = true`; its runs
+are labelled `pilot` in result.json and `publish` refuses them. A paid job needs `runtime/budget.json`
+(`{"cap": ..., "spent": ...}`); without it `run` stops before its first job.
+
+A bench run has no playthrough memory (the memory tools are off and the server's memory dir is the run's own empty
+`memory/`), no wiki and no `load_game` unless its condition says `+wiki` or `+reloads:N`. Its kickoff starts with the
+scenario's `task` and `scored_by`, and it ends once graded (an `until` milestone, or a goal scenario's live verdict)
+or at its time cap (docs/BENCHMARK.md §2).
 The format of a matrix file is in `matrix_cli.py`'s docstring; `matrices/pilot-2026-10-22.toml` is an example.
 
 The choice scenarios' result has the picks (`choices`), and the leaderboard adds a table of who picked what at each
@@ -97,8 +107,8 @@ calls from a scripted game):
 
 ## Status (2026-10-22)
 
-Built and tested offline. Only `nautiloid` has run live, through `play.py run --scenario`, which still reads the v1
-file in the root `scenarios/`: Claude Opus 5.5 through Claude Code and DeepSeek Flash through pi, one run each
-(research/ovh/live3.md). 17 of the 27 save starts have a registered start save (research/ovh/live6.md §2); the
+Built and tested offline. Only `nautiloid` has run live: through `play.py run --scenario` (the v1 file in the root
+`scenarios/`), Claude Opus 5.5 through Claude Code and DeepSeek Flash through pi, one run each (research/ovh/live3.md),
+and once through `play.py bench run` (live7: passed, but unseeded, so now invalid; research/ovh/live7.md). 17 of the 27 save starts have a registered start save (research/ovh/live6.md §2); the
 other ten say why not (`start.not_ready` or no save) and the matrix skips them. Each still needs an oracle run and
 both baselines before it counts. The human baseline protocol is [docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md).

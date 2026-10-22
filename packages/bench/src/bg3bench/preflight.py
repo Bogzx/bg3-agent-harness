@@ -285,7 +285,7 @@ def check_bg3le(ctx: Ctx) -> list[tuple[str, str, str]]:
 
 
 def mod_version(meta: str) -> str | None:
-    """As runner/runs.py mod_version (meta.lsx Version64, Larian's bit layout); copied to keep this script runner-free."""
+    """As bg3bench.pins.mod_version (meta.lsx Version64, Larian's bit layout); copied to keep this script runner-free."""
     m = re.search(r'id="Version64"[^>]*value="(\d+)"', meta)
     if not m:
         return None
