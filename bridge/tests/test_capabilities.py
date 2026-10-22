@@ -114,7 +114,7 @@ class Server(unittest.TestCase):
         self.assertIn("combat_turn", game["instructions"])
         self.assertTrue(
             tools({"BG3AI_TOOLS": "game,memory", "BG3AI_SERVE_RULES": "1"})["instructions"].startswith(
-                full["base"].split("\nUse screenshot")[0] + "\nMemory: "
+                full["base"].split("\nscreenshot shows")[0] + "\nMemory: "
             )
         )
 

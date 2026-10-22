@@ -153,14 +153,14 @@ def _session_key() -> str:
         return ""
 
 
-@core.mcp.prompt(name="rules", title="Rules of play", description="How to play through this server: play/CLAUDE.md, "
-            "the rules Claude Code loads by itself (also in the instructions and the first session_start).")
+@core.mcp.prompt(name="rules", title="Rules of play", description="How to play through this server: the rules of "
+            "this session (also in the instructions and the first session_start).")
 def rules_prompt() -> str:
-    return core.RULES.rules or "No rules file found (play/CLAUDE.md, $BG3AI_RULES_PATH)."
+    return core.RULES.rules or "No rules file found (packages/harness/prompts, $BG3AI_RULES_PATH)."
 
 
 @core.mcp.resource(rules.URI, name="rules", title="Rules of play", mime_type="text/markdown",
-              description="play/CLAUDE.md as served to MCP clients.")
+              description="The rules of this session, as served to MCP clients.")
 def rules_resource() -> str:
     return rules_prompt()
 

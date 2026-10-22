@@ -98,8 +98,10 @@ AFTER_STOP = frozenset({"note", "save_game", "list_saves", "session_start", "end
 
 
 def stop_refusal(tool: str, deadline: float, reads: frozenset[str] | set[str] = frozenset(),
-                 now: float | None = None, grace: float | None = None) -> str:
-    """The refusal for `tool` once the session is past deadline + grace ("" = allowed, or no deadline)."""
+                 now: float | None = None, grace: float | None = None,
+                 off: frozenset[str] | set[str] = frozenset()) -> str:
+    """The refusal for `tool` once the session is past deadline + grace ("" = allowed, or no deadline). It names
+    only the tools the session has: `off` are the ones its condition switched off (capabilities.py)."""
     if not deadline or tool in AFTER_STOP or tool in reads:
         return ""
     now = time.time() if now is None else now
@@ -107,6 +109,12 @@ def stop_refusal(tool: str, deadline: float, reads: frozenset[str] | set[str] = 
     if now <= deadline + grace:
         return ""
     over = int((now - deadline) // 60)
+    memory, saves = "end_session" not in off, "save_game" not in off
+    works = ", ".join(["Reads"] + ["memory tools", "note"] * memory + ["save_game"] * saves)
+    if memory:
+        finish = (f"Finish the wrap-up ({'save_game Sxxx-end if not saved, ' * saves}HANDOFF.md) and call "
+                  f"end_session now.")
+    else:
+        finish = f"{'Save with save_game if you want, then stop' if saves else 'Stop'} now: no more tool calls."
     return (f"REFUSED: the session ended {over} min ago ({time.strftime('%H:%M', time.localtime(deadline))}); "
-            f"game actions are closed. Reads, memory tools, note and save_game still work. Finish the wrap-up "
-            f"(save_game Sxxx-end if not saved, HANDOFF.md) and call end_session now.")
+            f"game actions are closed. {works} still work. {finish}")

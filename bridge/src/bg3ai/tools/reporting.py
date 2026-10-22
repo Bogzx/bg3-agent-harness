@@ -574,7 +574,8 @@ def _guard(fn):
         except Exception as e:
             core._log("session_start", {}, f"session not opened: {type(e).__name__}: {e}", 0)
         end = core._times()[1] if core.DEADLINE and time.time() > core.DEADLINE else core.DEADLINE  # a fight hold moves it
-        refused = rules.stop_refusal(fn.__name__, end, _READ_TOOLS)  # deadline + grace: for any client
+        refused = rules.stop_refusal(fn.__name__, end, _READ_TOOLS,  # deadline + grace: for any client
+                                     off={t for t in ("end_session", "save_game") if core.mcp._tool_manager.get_tool(t) is None})
         if refused:
             return _finish(fn.__name__, kw, refused, t0, events=False)
         waited = newgame._await_new_game() if newgame._new_game["thread"] is not None and fn.__name__ not in newgame._NEW_GAME_NO_WAIT \

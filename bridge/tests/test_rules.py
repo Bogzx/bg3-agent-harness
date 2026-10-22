@@ -17,7 +17,7 @@ from unittest import mock
 import test_memtools as TM  # (sets BG3AI_RUNTIME before importing server)
 from test_turn_macros import Base
 
-from bg3ai import memtools, rules  # noqa: E402
+from bg3ai import capabilities, memtools, rules  # noqa: E402
 from bg3ai.tools import core, world_tools, memory  # noqa: E402
 
 
@@ -97,6 +97,18 @@ class StopPolicy(unittest.TestCase):
         out = rules.stop_refusal("move_to", self.D, now=self.D + 400, grace=300)
         self.assertTrue(out.startswith("REFUSED: the session ended 6 min ago"))
         self.assertIn("call end_session now", out)
+
+    def test_the_refusal_names_only_the_tools_the_session_has(self):
+        # a condition with memory (and saves) off has no end_session: the refusal must not point at it
+        out = rules.stop_refusal("move_to", self.D, now=self.D + 400, grace=300,
+                                 off=set(capabilities.GROUPS["memory"]) | set(capabilities.GROUPS["saves"]))
+        self.assertNotIn("end_session", out)
+        self.assertNotIn("save_game", out)
+        self.assertNotIn("memory tools", out)
+        self.assertTrue(out.endswith("Reads still work. Stop now: no more tool calls."), out)
+        out = rules.stop_refusal("move_to", self.D, now=self.D + 400, grace=300, off={"end_session"})
+        self.assertIn("Save with save_game if you want, then stop now", out)
+        self.assertNotIn("HANDOFF", out)
 
     def test_reads_memory_and_wrapup_still_work(self):
         for tool in ("memory_write", "note", "save_game", "end_session", "session_start", "get_status"):

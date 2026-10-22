@@ -5,6 +5,19 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-22: benchmark neutrality audit (docs/BENCHMARK-BIAS.md status table)
+
+- The server instructions say what the tools do, not how to play well: "Pipeline like a human clicking ahead",
+  "keep planning while the character walks; wait_for only when ..." and "Use screenshot only when ..." are gone
+  (coaching/pace.md and efficiency.md have them for the coaching condition). Every client and condition got them.
+- level_up's and create_character's `plan` and set_reactions' `settings` take a JSON object as well as the same
+  JSON as a string (D15); their schemas said `string` while the descriptions said "plan: JSON like {...}".
+- combat_turn's and wiki_page's descriptions lost their session stories (S023-S026, S018-S027).
+- The `rules` prompt and bg3://rules resource no longer describe themselves as "play/CLAUDE.md, the rules Claude
+  Code loads".
+- The server-side stop refusal names only the tools the session has: with the memory group off it no longer says
+  "call end_session" or "HANDOFF.md", with saves off it no longer names save_game.
+
 ## 2026-10-22: run 1 result wording (live3, pi + DeepSeek Flash)
 
 - A do_actions/queue_actions/combat_turn step whose tool can't be a step (look, loot_area, ...) is refused with the

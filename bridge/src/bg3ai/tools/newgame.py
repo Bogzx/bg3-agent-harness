@@ -8,6 +8,7 @@ import os
 import re
 import threading
 import time
+from typing import Any
 
 from .. import naming, render
 from ..game import GameError, JobResult, NotReady
@@ -86,16 +87,16 @@ def character_creation_options() -> str:
 
 @core.mcp.tool()
 @reporting._guard
-def create_character(plan: str) -> str:
-    """Fill in character creation, type the character's name, finish it ("Venture forth") and check the name in game. plan: JSON with your build, e.g. {"race":"Elf","subrace":"High Elf","class":"Wizard","subclass":"School of Evocation","background":"Sage","abilities":"recommended","name":"Ilse"}; or {"origin":"Lae'zel"}. "name" is required for a custom character unless the playthrough already has a save owner (then it must be that name). Omitted fields keep the game's defaults/recommendations."""
+def create_character(plan: dict[str, Any] | str) -> str:
+    """Fill in character creation, type the character's name, finish it ("Venture forth") and check the name in game. plan: an object with your build (or the same as a JSON string), e.g. {"race":"Elf","subrace":"High Elf","class":"Wizard","subclass":"School of Evocation","background":"Sage","abilities":"recommended","name":"Ilse"}; or {"origin":"Lae'zel"}. "name" is required for a custom character unless the playthrough already has a save owner (then it must be that name). Omitted fields keep the game's defaults/recommendations."""
     if not saving.PLAYTHROUGH:
         raise GameError("create_character is only available in an AI playthrough session")
     t0 = time.monotonic()
     if core._session_over():
         return reporting._finish("create_character", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
-    p = json.loads(plan)
+    p = json.loads(plan) if isinstance(plan, str) else plan  # D15: an object or its JSON text
     if not isinstance(p, dict):
-        raise GameError("plan must be a JSON object, e.g. {\"class\":\"Wizard\",\"name\":\"Ilse\"}")
+        raise GameError("plan must be an object, e.g. {\"class\":\"Wizard\",\"name\":\"Ilse\"}")
     want = (str(p["name"]).strip() or None) if p.get("name") is not None else None
     if want and saving.SAVE_OWNER and want.casefold() != saving.SAVE_OWNER.casefold():
         raise GameError(f"this playthrough's saves belong to '{saving.SAVE_OWNER}': name the character '{saving.SAVE_OWNER}' "

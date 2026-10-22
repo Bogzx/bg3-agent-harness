@@ -57,9 +57,10 @@ def get_level_up_options(who: str | None = None) -> str:
 
 @core.mcp.tool()
 @reporting._guard
-def level_up(who: str | None = None, plan: str = "", out: str = "") -> str:
-    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: JSON like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":["Agonizing Blast"]}; omitted fields take the game's defaults, except choices with no default: a subclass, spells/cantrips to learn, and passives (invocations, fighting styles). Then it fails and lists what can be picked; add them to the plan and call again.
+def level_up(who: str | None = None, plan: dict[str, Any] | str = "", out: str = "") -> str:
+    """Level a character up in one call (out of combat). With no plan it uses your stored line for that character and level in memory/party-build.md ("- Gale L2: {...}"). plan: an object (or the same as a JSON string) like {"subclass":"Evocation","feat":"Ability Improvement","abilities":{"Strength":2},"spells":["Magic Missile","Shield"],"cantrips":[],"skills":[],"passives":["Agonizing Blast"]}; omitted fields take the game's defaults, except choices with no default: a subclass, spells/cantrips to learn, and passives (invocations, fighting styles). Then it fails and lists what can be picked; add them to the plan and call again.
     A companion waiting at camp is levelled too (every level it has waiting): it swaps in for `out` (default: the member it replaces best), levels, and swaps back."""
+    plan = plan if isinstance(plan, str) else json.dumps(plan) if plan else ""  # D15: an object or its JSON text
     st = core.game.try_rpc("state.status") or {}
     plumbing._remember_names(st)  # camp members' names (live 12:3x: the first call of a fresh bridge, level_up(who="Wyll"),
     uuid = plumbing._who(who)     # failed "unknown target 'Wyll'": only party names were known before a status read)

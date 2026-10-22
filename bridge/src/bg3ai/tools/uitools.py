@@ -148,11 +148,11 @@ def _job_reply(res: Any, wait_s: float = 5.0) -> Any:
 
 @core.mcp.tool()
 @reporting._guard
-def set_reactions(who: str | None = None, settings: str = "") -> str:
-    """See or change a character's reaction prompts (e.g. Shield, Divine Smite, Opportunity Attack). settings: JSON {"<reaction name>": "never"|"always"|"ask"}; empty = list current."""
+def set_reactions(who: str | None = None, settings: dict[str, str] | str = "") -> str:
+    """See or change a character's reaction prompts (e.g. Shield, Divine Smite, Opportunity Attack). settings: an object (or the same as a JSON string) {"<reaction name>": "never"|"always"|"ask"}; empty = list current."""
     args: dict[str, Any] = {"char": plumbing._who(who)}
     if settings:
-        args["set"] = json.loads(settings)
+        args["set"] = json.loads(settings) if isinstance(settings, str) else settings  # D15
     t0 = time.monotonic()
     res = _reactions_rpc(args["char"], args)
     plumbing._remember_names(res)

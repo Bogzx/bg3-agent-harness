@@ -95,7 +95,7 @@ def wiki_search(query: str, limit: int = 5) -> str:
 
 @core.mcp.tool()
 def wiki_page(title: str, section: str = "", max_chars: int = 2500) -> str:
-    """Read a bg3.wiki page (or one section) as plain text. A whole page is cut at max_chars and lists its sections: read the one you need with section= (S018-S027 pages ran ~2.5 KB median, most of it unread). For a puzzle, recall(query) and get_nearby(kinds="props") first."""
+    """Read a bg3.wiki page (or one section) as plain text. A whole page is cut at max_chars and lists its sections: read the one you need with section=. For a puzzle, recall(query) and get_nearby(kinds="props") first."""
     from ..wiki import format_page
     from ..wiki import wiki_page as wp
 
