@@ -60,6 +60,13 @@ class Call(unittest.TestCase):
         self.assertAlmostEqual(waited, 2 * busywait.STEP_S)
         self.assertEqual(self.clock.sleeps, [busywait.STEP_S] * 2)
 
+    def test_a_slow_answer_is_not_a_wait(self):
+        def slow():
+            self.clock.t += 0.03  # the call itself takes time (test_leveling: "waited 0.0 s" on every result)
+            return "ok"
+
+        self.assertEqual(busywait.call(slow, self.clock, self.clock.sleep, GameError), ("ok", 0.0))
+
     def test_other_errors_raise_at_once(self):
         with self.assertRaisesRegex(GameError, "no trade screen"):
             self.run_call([GameError("no trade screen is open"), "never"])

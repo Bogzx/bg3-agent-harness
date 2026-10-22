@@ -48,10 +48,10 @@ def call[T](
     """fn() and the seconds spent waiting for a busy UI before it answered. An `error` whose message is the busy
     answer is retried every step_s until budget_s has passed; then it is raised with the wait appended. Any other
     error is raised at once."""
-    t0 = clock()
+    t0 = asked = clock()  # the wait is the time before the last ask, not the ask itself (a slow answer isn't one)
     while True:
         try:
-            return fn(), clock() - t0
+            return fn(), asked - t0
         except error as e:
             if not is_busy(str(e)):
                 raise
@@ -59,6 +59,7 @@ def call[T](
             if waited + step_s > budget_s:
                 raise error(f"{e} (still busy after waiting {waited:.1f} s)") from e
         sleep(step_s)
+        asked = clock()
 
 
 def note(waited_s: float) -> str:
