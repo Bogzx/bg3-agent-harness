@@ -213,8 +213,16 @@ class FactsWiring(unittest.TestCase):
     def menu_runner(self, karmic: bool) -> tuple[lpt.Runner, list]:
         """A seeded scenario run on a new game, at the main menu of a fake mod (FakeMod: the bridge's wire) whose
         server context refuses every eval until `menu.loaded`, as the real game's does (live7)."""
-        r = lpt.Runner(rstate.Options("new-s", None, 20, "opus", seed=1001,
-                                      scenario_settings={"difficulty": "Balanced", "karmic_dice": karmic}))
+        r = lpt.Runner(
+            rstate.Options(
+                "new-s",
+                None,
+                20,
+                "opus",
+                seed=1001,
+                scenario_settings={"difficulty": "Balanced", "karmic_dice": karmic},
+            )
+        )
         events_: list = []
         r.event = lambda kind, **f: events_.append((kind, f))
         r.ring_feed = lambda: mock.Mock()
@@ -227,8 +235,11 @@ class FactsWiring(unittest.TestCase):
             with LuaDebugClient(port=fake.port, connect_timeout=5.0) as lua:
                 return lua.evaluate(code, context=context, timeout=timeout)
 
-        for patch in (mock.patch.object(G, "lua_eval", lua_eval), mock.patch.object(rstate, "write_status"),
-                      mock.patch.object(rchecks.facts, "read_inventory", lambda *a, **k: None)):
+        for patch in (
+            mock.patch.object(G, "lua_eval", lua_eval),
+            mock.patch.object(rstate, "write_status"),
+            mock.patch.object(rchecks.facts, "read_inventory", lambda *a, **k: None),
+        ):
             patch.start()
             self.addCleanup(patch.stop)
         return r, events_
