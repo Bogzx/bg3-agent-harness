@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from bg3bench import matrix, pins, report, scenario
+from bg3bench import matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
 from bg3bench.matrix import Matrix, RunResult
 
@@ -173,8 +173,18 @@ def test_a_subscription_run_is_not_billed(tmp_path):
 
 
 def test_a_failed_start_is_invalid_and_free(tmp_path):
-    res = run_one(tmp_path, Host([], fail_start=True))(job())
-    assert res == RunResult(None, False, False, 0.0, "start failed: RuntimeError: the start save would not load", True)
+    host = Host([[("exited", 5)]], fail_start=True)
+    one = run_one(tmp_path, host)
+    why = "start failed: RuntimeError: the start save would not load"
+    assert one(job()) == RunResult(None, False, False, 0.0, why, True)
+    series = series_name("m", job())
+    (rec,) = [json.loads(ln) for ln in (tmp_path / "sessions" / series / "runs.jsonl").read_text().splitlines()]
+    assert (rec["run"], rec["outcome"], rec["reason"], rec["cost_usd"]) == (1, "runner_error", why, 0.0)
+    assert results.validity(rec) == (False, "runner_error")
+    # the start may have written run 1's facts.jsonl (its run_start is time zero): the rerun is run 2, a fresh dir
+    host.fail_start = False
+    again = one(job())
+    assert again.valid and again.run_id == f"{series}-r002" and host.started[0][2].name == f"{series}-r2"
 
 
 def test_an_edited_scenario_is_refused_by_its_series(tmp_path):

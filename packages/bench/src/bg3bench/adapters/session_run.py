@@ -11,7 +11,8 @@ harness never imports the bench: the scenario reaches the host as the v2 dict (s
 
 A fault (game crash or hang, agent hang) ends the session at once (run_session's `invalid`): the run counts one more
 harness failure, so results.validity makes it invalid and the matrix reruns the job. A host whose `start` fails ran
-no agent: an invalid attempt that cost nothing. series.json freezes the scenario from the series' first run; a later
+no agent: an invalid attempt that cost nothing, recorded in runs.jsonl as a runner_error (no artifacts), so the
+rerun plays in a fresh run directory (the failed start may have left a facts.jsonl run_start there). series.json freezes the scenario from the series' first run; a later
 run of an edited scenario is refused.
 
 Budget: a paid client's (matrix.PAID_CLIENTS) cost is settled by the matrix (`charged` False), so the host must not
@@ -89,7 +90,12 @@ class SessionRun:
         try:
             st = self.host.start(job, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
-            return RunResult(None, False, False, 0.0, f"start failed: {type(e).__name__}: {e}", True)
+            why = f"start failed: {type(e).__name__}: {e}"
+            failed: JSON = {"series": name, "playthrough": run_dir.name, "run": k, "client": job["client"]}
+            failed.update(model=job["model"], effort=job["effort"], outcome="runner_error", reason=why, cost_usd=0.0)
+            with runs.open("a", encoding="utf-8") as f:  # the run number is used: a rerun gets a fresh run_dir
+                f.write(json.dumps(failed) + "\n")
+            return RunResult(None, False, False, 0.0, why, True)
         spec = SessionSpec(run_dir.name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, NO_RESUME)
         out = run_session(spec, st.hooks)
         rec: JSON = dict(self.host.record(job, sc, run_dir, out))
