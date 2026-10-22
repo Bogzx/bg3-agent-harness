@@ -7,7 +7,9 @@ What a run gets: a profile (runner/profiles.py) for the endpoint, model and effo
 docs/OVERHAUL-PLAN.md: for now the server's instructions + rules, dumped by write_system_text) that bg3.ts sends
 verbatim, so the server's own rules copy is off (BG3AI_SERVE_RULES=0); the bg3 tools as sequential
 mcp__bg3__* tools and nothing else. Per session, write_config puts settings.json, models.json and bg3.json in
-<session_dir>/<tag>.pi (pi's agent dir), so ~/.pi is never read; the API key stays in the env var the profile names.
+<session_dir>/<tag>.pi (pi's agent dir), so ~/.pi is never read; the conversations stay in
+<session_dir>/pi-sessions (a resume's process finds its first one's); the API key stays in the env var the
+profile names.
 
 The parser's guards (pi's exit code is no signal: it is 0 after a final API error and after a context overflow):
 - the result is an error when the last assistant message stopped on an error; api_error only for the API's
@@ -335,6 +337,11 @@ class PiClient:
     def agent_dir(self, req: C.Request) -> Path:
         return Path(req.session_dir) / f"{req.tag or 'session'}.pi"
 
+    def sessions_dir(self, req: C.Request) -> Path:
+        """pi's session files, shared by every process of the session dir: a resume (S001-c1, S001-r1) has its
+        own agent dir but must find the conversation its first process wrote (the ids are unique)."""
+        return Path(req.session_dir) / "pi-sessions"
+
     def bg3_config(self, req: C.Request) -> dict:
         s = self.server
         if C.is_http(s):  # the container sandbox: the host runs the server with the session env
@@ -383,7 +390,7 @@ class PiClient:
             "--tools",
             "mcp__bg3__*",
             "--session-dir",
-            str(self.agent_dir(req) / "sessions"),
+            str(self.sessions_dir(req)),
             "--session-id",
             req.session,
             "--model",

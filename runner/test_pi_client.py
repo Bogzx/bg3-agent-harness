@@ -9,6 +9,7 @@ command, and the runner's tool-count check (check 22) through play.mcp_problem. 
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -294,7 +295,7 @@ class Client(unittest.TestCase):
                 "--tools",
                 "mcp__bg3__*",
                 "--session-dir",
-                str(d / "sessions"),
+                str(self.tmp / "pi-sessions"),
                 "--session-id",
                 "S007-ab",
                 "--model",
@@ -306,6 +307,15 @@ class Client(unittest.TestCase):
         )
         self.req.effort = "max"
         self.assertEqual(self.client.command(self.req)[-3:], ["--thinking", "max", "go"])
+
+    def test_a_resume_finds_the_conversation_of_the_first_process(self):
+        # S001-c1 (a stop-check resume) has its own agent dir; with its own session dir pi started a new conversation
+        first = self.client.command(self.req)
+        resume = self.client.command(dataclasses.replace(self.req, tag="S007-c1", resume=True))
+        at = first.index("--session-dir") + 1
+        self.assertEqual(resume[at], first[at])
+        self.assertNotEqual(self.client.agent_dir(dataclasses.replace(self.req, tag="S007-c1")),
+                            self.client.agent_dir(self.req))
 
     def test_command_guards(self):
         self.req.session = None
