@@ -6,8 +6,8 @@ version:
 | Package | Version lives in | Now |
 |---|---|---|
 | harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.1.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.4.0 |
-| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.4 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.3.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.3 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
 
 The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
@@ -88,9 +88,7 @@ game unless it says so.
   live game on 2026-10-22 (research/ovh/live6.md §2) and the start notes corrected to what those saves hold. 17 of
   the 27 save starts are ready. Four saves are made but not registered (the save inspector refused them on false
   positives), `fight_act2_house_of_healing` has none yet and the Tactician twins wait for theirs. The matrix skips
-  a scenario that isn't ready and lists it with the reason (`start.not_ready`, or no start save). bench-v0.4: a
-  run of a seeded scenario whose seed the game didn't apply is invalid (`unseeded`) and rerun, and its manifest's
-  `seed` is the one the game applied (null when none).
+  a scenario that isn't ready and lists it with the reason (`start.not_ready`, or no start save).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

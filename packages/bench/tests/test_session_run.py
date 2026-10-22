@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from test_run_artifacts import assert_valid, readout
+from test_run_artifacts import assert_valid
 
 from bg3bench import conditions, matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
@@ -109,8 +109,7 @@ class Host:
         return Start("KICKOFF", self.hooks[-1], "conv-1", "a" * 64, ({"file": "rules.md", "sha256": "b" * 64},), "0.1")
 
     def record(self, job: dict, sc: dict, run_dir: Path, outcome) -> dict:
-        rec = {"outcome": "gave_up" if outcome.invalid else "timeout", "cost_usd": self.cost, "tokens": {}}
-        return rec | readout(sc["game_settings"].get("seed"))
+        return {"outcome": "gave_up" if outcome.invalid else "timeout", "cost_usd": self.cost, "tokens": {}}
 
 
 def job(client: str = "pi", condition: str = "rules", repeat: int = 1) -> dict:

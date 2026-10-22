@@ -73,9 +73,8 @@ class StubRunner(lpt.Runner):
     def apply_play_settings(self) -> None:
         pass
 
-    def check_settings(self) -> None:  # game_setup's readout: the mod applied the run's seed
-        seed = self.opt.seed
-        self.game_settings = {"seed": {"seed": seed, "applied": {"seed": seed}}} if seed is not None else {}
+    def check_settings(self) -> None:
+        pass
 
     def game_alive(self) -> bool:
         return True

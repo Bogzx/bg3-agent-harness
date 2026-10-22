@@ -8,9 +8,8 @@ for it, the choices grader's picks for a choice scenario (and their persona fit,
 luck summary when there is a roll log, and writes:
 
 - manifest.json: manifest.from_series over series.json and the run's runs.jsonl record, with the harness version,
-  the prompt hash, the condition, the dice seed the game applied (results.applied_seed: null when it wasn't seeded)
-  and the scenario's timing.
-- result.json: results.from_record with that grade (a seeded scenario whose seed didn't apply is invalid). Without facts.jsonl the runner's own milestone verdict is used
+  the prompt hash, the condition and the scenario's dice seed and timing.
+- result.json: results.from_record with that grade. Without facts.jsonl the runner's own milestone verdict is used
   (results.py); a malformed facts.jsonl raises (a harness bug, never a silent fallback to the milestone verdict).
 
 report.load_runs(<runtime/sessions>) then finds every run that has both files.
@@ -70,7 +69,7 @@ def write_run_artifacts(
         run_record,
         bench_tag=bench_tag,
         condition=condition,
-        seed=results.applied_seed(run_record),
+        seed=sc["game_settings"].get("seed"),
         autoskip=sc["game_settings"].get("autoskip", True) is not False,
         timing=sc["timing"],
         prompt=None if prompt_sha is None else {"sha256": prompt_sha, "parts": [dict(p) for p in prompt_parts]},
@@ -93,9 +92,7 @@ def write_run_artifacts(
             )
     if (run_dir / ROLLS).is_file():
         luck_summary = luck.summary(luck.load(run_dir / ROLLS))
-    res = results.from_record(
-        run_record, man["run_id"], grade, attribution, luck_summary, picked, pilot, sc["game_settings"].get("seed")
-    )
+    res = results.from_record(run_record, man["run_id"], grade, attribution, luck_summary, picked, pilot)
     manifest.write(man, run_dir / MANIFEST)
     results.write(res, run_dir / RESULT)
     return man, res

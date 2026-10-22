@@ -1,6 +1,6 @@
 [project]
 name = "bg3bench"
-version = "0.4.0"
+version = "0.3.0"
 description = "The BG3 benchmark: graders over facts.jsonl, statistics, run manifests and results"
 requires-python = ">=3.12"
 dependencies = ["bg3-agent-harness"]  # the LLM judge (bg3harness.judge, D4)
