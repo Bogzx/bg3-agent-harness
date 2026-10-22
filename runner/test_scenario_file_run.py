@@ -14,6 +14,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -28,7 +29,7 @@ import legacy_cli as lcli
 import legacy_playthrough as lpt
 import legacy_series as lser
 
-RESOLVED = dict(
+RESOLVED: dict[str, Any] = dict(
     T.save_scenario(), game_settings={"seed": 1002, "difficulty": "Balanced", "karmic_dice": False}, timing="realtime"
 )
 

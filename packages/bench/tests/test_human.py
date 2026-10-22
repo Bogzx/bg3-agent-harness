@@ -18,7 +18,14 @@ DOC = HERE.parents[2] / "docs" / "HUMAN-BASELINE.md"
 
 
 def attempt(
-    name="fight_act1_windmill", n=1, *, passed=True, time_s=900.0, t_pass_s: float | None = 840.0, reloads=0, **kw
+    name="fight_act1_windmill",
+    n=1,
+    *,
+    passed: object = True,
+    time_s=900.0,
+    t_pass_s: float | None = 840.0,
+    reloads=0,
+    **kw,
 ):
     return {
         "scenario": name,

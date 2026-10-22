@@ -91,6 +91,7 @@ class StubRunner(lpt.Runner):
             base = self.state.dir / f"{sid}{tag}"
             stream = base.with_name(base.name + ".jsonl")
             stream.write_text("")
+            assert self.run_started is not None
             os.utime(stream, (self.run_started + 1, self.run_started + 1))  # after the run's start (coarse mtimes)
             result = E.Event("result", subtype="success", turns=3, cost_usd=PAID_USD, tokens={"output": 10})
             base.with_name(base.name + ".events.jsonl").write_text(result.to_json() + "\n")

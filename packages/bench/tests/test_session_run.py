@@ -106,6 +106,7 @@ class Host:
         self.clock = [T0]
         self.started: list[tuple[dict, dict, Path]] = []
         self.hooks: list[Hooks] = []
+        self.stopped = False  # LiveRunHost.stopped: a signal or runtime/STOP
 
     def start(self, job: dict, sc: dict, run_dir: Path) -> Start:
         if self.fail_start:

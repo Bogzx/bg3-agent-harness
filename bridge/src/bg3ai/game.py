@@ -10,6 +10,7 @@ import json
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -233,7 +234,7 @@ class Game:
                 self._release(client, ok)
         raise NotReady("unreachable")
 
-    def parallel(self, *thunks):
+    def parallel(self, *thunks: Callable[[], Any]) -> list[Any]:
         """Run independent RPC thunks at once (each on its own pooled connection, so in one game tick);
         returns their results in order, re-raising the first exception."""
         if len(thunks) <= 1 or self.pool_max <= 1:
@@ -275,7 +276,7 @@ class Game:
     _busy_clock = staticmethod(time.monotonic)
     _busy_sleep = staticmethod(time.sleep)
 
-    def rpc(self, op: str, args: dict | None = None, context: str = "server", timeout: float = 12.0) -> Any:
+    def rpc(self, op: str, args: dict[str, Any] | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         if context != "client":
             return self._rpc_once(op, args, context, timeout)
         res, waited = busywait.call(lambda: self._rpc_once(op, args, context, timeout), self._busy_clock,

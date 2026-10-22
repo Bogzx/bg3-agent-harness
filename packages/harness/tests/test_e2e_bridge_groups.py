@@ -28,7 +28,7 @@ pytestmark = pytest.mark.e2e
 TIMEOUT_S = 180
 GOLDEN = Path(__file__).resolve().parent / "fixtures" / "golden" / "bridge"
 
-Step = tuple[str, str, dict[str, Any], int, Callable[[GameModel], None] | None]  # label, tool, args, budget, before
+Step = tuple[str, str, dict[str, Any], int, Callable[[GameModel], object] | None]  # label, tool, args, budget, before
 Result = tuple[str, str, int, list[str]]  # label, text, evals, ops
 
 
