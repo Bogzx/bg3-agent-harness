@@ -172,6 +172,52 @@ class Facts(unittest.TestCase):
         self.assertEqual([r["kind"] for r in out], [])
         self.assertIsNone(self.records()[0]["game_t"])  # before run_start: null
 
+    def test_end_reads_wait_for_the_area_after_a_region_change(self):  # live4: the naut runs had no beach area
+        def at(region, area):
+            r = copy.deepcopy(READ)
+            r["status"]["region"], r["ui"]["region"], r["explored"] = region, area, None
+            return r
+
+        self.w.observe(at("Nautiloid", "Helm"), INV, now=1.0)
+        self.w.observe(at("Wilderness", None), INV, now=2.0)  # the region event; the minimap has no area yet
+        self.assertTrue(self.w.area_due)
+        t, logs, sleeps = [0.0], [], []
+        seq = iter([{"status": None}, None, at("Wilderness", None), at("Wilderness", "Ravaged Beach")])
+
+        def read():
+            got = next(seq)
+            self.w.observe(got, INV, now=10 + t[0])
+            return got
+
+        def sleep(s):
+            sleeps.append(s)
+            t[0] += s
+
+        n = F.end_reads(read, self.w, sleep, lambda: t[0], logs.append)
+        self.assertEqual((n, sleeps), (4, [5.0, 5.0, 5.0]))
+        self.assertEqual([r["name"] for r in self.records() if r.get("ev") == "area"], ["Ravaged Beach"])
+        self.assertFalse(self.w.area_due)
+        self.assertEqual(logs, ["facts: end read 1 has no status (no snapshot); waiting for the area",
+                                "facts: end read 2 has no status (no snapshot); waiting for the area"])
+
+    def test_end_reads_give_up_after_the_wait_and_read_once_without_a_region_change(self):
+        self.w.observe(READ, INV, now=1.0)
+        logs = []
+        self.assertEqual(F.end_reads(lambda: {"status": None}, self.w, self.fail, lambda: 0.0, logs.append), 1)
+        self.assertEqual(logs, ["facts: end read 1 has no status (no snapshot)"])
+        self.w.area_due = True   # a region change whose area never comes: 45 s of reads, every 5 s
+        t = [0.0]
+
+        def boom():
+            raise OSError("loading screen")
+
+        n = F.end_reads(boom, self.w, lambda s: t.__setitem__(0, t[0] + s), lambda: t[0], logs.append)
+        self.assertEqual((n, t[0]), (10, 45.0))
+        self.assertEqual(logs[-1], "facts: end read 10 failed: loading screen")
+
+    def fail(self, _s):
+        raise AssertionError("no wait")
+
     def test_read_inventory(self):
         self.assertEqual(
             F.read_inventory(lambda c, ctx: json.dumps([{"ok": True, "result": INV}]), lambda ops: ""), INV

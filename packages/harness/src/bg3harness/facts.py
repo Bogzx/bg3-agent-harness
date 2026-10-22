@@ -33,6 +33,8 @@ INVENTORY_OP = "state.inventory"
 # Event kinds the referee ring records exactly per change (bridge/src/bg3ai/referee.py); while it answers, the
 # poll diff doesn't write them too (one source per kind, research/ovh/mod.md).
 REFEREE_KINDS = frozenset({"gold", "item_added", "died", "combat_started", "combat_ended"})
+# The reads before run_end wait this long, one every END_EVERY_S, for a region change's area (end_reads).
+END_WAIT_S, END_EVERY_S = 45.0, 5.0
 
 
 def _member(c: dict) -> dict:
@@ -150,6 +152,7 @@ class FactsWriter:
         self.areas: list[str] = []
         self.last_t: float | None = None
         self.referee_live = False            # the referee ring answered the last poll: it owns REFEREE_KINDS
+        self.area_due = False                # a region event came after the last area event (the minimap lags)
         self.lock = threading.Lock()
         try:   # a later process of the same run: time zero is the file's run_start
             with open(self.path) as f:
@@ -195,6 +198,9 @@ class FactsWriter:
         if not snap["inv"] and self.last and self.last["inv"] and not (isinstance(inv, dict) and "items" in inv):
             snap["inv"] = self.last["inv"]   # likewise a failed inventory read
         evs = events(self.last, snap, got.get("events"))
+        for e in evs:
+            if e["ev"] in ("region", "area"):
+                self.area_due = e["ev"] == "region"
         if self.referee_live:
             evs = [e for e in evs if e["ev"] not in REFEREE_KINDS]
         out = [self._write({"kind": "event", **e}, now) for e in evs]
@@ -213,6 +219,29 @@ class FactsWriter:
             rec = {"kind": "event", **{k: v for k, v in f.items() if k not in ("v", "kind", "t", "game_t")}}
             out.append(self._write(rec, f.get("t") or self.clock()))
         return out
+
+
+def end_reads(read: Callable[[], dict | None], writer: FactsWriter, sleep: Callable[[float], None],
+              clock: Callable[[], float], log: Callable[[str], None],
+              wait_s: float = END_WAIT_S, every_s: float = END_EVERY_S) -> int:
+    """The reads before run_end (read() reads the game and feeds `writer`): one, or after a region change whose
+    area hasn't come yet, one every every_s for up to wait_s until it has. The minimap's area lags a region change
+    by 15-30 s, and the Nautiloid -> Wilderness wake-up dialogue reads no status for a while (the naut runs of
+    live4 stopped 13-28 s after the change). A read without a status, or a failed one, is logged. Returns the
+    number of reads."""
+    t0, n = clock(), 0
+    while True:
+        n += 1
+        try:
+            got = read()
+            if not isinstance((got or {}).get("status"), dict):
+                wait = "; waiting for the area" if writer.area_due else ""
+                log(f"facts: end read {n} has no status (no snapshot){wait}")
+        except Exception as e:  # noqa: BLE001 - a loading screen; the run_end mark is written anyway
+            log(f"facts: end read {n} failed: {e}")
+        if not writer.area_due or clock() - t0 + every_s > wait_s:
+            return n
+        sleep(every_s)
 
 
 class RingFeed:

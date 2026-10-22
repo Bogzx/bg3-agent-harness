@@ -97,6 +97,25 @@ class FactsWiring(unittest.TestCase):
         self.assertEqual(recs[-2]["area"], "Ravaged Beach")  # the end state, whatever the snapshot cadence
         self.assertEqual(recs[-1]["detail"], {"outcome": "reached"})
 
+    def test_the_last_reads_wait_through_a_dialogue_without_status(self):  # live4: naut stopped 13-28 s after
+        r = P.Runner(P.Options("naut-w", None, 20, "opus", until="nautiloid_escaped"))
+        r.game_settings = {}
+        r.facts_writer().observe(game("Nautiloid", "Helm"))
+        r.facts_writer().observe(game("Wilderness", None))  # Nautiloid -> Wilderness: the area lags
+        seq = iter([{"status": None, "ui": {"screen": "dialog"}}, game("Wilderness", "Ravaged Beach")])
+        sleeps = []
+        with (
+            mock.patch.object(r, "ring_feed", lambda: mock.Mock()),
+            mock.patch.object(r, "sleep", sleeps.append),
+            mock.patch.object(P.story, "read_game", lambda _eval: next(seq)),
+            mock.patch.object(P.facts, "read_inventory", lambda *a, **k: None),
+        ):
+            self.record(r, port_open=lambda *a, **k: True)
+        self.assertEqual(sleeps, [P.facts.END_EVERY_S])
+        recs = self.facts(r)
+        self.assertEqual([x["name"] for x in recs if x.get("ev") == "area"], ["Ravaged Beach"])
+        self.assertEqual(recs[-1]["mark"], "run_end")
+
     def test_no_last_read_when_the_game_is_gone_or_was_never_read(self):
         for read_before, port in ((True, False), (False, True)):
             r = P.Runner(P.Options(f"naut-{read_before}-{port}", None, 20, "opus", until="nautiloid_escaped"))

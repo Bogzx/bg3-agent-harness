@@ -2718,20 +2718,20 @@ class Runner:
         self.facts_writer().observe(got, inv)
 
     def end_facts(self, outcome: str) -> None:
-        """facts.jsonl's run_end mark, once per run. When this runner has read a game, one last read first (a
-        snapshot of the end state): the minimap's area lags a region change by 15-30 s, and live3's run stopped
-        24 s after Nautiloid -> Wilderness, so the beach never got its `area` event."""
+        """facts.jsonl's run_end mark, once per run. When this runner has read a game, the last reads first (a
+        snapshot of the end state; facts.end_reads waits for a region change's lagging area)."""
         if getattr(self, "_facts_ended", False):
             return
         self._facts_ended = True
         w = self.facts_writer()
+        def read() -> dict | None:
+            got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+            w.snap_t = None
+            self.facts_poll(got)
+            return got
+
         if w.last is not None and game.port_open():
-            try:
-                got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
-                w.snap_t = None
-                self.facts_poll(got)
-            except Exception as e:  # noqa: BLE001 - the mark below is written anyway
-                log(f"facts: the last read failed: {e}")
+            facts.end_reads(read, w, self.sleep, time.monotonic, log)
         w.mark("run_end", {"outcome": outcome})
 
     def facts_writer(self) -> facts.FactsWriter:
