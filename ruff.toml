@@ -168,7 +168,7 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "runner/dashboard/seriesview.py" = ["N812"]
 "runner/dashboard/test_seriesview.py" = ["B905", "N812"]
 "runner/dashboard/test_serve.py" = ["N812"]
-"runner/play.py" = ["C408", "E501", "F541", "I001", "N812", "N818", "RUF001", "RUF005", "RUF100", "SIM103", "SIM105", "SIM108", "SIM114", "SIM115", "UP031", "UP037"]
+"runner/play.py" = ["C408", "E501", "F541", "I001", "N812", "N818", "RUF001", "RUF005", "RUF100", "SIM105", "SIM108", "SIM115", "UP031", "UP037"]
 "runner/runs.py" = ["E501", "F401", "RUF100", "SIM105", "SIM114"]   # F401: re-exports of bg3bench
 "runner/test_analyzer_parity.py" = ["N812"]
 "runner/test_clients.py" = ["B905", "E501", "I001", "N812", "RUF100"]
@@ -181,7 +181,10 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "runner/test_judge.py" = ["N812", "RUF100"]
 "runner/test_model_time.py" = ["B905", "C416", "C420", "N812", "RUF100", "UP017"]
 "runner/test_pi_client.py" = ["N812"]
-"runner/test_play.py" = ["E501", "E731", "I001", "N805", "N812", "RUF001", "RUF005", "RUF012", "RUF015", "RUF059", "RUF100", "SIM117"]
+"runner/test_play.py" = ["E501", "E731", "I001", "N812", "RUF005", "RUF012", "RUF100"]
+"runner/test_play_between.py" = ["E501", "E731", "N812", "RUF001", "RUF005", "RUF012", "SIM117"]   # moved from test_play.py
+"runner/test_play_saves.py" = ["E501", "E731", "N812", "RUF005"]   # moved from test_play.py
+"runner/test_play_series.py" = ["E501", "N805", "N812", "RUF001", "RUF005", "RUF015", "RUF059"]   # moved from test_play.py
 "runner/test_profiles.py" = ["N812"]
 "runner/test_ramwatch.py" = ["E501", "N812", "RUF005", "RUF100"]
 "runner/test_runs.py" = ["E501", "I001", "N812", "RUF012", "RUF100"]
@@ -461,6 +464,9 @@ exclude = [
     "runner/test_judge.py",
     "runner/test_model_time.py",
     "runner/test_play.py",
+    "runner/test_play_between.py",   # moved from test_play.py
+    "runner/test_play_saves.py",
+    "runner/test_play_series.py",
     "runner/test_ramwatch.py",
     "runner/test_runs.py",
     "runner/test_sandbox.py",

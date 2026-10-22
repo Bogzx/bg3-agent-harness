@@ -111,7 +111,7 @@ class FactsWiring(unittest.TestCase):
             mock.patch.object(P.facts, "read_inventory", lambda *a, **k: None),
         ):
             self.record(r, port_open=lambda *a, **k: True)
-        self.assertEqual(sleeps, [P.facts.END_EVERY_S])
+        self.assertEqual(sleeps, [5.0])  # facts.END_EVERY_S
         recs = self.facts(r)
         self.assertEqual([x["name"] for x in recs if x.get("ev") == "area"], ["Ravaged Beach"])
         self.assertEqual(recs[-1]["mark"], "run_end")

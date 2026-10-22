@@ -143,19 +143,22 @@ class RunFiles(unittest.TestCase):
     def test_claude_gets_the_tool_count_and_the_manifest(self):
         got, logs = self.run_files("claude", {})
         n = len(CS.tool_names(TOOLS))
-        self.assertEqual(set(got), {"tools_expected", "manifest"})   # no system file: claude reads play/CLAUDE.md
+        self.assertEqual(set(got), {"tools_expected", "manifest"})  # no system file: claude reads play/CLAUDE.md
         self.assertEqual(got["tools_expected"], n)
         m = got["manifest"]
-        self.assertEqual((m["seed"], m["timing"], m["client"], m["condition"], m["tools"]["count"]),
-                         (1001, "realtime", {"name": "claude", "version": "9.9"}, "rules+coaching", n))
+        self.assertEqual(
+            (m["seed"], m["timing"], m["client"], m["condition"], m["tools"]["count"]),
+            (1001, "realtime", {"name": "claude", "version": "9.9"}, "rules+coaching", n),
+        )
         self.assertIn(f"claude: {n} bg3 tools expected, prompt rules+coaching sha256 ", logs[0])
 
     def test_pi_gets_its_system_text_and_the_served_condition(self):
         got, _ = self.run_files("pi", {"BG3AI_TOOLS_OFF": "wiki"})
         self.assertTrue(got["system_file"].endswith("pi-system.txt"))
         self.assertEqual(got["tools_expected"], len(CS.tool_names(TOOLS)) - 2)
-        self.assertEqual((got["manifest"]["condition"], got["manifest"]["tools"]["count"]),
-                         ("rules", got["tools_expected"]))
+        self.assertEqual(
+            (got["manifest"]["condition"], got["manifest"]["tools"]["count"]), ("rules", got["tools_expected"])
+        )
 
     def test_coaching_with_a_group_off_records_the_error(self):
         got, logs = self.run_files("claude", {"BG3AI_TOOLS_OFF": "wiki"})

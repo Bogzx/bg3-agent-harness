@@ -36,71 +36,78 @@ class Hooks:
     """A fake client (each process plays `script`'s next step: (reason, minutes it runs, what it does to the game))
     and the runner's side of the session, all on one fake clock."""
 
-    def __init__(self, script: list[tuple[str, float]], game: FakeGame, stop_checks: list[str | None] | None = None):
+    def __init__(self, script: list[tuple[str, float]], game: FakeGame, stop_checks: list[str] | None = None):
         self.t, self.script, self.game = 1000.0, list(script), game
-        self.stop_checks = list(stop_checks or [])
+        self.stop_checks: list[str] = list(stop_checks or [])
         self.runs: list[dict[str, Any]] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
         self.logs: list[str] = []
         self.pending = ["RUNNER NOTE: x"]
         self.abort = self.stop = False
 
-    def run_agent(self, prompt, minutes, client_session, resume, tag):
+    def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> Result:
         reason, runs_min = self.script.pop(0)
         start = self.t
         self.t += min(runs_min, minutes + 10) * 60
         if reason in ("crash", "hang"):
             self.game.crash()
-        self.runs.append({"prompt": prompt, "minutes": round(minutes, 1), "session": client_session,
-                          "resume": resume, "tag": tag})
-        return Result(reason, 0 if reason == "exited" else None, start, self.t, client_session or "conv-new",
-                      fault_at=self.t if reason in ("crash", "hang", "agent_hang") else None)
+        self.runs.append(
+            {"prompt": prompt, "minutes": round(minutes, 1), "session": client_session, "resume": resume, "tag": tag}
+        )
+        return Result(
+            reason,
+            0 if reason == "exited" else None,
+            start,
+            self.t,
+            client_session or "conv-new",
+            fault_at=self.t if reason in ("crash", "hang", "agent_hang") else None,
+        )
 
-    def session_end(self, planned_end):
+    def session_end(self, planned_end: float) -> float:
         return planned_end
 
-    def stop_check(self, session_end):
+    def stop_check(self, session_end: float) -> str | None:
         return self.stop_checks.pop(0) if self.stop_checks else None
 
-    def game_ok(self):
+    def game_ok(self) -> bool:
         return self.game.alive
 
-    def recover(self, why):
+    def recover(self, why: str) -> RecoverFailure | None:
         if self.game.fail_recovery is not None:
             return self.game.fail_recovery
         self.game.alive, self.game.launches = True, self.game.launches + 1
         self.t += 120
         return None
 
-    def loaded(self):
+    def loaded(self) -> str | None:
         return self.game.save
 
-    def aborted(self):
+    def aborted(self) -> bool:
         return self.abort
 
-    def stop_requested(self):
+    def stop_requested(self) -> bool:
         return self.stop
 
-    def notes(self):
+    def notes(self) -> list[str]:
         notes, self.pending = self.pending, []
         return notes
 
-    def resume_prompt(self, why, notes):
+    def resume_prompt(self, why: str, notes: list[str]) -> str:
         return "\n".join([f"RESUME game {why}", *notes])
 
-    def agent_resume_prompt(self, notes):
+    def agent_resume_prompt(self, notes: list[str]) -> str:
         return "\n".join(["RESUME agent", *notes])
 
-    def stop_resume_prompt(self, why):
+    def stop_resume_prompt(self, why: str) -> str:
         return f"STOP {why}"
 
-    def event(self, kind, **fields):
+    def event(self, kind: str, **fields: Any) -> None:
         self.events.append((kind, fields))
 
-    def log(self, msg):
+    def log(self, msg: str) -> None:
         self.logs.append(msg)
 
-    def now(self):
+    def now(self) -> float:
         return self.t
 
 
@@ -118,8 +125,16 @@ class RunSession(unittest.TestCase):
         h = Hooks([("exited", 20), ("exited", 38)], FakeGame(), ["Keep playing: 40 minutes left."])
         out = run_session(SPEC, h)
         self.assertEqual(out.stop_resumes, 1)
-        self.assertEqual(h.runs[1], {"prompt": "STOP Keep playing: 40 minutes left.", "minutes": 40.0,
-                                     "session": "conv-1", "resume": True, "tag": "-c1"})
+        self.assertEqual(
+            h.runs[1],
+            {
+                "prompt": "STOP Keep playing: 40 minutes left.",
+                "minutes": 40.0,
+                "session": "conv-1",
+                "resume": True,
+                "tag": "-c1",
+            },
+        )
 
     def test_stop_resumes_are_bounded(self):
         h = Hooks([("exited", 1)] * 3, FakeGame(), ["again"] * 5)
@@ -138,16 +153,36 @@ class RunSession(unittest.TestCase):
         self.assertEqual((out.resumes, g.launches), (1, 0))
         self.assertEqual(h.runs[1]["prompt"], "RESUME agent\nRUNNER NOTE: x")
         self.assertEqual((h.runs[1]["tag"], h.runs[1]["session"]), ("-r1", "conv-1"))
-        self.assertEqual(h.events, [("recovered", {"fault": "agent_hang", "session": "S001", "seconds": 0,
-                                                   "how": "claude restarted, game untouched; claude resumed (-r1)"})])
+        self.assertEqual(
+            h.events,
+            [
+                (
+                    "recovered",
+                    {
+                        "fault": "agent_hang",
+                        "session": "S001",
+                        "seconds": 0,
+                        "how": "claude restarted, game untouched; claude resumed (-r1)",
+                    },
+                )
+            ],
+        )
 
     def test_crash_recovers_the_game_and_resumes_for_the_time_left(self):
         g = FakeGame()
         h = Hooks([("crash", 10), ("exited", 48)], g)
         out = run_session(SPEC, h)
         self.assertEqual((out.resumes, g.launches, out.result.reason, out.invalid), (1, 1, "exited", None))
-        self.assertEqual(h.runs[1], {"prompt": "RESUME game crashed\nRUNNER NOTE: x", "minutes": 48.0,
-                                     "session": "conv-1", "resume": True, "tag": "-r1"})
+        self.assertEqual(
+            h.runs[1],
+            {
+                "prompt": "RESUME game crashed\nRUNNER NOTE: x",
+                "minutes": 48.0,
+                "session": "conv-1",
+                "resume": True,
+                "tag": "-r1",
+            },
+        )
         self.assertEqual(h.events[0][1]["how"], "game relaunched, loaded Tav-1__S001; claude resumed (-r1)")
 
     def test_crash_with_no_resume_is_invalid_and_leaves_the_game(self):  # a benchmark run
@@ -163,7 +198,7 @@ class RunSession(unittest.TestCase):
         self.assertEqual((out.resumes, len(h.runs), out.result.reason), (1, 2, "hang"))
         self.assertIn("session ended, the next one picks up", h.events[-1][1]["how"])
         h = Hooks([("crash", 55)], FakeGame())
-        self.assertEqual(run_session(SPEC, h).resumes, 0)   # 3 min left < resume_min_minutes
+        self.assertEqual(run_session(SPEC, h).resumes, 0)  # 3 min left < resume_min_minutes
 
     def test_a_recovery_that_gives_up_is_handed_back(self):
         g = FakeGame()

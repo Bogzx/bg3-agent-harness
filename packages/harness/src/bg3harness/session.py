@@ -16,7 +16,7 @@ so a fake client and a fake game drive it in tests (packages/harness/tests/test_
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 GAME_FAULTS = ("crash", "hang")
 FAULTS = (*GAME_FAULTS, "agent_hang")
@@ -24,18 +24,18 @@ FAULTS = (*GAME_FAULTS, "agent_hang")
 
 @dataclass(frozen=True)
 class Recovery:
-    max_resumes: int = 3               # game crashes / agent hangs per session that resume the same conversation
-    resume_min_minutes: float = 8      # less than this left after a fault: end the session, the next one picks up
-    max_stop_resumes: int = 6          # the agent ended its turn but the stop check sent it back
-    hard_stop_grace_s: float = 600     # the deadline + this is the hard stop (no stop resume within a minute of it)
+    max_resumes: int = 3  # game crashes / agent hangs per session that resume the same conversation
+    resume_min_minutes: float = 8  # less than this left after a fault: end the session, the next one picks up
+    max_stop_resumes: int = 6  # the agent ended its turn but the stop check sent it back
+    hard_stop_grace_s: float = 600  # the deadline + this is the hard stop (no stop resume within a minute of it)
 
 
 @dataclass(frozen=True)
 class SessionSpec:
     sid: str
-    prompt: str                        # the kickoff
+    prompt: str  # the kickoff
     minutes: float
-    client_session: str | None         # the conversation id (None: the client names it)
+    client_session: str | None  # the conversation id (None: the client names it)
     recovery: Recovery = Recovery()
 
 
@@ -51,34 +51,35 @@ class AgentResult(Protocol):
 @dataclass(frozen=True)
 class RecoverFailure:
     error: Exception
-    fatal: bool                        # the launch gave up: the caller re-raises it after its bookkeeping
+    fatal: bool  # the launch gave up: the caller re-raises it after its bookkeeping
 
 
 @dataclass
 class SessionOutcome:
-    result: AgentResult                # the last process's result
-    started: float                     # when the first process started (the session's clock)
+    result: AgentResult  # the last process's result
+    started: float  # when the first process started (the session's clock)
     resumes: int = 0
     stop_resumes: int = 0
-    gave_up: Exception | None = None   # a fatal RecoverFailure's error
-    invalid: str | None = None         # max_resumes=0: the fault that ended the session
+    gave_up: Exception | None = None  # a fatal RecoverFailure's error
+    invalid: str | None = None  # max_resumes=0: the fault that ended the session
 
 
 class SessionHooks(Protocol):
-    def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool,
-                  tag: str) -> AgentResult: ...
-    def session_end(self, planned_end: float) -> float: ...   # the deadline with a fight hold applied
-    def stop_check(self, session_end: float) -> str | None: ...   # why the session can't end yet, or None
-    def game_ok(self) -> bool: ...                     # after an agent hang: the game alive and answering
-    def recover(self, why: str) -> RecoverFailure | None: ...   # relaunch the game, load the latest save
-    def loaded(self) -> str | None: ...                # the save the recovery loaded
-    def aborted(self) -> bool: ...                     # a signal: no more processes
-    def stop_requested(self) -> bool: ...              # an operator stop: no resume after a fault
-    def notes(self) -> list[str]: ...                  # the pending runner notes (taken)
+    def run_agent(
+        self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str
+    ) -> AgentResult: ...
+    def session_end(self, planned_end: float) -> float: ...  # the deadline with a fight hold applied
+    def stop_check(self, session_end: float) -> str | None: ...  # why the session can't end yet, or None
+    def game_ok(self) -> bool: ...  # after an agent hang: the game alive and answering
+    def recover(self, why: str) -> RecoverFailure | None: ...  # relaunch the game, load the latest save
+    def loaded(self) -> str | None: ...  # the save the recovery loaded
+    def aborted(self) -> bool: ...  # a signal: no more processes
+    def stop_requested(self) -> bool: ...  # an operator stop: no resume after a fault
+    def notes(self) -> list[str]: ...  # the pending runner notes (taken)
     def resume_prompt(self, why: str, notes: list[str]) -> str: ...
     def agent_resume_prompt(self, notes: list[str]) -> str: ...
     def stop_resume_prompt(self, why: str) -> str: ...
-    def event(self, kind: str, **fields) -> None: ...
+    def event(self, kind: str, **fields: Any) -> None: ...
     def log(self, msg: str) -> None: ...
     def now(self) -> float: ...
 
@@ -94,18 +95,26 @@ def run_session(spec: SessionSpec, hooks: SessionHooks) -> SessionOutcome:
     while True:
         session_end = hooks.session_end(planned_end)
         if res.reason not in FAULTS:
-            if (res.reason != "exited" or res.exit_code != 0 or out.stop_resumes >= rec.max_stop_resumes
-                    or hooks.aborted() or hooks.now() > session_end + rec.hard_stop_grace_s - 60):
+            if (
+                res.reason != "exited"
+                or res.exit_code != 0
+                or out.stop_resumes >= rec.max_stop_resumes
+                or hooks.aborted()
+                or hooks.now() > session_end + rec.hard_stop_grace_s - 60
+            ):
                 break
             why = hooks.stop_check(session_end)
             if not why:
                 break
             out.stop_resumes += 1
             left = (session_end - hooks.now()) / 60
-            hooks.log(f"{sid}: claude ended its turn but the session can't end yet ({left:.0f} min left); resuming it "
-                      f"(-c{out.stop_resumes}): {why[:160]}")
-            res = hooks.run_agent(hooks.stop_resume_prompt(why), left, res.claude_session, True,
-                                  f"-c{out.stop_resumes}")
+            hooks.log(
+                f"{sid}: claude ended its turn but the session can't end yet ({left:.0f} min left); resuming it "
+                f"(-c{out.stop_resumes}): {why[:160]}"
+            )
+            res = hooks.run_agent(
+                hooks.stop_resume_prompt(why), left, res.claude_session, True, f"-c{out.stop_resumes}"
+            )
             out.result = res
             continue
         fault, fault_at = res.reason, res.fault_at or res.ended
@@ -127,19 +136,32 @@ def run_session(spec: SessionSpec, hooks: SessionHooks) -> SessionOutcome:
                 break
             how = f"game relaunched, loaded {hooks.loaded() or 'main menu'}"
         left = (session_end - hooks.now()) / 60
-        if (out.resumes >= rec.max_resumes or left < rec.resume_min_minutes or hooks.aborted()
-                or hooks.stop_requested()):
-            hooks.log(f"{sid}: not resuming after the {res.reason} ({left:.0f} min left, {out.resumes} resume(s) so "
-                      "far); the next session picks up")
-            hooks.event("recovered", fault=fault, session=sid, seconds=round(hooks.now() - fault_at),
-                        how=how + "; session ended, the next one picks up")
+        if out.resumes >= rec.max_resumes or left < rec.resume_min_minutes or hooks.aborted() or hooks.stop_requested():
+            hooks.log(
+                f"{sid}: not resuming after the {res.reason} ({left:.0f} min left, {out.resumes} resume(s) so "
+                "far); the next session picks up"
+            )
+            hooks.event(
+                "recovered",
+                fault=fault,
+                session=sid,
+                seconds=round(hooks.now() - fault_at),
+                how=how + "; session ended, the next one picks up",
+            )
             break
         out.resumes += 1
         notes = hooks.notes()
-        hooks.log(f"{sid}: resuming claude after the {res.reason} ({left:.0f} min left, resume {out.resumes}; "
-                  f"{hooks.now() - fault_at:.0f} s after the fault)")
-        hooks.event("recovered", fault=fault, session=sid, seconds=round(hooks.now() - fault_at),
-                    how=how + f"; claude resumed (-r{out.resumes})")
+        hooks.log(
+            f"{sid}: resuming claude after the {res.reason} ({left:.0f} min left, resume {out.resumes}; "
+            f"{hooks.now() - fault_at:.0f} s after the fault)"
+        )
+        hooks.event(
+            "recovered",
+            fault=fault,
+            session=sid,
+            seconds=round(hooks.now() - fault_at),
+            how=how + f"; claude resumed (-r{out.resumes})",
+        )
         prompt = hooks.agent_resume_prompt(notes) if game_ok else hooks.resume_prompt(why, notes)
         res = hooks.run_agent(prompt, left, res.claude_session, True, f"-r{out.resumes}")
         out.result = res

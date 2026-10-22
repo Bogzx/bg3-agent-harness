@@ -197,15 +197,20 @@ class Facts(unittest.TestCase):
         self.assertEqual((n, sleeps), (4, [5.0, 5.0, 5.0]))
         self.assertEqual([r["name"] for r in self.records() if r.get("ev") == "area"], ["Ravaged Beach"])
         self.assertFalse(self.w.area_due)
-        self.assertEqual(logs, ["facts: end read 1 has no status (no snapshot); waiting for the area",
-                                "facts: end read 2 has no status (no snapshot); waiting for the area"])
+        self.assertEqual(
+            logs,
+            [
+                "facts: end read 1 has no status (no snapshot); waiting for the area",
+                "facts: end read 2 has no status (no snapshot); waiting for the area",
+            ],
+        )
 
     def test_end_reads_give_up_after_the_wait_and_read_once_without_a_region_change(self):
         self.w.observe(READ, INV, now=1.0)
         logs = []
         self.assertEqual(F.end_reads(lambda: {"status": None}, self.w, self.fail, lambda: 0.0, logs.append), 1)
         self.assertEqual(logs, ["facts: end read 1 has no status (no snapshot)"])
-        self.w.area_due = True   # a region change whose area never comes: 45 s of reads, every 5 s
+        self.w.area_due = True  # a region change whose area never comes: 45 s of reads, every 5 s
         t = [0.0]
 
         def boom():
