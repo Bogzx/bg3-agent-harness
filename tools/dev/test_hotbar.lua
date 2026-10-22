@@ -346,7 +346,8 @@ ldc.CurrentPlayer.UIData.ActiveTask.TargetValues = nil
 -- live6 se: after Dimension Door landed only the move cursor's preview was left (MoveTo): nothing in hand
 ldc.CurrentPlayer.UIData.ActiveTask.PreviewType = "MoveTo"
 r = ops["ui.cast_state"]({ char = "c3" })
-ok(r.armed == false and r.armed_by == nil and r.preview == "MoveTo", "live6: the move cursor's MoveTo preview = not armed")
+ok(r.armed == false and r.armed_by == nil and r.preview == "MoveTo",
+   "live6: the move cursor's MoveTo preview = not armed")
 ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = { TargetingType = "Teleportation" }
 r = ops["ui.cast_state"]({ char = "c3" })
 ok(r.armed == true and r.armed_by == "spell_task", "a teleport's landing step (MoveTo + its spell task) = armed")

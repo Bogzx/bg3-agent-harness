@@ -393,7 +393,8 @@ local function loadPage(n)
     local ex = { t = "Expander", hdr = "Claude", kids = items }
     ex.SetProperty = function(self, prop, v) if prop == "IsExpanded" then self.expanded = v end end
     page.pane = nil
-    widgets.LoadGame = { name = "LoadGame", visible = true, kids = { ex, { t = "TextBlock", nm = "Date", isPane = true } } }
+    widgets.LoadGame = { name = "LoadGame", visible = true,
+        kids = { ex, { t = "TextBlock", nm = "Date", isPane = true } } }
 end
 local function walk(e, pred, out)
     for _, k in ipairs(e.kids or {}) do
@@ -414,22 +415,23 @@ UIx.prop = function(e, k)
 end
 A.LOAD_ENABLED = true
 local function runLoad(args, ms)
-    local job = jobs[ops["ui.menu"](args).job]
+    local lj = jobs[ops["ui.menu"](args).job]
     for _ = 1, (ms or 40000) // 16 do
         clock = clock + 16
         if #pendingKey > 0 and widgets.LoadGame then hide("LoadGame") end
         pendingKey = {}
-        if clock > job.deadline_at then job.status = "timeout" break end
-        job.on_tick(job)
-        if job.status ~= "running" then break end
+        if clock > lj.deadline_at then lj.status = "timeout" break end
+        lj.on_tick(lj)
+        if lj.status ~= "running" then break end
     end
-    return job
+    return lj
 end
 local want = { y = 2026, m = 10, d = 9, H = 9, M = 48 }
 loadPage(12)
 local lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 5, date = want })
 ok(lj.status == "done" and lj.result.picked == 9 and lj.result.pane == "9/10/2026 09:48",
-    "load: a hint 4 low is found by the outward scan: " .. tostring(lj.status) .. " " .. tostring(lj.result and lj.result.picked))
+    "load: a hint 4 low is found by the outward scan: " .. tostring(lj.status) .. " "
+    .. tostring(lj.result and lj.result.picked))
 ok(lj.partial and lj.partial.tried == 8 and lj.partial.saves == 12, "load: the scan's progress is in the job's partial")
 loadPage(12)
 lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 9, date = want })
@@ -438,8 +440,9 @@ ok(lj.status == "done" and lj.result.picked == 9 and lj.partial.tried == 1, "loa
 loadPage(200)
 lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 1,
     date = { y = 2026, m = 11, d = 1, H = 9, M = 48 } })
-ok(lj.status == "timeout" and lj.partial.stage == "verify" and lj.partial.tried > 10 and lj.partial.picked == lj.partial.tried
-    and lj.partial.saves == 200 and lj.partial.pane ~= nil, "load: a scan cut off by the job's time says where it was: "
+ok(lj.status == "timeout" and lj.partial.stage == "verify" and lj.partial.tried > 10
+    and lj.partial.picked == lj.partial.tried and lj.partial.saves == 200 and lj.partial.pane ~= nil,
+    "load: a scan cut off by the job's time says where it was: "
     .. tostring(lj.status) .. " " .. tostring(lj.partial.tried))
 widgets.LoadGame = nil
 for k, f in pairs(saved) do UIx[k] = f end
