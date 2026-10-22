@@ -100,7 +100,7 @@
     "packages/harness/tests/test_host_tuning.py",
     "packages/harness/tests/test_profiles.py",
     "packages/harness/tests/test_ramwatch.py",
-    "packages/harness/tests/test_runs.py",
+    "packages/harness/tests/test_runs_core.py",
     "packages/playthrough/tests/e2e/conftest.py",
     "packages/playthrough/tests/memory/test_keeper.py",
     "packages/playthrough/tests/memory/test_session.py",
