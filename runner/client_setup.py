@@ -98,28 +98,25 @@ def api_key_env(prof: Profile | None, environ: dict, dotenv: Path) -> dict[str, 
     return {name: value}
 
 
-def dump_server(system: Path, tools: Path, repo: Path, run=subprocess.run) -> None:
-    """The system text (D2) and the bg3 server's full tool list, offline in the bridge's env (tools/pi/dump_server.py).
-    The runner's BG3AI_TOOLS* are left out so the list is the whole registry."""
-    env = {k: v for k, v in os.environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
+def _dump(args: list[str], repo: Path, env: dict[str, str], run) -> None:
+    """tools/pi/dump_server.py with these args, offline in the bridge's env."""
     run(
-        [
-            "uv",
-            "run",
-            "--project",
-            str(repo / "bridge"),
-            "python",
-            str(repo / "tools/pi/dump_server.py"),
-            "--system",
-            str(system),
-            "--tools",
-            str(tools),
-        ],
+        ["uv", "run", "--project", str(repo / "bridge"), "python", str(repo / "tools/pi/dump_server.py"), *args],
         check=True,
         capture_output=True,
         timeout=300,
         env=env,
     )
+
+
+def dump_server(system: Path, tools: Path, instructions: Path, repo: Path, run=subprocess.run) -> None:
+    """The bg3 server's full tool list, then the system text (D2) and the server's own instructions, offline in the
+    bridge's env (tools/pi/dump_server.py). The list leaves the runner's BG3AI_TOOLS* out so it is the whole
+    registry; the texts keep the session env (BG3AI_TOOLS*, BG3AI_PROMPT_CONDITION), as the play processes' server
+    words them for the tools it serves."""
+    env = {k: v for k, v in os.environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
+    _dump(["--tools", str(tools)], repo, env, run)
+    _dump(["--system", str(system), "--instructions", str(instructions)], repo, dict(os.environ), run)
 
 
 def run_files(
@@ -129,19 +126,20 @@ def run_files(
     timing: str | None,
     repo: Path,
     log: Callable[[str], None],
-    dump: Callable[[Path, Path, Path], None] = dump_server,
+    dump: Callable[[Path, Path, Path, Path], None] = dump_server,
     version: Callable[[str], str | None] | None = None,
 ) -> dict:
-    """play.py's Options fields every play process of a pi or claude run shares, from the system text and the bg3
-    server's tool list dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools the init must count
-    (claude: its mcp__bg3__* tools) and the run manifest's fields. The condition is the text the client is served:
-    claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION (default rules). A condition
-    the tools can't serve (coaching with a group off) leaves the manifest's error instead of its prompt."""
+    """play.py's Options fields every play process of a pi or claude run shares, from the system text, the bg3
+    server's tool list and its instructions dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools
+    the init must count (claude: its mcp__bg3__* tools) and the run manifest's fields. The condition is the text the
+    client is served: claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION (default
+    rules). A condition the tools can't serve (coaching with a group off) leaves the manifest's error instead of
+    its prompt."""
     from bg3harness import run_manifest
 
     d.mkdir(parents=True, exist_ok=True)
-    system, tools = d / "pi-system.txt", d / "bg3-tools.json"
-    dump(system, tools, repo)
+    system, tools, instructions = d / "pi-system.txt", d / "bg3-tools.json", d / "bg3-instructions.txt"
+    dump(system, tools, instructions, repo)
     served = served_tools(tool_names(tools), os.environ)
     condition = "rules+coaching" if client == "claude" else os.environ.get("BG3AI_PROMPT_CONDITION", "rules")
     try:
@@ -151,6 +149,7 @@ def run_files(
             condition,
             served,
             {"game_settings": {"seed": seed}, "timing": timing},
+            instructions.read_text(encoding="utf-8"),
         )
         prompt = f"prompt {condition} sha256 {manifest['prompt']['sha256'][:12]}"
     except ValueError as e:

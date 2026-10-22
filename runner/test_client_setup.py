@@ -105,19 +105,22 @@ class ToolCount(unittest.TestCase):
             "the bg3 MCP server gave 94 tools, expected 92 (BG3AI_TOOLS_OFF=wiki)",
         )
 
-    def test_dump_server_leaves_the_tool_selection_out(self):
-        seen = {}
+    def test_dump_server_leaves_the_tool_selection_out_of_the_list_only(self):
+        seen = []
 
         def run(cmd, **kw):
-            seen.update(cmd=cmd, env=kw["env"])
+            seen.append((cmd, kw["env"]))
 
         import os
 
         os.environ["BG3AI_TOOLS"] = "game"
         self.addCleanup(os.environ.pop, "BG3AI_TOOLS", None)
-        CS.dump_server(Path("/s.txt"), Path("/t.json"), REPO, run=run)
-        self.assertNotIn("BG3AI_TOOLS", seen["env"])
-        self.assertEqual(seen["cmd"][-4:], ["--system", "/s.txt", "--tools", "/t.json"])
+        CS.dump_server(Path("/s.txt"), Path("/t.json"), Path("/i.txt"), REPO, run=run)
+        (lst, lst_env), (txt, txt_env) = seen
+        self.assertEqual(lst[-2:], ["--tools", "/t.json"])
+        self.assertNotIn("BG3AI_TOOLS", lst_env)  # the whole registry, for the count
+        self.assertEqual(txt[-4:], ["--system", "/s.txt", "--instructions", "/i.txt"])
+        self.assertEqual(txt_env["BG3AI_TOOLS"], "game")  # the texts the session's server serves
 
 
 class RunFiles(unittest.TestCase):
@@ -131,12 +134,22 @@ class RunFiles(unittest.TestCase):
         d = Path(tempfile.mkdtemp(prefix="bg3ai-runfiles-")) / "pt"
         logs: list[str] = []
 
-        def dump(system: Path, tools: Path, repo: Path) -> None:
+        def dump(system: Path, tools: Path, instructions: Path, repo: Path) -> None:
             system.write_text("SYSTEM")
             tools.write_text(TOOLS.read_text())
+            instructions.write_text("INSTRUCTIONS\n")
 
         with mock.patch.dict(os.environ, env):
-            got = CS.run_files(d, client, 1001, "realtime", REPO, logs.append, dump=dump, version=lambda c: "9.9")
+            got = CS.run_files(
+                d,
+                client,
+                1001,
+                "realtime",
+                REPO,
+                logs.append,
+                dump=dump,
+                version=lambda c: "9.9",
+            )
         json.dumps(got)  # the run record takes it as is
         return got, logs
 
@@ -151,6 +164,7 @@ class RunFiles(unittest.TestCase):
             (1001, "realtime", {"name": "claude", "version": "9.9"}, "rules+coaching", n),
         )
         self.assertIn(f"claude: {n} bg3 tools expected, prompt rules+coaching sha256 ", logs[0])
+        self.assertEqual(m["prompt"]["parts"][0]["file"], "server:instructions")  # hashed with the rules
 
     def test_pi_gets_its_system_text_and_the_served_condition(self):
         got, _ = self.run_files("pi", {"BG3AI_TOOLS_OFF": "wiki"})
