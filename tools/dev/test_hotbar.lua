@@ -343,6 +343,17 @@ ldc.CurrentPlayer.UIData.ActiveTask.TargetValues = { Remaining = 2 }
 r = ops["ui.cast_state"]({ char = "c3" })
 ok(r.armed == true and r.armed_by == "counter" and r.remaining == 2, "the cursor counter = armed")
 ldc.CurrentPlayer.UIData.ActiveTask.TargetValues = nil
+-- live6 se: after Dimension Door landed only the move cursor's preview was left (MoveTo): nothing in hand
+ldc.CurrentPlayer.UIData.ActiveTask.PreviewType = "MoveTo"
+r = ops["ui.cast_state"]({ char = "c3" })
+ok(r.armed == false and r.armed_by == nil and r.preview == "MoveTo", "live6: the move cursor's MoveTo preview = not armed")
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = { TargetingType = "Teleportation" }
+r = ops["ui.cast_state"]({ char = "c3" })
+ok(r.armed == true and r.armed_by == "spell_task", "a teleport's landing step (MoveTo + its spell task) = armed")
+ldc.CurrentPlayer.SelectedCharacter.PlayerCharacterProperties.CurrentSpellTask = nil
+ldc.CurrentPlayer.UIData.ActiveTask.PreviewType = "Spell"
+ok(ops["ui.cast_state"]({ char = "c3" }).armed_by == "preview", "a Spell preview alone = armed")
+ldc.CurrentPlayer.UIData.ActiveTask.PreviewType = "4294967295"
 ok(not pcall(ops["ui.cast_confirm"], {}), "confirm refused: the task object alone is not a spell in hand")
 commands = {}
 r = ops["ui.cast_cancel"]({})

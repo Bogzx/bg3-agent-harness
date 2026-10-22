@@ -541,8 +541,10 @@ end
 
 -- LIVE G4: ActiveTask exists with nothing in hand (PreviewType 4294967295 = none). A spell is in hand when the
 -- cursor counter shows, the selected character has a CurrentSpellTask, a client cast entity exists, or the task
--- previews something.
-H.NO_PREVIEW = { ["4294967295"] = true, ["-1"] = true, ["None"] = true, ["0"] = true }
+-- previews something. live6 (se_live6.jsonl:448-452): after Dimension Door landed the task previewed "MoveTo" with no
+-- spell task or cast left, and went none/MoveTo as the cursor moved: the plain move cursor, not a spell in hand
+-- (a teleport's landing step previews MoveTo too, but it has its spell task then).
+H.NO_PREVIEW = { ["4294967295"] = true, ["-1"] = true, ["None"] = true, ["0"] = true, ["MoveTo"] = true }
 function H.armedOf(st)
     if not st.task then return false, nil end
     if st.counter then return true, "counter" end
