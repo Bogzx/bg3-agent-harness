@@ -135,8 +135,8 @@ def _movie_skipper(stop: "threading.Event") -> None:
     while another process (runner/play.py) holds runtime/skipper.lock: one skipper per game."""
     from ..skipper import MovieSkipper
 
-    MovieSkipper(Game(port=core.game.port), world_tools._inp, lambda msg: core._log("autoskip", {}, msg, 0),
-                 lock_path=core.RUNTIME / "skipper.lock").run(stop)
+    MovieSkipper(Game(port=core.game.port, pool_max=core.game.pool_cap), world_tools._inp,
+                 lambda msg: core._log("autoskip", {}, msg, 0), lock_path=core.RUNTIME / "skipper.lock").run(stop)
 
 
 # Claude Code defers MCP tools behind ToolSearch: the agent sees only names until it loads a schema, and

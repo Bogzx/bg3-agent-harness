@@ -22,7 +22,7 @@ _queue_ignore: dict[str, set] = {}
 def _watch_conn() -> Game:
     global _watch_game
     if _watch_game is None:
-        _watch_game = Game(port=core.game.port)
+        _watch_game = Game(port=core.game.port, pool_max=core.game.pool_cap, job_push=core.game.job_push)
         _watch_game.metrics = core.METRICS.watch_view()  # its evals count in the tools' rt_n / watch_n
     return _watch_game
 

@@ -7,7 +7,6 @@ context through the LuaDebug channel (see docs/PROTOCOL.md) and decodes the JSON
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 import time
@@ -73,8 +72,7 @@ def client_held() -> str:
     return CLIENT_HOLD["why"] if time.monotonic() < CLIENT_HOLD["until"] else ""
 
 
-POOL_MAX = max(1, int(os.environ.get("BG3AI_RPC_CONNS", "4")))
-JOB_PUSH = os.environ.get("BG3AI_JOB_PUSH", "1") != "0"  # wait on the mod's job-finished prints (jobpush.py)
+POOL_MAX = 4  # the default pool; the server passes settings.rpc_conns ($BG3AI_RPC_CONNS)
 RECORD = rpc_record.from_env()  # BG3AI_RPC_RECORD=<file>: every eval and its answer as a fixture line
 # After a refused connect the pool stays at the connections that worked for this long, then tries to grow again
 # (a load or the game's boot refuses connections for a while; bg3se takes one for good and refuses again).
@@ -88,11 +86,13 @@ class Game:
     every connection in the same game tick (debug_server.cpp pump_where). One shared connection behind a
     lock made each read wait for whatever another thread had in flight (a queue worker's job.poll, a
     wait_for poll), so S009's reads took ~155 ms with a queue running vs ~60 ms without. Each eval now
-    takes an idle connection (opening one up to POOL_MAX), so concurrent RPCs run in the same tick.
-    BG3AI_RPC_CONNS=1 brings back the single serialised connection (bg3se under Proton may want that).
+    takes an idle connection (opening one up to pool_max), so concurrent RPCs run in the same tick.
+    pool_max=1 (BG3AI_RPC_CONNS=1) brings back the single serialised connection (bg3se under Proton may want that).
+    job_push: wait on the mod's job-finished prints (jobpush.py; BG3AI_JOB_PUSH=0 polls instead).
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 9998, pool_max: int | None = None):
+    def __init__(self, host: str = "127.0.0.1", port: int = 9998, pool_max: int | None = None,
+                 job_push: bool = True):
         self.host = host
         self.port = port
         self.pool_max = self.pool_cap = pool_max or POOL_MAX
@@ -120,7 +120,7 @@ class Game:
         self._tl = threading.local()
         # Optional metrics.Recorder: gets every RPC's and job's wall-clock interval (set by the MCP server).
         self.metrics = None
-        self.job_push = JOB_PUSH
+        self.job_push = job_push
 
     # ---- connection pool ----
 

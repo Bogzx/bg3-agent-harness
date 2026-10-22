@@ -6,28 +6,26 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from .. import boxclick, delta, memtools, metrics, render, rules
+from .. import boxclick, delta, memtools, metrics, render, rules, settings
 from ..game import Game, GameError
 from ..render import Handles
 
-REPO = Path(__file__).resolve().parents[4]
-RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", REPO / "runtime"))
+SETTINGS = settings.from_env(os.environ)  # the only env read for these (settings.py)
+REPO = SETTINGS.repo
+RUNTIME = SETTINGS.runtime
 boxclick.HITS_PATH = RUNTIME / "boxclick_hits.json"   # a box's button position, kept across sessions
-PLAY_DIR = Path(os.environ.get("BG3AI_PLAY_DIR", REPO / "play"))
-MEMORY = Path(os.environ.get("BG3AI_MEMORY_DIR", PLAY_DIR / "memory"))
-KNOWLEDGE = Path(os.environ.get("BG3_KNOWLEDGE_DIR") or PLAY_DIR / "knowledge")
-# Same lookup as tools/steam_paths.py saves_dir() (the runner exports nothing: both read the same env).
-SAVE_DIR = Path(os.environ.get("BG3AI_SAVE_DIR") or Path(
-    os.environ.get("BG3AI_PROFILE_DIR") or Path.home() / ".local/share/Larian Studios/Baldur's Gate 3")
-    / "PlayerProfiles/Public/Savegames/Story")
-DEADLINE = float(os.environ.get("BG3AI_SESSION_DEADLINE", "0") or 0)
+PLAY_DIR = SETTINGS.play_dir
+MEMORY = SETTINGS.memory
+KNOWLEDGE = SETTINGS.knowledge
+SAVE_DIR = SETTINGS.save_dir
+DEADLINE = SETTINGS.deadline
+WRAPUP_AT = SETTINGS.wrapup_at  # the runner's wrap-up start (BG3AI_SESSION_WRAPUP), 0 = WRAPUP_S before DEADLINE
 WRAPUP_S = 10 * 60  # wrap-up length without the runner's BG3AI_SESSION_WRAPUP (the runner: 3 min, a third of a short one)
 
 # The server instructions, one part per line group; a part that names a tool group (capabilities.py) is served only
@@ -62,7 +60,7 @@ RULES = rules.Once(rules.load(required=rules.serve_enabled()))
 mcp = MCPServer("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
-game = Game(port=int(os.environ.get("BG3LE_DEBUG_PORT", "9998")))
+game = Game(port=SETTINGS.port, pool_max=SETTINGS.rpc_conns, job_push=SETTINGS.job_push)
 H = Handles()
 DELTA = delta.TRACKER.bind(H)  # the agent's last look; get_status/look/get_map diff against it
 METRICS = metrics.Recorder.from_env(RUNTIME)  # $BG3AI_METRICS_PATH (set by the runner) or runtime/metrics.jsonl
@@ -90,9 +88,7 @@ def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = Non
 
 _clock_shown = {"at": 0.0, "stuck": None}
 WRAPUP_HINT = "follow knowledge/playbooks/session-wrapup.md"
-PROGRESS_PATH = os.environ.get("BG3AI_PROGRESS_PATH") or (
-    re.sub(r"\.metrics\.jsonl$", ".progress.jsonl", os.environ["BG3AI_METRICS_PATH"])
-    if os.environ.get("BG3AI_METRICS_PATH", "").endswith(".metrics.jsonl") else "")
+PROGRESS_PATH = SETTINGS.progress_path
 _stuck_cache: dict = {"mtime": None, "open": None}
 
 
@@ -123,12 +119,8 @@ def _stuck_text(st: dict) -> str:
 
 
 def _wrap_left() -> float:
-    """Seconds before DEADLINE when WRAP UP starts: BG3AI_SESSION_WRAPUP (the runner's wrap-up time), else WRAPUP_S."""
-    try:
-        wrap_at = float(os.environ.get("BG3AI_SESSION_WRAPUP") or 0)
-    except ValueError:
-        wrap_at = 0.0
-    return DEADLINE - wrap_at if 0 < wrap_at < DEADLINE else WRAPUP_S
+    """Seconds before DEADLINE when WRAP UP starts: WRAPUP_AT (the runner's wrap-up time), else WRAPUP_S."""
+    return DEADLINE - WRAPUP_AT if 0 < WRAPUP_AT < DEADLINE else WRAPUP_S
 
 
 def _clock_line() -> str:
@@ -170,7 +162,7 @@ KEEP_PLAYING = "keep playing: you'll be told when to wrap up"
 FIGHT_HOLD_S = 15 * 60
 FIGHT_READ_S = 15.0  # a state.combat read is kept this long; combat_started/combat_ended events and load_game drop it
 FIGHT_LINE = "in a fight: finish it, taking each turn the time it needs; the session waits for the fight"
-HOLD_PATH = os.environ.get("BG3AI_FIGHT_HOLD_PATH", "")
+HOLD_PATH = SETTINGS.hold_path
 _hold: dict = {"of": None, "cap": 0.0, "wrap": None, "held": False, "fight": None, "read_at": 0.0,
          "written": None}
 

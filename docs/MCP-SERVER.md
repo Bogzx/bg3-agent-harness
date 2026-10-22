@@ -16,7 +16,8 @@ uv run --project bridge bg3ai-mcp --transport http --host 127.0.0.1 --port 8770 
 Over HTTP the server binds to 127.0.0.1 and port 8770 unless told otherwise. A client in a container reaches it on
 the docker network's gateway address ([tools/container/README.md](../tools/container/README.md)).
 
-The server reads its settings from the environment. The ones a standalone client may want:
+The server reads its settings from the environment once, at start (`bridge/src/bg3ai/settings.py` for paths, the
+session deadline, the port and the RPC pool). The ones a standalone client may want:
 
 | Variable | Default | What |
 |---|---|---|

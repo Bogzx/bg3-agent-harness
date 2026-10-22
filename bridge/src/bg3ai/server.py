@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
     if sample_s > 0:  # busy/idle samples for the latency metrics, on their own connection
         threading.Thread(
             target=metrics.sampler_loop,
-            args=(core.METRICS, Game(port=core.game.port), stop, sample_s),
+            args=(core.METRICS, Game(port=core.game.port, pool_max=core.game.pool_cap), stop, sample_s),
             name="activity-sampler",
             daemon=True,
         ).start()

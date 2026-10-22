@@ -47,10 +47,8 @@ class Clock(unittest.TestCase):
 
     def clock(self, left_s: float, wrap_left_s: float | None) -> str:
         core.DEADLINE = self.now + left_s
-        env = {} if wrap_left_s is None else {"BG3AI_SESSION_WRAPUP": str(core.DEADLINE - wrap_left_s)}
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(time, "time", lambda: self.now):
-            if wrap_left_s is None:
-                os.environ.pop("BG3AI_SESSION_WRAPUP", None)
+        wrap_at = 0.0 if wrap_left_s is None else core.DEADLINE - wrap_left_s
+        with mock.patch.object(core, "WRAPUP_AT", wrap_at), mock.patch.object(time, "time", lambda: self.now):
             return core._clock()
 
     def test_short_session_14m_left_is_play_time(self):
@@ -91,8 +89,8 @@ class Clock(unittest.TestCase):
     def line_at(self, left_s: float, wrap_left_s: float) -> str:
         """_clock_line with left_s to go, a full line shown 1 min ago and WRAP UP at wrap_left_s before the end."""
         core.DEADLINE = self.now + left_s
-        env = {"BG3AI_SESSION_WRAPUP": str(core.DEADLINE - wrap_left_s)}
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(time, "time", lambda: self.now), \
+        with mock.patch.object(core, "WRAPUP_AT", core.DEADLINE - wrap_left_s), \
+                mock.patch.object(time, "time", lambda: self.now), \
                 mock.patch.dict(core._clock_shown, {"at": self.now - 60, "stuck": None}):
             return core._clock_line()
 
@@ -107,8 +105,8 @@ class Clock(unittest.TestCase):
 
     def session_clock(self, left_s: float, wrap_left_s: float) -> str:
         core.DEADLINE = self.now + left_s
-        env = {"BG3AI_SESSION_WRAPUP": str(core.DEADLINE - wrap_left_s)}
-        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(time, "time", lambda: self.now):
+        with mock.patch.object(core, "WRAPUP_AT", core.DEADLINE - wrap_left_s), \
+                mock.patch.object(time, "time", lambda: self.now):
             return session_tools.session_clock()
 
     def test_session_clock_says_no_need_to_call_again(self):
@@ -140,6 +138,7 @@ class FightHold(unittest.TestCase):
                   mock.patch.object(core, "_fight_now", lambda: self.fight),
                   mock.patch.object(core, "DEADLINE", self.deadline),
                   mock.patch.object(core, "HOLD_PATH", str(self.hold)),
+                  mock.patch.object(core, "WRAPUP_AT", self.wrap),
                   mock.patch.dict(core._hold, {"of": None}),
                   mock.patch.dict(core._clock_shown, {"at": 0.0, "stuck": None}),
                   mock.patch.dict(os.environ, {"BG3AI_SESSION_WRAPUP": str(self.wrap),
@@ -209,7 +208,7 @@ class FightHold(unittest.TestCase):
         self.hold.write_text(json.dumps({"wrap": int(cap), "deadline": int(cap + 180), "held": True, "cap": int(cap)}))
         later = self.wrap + 5 * 60
         with mock.patch.object(core, "DEADLINE", later + 180), \
-                mock.patch.dict(os.environ, {"BG3AI_SESSION_WRAPUP": str(later)}):
+                mock.patch.object(core, "WRAPUP_AT", later):
             self.now = later + 60
             self.fight = True
             self.assertEqual(core._times(), (int(cap), int(cap) + 180, True))
