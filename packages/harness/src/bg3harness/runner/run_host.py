@@ -276,6 +276,25 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     return "\n\n".join(lines)
 
 
+def run_failures(
+    state_dir: Path, t0: float, outcome: SessionOutcome, name: str, why: str, cap: str | None = None
+) -> list[Json]:
+    """Every failure of a bench run, tagged harness/agent/unknown as the legacy series tags them (runs.classify_run
+    over the run's runner_events.jsonl, its play streams and the agent's reloads; its one session as the history),
+    plus the session's ending when it was ours (runs.reason_failures: mcp_failed, setup_failed, aborted, api_limit).
+    A harness failure makes the run invalid (bg3bench results.validity): it doesn't score the model. name: the
+    outcome to classify ("stopped" for an operator stop: listed apart, not a failure)."""
+    res = outcome.result
+    logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    events = [e for e in logged if e.get("t", 0) >= t0 - 1]
+    session = {"kind": "play", "session": SID, "started": outcome.started, "ended": res.ended}
+    session |= {"reason": res.reason, "exit": res.exit_code}
+    tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
+    ending = (res.reason, why)
+    return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, "", cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+
 class LiveRunHost:
     """bg3bench's RunHost (structural) on the live game, one run at a time.
 
@@ -430,6 +449,9 @@ class LiveRunHost:
             finally:
                 back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        why, cap = getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
+        failures = run_failures(r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap)
+        counts = {cls: sum(int(f.get("n") or 1) for f in failures if f["class"] == cls) for cls in runs.CLASSES}
         return {
             "outcome": name,
             "reason": res.reason,
@@ -444,4 +466,8 @@ class LiveRunHost:
             "manifest": r.opt.manifest,
             "reset": {"nav_files": moved, "restored": back},
             "loaded_save": r.state["loaded_save"],
+            "harness_failures": counts[runs.HARNESS],
+            "agent_failures": counts[runs.AGENT],
+            "unknown_failures": counts[runs.UNKNOWN],
+            "failures": failures,
         } | ({"operator": "stop"} if stopped else {})

@@ -28,6 +28,7 @@ from pathlib import Path
 from . import clients, events, fairness, model_time, triage
 
 HARNESS, AGENT, UNKNOWN = "harness", "agent", "unknown"
+CLASSES = (HARNESS, AGENT, UNKNOWN)
 OUTCOMES = ("reached", "timeout", "over_budget", "gave_up", "runner_error")  # timeout: the time cap; over_budget:
 CAPS = ("time", "cost", "tokens")  # the cost or token cap (record "cap")
 
@@ -76,7 +77,7 @@ def failure(t, kind: str, cls: str, detail: str, n: int = 1) -> dict:
 # ======================================================================== failure tagging
 
 
-def _read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path) -> list[dict]:
     out = []
     try:
         lines = path.read_text(errors="replace").splitlines()
@@ -145,7 +146,7 @@ def progress_failures(paths: list[Path], since: float) -> list[dict]:
     """Stalls: the progress poller's `stuck` records (no story progress for a while although the agent acted)."""
     out = []
     for p in paths:
-        for r in _read_jsonl(p):
+        for r in read_jsonl(p):
             if r.get("type") == "stuck" and (r.get("t") or 0) >= since:
                 out.append(
                     failure(
@@ -262,6 +263,24 @@ def outcome_failure(outcome: str, why: str, t: float, others: list[dict], cap: s
     return []
 
 
+# A play process's ending (SessionResult.reason) that is ours: the session path (LiveRunHost.record) has no run loop
+# whose events or history would show it (a toolless agent ended at once, a play command that didn't start, a
+# settings mismatch that aborted the run, a usage/rate limit).
+HARNESS_REASONS = {
+    "mcp_failed": "the agent's bg3 tools were missing",
+    "setup_failed": "the play process didn't start",
+    "aborted": "the runner aborted the run",
+    "api_limit": "the model API refused (usage or rate limit)",
+}
+
+
+def reason_failures(reason: str, detail: str, t: float, others: list[dict]) -> list[dict]:
+    """The session's ending reason as a harness failure (HARNESS_REASONS), unless one of that kind is listed."""
+    if reason not in HARNESS_REASONS or any(f["kind"] == reason for f in others):
+        return []
+    return [failure(t, reason, HARNESS, detail or HARNESS_REASONS[reason])]
+
+
 def classify_run(
     state_dir: Path,
     run_started: float,
@@ -272,8 +291,10 @@ def classify_run(
     outcome: str,
     why: str,
     cap: str | None = None,
+    ending: tuple[str, str] | None = None,
 ) -> list[dict]:
-    """Every failure of one run, in time order (failures without a time first)."""
+    """Every failure of one run, in time order (failures without a time first). ending: the session path's last
+    process (reason, detail) when there is no run loop (reason_failures)."""
     fails, _ = event_failures(events)
     fails += history_failures(sessions)
     files = []
@@ -291,6 +312,8 @@ def classify_run(
         if PLAY_STREAM_RE.match(f.name):
             fails += stream_failures(f)
     fails += reload_failures(actions)
+    if ending is not None:
+        fails += reason_failures(*ending, now, fails)
     fails += outcome_failure(outcome, why, now, fails, cap)
     return sorted(fails, key=lambda f: (f["t"] is not None, f["t"] or 0))
 
@@ -504,7 +527,7 @@ def death_counts(state_dir: Path, since: float, failures: list[dict], until: flo
     debrief saw (a fall, a trap out of combat) are not observable in the logs and not counted."""
     fights = downs = deaths = 0
     for f in _recent(state_dir, since, FIGHTS_RE, until):
-        for r in _read_jsonl(f):
+        for r in read_jsonl(f):
             fights += 1
             for m in r.get("party") or []:
                 if isinstance(m, dict):
@@ -619,7 +642,7 @@ def story_gained(state_dir: Path, since: float, until: float | None = None) -> d
     session) and their events by kind."""
     points = events = sessions = 0
     by_kind: Counter = Counter()
-    for r in _read_jsonl(state_dir / "progress_history.jsonl"):
+    for r in read_jsonl(state_dir / "progress_history.jsonl"):
         if (r.get("t") or 0) < since or (until is not None and (r.get("t") or 0) > until):
             continue
         sessions += 1

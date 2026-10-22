@@ -552,3 +552,18 @@ def test_a_bench_start_kills_a_leftover_agent_before_the_game_comes_up(rig: Rig,
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     assert not A.alive(leader) and gone(child) and not (renv.RUNTIME / A.FILE).exists()
     assert rig.calls[:2] == ["snapshot", "ensure_game(True)"]
+
+
+def test_record_tags_the_runs_failures_and_an_ending_that_was_ours(rig: Rig):
+    # H2: a session-path run was valid whatever the harness did, except a crash/hang (run_session's invalid)
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    res = rstate.SessionResult("S001", "c-1", None, "mcp_failed", 1000.0, 1030.0, detail="bg3 serves 12 tools")
+    rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), SessionOutcome(res, 1000.0))
+    assert (rec["harness_failures"], rec["agent_failures"], rec["unknown_failures"]) == (1, 0, 1)
+    assert [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]] == [
+        ("mcp_failed", "harness", "bg3 serves 12 tools"),
+        ("timeout", "unknown", "the run's time ran out before the milestone"),  # the harness failed it first
+    ]
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove-2"))
+    rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove-2"), outcome())
+    assert (rec["harness_failures"], [f["kind"] for f in rec["failures"]]) == (0, ["timeout"])
