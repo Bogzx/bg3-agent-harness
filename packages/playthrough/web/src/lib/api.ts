@@ -2,6 +2,7 @@ import type {
   BenchPayload, ClientProfile, Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
+import { authHeaders } from "./auth";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -62,7 +63,7 @@ export const api = {
   control: (name: string, what: "start" | "resume" | "stop", body: object = {}) =>
     getJson<{ v: number; supervisor: SupervisorView }>(`${pt(name)}/${what}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders(sessionStorage) },
       body: JSON.stringify(body),
     }),
 };
