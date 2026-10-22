@@ -1,6 +1,6 @@
-"""The keeper pass's spend for a paid client (runner/spend.py PAID_CLIENTS: pi through an API key).
+"""The keeper pass's spend for a paid client (bg3harness.spend PAID_CLIENTS: pi through an API key).
 
-Like a play session (runner/spend.py): the pass needs its own USD cap (playthrough.toml [keeper] max_cost_usd) and the
+Like a play session (bg3harness.spend): the pass needs its own USD cap (playthrough.toml [keeper] max_cost_usd) and the
 global budget runtime/budget.json; it is refused without either or when the budget is used up, and its cap is cut to
 what the budget has left. The cost is metered live from the client's events as they stream (runs.UsageMeter, the play
 session's fold: pi's billed running cost, then the result's total), across the pass and its fix attempt; the stream
@@ -10,27 +10,24 @@ Unpaid clients (claude, codex, gemini on subscriptions) pass through: no cap, no
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ..adapters import legacy_paths
-
-
-def _spend() -> Any:
-    return legacy_paths.load("spend")
+spend: Any = importlib.import_module("bg3harness.spend")  # Any to pyright: untyped legacy modules
+runs: Any = importlib.import_module("bg3harness.runs")
 
 
 class KeeperSpend:
     def __init__(self, client: str, max_cost: float | None, budget: Path | None):
-        self.paid = bool(_spend().is_paid(client))
+        self.paid = bool(spend.is_paid(client))
         self.client, self.budget = client, budget
         self.cap: float | None = None
         self.refusal: str | None = None
-        self.meter: Any = legacy_paths.load("runs").UsageMeter() if self.paid else None
+        self.meter: Any = runs.UsageMeter() if self.paid else None
         if not self.paid:
             return
-        spend = _spend()
         try:
             b = spend.read_budget(budget) if budget is not None else None
             cap, why = spend.run_cap(client, max_cost if max_cost and max_cost > 0 else None, b)
@@ -66,7 +63,6 @@ class KeeperSpend:
         """Adds the pass's cost to budget.json; a note for the result's detail ("" for an unpaid client)."""
         if not self.paid or self.budget is None:
             return ""
-        spend = _spend()
         try:
             b = spend.add_spend(self.budget, self.cost, playthrough=playthrough, session=sid, role="keeper")
         except (OSError, spend.BudgetError) as e:

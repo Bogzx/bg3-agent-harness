@@ -829,7 +829,7 @@ def run_keeper(
     client: the clients.py client that keeps the memory (the play client, so a benchmark compares one model end to
     end). mcp: through the bg3 server in keeper mode (keeper_server); None = True for every client but claude,
     whose default stays today's pass with Claude Code's file tools (keeper_cmd). binary: the client's executable
-    (default: `claude` for claude, else the client's own). sandbox: the runner's runner/sandbox.Sandbox (run
+    (default: `claude` for claude, else the client's own). sandbox: the runner's bg3harness.sandbox.Sandbox (run
     --sandbox container): the client runs in the container against the keeper-mode server over http (always MCP).
     profile: pi's client profile (profiles.Profile; its model is the keeper's). max_cost, budget: a paid client's
     cap for this pass and runtime/budget.json (keeper_spend.py): refused without them, killed at the cap."""

@@ -22,9 +22,11 @@ UP lasts and writes the moved times to $BG3AI_FIGHT_HOLD_PATH (Sxxx.hold.json, a
 check); the session's end and hard stop move with it, at most FIGHT_HOLD_S past the planned end
 (bg3harness.session.held_deadline).
 
-The game: AttachedGame reads a running game over the bridge and can't relaunch it, so a game fault ends the session.
-adapters/launched_game.py LaunchedGame relaunches it and loads the playthrough's newest save (also when it is down at
-a session start). A game death by OOM counts toward the Supervisor's OOM streak: at OOM_STREAK in a row the game is
+The game: adapters/launched_game.py LaunchedGame (the server's default) relaunches it through bg3harness's
+GameController over AppHost and loads the playthrough's newest save (also when it is down at a session start); the
+controller's notes (an older save loaded after the newest crashed) go into the resume prompt or the kickoff.
+AttachedGame (`bg3play-serve --attach`) reads a running game over the bridge and can't relaunch it, so a game fault
+ends the session. A game death by OOM counts toward the Supervisor's OOM streak: at OOM_STREAK in a row the game is
 not relaunched and the run ends. `--session-runner legacy` (adapters/legacy_cli.py) runs play.py, which launches it.
 """
 
@@ -36,7 +38,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -81,6 +83,7 @@ class Game(Protocol):
     def progress(self) -> dict[str, Any] | None: ...  # the save signature (bg3harness.game.io.progress_signature)
     def oom(self) -> str | None: ...  # the dead game's OOM cause (None: alive, or it died otherwise)
     def recover(self, why: str) -> str | None: ...  # relaunch and load the latest save; its name; raises if it can't
+    def notes(self) -> list[str]: ...  # RUNNER NOTEs from the recoveries since the last call
 
 
 class Memory(Protocol):
@@ -109,11 +112,18 @@ def session_env(
     }
 
 
-def kickoff(req: SessionRequest, sid: str, briefing: str, loaded: str | None = None, client: str = "claude") -> str:
+def kickoff(
+    req: SessionRequest,
+    sid: str,
+    briefing: str,
+    loaded: str | None = None,
+    client: str = "claude",
+    game_notes: Sequence[str] = (),
+) -> str:
     """The runner's kickoff (prompts.build_kickoff) for an app session: the request's notes and the character, the
-    save the game was recovered to, the pace pre-flight when the condition has coaching."""
+    save the game was recovered to and the recovery's notes, the pace pre-flight when the condition has coaching."""
     cfg = req.config
-    notes = list(req.notes)
+    notes = [*req.notes, *game_notes]
     if cfg.character.brief:
         notes.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
     pace = client_setup.kickoff_pace(client, {"BG3AI_PROMPT_CONDITION": cfg.agent.condition})
@@ -199,13 +209,15 @@ class AppSessionHooks:
         return self.stop.is_set()
 
     def notes(self) -> list[str]:
-        return []
+        return self.game.notes()
 
     def resume_prompt(self, why: str, notes: list[str]) -> str:
-        return f"The game {why}; it was recovered ({self.save or 'main menu'}). Continue the session from there."
+        line = f"The game {why}; it was recovered ({self.save or 'main menu'}). Continue the session from there."
+        return "\n\n".join([line, *notes])
 
     def agent_resume_prompt(self, notes: list[str]) -> str:
-        return "Your process stopped answering and was restarted; the game is as you left it. Continue the session."
+        line = "Your process stopped answering and was restarted; the game is as you left it. Continue the session."
+        return "\n\n".join([line, *notes])
 
     def stop_resume_prompt(self, why: str) -> str:
         return why
@@ -280,7 +292,7 @@ class HarnessRunner:
         start_sig = self.game.progress()
         write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
                      started=start, log=str(sdir / f"{sid}.log"), session_ended=None, updated=start)  # fmt: skip
-        prompt = kickoff(req, sid, briefing, hooks.save, agent.client_name)
+        prompt = kickoff(req, sid, briefing, hooks.save, agent.client_name, self.game.notes())
         spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         try:
             out = run_session(spec, hooks)
@@ -378,7 +390,10 @@ class AttachedGame:
         return None if self.ok() else "hang"
 
     def recover(self, why: str) -> str | None:
-        raise RuntimeError(f"the game {why} and the app can't relaunch it (--session-runner legacy can)")
+        raise RuntimeError(f"the game {why} and the app can't relaunch it (bg3play-serve without --attach can)")
+
+    def notes(self) -> list[str]:
+        return []
 
 
 class SessionPy:
@@ -412,7 +427,7 @@ class SessionPy:
 
 def dump_system(path: Path, condition: str, repo: Path) -> Path:
     """pi's system text (D2) for a condition: the bg3 server's instructions and rules, dumped offline in the bridge's
-    env by tools/pi/dump_server.py (runner/client_setup.py dump_server)."""
+    env by tools/pi/dump_server.py (bg3harness.client_setup dump_server)."""
     env = {k: v for k, v in os.environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF")}
     subprocess.run(
         ["uv", "run", "--project", str(repo / "bridge"), "python", str(repo / "tools/pi/dump_server.py"),

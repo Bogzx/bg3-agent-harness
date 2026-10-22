@@ -59,3 +59,26 @@ def test_nothing_when_the_runner_keeps_the_memory_or_no_session(tmp_path: Path):
     k2.run_keeper("ilse", SessionResult("?", "error"))
     assert run.calls == [] and run2.calls == []
     assert not (tmp_path / "runtime" / "sessions" / "ilse" / "keeper_history.jsonl").exists()
+
+
+def test_the_keepers_pi_spend_needs_no_runner_on_sys_path(tmp_path: Path):
+    # the keeper's pi client and its cost meter came from runner/'s pi_client shim (bg3harness.clients/runs imported
+    # the top-level `pi_client`): without runner/ on sys.path a paid keeper pass died with ModuleNotFoundError
+    import subprocess
+    import sys
+
+    code = """
+import sys
+from bg3harness import clients, profiles, runs
+from bg3play.memory.keeper_spend import KeeperSpend
+assert not any(p.rstrip("/").endswith("runner") for p in sys.path), sys.path
+p = profiles.parse({"client": "pi", "model": "anthropic/stub-model", "effort": "low",
+    "endpoint": {"provider": "openrouter", "base_url": "http://127.0.0.1:9/v1", "api_key_env": "BG3_STUB_KEY"},
+    "model_info": {"input": ["text"], "reasoning": True, "context_window": 200000, "max_tokens": 16000}})
+assert clients.make("pi", profile=p, system_file="x.md").name == "pi"
+assert runs.stream_events(['{"type": "session"}'], name="pi") == []
+k = KeeperSpend("pi", 0.05, None)
+assert k.paid and k.meter is not None
+"""
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr

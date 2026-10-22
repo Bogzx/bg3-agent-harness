@@ -20,7 +20,7 @@ from bg3play.memory import lint, memlib
 
 REPO = memlib.REPO_ROOT
 sys.path.insert(0, str(REPO / "bridge" / "src"))
-# stdlib only; Any to pyright (the bridge and runner/ ship no types)
+# stdlib only; Any to pyright (the bridge ships no types)
 milestones: Any = importlib.import_module("bg3ai.milestones")
 bg3progress: Any = importlib.import_module("bg3ai.progress")
 

@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 from bg3harness import client_setup
+from bg3harness.game.host import AppHost
+from bg3harness.game.io import Save
 from bg3harness.session import Recovery
 from bg3play import config
 from bg3play.adapters import harness_runner as hr
@@ -64,6 +66,7 @@ class FakeGame:
         self.sigs, self.recover_to, self.is_ok, self.ooms = list(sigs), recover_to, ok, list(ooms)
         self.recovered: list[str] = []
         self.began: list[tuple[Path, Path]] = []
+        self.pending_notes: list[str] = []  # the controller's RUNNER NOTEs, taken by notes()
 
     def begin(self, sdir: Path, mem: Path) -> None:
         self.began.append((sdir, mem))
@@ -83,6 +86,10 @@ class FakeGame:
             raise RuntimeError("can't relaunch")
         self.is_ok = True
         return self.recover_to
+
+    def notes(self) -> list[str]:
+        out, self.pending_notes = self.pending_notes, []
+        return out
 
 
 class FakeMemory:
@@ -293,9 +300,69 @@ def test_the_oom_streak_spans_sessions_and_a_death_by_something_else_breaks_it(t
 def test_a_game_down_at_the_session_start_is_recovered_first(tmp_path: Path):
     sup, agent, game, *_ = make(tmp_path, hours=0.5, recover_to="S000-end")
     game.is_ok = False
+    game.pending_notes = ["RUNNER NOTE: the newest save crashed on load"]
     sup.start(PT, wait=True)
     assert game.recovered == ["wasn't answering at the session start"] and len(agent.calls) == 1
+    assert "RUNNER NOTE: the newest save crashed on load" in agent.calls[0].prompt
     assert game.began == [(tmp_path / "runtime" / "sessions" / PT, tmp_path / "playthroughs" / PT / "memory")]
+    (h,) = sup.history(PT)
+    assert h["outcome"] == "ok" and h["game_deaths"] == [""]
+
+
+class FakeController:
+    """bg3harness's GameController over the real AppHost: the game dies when the agent crashes; launch_and_load
+    falls back to the older save with the controller's note (as when the newest crashed on load)."""
+
+    def __init__(self, host: AppHost, older: Save):
+        self.host, self.older, self.is_alive = host, older, True
+        self.calls: list[str] = []
+
+    def alive(self) -> bool:
+        return self.is_alive
+
+    def kill(self) -> None:
+        self.calls.append("kill")
+
+    def launch_and_load(self, save: Save) -> Save:
+        self.calls.append(f"launch {save.folder} ({self.host.state['save_owner']})")
+        self.host.note(f"RUNNER NOTE: {save.label} crashed on load; loaded {self.older.label}")
+        self.is_alive = True
+        return self.older
+
+    def check_oom(self) -> str | None:
+        return None
+
+
+def test_a_crash_relaunches_through_the_controller_and_the_session_resumes(tmp_path: Path):
+    from bg3play.adapters.launched_game import LaunchedGame
+
+    clock, pts, runtime = Clock(), tmp_path / "playthroughs", tmp_path / "runtime"
+    (pts / PT).mkdir(parents=True)
+    config.save(pts / PT, config.validate({"v": 1, "name": PT, "session": {"minutes": 30.0, "hours": 0.5}}))
+    older, newest = (
+        Save("Ilse-1__S001-start", "Ilse", "S001-start", 1100),
+        Save("Ilse-2__S001-x", "Ilse", "S001-x", 1200),
+    )
+    host = AppHost(runtime, tmp_path, tmp_path / "saves", saves=lambda: [older, newest])
+    ctl = FakeController(host, older)
+    reads = FakeGame([])
+    game = LaunchedGame(reads, ctl, host, lambda: [older, newest], lambda: "Ilse")
+
+    def during(n: int) -> None:  # the first process: the game dies under it
+        if n == 1:
+            ctl.is_alive = False
+
+    agent = FakeAgent(clock, [("crash", 5), ("exited", 25)], during)
+    runner = hr.HarnessRunner(runtime, pts, lambda c, d: agent, game, lambda mem: FakeMemory(), clock)
+    sup = Supervisor(runner, FakeKeeper(), runtime, pts, clock)
+    sup.start(PT, wait=True)
+    sdir = runtime / "sessions" / PT
+    assert host.sdir == sdir and ctl.calls == ["kill", "launch Ilse-2__S001-x (Ilse)"]
+    a, b = agent.calls
+    assert b.resume and b.conversation == a.conversation and "recovered (S001-start)" in b.prompt
+    assert "RUNNER NOTE: S001-x crashed on load; loaded S001-start" in b.prompt and host.notes == []
+    rj = json.loads((sdir / "runner.json").read_text())
+    assert rj["loaded_save"] == older.folder and rj["save_owner"] == "Ilse"
     (h,) = sup.history(PT)
     assert h["outcome"] == "ok" and h["game_deaths"] == [""]
 

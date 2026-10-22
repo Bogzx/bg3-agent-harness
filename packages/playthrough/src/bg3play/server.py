@@ -476,8 +476,15 @@ def parser() -> argparse.ArgumentParser:
         "--session-runner",
         choices=["harness", "legacy"],
         default="harness",
-        help="harness: bg3harness run_session against the running game (adapters/harness_runner.py); legacy: "
-        "runner/play.py run, which also launches the game and loads saves (adapters/legacy_cli.py, until Phase D)",
+        help="harness: bg3harness run_session, the app launches the game and relaunches it after a fault "
+        "(adapters/harness_runner.py, launched_game.py); legacy: runner/play.py run (adapters/legacy_cli.py, until "
+        "Phase D)",
+    )
+    ap.add_argument(
+        "--attach",
+        action="store_true",
+        help="--session-runner harness against a game you started: read it over the bridge, never launch, kill or "
+        "relaunch it (a game fault ends the session)",
     )
     ap.add_argument("--repo", type=Path, default=REPO, help="the bg3-ai checkout play.py runs from (--supervise)")
     ap.add_argument(
@@ -500,18 +507,32 @@ def session_runner(opt: argparse.Namespace) -> tuple[sup.SessionRunner, Any]:
     from .adapters.harness_runner import AttachedGame, ClientAgents, HarnessRunner, SessionPy
 
     legacy_paths.ensure()
-    game = AttachedGame(bridge_game(opt.debug_port))
+
+    def log(m: str) -> None:
+        print(f"bg3play: {m}", flush=True)
+
+    attached = AttachedGame(bridge_game(opt.debug_port))
+    game = attached if opt.attach else launched_game(opt, attached, log)
     agents = ClientAgents(opt.repo / "profiles", opt.repo / "play", time.time, game.fault, repo=opt.repo)
-    runner = HarnessRunner(
-        opt.runtime,
-        opt.playthroughs,
-        agents,
-        game,
-        SessionPy,
-        time.time,
-        log=lambda m: print(f"bg3play: {m}", flush=True),
-    )
+    runner = HarnessRunner(opt.runtime, opt.playthroughs, agents, game, SessionPy, time.time, log=log)
     return runner, agents.keeper_client
+
+
+def launched_game(opt: argparse.Namespace, reads: Any, log: Callable[[str], None]) -> Any:
+    """The game the app launches and relaunches: GameController over AppHost (runner/launch_game.sh in --repo, the
+    mod snapshot in --runtime, the Steam save folder), the bridge's reads."""
+    from bg3harness.game import controller as gctl
+    from bg3harness.game import io as gio
+    from bg3harness.game.host import AppHost
+    from bg3harness.game.saves import save_lsv
+
+    from .adapters.launched_game import LaunchedGame
+
+    host = AppHost(opt.runtime, opt.repo, log=log)
+    return LaunchedGame(
+        reads, gctl.GameController(host), host, lambda: gctl.list_saves(host.save_dir, save_lsv),
+        gio.host_character_name, log=log,
+    )  # fmt: skip
 
 
 def record_spec(video: Path, encoder: str, playthroughs: Path, pt: str | None) -> rec.RecordSpec:

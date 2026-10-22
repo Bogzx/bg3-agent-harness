@@ -1,19 +1,22 @@
 """A game the app launched and relaunches (HarnessRunner's Game, the recovering one; AttachedGame only reads).
 
-    begin(sdir, mem)    the session's playthrough: runner.json (sdir) and memory (mem/HANDOFF.md)
+    begin(sdir, mem)    the session's playthrough: runner.json (sdir) and memory (mem/HANDOFF.md); the host's too
     ok / progress       the bridge's reads (AttachedGame's)
     fault               "crash" when the game process is gone, "hang" when it doesn't answer (ClientAgent's watch)
     oom                 why the dead game died, when it ran out of memory (GameController.check_oom, once per launch)
     recover(why)        kill what is left, choose the save, GameController.launch_and_load; the loaded save's label
+                        (runner.json loaded_save = its folder: the controller's check_oom and previous_good_save
+                        read it)
+    notes               the controller's RUNNER NOTEs since the last call (the host's take_notes)
 
 The save choice (choose_save) is runner/play.py Runner.choose_save over bg3harness.game.saves: the newest save of
 this playthrough (or HANDOFF's "Save to load"), never another owner's, never one written while another playthrough
 played (play windows), never one older than the playthrough's run start (runner.json saves_after: a series reuses a
 character name) and never an OOM-blocked one. No owner known = no save is safe to load: recover refuses.
 
-The game process goes through the Controller Protocol, which bg3harness.game.controller.GameController fills. Its
-GameHost (launch_game.sh, the mod snapshot, the Steam/bg3le/display guards, runner.json as its state store) is still
-play.py's Runner; until bg3harness has one for the app, the server wires AttachedGame (research/ovh/app.md).
+The game process goes through the Controller Protocol, which bg3harness.game.controller.GameController fills over
+bg3harness.game.host.AppHost (launch_game.sh, the mod snapshot, the Steam/bg3le/display guards, the session's
+runner.json as its state store): server.session_runner wires them; `bg3play-serve --attach` wires AttachedGame instead.
 """
 
 from __future__ import annotations
@@ -41,6 +44,13 @@ class Controller(Protocol):
     def check_oom(self) -> str | None: ...  # after a death: the OOM cause, or None
 
 
+class Host(Protocol):
+    """The controller's GameHost as the app drives it (bg3harness.game.host.AppHost)."""
+
+    def begin(self, sdir: Path) -> None: ...  # the session's runner.json dir, before the controller touches state
+    def take_notes(self) -> list[str]: ...
+
+
 class Reads(Protocol):
     """The bridge's reads of the running game (AttachedGame)."""
 
@@ -56,9 +66,9 @@ def read_state(path: Path) -> dict[str, Any]:
     return v if is_obj(v) else {}
 
 
-def write_owner(path: Path, owner: str) -> None:
-    """runner.json's save_owner (play.py adopt_owner), the rest of the file kept."""
-    d = read_state(path) | {"save_owner": owner}
+def write_state(path: Path, **fields: Any) -> None:
+    """runner.json's fields set (save_owner: play.py adopt_owner; loaded_save: load_save), the rest of the file kept."""
+    d = read_state(path) | fields
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
     tmp.replace(path)
@@ -92,23 +102,25 @@ class LaunchedGame:
         self,
         reads: Reads,
         controller: Controller,
+        host: Host,
         saves: Callable[[], list[Save]],  # the save folder (bg3harness.game.controller.list_saves)
         leader: Callable[[], str | None],  # the running game's character (bg3harness.game.io.host_character_name)
         log: Callable[[str], None] = lambda msg: None,
     ):
-        self.reads, self.ctl, self.saves, self.leader, self.log = reads, controller, saves, leader, log
+        self.reads, self.ctl, self.host, self.saves, self.leader, self.log = reads, controller, host, saves, leader, log
         self.sdir: Path | None = None
         self.mem: Path | None = None
 
     def begin(self, sdir: Path, mem: Path) -> None:
         self.sdir, self.mem = sdir, mem
+        self.host.begin(sdir)
 
     def ok(self) -> bool:
         ok = self.reads.ok()
         if ok and self.sdir is not None and not read_state(self.sdir / "runner.json").get("save_owner"):
             owner = self.leader()  # the playthrough's first game: its character owns its saves
             if owner:
-                write_owner(self.sdir / "runner.json", owner)
+                write_state(self.sdir / "runner.json", save_owner=owner)
         return ok
 
     def progress(self) -> dict[str, Any] | None:
@@ -135,4 +147,9 @@ class LaunchedGame:
         if save is None:
             raise RuntimeError(f"no save to load: {how}")
         self.ctl.kill()
-        return self.ctl.launch_and_load(save).label
+        loaded = self.ctl.launch_and_load(save)
+        write_state(self.sdir / "runner.json", loaded_save=loaded.folder)
+        return loaded.label
+
+    def notes(self) -> list[str]:
+        return self.host.take_notes()

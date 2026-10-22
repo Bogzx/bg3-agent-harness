@@ -32,6 +32,19 @@ class FakeCtl:
         return self.oom_why
 
 
+class FakeHost:
+    def __init__(self):
+        self.began: list[Path] = []
+        self.pending: list[str] = []
+
+    def begin(self, sdir: Path) -> None:
+        self.began.append(sdir)
+
+    def take_notes(self) -> list[str]:
+        out, self.pending = self.pending, []
+        return out
+
+
 class FakeReads:
     def __init__(self, ok: bool = True):
         self.is_ok = ok
@@ -63,7 +76,9 @@ def setup(
     if handoff:
         (mem / "HANDOFF.md").write_text(handoff)
     logs: list[str] = []
-    g = lg.LaunchedGame(reads or FakeReads(), ctl or FakeCtl(), lambda: saves, leader or (lambda: None), logs.append)
+    g = lg.LaunchedGame(
+        reads or FakeReads(), ctl or FakeCtl(), FakeHost(), lambda: saves, leader or (lambda: None), logs.append
+    )
     g.begin(sdir, mem)
     return g, sdir, logs
 
@@ -77,6 +92,18 @@ def test_recover_kills_and_loads_the_playthroughs_newest_save(tmp_path: Path):
     g, _, logs = setup(tmp_path, PLAYED, saves, ctl=ctl)
     assert g.recover("crashed") == "S001-end"  # never the other owner's newer save
     assert ctl.calls == ["kill", f"launch {OWNER}-2__S001-end"] and "S001-end" in logs[0]
+
+
+def test_begin_names_the_hosts_session_and_recover_records_the_loaded_save(tmp_path: Path):
+    # the controller's state is the session's runner.json; check_oom and previous_good_save read loaded_save
+    saves = [save(OWNER, 1, "S001-start", 1100), save(OWNER, 2, "S001-end", 2900)]
+    g, sdir, _ = setup(tmp_path, PLAYED, saves)
+    assert isinstance(g.host, FakeHost) and g.host.began == [sdir]
+    g.recover("crashed")
+    rj = json.loads((sdir / "runner.json").read_text())
+    assert rj["loaded_save"] == f"{OWNER}-2__S001-end" and rj["history"] == PLAYED["history"]
+    g.host.pending = ["RUNNER NOTE: loaded the older save"]
+    assert g.notes() == ["RUNNER NOTE: loaded the older save"] and g.notes() == []
 
 
 def test_recover_refuses_a_save_from_elsewhere_or_stale_or_oom_blocked(tmp_path: Path):
@@ -127,6 +154,6 @@ def test_fault_and_oom(tmp_path: Path):
 
 
 def test_recover_before_a_session_began_refuses(tmp_path: Path):
-    g = lg.LaunchedGame(FakeReads(), FakeCtl(), lambda: [], lambda: None)
+    g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: [], lambda: None)
     with pytest.raises(RuntimeError, match="no session began"):
         g.recover("crashed")

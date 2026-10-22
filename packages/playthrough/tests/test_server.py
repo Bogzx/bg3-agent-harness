@@ -430,13 +430,21 @@ def test_main_wires_the_app_and_shuts_down(store: RunStore, web: Path, capsys: p
 
 
 def test_the_session_runner_is_the_harness_unless_legacy_is_asked_for(tmp_path):
-    from bg3play.adapters.harness_runner import HarnessRunner
+    from bg3harness.game.host import AppHost
+    from bg3play.adapters.harness_runner import AttachedGame, HarnessRunner
+    from bg3play.adapters.launched_game import LaunchedGame
     from bg3play.adapters.legacy_cli import LegacyCli
     from bg3play.server import session_runner
 
     base = ["--supervise", "--runtime", str(tmp_path), "--repo", str(tmp_path)]
     runner, keeper_client = session_runner(parser().parse_args(base))  # the bridge client connects lazily
     assert isinstance(runner, HarnessRunner) and keeper_client.__self__.profiles == tmp_path / "profiles"
+    # the app launches the game: GameController over AppHost (launch_game.sh in --repo, the mod snapshot in --runtime)
+    assert isinstance(runner.game, LaunchedGame) and isinstance(runner.game.host, AppHost)
+    assert runner.game.host.launch_sh == tmp_path / "runner" / "launch_game.sh"
+    assert runner.game.host.mod_live == tmp_path / "mod-live" and runner.game.ctl.host is runner.game.host
+    runner, _ = session_runner(parser().parse_args([*base, "--attach"]))  # a game the user started: only read
+    assert isinstance(runner, HarnessRunner) and isinstance(runner.game, AttachedGame)
     runner, keeper_client = session_runner(parser().parse_args([*base, "--session-runner", "legacy"]))
     assert isinstance(runner, LegacyCli) and keeper_client == runner.keeper_client
 

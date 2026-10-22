@@ -75,7 +75,7 @@ def test_session_py_answers():
 def test_the_keeper_gets_each_refused_line_once():
     refused = [{"name": "Shadowheart", "level": 3, "why": "game"}]
     bad = [{"name": "shadowheart", "level": 3, "why": "check"}, {"name": "Lae'zel", "level": 4, "why": "check"}]
-    assert keeper_side.merge_refused(refused, bad) == [refused[0], bad[1]]
+    assert keeper_side.merge_refused(refused, bad) == [refused[0], bad[1]]  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_relaunch_note_and_the_parts():
