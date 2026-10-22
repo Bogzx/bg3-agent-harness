@@ -32,8 +32,8 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "runner"))
-import profiles  # noqa: E402
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))  # a no-op under the uv workspace
+from bg3harness import profiles  # noqa: E402
 
 QUICKSTART = REPO / "docs" / "QUICKSTART.md"
 MCP_DOC = REPO / "docs" / "MCP-SERVER.md"
@@ -96,6 +96,7 @@ class QuickstartCommand(unittest.TestCase):
     def test_the_documented_profile_is_a_valid_pi_profile(self):
         p = profiles.parse(doc_profile(), "QUICKSTART.md")
         self.assertEqual((p.client, p.model, p.effort), ("pi", "vendor/model-id", "high"))
+        assert p.routing is not None and p.endpoint is not None
         self.assertEqual(p.routing["only"], ["vendor"])
         self.assertEqual(p.endpoint.api_key_env, "OPENROUTER_API_KEY")
 
@@ -149,16 +150,22 @@ async def _serve(env: dict[str, str], tool: str | None = "get_status") -> dict:
     params = StdioServerParameters(
         command="uv", args=["run", "--project", str(REPO / "bridge"), "bg3ai-mcp"], env=env, cwd=str(REPO)
     )
+    from mcp.types import TextContent, TextResourceContents
+
     async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
         init = await s.initialize()
+        rules = (await s.read_resource("bg3://rules")).contents[0]
+        assert isinstance(rules, TextResourceContents)
         out = {
             "instructions": init.instructions or "",
             "tools": {t.name for t in (await s.list_tools()).tools},
             "prompts": [p.name for p in (await s.list_prompts()).prompts],
-            "resource": (await s.read_resource("bg3://rules")).contents[0].text,
+            "resource": rules.text,
         }
         if tool:
-            out["result"] = (await s.call_tool(tool, {})).content[0].text
+            result = (await s.call_tool(tool, {})).content[0]
+            assert isinstance(result, TextContent)
+            out["result"] = result.text
         return out
 
 
@@ -214,7 +221,9 @@ class McpServerDoc(unittest.TestCase):
         bg3["env"] = self.env(BG3AI_AUTO_SESSION="1")  # the doc's memory var, plus the fake mod and scratch dirs
         (self.tmp / "mcp.json").write_text(json.dumps(config))
         (self.tmp / "client.py").write_text(blocks(self.text, "python")[0])
-        run = shlex.split(re.search(r"`(uv run --project bridge python client\.py mcp\.json)`", self.text).group(1))
+        m = re.search(r"`(uv run --project bridge python client\.py mcp\.json)`", self.text)
+        assert m, "MCP-SERVER.md names the client command"
+        run = shlex.split(m.group(1))
         run = [str(self.tmp / a) if a in ("client.py", "mcp.json") else a for a in run]
         out = subprocess.run(run, cwd=REPO, capture_output=True, text=True, timeout=180)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -247,7 +256,9 @@ class McpServerDoc(unittest.TestCase):
         self.assertEqual(quiet["resource"], coach["resource"])  # still served, and rules+coaching
 
     def test_a_typo_stops_the_server(self):
-        want = re.search(r"^ *(ValueError: BG3AI_TOOLS: .+)$", section(self.text, "## Tools"), re.M).group(1)
+        m = re.search(r"^ *(ValueError: BG3AI_TOOLS: .+)$", section(self.text, "## Tools"), re.M)
+        assert m, "MCP-SERVER.md shows the typo's error"
+        want = m.group(1)
         out = subprocess.run(
             ["uv", "run", "--project", "bridge", "bg3ai-mcp"],
             cwd=REPO, env=self.env(BG3AI_TOOLS="memroy"), stdin=subprocess.DEVNULL,

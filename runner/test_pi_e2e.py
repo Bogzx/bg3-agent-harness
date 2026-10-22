@@ -27,13 +27,12 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import events as E  # noqa: N812
 import test_crash as TCR  # noqa: N812
 import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
+from bg3harness import events as E  # noqa: N812
+from bg3harness import profiles
 from bg3harness.testing.fakemod import FakeMod
 from bg3harness.testing.scripted import FakeClock, GameModel
-
-import profiles
 
 MCP = importlib.util.find_spec("mcp") is not None  # the uv env (bg3harness.testing.mcp_bridge); not system python
 if MCP:
@@ -242,7 +241,7 @@ class PiE2EBase(TCR.FakeRunBase):
         return {e.tool: e.text for e in self.logged(stem) if e.kind == "tool_result"}
 
     def history(self) -> dict:
-        return self.r.state["history"][-1]
+        return self.r.state.data["history"][-1]
 
     def spent(self) -> float:
         return json.loads(self.budget.read_text())["spent"]
@@ -288,8 +287,10 @@ class Play(PiE2EBase):
     def test_the_cost_cap_stops_the_run(self):
         res = self.play([{"tool_calls": [call("get_status")], "delay": 0.2}], max_cost=2.5 * COST)
         self.assertEqual(res.reason, "cap")
-        self.assertEqual(self.r.cap_hit["cap"], "cost")
-        self.assertGreaterEqual(self.r.cap_hit["cost"], 2.5 * COST)
+        cap = self.r.cap_hit
+        assert cap is not None
+        self.assertEqual(cap["cap"], "cost")
+        self.assertGreaterEqual(cap["cost"], 2.5 * COST)
         self.assertEqual(self.history()["stop_resumes"], 0)
         billed = round((self.spent() - 1.0) / COST)  # the budget got what the stream billed
         self.assertGreaterEqual(billed, 3)

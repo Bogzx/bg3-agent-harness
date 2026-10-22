@@ -3,15 +3,18 @@ agent, game and memory on a fake clock."""
 
 import json
 import threading
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 from bg3harness.session import Recovery
 from bg3play import config
 from bg3play.adapters import harness_runner as hr
 from bg3play.adapters.agent_process import AgentCall, AgentRun
+from bg3play.config import PlaythroughConfig
 from bg3play.memory.new_playthrough import create_memory
-from bg3play.supervisor import CRASH_NOTE, SessionRequest, Supervisor, SupervisorError
+from bg3play.supervisor import CRASH_NOTE, SessionRequest, SessionResult, Supervisor, SupervisorError
 
 PT = "ilse"
 
@@ -27,9 +30,10 @@ class Clock:
 class FakeAgent:
     """Each process takes `minutes` of the fake clock and ends with the next scripted reason (default exited 0)."""
 
-    model, effort = "opus", None
+    model: str = "opus"
+    effort: str | None = None
 
-    def __init__(self, clock: Clock, script: list[tuple[str, float]], during=None):
+    def __init__(self, clock: Clock, script: list[tuple[str, float]], during: Callable[[int], None] | None = None):
         self.clock, self.script, self.during = clock, list(script), during
         self.calls: list[AgentCall] = []
 
@@ -47,7 +51,13 @@ class FakeAgent:
 class FakeGame:
     """`ooms`: each death's OOM cause in turn (None = not an OOM); recover() brings the game back up."""
 
-    def __init__(self, sigs: list[dict | None], recover_to: str | None = None, ok: bool = True, ooms=()):
+    def __init__(
+        self,
+        sigs: list[dict[str, Any] | None],
+        recover_to: str | None = None,
+        ok: bool = True,
+        ooms: Sequence[str | None] = (),
+    ):
         self.sigs, self.recover_to, self.is_ok, self.ooms = list(sigs), recover_to, ok, list(ooms)
         self.recovered: list[str] = []
         self.began: list[tuple[Path, Path]] = []
@@ -61,7 +71,7 @@ class FakeGame:
     def oom(self) -> str | None:
         return self.ooms.pop(0) if self.ooms else None
 
-    def progress(self):
+    def progress(self) -> dict[str, Any] | None:
         return self.sigs.pop(0) if self.sigs else {"level": "TUT"}
 
     def recover(self, why: str) -> str | None:
@@ -75,19 +85,19 @@ class FakeGame:
 class FakeMemory:
     def __init__(self, blocks: list[str] | None = None):
         self.blocks = list(blocks or [])
-        self.log: list[tuple[str, dict]] = []
+        self.log: list[tuple[str, dict[str, str]]] = []
         self.n = 0
 
-    def start(self, env):
+    def start(self, env: dict[str, str]) -> tuple[str | None, str]:
         self.n += 1
         self.log.append(("start", dict(env)))
         return f"S{self.n:03d}", f"BRIEFING {self.n}"
 
-    def stop_check(self, env):
+    def stop_check(self, env: dict[str, str]) -> str | None:
         self.log.append(("stop", dict(env)))
         return self.blocks.pop(0) if self.blocks else None
 
-    def end(self, env):
+    def end(self, env: dict[str, str]) -> None:
         self.log.append(("end", dict(env)))
 
 
@@ -95,12 +105,21 @@ class FakeKeeper:
     def __init__(self):
         self.ran: list[str] = []
 
-    def run_keeper(self, pt, result):
+    def run_keeper(self, pt: str, result: SessionResult) -> None:
         self.ran.append(result.session)
 
 
-def make(tmp_path: Path, agent_script=(), sigs=(), blocks=(), hours=1.0, recover_to=None, during=None, ooms=(),
-         **cfg_kw):  # fmt: skip
+def make(
+    tmp_path: Path,
+    agent_script: Sequence[tuple[str, float]] = (),
+    sigs: Sequence[dict[str, Any] | None] = (),
+    blocks: Sequence[str] = (),
+    hours: float = 1.0,
+    recover_to: str | None = None,
+    during: Callable[[int], None] | None = None,
+    ooms: Sequence[str | None] = (),
+    **cfg_kw: Any,
+) -> tuple[Supervisor, FakeAgent, FakeGame, FakeMemory, FakeKeeper, Path]:
     clock = Clock()
     pts, runtime = tmp_path / "playthroughs", tmp_path / "runtime"
     (pts / PT).mkdir(parents=True)
@@ -183,7 +202,7 @@ def test_a_fault_the_app_cant_recover_ends_the_session_and_the_next_gets_the_cra
 
 
 def test_a_soft_stop_plays_the_session_out_and_resumes_nothing_after_a_fault(tmp_path: Path):
-    def during(n):
+    def during(n: int) -> None:
         sup.stop()  # the user's stop while S001 plays
 
     sup, agent, game, *_ = make(tmp_path, [("hang", 5)], hours=2.0, recover_to="S001-end", during=during)
@@ -193,7 +212,7 @@ def test_a_soft_stop_plays_the_session_out_and_resumes_nothing_after_a_fault(tmp
 
 
 def test_a_soft_stop_ends_an_ok_session_as_stopped(tmp_path: Path):
-    def during(n):
+    def during(n: int) -> None:
         sup.stop()
 
     sup, agent, *_ = make(tmp_path, hours=2.0, during=during)
@@ -217,7 +236,7 @@ def test_no_game_or_an_unplayable_config_is_a_session_error(tmp_path: Path):
 
     runtime = tmp_path / "runtime"
 
-    def refuse(cfg, sdir):
+    def refuse(cfg: PlaythroughConfig, sdir: Path) -> hr.Agent:
         raise SupervisorError("client pi: pick a pi client profile")
 
     runner = hr.HarnessRunner(runtime, tmp_path / "playthroughs", refuse, FakeGame([]), lambda m: FakeMemory(), Clock())
@@ -229,7 +248,7 @@ def test_no_game_or_an_unplayable_config_is_a_session_error(tmp_path: Path):
 def test_a_fight_hold_moves_the_session_end_and_the_stop_resume_gets_the_held_time(tmp_path: Path):
     sdir = tmp_path / "runtime" / "sessions" / PT
 
-    def during(n):  # the bg3 MCP server: a fight was on at WRAP UP, the clock held 10 min
+    def during(n: int) -> None:  # the bg3 MCP server: a fight was on at WRAP UP, the clock held 10 min
         if n == 1:
             (sdir / "S001.hold.json").write_text(json.dumps({"deadline": 1000 + 40 * 60}))
 

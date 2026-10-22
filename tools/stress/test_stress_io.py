@@ -3,6 +3,7 @@ save) on a fake clock."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -56,11 +57,11 @@ class FakeClock:
         self.t += seconds
 
 
-def seq(*values):
-    it = iter(values)
-    last = [None]
+def seq[T](first: T, *rest: T) -> Callable[[], T]:
+    it = iter((first, *rest))
+    last = [first]
 
-    def nxt():
+    def nxt() -> T:
         last[0] = next(it, last[0])
         return last[0]
 

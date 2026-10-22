@@ -4,7 +4,9 @@ fault or at its cost cap. A fake process whose stream ends when it is killed; no
 import json
 import queue
 import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 from bg3harness import clients
 from bg3play.adapters.agent_process import AgentCall, ClientAgent
@@ -27,17 +29,17 @@ class FakeClient:
     def __init__(self):
         self.written: list[clients.Request] = []
 
-    def write_config(self, req):
+    def write_config(self, req: clients.Request) -> list[Path]:
         self.written.append(req)
         return []
 
-    def env(self, req):
+    def env(self, req: clients.Request) -> dict[str, str]:
         return {"FAKE": "1"}
 
-    def command(self, req):
-        return ["fake", "--resume" if req.resume else "--session-id", req.session, req.prompt]
+    def command(self, req: clients.Request) -> list[str]:
+        return ["fake", "--resume" if req.resume else "--session-id", str(req.session), req.prompt]
 
-    def parse(self, line):
+    def parse(self, line: str) -> list[clients.Event]:
         d = json.loads(line)
         if d["type"] == "say":
             return [clients.Event("text", text=d["text"])]
@@ -50,7 +52,7 @@ class FakeProc:
     """Its stdout yields the lines put on `lines`; None (or kill) ends it."""
 
     def __init__(self, lines: list[str], hold: bool):
-        self.q: queue.Queue = queue.Queue()
+        self.q: queue.Queue[str | None] = queue.Queue()
         for ln in lines:
             self.q.put(ln)
         if not hold:
@@ -58,28 +60,34 @@ class FakeProc:
         self.killed = False
 
     @property
-    def stdout(self):
+    def stdout(self) -> Iterator[str]:
         while (ln := self.q.get()) is not None:
             yield ln
 
-    def wait(self):
+    def wait(self) -> int:
         return -9 if self.killed else 0
 
-    def kill(self):
+    def kill(self) -> None:
         self.killed = True
         self.q.put(None)
 
 
-def call(tmp_path: Path, **kw) -> AgentCall:
-    base = {"sdir": tmp_path, "sid": "S004", "prompt": "Play.", "cap_s": 600.0, "conversation": "c-1",
+def call(tmp_path: Path, **kw: Any) -> AgentCall:
+    base: dict[str, Any] = {"sdir": tmp_path, "sid": "S004", "prompt": "Play.", "cap_s": 600.0, "conversation": "c-1",
             "resume": False, "env": {"BG3AI_SESSION": "S004"}}  # fmt: skip
     return AgentCall(**(base | kw))
 
 
-def agent(lines, hold=False, clock=None, fault=lambda: None, watch_s=30.0):
-    spawned = []
+def agent(
+    lines: list[str],
+    hold: bool = False,
+    clock: Clock | None = None,
+    fault: Callable[[], str | None] = lambda: None,
+    watch_s: float = 30.0,
+) -> tuple[ClientAgent, list[Any]]:
+    spawned: list[Any] = []  # (cmd, cwd, env) then the FakeProc, per spawn
 
-    def spawn(cmd, cwd, env):
+    def spawn(cmd: list[str], cwd: Path, env: dict[str, str]) -> FakeProc:
         spawned.append((cmd, cwd, env))
         spawned.append(FakeProc(lines, hold))
         return spawned[-1]
