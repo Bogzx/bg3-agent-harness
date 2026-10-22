@@ -683,7 +683,7 @@ def backfill_model_time(state_dir: Path, rec: dict) -> dict:
 
 
 def time_to_milestone(started: float | None, reached_at: float | None) -> float | None:
-    """Wall seconds from the run's start to the milestone (None: not reached). bg3bench.records has the same."""
+    """Wall seconds from the run's start to the milestone (None: not reached). bg3bench.records imports it."""
     if started is None or reached_at is None:
         return None
     return round(reached_at - started, 1)

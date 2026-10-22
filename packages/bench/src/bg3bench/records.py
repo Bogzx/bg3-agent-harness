@@ -1,10 +1,10 @@
 """The runs.jsonl records of a series as tables: the runs table, the series summary, two series compared
 (play.py runs; moved from runner/runs.py, which re-exports them).
 
-The record fields read here are the run record's contract: failures[].class is one of the failure classes below
-(runs.py tags them), model_time is runner/model_time.model_time() (HEADLINE, api_floor.p10_s), tokens are the
-token counts by kind. HEADLINE, FLOOR_DIFF_S and the class names are model_time's and runs.py's values, checked
-equal by runner/test_runs.py.
+The record fields read here are the run record's contract: failures[].class is one of bg3harness.runs' failure
+classes (it tags them), model_time is bg3harness.model_time.model_time() (HEADLINE, api_floor.p10_s), tokens are the
+token counts by kind. The class names, HEADLINE, FLOOR_DIFF_S, token_total and time_to_milestone are imported from
+there.
 """
 
 from __future__ import annotations
@@ -13,22 +13,8 @@ import json
 import statistics
 from collections import Counter
 
-HARNESS, AGENT, UNKNOWN = "harness", "agent", "unknown"  # runs.py's failure classes
-HEADLINE = "adjusted_model_s_ref_ttft"  # model_time.HEADLINE: the "adj model min"
-FLOOR_DIFF_S = 0.3  # model_time.FLOOR_DIFF_S: API floors further apart than this make model-time deltas the API's
-
-
-def token_total(tokens: dict | None) -> int:
-    """A record's tokens summed (input, output, cache reads and writes): what --max-tokens counts."""
-    return sum(int(v or 0) for v in (tokens or {}).values())
-
-
-def time_to_milestone(started: float | None, reached_at: float | None) -> float | None:
-    """Wall seconds from the run's start to the milestone (None: not reached)."""
-    if started is None or reached_at is None:
-        return None
-    return round(reached_at - started, 1)
-
+from bg3harness.model_time import FLOOR_DIFF_S, HEADLINE
+from bg3harness.runs import AGENT, HARNESS, UNKNOWN, time_to_milestone, token_total
 
 # The naut series (3 runs, Claude, before observation compaction): result tokens per run (vis, research/impl-vis.md
 # "Result tokens metric"; raw stream backfill). A run is coloured against their mean (total, and per result).
