@@ -707,7 +707,11 @@ class RefreshSnapshotsTest(MemoryTestCase):
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
         env = {"BG3_SNAPSHOTS": "1", "BG3LE_DEBUG_PORT": str(port), "PYTHONPATH": ""}
-        with mock.patch.dict(os.environ, env):
+        # without the test dirs pytest's prepend mode put on sys.path: refresh_snapshots passes sys.path on, and
+        # tools/saves/inspect.py there shadows the stdlib inspect in the subprocess (the hook's path has no test dirs)
+        repo = str(memlib.REPO_ROOT)
+        path = [p for p in sys.path if not p.startswith(repo) or p.endswith("src")]
+        with mock.patch.dict(os.environ, env), mock.patch.object(sys, "path", path):
             line = session.refresh_snapshots(self.mem)
         self.assertTrue(line.startswith("snapshots: wrote"), line)
 
