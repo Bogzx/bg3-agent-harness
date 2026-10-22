@@ -92,8 +92,8 @@ class StubRunner(lpt.Runner):
             result = E.Event("result", subtype="success", turns=3, cost_usd=PAID_USD, tokens={"output": 10})
             base.with_name(base.name + ".events.jsonl").write_text(result.to_json() + "\n")
             self.settle_cost(sid + tag, PAID_USD)
-        now = time.time()
-        return rstate.SessionResult(sid, claude_session or "", 0, "exited", now, now + 1)
+        now = time.time()  # a session that played (runs.history_failures: an exit within 60 s is a harness failure)
+        return rstate.SessionResult(sid, claude_session or "", 0, "exited", now, now + 600)
 
 
 class Bench(unittest.TestCase):
