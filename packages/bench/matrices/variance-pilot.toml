@@ -1,0 +1,34 @@
+# The variance pilot (BENCHMARK-PLAN.md phase 2): 2 models x 10 scenarios x 6 runs, to measure run-to-run variance
+# per scenario and fix each scenario's run count from it (docs/BENCHMARK.md "Variance pilot"). Not run yet: the save
+# scenarios wait for their start saves, and the paid part waits for the owner's go-ahead.
+#
+# Models: DeepSeek V4.1 Flash through pi (the cheap paid model; live4's whole flash nautiloid billed $0.19) and Opus
+# 5.5 through Claude Code (account 2's subscription: run with CLAUDE_CONFIG_DIR=~/.claude-2; no USD cost). Opus
+# through pi would cost about $10-30 a run, so it stays out until this pilot has fixed the run counts.
+# Scenarios: all four families and no holdout: two exploration legs, two sandbox goals, four fights (one of them the
+# windmill at Tactician next to its Balanced base, so the difficulty's effect on variance shows) and two choices.
+# Condition: the main track's rules only. allow_gaps: play.py can't play rules-only yet, so these runs are labelled
+# as a pilot and never published.
+#
+# Cost bound, DeepSeek (the only paid client): $0.25 per run for every scenario (the nautiloid's $0.19 is the
+# longest measured run; no other scenario has a longer cap), 60 paid runs, $15.00 at most. runtime/budget.json's cap
+# must allow it. Jobs run repeat-major: stop after repeat 1 (10 paid jobs, at most $2.50) and look at which runs hit
+# the $0.25 cap; a cap that stops runs makes their failures the cap's, not the model's.
+# Time bound: the caps' sum is 12.25 game hours per model and repeat, 147 h for all 120 runs if none ends early. The
+# Claude Code half (60 runs) also spends account 2's weekly limit.
+name = "variance-pilot"
+allow_gaps = true
+
+[[group]]
+models = ["profiles/deepseek-flash.toml", "profiles/opus-5.5-claude-code.toml"]
+scenarios = [
+  "nautiloid", "crash_site_grove",
+  "act1_gold_1000", "act1_level_3",
+  "fight_act1_windmill", "fight_act1_windmill_tactician", "fight_act2_house_of_healing", "fight_act2_balthazar",
+  "choice_act1_karlach", "choice_act1_minthara",
+]
+conditions = ["rules"]
+repeats = 6
+
+[budget]
+max_cost = { nautiloid = 0.25, crash_site_grove = 0.25, act1_gold_1000 = 0.25, act1_level_3 = 0.25, fight_act1_windmill = 0.25, fight_act1_windmill_tactician = 0.25, fight_act2_house_of_healing = 0.25, fight_act2_balthazar = 0.25, choice_act1_karlach = 0.25, choice_act1_minthara = 0.25 }

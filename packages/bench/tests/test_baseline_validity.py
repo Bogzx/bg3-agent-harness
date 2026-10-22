@@ -332,12 +332,20 @@ ORACLE: dict[str, list[Callable]] = {
     "fight_act3_cazador": fight("Cazador Szarr", "Predator Werewolf"),
 }
 
+# The Tactician variants (scenarios/*_tactician.json) start where their base does and are solved the same way: the
+# fake mod has no difficulty, so only the live baselines and oracle can tell them apart.
+TACTICIAN = sorted(p.stem for p in SCENARIOS.glob("*_tactician.json"))
+for _v in TACTICIAN:
+    _b = _v.removesuffix("_tactician")
+    START[_v], LIVE[_v], ORACLE[_v] = START[_b], f"{LIVE[_b]} at Tactician", ORACLE[_b]
+
 # Ends one step short of the goal, which the grader must fail: (name, the steps).
 NEAR_MISS: dict[str, list[Callable]] = {
     "act1_recruit_3": [recruit("Gale")],  # one companion recruited, the goal wants two more
     "fight_act1_windmill": fight("Goblin", "Worg")[:1],  # the fight started, never won
     "act1_gold_1000": [lambda m: m.add_gold(999 - m.gold)],
     "fight_act2_ketheric": fight("Ketheric Thorm"),  # the fight won, the quest still open
+    **{v: ORACLE[v][:1] for v in TACTICIAN},  # the fight started, never won
 }
 
 # Near misses the grader passes today, and why: strict, as BROKEN.
@@ -483,6 +491,7 @@ def test_every_scenario_has_a_fake_start_and_a_live_note():
     assert sorted(START) == names and sorted(LIVE) == names and sorted(ORACLE) == names
     assert set(NEAR_MISS) <= set(names)
     assert set(BROKEN) <= set(names)
+    assert len(TACTICIAN) == 5 and all(START[v] is START[v.removesuffix("_tactician")] for v in TACTICIAN)
 
 
 def test_each_fake_start_hosts_the_scenarios_party():

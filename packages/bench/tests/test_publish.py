@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench import manifest, publish, results
+from bg3bench import manifest, publish, results, suite
 from bg3bench.site import build
 
 HERE = Path(__file__).resolve().parent
 NAUT2 = HERE / "fixtures" / "naut2"
-TAG = "bench-v0.1"
+TAG = suite.suite_version()  # the installed bench's: a release holds runs of its own suite
 REPO = "owner/bg3-bench"
 
 

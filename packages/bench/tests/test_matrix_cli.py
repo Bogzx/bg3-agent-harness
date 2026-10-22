@@ -273,3 +273,31 @@ def test_the_pilot_matrix_loads_in_this_repo():
     paid = [j for j in m["jobs"] if j["client"] in matrix.PAID_CLIENTS]
     assert len(paid) == 6 and sum(j["max_cost"] for j in paid) <= 1.5  # the DeepSeek budget
     assert [j["client"] for j in m["jobs"]].count("claude") == 2  # both conditions, like DeepSeek (pi r14)
+
+
+def test_the_variance_pilot_plan(tmp_path):
+    """BENCHMARK-PLAN.md phase 2: 2 models x 10 scenarios x 6 runs; the paid half is bounded at $15 (play.py bench
+    plan's output through this repo's profiles and scenarios, against a budget file of its own)."""
+    real = Path(__file__).resolve().parents[3]
+    repo = tmp_path / "repo"
+    (repo / "runtime").mkdir(parents=True)
+    for d in ("packages", "profiles"):
+        (repo / d).symlink_to(real / d)
+    (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": 2.0}))
+    code, out = cli(repo, "plan", "--matrix", str(real / "packages" / "bench" / "matrices" / "variance-pilot.toml"))
+    assert code == 0
+    rows = [ln.split() for ln in out.splitlines()[1:121]]
+    assert len(rows) == 120 and [r[0].rsplit("~", 1)[1] for r in rows] == [
+        f"r{i}" for i in range(1, 7) for _ in range(20)
+    ]
+    cells = {(r[1], r[4]) for r in rows}
+    assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 20  # every model plays every scenario
+    assert {r[2] for r in rows} == {"high"} and {r[5] for r in rows} == {"rules"}
+    assert all(r[6:] == ["$0.25", "$0.25" if r[1] == "pi" else "-"] for r in rows)
+    assert "120 jobs (60 paid), reserve $15.00" in out and "budget " in out and "$2.00 of $20.00 spent" in out
+    assert "condition rules: a pilot (allow_gaps); play.py lacks a rules-only prompt" in out
+    m = matrix_cli.load(real / "packages" / "bench" / "matrices" / "variance-pilot.toml", real)
+    fams = sorted(sc["family"] for sc in m["scenarios"].values())
+    assert fams == ["choice"] * 2 + ["exploration"] * 2 + ["fight"] * 4 + ["sandbox"] * 2
+    assert not any(sc["holdout"] for sc in m["scenarios"].values())
+    assert {"fight_act1_windmill", "fight_act1_windmill_tactician"} <= set(m["scenarios"])

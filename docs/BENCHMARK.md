@@ -168,9 +168,27 @@ parallel only on separate machines, each with its own Steam install at the same 
 Steam account online on two machines kicks the other off). A machine left unattended for a day does about one
 model's full set (Underdark at its caps) or 4-5 models' Nautiloid series.
 
+### Variance pilot
+
+`packages/bench/matrices/variance-pilot.toml` (BENCHMARK-PLAN.md phase 2, not run): DeepSeek V4.1 Flash through pi
+and Opus 5.5 through Claude Code (account 2's subscription), 10 scenarios (two of each family but fights, four
+fights including `fight_act1_windmill` and its Tactician twin; no holdout), condition `rules`, 6 runs each: 120 runs,
+60 paid. Six runs per cell give each scenario's pass rate to about ±0.2 (a Wilson 95% interval at 3/6 is 19-81%),
+enough to see which scenarios are near 0 or 1 for both models (no spread: fewer runs) and which sit in between (the
+ones that need 5 or more). The run count per scenario is fixed from these rates before any published series.
+
+Cost bound: $0.25 per DeepSeek run (the longest measured flash run, live4's nautiloid, billed $0.19), $15.00 for all
+60; Claude Code runs cost no USD but use the subscription's weekly limit. The caps add up to 147 game hours if no run
+ends early. Jobs run repeat-major, so stop after repeat 1 (at most $2.50 paid) and check whether any run hit the
+$0.25 cap before going on. Check the plan with
+`uv run python runner/play.py bench plan --matrix packages/bench/matrices/variance-pilot.toml`
+(packages/bench/tests/test_matrix_cli.py test_the_variance_pilot_plan checks its output). It plays with `--runner session` (the
+default; the legacy runner refuses every goal that isn't one milestone) and needs the save scenarios' start saves and the owner's go-ahead for the spend.
+
 ## Not live-tested yet
 
 - Every scenario but `nautiloid`: start saves are not made yet, and loading one in a series has never run.
+- A Tactician scenario: its save is not made, and the harness doesn't read the game's difficulty yet.
 - `model_time` and `persona` in run records (both unit-tested on real session files).
 - Any non-Claude client in a series (section 3).
 - `tools/bench_preflight.py` on a machine other than the test machine (unit-tested with fixture Steam trees; its

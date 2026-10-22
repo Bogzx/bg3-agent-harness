@@ -94,3 +94,24 @@ Holdout (run, never published): `fight_act1_gith_patrol`, `fight_act3_cazador`, 
 `choice_act3_wyll_pact`, `act2_last_light` (5 of 23, one per family but puzzle). Seeds 1008-1023. Every new file says
 `requires: {vision: false, min_context: null}`: nothing in the set reads the screen, and the context floor waits for a
 pilot's peak. The saves to make are in research/ovh/bench.md "Start saves to make".
+
+## Round 20 (2026-10-22): Tactician variants, 28 scenarios
+
+Five fights get a harder twin at Tactician: `fight_act1_windmill_tactician`, `fight_act1_dror_ragzlin_tactician`,
+`fight_act1_gith_patrol_tactician` (holdout, like its base), `fight_act2_balthazar_tactician`,
+`fight_act3_sarevok_tactician`. That makes 15 fights (the plan's 10-15) and 28 scenarios; the holdout is 6 of 28.
+A variant is its base with `game_settings.difficulty` "Tactician", its own seed (1024-1028), " (Tactician)" in the
+title, a first line in `about` and the difficulty in `needs_save`; goal, caps, party, brief and the quiz's questions
+are the base's (tests/test_scenario_set.py test_a_tactician_variant_is_its_base_at_tactician). Same caps on purpose:
+the difficulty is the only thing that differs, so the pair measures it.
+
+How the difficulty is set: it lives in the save (the Ruleset component), and the mod only reads it (`scn.difficulty`
+refuses a write: the game sets it through its Options flow). So each variant needs its own start save: load the
+base's start moment, switch the game options' difficulty from Balanced to Tactician, then save as SCN-<name>. The
+run's settings check compares `game_settings.difficulty` with the game's readout and refuses a contradiction, but the
+harness readout doesn't read `scn.difficulty` yet (bg3harness/game_settings.py: always null), so today a wrong save
+is only logged as `settings_unverified`.
+
+No Honour variants: BG3 can't switch a running game to Honour (it is picked at a new game, with one save slot and
+no reloads), so an Honour fight needs an Honour playthrough to that point, and the bench's save starts and reruns
+from a start save don't fit its single save. The plan's `honour_survive_30m` stays unwritten for the same reason.

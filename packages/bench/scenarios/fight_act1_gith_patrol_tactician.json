@@ -1,0 +1,58 @@
+{
+ "schema": 2,
+ "name": "fight_act1_gith_patrol_tactician",
+ "title": "Act 1 fight: the githyanki patrol at the Mountain Pass (Tactician)",
+ "about": "The Tactician variant of fight_act1_gith_patrol: the same fight from the same moment, the same goal and caps, with the game's difficulty at Tactician instead of Balanced (tougher enemies, a smarter enemy AI). Fight (family 1), small and elite: a githyanki patrol of a few strong warriors and casters. claude-run-2 S023 nearly wiped and reloaded once; it won only after a full rest and Hold Person.",
+ "family": "fight",
+ "holdout": true,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Mountain Pass road before the githyanki patrol there is met (claude-run-2 S023-pre-gith), after a long rest: party level 4, companions (Karlach, Gale, Shadowheart), full HP and spell slots. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the game's options switched from Balanced to Tactician at fight_act1_gith_patrol's start moment, then saved: the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Mountain Pass, on the road ahead of a githyanki patrol, out of combat.",
+   "objective": "Defeat the githyanki patrol.",
+   "party": [
+    "Tav (Paladin 4)",
+    "Karlach (Barbarian 4)",
+    "Gale (Wizard 4)",
+    "Shadowheart (Cleric 4)"
+   ]
+  }
+ },
+ "goal": {
+  "combats_won": {
+   "gte": 1
+  }
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 0.75,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Tactician",
+  "karmic_dice": false,
+  "seed": 1026,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

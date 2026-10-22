@@ -52,7 +52,8 @@ model is not punished, the dice give real variance between runs, and knowing the
 
 - Graded: all hostiles dead or fled, no party wipe. Diagnostics: HP left, rounds, spell slots and consumables used.
 - Candidates come from claude-run-2's 149 recorded fights (`tools/logs/fights.py`).
-- Target size: 10-15 fights.
+- Target size: 10-15 fights. Since 2026-10-22: 10 fights plus 5 of them again at Tactician (the difficulty lives in the save;
+  no Honour variants, which need an Honour playthrough: packages/bench/docs/SCENARIOS-AUTHORING.md, round 20).
 
 ### 2. Sandbox goals
 
@@ -136,7 +137,7 @@ entries.
 |---|---|---|---|
 | 0 | pi client and offline checks against the real tool list and a stub MCP server: 94 tools exposed directly, sequential calls, no compaction, screenshots reach the model (canary), `usage.cost` matches `/generation`, provider is the pinned one | all checks pass, or switch to the Python loop | < $5 |
 | 1 | Nautiloid on pi: Opus 5.5, GPT-5.6 Terra, Gemini 3.1 Pro, Kimi K3, DeepSeek V4.1 Flash, 3 runs each, recorded | 15 valid runs; Claude-on-pi vs the 9/9 Claude Code runs gives the harness effect | ~$40-60, ~3 h |
-| 2 | rules/coaching split, neutral start saves, numeric and item milestone kinds, baselines, fairness tests; first fights, `act1_gold_1000` pilot, first choice scenes; variance pilot (2 models × 10 scenarios × 6 runs) | each scenario has an oracle solve and baselines; run count per scenario fixed from measured variance | ~$150-400 |
+| 2 | rules/coaching split, neutral start saves, numeric and item milestone kinds, baselines, fairness tests; first fights, `act1_gold_1000` pilot, first choice scenes; variance pilot (2 models × 10 scenarios × 6 runs: `packages/bench/matrices/variance-pilot.toml`) | each scenario has an oracle solve and baselines; run count per scenario fixed from measured variance | ~$150-400 |
 | 3 | suite v1: 20-30 scenarios across the four families, a private holdout, Pareto plot, per-run manifest, leaderboard version tied to the harness hash | first published leaderboard | ~$800 per frontier model, far less for cheap ones |
 
 Each paid phase pilots on one or two models first and does not scale without the owner's go-ahead.

@@ -11,6 +11,7 @@ HERE = Path(__file__).resolve().parent
 SCHEMAS = HERE.parent / "schema"
 NAUT2 = HERE / "fixtures" / "naut2"
 SHA = "ab" * 32
+NOW = suite.suite_version()  # the installed bench's suite: what its manifests record
 
 
 def load_series():
@@ -181,13 +182,13 @@ def test_timeout_is_a_valid_failure_and_unknown_outcomes_raise():
 
 def test_release_results_round_trip(tmp_path):
     pairs = naut2_pairs()
-    out = results.build_results(pairs, seed=0, created=1792300000.0, bench_tag="bench-v0.1", b=500)
+    out = results.build_results(pairs, seed=0, created=1792300000.0, bench_tag=NOW, b=500)
     assert_valid("results.v1.schema.json", out)
     assert [r["run_id"] for r in out["runs"]] == ["naut2-r001", "naut2-r002", "naut2-r003"]
     assert {tuple(r["versions"].items()) for r in out["runs"]} == {
-        (("harness", None), ("bench", manifest.installed_version()), ("suite", "bench-v0.1"))
+        (("harness", None), ("bench", manifest.installed_version()), ("suite", NOW))
     }
-    assert out["suite"] == "bench-v0.1"
+    assert out["suite"] == NOW
     assert out["runs"][0]["tokens"] == {"input": 186, "output": 15172, "cache_read": 4291143, "cache_write": 80131}
     (group,) = out["groups"]
     assert (group["model"], group["condition"], group["n_runs"], group["n_invalid"]) == ("opus", None, 3, 0)
@@ -200,7 +201,7 @@ def test_release_results_round_trip(tmp_path):
     assert group["wall_s"]["median"] == 630.0
     results.write(out, tmp_path / "results.json")
     assert results.load(tmp_path / "results.json") == out
-    assert out == results.build_results(pairs, seed=0, created=1792300000.0, bench_tag="bench-v0.1", b=500)
+    assert out == results.build_results(pairs, seed=0, created=1792300000.0, bench_tag=NOW, b=500)
 
 
 def test_release_is_of_one_suite_version_and_lists_harness_versions():
@@ -208,15 +209,15 @@ def test_release_is_of_one_suite_version_and_lists_harness_versions():
     (m1, r1), (m2, r2), (m3, r3) = pairs
     old = {**m1, "versions": {"harness": None, "bench": m1["versions"]["bench"]}}  # a manifest before the suite field
     mixed = [(old, r1), ({**m2, "versions": {**m2["versions"], "harness": "0.2.0"}}, r2), (m3, r3)]
-    out = results.build_results(mixed, seed=0, created=1.0, bench_tag="bench-v0.1", b=20)
+    out = results.build_results(mixed, seed=0, created=1.0, bench_tag=NOW, b=20)
     assert_valid("results.v1.schema.json", out)
-    assert (out["suite"], out["runs"][0]["versions"]["suite"]) == ("bench-v0.1", "bench-v0.1")
+    assert (out["suite"], out["runs"][0]["versions"]["suite"]) == (NOW, NOW)
     assert out["groups"][0]["harness"] == ["0.2.0"]
-    newer = {**m3, "versions": {"harness": "0.2.0", "bench": "0.2.0", "suite": "bench-v0.2"}}
+    newer = {**m3, "versions": {"harness": "0.2.0", "bench": "9.9.0", "suite": "bench-v9.9"}}
     with pytest.raises(ValueError, match="2 suite versions"):
         results.build_results([(m1, r1), (newer, r3)], seed=0, created=1.0, b=20)
-    with pytest.raises(ValueError, match="release bench-v0.2 holds runs of bench-v0.1"):
-        results.build_results(pairs, seed=0, created=1.0, bench_tag="bench-v0.2", b=20)
+    with pytest.raises(ValueError, match=f"release bench-v9.9 holds runs of {NOW}"):
+        results.build_results(pairs, seed=0, created=1.0, bench_tag="bench-v9.9", b=20)
     assert results.build_results([], seed=0, created=1.0, b=20)["suite"] is None
 
 
