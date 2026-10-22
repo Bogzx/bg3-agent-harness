@@ -148,7 +148,7 @@ def session_start(rules: bool = False) -> str:
 def _session_key() -> str:
     """The memory session the rules were last served for (rules.Once)."""
     try:
-        return os.environ.get("BG3AI_SESSION") or str(memtools.M.load_state(core.MEMORY).get("current") or "")
+        return os.environ.get("BG3AI_SESSION") or str(memtools.backend().load_state(core.MEMORY).get("current") or "")
     except (OSError, ValueError):
         return ""
 

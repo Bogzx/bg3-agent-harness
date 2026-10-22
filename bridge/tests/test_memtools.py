@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -21,9 +22,10 @@ from bg3ai import memtools, server  # noqa: E402
 from bg3ai.tools import core, plumbing, memory  # noqa: E402
 from bg3ai.memtools import Refused  # noqa: E402
 
-import _testutil as TU  # noqa: E402  (tools/memory, on sys.path via memtools)
-import memlib as M  # noqa: E402
-import new_playthrough as NP  # noqa: E402
+from bg3play.memory import memlib as M, new_playthrough as NP  # noqa: E402  (the backend memtools discovers)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "memory"))
+import _testutil as TU  # noqa: E402  (bg3play's memory test helpers)
 
 RUNNER_ENV = ("BG3AI_SESSION", "BG3AI_FIX_NOTES", "BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_KEEPER")
 

@@ -12,9 +12,12 @@ it, so any MCP client gets the same harness and the server, not the client, enfo
   snapshots/ (generated), markers.json (place_marker), whole-file rewrites of a session log (append-only), files
   other than .md, and CHARACTER.md changes other than appends to its "## Character development" once it is
   committed.
-* Lint: every write runs tools/memory/lint.py and the result names the errors about that file (was the memlint
+* Lint: every write runs the backend's lint and the result names the errors about that file (was the memlint
   hook).
-* Lifecycle (tools/memory/session.py): the runner opens the session and puts the briefing in its kickoff, and sets
+* Backend: the memory files' rules, lint and lifecycle are the playthrough app's (bg3play.memory), and the bridge
+  imports no app code: MemoryBackend is the contract, the app registers its implementation under the "bg3ai.memory"
+  entry-point group (or a launcher calls configure()), and with none the memory tools are off (tools/session.py).
+* Lifecycle (the backend's session module): the runner opens the session and puts the briefing in its kickoff, and sets
   BG3AI_SESSION; the server then only attaches. Without the runner the server process's first tool call opens the
   session and its result starts with the briefing (was the SessionStart hook; a plain import of the server, as the
   dev checks do, never opens one; BG3AI_AUTO_SESSION=0 turns it off); session_start shows it again. end_session makes the
@@ -29,17 +32,69 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import tempfile
 import time
+from importlib import metadata
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Any, Callable, Protocol
 
-REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tools" / "memory"))
-import lint as L  # noqa: E402
-import memlib as M  # noqa: E402
-import session as S  # noqa: E402
+
+class MemoryBackend(Protocol):
+    """What the server needs of a playthrough's memory (bg3play.memory's lint, memlib and session names): a module
+    or object with these attributes."""
+
+    @property
+    def CHARACTER_FILE(self) -> str: ...  # noqa: N802  (read-only: a module constant)
+    @property
+    def CHARACTER_DEV_HEADING(self) -> str: ...  # noqa: N802
+
+    def character_split(self, text: str) -> tuple[str, str]: ...
+    def tracked_in_head(self, mem: Path, rel: str) -> bool: ...
+    def load_state(self, mem: Path) -> dict[str, Any]: ...
+    def save_state(self, mem: Path, state: dict[str, Any]) -> None: ...
+    def session_id(self, n: int) -> str: ...
+    def has_head(self, mem: Path) -> bool: ...
+    def is_git_repo(self, mem: Path) -> bool: ...
+    def build_context(self, mem: Path, source: str = "startup") -> str: ...
+    def clock_message(self, state: dict[str, Any], now: float) -> str | None: ...
+    def memlint_findings(self, mem: Path, rel: str) -> list[tuple[str, str]]: ...
+    def no_memory_message(self, mem: Path) -> str: ...
+    def start_session(self, mem: Path) -> tuple[bool, str]: ...
+    def stop_decision(
+        self, mem: Path, now: float | None = None, in_combat: Callable[[], bool] | None = None
+    ) -> dict[str, Any] | None: ...
+
+
+ENTRY_POINT_GROUP = "bg3ai.memory"
+_backend: MemoryBackend | None = None
+
+
+def discover() -> MemoryBackend | None:
+    """The installed backend: the one "bg3ai.memory" entry point, loaded; None when no package registers one."""
+    eps = list(metadata.entry_points(group=ENTRY_POINT_GROUP))
+    if len(eps) > 1:
+        raise RuntimeError(f"more than one {ENTRY_POINT_GROUP} entry point: {sorted(e.value for e in eps)}")
+    return eps[0].load() if eps else None
+
+
+def configure(backend: MemoryBackend | None) -> None:
+    """Set the backend; before the server's tools module is imported, since it decides at import whether the memory
+    tools are served."""
+    global _backend
+    _backend = backend
+
+
+def active() -> bool:
+    return _backend is not None
+
+
+def backend() -> MemoryBackend:
+    if _backend is None:
+        raise RuntimeError(f"no memory backend: install the playthrough app (it registers {ENTRY_POINT_GROUP})")
+    return _backend
+
+
+configure(discover())
 
 ROOTS = ("memory", "knowledge")
 WRITE_SUFFIXES = (".md",)
@@ -93,7 +148,7 @@ class Sandbox:
                           f"outside the sandbox")
         base = self.root_dir(root)
         if not base.is_dir():
-            raise Refused(f"REFUSED: there is no {root}/ directory (operator: tools/memory/new_playthrough.py)")
+            raise Refused(f"REFUSED: there is no {root}/ directory (operator: python -m bg3play.memory.new_playthrough)")
         real_root = os.path.realpath(base)   # play/memory itself is normally a symlink into playthroughs/
         cur = real_root
         for p in rest:  # no symlink below the root: nothing can point the tools outside it
@@ -285,23 +340,23 @@ def _atomic_write(p: Path, text: str) -> None:
 def _character_ok(sb: Sandbox, old: str | None, new: str) -> str | None:
     """None if this CHARACTER.md change is allowed, else why not. Free until the file is committed (the
     character-creation session writes and corrects it); then only lines appended to its development section."""
-    mem = sb.memory
-    if old is None or not (M.is_git_repo(mem) and M.has_head(mem) and L.tracked_in_head(mem, L.CHARACTER_FILE)):
+    mem, b = sb.memory, backend()
+    if old is None or not (b.is_git_repo(mem) and b.has_head(mem) and b.tracked_in_head(mem, b.CHARACTER_FILE)):
         return None
-    old_core, old_dev = L.character_split(old)
-    new_core, new_dev = L.character_split(new)
+    old_core, old_dev = b.character_split(old)
+    new_core, new_dev = b.character_split(new)
     old_lines, new_lines = old_dev.splitlines(), new_dev.splitlines()
     if new_core == old_core and new_lines[:len(old_lines)] == old_lines:
         return None
-    return (f"REFUSED: {L.CHARACTER_FILE} is who you play: after character creation only lines appended to its "
-            f"'{L.CHARACTER_DEV_HEADING}' section may change (memory_append(\"memory/{L.CHARACTER_FILE}\", "
+    return (f"REFUSED: {b.CHARACTER_FILE} is who you play: after character creation only lines appended to its "
+            f"'{b.CHARACTER_DEV_HEADING}' section may change (memory_append(\"memory/{b.CHARACTER_FILE}\", "
             f"\"- Sxxx: ...\"))")
 
 
 def lint_note(sb: Sandbox, rel: str) -> str:
     """The lint errors about one memory file, for the write's result (was the PostToolUse memlint hook)."""
     try:
-        mine = S.memlint_findings(sb.memory, rel)
+        mine = backend().memlint_findings(sb.memory, rel)
     except Exception as e:  # noqa: BLE001 - lint trouble never fails a write
         return f"(lint not run: {type(e).__name__})"
     if not mine:
@@ -313,7 +368,7 @@ def lint_note(sb: Sandbox, rel: str) -> str:
 def _save(sb: Sandbox, root: str, p: Path, rel: str, old: str | None, new: str, verb: str) -> str:
     if len(new) > WRITE_MAX_CHARS:
         raise Refused(f"REFUSED: {rel} would be {len(new)} chars (limit {WRITE_MAX_CHARS}); condense it")
-    if rel == L.CHARACTER_FILE and (why := _character_ok(sb, old, new)):
+    if rel == backend().CHARACTER_FILE and (why := _character_ok(sb, old, new)):
         raise Refused(why)
     if why := sb.check_content(rel, old, new):
         raise Refused(why)
@@ -392,16 +447,16 @@ class Lifecycle:
 
     def ensure(self) -> None:
         """Before every tool call: in manual mode open the session once (the briefing goes to `pending`)."""
-        if not self.auto or self.opened is not None or self.ended or self.runner_mode():
+        if not self.auto or not active() or self.opened is not None or self.ended or self.runner_mode():
             return
         if not self._is_memory():
             return
         self._open()
 
     def _open(self) -> str:
-        ok, text = S.start_session(self.memory)
+        ok, text = backend().start_session(self.memory)
         if ok:
-            self.opened = M.load_state(self.memory).get("current")
+            self.opened = backend().load_state(self.memory).get("current")
             self.ended = False
             self.pending = text
         return text
@@ -414,31 +469,31 @@ class Lifecycle:
         """The session_start tool: the memory briefing (and the session opened, if nobody opened one)."""
         mem = self.memory
         if not mem.is_dir():
-            return S.no_memory_message(mem)
+            return backend().no_memory_message(mem)
         if self.pending:
             return self.take_pending()
-        st = M.load_state(mem)
+        st = backend().load_state(mem)
         if not self.runner_mode() and (self.opened is None or not st.get("open")) and self._is_memory():
             self._open()
             return self.take_pending()
-        return S.build_context(mem, "repeat" if st.get("open") else "startup")
+        return backend().build_context(mem, "repeat" if st.get("open") else "startup")
 
     def end(self, in_combat: Callable[[], bool] | None = None) -> str:
         """The end_session tool: the Stop hook's check (session.py stop_decision), as text."""
         mem = self.memory
         if not mem.is_dir():
-            return S.no_memory_message(mem)
-        st = M.load_state(mem)
+            return backend().no_memory_message(mem)
+        st = backend().load_state(mem)
         if not st.get("open"):
             return "No open session (it was already committed). You can stop now."
-        sid = M.session_id(st["current"])
-        out = S.stop_decision(mem, in_combat=in_combat)
+        sid = backend().session_id(st["current"])
+        out = backend().stop_decision(mem, in_combat=in_combat)
         if out is None:
             return (f"{sid} stays open: wrap-up isn't due and HANDOFF.md isn't written for {sid}. Keep playing, or "
                     f"run the session-wrapup playbook first if the operator asked you to stop.")
         if out.get("decision") == "block":
             return "NOT ENDED. " + out["reason"].replace("then stop again", "then call end_session again")
-        if not M.load_state(mem).get("open"):
+        if not backend().load_state(mem).get("open"):
             self.ended = True
             self.opened = None
             return out.get("systemMessage", f"{sid} closed.") + " Session over: stop now (no more tool calls)."
@@ -448,12 +503,12 @@ class Lifecycle:
         """Manual sessions (no runner deadline): the elapsed-time wrap-up reminder (was the PostToolUse clock hook)."""
         if self.opened is None or os.environ.get("BG3AI_SESSION_DEADLINE"):
             return ""
-        mem = self.memory
+        mem, b = self.memory, backend()
         try:
-            st = M.load_state(mem)
-            msg = S.clock_message(st, now or time.time())
+            st = b.load_state(mem)
+            msg = b.clock_message(st, now or time.time())
             if msg:
-                M.save_state(mem, st)
+                b.save_state(mem, st)
             return msg or ""
         except OSError:
             return ""

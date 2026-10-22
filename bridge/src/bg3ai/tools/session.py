@@ -14,7 +14,7 @@ from typing import Callable
 
 from mcp.server.mcpserver import MCPServer
 
-from .. import capabilities, compact, render, rules
+from .. import capabilities, compact, memtools, render, rules
 from ..game import Game
 from . import batch, core, plumbing, queueing, reporting, world_tools
 
@@ -232,8 +232,11 @@ _mark_results()
 
 # Capabilities (capabilities.py): tools a session's condition switches off are removed here, after the alwaysLoad
 # marks (_mark_always_load reports removed names as missing), so the client never sees them; the batch tools lose
-# them as steps, and note= on an action is refused when the note tool is off (it writes the memory log).
-TOOLS_OFF = capabilities.disabled([t.name for t in core.mcp._tool_manager.list_tools()], os.environ)
+# them as steps, and note= on an action is refused when the note tool is off (it writes the memory log). With no
+# memory backend installed (memtools.discover) the memory group is off too.
+_OFF_ENV = os.environ if memtools.active() else {
+    **os.environ, "BG3AI_TOOLS_OFF": ",".join(filter(None, (os.environ.get("BG3AI_TOOLS_OFF"), "memory")))}
+TOOLS_OFF = capabilities.disabled([t.name for t in core.mcp._tool_manager.list_tools()], _OFF_ENV)
 for _name in sorted(TOOLS_OFF):
     core.mcp.remove_tool(_name)
 batch._BATCHABLE -= TOOLS_OFF

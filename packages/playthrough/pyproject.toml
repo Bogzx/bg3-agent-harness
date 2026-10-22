@@ -8,6 +8,9 @@ dependencies = ["bg3-agent-harness"]  # run_session, the clients, client profile
 [project.scripts]
 bg3play-serve = "bg3play.server:main"
 
+[project.entry-points."bg3ai.memory"]
+bg3play = "bg3play.memory.bridge_backend"  # the memory tools' backend (bg3ai.memtools.MemoryBackend)
+
 [dependency-groups]
 dev = ["pytest>=8", "playwright==1.64.0", "jsonschema>=4.20"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
 
