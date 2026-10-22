@@ -320,6 +320,23 @@ def test_a_missing_or_broken_budget_stops_before_a_job(tmp_path):
     assert m.run() == matrix.BUDGET and progress(tmp_path)["stop_reason"] == "budget"
 
 
+@pytest.mark.parametrize("gone", ["deleted", "broken"])
+def test_a_budget_file_gone_when_a_runs_cost_is_added_stops_the_matrix(tmp_path, gone):
+    # pi's C3.6: the file removed (or broken) while a paid run played made add_spend raise and the matrix crash
+    jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 1, max_cost={"nautiloid": 1.0, "grove": 1.0})
+    budget = tmp_path / "budget.json"
+
+    def run_one(job):
+        budget.unlink() if gone == "deleted" else budget.write_text("{")
+        return RunResult("r", True, True, 0.75)
+
+    m, _, _ = make(tmp_path, run_one, jobs=jobs)
+    assert m.run() == matrix.BUDGET and progress(tmp_path)["stop_reason"] == "budget"
+    (first, second) = m.state().values()
+    assert first["status"] == "done" and first["attempts"][0]["result"]["cost_usd"] == 0.75  # the end keeps the cost
+    assert second["attempts"] == []  # no run after it
+
+
 def test_shares_the_harness_budget_file(tmp_path):
     spend = _load_spend()
     run = FakeRun()
