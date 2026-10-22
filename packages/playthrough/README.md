@@ -35,6 +35,22 @@ Launcher, on a server started without `--supervise`:
 
 ![Launcher](docs/launcher.webp)
 
+## Running playthroughs (`--supervise`)
+
+- Stop is soft: the running session wraps up, its memory keeper pass finishes, and no new session starts.
+  Ctrl-C on `bg3play-serve` is hard: the agent and a running keeper pass are killed, the session's memory
+  session still ends, and the session gets its history row (`stopped`). The game the app launched stays up.
+- A paid client (a pi profile) needs `runtime/budget.json`: each session's cost cap is the smaller of the
+  playthrough's `max_cost_usd` and what the budget has left, and its cost is charged to the budget. Without the file
+  the session is refused.
+- A session that never started (a broken client profile, a refused budget, a game that can't be recovered) is in the
+  history as `?` and doesn't count as played, so the playthrough can still be started. A keeper pass that can't
+  start is logged in `keeper_history.jsonl` and the run goes on.
+- The app runs from the bg3-ai checkout: the defaults of `--repo` and `--web` and the memory tools' paths are
+  computed from the source tree, and the package isn't published. Relative path options are made absolute at start.
+- The files the app shares with `runner/play.py` have JSON Schemas in `schemas/`: `supervisor.json`
+  (`supervisor.v1`), `runner.json` and `runner.status.json` (no version field yet: play.py writes them too).
+
 ## Tests
 
 ```bash
