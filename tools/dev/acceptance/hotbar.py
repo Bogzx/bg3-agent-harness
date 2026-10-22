@@ -17,11 +17,12 @@ def game_error_fails(*names: str):
     """live5 20261022-034005: a GameError ("bg3le: UI busy") from a direct S.game call in twostep_dd_probe aborted
     the whole se section (12 items lost). Now it is the probe's item FAIL (the first of `names` without a verdict;
     the later ones SKIP) and the probe returns True, so the caller reloads the save in case it cast."""
-    from bg3ai.game import GameError
 
     def deco(fn):
         @functools.wraps(fn)
         def wrapper():
+            from bg3ai.game import GameError  # at call time: importing acceptance must not need the bridge
+
             try:
                 return fn()
             except GameError as e:
