@@ -52,6 +52,7 @@ def write_run_artifacts(
     provider: str | None = None,
     client_version: str | None = None,
     price_sheet: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
     judge: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Grade the run in run_dir and write its manifest.json and result.json there; returns (manifest, result).
@@ -73,6 +74,7 @@ def write_run_artifacts(
         price_sheet=price_sheet,
         provider=provider,
         client_version=client_version,
+        profile=profile,
         harness_version=harness_version,
     )
     grade = attribution = luck_summary = picked = None

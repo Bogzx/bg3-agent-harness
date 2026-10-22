@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from bg3harness import profiles
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
 from bg3bench import conditions, pins, run_artifacts, scenario, series
@@ -42,6 +43,13 @@ JSON = dict[str, Any]
 def series_name(matrix: str, job: Mapping[str, Any]) -> str:
     parts: list[str] = [matrix, job["scenario"], job["model"], job["client"], job["effort"] or "", job["condition"]]
     return re.sub(r"[^a-z0-9_-]+", "-", "-".join(p for p in parts if p).lower()).strip("-")[:100]
+
+
+def profile_ref(path: str | None) -> JSON | None:
+    """A profile job's manifest `profile`: the file's name and the sha256 of what it sets (profiles.digest)."""
+    if not path:
+        return None
+    return {"name": Path(path).name, "sha256": profiles.digest(profiles.load(path))}
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,7 @@ class SessionRun:
         k = series.next_run_index(series.series_records(runs, name))
         run_dir = self.sessions / series.run_name(name, k)
         run_dir.mkdir(parents=True, exist_ok=True)
+        profile = profile_ref(job.get("profile"))  # as the run starts: what it played with
         try:
             st = self.host.start({**job, "tools_off": conditions.parse(job["condition"]).removed_tools()}, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
@@ -120,6 +129,7 @@ class SessionRun:
             prompt_parts=st.prompt_parts,
             scenario_spec=sc,
             condition=job["condition"],
+            profile=profile,
         )
         why = res["invalid_reason"]
         if why and out.invalid:

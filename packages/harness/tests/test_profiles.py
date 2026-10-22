@@ -162,6 +162,15 @@ class Parse(unittest.TestCase):
                 PR.load(path)
 
 
+class Digest(unittest.TestCase):
+    def test_what_a_profile_sets_not_where_it_came_from(self):
+        base = PR.digest(PR.parse(pi(), "a.toml"))
+        self.assertRegex(base, r"^[0-9a-f]{64}$")
+        self.assertEqual(PR.digest(PR.parse(pi(), "elsewhere/b.toml")), base)
+        for changed in (pi(model_info__cost={"input": 1.0, "output": 4.0, "cache_read": 0.2}), pi(effort="low")):
+            self.assertNotEqual(PR.digest(PR.parse(changed)), base)
+
+
 class ToolsOff(unittest.TestCase):
     def test_a_text_only_pi_model_gets_no_screenshots(self):
         text_only = PR.parse(pi(model_info__input=["text"]))

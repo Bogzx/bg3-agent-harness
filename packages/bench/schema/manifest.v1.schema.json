@@ -120,6 +120,14 @@
       ]
     },
     "sandbox": {"$ref": "#/$defs/str_or_null"},
+    "profile": {
+      "description": "the client profile a profile job played (profiles/*.toml): its file name and the sha256 of what it sets (bg3harness.profiles.digest), optional (added 2026-10-22, still v1). Two runs whose profiles differ in any field (rates, routing pin, thinking map) differ here.",
+      "oneOf": [
+        {"type": "null"},
+        {"type": "object", "required": ["name", "sha256"], "additionalProperties": false,
+         "properties": {"name": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}}
+      ]
+    },
     "judge": {
       "description": "the LLM judge that scored the run (persona, choices), optional (added 2026-10-22, still v1). It is never a model under test in the same comparison: results.build_results refuses a release where it is.",
       "oneOf": [

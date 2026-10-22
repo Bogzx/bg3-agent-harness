@@ -3,7 +3,8 @@
 
 `from_series` builds one from a series' `series.json` and one `runs.jsonl` record, the files the runner writes today
 (runner/runs.py). What those files don't record yet (prompt hash and parts, tool allowlist, price sheet, provider,
-client version, condition, the dice seed, the scenario's timing and the harness version) is passed in, or stays null.
+client version, condition, the dice seed, the scenario's timing, the client profile ({"name", "sha256"}:
+bg3harness.profiles.digest) and the harness version) is passed in, or stays null.
 `judge` names the LLM judge that scored the run (the persona judge's model), which must not be a contestant.
 Every manifest cites the harness version, this package's version and the suite version (`bench-vX.Y`,
 bg3bench.suite; CHANGELOG.md: results cite them). The record's pins carry the versions the run played with
@@ -44,6 +45,7 @@ def from_series(
     price_sheet: dict | None = None,
     provider: str | None = None,
     client_version: str | None = None,
+    profile: dict | None = None,
     grader_version: str = GRADER_VERSION,
     harness_version: str | None = None,
     bench_version: str | None = None,
@@ -74,6 +76,7 @@ def from_series(
         "condition": condition,
         "client": {"name": record.get("client") or series["client"], "version": client_version},
         "model": {"slug": record["model"], "provider_requested": provider, "reasoning_effort": record.get("effort")},
+        "profile": profile,
         "caps": {k: caps.get(k) for k in ("run_hours", "max_cost", "max_tokens")},
         "pins": record.get("pins") or series.get("pins") or {},
         "prompt": prompt,

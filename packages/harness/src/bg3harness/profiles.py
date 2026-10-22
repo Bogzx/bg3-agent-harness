@@ -40,10 +40,12 @@ CLI's own, so endpoint, routing and model_info are an error there rather than si
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -245,6 +247,14 @@ def load(path: Path | str) -> Profile:
     except tomllib.TOMLDecodeError as e:
         raise ProfileError(f"{path}: not valid TOML: {e}") from None
     return parse(raw, str(path))
+
+
+def digest(p: Profile) -> str:
+    """The sha256 of what a profile sets (its parsed fields as canonical JSON, not its file: comments and key order
+    don't count, a changed rate, pin or thinking map does), for the run manifest."""
+    fields = asdict(p)
+    del fields["source"]
+    return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def tools_off(p: Profile) -> tuple[str, ...]:

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_run_artifacts import assert_valid
 
 from bg3bench import matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
@@ -204,3 +205,26 @@ def test_an_edited_scenario_is_refused_by_its_series(tmp_path):
         SessionRun("m", host, scenarios={"e2e_sell_idol": edited}, sessions=tmp_path / "sessions")(job())
     with pytest.raises(ValueError, match="no scenario 'grove'"):
         run_one(tmp_path, host)({**job(), "scenario": "grove"})
+
+
+def test_the_manifest_names_the_profile_a_run_played(tmp_path):
+    # two profiles that differ only in their rates are two different setups (pkg-bench-analysis E7)
+    flash = (HERE.parents[2] / "profiles" / "deepseek-flash.toml").read_text()
+    paths = {"a": tmp_path / "a.toml", "a2": tmp_path / "a2.toml", "b": tmp_path / "b.toml"}
+    paths["a"].write_text(flash)
+    paths["a2"].write_text("# the same profile, reworded\n" + flash)
+    paths["b"].write_text(flash.replace("cache_read = 0.006", "cache_read = 0.012"))
+    shas = {}
+    for k, path in paths.items():
+        host = Host([[("exited", 5)]])
+        j = {**job(), "profile": str(path)}
+        res = SessionRun("m", host, scenarios={"e2e_sell_idol": SC}, sessions=tmp_path / k)(j)
+        man = json.loads((tmp_path / k / series_name("m", j) / "manifest.json").read_text())
+        assert res.valid and man["profile"]["name"] == path.name
+        assert_valid("manifest.v1.schema.json", man)
+        shas[k] = man["profile"]["sha256"]
+    assert shas["a"] == shas["a2"] != shas["b"]
+    assert run_one(tmp_path, Host([[("exited", 5)]]))(job()).valid  # a job without a profile: null
+    man = json.loads((tmp_path / "sessions" / series_name("m", job()) / "manifest.json").read_text())
+    assert man["profile"] is None
+    assert_valid("manifest.v1.schema.json", man)
