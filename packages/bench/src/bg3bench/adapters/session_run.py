@@ -13,8 +13,10 @@ reaches the host as the v2 dict (scenario.load: with defaults).
 A fault (game crash or hang, agent hang) ends the session at once (run_session's `invalid`): the run counts one more
 harness failure, so results.validity makes it invalid and the matrix reruns the job. A host whose `start` fails ran
 no agent: an invalid attempt that cost nothing, recorded in runs.jsonl as a runner_error (no artifacts), so the
-rerun plays in a fresh run directory (the failed start may have left a facts.jsonl run_start there). series.json freezes the scenario from the series' first run; a later
-run of an edited scenario is refused.
+rerun plays in a fresh run directory (the failed start may have left a facts.jsonl run_start there). A run whose
+artifacts can't be written (a facts or roll log the bench refuses) is invalid with the record's cost, so the matrix
+settles what it spent and reruns it instead of stopping on an unknown cost. series.json freezes the scenario from
+the series' first run; a later run of an edited scenario is refused.
 
 Budget: a paid client's (matrix.PAID_CLIENTS) cost is settled by the matrix (`charged` False), so the host must not
 add it to runtime/budget.json itself (LiveRunHost turns its runner's settles_budget off); a subscription run isn't
@@ -120,19 +122,23 @@ class SessionRun:
             rec["session_invalid"] = out.invalid
         with runs.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
-        _, res = run_artifacts.write_run_artifacts(
-            run_dir,
-            meta,
-            rec,
-            st.harness_version,
-            st.prompt_sha,
-            prompt_parts=st.prompt_parts,
-            scenario_spec=sc,
-            condition=job["condition"],
-            profile=profile,
-        )
+        charged = job["client"] not in PAID_CLIENTS
+        try:
+            _, res = run_artifacts.write_run_artifacts(
+                run_dir,
+                meta,
+                rec,
+                st.harness_version,
+                st.prompt_sha,
+                prompt_parts=st.prompt_parts,
+                scenario_spec=sc,
+                condition=job["condition"],
+                profile=profile,
+            )
+        except Exception as e:  # noqa: BLE001 - the run played and spent: ungradable is invalid, its cost still known
+            why = f"artifacts failed: {type(e).__name__}: {e}"
+            return RunResult(None, False, False, rec.get("cost_usd"), why[:500], charged)
         why = res["invalid_reason"]
         if why and out.invalid:
             why += f": {out.invalid} (no resume)"
-        charged = job["client"] not in PAID_CLIENTS
         return RunResult(res["run_id"], res["valid"], res["passed"], res["cost_usd"], why, charged)
