@@ -46,7 +46,8 @@ Flags (`bg3play-serve --help` lists all of them):
 | `--web DIR` | `packages/playthrough/web/dist` | the built web app |
 | `--poll S` | `0.5` | seconds between file checks |
 | `--supervise` | off | turn on the Launcher's Start, Stop and Resume |
-| `--session-runner` | `harness` | `harness`: bg3harness `run_session` against a game that is already running; `legacy`: `runner/play.py run`, which also launches the game and loads saves |
+| `--session-runner` | `harness` | `harness`: bg3harness `run_session`; the app launches the game, loads the playthrough's save and relaunches it after a crash; `legacy`: `runner/play.py run` |
+| `--attach` | off | `harness` against a game you started: read it, never launch, kill or relaunch it (a game fault ends the session) |
 | `--repo DIR` | this checkout | where `profiles/` and `play/` are read from (`--supervise`) |
 | `--record` | off | record the game window into MP4 segments |
 | `--video DIR` | `<runtime>/video` | where recordings go |
@@ -63,9 +64,12 @@ Flags (`bg3play-serve --help` lists all of them):
 | `--memory-dir DIR` | the runner's playthrough's | the memory the Stats and Story screens read |
 | `--verbose` | off | log every request |
 
-Writes (start, stop, resume) are refused from another site's page, and from anywhere but localhost unless the
-request carries the token (`Authorization: Bearer <token>`). Keep the default `--host 127.0.0.1` unless you set a
-token.
+Writes (start, stop, resume) are refused from another site's page. Without `--token` they work only from localhost
+and only through a localhost URL (`http://127.0.0.1:8780/` or `http://localhost:8780/`, not a host name that
+resolves to this machine), which keeps a DNS-rebinding page out. With `--token` every write needs it
+(`Authorization: Bearer <token>`), from localhost too. In the web app, open it once as
+`http://<host>:<port>/?token=<token>`: the tab keeps the token and removes it from the address bar. Keep the default
+`--host 127.0.0.1` unless you set a token.
 
 ## What needs the game
 
@@ -75,8 +79,9 @@ and browse the whole run.
 
 Needs BG3 running with the mod: `--game`, `--screen` and `--positions` (they talk to the mod on `--debug-port`),
 `--record` (it grabs the game window, so it needs the game's `DISPLAY` and `XAUTHORITY`), and playing a session
-through `--supervise`. The default `harness` session runner attaches to a game that is already running and has a
-save loaded; `--session-runner legacy` launches the game itself through `runner/play.py`.
+through `--supervise`. The default `harness` session runner launches the game itself (and relaunches it after a
+crash); with `--attach` it uses a game you started, which must have a save loaded. `--session-runner legacy` launches
+it through `runner/play.py`.
 
 ## Screens
 
@@ -115,7 +120,11 @@ directory at ...").
 Then open Launch, type the name and press Start. The Supervisor plays one session after another. It ends the run
 when you press Stop, the hours budget (`[session] hours`) is spent, the story is finished, the game ran out of
 memory twice in a row, three sessions crashed in a row, or a session failed with an error. Stop is soft:
-the running session is asked to finish and no new one starts. One playthrough runs at a time (one game). Between
+the running session is asked to finish, the keeper pass after it runs, and no new one starts. Ctrl-C on the server
+is hard: the agent and a running keeper pass are killed, the session's memory session still ends and it gets its
+history row (`stopped`); the game the app launched stays up. A session that never started (a broken client profile,
+a refused budget, a game that can't be recovered) is in the history as `?` and doesn't count as played, so Start
+still works afterwards. One playthrough runs at a time (one game). Between
 sessions the memory keeper updates the memory and commits it. The run's history and the reason it ended are in
 `runtime/sessions/<pt>/supervisor.json`; the Launcher's top-right corner shows the current state.
 
@@ -177,6 +186,10 @@ session and no ESCAPE skipper runs.
 **Prompt condition.** `condition` picks the text the agent is served and goes to the agent and the bg3 MCP server as
 `BG3AI_PROMPT_CONDITION`. A playthrough defaults to `rules+coaching`. Benchmark runs use `rules` only
 (docs/BENCHMARK-BIAS.md).
+
+**Session cost.** On a paid client (pi) a play session needs `runtime/budget.json`: its cost cap is the smaller of
+`[session] max_cost_usd` and what the budget has left, and its cost is added to the budget. Without the file, or
+with the budget spent, the session is refused.
 
 **Keeper cost.** On a paid client (pi) each keeper pass is capped at `[keeper] max_cost_usd` (default $0.05) and
 also needs the global budget file `runtime/budget.json`; the pass is refused without either, or when the budget is
