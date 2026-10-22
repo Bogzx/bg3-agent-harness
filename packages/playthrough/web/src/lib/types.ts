@@ -111,18 +111,23 @@ export interface TaggedText {
   tag: string | null;
 }
 
-export interface Decision {
+/** A decisions.md entry as the Story payload sends it. */
+export interface StoryDecision {
   id: string;
   title: string;
   session: string | null;
-  session_id: string | null;
-  t: number | null;
   choice: string[];
   why: string[];
   consequences: TaggedText[];
   expected: TaggedText[];
   reversible: string | null;
   notes: string[];
+}
+
+/** A Timeline decision: the session it was made in, normalized ("S012"), and that session's start. */
+export interface Decision extends StoryDecision {
+  session_id: string | null;
+  t: number | null;
 }
 
 export interface Fight {
@@ -468,7 +473,7 @@ export interface StoryPayload {
   playthrough: string;
   exists: boolean;
   dir: string;
-  decisions: Decision[];
+  decisions: StoryDecision[];
   chapters: { file: string; title: string; sections: { heading: string | null; items: string[] }[] }[];
   overview: { title: string | null; header: string[]; now: string | null; main_thread: string | null; party: string[];
               commitments: string[] };

@@ -54,6 +54,8 @@ from bg3play.memory.new_playthrough import create_memory  # noqa: E402
 from bg3play.server import DEFAULT_WEB, App, serve  # noqa: E402
 from bg3play.store import RunStore  # noqa: E402
 
+from .contract import payloads, type_errors  # noqa: E402
+
 
 def call(name: str, args: dict | None = None) -> dict:
     return {"name": "mcp__bg3__" + name, "arguments": args or {}}
@@ -268,3 +270,24 @@ def test_watch_timeline_and_replay_screens(page, played):
         page.get_by_label("Next event").click()
     expect(page.locator(".events").get_by_text("choose_dialogue").first).to_be_visible()
     expect(page.locator(".events").get_by_text("Off the first deck.").first).to_be_visible()
+
+
+def test_every_screen_and_payload_over_the_played_run(page, played, tmp_path):
+    """The run this playthrough leaves (a second shape next to the recorded claude-run-2 fixture): every screen
+    renders it without a console error, and its payloads match the client's types."""
+    url = played["url"]
+    for route, sign in [
+        (f"#/stats/{PT}", "Goal scorecard"),
+        (f"#/story/{PT}", "chapters"),
+        (f"#/memory/{PT}/quests.md", "Memory commits"),
+        (f"#/launch/{PT}", "2 sessions so far: Resume plays the next one"),
+        (f"#/replay/{PT}/S002", "At the playhead"),
+    ]:
+        page.goto(f"{url}/{route}")
+        expect(page.get_by_text(sign).first).to_be_visible()
+    page.goto(f"{url}/overlay?pt={PT}")
+    expect(page.locator(".box.tool")).to_be_visible()
+    found = payloads(url, PT)
+    assert {"replay/S001", "replay/S002", "memory/diff quests.md"} <= set(found)
+    errors = type_errors(found, tmp_path)
+    assert errors == "", errors
