@@ -104,7 +104,7 @@ class Bench(unittest.TestCase):
         (repo / "packages" / "bench" / "scenarios").mkdir(parents=True)
         (repo / "packages" / "bench" / "scenarios" / "host_idol.json").write_text(json.dumps(SCENARIO))
         (repo / "profiles").mkdir()
-        (repo / "profiles" / "claude.toml").write_text('client = "claude"\nmodel = "opus"\n')
+        (repo / "profiles" / "claude.toml").write_text('client = "claude"\nmodel = "opus"\nstatus = "verified"\n')
         (repo / "runtime").mkdir()
         (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": 0.0}))  # the matrix's
         self.matrix = self.tmp / "m.toml"

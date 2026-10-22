@@ -4,6 +4,7 @@
 client = "pi"
 model = "deepseek-v4-pro"
 effort = "high"
+status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)
 
 [endpoint]
 provider = "deepseek"

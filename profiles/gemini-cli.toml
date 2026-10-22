@@ -2,3 +2,4 @@
 # Gemini CLI with its own endpoint and login. Example model id.
 client = "gemini"
 model = "gemini-2.5-pro"
+status = "unsupported"  # kept for later, not to be run (bg3harness/profiles.py)

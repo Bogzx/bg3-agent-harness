@@ -3,3 +3,4 @@ client = "claude"
 model = "claude-opus-5-5"
 effort = "high"
 fallback_model = "claude-sonnet-5-5"
+status = "verified"  # played live through the game (bg3harness/profiles.py)

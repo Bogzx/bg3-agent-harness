@@ -3,6 +3,7 @@
 client = "pi"
 model = "deepseek/deepseek-v4.1-flash"
 effort = "high"
+status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)
 
 [endpoint]
 provider = "openrouter"

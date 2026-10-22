@@ -3,6 +3,7 @@
 client = "pi"
 model = "deepseek-flash"
 effort = "high"
+status = "verified"  # played live through the game (bg3harness/profiles.py)
 
 [endpoint]
 provider = "deepseek"

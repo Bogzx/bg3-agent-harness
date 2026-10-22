@@ -8,6 +8,7 @@ The matrix file (paths relative to the repo):
     conditions = ["rules"]
     repeats = 3
     allow_gaps = false                                # true: a pilot with conditions play.py can't play exactly yet
+    allow_unverified = false                          # true: profiles whose status is "offline" (never played live)
 
     [budget]
     file = "runtime/budget.json"                      # the machine's shared budget (the default)
@@ -16,6 +17,9 @@ The matrix file (paths relative to the repo):
 Cells that differ by model (e.g. 3 paid runs × 2 conditions plus 1 subscription run) go in `[[group]]` tables, each
 with its own models, scenarios, conditions and repeats, instead of the top-level four. The groups' jobs merge
 repeat-major (every group's repeat 1 first).
+
+Each profile is checked as the run will load it (bg3harness.profiles.load). One whose status is "unsupported" is
+refused; one that has never played live ("offline", the default) only with allow_unverified.
 
 A scenario that isn't ready (bench.scenario.not_ready: a save start without its save, or start.not_ready) gets no
 jobs: plan and run list it as skipped with the reason.
@@ -43,6 +47,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
+from bg3harness import profiles
+
 from bg3bench import matrix, scenario
 from bg3bench.adapters import legacy_cli, play_flags, session_run
 
@@ -63,15 +69,18 @@ def _list(raw: dict, key: str, path: Path) -> list[str]:
     return v
 
 
-def load_profile(path: Path) -> dict:
+def load_profile(path: Path, allow_unverified: bool = False) -> dict:
     """A client profile (profiles/*.toml) as a matrix model: {"slug", "client", "effort", "profile"}."""
     try:
-        raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as e:
+        p = profiles.load(path)
+    except OSError as e:
         raise MatrixFileError(f"{path}: {e}") from None
-    if not isinstance(raw.get("client"), str) or not isinstance(raw.get("model"), str):
-        raise MatrixFileError(f"{path}: a profile needs client and model")
-    return {"slug": raw["model"], "client": raw["client"], "effort": raw.get("effort"), "profile": str(path)}
+    except profiles.ProfileError as e:  # it names the file
+        raise MatrixFileError(str(e)) from None
+    if p.status == "unsupported" or (p.status != "verified" and not allow_unverified):
+        why = "" if p.status == "unsupported" else " (allow_unverified = true runs it)"
+        raise MatrixFileError(f"{path}: profile status {p.status!r}{why}")
+    return {"slug": p.model, "client": p.client, "effort": p.effort, "profile": str(path)}
 
 
 def _scenarios(raw: dict, path: Path, repo: Path) -> list[str]:
@@ -101,10 +110,10 @@ def resolved(m: dict) -> dict[str, dict]:
         raise MatrixFileError(f"{m['path']}: {e}") from None
 
 
-def _group(raw: dict, path: Path, repo: Path, max_cost: dict) -> tuple[list[dict], list[str]]:
+def _group(raw: dict, path: Path, repo: Path, max_cost: dict, allow_unverified: bool) -> tuple[list[dict], list[str]]:
     """One grid's jobs and conditions (after _scenarios checked it)."""
     scenarios, repeats = raw["scenarios"], raw.get("repeats", 1)
-    models = [load_profile(repo / p) for p in _list(raw, "models", path)]
+    models = [load_profile(repo / p, allow_unverified) for p in _list(raw, "models", path)]
     conds = _list(raw, "conditions", path)
     for c in conds:
         play_flags.entry(c)  # a malformed condition id raises here
@@ -150,7 +159,7 @@ def load(path: str | Path, repo: Path) -> dict:
     skipped = {s: why for s, sc in loaded.items() if (why := scenario.not_ready(sc))}
     jobs, conds = [], []
     for g in groups:
-        g_jobs, g_conds = _group(g, path, repo, max_cost)
+        g_jobs, g_conds = _group(g, path, repo, max_cost, raw.get("allow_unverified") is True)
         jobs += g_jobs
         conds += [c for c in g_conds if c not in conds]
     if len({j["id"] for j in jobs}) != len(jobs):

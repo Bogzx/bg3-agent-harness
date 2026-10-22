@@ -162,6 +162,23 @@ class Parse(unittest.TestCase):
                 PR.load(path)
 
 
+class Status(unittest.TestCase):
+    def test_offline_unless_the_profile_says(self):
+        self.assertEqual(PR.parse(pi()).status, "offline")
+        for client in ("claude", "pi"):
+            raw = pi(status="verified") if client == "pi" else {"client": client, "model": "m", "status": "verified"}
+            self.assertEqual(PR.parse(raw).status, "verified")
+        with self.assertRaisesRegex(PR.ProfileError, "t.toml: status must be one of verified, offline, unsupported"):
+            PR.parse(pi(status="tested"), "t.toml")
+
+    def test_the_examples_say_what_has_run_live(self):
+        got = {p.name: PR.load(p).status for p in EXAMPLES.glob("*.toml")}
+        self.assertEqual(got["deepseek-flash.toml"], "verified")  # research/ovh live3, live4
+        self.assertEqual(got["opus-5.5-claude-code.toml"], "verified")
+        self.assertEqual(got["gemini-cli.toml"], "unsupported")  # D14
+        self.assertEqual({got[n] for n in got if n.startswith(("codex", "deepseek-v4", "opus-5.5-pi"))}, {"offline"})
+
+
 class Digest(unittest.TestCase):
     def test_what_a_profile_sets_not_where_it_came_from(self):
         base = PR.digest(PR.parse(pi(), "a.toml"))
@@ -169,6 +186,7 @@ class Digest(unittest.TestCase):
         self.assertEqual(PR.digest(PR.parse(pi(), "elsewhere/b.toml")), base)
         for changed in (pi(model_info__cost={"input": 1.0, "output": 4.0, "cache_read": 0.2}), pi(effort="low")):
             self.assertNotEqual(PR.digest(PR.parse(changed)), base)
+        self.assertEqual(PR.digest(PR.parse(pi(status="verified"))), base)  # what it played, not how far it's checked
 
 
 class ToolsOff(unittest.TestCase):

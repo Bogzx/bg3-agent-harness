@@ -3,3 +3,4 @@
 client = "codex"
 model = "gpt-5"
 effort = "high"
+status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)

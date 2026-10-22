@@ -35,6 +35,11 @@ model needs into compat (pi detects the provider's defaults from the provider id
 claude, codex and gemini take only client, model, effort (and fallback_model for claude): their endpoint is the
 CLI's own, so endpoint, routing and model_info are an error there rather than silently meaning nothing.
 
+Any profile may say how far it has been checked: status = "verified" (played live through the game), "offline"
+(the default: only the offline checks have run it) or "unsupported" (kept for later, never to be run). The bench
+matrix refuses an unsupported profile, and an offline one unless the matrix file allows unverified profiles. The
+status is not part of digest(): promoting a profile after its first live run doesn't change what its runs played.
+
     uv run pytest packages/harness/tests/test_profiles.py
 """
 
@@ -51,6 +56,7 @@ from urllib.parse import urlparse
 
 CLIENT_NAMES = ("claude", "codex", "gemini", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # play.EFFORTS
+STATUSES = ("verified", "offline", "unsupported")
 API = "openai-completions"  # the one wire format for pi (D6)
 INPUTS = ("text", "image")
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")  # pi's thinkingLevelMap keys
@@ -93,6 +99,7 @@ class Profile:
     endpoint: Endpoint | None = None
     routing: dict | None = None  # compat.openRouterRouting, as sent
     model_info: ModelInfo | None = None
+    status: str = "offline"  # STATUSES
     source: str = ""
 
     @property
@@ -217,7 +224,7 @@ def parse(raw: dict, source: str = "<profile>") -> Profile:
     client = raw.get("client")
     if client not in CLIENT_NAMES:
         raise ProfileError(f"{source}: client must be one of {', '.join(CLIENT_NAMES)} (got {client!r})")
-    allowed = ("client", "model", "effort") + (("fallback_model",) if client == "claude" else ())
+    allowed = ("client", "model", "effort", "status") + (("fallback_model",) if client == "claude" else ())
     if client != "pi":
         given = [k for k in PI_ONLY if k in raw]
         if given:
@@ -231,12 +238,23 @@ def parse(raw: dict, source: str = "<profile>") -> Profile:
     if effort is not None and effort not in EFFORTS:
         raise ProfileError(f"{source}: effort must be one of {', '.join(EFFORTS)} (got {effort!r})")
     fallback = _str(raw, "fallback_model", source, required=False)
+    status = raw.get("status", "offline")
+    if status not in STATUSES:
+        raise ProfileError(f"{source}: status must be one of {', '.join(STATUSES)} (got {status!r})")
     if client != "pi":
-        return Profile(client, model, effort, fallback, source=source)
+        return Profile(client, model, effort, fallback, status=status, source=source)
     endpoint = _endpoint(raw.get("endpoint"), source)
     routing = _routing(raw["routing"], source, endpoint) if "routing" in raw else None
     return Profile(
-        client, model, effort, None, endpoint, routing, _model_info(raw.get("model_info"), source), source=source
+        client,
+        model,
+        effort,
+        None,
+        endpoint,
+        routing,
+        _model_info(raw.get("model_info"), source),
+        status=status,
+        source=source,
     )
 
 
@@ -251,9 +269,9 @@ def load(path: Path | str) -> Profile:
 
 def digest(p: Profile) -> str:
     """The sha256 of what a profile sets (its parsed fields as canonical JSON, not its file: comments and key order
-    don't count, a changed rate, pin or thinking map does), for the run manifest."""
+    don't count, a changed rate, pin or thinking map does; nor does the status), for the run manifest."""
     fields = asdict(p)
-    del fields["source"]
+    del fields["source"], fields["status"]
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 

@@ -84,7 +84,9 @@ uv run --project packages/bench python -m bg3bench.matrix run --matrix packages/
 ```
 
 `plan` is a dry run (the jobs, the budget reserve and what play.py can't play exactly yet); `run`, `resume` and
-`status` do the rest. The matrix file format is in [packages/bench/README.md](../packages/bench/README.md).
+`status` do the rest. The matrix file format is in [packages/bench/README.md](../packages/bench/README.md). A
+matrix refuses a profile that has never played live (its `status`, "offline" unless it says "verified") until the
+matrix file sets `allow_unverified = true`: play it once with `play.py run` first.
 
 ### What it costs
 

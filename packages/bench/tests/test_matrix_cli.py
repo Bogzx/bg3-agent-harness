@@ -1,6 +1,7 @@
 # pyright: basic
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,9 @@ import pytest
 from bg3bench import matrix, matrix_cli, scenario
 from bg3bench.matrix import RunResult
 
-PI = 'client = "pi"\nmodel = "anthropic/claude-opus-5.5"\neffort = "high"\n'
-CLAUDE = 'client = "claude"\nmodel = "claude-opus-5-5"\neffort = "high"\n'
+REPO = Path(__file__).resolve().parents[3]
+PI = (REPO / "profiles" / "opus-5.5-pi.toml").read_text().replace('status = "offline"', 'status = "verified"')
+CLAUDE = 'client = "claude"\nmodel = "claude-opus-5-5"\neffort = "high"\nstatus = "verified"\n'
 
 
 NAUTILOID = json.loads((Path(__file__).resolve().parents[1] / "scenarios" / "nautiloid.json").read_text())
@@ -61,6 +63,36 @@ def cli(repo, *argv, run_one=None, host=None):
     out, clock = io.StringIO(), Clock()
     code = matrix_cli.main(list(argv), repo=repo, run_one=run_one, host=host, now=clock.now, sleep=clock.sleep, out=out)
     return code, out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("status", "allow", "refused"),
+    [
+        ("", False, "profile status 'offline' (allow_unverified = true runs it)"),
+        ('status = "offline"', False, "profile status 'offline' (allow_unverified = true runs it)"),
+        ('status = "offline"', True, None),
+        ('status = "unsupported"', True, "profile status 'unsupported'"),
+    ],
+)
+def test_a_profile_never_played_live_needs_allow_unverified(tmp_path, status, allow, refused):
+    repo = fake_repo(tmp_path)
+    (repo / "profiles" / "claude.toml").write_text(f'client = "claude"\nmodel = "claude-opus-5-5"\n{status}\n')
+    body = matrix_file(tmp_path).read_text()
+    path = matrix_file(
+        tmp_path, body.replace("allow_gaps = true", "allow_gaps = true\nallow_unverified = true") if allow else body
+    )
+    if refused is None:
+        assert len(matrix_cli.load(path, repo)["jobs"]) == 8
+    else:
+        with pytest.raises(matrix_cli.MatrixFileError, match=re.escape(f"claude.toml: {refused}")):
+            matrix_cli.load(path, repo)
+
+
+def test_a_profile_is_checked_as_the_run_loads_it(tmp_path):
+    repo = fake_repo(tmp_path)
+    (repo / "profiles" / "pi.toml").write_text('client = "pi"\nmodel = "m"\nstatus = "verified"\n')
+    with pytest.raises(matrix_cli.MatrixFileError, match=r"pi\.toml: pi needs an \[endpoint\] table"):
+        matrix_cli.load(matrix_file(tmp_path), repo)
 
 
 def test_plan_is_a_dry_run_table(tmp_path):
@@ -241,7 +273,7 @@ def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
         ("name = 'm'\nscenarios = ['grove']\n[budget]\nmax_cost = { nautiloid = 1 }", "not in the matrix"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/none.toml']", "none.toml"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['packages/bench/scenarios/grove.json']", "grove.json"),
-        ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/bare.toml']", "needs client and model"),
+        ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/bare.toml']", "bare.toml: model must be a non-empty string"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/pi.toml']\nconditions = ['rules']", "spends money"),
         ("name = 'm'\nscenarios = ['grove', 'grove']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']",
          "duplicate"),
