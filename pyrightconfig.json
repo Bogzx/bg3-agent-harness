@@ -191,6 +191,9 @@
     "packages/harness/src",
     "packages/bench/src",
     "packages/playthrough/src",
-    "runner"
+    "runner",
+    "tools",
+    "tools/saves",
+    "tools/dev"
   ]
 }

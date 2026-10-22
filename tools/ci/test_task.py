@@ -117,7 +117,7 @@ def test_quick_is_the_check_jobs_ruff_steps_and_the_test_jobs_pytest_collected(
     pytest_run = next(argv for _, argv in single_commands("test", ci["test"]) if "pytest" in argv)
     marker = pytest_run[pytest_run.index("-m") : pytest_run.index("-m") + 2]
     assert [(s.cwd, s.argv) for s in task.QUICK[:2]] == check[1:3]
-    assert task.QUICK[2].argv == ("uv", "run", "pytest", "--collect-only", "-q", *marker)
+    assert task.QUICK[2].argv == ("uv", "run", "pytest", "--collect-only", "-qq", *marker)
     assert task.steps("quick") == task.QUICK and "quick" not in task.expand(["ci"])
 
 

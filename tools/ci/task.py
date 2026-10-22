@@ -79,7 +79,7 @@ JOBS: dict[str, tuple[Step, ...]] = {
 QUICK: tuple[Step, ...] = (
     uv("ruff", "check", "."),
     uv("ruff", "format", "--check", "."),
-    uv("pytest", "--collect-only", "-q", "-m", "not live and not e2e"),
+    uv("pytest", "--collect-only", "-qq", "-m", "not live and not e2e"),
 )
 
 # CI job id (ci.yml) of each task; "ts" steps are built per package (ts_steps).
