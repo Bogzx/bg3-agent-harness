@@ -295,7 +295,8 @@ end
 -- exposure?, straight_hazard?, closest?{..., legs, links}, connectors?,
 -- standing_in?, far? (beyond PATH_MAX_M: probed, no detail), too_far? (beyond
 -- ROUTE_FAR_M: not probed), unknown_goal? (not seen or walked, N.known: not
--- probed), waypoints? and visited_near? (far, unknown or no path)}.
+-- probed), waypoints? and visited_near? (far, unknown or no path), phases (ms per
+-- step: probe, lower, connectors, rest; nav.route adds ways, note)}.
 -- knownGoal: true for a visible target; nil asks N.known.
 -- check_all FAIL 03:50 (Lower City → the Bhaal Temple far below, no walk): nav.route 258 ms = closestReach (rings +
 -- the walk toward it) ~90 + lowerGround ~115 + connectors ~55. Route gives closestReach ROUTE_CLOSEST_BUDGET_MS and
@@ -311,6 +312,14 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
     if not from then return nil, "no position" end
     local out = { from = U.vec(from, 1), goal = U.vec(goal, 1), straight_m = round(U.dist(from, goal), 1),
         dir = N.direction(from, goal), dy = round(goal[2] - from[2], 1) }
+    -- live4 check_all: 274 ms for an unreachable goal 133 m away, and nothing said which step took it
+    local ph, last = {}, t0
+    out.phases = ph
+    local function lap(step)
+        local t = Ext.Utils.MonotonicTime()
+        ph[step] = round(t - last, 1)
+        last = t
+    end
     if knownGoal == nil then knownGoal = N.known(ctx, goal) end
     if U.dist(from, goal) > N.ROUTE_FAR_M then
         out.too_far = true
@@ -365,6 +374,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
             end
         end
     end
+    lap("probe")
     local lowerBy = t0 + N.ROUTE_BUDGET_MS - N.ROUTE_CONNECT_RESERVE_MS
     if out.reachable == false and goal[2] - from[2] <= -N.LOWER_MIN_M and Ext.Utils.MonotonicTime() > lowerBy then
         out.lower_skipped = true
@@ -376,10 +386,12 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
             if N.featherFall(charUuid) then out.feather_fall = true end -- no fall damage: route drops its warning
         end
     end
+    lap("lower")
     if withConnectors or not out.reachable then
         out.connectors = N.connectors(ctx, charUuid, goal, N.CONNECT_M, N.CONNECT_MAX,
             math.max(10, t0 + N.ROUTE_BUDGET_MS - Ext.Utils.MonotonicTime()))
     end
+    lap("connectors")
     if out.far or out.too_far or out.unknown_goal or out.reachable == false then
         local wps = N.unlockedWaypointsHere(goal, from)
         while #wps > N.WAYPOINTS_SHOWN do table.remove(wps) end
@@ -388,6 +400,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
     end
     local under = N.harmfulUnder(charUuid)
     if under then out.standing_in = under end
+    lap("rest")
     return out
 end
 

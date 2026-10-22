@@ -506,6 +506,15 @@ test("NAV-5: nav.route on an unreachable goal stays bounded when every search is
         local ms = clock - t0
         assert(ms <= N.ROUTE_BUDGET_MS + N.ROUTE_CLOSEST_BUDGET_MS + 3 * 30,
             "route took " .. ms .. " ms over " .. n .. " searches")
+        -- live4: the reply says where the time went; the steps add up to the whole
+        local ph = out.phases
+        local sum = 0
+        for _, k in ipairs({ "probe", "lower", "connectors", "rest" }) do
+            assert(type(ph[k]) == "number", "phase " .. k)
+            sum = sum + ph[k]
+        end
+        eq(sum, ms, "phases add up")
+        assert(ph.probe >= 30, "the slow searches are in the probe step: " .. ph.probe)
     end)
 end)
 

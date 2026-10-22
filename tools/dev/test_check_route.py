@@ -35,5 +35,13 @@ class LadderPivotTest(unittest.TestCase):
         self.assertEqual(C.classify(6.5, [0.9]), "unknown")
 
 
+class PhasesTest(unittest.TestCase):
+    def test_live4_says_where_the_time_went(self):
+        r = {"phases": {"probe": 181.4, "lower": 0, "connectors": 22.0, "rest": 1.2, "ways": 64.9, "note": 3.1}}
+        self.assertEqual(C.phases(r), "probe=181 lower=0 connectors=22 rest=1 ways=65 note=3")
+        self.assertEqual(C.phases({"phases": {"probe": 5.0}}), "probe=5")
+        self.assertEqual(C.phases({}), "no phases")  # a mod from before the phases
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -448,6 +448,7 @@ RPC.register("nav.route", function(args)
     local t0 = Ext.Utils.MonotonicTime()
     local r, err = N.routeAhead(ctx, char, goal, args.connectors == true, not args.pos and args.target and true or nil)
     if not r then error(err, 0) end
+    local t1 = Ext.Utils.MonotonicTime()
     -- No path: the open directions too, as get_frontier gives them (S023 06:23:
     -- 8 guessed route/wiki/zoom calls across a chasm while the way on, a stone
     -- bridge, lay SW).
@@ -455,10 +456,12 @@ RPC.register("nav.route", function(args)
         local ok, ways = pcall(N.ways, char, 20, 8, 80)
         if ok and ways and #ways > 0 then r.ways = ways end
     end
+    local t2 = Ext.Utils.MonotonicTime()
     if r.reachable == false then
         local ce = V.entity(char)
         r.opened = N.geoNote(ce and V.pos(ce))
     end
+    if r.phases then r.phases.ways, r.phases.note = t2 - t1, Ext.Utils.MonotonicTime() - t2 end
     r.ms = Ext.Utils.MonotonicTime() - t0
     return r
 end)

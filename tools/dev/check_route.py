@@ -6,8 +6,9 @@ even during one: no moves, no reloads, no UI). One command for the orchestrator:
     uv run --project bridge python tools/dev/check_route.py --json          # also dump the raw nav.route reply
 
 Checks (PASS / WARN / FAIL / INFO lines; exit 1 on any FAIL):
-  1 route    nav.route answers (FAIL "unknown op" = the mod was not hot-reloaded yet) for the goal; levels_here,
-             reachable or closest+connectors, ms (< 50 ms PASS, < 150 WARN). Printed through route.render_route,
+  1 route    nav.route answers (FAIL "unknown op" = the mod was not hot-reloaded yet) for the goal; reachable or
+             closest+connectors, ms (< 50 ms PASS, < 150 WARN) and the ms per step (phases). No floors line: nav.route
+             stopped reporting levels_here in 604264c (fairness: floors only from seen ground). Printed through route.render_route,
              i.e. what the agent's `route` tool shows.
   2 ladder   For each ladder in view (nav.route connectors=true): the floors at the ladder's own column relative
              to its pivot, and on rings round it (Guard.LADDER_TOP_RADII: the top landing is often off the column,
@@ -70,6 +71,14 @@ def pick_goal(g: Game, pos: list[float] | None) -> tuple[list[float], str]:
     return HELM, "Helm constant (S002)"
 
 
+def phases(r: dict) -> str:
+    """The ms per step (live4 FAIL 274 ms with nothing saying where): probe = the path searches, then lower ground,
+    connectors, rest, and nav.route's own ways and note. Short: check_all cuts the line at ~150 chars."""
+    ph = r.get("phases") or {}
+    order = ["probe", "lower", "connectors", "rest", "ways", "note"]
+    return " ".join(f"{k}={ph[k]:.0f}" for k in order if isinstance(ph.get(k), (int, float))) or "no phases"
+
+
 def check_route(g: Game, char: str, goal: list[float], label: str, dump: bool) -> dict | None:
     t0 = time.time()
     try:
@@ -82,11 +91,8 @@ def check_route(g: Game, char: str, goal: list[float], label: str, dump: bool) -
     ms = r.get("ms") or 0
     # timing first: check_all cuts the line at ~150 chars ("mod 222 ms, rou" once read as 222 m of route)
     report("route", "PASS" if ms < 50 else ("WARN" if ms < 150 else "FAIL"),
-           f"nav.route took {ms:.0f} ms in the mod (round trip {rt:.0f} ms, connectors=true); "
+           f"nav.route took {ms:.0f} ms in the mod ({phases(r)}; round trip {rt:.0f} ms, connectors=true); "
            f"goal {label} {goal}: straight {r.get('straight_m')} m {r.get('dir')} dy={r.get('dy')}")
-    lh = r.get("levels_here")
-    report("route", "PASS" if lh else "WARN", f"levels_here={lh} levels_goal={r.get('levels_goal')}"
-           + ("" if lh else " (GetHeightsAt gave nothing)"))
     if r.get("reachable"):
         links = r.get("links") or []
         report("route", "PASS", f"reachable: {r.get('length_m')}m, {len(r.get('legs') or [])} legs, "
