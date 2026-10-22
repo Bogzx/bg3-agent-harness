@@ -19,6 +19,7 @@ os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runti
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
 import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
 from bg3harness.game import io as G  # noqa: N812
+from bg3harness.game import controller as C  # noqa: N812  (the GameController and its timings)
 
 os_getpgid = P.os.getpgid
 
@@ -33,8 +34,8 @@ class KillGame(unittest.TestCase):
             P.os.kill,
             P.os.killpg,
             P.time.sleep,
-            P.KILL_GRACE,
-            P.KILL_CONFIRM,
+            C.KILL_GRACE,
+            C.KILL_CONFIRM,
             P.RUNTIME,
             G.crash_reporter_pids,
             G.is_harness_pid,
@@ -64,8 +65,8 @@ class KillGame(unittest.TestCase):
         P.os.kill = kill
         P.os.killpg = lambda pg, sig: self.sent.append(("pg", pg, sig))
         P.time.sleep = lambda s: None
-        P.KILL_GRACE = 0.01
-        P.KILL_CONFIRM = 0.01
+        C.KILL_GRACE = 0.01
+        C.KILL_CONFIRM = 0.01
         self.r = P.Runner.__new__(P.Runner)
         self.r.game_proc = None
         self.r.state = type(
@@ -85,8 +86,8 @@ class KillGame(unittest.TestCase):
             P.os.kill,
             P.os.killpg,
             P.time.sleep,
-            P.KILL_GRACE,
-            P.KILL_CONFIRM,
+            C.KILL_GRACE,
+            C.KILL_CONFIRM,
             P.RUNTIME,
             G.crash_reporter_pids,
             G.is_harness_pid,

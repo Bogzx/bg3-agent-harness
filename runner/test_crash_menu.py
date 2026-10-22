@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 import play as P  # noqa: N812, I001  (play puts packages/harness/src on sys.path)
 from bg3harness.game import io as G  # noqa: N812
+from bg3harness.game import oom as O  # noqa: N812  (the OOM check's journal and ramwatch reads)
+from bg3harness.game import controller as C  # noqa: N812  (the GameController and its timings)
 
 G_FUNCS = {
     n
@@ -28,9 +30,14 @@ G_FUNCS = {
 }
 
 
+CTL_NAMES = ("KILL_GRACE", "KILL_CONFIRM", "LAUNCH_BACKOFF", "MENU_POLL", "SPLASH_LOADMENU_S")
+MOVED = dict.fromkeys(CTL_NAMES, C) | dict.fromkeys(("user_journal", "read_spikes"), O)
+
+
 def home(name: str):
-    """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io."""
-    return G if name in G_FUNCS else P
+    """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io, the GameController's
+    timings to bg3harness.game.controller and the OOM check's reads to bg3harness.game.oom."""
+    return MOVED.get(name) or (G if name in G_FUNCS else P)
 
 
 class FakeMenuGame:
@@ -104,7 +111,7 @@ class SplashMenu(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.saved = {n: getattr(home(n), n) for n in self.NAMES}
         P.RUNTIME = self.tmp / "runtime"
-        P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
+        C.MENU_POLL, C.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
 
     def tearDown(self):
         for n, v in self.saved.items():
@@ -214,7 +221,7 @@ class RestartDrift(unittest.TestCase):
         self.saved = {n: getattr(home(n), n) for n in names}
         self.addCleanup(lambda: [setattr(home(n), n, v) for n, v in self.saved.items()])
         P.RUNTIME = self.tmp / "runtime"
-        P.MENU_POLL, P.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
+        C.MENU_POLL, C.SPLASH_LOADMENU_S, P.LOAD_START_TIMEOUT = 0.01, 0.2, 1
 
     def run_restart(
         self,

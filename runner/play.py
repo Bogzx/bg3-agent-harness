@@ -76,6 +76,12 @@ from bg3harness.game import io as game  # noqa: E402  (the game's I/O; called as
 from bg3harness.game.io import (  # noqa: E402, F401  (port_open: re-exported for test_play_isolation only)
     DEBUG_PORT, EVAL_TIMEOUT, MOD_READY_LUA, Bg3leStale, ForeignGameRunning, GameDied, LaunchBlocked, LaunchGaveUp,
     LaunchWatch, NoDisplay, RpcError, Save, SteamNotOffline, port_open)
+from bg3harness.game import controller as gamectl  # noqa: E402  (the GameController: launch, kill, waits, OOM check)
+from bg3harness.game.controller import (  # noqa: E402, F401  (re-exported: the runner's waits and tests use them)
+    MENU_STATES, GameController, WaitReporter)
+from bg3harness.game import oom  # noqa: E402  (OOM kills of the game: journal, ramwatch records, streak)
+from bg3harness.game.oom import (  # noqa: E402, F401  (re-exported for the runner and tests)
+    OOM_SAVE_LIMIT, find_game_oom, last_loaded_save, oom_streak_update)
 
 PLAY_DIR = REPO / "play"
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))
@@ -98,8 +104,6 @@ SE_BG3AI_DIR = steam_paths.se_dir() / "BG3AI"   # $BG3AI_SE_DIR, else <profile>/
 HARD_STOP_GRACE = 10 * 60      # deadline + this → SIGINT
 SIGINT_GRACE = 30              # then SIGTERM
 SIGTERM_GRACE = 15             # then SIGKILL
-KILL_GRACE = 3                 # the game ignores SIGTERM (S024: still up after 10 s): SIGKILL it after this many s
-KILL_CONFIRM = 30              # then wait this long for the processes and port 9998 to go away
 FIX_SESSION_MINUTES = 10
 MIN_SESSION_MINUTES = 20       # shortest session: --session-minutes below it is refused, and no session
                                # starts with less than this left in --hours (start ≤1 min + wrap-up 3 min)
@@ -194,14 +198,7 @@ COST_PAUSE_CHECK_S = 600       # ... while it is over the cap, the runner waits 
 STATUS_LINE = "runner.status.txt"   # runtime/: one line for the orchestrator (`cat`, or `play.py status`)
 HEAT_PAUSE_CHECK_S = 15        # heat pause (ramwatch.heat_limits, runtime/thermal.log): look again this often
 HEAT_MENU_WAIT_S = 2.0         # the ESC game menu opens/closes in ~0.3 s (bridge server._press_escape)
-LAUNCH_ATTEMPTS = 3            # a launch that dies before the save plays is retried; the 3rd try loads the previous
-LAUNCH_BACKOFF = (15, 45)      # good save; then the runner stops (alert). Seconds to wait before the 2nd and 3rd try
-MENU_STATES = ("Menu", "LoadMenu")   # client game states at the main menu or its splash ("Press any key")
-SPLASH_LOADMENU_S = 10         # LoadMenu this long without the main menu = the splash waiting for a key
-MENU_TIMEOUT = 180             # debug port up → main menu (splash pressed past), else wait_menu fails
-MENU_POLL = 3                  # seconds between menu/splash checks
 LOAD_START_TIMEOUT = 60        # ui.menu load → the game leaves the menu, else the load never started
-STALE_EXIT_WITHIN_S = 30       # launch_game.sh exiting STALE_EXIT this soon after the launch = its stale-bg3le refusal
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # Flags for every playing session. Keep the cacheable prefix (system prompt + tool schemas) byte-identical
 # across sessions: per-machine sections (cwd, git status, env info) move into the first user message, and the
@@ -745,68 +742,6 @@ def read_actions_since(t: float, path: Path | None = None, tail_bytes: int = 4_0
     return out
 
 
-OOM_LINE = "killed by the OOM killer"
-OOM_SAVE_LIMIT = 2             # OOM kills in a row right after loading the same save → the runner refuses that save
-OOM_SPIKE_S = 180              # a ramwatch RSS spike this close before an OOM line in another unit = the game's OOM
-
-
-def game_scope(stamp: str) -> str:
-    """The systemd user scope runner/launch_game.sh runs the game in (its own cgroup, OOMPolicy=continue)."""
-    return f"bg3ai-game-{stamp}.scope"
-
-
-def find_game_oom(journal: str, stamp: str, spikes: list[dict]) -> str | None:
-    """Why the game died of an OOM, from `journalctl --user -o short-unix` lines since its launch, or None. A kill in
-    the game's own scope counts; one in another unit (a game launched before scopes, e.g. in a terminal's unit) only
-    with a ramwatch RSS spike (runtime/ram_spikes.jsonl) within OOM_SPIKE_S before it."""
-    scope = game_scope(stamp)
-    for line in journal.splitlines():
-        if OOM_LINE not in line:
-            continue
-        head, _, rest = line.partition(" ")
-        try:
-            t = float(head)
-        except ValueError:
-            continue
-        unit = rest.split(": ")[-2].split()[-1] if ": " in rest else "?"
-        at = f"{datetime.fromtimestamp(t):%H:%M:%S}"
-        if unit == scope:
-            return f"the kernel OOM-killed the game at {at} (its scope {scope})"
-        spike = next((sp for sp in spikes if 0 <= t - sp.get("t", 0) <= OOM_SPIKE_S), None)
-        if spike:
-            return (f"the kernel OOM-killed the game at {at} (in {unit}; its RSS went {spike['from_mb']} → "
-                    f"{spike['to_mb']} MB in {spike['seconds']} s just before)")
-    return None
-
-
-def read_spikes(since: float, path: Path | None = None) -> list[dict]:
-    """runtime/ram_spikes.jsonl records (runner/ramwatch.py) with t >= since."""
-    out = []
-    try:
-        lines = (path or RUNTIME / "ram_spikes.jsonl").read_text().splitlines()
-    except OSError:
-        return out
-    for line in lines[-200:]:
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict) and rec.get("t", 0) >= since:
-            out.append(rec)
-    return out
-
-
-def user_journal(since: float) -> str:
-    """systemd --user manager lines since `since` (where 'A process of this unit has been killed by the OOM killer'
-    lands; the kernel log needs root here). '' when journalctl isn't usable."""
-    try:
-        r = subprocess.run(["journalctl", "--user", "--no-pager", "-q", "-o", "short-unix", "--since",
-                            f"@{int(since)}", "_COMM=systemd"], capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    return r.stdout
-
-
 def crash_tools_note(why: str, actions: list[dict], until: float, n: int = 3) -> str:
     """The kickoff warning after a game crash: the last n tool calls (runtime/actions.jsonl) up to `until`, so the
     next session doesn't walk straight back into it (S038: jump_to toward the Shadowfell ledge → OOM)."""
@@ -821,30 +756,6 @@ def crash_tools_note(why: str, actions: list[dict], until: float, n: int = 3) ->
     return (f"RUNNER NOTE: the last session ended in a game crash ({why}). The last {len(last)} tool calls before it: "
             f"{calls}. Treat the last one as the likely trigger: don't repeat it at the same spot (a jump: walk "
             "there via route/WAYS instead; a spell/item: another one), and reconcile your notes with get_status.")
-
-
-def last_loaded_save(actions: list[dict], saves: list[Save], fallback: str | None) -> str | None:
-    """The save the game process loaded last: the newest load_game in `actions` (actions.jsonl since its launch) that
-    loaded (`loaded=<label>`), as its folder, else `fallback` (the runner's load at the launch; S082's OOM line named
-    S078-start, loaded 2 h and two agent reloads before)."""
-    for a in reversed(actions):
-        m = re.search(r"loaded=(\S+)", str(a.get("result") or "")) if a.get("tool") == "load_game" else None
-        if not m:
-            continue
-        arg = game.parse_save_folder(str((a.get("args") or {}).get("save") or ""))
-        if arg and arg.label == m.group(1):
-            return arg.folder
-        same = [sv for sv in saves if sv.label == m.group(1) and sv.mtime <= a.get("t", 0)]
-        return max(same, key=lambda sv: sv.mtime).folder if same else m.group(1)
-    return fallback
-
-
-def oom_streak_update(streak: dict | None, save: str | None, oom: str | None) -> dict | None:
-    """The consecutive-OOM record after a game death: same save again → n+1, another save → 1, no OOM → reset."""
-    if not oom or not save:
-        return None
-    n = streak["n"] + 1 if streak and streak.get("save") == save else 1
-    return {"save": save, "n": n, "why": oom, "t": time.time()}
 
 
 def game_started_at() -> float | None:
@@ -1355,8 +1266,6 @@ MOD_DIR = REPO / "mod"
 # boundary: S090 loaded the Lua of a merge into main that landed 19 s after the session's bridge started.
 MOD_LIVE = RUNTIME / "mod-live"
 RELOAD_TIMEOUT = 60
-WAIT_REPORT_AFTER = 90         # a runner wait longer than this logs what it waits for ...
-WAIT_REPORT_EVERY = 30         # ... every this many seconds
 
 
 def mod_tree_hashes(root: Path | None = None) -> dict[str, str]:
@@ -1523,27 +1432,6 @@ class RestartRunner(Exception):
     """Raised between sessions when the runner's own code changed on disk: cmd_run execs the new code."""
 
 
-class WaitReporter:
-    """Watchdog for long runner waits: past WAIT_REPORT_AFTER s, logs what it waits for every WAIT_REPORT_EVERY s
-    (so a silent runner log always says why it's silent)."""
-
-    def __init__(self, what: str, timeout: float | None, start: float | None = None, logf=None):
-        self.what, self.timeout = what, timeout
-        self.start = time.time() if start is None else start
-        self.next = self.start + WAIT_REPORT_AFTER
-        self.log = logf or log
-
-    def tick(self, now: float | None = None) -> bool:
-        now = time.time() if now is None else now
-        if now < self.next:
-            return False
-        left = f", {self.timeout - (now - self.start):.0f} s left" if self.timeout else ""
-        self.log(f"still waiting for {self.what} ({now - self.start:.0f} s so far{left})")
-        while self.next <= now:
-            self.next += WAIT_REPORT_EVERY
-        return True
-
-
 class HealthTracker:
     """Counts consecutive failed liveness checks; `hung` once the limit is reached."""
 
@@ -1567,50 +1455,15 @@ SETUP_ERRORS = (RuntimeError, OSError, TimeoutError, LuaDebugError)
 
 
 def steam_ready() -> tuple[bool, str]:
-    """(ok to launch BG3?, why): a Steam client is running and, on a machine that requires it
-    (steam_paths.offline_required: $BG3AI_REQUIRE_STEAM_OFFLINE=1 or ~/.config/bg3ai/require-steam-offline; machine
-    2), Steam's last login was offline. Not required by default (RUN-11: a public user's runner launched never)."""
-    required, req_why = steam_paths.offline_required()
-    if not required:
-        ok, why = True, f"Steam offline {req_why}"
-    else:
-        ok, why = steam_paths.steam_offline()
-        why = f"{why} [offline required: {req_why}]"
-    if not ok:
-        return False, why
-    r = subprocess.run(["pgrep", "-x", "steam"], capture_output=True, text=True)
-    if not r.stdout.strip():
-        # libsteam_api would start Steam itself, maybe online
-        return False, f"Steam isn't running ({why})"
-    return True, why
+    return gamectl.steam_ready(steam_paths)
 
 
 def bg3le_problems() -> list[str]:
-    """Why the bg3le build launch_game.sh would preload is stale ([] = current, or $BG3AI_ALLOW_STALE_BG3LE=1)."""
-    if os.environ.get("BG3AI_ALLOW_STALE_BG3LE") == "1":
-        return []
-    lib = Path(os.environ.get("BG3AI_BG3LE_LIB", bg3le_buildinfo.DIST / "libbg3le.so"))
-    return bg3le_buildinfo.problems(lib.parent)
+    return gamectl.bg3le_problems(bg3le_buildinfo.problems, bg3le_buildinfo.DIST)
 
 
 def list_saves() -> list[Save]:
-    out = []
-    try:
-        entries = list(os.scandir(SAVE_DIR))
-    except OSError:
-        return out
-    for e in entries:
-        if not e.is_dir():
-            continue
-        lsv = runs.save_lsv(SAVE_DIR, e.name)   # <folder>/<label>.lsv
-        try:
-            mtime = lsv.stat().st_mtime if lsv is not None else e.stat().st_mtime
-        except OSError:
-            continue
-        s = game.parse_save_folder(e.name, mtime)
-        if s:
-            out.append(s)
-    return out
+    return gamectl.list_saves(SAVE_DIR, runs.save_lsv)
 
 
 # A harness process (launch_game.sh's game, or the crash reporter it spawns) carries one of these (RUN-4): the marker
@@ -1865,8 +1718,61 @@ class SessionResult:
     tool_calls: int = 0              # the process's tool calls (a context_overflow without any: at the kickoff)
 
 
+class RunnerGameHost:
+    """bg3harness.game.controller.GameHost for a Runner: its runner.json, log, events and hooks; the module's paths
+    and guards read on each call (tests patch play)."""
+
+    def __init__(self, runner: Runner):
+        self.r = runner
+
+    runtime = property(lambda self: RUNTIME)
+    launch_sh = property(lambda self: LAUNCH_SH)
+    mod_live = property(lambda self: MOD_LIVE)
+    stale_exit = property(lambda self: bg3le_buildinfo.STALE_EXIT)
+    rebuild_hint = property(lambda self: bg3le_buildinfo.REBUILD)
+    state = property(lambda self: self.r.state)
+
+    def log(self, msg: str) -> None:
+        log(msg)
+
+    def event(self, kind: str, **fields) -> None:
+        self.r.event(kind, **fields)
+
+    def status(self, **fields) -> None:
+        write_status(**fields)
+
+    def steam_ready(self) -> tuple[bool, str]:
+        return steam_ready()
+
+    def bg3le_problems(self) -> list[str]:
+        return bg3le_problems()
+
+    def setup_env(self) -> dict:
+        return self.r.setup_env()
+
+    def refresh_mod_snapshot(self) -> list[str]:
+        return self.r.refresh_mod_snapshot()
+
+    def mod_hashes(self) -> dict[str, str]:
+        return mod_tree_hashes()
+
+    def aborted(self) -> bool:
+        return bool(getattr(self.r, "abort", False))
+
+    def own_saves(self) -> list[Save]:
+        return self.r.own_saves()
+
+    def previous_good_save(self, failed: set[str]) -> Save | None:
+        return self.r.previous_good_save(failed)
+
+    def read_actions_since(self, t: float) -> list[dict]:
+        return read_actions_since(t)
+
+    def note(self, text: str) -> None:
+        self.r.pending_notes.append(text)
+
+
 class Runner:
-    watch: LaunchWatch | None = None   # crash signs of the game the runner launched (see launch_game)
     api_limits = 0                     # RUN-7: API limits in a row (the back-off doubles per repeat)
     cap_hit: dict | None = None        # --max-cost/--max-tokens: {cap, cost, tokens, why} once the run reached one
     run_started: float | None = None   # --until: the run's start (claude_totals counts from there)
@@ -1894,7 +1800,6 @@ class Runner:
                 self.state["save_owner"] = owner
             else:
                 self.state.data["save_owner"] = owner
-        self.game_proc: subprocess.Popen | None = None
         self.stop_requested = False
         self.abort = False
         self.pending_notes: list[str] = []
@@ -1920,9 +1825,7 @@ class Runner:
                 self.opt.series_end = self.handover["series_end"]
         self.outcome: str | None = None      # how run() ended: reached|timeout|gave_up|runner_error|stopped (--until)
         self.fatal = False                   # run() ended on something a next --runs run can't fix (needs a human)
-        g = self.state["game"] or {}
-        # The game a previous run of the runner launched: keep watching its bg3le logs.
-        self.watch = LaunchWatch(g["stamp"], RUNTIME / "logs", g.get("launched")) if g.get("stamp") else None
+        self.gamectl.resume_watch()   # the game a previous run of the runner launched
 
     def set_profile(self, profile: dict) -> None:
         """Write profile.json (not in a dry run) and use it."""
@@ -1997,241 +1900,53 @@ class Runner:
 
     # ---------------------------------------------------------------- game lifecycle
 
+    @property
+    def gamectl(self) -> GameController:
+        """The game this runner launched (bg3harness.game.controller), made on first use."""
+        ctl = self.__dict__.get("_gamectl")
+        if ctl is None:
+            ctl = self.__dict__["_gamectl"] = GameController(RunnerGameHost(self))
+        return ctl
+
+    @property
+    def game_proc(self) -> subprocess.Popen | None:
+        return self.gamectl.proc
+
+    @game_proc.setter
+    def game_proc(self, proc: subprocess.Popen | None) -> None:
+        self.gamectl.proc = proc
+
+    @property
+    def watch(self) -> LaunchWatch | None:   # crash signs of the game the runner launched (see launch_game)
+        return self.gamectl.watch
+
+    @watch.setter
+    def watch(self, w: LaunchWatch | None) -> None:
+        self.gamectl.watch = w
+
     def owned_group(self) -> int | None:
-        """The launcher's process group from runner.json's game record, only while it is provably that launch
-        (RUN-4): its leader is runtime launch_game.sh with the start time recorded at launch (records from before
-        2026-10-16 have none: the command line alone). None after a reboot or a pid reuse: never signalled then."""
-        g = self.state["game"] or {}
-        pg = g.get("pgid")
-        if not pg:
-            return None
-        try:   # after a self-restart (execv) the game is still our child: reap it if it exited, or it stays a zombie
-            os.waitpid(pg, os.WNOHANG)
-        except OSError:
-            pass
-        start = game.proc_start(pg)
-        if start is None:   # the leader (launch_game.sh) is gone: the group is ours only if it holds a harness game
-            return pg if any(game._pgid(p) == pg for p in game.pids_of_game()) else None
-        if b"launch_game.sh" not in game.proc_cmdline(pg):
-            return None
-        if g.get("pg_start") is not None and g["pg_start"] != start:
-            return None
-        return pg
+        return self.gamectl.owned_group()
 
     def owns_game(self) -> bool:
-        """True if the running game is one this runner (or a previous run of it) launched."""
-        if self.game_proc is not None and self.game_proc.poll() is None:
-            return True
-        pg = self.owned_group()
-        if pg is None:
-            return False
-        try:
-            os.killpg(pg, 0)
-            return True
-        except OSError:
-            return False
+        return self.gamectl.owns_game()
 
     def game_alive(self) -> bool:
-        if self.game_proc is not None and self.game_proc.poll() is not None:
-            return False
-        return game.port_open()
+        return self.gamectl.alive()
 
     def launch_game(self, load_folder: str | None) -> None:
-        ok, why = steam_ready()
-        write_status(steam_offline=ok, steam_why=why)
-        if not ok:
-            log(f"!!!!! REFUSING TO LAUNCH BG3: Steam not ready: {why}. Start Steam (in offline mode where offline "
-                "is required: Steam > Go Offline...) and leave it running; the runner keeps retrying. !!!!!")
-            self.event("steam_refused", why=why)
-            raise SteamNotOffline(why)
-        self.refuse_stale_bg3le(bg3le_problems())
-        foreign = game.foreign_bg3_pids()
-        if foreign:   # RUN-4: a user's own BG3 (Steam would hand a second launch to it, or two games fight)
-            why = f"a BG3 this harness didn't launch is running (pid {', '.join(map(str, foreign))})"
-            write_status(alert={"t": time.time(), "kind": "foreign_game", "msg": f"not launching: {why}"[:600]})
-            log(f"!!!!! REFUSING TO LAUNCH BG3: {why}; it is never killed by the runner. Close it to let the runner "
-                "launch its own game; the runner keeps retrying. !!!!!")
-            self.event("foreign_game", pids=foreign)
-            raise ForeignGameRunning(why)
-        if game.port_open():
-            raise RuntimeError(f"port {DEBUG_PORT} is still in use; can't launch another game")
-        filled = display_env.fill(os.environ)   # Xwayland restarted since the runner started: its new -auth file
-        if filled:
-            log("display env refreshed from the desktop session: " + " ".join(f"{k}={v}" for k, v in filled.items()))
-        no_display = display_env.problem(os.environ)
-        if no_display:
-            log(f"!!!!! REFUSING TO LAUNCH BG3: no usable display: {no_display}; the runner keeps retrying. !!!!!")
-            self.event("display_refused", why=no_display)
-            raise NoDisplay(no_display)
-        if not (MOD_LIVE / "Mods").is_dir():
-            self.refresh_mod_snapshot()
-        # the session's mod snapshot, also for a relaunch mid-session (never main's newer mod/)
-        args = [str(LAUNCH_SH), "--mod-path", str(MOD_LIVE)] + (["--load", load_folder] if load_folder else [])
-        stamp = base = f"{datetime.now():%Y%m%d-%H%M%S}"   # launch_game.sh names its logs with it (BG3AI_LAUNCH_STAMP)
-        n = 1
-        while list((RUNTIME / "logs").glob(f"*-{stamp}.log*")):   # never another launch's logs (LaunchWatch)
-            stamp, n = f"{base}-{n}", n + 1
-        logf = open(RUNTIME / f"launch-{stamp}.out", "w")
-        log(f"launching game: {' '.join(args)}")
-        self.game_proc = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                          start_new_session=True, env={**os.environ, "BG3AI_LAUNCH_STAMP": stamp,
-                                                                       **self.setup_env()})
-        logf.close()  # the game has its own copy of the descriptor
-        now = time.time()
-        self.watch = LaunchWatch(stamp, RUNTIME / "logs", now)
-        self.state["game"] = {"pgid": self.game_proc.pid, "pg_start": game.proc_start(self.game_proc.pid), "launched": now,
-                              "load": load_folder, "stamp": stamp}
-        self.state["mod_hashes"] = mod_tree_hashes()  # a fresh game loads the mod as it is now
-        write_status(game_pgid=self.game_proc.pid)
-
-    def refuse_stale_bg3le(self, bad: list[str]) -> None:
-        """A stale bg3le build (bg3le_problems, or launch_game.sh's exit 4): status, event, loud log, Bg3leStale."""
-        write_status(bg3le_stale=bad or None)
-        if not bad:
-            return
-        msg = "; ".join(bad)
-        log(f"!!!!! REFUSING TO LAUNCH BG3: stale bg3le build ({msg}). Run {bg3le_buildinfo.REBUILD} (with the game "
-            "closed), then restart the runner; BG3AI_ALLOW_STALE_BG3LE=1 launches it anyway. !!!!!")
-        self.event("bg3le_stale", problems=bad)
-        write_status(alert={"t": time.time(), "kind": "bg3le_stale",
-                            "msg": f"runner stopped: stale bg3le build ({msg})"[:600]})
-        raise Bg3leStale(msg)
+        self.gamectl.launch(load_folder)
 
     def kill_game(self) -> None:
-        """Stop the game: SIGTERM, then SIGKILL after KILL_GRACE s (bg3 ignores SIGTERM), on both the
-        launcher's process group (only while owned_group proves it is that launch) and this harness's bg3 processes
-        (pids_of_game: never a user's own BG3, RUN-4); then require port 9998 to be free."""
-        log("killing the game")
-        groups = []
-        if self.game_proc is not None and self.game_proc.poll() is None:
-            groups.append(self.game_proc.pid)
-        else:
-            pg = self.owned_group()
-            if pg:
-                groups.append(pg)
-            elif (self.state["game"] or {}).get("pgid"):
-                log(f"not signalling process group {self.state['game']['pgid']}: not provably our launch any more "
-                    "(a reboot or a reused pid)")
-        foreign = game.foreign_bg3_pids()
-        if foreign:
-            log(f"leaving bg3 pid(s) {', '.join(map(str, foreign))} alone: not launched by this harness")
-
-        def send(sig: int) -> None:
-            for pgid in groups:
-                try:
-                    os.killpg(pgid, sig)
-                except (ProcessLookupError, PermissionError):
-                    pass
-            for pid in game.pids_of_game() + game.crash_reporter_pids():
-                try:
-                    os.kill(pid, sig)
-                except (ProcessLookupError, PermissionError):
-                    pass
-
-        def gone() -> bool:
-            return not game.pids_of_game() and not game.crash_reporter_pids() and not game.port_open()
-
-        send(signal.SIGTERM)
-        end = time.time() + KILL_GRACE
-        while time.time() < end and not gone():
-            time.sleep(1)
-        if not gone():
-            log(f"game still running {KILL_GRACE} s after SIGTERM; SIGKILL")
-            send(signal.SIGKILL)
-            end = time.time() + KILL_CONFIRM
-            while time.time() < end and not gone():
-                time.sleep(1)
-        if self.game_proc is not None:
-            try:
-                self.game_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
-        self.game_proc = None
-        self.watch = None
-        self.state["game"] = None
-        self.state["game_killed_at"] = time.time()
-        if game.pids_of_game():
-            raise RuntimeError(f"bg3 processes survive SIGKILL: {game.pids_of_game()}")
-        if game.port_open():
-            raise RuntimeError(f"port {DEBUG_PORT} is still in use after the game was killed")
+        self.gamectl.kill()
 
     def wait_for(self, what: str, pred, timeout: float, interval: float = 2.0) -> bool:
-        start = time.time()
-        end = start + timeout
-        report = WaitReporter(what, timeout, start)
-        while time.time() < end:
-            report.tick()
-            if self.game_proc is not None and self.game_proc.poll() is not None:
-                launched = (self.state["game"] or {}).get("launched") or 0
-                if (self.game_proc.returncode == bg3le_buildinfo.STALE_EXIT
-                        and time.time() - launched < STALE_EXIT_WITHIN_S):
-                    # launch_game.sh's own stale-build refusal (the backstop of the check in launch_game)
-                    self.refuse_stale_bg3le([f"runner/launch_game.sh exited {bg3le_buildinfo.STALE_EXIT} "
-                                             f"(stale bg3le build, see {RUNTIME}/launch-*.out)"])
-                raise GameDied(f"game exited (status {self.game_proc.returncode}) while waiting for {what}")
-            if self.abort:
-                raise RuntimeError(f"aborted while waiting for {what}")
-            why = self.watch.check() if self.watch is not None else None
-            if why:
-                log(f"game died while waiting for {what}: {why}")
-                raise GameDied(f"{why} while waiting for {what}")
-            if pred():
-                return True
-            time.sleep(interval)
-        log(f"timed out after {timeout:.0f} s waiting for {what}")
-        return False
+        return self.gamectl.wait_for(what, pred, timeout, interval)
 
     def wait_menu(self) -> bool:
-        """Up to the main menu, pressing past the "Press any key" splash. The client state there is Menu or LoadMenu
-        (it flips between them on the splash): never a reason to wait for Running."""
-        if not self.wait_for("debug port", game.port_open, 240):
-            return False
-        if not self.wait_for("client game state Menu", lambda: game.game_state() in MENU_STATES, 300):
-            return False
-        if "ui.state" not in game.available_ops("client"):
-            for _ in range(2):  # without ui.state (no mod yet): two blind presses
-                self.try_menu_key()
-                time.sleep(MENU_POLL)
-            return True
-        loadmenu_since = None
-        presses = 0
-
-        def at_menu() -> bool:
-            nonlocal loadmenu_since, presses
-            state, st = game.game_state(), game.ui_state() or {}
-            if state == "Menu" and st.get("screen") == "main_menu":
-                return True
-            loadmenu_since = (loadmenu_since or time.time()) if state == "LoadMenu" else None
-            # Only on the splash: a key on the main menu itself would hit Continue (someone else's save, maybe).
-            if (state == "Menu" and game.at_splash(st)) or (
-                    loadmenu_since is not None and time.time() - loadmenu_since >= SPLASH_LOADMENU_S):
-                presses += 1
-                how = self.try_menu_key()
-                log(f"splash screen (state {state}): pressed {how} ({presses})")
-                loadmenu_since = None   # give the press time to act before the next one
-            return False
-        if not self.wait_for("the main menu", at_menu, MENU_TIMEOUT, MENU_POLL):
-            return False
-        return True
-
-    def try_menu_key(self) -> str:
-        try:
-            return game.press_menu_key(log)
-        except Exception as e:  # noqa: BLE001
-            log(f"key press failed: {e}")
-            return "nothing (failed)"
+        return self.gamectl.wait_menu()
 
     def wait_running(self) -> bool:
-        """After a load was started: Running, then the server context. A splash on the way gets a key press."""
-        def running() -> bool:
-            state = game.game_state()
-            if state == "Running":
-                return True
-            if state == "Menu" and game.at_splash(game.ui_state()):
-                log(f"splash screen while waiting for the load: pressed {self.try_menu_key()}")
-            return False
-        return (self.wait_for("game state Running", running, 600, MENU_POLL)
-                and self.wait_for("server context", game.server_ready, 120, 3))
+        return self.gamectl.wait_running()
 
     def own_saves(self) -> list[Save]:
         """list_saves() minus saves older than this playthrough's run start (runner.json saves_after, set for a
@@ -2321,35 +2036,7 @@ class Runner:
         self.pending_notes.append(crash_tools_note(why, read_actions_since(last["ended"] - 600), last["ended"]))
 
     def check_game_oom(self) -> str | None:
-        """After the game died (recover(), or a runner start finding it gone): did the kernel OOM-kill it? Updates
-        the consecutive-OOM streak for the save that game had loaded; at OOM_SAVE_LIMIT that save is blocked
-        (choose_save refuses it). Checked once per launch. -> the OOM reason, or None."""
-        g = self.state["game"] or {}
-        stamp, launched = g.get("stamp"), g.get("launched")
-        if not stamp or not launched or self.state["oom_checked"] == stamp:
-            return None
-        self.state["oom_checked"] = stamp
-        oom = find_game_oom(user_journal(launched), stamp, read_spikes(launched))
-        kills = [k for k in read_spikes(launched, RUNTIME / "ram_kills.jsonl") if k.get("kind") == "kill"]
-        if not oom and kills:
-            oom = (f"ramwatch killed the game at {datetime.fromtimestamp(kills[-1]['t']):%H:%M:%S} before the OOM "
-                   f"killer could: {kills[-1].get('why', '?')}")
-        acts = read_actions_since(launched)
-        save = last_loaded_save(acts, self.own_saves(), self.state["loaded_save"])
-        streak = oom_streak_update(self.state["oom_streak"], save, oom)
-        if streak:
-            spikes = read_spikes(launched)
-            streak["tools"] = (spikes[-1].get("tools", []) if spikes else
-                               ramwatch.last_tools(acts[-1]["t"], RUNTIME / "actions.jsonl") if acts else [])
-        self.state["oom_streak"] = streak
-        if not oom:
-            return None
-        log(f"!!!!! GAME OOM: {oom}; save loaded before it: {save} (OOM {streak['n'] if streak else 1} in a row) !!!!!")
-        self.event("game_oom", why=oom[:300], save=save, streak=streak["n"] if streak else 1,
-                   tools=(streak or {}).get("tools", [])[-8:])
-        if streak and streak["n"] >= OOM_SAVE_LIMIT:
-            self.state["oom_blocked"] = sorted(set(self.state["oom_blocked"] or []) | {save})
-        return oom
+        return self.gamectl.check_oom()
 
     def foreign_use(self, save: Save) -> str | None:
         """foreign_use_since() for the running game; a relaunch counts only for a game this runner didn't start."""
@@ -2464,60 +2151,13 @@ class Runner:
         return hit or pick_save(saves, None, self.state["save_owner"], self.ours(), windows=self.play_windows())
 
     def sleep(self, seconds: float) -> None:
-        end = time.time() + seconds
-        while time.time() < end and not self.abort:
-            time.sleep(min(1.0, max(0.0, end - time.time())))
+        self.gamectl.sleep(seconds)
 
     def launch_and_load(self, save: Save) -> Save:
-        """Launch the game with this save and wait until it plays; returns the save that loaded. A launch that dies on
-        the way (LaunchWatch, launcher exit, load timeout) is killed and retried after LAUNCH_BACKOFF; after the
-        second failure with previous_good_save(). LAUNCH_ATTEMPTS failures in a row → LaunchGaveUp (the runner stops:
-        a crash loop needs a human, e.g. a bg3le fix)."""
-        failed: list[str] = []
-        errors: list[str] = []
-        target = save
-        for attempt in range(1, LAUNCH_ATTEMPTS + 1):
-            try:
-                self.launch_game(target.folder)
-                if not self.wait_for("debug port", game.port_open, 240):
-                    raise GameDied("the debug port never opened")
-                if not self.wait_running():
-                    raise GameDied(f"save {target.folder} didn't finish loading")
-            except GameDied as e:
-                failed.append(target.folder)
-                errors.append(f"{target.folder}: {e}")
-                log(f"launch {attempt}/{LAUNCH_ATTEMPTS} with {target.folder} failed: {e}")
-                self.event("launch_failed", attempt=attempt, save=target.folder, error=str(e)[:300])
-                self.kill_game()
-                if attempt == LAUNCH_ATTEMPTS:
-                    break
-                if self.abort:
-                    raise RuntimeError("aborted between launch attempts") from e
-                if attempt >= 2:
-                    prev = self.previous_good_save(set(failed))
-                    if prev is not None:
-                        target = prev
-                wait = LAUNCH_BACKOFF[min(attempt, len(LAUNCH_BACKOFF)) - 1]
-                log(f"retrying in {wait} s with {target.folder}")
-                self.sleep(wait)
-                continue
-            if failed:
-                log(f"game up after {len(failed)} failed launch(es): {target.folder} loaded")
-                if target.folder != save.folder:
-                    self.pending_notes.append(
-                        f"RUNNER NOTE: the newest save \"{save.label}\" crashed the game on load {len(failed)} times; "
-                        f"the runner loaded the older save \"{target.label}\" instead. Progress after it is lost "
-                        "in the game: replay it, and fix HANDOFF.md/objectives if they assume the newer save.")
-            return target
-        raise LaunchGaveUp(f"{LAUNCH_ATTEMPTS} launches in a row died before the save played: " + "; ".join(errors))
+        return self.gamectl.launch_and_load(save)
 
     def give_up_launch(self, e: LaunchGaveUp) -> None:
-        """The loud stop after LaunchGaveUp: runner log, runner_events (dashboard) and a status alert."""
-        log(f"!!!!! GAME CRASH LOOP: {e}. The runner stops; fix the crash (bg3le log in runtime/logs), "
-            "then restart the runner. !!!!!")
-        self.event("launch_gave_up", error=str(e)[:600])
-        write_status(alert={"t": time.time(), "kind": "launch_gave_up",
-                            "msg": f"runner stopped: the game crashes on every launch ({e})"[:600]})
+        self.gamectl.give_up_launch(e)
 
     def maybe_relaunch(self, first: bool, minutes: float = 0.0) -> str | None:
         """Between sessions: kill a game process that relaunch_reason() condemns for the next session (`minutes`
@@ -3426,7 +3066,7 @@ class Runner:
     def heat_killed(self) -> str | None:
         """Why ramwatch's heat guard killed the game of this launch (runtime/heat_kills.jsonl), or None."""
         launched = (self.state["game"] or {}).get("launched")
-        kills = read_spikes(launched, RUNTIME / "heat_kills.jsonl") if launched else []
+        kills = oom.read_spikes(launched, RUNTIME / "heat_kills.jsonl") if launched else []
         return kills[-1].get("why", "too hot") if kills else None
 
     def heat_paused(self, after_kill: bool = False) -> bool:

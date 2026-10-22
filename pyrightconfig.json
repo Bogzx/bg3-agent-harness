@@ -129,6 +129,7 @@
     "runner/test_pi_client.py",
     "runner/test_pi_run.py",
     "runner/test_play.py",
+    "runner/test_play_oom.py",
     "runner/test_profiles.py",
     "runner/test_ramwatch.py",
     "runner/test_runs.py",

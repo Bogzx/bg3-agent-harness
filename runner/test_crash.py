@@ -43,14 +43,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 import play as P  # noqa: E402
 from bg3harness.game import io as G  # noqa: E402  (the game's I/O, moved out of play.py)
+from bg3harness.game import controller as C  # noqa: E402, N812  (the GameController and its timings)
+from bg3harness.game import oom as O  # noqa: E402, N812  (the OOM check's journal and ramwatch reads)
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
            and not isinstance(v, type)}
 
 
+CTL_NAMES = ("KILL_GRACE", "KILL_CONFIRM", "LAUNCH_BACKOFF", "MENU_POLL", "SPLASH_LOADMENU_S")
+MOVED = dict.fromkeys(CTL_NAMES, C) | dict.fromkeys(("user_journal", "read_spikes"), O)
+
+
 def home(name: str):
-    """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io."""
-    return G if name in G_FUNCS else P
+    """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io, the GameController's
+    timings to bg3harness.game.controller and the OOM check's reads to bg3harness.game.oom."""
+    return MOVED.get(name) or (G if name in G_FUNCS else P)
 
 FAKE_LAUNCH = """#!/bin/sh
 # stand-in for runner/launch_game.sh: just a process that lives until killed
@@ -209,15 +216,15 @@ class FakeRunBase(unittest.TestCase):
         P.HEALTH_RETRY_INTERVAL = 0.5
         P.HEALTH_EVAL_TIMEOUT = 0.5
         P.AGENT_SILENT_MINUTES = 2               # the fake claude idles silently; test_agent_hang sets 3 s
-        P.SIGINT_GRACE, P.SIGTERM_GRACE, P.KILL_GRACE = 2, 2, 2
+        P.SIGINT_GRACE, P.SIGTERM_GRACE, C.KILL_GRACE = 2, 2, 2
         P.steam_ready = lambda: (True, "test: offline")
         G.crash_reporter_pids = lambda: []   # never a real reporter (kill_game would kill it)
-        P.LAUNCH_BACKOFF = (0.2, 0.2)
+        C.LAUNCH_BACKOFF = (0.2, 0.2)
         P.PLAYTHROUGHS = self.tmp / "playthroughs"     # profile.json
         G.press_menu_key = lambda log=None: "fake key"         # never the real input shim
         P.bg3le_problems = lambda: []                  # the real dist may be stale on a dev machine (UI-1)
-        P.MENU_POLL = 0.05
-        P.user_journal = lambda since: ""              # recover's OOM check: never the real journalctl (up to 20 s)
+        C.MENU_POLL = 0.05
+        O.user_journal = lambda since: ""              # recover's OOM check: never the real journalctl (up to 20 s)
         P.SE_BG3AI_DIR = self.tmp / "se" / "BG3AI"     # a hang's recover marks nav_guard*.json: never the live game's
 
         self.claude = claude
