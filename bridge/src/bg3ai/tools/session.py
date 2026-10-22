@@ -76,7 +76,12 @@ def place_marker(label: str, target: str = "", x: float | None = None, y: float 
 def delete_marker(marker_id: str) -> str:
     """Delete one of your map markers."""
     t0 = time.monotonic()
-    markers = [m for m in _load_markers() if m.get("id") != marker_id]
+    old = _load_markers()
+    markers = [m for m in old if m.get("id") != marker_id]
+    if len(markers) == len(old):
+        ids = ", ".join(str(m.get("id")) for m in old) or "none"
+        return reporting._finish("delete_marker", {"id": marker_id}, f"FAILED: no marker {marker_id} (yours: {ids})", t0,
+                                 events=False)
     (core.MEMORY / "markers.json").write_text(json.dumps(markers, indent=1))
     return reporting._finish("delete_marker", {"id": marker_id}, f"deleted {marker_id}", t0, events=False)
 

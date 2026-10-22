@@ -56,7 +56,8 @@ class MemoryTools(Base):
         out = session.delete_marker("m1")
         self.assertTrue(out.startswith("deleted m1"), out)
         self.assertEqual([m["id"] for m in json.loads((core.MEMORY / "markers.json").read_text())], ["m2"])
-        session.delete_marker("m9")  # unknown: nothing else goes
+        out = session.delete_marker("m9")  # unknown: nothing goes, and the result says so
+        self.assertEqual(out.splitlines()[0], "FAILED: no marker m9 (yours: m2)")
         self.assertEqual([m["id"] for m in json.loads((core.MEMORY / "markers.json").read_text())], ["m2"])
 
     def test_end_combat_report_appends_to_the_session_log(self):
