@@ -242,7 +242,7 @@ for _name in sorted(TOOLS_OFF):
 batch._BATCHABLE -= TOOLS_OFF
 INSTRUCTIONS = core.instructions(TOOLS_OFF)
 if TOOLS_OFF:  # the rules of the served groups only
-    core.RULES.rules = rules.load(off=TOOLS_OFF)
+    core.RULES.rules = rules.load(off=TOOLS_OFF, required=rules.serve_enabled())
 core.mcp._lowlevel_server.instructions = rules.instructions(INSTRUCTIONS, core.RULES.rules)
 
 

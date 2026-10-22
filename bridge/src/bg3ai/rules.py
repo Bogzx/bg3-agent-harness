@@ -30,9 +30,10 @@ ASSEMBLE = REPO / "packages" / "harness" / "prompts" / "assemble.py"
 URI = "bg3://rules"
 
 
-def prompts(path: Path = ASSEMBLE) -> ModuleType:
+def prompts(path: Path | None = None) -> ModuleType:
     """packages/harness/prompts/assemble.py (standard library only), loaded by path: the bridge doesn't depend on
     the harness package."""
+    path = path or ASSEMBLE
     spec = importlib.util.spec_from_file_location("bg3_prompts_assemble", path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
@@ -41,9 +42,15 @@ def prompts(path: Path = ASSEMBLE) -> ModuleType:
     return mod
 
 
-def load(path: Path | None = None, condition: str | None = None, off: frozenset[str] | set[str] = frozenset()) -> str:
+class RulesMissingError(RuntimeError):
+    """The session's rules can't be read: a run without them would be scored as a valid run."""
+
+
+def load(path: Path | None = None, condition: str | None = None, off: frozenset[str] | set[str] = frozenset(),
+         required: bool = True) -> str:
     """The rules a client is served: `path` (or $BG3AI_RULES_PATH) verbatim, else the assembled text of `condition`
-    (or default_condition()). "" when unreadable: the server still runs, without rules.
+    (or default_condition()). Unreadable: RulesMissingError, so the server doesn't start; "" only when not `required`
+    (the server doesn't serve them: $BG3AI_SERVE_RULES=0, Claude Code reads play/CLAUDE.md).
     `off`: the tools the session's condition removed (capabilities.py); a rules-only text leaves out the rules of
     a group with a tool off. The coaching conditions are the playthrough's text with every group (assemble.py)."""
     path = path or (Path(p) if (p := os.environ.get("BG3AI_RULES_PATH")) else None)
@@ -56,7 +63,10 @@ def load(path: Path | None = None, condition: str | None = None, off: frozenset[
         if not mod.CONDITIONS.get(cond):
             caps = frozenset(c for c, names in mod.CAPABILITIES.items() if not set(names) & set(off))
         return mod.assemble(cond, caps=caps).text.strip()
-    except OSError:
+    except OSError as e:
+        if required:
+            raise RulesMissingError(f"no rules for this session ({e}); set $BG3AI_RULES_PATH or install the "
+                                    f"bridge from the repo (packages/harness/prompts)") from e
         return ""
 
 

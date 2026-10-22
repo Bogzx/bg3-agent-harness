@@ -865,10 +865,21 @@ class ClockStuck(unittest.TestCase):
 
     def test_wrapup_points_to_the_playbook(self):
         core.DEADLINE = time.time() + 5 * 60
-        line = core._clock_line()
+        with mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules+coaching"}):
+            line = core._clock_line()
         self.assertIn("WRAP UP NOW", line)
         self.assertIn("knowledge/playbooks/session-wrapup.md", line)
         self.assertNotIn("skill", line)
+
+    def test_rules_only_wrapup_says_only_the_time_left(self):
+        """B3: the ranked condition names no playbook and no tool its caps may have switched off."""
+        with mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules"}):
+            core.DEADLINE = time.time() + 5 * 60
+            line = core._clock_line()
+            self.assertRegex(line, r"^⏱ \d\d:\d\d · [45]m left: WRAP UP NOW\.$")
+            core.DEADLINE = time.time() - 60
+            over = core._clock_line()
+        self.assertEqual(over, "⏱ SESSION OVER: game actions close in a few minutes.")
 
 
 if __name__ == "__main__":

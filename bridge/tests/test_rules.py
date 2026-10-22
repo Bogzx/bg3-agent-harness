@@ -87,8 +87,15 @@ class Served(unittest.TestCase):
                   "item_present", "target_visible", "in_dialogue", "dialogue_line"}
         self.assertEqual(named - tools - events, set())
 
-    def test_missing_file_serves_nothing(self):
-        self.assertEqual(rules.load(rules.REPO / "no-such-CLAUDE.md"), "")
+    def test_missing_rules_fail_unless_not_served(self):
+        """B1: a run with no rules would be scored as valid; only a server that doesn't serve them may go on."""
+        with self.assertRaises(rules.RulesMissingError):
+            rules.load(rules.REPO / "no-such-CLAUDE.md")
+        with mock.patch.object(rules, "ASSEMBLE", rules.REPO / "no-such-assemble.py"), \
+                mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules"}), \
+                self.assertRaises(rules.RulesMissingError):
+            rules.load()
+        self.assertEqual(rules.load(rules.REPO / "no-such-CLAUDE.md", required=False), "")
         self.assertEqual(rules.instructions("base", ""), "base")
 
     def test_instructions_carry_the_rules_unless_turned_off(self):

@@ -58,7 +58,7 @@ def instructions(off: set[str] | frozenset[str] = frozenset()) -> str:
 INSTRUCTIONS = instructions()  # every tool on; session.INSTRUCTIONS is the served set's
 
 # The assembled rules for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
-RULES = rules.Once(rules.load())
+RULES = rules.Once(rules.load(required=rules.serve_enabled()))
 mcp = MCPServer("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
@@ -255,12 +255,17 @@ def _clock() -> str:
     wrap, end, _ = _times()
     now = time.time()
     left = end - now
+    # Rules-only (the benchmark's ranked condition) names no playbook and no tool its caps may have switched off.
+    coach = rules.coaching()
     if left <= 0:
+        if not coach:
+            return "⏱ SESSION OVER: game actions close in a few minutes."
         return f"⏱ SESSION OVER: only save_game and note-taking now; {WRAPUP_HINT}."
     # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 3 min before the end, a third of a short session); before
     # it, no minutes and no WRAP UP time (KEEP_PLAYING).
     if now >= wrap:
-        return f"⏱ {hhmm} · {int(left // 60)}m left: WRAP UP NOW. Reach a safe spot, save_game, then {WRAPUP_HINT}."
+        how = f" Reach a safe spot, save_game, then {WRAPUP_HINT}." if coach else ""
+        return f"⏱ {hhmm} · {int(left // 60)}m left: WRAP UP NOW.{how}"
     return f"⏱ {hhmm} · {KEEP_PLAYING}" + stuck
 
 

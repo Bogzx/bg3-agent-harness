@@ -18,3 +18,4 @@ packages = ["src/bg3harness"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "prompts/tests"]
+markers = ["unit", "integration", "e2e: the real bridge or harness against the fake mod", "live"]
