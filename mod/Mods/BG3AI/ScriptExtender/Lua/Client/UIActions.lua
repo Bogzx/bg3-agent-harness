@@ -281,12 +281,16 @@ end)
 -- (bg3le can't pass one): pressing the bound key fires the button the way
 -- the game does. Only for buttons that declare the binding.
 A.BOUND_KEYS = { UIAccept = "RETURN", UICancel = "ESCAPE", ToggleInGameMenu = "ESCAPE" }
+-- CommandParameter -> key, for such buttons that declare no binding above: GameMenu's Resume passes "CloseGameMenu"
+-- (live5 U12: ui.press Resume failed "parameter is a string (CloseGameMenu)"); ESCAPE closes that menu (live1 §2).
+A.PARAM_KEYS = { CloseGameMenu = "ESCAPE" }
 
 -- Press a button element: its command, or (string parameter) its bound key.
 function A.pressButton(el, dry)
     local ok, err = UI.press(el, dry)
     if ok then return true, "command" end
     local key = A.BOUND_KEYS[tostring(UI.get(el, "BoundEvent") or "")]
+        or A.PARAM_KEYS[tostring(UI.get(el, "CommandParameter") or "")]
     if key and tostring(err):find("parameter is a") then
         if dry then return true, "key:" .. key end
         Ext.Input.InjectKeyPress(key)

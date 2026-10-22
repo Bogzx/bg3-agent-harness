@@ -11,7 +11,12 @@
 --   finished  the ServerRollFinishedEvent one-frame component (natural, DC, skill, ability, advantage; no total).
 --             OnCreate never delivered it live (research/ovh/live3.md §4): bg3le queues create events to the next
 --             tick, when a one-frame component is gone. So it is also read inside the frame, after the ServerRoll
---             system's update (Ext.Entity.OnSystemPostUpdate).
+--             system's update (Ext.Entity.OnSystemPostUpdate). Neither path has ever seen one live: live3, live4 and
+--             live5 (24 passive checks, research/ovh/live5.md §3) all read hooks finished_create/post_update true,
+--             seen.finished_create 0 and fired.finished 0, while requested filled natural/dc on 24 of 24. Where the
+--             event lives on this build is not known (not under the ServerRoll system's post-update, or not for
+--             these rolls); natural/dc rely on `requested`. The hooks stay so roll.snapshot shows a build that
+--             delivers it.
 --   requested the roll entity's RequestedRoll component (eoc::RequestedRollComponent: natural, total, DC, roller,
 --             subject, skill, ability), tracked from its OnCreate and read once Finished is set (it lives for the
 --             roll's delay, so the deferred OnCreate still sees it).

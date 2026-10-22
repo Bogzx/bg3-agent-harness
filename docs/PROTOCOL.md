@@ -208,6 +208,19 @@ The helper API for other client modules is documented at the top of `Client/UI.l
 Every action op accepts `dry=true`, which only runs `CanExecute`. Ops marked *job* return `{job}` and settle at the next
 decision point, so batched actions can chain.
 
+**Busy UI answer.** During a rest, travel or load transition a Noesis call can wait out bg3le's frame lock; after one
+such call (≥ 40 ms, or bg3le's own refusal) every UI read raises at once for 200 ms (`Client/UI.lua` UI.busy). A client
+op that met it answers `{ok:false, error:"bg3le: UI busy: the game's UI is busy (...); <mark>; retry in a moment"}`
+(a job it started is finished `interrupted`). `<mark>` says whether anything ran (`Shared/RPC.lua`):
+
+| mark | meaning | the bridge (`bridge/src/bg3ai/busywait.py`, `Game.rpc`) |
+|---|---|---|
+| `refused before its first UI call, nothing was done` (RPC.BUSY_BEFORE) | the op's first UI call was refused at the gate and that ended the op: no read, no press | asks **any** client op again, presses included (e.g. `ui.dialogue_choose` right after a screen change) |
+| `met it after a UI call ran` (RPC.BUSY_AFTER) | a read or a press may have happened before the answer | asks again only the reads and target-state ops in `RETRY_OPS` (`ui.state`, `ui.selected`, `ui.trade`, `ui.reactions`, `ui.hotbar_slot`, `ui.cast_state`); any other op's caller gets the busy answer (asking again could press twice) |
+
+The bridge asks every 0.25 s for up to 5 s; then the busy answer stands, with the wait appended. Server ops never
+answer busy.
+
 | op | ctx | args | result |
 |---|---|---|---|
 | `ui.state` | C | `{full?}` | `{screen, page?, blocking?, panels_open?, region?, subtitle?:{speaker,text}, notifications?:[text], gates?, ms}` plus one of the blocks below. `screen` ∈ `main_menu, loading, game, dialogue, roll, reaction, popup, tutorial, container, trade, level_up, character_creation, rest, book, reward, learn_spells, tadpole_tree, save_load, game_menu, options, map, game_over`. `blocking` = a modal blocks world actions. `gates` only appears when a gate is on or with `full` |

@@ -374,3 +374,28 @@ do
     BG3AI.UI.findButton = _fb
     widgets = {}
 end
+
+-- live5 U12: GameMenu's Resume passes the string "CloseGameMenu" (bg3le can't pass it) and has no binding we map:
+-- pressButton presses ESCAPE instead; a string parameter nobody maps still fails with bg3le's reason.
+do
+    local _press, _get, _ikp = BG3AI.UI.press, BG3AI.UI.get, Ext.Input.InjectKeyPress
+    Ext.Input.InjectKeyPress = function(k) keys[#keys + 1] = k end
+    local stringParam = "parameter is a string (CloseGameMenu); bg3le can only pass Noesis objects"
+    BG3AI.UI.press = function() return false, stringParam end
+    local props = { CommandParameter = "CloseGameMenu" }
+    BG3AI.UI.get = function(el, k) return props[k] end
+    keys = {}
+    local okp, how = A.pressButton({ name = "ResumeBtn" }, false)
+    ok(okp and how == "key:ESCAPE" and keys[#keys] == "ESCAPE", "Resume (CloseGameMenu) presses ESCAPE: " .. tostring(how))
+    keys = {}
+    okp, how = A.pressButton({ name = "ResumeBtn" }, true)
+    ok(okp and how == "key:ESCAPE" and #keys == 0, "a dry Resume names the key and presses nothing")
+    props = { CommandParameter = "SomethingElse" }
+    okp, how = A.pressButton({ name = "OtherBtn" }, false)
+    ok(not okp and how == stringParam and #keys == 0, "an unmapped string parameter still fails: " .. tostring(how))
+    props = { BoundEvent = "UICancel", CommandParameter = "SomethingElse" }
+    okp, how = A.pressButton({ name = "BackBtn" }, false)
+    ok(okp and how == "key:ESCAPE", "a BoundEvent still wins: " .. tostring(how))
+    BG3AI.UI.press, BG3AI.UI.get, Ext.Input.InjectKeyPress = _press, _get, _ikp
+    keys = {}
+end
