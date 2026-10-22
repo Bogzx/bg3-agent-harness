@@ -286,6 +286,7 @@ def test_a_text_only_profile_doesnt_take_the_screenshots_from_the_next_job(rig: 
             "client": "pi",
             "effort": None,
             "condition": "rules",
+            "prompt_condition": "rules",  # the matrix sets it (conditions.Condition.prompt_condition)
             "profile": str(profiles_dir / name),
         }
         d = run_dir(f"m-{name}")
