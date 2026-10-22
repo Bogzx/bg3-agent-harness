@@ -4,10 +4,10 @@ The contracts name bg3harness, bg3bench and bg3play before those packages exist 
 import-linter refuses a root package it can't import, so this drops the missing ones from the config, and with them
 every contract that has nothing left to compare, then runs lint-imports on what remains.
 
-Report mode (the default until Phase D): broken contracts are printed and the exit code is 0. Only a run that
-didn't get to check the contracts (bad config, import-linter crash) fails. The one switch to enforce is
-`enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml: this check (in CI and locally) then fails on a
-broken contract, and tools/ci/test_boundaries.py fails on a boundary violation. --enforce forces it for one run.
+Enforced since Phase D (2026-10-22): `enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml makes this
+check (in CI and locally) fail on a broken contract, and tools/ci/test_boundaries.py fail on a boundary violation.
+With the switch off (report mode) broken contracts are printed and the exit code is 0; only a run that didn't get
+to check the contracts (bad config, import-linter crash) fails. --enforce forces it for one run.
 When all packages exist, the CI step can call `uv run lint-imports` directly and this wrapper can go.
 
     uv run python tools/ci/import_contracts.py [--enforce]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -15,9 +16,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bg3ai import lsf, lspk
-
 HERE = Path(__file__).resolve().parent
+BRIDGE_SRC = str(HERE.parents[1] / "bridge" / "src")  # bg3ai under a plain python3 too (suite_wt.sh), not only uv run
+sys.path.insert(0, BRIDGE_SRC)
+
+from bg3ai import lsf, lspk  # noqa: E402
 
 # inspect.py shares its name with the stdlib module: load it under another name.
 _spec = importlib.util.spec_from_file_location("saves_inspect", HERE / "inspect.py")
@@ -110,6 +113,7 @@ class ReportTest(unittest.TestCase):
     def test_script_runs_despite_its_stdlib_name(self):
         out = subprocess.run(
             [sys.executable, str(HERE / "inspect.py"), str(self.path)],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [BRIDGE_SRC, os.environ.get("PYTHONPATH")]))},
             capture_output=True,
             text=True,
             timeout=60,

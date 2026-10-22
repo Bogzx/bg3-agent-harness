@@ -120,8 +120,8 @@ def test_the_pyproject_switch_alone_enforces(tree: Path) -> None:
 
 
 @pytest.mark.unit
-def test_the_repo_is_in_report_mode_until_phase_d() -> None:
+def test_the_repo_enforces_the_boundaries() -> None:
     import tomllib
 
     pyproject = tomllib.loads((import_contracts.ROOT / "pyproject.toml").read_text())
-    assert import_contracts.enforced(pyproject) is False, "Phase D flipped the switch: drop this test"
+    assert import_contracts.enforced(pyproject) is True, "Phase D turned enforce-boundaries on: keep it on"

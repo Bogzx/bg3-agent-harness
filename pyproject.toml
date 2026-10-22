@@ -51,8 +51,8 @@ precision = 1
 
 [tool.bg3ci]
 # The Phase D switch (OVERHAUL-PLAN.md): true makes CI fail on a broken import-linter contract
-# (tools/ci/import_contracts.py) and on a package boundary violation (tools/ci/test_boundaries.py). Report mode until then.
-enforce-boundaries = false
+# (tools/ci/import_contracts.py) and on a package boundary violation (tools/ci/test_boundaries.py). On since 2026-10-22.
+enforce-boundaries = true
 
 # Coverage floors (percent, line + branch) of the offline run, `pytest -m "not live and not e2e"`. Each is the
 # measured value minus 1 (2026-10-22: bridge 88.3, harness 88.8, bench 99.8, playthrough 90.5). Ratchet only up.

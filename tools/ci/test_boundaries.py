@@ -9,9 +9,9 @@ reports:
   depend on (FORBIDDEN below). Docstrings and re.compile patterns (they match text, they open nothing) are not
   scanned.
 
-REPORT MODE until Phase D: the test prints the violations as a warning and passes. The one switch to enforce is
-`enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml (it enforces the import-linter contracts too, see
-tools/ci/import_contracts.py); then any violation fails the test. BG3AI_BOUNDARIES_ENFORCE=1 forces it for one run.
+Enforced since Phase D (2026-10-22): with `enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml (it
+enforces the import-linter contracts too, see tools/ci/import_contracts.py) any violation fails the test. With the
+switch off (REPORT MODE) it prints the violations as a warning and passes. BG3AI_BOUNDARIES_ENFORCE=1 forces it.
 
     uv run python tools/ci/test_boundaries.py      # print the violations
 """

@@ -1,6 +1,6 @@
 # CI (TARGET-ARCHITECTURE.md "CI pipeline"). No job needs the game, a GPU, Steam or an API key.
-# Report mode until Phase D (OVERHAUL-PLAN.md): import-linter and the boundary test print violations without failing.
-# To enforce both, set enforce-boundaries = true under [tool.bg3ci] in pyproject.toml (tools/ci/import_contracts.py).
+# import-linter and the boundary test fail on a violation: enforce-boundaries = true under [tool.bg3ci] in pyproject.toml
+# (Phase D, OVERHAUL-PLAN.md; tools/ci/import_contracts.py).
 name: CI
 
 on:
@@ -39,9 +39,9 @@ jobs:
         run: uv run python tools/ci/legacy_lint.py
       - name: pyright
         run: uv run pyright
-      - name: import-linter (report mode)
+      - name: import-linter
         run: uv run python tools/ci/import_contracts.py
-      - name: Package boundaries (report mode)
+      - name: Package boundaries
         run: uv run python tools/ci/test_boundaries.py
       - name: 1000-line cap
         run: uv run python tools/ci/line_cap.py

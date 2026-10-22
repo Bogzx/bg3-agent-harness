@@ -110,8 +110,8 @@ New code goes to its package: `packages/harness` (game, bridge and model plumbin
 benchmark) or `packages/playthrough` (the app). The harness imports neither of the other two, and the benchmark and
 the app never import each other ([docs/TARGET-ARCHITECTURE.md](docs/TARGET-ARCHITECTURE.md)). No `sys.path` edits and
 no file paths into another package's directory: import the package instead. `tools/ci/import_contracts.py`
-(import-linter) and `tools/ci/test_boundaries.py` check this. They report without failing until
-`enforce-boundaries` under `[tool.bg3ci]` in `pyproject.toml` is turned on, but don't add new violations.
+(import-linter) and `tools/ci/test_boundaries.py` check this, and CI fails on a violation (`enforce-boundaries` under
+`[tool.bg3ci]` in `pyproject.toml`).
 
 ## The fairness rule
 

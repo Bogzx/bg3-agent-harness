@@ -193,7 +193,6 @@
     "packages/playthrough/src",
     "runner",
     "tools",
-    "tools/saves",
     "tools/dev"
   ]
 }
