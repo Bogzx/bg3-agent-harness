@@ -6,13 +6,13 @@ A shim is a runner module that only stands in for code that moved into a package
     re-export  a module whose docstring calls itself a shim (runner/judge.py: bg3harness.judge plus runner wiring)
 
 A use of shim <name> is one of:
-    import     `import <name>` / `from <name> import ...` / `importlib.import_module("<name>")` in a file that has
-               runner/ on sys.path: a file under runner/, or one with a `sys.path.insert/append` whose argument
-               mentions runner, unless the importing file's own directory has a <name>.py; any of those in a
-               package module (bridge/src, packages/*/src): no sys.path of its own and its directory isn't searched,
-               so a top-level <name> there resolves only through the host's runner/ (bg3harness's
-               `__import__("pi_client")`); and the app's `legacy_paths.load("<name>")` (bg3play/adapters/
-               legacy_paths.py puts runner/ on sys.path)
+    import     `import <name>` / `from <name> import ...` / `importlib.import_module("<name>")` /
+               `__import__("<name>")` anywhere, unless the importing file's own directory has a <name>.py (a script's
+               own directory is sys.path[0]): no shim name is an installed module, so the import resolves only through
+               runner/ on sys.path, however it got there (tools/logs/review_session.py's `import triage` gets it from
+               series_report). In a package module (bridge/src, packages/*/src) the own-directory exception doesn't
+               hold: an absolute import never searches it (bg3harness's `__import__("pi_client")`). And the app's
+               `legacy_paths.load("<name>")` (bg3play/adapters/legacy_paths.py puts runner/ on sys.path)
     dotted     `import runner.<name>` / `from runner.<name> import ...` / `from runner import <name>`
     path       a Python string value or path join naming runner/<name>.py (spec_from_file_location, argv, ...)
     mention    runner/<name>.py in a docstring, or in a tracked non-Python text file (docs, shell scripts, configs)
@@ -52,7 +52,6 @@ DELETED = {
     "model_time": "bg3harness.model_time",
     "ramwatch": "bg3harness.ramwatch",
     "sandbox": "bg3harness.sandbox",
-    "triage": "bg3harness.triage",
 }
 
 
@@ -97,33 +96,15 @@ def find_shim(name: str, source: str) -> Shim | None:
     return None
 
 
-def _on_runner_path(path: str, tree: ast.Module, source: str) -> bool:
-    if path.startswith("runner/"):
-        return True
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ("insert", "append")
-            and ast.unparse(node.func.value) == "sys.path"
-        ):
-            arg = ast.get_source_segment(source, node.args[-1]) or ""
-            if "runner" in arg.lower():
-                return True
-    return False
-
-
 LOAD = "legacy_paths.load"
 PACKAGED = re.compile(r"(bridge/src|packages/[^/]+/src)/")
 
 
 def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[str] = ()) -> list[Use]:
     """The uses of the shims in one Python file; `local` are the module names of the file's own directory."""
-    names, mine = set(shims), set(local)
+    names = set(shims)
+    mine: set[str] = set() if PACKAGED.match(path) else set(local)  # absolute imports never search a package's dir
     tree = ast.parse(source)
-    bare = _on_runner_path(path, tree, source)
-    if PACKAGED.match(path):  # an absolute import never searches the module's own directory
-        bare, mine = True, set()
     docs = {  # docstrings and other bare string statements name a path, they don't load it
         id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
     }
@@ -132,13 +113,13 @@ def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[st
         if isinstance(node, ast.Import):
             for a in node.names:
                 top, _, rest = a.name.partition(".")
-                if top in names and bare and top not in mine:
+                if top in names and top not in mine:
                     out.append(Use(top, path, node.lineno, "import"))
                 if top == "runner" and rest.split(".")[0] in names:
                     out.append(Use(rest.split(".")[0], path, node.lineno, "dotted"))
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             top, _, rest = node.module.partition(".")
-            if top in names and bare and top not in mine:
+            if top in names and top not in mine:
                 out.append(Use(top, path, node.lineno, "import"))
             elif top == "runner" and rest.split(".")[0] in names:
                 out.append(Use(rest.split(".")[0], path, node.lineno, "dotted"))
@@ -146,13 +127,13 @@ def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[st
                 out.extend(Use(a.name, path, node.lineno, "dotted") for a in node.names if a.name in names)
         elif (
             isinstance(node, ast.Call)
-            and (func := ast.unparse(node.func)) in ("importlib.import_module", "import_module", "__import__", LOAD)
+            and ast.unparse(node.func) in ("importlib.import_module", "import_module", "__import__", LOAD)
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
         ):
             top, _, rest = node.args[0].value.partition(".")
-            if top in names and (bare or func == LOAD) and top not in mine:
+            if top in names and top not in mine:
                 out.append(Use(top, path, node.lineno, "import"))
             elif top == "runner" and rest.split(".")[0] in names:
                 out.append(Use(rest.split(".")[0], path, node.lineno, "dotted"))

@@ -22,14 +22,16 @@ def test_find_shim_kinds() -> None:
 
 
 @pytest.mark.unit
-def test_bare_imports_count_only_with_runner_on_sys_path() -> None:
+def test_bare_imports_count_wherever_runner_comes_onto_sys_path() -> None:
     src = "import oldmod\nfrom oldmod import Event\nimport importlib\nimportlib.import_module('oldmod')\n"
     assert [(u.line, u.kind) for u in runner_shims.python_uses("runner/play.py", src, ["oldmod"])] == [
         (1, "import"),
         (2, "import"),
         (4, "import"),
     ]
-    assert runner_shims.python_uses("tools/x.py", src, ["oldmod"]) == []
+    # tools/logs/review_session.py: runner/ comes from an imported module (series_report), not a sys.path edit here
+    via = 'sys.path.insert(0, str(REPO / "tools" / "vis"))\nimport series_report\nimport oldmod\n'
+    assert [(u.line, u.kind) for u in runner_shims.python_uses("tools/logs/x.py", via, ["oldmod"])] == [(3, "import")]
     inserted = 'import sys\nsys.path.insert(0, str(REPO / "runner"))\nimport oldmod as E\n'
     assert [u.kind for u in runner_shims.python_uses("tools/vis/x.py", inserted, ["oldmod"])] == ["import"]
 
