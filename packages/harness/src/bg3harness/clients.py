@@ -64,7 +64,7 @@ class Event:
     """One normalized stream event. kind: CLIENT_KINDS from a client's stream (src "client"), or the runner's own
     kinds (src "harness": session_start, session_end, fault, mcp_failed, ...; what in `detail`). tokens use
     TOKEN_KEYS (input without cache reads, as claude reports it). The envelope (v, t, seq, src) is set by the
-    events.jsonl writer (runner/events.py), not by the parsers."""
+    events.jsonl writer (bg3harness/events.py), not by the parsers."""
     kind: str
     text: str = ""
     tool: str = ""                     # bare bg3 tool name (other servers' tools keep their prefix)
@@ -136,7 +136,7 @@ def bg3_server(path: Path = MCP_CONFIG) -> dict:
 
 def http_server(url: str, timeout: int = 110_000) -> dict:
     """The bg3 server over streamable HTTP (`bg3ai-mcp --transport http`), for a client in the container sandbox
-    (runner/sandbox.py): the server runs on the host with the session env, so the client passes none."""
+    (bg3harness/sandbox.py): the server runs on the host with the session env, so the client passes none."""
     return {"type": "http", "url": url, "timeout": timeout}
 
 
@@ -570,7 +570,7 @@ class GeminiClient:
 
 
 CLIENTS = {"claude": ClaudeClient, "codex": CodexClient, "gemini": GeminiClient,
-           "pi": lambda **kw: __import__("pi_client").PiClient(**kw)}   # runner/pi_client.py imports this module
+           "pi": lambda **kw: __import__("pi_client").PiClient(**kw)}   # bg3harness/pi_client.py imports this module
 
 
 def make(name: str, **kw) -> Client:
@@ -594,7 +594,7 @@ def play_settings(path: Path = PLAY_DIR / ".claude" / "settings.json") -> dict:
 
 def make_http(name: str, url: str, server_timeout: int = 110_000, claude_settings: dict | None = None,
               **kw) -> Client:
-    """A client whose only MCP server is the bg3 server at `url` (the container sandbox, runner/sandbox.py). The
+    """A client whose only MCP server is the bg3 server at `url` (the container sandbox, bg3harness/sandbox.py). The
     rules of play come from the server (BG3AI_SERVE_RULES=1 on the host side): the container has no play/CLAUDE.md."""
     server = http_server(url, server_timeout)
     if name == "claude":

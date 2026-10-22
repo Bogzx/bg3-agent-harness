@@ -66,9 +66,9 @@ def sec_setup() -> None:
     except OSError:
         pass
     item("create_character: 1 attempt, time (last CC)", *cc_verdict(recs))
-    sys.path.insert(0, str(REPO / "runner"))
-    import ramwatch
+    sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
     from bg3ai import lessons, progress
+    from bg3harness import ramwatch
 
     # 1. ramwatch: the watchdog that holds runtime/ramwatch.lock writes anon+swap (else it runs old code)
     pids = ramwatch.game_pids()

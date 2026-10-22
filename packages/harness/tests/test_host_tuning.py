@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Offline tests for runner/host_tuning.py (a fake sudo runner and a fake platform_profile; no real sudo)."""
+"""Offline tests for bg3harness.host_tuning (a fake sudo runner and a fake platform_profile; no real sudo)."""
 from __future__ import annotations
 
 import contextlib
 import io
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import host_tuning as H  # noqa: E402
+from bg3harness import host_tuning as H
 
 
 class FakeSudo:
@@ -99,8 +97,8 @@ class HostTuningTest(unittest.TestCase):
             self.assertEqual(H.main([]), 2)
 
     def test_launch_game_applies_it_before_the_launch(self):
-        sh = (Path(__file__).resolve().parent / "launch_game.sh").read_text()
-        call = sh.index('runner/host_tuning.py" "$_tune"')
+        sh = (Path(__file__).resolve().parents[3] / "runner" / "launch_game.sh").read_text()
+        call = sh.index('-m bg3harness.host_tuning "$_tune"')
         self.assertLess(call, sh.index('launch=("${scope[@]}"'))
         self.assertIn("|| true", sh[call:sh.index("\n", call)])           # never fails a launch
 

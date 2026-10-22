@@ -20,12 +20,14 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import events as E
 import judge as J
-import model_time as MT
 import runs as R
-import triage as T
+from bg3harness import events as E
+from bg3harness import model_time as MT
+from bg3harness import triage as T
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sessions"
 # BG3AI_PARITY_SESSIONS: another checkout's runtime/sessions (a worktree has none)

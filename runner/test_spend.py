@@ -13,10 +13,12 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import clients as C
-import pi_client
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 import runs
 import spend as S
+from bg3harness import clients as C
+from bg3harness import pi_client
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 

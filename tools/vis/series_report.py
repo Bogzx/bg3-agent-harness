@@ -6,7 +6,7 @@ refusals, and a PROVED / FAILED / NOT-SEEN verdict for each live signature of th
     tools/vis/series_report.py naut3 --vs naut2 -v       # + every signature hit per run
 
 A series' runs come from its runs.jsonl records (runs.series_records); while a series is still running, the run
-dirs that exist (<base>, <base>-r2, …). Calls: overlap.load (runner/triage.py) over each run's play sessions
+dirs that exist (<base>, <base>-r2, …). Calls: overlap.load (bg3harness/triage.py) over each run's play sessions
 (model_time.session_files: Sxxx + resumes, not -fix / -keeper); model messages: model_time.model_turns.
 
 (a) phases of a Nautiloid run (first match after the previous phase's end; "-" when not reached):
@@ -32,11 +32,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "runner"))
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import model_time as MT  # noqa: E402  (puts bridge/src on the path)
 import overlap  # noqa: E402
 import runs  # noqa: E402
 from bg3ai import metrics as M  # noqa: E402
+from bg3harness import model_time as MT  # noqa: E402
 
 TURN_S = 0.3          # a call with less model time before it was issued in the same message: not a turn
 PHASES = ("CC", "first fight", "helm ladder", "transponder dash")

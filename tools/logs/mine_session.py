@@ -12,9 +12,11 @@ Writes runtime/mined/<run>/<sid>.calls.jsonl and <sid>.summary.json; prints a sh
 import json, os, re, sys, statistics, collections
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(ROOT, "runner"))
+sys.path.insert(0, os.path.join(ROOT, "runner"))  # runs.py: raw streams
+sys.path.insert(0, os.path.join(ROOT, "packages", "harness", "src"))
+sys.path.insert(0, os.path.join(ROOT, "bridge", "src"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
-import triage  # noqa: E402
+from bg3harness import triage  # noqa: E402
 import repo_paths  # noqa: E402
 SESS = os.path.join(repo_paths.runtime_dir(), "sessions")   # the main tree's from a worktree
 OUT = os.path.join(repo_paths.runtime_dir(), "mined")

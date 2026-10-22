@@ -1,6 +1,6 @@
 """TEMPORARY (Phase D): this checkout's bridge/src (bg3ai) and runner/ on sys.path, for what the app still reads
 from them until the harness package exposes it: bg3ai.metrics / progress / milestones (stdlib only; the live
-latency and progress views), bg3ai.game / screen (adapters/bridge_status.py) and runner/ramwatch.py (thermal)."""
+latency and progress views), bg3ai.game / screen (adapters/bridge_status.py) and runner/runs.py, spend.py (cost)."""
 
 from __future__ import annotations
 

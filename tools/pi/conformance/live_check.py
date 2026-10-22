@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real-call checks of pi + bg3.ts against one real model, no game (research/arch/pi-client.md §3.5, T8): the model
-plays a short scripted task against the stub MCP server, through runner/pi_client.py exactly as the runner would
+plays a short scripted task against the stub MCP server, through bg3harness/pi_client.py exactly as the runner would
 run it, and the script reports tool calls, malformed-argument rate, per-response usage (the endpoint's own usage
 fields, from bg3.ts's bg3.billing entries), cache hits on the later requests and the cost. COSTS MONEY: it needs
 the profile's key in the env and stops after --max-requests responses.
@@ -26,11 +26,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-sys.path.insert(0, str(REPO / "runner"))
-import clients as C
-import pi_client as PC
-
-import profiles as PR
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+from bg3harness import clients as C
+from bg3harness import pi_client as PC
+from bg3harness import profiles as PR
 
 PROMPT = (
     "This is a harness test, not a game. Do exactly this, one tool call per step: 1) call get_status; "

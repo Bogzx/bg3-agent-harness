@@ -70,7 +70,7 @@ uv run --project bridge python tools/dev/smoke.py     # once a game is loaded: e
 ```
 
 The game needs a display. From a shell without one (ssh, a terminal multiplexer started outside the desktop
-session) the runner finds the desktop's Xwayland itself (`runner/display_env.py`); `DISPLAY` and `XAUTHORITY`
+session) the runner finds the desktop's Xwayland itself (`bg3harness/display_env.py`); `DISPLAY` and `XAUTHORITY`
 in the environment win.
 
 The window layout doesn't matter: click coordinates come from the input shim's view of the game window.

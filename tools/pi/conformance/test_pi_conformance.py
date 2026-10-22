@@ -29,11 +29,10 @@ PI_DIR = HERE.parent
 REPO = PI_DIR.parents[1]
 BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
-sys.path.insert(0, str(REPO / "runner"))
-import clients as C
-import pi_client as PC
-
-import profiles as PR
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+from bg3harness import clients as C
+from bg3harness import pi_client as PC
+from bg3harness import profiles as PR
 
 sys.path.insert(0, str(HERE))
 import stub_mcp
@@ -43,7 +42,7 @@ PREFIX = "mcp__bg3__"
 MODEL = "anthropic/stub-model"
 SESSION = "conf-0001"
 SYSTEM = "SYSTEM-CANARY-91\n\nRules of play: line two, with trailing spaces   \n"
-# What runner/pi_client.py writes (PI_SETTINGS) plus fast retries, so check 20 takes ms, not 14 s.
+# What bg3harness/pi_client.py writes (PI_SETTINGS) plus fast retries, so check 20 takes ms, not 14 s.
 SETTINGS = {
     "compaction": {"enabled": False},
     "cacheWarming": "off",
@@ -495,7 +494,7 @@ class Conformance(unittest.TestCase):
         self.assertEqual(len(run.requests[0]["messages"]), 2)  # system + prompt, no context files
 
     def test_30_pi_client_end_to_end(self):
-        """runner/pi_client.py's own config files, env and command against the stubs, its parser on the stream."""
+        """bg3harness/pi_client.py's own config files, env and command against the stubs, its parser on the stream."""
         port = self.start_stub([{"tool_calls": [call("get_status"), call("press_key", '{"key"')]}, {"text": "done"}])
         server = {
             "command": sys.executable,

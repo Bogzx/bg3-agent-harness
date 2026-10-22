@@ -16,5 +16,5 @@ context_window = 1000000
 max_tokens = 32000
 thinking_level_map = { minimal = false, medium = false }
 # DeepSeek's peak USD rates (cache miss, output, cache hit); the runner bills half of them off-peak from
-# DeepSeek's usage fields (runner/deepseek_bill.py, price sheet read 2026-10-22). pi's own estimate is peak always.
+# DeepSeek's usage fields (bg3harness/deepseek_bill.py, price sheet read 2026-10-22). pi's own estimate is peak always.
 cost = { input = 0.3, output = 1.2, cache_read = 0.006 }

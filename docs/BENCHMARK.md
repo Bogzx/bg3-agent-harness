@@ -46,7 +46,7 @@ A comparison only holds when all of these are equal across the models compared. 
 | Scenarios | `scenarios/<name>.json`: start, `until` milestone, caps, profile, resets ([scenarios/README.md](../scenarios/README.md)) | `series.json` `scenario.digest` + the start save's sha1 |
 | Caps | per scenario (`run_hours`, `max_cost`, `max_tokens`) | `series.json` `caps` (`--allow-cap-change` records a change) |
 | Persona judge model | `claude-sonnet-5-5` (`runner/judge.py`, `$BG3AI_JUDGE_MODEL`); never the model under test | `series.json`; `--allow-judge-change` records it |
-| Latency reference speeds | 100 output tok/s, 0.75 s TTFT (`runner/model_time.py` `REF_OUT_TOK_S`, `REF_TTFT_S`) | constants, recorded in each record's `model_time.ref` |
+| Latency reference speeds | 100 output tok/s, 0.75 s TTFT (`bg3harness/model_time.py` `REF_OUT_TOK_S`, `REF_TTFT_S`) | constants, recorded in each record's `model_time.ref` |
 | Keeper model | `same` as the play model (or `--no-keeper` for every model) | recorded per run |
 | Agent-facing text | `play/CLAUDE.md`, playbooks, tool descriptions: tag one commit and don't edit it during a comparison | repo pin |
 
@@ -77,7 +77,7 @@ python3 runner/play.py runs --playthrough naut-opus [--failures]        # the ta
 `act2_last_light` need a start save made once by hand ([scenarios/README.md](../scenarios/README.md), "Making a
 start save"); loading a start save in a series is *not live-tested*.
 
-**Models other than Claude.** `--client claude|codex|gemini` picks the CLI that plays (`runner/clients.py`:
+**Models other than Claude.** `--client claude|codex|gemini` picks the CLI that plays (`bg3harness/clients.py`:
 Claude: the same command as before, verified offline; Codex: untested live, its CodexClient command passes an
 offline check against codex-cli 0.157.1, a stub Responses-API model and the stub MCP server
 (`tools/codex/conformance/`); Gemini: **unsupported** (D14: the Gemini CLI is not installed or logged in here, never

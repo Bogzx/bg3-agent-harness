@@ -57,7 +57,7 @@ host                                            internal network bg3ai-sandbox (
   internet <── default bridge ── bg3ai-egress (172.30.99.2): CONNECT <the client's API host>:443 only
 ```
 
-What `runner/sandbox.py` does:
+What `bg3harness/sandbox.py` does:
 - **Once per runner start** (`prepare`): `docker version` answers; the network exists (created like `run.sh`); both
   images are built (`Dockerfile` = smoke client, firewall probe and proxy; `Dockerfile.agent` = node 22 + the three
   CLIs, the play client's version pinned to the host's `<cli> --version`, + pi at `/opt/pi`: `npm ci` of

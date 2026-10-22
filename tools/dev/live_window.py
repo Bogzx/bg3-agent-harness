@@ -12,11 +12,11 @@ Steps (each one a row of the final PASS/FAIL/SKIP table; the first FAIL before t
              close-on-exec, and first_launch.sh closes fds > 2 before the launcher, so the game never inherits it
              (the 10:51 deadlock, docs/ORCHESTRATOR.md "flock -o"). The acceptance runs with BG3AI_GAME_LOCK_HELD=1,
              so its sections don't flock the file a second time.
-  display    DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR from Xwayland when unset (runner/display_env.py)
+  display    DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR from Xwayland when unset (bg3harness.display_env)
   steam      tools/steam_paths.py launch-ok: Steam up and OFFLINE (exit 3 = not offline: stop)
   bg3le      tools/bg3le_buildinfo.py: the dist has every patch
   check      acceptance.py --check (offline: tools, RPC ops, Lua snippets, saves): must be 0 FAIL
-  ramwatch   runner/ramwatch.py, started detached unless one holds runtime/ramwatch.lock (setup's ramwatch item needs it)
+  ramwatch   bg3harness.ramwatch, started detached unless one holds runtime/ramwatch.lock (setup's ramwatch item needs it)
   launch     tools/dev/first_launch.sh --skip-shim -- --load <save> (runner/launch_game.sh: its own systemd scope);
              it waits for bg3le, the mod's sys.info, health and one frame. Refused beside a user's own BG3; a harness
              game already running needs --attach
@@ -50,9 +50,9 @@ import time
 from pathlib import Path
 from typing import Callable
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "runner"))
-import display_env  # noqa: E402  (runner/display_env.py: shared with play.py run)
-from display_env import xwayland_auth  # noqa: E402,F401
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "harness" / "src"))
+from bg3harness import display_env  # noqa: E402  (shared with play.py run)
+from bg3harness.display_env import xwayland_auth  # noqa: E402,F401
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_SAVE = "Claude-4810126690__S027-start"   # acceptance.BASE's folder (acceptance --check proves it is the newest)
@@ -284,7 +284,8 @@ class Window:
             "steam": ["python3", str(self.repo / "tools" / "steam_paths.py"), "launch-ok"],
             "bg3le": ["python3", str(self.repo / "tools" / "bg3le_buildinfo.py")],
             "check": UV + ["--with", "lz4", "--with", "zstandard", "python", acc, "--check"],
-            "ramwatch": ["python3", str(self.repo / "runner" / "ramwatch.py")],
+            "ramwatch": ["env", f"PYTHONPATH={self.repo / 'packages' / 'harness' / 'src'}", "python3", "-m",
+                         "bg3harness.ramwatch"],
             "launch": launch,
             "reload": UV + ["python", "-c", RELOAD_PY],
             "acceptance": UV + ["python", "-u", acc] + only,

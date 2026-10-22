@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for runner/model_time.py: the span arithmetic, model messages (trigger, TTFT from the thinking timer),
+"""Unit tests for bg3harness.model_time: the span arithmetic, model messages (trigger, TTFT from the thinking timer),
 the harness / model / overlap / other split, token scaling to the result event's exact totals, the speed and the
 API-adjusted model time, old turns files without message ids, resumed sessions' cumulative API time, the idle gaps
 (in step with bg3ai.metrics.gaps), the run window and the CLI. Fixture sessions only; never launches the game.
@@ -18,9 +18,11 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import model_time as MT  # noqa: E402
-from model_time import M  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # runs.py: bg3harness.events reads raw streams with it
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
+from bg3harness import model_time as MT
+from bg3harness.model_time import M
 
 T0 = 1_000_000.0
 REAL = Path(__file__).resolve().parents[1] / "runtime" / "sessions" / "naut"

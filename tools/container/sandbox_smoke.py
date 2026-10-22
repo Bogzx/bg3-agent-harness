@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Docker-only smoke test of `play.py run --sandbox container`'s pieces (runner/sandbox.py), no game, no model spend.
+"""Docker-only smoke test of `play.py run --sandbox container`'s pieces (bg3harness/sandbox.py), no game, no model spend.
 
     python3 tools/container/sandbox_smoke.py [--firewalled] [--client claude|pi]
 
@@ -16,7 +16,7 @@ With --client pi, instead of 1's API CONNECT and 2 (no real network at all; noth
   1. the proxy runs with pi's egress (openrouter.ai, api.deepseek.com); it refuses example.com:443 and
      api.deepseek.com:80 (decided before any connection);
   3. the stub model (tools/pi/conformance/stub_llm.py) in a container on the sandbox network, and the image's pi
-     (runner/pi_client.py's command with the image's pi and bg3.ts) against it: init lists bg3 connected with every
+     (bg3harness/pi_client.py's command with the image's pi and bg3.ts) against it: init lists bg3 connected with every
      tool, the model's tool call reaches the bg3 server over http, pi ends with the stub's final text; the stub saw
      the system text verbatim (D2), only mcp__bg3__ tools, and the key from the env var the profile names (passed
      by name); pi's session file landed in its agent dir on the host.
@@ -33,12 +33,11 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "runner"))
-import clients as C  # noqa: E402
-import pi_client as PC  # noqa: E402
-import sandbox as S  # noqa: E402
-
-import profiles as PR  # noqa: E402
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+from bg3harness import clients as C  # noqa: E402
+from bg3harness import pi_client as PC  # noqa: E402
+from bg3harness import profiles as PR  # noqa: E402
+from bg3harness import sandbox as S  # noqa: E402
 
 STUB_IP, STUB_PORT, STUB_NAME = "172.30.99.3", 8000, "bg3ai-stub-llm"
 STUB_KEY_ENV = "BG3AI_SMOKE_STUB_KEY"

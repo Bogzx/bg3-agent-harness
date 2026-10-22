@@ -12,8 +12,8 @@ The harness runs non-Claude models (and Claude on the ranked track, D6 in docs/O
 - `conformance/`: offline checks of that setup against a stub model and a stub MCP server (no key, no game).
 - `test_pi_install.py`: the pinned version.
 
-The design and the evidence behind it: research/arch/pi-client.md (local). The runner side is `runner/pi_client.py`
-and the profiles `runner/profiles.py` + `profiles/*.toml`.
+The design and the evidence behind it: research/arch/pi-client.md (local). The runner side is `bg3harness/pi_client.py`
+and the profiles `bg3harness/profiles.py` + `profiles/*.toml`.
 
     python3 -m unittest tools/pi/test_pi_install.py
     python3 -m unittest tools/pi/conformance/test_pi_conformance.py

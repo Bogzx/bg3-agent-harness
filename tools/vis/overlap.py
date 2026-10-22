@@ -6,7 +6,7 @@ turns need not exist at all?
     tools/vis/overlap.py runtime/sessions/naut2/S001     # one session (stem, or its .jsonl)
     tools/vis/overlap.py naut2 -v                         # + every blocking call and every unneeded turn
 
-Input: the runner's Sxxx.jsonl (stream-json) + Sxxx.turns.jsonl (arrival times), read with runner/triage.py.
+Input: the runner's Sxxx.jsonl (stream-json) + Sxxx.turns.jsonl (arrival times), read with bg3harness/triage.py.
 A session dir is every Sxxx*.jsonl with a .turns.jsonl beside it (keeper transcripts have none).
 
 Overlap, per blocking call (>= BLOCK_S): upper = min(next think, call time); realistic = only when the next call
@@ -29,9 +29,11 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "runner"))
+sys.path.insert(0, str(REPO / "runner"))  # runs.py: raw streams
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "tools"))
-import triage  # noqa: E402
+from bg3harness import triage  # noqa: E402
 import repo_paths  # noqa: E402
 
 SESSIONS = repo_paths.runtime_dir() / "sessions"  # where playthrough names resolve (the main tree's from a worktree)

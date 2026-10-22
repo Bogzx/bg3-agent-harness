@@ -1,11 +1,12 @@
 """A play session's cost from its normalized events log (Sxxx.events.jsonl, events.v1) through the harness's reader:
-runner/events.load_events (bg3harness has no events module yet) and runner/runs.UsageMeter, the fold the runner's
+bg3harness.events.load_events and runner/runs.UsageMeter, the fold the runner's
 cost cap uses: a process's result event gives its exact cost (Claude's total_cost_usd), and a process without one
 yet counts its last usage event's running cost (pi's billed cost). Resumes (Sxxx-r1, ...) add to their session.
 Cached per file size and mtime: /sessions and /playthroughs read every session on each request."""
 
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from . import legacy_paths
 
 COST_KINDS = frozenset({"usage", "result"})
 _cache: dict[tuple[str, int, int], float | None] = {}
+events: Any = importlib.import_module("bg3harness.events")  # Any to pyright: untyped legacy module
 
 
 def events_cost(events: list[Any]) -> float | None:
@@ -31,7 +33,7 @@ def _file_cost(log: Path) -> float | None:
     key = (str(log), st.st_size, st.st_mtime_ns)
     if key not in _cache:
         base = log.with_name(log.name[: -len(".events.jsonl")])
-        _cache[key] = events_cost(legacy_paths.load("events").load_events(base, kinds=COST_KINDS))
+        _cache[key] = events_cost(events.load_events(base, kinds=COST_KINDS))
     return _cache[key]
 
 

@@ -25,8 +25,8 @@
     sessions at the lower heat-pause limits (runner/play.py heat_paused, from the same log).
 
 runner/play.py runs it as a thread for the whole run; standalone (e.g. live tests with the runner stopped):
-    python3 runner/ramwatch.py            # until Ctrl-C
-    python3 runner/ramwatch.py --once     # one check (RAM + one thermal line), printed
+    PYTHONPATH=packages/harness/src python3 -m bg3harness.ramwatch          # until Ctrl-C
+    PYTHONPATH=packages/harness/src python3 -m bg3harness.ramwatch --once   # one check (RAM + one thermal line), printed
 """
 from __future__ import annotations
 

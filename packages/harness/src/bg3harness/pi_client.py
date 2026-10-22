@@ -3,7 +3,7 @@
 extension, behind the runner's Client interface (clients.py). research/arch/pi-client.md §3.4 is the design and
 tools/pi/conformance/ the offline evidence; runner/fixtures/pi/*.jsonl are streams captured from those runs.
 
-What a run gets: a profile (runner/profiles.py) for the endpoint, model and effort; a system text file (D2 in
+What a run gets: a profile (bg3harness/profiles.py) for the endpoint, model and effort; a system text file (D2 in
 docs/OVERHAUL-PLAN.md: for now the server's instructions + rules, dumped by write_system_text) that bg3.ts sends
 verbatim, so the server's own rules copy is off (BG3AI_SERVE_RULES=0); the bg3 tools as sequential
 mcp__bg3__* tools and nothing else. Per session, write_config puts settings.json, models.json and bg3.json in

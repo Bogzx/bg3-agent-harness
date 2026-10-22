@@ -7,7 +7,7 @@ reference API speed so runs on different providers / hours / models compare.
 
 Stdlib only (plus the repo's bridge/src/bg3ai/metrics.py, itself stdlib only). Reads what a session leaves behind:
 Sxxx.turns.jsonl (runner arrival times of every assistant block, tool_use and tool_result; else the claude stream's
-own timestamps), the session's events (runner/events.py: Sxxx.events.jsonl, else the raw stream Sxxx.jsonl; claude's
+own timestamps), the session's events (bg3harness/events.py: Sxxx.events.jsonl, else the raw stream Sxxx.jsonl; claude's
 thinking_duration_ms per message, the final result event's exact duration_api_ms / output_tokens / thinking_tokens)
 and Sxxx.metrics.jsonl (the bridge's tool records and activity
 samples, for the idle gaps). Play sessions and their resumes only (-fix / -keeper are not the player).

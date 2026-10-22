@@ -3,7 +3,7 @@
     python3 runner/judge.py <session_dir> [--run K] [--model M | --profile P --max-cost USD] [--dry-run]
 
 Shim: the judge lives in packages/harness (bg3harness.judge, decision D4). This module wires it to the runner: the
-events loader (runner/events.py), the playthroughs dir and the default judge model, which tests patch here.
+events loader (bg3harness.events), the playthroughs dir and the default judge model, which tests patch here.
 
 judge_run(state_dir, record, ...) is what play.py calls to add `persona` (persona_field(result)) to a run record.
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
-import events
+from bg3harness import events, profiles
 from bg3harness import judge as _core
 from bg3harness.judge import (
     ATTEMPTS,
@@ -61,8 +61,6 @@ from bg3harness.judge import (
     same_model,
     streams_dir,
 )
-
-import profiles
 
 REPO = Path(__file__).resolve().parent.parent
 PLAYTHROUGHS = Path(os.environ.get("BG3AI_PLAYTHROUGHS", REPO / "playthroughs"))   # as play.py

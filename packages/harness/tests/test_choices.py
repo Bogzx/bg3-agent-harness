@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""runner/choices.py: dialogue choices from an event log, as the bridge renders DIALOGUE blocks.
+"""bg3harness.choices: dialogue choices from an event log, as the bridge renders DIALOGUE blocks.
 
-python3 -m unittest runner/test_choices.py
+uv run pytest packages/harness/tests/test_choices.py
 """
 
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import choices as ch
-from clients import Event
+from bg3harness import choices as ch
+from bg3harness.clients import Event
 
 SHOWN = (
     "interact: done — used @(-766.7,-25.9,-727.7)\nDIALOGUE Shadowheart: Another trial. Allow me - please.\n"

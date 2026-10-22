@@ -13,9 +13,11 @@ import json, re, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "runner"))
+sys.path.insert(0, str(ROOT / "runner"))  # runs.py: raw streams
+sys.path.insert(0, str(ROOT / "packages" / "harness" / "src"))
+sys.path.insert(0, str(ROOT / "bridge" / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
-import triage  # noqa: E402
+from bg3harness import triage  # noqa: E402
 from repo_paths import main_tree, runtime_dir  # noqa: E402
 
 NOT_GAME = {"Read", "Edit", "Write", "Glob", "Grep", "ToolSearch", "Bash", "note", "session_clock", "session_start",

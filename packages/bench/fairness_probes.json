@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "about": "Per-tool fairness probes (research/arch/bench.md 2.5). Each tool of the bg3 server has probes or an exemption. A probe calls the tool on a start save with {hidden} = one of that save's hidden facts of the kind (listed when the save is made) and {visible} = a visible handle; expect absent: the hidden thing's name and handle do not appear in the result (plus runner/fairness.py's LEAK rules); expect refusal: the call is refused (not visible). The live half runs them per start save.",
+ "about": "Per-tool fairness probes (research/arch/bench.md 2.5). Each tool of the bg3 server has probes or an exemption. A probe calls the tool on a start save with {hidden} = one of that save's hidden facts of the kind (listed when the save is made) and {visible} = a visible handle; expect absent: the hidden thing's name and handle do not appear in the result (plus bg3harness/fairness.py's LEAK rules); expect refusal: the call is refused (not visible). The live half runs them per start save.",
  "hidden_kinds": {
   "creature": "a character the party cannot perceive: invisible, behind a wall, out of sight, not yet revealed",
   "object": "an item, container, trap or lever not yet discovered (failed Perception, hidden stash, unread text)",

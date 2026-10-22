@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for runner/pi_client.py: PiParser on pi 1.3.0 streams captured from the conformance suite
+"""Unit tests for bg3harness/pi_client.py: PiParser on pi 1.3.0 streams captured from the conformance suite
 (runner/fixtures/pi/*.jsonl, made with BG3AI_PI_CAPTURE; the runner log lines each gives are golden files,
 <name>.log, regenerated with BG3AI_UPDATE_GOLDEN=1), the guards on synthetic lines, PiClient's config, env and
 command, and the runner's tool-count check (check 22) through play.mcp_problem. Never runs pi.
@@ -18,12 +18,14 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import clients as C
-import pi_client as PC
+from bg3harness import clients as C
+from bg3harness import pi_client as PC
+from bg3harness import profiles as PR
 
 import play as P
-import profiles as PR
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"
 STREAMS = ("sequential", "overflow", "malformed", "tool_error", "abort", "resume", "billing", "retries", "image")

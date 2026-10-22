@@ -1,4 +1,4 @@
-"""Offline tests for the per-session fairness audit (runner/fairness.py) and its triage section."""
+"""Offline tests for the per-session fairness audit (bg3harness.fairness) and its triage section."""
 from __future__ import annotations
 
 import json
@@ -7,9 +7,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fairness as F  # noqa: E402
-import triage  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # runs.py: bg3harness.events reads raw streams with it
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
+from bg3harness import fairness as F
+from bg3harness import triage
 
 
 def call(name: str, text: str, t: float = 1791600000.0) -> dict:

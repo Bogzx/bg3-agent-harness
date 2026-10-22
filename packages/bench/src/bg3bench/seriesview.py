@@ -50,7 +50,7 @@ BACKFILL_SLACK_S = 5.0  # runs.BACKFILL_SLACK_S: a run's last files are written 
 
 
 class Live(Protocol):
-    """The harness's analyzers over a playthrough's session files (runner/runs.py, runner/model_time.py)."""
+    """The harness's analyzers over a playthrough's session files (runner/runs.py, bg3harness/model_time.py)."""
 
     def usage(self, d: Path, started: float) -> dict:
         """{cost_usd, tokens_m, running_streams, estimated}: finished processes plus the streams still running."""

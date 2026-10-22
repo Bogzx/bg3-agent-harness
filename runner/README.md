@@ -149,11 +149,11 @@ as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each `{t
 |---|---|---|
 | `time_to_milestone_s` | wall seconds from the run's start to the milestone; null if not reached | the milestone's time |
 | `deaths` | `{fights, downs, deaths, wipes}`: party members downed / dead per fight, Game Overs | `Sxxx.fights.jsonl` (the fight debriefs' `party[].downed/died`), `party_wipe` failures. Downs/deaths outside a fight the debrief saw (falls, traps out of combat) aren't observable |
-| `fairness_flags` | `{count, leak, check, blocks, kinds: {rule: n}}` | runner/fairness.py over the play streams; `blocks`: the sandbox guard's blocks of the agent's file calls |
+| `fairness_flags` | `{count, leak, check, blocks, kinds: {rule: n}}` | bg3harness/fairness.py over the play streams; `blocks`: the sandbox guard's blocks of the agent's file calls |
 | `latency` | `{sessions, idle_median_s, idle_p90_s, gaps_over_10s, read_rt_median_ms}` | the play sessions' `Sxxx.latency.json`; over several sessions each value is the sample-weighted median of the per-session values (exact for one session); null without latency files |
 | `story` | `{points, events, sessions, by_kind}` gained in the run | `progress_history.jsonl` |
 | `milestones_reached` | milestones reached in the playthrough at the end | `bg3ai.milestones.status` |
-| `model_time` | the run's model vs harness time: `model_s`, `harness_s`, the wall split, idle-gap attribution, TTFT, output speed, and `adjusted_model_s` (model time at the reference API speed `ref`, so providers/hours compare) | `runner/model_time.py` over the run's play streams, turns and metrics (its constant field lists left out) |
+| `model_time` | the run's model vs harness time: `model_s`, `harness_s`, the wall split, idle-gap attribution, TTFT, output speed, and `adjusted_model_s` (model time at the reference API speed `ref`, so providers/hours compare) | `bg3harness/model_time.py` over the run's play streams, turns and metrics (its constant field lists left out) |
 
 `play.py runs` prints the per-run table (now with time to the milestone, tokens, the idle median, the persona score
 (`fail` / `n/d` no decisions / `n/c` no character when unscored) and the API-adjusted model minutes) and a series
@@ -168,7 +168,7 @@ Classes (`runner/runs.py`):
   `load_refused`, `recovery_failed`, `bg3le_stale`, `steam_refused`, `oom_save_refused` (runner_events.jsonl);
   `mcp_failed` (claude's init shows the bg3 server not connected), `claude_api` (API/usage/overload errors),
   `claude_quick_exit` (claude exited within a minute), `tool_exception` (an uncaught bridge exception, "Error
-  executing tool"), `tool_timeout` (an MCP timeout or a `TIMEOUT` step), `fairness_leak` (runner/fairness.py LEAK in a
+  executing tool"), `tool_timeout` (an MCP timeout or a `TIMEOUT` step), `fairness_leak` (bg3harness/fairness.py LEAK in a
   game-tool result: the agent saw what a player can't), `gave_up` (the runner gave up), `runner_error`.
 - **agent**: `stall` (the progress poller's stuck record: no story progress for 10+ min while acting), `party_wipe`
   (Game Over), `reload` (every load_game it called), `early_exit`, `fairness_block` (the sandbox guard blocked its
@@ -280,7 +280,7 @@ stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 - `--sandbox container` plays from a container that reaches only the bg3 MCP server (over http on the host, one
   server per play process) and the client's model API through an egress proxy; the memory keeper runs there too.
   It refuses to start without the host firewall (`sudo tools/container/firewall.sh up`; `--sandbox-unfirewalled`
-  for dev runs, recorded). runner/sandbox.py, tools/container/README.md ("The runner").
+  for dev runs, recorded). bg3harness/sandbox.py, tools/container/README.md ("The runner").
 - Only one runner at a time (`runtime/runner.lock`, an flock; never delete the file:
   a wrapper script should wait for the lock instead).
 - Steam offline is required only on a machine that sets it: `~/.config/bg3ai/require-steam-offline` (its

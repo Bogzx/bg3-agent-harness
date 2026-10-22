@@ -4,7 +4,7 @@
 
 Per play process (and per memory-keeper call) the runner starts the bg3 MCP server on the host over streamable HTTP,
 bound to the sandbox network's gateway (172.30.99.1:8770) with the session env a stdio server would get, and runs the
-client CLI (runner/clients.py) inside `bg3ai/agent-client` with that server as its only MCP server:
+client CLI (bg3harness/clients.py) inside `bg3ai/agent-client` with that server as its only MCP server:
 
     host                                         internal network bg3ai-sandbox (172.30.99.0/24)
       bg3ai-mcp --transport http  <── 8770 ───   client container (claude | codex | gemini | pi),

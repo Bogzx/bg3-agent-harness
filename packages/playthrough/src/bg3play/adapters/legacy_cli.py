@@ -2,7 +2,7 @@
 
 One session = one `python3 runner/play.py run --playthrough <pt> --hours <minutes/60> --session-minutes <minutes>`
 with the config's client/model/effort/character/difficulty as flags. A client profile (profiles/<name>.toml, parsed
-by runner/profiles.py) is mapped to --client/--model/--effort; a pi profile is passed whole as --profile with the
+by bg3harness/profiles.py) is mapped to --client/--model/--effort; a pi profile is passed whole as --profile with the
 config's cost cap as --max-cost and no keeper (what play.py --profile requires for pi).
 A soft stop writes <runtime>/STOP (`play.py stop`: the session finishes, the runner exits). The result comes from the
 newest play entry of <runtime>/sessions/<pt>/runner.json. The config's prompt condition goes to play.py as
@@ -42,7 +42,7 @@ def spawn(args: list[str], cwd: Path, log: IO[bytes], env: dict[str, str]) -> Pr
 def profile_agent(
     directory: Path, name: str, load: Callable[[Path], Any] = client_profiles.runner_load
 ) -> config.Agent:
-    """client/model/effort of a client profile (runner/profiles.py checks it)."""
+    """client/model/effort of a client profile (bg3harness/profiles.py checks it)."""
     try:
         p = client_profiles.load_one(directory, name, load)
     except (OSError, ValueError) as e:

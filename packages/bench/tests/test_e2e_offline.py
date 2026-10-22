@@ -6,7 +6,7 @@ No game, no key, no network.
 Two runs of e2e_sell_idol (fixtures/e2e), one matrix job with 2 repeats played by adapters/session_run.SessionRun:
 a trader's dialogue is open; the stub model sells the idol in run 1 (gold 100 -> 250: the goal is gold >= 200) and
 leaves in run 2. The harness side is a RunHost whose run_session hooks run pi; its facts come from the runner's
-progress poller read (runner/facts.py over bridge progress.read_game and the party inventory), from the fake mod
+progress poller read (bg3harness/facts.py over bridge progress.read_game and the party inventory), from the fake mod
 before and after the pi process, with a fake clock.
 
 TODO(fake mod merged): bg3harness.testing (ovh/mod) brings the fake mod and the bridge's rpc_record. Until it is in
@@ -91,7 +91,7 @@ class StubLLM:
 
 
 def run_pi(ws: Path, llm_port: int, server: dict) -> list[dict]:
-    """One pi process (as runner/pi_client.py runs it) against the stub model and `server`; its JSON events."""
+    """One pi process (as bg3harness/pi_client.py runs it) against the stub model and `server`; its JSON events."""
     for d in ("home", "agent", "cwd"):
         (ws / d).mkdir(exist_ok=True)
     raw = {

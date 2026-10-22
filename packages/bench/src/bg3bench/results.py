@@ -8,7 +8,7 @@ milestone verdict is used (`outcome == "reached"`), which is how series before f
 Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when the runner itself failed
 (`runner_error`), a harness failure was classified (runs.py `harness_failures`), or an operator acted on it.
 
-Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (runner/model_time.py);
+Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (bg3harness/model_time.py);
 realtime scenarios (D7) report it next to wall time, since the world runs while the model thinks. `luck` is
 luck.summary over the run's roll log (D9), null when the run has none. A choice scenario's result has `choices`
 (choices.grade: the picks, the persona fit), and its release run the picks and the fit score (choices.table).

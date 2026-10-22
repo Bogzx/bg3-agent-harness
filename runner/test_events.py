@@ -1,4 +1,4 @@
-"""Unit tests for runner/events.py and the clients.Event envelope: to_json/from_json round trip, the schema file
+"""Unit tests for bg3harness/events.py and the clients.Event envelope: to_json/from_json round trip, the schema file
 naming every field, EventLog's seq/t, load_events on an events log and on old raw streams (parity on the recorded
 client fixtures of test_clients.py), and run_claude writing Sxxx.events.jsonl (the fake claude of test_crash.py).
 
@@ -17,11 +17,13 @@ from dataclasses import fields
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import clients as C
-import events as E
 import test_clients as TC  # (the recorded codex lines)
 import test_crash as TCR  # (the fake claude and fake game)
+from bg3harness import clients as C
+from bg3harness import events as E
 
 SCHEMA = Path(__file__).resolve().parents[1] / "packages" / "harness" / "schemas" / "events.v1.schema.json"
 

@@ -110,7 +110,7 @@
       "type": "object",
       "required": ["mark"],
       "properties": {
-        "mark": {"enum": ["load", "run_start", "run_end", "settings"], "description": "settings: detail = the game's settings readout and the seed setup (runner/game_settings.py)"},
+        "mark": {"enum": ["load", "run_start", "run_end", "settings"], "description": "settings: detail = the game's settings readout and the seed setup (bg3harness/game_settings.py)"},
         "detail": {}
       }
     }

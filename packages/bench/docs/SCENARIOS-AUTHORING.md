@@ -38,7 +38,7 @@ marked **live**.
 7. **Run both baselines (live).** `authoring.run_baselines(runtime/matrix/baselines-<name>, <name>, run_one,
    now=time.time, sleep=time.sleep, guard=...)` runs do-nothing 5 times and the random agent with seeds 1-5 through
    the matrix runner, on a budget of $0, so a baseline that costs money stops at once. `run_one` today is
-   `bg3bench.adapters.legacy_cli.LegacyCli` (it needs a `baseline` client registered in `runner/clients.py`, see
+   `bg3bench.adapters.legacy_cli.LegacyCli` (it needs a `baseline` client registered in `bg3harness/clients.py`, see
    below). The rule: each baseline passes in under 5% of at least 5 valid runs (`out["ok"]`). A scenario that fails
    it gets a stronger goal, not more runs.
 8. **Write the quiz** (`quizzes/<name>.json`, `bg3bench.contamination`): closed-book questions that only prior
@@ -48,9 +48,9 @@ marked **live**.
 
 ## Running the baselines from the legacy runner
 
-`bg3bench.baselines.client.BaselineClient` implements the runner's `Client` protocol (`runner/clients.py:80-90`)
+`bg3bench.baselines.client.BaselineClient` implements the runner's `Client` protocol (`bg3harness/clients.py` `Client`)
 with model slugs `baseline:donothing` and `baseline:random:<seed>`. To play one through `runner/play.py run
---client baseline`, the owner of `runner/clients.py` registers it, passing the runner's `Event` class:
+--client baseline`, the owner of `bg3harness/clients.py` registers it, passing the runner's `Event` class:
 
 ```python
 from bg3bench.baselines.client import BaselineClient

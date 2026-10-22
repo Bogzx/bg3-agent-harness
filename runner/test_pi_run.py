@@ -17,10 +17,11 @@ from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import events as E
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 import test_crash as TCR
-
-import profiles
+from bg3harness import events as E
+from bg3harness import profiles
 
 P = TCR.P
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pi"

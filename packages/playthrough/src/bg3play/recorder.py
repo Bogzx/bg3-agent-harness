@@ -354,7 +354,7 @@ def _int(s: str) -> int | None:
 
 
 def thermal_reading(line: str) -> tuple[int | None, int | None]:
-    """(CPU C, GPU C) of a runtime/thermal.log line (runner/ramwatch.py thermal_line), (None, None) otherwise."""
+    """(CPU C, GPU C) of a runtime/thermal.log line (bg3harness/ramwatch.py thermal_line), (None, None) otherwise."""
     m = THERMAL_RX.match(line)
     if not m:
         return None, None

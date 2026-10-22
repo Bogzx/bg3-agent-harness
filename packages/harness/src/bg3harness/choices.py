@@ -1,4 +1,4 @@
-"""Dialogue choices from one play process's event log (runner/events.py) as facts v1 `choice` events
+"""Dialogue choices from one play process's event log (bg3harness/events.py) as facts v1 `choice` events
 (packages/harness/schemas/facts.v1.schema.json): the scene and the numbered answers the agent was last shown, the
 number it picked, and the reason it stated (its text and thinking since the tool result before the call).
 

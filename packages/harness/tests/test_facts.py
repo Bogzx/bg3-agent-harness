@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-"""runner/facts.py: facts.jsonl v1 from progress.read_game-shaped reads (status/journal/ui/explored/events, as the
+"""bg3harness.facts: facts.jsonl v1 from progress.read_game-shaped reads (status/journal/ui/explored/events, as the
 mod's state.status, state.journal and events.since answer) and state.inventory replies.
 
-    python3 -m unittest runner/test_facts.py
+    uv run pytest packages/harness/tests/test_facts.py
 """
 
 from __future__ import annotations
 
 import copy
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
-import facts as F
+from bg3harness import facts as F
 
-SCHEMA = Path(__file__).resolve().parents[1] / "packages" / "harness" / "schemas" / "facts.v1.schema.json"
+SCHEMA = Path(__file__).resolve().parents[3] / "packages" / "harness" / "schemas" / "facts.v1.schema.json"
 
 
 def member(name, level=1, hp=10, **kw):

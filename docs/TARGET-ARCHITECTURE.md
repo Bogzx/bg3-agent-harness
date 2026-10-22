@@ -74,7 +74,7 @@ the harness.
 | Today | Goes to |
 |---|---|
 | `mod/`, `bridge/`, `native/`, `patches/`, `third_party/`, `tools/container/` | harness |
-| `runner/clients.py`, launch, recovery, sandbox and pin code in `runner/play.py` / `runner/runs.py` | harness |
+| `bg3harness/clients.py`, launch, recovery, sandbox and pin code in `runner/play.py` / `runner/runs.py` | harness |
 | rules parts of `play/CLAUDE.md`, `bridge/src/bg3ai/rules.py` | harness |
 | `bridge/src/bg3ai/milestones.py` | facts to the harness, the milestone list and predicates to benchmark / playthrough |
 | `scenarios/`, series code in `runner/play.py` / `runner/runs.py`, `tools/bench_preflight.py` | benchmark |

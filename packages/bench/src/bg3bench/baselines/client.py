@@ -1,5 +1,5 @@
 # pyright: basic
-"""BaselineClient: the runner's Client protocol (runner/clients.py `Client`) for the baseline agents, so a series
+"""BaselineClient: the runner's Client protocol (bg3harness/clients.py `Client`) for the baseline agents, so a series
 runs them like any model client and its cost, token and event accounting sees them the same way.
 
 The model slug picks the agent: `baseline:donothing`, or `baseline:random:<seed>`. The bench does not import the

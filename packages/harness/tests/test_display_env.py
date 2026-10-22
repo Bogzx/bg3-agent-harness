@@ -1,4 +1,4 @@
-"""Offline tests: the display env found from the desktop session (runner/display_env.py)."""
+"""Offline tests: the display env found from the desktop session (bg3harness.display_env)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import display_env as D
+from bg3harness import display_env as D
 
 PS = "1873 /usr/bin/Xwayland :1 -auth /run/user/1000/xauth_ABcd -rootless -listenfd 4\n"
 
@@ -100,7 +100,7 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
                     "DISPLAY": ":97", "XAUTHORITY": str(self.tmp / "no-such-xauth")}   # no /tmp/.X11-unix/X97
 
     def launch(self, *args: str) -> subprocess.CompletedProcess:
-        sh = Path(__file__).resolve().parent / "launch_game.sh"
+        sh = Path(__file__).resolve().parents[3] / "runner" / "launch_game.sh"
         return subprocess.run(["bash", str(sh), "--no-bg3le", "--no-input-shim", *args], capture_output=True,
                               text=True, env=self.env, timeout=60)
 
@@ -120,7 +120,7 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
 
     def test_ui_strict_env(self):
         """S17: BG3AI_UI_STRICT=1 starts the game with bg3le's strict frame lock; unset/0 leaves it off."""
-        sh = Path(__file__).resolve().parent / "launch_game.sh"
+        sh = Path(__file__).resolve().parents[3] / "runner" / "launch_game.sh"
 
         def cmd(**env):
             r = subprocess.run(["bash", str(sh), "--no-input-shim", "--dry-run"], capture_output=True, text=True,

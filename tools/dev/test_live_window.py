@@ -113,6 +113,7 @@ class Base(unittest.TestCase):
         self.rt = self.repo / "runtime"
         (self.repo / "tools" / "dev").mkdir(parents=True)
         (self.repo / "runner").mkdir()
+        (self.repo / "packages" / "harness" / "src" / "bg3harness").mkdir(parents=True)
         (self.repo / "mod").mkdir()
         (self.repo / "bin").mkdir()
         self.rt.mkdir()
@@ -124,7 +125,8 @@ class Base(unittest.TestCase):
         self.write("tools/bg3le_buildinfo.py", 'print("OK: dist has all 10 patches")\n')
         self.write("tools/dev/acceptance.py", FAKE_ACCEPTANCE)
         self.write("tools/dev/first_launch.sh", FAKE_LAUNCH, exe=True)
-        self.write("runner/ramwatch.py", "import time\ntime.sleep(3)\n")
+        self.write("packages/harness/src/bg3harness/__init__.py", "")
+        self.write("packages/harness/src/bg3harness/ramwatch.py", "import time\ntime.sleep(3)\n")
         self.write("bin/uv", FAKE_UV, exe=True)
         self.xauth = self.repo / "xauth_test"   # a real file: display_env.fill replaces a missing one (stale)
         self.xauth.write_text("")

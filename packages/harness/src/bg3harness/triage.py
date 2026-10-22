@@ -4,7 +4,7 @@
     python runner/triage.py runtime/sessions/<playthrough>/S002     # writes S002.triage.md
 
 Reads the files the runner writes per session (all optional, missing ones are skipped):
-    Sxxx.events.jsonl   the normalized event log (runner/events.py; any client): tool calls with arguments, results,
+    Sxxx.events.jsonl   the normalized event log (bg3harness/events.py; any client): tool calls with arguments, results,
                         the final summary. Older sessions: their raw stream Sxxx.jsonl, timed by Sxxx.turns.jsonl
     Sxxx.turns.jsonl    arrival times of the stream events (bg3ai.metrics.StreamTiming)
     Sxxx.metrics.jsonl  the bridge's per-tool latency records and state samples

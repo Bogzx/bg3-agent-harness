@@ -14,8 +14,8 @@ sets them again from the machine's marker file $BG3AI_CONFIG_DIR (default $XDG_C
 No marker = nothing to do. Only `sudo -n`: when it needs a password the setting is skipped with a warning (never a
 prompt, never a failed launch). Every line it prints says what it set, found already set, or skipped.
 
-    python3 runner/host_tuning.py apply      # what launch_game.sh runs
-    python3 runner/host_tuning.py plan       # what it would do (launch_game.sh --dry-run)
+    PYTHONPATH=packages/harness/src python3 -m bg3harness.host_tuning apply   # what launch_game.sh runs
+    PYTHONPATH=packages/harness/src python3 -m bg3harness.host_tuning plan    # what it would do (--dry-run)
 """
 from __future__ import annotations
 

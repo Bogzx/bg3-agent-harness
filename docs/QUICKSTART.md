@@ -40,7 +40,7 @@ cost = { input = 1.0, output = 4.0, cache_read = 0.1 }   # USD per million token
 ```
 
 Put the key in the repo's gitignored `.env` (`OPENROUTER_API_KEY=...`) or in the environment. The runner reads it
-from there and never writes it to a file or a log. `runner/profiles.py` documents every field; a profile with a
+from there and never writes it to a file or a log. `bg3harness/profiles.py` documents every field; a profile with a
 field its client doesn't use is refused. `profiles/deepseek-flash.toml` is a direct DeepSeek example (no
 OpenRouter, so no `[routing]`).
 

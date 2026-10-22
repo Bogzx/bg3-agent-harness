@@ -117,10 +117,10 @@ else
     # The desktop's display env when this shell lacks it (ssh, a multiplexer); none usable = no launch (L8: the game
     # fell back to the AMD iGPU and dumped cores). launch_game.sh checks again (exit 5).
     display_problem=""
-    display_sh="$(python3 "$REPO/runner/display_env.py" shell)" || [ -n "$display_sh" ] || display_problem="display_env.py failed"
+    display_sh="$(PYTHONPATH="$REPO/packages/harness/src" python3 -m bg3harness.display_env shell)" || [ -n "$display_sh" ] || display_problem="display_env.py failed"
     eval "$display_sh"
     [ -z "$display_problem" ] ||
-        die "no usable display: $display_problem. Export DISPLAY/XAUTHORITY of the desktop session (runner/display_env.py)"
+        die "no usable display: $display_problem. Export DISPLAY/XAUTHORITY of the desktop session (bg3harness.display_env)"
     ok "display: DISPLAY=$DISPLAY XAUTHORITY=${XAUTHORITY:-~/.Xauthority}"
     LAUNCH_LOG="$RUNTIME/logs/first_launch-$(date +%Y%m%d-%H%M%S).log"
     # Close inherited fds > 2 first: run under `flock runtime/live.lock`, the launcher (which lives as long as the

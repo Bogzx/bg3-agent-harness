@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline conformance of the installed codex CLI with runner/clients.py's CodexClient: CodexClient's own command
+"""Offline conformance of the installed codex CLI with bg3harness/clients.py's CodexClient: CodexClient's own command
 (features off, -c overrides, the bg3 MCP server) runs codex against stub_responses.py (a scripted Responses-API
 model, as a custom model_provider) and tools/pi/conformance/stub_mcp.py (the real tool list, no game), with
 CODEX_HOME in a temp dir (~/.codex is never read or written). No key, no network, no game; ~10 s. Skips when
@@ -23,9 +23,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 PI_CONF = REPO / "tools" / "pi" / "conformance"
-sys.path.insert(0, str(REPO / "runner"))
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import clients as C  # noqa: E402, N812
+from bg3harness import clients as C  # noqa: E402, N812
 
 sys.path.insert(0, str(PI_CONF))
 import stub_mcp  # noqa: E402

@@ -24,8 +24,7 @@ sys.path.insert(0, str(REPO / "bridge" / "src"))
 milestones: Any = importlib.import_module("bg3ai.milestones")
 bg3progress: Any = importlib.import_module("bg3ai.progress")
 
-sys.path.insert(0, str(REPO / "runner"))  # TEMPORARY: clients.py until the harness package has it
-clients: Any = importlib.import_module("clients")
+clients: Any = importlib.import_module("bg3harness.clients")  # Any to pyright like the bridge: an untyped legacy module
 
 SESSION_PY = REPO / "tools" / "memory" / "session.py"
 KNOWLEDGE = REPO / "play" / "knowledge"

@@ -10,7 +10,7 @@ import time
 import unittest
 from pathlib import Path
 
-from bg3play.adapters import legacy_paths
+from bg3harness import profiles
 from bg3play.memory import keeper, memlib
 
 from tests.memory._testutil import MemoryTestCase
@@ -84,7 +84,7 @@ print(json.dumps({"type": "result", "subtype": "success"}))
 
 
 def _pi_profile():
-    return legacy_paths.load("profiles").parse(
+    return profiles.parse(
         {
             "client": "pi",
             "model": "anthropic/stub-model",

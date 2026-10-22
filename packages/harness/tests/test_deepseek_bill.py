@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""runner/deepseek_bill.py: DeepSeek's bill from its usage fields, peak and off-peak.
+"""bg3harness.deepseek_bill: DeepSeek's bill from its usage fields, peak and off-peak.
 
-python3 -m unittest runner/test_deepseek_bill.py
+uv run pytest packages/harness/tests/test_deepseek_bill.py
 """
 
 from __future__ import annotations
 
-import sys
 import unittest
 from datetime import UTC, datetime
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import deepseek_bill as D  # noqa: N812
+from bg3harness import deepseek_bill as D  # noqa: N812
 
 FLASH = {"input": 0.3, "output": 1.2, "cache_read": 0.006}  # profiles/deepseek-flash.toml
 # run 1's totals (research/ovh/live3.md, S001 bg3.billing entries): 53,296,640 hit, 165,340 miss, 109,003 out

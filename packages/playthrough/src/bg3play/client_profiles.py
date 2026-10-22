@@ -1,10 +1,10 @@
-"""The client profiles a playthrough can play with: profiles/*.toml in the format of runner/profiles.py (the pi
+"""The client profiles a playthrough can play with: profiles/*.toml in the format of bg3harness.profiles (the pi
 worker's: client, model, effort; for pi also the endpoint and model definition). The Launcher lists them; the
 session runner turns the chosen one into play.py flags (adapters/legacy_cli.py).
 
-Parsing and validation stay runner/profiles.py's (reached through adapters/legacy_paths.py until the harness package
-exposes it); this module only lists and summarises. A profile that fails to parse is listed with its error, so the
-Launcher can say why it can't be picked. Keys never live in a profile, only the name of the env var holding one.
+Parsing and validation stay bg3harness.profiles's; this module only lists and summarises. A profile that fails to
+parse is listed with its error, so the Launcher can say why it can't be picked. Keys never live in a profile, only
+the name of the env var holding one.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .adapters import legacy_paths
+from bg3harness import profiles
 
 
 def runner_load(path: Path) -> Any:
-    """runner/profiles.py load (raises its ProfileError, a ValueError, for a bad profile)."""
-    return legacy_paths.load("profiles").load(path)
+    """bg3harness.profiles load (raises its ProfileError, a ValueError, for a bad profile)."""
+    return profiles.load(path)
 
 
 def summary(name: str, p: Any) -> dict[str, Any]:

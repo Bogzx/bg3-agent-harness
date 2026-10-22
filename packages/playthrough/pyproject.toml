@@ -3,7 +3,7 @@ name = "bg3play"
 version = "0.1.0"
 description = "The BG3 playthrough app: config, run store, HTTP/SSE API and the web UI"
 requires-python = ">=3.12"
-dependencies = ["bg3-agent-harness"]  # run_session, the clients, the progress signature (adapters/harness_runner.py)
+dependencies = ["bg3-agent-harness"]  # run_session, the clients, client profiles, the events reader, the keeper's clients, ramwatch
 
 [project.scripts]
 bg3play-serve = "bg3play.server:main"

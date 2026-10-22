@@ -11,7 +11,7 @@ Two halves:
             comparison, so runs of different models stay comparable): a 0-10 adherence score with a short
             justification per decision, as JSON.
 
-The judge model is a client built from a client profile (runner/profiles.py: `client_for`): `claude -p` with no tools
+The judge model is a client built from a client profile (bg3harness.profiles: `client_for`): `claude -p` with no tools
 (ClaudeCLI, a subscription), or any OpenAI-compatible chat-completions endpoint over plain HTTP (ChatCompletions:
 a pi profile's endpoint, key env var and price sheet). A paid client refuses to exist without a cost cap and refuses
 a call that could cross it; every call's cost is recorded (`call_costs`). Tests pass a fake transport (`call`).
@@ -57,7 +57,7 @@ Meta = dict[str, Any]
 
 
 class Event(Protocol):
-    """What extraction reads of a clients.Event (runner/clients.py)."""
+    """What extraction reads of a clients.Event (bg3harness/clients.py)."""
 
     kind: str
     t: float | None

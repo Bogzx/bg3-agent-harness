@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""runner/game_settings.py: the settings readout from profile files and roll.snapshot; scn.seed / scn.undo.
+"""bg3harness.game_settings: the settings readout from profile files and roll.snapshot; scn.seed / scn.undo.
 
-python3 -m unittest runner/test_game_settings.py
+uv run pytest packages/harness/tests/test_game_settings.py
 """
 
 from __future__ import annotations
@@ -11,9 +11,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import game_settings as gs
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
+from bg3harness import game_settings as gs
 
 LSX = """<node id="ConfigEntry">
     <attribute id="MapKey" type="FixedString" value="ScreenHeight"/>

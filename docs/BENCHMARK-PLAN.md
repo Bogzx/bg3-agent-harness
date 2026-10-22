@@ -23,7 +23,7 @@ held-out seeds, dollar cost per run, [arXiv 2610.12596](https://arxiv.org/html/2
 ## Harness: one frozen client for every model
 
 - Every model, Claude included, plays through **pi** (`@earendil-works/pi-coding-agent`, pinned version) as a
-  fourth client in `runner/clients.py`, talking to **OpenRouter** Chat Completions. Changing the model means
+  fourth client in `bg3harness/clients.py`, talking to **OpenRouter** Chat Completions. Changing the model means
   changing the OpenRouter slug and nothing else.
 - pi settings that must be overridden: auto-compaction off, MCP exposure `direct` (not codemode), tool calls run
   one at a time in the order the model sent them, MCP timeout 110 s. The built-in coding tools stay off

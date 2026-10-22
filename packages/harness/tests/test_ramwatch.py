@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Offline tests for runner/ramwatch.py (fake /proc rows; never signals real processes)."""
+"""Offline tests for bg3harness.ramwatch (fake /proc rows; never signals real processes)."""
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import ramwatch as R  # noqa: E402
+from bg3harness import ramwatch as R
 
 REAL_ANON_SWAP_MB = R.anon_swap_mb
 

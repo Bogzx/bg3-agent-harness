@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
-"""Unit tests for runner/profiles.py: every example in profiles/ loads, the validation errors, and pi's
-models.json against golden files in runner/fixtures/pi/ (regenerate one with BG3AI_UPDATE_GOLDEN=1 after a
+"""Unit tests for bg3harness.profiles: every example in profiles/ loads, the validation errors, and pi's
+models.json against golden files in fixtures/pi/ (regenerate one with BG3AI_UPDATE_GOLDEN=1 after a
 deliberate change, then review the diff).
 
-    python3 -m unittest runner/test_profiles.py
+    uv run pytest packages/harness/tests/test_profiles.py
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import profiles as PR
+from bg3harness import profiles as PR
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[3]
 EXAMPLES = REPO / "profiles"
 GOLDEN = Path(__file__).resolve().parent / "fixtures" / "pi"
 

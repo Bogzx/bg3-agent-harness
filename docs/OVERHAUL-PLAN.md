@@ -87,7 +87,7 @@ game or a paid API.
    mod → `facts.jsonl` → grader → `result.json` → stats → leaderboard build; runs in CI in a few minutes.
 4. Playwright test of the app against the same run's output; coverage thresholds per package in CI.
 
-**B-pi** (owns `tools/pi/`, `runner/profiles.py`, the pi parts of `runner/clients.py`)
+**B-pi** (owns `tools/pi/`, `bg3harness/profiles.py`, the pi parts of `bg3harness/clients.py`)
 1. Pinned pi 1.3.0 in `tools/pi/` (package.json + lockfile, `npm ci --ignore-scripts`).
 2. `bg3.ts` extension: registers the bg3 tools as sequential, sets the system text verbatim, records OpenRouter's
    billed `usage.cost` and served provider per response.

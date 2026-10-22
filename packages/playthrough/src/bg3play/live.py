@@ -2,12 +2,13 @@
 view, latency, story progress, the goal scorecard, unattended hours, milestones and the machine's temperature.
 
 Everything here is side-effect free apart from reading files, so it is unit-tested without a game. The latency,
-progress and milestone views use the bridge's stdlib-only bg3ai.metrics / progress / milestones and the thermal view
-runner/ramwatch.py, reached through adapters/legacy_paths.py until the harness package exposes them.
+progress and milestone views use the bridge's stdlib-only bg3ai.metrics / progress / milestones, reached through
+adapters/legacy_paths.py until the harness package exposes them, and the thermal view bg3harness.ramwatch.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -19,6 +20,8 @@ from typing import Any, cast
 from . import parse
 from .adapters import legacy_paths
 from .jsontypes import Obj, is_list, is_obj
+
+ramwatch: Any = importlib.import_module("bg3harness.ramwatch")  # Any to pyright: untyped legacy module
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -635,10 +638,8 @@ def milestones_payload(d: Path) -> dict[str, Any] | None:
 
 
 def thermal_view(path: Path) -> dict[str, Any] | None:
-    """The last thermal.log line (runner/ramwatch.py or an operator's thermal_log.sh) with its CPU/GPU C and
+    """The last thermal.log line (bg3harness.ramwatch or an operator's thermal_log.sh) with its CPU/GPU C and
     the heat-pause limits, or None."""
-    ramwatch = legacy_paths.load("ramwatch")
-
     last = ramwatch.last_thermal(path)
     if not last:
         return None

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for run --sandbox container (runner/sandbox.py and its wiring in clients.py, play.py and
+"""Unit tests for run --sandbox container (bg3harness/sandbox.py and its wiring in clients.py, play.py and
 memory_keeper.py). Offline: a fake `docker` script ($BG3AI_DOCKER), fake nft/sudo answers, fake or throwaway servers.
 Never touches the real docker daemon, nft or the game.
 
@@ -20,12 +20,14 @@ from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 os.environ.setdefault("BG3AI_KNOWLEDGE_LOCK", "0")
-import clients as C  # noqa: E402
+from bg3harness import clients as C  # noqa: E402
 import play as P  # noqa: E402
-import profiles as PR  # noqa: E402
-import sandbox as S  # noqa: E402
+from bg3harness import profiles as PR  # noqa: E402
+from bg3harness import sandbox as S  # noqa: E402
 
 PI_PROFILE = PR.parse({"client": "pi", "model": "deepseek-flash",
                        "endpoint": {"provider": "deepseek", "base_url": "https://api.deepseek.com",

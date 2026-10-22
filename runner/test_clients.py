@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for runner/clients.py: ClaudeClient is a drop-in for play.py's claude_cmd and format_stream_event as
+"""Unit tests for bg3harness/clients.py: ClaudeClient is a drop-in for play.py's claude_cmd and format_stream_event as
 they were before the client interface (frozen in test_play.py: legacy_claude_cmd, legacy_format_stream_event; compared on every line of the real runtime/sessions streams), CodexClient's command and its parsing of real codex
 0.157.1 event lines (recorded offline against a local stub model server and a stub MCP server, no model call), and
 GeminiClient's documented shapes (untested CLI). Never launches claude, codex, gemini or the game.
@@ -20,10 +20,12 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
+sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 # RUN-9: play.RUNTIME is read at import; a test must never append to the real runtime/runner.log (the phantom
 # "0.01 s after SIGTERM" kill bursts the orchestrator chased). Tests that need a runtime set their own.
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import clients as C  # noqa: E402
+from bg3harness import clients as C  # noqa: E402
 import play as P  # noqa: E402
 import runs as R  # noqa: E402
 import test_play as TP  # noqa: E402  (the frozen pre-client claude_cmd / format_stream_event)

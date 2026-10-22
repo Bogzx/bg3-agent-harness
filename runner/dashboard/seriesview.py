@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The benchmark series view, served with the live row: bg3bench.seriesview (the page, the rows from the records)
-wired to the runner's analyzers over session files (runner/runs.py, runner/model_time.py) and the playthrough app's
+wired to the runner's analyzers over session files (runner/runs.py, bg3harness.model_time) and the playthrough app's
 latency of the running session (bg3play.live), so the page and the records never disagree on a definition.
 
     python3 runner/dashboard/seriesview.py [--port 8766]     # http://127.0.0.1:8766/series
@@ -17,9 +17,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-sys.path.insert(0, str(HERE.parent))   # runner/: runs.py, model_time.py
+sys.path.insert(0, str(HERE.parent))   # runner/: runs.py
 sys.path.insert(0, str(REPO / "packages" / "bench" / "src"))
-import model_time as MT  # noqa: E402
+sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+sys.path.insert(0, str(REPO / "bridge" / "src"))
 import runs as R  # noqa: E402
 from bg3bench import seriesview as _core  # noqa: E402
 from bg3bench.seriesview import (  # noqa: E402, F401 - re-exports
@@ -35,6 +36,7 @@ from bg3bench.seriesview import (  # noqa: E402, F401 - re-exports
     result_tokens_view,
     spread,
 )
+from bg3harness import model_time as MT  # noqa: E402
 
 _RT_CACHE: dict = {}   # (state dir, started, until) → result_tokens_summary of a record without the field
 
