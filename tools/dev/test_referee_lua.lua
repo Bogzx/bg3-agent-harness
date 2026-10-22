@@ -82,7 +82,7 @@ local function item(tag, n) return string.format("%s_%08x-0000-0000-0000-0000000
 -- Listeners are registered at the live arities, and the quiet op list knows the poll.
 for _, key in ipairs({ "RequestTrade/4", "TradeEnds/2", "GoldChanged/2", "AddedTo/3", "TemplateAddedTo/4",
     "RemovedFrom/2", "RequestPickpocket/2", "CharacterPickpocketFailed/2", "CrimeIsRegistered/8", "KilledBy/4",
-    "Died/1", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2" }) do
+    "AttackedBy/7", "Died/1", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2" }) do
     check("listens " .. key, listeners[key] ~= nil)
 end
 check("ref.since quiet", BG3AI.RPC.QUIET_OPS["ref.since"] == true)
@@ -202,6 +202,32 @@ do
     check("loot container", lastOf("loot").from == "container")
     fire("KilledBy/4", T, NULL, P, 0)
     check("trader kill", lastOf("kill").trader == true)
+    -- live4: a self-kill (a mephit's death burst) goes to the last hit; the engine's names are kept.
+    local MEPHIT, MASTER = "dddddddd-0000-0000-0000-00000000000a", "dddddddd-0000-0000-0000-00000000000b"
+    names[MEPHIT], names[MASTER] = "Young Grease Mephit", "Grease Mephit"
+    fire("AttackedBy/7", "S_M_" .. MEPHIT, P, SH, "Piercing", 8, "Attack", 0)
+    clock = clock + 100
+    fire("KilledBy/4", "S_M_" .. MEPHIT, "S_G_" .. MASTER, "S_M_" .. MEPHIT, 0)
+    local sk = lastOf("kill")
+    check("self-kill to the last hit", sk.killer == "Shadowheart" and sk.owner == "Tav" and sk.by_party
+        and sk.self_kill and sk.engine_killer == "Young Grease Mephit" and sk.engine_owner == "Grease Mephit", sk.killer)
+    check("hit forgotten after the kill", R.lastHit[MEPHIT] == nil)
+    -- an old hit: the engine's names stand, flagged
+    fire("AttackedBy/7", "S_M_" .. MEPHIT, P, HOST, "Piercing", 8, "Attack", 0)
+    clock = clock + R.HIT_MS + 1
+    fire("KilledBy/4", "S_M_" .. MEPHIT, "S_G_" .. MASTER, "S_M_" .. MEPHIT, 0)
+    sk = lastOf("kill")
+    check("stale hit: engine names", sk.killer == "Young Grease Mephit" and sk.owner == "Grease Mephit"
+        and sk.self_kill and not sk.by_party)
+    -- a self-hit is no hit; a normal kill has no self_kill
+    fire("AttackedBy/7", "S_M_" .. MEPHIT, "S_M_" .. MEPHIT, "S_M_" .. MEPHIT, "Fire", 3, "Attack", 0)
+    check("self-hit ignored", R.lastHit[MEPHIT] == nil)
+    fire("KilledBy/4", "S_M_" .. MEPHIT, P, P, 0)
+    check("normal kill unflagged", lastOf("kill").self_kill == nil and lastOf("kill").killer == "Tav")
+    -- Died forgets a hit
+    fire("AttackedBy/7", "S_M_" .. MEPHIT, P, HOST, "Piercing", 8, "Attack", 0)
+    fire("Died/1", "S_M_" .. MEPHIT)
+    check("died forgets the hit", R.lastHit[MEPHIT] == nil)
     -- a pick-up from the ground: item_added only
     local nl = #recs("loot")
     fire("AddedTo/3", item("WPN_Bow", 8), P, "Regular")

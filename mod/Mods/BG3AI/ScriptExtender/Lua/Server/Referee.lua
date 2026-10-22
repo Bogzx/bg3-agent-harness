@@ -27,6 +27,8 @@ R.removed = R.removed or {} -- item uuid -> {holder, t}: the last RemovedFrom, p
 R.traders = R.traders or {} -- npc uuid -> true: every RequestTrade partner this Lua state saw
 R.combats = R.combats or {} -- combat guid -> {announced, members = {uuid -> true}}
 R.ppItems = R.ppItems or {} -- item uuids a CharacterPickpocketSuccess already counted
+R.lastHit = R.lastHit or {} -- defender uuid -> {attacker, owner, t}: the last AttackedBy, for self-kills
+R.HIT_MS = 5000 -- a self-kill goes to the last hit within this time
 
 local truthy = U.truthy
 local osi = V.osi
@@ -228,20 +230,37 @@ listen("CrimeIsRegistered", 8, function(victim, crimeType, crimeId, _, criminal)
         criminal = name(c) })
 end)
 
+-- Hits: AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, _) (live1 §6), kept per defender.
+listen("AttackedBy", 7, function(defender, owner, attacker)
+    local d, a = uuid(defender), uuid(attacker)
+    if not d or not a or a == d then return end
+    R.lastHit[d] = { attacker = a, owner = uuid(owner), t = now_ms() }
+end)
+
 -- Kills: KilledBy(victim, killerOwner, killer, _): the owner tells a summon's kill from its master's.
+-- live4: Karlach's arrow killed a Young Grease Mephit and KilledBy named the mephit itself as the killer (its death
+-- burst; owner its summoner): a self-kill goes to the victim's last attacker within HIT_MS, the engine's names kept
+-- as engine_killer / engine_owner with self_kill = true (no recent hit: the engine's names stand, still flagged).
 listen("KilledBy", 4, function(victim, owner, killer)
     local v, o, k = uuid(victim), uuid(owner), uuid(killer)
     if not v then return end
-    R.record("kill", {
-        victim = name(v) or "Unknown", victim_uuid = v, killer = k and name(k) or nil,
-        owner = o and name(o) or nil, by_party = isParty(o) or isParty(k),
-        trader = (R.traders[v] or truthy(osi(Osi.CanTrade, v))) and true or false,
-    })
+    local rec = {}
+    if k == v then
+        rec.self_kill, rec.engine_killer, rec.engine_owner = true, name(k), o and name(o) or nil
+        local h = R.lastHit[v]
+        if h and now_ms() - h.t <= R.HIT_MS then k, o = h.attacker, h.owner end
+    end
+    R.lastHit[v] = nil
+    rec.victim, rec.victim_uuid, rec.killer = name(v) or "Unknown", v, k and name(k) or nil
+    rec.owner, rec.by_party = o and name(o) or nil, isParty(o) or isParty(k)
+    rec.trader = (R.traders[v] or truthy(osi(Osi.CanTrade, v))) and true or false
+    R.record("kill", rec)
 end)
 
 listen("Died", 1, function(char)
     local u = uuid(char)
     if not u then return end
+    R.lastHit[u] = nil
     R.record("died", { name = name(u) or "Unknown", party = isParty(u), uuid = u })
 end)
 
