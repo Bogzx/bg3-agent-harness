@@ -80,6 +80,10 @@ class ClientAgent:
         self.client, self.model, self.effort, self.cwd, self.clock = client, model, effort, cwd, clock
         self.fault, self.spawn, self.watch_s = fault, spawn, watch_s
 
+    @property
+    def client_name(self) -> str:
+        return self.client.name
+
     def run(self, call: AgentCall, done: threading.Event | None = None) -> AgentRun:
         """Plays one process to its end. `done` (tests) is the watchdog's wake-up; set when the stream ends."""
         req = clients.Request(

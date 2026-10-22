@@ -27,15 +27,8 @@ from . import config
 from .jsontypes import is_list, is_obj
 
 HISTORY_VERSION = 1
-STUCK_SESSIONS = 2  # runner/play.py STUCK_SESSIONS
 MAX_CRASHES = 3  # crashed sessions in a row before the loop gives up
 OOM_STREAK = 2  # game deaths in a row by running out of memory before the loop gives up (no 3rd relaunch)
-# Coaching text (the app's, not the harness's: app.md §5.7); moves to kit/prompts.py with A1.
-STUCK_NUDGE = (
-    "CHANGE APPROACH: the last {n} sessions ended with no measurable progress. What you've been doing "
-    "isn't working. Run the stuck playbook, write three genuinely different approaches in hypotheses.md "
-    "and pick one you haven't tried; consider parking the blocked objective for another quest or region."
-)
 CRASH_NOTE = "The last session ended early ({why}). Load the save from HANDOFF.md and continue from there."
 
 
@@ -87,10 +80,12 @@ class SupervisorError(RuntimeError):
 # ------------------------------------------------------------ pure policy
 
 
-def is_stuck(history: list[dict[str, Any]], n: int = STUCK_SESSIONS) -> bool:
-    """The last n sessions each ended with progress False (runner/play.py is_stuck)."""
-    recent = history[-n:]
-    return len(recent) == n and all(h.get("progress") is False for h in recent)
+def is_stuck(history: list[dict[str, Any]]) -> bool:
+    """The runner's stuck rule (bg3harness.runner.policy.is_stuck): the last STUCK_SESSIONS sessions each ended
+    with progress False. Imported here: the runner's policy needs the bridge's modules on sys.path."""
+    from bg3harness.runner import policy
+
+    return policy.is_stuck(history)  # pyright: ignore[reportUnknownMemberType]
 
 
 def notes_for(history: list[dict[str, Any]]) -> tuple[str, ...]:
@@ -98,7 +93,9 @@ def notes_for(history: list[dict[str, Any]]) -> tuple[str, ...]:
     if history and history[-1].get("outcome") in ("crash", "error"):
         out.append(CRASH_NOTE.format(why=history[-1].get("detail") or history[-1]["outcome"]))
     if is_stuck(history):
-        out.append(STUCK_NUDGE.format(n=STUCK_SESSIONS))
+        from .runner import prompts
+
+        out.append(prompts.stuck_directive(history))
     return tuple(out)
 
 

@@ -32,9 +32,9 @@
 Secrets never go here (keys come from the machine's .env). Parsing, validation and writing are pure functions over
 text and dicts; load/save/migrate are the only file I/O. Unknown keys are errors, so a typo is not silently ignored.
 
-Migration: profile.json (runner/play.py load_profile) maps onto `difficulty` and `[character]`; `to_profile` gives
-back exactly what load_profile returns for it. `parse_profile_json` is the single source of that parse;
-runner/play.py load_profile still has its own copy until the harness owner points it here.
+Migration: profile.json (bg3harness.runner.profile, the runner's load_profile) maps onto `difficulty` and
+`[character]`; `to_profile` gives back exactly what load_profile returns for it. `parse_profile_json` is that parse
+(bg3harness.runner.profile.parse_profile) on the file's text.
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
+from bg3harness.runner.profile import DIFFICULTIES, ROLEPLAY_MODES, parse_profile
+
 from .jsontypes import is_obj
 
 VERSION = 1
@@ -56,8 +58,6 @@ PROFILE_FILENAME = "profile.json"
 
 CLIENTS = ("claude", "codex", "gemini", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # runner/play.py EFFORTS
-ROLEPLAY_MODES = ("strict", "light")  # runner/play.py ROLEPLAY_MODES
-DIFFICULTIES = ("Explorer", "Balanced", "Tactician")  # runner/play.py DIFFICULTIES (new_game's)
 # docs/BENCHMARK-BIAS.md: a playthrough plays with the coaching (orchestrator decision 2026-10-22 03:40), a benchmark
 # run with the rules only
 CONDITIONS = ("rules", "rules+coaching")
@@ -241,24 +241,14 @@ def to_dict(cfg: PlaythroughConfig) -> dict[str, Any]:
 
 
 def parse_profile_json(text: str) -> dict[str, Any]:
-    """runner/play.py load_profile on the file's text (play.py still has a copy: harness-owned):
+    """profile.json's text -> the runner's profile (bg3harness.runner.profile.parse_profile):
     {"character": {"brief", "name"?, "constraints"?, "roleplay"}, "difficulty"?}.
     Broken JSON, or a character without a brief, means no character."""
     try:
-        raw = json.loads(text)
+        raw: object = json.loads(text)
     except ValueError:
         return {}
-    if not is_obj(raw):
-        return {}
-    out = dict(raw)
-    c = raw.get("character")
-    if is_obj(c) and isinstance(c.get("brief"), str) and c["brief"].strip():
-        out["character"] = dict(c, roleplay=c.get("roleplay") if c.get("roleplay") in ROLEPLAY_MODES else "strict")
-    else:
-        out.pop("character", None)
-    if out.get("difficulty") not in DIFFICULTIES:
-        out.pop("difficulty", None)
-    return out
+    return parse_profile(raw)
 
 
 def from_profile(profile: dict[str, Any], name: str) -> PlaythroughConfig:

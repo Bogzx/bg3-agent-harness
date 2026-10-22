@@ -10,15 +10,17 @@ One play session:
     end_sig = game.progress()          progress = the save signature changed (runner/play.py made_progress)
     runner.json + runner.status.json   the files the store reads, as play.py writes them
 
-The kickoff carries the request's notes (the Supervisor's stuck nudge and crash note). A soft stop (the Supervisor's
+The kickoff is the runner's (bg3play.runner.prompts.build_kickoff: the memory briefing, the playbooks, WRAP UP, the
+pace pre-flight of a coaching condition, the save the game recovered to) with the request's notes (the Supervisor's
+stuck directive and crash note, the character). A soft stop (the Supervisor's
 stop event) lets the session play out and resumes nothing after a fault. The prompt condition (config [agent]
 condition, default rules+coaching for a playthrough) goes to the agent and the bg3 server as BG3AI_PROMPT_CONDITION.
 What runs between sessions (the memory keeper) is the Supervisor's Keeper: keeper_client gives it every client.
 
 A session never ends mid-fight (S078): the bg3 MCP server holds the session's clock while a fight that was on at WRAP
 UP lasts and writes the moved times to $BG3AI_FIGHT_HOLD_PATH (Sxxx.hold.json, also read by session.py's stop
-check); the session's end and hard stop move with it, at most FIGHT_HOLD_S past the planned end (play.py
-held_deadline).
+check); the session's end and hard stop move with it, at most FIGHT_HOLD_S past the planned end
+(bg3harness.session.held_deadline).
 
 The game: AttachedGame reads a running game over the bridge and can't relaunch it, so a game fault ends the session.
 adapters/launched_game.py LaunchedGame relaunches it and loads the playthrough's newest save (also when it is down at
@@ -39,22 +41,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from bg3harness.session import RecoverFailure, Recovery, SessionOutcome, SessionSpec, run_session
+from bg3harness import client_setup
+from bg3harness.session import (
+    RecoverFailure,
+    Recovery,
+    SessionOutcome,
+    SessionSpec,
+    fight_hold_path,
+    held_deadline,
+    run_session,
+)
 
 from .. import config
 from ..jsontypes import is_obj
 from ..memory import memlib
 from ..supervisor import OOM_STREAK, SessionRequest, SessionResult, SupervisorError
+from . import legacy_paths
 from .agent_process import AgentCall, AgentRun, ClientAgent
 
-WRAPUP_MINUTES = 3.0  # runner/play.py WRAPUP_MINUTES
-POS_KEYS = ("pos", "pos_name", "party_pos")  # runner/play.py POS_KEYS: a step is not progress
-FIGHT_HOLD_S = 15 * 60  # runner/play.py FIGHT_HOLD_S (the bg3 MCP server's own bound)
+legacy_paths.ensure()  # bg3harness.runner (the runner's policy, under bg3play.runner) reads the bridge's modules
+from bg3harness.runner import policy  # noqa: E402
+
+from ..runner import memory_session, prompts  # noqa: E402
 
 
 class Agent(Protocol):
     model: str  # what plays (a client profile's model, else the config's)
     effort: str | None
+
+    @property
+    def client_name(self) -> str: ...  # the client CLI (the kickoff's pace pre-flight names its tools)
 
     def run(self, call: AgentCall) -> AgentRun: ...
 
@@ -76,15 +92,11 @@ class Memory(Protocol):
 # ------------------------------------------------------------ pure
 
 
-def wrap_minutes(minutes: float) -> float:
-    """Minutes into the session when WRAP UP starts (runner/play.py wrap_minutes)."""
-    return minutes - min(WRAPUP_MINUTES, minutes / 3)
-
-
 def session_env(
     req: SessionRequest, sid: str, start: float, runtime: Path, playthroughs: Path, keeper: bool
 ) -> dict[str, str]:
-    """The session's clock and paths, for the agent, the bg3 server and session.py (runner/play.py session_env)."""
+    """The session's clock (bg3play.runner.memory_session.clock_env, the runner's) and paths, for the agent, the bg3
+    server and session.py."""
     m = req.config.session.minutes
     return {
         "BG3AI_PLAYTHROUGH": req.playthrough,
@@ -92,55 +104,24 @@ def session_env(
         "BG3AI_RUNTIME": str(runtime),
         "BG3AI_PLAYTHROUGHS": str(playthroughs),
         "BG3_MEMORY_DIR": str(playthroughs / req.playthrough / "memory"),
-        "BG3AI_SESSION_DEADLINE": str(int(start + m * 60)),
-        "BG3AI_SESSION_WRAPUP": str(int(start + wrap_minutes(m) * 60)),
-        "BG3_SESSION_MINUTES": f"{m:g}",
-        "BG3_WRAP_MINUTES": f"{wrap_minutes(m):g}",
-        "BG3AI_KEEPER": "1" if keeper else "0",
+        **memory_session.clock_env(start + m * 60, m, keeper),
         "BG3AI_PROMPT_CONDITION": req.config.agent.condition,
     }
 
 
-def kickoff(req: SessionRequest, sid: str, briefing: str) -> str:
+def kickoff(req: SessionRequest, sid: str, briefing: str, loaded: str | None = None, client: str = "claude") -> str:
+    """The runner's kickoff (prompts.build_kickoff) for an app session: the request's notes and the character, the
+    save the game was recovered to, the pace pre-flight when the condition has coaching."""
     cfg = req.config
-    lines = [briefing.strip()] if briefing.strip() else []
-    lines.append(
-        f"Session {sid} of playthrough {req.playthrough}: play for {cfg.session.minutes:g} minutes. The game is "
-        "running; continue from where it is (HANDOFF.md says what you were doing)."
-    )
+    notes = list(req.notes)
     if cfg.character.brief:
-        lines.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
-    if req.notes:
-        lines.append("Notes from the supervisor:\n" + "\n".join(f"- {n}" for n in req.notes))
-    return "\n\n".join(lines)
-
-
-def fight_hold_path(sdir: Path, sid: str) -> Path:
-    return sdir / f"{sid}.hold.json"
-
-
-def held_deadline(path: Path, deadline: float) -> float:
-    """The session end with the MCP server's fight hold applied (bounded), or `deadline` (play.py held_deadline)."""
-    try:
-        held = float(json.loads(path.read_text(encoding="utf-8")).get("deadline") or 0)
-    except (OSError, ValueError, AttributeError, TypeError):
-        return deadline
-    return max(deadline, min(held, deadline + FIGHT_HOLD_S))
+        notes.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
+    pace = client_setup.kickoff_pace(client, {"BG3AI_PROMPT_CONDITION": cfg.agent.condition})
+    return prompts.build_kickoff(sid, req.playthrough, loaded, notes, briefing.strip(), pace=pace)
 
 
 class OomStreakError(RuntimeError):
     """The game ran out of memory OOM_STREAK times in a row: not relaunched (the Supervisor ends the run)."""
-
-
-def made_progress(start: dict[str, Any] | None, end: dict[str, Any] | None) -> bool | None:
-    """runner/play.py made_progress: None when a signature is missing; the position left out."""
-    if start is None or end is None:
-        return None
-
-    def strip(d: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in d.items() if k not in POS_KEYS}
-
-    return strip(start) != strip(end)
 
 
 def outcome_of(out: SessionOutcome, stopped: bool) -> str:
@@ -299,12 +280,15 @@ class HarnessRunner:
         start_sig = self.game.progress()
         write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
                      started=start, log=str(sdir / f"{sid}.log"), session_ended=None, updated=start)  # fmt: skip
-        spec = SessionSpec(sid, kickoff(req, sid, briefing), cfg.session.minutes, str(uuid.uuid4()), self.recovery)
+        prompt = kickoff(req, sid, briefing, hooks.save, agent.client_name)
+        spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         try:
             out = run_session(spec, hooks)
         finally:
             memory.end(env)
-        progress = None if out.result.reason in ("crash", "hang") else made_progress(start_sig, self.game.progress())
+        progress = (
+            None if out.result.reason in ("crash", "hang") else policy.made_progress(start_sig, self.game.progress())  # pyright: ignore[reportUnknownMemberType]
+        )
         ended = out.result.ended
         cost = sum(r.cost_usd for r in hooks.runs if r.cost_usd is not None) if hooks.runs else None
         entry = {
@@ -412,18 +396,15 @@ class SessionPy:
 
     def start(self, env: dict[str, str]) -> tuple[str | None, str]:
         r = self._run("start", env)
-        st = memlib.load_state(self.mem)
-        if r.returncode != 0 or not st.get("open") or not st.get("current"):
-            return None, ""
-        return memlib.session_id(st["current"]), r.stdout.strip()
+        sid = memory_session.opened_sid(r.returncode, memlib.load_state(self.mem))
+        return (sid, r.stdout.strip()) if sid else (None, "")
 
     def stop_check(self, env: dict[str, str]) -> str | None:
         r = self._run("stop", env)
         try:
-            out: object = json.loads(r.stdout) if r.stdout.strip() else {}
+            return memory_session.stop_reason(r.stdout)[0]
         except ValueError:
             return None
-        return out.get("reason") if is_obj(out) and out.get("decision") == "block" else None
 
     def end(self, env: dict[str, str]) -> None:
         self._run("session-end", env)

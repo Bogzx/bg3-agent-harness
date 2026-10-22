@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from bg3harness import client_setup
 from bg3harness.session import Recovery
 from bg3play import config
 from bg3play.adapters import harness_runner as hr
 from bg3play.adapters.agent_process import AgentCall, AgentRun
 from bg3play.config import PlaythroughConfig
 from bg3play.memory.new_playthrough import create_memory
+from bg3play.runner import prompts
 from bg3play.supervisor import CRASH_NOTE, SessionRequest, SessionResult, Supervisor, SupervisorError
 
 PT = "ilse"
@@ -32,6 +34,7 @@ class FakeAgent:
 
     model: str = "opus"
     effort: str | None = None
+    client_name: str = "claude"
 
     def __init__(self, clock: Clock, script: list[tuple[str, float]], during: Callable[[int], None] | None = None):
         self.clock, self.script, self.during = clock, list(script), during
@@ -146,11 +149,13 @@ def test_two_sessions_with_the_keeper_between_and_the_files_the_store_reads(tmp_
         ("S002", "ok", True, 0.5),
     ]
     first = agent.calls[0]
-    assert first.prompt.startswith("BRIEFING 1\n\nSession S001 of playthrough ilse: play for 30 minutes")
+    # the runner's kickoff (bg3play.runner.prompts): the memory briefing first, no deadline, coaching's pace
+    assert first.prompt.startswith("BRIEFING 1\n\nThis is session S001 of the BG3 playthrough 'ilse'")
+    assert "WRAP UP NOW" in first.prompt and "PACE PRE-FLIGHT" in first.prompt and "30 min" not in first.prompt
     assert not first.resume and first.cap_s == 30 * 60 + Recovery().hard_stop_grace_s and first.max_cost_usd == 0
     # the condition and the clock reach the agent and the bg3 server; the memory's sid names the session
     assert first.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching" and first.env["BG3AI_SESSION"] == "S001"
-    assert first.env["BG3AI_SESSION_DEADLINE"] == str(1000 + 30 * 60) and first.env["BG3_WRAP_MINUTES"] == "27"
+    assert first.env["BG3AI_SESSION_DEADLINE"] == str(1000 + 30 * 60) and first.env["BG3_WRAP_MINUTES"] == "27.0"
     assert [k for k, _ in memory.log] == ["start", "stop", "end", "start", "stop", "end"]
     rj = json.loads((runtime / "sessions" / PT / "runner.json").read_text())["history"]
     assert [(h["kind"], h["session"], h["reason"], h["progress"], h["condition"]) for h in rj] == [
@@ -260,17 +265,6 @@ def test_a_fight_hold_moves_the_session_end_and_the_stop_resume_gets_the_held_ti
     assert b.resume and b.cap_s == 10 * 60 + Recovery().hard_stop_grace_s  # the held 10 min, not 0
 
 
-def test_the_fight_hold_is_bounded(tmp_path: Path):
-    path = tmp_path / "S001.hold.json"
-    assert hr.held_deadline(path, 5000.0) == 5000.0  # no hold
-    path.write_text(json.dumps({"deadline": 5000 + 3600}))
-    assert hr.held_deadline(path, 5000.0) == 5000 + hr.FIGHT_HOLD_S
-    path.write_text(json.dumps({"deadline": 4000}))
-    assert hr.held_deadline(path, 5000.0) == 5000.0  # never earlier
-    path.write_text("{")
-    assert hr.held_deadline(path, 5000.0) == 5000.0
-
-
 def test_two_oom_deaths_in_a_session_end_the_run_without_a_second_relaunch(tmp_path: Path):
     sup, agent, game, *_ = make(tmp_path, [("crash", 5), ("crash", 5)], hours=5.0, recover_to="S001-end",
                                 ooms=["oom A", "oom B"])  # fmt: skip
@@ -306,14 +300,17 @@ def test_a_game_down_at_the_session_start_is_recovered_first(tmp_path: Path):
     assert h["outcome"] == "ok" and h["game_deaths"] == [""]
 
 
-def test_kickoff_and_progress_are_pure():
+def test_the_kickoff_is_the_runners():
     cfg = config.validate({"v": 1, "name": PT, "character": {"brief": "a dwarf cleric", "roleplay": "light"}})
-    text = hr.kickoff(SessionRequest(PT, 3, cfg, True, notes=("Load S002-end.",)), "S003", "")
-    assert text.splitlines()[0].startswith("Session S003 of playthrough ilse")
-    assert "Your character: a dwarf cleric (roleplay: light)." in text and text.endswith("- Load S002-end.")
-    assert hr.made_progress(None, {"level": "TUT"}) is None
-    assert hr.made_progress({"level": "TUT", "pos": [0, 0, 0]}, {"level": "TUT", "pos": [50, 0, 0]}) is False
-    assert hr.made_progress({"xp": 10}, {"xp": 20}) is True
+    req = SessionRequest(PT, 3, cfg, True, notes=("Load S002-end.",))
+    text = hr.kickoff(req, "S003", "", "S002-end")
+    assert text == prompts.build_kickoff(
+        "S003", PT, "S002-end", ["Load S002-end.", "Your character: a dwarf cleric (roleplay: light)."],
+        pace=client_setup.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"}),
+    )  # fmt: skip
+    assert "First call session_start" in text and 'already loaded save "S002-end"' in text
+    rules = config.validate({"v": 1, "name": PT, "agent": {"condition": "rules"}})
+    assert "PACE PRE-FLIGHT" not in hr.kickoff(SessionRequest(PT, 1, rules, False), "S001", "BRIEFING")
 
 
 def test_the_keeper_runs_for_every_client(tmp_path: Path):

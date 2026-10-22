@@ -36,6 +36,7 @@ from bg3harness.runner import game_side as rgame
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 import legacy_playthrough as lpt
+from bg3play.runner import prompts as pprompts
 import legacy_series as lser
 import runs as R  # noqa: E402
 
@@ -143,7 +144,7 @@ class StartNote(TmpDir):
         self.assertIn("0 error(s)", out.stdout)
 
     def test_the_kickoff_note(self):
-        note = rpolicy.scenario_start_note("beach", save_scenario()["profile"], "SCN-beach")
+        note = pprompts.scenario_start_note("beach", save_scenario()["profile"], "SCN-beach")
         self.assertIn("SCENARIO START (beach)", note)
         self.assertIn('loaded "SCN-beach"', note)
         self.assertIn("The character (Claude) is the save's", note)

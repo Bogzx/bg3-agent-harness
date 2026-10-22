@@ -29,6 +29,7 @@ from bg3harness.runner import game_side as rgame
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 import legacy_playthrough as lpt
+from bg3play.runner import prompts as pprompts
 from bg3harness.game import io as G
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
@@ -195,7 +196,7 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertIn("S075's choice", r.loaded_why("S075-end"))
         self.assertEqual(r.loaded_why("S075-fight"), "")   # a fallback loaded another save: no reason
         self.assertEqual(r.loaded_why(None), "")
-        k = rpolicy.build_kickoff("S076", "pt", "S075-end", [], save_why=r.loaded_why("S075-end"))
+        k = pprompts.build_kickoff("S076", "pt", "S075-end", [], save_why=r.loaded_why("S075-end"))
         self.assertIn('already loaded save "S075-end" (HANDOFF\'s "Save to load" (S075\'s choice), not the newer '
                       '"S075-fight" from the same session). Don\'t reload it', k)
 

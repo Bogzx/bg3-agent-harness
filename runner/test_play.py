@@ -30,6 +30,7 @@ from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 import legacy_cli as lcli
 import legacy_playthrough as lpt
+from bg3play.runner import prompts as pprompts
 import legacy_series as lser
 from bg3harness.game import io as G  # noqa: E402  (the game's I/O, moved out of play.py)
 
@@ -101,7 +102,7 @@ class DeadlineMath(unittest.TestCase):
         self.assertIsNone(rpolicy.session_budget(now, now - 5, 60))
 
     def test_kickoff_has_pace_preflight(self):
-        k = rpolicy.build_kickoff("S004", "pt1", None, [])
+        k = pprompts.build_kickoff("S004", "pt1", None, [])
         self.assertIn("PACE PRE-FLIGHT", k)
         self.assertIn("Never pass wait=true", k)
         self.assertIn("stuck.md", k)
@@ -109,23 +110,23 @@ class DeadlineMath(unittest.TestCase):
 
     def test_kickoff_names_no_deadline_and_has_the_notes(self):
         # S082: any time shown before WRAP UP NOW was read as a clock to beat (early wrap-up 6 sessions in a row)
-        k = rpolicy.build_kickoff("S004", "pt1", "S003-end", ["NOTE A", "NOTE B"])
+        k = pprompts.build_kickoff("S004", "pt1", "S003-end", ["NOTE A", "NOTE B"])
         self.assertIn("S004", k)
         self.assertNotRegex(k.split("PACE PRE-FLIGHT")[0], r"\d\d:\d\d|deadline|time left")
         self.assertIn("you'll be told when to wrap up", k)
         self.assertIn('"S003-end"', k)
         self.assertTrue(k.index("NOTE A") < k.index("NOTE B"))
-        self.assertNotIn("already loaded", rpolicy.build_kickoff("S001", "pt1", None, []))
+        self.assertNotIn("already loaded", pprompts.build_kickoff("S001", "pt1", None, []))
 
     def test_kickoff_leads_with_the_memory_briefing(self):
-        k = rpolicy.build_kickoff("S004", "pt1", None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
+        k = pprompts.build_kickoff("S004", "pt1", None, [], "=== BG3 PLAYTHROUGH MEMORY — session S004 ===\n...")
         self.assertTrue(k.startswith("=== BG3 PLAYTHROUGH MEMORY — session S004"))
         self.assertIn("briefing (PLAYTHROUGH.md and HANDOFF.md) is above", k)
         self.assertIn("end_session", k)
-        self.assertIn("First call session_start", rpolicy.build_kickoff("S004", "pt1", None, []))
+        self.assertIn("First call session_start", pprompts.build_kickoff("S004", "pt1", None, []))
 
     def test_a_rules_only_kickoff_has_no_pace_preflight(self):
-        self.assertNotIn("PACE PRE-FLIGHT", rpolicy.build_kickoff("S004", "pt1", None, [], pace=""))
+        self.assertNotIn("PACE PRE-FLIGHT", pprompts.build_kickoff("S004", "pt1", None, [], pace=""))
 
 
 class StuckDetection(unittest.TestCase):
@@ -191,7 +192,7 @@ class StuckDetection(unittest.TestCase):
 
     def test_directive_mentions_location(self):
         sig = G.progress_signature(self.status, self.journal)
-        d = rpolicy.stuck_directive([{"progress": False, "end_sig": sig}] * 2)
+        d = pprompts.stuck_directive([{"progress": False, "end_sig": sig}] * 2)
         self.assertIn("CHANGE APPROACH", d)
         self.assertIn("Last Light Inn", d)
         self.assertNotIn(sig["level"], d)  # audit C24: the level id stays internal

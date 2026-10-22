@@ -30,6 +30,7 @@ from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 import legacy_playthrough as lpt
+from bg3play.runner import session_side
 from bg3harness.game import io as G
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
@@ -234,7 +235,7 @@ class ModSnapshot(unittest.TestCase):
                 self.assertIsNone(rcode.game_mod_path(proc))
 
     def test_wired_at_the_boundary(self):
-        src = Path(lpt.__file__).read_text()
+        src = Path(session_side.__file__).read_text()
         body = src[src.index("    def play_session("):]
         self.assertLess(body.index("self.refresh_mod_snapshot()"), body.index("self.maybe_relaunch("))
         self.assertLess(body.index("self.refresh_mod_snapshot()"), body.index("self.hot_reload_mod()"))
@@ -381,7 +382,7 @@ class CheckAllBetweenSessions(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_wired_after_reload_before_kickoff(self):
-        src = Path(lpt.__file__).read_text()
+        src = Path(session_side.__file__).read_text()
         body = src[src.index("    def play_session("):]
         self.assertLess(body.index("self.hot_reload_mod()"), body.index("self.between_sessions_check()"))
         self.assertLess(body.index("self.between_sessions_check()"), body.index("build_kickoff("))
