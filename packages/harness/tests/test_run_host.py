@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -296,6 +297,34 @@ def test_the_scenario_autoskip_reaches_the_runner_env(rig: Rig):
     off = {**SAVE_SC, "game_settings": {**SAVE_SC["game_settings"], "autoskip": False}}
     rig.h.start(JOB, off, run_dir("m-grove2"))
     assert rig.env["BG3AI_AUTOSKIP"] == "0"
+
+
+@pytest.mark.integration
+def test_a_bench_runs_served_text_and_tools_have_no_memory(rig: Rig, monkeypatch: pytest.MonkeyPatch):
+    # the real dump (tools/pi/dump_server.py in the bridge's env) of what a pi bench run is served under "rules"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")  # resolve wants the profile's key; nothing is sent
+    for k in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF", "BG3AI_MEMORY_DIR", "BG3AI_PROMPT_CONDITION"):
+        monkeypatch.setenv(k, "")  # recorded, so the host's writes to os.environ are undone after the test
+    host = H.LiveRunHost(lambda opt: FakeRunner(opt, []), env=os.environ, clock=lambda: 1000.0)
+    job = {
+        **JOB,
+        "client": "pi",
+        "model": "deepseek-flash",
+        "profile": str(renv.REPO / "profiles" / "deepseek-flash.toml"),
+    }
+    host.start({**job, "tools_off": ["wiki_search", "wiki_page", "load_game"]}, SAVE_SC, run_dir("m-pi"))
+    d = run_dir("m-pi")
+    registry = {t["name"] for t in json.loads((d / "bg3-tools.json").read_text())}
+    gone = {"memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append"}
+    gone |= {"note", "session_start", "end_session", "recall", "wiki_search", "wiki_page", "load_game"}
+    assert gone <= registry  # the dump lists the whole registry; the run is served the rest
+    (r,) = host.runs.values()
+    assert r[0].opt.tools_expected == len(registry - gone)
+    assert r[0].opt.manifest is not None and r[0].opt.manifest["prompt"]["sha256"]  # rules: no capability needed
+    for name in ("pi-system.txt", "bg3-instructions.txt"):
+        text = (d / name).read_text()
+        for word in ("memory_read", "session_start", "memory/", "PLAYTHROUGH MEMORY", "HANDOFF", "wiki_search"):
+            assert word not in text, (name, word)
 
 
 def test_a_coaching_condition_gets_the_pace_preflight(rig: Rig):
