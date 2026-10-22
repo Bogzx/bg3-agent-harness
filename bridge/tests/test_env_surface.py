@@ -54,6 +54,7 @@ KNOWN = frozenset(
         "BG3AI_SAVE_PREFIX",
         "BG3AI_SAVES_AFTER",
         "BG3AI_SAVES_EXCLUDE",
+        "BG3AI_SCENARIO_DIFFICULTY",  # a new-game bench run's difficulty (run_host sets and records it)
         "BG3AI_SERVE_RULES",
         "BG3AI_SESSION",
         "BG3AI_SESSION_DEADLINE",
