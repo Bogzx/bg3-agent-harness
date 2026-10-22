@@ -1,7 +1,7 @@
 """The screen recorder: one ffmpeg process that records the game into rolling MP4 segments and tees a low-rate MJPEG
 stream for the live view.
 
-    ffmpeg -f x11grab [-window_id <id>] -i :1  ->  scale 1280x720, h264_nvenc, 15 fps
+    ffmpeg -f x11grab [-window_id <id>] -i :1  ->  scale 1280x720, h264_nvenc, 15 fps (playthrough.toml [recording])
         -> <out>/rec-<t0>-0000.mp4, -0001.mp4 ...  (fragmented MP4: a crash keeps what was written)
         -> <out>/rec-<t0>.csv                       (ffmpeg's segment list: file, start s, end s)
         -> stdout: multipart JPEG at 3 fps          (MjpegParser -> LiveFrame -> /api/v1/screen.mjpg)
@@ -9,9 +9,10 @@ stream for the live view.
     so replay maps an event time to (segment, offset). start = the run's spawn time + ffmpeg's segment start.
 
 `Recorder.poll()` (one thread calls it every second; tests call it with a fake clock) starts ffmpeg while the game
-runs, the recording is enabled and the guard is quiet; stops it when the game exits, the guard trips (RAM/heat) or
-it is disabled; restarts a crashed ffmpeg with backoff; keeps the index; deletes the oldest finished segments above
-the disk cap. ffmpeg needs DISPLAY/XAUTHORITY like the game (memory: runner display env).
+runs, the recording is enabled and the guard is quiet; stops it when the game exits, the guard trips (RAM/heat), it
+is disabled or its format changed (`Recorder.configure`: a playthrough's [recording] enabled, fps and height);
+restarts a crashed ffmpeg with backoff; keeps the index; deletes the oldest finished segments above the disk cap.
+ffmpeg needs DISPLAY/XAUTHORITY like the game (memory: runner display env).
 
 Live probe 2026-10-21 (research/ovh/live1.md 7): `-window_id` on the BG3 window ("Baldur's Gate 3 (1920x1080) -
 (Vulkan) ...") gives real frames under rootless Xwayland; the root window is black, so "window" is the default mode.
@@ -28,7 +29,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import IO, Any, Protocol
 
@@ -69,6 +70,11 @@ ENCODER_ARGS: dict[str, tuple[str, ...]] = {
     "h264_nvenc": ("-preset", "p4", "-rc", "vbr", "-cq", "28", "-b:v", "0"),
     "libx264": ("-preset", "ultrafast", "-crf", "28"),
 }
+
+
+def sized(spec: RecordSpec, fps: int, height: int) -> RecordSpec:
+    """The spec at a playthrough's [recording] fps and height, 16:9 (an even width, as h264 needs)."""
+    return replace(spec, fps=fps, height=height, width=2 * round(height * 8 / 9))
 
 
 def run_prefix(t0: float) -> str:
@@ -421,6 +427,7 @@ class Run:
     t0: float
     capture: Capture
     proc: Proc
+    spec: RecordSpec
     ended_at: float | None = None
     pump: threading.Thread | None = None
 
@@ -477,6 +484,8 @@ class Recorder:
                 if why
                 else "capture changed"
                 if target != run.capture
+                else "format changed"
+                if run.spec != self.spec
                 else None
             )
             if stop_why:
@@ -499,13 +508,19 @@ class Recorder:
         prefix = run_prefix(now)
         args = ffmpeg_args(self.spec, capture, prefix, self.ffmpeg)
         proc = self.spawn(args, self.out / "ffmpeg.log")
-        self.run = Run(prefix, now, capture, proc)
+        self.run = Run(prefix, now, capture, proc, self.spec)
         if self.spec.live and proc.stdout is not None:
             self.run.pump = threading.Thread(
                 target=pump_mjpeg, args=(proc.stdout, self.live), daemon=True, name="mjpeg"
             )
             self.run.pump.start()
         self.reason = "recording"
+
+    def configure(self, enabled: bool, fps: int, height: int) -> None:
+        """A playthrough's [recording]: on or off, and its format. A capture in another format restarts in the new one
+        at the next poll (ffmpeg closes its open segment first)."""
+        self.enabled = enabled
+        self.spec = sized(self.spec, fps, height)
 
     def stop(self, reason: str = "stopped") -> None:
         """Stops ffmpeg (SIGTERM: it closes the open segment and its list row; SIGKILL after 10 s)."""

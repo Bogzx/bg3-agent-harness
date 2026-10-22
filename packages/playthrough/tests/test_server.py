@@ -439,3 +439,47 @@ def test_the_session_runner_is_the_harness_unless_legacy_is_asked_for(tmp_path):
     assert isinstance(runner, HarnessRunner) and keeper_client.__self__.profiles == tmp_path / "profiles"
     runner, keeper_client = session_runner(parser().parse_args([*base, "--session-runner", "legacy"]))
     assert isinstance(runner, LegacyCli) and keeper_client == runner.keeper_client
+
+
+def test_a_start_applies_the_playthroughs_recording_format(store: RunStore, web: Path):
+    # playthrough.toml [recording] fps/height reach the recorder (they were validated but never used)
+    from bg3play import config
+    from bg3play.recorder import Recorder, RecordSpec
+
+    (store.playthroughs_dir / "rec").mkdir()
+    config.save(
+        store.playthroughs_dir / "rec",
+        config.validate({"v": 1, "name": "rec", "recording": {"fps": 30, "height": 1080}}),
+    )
+    started = []
+
+    class Sup:
+        pt = None
+
+        def start(self, pt, resume=False, cfg=None):
+            started.append((pt, resume))
+
+        def view(self):
+            return {}
+
+    recorder = Recorder(RecordSpec(store.runtime / "video"), probe=lambda: None, clock=lambda: 1.0)
+    app = App(store, Hub(store, generation="g"), web, recorder=recorder, supervisor=Sup())  # type: ignore[arg-type]
+    assert app.control("rec", "start", {"recording": False})[0] == 200 and started == [("rec", False)]
+    spec = recorder.spec
+    assert (spec.fps, spec.width, spec.height, recorder.enabled) == (30, 1920, 1080, False)
+
+
+def test_the_recorders_first_spec_is_the_followed_playthroughs(store: RunStore):
+    from bg3play import config
+    from bg3play.server import record_spec
+
+    pts = store.playthroughs_dir
+    (pts / "rec").mkdir()
+    config.save(pts / "rec", config.validate({"v": 1, "name": "rec", "recording": {"fps": 10, "height": 480}}))
+    spec = record_spec(store.runtime / "video", "libx264", pts, "rec")
+    assert (spec.fps, spec.width, spec.height, spec.encoder) == (10, 854, 480, "libx264")
+    default = record_spec(store.runtime / "video", "libx264", pts, None)
+    assert (default.fps, default.width, default.height) == (15, 1280, 720)
+    (pts / "broken").mkdir()
+    (pts / "broken" / "playthrough.toml").write_text("v = [")
+    assert record_spec(store.runtime / "video", "libx264", pts, "broken").height == 720

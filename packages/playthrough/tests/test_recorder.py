@@ -355,3 +355,29 @@ def test_real_ffmpeg_writes_a_playable_mp4(tmp_path: Path):
         check=False,
     )
     assert dec.returncode == 0 and dec.stderr == ""
+
+
+def test_sized_is_16_9_with_an_even_width():
+    spec = RecordSpec(Path("v"))
+    assert [(s.width, s.height, s.fps) for s in (recorder.sized(spec, 30, h) for h in (720, 1080, 480, 144))] == [
+        (1280, 720, 30),
+        (1920, 1080, 30),
+        (854, 480, 30),
+        (256, 144, 30),
+    ]
+
+
+def test_recorder_restarts_in_a_new_format(tmp_path: Path, fake_env):
+    # a start or resume of a playthrough with another [recording] fps/height: the running capture restarts in it
+    clock, game = Clock(1000.0), {"cap": Capture(":1", "0x5")}
+    rec = make(tmp_path, clock, game)
+    rec.poll()
+    rec.live.get(after=0, timeout=10)
+    first = rec.run
+    assert first is not None and "fps=15,scale=1280:720" in " ".join(first.proc.args)
+    rec.configure(True, 30, 1080)
+    clock.t = 1100.0
+    rec.poll()
+    assert rec.run is not first and rec.run is not None and rec.run.spec.fps == 30
+    assert "fps=30,scale=1920:1080" in " ".join(rec.run.proc.args)
+    rec.stop()

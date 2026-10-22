@@ -149,7 +149,7 @@ class App:
             else:
                 cfg = sup.launch_config(config.load(self.store.playthroughs_dir / pt), body)
                 if self.recorder is not None:
-                    self.recorder.enabled = cfg.recording.enabled
+                    self.recorder.configure(cfg.recording.enabled, cfg.recording.fps, cfg.recording.height)
                 s.start(pt, resume=what == "resume", cfg=cfg)
         except config.ConfigError as e:
             return 400, {"v": v, "error": str(e)}
@@ -514,6 +514,17 @@ def session_runner(opt: argparse.Namespace) -> tuple[sup.SessionRunner, Any]:
     return runner, agents.keeper_client
 
 
+def record_spec(video: Path, encoder: str, playthroughs: Path, pt: str | None) -> rec.RecordSpec:
+    """The recorder's spec at the followed playthrough's [recording] fps and height (the defaults without one, or
+    with a broken playthrough.toml); a start or resume applies its playthrough's (App.control)."""
+    spec = rec.RecordSpec(video, encoder=encoder)
+    try:
+        cfg = config.load(playthroughs / pt) if pt else None
+    except config.ConfigError:
+        cfg = None
+    return rec.sized(spec, cfg.recording.fps, cfg.recording.height) if cfg else spec
+
+
 def main(argv: list[str] | None = None) -> int:
     opt = parser().parse_args(argv)
 
@@ -525,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     recorder, rec_thread = None, None
     if opt.record:
         recorder = rec.Recorder(
-            rec.RecordSpec(video, encoder=opt.encoder),
+            record_spec(video, opt.encoder, store.playthroughs_dir, opt.playthrough or store.current()),
             rec.game_probe(opt.display, opt.capture),
             time.time,
             rec.resource_guard(opt.runtime / "thermal.log"),

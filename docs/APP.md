@@ -177,7 +177,9 @@ spent, and its cost is added to the budget when it ends. Subscription clients (c
 cap.
 
 **Recording.** `enabled` switches the recorder on or off per playthrough when the server runs with `--record`.
-`fps` and `height` are checked but not applied yet: the recorder records at 15 fps, 1280x720.
+`fps` and `height` set the recording's frame rate and size (16:9, so `height = 1080` records 1920x1080). The server
+starts with the followed playthrough's values and switches to a playthrough's own when it is started or resumed; a
+capture that is running in another format restarts in the new one.
 
 An older playthrough with only a `profile.json` loads its character and difficulty from it.
 `bg3play.config.migrate` writes `playthrough.toml` from it and leaves `profile.json` in place, because the runner
