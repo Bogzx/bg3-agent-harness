@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from bg3harness import client_setup, spend
+from bg3harness.game.host import append_event
 from bg3harness.runner import policy
 from bg3harness.session import (
     RecoverFailure,
@@ -199,6 +200,8 @@ class AppSessionHooks:
         )  # fmt: skip
         res = self.agent.run(call)
         self.runs.append(res)
+        if res.reason in ("crash", "hang", "agent_hang"):
+            self.event("fault", fault=res.reason, session=self.sid + tag)
         if self.budget is not None and res.cost_usd:
             try:
                 spend.add_spend(  # pyright: ignore[reportUnknownMemberType]
@@ -257,7 +260,10 @@ class AppSessionHooks:
         self._log(msg)
 
     def event(self, kind: str, **fields: Any) -> None:
+        """Logged and appended to the session dir's runner_events.jsonl, as play.py's Runner.event (the dashboard's
+        crash and recovery counts read it)."""
         self._log(f"{self.sid}: {kind} {json.dumps(fields, default=str)}")
+        append_event(self.sdir, kind, fields, self._log)
 
     def now(self) -> float:
         return self.clock()

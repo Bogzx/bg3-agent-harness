@@ -209,6 +209,24 @@ def test_a_game_hang_the_game_recovers_from_resumes_the_session(tmp_path: Path):
     assert (h["outcome"], h["progress"]) == ("ok", False)
 
 
+def test_faults_and_recoveries_reach_the_dashboards_event_log(tmp_path: Path):
+    # live7 D.4b: the app wrote no runner_events.jsonl, so the dashboard counted no crash or recovery of an app run
+    from bg3play.live import unattended_payload
+
+    sup, *_, runtime = make(tmp_path, [("hang", 5), ("exited", 25), ("crash", 5)], hours=1.0, recover_to="S001-end")
+    sup.start(PT, wait=True)
+    sdir = runtime / "sessions" / PT
+    evs = [json.loads(ln) for ln in (sdir / "runner_events.jsonl").read_text().splitlines()]
+    assert [(e["kind"], e["fault"], e["session"]) for e in evs] == [
+        ("fault", "hang", "S001"),
+        ("recovered", "hang", "S001"),
+        ("fault", "crash", "S002"),
+        ("recovered", "crash", "S002"),
+    ]
+    u = unattended_payload(sdir, {})
+    assert u is not None and u["faults"]["hang"] == 1 and u["faults"]["crash"] == 1 and u["recovered"] == 2
+
+
 def test_a_fault_the_app_cant_recover_ends_the_session_and_the_next_gets_the_crash_note(tmp_path: Path):
     sup, agent, game, *_ = make(tmp_path, [("crash", 5)], hours=0.5)
     sup.start(PT, wait=True)
