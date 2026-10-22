@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Unit tests for runner/judge.py: the decision extractor over fixture streams (dialogue options and choices, batched
-choices, [decision] notes, CHARACTER.md appends, the run window, dedup, the cap), the run/dir/character lookup, the
-judge run with a fake client and the CLI (--profile, --dry-run). The judge itself (prompt, parsing, retries, clients,
-the cost cap) is tested in packages/harness/tests/test_llm_judge.py. Never launches claude or the game.
+"""Unit tests for the runner's judge wiring (bg3harness.runner.judging): the decision extractor over fixture streams
+(dialogue options and choices, batched choices, [decision] notes, CHARACTER.md appends, the run window, dedup, the
+cap), the run/dir/character lookup, the judge run with a fake client and the CLI (--profile, --dry-run). The judge
+itself (prompt, parsing, retries, clients, the cost cap) is tested in packages/harness/tests/test_llm_judge.py. Never
+launches claude or the game.
 
     python3 -m unittest runner/test_judge.py
 """
@@ -18,7 +19,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import judge as J  # noqa: E402
+import testenv  # noqa: E402,F401  (first: the game's profile folders are a temp dir before bg3harness.runner)
+from bg3harness import judge as core  # noqa: E402
+from bg3harness.runner import env as renv  # noqa: E402
+from bg3harness.runner import judging as J  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -155,21 +159,21 @@ class Extract(TmpDir):
         self.assertEqual(J.stream_decisions(s), [])
 
     def test_dialogue_blocks(self):
-        bl = J.dialogue_blocks("x\nDIALOGUE A: hi\n  1. one\n  2. two\nEVENTS\n  1. not an option\nDIALOGUE B: bye")
+        bl = core.dialogue_blocks("x\nDIALOGUE A: hi\n  1. one\n  2. two\nEVENTS\n  1. not an option\nDIALOGUE B: bye")
         self.assertEqual(bl, [{"speaker": "A", "line": "hi", "options": {1: "one", 2: "two"}},
                               {"speaker": "B", "line": "bye", "options": {}}])
 
     def test_dedupe_and_cap(self):
         d = {"kind": "dialogue", "speaker": "A", "line": "l", "offered": ["1. x", "2. y"], "chosen": "x",
              "reason": None}
-        out = J.dedupe([d, dict(d, reason="again"), dict(d, chosen="y")])
+        out = core.dedupe([d, dict(d, reason="again"), dict(d, chosen="y")])
         self.assertEqual(len(out), 2)
         self.assertEqual((out[0]["n"], out[0]["reason"]), (2, "again"))
         items = [{"i": i} for i in range(10)]
-        kept, dropped = J.cap(items, 4)
+        kept, dropped = core.cap(items, 4)
         self.assertEqual(([k["i"] for k in kept], dropped), ([0, 3, 6, 9], 6))
-        self.assertEqual(J.cap(items, 20), (items, 0))
-        self.assertEqual(J.cap(items, 1), ([items[0]], 9))
+        self.assertEqual(core.cap(items, 20), (items, 0))
+        self.assertEqual(core.cap(items, 1), ([items[0]], 9))
 
     def test_extract_numbers_skips_other_streams(self):
         self.stream()
@@ -195,16 +199,16 @@ class RunLookup(TmpDir):
         self.pt = self.tmp / "playthroughs"
         (self.pt / "naut-r2" / "memory").mkdir(parents=True)
         (self.pt / "naut-r2" / "memory" / "CHARACTER.md").write_text(CHARACTER)
-        old, J.PLAYTHROUGHS = J.PLAYTHROUGHS, self.pt
-        self.addCleanup(setattr, J, "PLAYTHROUGHS", old)
+        old, renv.PLAYTHROUGHS = renv.PLAYTHROUGHS, self.pt
+        self.addCleanup(setattr, renv, "PLAYTHROUGHS", old)
 
     def test_find_record_and_streams_dir(self):
-        self.assertEqual(J.find_record(self.base, 1)["playthrough"], "naut")
-        self.assertEqual(J.find_record(self.base)["run"], 2)            # the last
-        self.assertEqual(J.find_record(self.r2)["run"], 2)              # a run dir: its sibling series dir
-        self.assertIsNone(J.find_record(self.base, 7))
-        self.assertEqual(J.streams_dir(self.base, J.find_record(self.base, 2)), self.r2)
-        self.assertEqual(J.streams_dir(self.base, J.find_record(self.base, 1)), self.base)
+        self.assertEqual(core.find_record(self.base, 1)["playthrough"], "naut")
+        self.assertEqual(core.find_record(self.base)["run"], 2)            # the last
+        self.assertEqual(core.find_record(self.r2)["run"], 2)              # a run dir: its sibling series dir
+        self.assertIsNone(core.find_record(self.base, 7))
+        self.assertEqual(core.streams_dir(self.base, core.find_record(self.base, 2)), self.r2)
+        self.assertEqual(core.streams_dir(self.base, core.find_record(self.base, 1)), self.base)
 
     def test_character_md_then_brief(self):
         text, src = J.load_character({"playthrough": "naut-r2", "series": "naut"}, self.r2)
@@ -223,24 +227,24 @@ class RunLookup(TmpDir):
             _use("c", "choose_dialogue", {"option": 2}), _res("c", "conversation ended"),
         ], {"a": T0 + 5, "b": T0 + 21, "c": T0 + 22})
         fake = FakeClient([_verdict(8, {1: 8})])
-        res = J.judge_run(self.base, J.find_record(self.base, 2), client=fake, call=fake)
+        res = J.judge_run(self.base, core.find_record(self.base, 2), client=fake, call=fake)
         self.assertEqual((res["status"], res["score"], res["decisions"], res["judge_model"]),
                          ("ok", 8.0, 1, "judge-model-x"))
         self.assertEqual(res["items"][0]["chosen"], "What do you suggest?")
         self.assertEqual(res["items"][0]["why"], "why 1")
         self.assertIn("Orsen Vale", fake.prompts[0])
         self.assertNotIn("before the run", fake.prompts[0])
-        p = J.persona_field(res)
+        p = core.persona_field(res)
         self.assertEqual((p["status"], p["score"]), ("ok", 8.0))
         self.assertNotIn("items", p)
 
     def test_judge_run_no_decisions_no_character_same_model(self):
         fake = FakeClient([])
-        res = J.judge_run(self.base, J.find_record(self.base, 2), client=fake, call=fake)
+        res = J.judge_run(self.base, core.find_record(self.base, 2), client=fake, call=fake)
         self.assertEqual((res["status"], res["score"]), ("no_decisions", None))
         res = J.judge_run(self.tmp / "nowhere", {"playthrough": "nowhere"}, client=fake, call=fake)
         self.assertEqual(res["status"], "no_character")
-        res = J.judge_run(self.base, {"model": "opus"}, client=J.ClaudeCLI("claude-opus-5-5"), call=fake)
+        res = J.judge_run(self.base, {"model": "opus"}, client=core.ClaudeCLI("claude-opus-5-5"), call=fake)
         self.assertEqual(res["status"], "judge_failed")
         self.assertIn("model under test", res["error"])
         self.assertEqual(fake.prompts, [])
@@ -254,12 +258,11 @@ class RunLookup(TmpDir):
             self.assertEqual(J.main([str(self.base), "--run", "9", "--dry-run"]), 2)
 
 
-# ======================================================================== the shim's wiring (the judge itself:
+# ======================================================================== the runner's wiring (the judge itself:
 # packages/harness/tests/test_llm_judge.py)
 
 class Shim(TmpDir):
     def test_default_client_is_claude_with_the_pinned_model(self):
-        self.assertIs(J.ClaudeCLI, J._core.ClaudeCLI)
         seen = []
         res = J.judge_run(self.tmp, {"model": J.DEFAULT_MODEL}, call=lambda c, p: seen.append(c))
         self.assertIn("model under test", res["error"])

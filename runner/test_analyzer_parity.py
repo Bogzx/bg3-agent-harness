@@ -23,11 +23,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "packages" / "harness" / "src"))
 sys.path.insert(1, str(Path(__file__).resolve().parents[1] / "bridge" / "src"))
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
-import judge as J
-import runs as R
+import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before bg3harness.runner)
 from bg3harness import events as E
+from bg3harness import judge as J
 from bg3harness import model_time as MT
+from bg3harness import runs as R
 from bg3harness import triage as T
+from bg3harness.runner import judging
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "sessions"
 # BG3AI_PARITY_SESSIONS: another checkout's runtime/sessions (a worktree has none)
@@ -253,11 +255,13 @@ class Base(unittest.TestCase):
             c["text"] = re.sub(r"\[(image|tool_reference)\]", r"<\1>", c["text"])
         self.assertEqual(calls, old_calls, msg)
         self.assertEqual(summary, old_summary, msg)
-        self.assertEqual(J.stream_decisions(stream), legacy_stream_decisions(legacy_stream), msg)
+        self.assertEqual(judging.stream_decisions(stream), legacy_stream_decisions(legacy_stream), msg)
         ts = [c["t"] for c in old_calls if c["t"]]
         if ts:  # a window over the middle of the session
             lo, hi = ts[len(ts) // 4], ts[3 * len(ts) // 4]
-            self.assertEqual(J.stream_decisions(stream, lo, hi), legacy_stream_decisions(legacy_stream, lo, hi), msg)
+            self.assertEqual(
+                judging.stream_decisions(stream, lo, hi), legacy_stream_decisions(legacy_stream, lo, hi), msg
+            )
         self.assertEqual(MT.stream_info(stream), legacy_stream_info(legacy_stream), msg)
 
 
@@ -280,7 +284,7 @@ class Fixtures(Base):
         self.assertTrue(summary)
         self.assertGreater(len(calls), 20)
         self.assertTrue(any(c["failed"] for c in calls) and all(c["t"] for c in calls))
-        self.assertTrue(J.stream_decisions(s086))
+        self.assertTrue(judging.stream_decisions(s086))
         info = MT.stream_info(s086)
         self.assertTrue(info["think_ms"] and info["result"] and info["result"]["api_ms"])
         tot = R.claude_totals(FIXTURES / "claude-run-2", 0)

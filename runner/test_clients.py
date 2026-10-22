@@ -28,7 +28,7 @@ from bg3harness import clients as C  # noqa: E402
 from bg3harness.runner import env as renv
 from bg3harness.runner import state as rstate
 import legacy_playthrough as lpt
-import runs as R  # noqa: E402
+from bg3harness import runs as R  # noqa: E402
 import test_play as TP  # noqa: E402  (the frozen pre-client claude_cmd / format_stream_event)
 
 SESSIONS = renv.REPO / "runtime" / "sessions"

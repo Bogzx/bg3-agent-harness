@@ -176,7 +176,7 @@ class PiRun(PiRunBase):
 
 class RawStream(unittest.TestCase):
     def test_a_pi_stream_without_an_events_log_is_parsed_as_pi(self):
-        import runs
+        from bg3harness import runs
 
         lines = (FIXTURES / "billing.jsonl").read_text().splitlines()
         self.assertEqual(runs.stream_client(lines), "pi")

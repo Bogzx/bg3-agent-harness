@@ -21,17 +21,22 @@ import _harness  # noqa: F401  (packages/harness/src and bridge/src on sys.path)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "memory"))  # memlib, new_playthrough
 
-import judge
 import legacy_playthrough as lpt
 import legacy_series as lser
-import runs
+from bg3bench import pins as bpins
+from bg3bench import records as brecords
+from bg3bench import resets as bresets
+from bg3bench import scenario_v1 as bscenario
+from bg3bench import series as bseries
 from bg3harness import (
     bg3le_buildinfo,
     client_setup,
     clients,
     display_env,
+    judge,
     model_time,
     ramwatch,
+    runs,
     sandbox,
     spend,
     steam_paths,
@@ -48,6 +53,7 @@ from bg3harness.game.saves import (
 )
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
+from bg3harness.runner import judging
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 
@@ -76,7 +82,7 @@ def cmd_run(a) -> int:
                 scenario = lser.load_scenario_file(a.scenario)
             else:
                 scenario, scenario_settings = lser.load_scenario_path(Path(a.scenario_file))
-        except runs.ScenarioError as e:
+        except bscenario.ScenarioError as e:
             print(f"refusing {flag}: {e}", file=sys.stderr)
             return 2
         refusal, save_sha1 = lser.apply_scenario(a, scenario)
@@ -123,7 +129,7 @@ def cmd_run(a) -> int:
         return 2
     caps = {"run_hours": a.run_hours, "max_cost": a.max_cost, "max_tokens": a.max_tokens}
     frozen = (lser.series_meta(a.playthrough).get("caps") or (scenario["caps"] if scenario else None)) if a.runs else None
-    caps, spend_cap, err, cap_changes = runs.series_caps(frozen, caps, a.allow_cap_change)   # run 1's or the scenario's
+    caps, spend_cap, err, cap_changes = bseries.series_caps(frozen, caps, a.allow_cap_change)   # run 1's or the scenario's
     if err:
         print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
         return 2
@@ -131,18 +137,18 @@ def cmd_run(a) -> int:
     if use_judge and not a.until:
         print("refusing --judge: it scores a run's record, which needs --until MILESTONE", file=sys.stderr)
         return 2
-    judge_model, judge_change = a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL") or judge.DEFAULT_MODEL, None
+    judge_model, judge_change = a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL") or judging.DEFAULT_MODEL, None
     if use_judge and a.runs:   # a series' judge is fixed like its caps: scores by another judge don't compare
-        judge_model, err, judge_change = runs.series_judge_model(
+        judge_model, err, judge_change = bseries.series_judge_model(
             lser.series_meta(a.playthrough).get("judge_model"), a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL"),
-            judge.DEFAULT_MODEL, a.allow_judge_change)
+            judging.DEFAULT_MODEL, a.allow_judge_change)
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
             return 2
     client, client_change = a.client or "claude", None
     if a.runs:   # a series plays with one CLI, fixed like its judge; a series from before --client played claude
         meta = lser.series_meta(a.playthrough)
-        client, err, client_change = runs.series_client(meta.get("client") or ("claude" if meta else None),
+        client, err, client_change = bseries.series_client(meta.get("client") or ("claude" if meta else None),
                                                         a.client, "claude", a.allow_client_change)
         if err:
             print(f"refusing to run series {a.playthrough}: {err}", file=sys.stderr)
@@ -171,8 +177,8 @@ def cmd_run(a) -> int:
         return 2
     sandbox_change = None
     if a.runs:   # a series plays in one sandbox mode, fixed like its client; checked before docker is touched
-        err, sandbox_change = runs.series_sandbox(lser.series_meta(a.playthrough),
-                                                  runs.sandbox_mode(a.sandbox, a.sandbox_unfirewalled),
+        err, sandbox_change = bseries.series_sandbox(lser.series_meta(a.playthrough),
+                                                  bseries.sandbox_mode(a.sandbox, a.sandbox_unfirewalled),
                                                   a.allow_sandbox_change)
         if err:
             msg = f"series {a.playthrough}: REFUSING the run: {err}"
@@ -248,11 +254,11 @@ def cmd_run(a) -> int:
     signal.signal(signal.SIGTERM, on_signal)
     try:
         if a.runs and os.environ.get("BG3AI_KNOWLEDGE_LOCK", "1") != "0":
-            renv.log(f"play/knowledge read-only for the series: {runs.lock_tree(renv.KNOWLEDGE_DIR, renv.KNOWLEDGE_LOCK)} files "
+            renv.log(f"play/knowledge read-only for the series: {bresets.lock_tree(renv.KNOWLEDGE_DIR, renv.KNOWLEDGE_LOCK)} files "
                 f"(modes in {renv.KNOWLEDGE_LOCK}; BG3AI_KNOWLEDGE_LOCK=0 skips)")
         if a.runs:
             return lser.run_series(opt, a.runs, current, a.allow_version_drift, scenario, save_sha1)
-        if runs.unlock_tree(renv.KNOWLEDGE_DIR, renv.KNOWLEDGE_LOCK):   # a series runner that died while locked
+        if bresets.unlock_tree(renv.KNOWLEDGE_DIR, renv.KNOWLEDGE_LOCK):   # a series runner that died while locked
             renv.log("play/knowledge: a stale series lock was undone")
         current["runner"] = lpt.Runner(opt)
         rc = current["runner"].run()
@@ -268,7 +274,7 @@ def cmd_run(a) -> int:
             sandbox.shutdown()   # the egress proxy and any container left (a self-restart's successor recreates them)
         if ram_stop is not None:
             ram_stop.set()
-        runs.unlock_tree(renv.KNOWLEDGE_DIR, renv.KNOWLEDGE_LOCK)
+        bresets.unlock_tree(renv.KNOWLEDGE_DIR, renv.KNOWLEDGE_LOCK)
 
 
 PLAN_PROMPT = "<KICKOFF: built at the session start from the run's memory briefing>"
@@ -319,9 +325,9 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
     print(f"plan for `run` (nothing launched or written; {time.strftime('%Y-%m-%d %H:%M')})")
     k, pt = 1, base
     if a.runs:
-        recs = runs.series_records(renv.RUNTIME / "sessions" / base / "runs.jsonl", base)
-        k = runs.next_run_index(recs)
-        pt = runs.run_name(base, k)
+        recs = bseries.series_records(renv.RUNTIME / "sessions" / base / "runs.jsonl", base)
+        k = bseries.next_run_index(recs)
+        pt = bseries.run_name(base, k)
         print(f"series:         {base}: run {k}/{a.runs} next ({pt}), {len(recs)} recorded"
               + ("; ALL DONE: run would exit at once" if k > a.runs else ""))
         half = lser.half_run_state(pt) if k <= a.runs else None
@@ -335,9 +341,9 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
             if (a.character_brief or a.roleplay or a.difficulty) else prof
         pins = lser.current_pins()
         meta = lser.series_freeze(base, a.runs, a.until, prof, pins, caps,
-                             runs.scenario_freeze(scenario, save_sha1) if scenario else None,
+                             bscenario.scenario_freeze(scenario, save_sha1) if scenario else None,
                              judge_model if use_judge else None, client_name,
-                             runs.sandbox_mode(a.sandbox, bool(a.sandbox_unfirewalled)))
+                             bseries.sandbox_mode(a.sandbox, bool(a.sandbox_unfirewalled)))
         path = renv.RUNTIME / "sessions" / base / "series.json"
         if meta is None:
             print(f"series.json:    {path} exists with every key (frozen; this run is held to it):")
@@ -345,7 +351,7 @@ def plan_run(a, scenario: dict | None, save_sha1: str | None, caps: dict, use_ju
         else:
             print(f"series.json:    {'NEW ' if not path.exists() else 'keys added to '}{path} would be:")
             print(json.dumps(meta, indent=1, ensure_ascii=False))
-        drift = runs.pin_drift(lser.series_meta(base).get("pins"), pins) if path.exists() else []
+        drift = bpins.pin_drift(lser.series_meta(base).get("pins"), pins) if path.exists() else []
         if drift:
             print(f"version drift:  {'; '.join(drift)} -> run {k} "
                   + ("plays with it (recorded)" if a.allow_version_drift else "REFUSED (--allow-version-drift)"))
@@ -495,7 +501,7 @@ def cmd_runs(a) -> int:
     (api_floor, the headline) an older model_time lacks, in place; present values stay. --vs OTHER: the two series'
     means side by side, "API floor differs" when their API floors are > 0.3 s apart."""
     path = renv.RUNTIME / "sessions" / a.playthrough / "runs.jsonl"
-    recs = runs.series_records(path, a.playthrough)
+    recs = bseries.series_records(path, a.playthrough)
     if not recs:
         print(f"no run records for {a.playthrough} ({path})")
         return 1
@@ -504,15 +510,15 @@ def cmd_runs(a) -> int:
             state_dir = renv.RUNTIME / "sessions" / (r.get("playthrough") or a.playthrough)
             fields = {**runs.backfill_metrics(state_dir, r), **runs.backfill_model_time(state_dir, r)}
             if fields:
-                ok = runs.update_record(path, r, fields)
+                ok = bseries.update_record(path, r, fields)
                 print(f"run {r.get('run') or 1} ({r.get('playthrough')}): "
                       f"{'backfilled' if ok else 'NOT written'} {', '.join(fields)}")
-        recs = runs.series_records(path, a.playthrough)
-    print(runs.runs_table(recs))
-    print("\n" + runs.series_summary(recs))
+        recs = bseries.series_records(path, a.playthrough)
+    print(brecords.runs_table(recs))
+    print("\n" + brecords.series_summary(recs))
     if getattr(a, "vs", None):
-        other = runs.series_records(renv.RUNTIME / "sessions" / a.vs / "runs.jsonl", a.vs)
-        print("\n" + (runs.series_compare(a.vs, other, a.playthrough, recs) if other else
+        other = bseries.series_records(renv.RUNTIME / "sessions" / a.vs / "runs.jsonl", a.vs)
+        print("\n" + (brecords.series_compare(a.vs, other, a.playthrough, recs) if other else
                       f"no run records for {a.vs}"))
     if a.failures:
         for r in recs:
@@ -533,19 +539,19 @@ def cmd_runs(a) -> int:
 def cmd_judge(a) -> int:
     """Re-judge records of a series (or a playthrough's --until runs) in place: --run K, else every record without
     a scored persona. Also fills a missing `model_time`. The judge model: series.json's, else --judge-model /
-    $BG3AI_JUDGE_MODEL / judge.DEFAULT_MODEL (then frozen into an existing series.json)."""
+    $BG3AI_JUDGE_MODEL / judging.DEFAULT_MODEL (then frozen into an existing series.json)."""
     path = renv.RUNTIME / "sessions" / a.playthrough / "runs.jsonl"
-    recs = runs.series_records(path, a.playthrough)
+    recs = bseries.series_records(path, a.playthrough)
     if a.run is not None:
         recs = [r for r in recs if int(r.get("run") or 1) == a.run]
     elif not a.all:
-        recs = [r for r in recs if runs.record_persona(r) is None]
+        recs = [r for r in recs if brecords.record_persona(r) is None]
     if not recs:
         print(f"no run {'%d ' % a.run if a.run is not None else 'to judge '}in {path}", file=sys.stderr)
         return 1
     frozen = lser.series_meta(a.playthrough).get("judge_model")
-    model, err, change = runs.series_judge_model(frozen, a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL"),
-                                                 judge.DEFAULT_MODEL, a.allow_judge_change)
+    model, err, change = bseries.series_judge_model(frozen, a.judge_model or os.environ.get("BG3AI_JUDGE_MODEL"),
+                                                 judging.DEFAULT_MODEL, a.allow_judge_change)
     if err:
         print(f"refusing to judge {a.playthrough}: {err}", file=sys.stderr)
         return 2
@@ -561,7 +567,7 @@ def cmd_judge(a) -> int:
             end = r.get("t")
             fields["model_time"] = runs.model_time_field(model_time.model_time(
                 state_dir, since=r.get("started"), until=end + model_time.WINDOW_SLACK_S if end else None))
-        ok = runs.update_record(path, r, fields)
+        ok = bseries.update_record(path, r, fields)
         print(f"run {r.get('run') or 1} ({r.get('playthrough')}): {persona_line(fields['persona'])}"
               + ("" if ok else f" (NOT written: the record is gone from {path})"))
         rc = rc if ok and fields["persona"].get("status") in (judge.OK, judge.NO_DECISIONS) else 1
@@ -578,8 +584,8 @@ def cmd_scenarios(_a) -> int:
     for path in paths:
         try:
             sc = lser.load_scenario_file(path.stem)
-        except runs.ScenarioError as e:
-            print(f"{path.stem:20} {runs.INVALID}: {e}")
+        except bscenario.ScenarioError as e:
+            print(f"{path.stem:20} {bscenario.INVALID}: {e}")
             continue
         status, detail = lser.scenario_status(sc, saves)
         caps = ", ".join(f"{k}={v:g}" for k, v in sc["caps"].items() if v is not None)
@@ -593,7 +599,7 @@ def cmd_bench(argv: list[str]) -> int:
     (python -m bg3bench.matrix) with the harness's live RunHost, so `--runner session` plays each job as one
     run_session on this machine's game (bg3harness.runner.run_host). run and resume take runtime/runner.lock like
     `run`, and the cutscene skipper and the RAM watchdog run meanwhile."""
-    from bg3bench import matrix_cli  # runner/runs.py put packages/bench/src on sys.path
+    from bg3bench import matrix_cli  # _harness puts packages/bench/src on sys.path
     from bg3harness.runner.run_host import LiveRunHost
 
     host = LiveRunHost(lpt.Runner)

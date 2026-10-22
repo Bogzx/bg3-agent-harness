@@ -269,7 +269,7 @@ def _cmd(r, prompt: str, session: str, resume: bool, tag: str = "") -> list[str]
 
 def _lines(ev: dict) -> list[str]:
     """The human log lines the runner writes for one claude stream event (ClaudeClient.parse → format_event)."""
-    from clients import ClaudeClient, format_event
+    from bg3harness.clients import ClaudeClient, format_event
     return [x for e in ClaudeClient().parse(json.dumps(ev)) for x in format_event(e)]
 
 

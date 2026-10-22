@@ -1,4 +1,4 @@
-"""Run records' core (moved from runner/runs.py, which re-exports it with the bench parts): failure tagging, the usage
+"""Run records' core (moved from the runner, Phase D): failure tagging, the usage
 meter and caps, and the run metrics over a run's files. The benchmark runner (play.py) and playthroughs both write
 their run records with it; the series, pins, resets, runs table and scenario files are bg3bench's.
 

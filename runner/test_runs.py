@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for the benchmark fields' play.py wiring (runner/runs.py re-exports bg3harness.runs, whose own tests are
-packages/harness/tests/test_runs.py, and the bench parts): version pins and the series' drift refusal, the cost/token
+"""Unit tests for the benchmark fields' play.py wiring (bg3harness.runs, whose own tests are
+packages/harness/tests/test_runs_core.py, and the bench parts in bg3bench): version pins and the series' drift refusal, the cost/token
 caps ending a run, the series summary, and the persona judge / model time in the run record (a fake judge client: a python
 one-liner in place of `claude -p`). Never launches claude or the game.
 
@@ -34,7 +34,9 @@ from bg3harness.runner import state as rstate
 import legacy_cli as lcli
 import legacy_playthrough as lpt
 import legacy_series as lser
-import runs as R  # noqa: E402
+from bg3harness import runs as R  # noqa: E402
+from bg3bench import records as brecords  # noqa: E402
+from bg3bench import series as bseries  # noqa: E402
 from test_play_series import _res, _stream, _use  # noqa: E402
 import test_judge as TJ  # noqa: E402  (its stream builders and CHARACTER.md fixture)
 
@@ -49,31 +51,18 @@ class TmpDir(unittest.TestCase):
             self.addCleanup(p.stop)
 
 
-# ======================================================================== the bench re-exports
+# ======================================================================== the bench's contract copies
 
-class Shims(unittest.TestCase):
-    def test_runs_reexports_the_harness_core(self):
-        from bg3harness import runs as core
-        for name in ("classify_run", "UsageMeter", "claude_totals", "run_metrics", "backfill_model_time",
-                     "model_time_field", "HARNESS", "METRIC_FIELDS", "CLAUDE_STREAM_RE"):
-            self.assertIs(getattr(R, name), getattr(core, name), name)
-        self.assertIs(R.model_time, core.model_time)
-
-    def test_runs_reexports_the_bench_and_its_contract_copies_agree(self):
-        """The benchmark parts live in bg3bench (runs.py re-exports them); bg3bench.records reads run records with its
-        own copies of model_time's headline key and floor limit and of runs.py's failure classes: they must agree."""
-        from bg3bench import pins, records, resets, scenario_v1, series
-        self.assertIs(R.series_caps, series.series_caps)
-        self.assertIs(R.version_pins, pins.version_pins)
-        self.assertIs(R.lock_tree, resets.lock_tree)
-        self.assertIs(R.runs_table, records.runs_table)
-        self.assertIs(R.load_scenario, scenario_v1.load_scenario)
-        self.assertEqual((records.HEADLINE, records.FLOOR_DIFF_S), (R.model_time.HEADLINE, R.model_time.FLOOR_DIFF_S))
-        self.assertEqual((records.HARNESS, records.AGENT, records.UNKNOWN), (R.HARNESS, R.AGENT, R.UNKNOWN))
-        from bg3harness import runs as core
+class BenchContract(unittest.TestCase):
+    def test_the_bench_contract_copies_agree(self):
+        """bg3bench.records reads run records with its own copies of model_time's headline key and floor limit and of
+        bg3harness.runs' failure classes: they must agree."""
+        self.assertEqual((brecords.HEADLINE, brecords.FLOOR_DIFF_S),
+                         (R.model_time.HEADLINE, R.model_time.FLOOR_DIFF_S))
+        self.assertEqual((brecords.HARNESS, brecords.AGENT, brecords.UNKNOWN), (R.HARNESS, R.AGENT, R.UNKNOWN))
         for started, reached in ((100.0, 550.04), (100.0, None), (None, 5.0)):
-            self.assertEqual(core.time_to_milestone(started, reached), records.time_to_milestone(started, reached))
-        self.assertEqual(records.token_total({"input": 1, "output": None, "cache_read": 3}),
+            self.assertEqual(R.time_to_milestone(started, reached), brecords.time_to_milestone(started, reached))
+        self.assertEqual(brecords.token_total({"input": 1, "output": None, "cache_read": 3}),
                          R.token_total({"input": 1, "output": None, "cache_read": 3}))
 
 
@@ -298,10 +287,9 @@ class Judging(TmpDir):
         self.addCleanup(lambda: [setattr(testenv.home(n), n, v) for n, v in self.saved.items()])
         renv.RUNTIME, renv.PLAYTHROUGHS = self.tmp / "runtime", self.tmp / "playthroughs"
         rpolicy.read_actions_since = lambda t, path=None: []
-        for name, value in (("PLAYTHROUGHS", renv.PLAYTHROUGHS), ("DEFAULT_MODEL", "judge-x")):
-            patcher = mock.patch.object(lser.judge, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(lser.judging, "DEFAULT_MODEL", "judge-x")
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.calls = self.tmp / "judge-calls.log"
         (renv.PLAYTHROUGHS / "naut" / "memory").mkdir(parents=True)
         (renv.PLAYTHROUGHS / "naut" / "memory" / "CHARACTER.md").write_text(TJ.CHARACTER)
@@ -336,7 +324,7 @@ class Judging(TmpDir):
         r.begin_run(t0)
         with self.fake(cost=0.03):
             rec = r.write_run_record(t0, "timeout", "time cap used up")
-        on_disk = R.series_records(self.dir / "runs.jsonl", "naut")
+        on_disk = bseries.series_records(self.dir / "runs.jsonl", "naut")
         self.assertEqual(len(on_disk), 1)
         self.assertEqual(on_disk[0], rec)
         p = rec["persona"]
@@ -364,8 +352,8 @@ class Judging(TmpDir):
         self.assertEqual(rec["persona"]["status"], "judge_failed")
         self.assertIn("boom", rec["persona"]["error"])
         self.assertGreater(rec["persona"]["cost_usd"], 0.0)         # an is_error answer's cost is still counted
-        self.assertEqual(R.series_records(self.dir / "runs.jsonl", "naut")[-1]["persona"], rec["persona"])
-        with mock.patch.object(lser.judge, "judge_run", side_effect=RuntimeError("bug")):
+        self.assertEqual(bseries.series_records(self.dir / "runs.jsonl", "naut")[-1]["persona"], rec["persona"])
+        with mock.patch.object(lser.judging, "judge_run", side_effect=RuntimeError("bug")):
             p = lser.judge_record(self.dir, rec, "judge-x")
         self.assertEqual((p["status"], p["error"]), ("judge_failed", "RuntimeError: bug"))
 
@@ -405,7 +393,7 @@ class Judging(TmpDir):
             rc, out, err = self.cli("judge", "--playthrough", "naut", "--run", "1")
         self.assertEqual(rc, 0, err)
         self.assertIn("run 1 (naut): score 7.5/10 by judge-x on 1 decision(s), $0.02", out)
-        recs = R.series_records(self.dir / "runs.jsonl", "naut")
+        recs = bseries.series_records(self.dir / "runs.jsonl", "naut")
         self.assertEqual((recs[0]["persona"]["score"], recs[0]["cost_usd"]), (7.5, 4.0))
         self.assertIn("model_time", recs[0])
         self.assertNotIn("persona", recs[1])

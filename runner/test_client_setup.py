@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""runner/client_setup.py: --profile resolution, the API key, the expected tool count.
+"""bg3harness.client_setup: --profile resolution, the API key, the expected tool count.
 
 python3 -m unittest runner/test_client_setup.py
 """
@@ -11,12 +11,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import client_setup as CS
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+from bg3harness import client_setup as CS  # noqa: E402
+
 PI = str(REPO / "profiles" / "deepseek-flash.toml")
 CLAUDE = str(REPO / "profiles" / "opus-5.5-claude-code.toml")
 TOOLS = REPO / "tools" / "pi" / "conformance" / "tools.json"
@@ -92,7 +91,7 @@ class ToolCount(unittest.TestCase):
         # registry: that run's server (bg3-tools.json of the same code)
         import json
 
-        import clients
+        from bg3harness import clients
 
         fx = json.loads((REPO / "runner" / "fixtures" / "claude" / "e2e-naut-init.json").read_text())
         self.assertEqual(len(fx["init"]["tools"]), 95)

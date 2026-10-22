@@ -261,7 +261,6 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 "runner/test_client_setup.py" = ["N812"]
 "packages/harness/tests/test_facts.py" = ["N812"]
 "runner/test_pi_run.py" = ["N812", "RUF005"]
-"runner/test_spend.py" = ["N812"]
 # client_setup.py keeps SetupRefused (N818: renaming it changes the API), test_pi_run.py a list concatenation.
 # runner/play.py split (Phase D.3, harness round 8): its code moved unchanged into bg3harness.runner and the legacy
 # runner/legacy_*.py; each module keeps the codes of play.py's legacy entry it still breaks, and tools/steam_paths.py's

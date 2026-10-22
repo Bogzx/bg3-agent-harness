@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-for _p in (_REPO / "bridge" / "src", _REPO / "packages" / "harness" / "src"):  # no-ops under the uv workspace
+_SRC = (_REPO / "bridge" / "src", _REPO / "packages" / "harness" / "src", _REPO / "packages" / "bench" / "src")
+for _p in _SRC:  # no-ops under the uv workspace
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 

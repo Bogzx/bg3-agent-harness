@@ -294,16 +294,16 @@ class SeriesRuns(unittest.TestCase):
     # ---------------------------------------------------------------- naming, memory, profile
 
     def test_run_names_and_the_next_run(self):
-        self.assertEqual([lser.runs.run_name("naut", k) for k in (1, 2, 3)], ["naut", "naut-r2", "naut-r3"])
+        self.assertEqual([lser.bseries.run_name("naut", k) for k in (1, 2, 3)], ["naut", "naut-r2", "naut-r3"])
         f = self.tmp / "runs.jsonl"
-        self.assertEqual(lser.runs.next_run_index(lser.runs.series_records(f, "naut")), 1)    # no file yet
+        self.assertEqual(lser.bseries.next_run_index(lser.bseries.series_records(f, "naut")), 1)    # no file yet
         f.write_text("".join(json.dumps(r) + "\n" for r in (
             {"playthrough": "naut", "milestone": "nautiloid_escaped"},                   # a plain --until run
             {"series": "naut", "run": 2, "playthrough": "naut-r2", "outcome": "timeout"},
             {"series": "other", "run": 7, "playthrough": "other-r7"})) + "not json\n")
-        recs = lser.runs.series_records(f, "naut")
+        recs = lser.bseries.series_records(f, "naut")
         self.assertEqual([r["playthrough"] for r in recs], ["naut", "naut-r2"])
-        self.assertEqual(lser.runs.next_run_index(recs), 3)
+        self.assertEqual(lser.bseries.next_run_index(recs), 3)
 
     def test_each_run_gets_a_fresh_memory_and_the_series_profile(self):
         prof = {"character": {"brief": "a dwarf cleric", "roleplay": "strict"}, "difficulty": "Explorer"}
@@ -561,9 +561,9 @@ class SeriesRuns(unittest.TestCase):
                  "failures": [{"kind": "stall", "class": "agent", "n": 2}]},
                 {"series": "naut", "run": 3, "playthrough": "naut-r3", "outcome": "reached", "clean": True,
                  "wall_min": 55, "sessions": 1, "cost_usd": 8, "failures": []}]
-        self.assertEqual((lser.runs.clean_streak(recs), lser.runs.best_streak(recs)), (2, 2))
-        self.assertEqual(lser.runs.clean_streak(recs + [{"clean": False}]), 0)
-        out = lser.runs.runs_table(recs)
+        self.assertEqual((lser.brecords.clean_streak(recs), lser.brecords.best_streak(recs)), (2, 2))
+        self.assertEqual(lser.brecords.clean_streak(recs + [{"clean": False}]), 0)
+        out = lser.brecords.runs_table(recs)
         lines = out.splitlines()
         self.assertTrue(lines[0].startswith("run  playthrough  outcome"))
         self.assertIn("naut-r2", lines[3])
@@ -648,7 +648,7 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual((frozen["series"], frozen["runs"], frozen["until"]), ("np", 3, "nautiloid_escaped"))
         self.assertEqual(frozen["profile"]["character"], {"brief": "A watch sergeant", "roleplay": "strict"})
         self.assertEqual((frozen["client"], frozen["sandbox"], frozen["judge_model"]),
-                         ("claude", "none", lser.judge.DEFAULT_MODEL))
+                         ("claude", "none", lser.judging.DEFAULT_MODEL))
         self.assertEqual(frozen["pins"]["game_build"], "25605617")
         self.assertIn("THE RUNNER WOULD REFUSE TO LAUNCH", out)   # Steam online where offline is required
         cmd = json.loads(out[out.index('{\n "cmd"'):])

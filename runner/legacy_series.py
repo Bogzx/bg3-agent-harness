@@ -1,7 +1,7 @@
 """The legacy series parts of `play.py run` (moved from runner/play.py, Phase D.3): run records
 (runs.jsonl), the persona judge, the fresh-run reset and knowledge restore, scenario files, the frozen series
-settings, half runs and run_series. They use the bench's code through runner/runs.py; bg3bench's matrix replaces them
-(`bg3bench run --runner session`).
+settings, half runs and run_series. They use the bench's code (bg3bench, on sys.path through _harness); bg3bench's
+matrix replaces them (`bg3bench run --runner session`).
 """
 
 from __future__ import annotations
@@ -17,19 +17,23 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-import _harness  # noqa: F401  (packages/harness/src and bridge/src on sys.path)
+import _harness  # noqa: F401  (packages/harness/src, packages/bench/src and bridge/src on sys.path)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "memory"))  # memlib, new_playthrough
 
-import judge
 import legacy_cli as lcli
 import legacy_playthrough as lpt
-import runs
 from bg3ai import milestones
-from bg3harness import bg3le_buildinfo, client_setup, model_time, scenario_file, steam_paths
+from bg3bench import pins as bpins
+from bg3bench import records as brecords
+from bg3bench import resets as bresets
+from bg3bench import scenario_v1 as bscenario
+from bg3bench import series as bseries
+from bg3harness import bg3le_buildinfo, client_setup, judge, model_time, runs, scenario_file, steam_paths
 from bg3harness.game.io import Save
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
+from bg3harness.runner import judging
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 from bg3harness.session import GAME_FAULTS
@@ -41,7 +45,7 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
     """One runs.jsonl line for an --until run: wall time, sessions, claude cost and tokens (the stream's result
     events, the [end] lines), crashes/hangs and recoveries (runner_events.jsonl), agent reloads (actions.jsonl);
     the outcome (reached | timeout | over_budget | gave_up | runner_error) and the cap that ended it (time | cost |
-    tokens), every failure tagged harness/agent/unknown (runner/runs.py), the operator actions, `clean` (reached, no
+    tokens), every failure tagged harness/agent/unknown (bg3harness.runs), the operator actions, `clean` (reached, no
     harness failure, no operator action), and the benchmark metrics (runs.run_metrics: time to the milestone,
     deaths, fairness flags, latency, story points)."""
     outcome = outcome or ("reached" if hit.get("id") else "timeout")
@@ -68,7 +72,7 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
     if take_over:
         operator.append({"t": round(run_started, 1), "what": "--take-over (the run may have started from a game "
                                                               "it didn't set up)"})
-    counts = runs.class_counts(failures)
+    counts = brecords.class_counts(failures)
     return {"t": round(now, 1), "playthrough": playthrough, "outcome": outcome, "why": why[:300],
             "clean": runs.is_clean(outcome, failures, operator),
             "harness_failures": counts[runs.HARNESS], "agent_failures": counts[runs.AGENT],
@@ -89,7 +93,7 @@ def run_record(state_dir: Path, run_started: float, now: float, hit: dict, playt
 
 def judge_record(state_dir: Path, rec: dict, model: str, timeout: float = renv.JUDGE_TIMEOUT_S, client=None,
                  stop=lambda: False) -> dict:
-    """A run record's `persona` (judge.persona_field of judge.judge_run) within `timeout` seconds overall; stop():
+    """A run record's `persona` (judge.persona_field of judging.judge_run) within `timeout` seconds overall; stop():
     give up now (a second operator signal). Never raises: a failed or late judge is a judge_failed persona. Its
     cost is persona.cost_usd, apart from the run's capped cost_usd (the judge runs in a temp dir, not state_dir)."""
     deadline = time.time() + timeout
@@ -102,61 +106,61 @@ def judge_record(state_dir: Path, rec: dict, model: str, timeout: float = renv.J
             raise RuntimeError(f"judge timed out ({timeout:g} s)")
         return judge.call_client(c, prompt, timeout=min(judge.TIMEOUT_S, left))
     try:
-        res = judge.judge_run(state_dir, rec, client=client or judge.ClaudeCLI(model), call=call)
+        res = judging.judge_run(state_dir, rec, client=client or judge.ClaudeCLI(model), call=call)
     except Exception as e:
         res = {"status": judge.FAILED, "score": None, "judge_model": model, "error": f"{type(e).__name__}: {e}"}
     return judge.persona_field(res)
 
 
 def load_scenario_file(name: str) -> dict:
-    """scenarios/<name>.json, validated (runs.load_scenario); runs.ScenarioError when missing or invalid."""
+    """scenarios/<name>.json, validated (bscenario.load_scenario); bscenario.ScenarioError when missing or invalid."""
     path = renv.SCENARIOS / f"{name}.json"
     if not path.exists():
         have = ", ".join(sorted(p.stem for p in renv.SCENARIOS.glob("*.json"))) or "none"
-        raise runs.ScenarioError(f"no scenario {name!r} in {renv.SCENARIOS} (have: {have})")
-    return runs.load_scenario(path, [m[0] for m in milestones.MILESTONES], rpolicy.ROLEPLAY_MODES, rpolicy.DIFFICULTIES)
+        raise bscenario.ScenarioError(f"no scenario {name!r} in {renv.SCENARIOS} (have: {have})")
+    return bscenario.load_scenario(path, [m[0] for m in milestones.MILESTONES], rpolicy.ROLEPLAY_MODES, rpolicy.DIFFICULTIES)
 
 
 def load_scenario_path(path: Path) -> tuple[dict, dict]:
     """run --scenario-file: a resolved scenario (bg3harness.scenario_file) -> (the v1 scenario, validated and filled
     like scenarios/<name>.json, its name from the file's content; the expected {difficulty, karmic_dice, timing}).
-    runs.ScenarioError when unreadable or invalid."""
+    bscenario.ScenarioError when unreadable or invalid."""
     try:
         sc = json.loads(path.read_text())
     except (OSError, ValueError) as e:
-        raise runs.ScenarioError(f"{path}: {e}") from None
+        raise bscenario.ScenarioError(f"{path}: {e}") from None
     v1, want, errs = scenario_file.split(sc)
     if errs:
-        raise runs.ScenarioError(f"{path}: " + "; ".join(errs))
+        raise bscenario.ScenarioError(f"{path}: " + "; ".join(errs))
     name = str(v1.get("name") or "")
-    if not runs.SCENARIO_NAME_RE.fullmatch(name):
-        raise runs.ScenarioError(f"{path}: name {name!r}: use a-z, 0-9, '_' or '-'")
-    with tempfile.TemporaryDirectory(prefix="bg3ai-scenario-") as td:   # runs.load_scenario names it by its file
+    if not bscenario.SCENARIO_NAME_RE.fullmatch(name):
+        raise bscenario.ScenarioError(f"{path}: name {name!r}: use a-z, 0-9, '_' or '-'")
+    with tempfile.TemporaryDirectory(prefix="bg3ai-scenario-") as td:   # bscenario.load_scenario names it by its file
         v1_path = Path(td) / f"{name}.json"
         v1_path.write_text(json.dumps(v1))
         try:
-            return runs.load_scenario(v1_path, [m[0] for m in milestones.MILESTONES], rpolicy.ROLEPLAY_MODES,
+            return bscenario.load_scenario(v1_path, [m[0] for m in milestones.MILESTONES], rpolicy.ROLEPLAY_MODES,
                                       rpolicy.DIFFICULTIES), want
-        except runs.ScenarioError as e:
-            raise runs.ScenarioError(str(e).replace(str(v1_path), str(path))) from None
+        except bscenario.ScenarioError as e:
+            raise bscenario.ScenarioError(str(e).replace(str(v1_path), str(path))) from None
 
 
 def scenario_status(sc: dict, saves: list[Save] | None = None) -> tuple[str, str]:
-    """runs.scenario_status against the save folder (read only: the start save's .lsv is hashed, never written)."""
+    """bscenario.scenario_status against the save folder (read only: the start save's .lsv is hashed, never written)."""
     folders = {s.folder for s in (rcode.list_saves() if saves is None else saves)}
-    return runs.scenario_status(sc, folders, lambda f: runs.save_digest(renv.SAVE_DIR, f))
+    return bscenario.scenario_status(sc, folders, lambda f: bscenario.save_digest(renv.SAVE_DIR, f))
 
 
 def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
     """run --scenario: the scenario's values into the parsed args (a flag left out takes the scenario's; one that
     contradicts it is refused). -> (refusal, the start save's sha1)."""
-    conflicts = runs.scenario_cli_conflicts(sc, {"seed": getattr(a, "seed", None), "until": a.until,
+    conflicts = bscenario.scenario_cli_conflicts(sc, {"seed": getattr(a, "seed", None), "until": a.until,
                                                  "character_brief": a.character_brief, "roleplay": a.roleplay, "difficulty": a.difficulty,
                                                  "save_owner": a.save_owner})
     if conflicts:
         return "; ".join(conflicts) + " (drop the flag: the scenario fixes it)", None
     status, detail = scenario_status(sc)
-    if status != runs.READY:
+    if status != bscenario.READY:
         return f"{status}: {detail}", None
     a.playthrough = a.playthrough or sc["name"]
     a.until, a.runs = sc["until"], a.runs or sc["runs"]
@@ -165,8 +169,8 @@ def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
     sha1 = None
     if sc["start"]["kind"] == "save":
         a.save_owner = sc["profile"]["character"]["name"]
-        sha1 = runs.save_digest(renv.SAVE_DIR, sc["start"]["save"])
-    return runs.scenario_series_check(series_meta(a.playthrough), sc, a.playthrough, sha1), sha1
+        sha1 = bscenario.save_digest(renv.SAVE_DIR, sc["start"]["save"])
+    return bscenario.scenario_series_check(series_meta(a.playthrough), sc, a.playthrough, sha1), sha1
 
 
 def series_meta(base: str) -> dict:
@@ -189,10 +193,10 @@ def freeze_series(base: str, n: int, until: str | None, profile: dict, pins: dic
                   caps: dict | None = None, scenario: dict | None = None, judge_model: str | None = None,
                   client: str | None = None, box: dict | None = None) -> None:
     """series.json, written once by the first run: the profile, N, the milestone, the version pins, the caps, the
-    persona judge's model, the client (--client) and the sandbox (box: runs.sandbox_mode) every later run is held
-    to, and the scenario (runs.scenario_freeze) of a run --scenario series. A series from before
+    persona judge's model, the client (--client) and the sandbox (box: bseries.sandbox_mode) every later run is held
+    to, and the scenario (bscenario.scenario_freeze) of a run --scenario series. A series from before
     pins/caps/judge/client gets them from the first run that has them; one from before the sandbox key never gets
-    it (it played without a sandbox: runs.series_sandbox reads a missing key as "none")."""
+    it (it played without a sandbox: bseries.series_sandbox reads a missing key as "none")."""
     meta = series_freeze(base, n, until, profile, pins, caps, scenario, judge_model, client, box)
     if meta is None:
         return
@@ -230,10 +234,10 @@ def series_freeze(base: str, n: int, until: str | None, profile: dict, pins: dic
 
 
 def current_pins() -> dict:
-    """The versions a run starting now plays with (runs.version_pins): the BG3 Steam buildid, the bg3le build the
+    """The versions a run starting now plays with (bpins.version_pins): the BG3 Steam buildid, the bg3le build the
     launcher loads, the mod tree and the repo."""
     lib = Path(os.environ.get("BG3AI_BG3LE_LIB", bg3le_buildinfo.DIST / "libbg3le.so"))
-    return runs.version_pins(renv.REPO, steam_paths.buildid(), lib.parent, rcode.MOD_DIR / "Mods" / "BG3AI" / "meta.lsx",
+    return bpins.version_pins(renv.REPO, steam_paths.buildid(), lib.parent, rcode.MOD_DIR / "Mods" / "BG3AI" / "meta.lsx",
                              rcode.mod_tree_hashes())
 
 
@@ -245,7 +249,7 @@ def gate_series_run(base: str, r: lpt.Runner, pins: dict, allow_drift: bool) -> 
     if run.get("started") or r.state["history"]:
         r.opt.pins = run.get("pins") or pins
         return None
-    drift = runs.pin_drift(series_meta(base).get("pins"), pins)
+    drift = bpins.pin_drift(series_meta(base).get("pins"), pins)
     if drift and not allow_drift:
         return (f"series {base}: REFUSING run {r.opt.run_index}: versions differ from the series' first run "
                 f"({'; '.join(drift)}); restore them, or pass --allow-version-drift to record the drift")
@@ -259,7 +263,7 @@ def prepare_series_run(base: str, pt: str, k: int, scenario: dict | None = None)
     """Run k's playthrough before its Runner exists: the series' profile.json (k > 1, or every run of a scenario:
     its profile) and a fresh memory from memory-template/ (tools/memory/new_playthrough.py), unless they're there
     already (a resumed run). A scenario that starts from a save also gets its start note as HANDOFF.md
-    (runs.start_note: the harness's neutral text, never another playthrough's memory)."""
+    (bscenario.start_note: the harness's neutral text, never another playthrough's memory)."""
     import memlib
     from new_playthrough import create_memory
     prof_path = renv.PLAYTHROUGHS / pt / "profile.json"
@@ -278,7 +282,7 @@ def prepare_series_run(base: str, pt: str, k: int, scenario: dict | None = None)
         h = create_memory(pt, mem, renv.MEMORY_TEMPLATE)
         renv.log(f"{pt}: new memory {mem} from memory-template (commit {h[:8]})")
         if scenario is not None and scenario["start"]["kind"] == "save":
-            (mem / "HANDOFF.md").write_text(runs.start_note(scenario))
+            (mem / "HANDOFF.md").write_text(bscenario.start_note(scenario))
             h = memlib.git_commit_all(mem, f"S000 scenario {scenario['name']}: start note") or h
             renv.log(f"{pt}: HANDOFF.md = the start note of scenario {scenario['name']} (commit {h[:8]})")
 
@@ -432,7 +436,7 @@ def stop_game_at_end(r: lpt.Runner | None, opt: rstate.Options, when: str) -> bo
 
 def run_series(opt: rstate.Options, n: int, current: dict, allow_drift: bool = False, scenario: dict | None = None,
                save_sha1: str | None = None) -> int:
-    """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (runs.run_name) and a new
+    """run --until M --runs N: runs 1..N of the series opt.series, each a new playthrough (bseries.run_name) and a new
     game, one runs.jsonl record per run in runtime/sessions/<base>/. Resumes at the first run without a record (a
     restart, by hand or on changed code, continues the series). Between runs the game is stopped (end_run_game).
     Stops early on an operator stop or on something a next run can't fix (stale bg3le, a runner error)."""
@@ -441,12 +445,12 @@ def run_series(opt: rstate.Options, n: int, current: dict, allow_drift: bool = F
     path = renv.RUNTIME / "sessions" / base / "runs.jsonl"
     rc, prev, first = 0, None, True
     while not current["stop"]:
-        k = runs.next_run_index(runs.series_records(path, base))
+        k = bseries.next_run_index(bseries.series_records(path, base))
         if k > n:
             break
         if prev is not None:
             prev.end_run_game()
-        pt = runs.run_name(base, k)
+        pt = bseries.run_name(base, k)
         restarted = restart_half_run(opt, base, pt, k, forced=opt.restart_run and first)
         first = False
         try:
@@ -462,10 +466,10 @@ def run_series(opt: rstate.Options, n: int, current: dict, allow_drift: bool = F
         if current["stop"]:
             r.stop_requested = True
         pins = current_pins()
-        freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in runs.CAP_KEYS},
-                      runs.scenario_freeze(scenario, save_sha1) if scenario else None,
+        freeze_series(base, n, opt.until, r.profile, pins, {k_: getattr(opt, k_) for k_ in bseries.CAP_KEYS},
+                      bscenario.scenario_freeze(scenario, save_sha1) if scenario else None,
                       opt.judge_model if opt.judge else None, opt.client,
-                      runs.sandbox_mode(opt.sandbox, bool(opt.box and opt.box.unfirewalled)))
+                      bseries.sandbox_mode(opt.sandbox, bool(opt.box and opt.box.unfirewalled)))
         refusal = gate_series_run(base, r, pins, allow_drift)
         if refusal:
             renv.log(refusal)
@@ -481,10 +485,10 @@ def run_series(opt: rstate.Options, n: int, current: dict, allow_drift: bool = F
             break
         prev = r
     stop_game_at_end(current["runner"], opt, "series end")
-    recs = runs.series_records(path, base)
+    recs = bseries.series_records(path, base)
     if recs:
         renv.log(f"series {base}: {len(recs)}/{n} run(s) recorded, {sum(1 for x in recs if x.get('clean'))} clean, "
-            f"{runs.clean_streak(recs)} clean in a row (python3 runner/play.py runs --playthrough {base})")
+            f"{brecords.clean_streak(recs)} clean in a row (python3 runner/play.py runs --playthrough {base})")
     return rc
 
 
@@ -580,10 +584,10 @@ class SeriesSide:
 
     def judge_run_record(self, path: Path, rec: dict) -> None:
         """--judge: the persona judge on the run just recorded, merged into its runs.jsonl line. Never raises."""
-        model = self.opt.judge_model or judge.DEFAULT_MODEL
+        model = self.opt.judge_model or judging.DEFAULT_MODEL
         renv.log(f"persona judge ({model}) on run {rec.get('run') or 1} ({rec['playthrough']}) ...")
         rec["persona"] = judge_record(self.state.dir, rec, model, stop=lambda: self.abort)
-        if not runs.update_record(path, rec, {"persona": rec["persona"]}):
+        if not bseries.update_record(path, rec, {"persona": rec["persona"]}):
             renv.log(f"persona: could not update the record in {path} (play.py judge --playthrough "
                 f"{self.opt.series or self.opt.playthrough} redoes it)")
         renv.log("persona: " + lcli.persona_line(rec["persona"]))
@@ -610,8 +614,8 @@ class SeriesSide:
         - play/knowledge is snapshotted; the agent's edits are put back after the run (FAIR-2)
         The game process itself is restarted between runs (end_run_game)."""
         self.state["saves_after"] = now
-        moved = runs.archive_nav_state(renv.SE_BG3AI_DIR, self.state.dir / "reset")
-        snap = runs.snapshot_tree(renv.KNOWLEDGE_DIR)
+        moved = bresets.archive_nav_state(renv.SE_BG3AI_DIR, self.state.dir / "reset")
+        snap = bresets.snapshot_tree(renv.KNOWLEDGE_DIR)
         try:
             (self.state.dir / "knowledge_snapshot.json").write_text(json.dumps(snap))
         except OSError as e:
@@ -636,7 +640,7 @@ class SeriesSide:
                     streams.append(f)
             except OSError:
                 continue
-        res = runs.restore_agent_edits(renv.KNOWLEDGE_DIR, snap, runs.agent_written(streams, renv.KNOWLEDGE_DIR, renv.PLAY_DIR),
+        res = bresets.restore_agent_edits(renv.KNOWLEDGE_DIR, snap, bresets.agent_written(streams, renv.KNOWLEDGE_DIR, renv.PLAY_DIR),
                                        self.state.dir / "knowledge_edits")
         if res["agent_edits"] or res["other_changes"]:
             renv.log(f"knowledge/ after the run: agent edits put back: {', '.join(res['agent_edits']) or 'none'}; "

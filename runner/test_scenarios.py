@@ -38,7 +38,8 @@ from bg3harness.runner import state as rstate
 import legacy_playthrough as lpt
 from bg3play.runner import prompts as pprompts
 import legacy_series as lser
-import runs as R  # noqa: E402
+from bg3bench import scenario_v1 as bscenario  # noqa: E402
+from bg3bench import series as bseries  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 MILESTONES = [m[0] for m in rpolicy.milestones.MILESTONES]
@@ -58,7 +59,7 @@ def save_scenario(**over) -> dict:
 
 
 def problems(sc: dict, name: str = "beach") -> list[str]:
-    return R.validate_scenario(sc, name, MILESTONES, rpolicy.ROLEPLAY_MODES, rpolicy.DIFFICULTIES)
+    return bscenario.validate_scenario(sc, name, MILESTONES, rpolicy.ROLEPLAY_MODES, rpolicy.DIFFICULTIES)
 
 
 class TmpDir(unittest.TestCase):
@@ -101,20 +102,20 @@ class Format(unittest.TestCase):
         self.assertIn("nautiloid", names)
         self.assertGreaterEqual(len(names), 3)
         for n in names:
-            sc = R.load_scenario(REPO / "scenarios" / f"{n}.json", MILESTONES, rpolicy.ROLEPLAY_MODES,
+            sc = bscenario.load_scenario(REPO / "scenarios" / f"{n}.json", MILESTONES, rpolicy.ROLEPLAY_MODES,
                                  rpolicy.DIFFICULTIES)
-            self.assertEqual(set(sc["caps"]), set(R.CAP_KEYS))
-            self.assertEqual(sc["reset"], R.RESETS[sc["start"]["kind"]])
+            self.assertEqual(set(sc["caps"]), set(bseries.CAP_KEYS))
+            self.assertEqual(sc["reset"], bscenario.RESETS[sc["start"]["kind"]])
             if sc["start"]["kind"] == "save":
                 self.assertTrue(sc["profile"]["character"]["name"])
 
     def test_nautiloid_is_the_launch_bar_series(self):
-        sc = R.load_scenario(REPO / "scenarios" / "nautiloid.json", MILESTONES, rpolicy.ROLEPLAY_MODES,
+        sc = bscenario.load_scenario(REPO / "scenarios" / "nautiloid.json", MILESTONES, rpolicy.ROLEPLAY_MODES,
                              rpolicy.DIFFICULTIES)
         self.assertEqual((sc["start"], sc["until"], sc["runs"], sc["caps"]["run_hours"]),
                          ({"kind": "new_game"}, "nautiloid_escaped", 3, 4))
         self.assertNotIn("name", sc["profile"]["character"])          # phase 0: the agent names the character
-        self.assertEqual(R.scenario_status(sc, set()), (R.READY, "new game"))
+        self.assertEqual(bscenario.scenario_status(sc, set()), (bscenario.READY, "new game"))
 
 
 # ======================================================================== start note, conflicts, series
@@ -122,22 +123,22 @@ class Format(unittest.TestCase):
 class StartNote(TmpDir):
     def test_the_note_is_the_scenarios_text_only(self):
         sc = save_scenario()
-        text = R.start_note(sc)
+        text = bscenario.start_note(sc)
         self.assertTrue(text.startswith("# Handoff S000 → S001\n"))
         self.assertIn('Save to load: "SCN-beach"', text)
         self.assertEqual(rgame.parse_handoff_save(text), "SCN-beach")
         for part in ("Where: Ravaged Beach, out of combat.", "1. Find a Cure.",
                      "Party: Claude (Paladin), Shadowheart (Cleric)", "## Journal at the start save\n- Find a Cure"):
             self.assertIn(part, text)
-        self.assertEqual(text, R.start_note(copy.deepcopy(sc)))           # pure: same scenario, same note
-        self.assertIn("- (empty)", R.start_note(save_scenario(start=dict(sc["start"], note={
+        self.assertEqual(text, bscenario.start_note(copy.deepcopy(sc)))           # pure: same scenario, same note
+        self.assertIn("- (empty)", bscenario.start_note(save_scenario(start=dict(sc["start"], note={
             "where": "w", "objective": "o"}))))
 
     def test_a_memory_with_the_note_passes_the_lint(self):
         from new_playthrough import create_memory
         mem = self.tmp / "mem"
         create_memory("t", mem, renv.MEMORY_TEMPLATE)
-        (mem / "HANDOFF.md").write_text(R.start_note(save_scenario()))
+        (mem / "HANDOFF.md").write_text(bscenario.start_note(save_scenario()))
         out = subprocess.run([sys.executable, str(REPO / "tools" / "memory" / "lint.py"), str(mem)],
                              capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
@@ -166,7 +167,7 @@ class Wiring(TmpDir):
         for k, pt in ((1, "beach"), (2, "beach-r2")):
             lser.prepare_series_run("beach", pt, k, sc)
             mem = renv.PLAYTHROUGHS / pt / "memory"
-            self.assertEqual((mem / "HANDOFF.md").read_text(), R.start_note(sc))
+            self.assertEqual((mem / "HANDOFF.md").read_text(), bscenario.start_note(sc))
             log = subprocess.run(["git", "-C", str(mem), "log", "--format=%s"], capture_output=True, text=True).stdout
             self.assertIn("S000 scenario beach: start note", log)
             self.assertEqual(subprocess.run(["git", "-C", str(mem), "status", "--porcelain"], capture_output=True,
@@ -203,8 +204,9 @@ class Wiring(TmpDir):
 
     def test_series_json_freezes_the_scenario(self):
         sc = save_scenario()
-        lser.freeze_series("beach", 2, "grove", sc["profile"], {"p": 1}, sc["caps"], R.scenario_freeze(sc, "s1"))
-        lser.freeze_series("beach", 2, "grove", {}, {"p": 2}, {}, R.scenario_freeze(dict(sc, until="x"), "s2"))
+        lser.freeze_series("beach", 2, "grove", sc["profile"], {"p": 1}, sc["caps"],
+                           bscenario.scenario_freeze(sc, "s1"))
+        lser.freeze_series("beach", 2, "grove", {}, {"p": 2}, {}, bscenario.scenario_freeze(dict(sc, until="x"), "s2"))
         meta = lser.series_meta("beach")
         self.assertEqual((meta["scenario"]["name"], meta["scenario"]["start_save_sha1"], meta["profile"]),
                          ("beach", "s1", sc["profile"]))
@@ -252,7 +254,7 @@ class Cli(TmpDir):
                          ("beach", "grove", 2, "beach", START, "Claude"))
         self.assertEqual((opt.run_hours, opt.max_cost, opt.max_tokens), (2, 40, None))
         self.assertIsNone(opt.character_brief)                        # profile.json comes from the scenario
-        self.assertEqual((got, sha1), (sc, R.save_digest(renv.SAVE_DIR, START)))
+        self.assertEqual((got, sha1), (sc, bscenario.save_digest(renv.SAVE_DIR, START)))
         # --runs and --playthrough override N and the series' name; flags equal to the scenario's are fine
         self.assertEqual(self.run_cli("--scenario", "beach", "--runs", "5", "--playthrough", "b2", "--until", "grove",
                                       "--max-cost", "40", "--save-owner", "Claude")[0], 0)

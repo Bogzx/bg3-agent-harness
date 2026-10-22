@@ -537,7 +537,7 @@ class PlayWiring(unittest.TestCase):
             self.assertEqual(lser.series_meta("old")["pins"], {"p": 1})
 
     def test_series_sandbox_rules(self):
-        from runs import sandbox_mode as m, series_sandbox as f
+        from bg3bench.series import sandbox_mode as m, series_sandbox as f
         self.assertEqual(m(None, True), {"sandbox": "none", "sandbox_unfirewalled": False})
         self.assertEqual(f({}, m("container"), False), (None, None))
         self.assertEqual(f({"series": "x"}, m("none"), False), (None, None))
@@ -590,7 +590,7 @@ class PlayWiring(unittest.TestCase):
     def test_pi_in_the_container_writes_its_session_files(self):
         """pi.md round 10: the container's root is read-only, so pi's agent dir and its session files (shared by the
         session's resumes) are mounted read-write at their own path; the configs it only reads stay read-only."""
-        import profiles
+        from bg3harness import profiles
         docker = fake_docker(self.d, [])
         system = self.d / "system.txt"
         system.write_text("rules\n")

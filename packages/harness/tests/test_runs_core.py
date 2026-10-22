@@ -1,4 +1,4 @@
-"""bg3harness.runs (moved from runner/runs.py): the usage meter and caps, the run's totals over its streams, the run
+"""bg3harness.runs (moved from the runner): the usage meter and caps, the run's totals over its streams, the run
 metrics (deaths, fairness flags, latency, result tokens, story points) and the model_time backfill. Pure functions over
 files in a temp dir; never launches a client or the game. Runner-side wiring: runner/test_runs.py."""
 

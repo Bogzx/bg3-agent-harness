@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Collection
 from pathlib import Path
+from typing import Any
 
 from .clients import Event
 
@@ -90,7 +91,7 @@ def _turn_times(path: Path) -> dict:
 
 
 def load_events(
-    base: Path, kinds: Collection[str] | None = None, parsers: dict | None = None, turns: Path | None = None
+    base: Path, kinds: Collection[str] | None = None, parsers: dict[str, Any] | None = None, turns: Path | None = None
 ) -> list[Event]:
     """The Events of one play process; base is its path without the extension (runtime/sessions/<pt>/S012-r1).
     kinds: only these kinds (the raw fallback skips lines early for kinds={"result"}: streams run to tens of MB).

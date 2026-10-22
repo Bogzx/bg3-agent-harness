@@ -7,7 +7,7 @@
     runner/play.py bench run --matrix M.toml   # bg3bench's matrix, each job one run_session on this game
     runner/play.py run --playthrough NAME --until nautiloid_escaped --runs 3 [--run-hours 4]   # benchmark series
     runner/play.py runs --playthrough NAME [--failures]   # its runs: outcome, clean, failures by class
-    runner/play.py judge --playthrough NAME [--run K]     # (re-)score runs' in-character decisions (runner/judge.py)
+    runner/play.py judge --playthrough NAME [--run K]     # (re-)score runs' in-character decisions (runner.judging)
 
 Per session: make sure the game is up with this playthrough's save loaded, open the memory session (session.py
 start; its briefing leads the kickoff), launch `claude -p` in play/ with only the bg3 MCP tools (the server owns
@@ -30,11 +30,11 @@ import argparse
 import sys
 
 import _harness  # noqa: F401  (packages/harness/src and bridge/src on sys.path)
-import judge
 import legacy_cli as lcli
 from bg3ai import milestones
 from bg3harness import clients, sandbox
 from bg3harness.runner import env as renv
+from bg3harness.runner import judging
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 
@@ -182,13 +182,13 @@ def main(argv: list[str] | None = None) -> int:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="with --until: after each run, score its in-character decisions against CHARACTER.md "
-        "(runner/judge.py; the judge's cost is recorded apart, never capped). Default: on with --runs "
+        "(bg3harness.runner.judging; the judge's cost is recorded apart, never capped). Default: on with --runs "
         "and --scenario, off for a single run",
     )
     r.add_argument(
         "--judge-model",
         help="the judge's model (default $BG3AI_JUDGE_MODEL or "
-        f"{judge.DEFAULT_MODEL}); never the model under test. A series keeps its first one (series.json)",
+        f"{judging.DEFAULT_MODEL}); never the model under test. A series keeps its first one (series.json)",
     )
     r.add_argument(
         "--allow-judge-change",
@@ -301,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     j.add_argument("--playthrough", required=True, help="the series (run --runs) or playthrough (run --until)")
     j.add_argument("--run", type=int, help="this run only (default: every run without a persona score)")
     j.add_argument("--all", action="store_true", help="re-judge every run, scored ones too")
-    j.add_argument("--judge-model", help="default: series.json's, else $BG3AI_JUDGE_MODEL or " + judge.DEFAULT_MODEL)
+    j.add_argument("--judge-model", help="default: series.json's, else $BG3AI_JUDGE_MODEL or " + judging.DEFAULT_MODEL)
     j.add_argument("--allow-judge-change", action="store_true", help="judge with another model than series.json's")
     j.add_argument("--timeout", type=float, default=renv.JUDGE_TIMEOUT_S, help="seconds per run (default %(default)s)")
     a = ap.parse_args(argv)

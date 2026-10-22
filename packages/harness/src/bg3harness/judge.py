@@ -57,14 +57,20 @@ Meta = dict[str, Any]
 
 
 class Event(Protocol):
-    """What extraction reads of a clients.Event (bg3harness/clients.py)."""
+    """What extraction reads of a clients.Event (bg3harness/clients.py); read-only, so a str field fits str | None."""
 
-    kind: str
-    t: float | None
-    call_id: str | None
-    tool: str | None
-    args: Any
-    text: str
+    @property
+    def kind(self) -> str: ...
+    @property
+    def t(self) -> float | None: ...
+    @property
+    def call_id(self) -> str | None: ...
+    @property
+    def tool(self) -> str | None: ...
+    @property
+    def args(self) -> Any: ...
+    @property
+    def text(self) -> str: ...
 
 
 Loader = Callable[[Path], Sequence[Event]]  # events of one play process from its path without extension

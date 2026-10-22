@@ -16,6 +16,7 @@ calls), and the agent's last summary. Stdlib + bg3ai.metrics only.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -266,6 +267,15 @@ def write(base: Path) -> Path:
     return out
 
 
-if __name__ == "__main__":
-    for arg in sys.argv[1:]:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="python -m bg3harness.triage", description="Write <session>.triage.md for each session's files."
+    )
+    ap.add_argument("session", nargs="+", help="runtime/sessions/<playthrough>/Sxxx (or one of its .jsonl/.log files)")
+    for arg in ap.parse_args(argv).session:
         print(write(Path(re.sub(r"\.(jsonl|log|triage\.md)$", "", arg))))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
