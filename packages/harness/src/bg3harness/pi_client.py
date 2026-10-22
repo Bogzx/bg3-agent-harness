@@ -108,6 +108,7 @@ class PiParser:
         self.unsettled_bill: float | None = None  # billed since the last assistant message
         self.providers: list[str] = []  # served providers, as the endpoint named them
         self.generations: list[str] = []  # response ids (OpenRouter: /api/v1/generation?id=)
+        self.efforts: list[str] = []  # the thinking levels pi sent (its message thinkingLevel: after its clamp)
         self.malformed = 0  # tool calls whose arguments pi could not parse
         self.recovery = 0  # compaction or overflow rounds
         self.last_stop: str | None = None
@@ -136,6 +137,11 @@ class PiParser:
             self.first_ts = ts if self.first_ts is None else min(self.first_ts, ts)
             self.last_ts = ts if self.last_ts is None else max(self.last_ts, ts)
 
+    def _served(self) -> dict | None:
+        """What the endpoint served so far, each value once in first-seen order (usage and result events)."""
+        served = {"effort": list(dict.fromkeys(self.efforts)), "providers": list(dict.fromkeys(self.providers))}
+        return served if any(served.values()) else None
+
     def _cost(self) -> float:
         return round(self.cost + (self.unsettled_bill or 0.0), 6)
 
@@ -154,6 +160,7 @@ class PiParser:
             cost_usd=self._cost(),
             tokens=dict(self.tokens),
             model=self.model,
+            served=self._served(),
         )
 
     def _recover(self, what: str) -> list[C.Event]:
@@ -173,6 +180,8 @@ class PiParser:
         self._stamp(msg)
         self.turns += 1
         self.model = msg.get("model") or self.model
+        if msg.get("thinkingLevel"):
+            self.efforts.append(str(msg["thinkingLevel"]))
         sid = self.session
         for c in msg.get("content") or []:
             if c.get("type") == "text" and str(c.get("text") or "").strip():
@@ -197,8 +206,15 @@ class PiParser:
         bill, self.unsettled_bill = self.unsettled_bill, None
         self.cost += bill if bill is not None else float((u.get("cost") or {}).get("total") or 0)
         out.append(
-            C.Event("usage", session_id=sid, message_id=msg.get("responseId"), tokens=toks, cost_usd=self._cost())
-        )  # the process's running cost (spend caps act on it)
+            C.Event(
+                "usage",
+                session_id=sid,
+                message_id=msg.get("responseId"),
+                tokens=toks,
+                cost_usd=self._cost(),
+                served=self._served(),
+            )
+        )  # the process's running cost (spend caps act on it) and what it was served (a capped process keeps it)
         self.last_stop = msg.get("stopReason")
         if self.last_stop == "error":
             self.last_error = str(msg.get("errorMessage") or "")

@@ -399,6 +399,7 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)
     moved = ["nav_aa.json", "nav_guard_aa.json"]
     assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved})
+    assert rec["served"] is None  # runs.claude_totals' served: no stream, nothing served
     assert (rec["game_settings"], rec["manifest"], rec["loaded_save"]) == (
         {"difficulty": "Balanced"},
         {"m": 1},

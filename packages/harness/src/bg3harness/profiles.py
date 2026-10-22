@@ -275,6 +275,17 @@ def digest(p: Profile) -> str:
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def _provider_key(name: str) -> str:
+    return re.sub(r"[\s_]+", "-", name.strip().lower())
+
+
+def off_route(p: Profile, providers: list[str]) -> list[str]:
+    """The served providers outside the profile's [routing].only (OpenRouter names them as "DeepSeek" or "Amazon
+    Bedrock", the pin as slugs: compared lower-case, spaces as dashes); [] when it pins none."""
+    only = {_provider_key(s) for s in (p.routing or {}).get("only") or ()}
+    return [x for x in providers if only and _provider_key(x) not in only]
+
+
 def tools_off(p: Profile) -> tuple[str, ...]:
     """The bg3 tool groups (bridge capabilities.py) a profile's model can't use: screenshots for a pi model without
     image input (pi would hand it "(see attached image)" and no picture). The CLIs (claude, codex, gemini) show

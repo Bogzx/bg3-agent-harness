@@ -398,7 +398,8 @@ def claude_totals(state_dir: Path, since: float) -> dict:
     message id, one turn per message, the cost its client reported as running (pi), else its tokens at the run's cost
     per token so far (claude reports cost only in its result). A process whose cost can't be known (a codex/gemini
     model without a price, a first process stopped before any result priced a token) adds no cost and sets
-    cost_unknown: the cost_usd is then a lower bound, never a run's true cost (H4: it read $0 with 208k tokens)."""
+    cost_unknown: the cost_usd is then a lower bound, never a run's true cost (H4: it read $0 with 208k tokens).
+    served: what the endpoints served (pi's thinking levels and providers), a stopped process's from its last usage."""
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
     unknown = False
     try:
@@ -413,6 +414,7 @@ def claude_totals(state_dir: Path, since: float) -> dict:
         except OSError:
             continue
     parsers: dict = {}
+    served: dict = {}  # what the endpoints served (clients.Event.served), merged in first-seen order
     for _, _, f in sorted(found):  # in the order written: a resume after the process it resumes
         base = f.with_name(f.name[: -len(".jsonl")])
         evs = events.load_events(base, kinds={"result"}, parsers=parsers)
@@ -424,7 +426,9 @@ def claude_totals(state_dir: Path, since: float) -> dict:
             turns += int(ev.turns or 0)
             for k in clients.TOKEN_KEYS:
                 tokens[k] += int((ev.tokens or {}).get(k) or 0)
-    return {"cost_usd": cost, "turns": turns, "tokens": tokens, "cost_unknown": unknown}
+            for k, values in (ev.served or {}).items():
+                served.setdefault(k, []).extend(v for v in values if v not in served[k])
+    return {"cost_usd": cost, "turns": turns, "tokens": tokens, "cost_unknown": unknown, "served": served or None}
 
 
 def stopped_usage(base: Path) -> list | None:
@@ -441,15 +445,16 @@ def unfinished_result(usage: list, done_cost: float, done_tokens: int):
     last tokens per message id, one turn per message, the last running cost (pi), else the tokens at done_cost per
     done_token (UsageMeter's live rate); no cost (None) when nothing priced a token yet."""
     msgs: dict = {}
-    running = None
+    running = served = None
     for ev in usage:
         msgs[ev.message_id or f"#{len(msgs)}"] = ev.tokens or {}
         if ev.cost_usd is not None:
             running = float(ev.cost_usd)
+        served = ev.served or served
     tokens = {k: sum(int(t.get(k) or 0) for t in msgs.values()) for k in clients.TOKEN_KEYS}
     if running is None and done_tokens:
         running = token_total(tokens) * done_cost / done_tokens
-    return clients.Event("result", turns=len(msgs), cost_usd=running, tokens=tokens)
+    return clients.Event("result", turns=len(msgs), cost_usd=running, tokens=tokens, served=served)
 
 
 class UsageMeter:

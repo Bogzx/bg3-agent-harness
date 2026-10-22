@@ -42,6 +42,12 @@
     "think_ms": {"type": ["number", "null"], "description": "thinking: the CLI's thinking time for the block"},
     "api_ms": {"type": ["number", "null"], "description": "result: API time of the process"},
     "think_tokens": {"type": ["integer", "null"], "description": "result: output tokens spent thinking"},
+    "served": {
+      "type": ["object", "null"],
+      "description": "usage, result: what the endpoint served the process so far, each value once in first-seen order (pi: the thinking levels it sent, after its clamp, and the providers that served it); optional, added 2026-10-22, still v1",
+      "properties": {"effort": {"type": "array", "items": {"type": "string"}}, "providers": {"type": "array", "items": {"type": "string"}}},
+      "additionalProperties": false
+    },
     "detail": {"type": ["object", "null"], "description": "harness kinds: what happened"}
   }
 }

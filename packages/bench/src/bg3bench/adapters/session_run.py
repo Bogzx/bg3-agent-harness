@@ -56,6 +56,12 @@ def profile_ref(path: str | None) -> JSON | None:
     return {"name": Path(path).name, "sha256": profiles.digest(profiles.load(path))}
 
 
+def served_providers(rec: JSON) -> list[str]:
+    served: JSON = rec.get("served") or {}
+    providers: list[str] = served.get("providers") or []
+    return providers
+
+
 @dataclass(frozen=True)
 class Start:
     prompt: str  # the kickoff
@@ -118,6 +124,8 @@ class SessionRun:
         rec: JSON = dict(self.host.record(job, sc, run_dir, out))
         rec.update(series=name, playthrough=run_dir.name, run=k, client=job["client"], model=job["model"])
         rec.setdefault("effort", job["effort"])
+        if job.get("profile") and (off := profiles.off_route(profiles.load(job["profile"]), served_providers(rec))):
+            rec["off_route"] = off  # served outside the profile's provider pin: invalid (results.validity)
         rec.setdefault("started", out.started)
         versions = {**pins.versions(), **({"harness": st.harness_version} if st.harness_version else {})}
         rec["pins"] = {"versions": versions, **(rec.get("pins") or {})}

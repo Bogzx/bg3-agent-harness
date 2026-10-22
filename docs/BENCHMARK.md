@@ -136,7 +136,8 @@ models whose ranges overlap are not distinguished), the idle median (live feel),
   outside; timeouts and caps also become unknown when harness failures hit the run).
 - **Which runs count**: a run with a harness failure measures us, not the model. Report it, re-run it (a new run in
   the same series), and compare models on `clean` runs plus agent-class failures. A run with an operator action
-  (`operator` non-empty) never counts.
+  (`operator` non-empty) never counts, nor does one an endpoint served outside its profile's `[routing].only`
+  (`off_route`: the manifest's `model.served` lists the providers and pi's thinking levels after its clamp).
 
 ## 7. Budget and machine plan
 

@@ -483,6 +483,7 @@ class LiveRunHost:
                 "reason": res.reason,
                 "cost_usd": None if totals["cost_unknown"] else totals["cost_usd"],  # unknown is not $0
                 "tokens": totals["tokens"],
+                "served": totals["served"],  # what the endpoint served (pi: thinking levels, providers)
                 "turns": totals["turns"],
                 "wall_min": round((res.ended - outcome.started) / 60, 2),
                 "sessions": 1,

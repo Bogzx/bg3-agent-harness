@@ -277,6 +277,7 @@ class Fixtures(Base):
                 self.assertEqual(R.fairness_flags(plays), legacy_fairness_flags(self.streams(src, play_only=True)))
                 totals = R.claude_totals(d, 0)
                 self.assertIs(totals.pop("cost_unknown"), False)  # every process here reported its cost
+                self.assertIsNone(totals.pop("served"))  # claude reports no served levels or providers
                 self.assertEqual(totals, legacy_claude_totals(src, 0), f"{how} {src.name}")
         self.assertEqual(n, 8)
 

@@ -53,7 +53,16 @@
       "properties": {
         "slug": {"type": "string", "minLength": 1},
         "provider_requested": {"$ref": "#/$defs/str_or_null"},
-        "reasoning_effort": {"$ref": "#/$defs/str_or_null"}
+        "reasoning_effort": {"$ref": "#/$defs/str_or_null"},
+        "served": {
+          "description": "what the endpoint served the run (bg3harness clients.Event.served via runs.claude_totals): pi's thinking levels after its clamp, the providers that served it; null when the client reports neither. Optional (added 2026-10-22, still v1).",
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false,
+             "properties": {"effort": {"type": "array", "items": {"type": "string"}},
+                            "providers": {"type": "array", "items": {"type": "string"}}}}
+          ]
+        }
       }
     },
     "caps": {

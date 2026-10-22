@@ -6,7 +6,9 @@ and the method attribution (methods.attribute) when the run has a facts.jsonl. W
 milestone verdict is used (`outcome == "reached"`), which is how series before facts.jsonl were scored.
 
 Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when the runner itself failed
-(`runner_error`), a harness failure was classified (runs.py `harness_failures`), or an operator acted on it.
+(`runner_error`), a harness failure was classified (runs.py `harness_failures`), an operator acted on it, or an
+endpoint served it outside its profile's provider pin (`off_route`: the record's off_route, set by the session
+runner from bg3harness.profiles.off_route).
 
 Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (bg3harness/model_time.py);
 realtime scenarios (D7) report it next to wall time, since the world runs while the model thinks. `luck` is
@@ -42,6 +44,8 @@ def validity(record: dict) -> tuple[bool, str | None]:
         return False, "harness_failure"
     if record.get("operator"):
         return False, "operator"
+    if record.get("off_route"):
+        return False, "off_route"
     return True, None
 
 

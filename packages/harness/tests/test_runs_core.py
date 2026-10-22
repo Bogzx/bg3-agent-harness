@@ -151,6 +151,24 @@ class Caps(TmpDir):
         ev = runs.unfinished_result(runs.stopped_usage(self.tmp / "S001") or [], 0.0, 0)
         self.assertIsNone(ev.cost_usd)  # nothing priced a token yet: no rate to price it at
 
+    def test_what_the_endpoints_served_is_merged_and_a_stopped_process_keeps_its_last(self):
+        event = runs.clients.Event
+        _stream(self.tmp / "S001.jsonl", {"type": "session"})
+        log = runs.events.EventLog(self.tmp / "S001.events.jsonl")
+        log.write(event("result", cost_usd=0.1, served={"effort": ["high"], "providers": ["DeepSeek"]}))
+        log.close()
+        later = time.time() + 5
+        os.utime(self.tmp / "S001.jsonl", (later, later))
+        _stream(self.tmp / "S002.jsonl", {"type": "session"})  # capped: no result, its usage events say it
+        os.utime(self.tmp / "S002.jsonl", (later + 1, later + 1))
+        log = runs.events.EventLog(self.tmp / "S002.events.jsonl")
+        log.write(event("usage", message_id="m1", cost_usd=0.2, served={"effort": ["high"], "providers": ["DeepSeek"]}))
+        served = {"effort": ["high", "medium"], "providers": ["DeepSeek", "Novita"]}
+        log.write(event("usage", message_id="m2", cost_usd=0.3, served=served))
+        log.end("cap", -2, time.time())
+        self.assertEqual(runs.claude_totals(self.tmp, 0)["served"], served)
+        self.assertIsNone(runs.claude_totals(self.tmp, later + 60)["served"])  # nothing ran: nothing served
+
     def test_a_result_without_a_price_has_an_unknown_cost(self):
         # a codex model with no known price: its result carries tokens and no cost
         _stream(

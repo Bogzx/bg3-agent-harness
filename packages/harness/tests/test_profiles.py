@@ -179,6 +179,14 @@ class Status(unittest.TestCase):
         self.assertEqual({got[n] for n in got if n.startswith(("codex", "deepseek-v4", "opus-5.5-pi"))}, {"offline"})
 
 
+class OffRoute(unittest.TestCase):
+    def test_providers_outside_the_pin_by_name_or_slug(self):
+        pinned = PR.parse(pi(routing={"only": ["deepseek", "amazon-bedrock"]}))
+        served = ["DeepSeek", "Amazon Bedrock", "deepseek", "Novita", "amazon_bedrock"]
+        self.assertEqual(PR.off_route(pinned, served), ["Novita"])
+        self.assertEqual(PR.off_route(PR.parse(pi(routing=None)), ["Novita"]), [])  # no pin: nothing is off it
+
+
 class Digest(unittest.TestCase):
     def test_what_a_profile_sets_not_where_it_came_from(self):
         base = PR.digest(PR.parse(pi(), "a.toml"))

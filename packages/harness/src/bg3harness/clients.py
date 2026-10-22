@@ -86,6 +86,7 @@ class Event:
     think_ms: float | None = None      # thinking: the CLI's thinking time for this block (claude thinking_duration_ms)
     api_ms: float | None = None        # result: API time of the process (claude duration_api_ms)
     think_tokens: int | None = None    # result: output tokens spent thinking (claude output_tokens_details)
+    served: dict | None = None         # usage, result: what the endpoint served so far (pi: {"effort", "providers"})
     detail: dict | None = None         # harness kinds: what happened (reason, fault, exit, ...)
     v: int = EVENTS_VERSION
     t: float | None = None             # when the runner read the line (epoch s)

@@ -151,6 +151,28 @@ class Streams(unittest.TestCase):
         self.assertEqual(next(e for e in events if e.kind == "tool_result").text, "<image>")
 
 
+class Served(unittest.TestCase):
+    def test_the_clamped_effort_and_providers_ride_on_usage_and_the_result(self):
+        # pi stamps each assistant message with the level it sent after its clamp (conformance: --thinking high on a
+        # model whose map drops high sent "medium"); bg3.ts's billing entry names the provider that served it
+        _, events = parse(lines("billing"))
+        want = {"effort": ["high"], "providers": ["StubProvider"]}
+        self.assertEqual(result(events).served, want)
+        self.assertEqual([e.served for e in events if e.kind == "usage"], [want, want])
+
+    def test_each_value_once_in_first_seen_order(self):
+        def answer(level: str, provider: str) -> list[str]:
+            bill = {"customType": "bg3.billing", "data": {"usage": {"cost": 0.1}, "provider": provider}}
+            msg = json.loads(assistant())
+            msg["message"]["thinkingLevel"] = level
+            return [ev("entry_appended", entry=bill), json.dumps(msg)]
+
+        stream = [TOOLS, SYSTEM, *answer("high", "B"), *answer("medium", "A"), *answer("high", "B")]
+        res = result(parse([*stream, ev("agent_settled", aborted=False)])[1])
+        self.assertEqual(res.served, {"effort": ["high", "medium"], "providers": ["B", "A"]})
+        self.assertIsNone(result(parse([TOOLS, SYSTEM, assistant(), ev("agent_settled")])[1]).served)
+
+
 class Guards(unittest.TestCase):
     def test_tool_count_check(self):
         """Check 22: the model got fewer tools than the server listed -> the runner's mcp_failed."""

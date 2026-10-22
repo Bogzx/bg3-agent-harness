@@ -53,7 +53,7 @@ def test_manifest_from_the_naut2_series(tmp_path):
         "timing": None,
     }
     assert man["client"] == {"name": "claude", "version": None}
-    assert man["model"] == {"slug": "opus", "provider_requested": None, "reasoning_effort": "medium"}
+    assert man["model"] == {"slug": "opus", "provider_requested": None, "reasoning_effort": "medium", "served": None}
     assert man["caps"] == {"run_hours": 4, "max_cost": None, "max_tokens": None}
     assert man["pins"]["game_build"] == "25605617"
     assert (man["prompt"], man["tools"], man["price_sheet"], man["sandbox"]) == (None, None, None, "none")

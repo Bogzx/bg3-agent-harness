@@ -77,7 +77,12 @@ def from_series(
         "autoskip": autoskip,
         "condition": condition,
         "client": {"name": record.get("client") or series["client"], "version": client_version},
-        "model": {"slug": record["model"], "provider_requested": provider, "reasoning_effort": record.get("effort")},
+        "model": {
+            "slug": record["model"],
+            "provider_requested": provider,
+            "reasoning_effort": record.get("effort"),
+            "served": record.get("served"),
+        },
         "profile": profile,
         "caps": {k: caps.get(k) for k in ("run_hours", "max_cost", "max_tokens")},
         "pins": record.get("pins") or series.get("pins") or {},

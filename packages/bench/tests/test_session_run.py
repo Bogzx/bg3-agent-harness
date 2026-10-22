@@ -95,8 +95,14 @@ class Hooks:
 class Host:
     """The harness's side: each start plays the next script of `scripts`; the record is a passed or failed run."""
 
-    def __init__(self, scripts: list[list[tuple[str, float]]], cost: float | None = 0.4, fail_start: bool = False):
-        self.scripts, self.cost, self.fail_start = list(scripts), cost, fail_start
+    def __init__(
+        self,
+        scripts: list[list[tuple[str, float]]],
+        cost: float | None = 0.4,
+        fail_start: bool = False,
+        served: dict | None = None,
+    ):
+        self.scripts, self.cost, self.fail_start, self.served = list(scripts), cost, fail_start, served
         self.clock = [T0]
         self.started: list[tuple[dict, dict, Path]] = []
         self.hooks: list[Hooks] = []
@@ -109,7 +115,9 @@ class Host:
         return Start("KICKOFF", self.hooks[-1], "conv-1", "a" * 64, ({"file": "rules.md", "sha256": "b" * 64},), "0.1")
 
     def record(self, job: dict, sc: dict, run_dir: Path, outcome) -> dict:
-        return {"outcome": "gave_up" if outcome.invalid else "timeout", "cost_usd": self.cost, "tokens": {}}
+        rec = {"outcome": "gave_up" if outcome.invalid else "timeout", "cost_usd": self.cost, "tokens": {}}
+        rec["served"] = self.served
+        return rec
 
 
 def job(client: str = "pi", condition: str = "rules", repeat: int = 1) -> dict:
@@ -228,6 +236,24 @@ def test_the_manifest_names_the_profile_a_run_played(tmp_path):
     man = json.loads((tmp_path / "sessions" / series_name("m", job()) / "manifest.json").read_text())
     assert man["profile"] is None
     assert_valid("manifest.v1.schema.json", man)
+
+
+def test_a_run_served_outside_its_provider_pin_is_invalid_and_the_manifest_says_what_was_served(tmp_path):
+    opus = HERE.parents[2] / "profiles" / "opus-5.5-pi.toml"  # [routing] only = ["anthropic"]
+    j = {**job(), "profile": str(opus)}
+    for k, providers, reason in (("pinned", ["Anthropic"], None), ("off", ["Anthropic", "Google Vertex"], "off_route")):
+        served = {"effort": ["high", "medium"], "providers": providers}
+        res = SessionRun(
+            "m", Host([[("exited", 5)]], served=served), scenarios={"e2e_sell_idol": SC}, sessions=tmp_path / k
+        )(j)
+        assert (res.valid, res.invalid_reason, res.cost_usd) == (reason is None, reason, 0.4)  # its cost still counts
+        run_dir = tmp_path / k / series_name("m", j)
+        man = json.loads((run_dir / "manifest.json").read_text())
+        assert man["model"]["served"] == served
+        assert_valid("manifest.v1.schema.json", man)
+        assert_valid("result.v1.schema.json", json.loads((run_dir / "result.json").read_text()))
+    rec = json.loads((tmp_path / "off" / series_name("m", j) / "runs.jsonl").read_text())
+    assert rec["off_route"] == ["Google Vertex"]
 
 
 def test_the_host_gets_the_prompt_condition_and_a_gapped_run_is_a_pilot(tmp_path):

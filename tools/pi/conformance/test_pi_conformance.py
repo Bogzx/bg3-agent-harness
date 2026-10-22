@@ -476,6 +476,12 @@ class Conformance(unittest.TestCase):
         last = run.requests[1]["messages"][-1]
         self.assertIn("cache_control", json.dumps(last))
 
+    def test_18b_an_unsupported_effort_is_clamped_and_the_message_says_the_level_sent(self):
+        # PiParser's served effort is the message's thinkingLevel: pi's clamped level, the one in the request
+        run = self.run_pi([{"text": "ok"}], model_info={"thinking_level_map": {"high": False}})
+        self.assertEqual(run.requests[0]["reasoning"], {"effort": "medium"})
+        self.assertEqual([m["thinkingLevel"] for m in run.messages("assistant")], ["medium"])
+
     def test_19_billed_cost_and_provider_per_response(self):
         run = self.run_pi([{"tool_calls": [call("get_status")]}, {"text": "ok"}])
         billing = [
