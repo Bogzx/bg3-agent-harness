@@ -54,12 +54,14 @@ def write_run_artifacts(
     price_sheet: dict[str, Any] | None = None,
     profile: dict[str, Any] | None = None,
     judge: Any = None,
+    pilot: Sequence[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Grade the run in run_dir and write its manifest.json and result.json there; returns (manifest, result).
 
     `prompt_sha` is the sha256 of the assembled prompt (`prompt_parts`: [{"file", "sha256"}]); `scenario_spec`
     overrides series.json's frozen spec (a v2 file from packages/bench/scenarios). `judge` (a bg3harness.judge
-    client, never the model under test) scores a choice scenario's picks against its character brief."""
+    client, never the model under test) scores a choice scenario's picks against its character brief. `pilot`: what
+    the run didn't play of its condition (bg3bench.conditions.session_gaps), result.json's `pilot`."""
     run_dir = Path(run_dir)
     sc = series_scenario(series) if scenario_spec is None else _v2(scenario_spec)
     man = manifest.from_series(
@@ -90,7 +92,7 @@ def write_run_artifacts(
             )
     if (run_dir / ROLLS).is_file():
         luck_summary = luck.summary(luck.load(run_dir / ROLLS))
-    res = results.from_record(run_record, man["run_id"], grade, attribution, luck_summary, picked)
+    res = results.from_record(run_record, man["run_id"], grade, attribution, luck_summary, picked, pilot)
     manifest.write(man, run_dir / MANIFEST)
     results.write(res, run_dir / RESULT)
     return man, res

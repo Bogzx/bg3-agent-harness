@@ -9,6 +9,10 @@ run's manifest names it exactly: `rules`, `rules+coaching@<hash8>`, `rules+wiki`
 - persona: neutral unless named.
 - reloads: `load_game` is removed from the tool list unless the condition allows reloads (BENCHMARK-PLAN.md:
   "success within R reloads" is a separate, declared condition).
+
+The harness's prompts know two conditions, `rules` and `rules+coaching` (BG3AI_PROMPT_CONDITION): prompt_condition
+maps an id to its one. session_gaps lists what a session run (bg3harness.runner.run_host) can't play exactly: such
+a run is a pilot (matrix allow_gaps, result.json `pilot`), never a published result.
 """
 
 from __future__ import annotations
@@ -21,6 +25,15 @@ RELOAD_TOOLS = ("load_game",)
 _COACHING_RE = re.compile(r"^coaching@[0-9a-f]{8}$")
 _PERSONA_RE = re.compile(r"^persona:[a-z][a-z0-9_-]{0,31}$")
 _RELOADS_RE = re.compile(r"^reloads:[1-9]\d?$")
+GAP_CLAUDE_PROMPT = (
+    "claude reads play/CLAUDE.md (rules+coaching with the playthrough's memory protocol), not the condition's prompt"
+)
+GAP_COACHING = (
+    "a coaching bundle by hash (the served coaching is the current one, and it needs the memory tools a bench run has "
+    "off)"
+)
+GAP_PERSONA = "a persona switch on top of the scenario's character brief"
+GAP_RELOADS = "a reload cap at R (reloads are counted, never stopped at R)"
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,10 @@ class Condition:
         if self.reloads:
             parts.append(f"reloads:{self.reloads}")
         return "+".join(parts)
+
+    def prompt_condition(self) -> str:
+        """The harness prompt condition (BG3AI_PROMPT_CONDITION) this id plays: rules, or rules+coaching."""
+        return "rules+coaching" if self.coaching else "rules"
 
     def removed_tools(self) -> list[str]:
         """Tools the server must not list for this condition."""
@@ -69,3 +86,16 @@ def parse(cid: str) -> Condition:
     if cond.id != cid:
         raise ValueError(f"condition {cid!r} is not canonical: write {cond.id!r}")
     return cond
+
+
+def session_gaps(cid: str, client: str) -> list[str]:
+    """What a session run of condition `cid` through `client` doesn't play as the id says; [] = exact."""
+    c = parse(cid)
+    gaps = [GAP_CLAUDE_PROMPT] if client == "claude" else []
+    if c.coaching:
+        gaps.append(GAP_COACHING)
+    if c.persona != "neutral":
+        gaps.append(GAP_PERSONA)
+    if c.reloads:
+        gaps.append(GAP_RELOADS)
+    return gaps

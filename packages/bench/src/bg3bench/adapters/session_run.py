@@ -6,7 +6,8 @@ SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=
 runs.jsonl line (its pins carry the harness, bench and suite versions: pins.versions, the host's harness version
 first) and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
 `start` puts the game at the scenario's start and returns the kickoff and the session hooks (the agent process, the
-game, the clock; the job it gets carries "tools_off", the tools its condition removes), `record` returns the run's
+game, the clock; the job it gets carries "tools_off", the tools its condition removes, and "prompt_condition", the
+harness prompt condition it plays: conditions.Condition.prompt_condition), `record` returns the run's
 record fields once the session is over (facts.jsonl closed). The harness never imports the bench: the scenario
 reaches the host as the v2 dict (scenario.load: with defaults).
 
@@ -15,7 +16,8 @@ harness failure, so results.validity makes it invalid and the matrix reruns the 
 no agent: an invalid attempt that cost nothing, recorded in runs.jsonl as a runner_error (no artifacts), so the
 rerun plays in a fresh run directory (the failed start may have left a facts.jsonl run_start there). A run whose
 artifacts can't be written (a facts or roll log the bench refuses) is invalid with the record's cost, so the matrix
-settles what it spent and reruns it instead of stopping on an unknown cost. series.json freezes the scenario from
+settles what it spent and reruns it instead of stopping on an unknown cost. A run whose condition the session can't
+play exactly (conditions.session_gaps) is labelled a pilot in result.json (the matrix refuses it unless allow_gaps). series.json freezes the scenario from
 the series' first run; a later run of an edited scenario is refused.
 
 Budget: a paid client's (matrix.PAID_CLIENTS) cost is settled by the matrix (`charged` False), so the host must not
@@ -101,7 +103,9 @@ class SessionRun:
         run_dir.mkdir(parents=True, exist_ok=True)
         profile = profile_ref(job.get("profile"))  # as the run starts: what it played with
         try:
-            st = self.host.start({**job, "tools_off": conditions.parse(job["condition"]).removed_tools()}, sc, run_dir)
+            cond = conditions.parse(job["condition"])
+            host_job = {**job, "tools_off": cond.removed_tools(), "prompt_condition": cond.prompt_condition()}
+            st = self.host.start(host_job, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
             why = f"start failed: {type(e).__name__}: {e}"
             failed: JSON = {"series": name, "playthrough": run_dir.name, "run": k, "client": job["client"]}
@@ -134,6 +138,7 @@ class SessionRun:
                 scenario_spec=sc,
                 condition=job["condition"],
                 profile=profile,
+                pilot=conditions.session_gaps(job["condition"], job["client"]) or None,
             )
         except Exception as e:  # noqa: BLE001 - the run played and spent: ungradable is invalid, its cost still known
             why = f"artifacts failed: {type(e).__name__}: {e}"

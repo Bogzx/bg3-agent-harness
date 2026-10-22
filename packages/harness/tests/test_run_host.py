@@ -56,7 +56,14 @@ UNTIL_SC: dict[str, Any] = {k: v for k, v in NEW_SC.items() if k != "goal"} | {
     "name": "nautiloid",
     "until": "nautiloid_escaped",
 }
-JOB = {"model": "opus", "client": "claude", "effort": "high", "condition": "rules", "max_cost": None}
+JOB = {
+    "model": "opus",
+    "client": "claude",
+    "effort": "high",
+    "condition": "rules",
+    "prompt_condition": "rules",
+    "max_cost": None,
+}
 
 
 class State(dict[str, Any]):
@@ -329,10 +336,13 @@ def test_a_bench_runs_served_text_and_tools_have_no_memory(rig: Rig, monkeypatch
 
 
 def test_a_coaching_condition_gets_the_pace_preflight(rig: Rig):
+    # the bench's id names the coaching bundle's hash; the server and the kickoff go by the prompt condition it maps to
     h = rig.h
-    st = h.start({**JOB, "condition": "rules+coaching"}, NEW_SC, run_dir("m-idol"))
+    job = {**JOB, "condition": "rules+coaching@1a2b3c4d", "prompt_condition": "rules+coaching"}
+    st = h.start(job, NEW_SC, run_dir("m-idol"))
     pace = client_setup.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
     assert pace and st.prompt.endswith(pace)
+    assert rig.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching"
 
 
 def test_a_run_dir_the_runner_doesnt_write_to_is_refused(rig: Rig, tmp_path: Path):

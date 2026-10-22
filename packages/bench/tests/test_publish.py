@@ -111,7 +111,11 @@ def test_plan_refuses(tmp_path):
         publish.plan(root, tag="bench-v9", hf_repo=REPO)
     with pytest.raises(publish.PublishError, match="holdout scenarios in results.json: nautiloid"):
         publish.plan(root, tag=TAG, hf_repo=REPO, holdout={"nautiloid", "other"})
-    (root / "runs" / "naut2-r002" / "result.json").unlink()
+    res = root / "runs" / "naut2-r002" / "result.json"
+    res.write_text(json.dumps({**json.loads(res.read_text()), "pilot": ["a rules-only prompt"]}))
+    with pytest.raises(publish.PublishError, match="naut2-r002 is a pilot \\(a rules-only prompt\\)"):
+        publish.plan(root, tag=TAG, hf_repo=REPO)
+    res.unlink()
     with pytest.raises(publish.PublishError, match="naut2-r002 is in results.json"):
         publish.plan(root, tag=TAG, hf_repo=REPO)
     (root / "site" / "index.html").unlink()

@@ -113,6 +113,12 @@
         "blocks": {"$ref": "#/$defs/count"}
       }
     },
+    "pilot": {
+      "description": "what a pilot run didn't play of its condition (bg3bench.conditions.session_gaps): such a run is never published. Absent: the run played its condition exactly. Optional, added 2026-10-22 (still v1).",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
     "choices": {
       "description": "a choice scenario's picks (bg3bench.choices.grade over the facts' choice events; never right or wrong) and their persona fit by the judge (null: not judged). Optional, added 2026-10-22 (still v1).",
       "type": "object",

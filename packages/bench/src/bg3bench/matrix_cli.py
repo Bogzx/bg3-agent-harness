@@ -7,7 +7,7 @@ The matrix file (paths relative to the repo):
     scenarios = ["nautiloid"]                         # packages/bench/scenarios/<name>.json (v2)
     conditions = ["rules"]
     repeats = 3
-    allow_gaps = false                                # true: a pilot with conditions play.py can't play exactly yet
+    allow_gaps = false                                # true: a pilot with conditions a run can't play exactly yet
     allow_unverified = false                          # true: profiles whose status is "offline" (never played live)
 
     [budget]
@@ -24,11 +24,13 @@ refused; one that has never played live ("offline", the default) only with allow
 A scenario that isn't ready (bench.scenario.not_ready: a save start without its save, or start.not_ready) gets no
 jobs: plan and run list it as skipped with the reason.
 
-- plan: a dry run. The jobs as a table, the reserve, the budget left, the skipped scenarios and what play.py lacks
-  for each condition; writes nothing.
+- plan: a dry run. The jobs as a table, the reserve, the budget left, the skipped scenarios and what a session run
+  (conditions.session_gaps, per client) and play.py lack for each condition; writes nothing.
 - run: writes the plan (or keeps the same one) and runs it until done or a stop. `--runner session` (the default):
   each job is one run_session (adapters/session_run.py; the v2 scenario goes to the RunHost the caller passes in as
-  `main(host=...)`: the harness has none to offer yet, so the CLI alone refuses it). `--runner legacy` (the fallback
+  `main(host=...)`: the harness has none to offer yet, so the CLI alone refuses it); a job whose condition the session
+  can't play exactly through its client is refused unless allow_gaps, and its runs are labelled pilot in
+  result.json. `--runner legacy` (the fallback
   until Phase D): each scenario is resolved (bg3bench.scenario.resolve: the runner's v1 shape plus game_settings and
   timing; a goal that isn't one milestone is refused), written to runtime/matrix/<name>/scenarios/ and played by
   play.py run --scenario-file (adapters/legacy_cli.py); a condition play.py lacks is refused unless allow_gaps.
@@ -49,7 +51,7 @@ from typing import TextIO
 
 from bg3harness import profiles
 
-from bg3bench import matrix, scenario
+from bg3bench import conditions, matrix, scenario
 from bg3bench.adapters import legacy_cli, play_flags, session_run
 
 BUDGET = "runtime/budget.json"
@@ -229,6 +231,10 @@ def print_plan(m: dict, out: TextIO) -> None:
         print(f"budget {m['budget']}: unreadable ({e}): run stops before its first job", file=out)
     for name, why in m["skipped"].items():
         print(f"scenario {name}: skipped, not ready: {why}", file=out)
+    for c, client in sorted({(j["condition"], j["client"]) for j in m["jobs"]}):
+        if gaps := conditions.session_gaps(c, client):
+            how = "a pilot (allow_gaps)" if m["allow_gaps"] else "refused by run"
+            print(f"condition {c} through {client}: {how}; a session run lacks " + "; ".join(gaps), file=out)
     for c in m["conditions"]:
         gaps = play_flags.entry(c).gaps
         if gaps:
@@ -299,6 +305,14 @@ def main(
     if run_one is None and args.runner == "session":
         if host is None:
             print("refusing: no run_session host (the harness has none yet): use --runner legacy", file=sys.stderr)
+            return 2
+        gapped = sorted({j["condition"] for j in m["jobs"] if conditions.session_gaps(j["condition"], j["client"])})
+        if gapped and not m["allow_gaps"]:
+            print(
+                f"refusing: a session run can't play {', '.join(gapped)} exactly (bench plan says why): set "
+                "allow_gaps = true for a pilot",
+                file=sys.stderr,
+            )
             return 2
         run_one = session_run.SessionRun(m["name"], host, scenarios=m["scenarios"], sessions=repo / SESSIONS)
     elif run_one is None:

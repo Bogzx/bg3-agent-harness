@@ -110,6 +110,7 @@ class Bench(unittest.TestCase):
         self.matrix = self.tmp / "m.toml"
         self.matrix.write_text(
             "name = 'm'\nscenarios = ['host_idol']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']\n"
+            "allow_gaps = true\n"  # claude plays play/CLAUDE.md (coached) under any condition: a pilot
         )
         se = self.tmp / "se" / "BG3AI"
         se.mkdir(parents=True)

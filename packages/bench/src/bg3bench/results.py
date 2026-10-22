@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import random
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
 from pathlib import Path
 from statistics import median
 
@@ -56,9 +56,10 @@ def from_record(
     methods: dict | None = None,
     luck: dict | None = None,
     choices: dict | None = None,
+    pilot: Sequence[str] | None = None,
 ) -> dict:
     """One runs.jsonl record (+ grader output, + method attribution, + luck.summary, + the choices grader's
-    picks and fit for a choice scenario) -> result v1."""
+    picks and fit for a choice scenario, + what a pilot run didn't play of its condition) -> result v1."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
     valid, reason = validity(record)
@@ -91,6 +92,8 @@ def from_record(
     }
     if choices is not None:
         out["choices"] = choices
+    if pilot:
+        out["pilot"] = list(pilot)
     return out
 
 

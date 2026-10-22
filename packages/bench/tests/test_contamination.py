@@ -82,6 +82,16 @@ def test_conditions_default_to_wiki_off():
     assert conditions.parse(scenario.DEFAULT_CONDITIONS[0]).wiki is False
 
 
+def test_a_condition_maps_to_the_harness_prompt_condition_and_its_session_gaps():
+    assert conditions.parse("rules+wiki").prompt_condition() == "rules"
+    assert conditions.parse("rules+coaching@1a2b3c4d+wiki").prompt_condition() == "rules+coaching"
+    assert conditions.session_gaps("rules", "pi") == conditions.session_gaps("rules+wiki", "pi") == []
+    assert conditions.session_gaps("rules", "claude") == [conditions.GAP_CLAUDE_PROMPT]  # play/CLAUDE.md is coached
+    full = "rules+coaching@1a2b3c4d+persona:evil+reloads:2"
+    want = [conditions.GAP_COACHING, conditions.GAP_PERSONA, conditions.GAP_RELOADS]
+    assert conditions.session_gaps(full, "pi") == want
+
+
 def test_holdout_scenarios_are_never_published():
     pairs = naut2_pairs()
     gold = {**gold_save(), "holdout": True}

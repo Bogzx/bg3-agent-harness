@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from test_run_artifacts import assert_valid
 
-from bg3bench import matrix, pins, report, results, scenario
+from bg3bench import conditions, matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
 from bg3bench.matrix import Matrix, RunResult
 
@@ -228,3 +228,17 @@ def test_the_manifest_names_the_profile_a_run_played(tmp_path):
     man = json.loads((tmp_path / "sessions" / series_name("m", job()) / "manifest.json").read_text())
     assert man["profile"] is None
     assert_valid("manifest.v1.schema.json", man)
+
+
+def test_the_host_gets_the_prompt_condition_and_a_gapped_run_is_a_pilot(tmp_path):
+    host = Host([[("exited", 5)], [("exited", 5)]])
+    sr = run_one(tmp_path, host)
+    sr(job(condition="rules+coaching@1a2b3c4d+wiki"))
+    sr(job(condition="rules+wiki"))
+    (coached, _, coached_dir), (plain, _, plain_dir) = host.started
+    assert (coached["prompt_condition"], plain["prompt_condition"]) == ("rules+coaching", "rules")
+    assert coached["tools_off"] == ["load_game"]
+    res = json.loads((coached_dir / "result.json").read_text())
+    assert res["pilot"] == [conditions.GAP_COACHING]
+    assert_valid("result.v1.schema.json", res)
+    assert "pilot" not in json.loads((plain_dir / "result.json").read_text())  # pi under rules+wiki: exact

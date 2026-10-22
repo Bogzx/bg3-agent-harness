@@ -374,10 +374,11 @@ class LiveRunHost:
         A bench run sees no playthrough memory (knowledge contamination, live7: session_start served play/memory's
         briefing): the memory tool group is off and the server's memory dir is the run's own `memory/`, which
         nothing fills, so no tool reads another playthrough's notes. job["tools_off"]: the condition's removed
-        tools (the bench's conditions.removed_tools: wiki, load_game)."""
+        tools (the bench's conditions.removed_tools: wiki, load_game); job["prompt_condition"]: the prompt condition
+        the bench's id maps to (conditions.Condition.prompt_condition)."""
         choice = client_setup.resolve(job["client"], job.get("profile"), job["model"], job.get("effort"), None, False)
         self.env.update(client_setup.api_key_env(choice.profile, self.env, renv.REPO / ".env"))
-        self.env["BG3AI_PROMPT_CONDITION"] = job["condition"]
+        self.env["BG3AI_PROMPT_CONDITION"] = job["prompt_condition"]  # rules | rules+coaching, not the bench's id
         self.env["BG3AI_MEMORY_DIR"] = str(run_dir / "memory")
         self.env["BG3AI_TOOLS_OFF"] = ",".join([NO_MEMORY, *job.get("tools_off", ())])  # the profile's go on top
         # the scenario's autoskip (default on): the runner's ui.config each session, and the play server's skipper

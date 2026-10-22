@@ -15,7 +15,8 @@ A release directory, as the matrix and results tooling leave it:
 
 Only runs listed in results.json are published, and from a run directory only the files in RUN_FILES (anything else
 there, such as screenshots or logs with local paths, is skipped and listed in the plan). A run of a holdout scenario
-refuses the whole plan: a published release never contains one (contamination.holdout_names).
+refuses the whole plan: a published release never contains one (contamination.holdout_names). Nor a pilot run (its
+result.json's `pilot`: a condition it didn't play exactly).
 
     python -m bg3bench.publish RELEASE_DIR --tag bench-v0.1 --hf-repo OWNER/bg3-bench --dry-run OUT_DIR
 """
@@ -129,6 +130,8 @@ def plan(release_dir: str | Path, *, tag: str, hf_repo: str, holdout: Collection
         d = runs_dir / run_id
         if not (d / "manifest.json").is_file() or not (d / "result.json").is_file():
             raise PublishError(f"run {run_id} is in results.json but {d} has no manifest.json and result.json")
+        if gaps := json.loads((d / "result.json").read_text(encoding="utf-8")).get("pilot"):
+            raise PublishError(f"run {run_id} is a pilot ({'; '.join(gaps)}); never publish it")
         for p in sorted(x for x in d.rglob("*") if x.is_file()):
             rel = p.relative_to(d).as_posix()
             if "/" not in rel and _wanted(rel):

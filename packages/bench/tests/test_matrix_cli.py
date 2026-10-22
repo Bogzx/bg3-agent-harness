@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench import matrix, matrix_cli, scenario
+from bg3bench import conditions, matrix, matrix_cli, scenario
 from bg3bench.matrix import RunResult
 
 REPO = Path(__file__).resolve().parents[3]
@@ -170,6 +170,8 @@ def test_run_refuses_a_condition_play_py_lacks(tmp_path, capsys):
     assert code == 2 and "play.py can't play 'rules' yet" in capsys.readouterr().err
     code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, body)))
     assert code == 0 and "condition rules: refused by run --runner legacy" in out
+    assert "condition rules through claude: refused by run; a session run lacks claude reads" in out
+    assert "through pi" not in out  # pi plays rules exactly
 
 
 def test_run_without_run_one_plays_run_session_on_the_host(tmp_path, capsys):
@@ -179,12 +181,16 @@ def test_run_without_run_one_plays_run_session_on_the_host(tmp_path, capsys):
     body = "name = 'm'\nscenarios = ['nautiloid']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
     code, _ = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)))
     assert code == 2 and "no run_session host" in capsys.readouterr().err  # the CLI alone has no host yet
+    code, _ = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), host=Host([]))
+    assert code == 2 and "can't play rules exactly" in capsys.readouterr().err  # claude's prompt is coached
+    body += "\nallow_gaps = true"
     host = Host([[("exited", 5)]], cost=None)
     code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), host=host)
     assert code == 0 and out.rstrip().endswith(f"stopped: {matrix.FINISHED}")
     ((_job, sc, run_dir),) = host.started
     assert sc == scenario.load(repo / "packages" / "bench" / "scenarios" / "nautiloid.json")  # v2, not resolved
     assert run_dir.parent == repo / "runtime" / "sessions" and (run_dir / "result.json").is_file()
+    assert json.loads((run_dir / "result.json").read_text())["pilot"] == [conditions.GAP_CLAUDE_PROMPT]
     assert not (repo / "runtime" / "matrix" / "m" / "scenarios").exists()  # resolved files are the legacy path's
 
 
@@ -193,6 +199,7 @@ def test_run_stops_when_the_host_says_stopped(tmp_path):
 
     repo = fake_repo(tmp_path)
     body = "name = 'm'\nscenarios = ['nautiloid']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
+    body += "\nallow_gaps = true"
     host = Host([[("exited", 5)]], cost=None)
     host.stopped = True  # LiveRunHost.stopped: a signal or runtime/STOP
     code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), host=host)
