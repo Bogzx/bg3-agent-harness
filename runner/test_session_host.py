@@ -92,8 +92,8 @@ class StubRunner(lpt.Runner):
             result = E.Event("result", subtype="success", turns=3, cost_usd=PAID_USD, tokens={"output": 10})
             base.with_name(base.name + ".events.jsonl").write_text(result.to_json() + "\n")
             self.settle_cost(sid + tag, PAID_USD)
-        now = time.time()  # a session that played (runs.history_failures: an exit within 60 s is a harness failure)
-        return rstate.SessionResult(sid, claude_session or "", 0, "exited", now, now + 600)
+        now = time.time()  # a whole session: one that exits within a minute is a harness failure (claude_quick_exit)
+        return rstate.SessionResult(sid, claude_session or "", 0, "exited", now, now + 25 * 60)
 
 
 class Bench(unittest.TestCase):
@@ -104,13 +104,12 @@ class Bench(unittest.TestCase):
         (repo / "packages" / "bench" / "scenarios").mkdir(parents=True)
         (repo / "packages" / "bench" / "scenarios" / "host_idol.json").write_text(json.dumps(SCENARIO))
         (repo / "profiles").mkdir()
-        (repo / "profiles" / "claude.toml").write_text('client = "claude"\nmodel = "opus"\nstatus = "verified"\n')
+        (repo / "profiles" / "claude.toml").write_text('client = "claude"\nmodel = "opus"\n')
         (repo / "runtime").mkdir()
         (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": 0.0}))  # the matrix's
         self.matrix = self.tmp / "m.toml"
         self.matrix.write_text(
             "name = 'm'\nscenarios = ['host_idol']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']\n"
-            "allow_gaps = true\n"  # claude plays play/CLAUDE.md (coached) under any condition: a pilot
         )
         se = self.tmp / "se" / "BG3AI"
         se.mkdir(parents=True)
