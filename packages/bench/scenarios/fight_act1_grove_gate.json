@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the road below the Emerald Grove's gate, before the goblin raid there begins (claude-run-2 S007-pre-grove-gate): Tav and Shadowheart level 2, Gale level 1, full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-1522126493__SCN-fight_act1_grove_gate",
+  "save_sha1": "65fdc7d172d7f21253eb36454255a58dd368efa9",
   "note": {
    "where": "The road to the Emerald Grove's gate, out of combat; fighting can be heard ahead.",
    "objective": "Help the defenders drive off the goblins at the gate.",

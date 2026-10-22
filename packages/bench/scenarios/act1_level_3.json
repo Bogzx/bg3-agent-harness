@@ -2,16 +2,15 @@
  "schema": 2,
  "name": "act1_level_3",
  "title": "Act 1 → whole party level 3",
- "about": "Sandbox (family 2): every party member reaches level 3, by any means the game allows (fights, quests, exploration, level-up screens); the method is reported, never graded. Gale starts a level behind, so the level-up screen is part of the job. Cap to be calibrated by one pilot run.",
+ "about": "Sandbox (family 2): every party member reaches level 3, by any means the game allows (fights, quests, exploration, level-up screens); the method is reported, never graded. Gale starts a level behind, so the level-up screen is part of the job. Cap to be calibrated by one pilot run. Start save: Gale has a level-up to 2 pending (not taken) and Shadowheart starts 79 m away, 13.5 m below the party.",
  "family": "sandbox",
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Overgrown Ruins near the crash site after Gimblebock's looters left (claude-run-2 S005-ruins-bandits-gone): Tav and Shadowheart level 2, Gale level 1, no level-up pending. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-45221263947__SCN-act1_level_3",
+  "save_sha1": "5a1d6674395f203e78d4245ffd6bc538cd430975",
   "note": {
-   "where": "The Overgrown Ruins near the crash site, out of combat, no dialogue open.",
+   "where": "The Overgrown Ruins near the crash site, by the chapel entrance, out of combat, no dialogue open; Shadowheart is about 80 m away, below.",
    "objective": "Get every party member to level 3.",
    "party": [
     "Tav (Paladin 2)",

@@ -99,5 +99,6 @@ calls from a scripted game):
 
 Built and tested offline. Only `nautiloid` has run live, through `play.py run --scenario`, which still reads the v1
 file in the root `scenarios/`: Claude Opus 5.5 through Claude Code and DeepSeek Flash through pi, one run each
-(research/ovh/live3.md). The other scenarios need their start saves, an oracle run and both baselines before they
-count. The human baseline protocol is [docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md).
+(research/ovh/live3.md). 17 of the 27 save starts have a registered start save (research/ovh/live6.md §2); the
+other ten say why not (`start.not_ready` or no save) and the matrix skips them. Each still needs an oracle run and
+both baselines before it counts. The human baseline protocol is [docs/HUMAN-BASELINE.md](../../docs/HUMAN-BASELINE.md).

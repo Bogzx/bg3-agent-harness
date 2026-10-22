@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 2, the Shadowfell, on the Nightsong's plateau right after Balthazar's fight, before talking to the Nightsong (claude-run-2 S041-end): party level 6, companions (Wyll, Karlach, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-18221265949__SCN-choice_act2_nightsong",
+  "save_sha1": "be5f850108d7bf3df1509a8303e173b4185bd889",
   "note": {
    "where": "The Shadowfell, Nightsong's Prison, on the plateau before the Nightsong; out of combat, no dialogue open.",
    "objective": "Go to the Nightsong with Shadowheart.",

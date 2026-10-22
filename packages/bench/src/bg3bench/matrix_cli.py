@@ -17,8 +17,11 @@ Cells that differ by model (e.g. 3 paid runs × 2 conditions plus 1 subscription
 with its own models, scenarios, conditions and repeats, instead of the top-level four. The groups' jobs merge
 repeat-major (every group's repeat 1 first).
 
-- plan: a dry run. The jobs as a table, the reserve, the budget left and what play.py lacks for each condition;
-  writes nothing.
+A scenario that isn't ready (bench.scenario.not_ready: a save start without its save, or start.not_ready) gets no
+jobs: plan and run list it as skipped with the reason.
+
+- plan: a dry run. The jobs as a table, the reserve, the budget left, the skipped scenarios and what play.py lacks
+  for each condition; writes nothing.
 - run: writes the plan (or keeps the same one) and runs it until done or a stop. `--runner session` (the default):
   each job is one run_session (adapters/session_run.py; the v2 scenario goes to the RunHost the caller passes in as
   `main(host=...)`: the harness has none to offer yet, so the CLI alone refuses it). `--runner legacy` (the fallback
@@ -91,9 +94,9 @@ def _load(name: str, path: Path, repo: Path) -> dict:
 
 
 def resolved(m: dict) -> dict[str, dict]:
-    """Each scenario as the legacy runner reads it (scenario.resolve); a goal it can't stop at raises."""
+    """Each scenario with jobs as the legacy runner reads it (scenario.resolve); a goal it can't stop at raises."""
     try:
-        return {s: scenario.resolve(sc) for s, sc in m["scenarios"].items()}
+        return {s: scenario.resolve(sc) for s, sc in m["scenarios"].items() if s not in m["skipped"]}
     except scenario.ScenarioError as e:
         raise MatrixFileError(f"{m['path']}: {e}") from None
 
@@ -113,8 +116,9 @@ def _group(raw: dict, path: Path, repo: Path, max_cost: dict) -> tuple[list[dict
 
 
 def load(path: str | Path, repo: Path) -> dict:
-    """The matrix file -> {"name", "path", "jobs", "budget", "conditions", "allow_gaps", "scenarios"} (scenarios:
-    name -> the v2 scenario, scenario.load); checks profiles and scenarios."""
+    """The matrix file -> {"name", "path", "jobs", "budget", "conditions", "allow_gaps", "scenarios", "skipped"}
+    (scenarios: name -> the v2 scenario, scenario.load; skipped: name -> why it isn't ready, its jobs left out);
+    checks profiles and scenarios."""
     path = Path(path)
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -143,6 +147,7 @@ def load(path: str | Path, repo: Path) -> dict:
     if unknown := sorted(set(max_cost) - named):
         raise MatrixFileError(f"{path}: budget.max_cost names scenarios not in the matrix: {unknown}")
     loaded = {s: _load(s, path, repo) for s in sorted(named)}
+    skipped = {s: why for s, sc in loaded.items() if (why := scenario.not_ready(sc))}
     jobs, conds = [], []
     for g in groups:
         g_jobs, g_conds = _group(g, path, repo, max_cost)
@@ -150,6 +155,7 @@ def load(path: str | Path, repo: Path) -> dict:
         conds += [c for c in g_conds if c not in conds]
     if len({j["id"] for j in jobs}) != len(jobs):
         raise MatrixFileError(f"{path}: duplicate jobs: two groups share a model, scenario and condition")
+    jobs = [j for j in jobs if j["scenario"] not in skipped]
     jobs.sort(key=lambda j: j["repeat"])  # stable: repeat-major across groups
     for j in jobs:
         if j["client"] in matrix.PAID_CLIENTS and j["max_cost"] is None:
@@ -162,6 +168,7 @@ def load(path: str | Path, repo: Path) -> dict:
         "conditions": conds,
         "allow_gaps": bool(raw.get("allow_gaps", False)),
         "scenarios": loaded,
+        "skipped": skipped,
     }
 
 
@@ -211,12 +218,16 @@ def print_plan(m: dict, out: TextIO) -> None:
         print(f"budget {m['budget']}: {_usd(b['spent'])} of {_usd(b['cap'])} spent", file=out)
     except (OSError, ValueError) as e:
         print(f"budget {m['budget']}: unreadable ({e}): run stops before its first job", file=out)
+    for name, why in m["skipped"].items():
+        print(f"scenario {name}: skipped, not ready: {why}", file=out)
     for c in m["conditions"]:
         gaps = play_flags.entry(c).gaps
         if gaps:
             how = "a pilot (allow_gaps)" if m["allow_gaps"] else "refused by run --runner legacy"
             print(f"condition {c}: {how}; play.py lacks " + "; ".join(gaps), file=out)
     for name, sc in m["scenarios"].items():
+        if name in m["skipped"]:
+            continue
         try:
             scenario.resolve(sc)
         except scenario.ScenarioError as e:
@@ -271,6 +282,11 @@ def main(
     if args.command == "status":
         print_status(matrix.Matrix(root, _no_run, m["budget"], now=now, sleep=sleep), out)
         return 0
+    for name, why in m["skipped"].items():
+        print(f"scenario {name}: skipped, not ready: {why}", file=out)
+    if not m["jobs"]:
+        print(f"refusing: matrix {m['name']} has no job: no scenario of it is ready", file=sys.stderr)
+        return 2
     if run_one is None and args.runner == "session":
         if host is None:
             print("refusing: no run_session host (the harness has none yet): use --runner legacy", file=sys.stderr)

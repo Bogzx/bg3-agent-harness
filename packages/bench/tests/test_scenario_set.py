@@ -58,6 +58,10 @@ HOLDOUT = {
     "fight_act1_gith_patrol", "fight_act3_cazador", "act1_get_item", "choice_act3_wyll_pact", "act2_last_light",
     "fight_act1_gith_patrol_tactician",
 }  # fmt: skip
+# Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector; the
+# Tactician variants wait for theirs.
+NOT_MADE = {"fight_act2_house_of_healing", *TACTICIAN}
+UNREGISTERED = {"fight_act2_ketheric", "fight_act3_sarevok", "choice_act3_wyll_pact", "fight_act3_cazador"}
 # Scenarios the legacy runner can play today: their goal is one milestone (scenario.resolve).
 RESOLVABLE = {"nautiloid", "crash_site_grove", "act2_last_light"}
 
@@ -103,19 +107,28 @@ def test_each_scenario_is_valid_v2(path):
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
-def test_save_starts_wait_for_their_save(path):
-    st = raw(path)["start"]
+def test_save_starts_have_their_save_or_say_why_not(path):
+    st, name = raw(path)["start"], path.stem
     if st["kind"] == "new_game":
         return
-    assert st["save"] is None and st["save_sha1"] is None
-    assert re.search(r"\bAct [123]\b", st["needs_save"]) and "Tav" in st["needs_save"]
     assert raw(path)["profile"]["character"]["name"] == "Tav"
+    if name in NOT_MADE:
+        assert st["save"] is None and st["save_sha1"] is None
+        assert re.search(r"\bAct [123]\b", st["needs_save"]) and "Tav" in st["needs_save"]
+    else:  # made_start_save's folder and the store's lsv sha1
+        assert re.fullmatch(rf"Tav-\d+__SCN-{name}", st["save"]) and re.fullmatch(r"[0-9a-f]{40}", st["save_sha1"])
+        assert "needs_save" not in st
+    assert ("not_ready" in st) == (name in UNREGISTERED or name == "fight_act2_house_of_healing")
+    why = scenario.not_ready(scenario.load(path))
+    assert (why is not None) == (name in NOT_MADE | UNREGISTERED), why
+    if name in UNREGISTERED:
+        assert "inspect.py refused it on false positives" in why  # type: ignore[operator]
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
 def test_needs_save_agrees_with_the_note(path):
     st = raw(path)["start"]
-    if st["kind"] == "new_game":
+    if "needs_save" not in st:
         return
     found = [re.fullmatch(r"(.+) \((\w+)(?: (\d+))?\)", m) for m in st["note"]["party"]]
     assert all(found), st["note"]["party"]
@@ -127,13 +140,15 @@ def test_needs_save_agrees_with_the_note(path):
         assert sorted(re.split(r", | and ", named[1])) == sorted(n for n, _, _ in party[1:]), path.stem
 
 
-def test_starts_match_the_claude_run_2_saves():
-    """research/ovh/bench.md "Start saves to make": run 2 never recruited Lae'zel; the Sanctum save is level 3."""
-    gold = raw(SET / "act1_gold_1000.json")["start"]
-    assert "Lae'zel never recruited): two companions (Shadowheart, Gale)" in gold["needs_save"]
-    assert not any("Lae'zel" in m for m in gold["note"]["party"])
-    minthara = raw(SET / "choice_act1_minthara.json")["start"]
-    assert "S017-worgpens" in minthara["needs_save"] and "party level 3" in minthara["needs_save"]
+def test_starts_match_the_made_saves():
+    """research/ovh/live6.md §2, the inspector's Active Party of each start save: run 2 never recruited Lae'zel, Wyll
+    was already in the party at the druids' chamber and a level behind on the Risen Road."""
+    party = {p.stem: raw(p)["start"]["note"].get("party") for p in FILES if raw(p)["start"]["kind"] == "save"}
+    assert party["act1_gold_1000"] == ["Tav (Paladin 2)", "Shadowheart (Cleric 2)", "Gale (Wizard 1)"]
+    assert party["choice_act1_arabella"][-1] == "Wyll (Warlock 1)"
+    assert party["choice_act1_karlach"] == ["Tav (Paladin 4)", "Wyll (Warlock 3)", "Shadowheart (Cleric 4)"]
+    assert {m.split(" (")[0] for m in party["choice_act1_minthara"]} == {"Tav", "Wyll", "Gale", "Shadowheart"}
+    assert not any("Lae'zel" in m for ms in party.values() for m in ms)
 
 
 def test_seeds_differ():
@@ -186,12 +201,9 @@ def test_a_tactician_variant_is_its_base_at_tactician(name):
         "seed": var["game_settings"]["seed"],
     }
     vs, bs = var["start"], base["start"]
-    assert {**vs, "needs_save": None} == {**bs, "needs_save": None}
-    switched = (
-        ", Tactician (the game's options switched from Balanced to Tactician at "
-        f"{TACTICIAN[name]}'s start moment, then saved: the difficulty lives in the save), "
-    )
-    assert vs["needs_save"] == bs["needs_save"].replace(", Balanced, ", switched)
+    assert vs["note"] == bs["note"] and vs["save"] is None and bs["save"]  # made from the base's start save
+    assert f"its start save {bs['save']} (lsv sha1 {bs['save_sha1'][:12]})" in vs["needs_save"]
+    assert "difficulty switched from Balanced to Tactician" in vs["needs_save"]
     vq, bq = (raw(SET / "quizzes" / f"{n}.json") for n in (name, TACTICIAN[name]))
     assert vq == {**bq, "scenario": name}
 

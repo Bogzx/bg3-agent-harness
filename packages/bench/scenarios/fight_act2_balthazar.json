@@ -7,11 +7,10 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 2, Gauntlet of Shar, Nightsong's Prison, at the top of the stairs before the bridge to Balthazar (claude-run-2 S040-pre-balthazar): party level 6, full HP after a long rest. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-14221265938__SCN-fight_act2_balthazar",
+  "save_sha1": "da79bf42f2f672b815ae64c2008e80483f2c33f3",
   "note": {
-   "where": "Nightsong's Prison, before the bridge where Balthazar waits, out of combat.",
+   "where": "Nightsong's Prison, on the prison floor past the stairs and the bridge, about 11 m from Balthazar; out of combat.",
    "objective": "Defeat Balthazar and his guards.",
    "party": [
     "Tav (Paladin 6)",

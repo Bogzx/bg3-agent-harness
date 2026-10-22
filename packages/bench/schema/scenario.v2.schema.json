@@ -40,6 +40,7 @@
             "kind": {"const": "save"},
             "save": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^.+-\\d+__.+$"}]},
             "save_sha1": {"type": ["string", "null"]},
+            "not_ready": {"type": "string", "pattern": "\\S", "description": "Why this start can't be run yet (a save not made, or made but not registered); the matrix skips it."},
             "needs_save": {"type": "string", "pattern": "\\S", "description": "Only while save is null: the exact game point the start save must be made at."},
             "note": {
               "type": "object",

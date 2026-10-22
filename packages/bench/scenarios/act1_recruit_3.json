@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Roadside Cliffs near the crash site before Gale's portal is touched (claude-run-2 S005-pre-gale, Lae'zel lost after the crash): party level 2, companions (Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-40221263931__SCN-act1_recruit_3",
+  "save_sha1": "13287171ea6b91f71e221b857b27a17b7efcf394",
   "note": {
    "where": "The Roadside Cliffs near the crash site, out of combat, no dialogue open.",
    "objective": "Have three companions travelling with you.",

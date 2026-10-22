@@ -2,14 +2,13 @@
  "schema": 2,
  "name": "act2_last_light",
  "title": "Act 2: across the shadow curse to Last Light",
- "about": "Exploration (family 4): enter the shadow-cursed lands and reach the Last Light Inn, which needs a light against the curse (a moonlantern, an escort, Harper help). claude-run-2 S024-S025 went with Kar'niss's convoy to Moonrise first.",
+ "about": "Exploration (family 4): enter the shadow-cursed lands and reach the Last Light Inn, which needs a light against the curse (a moonlantern, an escort, Harper help). claude-run-2 S024-S025 went with Kar'niss's convoy to Moonrise first. Start save: its Current Level is CRE_Main_A (the inspector's read), not WLD_Main_A.",
  "family": "exploration",
  "holdout": true,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Rosymorn Monastery Trail at the exit to the shadow-cursed lands, not taken yet (claude-run-2 S024-pre-shadowlands): party level 5, companions (Karlach, Gale, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-7221265932__SCN-act2_last_light",
+  "save_sha1": "42d4427a2fd7cd631184c559852da026cd53c3c9",
   "note": {
    "where": "The Rosymorn Monastery Trail at the edge of the shadow-cursed lands, out of combat, no dialogue open.",
    "objective": "Reach the Last Light Inn.",

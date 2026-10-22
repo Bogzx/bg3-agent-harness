@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Blighted Village just east of the windmill, before the goblins there turn hostile (claude-run-2 S014-start, after a long rest): party level 3, full HP and spell slots. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-26221264947__SCN-fight_act1_windmill",
+  "save_sha1": "ca8dae135db0df99b21c9e59197e0953144b63be",
   "note": {
    "where": "The Blighted Village, east of the windmill; goblins and worgs ahead, out of combat.",
    "objective": "Defeat the goblins at the windmill.",

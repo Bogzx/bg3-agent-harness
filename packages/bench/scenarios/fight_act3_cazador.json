@@ -7,9 +7,9 @@
  "holdout": true,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 3, the Lower City, Cazador's Dungeon below Szarr Palace, at the top of the stairs before the talk with Cazador that starts the fight (claude-run-2 S075-end, the start of its last tries): party level 11, companions (Gale, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-37221265921__SCN-fight_act3_cazador",
+  "save_sha1": "aed6dad0dea72e71cd64a3660695b2ee3b4cdcbc",
+  "not_ready": "made 2026-10-22 (research/ovh/live6.md §2) and kept in ~/bg3-start-saves, not registered: tools/saves/inspect.py refused it on false positives (two LSF byte runs read as e-mails in LevelCache/CTY_Main_A.lsf); ready once the fixed inspector registers this save with this sha1",
   "note": {
    "where": "Cazador's Dungeon below Szarr Palace, out of combat.",
    "objective": "Defeat Cazador Szarr.",

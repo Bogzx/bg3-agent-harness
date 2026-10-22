@@ -2,14 +2,13 @@
  "schema": 2,
  "name": "fight_act1_gith_patrol",
  "title": "Act 1 fight: the githyanki patrol at the Mountain Pass",
- "about": "Fight (family 1), small and elite: a githyanki patrol of a few strong warriors and casters. claude-run-2 S023 nearly wiped and reloaded once; it won only after a full rest and Hold Person.",
+ "about": "Fight (family 1), small and elite: a githyanki patrol of a few strong warriors and casters. claude-run-2 S023 nearly wiped and reloaded once; it won only after a full rest and Hold Person. Start save: no long rest (camp supplies 35 of 40 are too few), full HP, one level-2 spell slot spent; Wyll is at camp.",
  "family": "fight",
  "holdout": true,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Mountain Pass road before the githyanki patrol there is met (claude-run-2 S023-pre-gith), after a long rest: party level 4, companions (Karlach, Gale, Shadowheart), full HP and spell slots. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-4221265922__SCN-fight_act1_gith_patrol",
+  "save_sha1": "9b0e882dc48a2d88ccb666fd10cd3420e3c11ff2",
   "note": {
    "where": "The Mountain Pass, on the road ahead of a githyanki patrol, out of combat.",
    "objective": "Defeat the githyanki patrol.",

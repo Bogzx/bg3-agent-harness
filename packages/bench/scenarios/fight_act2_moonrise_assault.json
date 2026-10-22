@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 2, outside the main doors of Moonrise Towers with Jaheira's Harpers ready to attack (claude-run-2 S042-pre-moonrise-assault): party level 6, companions (Wyll, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-22221265932__SCN-fight_act2_moonrise_assault",
+  "save_sha1": "7a223384a912d8cca0706bfea39d0386c410c101",
   "note": {
    "where": "Moonrise Towers, outside the main hall's doors with the Harpers, out of combat.",
    "objective": "Take the main floor of Moonrise Towers.",

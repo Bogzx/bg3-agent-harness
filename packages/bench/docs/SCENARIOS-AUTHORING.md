@@ -115,3 +115,21 @@ is only logged as `settings_unverified`.
 No Honour variants: BG3 can't switch a running game to Honour (it is picked at a new game, with one save slot and
 no reloads), so an Honour fight needs an Honour playthrough to that point, and the bench's save starts and reruns
 from a start save don't fit its single save. The plan's `honour_survive_30m` stays unwritten for the same reason.
+
+## Round 21 (2026-10-22): the start saves as made
+
+The live worker made the start saves (research/ovh/live6.md §2; store `~/bg3-start-saves/<scenario>/`). Each made
+save is the scenario's `start.save` (its `Tav-<id>__SCN-<name>` folder) and `start.save_sha1` (the store's
+`registration.json` `lsv_sha1`), and `needs_save` is gone. Where a save holds something else than the file said, the
+file follows the save: `act1_gold_1000`'s party levels (Tav 2, Shadowheart 2, Gale 1), Wyll in
+`choice_act1_arabella`'s party (level 1), Wyll at level 3 in `choice_act1_karlach`, `act1_level_3`'s Shadowheart
+79 m away, `fight_act2_balthazar`'s start past the bridge, ~11 m from Balthazar (its twin's note too); the rest
+(a pending level-up, no long rest in `fight_act1_gith_patrol`) is in `about`.
+
+A start that can't be run yet says why in `start.not_ready`; a save start with no save is not ready either
+(`scenario.not_ready`). The matrix gives such a scenario no jobs and `bench plan`/`run` list it as "skipped, not
+ready: <why>". Not ready today: `fight_act2_house_of_healing` (not made: needs a hand-played approach),
+`fight_act2_ketheric`, `fight_act3_sarevok`, `choice_act3_wyll_pact`, `fight_act3_cazador` (made, but the save
+inspector refused them on false positives: once a fixed inspector registers the same save, delete `not_ready`) and
+the five Tactician twins, whose `needs_save` now names their base's start save to switch to Tactician and resave.
+

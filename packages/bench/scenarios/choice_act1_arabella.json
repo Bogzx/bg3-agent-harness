@@ -2,21 +2,21 @@
  "schema": 2,
  "name": "choice_act1_arabella",
  "title": "Act 1 choice: the tiefling thief in the druids' chamber",
- "about": "Choice (family 3, claude-run-2 decisions.md D-03): Kagha holds Arabella, a tiefling child caught stealing the idol, and means to punish her; the party can talk, fight or stand by. The run ends when the quest closes or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md).",
+ "about": "Choice (family 3, claude-run-2 decisions.md D-03): Kagha holds Arabella, a tiefling child caught stealing the idol, and means to punish her; the party can talk, fight or stand by. The run ends when the quest closes or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md). Start save: Wyll is already in the party (level 1).",
  "family": "choice",
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Emerald Grove, at the druids' chamber door while Kagha holds Arabella, before speaking to anyone (claude-run-2 S009-pre-kagha): Tav and Shadowheart level 2, Gale level 1. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-21221264940__SCN-choice_act1_arabella",
+  "save_sha1": "ca983b576ea987fb18483d94e76b38daa8ea351a",
   "note": {
    "where": "The Emerald Grove, outside the druids' chamber; raised voices inside. Out of combat, no dialogue open.",
    "objective": "Find out what is happening in the druids' chamber.",
    "party": [
     "Tav (Paladin 2)",
     "Shadowheart (Cleric 2)",
-    "Gale (Wizard 1)"
+    "Gale (Wizard 1)",
+    "Wyll (Warlock 1)"
    ]
   }
  },

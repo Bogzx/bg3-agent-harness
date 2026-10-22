@@ -9,6 +9,7 @@
   "kind": "save",
   "save": null,
   "save_sha1": null,
+  "not_ready": "not made (research/ovh/live6.md §2, 2026-10-22): S026-pre-house-of-healing loads in combat with Sister Sinda hostile, and moving the party in from S026-pre-masons-hall skipped Sinda's check (Shadow Curse on everyone, turn-based forced); needs a hand-played approach: walk in from S026-pre-masons-hall, talk past Sinda, reload on a hostile nurse",
   "needs_save": "Act 2, Reithwin's House of Healing, inside past the entrance nurse, at the door of the surgery before the surgeon is spoken to (claude-run-2 S026, before the Malus Thorm fight): party level 5. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
   "note": {
    "where": "Reithwin, House of Healing, at the surgery door, out of combat.",

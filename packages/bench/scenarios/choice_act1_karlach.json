@@ -2,20 +2,19 @@
  "schema": 2,
  "name": "choice_act1_karlach",
  "title": "Act 1 choice: the paladins' bounty on Karlach",
- "about": "Choice (family 3, claude-run-2 decisions.md D-11): Anders' group at the Risen Road asks the party to kill the 'devil' Karlach; Wyll is in the party and has his own reason to want her dead. The choice and the reason given are recorded and compared across models, never scored right or wrong. The goal only ends the run: Karlach joins (a third companion) or a fight is won (against either side). The brief is neutral on purpose (BENCHMARK-PLAN.md: compare with a neutral brief and with a given persona); a persona condition is added once the harness defines persona texts.",
+ "about": "Choice (family 3, claude-run-2 decisions.md D-11): Anders' group at the Risen Road asks the party to kill the 'devil' Karlach; Wyll is in the party and has his own reason to want her dead. The choice and the reason given are recorded and compared across models, never scored right or wrong. The goal only ends the run: Karlach joins (a third companion) or a fight is won (against either side). The brief is neutral on purpose (BENCHMARK-PLAN.md: compare with a neutral brief and with a given persona); a persona condition is added once the harness defines persona texts. Start save: Wyll is level 3 with a level-up pending (not taken), a level behind Tav and Shadowheart.",
  "family": "choice",
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Risen Road, approaching Anders' group before talking to them, Karlach not yet met (claude-run-2 S021): exactly two companions in the party (Wyll and Shadowheart), so recruiting Karlach makes three. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-56221264931__SCN-choice_act1_karlach",
+  "save_sha1": "5b416c5db765b664712dd87466dcfc87c82dce3e",
   "note": {
    "where": "The Risen Road, near the ruined tollhouse, out of combat, no dialogue open.",
    "objective": "Find out what the armed group on the road wants.",
    "party": [
     "Tav (Paladin 4)",
-    "Wyll (Warlock 4)",
+    "Wyll (Warlock 3)",
     "Shadowheart (Cleric 4)"
    ]
   }

@@ -1,6 +1,7 @@
 # The variance pilot (BENCHMARK-PLAN.md phase 2): 2 models x 10 scenarios x 6 runs, to measure run-to-run variance
-# per scenario and fix each scenario's run count from it (docs/BENCHMARK.md "Variance pilot"). Not run yet: the save
-# scenarios wait for their start saves, and the paid part waits for the owner's go-ahead.
+# per scenario and fix each scenario's run count from it (docs/BENCHMARK.md "Variance pilot"). Not run yet: the paid
+# part waits for the owner's go-ahead. fight_act1_windmill_tactician and fight_act2_house_of_healing have no start save
+# yet, so bench plan skips them (96 jobs, 48 paid, $12.00) until they do.
 #
 # Models: DeepSeek V4.1 Flash through pi (the cheap paid model; live4's whole flash nautiloid billed $0.19) and Opus
 # 5.5 through Claude Code (account 2's subscription: run with CLAUDE_CONFIG_DIR=~/.claude-2; no USD cost). Opus

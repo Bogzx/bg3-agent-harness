@@ -2,14 +2,14 @@
  "schema": 2,
  "name": "fight_act1_gith_patrol_tactician",
  "title": "Act 1 fight: the githyanki patrol at the Mountain Pass (Tactician)",
- "about": "The Tactician variant of fight_act1_gith_patrol: the same fight from the same moment, the same goal and caps, with the game's difficulty at Tactician instead of Balanced (tougher enemies, a smarter enemy AI). Fight (family 1), small and elite: a githyanki patrol of a few strong warriors and casters. claude-run-2 S023 nearly wiped and reloaded once; it won only after a full rest and Hold Person.",
+ "about": "The Tactician variant of fight_act1_gith_patrol: the same fight from the same moment, the same goal and caps, with the game's difficulty at Tactician instead of Balanced (tougher enemies, a smarter enemy AI). Fight (family 1), small and elite: a githyanki patrol of a few strong warriors and casters. claude-run-2 S023 nearly wiped and reloaded once; it won only after a full rest and Hold Person. Start save: no long rest (camp supplies 35 of 40 are too few), full HP, one level-2 spell slot spent; Wyll is at camp.",
  "family": "fight",
  "holdout": true,
  "start": {
   "kind": "save",
   "save": null,
   "save_sha1": null,
-  "needs_save": "Act 1, the Mountain Pass road before the githyanki patrol there is met (claude-run-2 S023-pre-gith), after a long rest: party level 4, companions (Karlach, Gale, Shadowheart), full HP and spell slots. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the game's options switched from Balanced to Tactician at fight_act1_gith_patrol's start moment, then saved: the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "needs_save": "Act 1, fight_act1_gith_patrol's start moment: its start save Tav-4221265922__SCN-fight_act1_gith_patrol (lsv sha1 9b0e882dc48a) loaded with BG3AI_SCENARIO_SETUP=1, the game's difficulty switched from Balanced to Tactician (game menu > Difficulty > Change Difficulty > Tactician > Confirm) and nothing else done: party level 4, companions (Karlach, Gale, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
   "note": {
    "where": "The Mountain Pass, on the road ahead of a githyanki patrol, out of combat.",
    "objective": "Defeat the githyanki patrol.",

@@ -187,6 +187,29 @@ def test_a_scenario_the_legacy_runner_cant_stop_is_refused(tmp_path, capsys):
     assert code == 2 and "gold: goal" in capsys.readouterr().err
 
 
+def test_a_scenario_that_is_not_ready_is_skipped_visibly(tmp_path, capsys):
+    repo = fake_repo(tmp_path)
+    note = {"where": "w", "objective": "o"}
+    start = {"kind": "save", "save": None, "save_sha1": None, "needs_save": "Act 1, the Grove", "note": note}
+    char = {"name": "Tav", "brief": "b"}
+    for name, st in (("unmade", start), ("refused", {**start, "save": "Tav-1__SCN-refused", "not_ready": "refused"})):
+        st = {k: v for k, v in st.items() if name == "unmade" or k != "needs_save"}
+        sc = {**NAUTILOID, "name": name, "start": st, "profile": {"character": char}}
+        (repo / "packages" / "bench" / "scenarios" / f"{name}.json").write_text(json.dumps(sc))
+    body = "name = 'm'\nscenarios = ['nautiloid', 'unmade', 'refused']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']"
+    code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, body)))
+    assert code == 0 and "1 jobs (0 paid)" in out
+    assert "scenario refused: skipped, not ready: refused" in out
+    assert "scenario unmade: skipped, not ready: no start save yet (start.needs_save: where to make it)" in out
+    calls = []
+    code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, body)), run_one=lambda job: calls.append(job)
+                    or RunResult("r", True, True, 0.0, None, True))  # fmt: skip
+    assert code == 0 and [j["scenario"] for j in calls] == ["nautiloid"] and "scenario unmade: skipped" in out
+    only = body.replace("'nautiloid', ", "").replace("name = 'm'", "name = 'm2'")
+    code, _ = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, only)), run_one=lambda job: None)
+    assert code == 2 and "no scenario of it is ready" in capsys.readouterr().err
+
+
 def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
     repo = fake_repo(tmp_path)
     path = matrix_file(tmp_path)
@@ -277,7 +300,8 @@ def test_the_pilot_matrix_loads_in_this_repo():
 
 def test_the_variance_pilot_plan(tmp_path):
     """BENCHMARK-PLAN.md phase 2: 2 models x 10 scenarios x 6 runs; the paid half is bounded at $15 (play.py bench
-    plan's output through this repo's profiles and scenarios, against a budget file of its own)."""
+    plan's output through this repo's profiles and scenarios, against a budget file of its own). Two of the ten have
+    no start save yet (research/ovh/live6.md §2): they are skipped, so 8 scenarios play (96 jobs, $12.00)."""
     real = Path(__file__).resolve().parents[3]
     repo = tmp_path / "repo"
     (repo / "runtime").mkdir(parents=True)
@@ -286,15 +310,21 @@ def test_the_variance_pilot_plan(tmp_path):
     (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": 2.0}))
     code, out = cli(repo, "plan", "--matrix", str(real / "packages" / "bench" / "matrices" / "variance-pilot.toml"))
     assert code == 0
-    rows = [ln.split() for ln in out.splitlines()[1:121]]
-    assert len(rows) == 120 and [r[0].rsplit("~", 1)[1] for r in rows] == [
-        f"r{i}" for i in range(1, 7) for _ in range(20)
+    rows = [ln.split() for ln in out.splitlines()[1:97]]
+    assert len(rows) == 96 and [r[0].rsplit("~", 1)[1] for r in rows] == [
+        f"r{i}" for i in range(1, 7) for _ in range(16)
     ]
     cells = {(r[1], r[4]) for r in rows}
-    assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 20  # every model plays every scenario
+    assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 16  # every model plays every ready scenario
     assert {r[2] for r in rows} == {"high"} and {r[5] for r in rows} == {"rules"}
     assert all(r[6:] == ["$0.25", "$0.25" if r[1] == "pi" else "-"] for r in rows)
-    assert "120 jobs (60 paid), reserve $15.00" in out and "budget " in out and "$2.00 of $20.00 spent" in out
+    assert "96 jobs (48 paid), reserve $12.00" in out
+    assert "scenario fight_act1_windmill_tactician: skipped, not ready: no start save yet" in out
+    assert (
+        "scenario fight_act2_house_of_healing: skipped, not ready: not made" in out
+        and "budget " in out
+        and "$2.00 of $20.00 spent" in out
+    )
     assert "condition rules: a pilot (allow_gaps); play.py lacks a rules-only prompt" in out
     m = matrix_cli.load(real / "packages" / "bench" / "matrices" / "variance-pilot.toml", real)
     fams = sorted(sc["family"] for sc in m["scenarios"].values())

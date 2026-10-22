@@ -7,9 +7,8 @@
  "holdout": true,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Emerald Grove Environs at the start of claude-run-2 S009 (S009-start, before Wyll was recruited), the idol still on its altar: Tav and Shadowheart level 2, Gale level 1. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-18221264924__SCN-act1_get_item",
+  "save_sha1": "8069ca673a242bf262865636cafaf86ad7fb7b54",
   "note": {
    "where": "The Emerald Grove, out of combat, no dialogue open.",
    "objective": "Get the Idol of Silvanus.",

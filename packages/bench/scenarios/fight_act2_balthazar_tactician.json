@@ -9,9 +9,9 @@
   "kind": "save",
   "save": null,
   "save_sha1": null,
-  "needs_save": "Act 2, Gauntlet of Shar, Nightsong's Prison, at the top of the stairs before the bridge to Balthazar (claude-run-2 S040-pre-balthazar): party level 6, full HP after a long rest. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the game's options switched from Balanced to Tactician at fight_act2_balthazar's start moment, then saved: the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "needs_save": "Act 2, fight_act2_balthazar's start moment: its start save Tav-14221265938__SCN-fight_act2_balthazar (lsv sha1 da79bf42f2f6) loaded with BG3AI_SCENARIO_SETUP=1, the game's difficulty switched from Balanced to Tactician (game menu > Difficulty > Change Difficulty > Tactician > Confirm) and nothing else done: party level 6, companions (Wyll, Karlach, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
   "note": {
-   "where": "Nightsong's Prison, before the bridge where Balthazar waits, out of combat.",
+   "where": "Nightsong's Prison, on the prison floor past the stairs and the bridge, about 11 m from Balthazar; out of combat.",
    "objective": "Defeat Balthazar and his guards.",
    "party": [
     "Tav (Paladin 6)",

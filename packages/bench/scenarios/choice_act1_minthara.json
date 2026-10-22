@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the Shattered Sanctum, in the drow leader's war room before speaking to Minthara, the other two goblin leaders alive and the goblins not hostile (claude-run-2 S017-worgpens, before D-09): party level 3. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-47221264946__SCN-choice_act1_minthara",
+  "save_sha1": "2e6408acbebdf9f529adf419f757ad128b819c7c",
   "note": {
    "where": "The Shattered Sanctum, at the drow leader's war room, out of combat, no dialogue open.",
    "objective": "Speak to the leader of the goblin camp.",

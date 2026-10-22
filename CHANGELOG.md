@@ -6,8 +6,8 @@ version:
 | Package | Version lives in | Now |
 |---|---|---|
 | harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.1.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.1.0 |
-| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.1 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.3.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.3 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
 
 The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
@@ -82,9 +82,13 @@ game unless it says so.
 - Scenario schema v2 (family, holdout, goal or until, game settings, dice seed, realtime or turn-based timing,
   requires, conditions) and a loader that converts the v1 files. The think-pause is gone: the ESC menu does not
   pause BG3 (D7).
-- The first v2 scenario set: `nautiloid`, a 45-minute `act1_gold_1000` sandbox, three fights and two choice scenes
-  from claude-run-2's game points, each with a closed-book quiz. Every scenario except `nautiloid` still needs its
-  start save.
+- The v2 scenario set, each scenario with a closed-book quiz. Suite versions so far: bench-v0.1, the first set
+  (`nautiloid`, a 45-minute `act1_gold_1000` sandbox, fights and choice scenes from claude-run-2's game points);
+  bench-v0.2, five fights with a Tactician twin (28 scenarios, 15 fights); bench-v0.3, the start saves made in the
+  live game on 2026-10-22 (research/ovh/live6.md §2) and the start notes corrected to what those saves hold. 17 of
+  the 27 save starts are ready. Four saves are made but not registered (the save inspector refused them on false
+  positives), `fight_act2_house_of_healing` has none yet and the Tactician twins wait for theirs. The matrix skips
+  a scenario that isn't ready and lists it with the reason (`start.not_ready`, or no start save).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

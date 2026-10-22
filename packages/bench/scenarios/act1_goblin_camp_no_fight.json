@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the road from the Blighted Village to the goblin camp, before Olak's checkpoint at the camp gate (claude-run-2 S015-olak, the windmill goblins already beaten): party level 3, companions (Wyll, Gale, Shadowheart), the goblins at the camp neutral. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-41221265956__SCN-act1_goblin_camp_no_fight",
+  "save_sha1": "76ed7b41595cdd910bdd2f6f70f5cbf9b4b07d70",
   "note": {
    "where": "The road to the goblin camp, before its gate; out of combat, no dialogue open.",
    "objective": "Get inside the Shattered Sanctum without a fight.",

@@ -9,7 +9,7 @@
   "kind": "save",
   "save": null,
   "save_sha1": null,
-  "needs_save": "Act 3, the Lower City, inside the Murder Tribunal's hall before Sarevok's trial turns into a fight (claude-run-2 S048-tribunal-hall): party level 8, companions (Wyll, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the game's options switched from Balanced to Tactician at fight_act3_sarevok's start moment, then saved: the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "needs_save": "Act 3, fight_act3_sarevok's start moment: its start save Tav-29221265940__SCN-fight_act3_sarevok (lsv sha1 77283ecc232d) (once it is registered: see its start.not_ready) loaded with BG3AI_SCENARIO_SETUP=1, the game's difficulty switched from Balanced to Tactician (game menu > Difficulty > Change Difficulty > Tactician > Confirm) and nothing else done: party level 8, companions (Wyll, Karlach, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
   "note": {
    "where": "The Murder Tribunal's hall under the Lower City, out of combat, the tribunal not yet hostile.",
    "objective": "Defeat Sarevok.",

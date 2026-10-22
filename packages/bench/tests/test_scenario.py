@@ -164,6 +164,7 @@ START_BAD = [
         {"kind": "save", "save": "Tav-1__SCN-x", "needs_save": "here", "note": {"where": "w", "objective": "o"}},
         "only for a start whose save is not made yet",
     ),
+    ({"kind": "save", "save": "Tav-1__SCN-x", "not_ready": " ", "note": {"where": "w", "objective": "o"}}, "not_ready"),
     ({"kind": "save", "note": {"where": "w"}}, "where and objective"),
     ({"kind": "save", "note": {"where": "w", "objective": "o", "mood": "x"}}, "unknown start.note keys"),
     ({"kind": "save", "note": {"where": "w", "objective": "o", "party": "Gale"}}, "party must be a list"),
@@ -190,6 +191,18 @@ def test_new_game_start_and_non_objects(tmp_path):
     (tmp_path / "act1_gold_1000.json").write_text(json.dumps({**sc, "family": "x"}))
     with pytest.raises(scenario.ScenarioError, match="family"):
         scenario.load(tmp_path / "act1_gold_1000.json")
+
+
+def test_not_ready():
+    sc = scenario.with_defaults(gold_save())
+    made = {"kind": "save", "save": "Tav-1__SCN-act1_gold_1000", "save_sha1": "ab", "note": sc["start"]["note"]}
+    assert scenario.not_ready({**sc, "start": made}) is None
+    assert scenario.not_ready({**sc, "start": {**made, "not_ready": "the inspector refused it"}}) == (
+        "the inspector refused it"
+    )
+    unmade = {**made, "save": None, "save_sha1": None, "needs_save": "Act 1"}
+    assert "no start save yet" in scenario.not_ready({**sc, "start": unmade})  # type: ignore[operator]
+    assert scenario.not_ready({**sc, "start": {"kind": "new_game"}}) is None
 
 
 def test_applicable():

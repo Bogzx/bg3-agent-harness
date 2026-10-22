@@ -9,7 +9,7 @@
   "kind": "save",
   "save": null,
   "save_sha1": null,
-  "needs_save": "Act 1, the Shattered Sanctum outside Dror Ragzlin's throne room, the camp still neutral, Priestess Gut already dead in her chapel (claude-run-2 S017-pre-dror): party level 3, companions (Wyll, Gale, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the game's options switched from Balanced to Tactician at fight_act1_dror_ragzlin's start moment, then saved: the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "needs_save": "Act 1, fight_act1_dror_ragzlin's start moment: its start save Tav-5122126499__SCN-fight_act1_dror_ragzlin (lsv sha1 d8ab62ff9b79) loaded with BG3AI_SCENARIO_SETUP=1, the game's difficulty switched from Balanced to Tactician (game menu > Difficulty > Change Difficulty > Tactician > Confirm) and nothing else done: party level 3, companions (Wyll, Gale, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
   "note": {
    "where": "The Shattered Sanctum, at the throne room's door; the goblins are not hostile yet.",
    "objective": "Defeat Dror Ragzlin.",

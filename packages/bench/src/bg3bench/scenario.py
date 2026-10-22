@@ -15,6 +15,8 @@ v2 adds to today's scenarios/*.json (v1, runner/runs.py `validate_scenario`, sce
   key is refused.
 - `start.needs_save`: while a save start has no save yet (`save: null`), the exact game point the start save must
   be made at (docs/SCENARIOS-AUTHORING.md); refused once the save is set.
+- `start.not_ready`: why a save start can't be run yet although it is written (a save that wasn't made, or one made
+  but not registered); a save start without its save is not ready either (`not_ready`). The matrix skips both.
 - `methods` (default: true for sandbox): report the method attribution (methods.attribute) with the result.
 - `requires` {vision, min_context}: a model that can't meet them is reported as not applicable, never as a failure
   (`applicable`). `conditions`: the condition ids it may run under.
@@ -105,7 +107,7 @@ def _check_start(st: Any, name: str, char_name: str | None) -> list[str]:
     if kind == "new_game":
         return ["a new_game start takes no save or note"] if set(st) - {"kind"} else []
     errs = []
-    if unknown := sorted(set(st) - {"kind", "save", "save_sha1", "note", "needs_save"}):
+    if unknown := sorted(set(st) - {"kind", "save", "save_sha1", "not_ready", "note", "needs_save"}):
         errs.append(f"unknown start keys: {', '.join(unknown)}")
     save = st.get("save")
     if save is None and not _str(st.get("needs_save")):
@@ -118,6 +120,8 @@ def _check_start(st: Any, name: str, char_name: str | None) -> list[str]:
         errs.append(f"start.save {save!r} has an Sxxx- label: re-save it as SCN-{name}")
     if st.get("save_sha1") is not None and not isinstance(st["save_sha1"], str):
         errs.append("start.save_sha1 must be a string or null")
+    if "not_ready" in st and not _str(st["not_ready"]):
+        errs.append("start.not_ready must say why the start can't be run yet")
     if not char_name:
         errs.append("a save start needs profile.character.name: the save fixes the character")
     elif save_owner(save) and save_owner(save) != char_name:
@@ -288,6 +292,16 @@ def goal_of(sc: dict) -> dict:
     return {"milestone": sc["until"]} if "until" in sc else sc["goal"]
 
 
+def not_ready(sc: dict) -> str | None:
+    """Why a loaded scenario can't be run yet (start.not_ready, or a save start without its save); None: it can."""
+    st = sc["start"]
+    if st["kind"] != "save":
+        return None
+    if st.get("not_ready"):
+        return str(st["not_ready"])
+    return None if st.get("save") else "no start save yet (start.needs_save: where to make it)"
+
+
 def digest(sc: Mapping[str, Any]) -> str:
     """A short hash of a scenario's content (as runs.scenario_digest): a series refuses an edited scenario."""
     return hashlib.sha1(json.dumps(sc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
@@ -325,8 +339,8 @@ def resolve(sc: dict) -> dict:
     plus `game_settings` {difficulty, karmic_dice, seed} and `timing`. The difficulty is also `profile.difficulty`,
     where v1 has it. The legacy runner stops at a milestone only (play.py --until), so a goal other than one milestone
     is refused. The bench's own fields (family, holdout, methods, requires, conditions) and the settings a run only
-    records (resolution, ui_scale, language) are left out; so is `start.needs_save` (v1: a save start with save null
-    is a placeholder the runner refuses)."""
+    records (resolution, ui_scale, language) are left out; so are `start.needs_save` and `start.not_ready` (v1: a save
+    start with save null is a placeholder the runner refuses)."""
     goal = goal_of(sc)
     if set(goal) != {"milestone"}:
         raise ScenarioError(
@@ -337,7 +351,7 @@ def resolve(sc: dict) -> dict:
     if "about" in sc:
         out["about"] = sc["about"]
     out.update(
-        start={k: v for k, v in sc["start"].items() if k != "needs_save"},
+        start={k: v for k, v in sc["start"].items() if k not in ("needs_save", "not_ready")},
         until=goal["milestone"],
         runs=sc["runs"],
         caps=dict(sc["caps"]),

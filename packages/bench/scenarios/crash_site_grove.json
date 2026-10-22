@@ -7,9 +7,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, the crash site after the intellect devourers there were killed (claude-run-2 S005-devourers-done, Lae'zel lost after the crash): party level 2, companions (Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-34221263934__SCN-crash_site_grove",
+  "save_sha1": "d7b0749e1dc6febb477f302d2a30b25770329213",
   "note": {
    "where": "The crash site of the nautiloid, out of combat, no dialogue open.",
    "objective": "Find the Emerald Grove.",

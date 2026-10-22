@@ -7,9 +7,9 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 2, the Mind Flayer Colony beneath Moonrise Towers, at the chamber where Ketheric Thorm waits, before the fight starts (claude-run-2 S045-pre-ketheric-fight): party level 7, companions (Wyll, Karlach, Shadowheart), full HP after the restoration pod. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-2622126592__SCN-fight_act2_ketheric",
+  "save_sha1": "a852ea1fc1406f30bc5c51b9073232a71f57501e",
+  "not_ready": "made 2026-10-22 (research/ovh/live6.md §2) and kept in ~/bg3-start-saves, not registered: tools/saves/inspect.py refused it on false positives (user_path steamapps in LevelCache/CRE_AstralPlane_E_Art.lsf, the game's own install path with no user in it); ready once the fixed inspector registers this save with this sha1",
   "note": {
    "where": "The Mind Flayer Colony beneath Moonrise Towers, before Ketheric's chamber, out of combat.",
    "objective": "Defeat Ketheric Thorm.",

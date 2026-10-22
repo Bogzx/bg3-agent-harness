@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -49,15 +50,15 @@ START: dict[str, dict] = {
     "act1_gold_1000": {
         "area": "Emerald Grove",
         "level": "WLD_Main_A",
-        "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Gale", "Wizard", 2)],
-        "gold": 150,
+        "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Gale", "Wizard", 1)],
+        "gold": 133,
         "quests": ["Find a Cure"],
         "nearby": ["Arron", "Dammon", "Alfira"],
     },
     "choice_act1_karlach": {
         "area": "Risen Road",
         "level": "WLD_Main_A",
-        "party": [("Tav", "Paladin", 4), ("Wyll", "Warlock", 4), ("Shadowheart", "Cleric", 4)],
+        "party": [("Tav", "Paladin", 4), ("Wyll", "Warlock", 3), ("Shadowheart", "Cleric", 4)],
         "gold": 300,
         "quests": [],
         "nearby": ["Anders", "Paladin of Tyr"],
@@ -136,7 +137,7 @@ START: dict[str, dict] = {
     },
     "fight_act3_sarevok": {
         "area": "Murder Tribunal",
-        "level": "BGO_Main_A",
+        "level": "CTY_Main_A",
         "party": [("Tav", "Paladin", 8), ("Wyll", "Warlock", 8), ("Karlach", "Barbarian", 8), ("Shadowheart", "Cleric", 8)],
         "gold": 410,
         "quests": ["Impress the Murder Tribunal"],
@@ -144,7 +145,7 @@ START: dict[str, dict] = {
     },
     "fight_act3_cazador": {
         "area": "Cazador's Dungeon",
-        "level": "BGO_Main_A",
+        "level": "CTY_Main_A",
         "party": [("Tav", "Paladin", 11), ("Gale", "Wizard", 11), ("Karlach", "Barbarian", 11), ("Shadowheart", "Cleric", 11)],
         "gold": 671,
         "quests": ["Investigate Cazador's Palace"],
@@ -185,7 +186,7 @@ START: dict[str, dict] = {
     "choice_act1_arabella": {
         "area": "Emerald Grove",
         "level": "WLD_Main_A",
-        "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Gale", "Wizard", 1)],
+        "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Gale", "Wizard", 1), ("Wyll", "Warlock", 1)],
         "gold": 133,
         "quests": ["Save Arabella"],
         "nearby": ["Kagha", "Arabella"],
@@ -216,7 +217,7 @@ START: dict[str, dict] = {
     },
     "act2_last_light": {
         "area": "Rosymorn Monastery Trail",
-        "level": "WLD_Main_A",
+        "level": "CRE_Main_A",
         "party": [("Tav", "Paladin", 5), ("Karlach", "Barbarian", 5), ("Gale", "Wizard", 5), ("Shadowheart", "Cleric", 5)],
         "gold": 738,
         "quests": [],
@@ -498,7 +499,9 @@ def test_each_fake_start_hosts_the_scenarios_party():
     for name, st in START.items():
         note = json.loads((SCENARIOS / f"{name}.json").read_text())["start"].get("note", {})
         if "party" in note:
-            assert [m.split(" (")[0] for m in note["party"]] == [n for n, _, _ in st["party"]], name
+            party = [re.fullmatch(r"(.+) \((\w+)(?: (\d+))?\)", m).groups() for m in note["party"]]  # pyright: ignore[reportOptionalMemberAccess]
+            assert [n for n, _, _ in party] == [n for n, _, _ in st["party"]], name
+            assert all(lv is None or int(lv) == m[2] for (_, _, lv), m in zip(party, st["party"], strict=True)), name
 
 
 @pytest.mark.parametrize(

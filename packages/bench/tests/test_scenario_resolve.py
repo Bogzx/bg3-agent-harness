@@ -27,9 +27,11 @@ def write(tmp_path: Path, sc: dict) -> Path:
 
 
 def gold_with_a_milestone(**over) -> dict:
-    """act1_gold_1000 (a save start whose save isn't made yet) with a milestone goal instead of its predicate."""
+    """act1_gold_1000 as a save start whose save isn't made yet, with a milestone goal instead of its predicate."""
     sc = json.loads((V2 / "act1_gold_1000.json").read_text(encoding="utf-8"))
     del sc["goal"]
+    note = sc["start"]["note"]
+    sc["start"] = {"kind": "save", "save": None, "save_sha1": None, "needs_save": "Act 1, the Grove.", "note": note}
     return {**sc, "until": "grove", **over}
 
 
@@ -74,6 +76,15 @@ def test_a_save_start_drops_needs_save_and_keeps_the_note(tmp_path):
         write(tmp_path, resolved), list(predicates.MILESTONES), scenario.ROLEPLAYS, scenario.DIFFICULTIES
     )
     assert scenario_v1.scenario_status(loaded, set())[0] == scenario_v1.NEEDS_SAVE
+
+
+def test_a_save_start_drops_not_ready(tmp_path):
+    sc = gold_with_a_milestone()
+    sc["start"]["not_ready"] = "not made: the nurse turns hostile"
+    loaded = scenario.load(write(tmp_path, sc))
+    assert scenario.not_ready(loaded) == "not made: the nurse turns hostile"
+    resolved = scenario.resolve(loaded)
+    assert "not_ready" not in resolved["start"] and v1_problems(resolved) == []
 
 
 def test_a_milestone_goal_resolves_to_until(tmp_path):
