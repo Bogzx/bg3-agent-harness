@@ -1,5 +1,8 @@
 """What a BG3 save (.lsv) embeds: members, mod list, game version, character and profile names, and anything that
 looks like a Steam ID, an e-mail address or a user path (research/arch/game.md T6; before any save is published).
+Game-install paths (steamapps, a Proton compatdata prefix) carry no user and are listed apart, not as findings.
+An LSF is scanned field by field (its names, each text value, each opaque buffer), never across a field's end: the
+values section is binary, and float or UUID bytes run into the next string look like `hB@j.rD` (live6 rows 19-22).
 
 Read-only and on COPIES only: it refuses a path inside the game's Larian Studios folder (copy the .lsv out first).
 zstd members (BG3 4.x writes them) need Python 3.14+ (`compression.zstd`).
@@ -33,9 +36,17 @@ PATTERNS = {
     "email": re.compile(rb"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,12}"),
     "user_path": re.compile(
         rb"(?:/home/[A-Za-z0-9._-]+|/Users/[A-Za-z0-9._ -]+|[A-Za-z]:[\\/]+Users[\\/]+[^\\/\x00\"<>|]+"
-        rb"|/var/home/[A-Za-z0-9._-]+|steamapps|compatdata/\d+)"
+        rb"|/var/home/[A-Za-z0-9._-]+|/(?:run/)?media/[A-Za-z0-9._-]+)"
     ),
+    "install_path": re.compile(rb"steamapps|compatdata/\d+"),  # reported apart: no user in it
 }
+# In an opaque LSF buffer (ScratchBuffer) an e-mail needs a lower-case domain ending the text: binary bytes rarely do.
+BUFFER_PATTERNS = dict(
+    PATTERNS,
+    email=re.compile(rb"[A-Za-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})*\.[a-z]{2,12}(?![A-Za-z0-9-])"),
+)
+TEXT_TYPES = lsf.STRING_TYPES | {28, 33}  # 28/33: TranslatedString (a handle)
+BUFFER_TYPE = 25
 # Osiris masks the story's strings by XOR 0xAD (LSLib OsiReader).
 _UNMASK = bytes(b ^ 0xAD for b in range(256))
 SKIP_SCAN = (".webp", ".png", ".jpg", ".dds")
@@ -50,9 +61,9 @@ def mask(kind: str, value: str) -> str:
     return re.sub(r"(/home/|/Users/|Users[\\/]+)([^\\/]+)", lambda m: m.group(1) + "<user>", value)
 
 
-def scan(blobs: list[bytes], member: str, found: dict, limit: int = 20) -> None:
-    for blob in blobs:
-        for kind, rx in PATTERNS.items():
+def scan(blobs: list[tuple[dict, bytes]], member: str, found: dict, limit: int = 20) -> None:
+    for patterns, blob in blobs:
+        for kind, rx in patterns.items():
             for m in rx.finditer(blob):
                 value = m.group().decode("utf-8", "replace")
                 hit = found.setdefault((kind, value), {"kind": kind, "value": value, "count": 0, "members": []})
@@ -61,13 +72,21 @@ def scan(blobs: list[bytes], member: str, found: dict, limit: int = 20) -> None:
                     hit["members"].append(member)
 
 
-def _scan_blobs(name: str, data: bytes) -> list[bytes]:
+def _scan_blobs(name: str, data: bytes) -> list[tuple[dict, bytes]]:
+    """What to scan with which patterns. Fields are joined by NUL, which no pattern crosses."""
     if data[:4] == lsf.MAGIC:
         s = lsf.sections(data)
-        return [s.strings, s.values]
+        text, buffers = [], []
+        for t, raw in lsf.raw_values(s):
+            if t in TEXT_TYPES:
+                text.append(raw)
+            elif t == BUFFER_TYPE:
+                buffers.append(raw)
+        names = [n.encode() for bucket in lsf.names(s.strings) for n in bucket]
+        return [(PATTERNS, b"\0".join(names + text)), (BUFFER_PATTERNS, b"\0".join(buffers))]
     if name.endswith(".bin"):
-        return [data, data.translate(_UNMASK)]
-    return [data]
+        return [(PATTERNS, data), (PATTERNS, data.translate(_UNMASK))]
+    return [(PATTERNS, data)]
 
 
 def meta_summary(attrs: list[lsf.Attr]) -> dict:
@@ -138,7 +157,8 @@ def inspect_save(path: Path, show: bool = False, deep: bool = True) -> dict:
     if not show:
         for h in hits:
             h["value"] = mask(h["kind"], h["value"])
-    report["findings"] = hits
+    report["findings"] = [h for h in hits if h["kind"] != "install_path"]
+    report["install_paths"] = [h for h in hits if h["kind"] == "install_path"]
     return report
 
 

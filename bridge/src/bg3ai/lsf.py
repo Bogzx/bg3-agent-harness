@@ -13,6 +13,7 @@ from __future__ import annotations
 import struct
 import uuid as uuidlib
 import zlib
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from bg3ai.lspk import LZ4_FRAME, lz4_block, lz4_frame
@@ -166,6 +167,19 @@ def attributes(data: bytes) -> list[Attr]:
             out.append(Attr(path(node), name(ref), t, _value(t, s.values[off : off + n])))
             off += n
     return out
+
+
+def raw_values(s: Sections) -> Iterator[tuple[int, bytes]]:
+    """(type, raw bytes) of every attribute value, in file order: no names or paths (fast, for scanning)."""
+    off, step = 0, 16 if s.long_entries else 12
+    for k in range(0, len(s.attributes), step):
+        if s.long_entries:
+            _, tl, _, off = struct.unpack_from("<IIiI", s.attributes, k)
+        else:
+            _, tl, _ = struct.unpack_from("<IIi", s.attributes, k)
+        n = tl >> 6
+        yield tl & 0x3F, s.values[off : off + n]
+        off += n
 
 
 def build(nodes: list[tuple[str, int]], attrs: list[tuple[str, int, int, bytes]]) -> bytes:

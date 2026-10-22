@@ -119,5 +119,52 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(json.loads(out.stdout)["meta"]["fields"]["LeaderName"], "Claude")
 
 
+# live6 rows 19-22, bytes from the start saves' level caches: a Translate vec3 whose float bytes read `hB@j.rD`, a UUID
+# ending `i@` right before the string `Cnst.Perception.Discovered`, and a NewAge ScratchBuffer holding both the float
+# bytes and the game's own install path next to a heap pointer. Real data in a string or a buffer still counts.
+INSTALL = b"\x80\xf1\xe4\xbdl\x04\0\0eamLibrary/steamapps/common/Baldurs Gate 3/Data/Mods/MainUI/GUI/Pages/x"
+LEVEL = lsf.build(
+    [("Templates", -1), ("GameObjects", 0)],
+    [
+        ("Translate", 12, 1, b"\xbc3\xddD\xfehB@j.rD"),
+        ("MapKey", 31, 1, b"\xdc\xe9\xf2\x80,\xb1\xe6@\x87\xbeuL\xcc\xeci@"),
+        ("Name", 22, 1, s("Cnst.Perception.Discovered")),
+        ("NewAge", 25, 1, b"LSMF\xff\xff\xbc3\xddD\xfehB@j.rD\0\0" + INSTALL + b"\0"),
+    ],
+)
+REAL = lsf.build(
+    [("Templates", -1), ("GameObjects", 0)],
+    [
+        ("Name", 22, 1, s("Mail Jane@Example.ORG")),
+        ("NewAge", 25, 1, b"LSMF\xfe" + b"x@y.org\0/media/someone/SteamLibrary\0" + STEAM.encode()),
+    ],
+)
+
+
+class LevelCacheTest(unittest.TestCase):
+    def inspect(self, level: bytes) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.lsv"
+            path.write_bytes(lspk.build([("LevelCache/CTY_Main_A.lsf", level, "zlib")]))
+            return inspect_mod.inspect_save(path, show=True)
+
+    def test_binary_bytes_are_no_findings(self):
+        r = self.inspect(LEVEL)
+        self.assertEqual(r["findings"], [])
+        self.assertEqual([h["value"] for h in r["install_paths"]], ["steamapps"])
+
+    def test_real_strings_still_count(self):
+        hits = {(h["kind"], h["value"]) for h in self.inspect(REAL)["findings"]}
+        self.assertEqual(
+            hits,
+            {
+                ("email", "Jane@Example.ORG"),  # a text field: any case
+                ("email", "x@y.org"),
+                ("user_path", "/media/someone"),
+                ("steam_id", STEAM),
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

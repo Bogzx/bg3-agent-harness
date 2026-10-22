@@ -111,6 +111,12 @@ class LsfTest(unittest.TestCase):
         self.assertEqual(got[("MetaData/MetaData/ModuleShortDesc", "UUID")], "03020100-0504-0706-0809-0a0b0c0d0e0f")
         self.assertEqual(got[("MetaData/MetaData/GameVersions/GameVersion", "Object")], "4.1.1.7631656")
 
+    def test_raw_values_in_file_order(self):
+        got = list(lsf.raw_values(lsf.sections(META)))
+        self.assertEqual(len(got), len(lsf.attributes(META)))
+        self.assertEqual(got[0], (23, s("Claude")))
+        self.assertEqual(got[-1], (23, s("4.1.1.7631656")))
+
     def test_not_lsf(self):
         with self.assertRaises(lsf.LsfError):
             lsf.attributes(b"LSOX" + b"\0" * 80)
