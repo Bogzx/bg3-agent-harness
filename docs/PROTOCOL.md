@@ -21,6 +21,17 @@ Ops must return in well under 1 s. bg3le gives up after 10 s, and a slow op stal
 Anything that takes game time (walking, a spell resolving, a dialogue line) **starts a job** and returns
 `{"job": <id>}`. The bridge then polls `job.poll {id}` until `status ~= "running"`.
 
+`Game.eval` (`bridge/src/bg3ai/game.py`) is the only place the bridge sends Lua. Besides the single call above,
+`Game.multi` batches several ops into one eval (`local R=Mods.BG3AI.BG3AI.rpc return '['..R(...)..','..R(...)..']'`).
+
+**Recording and replay.** With `BG3AI_RPC_RECORD=<file>` in the bridge's env, every eval and its answer is appended
+as one JSONL line (`bridge/src/bg3ai/rpc_record.py`): `{v, t, ms, ctx, calls:[{op,args}], replies:[...]}`, with
+absolute paths scrubbed. The fake mod (`packages/harness/src/bg3harness/testing/fakemod.py`) speaks the same
+LuaDebug protocol, decodes both eval shapes with the recorder's own decoder, and answers each op from a scripted game
+model or from recorded files (`packages/harness/tests/fixtures/rpc/`); an op nobody answers gets the mod's own
+`unknown op` refusal. Point a bridge at it with `BG3LE_DEBUG_PORT=<port>`. Use it for offline tests of any change
+to an op the bridge calls.
+
 ## Live development
 
 The game is usually running with bg3le and our mod loaded from `mod/` (via `BG3LE_MOD_PATH`, a loose
@@ -83,7 +94,11 @@ Context: **S** = server, **C** = client. `uuid` = entity GUID string. `pos` = `[
 | `job.poll` / `job.cancel` | S,C | `{id}` | `{id,kind,status,result,error,elapsed_ms}` |
 | `job.notify` | S,C | `{id}` | same view; a still-running job announces its end as `job_finished` (a waited call that outlived its wait) |
 
-### State (`Server/Visibility.lua`, `Server/State.lua`; owner: worker **vis**)
+Each module below may span several files: the first file loads the rest at its end with `Ext.Require` (the list is
+in [ARCHITECTURE.md](ARCHITECTURE.md), "The mod"). Ops are registered wherever their code lives, so grep for
+`RPC.register("<op>"` to find one.
+
+### State (`Server/Visibility.lua` + `VisibilityObjects.lua`, `Server/State.lua` + `StateWorld.lua`, `StateOps.lua`; owner: worker **vis**)
 | op | ctx | args | result (sketch) |
 |---|---|---|---|
 | `state.status` | S | – | `{level, region, subregion, active:uuid, party:[{uuid,name,hp,max_hp,level,classes,pos,statuses,downed,in_combat}], in_combat, turn_based, in_dialogue, gold, combat:{round,current}?}` |
@@ -106,7 +121,7 @@ Context: **S** = server, **C** = client. `uuid` = entity GUID string. `pos` = `[
 `spotted{uuid}` (a hidden thing revealed to the party), `cast{caster,spell,target?}` for visible
 casters, and `moved_done{uuid,move_id}`.
 
-### Navigation (`Server/Navigation.lua`; owner: **vis**)
+### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`; owner: **vis**)
 | op | ctx | args | result (sketch) |
 |---|---|---|---|
 | `nav.path` | S | `{char?, pos \| target}` | `{reachable, length_m, nodes, needs_jump?, within_movement?, movement_left, approach_pos?}` or `{reachable:false, straight_m, error_cause}`; points > 80 m → `{estimate:true, straight_m}`; a pos the party hasn't seen or walked (`N.known`) → `{unknown_goal:true, straight_m, dir, dy}` |
@@ -129,7 +144,7 @@ get_map: all) and exposes `walk_toward(direction | objective | target)` = `nav.r
 | `dev.perception_probe` | S | `{radius=30, reset?}` | Large-object (door/ladder/≥2 m tall or ≥1 m radius) perception: `{counts:{large, by_sight, by_ray, not_perceived, filtered, ray_shown_traps, ray_shown_secret_doors}, ray_only:[{uuid,name,kind,dist,height,radius}], stats, calibrated, ray_broken}`. `ray_shown_*` must be 0. `reset` re-enables a ray rule disabled by an error |
 | `state.timings` | S | – | Per-op latency in ms |
 
-### Actions (`Server/Guard.lua`, `Server/Actions.lua`; owner: worker **act**)
+### Actions (`Server/Guard.lua` + `GuardGate.lua`, `GuardSpells.lua`, `GuardCast.lua`; `Server/Actions.lua` + `ActionsMove.lua`, `ActionsInteract.lua`, `ActionsCast.lua`, `ActionsParty.lua`, `ActionsClick.lua`; owner: worker **act**)
 All take `{char: uuid, ...}` and return `{job}`. A job finishes `done` (with a short result), `failed`
 (with the reason a player would see), `interrupted` (with what happened, e.g. combat started or dialogue
 began), or `timeout`.
@@ -188,7 +203,7 @@ target moves more than 2 m or is out of reach on arrival, up to 4 times. Jump di
   `rest_if_needed`. All are bridge-side, use only player-visible ops, and run their steps through the
   guarded tools with the default interrupts.
 
-### UI (`Client/UI.lua`, `Client/UIState.lua`, `Client/UIActions.lua`; owner: worker **io**)
+### UI (`Client/UI.lua`, `Client/UIState.lua`, `Client/UIActions.lua` + `UIActionsPrompts.lua`, `UIActionsMenu.lua`; owner: worker **io**)
 The helper API for other client modules is documented at the top of `Client/UI.lua`.
 Every action op accepts `dry=true`, which only runs `CanExecute`. Ops marked *job* return `{job}` and settle at the next
 decision point, so batched actions can chain.
@@ -216,8 +231,8 @@ decision point, so batched actions can chain.
 | `ui.dump` | C | `{root?, depth?, text_only?, max?, hidden?}` | `{widgets:[{w, dc, items:[{t} \| {b,n,off?}]}], ms}`: visible text and buttons per page |
 | `ui.widgets` / `ui.props` | C | – / `{widget, path?, commands?}` | Open pages with DC types / a VM's values, sub-objects and commands (dev) |
 
-Hotbar cast route (`Client/Hotbar.lua`, worker **se**, audit ACT-8; bridge `bg3ai/hotbar.py hotbar_cast`, not wired into
-use_ability yet: `HOTBAR_CAST_ENABLED`). Built from HotBar.xaml offline; the guesses G1-G10 are listed in both files and
+Hotbar cast route (`Client/Hotbar.lua`, worker **se**, audit ACT-8; bridge `bg3ai/hotbar.py hotbar_cast`, wired into
+use_ability for more than two targets but off: `HOTBAR_CAST_ENABLED = False`). Built from HotBar.xaml offline; the guesses G1-G10 are listed in both files and
 checked by acceptance se "hotbar widget tree (ACT-8, read-only)" / "hotbar cast: Bless on 3 allies (ACT-8)".
 
 | op | ctx | args | result |
@@ -232,8 +247,9 @@ checked by acceptance se "hotbar widget tree (ACT-8, read-only)" / "hotbar cast:
 (the point projected).
 
 Widget names are the XAML root `x:Name`, e.g. `ContainerWidget`, `Dialog_box` (MessageBox), `ModalTutorial`,
-`NotificationWidget`, `JournalQuest`, `DMSettings`. Character creation, new game and level-up live in `Client/Progression.lua`
-(worker **se**). Trade, rests, fast travel and waypoints live in `Client/Services.lua` (worker **kb**).
+`NotificationWidget`, `JournalQuest`, `DMSettings`. Character creation, new game and level-up live in `Client/Progression.lua`,
+`ProgressionCC.lua` and `ProgressionLevelUp.lua` (worker **se**). Trade, rests, fast travel and waypoints live in
+`Client/Services.lua`, `ServicesItems.lua`, `ServicesRest.lua` and `ServicesWaypoints.lua` (worker **kb**).
 
 bg3le limitations (verified 2026-10-09):
 - `TextBlock` text: use `:ToString()`, because `GetProperty("Text")` is nil. `GetProperty` logs unknown names, so use `GetAllProperties` for optional ones.
@@ -246,6 +262,29 @@ bg3le limitations (verified 2026-10-09):
 - Verified working: `Ext.UI.GetRoot()`, `VisualChild`, `GetProperty`, `GetAllProperties`, `At`/`Count`,
   `ICommand:CanExecute/Execute` (`gui::DCMainMenu.ContinueGameCommand` loaded a save), `Ext.Input.InjectKeyPress`,
   `Ext.IO.SaveFile/LoadFile`, `Ext.Debug.Reset()`.
+
+### Harness only (`Server/Referee.lua`, `Server/RollLog.lua`, `Server/Scenario.lua`)
+These ops are for the harness and never for the agent: no MCP tool calls them, nothing in them calls `RPC.push`, and
+`bridge/tests/test_referee.py` checks the bridge's top-level modules and tool names for them. The harness reads the
+rings through `bridge/src/bg3ai/referee.py` (`RingReader`, which turns the mod's monotonic `t` into epoch seconds)
+and calls `scn.*` through `packages/harness/src/bg3harness/game_settings.py` and `tools/saves/make_start_save.py`.
+
+| op | ctx | args | result |
+|---|---|---|---|
+| `ref.since` | S | `{seq, limit=500}` | `{boot, now, gt, latest, first, events:[{seq, t, gt, ev, ...}]}`: referee records after `seq` in the facts v1 event shapes (`packages/harness/schemas/facts.v1.schema.json`). `first` is the oldest seq kept (cap 4000): a cursor below `first - 1` lost records. A new `boot` (a load rebuilt the Lua state) restarts `seq` at 1 |
+| `ref.snapshot` | S | – | `{boot, now, gt, latest, fired, never, registered, trade?, pickpocket?, combats}`: which listeners fired at least once, the open trade or pickpocket, the combats seen |
+| `roll.since` | S | `{seq, limit=500}` | same cursor contract; one record per die roll: `{seq, t, gt, srcs, roller, party, success, natural, result, dc, stream, streams, ...}` |
+| `roll.snapshot` | S | – | the roll streams now (`num_rolls`, `seed`, Karmic debts), `mode` (RollModeType), `base_seed`, which sources and hooks fired |
+| `scn.seed` | S | `{seed}` (integer 0..2000000000) | writes the dice seed now and records it; the mod writes it again after every load (`LevelGameplayStarted`) |
+| `scn.karmic` | S | `{set?: bool}` | reads Karmic Dice, or turns it off/on and reads it back |
+| `scn.difficulty` | S | – | reads the difficulty; a `set` is refused (the game's Options flow owns it) |
+| `scn.rename_avatar` | S | `{name}` | the host avatar's CustomName (1-40 letters, digits, spaces, `_`, `-`) |
+| `scn.rename` | S | `{renames:[{uuid, name}]}` | changes display names through `Ext.Loca`; originals are recorded so `scn.undo` restores them after a load |
+| `scn.undo` | S | – | removes the seed record and restores the renames |
+| `scn.status` | S | – | `{seed, applied, reapplied, renames}` |
+
+Every `scn.*` op fails with `scenario setup is off: the game was not started with BG3AI_SCENARIO_SETUP=1` unless
+the game process has that variable. The runner sets it only for a run with a seed.
 
 ## Input shim (native, owner: worker **se**)
 `native/bg3sdl/`: an `LD_PRELOAD` SDL2 shim for mouse and keyboard injection into the game only, controlled
