@@ -611,7 +611,7 @@ def cmd_bench(argv: list[str]) -> int:
         return matrix_cli.main(argv, repo=renv.REPO, host=host, out=sys.stdout)
     lock = acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
     stop_file().unlink(missing_ok=True)  # a STOP left from before would stop the first run
-    stop_on_signals(host, renv.log)
+    stop_on_signals(host)
     from bg3ai.skipper import start_background
     skip_stop = start_background(DEBUG_PORT, lambda m: renv.log(f"autoskip: {m}"), renv.RUNTIME / "skipper.lock")
     ram_stop = ramwatch.start_background(renv.log)

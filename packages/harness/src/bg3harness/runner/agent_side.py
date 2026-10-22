@@ -21,6 +21,7 @@ from bg3harness import client_setup, clients, events, pi_client, runs, sandbox, 
 from bg3harness.game import io as game
 from bg3harness.game.io import DEBUG_PORT
 from bg3harness.game.saves import foreign_saves
+from bg3harness.runner import agent_group
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
@@ -141,6 +142,7 @@ class AgentSide:
         if self.opt.dry_run:
             print(json.dumps({"cmd": cmd, "cwd": str(renv.PLAY_DIR), "deadline": deadline}, indent=1))
             return rstate.SessionResult(sid, claude_session, 0, "dry_run", start, start, model=model, effort=effort)
+        agent_group.reap_leftover(renv.RUNTIME / agent_group.FILE, renv.log)  # never two agents on one game
 
         jsonl = open(f"{base}.jsonl", "a")
         evlog = self.events_log = events.EventLog(Path(f"{base}.events.jsonl"))
@@ -174,6 +176,7 @@ class AgentSide:
             self.events_log = evlog.end("setup_failed", None, start, detail=str(e)[:300])
             raise
         self.agent_proc = proc  # an operator's hard exit kills it (kill_agent): it runs in its own session
+        agent_group.record(renv.RUNTIME / agent_group.FILE, proc)
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
         last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
@@ -333,6 +336,8 @@ class AgentSide:
                 self._signal(proc, signal.SIGKILL)
                 signals_sent.append("kill")
         self.agent_proc = None
+        if not agent_group.end_group(renv.RUNTIME / agent_group.FILE, proc):  # its MCP server too: nothing of it plays on
+            renv.log(f"{sid}{tag}: a process of {client.name}'s group survived SIGKILL (pgid {proc.pid})")
         reader.join(timeout=10)
         self.sandbox_cleanup()
         reason = renv.exit_reason(reason, proc.returncode)
@@ -376,11 +381,12 @@ class AgentSide:
                              tool_calls=api["tool_calls"])
 
     def kill_agent(self) -> None:
-        """An operator's hard exit: SIGKILL the play process a session left running (it has its own session, so the
-        terminal's Ctrl-C never reaches it)."""
+        """An operator's hard exit: SIGKILL the play process a session left running and every process of its group
+        (its MCP server), and wait until they are gone (it has its own session, so the terminal's Ctrl-C never
+        reaches it)."""
         proc, self.agent_proc = self.agent_proc, None
-        if proc is not None and proc.poll() is None:
-            self._signal(proc, signal.SIGKILL)
+        if proc is not None and not agent_group.end_group(renv.RUNTIME / agent_group.FILE, proc):
+            renv.log(f"a process of the play agent's group survived SIGKILL (pgid {proc.pid})")
         self.sandbox_cleanup()
 
     def settle_cost(self, stem: str, usd: float) -> None:

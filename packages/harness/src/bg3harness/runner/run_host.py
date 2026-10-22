@@ -40,6 +40,7 @@ from typing import Any, Protocol
 
 import bg3harness
 from bg3harness import client_setup, runs
+from bg3harness.runner import agent_group
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
@@ -167,21 +168,24 @@ def stop_file() -> Path:
     return renv.RUNTIME / "STOP"
 
 
-def stop_on_signals(host: LiveRunHost, log: Callable[[str], None]) -> None:
+def stop_on_signals(host: LiveRunHost, fd: int = 2) -> None:
     """SIGINT/SIGTERM for play.py bench: the first one is host.stop() (the run playing now ends and is recorded, no new
-    run starts), a second one raises KeyboardInterrupt (the caller's finally calls host.abort())."""
+    run starts), a second one raises KeyboardInterrupt (the caller's finally calls host.abort()).
+
+    The handler only sets flags and says so with one os.write to `fd` (stderr): a print or a logging call there
+    re-enters the buffered stream the main thread may be writing ("reentrant call inside BufferedWriter", the merge
+    suite under load). The runner's agent loop logs the stop when it acts on it."""
     seen: list[int] = []
 
     def on_signal(signum: int, _frame: object) -> None:
         seen.append(signum)
         if len(seen) > 1:
-            log(f"signal {signum} again: exiting now; the open run's game is stopped and the run is not recorded")
+            os.write(fd, f"signal {signum} again: exiting now; the run is not recorded\n".encode())
             raise KeyboardInterrupt
-        log(
-            f"signal {signum}: the run playing now ends at its next check and is recorded; no new run starts "
-            "(send again to exit at once)"
-        )
         host.stop()
+        os.write(
+            fd, f"signal {signum}: the run playing now ends and is recorded (send again to exit at once)\n".encode()
+        )
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
@@ -354,6 +358,7 @@ class LiveRunHost:
             raise RuntimeError("operator stop: no new run starts")
         r: RunRunner | None = None
         try:
+            agent_group.reap_leftover(renv.RUNTIME / agent_group.FILE, renv.log)  # live7: it drove the next game
             files, model, effort = self._setup(job, sc, run_dir)
             opt = options_for(dict(job, model=model, effort=effort), sc, run_dir.name, files)
             r = self.make_runner(opt)

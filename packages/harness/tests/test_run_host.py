@@ -541,3 +541,14 @@ def test_abort_kills_the_agent_stops_the_game_and_puts_the_nav_files_back(rig: R
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"] and not H.nav_marker().exists()
     rig.h.abort()  # nothing open: a no-op
     assert rig.calls == ["kill_agent", "end_run_game(operator exit)"]
+
+
+def test_a_bench_start_kills_a_leftover_agent_before_the_game_comes_up(rig: Rig, tmp_path: Path):
+    # live7: the leftover claude drove the next game (the app session) for 19 min
+    from bg3harness.runner import agent_group as A  # noqa: N812
+    from test_agent_group import dead_runner_leftover, gone
+
+    leader, child = dead_runner_leftover(tmp_path, renv.RUNTIME / A.FILE)
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert not A.alive(leader) and gone(child) and not (renv.RUNTIME / A.FILE).exists()
+    assert rig.calls[:2] == ["snapshot", "ensure_game(True)"]
