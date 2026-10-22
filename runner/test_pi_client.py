@@ -334,6 +334,28 @@ class Client(unittest.TestCase):
         c = PC.PiClient(prof, self.tmp / "s.txt", server=self.server)
         self.assertEqual(c.parser.deepseek_prices, {"input": 0.3, "output": 1.2, "cache_read": 0.006})
 
+    def test_deepseek_profiles_bill_at_deepseeks_price_sheet(self):
+        # https://api-docs.deepseek.com/quick_start/pricing/ (read 2026-10-22): peak USD per M tokens; off-peak
+        # (UTC 01-04 and 06-10 Monday to Friday are peak) is half
+        sheet = {  # model: (cache hit, cache miss, output)
+            "deepseek-flash": (0.006, 0.3, 1.2),
+            "deepseek-v4-pro": (0.044, 1.32, 3.96),
+        }
+        usage = {"prompt_cache_hit_tokens": 2_000_000, "prompt_cache_miss_tokens": 300_000, "completion_tokens": 40_000}
+        for path in sorted((C.REPO / "profiles").glob("deepseek-*.toml")):
+            prof = PR.load(path)
+            if prof.endpoint is None or prof.endpoint.provider != "deepseek":
+                continue  # through OpenRouter: its usage.cost is the bill
+            hit, miss, out = sheet.pop(prof.model)
+            peak = (2_000_000 * hit + 300_000 * miss + 40_000 * out) / 1e6
+            for ts, want in (("2026-10-22T02:00:00Z", peak), ("2026-10-22T12:00:00Z", peak / 2)):
+                entry = {"customType": "bg3.billing", "data": {"usage": usage}, "timestamp": ts}
+                parser = PC.PiClient(prof, self.tmp / "s.txt", server=self.server).new_parser()
+                stream = [TOOLS, SYSTEM, ev("entry_appended", entry=entry), assistant(cost=9.0)]
+                res = result([e for line in [*stream, ev("agent_settled", aborted=False)] for e in parser.parse(line)])
+                self.assertAlmostEqual(res.cost_usd, want, msg=f"{path.name} at {ts}")
+        self.assertEqual(sheet, {})  # a profile for each model DeepSeek's API names
+
     def test_config_files(self):
         paths = self.client.write_config(self.req)
         d = self.tmp / "S007.pi"

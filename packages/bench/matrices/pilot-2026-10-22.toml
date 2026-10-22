@@ -1,9 +1,13 @@
-# Tonight's pilot (2026-10-22): nautiloid, DeepSeek V4.1 Flash through pi x 3 runs in two conditions, and Claude Code
-# (account 2's subscription: run the matrix with CLAUDE_CONFIG_DIR=~/.claude-2, no USD cost) x 1 run.
+# Tonight's pilot (2026-10-22): nautiloid, DeepSeek V4.1 Flash through pi x 3 runs in two conditions, and the Claude
+# Code baseline (account 2's subscription: run the matrix with CLAUDE_CONFIG_DIR=~/.claude-2, no USD cost) x 1 run in
+# the same two conditions. research/ovh/pilot-runbook.md has the commands.
 # A pilot: play.py can't play rules-only or a frozen coaching bundle yet (allow_gaps), so these runs are labelled,
 # never published. coaching@edaa24f8 = sha256 of packages/harness/prompts/coaching/*.md (assemble.py's COACHING order,
 # stripped, joined by a blank line, trailing newline), first 8 hex.
-# DeepSeek budget: USD 1.5 max = 6 paid runs x max_cost 0.25 (the reserve); runtime/budget.json's cap must allow it.
+# DeepSeek budget: USD 1.5 max = 6 paid runs x max_cost 0.25 (each run's cap and the matrix's reserve);
+# runtime/budget.json's cap must allow it. No deepseek-v4-pro job: at its rates (4.4x flash per token, 7.3x on cache
+# hits; live4's whole flash nautiloid billed $0.19) a nautiloid costs about $0.9-1.4, so a $0.25 cap stops it a fifth
+# of the way and the $1.5 buys about one run.
 name = "pilot-2026-10-22"
 allow_gaps = true
 
@@ -16,7 +20,7 @@ repeats = 3
 [[group]]
 models = ["profiles/opus-5.5-claude-code.toml"]
 scenarios = ["nautiloid"]
-conditions = ["rules+coaching@edaa24f8"]
+conditions = ["rules", "rules+coaching@edaa24f8"]
 repeats = 1
 
 [budget]

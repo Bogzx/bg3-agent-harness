@@ -59,7 +59,7 @@ class Examples(unittest.TestCase):
 
     def test_golden_models_json(self):
         pi = [p for p in sorted(EXAMPLES.glob("*.toml")) if PR.load(p).client == "pi"]
-        self.assertEqual(len(pi), 3)
+        self.assertEqual(len(pi), 4)
         for p in pi:
             got = json.dumps(PR.models_json(PR.load(p)), indent=1) + "\n"
             golden = GOLDEN / f"models.{p.stem}.json"

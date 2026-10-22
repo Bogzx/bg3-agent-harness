@@ -1,0 +1,22 @@
+# DeepSeek V4 Pro through pi and DeepSeek's own API (pi's deepseek provider id; no OpenRouter, so no [routing]).
+# Text only (DeepSeek's sheet: no image input), so a run gets the text-only tool set (no screenshots group).
+# Model numbers from pi 1.3.0's catalog (2026-10-21); pi detects DeepSeek's compat from the provider id.
+client = "pi"
+model = "deepseek-v4-pro"
+effort = "high"
+
+[endpoint]
+provider = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[model_info]
+input = ["text"]
+reasoning = true
+context_window = 1000000
+max_tokens = 32000
+thinking_level_map = { minimal = false, low = false, medium = false }
+# DeepSeek's peak USD rates (cache miss, output, cache hit; https://api-docs.deepseek.com/quick_start/pricing/,
+# read 2026-10-22: pi's catalog has the same); the runner bills half of them off-peak from DeepSeek's usage fields
+# (bg3harness/deepseek_bill.py). About 4.4x flash per token, 7.3x on cache hits.
+cost = { input = 1.32, output = 3.96, cache_read = 0.044 }

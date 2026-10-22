@@ -1,0 +1,33 @@
+{
+ "providers": {
+  "deepseek": {
+   "baseUrl": "https://api.deepseek.com",
+   "api": "openai-completions",
+   "apiKey": "${DEEPSEEK_API_KEY}",
+   "models": [
+    {
+     "id": "deepseek-v4-pro",
+     "name": "deepseek-v4-pro",
+     "api": "openai-completions",
+     "reasoning": true,
+     "input": [
+      "text"
+     ],
+     "contextWindow": 1000000,
+     "maxTokens": 32000,
+     "cost": {
+      "input": 1.32,
+      "output": 3.96,
+      "cacheRead": 0.044,
+      "cacheWrite": 0.0
+     },
+     "thinkingLevelMap": {
+      "minimal": null,
+      "low": null,
+      "medium": null
+     }
+    }
+   ]
+  }
+ }
+}

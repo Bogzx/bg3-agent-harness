@@ -268,4 +268,4 @@ def test_the_pilot_matrix_loads_in_this_repo():
     m = matrix_cli.load(repo / "packages" / "bench" / "matrices" / "pilot-2026-10-22.toml", repo)
     paid = [j for j in m["jobs"] if j["client"] in matrix.PAID_CLIENTS]
     assert len(paid) == 6 and sum(j["max_cost"] for j in paid) <= 1.5  # the DeepSeek budget
-    assert [j["client"] for j in m["jobs"]].count("claude") == 1
+    assert [j["client"] for j in m["jobs"]].count("claude") == 2  # both conditions, like DeepSeek (pi r14)

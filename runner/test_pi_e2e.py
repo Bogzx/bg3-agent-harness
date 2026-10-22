@@ -4,8 +4,9 @@ fake game process of test_crash for the runner's own game checks), the pinned pi
 model (tools/pi/conformance/stub_llm.py), the real bridge (bg3ai-mcp, started by bg3.ts) answering from the fake mod
 (bg3harness.testing). Covers a short scripted play with a stop-check resume of the same conversation, billing from
 the stub's usage into the budget, the cost cap stopping the run, a context overflow ending the session as a recorded
-failure, the tool-count check, the rules-only vs rules+coaching system text and result nudges, and a text-only
-model without the screenshots group. No game, no key, no network; ~2 min.
+failure, the tool-count check, the rules-only vs rules+coaching system text and result nudges, a text-only
+model without the screenshots group, and profiles/deepseek-v4-pro.toml billed from DeepSeek's usage fields until its
+cost cap stops the run. No game, no key, no network; ~2 min.
 
     uv run pytest -m e2e runner/test_pi_e2e.py      (or BG3AI_E2E=1 uv run python -m unittest runner/test_pi_e2e.py)
 
@@ -21,16 +22,18 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_crash as TCR  # noqa: N812
 import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
+from bg3harness import deepseek_bill, profiles
 from bg3harness import events as E  # noqa: N812
-from bg3harness import profiles
 from bg3harness.testing.fakemod import FakeMod
 from bg3harness.testing.scripted import FakeClock, GameModel
 
@@ -373,6 +376,37 @@ class TextOnly(PiE2EBase):
         self.assertEqual(system, self.system)
         self.assertNotIn("screenshot(", system)
         self.assertIn("gold 100", self.results()["get_status"])
+
+
+class DeepSeekCap(PiE2EBase):
+    # one response's DeepSeek usage, off-peak at deepseek-v4-pro's rates (profiles/deepseek-v4-pro.toml, USD per M:
+    # cache hit 0.044, miss 1.32, output 3.96, halved): no usage.cost, so the runner prices these fields itself
+    USAGE: ClassVar[dict] = {
+        "cost": None,
+        "prompt_cache_hit_tokens": 100_000,
+        "prompt_cache_miss_tokens": 10_000,
+        "completion_tokens": 2_000,
+    }
+    BILL = (100_000 * 0.044 + 10_000 * 1.32 + 2_000 * 3.96) / 1e6 / 2
+
+    def test_a_deepseek_billed_run_stops_at_its_cap(self):
+        raw = tomllib.loads((REPO / "profiles" / "deepseek-v4-pro.toml").read_text())
+        raw["endpoint"]["api_key_env"] = KEY_ENV
+        step = {"tool_calls": [call("get_status")], "usage": self.USAGE, "delay": 0.2}
+        # the stub serves 127.0.0.1, not api.deepseek.com; the bill's hour is fixed off-peak
+        with (
+            mock.patch.object(deepseek_bill, "is_deepseek", lambda url: True),
+            mock.patch.object(deepseek_bill, "off_peak", lambda when: True),
+        ):
+            res = self.play([step], raw=raw, max_cost=2.5 * self.BILL)
+        self.assertEqual(res.reason, "cap")
+        self.assertEqual(self.r.cap_hit["cap"], "cost")
+        self.assertGreaterEqual(self.r.cap_hit["cost"], 2.5 * self.BILL)
+        billed = round((self.spent() - 1.0) / self.BILL)
+        self.assertGreaterEqual(billed, 3)  # mid-way: the scripted model never stops by itself
+        self.assertAlmostEqual(self.spent(), 1.0 + billed * self.BILL)
+        self.assertIn(len(self.requests()) - billed, (0, 1))  # at most one request in flight at the stop
+        self.assertEqual({r["model"] for r in self.requests()}, {"deepseek-v4-pro"})
 
 
 if __name__ == "__main__":
