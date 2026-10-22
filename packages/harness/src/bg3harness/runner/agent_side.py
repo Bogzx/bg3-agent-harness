@@ -31,6 +31,9 @@ class AgentSide:
     # a paid process's cost goes into runtime/budget.json as it ends (play.py run); a bench run's host turns this
     # off: the matrix settles the run's cost (bg3bench.adapters.session_run), so it is added once
     settles_budget = True
+    # the agent loop's clock and its pause between checks (a test's fake clock advances on each pause)
+    clock = staticmethod(time.time)
+    pause = staticmethod(time.sleep)
 
     def model_for(self, tag: str = "") -> tuple[str, str | None]:
         """(model, effort) for a session: CLI options < session-config.json; the fix pass has its own."""
@@ -86,7 +89,7 @@ class AgentSide:
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> rstate.SessionResult:
         """needs_game=False (the fix-notes pass edits memory only): a game crash meanwhile doesn't stop it (S027-fix
         was killed 30 s in by the OOM kill of the game); the next session's setup relaunches the game."""
-        start = time.time()
+        start = self.clock()
         deadline, hard_stop = rpolicy.deadlines(start, minutes)
         client = self.client
         session_env = dict(BG3AI_SESSION_DEADLINE=str(int(deadline)),
@@ -163,7 +166,7 @@ class AgentSide:
                 renv.log(f"{sid}{tag}: {detail} (a setup failure)")
                 self.event("mcp_failed", session=sid + tag, detail=detail[:300])
                 self.events_log = evlog.end("mcp_failed", None, start)
-                return rstate.SessionResult(sid, claude_session, None, "mcp_failed", start, time.time(), model=model,
+                return rstate.SessionResult(sid, claude_session, None, "mcp_failed", start, self.clock(), model=model,
                                      effort=effort, detail=detail)
         try:
             proc = subprocess.Popen(cmd, cwd=renv.PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -178,7 +181,7 @@ class AgentSide:
         agent_group.record(renv.RUNTIME / agent_group.FILE, proc)
 
         timing = latency.StreamTiming(Path(f"{base}.turns.jsonl"))
-        last_output = [time.time()]  # the agent-hang watchdog: any stream line counts as alive
+        last_output = [self.clock()]  # the agent-hang watchdog: any stream line counts as alive
         meter = None   # --max-cost/--max-tokens: the run's cost and tokens as this stream goes (runs.UsageMeter)
         since = self.run_started if self.run_started is not None else getattr(self, "run_t0", None)
         if self.has_usage_caps() and since is not None:
@@ -192,7 +195,7 @@ class AgentSide:
 
         def pump():
             for line in proc.stdout:
-                last_output[0] = time.time()
+                last_output[0] = self.clock()
                 jsonl.write(line)
                 jsonl.flush()
                 stamp = datetime.now().strftime("%H:%M:%S")
@@ -247,15 +250,15 @@ class AgentSide:
         poller.start()
 
         health = rcode.HealthTracker()
-        next_health = time.time() + renv.HEALTH_INTERVAL
+        next_health = self.clock() + renv.HEALTH_INTERVAL
         mod_gone_since = None   # RUN-8: the game answers but Mods.BG3AI is gone (a Lua reset, a mod load error)
         reason = "exited"
         detail, fault_at = "", None
         signals_sent = []
         hold, held_until, planned_stop = rpolicy.fight_hold_path(self.state.dir, sid), deadline, hard_stop
         while proc.poll() is None:
-            time.sleep(2)
-            now = time.time()
+            self.pause(2)
+            now = self.clock()
             if reason == "exited" and not signals_sent and needs_game and rpolicy.held_deadline(hold, deadline) != held_until:
                 # the cap while the fight lasts, then the fight's end + the wrap-up; never before the planned stop
                 held_until = rpolicy.held_deadline(hold, deadline)
@@ -278,7 +281,7 @@ class AgentSide:
                 alive = self.game_alive()
                 ok = alive and game.game_state(renv.HEALTH_EVAL_TIMEOUT) is not None
                 health.record(ok)
-                next_health = time.time() + (renv.HEALTH_INTERVAL if ok else renv.HEALTH_RETRY_INTERVAL)
+                next_health = self.clock() + (renv.HEALTH_INTERVAL if ok else renv.HEALTH_RETRY_INTERVAL)
                 rstate.write_status(heartbeat=time.time())
                 if ok and game.mod_loaded(renv.HEALTH_EVAL_TIMEOUT) is False:
                     mod_gone_since = mod_gone_since or now
@@ -358,7 +361,7 @@ class AgentSide:
             renv.log(f"{sid}{tag}: {detail}")
         poll_stop.set()
         poller.join(timeout=20)
-        end = time.time()
+        end = self.clock()
         rstate.write_status(session_ended=end)
         human.write(f"===== {sid}{tag} ended: {reason}, exit {proc.returncode}, "
                     f"{(end - start) / 60:.1f} min\n")
