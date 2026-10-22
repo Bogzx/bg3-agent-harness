@@ -520,7 +520,9 @@ def flee(who: str | None = None) -> str:
         return f"REFUSED: {name} is not in a fight"
     near = _nearest_hostile(cs, char)
     if near and near[0] < FLEE_MIN_M:
-        return (f"REFUSED: enemy too close: {core.H.get(near[1])} {overview._name_of(near[1])} at {near[0]:.1f} m; "
+        # live4 §5: _name_of gives the handle for a hostile never named in a result ("e7 e7"); state.combat names it
+        who_near = near[2] or overview._name_of(near[1])
+        return (f"REFUSED: enemy too close: {core.H.get(near[1])} {who_near} at {near[0]:.1f} m; "
                 f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip). Get farther first.")
     rpc = lambda op, a: core.game.rpc(op, a, context="client")  # noqa: E731
     inp = world_tools._inp()
@@ -553,14 +555,14 @@ def _in_fight(cs: dict, char: str) -> bool:
     return any(o.get("uuid") == char for o in cs.get("order") or [])
 
 
-def _nearest_hostile(cs: dict, char: str) -> tuple[float, str] | None:
-    """(metres, uuid) of the nearest living hostile `char` can see (state.combat lists only seen combatants)."""
+def _nearest_hostile(cs: dict, char: str) -> tuple[float, str, str] | None:
+    """(metres, uuid, name) of the nearest living hostile `char` can see (state.combat lists only seen combatants)."""
     out = []
     for o in cs.get("order") or []:
         d = (o.get("from") or {}).get(char)
         if o.get("relation") == "hostile" and not o.get("dead") and o.get("uuid") and isinstance(d, (list, tuple)) \
                 and d and isinstance(d[0], (int, float)):
-            out.append((float(d[0]), o["uuid"]))
+            out.append((float(d[0]), o["uuid"], str(o.get("name") or "")))
     return min(out) if out else None
 
 

@@ -110,8 +110,9 @@ class Pickpocket(unittest.TestCase):
         out = world_tools.pickpocket(self.npc, take=h, min_chance=40)
         self.assertIn("stole", out)
         self.assertIn("rolled 15 vs DC 12", out)
-        take = self.jobs[-1][1]
+        take = next(a for _, a in self.jobs if a.get("take"))   # the pockets are read again after it
         self.assertEqual((take["take"], take["min_chance"]), (_u(31), world_tools.SELECT_ONLY))  # 40: checked here
+        self.assertEqual(self.jobs[-1][1].get("take"), None)
 
     def test_window_that_never_opens(self):
         # live 12:3x: pickpocket on an Ox: the open step said done but no window came; the 2nd read raised

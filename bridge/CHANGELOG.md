@@ -5,6 +5,18 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-22: live4 §2/§5 fixes (pickpocket, summon attack, flee, trade table)
+
+- pickpocket: a window it didn't open is closed and then waited for (≤2 s) before this NPC's is opened; the open
+  sent right after the close went with it ("FAILED — no pickpocket window is open" 2/2 after another process left
+  the window open). A window that stays open says so.
+- pickpocket(take=...): the POCKETS line after a steal is read again (it still listed the stolen Gold x15).
+- combat_turn / use_ability: a guessed Target_MainHandAttack for a character with no weapon attack becomes its
+  Unarmed Strike (a summoned Cambion: "the character does not have that action").
+- flee's "enemy too close" names the enemy from the fight's turn order ("e7 e7" before).
+- The trade table says "the trader pays you Ng on confirm" for an overpay their gold covers (confirm presses the
+  game's Balance; "you overpay 30g" was followed by +30 gold), and what is still overpaid when it doesn't.
+
 ## 2026-10-22: benchmark neutrality audit (docs/BENCHMARK-BIAS.md status table)
 
 - The server instructions say what the tools do, not how to play well: "Pipeline like a human clicking ahead",

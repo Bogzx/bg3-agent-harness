@@ -137,6 +137,13 @@ class Flee(unittest.TestCase):
         self.assertIn("REFUSED: enemy too close: e2 Goblin at 5.5 m", out)
         self.assertEqual(self.names(), ["state.combat"])
 
+    def test_a_too_close_enemy_is_named_from_the_fight(self):
+        # live4 §5: "enemy too close: e7 e7 at 5.5 m": the hostile was never named in a result (its handle had no name)
+        self.gob_m = 5.5
+        core.H.names.pop(core.H.get(GOB))
+        out = combat.flee()
+        self.assertIn("REFUSED: enemy too close: e2 Goblin at 5.5 m", out)
+
     def test_not_in_a_fight(self):
         self.fled = True
         self.assertIn("REFUSED: Claude is not in a fight", combat.flee())

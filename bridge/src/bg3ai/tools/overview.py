@@ -545,6 +545,9 @@ def _own_attack(who: str, ability: str) -> tuple[str, str]:
         return ability, ""
     pre = "Projectile_MainHandAttack" if ability.startswith("Projectile_") else "Target_MainHandAttack"
     own = sorted(i for i in shown if i.startswith(pre))
+    if not own and pre == "Target_MainHandAttack":
+        # live4 §5: a summoned Cambion has no weapon; its melee attack is Unarmed Strike (Target_UnarmedAttack)
+        own = sorted(i for i in shown if i.startswith("Target_UnarmedAttack"))
     if len(own) != 1:
         return ability, ""
     return own[0], (f"{ability}: {queueing._label(who)} has no such action → its own weapon attack "

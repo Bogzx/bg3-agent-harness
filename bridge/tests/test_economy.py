@@ -647,6 +647,18 @@ class TradeText(unittest.TestCase):
         self.assertNotIn("WARES", out)
         self.assertLess(len(out), 400)
 
+    def test_an_overpay_says_the_trader_pays_on_confirm(self):
+        # live4 §5: "you give 31g, you get 1g, you overpay 30g", then confirm's Balance paid +30 gold
+        def table(trader_gold):
+            res = dict(TRADE_S023, trader_gold=trader_gold,
+                       offer={"you": {"gold": 0, "items": [{"uuid": _u(301), "name": "Leather Armour", "price": 31}]},
+                              "trader": {"gold": 0, "items": [{"uuid": _u(102), "name": "Shovel", "price": 1}]}},
+                       balance={"you_give": 31, "you_get": 1})
+            return economy.trade_text(res, self.h, listing=False)
+        self.assertIn("(=1g) | the trader pays you 30g on confirm", table(500))
+        self.assertIn("the trader pays you 12g on confirm, all their gold: you still overpay 18g", table(12))
+        self.assertIn("you overpay 30g (the trader has no gold: confirm refuses; donate=true gives it)", table(0))
+
     def test_gold_on_the_table_is_its_stack_shown_once(self):
         # S055 03:45:46: "you give: (no id) ? x60 60g, 60 gold (=120g)": the Balance's gold (a Gold stack) printed
         # as an unnamed item plus the side's shown total as gold. Now the Lua counts the stack once (A13).

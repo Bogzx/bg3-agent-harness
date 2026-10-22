@@ -343,8 +343,17 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
     if listing.status == "done" and _pp_open["npc"] != target:
         # live2 §1: a window left open for another NPC (or opened by hand) was listed as this NPC's pockets (a stale
         # empty Cerys window read "nothing to steal" for Alfira and Tumeril 4 times). Close it and open this NPC's.
+        # live4 §2: the close lands frames later, so an open sent at once was undone with it ("opened", then no window
+        # 2/2 when another process had left this NPC's window open): wait for the window to be gone first.
         _pockets(dict(args, leave=True))
-        listing = JobResult("failed", error="no pickpocket window is open")
+        listing = _pockets(args)
+        deadline = time.monotonic() + PP_CLOSE_S
+        while listing.status == "done" and time.monotonic() < deadline:
+            time.sleep(PP_POLL_S)
+            listing = _pockets(args)
+        if listing.status == "done":
+            return reporting._finish("pickpocket", args, "pickpocket: FAILED — a pickpocket window this call didn't "
+                                     f"open stayed open {PP_CLOSE_S:g} s after closing it; nothing taken", t0)
     if listing.status != "done" and "no pickpocket window" in str(listing.error or ""):
         char = plumbing._who(who)
         if who and not uitools._hud_has(char):
@@ -365,7 +374,7 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
                 return not (r.result or {}).get("items")
             return "no pickpocket window" in str(r.error or "")
         while early(listing) and time.monotonic() < deadline:
-            time.sleep(0.25)
+            time.sleep(PP_POLL_S)
             listing = _pockets(args)
     if listing.status != "done":
         return reporting._finish("pickpocket", args, (out + "\n" if out else "") + plumbing._job_text("pickpocket", listing), t0)
@@ -373,12 +382,18 @@ def pickpocket(npc: str, who: str | None = None, take: str = "", min_chance: int
     text = economy.pockets_text(listing.result, _pocket_handle)
     if take:
         tk = plumbing._uuid(take) if re.fullmatch(r"e\d+", take.strip()) else take   # a handle from the listing, else a name
-        text = _steal(args, tk, min_chance) + "\n" + text
+        stole = _steal(args, tk, min_chance)
+        if stole.startswith("stole "):   # live4 §5: the listing read before the steal still showed the stolen item
+            after = _pockets(args)
+            text = economy.pockets_text(after.result, _pocket_handle) if after.status == "done" else ""
+        text = stole + ("\n" + text if text else "")
     head = out.split("\n", 1)[0] + "\n" if out else ""
     return reporting._finish("pickpocket", {"npc": npc, "take": take}, head + text + ("\n" + sel if sel else ""), t0)
 
 
 _pp_open: dict[str, str | None] = {"npc": None}   # the NPC whose pickpocket window this server opened last
+PP_CLOSE_S = 2.0   # how long a closed pickpocket window may take to go
+PP_POLL_S = 0.25
 SELECT_ONLY = 101   # ui.pickpocket's min_chance above any odds: it selects the item, reads its odds, presses nothing
 STEAL_SEED = (0.5604, 0.6519)   # live2 §1: the Steal button at (538, 352) of a 960x540 window
 STEAL_ROLL_S = 5.0

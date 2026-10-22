@@ -117,13 +117,15 @@ class Steal(unittest.TestCase):
     }
 
     def setUp(self):
-        saved = (core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S)
+        saved = (core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S,
+                 world_tools.PP_POLL_S)
         core.H = Handles()
         world_tools._pp_open["npc"] = None
         hoverclick._hits.clear()
 
         def restore():
-            core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S = saved
+            (core.H, core.game, world_tools._click_act, world_tools._inp, world_tools.STEAL_ROLL_S,
+             world_tools.PP_POLL_S) = saved
             world_tools._pp_open["npc"] = None
             hoverclick._hits.clear()
 
@@ -132,6 +134,9 @@ class Steal(unittest.TestCase):
         self.window: str | None = None  # the NPC whose window shows
         self.roll_after_click: dict | None = {"finished": True, "success": True, "rolled": 15, "dc": 12}
         self.closes_on_click = False
+        self.close_lag = 0      # polls a closed window stays up (the game closes it frames later)
+        self.closing = 0
+        self.stolen: set[str] = set()
         self.inp = FakeInput(over={(560, 651)})  # Steal under the seed (0.5604, 0.6519) of a 1000x1000 window
         test = self
 
@@ -140,10 +145,16 @@ class Steal(unittest.TestCase):
                 test.ops.append((op, dict(args)))
                 if op == "act.select":
                     return JobResult("done", {})
+                if test.closing:
+                    test.closing -= 1
+                    if not test.closing:
+                        test.window = None
                 if test.window is None:
                     return JobResult("failed", error="no pickpocket window is open: pickpocket(npc) opens it")
                 if args.get("leave"):
-                    test.window = None
+                    test.closing = test.close_lag
+                    if not test.closing:
+                        test.window = None
                     return JobResult("done", {"left": True})
                 if args.get("take"):
                     it = next(i for i in test.POCKETS["items"] if i["uuid"] == args["take"])
@@ -152,7 +163,7 @@ class Steal(unittest.TestCase):
                     return JobResult("done", {"item": it, "pending": True})  # the dead press (live2)
                 if test.window != _u(30):
                     return JobResult("done", {"items": []})  # another NPC's empty window
-                return JobResult("done", test.POCKETS)
+                return JobResult("done", {"items": [i for i in test.POCKETS["items"] if i["uuid"] not in test.stolen]})
 
             def rpc(self, op, args=None, context="server", **k):
                 test.ops.append((op, dict(args or {})))
@@ -161,6 +172,8 @@ class Steal(unittest.TestCase):
                         return {"open": False}
                     clicked = bool(test.inp.clicks())
                     roll = test.roll_after_click if clicked else {"finished": False}
+                    if clicked and (roll or {}).get("success"):
+                        test.stolen.add(_u(31))
                     return {
                         "open": True,
                         "button": True,
@@ -190,13 +203,15 @@ class Steal(unittest.TestCase):
 
         def click_act(tool, op, args, wait_s=40.0):
             test.ops.append((op, dict(args)))
-            test.window = args["target"]
+            if not test.closing:  # an open sent while a close is pending goes with the close
+                test.window = args["target"]
             reporting._batch["last"] = "done"
             return "pickpocket: done — opened pickpocket"
 
         world_tools._click_act = click_act
         world_tools._inp = lambda: self.inp
         world_tools.STEAL_ROLL_S = 0.0
+        world_tools.PP_POLL_S = 0.0
         self.npc = core.H.get(_u(30), "Refugee")
         self.dagger = core.H.get(_u(31), "Dagger")
 
@@ -241,12 +256,37 @@ class Steal(unittest.TestCase):
         self.window = _u(40)
         out = world_tools.pickpocket(self.npc)
         self.assertIn("Dagger", out)
-        self.assertEqual(self.names()[:3], ["ui.pickpocket", "ui.pickpocket", "act.pickpocket"])
+        self.assertEqual(self.names()[:4], ["ui.pickpocket", "ui.pickpocket", "ui.pickpocket", "act.pickpocket"])
         self.assertTrue(self.ops[1][1].get("leave"))
         # the window is now ours: a second call lists it without closing
         self.ops.clear()
         world_tools.pickpocket(self.npc)
         self.assertEqual(self.names(), ["ui.pickpocket"])
+
+    def test_a_window_left_open_by_another_process_is_reopened_after_it_closed(self):
+        # live4 §2: this NPC's window, opened by the previous server process; the close lands a few frames later and
+        # took the new window with it ("opened", then "no pickpocket window is open", 2/2)
+        self.window, self.close_lag = _u(30), 3
+        out = world_tools.pickpocket(self.npc, take=self.dagger)
+        self.assertIn("stole e2 Dagger", out)
+        names = self.names()
+        self.assertEqual(names.count("act.pickpocket"), 1)
+        self.assertEqual(self.closing, 0)
+
+    def test_a_window_that_never_closes_is_reported(self):
+        self.window, self.close_lag = _u(40), 10**6
+        with mock.patch.object(world_tools, "PP_CLOSE_S", 0.0):
+            out = world_tools.pickpocket(self.npc)
+        self.assertIn("stayed open", out)
+        self.assertNotIn("act.pickpocket", self.names())
+
+    def test_pockets_after_a_steal_are_read_again(self):
+        # live4 §5: POCKETS still listed the stolen Gold x15
+        out = world_tools.pickpocket(self.npc, take=self.dagger)
+        self.assertIn("stole e2 Dagger", out)
+        pockets = next(line for line in out.splitlines() if line.startswith("POCKETS"))
+        self.assertIn("Ring", pockets)
+        self.assertNotIn("Dagger", pockets)
 
     def test_leave_forgets_the_window(self):
         world_tools.pickpocket(self.npc)

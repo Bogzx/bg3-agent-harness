@@ -114,6 +114,20 @@ class OwnAttack(Base):
             self.assertIn("'greataxe slash'", note)
         self.assertEqual(len(self.g.ops("state.actions")), 1)
 
+    def test_a_summon_without_a_weapon_uses_its_unarmed_strike(self):
+        # live4 §5: Cambion (summoned) Target_MainHandAttack -> "the character does not have that action"; its
+        # actions there (runtime/rec/fight.jsonl): Rays of Fire, Draining Kiss, Fiendish Charm, Unarmed Strike, ...
+        self.g.actions = [{"spell": "Shout_Dash_NPC", "name": "Dash"},
+                          {"spell": "Projectile_FireRay_Cambion", "name": "Rays of Fire", "range": 18},
+                          {"spell": "Target_DrainingKiss_Cambion", "name": "Draining Kiss", "range": 1.5},
+                          {"spell": "Target_UnarmedAttack", "name": "Unarmed Strike", "range": 1.5},
+                          {"spell": "Shout_Dismiss_Self", "name": "Dismiss Summon"}]
+        sp, note = overview._own_attack(P1, "Target_MainHandAttack")
+        self.assertEqual(sp, "Target_UnarmedAttack")
+        self.assertIn("'unarmed strike'", note)
+        # no ranged weapon attack to fall back to: a Projectile_ guess stays as it is
+        self.assertEqual(overview._own_attack(P1, "Projectile_MainHandAttack"), ("Projectile_MainHandAttack", ""))
+
     def test_owned_or_unrelated_ids_unchanged(self):
         self.assertEqual(overview._own_attack(P1, "Target_MainHandAttack_SpiritualWeapon_Greataxe"),
                          ("Target_MainHandAttack_SpiritualWeapon_Greataxe", ""))

@@ -587,6 +587,17 @@ def _price(it: dict) -> int:
     return p if isinstance(p, (int, float)) else 0
 
 
+def _overpay(n: int, trader_gold: int | None) -> str:
+    """You give n more than you get. confirm presses the game's Balance first, which puts the trader's gold on the
+    table (live4 §5: "you overpay 30g", then the deal paid +30 gold); only what their gold can't cover is lost."""
+    if not isinstance(trader_gold, (int, float)) or trader_gold >= n:
+        return f"the trader pays you {n}g on confirm"
+    if trader_gold <= 0:
+        return f"you overpay {n}g (the trader has no gold: confirm refuses; donate=true gives it)"
+    return (f"the trader pays you {trader_gold}g on confirm, all their gold: you still overpay {n - trader_gold}g "
+            "(confirm refuses; donate=true gives it)")
+
+
 def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False) -> str:
     """The trade screen for the agent. h(item) -> its handle (e12). listing: show wares and your items (opening or
     trade() with no args); else only the table/balance. full: no caps."""
@@ -614,7 +625,7 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         give, get = bal.get("you_give") or 0, bal.get("you_get") or 0
         lines.append(f"TABLE you give: {side(you)} (={give}g) | you get: {side(them)} (={get}g) | "
                      + (f"short by {get - give}g (add items/gold or barter)" if get > give else
-                        f"you overpay {give - get}g" if give > get else "even"))
+                        _overpay(give - get, res.get("trader_gold")) if give > get else "even"))
     if res.get("trader_gold") == 0 and "wares" in res:
         # S028: Wulbren's hand-over (no wares, no gold) and a broke trader read like any shop until a confirm failed
         if handover(res):
