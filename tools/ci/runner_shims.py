@@ -46,9 +46,13 @@ DELETED = {
     "display_env": "bg3harness.display_env",
     "events": "bg3harness.events",
     "facts": "bg3harness.facts",
+    "fairness": "bg3harness.fairness",
     "game_settings": "bg3harness.game_settings",
     "host_tuning": "bg3harness.host_tuning",
+    "model_time": "bg3harness.model_time",
     "ramwatch": "bg3harness.ramwatch",
+    "sandbox": "bg3harness.sandbox",
+    "triage": "bg3harness.triage",
 }
 
 

@@ -23,12 +23,12 @@ through a tool) is allowed, the way a player who read the wiki has it, and is ta
 Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendered frame.
 
 ## Auditing
-* **Per-session audit** (`packages/harness/src/bg3harness/fairness.py`, run through the `runner/fairness.py` shim; a section of every `Sxxx.triage.md`): scans every game-tool result
+* **Per-session audit** (`packages/harness/src/bg3harness/fairness.py`; a section of every `Sxxx.triage.md`): scans every game-tool result
   the agent got, and the runner's prompts (the `.log`'s `[prompt]` lines), for raw GUIDs, DCs outside the roll screen and the pickpocket window, passive-roll subjects, story-flag/template names,
   engine status ids, waypoint/level ids, side-channel flags (`unseen_combatants`, `geo_gen`), puzzle/lock verdicts
   from story data, an unseen target's fate and unlocalised engine text (LEAK), and hidden-state words on entity lines
   (CHECK). Memory, wiki and screenshot results are skipped. It is lexical: paths, maps and refusals built from hidden
-  data pass it (audit C1, 2026-10-18). `python3 runner/fairness.py runtime/sessions/<run>/Sxxx` prints it alone.
+  data pass it (audit C1, 2026-10-18). `uv run python -m bg3harness.fairness runtime/sessions/<run>/Sxxx` prints it alone.
 * **Where the game itself shows a DC** (checked in the game's XAML, Game.pak + Patch8 overrides, 2026-10-17):
   the roll screen (`Library/DiceAnimation.xaml`: `Roll.DifficultyCheck`, hidden when `Roll.ShowDC` is false, which
   is how `DIALOGUE_DC_HIDE` reaches it; lockpick, disarm and dialogue checks all use it) and the pickpocket window
