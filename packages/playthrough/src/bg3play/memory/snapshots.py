@@ -29,9 +29,6 @@ from typing import Any, cast
 from bg3play.jsontypes import Obj, is_list, is_obj
 from bg3play.memory import memlib
 
-BRIDGE_SRC = memlib.REPO_ROOT / "bridge" / "src"
-sys.path.insert(0, str(BRIDGE_SRC))
-
 DEBUG_HOST = "127.0.0.1"
 SNAP_FILES = ("status", "party", "inventory", "journal", "map", "gear")
 
@@ -351,7 +348,7 @@ def run(mem: Path, port: int = 9998) -> tuple[list[str], list[str]]:
     try:
         from bg3ai.game import Game, GameError  # pyright: ignore[reportMissingTypeStubs]
     except ImportError as e:
-        return [], [f"bridge not importable from {BRIDGE_SRC}: {e}"]
+        return [], [f"bridge (bg3ai) not importable: {e}"]
     game: Any = Game(port=port)
     try:
         info = game.rpc("sys.info", context="server", timeout=5.0)

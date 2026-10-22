@@ -56,7 +56,6 @@ from . import game as gm
 from . import positions as pos
 from . import recorder as rec
 from . import supervisor as sup
-from .adapters import legacy_paths
 from .adapters.session_cost import session_cost
 from .dashboard import SERIES_HTML, Dashboard
 from .game import GameWatch, ScreenWatch, Viewers
@@ -506,8 +505,6 @@ def session_runner(opt: argparse.Namespace) -> tuple[sup.SessionRunner, Any]:
     from .adapters.bridge_status import bridge_game  # the bridge's debug-port client
     from .adapters.harness_runner import AttachedGame, ClientAgents, HarnessRunner, SessionPy
 
-    legacy_paths.ensure()
-
     def log(m: str) -> None:
         print(f"bg3play: {m}", flush=True)
 
@@ -568,8 +565,6 @@ def main(argv: list[str] | None = None) -> int:
     if opt.positions:
         from .adapters.bridge_status import BridgeStatus  # temporary; needs the bridge package
 
-        legacy_paths.ensure()
-
         def path_for() -> Path | None:
             cur = opt.playthrough or store.current()
             return store.positions_path(cur) if cur else None
@@ -600,13 +595,11 @@ def main(argv: list[str] | None = None) -> int:
     if opt.game:
         from .adapters.bridge_status import bridge_game  # temporary; needs the bridge package
 
-        legacy_paths.ensure()
         game = GameWatch(lambda: bridge_game(opt.debug_port), viewers, opt.status_interval)
         threading.Thread(target=gm.loop, args=(game, stop, time.time), daemon=True, name="game").start()
     if opt.screen:
         from .adapters.bridge_status import bridge_capture  # temporary; needs the bridge package
 
-        legacy_paths.ensure()
         capture, note, err = bridge_capture(opt.runtime / "shots", opt.screen_width)
         interval = opt.screen_interval if note is None else max(opt.screen_interval, 15.0)
         screen = ScreenWatch(capture, viewers, interval, note=note, error=err)

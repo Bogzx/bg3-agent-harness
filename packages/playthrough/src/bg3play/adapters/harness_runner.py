@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from bg3harness import client_setup
+from bg3harness.runner import policy
 from bg3harness.session import (
     RecoverFailure,
     Recovery,
@@ -57,14 +58,9 @@ from bg3harness.session import (
 from .. import config
 from ..jsontypes import is_obj
 from ..memory import memlib
+from ..runner import memory_session, prompts
 from ..supervisor import OOM_STREAK, SessionRequest, SessionResult, SupervisorError
-from . import legacy_paths
 from .agent_process import AgentCall, AgentRun, ClientAgent
-
-legacy_paths.ensure()  # bg3harness.runner (the runner's policy, under bg3play.runner) reads the bridge's modules
-from bg3harness.runner import policy  # noqa: E402
-
-from ..runner import memory_session, prompts  # noqa: E402
 
 
 class Agent(Protocol):

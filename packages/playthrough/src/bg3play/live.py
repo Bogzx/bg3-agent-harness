@@ -2,8 +2,8 @@
 view, latency, story progress, the goal scorecard, unattended hours, milestones and the machine's temperature.
 
 Everything here is side-effect free apart from reading files, so it is unit-tested without a game. The latency,
-progress and milestone views use the bridge's stdlib-only bg3ai.metrics / progress / milestones, reached through
-adapters/legacy_paths.py until the harness package exposes them, and the thermal view bg3harness.ramwatch.
+progress and milestone views use the bridge's stdlib-only bg3ai.metrics / progress / milestones (bg3ai-bridge, a
+dependency), and the thermal view bg3harness.ramwatch.
 """
 
 from __future__ import annotations
@@ -18,10 +18,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from . import parse
-from .adapters import legacy_paths
 from .jsontypes import Obj, is_list, is_obj
 
 ramwatch: Any = importlib.import_module("bg3harness.ramwatch")  # Any to pyright: untyped legacy module
+metrics: Any = importlib.import_module("bg3ai.metrics")  # the bridge ships no types
+progress: Any = importlib.import_module("bg3ai.progress")
+milestones: Any = importlib.import_module("bg3ai.milestones")
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -301,8 +303,6 @@ def latency_payload(
 ) -> dict[str, Any]:
     """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table. Once the runner says its
     session ended there is no idle time now (nobody is playing; the agent's last call would count up forever)."""
-    metrics = legacy_paths.load("bg3ai.metrics")
-
     now = time.time() if now is None else now
     paths = resolve_latency_paths(runtime, runner_status)
     recs = _tail_jsonl(paths["metrics"])
@@ -329,8 +329,6 @@ def progress_payload(
     runtime: Path, runner_status: dict[str, Any], now: float | None = None, history_rows: int = 30
 ) -> dict[str, Any]:
     """/api/progress: live counter of the running session (bg3ai.progress.live_view) + per-session history."""
-    progress = legacy_paths.load("bg3ai.progress")
-
     now = time.time() if now is None else now
     live_path = runner_status.get("progress")
     live_path = Path(live_path) if live_path and Path(live_path).exists() else None
@@ -443,8 +441,6 @@ def goal_pass(op: str, value: Any, target: Any) -> bool | None:
 def _session_summaries(
     d: Path, sid: str, live: bool, started: float | None, now: float
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    metrics, progress = legacy_paths.load("bg3ai.metrics"), legacy_paths.load("bg3ai.progress")
-
     lat_f, met_f, turns_f = d / f"{sid}.latency.json", d / f"{sid}.metrics.jsonl", d / f"{sid}.turns.jsonl"
     prog_f, progl_f = d / f"{sid}.progress.json", d / f"{sid}.progress.jsonl"
     if lat_f.exists() and not live:
@@ -629,8 +625,6 @@ def unattended_payload(
 
 def milestones_payload(d: Path) -> dict[str, Any] | None:
     """Story milestones for the playthrough dir (bg3ai.milestones), with the session that first reached each."""
-    milestones, progress = legacy_paths.load("bg3ai.milestones"), legacy_paths.load("bg3ai.progress")
-
     seen = read_json(d / "progress_state.json")
     sessions = [(sid, progress.load(d / f"{sid}.progress.jsonl")) for sid in session_ids(d)]
     if not seen and not any(r for _s, r in sessions):

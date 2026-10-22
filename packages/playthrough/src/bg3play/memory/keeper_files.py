@@ -11,7 +11,6 @@ import json
 import os
 import re
 import signal
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -19,8 +18,7 @@ from typing import Any
 from bg3play.memory import lint, memlib
 
 REPO = memlib.REPO_ROOT
-sys.path.insert(0, str(REPO / "bridge" / "src"))
-# stdlib only; Any to pyright (the bridge ships no types)
+# bg3ai-bridge (stdlib only); Any to pyright (the bridge ships no types)
 milestones: Any = importlib.import_module("bg3ai.milestones")
 bg3progress: Any = importlib.import_module("bg3ai.progress")
 

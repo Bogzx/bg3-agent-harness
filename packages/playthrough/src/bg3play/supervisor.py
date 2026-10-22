@@ -82,7 +82,7 @@ class SupervisorError(RuntimeError):
 
 def is_stuck(history: list[dict[str, Any]]) -> bool:
     """The runner's stuck rule (bg3harness.runner.policy.is_stuck): the last STUCK_SESSIONS sessions each ended
-    with progress False. Imported here: the runner's policy needs the bridge's modules on sys.path."""
+    with progress False. Imported here: the policy pulls in the bridge (bg3ai)."""
     from bg3harness.runner import policy
 
     return policy.is_stuck(history)  # pyright: ignore[reportUnknownMemberType]

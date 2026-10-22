@@ -23,7 +23,6 @@ class Runner(PlaythroughSide, lser.SeriesSide, rcore.SessionRunner):
     """`play.py run`: SessionRunner with the playthrough parts (PlaythroughSide) and the series' (SeriesSide)."""
 
     def lsf_attributes(self) -> Callable[[bytes], list]:
-        sys.path.append(str(Path(__file__).resolve().parents[1] / "tools" / "saves"))
-        import lsf  # pyright: ignore[reportMissingImports]  (tools/saves on sys.path)
+        from bg3ai import lsf
 
         return lsf.attributes

@@ -256,7 +256,7 @@ class RunTest(MemoryTestCase):
     def test_bridge_not_importable(self):
         written, notes = self.run_with(None)
         self.assertEqual(written, [])
-        self.assertIn("bridge not importable", notes[0])
+        self.assertIn("bridge (bg3ai) not importable", notes[0])
 
     def test_missing_memory_dir(self):
         written, notes = snapshots.run(self.tmp / "nope")

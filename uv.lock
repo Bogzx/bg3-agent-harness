@@ -350,6 +350,7 @@ version = "0.1.0"
 source = { editable = "packages/playthrough" }
 dependencies = [
     { name = "bg3-agent-harness" },
+    { name = "bg3ai-bridge" },
 ]
 
 [package.dev-dependencies]
@@ -360,7 +361,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "bg3-agent-harness", editable = "packages/harness" }]
+requires-dist = [
+    { name = "bg3-agent-harness", editable = "packages/harness" },
+    { name = "bg3ai-bridge", editable = "bridge" },
+]
 
 [package.metadata.requires-dev]
 dev = [
