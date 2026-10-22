@@ -1,4 +1,5 @@
--- Offline tests for Client/Pick.lua P.same_entity (the hover check's no-Uuid object vs the target entity).
+-- Offline tests for Client/Pick.lua: P.same_entity (the hover check's no-Uuid object vs the target entity), the
+-- helpers, and the ui.screen_pos / ui.hover_check replies (45 and 134 calls in the recorded fixtures: click_on's loop).
 -- Run: tools/dev/test_confirm.sh (Lua 5.3 + 5.4 in Docker)
 local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
 
@@ -19,8 +20,10 @@ Ext = {
     },
     Entity = {}, UI = {},
 }
-BG3AI = { Util = { round = function(x) return x end, comp = function(e, c) return type(e) == "table" and e[c] or nil end },
-    RPC = { register = function() end } }
+local H = {} -- RPC name -> handler
+BG3AI = { Util = { round = function(x) return x end, comp = function(e, c) return type(e) == "table" and e[c] or nil end,
+    vec = function(v) return v and { v[1], v[2], v[3] } end },
+    RPC = { register = function(name, fn) H[name] = fn end } }
 dofile(LUA .. "/Client/Pick.lua")
 local P = BG3AI.Pick
 
@@ -147,6 +150,130 @@ test("aim_point: high/top reach a wall mount on an item; a character's are its c
     p, aim = P.aim_point("guy", "top")
     assert(aim == "chest" and math.abs(p[2] - 11.1) < 1e-9, tostring(aim))
     Ext.Entity.Get = nil
+end)
+
+-- ui.screen_pos: a camera at the origin looking along +Z (identity rotation), no readable intrinsics (fy 1.921,
+-- the window's aspect), a 1920x1080 window.
+local T1, T2 = "aaaaaaaa-0000-0000-0000-000000000001", "aaaaaaaa-0000-0000-0000-000000000002"
+local function with_camera(ents, fn)
+    local cam = { Camera = { Active = true, Controller = { Camera = { ProjectionMatrix = {} } } },
+        Transform = { Transform = { Translate = { 0, 0, 0 }, RotationQuat = { 0, 0, 0, 1 } } } }
+    local saved = { Ext.Entity.Get, Ext.Entity.GetAllEntitiesWithComponent, Ext.UI.GetRoot }
+    Ext.Entity.Get = function(u) return ents[u] end
+    Ext.Entity.GetAllEntitiesWithComponent = function() return { cam } end
+    Ext.UI.GetRoot = function() return { ActualWidth = 1920, ActualHeight = 1080 } end
+    local ok, err = pcall(fn)
+    Ext.Entity.Get, Ext.Entity.GetAllEntitiesWithComponent, Ext.UI.GetRoot = saved[1], saved[2], saved[3]
+    if not ok then error(err, 0) end
+end
+local function char(x, y, z)
+    return { Transform = { Transform = { Translate = { x, y, z } } }, ClientCharacter = {} }
+end
+local function near(a, b, what) assert(math.abs(a - b) < 1e-3, what .. ": " .. tostring(a) .. " vs " .. tostring(b)) end
+
+test("screen_pos: a character straight ahead is aimed at its chest, mid-window, on screen", function()
+    with_camera({ [T1] = char(0, -1.1, 10) }, function()
+        local r = H["ui.screen_pos"]({ uuid = T1 })
+        assert(r.on_screen == true and r.aim == "chest" and r.side == "right", tostring(r.aim))
+        assert(r.x == 960 and r.y == 540, r.x .. "," .. r.y)
+        assert(r.size[1] == 1920 and r.size[2] == 1080)
+        near(r.depth, 10, "depth")
+        near(r.world[2], 0, "aimed y")
+    end)
+end)
+
+test("screen_pos: a point to the left projects left of centre (fx = fy / aspect)", function()
+    with_camera({ [T1] = char(-3, -1.1, 10) }, function()
+        local r = H["ui.screen_pos"]({ uuid = T1 })
+        near(r.ndc[1], -1.921 / (1920 / 1080) * 0.3, "ndc x")
+        assert(r.side == "left" and r.x == 649 and r.on_screen == true, r.side .. " " .. r.x)
+    end)
+end)
+
+test("screen_pos: far to the side is off screen, behind the camera says behind", function()
+    with_camera({ [T1] = char(50, -1.1, 10), [T2] = char(-1, 0, -5) }, function()
+        local r = H["ui.screen_pos"]({ uuid = T1 })
+        assert(r.on_screen == false and r.x > 1920, tostring(r.x))
+        r = H["ui.screen_pos"]({ uuid = T2 })
+        assert(r.behind == true and r.on_screen == false and r.side == "left" and r.x == nil)
+    end)
+end)
+
+test("screen_pos: a world point (pos) and the errors", function()
+    with_camera({}, function()
+        local r = H["ui.screen_pos"]({ pos = { 0, 0, 10 } })
+        assert(r.aim == "point" and r.x == 960 and r.y == 540)
+        assert(not pcall(H["ui.screen_pos"], { pos = { 1, "x" } }), "bad pos")
+        assert(not pcall(H["ui.screen_pos"], { uuid = "nope" }), "bad uuid")
+        local ok, err = pcall(H["ui.screen_pos"], { uuid = T1 })
+        assert(not ok and tostring(err):find("unknown entity"), tostring(err))
+    end)
+    local saved = Ext.Entity.GetAllEntitiesWithComponent
+    Ext.Entity.GetAllEntitiesWithComponent = function() return {} end
+    local ok, err = pcall(H["ui.screen_pos"], { pos = { 0, 0, 10 } })
+    Ext.Entity.GetAllEntitiesWithComponent = saved
+    assert(not ok and tostring(err):find("no active camera"), tostring(err))
+end)
+
+-- ui.hover_check: what the picking helper names under the cursor.
+local function with_picking(entries, ents, fn)
+    local saved = { Ext.UI.GetPickingHelper, Ext.Entity.Get }
+    Ext.UI.GetPickingHelper = function()
+        return { Inner = { Inner = entries, WorldPosition = { 1.5, 2, 3 } }, WindowCursorPos = { 100, 200 } }
+    end
+    Ext.Entity.Get = function(u) return ents[u] end
+    local ok, err = pcall(fn)
+    Ext.UI.GetPickingHelper, Ext.Entity.Get = saved[1], saved[2]
+    if not ok then error(err, 0) end
+end
+local function named(u) return { Uuid = { EntityUuid = u } } end
+
+test("hover_check: the target under the cursor, with the cursor and its world point", function()
+    with_picking({ { GameObject = named(T1) } }, {}, function()
+        local r = H["ui.hover_check"]({ uuid = T1:upper() })
+        assert(r.hovered == true and r.hover == T1 and r.via_field == nil)
+        assert(r.cursor[1] == 100 and r.cursor[2] == 200 and r.world[1] == 1.5)
+    end)
+end)
+
+test("hover_check: something else under the cursor is named in hover, not hovered", function()
+    with_picking({ { GameObject = named(T2) } }, {}, function()
+        local r = H["ui.hover_check"]({ uuid = T1 })
+        assert(r.hovered == false and r.hover == T2 and r.hover_nouuid == nil)
+    end)
+end)
+
+test("hover_check: the target named only by the entry's Character pick says via_field", function()
+    with_picking({ { Character = named(T1) } }, {}, function()
+        local r = H["ui.hover_check"]({ uuid = T1 })
+        assert(r.hovered == true and r.via_field == "Character", tostring(r.via_field))
+    end)
+end)
+
+test("hover_check: an object with no id at the target's origin is the target; 2 m off it is not", function()
+    local at = { Transform = { Transform = { Translate = { 10, 0, 5 } } } }
+    local off = { Transform = { Transform = { Translate = { 12, 0, 5 } } } }
+    local target = { Transform = { Transform = { Translate = { 10, 0, 5 } } } }
+    with_picking({ { GameObject = at } }, { [T1] = target }, function()
+        local r = H["ui.hover_check"]({ uuid = T1 })
+        assert(r.hovered == true and r.via == "origin" and r.hover_nouuid == true, tostring(r.via))
+    end)
+    with_picking({ { GameObject = off } }, { [T1] = target }, function()
+        local r = H["ui.hover_check"]({ uuid = T1 })
+        assert(r.hovered == false and r.nouuid and r.nouuid[1].m == 2, tostring(r.nouuid and r.nouuid[1].m))
+    end)
+    with_picking({ { GameObject = off } }, {}, function()
+        local r = H["ui.hover_check"]({ uuid = T1 })
+        assert(r.hovered == false and r.nouuid_why ~= nil)
+    end)
+end)
+
+test("hover_check: no picking helper is an empty answer, not an error", function()
+    local saved = Ext.UI.GetPickingHelper
+    Ext.UI.GetPickingHelper = function() return nil end
+    local r = H["ui.hover_check"]({ uuid = T1 })
+    Ext.UI.GetPickingHelper = saved
+    assert(r.hovered == false and r.hover == nil and r.cursor == nil)
 end)
 
 print(string.format("%d/%d passed", n - bad, n))
