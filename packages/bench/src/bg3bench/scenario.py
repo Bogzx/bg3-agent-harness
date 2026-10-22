@@ -32,7 +32,7 @@ import hashlib
 import json
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -288,7 +288,7 @@ def goal_of(sc: dict) -> dict:
     return {"milestone": sc["until"]} if "until" in sc else sc["goal"]
 
 
-def digest(sc: dict) -> str:
+def digest(sc: Mapping[str, Any]) -> str:
     """A short hash of a scenario's content (as runs.scenario_digest): a series refuses an edited scenario."""
     return hashlib.sha1(json.dumps(sc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 
 def run_name(base: str, k: int) -> str:
@@ -17,9 +18,9 @@ def run_name(base: str, k: int) -> str:
     return base if k <= 1 else f"{base}-r{k}"
 
 
-def series_records(path: Path, base: str) -> list[dict]:
+def series_records(path: Path, base: str) -> list[dict[str, Any]]:
     """The series' runs.jsonl records (runtime/sessions/<base>/runs.jsonl), in file order."""
-    out = []
+    out: list[dict[str, Any]] = []
     try:
         lines = path.read_text().splitlines()
     except OSError:
@@ -66,7 +67,7 @@ def update_record(path: Path, record: dict, fields: dict) -> bool:
     return True
 
 
-def next_run_index(records: list[dict]) -> int:
+def next_run_index(records: list[dict[str, Any]]) -> int:
     """The run to play next: one after the highest recorded run (a record means that run is over, any outcome)."""
     return max([int(r.get("run") or 1) for r in records], default=0) + 1
 

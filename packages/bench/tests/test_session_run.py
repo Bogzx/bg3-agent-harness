@@ -75,7 +75,11 @@ class Hooks:
     def resume_prompt(self, why: str, notes: list[str]) -> str:
         return "RESUME"
 
-    agent_resume_prompt = stop_resume_prompt = resume_prompt
+    def agent_resume_prompt(self, notes: list[str]) -> str:
+        return "RESUME"
+
+    def stop_resume_prompt(self, why: str) -> str:
+        return "RESUME"
 
     def event(self, kind: str, **fields: Any) -> None:
         self.events.append((kind, fields))

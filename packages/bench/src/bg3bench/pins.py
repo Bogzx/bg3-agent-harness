@@ -125,7 +125,7 @@ def version_pins(repo: Path, game_build: str, dist: Path, mod_meta: Path, mod_ha
     }
 
 
-def versions() -> dict:
+def versions() -> dict[str, str]:
     """The harness, bg3bench and suite versions of the running code (CHANGELOG.md: every result cites them)."""
     return {
         "harness": bg3harness.__version__,

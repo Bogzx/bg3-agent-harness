@@ -25,7 +25,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
@@ -33,10 +33,11 @@ from bg3bench import pins, run_artifacts, scenario, series
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 NO_RESUME = Recovery(max_resumes=0)
+JSON = dict[str, Any]
 
 
-def series_name(matrix: str, job: Mapping) -> str:
-    parts = [matrix, job["scenario"], job["model"], job["client"], job["effort"] or "", job["condition"]]
+def series_name(matrix: str, job: Mapping[str, Any]) -> str:
+    parts: list[str] = [matrix, job["scenario"], job["model"], job["client"], job["effort"] or "", job["condition"]]
     return re.sub(r"[^a-z0-9_-]+", "-", "-".join(p for p in parts if p).lower()).strip("-")[:100]
 
 
@@ -46,27 +47,28 @@ class Start:
     hooks: SessionHooks
     client_session: str | None = None
     prompt_sha: str | None = None  # sha256 of the assembled prompt
-    prompt_parts: Sequence[dict] = field(default_factory=tuple)  # [{"file", "sha256"}]
+    prompt_parts: Sequence[JSON] = field(default_factory=tuple)  # [{"file", "sha256"}]
     harness_version: str | None = None
 
 
 class RunHost(Protocol):
-    def start(self, job: dict, sc: dict, run_dir: Path) -> Start: ...  # the scenario's start state, the kickoff
-    def record(self, job: dict, sc: dict, run_dir: Path, outcome: SessionOutcome) -> dict: ...  # runs.jsonl fields
+    def start(self, job: JSON, sc: JSON, run_dir: Path) -> Start: ...  # the scenario's start state, the kickoff
+    def record(self, job: JSON, sc: JSON, run_dir: Path, outcome: SessionOutcome) -> JSON: ...  # runs.jsonl fields
 
 
 class SessionRun:
     """run_one for matrix.Matrix over run_session. scenarios maps each scenario name to its v2 dict."""
 
-    def __init__(self, matrix: str, host: RunHost, *, scenarios: Mapping[str, dict], sessions: str | Path):
+    def __init__(self, matrix: str, host: RunHost, *, scenarios: Mapping[str, JSON], sessions: str | Path):
         self.matrix, self.host, self.scenarios, self.sessions = matrix, host, dict(scenarios), Path(sessions)
 
-    def _series(self, name: str, job: dict, sc: dict) -> dict:
+    def _series(self, name: str, job: JSON, sc: JSON) -> JSON:
         path = self.sessions / name / "series.json"
-        want = {"name": sc["name"], "digest": scenario.digest(sc), "start_save_sha1": None, "spec": sc}
+        want: JSON = {"name": sc["name"], "digest": scenario.digest(sc), "start_save_sha1": None, "spec": sc}
         if path.exists():
-            meta = json.loads(path.read_text(encoding="utf-8"))
-            if (meta.get("scenario") or {}).get("digest") != want["digest"]:
+            meta: JSON = json.loads(path.read_text(encoding="utf-8"))
+            frozen: JSON = meta.get("scenario") or {}
+            if frozen.get("digest") != want["digest"]:
                 raise ValueError(f"series {name}: scenario {sc['name']} changed since its first run")
             return meta
         meta = {"series": name, "client": job["client"], "scenario": want, "caps": dict(sc["caps"])}
@@ -74,7 +76,7 @@ class SessionRun:
         path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         return meta
 
-    def __call__(self, job: dict) -> RunResult:
+    def __call__(self, job: JSON) -> RunResult:
         if job["scenario"] not in self.scenarios:
             raise ValueError(f"no scenario {job['scenario']!r}")
         sc = self.scenarios[job["scenario"]]
@@ -90,7 +92,7 @@ class SessionRun:
             return RunResult(None, False, False, 0.0, f"start failed: {type(e).__name__}: {e}", True)
         spec = SessionSpec(run_dir.name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, NO_RESUME)
         out = run_session(spec, st.hooks)
-        rec = dict(self.host.record(job, sc, run_dir, out))
+        rec: JSON = dict(self.host.record(job, sc, run_dir, out))
         rec.update(series=name, playthrough=run_dir.name, run=k, client=job["client"], model=job["model"])
         rec.setdefault("effort", job["effort"])
         rec.setdefault("started", out.started)

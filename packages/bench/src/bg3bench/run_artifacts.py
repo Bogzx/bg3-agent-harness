@@ -39,21 +39,21 @@ def series_scenario(series: dict) -> dict:
 
 def write_run_artifacts(
     run_dir: str | Path,
-    series: dict,
-    run_record: dict,
+    series: dict[str, Any],
+    run_record: dict[str, Any],
     harness_version: str | None,
     prompt_sha: str | None,
     *,
-    prompt_parts: Sequence[dict] = (),
-    scenario_spec: dict | None = None,
+    prompt_parts: Sequence[dict[str, Any]] = (),
+    scenario_spec: dict[str, Any] | None = None,
     condition: str | None = None,
     bench_tag: str | None = None,
-    tools: dict | None = None,
+    tools: dict[str, Any] | None = None,
     provider: str | None = None,
     client_version: str | None = None,
-    price_sheet: dict | None = None,
+    price_sheet: dict[str, Any] | None = None,
     judge: Any = None,
-) -> tuple[dict, dict]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Grade the run in run_dir and write its manifest.json and result.json there; returns (manifest, result).
 
     `prompt_sha` is the sha256 of the assembled prompt (`prompt_parts`: [{"file", "sha256"}]); `scenario_spec`

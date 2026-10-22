@@ -272,7 +272,7 @@ def test_scenario_to_leaderboard(tmp_path):
     model = {"slug": MODEL, "client": "pi", "effort": "high"}
     jobs = matrix.plan([model], [sc["name"]], ["rules"], 2, max_cost={sc["name"]: sc["caps"]["max_cost"]})
     run_one = SessionRun("e2e", host, scenarios={sc["name"]: sc}, sessions=sessions)
-    mx = matrix.Matrix(tmp_path / "runtime" / "matrix" / "e2e", run_one, budget, now=lambda: T0, sleep=lambda s: 0)
+    mx = matrix.Matrix(tmp_path / "runtime" / "matrix" / "e2e", run_one, budget, now=lambda: T0, sleep=lambda s: None)
     mx.create("e2e", jobs)
     assert mx.run() == matrix.FINISHED
     series = series_name("e2e", jobs[0])
