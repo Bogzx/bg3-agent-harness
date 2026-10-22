@@ -2380,9 +2380,8 @@ class Runner:
         cmd = self.agent_cmd(req)
         box, cname = self.box, None
         if box is not None:   # --sandbox container: the client in the container, the bg3 server over http here
-            cname = box.container_name(sid + tag)
-            cmd = box.run_argv(cname, cmd, client.env(req), written,
-                               writable=client_setup.container_writable(client, req))
+            cname, rw = box.container_name(sid + tag), client_setup.container_writable(client, req)
+            cmd = box.run_argv(cname, cmd, client.env(req), written, writable=rw)
         model, effort = self.model_for(tag)
         write_status(playthrough=self.opt.playthrough, session=sid + tag, claude_session=claude_session,
                      model=model, effort=effort or "default",

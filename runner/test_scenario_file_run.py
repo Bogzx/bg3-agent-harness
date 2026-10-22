@@ -16,8 +16,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
-import test_scenarios as T  # noqa: N812, I001  (first: it sets the test runtime before play is imported)
+import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
+import test_scenarios as T  # noqa: N812  (first: it sets the test runtime before play is imported)
 import play as P  # noqa: N812
 
 RESOLVED = dict(
