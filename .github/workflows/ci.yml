@@ -106,7 +106,7 @@ jobs:
         run: uv run pytest -m "e2e and not live"
 
   lua:
-    name: Lua suites (Docker)
+    name: Lua lint and suites (Docker)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
