@@ -87,6 +87,14 @@ class Pins(TmpDir):
             (bare["game_build"], bare["mod"], bare["repo"]["commit"], bare["bg3le"]["local_changes"]),
             (None, {"version": None, "sha1": None}, None, None),
         )
+        (dist / "libbg3le.so").unlink()  # nothing built: no sha256
+        self.assertIsNone(R.bg3le_pin(dist, self.tmp, _git({}))["sha256"])
+
+    def test_git_runs_or_gives_none(self):
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        self.assertIsNone(R._git(repo, "rev-parse", "HEAD"))  # not a repository: git fails
+        self.assertIsNone(R._git(self.tmp / "missing", "status"))  # no such cwd: OSError
 
     def test_pin_drift(self):
         first = {

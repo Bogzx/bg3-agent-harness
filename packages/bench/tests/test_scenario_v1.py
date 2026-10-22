@@ -3,6 +3,8 @@ runner/test_scenarios.py; the play.py wiring and the bundled files' test stay th
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -108,6 +110,29 @@ class Format(unittest.TestCase):
         self.assertIn("keep it short", first(save_scenario(start=dict(st, note=dict(note, journal=["q" * 40] * 40)))))
         self.assertIn("reset must be the standard", first(save_scenario(reset={"memory": "copy"})))
         self.assertEqual(problems(save_scenario(reset=R.RESETS["save"])), [])
+        self.assertEqual(problems([]), ["not a JSON object"])
+        self.assertIn("use a-z, 0-9", first(save_scenario(name="Beach!"), "Beach!"))
+        self.assertIn("save_sha1 must be a string", first(save_scenario(start=dict(st, save_sha1=1))))
+        self.assertIn("unknown start keys: area", first(save_scenario(start=dict(st, area="x"))))
+        self.assertIn("unknown start.note keys: mood", first(save_scenario(start=dict(st, note=dict(note, mood="x")))))
+
+    def test_load_fills_the_defaults_or_refuses(self):
+        tmp = Path(tempfile.mkdtemp(prefix="bg3ai-scen-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        load = lambda p: R.load_scenario(p, MILESTONES, ROLEPLAY_MODES, DIFFICULTIES)
+        sc = save_scenario(caps={"run_hours": 2}, profile={"character": {"name": "Claude", "brief": "b"}})
+        del sc["runs"]
+        (tmp / "beach.json").write_text(json.dumps(sc))
+        got = load(tmp / "beach.json")
+        self.assertEqual(got["runs"], 3)
+        self.assertEqual(got["caps"], {"run_hours": 2, "max_cost": None, "max_tokens": None})
+        self.assertEqual((got["reset"], got["profile"]["character"]["roleplay"]), (R.RESETS["save"], "strict"))
+        (tmp / "bad.json").write_text("{")
+        (tmp / "other.json").write_text(json.dumps(save_scenario()))
+        for path, msg in ((tmp / "none.json", "No such file"), (tmp / "bad.json", "Expecting"),
+                          (tmp / "other.json", "must be the file name")):  # fmt: skip
+            with self.assertRaisesRegex(R.ScenarioError, msg):
+                load(path)
 
     def test_status(self):
         base = save_scenario()
@@ -122,6 +147,28 @@ class Format(unittest.TestCase):
         st, why = R.scenario_status(pinned, {START}, lambda f: "def")
         self.assertEqual(st, R.NEEDS_SAVE)
         self.assertIn("changed", why)
+        self.assertEqual(R.scenario_status({"start": {"kind": "new_game"}}, set()), (R.READY, "new game"))
+
+    def test_start_note(self):
+        note = R.start_note(save_scenario())
+        self.assertTrue(note.startswith("# Handoff S000 → S001\n"))
+        for line in (
+            'Save to load: "SCN-beach"',
+            "scenarios/beach.json",
+            "Scenario start: Beach → Grove.",
+            "Where: Ravaged Beach, out of combat.",
+            "Party: Claude (Paladin), Shadowheart (Cleric)",
+            "1. Find a Cure.",
+            "## Journal at the start save\n- Find a Cure\n",
+        ):
+            self.assertIn(line, note)
+        st = save_scenario()["start"]
+        bare = save_scenario(title=None, start=dict(st, save=None, note={"where": "Beach.", "objective": "Go."}))
+        note = R.start_note(bare)
+        self.assertIn("(the scenario's start save)", note)
+        self.assertIn("Scenario start: beach.", note)
+        self.assertNotIn("Party:", note)
+        self.assertIn("## Journal at the start save\n- (empty)\n", note)
 
 
 class Checks(unittest.TestCase):
@@ -190,6 +237,11 @@ class Checks(unittest.TestCase):
         self.assertEqual(R.save_digest(tmp, odd), "a9993e364706816aba3e25717850c26c9cd0d89d")
         (tmp / odd / "another.lsv").write_bytes(b"x")
         self.assertIsNone(R.save_digest(tmp, odd))  # ambiguous: two .lsv and none named after the label
+        self.assertIsNone(R.save_lsv(tmp, "Claude-3__missing"))  # no such folder
+        if os.geteuid():  # root reads a mode-000 file
+            lsv = tmp / START / f"{label}.lsv"
+            lsv.chmod(0)
+            self.assertIsNone(R.save_digest(tmp, START))
 
 
 class Legacy(unittest.TestCase):

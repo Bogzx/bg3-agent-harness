@@ -169,6 +169,10 @@ class TestNative(Fixture):
         self.install(native=False)
         self.assertEqual(self.statuses(P.check_native(self.ctx()), "native"), [P.FAIL])
 
+    def test_no_sniper_fails(self):
+        (self.lib / "steamapps/common/SteamLinuxRuntime_sniper/run").unlink()
+        self.assertEqual(self.statuses(P.check_native(self.ctx()), "sniper"), [P.FAIL])
+
     def test_proton_install_named(self):
         game = self.install()
         (game / "bin/bg3").unlink()
@@ -200,6 +204,10 @@ class TestBuild(Fixture):
 
     def test_real_first_launch_matches_fallback(self):
         self.assertEqual(P.pinned_build(REPO), P.PINNED_BUILD)
+
+    def test_no_buildid_fails(self):
+        self.install(build="")
+        self.assertEqual(P.check_build(self.ctx()), [(P.FAIL, "build", "no buildid (no manifest)")])
 
     def series(self, pins):
         d = self.repo / "runtime/sessions/s1"
@@ -283,6 +291,18 @@ class TestRepoChecks(Fixture):
         self.assertEqual(s, P.PASS)
         self.assertIn("version 1.0.0.0", d)
 
+    def test_mod_version_unknown_or_unreadable(self):
+        self.deploy_mod()
+        meta = self.repo / "mod/Mods/BG3AI/meta.lsx"
+        meta.write_text("<save/>")  # no Version64
+        ((s, _, d),) = P.check_mod(self.ctx())
+        self.assertEqual((s, "version ?" in d), (P.PASS, True))
+        if os.geteuid():  # root reads a mode-000 file
+            meta.chmod(0)
+            self.addCleanup(meta.chmod, 0o644)
+            ((s, _, d),) = P.check_mod(self.ctx())
+            self.assertEqual((s, "version ?" in d), (P.PASS, True))
+
     def test_mod_path_env(self):
         self.deploy_mod()
         self.assertEqual(self.statuses(P.check_mod(self.ctx(BG3AI_MOD_PATH=str(self.tmp / "x")))), [P.FAIL])
@@ -309,6 +329,13 @@ class TestTools(Fixture):
         self.cmds["pgrep"] = (1, "")
         self.assertEqual(self.statuses(P.check_steam_running(self.ctx())), [P.WARN])
 
+    def test_run_returns_the_output_or_127(self):
+        self.assertEqual(P._run([sys.executable, "-c", "print(' out ')"]), (0, "out"))
+        self.assertEqual(P._run([sys.executable, "-c", "import sys; sys.exit('err')"]), (1, "err"))
+        rc, out = P._run([str(self.tmp / "no-such-command")])
+        self.assertEqual(rc, 127)
+        self.assertIn("no-such-command", out)
+
 
 class TestMemory(Fixture):
     def test_parse_size(self):
@@ -325,6 +352,13 @@ class TestMemory(Fixture):
         self.assertEqual(self.statuses(P.check_ram(self.ctx())), [P.FAIL])
         self.assertEqual(self.statuses(P.check_ram(self.ctx(BG3AI_GAME_MEMORY_MAX="6G"))), [P.PASS])
 
+    def test_ram_unknown_warns(self):
+        self.meminfo.write_text("MemTotal: lots\nHugePages_Total: 0\n")  # no kB values
+        self.assertEqual(self.statuses(P.check_ram(self.ctx())), [P.WARN])
+        self.meminfo.unlink()
+        ((s, _, d),) = P.check_ram(self.ctx())
+        self.assertEqual((s, "can't read" in d), (P.WARN, True))
+
     def test_vram(self):
         ((s, _, d),) = P.check_vram(self.ctx())
         self.assertEqual(s, P.PASS)
@@ -338,6 +372,11 @@ class TestMemory(Fixture):
         self.assertEqual(self.statuses(P.check_vram(self.ctx())), [P.WARN])
         self.have.discard("nvidia-smi")
         self.assertEqual(self.statuses(P.check_vram(self.ctx())), [P.WARN])
+
+    def test_vram_unreadable_memory_warns(self):
+        self.cmds["nvidia-smi"] = (0, "Some GPU, [N/A], [N/A]")
+        ((s, _, d),) = P.check_vram(self.ctx())
+        self.assertEqual((s, "can't read its memory" in d), (P.WARN, True))
 
 
 class TestPreflight(Fixture):

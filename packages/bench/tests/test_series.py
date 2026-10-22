@@ -67,3 +67,47 @@ class Series(TmpDir):
         self.assertIn("--allow-judge-change", err)
         self.assertEqual(change, "judge_model: j1 → j2")
         self.assertEqual(R.series_judge_model("j1", "j2", "d", True), ("j2", None, "judge_model: j1 → j2"))
+
+    def test_series_records(self):
+        path = self.tmp / "runs.jsonl"
+        recs = [{"series": "naut", "run": 1}, {"playthrough": "naut", "run": 2}, {"series": "other", "run": 1}]
+        path.write_text("\n".join([json.dumps(recs[0]), "not json", "[1]", json.dumps(recs[1]), json.dumps(recs[2])]))
+        self.assertEqual(R.series_records(path, "naut"), recs[:2])  # a record before "series" keys its playthrough
+        self.assertEqual(R.series_records(self.tmp / "missing.jsonl", "naut"), [])
+
+    def test_update_record_that_cant_be_written(self):
+        path = self.tmp / "runs.jsonl"
+        rec = {"run": 1, "playthrough": "naut", "started": 1.0}
+        path.write_text(json.dumps(rec) + "\n")
+        (self.tmp / "runs.jsonl.tmp").mkdir()  # the temp file can't be written
+        self.assertFalse(R.update_record(path, rec, {"x": 1}))
+        self.assertEqual(path.read_text(), json.dumps(rec) + "\n")
+
+    def test_series_client(self):
+        self.assertEqual(R.series_client(None, None, "claude", False), ("claude", None, None))  # first run: default
+        self.assertEqual(R.series_client(None, "pi", "claude", False), ("pi", None, None))
+        self.assertEqual(R.series_client("pi", None, "claude", False), ("pi", None, None))  # frozen rules
+        client, err, change = R.series_client("claude", "pi", "claude", False)
+        self.assertEqual((client, change), ("pi", "client: claude → pi"))
+        self.assertIn("--allow-client-change", err)
+        self.assertEqual(R.series_client("claude", "pi", "claude", True), ("pi", None, "client: claude → pi"))
+
+    def test_series_sandbox(self):
+        none, box = R.sandbox_mode(None), R.sandbox_mode("container")
+        self.assertEqual(none, {"sandbox": "none", "sandbox_unfirewalled": False})
+        self.assertFalse(R.sandbox_mode("none", True)["sandbox_unfirewalled"])  # only meaningful with container
+        open_box = R.sandbox_mode("container", True)
+        self.assertEqual(R.series_sandbox({}, box, False), (None, None))  # a new series: nothing frozen
+        self.assertEqual(R.series_sandbox({"client": "pi"}, none, False), (None, None))  # before the sandbox key
+        self.assertEqual(R.series_sandbox({"sandbox": "container"}, box, False), (None, None))
+        err, change = R.series_sandbox({"sandbox": "container", "sandbox_unfirewalled": True}, none, False)
+        self.assertEqual(change, "sandbox: container (unfirewalled) → none")
+        self.assertIn("run it with --sandbox container --sandbox-unfirewalled", err)
+        err, change = R.series_sandbox({"sandbox": "container"}, open_box, False)
+        self.assertIn("run it with --sandbox container, or pass --allow-sandbox-change", err)
+        self.assertEqual(R.series_sandbox({"sandbox": "none"}, box, True), (None, "sandbox: none → container"))
+
+    def test_run_names_and_the_next_run(self):
+        self.assertEqual([R.run_name("naut", k) for k in (1, 2, 3)], ["naut", "naut-r2", "naut-r3"])
+        self.assertEqual(R.next_run_index([]), 1)
+        self.assertEqual(R.next_run_index([{"run": 2}, {}, {"run": 1}]), 3)  # a record without a run is run 1

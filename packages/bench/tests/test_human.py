@@ -77,6 +77,15 @@ def test_valid_file_loads(tmp_path):
         (results_file(attempt(seconds=3)), "unknown key 'seconds'"),
         ({**results_file(), "player": "The Owner"}, "player"),
         ({**results_file(), "schema": 2}, "schema must be 1"),
+        ({**results_file(), "game_version": 4}, "game_version must be"),
+        ({**results_file(), "attempts": {}}, "attempts must be a list"),
+        ([], "not an object"),
+        (results_file("windmill"), "attempts[0]: not an object"),
+        (results_file(attempt(n=0)), "attempt must be an integer"),
+        (results_file(attempt(passed="yes")), "passed must be true or false"),
+        (results_file(attempt(time_s=-1)), "time_s must be"),
+        (results_file(attempt("choice_act1_karlach", picks=["a"])), "list of {scene, pick}"),
+        (results_file(attempt(notes=3)), "notes must be a string"),
     ],
 )
 def test_bad_files_are_refused(tmp_path, data, msg):

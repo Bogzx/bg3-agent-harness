@@ -160,3 +160,116 @@ class StartHost(unittest.TestCase):
                        self.runner(out=json.dumps({"host_uuid": "Claude"})), self.runner(rc=2, err="refused")):  # fmt: skip
             with self.assertRaises(R.NavIsolationError):
                 R.start_host(Path("S.lsv"), run=run)
+
+
+class AgentEdits(TmpDir):
+    """FAIR-2: after a run, the knowledge files the playing agent wrote are put back; other changes are reported."""
+
+    def stream(self, *blocks, extra: str = "") -> Path:
+        s = self.tmp / f"stream{len(list(self.tmp.glob('stream*')))}.jsonl"
+        lines = [json.dumps({"type": "assistant", "message": {"content": list(blocks)}}), extra]
+        s.write_text("\n".join(lines))
+        return s
+
+    @staticmethod
+    def tool(name: str, **inp) -> dict:
+        return {"type": "tool_use", "name": name, "input": inp}
+
+    def test_the_agents_writes_under_the_tree(self):
+        k, cwd = self.tmp / "play" / "knowledge", self.tmp / "play"
+        k.mkdir(parents=True)
+        s1 = self.stream(
+            self.tool("Edit", file_path="knowledge/a.md"),  # relative: from play/
+            self.tool("Write", file_path=str(k / "new.md")),
+            self.tool("NotebookEdit", notebook_path=str(k / "n.ipynb")),
+            self.tool("Read", file_path=str(k / "read.md")),  # not a write
+            self.tool("Write", file_path=str(self.tmp / "outside.md")),  # not under the tree
+            self.tool("Write", file_path=""),
+            {"type": "text", "text": "Edit knowledge/b.md"},
+            "not a block",
+            extra='{"type": "user", "message": {"content": [{"type": "tool_use", "name": "Write"}]}}\nnot json\n[1]',
+        )
+        missing = self.tmp / "no-such-stream.jsonl"
+        self.assertEqual(R.agent_written([s1, missing], k, cwd), {"a.md", "new.md", "n.ipynb"})
+
+    def test_restore_puts_back_only_the_agents_changes(self):
+        k, keep = self.tmp / "knowledge", self.tmp / "keep"
+        (k / "sub").mkdir(parents=True)
+        for name in ("a.md", "b.md", "gone.md", "same.md", "sub/c.md"):
+            (k / name).write_text(f"orig {name}")
+        snap = R.snapshot_tree(k)
+        (k / "a.md").write_text("agent edit")
+        (k / "b.md").write_text("operator edit")
+        (k / "gone.md").unlink()
+        (k / "sub" / "c.md").unlink()
+        (k / "sub").rmdir()
+        (k / "added.md").write_text("agent note")
+        self.assertEqual(
+            R.tree_changes(k, snap),
+            {"a.md": "changed", "added.md": "added", "b.md": "changed", "gone.md": "removed", "sub/c.md": "removed"},
+        )
+        out = R.restore_agent_edits(k, snap, {"a.md", "added.md", "gone.md", "sub/c.md"}, keep)
+        self.assertEqual(
+            out,
+            {
+                "agent_edits": ["a.md (changed)", "added.md (added)", "gone.md (removed)", "sub/c.md (removed)"],
+                "other_changes": ["b.md (changed)"],
+            },
+        )
+        self.assertEqual(R.snapshot_tree(k), {**snap, "b.md": "operator edit"})
+        self.assertEqual(R.snapshot_tree(keep), {"a.md": "agent edit", "added.md": "agent note"})  # the agent's kept
+
+    def test_a_failed_restore_is_reported(self):
+        k, keep = self.tmp / "knowledge", self.tmp / "keep"
+        k.mkdir()
+        (k / "a.md").write_text("orig")
+        snap = R.snapshot_tree(k)
+        (k / "a.md").write_text("agent edit")
+        keep.write_text("a file where the keep folder goes")
+        out = R.restore_agent_edits(k, snap, {"a.md"}, keep)
+        self.assertEqual(out["agent_edits"], [])
+        self.assertRegex(out["other_changes"][0], r"^a\.md \(changed; restore failed: ")
+        self.assertEqual((k / "a.md").read_text(), "agent edit")
+
+    def test_snapshot_of_no_tree_or_an_unreadable_file(self):
+        self.assertEqual(R.snapshot_tree(self.tmp / "none"), {})
+        if not os.geteuid():
+            self.skipTest("root reads a mode-000 file")
+        (self.tmp / "ok.md").write_text("ok")
+        (self.tmp / "secret.md").write_text("x")
+        (self.tmp / "secret.md").chmod(0)
+        self.addCleanup((self.tmp / "secret.md").chmod, 0o644)
+        self.assertEqual(R.snapshot_tree(self.tmp), {"ok.md": "ok"})
+
+    def test_unlock_skips_a_gone_file_and_a_bad_mode(self):
+        k, rec = self.tmp / "knowledge", self.tmp / "lock.json"
+        k.mkdir()
+        (k / "a.md").write_text("a")
+        (k / "a.md").chmod(0o444)
+        rec.write_text(json.dumps({"a.md": 0o644, "gone.md": 0o644, "bad.md": "rw"}))
+        (k / "bad.md").write_text("b")
+        self.assertEqual(R.unlock_tree(k, rec), 1)
+        self.assertEqual((k / "a.md").stat().st_mode & 0o777, 0o644)
+        self.assertFalse(rec.exists())
+
+
+class ArchiveNav(TmpDir):
+    """The old NAV-3 rule: every nav_*.json moves into dest, nothing else."""
+
+    def test_every_nav_file_moves(self):
+        se, dest = self.tmp / "BG3AI", self.tmp / "archive"
+        (se / "nav_dir.json").mkdir(parents=True)  # a folder, not a nav file
+        for name in ("nav_guard.json", "nav_x.json", "other.json"):
+            (se / name).write_text(name)
+        self.assertEqual(R.archive_nav_state(se, dest), ["nav_guard.json", "nav_x.json"])
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), ["nav_guard.json", "nav_x.json"])
+        self.assertEqual(sorted(p.name for p in se.iterdir()), ["nav_dir.json", "other.json"])
+        self.assertEqual(R.archive_nav_state(self.tmp / "none", dest), [])
+
+    def test_a_dest_that_cant_be_made_moves_nothing(self):
+        se, dest = self.tmp / "BG3AI", self.tmp / "archive"
+        se.mkdir()
+        (se / "nav_x.json").write_text("x")
+        dest.write_text("a file where the archive goes")
+        self.assertEqual(R.archive_nav_state(se, dest), [])
+        self.assertTrue((se / "nav_x.json").exists())
