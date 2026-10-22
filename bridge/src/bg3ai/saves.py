@@ -1,12 +1,13 @@
 """Save-folder helpers for loading a named save through the in-game Load page.
 
-The Load page groups saves by playthrough (the character's name) and lists them newest first, but the mod
-cannot read a save's title there. So the caller tells it where to look: the playthrough name, the save's
-position in that playthrough's list and the save time, which the mod checks against the page's info pane
-before pressing Load. The page groups by the save's LeaderName and sorts by its SaveTime (meta.lsf), so those
-come from the save itself (read_meta); a save whose meta can't be read counts by its folder prefix and .lsv
-mtime. live5: copies whose mtime wasn't their save time, or whose folder prefix wasn't their leader, shifted
-the mtime order by one and every load of an older save timed out.
+The Load page groups saves by playthrough and lists them newest first, but the mod cannot read a save's title
+there. So the caller tells it where to look: the playthrough's heading, the save's position in that playthrough's
+list and the save time, which the mod checks against the page's info pane before pressing Load. The page groups by
+the save's GameSessionID and sorts by its SaveTime (meta.lsf), so those come from the save itself (read_meta); a
+save whose meta can't be read counts by its folder prefix and .lsv mtime. live5: copies whose mtime wasn't their
+save time, or whose folder prefix wasn't their leader, shifted the mtime order by one and every load of an older
+save timed out. live6: saves made from claude-run-2 copies under another leader (Tav-…__SCN-*) keep its
+GameSessionID and sit in the Claude group, so a LeaderName count was 4 low.
 """
 
 from __future__ import annotations
@@ -41,9 +42,10 @@ def _mtime(d: Path) -> float:
         return d.stat().st_mtime
 
 
-def read_meta(lsv: Path) -> tuple[str, float] | None:
-    """(LeaderName, SaveTime) from the save's meta.lsf, or None when it can't be read (zstd before Python 3.14,
-    not a v18 package, no such fields). Reads the header, the file list and that one member only."""
+def read_meta(lsv: Path) -> tuple[str, float, str] | None:
+    """(LeaderName, SaveTime, playthrough) from the save's meta.lsf, or None when it can't be read (zstd before
+    Python 3.14, not a v18 package, no such fields). The playthrough is the GameSessionID (the Load page's group),
+    else the LeaderName. Reads the header, the file list and that one member only."""
     try:
         with lsv.open("rb") as f:
             head = f.read(lspk.HEADER.size)
@@ -67,25 +69,27 @@ def read_meta(lsv: Path) -> tuple[str, float] | None:
         fields = {a.name: a.value for a in lsf.attributes(body) if a.path == "MetaData/MetaData"}
     except (OSError, ValueError, struct.error, IndexError, KeyError):  # LspkError/LsfError are ValueErrors
         return None
-    leader, saved = fields.get("LeaderName"), fields.get("SaveTime")
+    leader, saved, session = fields.get("LeaderName"), fields.get("SaveTime"), fields.get("GameSessionID")
     if not isinstance(leader, str) or not leader or not isinstance(saved, int) or saved <= 0:
         return None
-    return leader, float(saved)
+    return leader, float(saved), session if isinstance(session, str) and session else leader
 
 
-def load_args(save_dir: Path, folder: str, meta: Callable[[Path], tuple[str, float] | None] = read_meta) -> dict:
-    """Arguments for ui.menu {action: "load"}: name, owner, index (1 = newest of that owner), date. Owner and
-    time are each save's LeaderName and SaveTime (meta), else its folder prefix and .lsv mtime."""
+def load_args(save_dir: Path, folder: str, meta: Callable[[Path], tuple[str, float, str] | None] = read_meta) -> dict:
+    """Arguments for ui.menu {action: "load"}: name, owner (the playthrough's heading), index (1 = newest of its
+    playthrough), date. Each save's leader, time and playthrough come from its meta, else its folder prefix (as
+    leader and playthrough) and .lsv mtime. The heading is the leader of the playthrough's oldest save, not the
+    newest's: live6 loaded under 'Claude' with a Tav-…__SCN save on top of run 2's group."""
 
-    def key(d: Path) -> tuple[str, float]:
-        return meta(save_file(d)) or (owner_of(d.name), _mtime(d))
+    def key(d: Path) -> tuple[str, float, str]:
+        prefix = owner_of(d.name)
+        return meta(save_file(d)) or (prefix, _mtime(d), prefix)
 
     keys = {d.name: key(d) for d in save_dir.iterdir() if d.is_dir()} if save_dir.is_dir() else {}
-    owner = keys[folder][0] if folder in keys else owner_of(folder)
-    same = sorted((t, n) for n, (o, t) in keys.items() if o == owner)
-    same.reverse()
-    args: dict = {"action": "load", "name": folder, "owner": owner}
-    for i, (when, name) in enumerate(same, 1):
+    owner, _, group = keys.get(folder) or (owner_of(folder), 0.0, owner_of(folder))
+    same = sorted(((t, n, o) for n, (o, t, g) in keys.items() if g == group), reverse=True)
+    args: dict = {"action": "load", "name": folder, "owner": same[-1][2] if same else owner}
+    for i, (when, name, _) in enumerate(same, 1):
         if name == folder:
             t = time.localtime(when)
             args["index"] = i

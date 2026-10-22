@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
-from bg3ai import busywait
+from bg3ai import busywait, saves
 from bg3ai.game import Game, GameError
 from bg3harness.testing.fakemod import FakeMod
 from bg3harness.testing.fixtures import FixtureStore
@@ -170,6 +171,38 @@ def test_load_finds_the_save_four_past_its_hint(name: str, hint: int, picked: in
     (job,) = settled(name, "ui.menu.load")
     assert job["status"] == "done" and job["result"]["picked"] == picked and job["result"]["loading"] is True
     assert job["result"]["name"] == args["name"]
+
+
+@pytest.mark.parametrize("name", ["load_s027", "load_s049"])
+def test_load_args_hint_is_the_recorded_pick(name: str, tmp_path: Path) -> None:
+    # The Load page as live6 had it, around each recorded load: the save's playthrough (claude-run-2's
+    # GameSessionID) holds picked-1 newer saves, picked-hint of them start saves under the leader Tav; another
+    # playthrough's newer Tav and Claude saves are on the page too. Counted by playthrough the hint is the pick.
+    ((args, _),) = results(name, "ui.menu")
+    (job,) = settled(name, "ui.menu.load")
+    hint, picked = args["index"], job["result"]["picked"]
+    d = args["date"]
+    when = datetime(d["y"], d["m"], d["d"], d["H"], d["M"]).timestamp()
+    run2, metas = "df58a4c1-run2", {}
+    metas[args["name"]] = ("Claude", when, run2)
+    for i in range(1, picked):
+        leader = "Tav" if i <= picked - hint else "Claude"
+        metas[f"{leader}-{i}__newer"] = (leader, when + 86400 - i, run2)
+    metas["Tav-0__S001-start"] = ("Tav", when + 99999, "0e4b554e-other")
+    metas["Claude-0__S001-start"] = ("Claude", when + 99999, "41ce6db9-other")
+    for folder in metas:
+        (tmp_path / folder).mkdir()
+
+    def meta(lsv: Path) -> tuple[str, float, str]:
+        return metas[lsv.parent.name]
+
+    def by_leader(lsv: Path) -> tuple[str, float, str]:  # the old grouping
+        leader, saved, _ = metas[lsv.parent.name]
+        return leader, saved, leader
+
+    got = saves.load_args(tmp_path, args["name"], meta)
+    assert (got["owner"], got["index"], got["date"]) == ("Claude", picked, d)
+    assert saves.load_args(tmp_path, args["name"], by_leader)["index"] == hint + 1  # + the other Claude save
 
 
 def test_gamemenu_resume_was_refused_before_c3a6c26() -> None:

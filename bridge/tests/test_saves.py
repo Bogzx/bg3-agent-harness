@@ -12,11 +12,15 @@ def at(y, mo, d, h, mi) -> float:
     return time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
 
 
-def meta_lsf(leader: str, saved: float) -> bytes:
-    """meta.lsf as BG3 writes it: LeaderName and SaveTime (u64 epoch) on MetaData/MetaData."""
+RUN2 = "df58a4c1-2e2d-03f5-4828-ea5ef6460c6f"  # claude-run-2's GameSessionID
+
+
+def meta_lsf(leader: str, saved: float, session: str | None = None) -> bytes:
+    """meta.lsf as BG3 writes it: GameSessionID, LeaderName and SaveTime (u64 epoch) on MetaData/MetaData."""
+    sid = [("GameSessionID", 22, 1, session.encode() + b"\0")] if session else []
     return lsf.build(
         [("MetaData", -1), ("MetaData", 0)],
-        [("TimeStamp", 5, 1, struct.pack("<I", 10490)), ("LeaderName", 23, 1, leader.encode() + b"\0"),
+        [("TimeStamp", 5, 1, struct.pack("<I", 10490)), *sid, ("LeaderName", 23, 1, leader.encode() + b"\0"),
          ("SaveTime", 24, 1, struct.pack("<Q", int(saved)))],
     )
 
@@ -82,14 +86,16 @@ class SavesTest(unittest.TestCase):
             root = Path(td)
             saved = at(2026, 10, 10, 9, 48)
             d = make_save(root, "Claude-1__S027-start", at(2026, 10, 21, 23, 8), meta_lsf("Claude", saved))
-            self.assertEqual(saves.read_meta(saves.save_file(d)), ("Claude", saved))
+            self.assertEqual(saves.read_meta(saves.save_file(d)), ("Claude", saved, "Claude"))  # no session id
+            sd = make_save(root, "Tav-5__SCN-x", 0, meta_lsf("Tav", saved, RUN2))
+            self.assertEqual(saves.read_meta(saves.save_file(sd)), ("Tav", saved, RUN2))
             self.assertIsNone(saves.read_meta(saves.save_file(make_save(root, "Claude-2__junk", 0))))
             self.assertIsNone(saves.read_meta(root / "Claude-9__gone" / "gone.lsv"))
             no_leader = lsf.build([("MetaData", -1), ("MetaData", 0)], [("SaveTime", 24, 1, struct.pack("<Q", 5))])
             self.assertIsNone(saves.read_meta(saves.save_file(make_save(root, "Claude-3__x", 0, no_leader))))
             if lspk.zstd is not None:  # BG3 4.x stores meta.lsf with zstd
                 z = make_save(root, "Claude-4__z", 0, meta_lsf("Tav", at(2026, 10, 1, 1, 1)), "zstd")
-                self.assertEqual(saves.read_meta(saves.save_file(z)), ("Tav", at(2026, 10, 1, 1, 1)))
+                self.assertEqual(saves.read_meta(saves.save_file(z)), ("Tav", at(2026, 10, 1, 1, 1), "Tav"))
 
     def test_load_args_from_meta_live5(self):
         # live5 §0.5: the page (sorted by SaveTime, grouped by LeaderName) had S027-start at 377, the mtime/prefix
@@ -125,6 +131,29 @@ class SavesTest(unittest.TestCase):
             self.assertEqual(saves.load_args(root, "Claude-2__unreadable")["index"], 2)
             self.assertEqual(saves.load_args(root, "Claude-3__b")["index"], 1)
             self.assertEqual(saves.load_args(root, "Claude-1__a")["index"], 3)
+
+    def test_load_args_counts_the_playthrough_live6(self):
+        # live6 §1b: the page groups by playthrough (GameSessionID). Start saves made from claude-run-2 copies
+        # under the leader Tav keep run 2's session and sit at the top of the Claude group; the LeaderName count
+        # was 4 low (377 -> 381). Another playthrough's newer saves, Claude's or Tav's, don't count.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+
+            def save(folder: str, leader: str, when: float, session: str) -> None:
+                make_save(root, folder, when, meta_lsf(leader, when, session))
+
+            for i, m in enumerate((34, 40, 45, 52)):
+                save(f"Tav-{i}__SCN-s{i}", "Tav", at(2026, 10, 22, 6, m), RUN2)
+            save("Claude-5__AutoSave_143", "Claude", at(2026, 10, 22, 6, 53), RUN2)
+            save("Tav-6__S001-start", "Tav", at(2026, 10, 22, 7, 0), "0e4b554e-other")
+            save("Claude-7__S001-start", "Claude", at(2026, 10, 22, 7, 0), "41ce6db9-other")
+            save("Claude-8__S030-end", "Claude", at(2026, 10, 10, 10, 14), RUN2)
+            save("Claude-9__S027-start", "Claude", at(2026, 10, 10, 9, 48), RUN2)
+            a = saves.load_args(root, "Claude-9__S027-start")
+            self.assertEqual((a["owner"], a["index"]), ("Claude", 7))  # 4 Tav + autosave + S030-end above it
+            t = saves.load_args(root, "Tav-0__SCN-s0")
+            self.assertEqual((t["owner"], t["index"]), ("Claude", 5))  # under run 2's heading, not the other Tav's
+            self.assertEqual(saves.load_args(root, "Tav-6__S001-start")["index"], 1)
 
 
 if __name__ == "__main__":

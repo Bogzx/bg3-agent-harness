@@ -197,7 +197,9 @@ function MENU.load(args)
     local function enter(st) stage, since, tries = st, RPC.now_ms(), 0 end
     return waitJob("ui.menu.load", 30000, function(job)
         local now = RPC.now_ms()
-        job.partial = { stage = stage, name = name }
+        -- live6: a load from the Lower City timed out at "verify" with no word on how far the scan got
+        job.partial = { stage = stage, name = name, picked = job.picked, tried = job.tried, saves = job.n_items,
+            pane = job.pane }
         local st = tostring(try(Ext.Utils.GetGameState) or "")
         local page = UI.widget("LoadGame")
         local pageUp = page ~= nil and UI.isVisible(page)
@@ -254,7 +256,7 @@ function MENU.load(args)
                 local i = table.remove(cand, 1)
                 if not i then return "failed", { stage = stage, error = "no save on the page matches the date of '" .. name .. "'", saves = #items } end
                 pcall(items[i].SetProperty, items[i], "IsSelected", true)
-                job.picked = i
+                job.picked, job.tried = i, (job.tried or 0) + 1
                 enter("verify")
                 return nil
             end

@@ -378,6 +378,72 @@ ok(same(A.loadOrder(2, 0), {}), "loadOrder: no items, nothing to try")
 local o = A.loadOrder(376, 494)
 ok(#o == 494 and o[1] == 376 and o[2] == 377, "loadOrder: live5's 376 hint reaches 377 on the second try")
 
+-- load_game on a fake Load page: one playthrough "Claude" of n saves, item k saved on day k (newest first). The info
+-- pane shows the selected save's date; RETURN on the page loads it (the page closes).
+local UIx, saved = BG3AI.UI, {}
+for _, k in ipairs({ "findAll", "find", "typeName", "allText", "prop", "name", "text" }) do saved[k] = UIx[k] end
+local page = { pane = nil }
+local function loadPage(n)
+    local items = {}
+    for k = 1, n do
+        local it = { t = "ls.LSListBoxItem", dc = { t = "ls.VMSavegame" }, date = string.format("%d/10/2026 09:48", k) }
+        it.SetProperty = function(self, prop, v) if prop == "IsSelected" and v then page.pane = self.date end end
+        items[k] = it
+    end
+    local ex = { t = "Expander", hdr = "Claude", kids = items }
+    ex.SetProperty = function(self, prop, v) if prop == "IsExpanded" then self.expanded = v end end
+    page.pane = nil
+    widgets.LoadGame = { name = "LoadGame", visible = true, kids = { ex, { t = "TextBlock", nm = "Date", isPane = true } } }
+end
+local function walk(e, pred, out)
+    for _, k in ipairs(e.kids or {}) do
+        if pred(k) then out[#out + 1] = k else walk(k, pred, out) end
+    end
+    return out
+end
+UIx.findAll = function(root, pred) return walk(root, pred, {}) end
+UIx.find = function(root, pred) return walk(root, pred, {})[1] end
+UIx.typeName = function(e) return type(e) == "table" and e.t or nil end
+UIx.allText = function(e) return e.hdr end
+UIx.name = function(e) return e.nm end
+UIx.text = function(e) if e.isPane then return page.pane end return "ls.LSTextBox" end
+UIx.prop = function(e, k)
+    if k == "IsExpanded" then return e.expanded end
+    if k == "DataContext" then return e.dc end
+    return saved.prop(e, k)
+end
+A.LOAD_ENABLED = true
+local function runLoad(args, ms)
+    local job = jobs[ops["ui.menu"](args).job]
+    for _ = 1, (ms or 40000) // 16 do
+        clock = clock + 16
+        if #pendingKey > 0 and widgets.LoadGame then hide("LoadGame") end
+        pendingKey = {}
+        if clock > job.deadline_at then job.status = "timeout" break end
+        job.on_tick(job)
+        if job.status ~= "running" then break end
+    end
+    return job
+end
+local want = { y = 2026, m = 10, d = 9, H = 9, M = 48 }
+loadPage(12)
+local lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 5, date = want })
+ok(lj.status == "done" and lj.result.picked == 9 and lj.result.pane == "9/10/2026 09:48",
+    "load: a hint 4 low is found by the outward scan: " .. tostring(lj.status) .. " " .. tostring(lj.result and lj.result.picked))
+ok(lj.partial and lj.partial.tried == 8 and lj.partial.saves == 12, "load: the scan's progress is in the job's partial")
+loadPage(12)
+lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 9, date = want })
+ok(lj.status == "done" and lj.result.picked == 9 and lj.partial.tried == 1, "load: the right hint is the first try")
+-- live6: the second S027 load timed out at "verify" with nothing on how far it got; now the partial says
+loadPage(200)
+lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 1,
+    date = { y = 2026, m = 11, d = 1, H = 9, M = 48 } })
+ok(lj.status == "timeout" and lj.partial.stage == "verify" and lj.partial.tried > 10 and lj.partial.picked == lj.partial.tried
+    and lj.partial.saves == 200 and lj.partial.pane ~= nil, "load: a scan cut off by the job's time says where it was: "
+    .. tostring(lj.status) .. " " .. tostring(lj.partial.tried))
+widgets.LoadGame = nil
+for k, f in pairs(saved) do UIx[k] = f end
+
 local tally = string.format("%d passed, %d failed", passes, fails)
 print(tally)
 if fails > 0 then os.exit(1) end
