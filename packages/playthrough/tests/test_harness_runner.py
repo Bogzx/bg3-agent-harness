@@ -92,6 +92,9 @@ class FakeGame:
         self.is_ok = True
         return self.recover_to
 
+    def new_game(self) -> None:
+        raise RuntimeError("FakeGame: no new game")
+
     def notes(self) -> list[str]:
         out, self.pending_notes = self.pending_notes, []
         return out
@@ -406,6 +409,12 @@ class FakeController:
         self.is_alive = True
         return self.older
 
+    def launch(self, load_folder: str | None) -> None:
+        raise AssertionError("FakeController: only launch_and_load")
+
+    def wait_menu(self) -> bool:
+        return False
+
     def check_oom(self) -> str | None:
         return None
 
@@ -442,6 +451,79 @@ def test_a_crash_relaunches_through_the_controller_and_the_session_resumes(tmp_p
     assert rj["loaded_save"] == older.folder and rj["save_owner"] == "Ilse"
     (h,) = sup.history(PT)
     assert h["outcome"] == "ok" and h["game_deaths"] == [""]
+
+
+class NewGameController:
+    """GameController for a brand-new playthrough: launch(None) brings the game to the main menu, launch_and_load
+    the save it is given."""
+
+    def __init__(self, reads: FakeGame):
+        self.reads, self.is_alive = reads, False
+        self.calls: list[str] = []
+
+    def alive(self) -> bool:
+        return self.is_alive
+
+    def kill(self) -> None:
+        self.calls.append("kill")
+
+    def launch(self, load_folder: str | None) -> None:
+        self.calls.append(f"launch {load_folder}")
+        self.is_alive = self.reads.is_ok = True
+
+    def wait_menu(self) -> bool:
+        self.calls.append("main menu")
+        return True
+
+    def launch_and_load(self, save: Save) -> Save:
+        self.calls.append(f"launch {save.folder}")
+        self.is_alive = self.reads.is_ok = True
+        return save
+
+    def check_oom(self) -> str | None:
+        return None
+
+
+def test_a_new_playthroughs_first_session_launches_a_new_game_and_the_second_its_save(tmp_path: Path):
+    # live8: a new playthrough's first session ended at once: "no save to load: no save owner known for this
+    # playthrough"; play.py launches a new game to the main menu for it (character creation) and learns the owner
+    # from the saves the session made
+    from bg3play.adapters.launched_game import LaunchedGame
+
+    clock, pts, runtime = Clock(), tmp_path / "playthroughs", tmp_path / "runtime"
+    (pts / PT).mkdir(parents=True)
+    cfg = {"v": 1, "name": PT, "difficulty": "Balanced", "character": {"brief": "a half-orc bard"},
+           "session": {"minutes": 30.0, "hours": 0.5}}  # fmt: skip
+    config.save(pts / PT, config.validate(cfg))
+    saves: list[Save] = []
+    reads = FakeGame([], ok=False)
+    ctl = NewGameController(reads)
+    host = AppHost(runtime, tmp_path, tmp_path / "saves", saves=lambda: saves)
+    game = LaunchedGame(reads, ctl, host, lambda: saves, lambda: None)  # no character yet: no leader name
+
+    def during(n: int) -> None:  # S001's agent creates Vessa; its create_character queues the first save
+        if n == 1:
+            saves.append(Save("Vessa-1__S001-start", "Vessa", "S001-start", clock.t + 60))
+
+    agent = FakeAgent(clock, [("exited", 30)], during)
+    runner = hr.HarnessRunner(runtime, pts, lambda c, d: agent, game, lambda mem: FakeMemory(), clock)
+    sup = Supervisor(runner, FakeKeeper(), runtime, pts, clock)
+    sup.start(PT, wait=True)
+    assert ctl.calls == ["kill", "launch None", "main menu"]
+    first = agent.calls[0].prompt
+    assert "PHASE 0, CHARACTER CREATION" in first and "> a half-orc bard" in first and 'new_game("Balanced")' in first
+    sdir = runtime / "sessions" / PT
+    (h,) = sup.history(PT)
+    assert h["session"] == "S001" and h["outcome"] == "ok"
+    assert json.loads((sdir / "runner.json").read_text()).get("save_owner") is None
+
+    ctl.is_alive = reads.is_ok = False  # the game is gone before S002
+    sup.resume(PT, wait=True)
+    assert ctl.calls[3:] == ["kill", "launch Vessa-1__S001-start"]
+    second = agent.calls[1].prompt
+    assert 'already loaded save "S001-start"' in second and "PHASE 0" not in second
+    rj = json.loads((sdir / "runner.json").read_text())
+    assert rj["save_owner"] == "Vessa" and rj["loaded_save"] == "Vessa-1__S001-start"
 
 
 def test_the_kickoff_is_the_runners():

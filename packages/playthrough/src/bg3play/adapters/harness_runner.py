@@ -67,6 +67,7 @@ from ..memory import memlib
 from ..runner import memory_session, prompts
 from ..supervisor import OOM_STREAK, SessionRequest, SessionResult, SupervisorError
 from .agent_process import AgentCall, AgentRun, ClientAgent
+from .launched_game import NoSaveYetError
 
 
 class Agent(Protocol):
@@ -86,6 +87,8 @@ class Game(Protocol):
     def progress(self) -> dict[str, Any] | None: ...  # the save signature (bg3harness.game.io.progress_signature)
     def oom(self) -> str | None: ...  # the dead game's OOM cause (None: alive, or it died otherwise)
     def recover(self, why: str) -> str | None: ...  # relaunch and load the latest save; its name; raises if it can't
+    # (NoSaveYetError: the playthrough has no save yet)
+    def new_game(self) -> None: ...  # launch to the main menu for a playthrough without a save; raises if it can't
     def notes(self) -> list[str]: ...  # RUNNER NOTEs from the recoveries since the last call
 
 
@@ -114,6 +117,17 @@ def session_env(
         "BG3AI_PROMPT_CONDITION": req.config.agent.condition,
         "BG3AI_AUTOSKIP": "1" if req.config.game.autoskip else "0",  # the bg3 server's movie skipper
     }
+
+
+def new_game_notes(cfg: config.PlaythroughConfig) -> list[str]:
+    """The kickoff's notes for a new game, as play.py's load_save(None): phase 0 (character creation) with a
+    character brief, else the name to give the character when the config names one."""
+    c = cfg.character
+    if c.brief:
+        character = {"brief": c.brief, "roleplay": c.roleplay, "constraints": c.constraints}
+        profile = {"character": character, "difficulty": cfg.difficulty}
+        return [policy.character_creation_note(profile, c.name or None)]  # pyright: ignore[reportUnknownMemberType]
+    return [policy.new_game_note(c.name)] if c.name else []
 
 
 LOADED_AFTER_FAULT = "after the last session's fault; nobody has played since"
@@ -357,10 +371,15 @@ class HarnessRunner:
             self.clock, self.recovery.hard_stop_grace_s, max_cost, self.log, req.oom_streak, budget,
             self._abort.is_set,
         )  # fmt: skip
+        new_game: list[str] = []  # the runner's notes for a new game (play.py load_save(None))
         if not self.game.ok():
             req.phase("launching the game")
             try:
-                hooks.save = recover_game(self.game, "wasn't answering at the session start", hooks)
+                try:
+                    hooks.save = recover_game(self.game, "wasn't answering at the session start", hooks)
+                except NoSaveYetError:
+                    self.game.new_game()
+                    new_game = new_game_notes(cfg)
             except Exception as e:
                 outcome = "crash" if isinstance(e, OomStreakError) else "error"
                 return SessionResult("?", outcome, detail=f"the game doesn't answer and wasn't recovered: {e}",
@@ -379,7 +398,7 @@ class HarnessRunner:
         write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
                      started=start, log=str(sdir / f"{sid}.log"), session_ended=None, updated=start)  # fmt: skip
         loaded, why = (hooks.save, "") if hooks.save else (req.loaded, LOADED_AFTER_FAULT if req.loaded else "")
-        prompt = kickoff(req, sid, briefing, loaded, agent.client_name, self.game.notes(), why)
+        prompt = kickoff(req, sid, briefing, loaded, agent.client_name, [*new_game, *self.game.notes()], why)
         spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         try:
             out = run_session(spec, hooks)
@@ -480,6 +499,9 @@ class AttachedGame:
 
     def recover(self, why: str) -> str | None:
         raise RuntimeError(f"the game {why} and the app can't relaunch it (bg3play-serve without --attach can)")
+
+    def new_game(self) -> None:
+        raise RuntimeError("no game is running and the app can't launch one (bg3play-serve without --attach can)")
 
     def notes(self) -> list[str]:
         return []

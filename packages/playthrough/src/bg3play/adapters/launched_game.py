@@ -12,7 +12,9 @@
 The save choice (choose_save) is runner/play.py Runner.choose_save over bg3harness.game.saves: the newest save of
 this playthrough (or HANDOFF's "Save to load"), never another owner's, never one written while another playthrough
 played (play windows), never one older than the playthrough's run start (runner.json saves_after: a series reuses a
-character name) and never an OOM-blocked one. No owner known = no save is safe to load: recover refuses.
+character name) and never an OOM-blocked one. No owner known: it is learned from the newest agent save written in
+this playthrough's play windows; with none, the playthrough is new (NoSaveYetError): a session start launches a new game
+to the main menu (new_game), a recovery mid-session has nothing to load.
 
 The game process goes through the Controller Protocol, which bg3harness.game.controller.GameController fills over
 bg3harness.game.host.AppHost (launch_game.sh, the mod snapshot, the Steam/bg3le/display guards, the session's
@@ -41,6 +43,8 @@ class Controller(Protocol):
     def alive(self) -> bool: ...
     def kill(self) -> None: ...
     def launch_and_load(self, save: Save) -> Save: ...  # the save that loaded; LaunchGaveUp after its retries
+    def launch(self, load_folder: str | None) -> None: ...  # None: to the main menu
+    def wait_menu(self) -> bool: ...  # up to the main menu, past the splash; False: it never came up
     def check_oom(self) -> str | None: ...  # after a death: the OOM cause, or None
 
 
@@ -89,6 +93,21 @@ def choose_save(saves: list[Save], state: dict[str, Any], handoff: str, sdir: Pa
     ends = hsaves.session_ends(history, sdir)  # pyright: ignore[reportUnknownMemberType]
     return pick_save_why(own, parse_handoff_save(handoff), owner, ours, windows=windows,
                          handoff_session=handoff_session(handoff), ends=ends)  # fmt: skip
+
+
+class NoSaveYetError(RuntimeError):
+    """The playthrough has no save owner (no save of its own): a new playthrough. At a session start the runner
+    launches a new game instead (LaunchedGame.new_game); mid-session there is nothing to relaunch into."""
+
+
+def learn_owner(saves: list[Save], state: dict[str, Any], sdir: Path) -> str | None:
+    """No save owner yet: the owner of the newest agent save written while this playthrough played (its sessions'
+    windows), as play.py adopts it from the session's own saves (I3). None: it has none."""
+    raw: object = state.get("history")
+    history: list[dict[str, Any]] = [h for h in raw if is_obj(h)] if is_list(raw) else []
+    windows = hsaves.play_windows(history, sdir)  # pyright: ignore[reportUnknownMemberType]
+    mine = [s for s in saves if hsaves.is_ai_save(s) and hsaves.in_windows(s.mtime, windows)]  # pyright: ignore[reportUnknownMemberType]
+    return max(mine, key=lambda s: s.mtime).owner if mine else None
 
 
 def handoff_session(handoff: str) -> int | None:
@@ -142,7 +161,15 @@ class LaunchedGame:
             text = handoff.read_text(encoding="utf-8")
         except OSError:
             text = ""
-        save, how = choose_save(self.saves(), read_state(self.sdir / "runner.json"), text, self.sdir)
+        saves, state = self.saves(), read_state(self.sdir / "runner.json")
+        if not state.get("save_owner"):
+            owner = learn_owner(saves, state, self.sdir)
+            if owner is None:
+                raise NoSaveYetError("this playthrough has no save yet (no save owner known)")
+            self.log(f"save owner {owner}: learned from this playthrough's own saves")
+            write_state(self.sdir / "runner.json", save_owner=owner)
+            state["save_owner"] = owner
+        save, how = choose_save(saves, state, text, self.sdir)
         self.log(f"recovering (the game {why}): save choice {save.folder if save else 'none'}: {how}")
         if save is None:
             raise RuntimeError(f"no save to load: {how}")
@@ -150,6 +177,18 @@ class LaunchedGame:
         loaded = self.ctl.launch_and_load(save)
         write_state(self.sdir / "runner.json", loaded_save=loaded.folder)
         return loaded.label
+
+    def new_game(self) -> None:
+        """A playthrough without a save: the game launched to the main menu, where the agent starts a new game (and
+        creates the character, whose name becomes the save owner)."""
+        if self.sdir is None:
+            raise RuntimeError("no session began: whose game is unknown")
+        self.log("no save for this playthrough yet: launching the game to the main menu (new game)")
+        self.ctl.kill()
+        self.ctl.launch(None)
+        if not self.ctl.wait_menu():
+            raise RuntimeError("the main menu never came up")
+        write_state(self.sdir / "runner.json", loaded_save=None)
 
     def notes(self) -> list[str]:
         return self.host.take_notes()

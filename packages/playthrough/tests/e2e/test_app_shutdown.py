@@ -79,6 +79,9 @@ class UpGame:
     def recover(self, why: str) -> str | None:
         raise RuntimeError("no game")
 
+    def new_game(self) -> None:
+        raise RuntimeError("no game")
+
     def notes(self) -> list[str]:
         return []
 
