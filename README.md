@@ -39,7 +39,8 @@ The harness was fixed and improved while claude-run-2 went on, so the run shows 
 through it. It is not a controlled measurement. Fights are the harness's own records, one per fight, graded when it
 ends.
 
-On the reorganised code (the `overhaul` branch), the live runs so far were checks of the new code, and none is a benchmark result:
+On the reorganised code (the `overhaul` branch), the live runs so far were checks, and none is a benchmark
+result:
 
 - Claude Code (Opus 5.5) escaped the Nautiloid in 15.2 minutes of play, and again in 12.1 minutes through the
   benchmark runner. That second run had unseeded dice and didn't stop at the goal, so it doesn't count.
