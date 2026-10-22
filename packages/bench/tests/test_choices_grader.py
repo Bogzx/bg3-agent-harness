@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from bg3harness.testing.judge import FakeJudge
+from test_run_artifacts import readout
 
 from bg3bench import choices, facts, manifest, results, run_artifacts
 from bg3bench.site import build
@@ -156,6 +157,7 @@ def series_and_record() -> tuple[dict[str, Any], dict[str, Any]]:
     sc = json.loads(SCENARIO.read_text())
     series = {"series": "karlach", "client": "claude", "scenario": {"name": sc["name"], "spec": sc}, "sandbox": "none"}
     record = {"series": "karlach", "run": 1, "started": 1_800_000_000.0, "outcome": "reached", "model": "opus"}
+    record |= readout(sc["game_settings"].get("seed"))
     return series, record
 
 

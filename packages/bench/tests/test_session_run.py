@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from test_run_artifacts import assert_valid
+from test_run_artifacts import assert_valid, readout
 
 from bg3bench import conditions, matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
@@ -117,7 +117,7 @@ class Host:
     def record(self, job: dict, sc: dict, run_dir: Path, outcome) -> dict:
         rec = {"outcome": "gave_up" if outcome.invalid else "timeout", "cost_usd": self.cost, "tokens": {}}
         rec["served"] = self.served
-        return rec
+        return rec | readout(sc["game_settings"].get("seed"))
 
 
 def job(client: str = "pi", condition: str = "rules", repeat: int = 1) -> dict:

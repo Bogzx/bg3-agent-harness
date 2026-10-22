@@ -86,7 +86,9 @@ class FakeRunner:
         self.settles_budget = True
         self.stop_ends_session = False
         self.stop_requested = False
-        self.game_settings = {"difficulty": "Balanced"}
+        self.game_settings: dict[str, Any] = {"difficulty": "Balanced"}  # game_setup's readout
+        if opt.seed is not None:  # the mod applied the run's seed
+            self.game_settings["seed"] = {"seed": opt.seed, "applied": {"seed": opt.seed}}
         self.facts_fail = False
         self.fail_at: dict[str, BaseException] = {}  # a call -> what it raises
         self.loads: str | None = opt.start_save  # the save folder ensure_game loads
@@ -401,7 +403,7 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved})
     assert rec["served"] is None  # runs.claude_totals' served: no stream, nothing served
     assert (rec["game_settings"], rec["manifest"], rec["loaded_save"]) == (
-        {"difficulty": "Balanced"},
+        {"difficulty": "Balanced", "seed": {"seed": 7, "applied": {"seed": 7}}},
         {"m": 1},
         SAVE_SC["start"]["save"],
     )
