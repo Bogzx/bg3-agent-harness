@@ -6,7 +6,8 @@ reports:
 
 - any `sys.path` edit (insert, append, extend, assignment): packaged code imports through its dependencies;
 - any string literal, or `"a" / "b"` chain of literals, that names a path owned by a package the source must not
-  depend on (FORBIDDEN below). Docstrings are not scanned.
+  depend on (FORBIDDEN below). Docstrings and re.compile patterns (they match text, they open nothing) are not
+  scanned.
 
 REPORT MODE until Phase D: the test prints the violations as a warning and passes. The one switch to enforce is
 `enforce-boundaries = true` under [tool.bg3ci] in pyproject.toml (it enforces the import-linter contracts too, see
@@ -34,14 +35,14 @@ ENFORCE = os.environ.get("BG3AI_BOUNDARIES_ENFORCE") == "1" or import_contracts.
 )
 
 # Paths each side owns (TARGET-ARCHITECTURE.md, research/arch/harness.md 3.3).
-APP = ("playthroughs/", "memory-template/", "tools/memory", "tools/logs", "packages/app")
+APP = ("playthroughs/", "memory-template/", "tools/memory", "tools/logs", "packages/playthrough")
 BENCH = ("scenarios/", "packages/bench")
 # Source root (relative to ROOT) -> path fragments it may not name.
 FORBIDDEN: dict[str, tuple[str, ...]] = {
     "bridge/src": APP + BENCH,
     "packages/harness/src": APP + BENCH,
     "packages/bench/src": APP,
-    "packages/app/src": BENCH,
+    "packages/playthrough/src": BENCH,
 }
 SYS_PATH_EDITS = {"insert", "append", "extend", "remove", "clear", "pop", "__setitem__"}
 
@@ -65,6 +66,16 @@ def _docstrings(tree: ast.AST) -> set[int]:
     return ids
 
 
+def _patterns(tree: ast.AST) -> set[int]:
+    """The string constants of every re.compile(...) pattern."""
+    return {
+        id(sub)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in ("re.compile", "compile") and node.args
+        for sub in ast.walk(node.args[0])
+    }
+
+
 def _div_chain(node: ast.BinOp) -> str | None:
     """'tools/memory' for `X / "tools" / "memory"`: the string literals of a `/` chain joined, None if fewer than 2."""
     parts: list[str] = []
@@ -86,7 +97,7 @@ def violations(source: str, filename: str, forbidden: tuple[str, ...]) -> list[s
 
 def _find(source: str, filename: str, forbidden: tuple[str, ...]) -> Iterator[str]:
     tree = ast.parse(source, filename)
-    docs = _docstrings(tree)
+    docs = _docstrings(tree) | _patterns(tree)
     chained: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and _is_sys_path(node.func.value):
@@ -157,10 +168,21 @@ def test_docstrings_and_allowed_paths_are_fine() -> None:
 
 
 @pytest.mark.unit
+def test_a_regex_pattern_matches_text_it_names_no_path() -> None:
+    src = 'import re\nR = re.compile(r"claude-run|playthroughs/|runtime/", re.I)\nP = "playthroughs/x"\n'
+    assert violations(src, "m.py", APP) == ["m.py:3: literal names playthroughs"]
+
+
+@pytest.mark.unit
 def test_scan_uses_each_roots_own_rules(tmp_path: Path) -> None:
     (tmp_path / "packages/bench/src/b").mkdir(parents=True)
-    (tmp_path / "packages/bench/src/b/m.py").write_text('S = "scenarios/naut.json"\nA = "packages/app/x"\n')
-    assert scan(tmp_path) == ["packages/bench/src/b/m.py:2: literal names packages/app"]
+    (tmp_path / "packages/bench/src/b/m.py").write_text('S = "scenarios/naut.json"\nA = "packages/playthrough/x"\n')
+    (tmp_path / "packages/playthrough/src/a").mkdir(parents=True)  # the app (bg3play) is scanned too
+    (tmp_path / "packages/playthrough/src/a/m.py").write_text('S = "scenarios/naut.json"\nM = "tools/memory"\n')
+    assert scan(tmp_path) == [
+        "packages/bench/src/b/m.py:2: literal names packages/playthrough",
+        "packages/playthrough/src/a/m.py:1: literal names scenarios",
+    ]
 
 
 @pytest.mark.integration
