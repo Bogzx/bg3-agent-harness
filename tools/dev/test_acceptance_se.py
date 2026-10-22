@@ -258,5 +258,67 @@ class TwostepContainer(unittest.TestCase):
         self.assertIn("e3 has Teleportation_DimensionDoor greyed out", got[0][2])
 
 
+class ProbeGameError(unittest.TestCase):
+    """live5 20261022-034005: ui.hotbar_slot answered "bg3le: UI busy" 2.5 s after load_game inside twostep_dd_probe;
+    the uncaught GameError aborted the se section (12 items lost). Now it is that probe's FAIL."""
+
+    def _env(self, results, got):
+        from unittest import mock
+
+        fake_s = mock.Mock()
+        fake_s.game.try_rpc = lambda *a, **k: {}
+        return [mock.patch.object(hotbar, "S", fake_s),
+                mock.patch.object(hotbar, "RESULTS", results),
+                mock.patch.object(hotbar, "item", lambda *a: got.append(a)),
+                mock.patch.object(hotbar, "close_targeting", lambda: "game")]
+
+    def _busy(self, *a, **k):
+        from bg3ai.game import GameError
+        raise GameError("bg3le: UI busy: the game's UI is busy (a rest/travel/load transition); retry in a moment")
+
+    def test_twostep_busy_is_its_fail_and_the_caller_reloads(self):
+        from contextlib import ExitStack
+        from unittest import mock
+
+        from bg3ai import hotbar as HB
+        got = []
+        with ExitStack() as st:
+            for p in self._env([{"item": hotbar.TREE_ITEM, "verdict": "PASS"}], got):
+                st.enter_context(p)
+            st.enter_context(mock.patch.object(hotbar, "status", lambda: {"party": [{"uuid": "u5"}]}))
+            st.enter_context(mock.patch.object(HB, "server_map", lambda g, u: {}))
+            st.enter_context(mock.patch.object(HB, "map_has", lambda m, sp: True))
+            st.enter_context(mock.patch.object(hotbar, "hb_slot", lambda sp, u: {"selected": False}))
+            st.enter_context(mock.patch.object(HB, "_slot_after_select", self._busy))
+            self.assertTrue(hotbar.twostep_dd_probe())
+        self.assertEqual([(g[0], g[1]) for g in got], [(hotbar.TWOSTEP_ITEM, "FAIL")])
+        self.assertIn("UI busy", got[0][2])
+
+    def test_hotbar_probe_fails_the_unfinished_item_and_skips_the_rest(self):
+        from contextlib import ExitStack
+        from unittest import mock
+
+        got = []
+        with ExitStack() as st:
+            for p in self._env([], got):
+                st.enter_context(p)
+            st.enter_context(mock.patch.object(hotbar, "status", self._busy))
+            st.enter_context(mock.patch.object(hotbar, "log", lambda *a: None))
+            hotbar.hotbar_probe()
+        self.assertEqual([(g[0], g[1]) for g in got], [(hotbar.TREE_ITEM, "FAIL"), (hotbar.BLESS_ITEM, "SKIP")])
+
+    def test_other_errors_still_raise(self):
+        from contextlib import ExitStack
+        from unittest import mock
+
+        got = []
+        with ExitStack() as st:
+            for p in self._env([], got):
+                st.enter_context(p)
+            st.enter_context(mock.patch.object(hotbar, "status", lambda: 1 / 0))
+            with self.assertRaises(ZeroDivisionError):
+                hotbar.hotbar_probe()
+
+
 if __name__ == "__main__":
     unittest.main()

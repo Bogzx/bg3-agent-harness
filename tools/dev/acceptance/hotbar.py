@@ -2,11 +2,37 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 import time
 
 from .core import RESULTS, S, item, log, lua_server, need, party_pos, server_map_line, status, took, ui_screen
+
+TREE_ITEM = "hotbar widget tree (ACT-8, read-only)"
+BLESS_ITEM = "hotbar cast: Bless on 3 allies (ACT-8)"
+
+
+def game_error_fails(*names: str):
+    """live5 20261022-034005: a GameError ("bg3le: UI busy") from a direct S.game call in twostep_dd_probe aborted
+    the whole se section (12 items lost). Now it is the probe's item FAIL (the first of `names` without a verdict;
+    the later ones SKIP) and the probe returns True, so the caller reloads the save in case it cast."""
+    from bg3ai.game import GameError
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper():
+            try:
+                return fn()
+            except GameError as e:
+                done = {r["item"] for r in RESULTS}
+                todo = [n for n in names if n not in done]
+                for i, n in enumerate(todo):
+                    item(n, "FAIL" if i == 0 else "SKIP", f"game error: {e}" if i == 0 else "an earlier step's game error")
+                close_targeting()
+                return True
+        return wrapper
+    return deco
 
 
 def ui3_refused(msg: str) -> bool:
@@ -35,7 +61,8 @@ def close_targeting() -> str:
     return ui_screen()
 
 
-def hotbar_probe() -> None:
+@game_error_fails(TREE_ITEM, BLESS_ITEM)
+def hotbar_probe() -> bool | None:
     """Audit ACT-8 rest (se, 2026-10-16): the hotbar cast route (bridge hotbar.py + Client/Hotbar.lua), built offline
     from HotBar.xaml with guesses G1-G10 (Hotbar.lua / hotbar.py headers). 1) read-only: the widget tree as the mod
     sees it (decks, a slot VM's spell id, a slot button's DataContext), ui.hotbar_slot for Main Hand Attack, and the
@@ -115,7 +142,7 @@ def hotbar_probe() -> None:
         log(f"PROBE hotbar locate seen {json.dumps(seen)}")
     ok = bool(want.get("found")) and want.get("rendered") is not False and pos is not None and cs.get("armed") is False
     item(
-        "hotbar widget tree (ACT-8, read-only)",
+        TREE_ITEM,
         "PASS" if ok else "FAIL",
         f"{tree[:120]}; ids={want.get('ids')} from={want.get('ids_from')} map_why={want.get('map_why')}; "
         f"MainHandAttack: found={want.get('found')} deck={want.get('deck')} index={want.get('index')} "
@@ -131,7 +158,7 @@ def hotbar_probe() -> None:
         f"preview={cs.get('preview')} spell_task={cs.get('spell_task')}",
     )
     if not ok:  # the guesses the clicks rely on broke: don't click blind into the world with a spell in hand
-        item("hotbar cast: Bless on 3 allies (ACT-8)", "SKIP", "the read-only hotbar item failed (see its PROBE line)")
+        item(BLESS_ITEM, "SKIP", "the read-only hotbar item failed (see its PROBE line)")
         return
     # 2) Bless x3 out of combat
     party = [r.get("uuid") for r in st.get("party") or []]
@@ -139,7 +166,7 @@ def hotbar_probe() -> None:
     caster, spell, status_id, n = pick or (None, None, None, 0)
     if need(
         caster is not None and not st.get("in_combat") and inp is not None,
-        "hotbar cast: Bless on 3 allies (ACT-8)",
+        BLESS_ITEM,
         f"caster with a usable ally multi-target spell={caster}, party={len(party)}, "
         f"in_combat={st.get('in_combat')}; {why}",
     ):
@@ -157,7 +184,7 @@ def hotbar_probe() -> None:
         if ok:
             HOTBAR_PICK.update(caster=caster, spell=spell, status=status_id, n=n)
         item(
-            "hotbar cast: Bless on 3 allies (ACT-8)",
+            BLESS_ITEM,
             "PASS" if ok else "FAIL",
             f"{spell} by {S.H.get(caster)} on {len(targets)}: {json.dumps(r.as_dict())[:200]}; {status_id} on {on}; "
             f"in hand after={cs.get('armed')}; screen={ui_screen()}",
@@ -279,6 +306,7 @@ def pick_hotbar_caster(party: list, sel: str | None) -> tuple[tuple | None, str]
     return None, why
 
 
+@game_error_fails(HOTBAR_ITEM)
 def hotbar_use_ability() -> bool:
     """act 2026-10-16, audit ACT-8 wiring: use_ability with 3 targets goes the hotbar route (act.cast {ui=true} checks
     and watches the cast, hotbar.hotbar_cast clicks it). HOTBAR_CAST_ENABLED is off by default: turned on for this one
@@ -287,7 +315,7 @@ def hotbar_use_ability() -> bool:
     hotbar.HOTBAR_CAST_ENABLED = True. True = it cast (the caller reloads)."""
     from bg3ai import hotbar as HB
 
-    se_ok = any(r["item"] == "hotbar cast: Bless on 3 allies (ACT-8)" and r["verdict"] == "PASS" for r in RESULTS)
+    se_ok = any(r["item"] == BLESS_ITEM and r["verdict"] == "PASS" for r in RESULTS)
     if not need(se_ok, HOTBAR_ITEM, "se's 'hotbar cast: Bless on 3 allies (ACT-8)' did not PASS"):
         return False
     st = status()
@@ -393,6 +421,7 @@ def floor_point(p0: list, dist: float) -> list | None:
     return None
 
 
+@game_error_fails(TWOSTEP_ITEM)
 def twostep_dd_probe() -> bool:
     """act 2026-10-16, audit ACT-9: a two-step spell by the player's clicks (bridge twostep.py: hotbar cell, who goes =
     the caster, then the landing on the ground, the cursor checked by ui.ground_check before the click). Out of
@@ -405,7 +434,7 @@ def twostep_dd_probe() -> bool:
     True = it cast (the caller reloads)."""
     from bg3ai import hotbar as HB
 
-    ro_ok = any(r["item"] == "hotbar widget tree (ACT-8, read-only)" and r["verdict"] == "PASS" for r in RESULTS)
+    ro_ok = any(r["item"] == TREE_ITEM and r["verdict"] == "PASS" for r in RESULTS)
     if not need(ro_ok, TWOSTEP_ITEM, "se's 'hotbar widget tree (ACT-8, read-only)' did not PASS"):
         return False
     st = status()
