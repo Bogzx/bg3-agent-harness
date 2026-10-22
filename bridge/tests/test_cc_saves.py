@@ -15,7 +15,7 @@ from unittest import mock
 from test_naming import FakeInput, FakePage
 from test_turn_macros import Base, FakeGame  # sets BG3AI_RUNTIME before importing server
 
-from bg3ai import naming
+from bg3ai import naming, settings
 from bg3ai.tools import core, reporting, world_tools, newgame, saving, session
 from bg3ai.game import GameError, JobResult
 
@@ -446,9 +446,10 @@ class Saves(Base):
         self.assertEqual(self.loaded, ["Claude-1__SCN-grove"])
 
     def test_prefix_from_the_owner(self):
-        self.assertEqual(saving._env_prefix({"BG3AI_SAVE_OWNER": "Ilse"}), "Ilse-")
-        self.assertEqual(saving._env_prefix({"BG3AI_SAVE_OWNER": "Ilse", "BG3AI_SAVE_PREFIX": "Ilse-4"}), "Ilse-4")
-        self.assertEqual(saving._env_prefix({}), "")
+        self.assertEqual(settings.save_identity({"BG3AI_SAVE_OWNER": "Ilse"}).prefix, "Ilse-")
+        self.assertEqual(settings.save_identity({"BG3AI_SAVE_OWNER": "Ilse", "BG3AI_SAVE_PREFIX": "Ilse-4"}).prefix,
+                         "Ilse-4")
+        self.assertEqual(settings.save_identity({}).prefix, "")
         saving.SAVE_PREFIX = ""
         self.assertIn("isn't known", saving.load_game("latest"))
         self.assertIn("isn't known yet", saving.list_saves())

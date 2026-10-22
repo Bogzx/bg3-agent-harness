@@ -16,6 +16,25 @@ REPO = Path(__file__).resolve().parents[3]  # the checkout (bridge/src/bg3ai -> 
 
 
 @dataclass(frozen=True)
+class SaveIdentity:
+    """Which saves are this run's (runner I1): folders are "<character name>-<number>__<label>"."""
+
+    owner: str = ""  # $BG3AI_SAVE_OWNER: the character's name
+    prefix: str = ""  # $BG3AI_SAVE_PREFIX, else the owner's name and the dash the game adds
+    playthrough: str = ""  # $BG3AI_PLAYTHROUGH
+    # $BG3AI_SAVE_GATES "1": the runner opened the save/load gates for this game, "0": it closed them (not our
+    # character); None: hand-run.
+    gates: str | None = None
+    # $BG3AI_SAVES_AFTER, epoch seconds: a `run --runs` playthrough's saves are only those written since its run
+    # started (the runs of a series share one character name, so the prefix alone would let run 2 load run 1's).
+    after: float = 0.0
+    start_save: str = ""  # $BG3AI_START_SAVE: a scenario's start save, older than the run, still its own
+    # $BG3AI_SAVES_EXCLUDE (newline-separated): this character's save folders that another playthrough (same name) or
+    # a worker wrote (the runner's foreign_saves): never in list_saves / load_game.
+    exclude: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class Settings:
     repo: Path
     runtime: Path  # $BG3AI_RUNTIME: actions.jsonl, metrics, locks
@@ -30,6 +49,7 @@ class Settings:
     port: int  # $BG3LE_DEBUG_PORT
     rpc_conns: int  # $BG3AI_RPC_CONNS: LuaDebug connections in the pool (1 = one serialised connection)
     job_push: bool  # $BG3AI_JOB_PUSH != "0": wait on the mod's job-finished prints (jobpush.py)
+    saves: SaveIdentity
 
 
 def _float(env: Mapping[str, str], key: str) -> float:
@@ -59,4 +79,18 @@ def from_env(env: Mapping[str, str], repo: Path = REPO, home: Path | None = None
         port=int(env.get("BG3LE_DEBUG_PORT") or 9998),
         rpc_conns=max(1, int(env.get("BG3AI_RPC_CONNS") or 4)),
         job_push=env.get("BG3AI_JOB_PUSH", "1") != "0",
+        saves=save_identity(env),
+    )
+
+
+def save_identity(env: Mapping[str, str]) -> SaveIdentity:
+    owner = env.get("BG3AI_SAVE_OWNER", "")
+    return SaveIdentity(
+        owner=owner,
+        prefix=env.get("BG3AI_SAVE_PREFIX", "") or (f"{owner}-" if owner else ""),
+        playthrough=env.get("BG3AI_PLAYTHROUGH", ""),
+        gates=env.get("BG3AI_SAVE_GATES"),
+        after=_float(env, "BG3AI_SAVES_AFTER"),
+        start_save=env.get("BG3AI_START_SAVE") or "",
+        exclude=frozenset(x for x in (env.get("BG3AI_SAVES_EXCLUDE") or "").split("\n") if x),
     )

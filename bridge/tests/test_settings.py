@@ -60,6 +60,25 @@ class FromEnv(unittest.TestCase):
         s = make(BG3AI_RUNTIME="", BG3AI_SESSION_WRAPUP="soon", BG3AI_RPC_CONNS="0")
         self.assertEqual((s.runtime, s.wrapup_at, s.rpc_conns), (REPO / "runtime", 0.0, 1))
 
+    def test_save_identity(self):
+        s = make().saves
+        self.assertEqual(
+            (s.owner, s.prefix, s.playthrough, s.gates, s.after, s.start_save), ("", "", "", None, 0.0, "")
+        )
+        self.assertEqual(s.exclude, frozenset())
+        s = make(
+            BG3AI_SAVE_OWNER="Ilse",
+            BG3AI_PLAYTHROUGH="run-2",
+            BG3AI_SAVE_GATES="0",
+            BG3AI_SAVES_AFTER="1760000000.5",
+            BG3AI_START_SAVE="Ilse-1__SCN-grove",
+            BG3AI_SAVES_EXCLUDE="Ilse-1__S004-end\n\nIlse-2__x",
+        ).saves
+        self.assertEqual((s.owner, s.prefix, s.playthrough, s.gates), ("Ilse", "Ilse-", "run-2", "0"))
+        self.assertEqual((s.after, s.start_save), (1760000000.5, "Ilse-1__SCN-grove"))
+        self.assertEqual(s.exclude, frozenset({"Ilse-1__S004-end", "Ilse-2__x"}))
+        self.assertEqual(make(BG3AI_SAVES_AFTER="soon").saves.after, 0.0)
+
     def test_repo_default_is_the_checkout(self):
         self.assertTrue((settings.REPO / "bridge" / "src" / "bg3ai" / "settings.py").is_file())
 
@@ -69,6 +88,9 @@ class ServerGame(unittest.TestCase):
         s = core.SETTINGS
         self.assertEqual((core.game.port, core.game.pool_cap, core.game.job_push), (s.port, s.rpc_conns, s.job_push))
         self.assertEqual((core.RUNTIME, core.DEADLINE, core.WRAPUP_AT), (s.runtime, s.deadline, s.wrapup_at))
+        from bg3ai.tools import saving
+
+        self.assertEqual((saving.SAVE_PREFIX, saving.SAVES_EXCLUDE), (s.saves.prefix, s.saves.exclude))
 
     def test_game_defaults_read_no_env(self):
         g = Game(pool_max=2, job_push=False)

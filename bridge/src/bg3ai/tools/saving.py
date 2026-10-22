@@ -17,28 +17,14 @@ from . import batch, core, plumbing, queueing, reporting, travel, turn_plan, wor
 # meta: saves, waiting, markers, wiki, clock
 # ---------------------------------------------------------------------------
 
-# Save identity (runner I1): folders are "<character name>-<number>__<label>"; this playthrough's start with the prefix.
-def _env_prefix(env=os.environ) -> str:
-    """BG3AI_SAVE_PREFIX, else the owner's name and the dash the game adds."""
-    owner = env.get("BG3AI_SAVE_OWNER", "")
-    return env.get("BG3AI_SAVE_PREFIX", "") or (f"{owner}-" if owner else "")
-
-
-SAVE_OWNER = os.environ.get("BG3AI_SAVE_OWNER", "")
-SAVE_PREFIX = _env_prefix()
-PLAYTHROUGH = os.environ.get("BG3AI_PLAYTHROUGH", "")
-# "1": the runner opened the save/load gates for this game, "0": it closed them (not our character); unset: hand-run.
-SAVE_GATES = os.environ.get("BG3AI_SAVE_GATES")
-# Epoch seconds: a `run --runs` playthrough's saves are only those written since its run started (the runs of a
-# series share one character name, so the folder prefix alone would let run 2 load run 1's saves).
-try:
-    SAVES_AFTER = float(os.environ.get("BG3AI_SAVES_AFTER") or 0)
-except ValueError:
-    SAVES_AFTER = 0.0
-START_SAVE = os.environ.get("BG3AI_START_SAVE") or ""  # a scenario's start save: older than the run, still its own
-# Save folders of this character that another playthrough (same name) or a worker wrote (the runner's foreign_saves,
-# newline-separated): never in list_saves / load_game (claude-run-2's resume: "latest" was replay-hoh's Act 2 save).
-SAVES_EXCLUDE = frozenset(x for x in (os.environ.get("BG3AI_SAVES_EXCLUDE") or "").split("\n") if x)
+# Save identity (runner I1, settings.SaveIdentity): read once at start; newgame/tests set these names.
+SAVE_OWNER = core.SETTINGS.saves.owner
+SAVE_PREFIX = core.SETTINGS.saves.prefix
+PLAYTHROUGH = core.SETTINGS.saves.playthrough
+SAVE_GATES = core.SETTINGS.saves.gates
+SAVES_AFTER = core.SETTINGS.saves.after
+START_SAVE = core.SETTINGS.saves.start_save
+SAVES_EXCLUDE = core.SETTINGS.saves.exclude
 AI_LABEL = re.compile(r"S\d{3}-")
 
 
