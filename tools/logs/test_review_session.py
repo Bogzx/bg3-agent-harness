@@ -11,9 +11,11 @@ of the real files.
 """
 import gzip
 import json
+import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -102,9 +104,26 @@ def body(text: str) -> str:
     return "\n".join(ln for ln in text.splitlines() if not ln.startswith("(tools/logs/review_session.py"))
 
 
+def pin_tz(tz):
+    """Set the process's local zone; returns the undo. The runner's log lines carry naive local times, and the
+    fixture's were written at +03:00 (dev2), so its review reads them in that zone on any machine (CI runs in UTC)."""
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = tz
+    time.tzset()
+
+    def undo():
+        if old is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old
+        time.tzset()
+    return undo
+
+
 class ReviewFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.addClassCleanup(pin_tz("Etc/GMT-3"))  # POSIX sign: UTC+3
         cls.tmp = tempfile.TemporaryDirectory()
         fx = json.loads(gzip.decompress(FIXTURE.read_bytes()))
         cls.sessions, cls.rt = unpack(fx, Path(cls.tmp.name))

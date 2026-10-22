@@ -28,7 +28,8 @@ class Package(unittest.TestCase):
         self.assertEqual(bg3harness.prompts().__file__, str(bg3harness.PROMPTS / "assemble.py"))
 
     def test_leaf_modules_import_without_the_runner(self) -> None:
-        # step 5: the moved modules import each other inside the package, never runner/ (its shims alias them)
+        # step 5: the moved modules import each other inside the package, never runner/ (its shims alias them). The
+        # check is by the repo's runner/ path: GitHub's checkout lives under /home/runner/, so every path has "runner"
         mods = (
             "clients",
             "pi_client",
@@ -54,7 +55,9 @@ class Package(unittest.TestCase):
             "import importlib, sys\n"
             + "".join(f"importlib.import_module('bg3harness.{m}')\n" for m in mods)
             + (
-                "bad = sorted(n for n, m in sys.modules.items() if 'runner' in str(getattr(m, '__file__', '') or ''))\n"
+                f"runner = {str(REPO / 'runner') + '/'!r}\n"
+                "files = {n: str(getattr(m, '__file__', '') or '') for n, m in sys.modules.items()}\n"
+                "bad = sorted(n for n, f in files.items() if f.startswith(runner))\n"
                 "assert not bad, bad\n"
             )
         )
