@@ -8,7 +8,9 @@ Clock (decision D7): `clock="game"` (default) measures time by the records' `gam
 think-pause excluded); every record in the run needs one, else FactsError (carrying the last snapshot's time forward
 would move gains between snapshots earlier). `clock="wall"` uses `t` minus time zero.
 
-Result: `{passed, t_pass_s, violations, curve, progress}`.
+Result: `{passed, t_pass_s, violations, curve, progress}`. `verdict(goal, records)` is the live check on a run
+still playing: passed, failed (a fired `never` left the goal unreachable) or undecided; it only ends a run early,
+the post-run grade is the score.
 - `violations`: every `never` that fired before the verdict, `{"t_s", "node"}`; a fired `never` stays false.
 - `curve`: a numeric fact at fixed run times (default party gold at 10/20/30 min): `value` at that time and the
   `peak` up to it, both null when the run ended earlier.
@@ -124,6 +126,18 @@ def _describe(node: Node) -> Any:
     raise TypeError(f"not a goal node: {node!r}")
 
 
+def _doomed(ev: _Eval, node: Node) -> bool:
+    """The node can never be true again: a fired `never` stays false, so a conjunction holding one is lost."""
+    match node:
+        case Mode(mode="never"):
+            return ev.latched.get(id(node), False)
+        case All(children=kids):
+            return any(_doomed(ev, c) for c in kids)
+        case Any_(children=kids):
+            return all(_doomed(ev, c) for c in kids)
+    return False
+
+
 def _window(records: list[dict]) -> tuple[int, int]:
     """Indices [start, end] of the run: from the first run_start mark to the first run_end after it."""
     start = next((i for i, r in enumerate(records) if r["kind"] == "mark" and r.get("mark") == "run_start"), 0)
@@ -200,3 +214,28 @@ def _curve(samples: list[tuple[float, float]], spec: dict) -> dict:
         else:
             points.append({"at_s": at, "value": upto[-1], "peak": max(upto)})
     return {"fact": spec["fact"], "points": points}
+
+
+def verdict(goal: Any, timeline: Iterable[dict[str, Any]]) -> str | None:
+    """The live verdict on a run still playing (game clock, as grade): "passed" at the first instant grade would
+    pass, "failed" once a fired `never` makes the goal unreachable, else None (undecided, or no run_start yet)."""
+    root = parse(goal)
+    records = check(timeline)
+    start = next((i for i, r in enumerate(records) if r["kind"] == "mark" and r.get("mark") == "run_start"), None)
+    if start is None:
+        return None
+    state, ev = State(), _Eval(root)
+    for r in records[:start]:
+        state.apply(r)
+    for r in records[start:]:
+        state.apply(r)
+        elapsed = 0.0 if r is records[start] and r.get("game_t") is None else r.get("game_t")
+        if elapsed is None:
+            continue  # grade refuses such a run; the live check just doesn't decide on that record
+        if ev.step(root, state, elapsed):
+            return "passed"
+        if _doomed(ev, root):
+            return "failed"
+        if r["kind"] == "mark" and r.get("mark") == "run_end":
+            break
+    return None

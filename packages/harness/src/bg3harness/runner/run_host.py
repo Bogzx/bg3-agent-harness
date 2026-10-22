@@ -10,12 +10,14 @@ save start the mod's nav_*.json moved into <run_dir>/reset/, a new game's host i
 at the scenario's start (its start save loaded, or a new game), the settings check and seed, and the kickoff for the
 job's condition. The session's hooks are the runner's
 own (RunnerSessionHooks), so crashes, hangs and caps behave as in a playthrough; SessionRun's Recovery(max_resumes=0)
-makes a fault end the run invalid.
+makes a fault end the run invalid. A goal scenario's job carries the bench's live verdict (job["verdict"]):
+GoalWatch asks it while the run plays and ends the run once it says passed or failed.
 
 record: facts.jsonl's run_end, the game stopped (the next run starts a fresh process), the moved nav files put back
 (the run's own versions kept in <run_dir>/reset/run/; a failed start puts them back too, and a marker,
 runtime/nav-reset.json, lets the next start restore what a run that died left moved), and the run's fields: the
-outcome (the bench grades facts.jsonl; the harness decides no goal), cost and tokens of every play process, wall
+outcome (the bench grades facts.jsonl; the harness decides no goal: a goal run the live verdict ended is "reached"
+or "failed" by that verdict), cost and tokens of every play process, wall
 time, the settings readout, the manifest fields and the reset.
 
 stop: an operator stop (play.py bench's first SIGINT/SIGTERM, or runtime/STOP, which the runner reads) ends the run's
@@ -31,6 +33,7 @@ import json
 import os
 import shutil
 import signal
+import threading
 import time
 import uuid
 from collections.abc import Callable, MutableMapping, Sequence
@@ -48,6 +51,8 @@ from bg3harness.session import SessionHooks, SessionOutcome
 
 SID = "S001"  # a bench run is one session
 SCENARIO_DIFFICULTY = "BG3AI_SCENARIO_DIFFICULTY"  # bg3ai.tools.newgame.SCENARIO_DIFFICULTY_ENV
+GOAL_HIT = "goal"  # until_hit's id when the bench's live verdict decided a goal scenario (GoalWatch)
+GOAL_POLL_S = 10.0  # how often GoalWatch asks the verdict: the stop comes one poll + the in-flight tool call late
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -68,6 +73,7 @@ class RunRunner(Protocol):
     settles_budget: bool  # False here: SessionRun's matrix adds the run's cost to budget.json
     stop_ends_session: bool  # True here: an operator stop ends the run's one session at the next check
     stop_requested: bool
+    until_hit: Json | None  # GoalWatch sets it: the agent loop stops on it as on an until milestone
 
     @property
     def opt(self) -> rstate.Options: ...
@@ -75,8 +81,6 @@ class RunRunner(Protocol):
     def state(self) -> RunState: ...
     @property
     def cap_hit(self) -> Json | None: ...
-    @property
-    def until_hit(self) -> Json | None: ...
     @property
     def mod_rev(self) -> str | None: ...
 
@@ -190,6 +194,45 @@ def stop_on_signals(host: LiveRunHost, fd: int = 2) -> None:
 
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
+
+
+class GoalWatch:
+    """A goal scenario's live verdict (SessionRun's job["verdict"]: "passed", "failed" or None) asked every poll_s
+    while the run plays. Once it decides, the runner's until_hit is set to {"id": GOAL_HIT, "verdict": ...}: the
+    agent loop stops the agent on it as on an until milestone (a goal run never plays on past its grade). check()
+    is one poll (the tests call it directly)."""
+
+    def __init__(self, r: RunRunner, verdict: Callable[[], str | None], poll_s: float = GOAL_POLL_S):
+        self.r, self.verdict, self.poll_s = r, verdict, poll_s
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._loop, name="goal-watch", daemon=True)
+
+    def check(self) -> bool:
+        """True once the run is decided (by this verdict or an earlier stop): nothing left to watch."""
+        if self.r.until_hit:
+            return True
+        try:
+            v = self.verdict()
+        except Exception as e:  # a verdict that can't be read doesn't end the run
+            renv.log(f"goal verdict failed: {type(e).__name__}: {e}")
+            return False
+        if v not in ("passed", "failed"):
+            return False
+        self.r.until_hit = {"id": GOAL_HIT, "label": f"the goal {v}", "verdict": v, "session": SID, "t": time.time()}
+        renv.log(f"{SID}: the scenario's goal {v}: stopping the run")
+        self.r.event("goal_verdict", verdict=v, session=SID)
+        return True
+
+    def _loop(self) -> None:
+        while not self.done.wait(self.poll_s):
+            if self.check():
+                return
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.done.set()
 
 
 def owner_of(sc: Json) -> str:
@@ -340,6 +383,7 @@ class LiveRunHost:
         self.env = os.environ if env is None else env
         self.run_files = run_files or self._run_files
         self.runs: dict[Path, tuple[RunRunner, float, list[str]]] = {}
+        self.watches: dict[Path, GoalWatch] = {}  # a goal scenario's live verdict while its run plays
         self.stopping = False  # stop(): an operator signal
 
     @property
@@ -358,7 +402,9 @@ class LiveRunHost:
         """A hard exit (a second signal, or an exception out of the matrix): every run still open loses its play
         process and the game it brought up, and its moved nav files go back. Its record is not written."""
         while self.runs:
-            _, (r, _, _) = self.runs.popitem()
+            run_dir, (r, _, _) = self.runs.popitem()
+            if (w := self.watches.pop(run_dir, None)) is not None:
+                w.stop()
             try:
                 r.kill_agent()
                 r.end_run_game(when, "the run is not recorded")
@@ -412,7 +458,11 @@ class LiveRunHost:
             files, model, effort = self._setup(job, sc, run_dir)
             opt = options_for(dict(job, model=model, effort=effort), sc, run_dir.name, files)
             r = self.make_runner(opt)
-            return self._begin(r, opt, sc, run_dir)
+            st = self._begin(r, opt, sc, run_dir)
+            if job.get("verdict") is not None:
+                self.watches[run_dir] = GoalWatch(r, job["verdict"])
+                self.watches[run_dir].start()
+            return st
         except (Exception, SystemExit) as e:
             try:
                 if r is not None:
@@ -467,11 +517,19 @@ class LiveRunHost:
 
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
         r, t0, moved = self.runs.pop(run_dir)
+        if (w := self.watches.pop(run_dir, None)) is not None:
+            w.stop()
         res = outcome.result
         hit = r.until_hit if r.until_hit and r.until_hit.get("id") == sc.get("until") else None
+        goal = r.until_hit if r.until_hit and r.until_hit.get("id") == GOAL_HIT and "goal" in sc else None
         stopped = res.reason == "stopped"  # an operator stop ended the session: invalid (bench results.validity)
         invalid = outcome.invalid or outcome.gave_up or stopped or res.reason in runs.HARNESS_REASONS
-        name = "gave_up" if invalid else "reached" if hit else "over_budget" if r.cap_hit else "timeout"
+        if invalid:
+            name = "gave_up"
+        elif goal:
+            name = "reached" if goal["verdict"] == "passed" else "failed"  # the live verdict ended the run
+        else:
+            name = "reached" if hit else "over_budget" if r.cap_hit else "timeout"
         try:
             r.end_facts(name)
         finally:

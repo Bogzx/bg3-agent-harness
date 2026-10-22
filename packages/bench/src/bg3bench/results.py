@@ -36,7 +36,8 @@ from bg3bench import choices as choices_mod
 from bg3bench import stats, suite
 
 SCHEMA = 1
-OUTCOMES = ("reached", "timeout", "over_budget", "gave_up", "runner_error")
+# failed: a goal run that its live verdict (a fired never) ended
+OUTCOMES = ("reached", "failed", "timeout", "over_budget", "gave_up", "runner_error")
 
 
 def applied_seed(record: dict) -> int | None:

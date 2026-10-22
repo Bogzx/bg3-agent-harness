@@ -409,6 +409,32 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     )
 
 
+def test_a_goal_runs_live_verdict_ends_it_and_names_its_outcome(rig: Rig):
+    h, runners = rig.h, rig.runners
+    said: list[str | None] = [None]
+    h.start({**JOB, "verdict": lambda: said[0]}, SAVE_SC, run_dir("g1"))
+    watch, r = h.watches[run_dir("g1")], runners[-1]
+    assert not watch.check() and r.until_hit is None  # undecided: the run plays on
+    said[0] = "passed"
+    assert watch.check() and r.until_hit is not None and r.until_hit["verdict"] == "passed"
+    assert ("goal_verdict", {"verdict": "passed", "session": "S001"}) in r.events
+    rec = h.record(JOB, SAVE_SC, run_dir("g1"), outcome())
+    assert (rec["outcome"], rec["milestone"]) == ("reached", None) and watch.done.is_set() and not h.watches
+    said[0] = "failed"
+    h.start({**JOB, "verdict": lambda: said[0]}, SAVE_SC, run_dir("g2"))
+    assert h.watches[run_dir("g2")].check()
+    assert h.record(JOB, SAVE_SC, run_dir("g2"), outcome())["outcome"] == "failed"
+
+
+def test_a_verdict_that_raises_doesnt_end_the_run(rig: Rig):
+    def broken() -> str | None:
+        raise OSError("facts.jsonl gone")
+
+    rig.h.start({**JOB, "verdict": broken}, SAVE_SC, run_dir("g"))
+    assert not rig.h.watches[run_dir("g")].check() and rig.runners[-1].until_hit is None
+    assert rig.h.record(JOB, SAVE_SC, run_dir("g"), outcome())["outcome"] == "timeout"
+
+
 def test_record_outcomes_and_the_game_stops_even_when_the_facts_fail(rig: Rig):
     h, calls, runners = rig.h, rig.calls, rig.runners
     h.start(JOB, SAVE_SC, run_dir("a"))

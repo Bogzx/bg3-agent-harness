@@ -370,3 +370,18 @@ def test_unknown_nodes_raise_type_error():
         graders._Eval(None).step("nope", facts.State(), 0)
     with pytest.raises(TypeError):
         graders._describe("nope")
+
+
+def test_the_live_verdict_passes_fails_or_waits_as_grade_would():
+    goal = {"gold": {"gte": 100}}
+    assert graders.verdict(goal, run(snap(10, gold=50))) is None  # still playing
+    assert graders.verdict(goal, [snap(10, gold=500)]) is None  # no run_start yet: not this run's facts
+    tl = run(snap(10, gold=50), ev(20, "gold", gold=150, delta=100))
+    assert graders.verdict(goal, tl) == "passed" and grade(goal, tl)["passed"]
+    sneak = {"all": [{"area": "shattered sanctum"}, {"no_combat": True}]}
+    fought = run(snap(10, combat=True), snap(20, area="Shattered Sanctum", areas=["Shattered Sanctum"]))
+    assert graders.verdict(sneak, fought) == "failed" and not grade(sneak, fought)["passed"]  # lost for good
+    either = {"any": [{"gold": {"gte": 100}}, {"all": [{"area": "x"}, {"no_combat": True}]}]}
+    assert graders.verdict(either, run(snap(10, combat=True))) is None  # the gold branch can still pass
+    after_end = run(snap(10), mark(20, "run_end"), ev(30, "gold", gold=150, delta=150))
+    assert graders.verdict(goal, after_end) is None  # nothing after run_end counts, as in grade

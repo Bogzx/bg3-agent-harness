@@ -14,7 +14,7 @@ import pytest
 from test_run_artifacts import assert_valid, readout
 
 from bg3bench import conditions, matrix, pins, report, results, scenario
-from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, series_name
+from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, live_verdict, series_name
 from bg3bench.matrix import Matrix, RunResult
 
 HERE = Path(__file__).resolve().parent
@@ -268,3 +268,23 @@ def test_the_host_gets_the_prompt_condition_and_a_gapped_run_is_a_pilot(tmp_path
     assert res["pilot"] == [conditions.GAP_COACHING]
     assert_valid("result.v1.schema.json", res)
     assert "pilot" not in json.loads((plain_dir / "result.json").read_text())  # pi under rules+wiki: exact
+
+
+def test_a_goal_run_hands_the_host_its_live_verdict(tmp_path):
+    host = Host([[("exited", 5)]])
+    run_one(tmp_path, host)(job())
+    (started, _, run_dir) = host.started[0]
+    until_sc = {k: v for k, v in SC.items() if k != "goal"} | {"until": "grove"}
+    facts = run_dir / "facts.jsonl"
+    start = {"v": 1, "kind": "mark", "t": T0, "game_t": 0.0, "mark": "run_start"}
+    rich = {"v": 1, "kind": "event", "t": T0 + 9, "game_t": 9.0, "ev": "gold", "gold": 250, "delta": 250}
+    facts.write_text(json.dumps(start) + "\n")
+    assert started["verdict"]() is None  # SC's goal: gold >= 200, not yet
+    facts.write_text(json.dumps(start) + "\n" + json.dumps(rich)[:20])  # the runner is mid-line
+    assert started["verdict"]() is None
+    facts.write_text(json.dumps(start) + "\n" + json.dumps(rich) + "\n")
+    assert started["verdict"]() == "passed"
+    assert live_verdict(SC["goal"], tmp_path / "missing.jsonl") is None
+    until_host = Host([[("exited", 5)]])
+    SessionRun("m", until_host, scenarios={"e2e_sell_idol": until_sc}, sessions=tmp_path / "s2")(job())
+    assert "verdict" not in until_host.started[0][0]  # the runner ends an until run at its milestone itself
