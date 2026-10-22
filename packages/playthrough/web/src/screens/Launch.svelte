@@ -35,6 +35,16 @@
     }
   }
 
+  /** The sessions behind `name` again (a run of it ended): Start or Resume, without touching the form. */
+  async function countSessions(name: string) {
+    try {
+      const c = await api.config(name);
+      if (loaded === name) sessions = c.sessions;
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
   onMount(() => {
     const h = heard;
     api.supervisor().then(
@@ -51,6 +61,7 @@
       if (type === "supervisor") {
         sup = data as SupervisorView;
         heard++;
+        if (sup.state === "idle" && sup.playthrough === loaded) void countSessions(loaded); // its run just ended
       }
     }, () => {}, () => {});
   });

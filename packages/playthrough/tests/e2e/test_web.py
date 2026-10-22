@@ -107,7 +107,8 @@ def test_launcher_resume_offer_and_start_a_new_playthrough(page, site):
     expect(page.locator(".state")).to_contain_text("idle · e2e-new")
     stale = {"playthrough": "e2e-new", "state": "running", "detail": "playing", "session": "S001"}
     held[0].fulfill(response=reply, json=dict(reply.json(), supervisor=stale))
-    expect(page.get_by_role("button", name="Start")).to_be_enabled()  # the reply was handled (busy is over)
+    # the reply was handled (busy is over), and the ended session counts: Resume plays session 2
+    expect(page.get_by_role("button", name="Resume")).to_be_enabled()
     expect(page.locator(".state")).to_contain_text("idle · e2e-new")
     page.unroute("**/api/v1/playthroughs/e2e-new/start")
     req = site["runner"].requests[-1]
