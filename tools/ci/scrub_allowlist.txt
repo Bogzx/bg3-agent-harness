@@ -1,0 +1,15 @@
+# Allowed hits of tools/ci/scrub.py: "<kind|*> <path-glob> [<text>]  # <reason>". Never scanned itself.
+# Only false positives and authorship lines belong here; a real leak is fixed in its file instead.
+home_path * /home/agent  # the container's user (tools/container), not a person
+home_path * /home/runner  # GitHub Actions' runner home
+home_path * /home/user  # placeholder user in fixtures
+home_path * /home/someone  # placeholder user in tests
+home_path * /home/u  # placeholder user in tests
+home_path * /home/x  # placeholder user in tests
+home_path bridge/tests/test_rpc_record.py C:\\Users\\steamuser  # Proton's generic Windows user, the scrubber's own test input
+steam_id packages/bench/tests/test_preflight.py 76561190000000001  # made-up SteamID64 in a test
+steam_id tools/saves/test_inspect.py 76561198000000042  # made-up SteamID64 in a test
+email runner/test_play_oom.py app-term@b676.service  # a systemd unit name, not an address
+email tools/dev/test_acceptance_memory.py user@1000.service  # a systemd unit name, not an address
+term LICENSE  # the copyright line: the authorship line, like git's author
+term CITATION.cff  # the citation's author entry: the authorship line, like git's author
