@@ -237,7 +237,8 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     assert dumped == [(run_dir("m-grove"), "claude", 7, "turn_based")]
     assert st.prompt == H.scenario_kickoff(SAVE_SC, "S001", "SCN-grove_fight")  # rules: no pace pre-flight
     assert st.prompt_sha == hashlib.sha256(st.prompt.encode()).hexdigest() and st.harness_version
-    assert isinstance(st.hooks, rstate.RunnerSessionHooks) and (st.hooks.sid, st.hooks.minutes) == ("S001", 30.0)
+    assert isinstance(st.hooks, H.BenchHooks) and isinstance(inner := st.hooks.hooks, rstate.RunnerSessionHooks)
+    assert (inner.sid, inner.minutes) == ("S001", 30.0)
 
 
 def test_a_bench_run_serves_no_memory_tools_and_its_own_empty_memory_dir(rig: Rig):
@@ -559,11 +560,45 @@ def test_record_tags_the_runs_failures_and_an_ending_that_was_ours(rig: Rig):
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     res = rstate.SessionResult("S001", "c-1", None, "mcp_failed", 1000.0, 1030.0, detail="bg3 serves 12 tools")
     rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), SessionOutcome(res, 1000.0))
-    assert (rec["harness_failures"], rec["agent_failures"], rec["unknown_failures"]) == (1, 0, 1)
+    assert (rec["outcome"], rec["harness_failures"], rec["agent_failures"], rec["unknown_failures"]) == (
+        "gave_up",  # not a time-out: the run ended on the harness's failure
+        2,
+        0,
+        0,
+    )
     assert [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]] == [
         ("mcp_failed", "harness", "bg3 serves 12 tools"),
-        ("timeout", "unknown", "the run's time ran out before the milestone"),  # the harness failed it first
+        ("gave_up", "harness", "bg3 serves 12 tools"),
     ]
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove-2"))
     rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove-2"), outcome())
     assert (rec["harness_failures"], [f["kind"] for f in rec["failures"]]) == (0, ["timeout"])
+
+
+def test_bench_hooks_turn_a_play_process_that_cant_start_into_a_setup_failed_result():
+    # H3: Popen's OSError escaped run_session and the matrix with the game up
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    class Inner:
+        raises: Exception = FileNotFoundError(2, "No such file or directory", "claude")
+
+        def run_agent(self, *a: Any) -> Any:
+            raise self.raises
+
+        def now(self) -> float:
+            return 1234.0
+
+    def event(kind: str, **fields: Any) -> None:
+        events.append((kind, fields))
+
+    inner = Inner()
+    hooks = H.BenchHooks(inner, event)  # pyright: ignore[reportArgumentType]
+    res = hooks.run_agent("KICKOFF", 30, "c-1", False, "")
+    assert (res.reason, res.exit_code, res.started, res.ended) == ("setup_failed", None, 1234.0, 1234.0)
+    assert res.detail.startswith("FileNotFoundError: ") and events == [
+        ("setup_failed", {"session": "S001", "error": res.detail})
+    ]
+    assert hooks.now() == 1234.0  # the rest is the runner's
+    inner.raises = ValueError("a bug")
+    with pytest.raises(ValueError, match="a bug"):  # not a setup failure: it still ends the matrix (abort)
+        hooks.run_agent("KICKOFF", 30, "c-1", False, "")

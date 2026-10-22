@@ -43,6 +43,7 @@ class Play:
     stream: tuple[dict[str, Any], ...] = ()  # S001.jsonl lines (claude stream-json)
     events: tuple[dict[str, Any], ...] = ()  # runner events the runner wrote meanwhile
     abort: bool = False  # the runner's abort flag (a settings mismatch found mid-run)
+    raises: Exception | None = None  # the play process didn't start (agent_side re-raises Popen's OSError)
 
 
 def init(status: str = "connected") -> dict[str, Any]:
@@ -88,6 +89,8 @@ class ScriptedRunner(FakeRunner):
         self, sid: str, prompt: str, minutes: float, session: str | None, resume: bool = False, tag: str = ""
     ) -> rstate.SessionResult:
         p = self.play
+        if p.raises is not None:
+            raise p.raises
         (self.state.dir / f"{sid}{tag}.jsonl").write_text("".join(json.dumps(ln) + "\n" for ln in p.stream))
         for e in p.events:
             self.event(**e)
@@ -103,16 +106,18 @@ class ScriptedRunner(FakeRunner):
         return True
 
 
-def job() -> dict[str, Any]:
+def job(name: str = "e2e_sell_idol") -> dict[str, Any]:
     model = {"slug": "opus", "client": "claude", "effort": "high"}
-    return matrix.plan([model], ["e2e_sell_idol"], ["rules"], 1, max_cost={"e2e_sell_idol": 1.0})[-1]
+    return matrix.plan([model], [name], ["rules"], 1, max_cost={name: 1.0})[-1]
 
 
 def run_files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
     return {"tools_expected": 90}
 
 
-def bench_run(rig: Rig, play: Play, prepare: Callable[[ScriptedRunner], None] | None = None) -> dict[str, Any]:
+def bench_run(
+    rig: Rig, play: Play, prepare: Callable[[ScriptedRunner], None] | None = None, sc: dict[str, Any] = SC
+) -> dict[str, Any]:
     """One `bg3bench run --runner session` job through the real LiveRunHost: its runs.jsonl line and result.json."""
 
     def make(opt: rstate.Options) -> ScriptedRunner:
@@ -125,8 +130,8 @@ def bench_run(rig: Rig, play: Play, prepare: Callable[[ScriptedRunner], None] | 
 
     host = H.LiveRunHost(make, run_files=run_files, env=rig.env, clock=lambda: T0)
     sessions = renv.RUNTIME / "sessions"
-    res = SessionRun("m", cast(Any, host), scenarios={"e2e_sell_idol": SC}, sessions=sessions)(job())
-    name = series_name("m", job())
+    res = SessionRun("m", cast(Any, host), scenarios={sc["name"]: sc}, sessions=sessions)(job(sc["name"]))
+    name = series_name("m", job(sc["name"]))
     rec = json.loads((sessions / name / "runs.jsonl").read_text().splitlines()[-1])
     result = json.loads((sessions / rec["playthrough"] / "result.json").read_text())
     assert (result["valid"], res.valid) == (res.valid, res.valid) and host.runs == {}
@@ -210,3 +215,30 @@ def test_the_harness_failure_names_what_went_wrong(rig: Rig):
     assert setup["class"] == "harness" and "No such file" in setup["detail"]
     rec = bench_run(rig, HARNESS_ENDINGS["mcp_failed (init)"])
     assert [f["kind"] for f in rec["failures"] if f["class"] == "harness"].count("mcp_failed") == 1  # listed once
+
+
+def save_scenario(tmp_path: Path) -> dict[str, Any]:
+    """The e2e scenario as a save start (its nav files are moved for the run and put back)."""
+    spec = json.loads((BENCH_FIXTURES / "e2e" / "e2e_sell_idol.json").read_text())
+    note = {"where": "The trader", "objective": "Sell the idol"}
+    spec |= {"name": "e2e_save", "start": {"kind": "save", "save": "Tav-3__SCN-e2e_save", "note": note}}
+    spec["profile"]["character"]["name"] = "Tav"
+    path = tmp_path / "e2e_save.json"
+    path.write_text(json.dumps(spec))
+    return scenario.load(path)
+
+
+def test_a_play_process_that_cant_start_is_recorded_invalid_and_the_matrix_goes_on(rig: Rig, tmp_path: Path):
+    # H3: Popen's OSError escaped run_session: no runs.jsonl line, the game up, the nav files moved, `bg3bench run` dead
+    sc = save_scenario(tmp_path)
+    nav = sorted(p.name for p in renv.SE_BG3AI_DIR.iterdir())
+    missing = FileNotFoundError(2, "No such file or directory", "claude")
+    rec = bench_run(rig, Play("exited", raises=missing), sc=sc)
+    assert (rec["outcome"], rec["reason"], rec["harness_failures"]) == ("gave_up", "setup_failed", 2)
+    assert {f["kind"] for f in rec["failures"]} == {"setup_failed", "gave_up"}
+    assert "FileNotFoundError" in rec["failures"][0]["detail"] and rec["reset"]["nav_files"]
+    assert (rec["_result"]["valid"], rec["_result"]["invalid_reason"]) == (False, "harness_failure")
+    assert rig.calls[-2:] == ["end_facts(gave_up)", "end_run_game(run end)"]  # the game stopped
+    assert sorted(p.name for p in renv.SE_BG3AI_DIR.iterdir()) == nav and not H.nav_marker().exists()
+    rec = bench_run(rig, Play("exited"), sc=sc)  # the matrix's rerun plays
+    assert (rec["run"], rec["outcome"], rec["_result"]["valid"]) == (2, "timeout", True)

@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import bg3harness
 from bg3harness import client_setup, runs
@@ -276,6 +276,29 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     return "\n\n".join(lines)
 
 
+class BenchHooks:
+    """The runner's session hooks for a bench run, except that a play process that can't start (the client's binary
+    missing, a leftover agent that survived SIGKILL: OSError, RuntimeError) ends the session as a `setup_failed`
+    result instead of raising out of the matrix (H3: the run then went unrecorded with its game up). record lists it
+    as a harness failure, so the run is invalid and the matrix reruns it. A playthrough's run loop keeps the raise
+    (it counts setup failures and recovers)."""
+
+    def __init__(self, hooks: SessionHooks, event: Callable[..., None]):
+        self.hooks, self.event = hooks, event
+
+    def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> Any:
+        try:
+            return self.hooks.run_agent(prompt, minutes, client_session, resume, tag)
+        except (OSError, RuntimeError) as e:
+            detail = f"{type(e).__name__}: {e}"[:300]
+            self.event("setup_failed", session=SID + tag, error=detail)
+            now = self.hooks.now()
+            return rstate.SessionResult(SID, client_session or "", None, "setup_failed", now, now, detail=detail)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.hooks, name)
+
+
 def run_failures(
     state_dir: Path, t0: float, outcome: SessionOutcome, name: str, why: str, cap: str | None = None
 ) -> list[Json]:
@@ -292,7 +315,8 @@ def run_failures(
     tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
     ending = (res.reason, why)
-    return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, "", cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    gave_up_why = why or res.reason if name == "gave_up" else ""  # a time-out or a cap says its own why
+    return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, gave_up_why, cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
 class LiveRunHost:
@@ -427,7 +451,7 @@ class LiveRunHost:
         minutes = opt.session_minutes
         return HostStart(
             prompt,
-            r.session_hooks(SID, minutes),
+            cast(SessionHooks, BenchHooks(r.session_hooks(SID, minutes), r.event)),
             str(uuid.uuid4()),
             hashlib.sha256(prompt.encode()).hexdigest(),
             (),
@@ -439,7 +463,7 @@ class LiveRunHost:
         res = outcome.result
         hit = r.until_hit if r.until_hit and r.until_hit.get("id") == sc.get("until") else None
         stopped = res.reason == "stopped"  # an operator stop ended the session: invalid (bench results.validity)
-        invalid = outcome.invalid or outcome.gave_up or stopped
+        invalid = outcome.invalid or outcome.gave_up or stopped or res.reason in runs.HARNESS_REASONS
         name = "gave_up" if invalid else "reached" if hit else "over_budget" if r.cap_hit else "timeout"
         try:
             r.end_facts(name)
