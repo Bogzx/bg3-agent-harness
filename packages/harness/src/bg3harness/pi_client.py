@@ -31,7 +31,7 @@ from pathlib import Path
 
 from . import clients as C
 from . import deepseek_bill
-from .profiles import Profile, ProfileError, models_json
+from .profiles import Profile, ProfileError, models_json, tool_env
 
 PI_DIR = C.REPO / "tools" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
@@ -345,6 +345,7 @@ class PiClient:
                 "BG3AI_SERVE_RULES": "0",  # the system text carries the rules (D2)
                 **{k: str(req.env[k]) for k in C.session_env_names(req.env)},
             }
+            env = tool_env(self.p, env)  # no screenshots for a model without image input
             server = {"command": s["command"], "args": list(s.get("args") or []), "cwd": str(self.cwd), "env": env}
         server["timeout"] = (s.get("timeout") or 110_000) / 1000  # bg3.ts takes seconds
         return {"server": server, "systemPromptFile": str(self.system_file)}

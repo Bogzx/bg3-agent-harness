@@ -49,6 +49,17 @@ class Served(unittest.TestCase):
             os.environ["BG3AI_RULES_PATH"] = str(f)
             self.assertEqual(rules.load(), "MY RULES")
 
+    def test_rules_only_text_follows_the_served_tools(self):
+        mod = rules.prompts()
+        self.assertEqual(rules.load(off={"wiki_search", "wiki_page"}),
+                         mod.assemble("rules", caps=mod.ALL_CAPS - {"wiki"}).text.strip())
+        no_shots = mod.assemble("rules", caps=mod.ALL_CAPS - {"screenshots"}).text.strip()
+        self.assertEqual(rules.load(off={"zoom"}), no_shots)
+        self.assertEqual(rules.load(), mod.assemble("rules").text.strip())
+        # coaching is the playthrough's text: every group (assemble refuses a partial one)
+        self.assertEqual(rules.load(condition="rules+coaching", off={"zoom"}),
+                         mod.assemble("rules+coaching").text.strip())
+
     def test_coaching_nudges_only_in_a_coaching_condition(self):
         self.assertFalse(rules.coaching())  # default: rules
         self.assertFalse(rules.coaching({"BG3AI_PROMPT_CONDITION": "rules"}))

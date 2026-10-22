@@ -118,6 +118,15 @@ class Server(unittest.TestCase):
             )
         )
 
+    def test_served_rules_leave_out_an_off_groups_rules(self):
+        # a text-only model (screenshots off) was told about screenshot and zoom by the rules part
+        on = tools({"BG3AI_SERVE_RULES": "1"})["instructions"]
+        self.assertIn("`zoom`", on)
+        off = tools({"BG3AI_TOOLS_OFF": "screenshots", "BG3AI_SERVE_RULES": "1"})["instructions"]
+        self.assertIn("=== RULES ===", off)
+        self.assertNotIn("screenshot", off)
+        self.assertNotIn("zoom", off)
+
 
 class Instructions(unittest.TestCase):
     def test_parts_follow_the_tool_set(self):

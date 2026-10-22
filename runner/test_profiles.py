@@ -149,6 +149,21 @@ class Parse(unittest.TestCase):
                 PR.load(path)
 
 
+class ToolsOff(unittest.TestCase):
+    def test_a_text_only_pi_model_gets_no_screenshots(self):
+        text_only = PR.parse(pi(model_info__input=["text"]))
+        self.assertEqual(PR.tools_off(text_only), ("screenshots",))
+        self.assertEqual(PR.tool_env(text_only, {"X": "1"}), {"X": "1", "BG3AI_TOOLS_OFF": "screenshots"})
+        self.assertEqual(PR.tool_env(text_only, {"BG3AI_TOOLS_OFF": "wiki"})["BG3AI_TOOLS_OFF"], "wiki,screenshots")
+        self.assertEqual(PR.tool_env(text_only, {"BG3AI_TOOLS_OFF": "screenshots"})["BG3AI_TOOLS_OFF"], "screenshots")
+
+    def test_image_models_and_the_clis_keep_every_tool(self):
+        self.assertEqual(PR.tools_off(PR.parse(pi())), ())
+        self.assertEqual(PR.tools_off(PR.parse({"client": "codex", "model": "m"})), ())
+        self.assertEqual(PR.tool_env(PR.parse(pi()), {"BG3AI_TOOLS_OFF": "wiki"}), {"BG3AI_TOOLS_OFF": "wiki"})
+        self.assertEqual(PR.tool_env(PR.parse(pi()), {}), {})
+
+
 class ModelsJson(unittest.TestCase):
     def test_full_definition(self):
         raw = pi(

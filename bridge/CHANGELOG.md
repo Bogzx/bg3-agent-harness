@@ -5,6 +5,15 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-22: served rules follow the served tools; no screenshots for a text-only model
+
+- In the rules condition the served rules (instructions, first briefing, `rules` prompt, bg3://rules, pi's system
+  text) leave out the rules part of a tool group the session switched off (BG3AI_TOOLS / BG3AI_TOOLS_OFF): with
+  screenshots off they still described `screenshot` and `zoom`. rules+coaching keeps the whole text (it needs every
+  group).
+- A pi profile whose model has no image input runs with the screenshots group off (bg3harness profiles.tools_off,
+  PiClient's server env): it was told "(see attached image)" and given no picture.
+
 ## 2026-10-22: coaching nudges only in a coaching condition
 
 - The `PACE: you waited right after issuing…` and `NOTES WINDOW: ~Ns of walking left…` (with its PARTY PLAN line)

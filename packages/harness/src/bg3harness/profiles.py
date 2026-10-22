@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -233,6 +234,21 @@ def load(path: Path | str) -> Profile:
     except tomllib.TOMLDecodeError as e:
         raise ProfileError(f"{path}: not valid TOML: {e}") from None
     return parse(raw, str(path))
+
+
+def tools_off(p: Profile) -> tuple[str, ...]:
+    """The bg3 tool groups (bridge capabilities.py) a profile's model can't use: screenshots for a pi model without
+    image input (pi would hand it "(see attached image)" and no picture). The CLIs (claude, codex, gemini) show
+    images themselves."""
+    return ("screenshots",) if p.model_info is not None and "image" not in p.model_info.input else ()
+
+
+def tool_env(p: Profile, env: Mapping[str, str]) -> dict[str, str]:
+    """`env` with the profile's tools_off added to BG3AI_TOOLS_OFF (the server, the tool count check and the run
+    manifest all read it from there)."""
+    names = [n.strip() for n in (env.get("BG3AI_TOOLS_OFF") or "").split(",") if n.strip()]
+    names += [g for g in tools_off(p) if g not in names]
+    return {**env, "BG3AI_TOOLS_OFF": ",".join(names)} if names else dict(env)
 
 
 def models_json(p: Profile) -> dict:

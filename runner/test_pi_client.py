@@ -344,6 +344,18 @@ class Client(unittest.TestCase):
         )
         self.assertNotIn("OTHER", paths[2].read_text())
 
+    def test_a_text_only_model_gets_a_server_without_screenshots(self):
+        raw = PR.parse({"client": "pi", "model": "vendor/model-1",
+                        "endpoint": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1",
+                                     "api_key_env": "OPENROUTER_API_KEY"},
+                        "model_info": {"input": ["text"], "reasoning": False, "context_window": 9000,
+                                       "max_tokens": 1000}})
+        c = PC.PiClient(raw, self.tmp / "s.txt", server=self.server, cwd=self.tmp / "play")
+        req = C.Request(prompt="go", model="vendor/model-1", session_dir=self.tmp, session="S007-ab",
+                        env={"BG3AI_TOOLS_OFF": "wiki"}, tag="S007")
+        env = c.bg3_config(req)["server"]["env"]
+        self.assertEqual(env["BG3AI_TOOLS_OFF"], "wiki,screenshots")
+
     def test_config_http(self):
         c = PC.PiClient(PROFILE, self.tmp / "s.txt", server=C.http_server("http://h:1/mcp", 60_000))
         self.assertEqual(c.bg3_config(self.req)["server"], {"url": "http://h:1/mcp", "timeout": 60.0})

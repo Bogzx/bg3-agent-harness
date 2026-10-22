@@ -40,14 +40,21 @@ def prompts(path: Path = ASSEMBLE) -> ModuleType:
     return mod
 
 
-def load(path: Path | None = None, condition: str | None = None) -> str:
+def load(path: Path | None = None, condition: str | None = None, off: frozenset[str] | set[str] = frozenset()) -> str:
     """The rules a client is served: `path` (or $BG3AI_RULES_PATH) verbatim, else the assembled text of `condition`
-    (or $BG3AI_PROMPT_CONDITION, default "rules"). "" when unreadable: the server still runs, without rules."""
+    (or $BG3AI_PROMPT_CONDITION, default "rules"). "" when unreadable: the server still runs, without rules.
+    `off`: the tools the session's condition removed (capabilities.py); a rules-only text leaves out the rules of
+    a group with a tool off. The coaching conditions are the playthrough's text with every group (assemble.py)."""
     path = path or (Path(p) if (p := os.environ.get("BG3AI_RULES_PATH")) else None)
     try:
         if path is not None:
             return path.read_text(encoding="utf-8").strip()
-        return prompts().assemble(condition or os.environ.get("BG3AI_PROMPT_CONDITION") or "rules").text.strip()
+        mod = prompts()
+        cond = condition or os.environ.get("BG3AI_PROMPT_CONDITION") or "rules"
+        caps = mod.ALL_CAPS
+        if not mod.CONDITIONS.get(cond):
+            caps = frozenset(c for c, names in mod.CAPABILITIES.items() if not set(names) & set(off))
+        return mod.assemble(cond, caps=caps).text.strip()
     except OSError:
         return ""
 

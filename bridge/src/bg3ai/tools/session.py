@@ -238,6 +238,8 @@ for _name in sorted(TOOLS_OFF):
     core.mcp.remove_tool(_name)
 batch._BATCHABLE -= TOOLS_OFF
 INSTRUCTIONS = core.instructions(TOOLS_OFF)
+if TOOLS_OFF:  # the rules of the served groups only
+    core.RULES.rules = rules.load(off=TOOLS_OFF)
 core.mcp._lowlevel_server.instructions = rules.instructions(INSTRUCTIONS, core.RULES.rules)
 
 
