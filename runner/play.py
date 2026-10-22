@@ -70,6 +70,7 @@ import spend  # noqa: E402  (runner/spend.py: paid clients' per-run cap and runt
 import facts  # noqa: E402  (runner/facts.py: facts.jsonl v1, the graders' game state)
 import choices  # noqa: E402  (runner/choices.py: the agent's dialogue choices as facts events)
 import game_settings  # noqa: E402  (runner/game_settings.py: settings readout, scn.seed / scn.undo)
+import bg3harness  # noqa: E402  (prompts/assemble.py: the kickoff's pace pre-flight)
 from bg3harness import scenario_file  # noqa: E402  (run --scenario-file: the resolved scenario's contract)
 from bg3harness.scenario_file import SettingsMismatch  # noqa: E402
 sys.path.insert(0, str(REPO / "tools"))
@@ -775,25 +776,13 @@ def is_stuck(history: list[dict], n: int = STUCK_SESSIONS) -> bool:
 
 # A concrete pre-flight for pace, right in the kickoff (the most salient spot): in claude-run-2 S001 the
 # agent read the CLAUDE.md pipelining rules, then blocked on every walk anyway (31 wait=true walks, 0% of
-# actions pipelined, idle median 2.27 s) and wrapped up 16 min early when a ladder bugged out.
-PACE_PREFLIGHT = """PACE PRE-FLIGHT (read before your first game action):
-- Game tools are named mcp__bg3__<name> (e.g. mcp__bg3__get_status); the short names below are shorthand.
-- The character must be busy while you think. A walk is: issue it, then do something that doesn't
-  depend on it, then react to its result. For example:
-    travel_to(objective="o1")                      -> started, returns at once
-    queue_actions('[{"tool":"interact","target":"e15"}]')   -> what to do on arrival
-    look() / get_frontier() / note("[tag] ...")      -> while it walks
-    wait_for("queue")                              -> only now, if nothing else is left to do
-- Never pass wait=true to move_to, walk_toward or travel_to, not even after a walk stopped or
-  failed (failures come back at once anyway), and not because you did it earlier this session. Never
-  wait() to pass time: wait_for("my_turn" | "idle" | a job id).
-- Stuck (a loop, a bugged action, a route that keeps failing) never ends the session: follow
-  knowledge/playbooks/stuck.md section 0 (cancel and retry differently, reload the last good save, lead
-  with another party member, another objective) and keep playing until the ⏱ line says WRAP UP NOW."""
+# actions pipelined, idle median 2.27 s) and wrapped up 16 min early when a ladder bugged out. Coaching: a
+# rules-only condition's kickoff has none (client_setup.kickoff_pace).
+PACE_PREFLIGHT = bg3harness.prompts().pace_preflight("claude")
 
 
 def build_kickoff(sid: str, playthrough: str, loaded_save: str | None, notes: list[str], briefing: str = "",
-                  save_why: str = "") -> str:
+                  save_why: str = "", pace: str = PACE_PREFLIGHT) -> str:
     """The first message of a session. `briefing` is session.py start's memory injection (the runner opened the
     session): it leads the message, where the SessionStart hook used to put it. Without it (the runner couldn't open
     the session) the agent calls session_start. It names no deadline: every time shown before WRAP UP NOW was read
@@ -807,7 +796,7 @@ def build_kickoff(sid: str, playthrough: str, loaded_save: str | None, notes: li
         "Keep playing until the ⏱ line in tool results says WRAP UP NOW: you'll be told when to wrap up. Then run "
         "the session-wrapup playbook; its last step is end_session, and you stop (no more tool calls) when that "
         "reports the commit. Nobody will answer questions: decide yourself and write down why.",
-        PACE_PREFLIGHT,
+        *([pace] if pace else []),
     ]
     if briefing:
         lines.insert(0, briefing)
@@ -1449,6 +1438,7 @@ class Options:
     system_file: str | None = None     # pi: the system text, dumped once per run (client_setup.dump_server)
     tools_expected: int | None = None  # pi, claude: the bg3 tools every play process must get (else mcp_failed)
     manifest: dict | None = None       # pi, claude: run_manifest.manifest_fields (the run record's "manifest")
+    pace: str | None = None            # the kickoff's pace pre-flight: client_setup.kickoff_pace ("": none); None: claude's
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
     scenario_settings: dict | None = None  # run --scenario-file: {difficulty, karmic_dice, timing} (check_settings)
 
@@ -1845,6 +1835,11 @@ class Runner:
         if save and not self.state["save_owner"] and not self.opt.dry_run:
             self.adopt_owner(save.owner)
         return save
+
+    def kickoff_pace(self) -> str:
+        """The kickoff's pace pre-flight: cmd_run's (client_setup.kickoff_pace), else claude's."""
+        pace = getattr(self.opt, "pace", None)
+        return PACE_PREFLIGHT if pace is None else pace
 
     def loaded_why(self, loaded: str | None) -> str:
         """Why the runner loaded `loaded` (choose_save's reason), "" when it loaded another save (a crash fallback)."""
@@ -3487,7 +3482,7 @@ class Runner:
         print("plan check:     tools/dev/check_plans.py at each session end (→ keeper) and in the prep (→ RUNNER NOTE); now:")
         self.check_plan_lines("dry run", dry=True)
         prompt = build_kickoff(sid, self.opt.playthrough, save.label if save else None, list(self.pending_notes),
-                               save_why=self.loaded_why(save.label if save else None))
+                               save_why=self.loaded_why(save.label if save else None), pace=self.kickoff_pace())
         return self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
 
     def play_session(self, minutes: float, first: bool) -> SessionResult:
@@ -3550,7 +3545,8 @@ class Runner:
         sid = opened or predicted
         if opened and opened != predicted:
             log(f"session.py start opened {opened} (predicted {predicted})")
-        prompt = build_kickoff(sid, self.opt.playthrough, loaded, notes, briefing, self.loaded_why(loaded))
+        prompt = build_kickoff(sid, self.opt.playthrough, loaded, notes, briefing, self.loaded_why(loaded),
+                               self.kickoff_pace())
         out = run_session(SessionSpec(sid, prompt, minutes, str(uuid.uuid4()), Recovery(
             MAX_RESUMES, RESUME_MIN_MINUTES, MAX_STOP_RESUMES, HARD_STOP_GRACE)), RunnerSessionHooks(self, sid, minutes))
         res, resumes, stop_resumes, gave_up = out.result, out.resumes, out.stop_resumes, out.gave_up
@@ -4060,10 +4056,11 @@ def cmd_run(a) -> int:
     if a.plan:   # after every refusal above, before the lock: nothing written, nothing launched
         return plan_run(a, scenario, save_sha1, caps, use_judge, judge_model, client, choice.profile)
     lock = acquire_lock()  # held for the process lifetime (released only to exec the new runner code)
-    pi_files: dict = {}
+    os.environ.update(client_setup.session_env(client, choice.profile, scenario is not None, os.environ))
+    pi_files: dict = {"pace": client_setup.kickoff_pace(client, os.environ)}
     if client == "claude" or (choice.profile is not None and client == "pi"):   # once per runner
         try:
-            pi_files = client_setup.run_files(RUNTIME / "sessions" / a.playthrough, client, getattr(a, "seed", None),
+            pi_files |= client_setup.run_files(RUNTIME / "sessions" / a.playthrough, client, getattr(a, "seed", None),
                                               (scenario_settings or {}).get("timing"), REPO, log)
         except (OSError, ValueError, subprocess.SubprocessError) as e:
             print(f"refusing --client {client}: the system text / tool list dump failed: {e}", file=sys.stderr)

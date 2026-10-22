@@ -401,9 +401,10 @@ class PlayWiring(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="bg3ai-sandbox-play-"))
         self.addCleanup(shutil.rmtree, self.d, True)
-        p = mock.patch.object(P.client_setup, "run_files", lambda *a: {})   # main(): no tool dump (uv, the bridge)
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(P.client_setup, "run_files", lambda *a: {}),   # main(): no uv tool dump
+                  mock.patch.dict(os.environ)):   # main(): session_env sets BG3AI_PROMPT_CONDITION
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_options_pick_the_http_client(self):
         self.assertEqual(P.make_client(P.Options("pt", None, 60, "opus")).mcp_config, C.MCP_CONFIG)

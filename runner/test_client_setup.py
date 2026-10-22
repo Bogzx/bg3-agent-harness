@@ -123,6 +123,37 @@ class ToolCount(unittest.TestCase):
         self.assertEqual(txt_env["BG3AI_TOOLS"], "game")  # the texts the session's server serves
 
 
+class SessionEnv(unittest.TestCase):
+    """session_env / kickoff_pace: coaching (PACE:/NOTES WINDOW, the pace pre-flight) in playthroughs and claude."""
+
+    def test_the_condition_default(self):
+        cond = lambda client, scenario, env={}: CS.session_env(client, None, scenario, env).get(  # noqa: E731
+            "BG3AI_PROMPT_CONDITION"
+        )
+        self.assertEqual(cond("pi", False), "rules+coaching")
+        self.assertEqual(cond("pi", True), "rules")
+        self.assertEqual(cond("claude", True), "rules+coaching")  # its play/CLAUDE.md
+        self.assertIsNone(cond("pi", False, {"BG3AI_PROMPT_CONDITION": "rules"}))  # the operator's
+
+    def test_a_text_only_profile_turns_screenshots_off(self):
+        from dataclasses import replace
+
+        prof = CS.profiles.load(Path(PI))
+        text_only = replace(prof, model_info=replace(prof.model_info, input=("text",)))
+        self.assertNotIn("BG3AI_TOOLS_OFF", CS.session_env("pi", prof, True, {}))
+        got = CS.session_env("pi", text_only, True, {"BG3AI_TOOLS_OFF": "wiki"})
+        self.assertEqual(got["BG3AI_TOOLS_OFF"], "wiki,screenshots")
+
+    def test_kickoff_pace_follows_the_condition(self):
+        self.assertEqual(CS.kickoff_pace("pi", {}), "")
+        self.assertEqual(CS.kickoff_pace("pi", {"BG3AI_PROMPT_CONDITION": "rules"}), "")
+        pi = CS.kickoff_pace("pi", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
+        claude = CS.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
+        self.assertIn("PACE PRE-FLIGHT", pi)
+        self.assertNotIn("mcp__bg3__", pi)  # claude's tool-name line only for claude
+        self.assertIn("mcp__bg3__", claude)
+
+
 class RunFiles(unittest.TestCase):
     """run_files: what a pi or claude run's play processes share (tool count, manifest; pi: the system text)."""
 

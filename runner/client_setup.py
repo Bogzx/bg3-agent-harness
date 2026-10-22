@@ -64,6 +64,32 @@ def resolve(
     return ClientChoice(prof.client, prof.model, effort or prof.effort, prof)
 
 
+def session_env(client: str, prof: Profile | None, scenario_run: bool, environ: dict) -> dict[str, str]:
+    """{name: value} to add to the runner's env, which every play process's bg3 server inherits: the prompt
+    condition when the operator set none (coaching, i.e. the PACE:/NOTES WINDOW nudges and the kickoff's pace
+    pre-flight, in playthroughs and for claude, whose play/CLAUDE.md is rules+coaching; scenario runs of the other
+    clients get rules), and the profile's tools_off (a model without image input gets no screenshot tools), so the
+    tool count check and the run manifest see the set the server serves."""
+    out: dict[str, str] = {}
+    if not environ.get("BG3AI_PROMPT_CONDITION"):
+        out["BG3AI_PROMPT_CONDITION"] = "rules+coaching" if client == "claude" or not scenario_run else "rules"
+    if prof is not None:
+        off = profiles.tool_env(prof, environ).get("BG3AI_TOOLS_OFF")
+        if off:
+            out["BG3AI_TOOLS_OFF"] = off
+    return out
+
+
+def kickoff_pace(client: str, environ: dict) -> str:
+    """The kickoff's pace pre-flight for this client (prompts/assemble.py pace_preflight), or "" when the session's
+    condition (BG3AI_PROMPT_CONDITION, default rules) has no coaching."""
+    import bg3harness
+
+    if "coaching" not in (environ.get("BG3AI_PROMPT_CONDITION") or "rules").split("+"):
+        return ""
+    return bg3harness.prompts().pace_preflight(client)
+
+
 def read_dotenv(path: Path) -> dict[str, str]:
     """KEY=VALUE lines of a .env file (`export ` and quotes allowed, # comments); {} when there is none."""
     out: dict[str, str] = {}

@@ -217,6 +217,7 @@ class Cli(TmpDir):
             self.addCleanup(p.stop)
         for p in (mock.patch("bg3ai.skipper.start_background", return_value=None),
                   mock.patch.object(P.client_setup, "run_files", lambda *a: {}),   # no tool dump (uv, the bridge)
+                  mock.patch.dict(os.environ),   # session_env sets BG3AI_PROMPT_CONDITION
                   mock.patch.object(P.ramwatch, "start_background", return_value=None),
                   mock.patch.object(P.signal, "signal")):
             p.start()
@@ -243,6 +244,18 @@ class Cli(TmpDir):
         self.assertEqual(self.run_cli("--scenario", "beach", "--runs", "5", "--playthrough", "b2", "--until", "grove",
                                       "--max-cost", "40", "--save-owner", "Claude")[0], 0)
         self.assertEqual((self.calls[-1][0].series, self.calls[-1][1]), ("b2", 5))
+
+    def test_coaching_only_in_playthroughs_and_for_claude(self):  # PACE:/NOTES WINDOW nudges, the kickoff's pace
+        self.write(save_scenario())
+        self.make_save()
+        P.list_saves = lambda: [P.Save(START, "Claude", "SCN-beach", 1.0)]
+        os.environ.pop("BG3AI_PROMPT_CONDITION", None)
+        self.assertEqual(self.run_cli("--scenario", "beach", "--client", "codex")[0], 0)
+        self.assertEqual((os.environ["BG3AI_PROMPT_CONDITION"], self.calls[-1][0].pace), ("rules", ""))
+        os.environ.pop("BG3AI_PROMPT_CONDITION")
+        self.assertEqual(self.run_cli("--scenario", "beach")[0], 0)  # claude: play/CLAUDE.md is rules+coaching
+        self.assertEqual(os.environ["BG3AI_PROMPT_CONDITION"], "rules+coaching")
+        self.assertEqual(self.calls[-1][0].pace, P.PACE_PREFLIGHT)
 
     def test_refusals(self):
         self.write(save_scenario())

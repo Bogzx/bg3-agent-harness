@@ -113,6 +113,9 @@ class DeadlineMath(unittest.TestCase):
         self.assertIn("end_session", k)
         self.assertIn("First call session_start", P.build_kickoff("S004", "pt1", None, []))
 
+    def test_a_rules_only_kickoff_has_no_pace_preflight(self):
+        self.assertNotIn("PACE PRE-FLIGHT", P.build_kickoff("S004", "pt1", None, [], pace=""))
+
 
 class StuckDetection(unittest.TestCase):
     status = {"level": "SCL_Main_A", "region": "Shadow-Cursed Lands", "subregion": "Last Light Inn",
