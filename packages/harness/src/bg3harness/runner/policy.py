@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from bg3ai import metrics as latency
-from bg3ai import milestones
+from bg3ai import milestones, skipper
 
 import bg3harness
 from bg3harness import clients, ramwatch, runs
@@ -591,12 +591,15 @@ def gates_env(allow: bool | None) -> dict:
     return {} if allow is None else {"BG3AI_SAVE_GATES": "1" if allow else "0"}
 
 
-PLAY_SETTINGS = [
-    # (op, args) applied before every session; cutscene autoskip is a project requirement.
-    ("ui.config", {"autoskip": True}),
-    ("ui.settings", {"show_tutorials": False}),
-    ("ui.dismiss", {}),
-]
+def play_settings(env) -> list[tuple[str, dict]]:
+    """(op, args) applied before every session. autoskip is the run's switch (bg3ai.skipper.enabled: on unless
+    $BG3AI_AUTOSKIP=0, which `play.py run --no-autoskip`, a scenario's game_settings.autoskip = false or
+    playthrough.toml [game] autoskip = false set), sent every session so a game kept from another run follows it."""
+    return [
+        ("ui.config", {"autoskip": skipper.enabled({"BG3AI_AUTOSKIP": env.get("BG3AI_AUTOSKIP", "1")})}),
+        ("ui.settings", {"show_tutorials": False}),
+        ("ui.dismiss", {}),
+    ]
 
 
 def ui_strict_wanted(env) -> bool | None:

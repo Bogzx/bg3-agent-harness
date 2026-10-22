@@ -102,3 +102,14 @@ def test_each_v2_scenario_resolves_or_is_refused_for_its_goal():
         else:
             with pytest.raises(scenario.ScenarioError, match="not one milestone"):
                 scenario.resolve(sc)
+
+
+def test_autoskip_reaches_the_runner_file_only_when_off(tmp_path):
+    """Default on: the resolved file is what it was before the setting existed (a series' frozen digest holds);
+    off: the runner reads game_settings.autoskip = false and the v1 check takes it."""
+    sc = gold_with_a_milestone()
+    on = scenario.resolve(scenario.load(write(tmp_path, sc)))
+    assert "autoskip" not in on["game_settings"]
+    off = scenario.resolve(scenario.load(write(tmp_path, {**sc, "game_settings": {"autoskip": False}})))
+    assert off["game_settings"]["autoskip"] is False
+    assert v1_problems(off) == []

@@ -16,7 +16,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import memtools, metrics
+from . import memtools, metrics, skipper
 from .game import Game
 from .tools import core, session
 
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> None:
     # Serving a client: without the runner the first tool call opens the memory session (never on a plain import).
     core.LIFE.auto = os.environ.get("BG3AI_AUTO_SESSION", "1") != "0"
     stop = threading.Event()
-    if os.environ.get("BG3AI_MOVIE_SKIP", "1") != "0":
+    if skipper.enabled():
         threading.Thread(target=session._movie_skipper, args=(stop,), name="movie-skipper", daemon=True).start()
     sample_s = float(os.environ.get("BG3AI_METRICS_SAMPLE_S", "1.0") or 0)
     if sample_s > 0:  # busy/idle samples for the latency metrics, on their own connection

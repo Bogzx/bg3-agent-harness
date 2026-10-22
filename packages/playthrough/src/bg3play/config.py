@@ -28,6 +28,8 @@
     enabled = true
     fps = 15
     height = 720
+    [game]
+    autoskip = true                    # skip movies, cinematics and voiced lines (play.py --no-autoskip when false)
 
 Secrets never go here (keys come from the machine's .env). Parsing, validation and writing are pure functions over
 text and dicts; load/save/migrate are the only file I/O. Unknown keys are errors, so a typo is not silently ignored.
@@ -109,6 +111,11 @@ class Recording:
 
 
 @dataclass(frozen=True)
+class GameOptions:
+    autoskip: bool = True
+
+
+@dataclass(frozen=True)
 class PlaythroughConfig:
     name: str
     difficulty: str = ""
@@ -117,6 +124,7 @@ class PlaythroughConfig:
     session: Session = field(default_factory=Session)
     keeper: Keeper = field(default_factory=Keeper)
     recording: Recording = field(default_factory=Recording)
+    game: GameOptions = field(default_factory=GameOptions)
     v: int = VERSION
 
 
@@ -126,6 +134,7 @@ SECTIONS: dict[str, type] = {
     "session": Session,
     "keeper": Keeper,
     "recording": Recording,
+    "game": GameOptions,
 }
 ENUMS: dict[str, tuple[str, ...]] = {
     "difficulty": ("", *DIFFICULTIES),

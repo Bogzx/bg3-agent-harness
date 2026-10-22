@@ -165,7 +165,14 @@ max_cost_usd = 0.05              # cost cap of one keeper pass on a paid client 
 enabled = true
 fps = 15
 height = 720
+
+[game]
+autoskip = true                  # skip movies, cinematics and voiced lines; false lets them play
 ```
+
+**Autoskip.** `[game] autoskip` (default true) is the playthrough's cutscene switch: false reaches the runner and the
+bg3 MCP server as `BG3AI_AUTOSKIP=0` (`play.py run --no-autoskip`), so the mod's AutoSkip is turned off for each
+session and no ESCAPE skipper runs.
 
 **Prompt condition.** `condition` picks the text the agent is served and goes to the agent and the bg3 MCP server as
 `BG3AI_PROMPT_CONDITION`. A playthrough defaults to `rules+coaching`. Benchmark runs use `rules` only

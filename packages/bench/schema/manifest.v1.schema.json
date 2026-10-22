@@ -38,6 +38,7 @@
       }
     },
     "seed": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}], "description": "the dice seed the mod wrote after every load (scenario game_settings.seed, D9); null: not seeded"},
+    "autoskip": {"type": "boolean", "description": "scenario game_settings.autoskip: movies, cinematics and voiced lines skipped (default true); absent in manifests written before 2026-10-22"},
     "condition": {"$ref": "#/$defs/str_or_null", "description": "rules | rules+coaching@<hash8> | byo:<client>"},
     "client": {
       "type": "object",

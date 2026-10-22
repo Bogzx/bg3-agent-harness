@@ -101,6 +101,8 @@ def cmd_run(a) -> int:
     if a.autocompact is not None and not rstate.AUTOCOMPACT_MIN <= a.autocompact <= rstate.AUTOCOMPACT_MAX:
         print(f"refusing --autocompact {a.autocompact}: claude takes {rstate.AUTOCOMPACT_MIN}-{rstate.AUTOCOMPACT_MAX} tokens")
         return 2
+    if getattr(a, "no_autoskip", False):
+        os.environ["BG3AI_AUTOSKIP"] = "0"  # the runner's ui.config, the skippers and the play sessions' servers
     if a.runs is not None and (a.runs < 1 or not a.until):
         print("refusing --runs: it needs N >= 1 and --until MILESTONE (each run ends there)", file=sys.stderr)
         return 2
@@ -230,8 +232,8 @@ def cmd_run(a) -> int:
         opt = replace(opt, hours=None, series=a.playthrough,
                       series_end=time.time() + a.hours * 3600 if a.hours else None)
     current: dict = {"runner": None, "stop": False}   # the run playing now (a series has one Runner per run)
-    # Cutscenes are always skipped, also while the runner waits on menus and loads (the New Game intro
-    # plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
+    # Unless autoskip is off, cutscenes are skipped also while the runner waits on menus and loads (the New Game
+    # intro plays during StartLoading) and between sessions; the play session's MCP server idles meanwhile
     # (one skipper per game, runtime/skipper.lock).
     from bg3ai.skipper import start_background
     skip_stop = start_background(DEBUG_PORT, lambda m: renv.log(f"autoskip: {m}"), renv.RUNTIME / "skipper.lock")

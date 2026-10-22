@@ -112,10 +112,15 @@ class SkipperTest(unittest.TestCase):
         self.assertIn("fallback", self.logs[-1])
         self.assertNotIn("autoskip.status", self.game.calls[-1:])
 
-    def test_fallback_when_autoskip_is_off(self):
-        self.game.status = {"on": False}
-        self.sk.step()
-        self.assertEqual(self.sk.mode, "fallback")
+    def test_nothing_when_autoskip_is_off(self):
+        """The run's autoskip = false (ui.config): a movie plays on, the old ui.state fallback doesn't press either."""
+        self.game.status = {"on": False, "movie": {"age": 400}, "want": {"seq": 1, "key": "ESCAPE"}}
+        self.game.screen = "movie"
+        for _ in range(3):
+            self.assertEqual(self.sk.step(), 1.0)
+        self.assertEqual(self.sk.mode, "fast")
+        self.assertEqual(self.inp.keys, [])
+        self.assertNotIn("ui.state", self.game.calls)
 
     def test_fast_path_is_retried_later(self):
         self.game.status = GameError("unknown op 'autoskip.status' in client context")
@@ -179,6 +184,17 @@ class SkipperTest(unittest.TestCase):
         from bg3ai.skipper import start_background
         with mock.patch.dict(os.environ, {"BG3AI_MOVIE_SKIP": "0"}):
             self.assertIsNone(start_background())
+        with mock.patch.dict(os.environ, {"BG3AI_AUTOSKIP": "0"}):
+            self.assertIsNone(start_background())
+
+    def test_enabled_by_default_off_only_when_set(self):
+        from bg3ai.skipper import enabled
+        self.assertTrue(enabled({}))
+        for on in ("1", "true", "yes", ""):
+            self.assertTrue(enabled({"BG3AI_AUTOSKIP": on}), on)
+        for off in ("0", "false", " Off ", "no"):
+            self.assertFalse(enabled({"BG3AI_AUTOSKIP": off}), off)
+        self.assertFalse(enabled({"BG3AI_MOVIE_SKIP": "0"}))
 
 if __name__ == "__main__":
     unittest.main()

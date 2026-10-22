@@ -39,6 +39,7 @@ def full_config() -> config.PlaythroughConfig:
         session=config.Session(minutes=45.0, hours=8.5),
         keeper=config.Keeper(enabled=False, model="sonnet", effort="medium", minutes=3.0),
         recording=config.Recording(enabled=False, fps=10, height=1080),
+        game=config.GameOptions(autoskip=False),
     )
 
 
@@ -55,6 +56,21 @@ def test_round_trip_defaults_and_every_key_written():
         assert f"[{section}]" in text
     assert cfg.recording.enabled and cfg.keeper.enabled and cfg.agent.client == "claude"
     assert cfg.agent.condition == "rules+coaching"  # a playthrough plays with the coaching (decision 03:40)
+    assert cfg.game.autoskip is True  # cutscenes skipped unless [game] autoskip = false (user 2026-10-22)
+
+
+def test_autoskip_reaches_the_runner_and_the_bg3_server():
+    from bg3play.adapters import harness_runner, legacy_cli
+
+    off = config.validate({"v": 1, "name": "naut", "game": {"autoskip": False}})
+    on = config.validate({"v": 1, "name": "naut"})
+    assert legacy_cli.condition_env(off)["BG3AI_AUTOSKIP"] == "0"
+    assert legacy_cli.condition_env(on)["BG3AI_AUTOSKIP"] == "1"
+    req = type("Req", (), {"config": off, "playthrough": "naut"})()
+    env = harness_runner.session_env(req, "S001", 0.0, Path("/r"), Path("/p"), False)  # pyright: ignore[reportArgumentType]
+    assert env["BG3AI_AUTOSKIP"] == "0"
+    with pytest.raises(config.ConfigError, match=r"game\.autoskip"):
+        config.validate({"v": 1, "name": "naut", "game": {"autoskip": "no"}})
 
 
 def test_save_load_files(tmp_path: Path):

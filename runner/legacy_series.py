@@ -155,6 +155,7 @@ def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
     """run --scenario: the scenario's values into the parsed args (a flag left out takes the scenario's; one that
     contradicts it is refused). -> (refusal, the start save's sha1)."""
     conflicts = bscenario.scenario_cli_conflicts(sc, {"seed": getattr(a, "seed", None), "until": a.until,
+                                                 "autoskip": False if getattr(a, "no_autoskip", False) else None,
                                                  "character_brief": a.character_brief, "roleplay": a.roleplay, "difficulty": a.difficulty,
                                                  "save_owner": a.save_owner})
     if conflicts:
@@ -165,6 +166,8 @@ def apply_scenario(a, sc: dict) -> tuple[str | None, str | None]:
     a.playthrough = a.playthrough or sc["name"]
     a.until, a.runs = sc["until"], a.runs or sc["runs"]
     a.seed = (sc.get("game_settings") or {}).get("seed")
+    if (sc.get("game_settings") or {}).get("autoskip") is False:
+        a.no_autoskip = True  # cmd_run sets BG3AI_AUTOSKIP=0
     a.character_brief = a.roleplay = a.difficulty = None   # profile.json comes from the scenario (prepare_series_run)
     sha1 = None
     if sc["start"]["kind"] == "save":

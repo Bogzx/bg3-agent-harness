@@ -4,6 +4,8 @@ hands the runner. The harness never imports the bench, so this is the contract b
 
 - game_settings {seed, difficulty, karmic_dice}: seed goes to scn.seed as a v1 scenario's does; difficulty and
   karmic_dice are what the game must be set to: the run's settings check refuses a game that reads otherwise;
+- game_settings.autoskip: false lets movies, cinematics and voiced lines play (default true: skipped); it stays in
+  the v1 part, where run --scenario reads it (play.py --no-autoskip);
 - timing: "realtime" or "turn_based" (BENCHMARK-PLAN.md D7), recorded in the run record.
 
 null (or a missing key) = not fixed by the scenario.
@@ -38,15 +40,20 @@ def split(sc: Any) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
             errs.append("game_settings must be an object")
         else:
             gsd: dict[str, Any] = dict(gs)  # pyright: ignore[reportUnknownArgumentType]
-            if unknown := sorted(set(gsd) - {"seed", *CHECKED}):
-                errs.append(f"game_settings: unknown keys {', '.join(unknown)} (seed, difficulty, karmic_dice)")
+            if unknown := sorted(set(gsd) - {"seed", "autoskip", *CHECKED}):
+                errs.append(
+                    f"game_settings: unknown keys {', '.join(unknown)} (seed, difficulty, karmic_dice, autoskip)"
+                )
+            if gsd.get("autoskip", True) not in (True, False):
+                errs.append("game_settings.autoskip must be true or false")
             if gsd.get("difficulty") not in (None, *DIFFICULTIES):
                 errs.append(f"game_settings.difficulty must be one of {', '.join(DIFFICULTIES)} or null")
             if gsd.get("karmic_dice") not in (None, True, False):
                 errs.append("game_settings.karmic_dice must be true, false or null")
             want.update(difficulty=gsd.get("difficulty"), karmic_dice=gsd.get("karmic_dice"))
-            if "seed" in gsd:
-                v1["game_settings"] = {"seed": gsd["seed"]}
+            kept = {k: gsd[k] for k in ("seed", "autoskip") if k in gsd and (k == "seed" or gsd[k] is False)}
+            if kept:
+                v1["game_settings"] = kept
     if timing not in (None, *TIMINGS):
         errs.append(f"timing must be one of {', '.join(TIMINGS)} or null")
     return v1, want, errs

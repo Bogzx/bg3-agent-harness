@@ -116,6 +116,7 @@ BAD = [
     ({"game_settings": {"ui_scale": 0}}, "ui_scale"),
     ({"game_settings": {"language": ""}}, "language"),
     ({"game_settings": {"fov": 90}}, "game_settings must be"),
+    ({"game_settings": {"autoskip": "no"}}, "autoskip must be"),
     ({"think_pause": True}, "think_pause was dropped"),
     ({"think_pause": False}, "think_pause was dropped"),
     ({"timing": "paused"}, "timing must be"),

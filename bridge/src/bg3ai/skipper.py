@@ -1,7 +1,8 @@
 """Movie skipper: sends ESCAPE through the SDL input shim when the mod's AutoSkip asks for it.
 
-Cutscenes are always skipped (project requirement). Bink movies only react to real input, so the mod
-(Client/AutoSkip.lua) detects a movie on its tick (every 100 ms), presses the engine's ESCAPE, and if
+Optional (user 2026-10-22): on by default, off when the run's config says autoskip = false ($BG3AI_AUTOSKIP=0,
+see enabled(); the runner also sends ui.config{autoskip} to the mod every session). Bink movies only react to real
+input, so the mod (Client/AutoSkip.lua) detects a movie on its tick (every 100 ms), presses the engine's ESCAPE, and if
 the movie is still up asks for a shim key: `autoskip.status` then carries `want = {seq, key, ...}`.
 This loop polls that cheap op (no UI reads in the game) every `fast_s` and sends each new request
 once, after checking that the movie is still showing in the same reply. A movie is gone within
@@ -10,7 +11,8 @@ about half a second.
 Load-time movies (the New Game intro plays during StartLoading) are requested by the mod every
 LOAD_RETRY_MS (2 s) for as long as they last; this loop just honours each request.
 
-Fallback, for a mod without `autoskip.status` (or AutoSkip switched off): the old `ui.state` poll
+When the mod says AutoSkip is off (autoskip.status on=false) nothing is pressed.
+Fallback, for a mod without `autoskip.status`: the old `ui.state` poll
 every `fallback_s`, sending ESCAPE when two polls in a row report screen "movie" (ui.state reports
 "movie" over a loading screen too).
 
@@ -26,11 +28,19 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .game import GameError, NotReady
 
 DEFAULT_LOCK = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[3] / "runtime")) / "skipper.lock"
+
+
+def enabled(env: Mapping[str, str] | None = None) -> bool:
+    """The run's autoskip switch: $BG3AI_AUTOSKIP, on unless 0/false/no/off. $BG3AI_MOVIE_SKIP=0 (tests, the
+    keeper) also keeps this process from running a skipper."""
+    env = os.environ if env is None else env
+    off = env.get("BG3AI_AUTOSKIP", "1").strip().lower() in ("0", "false", "no", "off")
+    return not off and env.get("BG3AI_MOVIE_SKIP", "1") != "0"
 
 
 LINE_WANT_MS = 400  # AutoSkip.lua K.LINE_WANT_MS: only a fresh line request (the line may have ended since)
@@ -113,7 +123,9 @@ class MovieSkipper:
                 st = None
             except Exception:
                 return 1.0
-            if isinstance(st, dict) and st.get("on") is not False:
+            if isinstance(st, dict) and st.get("on") is False:
+                return 1.0  # switched off (ui.config autoskip=false): no key, and no fallback poll either
+            if isinstance(st, dict):
                 want = st.get("want")
                 if isinstance(want, dict) and st.get("movie") and want.get("seq") != self.sent_seq:
                     self.sent_seq = want.get("seq")
@@ -163,10 +175,9 @@ def start_background(port: int = 9998, log: Callable[[str], None] = lambda m: No
                      lock_path: str | os.PathLike | None = DEFAULT_LOCK) -> threading.Event | None:
     """Run a MovieSkipper on its own Game connection in a daemon thread; set the returned event to stop it.
 
-    None when $BG3AI_MOVIE_SKIP=0. Cutscenes are always skipped (project requirement), so every process that
-    drives the game outside the MCP server (runner/play.py, tools/dev/test_new_game.py) starts one; the lock
-    keeps it to one active skipper per game."""
-    if os.environ.get("BG3AI_MOVIE_SKIP", "1") == "0":
+    None when autoskip is off (enabled()). Every process that drives the game outside the MCP server
+    (runner/play.py, tools/dev/test_new_game.py) starts one; the lock keeps it to one active skipper per game."""
+    if not enabled():
         return None
     from .game import Game
 

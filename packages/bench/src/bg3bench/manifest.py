@@ -49,6 +49,7 @@ def from_series(
     grader_version: str = GRADER_VERSION,
     harness_version: str | None = None,
     bench_version: str | None = None,
+    autoskip: bool = True,
 ) -> dict:
     """series.json + one runs.jsonl record -> manifest v1. The versions: the arguments, else the record's pins
     (`versions`), else (bench and suite only) the installed bg3bench's; the harness stays null when neither says."""
@@ -73,6 +74,7 @@ def from_series(
             "timing": timing,
         },
         "seed": seed,
+        "autoskip": autoskip,
         "condition": condition,
         "client": {"name": record.get("client") or series["client"], "version": client_version},
         "model": {"slug": record["model"], "provider_requested": provider, "reasoning_effort": record.get("effort")},

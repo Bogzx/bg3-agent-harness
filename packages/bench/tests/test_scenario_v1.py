@@ -203,6 +203,11 @@ class Checks(unittest.TestCase):
         seeded = dict(sc, game_settings={"seed": 7})
         self.assertEqual(R.scenario_cli_conflicts(seeded, dict(none, seed=7)), [])
         self.assertEqual([b.split()[0] for b in R.scenario_cli_conflicts(seeded, dict(none, seed=8))], ["--seed"])
+        # --no-autoskip against a scenario that skips (the default) contradicts it; one that sets it off agrees
+        self.assertEqual([b.split()[0] for b in R.scenario_cli_conflicts(sc, dict(none, autoskip=False))],
+                         ["--no-autoskip"])  # fmt: skip
+        no_skip = dict(sc, game_settings={"autoskip": False})
+        self.assertEqual(R.scenario_cli_conflicts(no_skip, dict(none, autoskip=False)), [])
 
     def test_series_check(self):
         sc = save_scenario()

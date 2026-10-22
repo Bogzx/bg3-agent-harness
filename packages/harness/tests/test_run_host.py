@@ -288,6 +288,16 @@ def test_a_bench_run_sees_no_playthrough_memory_through_the_real_bridge(rig: Rig
     assert not (run_dir("m-grove") / "memory").exists()  # nothing filled the run's own memory dir
 
 
+def test_the_scenario_autoskip_reaches_the_runner_env(rig: Rig):
+    """On by default; a scenario's game_settings.autoskip = false turns it off for the runner's ui.config and the
+    play server's skipper (BG3AI_AUTOSKIP)."""
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.env["BG3AI_AUTOSKIP"] == "1"
+    off = {**SAVE_SC, "game_settings": {**SAVE_SC["game_settings"], "autoskip": False}}
+    rig.h.start(JOB, off, run_dir("m-grove2"))
+    assert rig.env["BG3AI_AUTOSKIP"] == "0"
+
+
 def test_a_coaching_condition_gets_the_pace_preflight(rig: Rig):
     h = rig.h
     st = h.start({**JOB, "condition": "rules+coaching"}, NEW_SC, run_dir("m-idol"))

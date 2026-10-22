@@ -76,12 +76,13 @@ def validate_scenario(sc, name: str, milestone_ids, roleplays, difficulties) -> 
     seed = gs.get("seed") if isinstance(gs, dict) else None
     if (
         not isinstance(gs, dict)
-        or set(gs) - {"seed", "difficulty", "karmic_dice"}
+        or set(gs) - {"seed", "difficulty", "karmic_dice", "autoskip"}
+        or not isinstance(gs.get("autoskip", True), bool)
         or not (seed is None or (isinstance(seed, int) and not isinstance(seed, bool) and 0 <= seed <= 2**31 - 1))
     ):
         errs.append(
-            "game_settings must be an object with only seed (an integer 0..2147483647 or null), difficulty and "
-            "karmic_dice"
+            "game_settings must be an object with only seed (an integer 0..2147483647 or null), difficulty, "
+            "karmic_dice and autoskip (true or false)"
         )
     elif gs.get("karmic_dice", False) is not False:
         errs.append("game_settings.karmic_dice must be false (D9)")
@@ -271,7 +272,7 @@ def start_note(sc: dict) -> str:
 def scenario_cli_conflicts(sc: dict, cli: dict) -> list[str]:
     """CLI flags that contradict the scenario (run --scenario refuses them; caps go through series_caps): a flag
     left out takes the scenario's value, the same value is fine. cli: until, character_brief, roleplay, difficulty,
-    save_owner, seed (None = not given)."""
+    save_owner, seed, autoskip (None = not given)."""
     c = sc["profile"]["character"]
     want = {
         "until": ("--until", sc["until"]),
@@ -280,6 +281,7 @@ def scenario_cli_conflicts(sc: dict, cli: dict) -> list[str]:
         "difficulty": ("--difficulty", sc["profile"].get("difficulty")),
         "save_owner": ("--save-owner", c.get("name")),
         "seed": ("--seed", (sc.get("game_settings") or {}).get("seed")),
+        "autoskip": ("--no-autoskip", (sc.get("game_settings") or {}).get("autoskip", True)),
     }
     out = []
     for k, (flag, have) in want.items():

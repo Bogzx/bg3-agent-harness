@@ -403,7 +403,7 @@ class GameSide:
     def apply_play_settings(self) -> None:
         """Best effort, never fatal: autoskip, no tutorials, dismiss popups, then the save/load gates."""
         self.gates = None
-        for op, args in rpolicy.PLAY_SETTINGS:
+        for op, args in rpolicy.play_settings(os.environ):
             try:
                 game.rpc(op, args, context="client")
             except Exception as e:

@@ -45,7 +45,7 @@ def test_grades_facts_and_writes_both_files(tmp_path):
     assert manifest.load(run_dir / "manifest.json") == man and results.load(run_dir / "result.json") == res
     assert man["run_id"] == "naut2-r001" and man["versions"]["harness"] == "0.1.0"
     assert man["prompt"] == {"sha256": SHA, "parts": parts} and man["condition"] == "legacy"
-    assert (man["scenario"]["timing"], man["seed"]) == ("realtime", None)
+    assert (man["scenario"]["timing"], man["seed"], man["autoskip"]) == ("realtime", None, True)
     assert res["grade"] is not None and res["passed"] is True and res["t_pass_s"] is not None
     assert res["methods"] is None and res["luck"] is None  # exploration: no attribution; no roll log
     assert_valid("manifest.v1.schema.json", man)
@@ -73,6 +73,10 @@ def test_without_facts_the_milestone_verdict_and_a_sandbox_gets_methods_and_luck
     sandbox = {**series["scenario"]["spec"], "schema": 2, "family": "sandbox", "game_settings": {"seed": 7}}
     man, res = run_artifacts.write_run_artifacts(tmp_path, series, records[0], None, None, scenario_spec=sandbox)
     assert man["seed"] == 7 and res["methods"] is not None and res["luck"]["n"] == 1
+    no_skip = {**sandbox, "game_settings": {"seed": 7, "autoskip": False}}
+    man, _ = run_artifacts.write_run_artifacts(tmp_path, series, records[0], None, None, scenario_spec=no_skip)
+    assert man["autoskip"] is False  # the run's wall time had the cutscenes in it
+    assert_valid("manifest.v1.schema.json", man)
 
 
 def test_bad_inputs_raise(tmp_path):

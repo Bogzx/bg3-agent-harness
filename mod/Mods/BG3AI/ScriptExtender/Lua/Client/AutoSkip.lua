@@ -1,6 +1,8 @@
--- AutoSkip (owner: worker "io"): always skip movies, cinematics and voiced
--- dialogue lines, so the agent never waits on them. ON by default; toggle
--- with ui.config{autoskip=false} (persisted with the other gates).
+-- AutoSkip (owner: worker "io"): skip movies, cinematics and voiced
+-- dialogue lines, so the agent never waits on them. Optional (user
+-- 2026-10-22), ON by default; a run's config turns it off with
+-- ui.config{autoskip=false} (kept in memory only, not in bg3ai/config.json:
+-- the next game process or mod reload starts on again).
 --
 -- How things look on the client (from Public/Game/GUI/StateMachine.xaml and
 -- Mods/MainUI/GUI/Pages/Dialogue.xaml):

@@ -78,6 +78,7 @@ KEYS = {
 }  # fmt: skip
 GAME_SETTINGS = {
     "difficulty": None, "karmic_dice": False, "seed": None, "resolution": None, "ui_scale": None, "language": None,
+    "autoskip": True,
 }  # fmt: skip
 REQUIRES = {"vision": False, "min_context": None}
 DEFAULT_CONDITIONS = ["rules"]
@@ -159,6 +160,8 @@ def _check_settings(gs: Any) -> list[str]:
         errs.append("game_settings.ui_scale must be a positive number (percent), or null")
     if gs.get("language") is not None and not _str(gs["language"]):
         errs.append("game_settings.language must be a non-empty string, or null")
+    if not isinstance(gs.get("autoskip", True), bool):
+        errs.append("game_settings.autoskip must be true or false (skip movies, cinematics and voiced lines)")
     return errs
 
 
@@ -357,7 +360,8 @@ def resolve(sc: dict) -> dict:
         caps=dict(sc["caps"]),
         profile={"character": dict(sc["profile"]["character"]), "difficulty": gs["difficulty"]},
         reset=sc["reset"],
-        game_settings={k: gs[k] for k in RESOLVED_SETTINGS},
+        # autoskip only when off: a default scenario resolves as before (the series' frozen digest stays valid)
+        game_settings={k: gs[k] for k in RESOLVED_SETTINGS} | ({"autoskip": False} if gs["autoskip"] is False else {}),
         timing=sc["timing"],
     )
     return out

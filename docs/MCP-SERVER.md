@@ -26,6 +26,7 @@ The server reads its settings from the environment. The ones a standalone client
 | `BG3AI_RUNTIME` | `runtime` | where the server writes its logs (`actions.jsonl`, metrics) |
 | `BG3AI_SAVE_DIR` | the Larian profile's save folder | the saves `list_saves` and `load_game` see |
 | `BG3AI_PROMPT_CONDITION` | `rules` | which rules text the server serves (below) |
+| `BG3AI_AUTOSKIP` | on | `0` = the run lets cutscenes play: the server starts no movie skipper (no shim ESCAPE) |
 | `BG3AI_TOOLS`, `BG3AI_TOOLS_OFF` | every tool | which tools it serves (below) |
 
 ## A memory

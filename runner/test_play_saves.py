@@ -729,6 +729,8 @@ class Gates(unittest.TestCase):
         self.assertEqual([c[0] for c in self.calls[:3]], ["ui.config", "ui.settings", "ui.dismiss"])
         self.assertEqual(self.calls[0][1], {"autoskip": True})
         self.assertEqual(self.calls[1][1], {"show_tutorials": False})
+        self.assertEqual(rpolicy.play_settings({"BG3AI_AUTOSKIP": "0"})[0], ("ui.config", {"autoskip": False}))
+        self.assertEqual(rpolicy.play_settings({})[0], ("ui.config", {"autoskip": True}))  # on unless set off
 
     def test_gates_follow_character(self):
         for name, new_game, expected in (("Claude", False, True), ("pibooool", False, False),

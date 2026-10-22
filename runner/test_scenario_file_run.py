@@ -9,6 +9,7 @@ game contradicts them (karmic dice, difficulty). Never launches claude or the ga
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import unittest
@@ -65,6 +66,21 @@ class Cli(T.TmpDir):
         )
         self.assertEqual(opt.scenario_settings, {"difficulty": "Balanced", "karmic_dice": False, "timing": "realtime"})
         self.assertEqual(got["game_settings"], {"seed": 1002})  # the v1 part: what series.json freezes
+
+    def test_a_scenario_with_autoskip_off_turns_it_off_for_the_run(self):
+        self.make_save()
+        rcode.list_saves = lambda: [rpolicy.Save(T.START, "Claude", "SCN-beach", 1.0)]
+        off = dict(RESOLVED, game_settings={**RESOLVED["game_settings"], "autoskip": False})
+        with mock.patch.dict(os.environ, {"BG3AI_AUTOSKIP": "1"}):
+            self.assertEqual(self.run_cli("--scenario-file", self.resolved(off)), (0, ""))
+            self.assertEqual(os.environ["BG3AI_AUTOSKIP"], "0")
+        self.assertEqual(self.calls[-1][4]["game_settings"], {"seed": 1002, "autoskip": False})
+        with mock.patch.dict(os.environ, {"BG3AI_AUTOSKIP": "1"}):
+            self.assertEqual(self.run_cli("--scenario-file", self.resolved(RESOLVED)), (0, ""))
+            self.assertEqual(os.environ["BG3AI_AUTOSKIP"], "1")  # on: nothing changed
+        rc, err = self.run_cli("--scenario-file", self.resolved(RESOLVED), "--no-autoskip")
+        self.assertEqual(rc, 2)
+        self.assertIn("--no-autoskip", err)
 
     def test_refusals(self):
         self.make_save()

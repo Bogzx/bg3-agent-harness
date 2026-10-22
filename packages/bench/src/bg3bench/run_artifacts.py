@@ -68,6 +68,7 @@ def write_run_artifacts(
         bench_tag=bench_tag,
         condition=condition,
         seed=sc["game_settings"].get("seed"),
+        autoskip=sc["game_settings"].get("autoskip", True) is not False,
         timing=sc["timing"],
         prompt=None if prompt_sha is None else {"sha256": prompt_sha, "parts": [dict(p) for p in prompt_parts]},
         tools=tools,

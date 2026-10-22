@@ -100,8 +100,9 @@ def play_args(
 
 def condition_env(cfg: config.PlaythroughConfig) -> dict[str, str]:
     """play.py's env: the config's prompt condition for the bg3 server and pi's system text (claude's play/CLAUDE.md
-    is rules+coaching whatever it says)."""
-    return {**os.environ, "BG3AI_PROMPT_CONDITION": cfg.agent.condition}
+    is rules+coaching whatever it says), and [game] autoskip (the runner's ui.config, its and the server's skipper)."""
+    return {**os.environ, "BG3AI_PROMPT_CONDITION": cfg.agent.condition,
+            "BG3AI_AUTOSKIP": "1" if cfg.game.autoskip else "0"}  # fmt: skip
 
 
 def last_play(runner_json: Path) -> dict[str, Any] | None:

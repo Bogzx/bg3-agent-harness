@@ -105,6 +105,7 @@ def session_env(
         "BG3_MEMORY_DIR": str(playthroughs / req.playthrough / "memory"),
         **memory_session.clock_env(start + m * 60, m, keeper),
         "BG3AI_PROMPT_CONDITION": req.config.agent.condition,
+        "BG3AI_AUTOSKIP": "1" if req.config.game.autoskip else "0",  # the bg3 server's movie skipper
     }
 
 

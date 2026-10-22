@@ -211,6 +211,7 @@ export interface PlaythroughConfig {
   session: { minutes: number; hours: number; max_cost_usd: number };
   keeper: { enabled: boolean; model: string; effort: string; minutes: number };
   recording: { enabled: boolean; fps: number; height: number };
+  game?: { autoskip: boolean };
 }
 
 export type ReplayEvent =

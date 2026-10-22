@@ -96,7 +96,8 @@
         "seed": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0, "maximum": 2147483647}], "description": "D9: the dice seed the mod writes to ServerRollStreams after every load (null: the game's wall-clock seed). The run manifest records it."},
         "resolution": {"oneOf": [{"type": "null"}, {"type": "string", "pattern": "^\\d{3,5}x\\d{3,5}$"}]},
         "ui_scale": {"$ref": "#/$defs/pos_or_null"},
-        "language": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]}
+        "language": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "autoskip": {"type": "boolean", "description": "Movies, cinematics and voiced dialogue lines are skipped (default true). false changes the wall time a run needs: check the caps. The run manifest records it."}
       }
     },
     "timing": {"enum": ["realtime", "turn_based"], "description": "D7: realtime = the world runs while the model thinks (there is no think-pause: the ESC menu does not pause BG3); results report thinking time next to wall time. Exploration and sandbox must be realtime; the default is turn_based for fight, realtime otherwise."},

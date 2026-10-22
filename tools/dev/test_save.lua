@@ -447,6 +447,31 @@ ok(lj.status == "timeout" and lj.partial.stage == "verify" and lj.partial.tried 
 widgets.LoadGame = nil
 for k, f in pairs(saved) do UIx[k] = f end
 
+-- ui.config autoskip (user 2026-10-22: optional, on by default): a run's "off" lives in memory only. The file keeps
+-- the gates; an autoskip a config file holds (written before the change) is ignored on load.
+do
+    local files, encode = {}, function(t)
+        local kv = {}
+        for k, v in pairs(t) do kv[#kv + 1] = k .. "=" .. tostring(v) end
+        table.sort(kv)
+        return table.concat(kv, ",")
+    end
+    local realIO, realJson, realConfig = Ext.IO, Ext.Json, A.config
+    Ext.IO = { LoadFile = function(p) return files[p] end, SaveFile = function(p, t) files[p] = t return true end }
+    Ext.Json = { Stringify = encode, Parse = function() return { autoskip = false, save_enabled = true } end }
+    files[A.CONFIG_PATH] = "autoskip=false,save_enabled=true"  -- an old file with a persisted off
+    A.loadConfig()
+    ok(A.config.autoskip == nil and A.SAVE_ENABLED == true, "an old file's autoskip is ignored, its gates kept")
+    ok(ops["ui.config"]({}).autoskip == true, "autoskip on by default")
+    local r = ops["ui.config"]({ autoskip = false })
+    ok(r.autoskip == false and A.config.autoskip == false, "ui.config autoskip=false turns it off")
+    ok(files[A.CONFIG_PATH] == "save_enabled=true", "the off is not written: " .. tostring(files[A.CONFIG_PATH]))
+    ok(ops["ui.config"]({ load_enabled = true }).autoskip == false, "another setting keeps this run's off")
+    ok(files[A.CONFIG_PATH] == "load_enabled=true,save_enabled=true", "the file still has no autoskip")
+    ok(ops["ui.config"]({ autoskip = true }).autoskip == true, "and back on")
+    Ext.IO, Ext.Json, A.config = realIO, realJson, realConfig
+end
+
 local tally = string.format("%d passed, %d failed", passes, fails)
 print(tally)
 if fails > 0 then os.exit(1) end

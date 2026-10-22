@@ -250,6 +250,13 @@ def main(argv: list[str] | None = None) -> int:
         "at the run's start (re-applied after every load), scn.undo at its end",
     )
     r.add_argument(
+        "--no-autoskip",
+        dest="no_autoskip",
+        action="store_true",
+        help="let movies, cinematics and voiced lines play (default: skipped; $BG3AI_AUTOSKIP=0 does the same; a "
+        "scenario's game_settings.autoskip = false turns it off too)",
+    )
+    r.add_argument(
         "--take-over", action="store_true", help="allow using a game that is already in a save the runner didn't load"
     )
     r.add_argument(

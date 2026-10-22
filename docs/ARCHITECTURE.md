@@ -15,8 +15,11 @@ scenarios. Two hard rules apply throughout:
     (positions, distances, ranges, costs, remaining resources, options). `do_actions` executes the
     sequence in one call (move → attack → bonus action → end turn; a looting sweep; a dialogue chain) and
     stops only on a real interrupt.
-  * **Cutscenes are always skipped.** `Client/AutoSkip.lua` skips movies and cinematics and fast-forwards
-    spoken lines, emitting each line as text. It never auto-picks answers, rolls or decisions.
+  * **Cutscenes are skipped by default.** `Client/AutoSkip.lua` skips movies and cinematics and fast-forwards
+    spoken lines, emitting each line as text. It never auto-picks answers, rolls or decisions. It is a run setting
+    (user 2026-10-22): `play.py run --no-autoskip`, a scenario's `game_settings.autoskip = false` or
+    playthrough.toml `[game] autoskip = false` turn it off (`BG3AI_AUTOSKIP=0`: the runner's `ui.config` and no
+    ESCAPE skipper).
 
 The research behind the game-side decisions is in `research/` (01–06); the overhaul's is in `research/arch/`
 (local). The target layout and the engineering standards are in [TARGET-ARCHITECTURE.md](TARGET-ARCHITECTURE.md),

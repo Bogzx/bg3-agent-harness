@@ -333,6 +333,8 @@ class LiveRunHost:
         self.env["BG3AI_PROMPT_CONDITION"] = job["condition"]
         self.env["BG3AI_MEMORY_DIR"] = str(run_dir / "memory")
         self.env["BG3AI_TOOLS_OFF"] = ",".join([NO_MEMORY, *job.get("tools_off", ())])  # the profile's go on top
+        # the scenario's autoskip (default on): the runner's ui.config each session, and the play server's skipper
+        self.env["BG3AI_AUTOSKIP"] = "0" if sc["game_settings"].get("autoskip", True) is False else "1"
         self.env.update(client_setup.session_env(choice.client, choice.profile, True, self.env))
         files: Json = {"profile": choice.profile, "pace": client_setup.kickoff_pace(choice.client, self.env)}
         if choice.client == "claude" or (choice.profile is not None and choice.client == "pi"):

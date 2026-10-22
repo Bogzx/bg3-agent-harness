@@ -38,6 +38,9 @@ function A.loadConfig()
         local okp, parsed = pcall(Ext.Json.Parse, text)
         if okp and type(parsed) == "table" then cfg = parsed end
     end
+    -- autoskip is the run's setting, not the game's: never taken from the file (one written before 2026-10-22 may
+    -- hold it), so a game process starts with AutoSkip on and the runner sends each session's value with ui.config
+    cfg.autoskip = nil
     A.config = cfg
     A.SAVE_ENABLED = cfg.save_enabled == true
     A.LOAD_ENABLED = cfg.load_enabled == true
@@ -51,7 +54,8 @@ end
 A.loadConfig()
 
 -- ui.config {save_enabled?, load_enabled?, autoskip?} -> {gates, autoskip};
--- persists everything in bg3ai/config.json.
+-- persists the gates in bg3ai/config.json; autoskip (default on) lasts until the game process ends or the mod
+-- reloads: a run's "off" never reaches the next run.
 RPC.register("ui.config", function(args)
     local cfg = A.config or {}
     local changed = false
@@ -62,7 +66,9 @@ RPC.register("ui.config", function(args)
     A.SAVE_ENABLED = cfg.save_enabled == true
     A.LOAD_ENABLED = cfg.load_enabled == true
     if changed then
-        local ok, err = pcall(Ext.IO.SaveFile, A.CONFIG_PATH, Ext.Json.Stringify(cfg))
+        local saved = {}
+        for k, v in pairs(cfg) do if k ~= "autoskip" then saved[k] = v end end
+        local ok, err = pcall(Ext.IO.SaveFile, A.CONFIG_PATH, Ext.Json.Stringify(saved))
         if not ok or err == false then error("could not write " .. A.CONFIG_PATH .. ": " .. tostring(err)) end
     end
     return { gates = A.gates(), autoskip = cfg.autoskip ~= false }

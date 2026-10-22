@@ -129,7 +129,7 @@ def _session_log() -> Path | None:
 
 
 def _movie_skipper(stop: "threading.Event") -> None:
-    """Cutscenes are always skipped (project requirement). The mod's AutoSkip handles dialogue lines in-game
+    """Started unless the run's autoskip is off (skipper.enabled: on by default). The mod's AutoSkip handles dialogue lines in-game
     and asks for a shim ESCAPE when a Bink movie ignores the engine's; skipper.py polls that request
     (autoskip.status, ~150 ms) on its own connection, with the old ui.state poll as a fallback. It idles
     while another process (runner/play.py) holds runtime/skipper.lock: one skipper per game."""
