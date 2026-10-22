@@ -29,7 +29,7 @@ def test_bare_imports_count_only_with_runner_on_sys_path() -> None:
         (2, "import"),
         (4, "import"),
     ]
-    assert runner_shims.python_uses("bridge/src/bg3ai/x.py", src, ["oldmod"]) == []
+    assert runner_shims.python_uses("tools/x.py", src, ["oldmod"]) == []
     inserted = 'import sys\nsys.path.insert(0, str(REPO / "runner"))\nimport oldmod as E\n'
     assert [u.kind for u in runner_shims.python_uses("tools/vis/x.py", inserted, ["oldmod"])] == ["import"]
 
@@ -38,6 +38,15 @@ def test_bare_imports_count_only_with_runner_on_sys_path() -> None:
 def test_a_same_named_module_next_to_the_file_is_not_the_shim() -> None:
     src = 'import sys\nsys.path.insert(0, "runner")\nimport oldmod\n'
     assert runner_shims.python_uses("tools/logs/x.py", src, ["oldmod"], local=["oldmod"]) == []
+
+
+@pytest.mark.unit
+def test_a_package_module_reaches_a_shim_through_the_hosts_runner_path() -> None:
+    # bg3harness/runs.py's __import__("pi_client") next to bg3harness/pi_client.py: absolute, so it is runner/'s shim
+    src = 'import oldmod\nP = __import__("oldmod").P\n'
+    for path in ("packages/harness/src/bg3harness/runs.py", "bridge/src/bg3ai/x.py"):
+        got = runner_shims.python_uses(path, src, ["oldmod"], local=["oldmod"])
+        assert [(u.line, u.kind) for u in got] == [(1, "import"), (2, "import")]
 
 
 @pytest.mark.unit

@@ -8,8 +8,11 @@ A shim is a runner module that only stands in for code that moved into a package
 A use of shim <name> is one of:
     import     `import <name>` / `from <name> import ...` / `importlib.import_module("<name>")` in a file that has
                runner/ on sys.path: a file under runner/, or one with a `sys.path.insert/append` whose argument
-               mentions runner, unless the importing file's own directory has a <name>.py; and the app's
-               `legacy_paths.load("<name>")` (bg3play/adapters/legacy_paths.py puts runner/ on sys.path)
+               mentions runner, unless the importing file's own directory has a <name>.py; any of those in a
+               package module (bridge/src, packages/*/src): no sys.path of its own and its directory isn't searched,
+               so a top-level <name> there resolves only through the host's runner/ (bg3harness's
+               `__import__("pi_client")`); and the app's `legacy_paths.load("<name>")` (bg3play/adapters/
+               legacy_paths.py puts runner/ on sys.path)
     dotted     `import runner.<name>` / `from runner.<name> import ...` / `from runner import <name>`
     path       a Python string value or path join naming runner/<name>.py (spec_from_file_location, argv, ...)
     mention    runner/<name>.py in a docstring, or in a tracked non-Python text file (docs, shell scripts, configs)
@@ -38,8 +41,14 @@ ROOT = Path(__file__).resolve().parents[2]
 TEXT_SUFFIXES = (".md", ".sh", ".toml", ".yml", ".yaml", ".json", ".txt", ".cfg", ".ini")
 # Shims removed once nothing used them (research/ovh/found.md round 8): name -> the package module to use instead.
 DELETED = {
+    "choices": "bg3harness.choices",
     "deepseek_bill": "bg3harness.deepseek_bill",
+    "display_env": "bg3harness.display_env",
+    "events": "bg3harness.events",
+    "facts": "bg3harness.facts",
+    "game_settings": "bg3harness.game_settings",
     "host_tuning": "bg3harness.host_tuning",
+    "ramwatch": "bg3harness.ramwatch",
 }
 
 
@@ -101,6 +110,7 @@ def _on_runner_path(path: str, tree: ast.Module, source: str) -> bool:
 
 
 LOAD = "legacy_paths.load"
+PACKAGED = re.compile(r"(bridge/src|packages/[^/]+/src)/")
 
 
 def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[str] = ()) -> list[Use]:
@@ -108,6 +118,8 @@ def python_uses(path: str, source: str, shims: Iterable[str], local: Iterable[st
     names, mine = set(shims), set(local)
     tree = ast.parse(source)
     bare = _on_runner_path(path, tree, source)
+    if PACKAGED.match(path):  # an absolute import never searches the module's own directory
+        bare, mine = True, set()
     docs = {  # docstrings and other bare string statements name a path, they don't load it
         id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
     }
