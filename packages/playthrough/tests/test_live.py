@@ -260,6 +260,12 @@ class LatencyTest(TmpCase):
         self.assertEqual([h["session"] for h in r["history"]], ["S001", "S002"])
         self.assertEqual(r["files"]["metrics"], "S003.metrics.jsonl")
         self.assertIsNone(r["files"]["turns"])
+        # the session ended: no idle time now (Stats counted it up in red after the session, r13)
+        ended = {"playthrough": "pt", "metrics": str(m), "session_ended": now - 10}
+        live = live_mod.latency_payload(self.tmp, ended, now=now)["live"]
+        self.assertIsNone(live["current_idle_s"])
+        self.assertFalse(live["busy_now"])
+        self.assertEqual(live["idle_median_s"], 3.0)  # the session's own numbers stay
 
     def test_fallback_runtime_metrics(self):
         self._write(

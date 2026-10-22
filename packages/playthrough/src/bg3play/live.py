@@ -299,7 +299,8 @@ def _tail_jsonl(path: Path | None, max_bytes: int = 4 * 1024 * 1024) -> list[dic
 def latency_payload(
     runtime: Path, runner_status: dict[str, Any], now: float | None = None, history_rows: int = 30
 ) -> dict[str, Any]:
-    """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table."""
+    """/api/latency: live view (bg3ai.metrics.live_view) plus the per-session history table. Once the runner says its
+    session ended there is no idle time now (nobody is playing; the agent's last call would count up forever)."""
     metrics = legacy_paths.load("bg3ai.metrics")
 
     now = time.time() if now is None else now
@@ -309,6 +310,8 @@ def latency_payload(
     samples = [r for r in recs if r.get("type") == "sample" and "t" in r]
     turns = _tail_jsonl(paths["turns"])
     live = metrics.live_view(tools, samples, turns, now) if (tools or samples or turns) else None
+    if live is not None and runner_status.get("session_ended"):
+        live = {**live, "current_idle_s": None, "busy_now": False}
     hist = _tail_jsonl(paths["history"])[-history_rows:]
     return {
         "now": now,
