@@ -12,6 +12,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from bg3harness import client_setup
 from bg3harness.runner import env as renv
 from bg3harness.runner import run_host as H  # noqa: N812
 from bg3harness.runner import state as rstate
+from bg3harness.runner.checks_side import ChecksSide
 from bg3harness.session import SessionOutcome
 
 SAVE_SC: dict[str, Any] = {
@@ -42,6 +44,10 @@ NEW_SC: dict[str, Any] = {
     "start": {"kind": "new_game"},
     "profile": {"character": {"brief": "A careful trader.", "roleplay": "strict"}},
 }
+UNTIL_SC: dict[str, Any] = {k: v for k, v in NEW_SC.items() if k != "goal"} | {
+    "name": "nautiloid",
+    "until": "nautiloid_escaped",
+}
 JOB = {"model": "opus", "client": "claude", "effort": "high", "condition": "rules", "max_cost": None}
 
 
@@ -59,6 +65,7 @@ class FakeRunner:
         self.state = State(renv.RUNTIME / "sessions" / opt.playthrough)
         self.events: list[tuple[str, dict[str, Any]]] = []
         self.cap_hit: dict[str, Any] | None = None
+        self.until_hit: dict[str, Any] | None = None
         self.mod_rev: str | None = None
         self.run_started: float | None = None
         self.settles_budget = True
@@ -161,6 +168,24 @@ def test_options_of_a_save_start_and_a_new_game():
         0.5,
         "A careful trader.",
     )
+
+
+def test_an_until_scenario_ends_at_its_milestone():
+    # live7: the nautiloid run reached nautiloid_escaped 12 min in and played on for run_hours (Options had no until)
+    opt = H.options_for(JOB, UNTIL_SC, "m-naut", {})
+    assert opt.until == "nautiloid_escaped"
+    assert H.options_for(JOB, SAVE_SC, "m-grove", {}).until is None  # a goal scenario: graded on facts.jsonl
+    events: list[str] = []
+
+    def event(kind: str, **fields: Any) -> None:
+        events.append(kind)
+
+    runner = SimpleNamespace(opt=opt, until_hit=None, event=event)
+    check_until: Callable[..., dict[str, Any] | None] = ChecksSide.check_until  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    escaped = {"quests": {"Escape the Nautiloid": {"steps": 4, "done": True}}}
+    assert check_until(runner, {"quests": {}}, "S001") is None
+    hit = check_until(runner, escaped, "S001")
+    assert hit is not None and hit["id"] == "nautiloid_escaped" and events == ["milestone"]
 
 
 def test_the_kickoff_names_the_start_the_goal_and_the_character_and_no_memory_steps():
@@ -331,6 +356,21 @@ def test_the_next_start_restores_what_a_dead_run_left_moved(rig: Rig):
     host.start(JOB, NEW_SC, run_dir("m-idol"))
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
     assert not H.nav_marker().exists()
+
+
+def test_record_of_a_run_that_reached_its_until_milestone(rig: Rig):
+    h, calls, runners = rig.h, rig.calls, rig.runners
+    h.start(JOB, UNTIL_SC, run_dir("naut"))
+    runners[-1].until_hit = {"id": "nautiloid_escaped", "label": "Nautiloid escaped", "t": 1720.0}
+    runners[-1].cap_hit = {"cap": "cost"}  # the milestone came first: the agent was stopped there
+    calls.clear()
+    rec = h.record(JOB, UNTIL_SC, run_dir("naut"), outcome())
+    assert (rec["outcome"], rec["milestone"]) == ("reached", "nautiloid_escaped")
+    assert calls == ["end_facts(reached)", "end_run_game(run end)"]
+    h.start(JOB, SAVE_SC, run_dir("grove"))  # the end credits stop any run; a goal scenario isn't "reached" by them
+    runners[-1].until_hit = {"id": "game_end", "label": "The end", "t": 1720.0}
+    rec = h.record(JOB, SAVE_SC, run_dir("grove"), outcome())
+    assert (rec["outcome"], rec["milestone"]) == ("timeout", None)
 
 
 def test_archive_moves_only_the_nav_files(tmp_path: Path):

@@ -65,6 +65,8 @@ class RunRunner(Protocol):
     @property
     def cap_hit(self) -> Json | None: ...
     @property
+    def until_hit(self) -> Json | None: ...
+    @property
     def mod_rev(self) -> str | None: ...
 
     def event(self, kind: str, **fields: Any) -> None: ...
@@ -157,7 +159,9 @@ def owner_of(sc: Json) -> str:
 
 def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Options:
     """One bench run's Options: one session of the scenario's run_hours, no keeper, no judge, the start save (none
-    for a new game), the dice seed and the settings the check compares. `files`: client_setup.run_files' fields."""
+    for a new game), the dice seed and the settings the check compares. An `until` scenario's run ends at its
+    milestone (the runner stops the agent once the progress poller sees it: until_hit). `files`:
+    client_setup.run_files' fields."""
     caps, char, gs = sc["caps"], sc["profile"]["character"], sc["game_settings"]
     max_cost = job.get("max_cost") if job.get("max_cost") is not None else caps.get("max_cost")
     return rstate.Options(
@@ -169,6 +173,7 @@ def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Optio
         effort=job.get("effort"),
         allow_short=True,
         keeper=False,
+        until=sc.get("until"),
         character_brief=char.get("brief"),
         roleplay=char.get("roleplay"),
         difficulty=gs.get("difficulty"),
@@ -334,7 +339,16 @@ class LiveRunHost:
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
         r, t0, moved = self.runs.pop(run_dir)
         res = outcome.result
-        name = "gave_up" if outcome.invalid or outcome.gave_up else "over_budget" if r.cap_hit else "timeout"
+        hit = r.until_hit if r.until_hit and r.until_hit.get("id") == sc.get("until") else None
+        name = (
+            "gave_up"
+            if outcome.invalid or outcome.gave_up
+            else "reached"
+            if hit
+            else "over_budget"
+            if r.cap_hit
+            else "timeout"
+        )
         try:
             r.end_facts(name)
         finally:
@@ -352,6 +366,7 @@ class LiveRunHost:
             "wall_min": round((res.ended - outcome.started) / 60, 2),
             "sessions": 1,
             "cap_hit": r.cap_hit,
+            "milestone": hit and hit["id"],
             "game_settings": getattr(r, "game_settings", None),
             "manifest": r.opt.manifest,
             "reset": {"nav_files": moved, "restored": back},
