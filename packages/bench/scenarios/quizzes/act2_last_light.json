@@ -1,0 +1,36 @@
+{
+ "schema": 1,
+ "scenario": "act2_last_light",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which Harper leader holds the inn that resists the shadow curse?",
+   "kind": "text",
+   "answer": "Jaheira",
+   "accept": [
+    "\\bjaheira\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which cleric of Selûne keeps the inn's protective ward up?",
+   "kind": "text",
+   "answer": "Isobel",
+   "accept": [
+    "\\bisobel\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "What lets travellers cross the shadow curse safely?",
+   "kind": "choice",
+   "choices": [
+    "A source of magical light such as a moonlantern",
+    "A potion of fire resistance",
+    "Holding one's breath",
+    "Travelling only at noon"
+   ],
+   "answer": "A"
+  }
+ ]
+}

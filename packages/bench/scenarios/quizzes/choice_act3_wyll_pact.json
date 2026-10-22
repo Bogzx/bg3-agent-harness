@@ -1,0 +1,36 @@
+{
+ "schema": 1,
+ "scenario": "choice_act3_wyll_pact",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Who is Wyll's devil patron?",
+   "kind": "text",
+   "answer": "Mizora",
+   "accept": [
+    "\\bmizora\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "What is Wyll's family name, shared with his father the Grand Duke?",
+   "kind": "text",
+   "answer": "Ravengard",
+   "accept": [
+    "\\bravengard\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Which archdevil does Wyll's patron serve?",
+   "kind": "choice",
+   "choices": [
+    "Zariel",
+    "Raphael",
+    "Mephistopheles",
+    "Asmodeus"
+   ],
+   "answer": "A"
+  }
+ ]
+}

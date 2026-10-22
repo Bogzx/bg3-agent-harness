@@ -1,0 +1,45 @@
+{
+ "schema": 1,
+ "scenario": "act1_recruit_3",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which vampire spawn rogue can join the party near the crash site?",
+   "kind": "text",
+   "answer": "Astarion",
+   "accept": [
+    "\\bastarion\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which githyanki fighter do tieflings hold in a cage near the druids' grove?",
+   "kind": "text",
+   "answer": "Lae'zel",
+   "accept": [
+    "\\blae'?zel\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Which warlock, known as the Blade of Frontiers, is staying in the druids' grove?",
+   "kind": "text",
+   "answer": "Wyll",
+   "accept": [
+    "\\bwyll\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "Where is the tiefling barbarian with an infernal engine heart first found?",
+   "kind": "choice",
+   "choices": [
+    "Near the Risen Road",
+    "In the Underdark",
+    "In Moonrise Towers",
+    "On the nautiloid"
+   ],
+   "answer": "A"
+  }
+ ]
+}

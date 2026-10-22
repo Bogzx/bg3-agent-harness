@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "fight_act2_moonrise_assault",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which half-elf druid leads the Harpers in the shadow-cursed lands?",
+   "kind": "text",
+   "answer": "Jaheira",
+   "accept": [
+    "\\bjaheira\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Who rules Moonrise Towers for the Absolute?",
+   "kind": "choice",
+   "choices": [
+    "Ketheric Thorm",
+    "Enver Gortash",
+    "Orin the Red",
+    "Cazador Szarr"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q3",
+   "q": "What blights the lands around Moonrise Towers?",
+   "kind": "choice",
+   "choices": [
+    "A shadow curse",
+    "A plague of locusts",
+    "An endless winter",
+    "Hellfire"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q4",
+   "q": "Which inn shelters the refugees and the Harpers in the cursed lands?",
+   "kind": "text",
+   "answer": "Last Light Inn",
+   "accept": [
+    "\\blast light\\b"
+   ]
+  }
+ ]
+}

@@ -52,6 +52,22 @@ refuses gaps and repeats, so a failed attempt can't be left out. Three attempts 
 | `fight_act2_balthazar` | 1.5 h | the Balthazar fight is won |
 | `choice_act1_karlach` | 30 min | a third companion joins the party, or a fight is won |
 | `choice_act1_minthara` | 30 min | a fight is won, or the party is back in the Emerald Grove (or the Hollow) |
+| `fight_act1_grove_gate` | 30 min | the goblin raid at the Grove gate is won |
+| `fight_act1_dror_ragzlin` | 1 h | the throne-room fight is won |
+| `fight_act1_gith_patrol` | 45 min | the githyanki patrol fight is won (holdout) |
+| `fight_act2_moonrise_assault` | 1 h | the Moonrise main-floor fight is won |
+| `fight_act2_ketheric` | 1.5 h | the journal closes "Defeat Ketheric Thorm" |
+| `fight_act3_sarevok` | 1 h | the tribunal fight is won |
+| `fight_act3_cazador` | 1.5 h | the Cazador fight is won (holdout) |
+| `act1_level_3` | 1 h | every party member is level 3 or more |
+| `act1_recruit_3` | 1 h | three companions travel with the avatar |
+| `act1_goblin_camp_no_fight` | 45 min | the party is inside the Shattered Sanctum and no combat started on the way |
+| `act1_get_item` | 45 min | the party holds the Idol of Silvanus (holdout) |
+| `choice_act1_arabella` | 30 min | the journal closes "Save Arabella", or a fight is won |
+| `choice_act2_nightsong` | 30 min | the journal closes "The Chosen of Shar" or "Daughter of Darkness", or a fight is won |
+| `choice_act3_wyll_pact` | 30 min | the journal closes the Grand Duke's quest, or a fight is won (holdout) |
+| `crash_site_grove` | 1 h | the party reaches the Emerald Grove |
+| `act2_last_light` | 1 h | the party reaches the Last Light Inn (holdout) |
 
 The choice scenarios' goal only ends the attempt; the picks are compared with the models', never scored. The table
 says in words what each scenario's `goal` checks in game state; the scenario file is the definition.

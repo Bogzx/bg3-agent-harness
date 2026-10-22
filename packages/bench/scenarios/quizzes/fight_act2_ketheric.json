@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "fight_act2_ketheric",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "What keeps Ketheric Thorm from dying until it is broken?",
+   "kind": "choice",
+   "choices": [
+    "The Nightsong's power",
+    "A lich's phylactery",
+    "A devil's contract",
+    "A Netherbrain link"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "Which god of death makes Ketheric his Apostle?",
+   "kind": "text",
+   "answer": "Myrkul",
+   "accept": [
+    "\\bmyrkul\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Which aasimar, held as the Nightsong, is the source of Ketheric Thorm's immortality?",
+   "kind": "text",
+   "answer": "Aylin",
+   "accept": [
+    "\\baylin\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "What does Ketheric carry that the party needs for the end of the game?",
+   "kind": "choice",
+   "choices": [
+    "A Netherstone",
+    "The Crown of Karsus",
+    "The Orphic Hammer",
+    "The Blood of Lathander"
+   ],
+   "answer": "A"
+  }
+ ]
+}

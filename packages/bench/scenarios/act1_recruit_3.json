@@ -1,0 +1,57 @@
+{
+ "schema": 2,
+ "name": "act1_recruit_3",
+ "title": "Act 1 → three companions",
+ "about": "Sandbox (family 2): three companions in the party by any means (who joins is reported, never graded). claude-run-2 had Gale at once and Wyll in the Grove; Lae'zel and Astarion are close too.",
+ "family": "sandbox",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Roadside Cliffs near the crash site before Gale's portal is touched (claude-run-2 S005-pre-gale, Lae'zel lost after the crash): party level 2, companions (Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Roadside Cliffs near the crash site, out of combat, no dialogue open.",
+   "objective": "Have three companions travelling with you.",
+   "party": [
+    "Tav (Paladin 2)",
+    "Shadowheart (Cleric 2)"
+   ]
+  }
+ },
+ "goal": {
+  "companions": {
+   "gte": 3
+  }
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 1.0,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1016,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "methods": true,
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

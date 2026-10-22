@@ -1,0 +1,58 @@
+{
+ "schema": 2,
+ "name": "fight_act2_moonrise_assault",
+ "title": "Act 2 fight: the assault on Moonrise Towers",
+ "about": "Fight (family 1), large with allies: the Harpers' assault on Moonrise Towers' main floor against the Absolute's zealots and their leaders, about seventeen enemies. claude-run-2 S042 lost the first try (7 downs) and won the retry in 7 rounds from the doorway.",
+ "family": "fight",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 2, outside the main doors of Moonrise Towers with Jaheira's Harpers ready to attack (claude-run-2 S042-pre-moonrise-assault): party level 6, companions (Wyll, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "Moonrise Towers, outside the main hall's doors with the Harpers, out of combat.",
+   "objective": "Take the main floor of Moonrise Towers.",
+   "party": [
+    "Tav (Paladin 6)",
+    "Wyll (Warlock 6)",
+    "Karlach (Barbarian 6)",
+    "Shadowheart (Cleric 6)"
+   ]
+  }
+ },
+ "goal": {
+  "combats_won": {
+   "gte": 1
+  }
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 1.0,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1011,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

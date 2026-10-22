@@ -1,0 +1,36 @@
+{
+ "schema": 1,
+ "scenario": "fight_act1_grove_gate",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which tiefling leads the refugees who hold the gate of the druids' grove in Act 1?",
+   "kind": "text",
+   "answer": "Zevlor",
+   "accept": [
+    "\\bzevlor\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which human adventurer, back from a failed raid on the goblins, quarrels with the tiefling leader at the grove's gate after the fight?",
+   "kind": "text",
+   "answer": "Aradin",
+   "accept": [
+    "\\baradin\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Who leads the goblin war band camped in the ruined temple west of the grove?",
+   "kind": "choice",
+   "choices": [
+    "Priestess Gut, Dror Ragzlin and Minthara",
+    "Kagha and the shadow druids",
+    "Commander Zhalk",
+    "Ketheric Thorm"
+   ],
+   "answer": "A"
+  }
+ ]
+}

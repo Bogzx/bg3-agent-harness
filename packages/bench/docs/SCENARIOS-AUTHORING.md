@@ -72,3 +72,25 @@ decisions.md (`choice_act1_karlach`, `choice_act1_minthara`, neutral brief). Eve
 and draft it (step 4) with the same seed. The draft drops `needs_save`. Delete the placeholder by hand before
 `write_draft`, which never overwrites; that is safe because no series can run on a file that has no save. A choice scene's goal only ends the run; the choice
 itself is read from the trajectory.
+
+## Round 11 (2026-10-22): 23 scenarios
+
+Sixteen more, the same conventions (tests/test_scenario_set.py checks the set's shape, the holdout, the resolve split
+and the quizzes; tests/test_baseline_validity.py hosts each start in the fake mod and fails both baselines on it):
+
+- fights (10 in all, every act): `fight_act1_grove_gate` (allies, the first big fight), `fight_act1_dror_ragzlin`
+  (a boss in a crowd), `fight_act1_gith_patrol` (small and elite), `fight_act2_moonrise_assault` (large, with the
+  Harpers), `fight_act2_ketheric` (a boss; the goal is the journal's "Defeat Ketheric Thorm", so a phase change can't
+  end the run), `fight_act3_sarevok` (a boss), `fight_act3_cazador` (a boss in a crowd);
+- sandbox goals: `act1_level_3` (`party_level` gte 3, the lowest member), `act1_recruit_3` (`companions` gte 3),
+  `act1_goblin_camp_no_fight` (the Shattered Sanctum reached and no combat: the area is the D8 positive conjunct),
+  `act1_get_item` (`item` Idol of Silvanus);
+- choices: `choice_act1_arabella`, `choice_act2_nightsong`, `choice_act3_wyll_pact` (neutral brief; the goal is a
+  journal quest closing or a won fight, from the quest titles claude-run-2 recorded);
+- exploration: `crash_site_grove` (milestone `grove`), `act2_last_light` (milestone `last_light`). With `nautiloid`
+  they are the only ones `scenario.resolve` accepts today (one milestone).
+
+Holdout (run, never published): `fight_act1_gith_patrol`, `fight_act3_cazador`, `act1_get_item`,
+`choice_act3_wyll_pact`, `act2_last_light` (5 of 23, one per family but puzzle). Seeds 1008-1023. Every new file says
+`requires: {vision: false, min_context: null}`: nothing in the set reads the screen, and the context floor waits for a
+pilot's peak. The saves to make are in research/ovh/bench.md "Start saves to make".

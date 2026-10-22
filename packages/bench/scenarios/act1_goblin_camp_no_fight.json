@@ -1,0 +1,64 @@
+{
+ "schema": 2,
+ "name": "act1_goblin_camp_no_fight",
+ "title": "Act 1 → into the Shattered Sanctum without a fight",
+ "about": "Sandbox (family 2): reach the Shattered Sanctum inside the goblin camp with no combat on the way (talk, stealth, disguise, the tadpole; the method is reported). The positive conjunct is the Sanctum (D8): no combat alone would pass a do-nothing agent. claude-run-2 S015 got in by accepting Olak's war paint.",
+ "family": "sandbox",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the road from the Blighted Village to the goblin camp, before Olak's checkpoint at the camp gate (claude-run-2 S015-olak, the windmill goblins already beaten): party level 3, companions (Wyll, Gale, Shadowheart), the goblins at the camp neutral. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The road to the goblin camp, before its gate; out of combat, no dialogue open.",
+   "objective": "Get inside the Shattered Sanctum without a fight.",
+   "party": [
+    "Tav (Paladin 3)",
+    "Wyll (Warlock 3)",
+    "Gale (Wizard 3)",
+    "Shadowheart (Cleric 3)"
+   ]
+  }
+ },
+ "goal": {
+  "all": [
+   {
+    "area": "shattered sanctum"
+   },
+   {
+    "no_combat": true
+   }
+  ]
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 0.75,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1017,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "methods": true,
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

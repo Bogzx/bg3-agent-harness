@@ -1,0 +1,58 @@
+{
+ "schema": 2,
+ "name": "fight_act3_cazador",
+ "title": "Act 3 boss: Cazador in his dungeon",
+ "about": "Fight (family 1), a boss with a large crowd: the vampire lord Cazador Szarr and his werewolves, gur hunters and bats beneath Szarr Palace, about twenty-five enemies. claude-run-2 needed three tries (S074-S077); the winning one took 10 rounds and 1036 party HP.",
+ "family": "fight",
+ "holdout": true,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 3, the Lower City, Cazador's Dungeon below Szarr Palace, before the fight with Cazador starts (claude-run-2 S074-start): party level 11, companions (Gale, Karlach, Shadowheart), full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "Cazador's Dungeon below Szarr Palace, out of combat.",
+   "objective": "Defeat Cazador Szarr.",
+   "party": [
+    "Tav (Paladin 11)",
+    "Gale (Wizard 11)",
+    "Karlach (Barbarian 11)",
+    "Shadowheart (Cleric 11)"
+   ]
+  }
+ },
+ "goal": {
+  "combats_won": {
+   "gte": 1
+  }
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 1.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1014,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

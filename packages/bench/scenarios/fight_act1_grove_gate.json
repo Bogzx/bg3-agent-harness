@@ -1,0 +1,57 @@
+{
+ "schema": 2,
+ "name": "fight_act1_grove_gate",
+ "title": "Act 1 fight: the goblin raid on the Emerald Grove gate",
+ "about": "Fight (family 1) with allies: the goblin raiders at the Emerald Grove's gate, fought beside the tiefling defenders, the first large Act 1 fight. claude-run-2 S007 won it at level 1-2 with a three-member party.",
+ "family": "fight",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the road below the Emerald Grove's gate, before the goblin raid there begins (claude-run-2 S007-pre-grove-gate): Tav and Shadowheart level 2, Gale level 1, full HP. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The road to the Emerald Grove's gate, out of combat; fighting can be heard ahead.",
+   "objective": "Help the defenders drive off the goblins at the gate.",
+   "party": [
+    "Tav (Paladin 2)",
+    "Shadowheart (Cleric 2)",
+    "Gale (Wizard 1)"
+   ]
+  }
+ },
+ "goal": {
+  "combats_won": {
+   "gte": 1
+  }
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 0.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1008,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

@@ -1,0 +1,56 @@
+{
+ "schema": 2,
+ "name": "act2_last_light",
+ "title": "Act 2: across the shadow curse to Last Light",
+ "about": "Exploration (family 4): enter the shadow-cursed lands and reach the Last Light Inn, which needs a light against the curse (a moonlantern, an escort, Harper help). claude-run-2 S024-S025 went with Kar'niss's convoy to Moonrise first.",
+ "family": "exploration",
+ "holdout": true,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Rosymorn Monastery Trail at the exit to the shadow-cursed lands, not taken yet (claude-run-2 S024-pre-shadowlands): party level 5, companions (Karlach, Gale, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Rosymorn Monastery Trail at the edge of the shadow-cursed lands, out of combat, no dialogue open.",
+   "objective": "Reach the Last Light Inn.",
+   "party": [
+    "Tav (Paladin 5)",
+    "Karlach (Barbarian 5)",
+    "Gale (Wizard 5)",
+    "Shadowheart (Cleric 5)"
+   ]
+  }
+ },
+ "goal": {
+  "milestone": "last_light"
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 1.0,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1023,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

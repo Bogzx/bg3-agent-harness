@@ -1,0 +1,36 @@
+{
+ "schema": 1,
+ "scenario": "act1_goblin_camp_no_fight",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which goblin guards the checkpoint at the goblin camp's gate and offers worg-dung war paint?",
+   "kind": "text",
+   "answer": "Olak",
+   "accept": [
+    "\\bolak\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "What lets a party with tadpoles walk into the goblin camp unchallenged?",
+   "kind": "choice",
+   "choices": [
+    "Being taken for True Souls",
+    "Paying a toll",
+    "A forged letter",
+    "Wearing goblin masks"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q3",
+   "q": "Which travelling author and bard is held captive in the goblin camp?",
+   "kind": "text",
+   "answer": "Volo",
+   "accept": [
+    "\\bvolo\\b"
+   ]
+  }
+ ]
+}

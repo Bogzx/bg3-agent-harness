@@ -1,0 +1,54 @@
+{
+ "schema": 2,
+ "name": "crash_site_grove",
+ "title": "Act 1: from the crash site to the Emerald Grove",
+ "about": "Exploration (family 4): find the way from the nautiloid's crash site to the druids' grove. claude-run-2 S005-S007 took about two sessions (forced jumps over the wreck, Gale's portal, the ruins).",
+ "family": "exploration",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the crash site after the intellect devourers there were killed (claude-run-2 S005-devourers-done, Lae'zel lost after the crash): party level 2, companions (Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The crash site of the nautiloid, out of combat, no dialogue open.",
+   "objective": "Find the Emerald Grove.",
+   "party": [
+    "Tav (Paladin 2)",
+    "Shadowheart (Cleric 2)"
+   ]
+  }
+ },
+ "goal": {
+  "milestone": "grove"
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 1.0,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1022,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

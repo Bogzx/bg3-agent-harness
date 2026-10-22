@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "choice_act2_nightsong",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "What is the Nightsong?",
+   "kind": "choice",
+   "choices": [
+    "An aasimar, daughter of Selûne",
+    "A war hymn of the Absolute",
+    "A demon bound in a song",
+    "A githyanki relic"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "Which goddess of darkness wants Shadowheart to kill the Nightsong?",
+   "kind": "text",
+   "answer": "Shar",
+   "accept": [
+    "\\bshar\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Whose immortality does the Nightsong's imprisonment feed?",
+   "kind": "text",
+   "answer": "Ketheric Thorm",
+   "accept": [
+    "\\bketheric\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "Where is the Nightsong imprisoned?",
+   "kind": "choice",
+   "choices": [
+    "In the Shadowfell, below a ruined temple",
+    "In Moonrise Towers' prison",
+    "In the Underdark",
+    "In the Astral Plane"
+   ],
+   "answer": "A"
+  }
+ ]
+}

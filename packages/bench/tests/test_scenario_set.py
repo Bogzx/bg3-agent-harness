@@ -21,7 +21,31 @@ FAMILIES = {
     "fight_act2_balthazar": "fight",
     "choice_act1_karlach": "choice",
     "choice_act1_minthara": "choice",
+    "fight_act1_grove_gate": "fight",
+    "fight_act1_dror_ragzlin": "fight",
+    "fight_act1_gith_patrol": "fight",
+    "fight_act2_moonrise_assault": "fight",
+    "fight_act2_ketheric": "fight",
+    "fight_act3_sarevok": "fight",
+    "fight_act3_cazador": "fight",
+    "act1_level_3": "sandbox",
+    "act1_recruit_3": "sandbox",
+    "act1_goblin_camp_no_fight": "sandbox",
+    "act1_get_item": "sandbox",
+    "choice_act1_arabella": "choice",
+    "choice_act2_nightsong": "choice",
+    "choice_act3_wyll_pact": "choice",
+    "crash_site_grove": "exploration",
+    "act2_last_light": "exploration",
 }
+FIRST_SET = {
+    "nautiloid", "act1_gold_1000", "fight_act1_windmill", "fight_act2_house_of_healing", "fight_act2_balthazar",
+    "choice_act1_karlach", "choice_act1_minthara",
+}  # fmt: skip
+# The private holdout (BENCHMARK-PLAN.md): run, never published; about a fifth of the set, one per family but puzzle.
+HOLDOUT = {"fight_act1_gith_patrol", "fight_act3_cazador", "act1_get_item", "choice_act3_wyll_pact", "act2_last_light"}
+# Scenarios the legacy runner can play today: their goal is one milestone (scenario.resolve).
+RESOLVABLE = {"nautiloid", "crash_site_grove", "act2_last_light"}
 
 
 def validator():
@@ -115,9 +139,44 @@ def test_sandbox_gold_target_and_cap():
 
 
 def test_choice_scenes_use_a_neutral_brief():
-    for name in ("choice_act1_karlach", "choice_act1_minthara"):
+    for name in (n for n, f in FAMILIES.items() if f == "choice"):
         brief = raw(SET / f"{name}.json")["profile"]["character"]["brief"].lower()
         assert not re.search(r"devotion|protects|good|evil|oath", brief), name
+
+
+def test_the_set_covers_the_plan():
+    """BENCHMARK-PLAN.md: 20-30 scenarios, fights the core, every act's fights, sandbox goals, choices, exploration."""
+    fams = list(FAMILIES.values())
+    assert 20 <= len(FAMILIES) <= 30 and fams.count("fight") == 10 and fams.count("fight") > len(fams) / 3
+    assert fams.count("sandbox") == 5 and fams.count("choice") == 5 and fams.count("exploration") == 3
+    fights = [n for n, f in FAMILIES.items() if f == "fight"]
+    assert {re.match(r"fight_act(\d)_", n)[1] for n in fights} == {"1", "2", "3"}
+
+
+def test_the_holdout_is_about_a_fifth_and_spans_the_families():
+    loaded = [scenario.load(p) for p in FILES]
+    assert contamination.holdout_names(loaded) == HOLDOUT
+    assert 0.15 <= len(HOLDOUT) / len(FILES) <= 0.25
+    assert {FAMILIES[n] for n in HOLDOUT} == {"fight", "sandbox", "choice", "exploration"}
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
+def test_each_scenario_resolves_only_when_its_goal_is_one_milestone(path):
+    sc = scenario.load(path)
+    if path.stem in RESOLVABLE:
+        resolved = scenario.resolve(sc)
+        assert resolved["game_settings"]["seed"] == sc["game_settings"]["seed"]
+        assert "needs_save" not in resolved["start"]
+    else:
+        with pytest.raises(scenario.ScenarioError, match="not one milestone"):
+            scenario.resolve(sc)
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
+def test_requirements(path):
+    assert scenario.load(path)["requires"] == {"vision": False, "min_context": None}  # no scenario reads the screen yet
+    if path.stem not in FIRST_SET:  # the round-11 files say so; the first seven keep their digests (default requires)
+        assert raw(path)["requires"] == {"vision": False, "min_context": None}
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)

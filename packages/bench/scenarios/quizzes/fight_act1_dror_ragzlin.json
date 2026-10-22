@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "fight_act1_dror_ragzlin",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which deity was the ruined temple that the goblins now call the Shattered Sanctum built for?",
+   "kind": "choice",
+   "choices": [
+    "Selûne",
+    "Shar",
+    "Lathander",
+    "Tyr"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "Whom do the goblin camp's leaders serve?",
+   "kind": "choice",
+   "choices": [
+    "The Absolute",
+    "Lolth",
+    "Bane",
+    "Myrkul"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q3",
+   "q": "Which archdruid of the grove is held prisoner in the goblin camp?",
+   "kind": "text",
+   "answer": "Halsin",
+   "accept": [
+    "\\bhalsin\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "Which of the goblin camp's three leaders is a drow?",
+   "kind": "text",
+   "answer": "Minthara",
+   "accept": [
+    "\\bminthara\\b"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "fight_act3_sarevok",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which god does Sarevok Anchev serve?",
+   "kind": "choice",
+   "choices": [
+    "Bhaal",
+    "Bane",
+    "Myrkul",
+    "Shar"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "What does Sarevok's secret court of Bhaalist killers under the Lower City call itself?",
+   "kind": "text",
+   "answer": "The Murder Tribunal",
+   "accept": [
+    "\\bmurder tribunal\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Who is the Chosen of Bhaal in Baldur's Gate?",
+   "kind": "choice",
+   "choices": [
+    "Orin the Red",
+    "Enver Gortash",
+    "Ketheric Thorm",
+    "Raphael"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q4",
+   "q": "Which Flaming Fist investigator is the tribunal's captive?",
+   "kind": "text",
+   "answer": "Valeria",
+   "accept": [
+    "\\bvaleria\\b"
+   ]
+  }
+ ]
+}

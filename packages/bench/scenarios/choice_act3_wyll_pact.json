@@ -1,0 +1,65 @@
+{
+ "schema": 2,
+ "name": "choice_act3_wyll_pact",
+ "title": "Act 3 choice: Wyll's pact or his father",
+ "about": "Choice (family 3, claude-run-2 decisions.md D-xx, S068): Mizora offers to save the Grand Duke if Wyll binds himself to her for eternity; refusing breaks his pact and leaves the Duke to die. claude-run-2 broke the pact. The run ends when the journal closes the Duke's quest or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md).",
+ "family": "choice",
+ "holdout": true,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 3, camp, with Mizora waiting to talk about the Grand Duke, before speaking to her (claude-run-2 S068-mizora): party level 10, companions (Karlach, Wyll, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "Camp in Act 3, Mizora nearby; out of combat, no dialogue open.",
+   "objective": "Hear what Mizora has to say about the Grand Duke.",
+   "party": [
+    "Tav (Paladin 10)",
+    "Karlach (Barbarian 10)",
+    "Wyll (Warlock 10)",
+    "Shadowheart (Cleric 10)"
+   ]
+  }
+ },
+ "goal": {
+  "any": [
+   {
+    "quest_done": "the grand duke"
+   },
+   {
+    "combats_won": {
+     "gte": 1
+    }
+   }
+  ]
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 0.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1021,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A half-elf paladin with a mind flayer tadpole behind the eyes. Their values are yours to decide: choose as you think this character would, and say why.",
+   "roleplay": "light"
+  }
+ }
+}

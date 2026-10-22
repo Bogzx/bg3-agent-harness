@@ -1,0 +1,36 @@
+{
+ "schema": 1,
+ "scenario": "choice_act1_arabella",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which druid threatens a tiefling child caught stealing from the druids' grove?",
+   "kind": "text",
+   "answer": "Kagha",
+   "accept": [
+    "\\bkagha\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "What is the name of that tiefling child?",
+   "kind": "text",
+   "answer": "Arabella",
+   "accept": [
+    "\\barabella\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "What creature does the druid hold ready to punish the child?",
+   "kind": "choice",
+   "choices": [
+    "A snake",
+    "A wolf",
+    "A bear",
+    "A raven"
+   ],
+   "answer": "A"
+  }
+ ]
+}

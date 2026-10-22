@@ -1,0 +1,39 @@
+{
+ "schema": 1,
+ "scenario": "crash_site_grove",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "What kind of ship crashes at the start of Act 1?",
+   "kind": "choice",
+   "choices": [
+    "A mind flayer nautiloid",
+    "A githyanki red dragon",
+    "A spelljammer galleon",
+    "A Flaming Fist warship"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "Who is the archdruid of the grove near the crash site?",
+   "kind": "text",
+   "answer": "Halsin",
+   "accept": [
+    "\\bhalsin\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Who shelters in the druids' grove in Act 1?",
+   "kind": "choice",
+   "choices": [
+    "Tiefling refugees",
+    "Githyanki",
+    "Duergar slavers",
+    "The Flaming Fist"
+   ],
+   "answer": "A"
+  }
+ ]
+}

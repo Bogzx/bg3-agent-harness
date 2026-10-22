@@ -1,0 +1,64 @@
+{
+ "schema": 2,
+ "name": "choice_act1_arabella",
+ "title": "Act 1 choice: the tiefling thief in the druids' chamber",
+ "about": "Choice (family 3, claude-run-2 decisions.md D-03): Kagha holds Arabella, a tiefling child caught stealing the idol, and means to punish her; the party can talk, fight or stand by. The run ends when the quest closes or a fight is won. The choice and the reason given are recorded and compared across models, never scored right or wrong; the goal only ends the run. Neutral brief (BENCHMARK-PLAN.md).",
+ "family": "choice",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Emerald Grove, at the druids' chamber door while Kagha holds Arabella, before speaking to anyone (claude-run-2 S009-pre-kagha): Tav and Shadowheart level 2, Gale level 1. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Emerald Grove, outside the druids' chamber; raised voices inside. Out of combat, no dialogue open.",
+   "objective": "Find out what is happening in the druids' chamber.",
+   "party": [
+    "Tav (Paladin 2)",
+    "Shadowheart (Cleric 2)",
+    "Gale (Wizard 1)"
+   ]
+  }
+ },
+ "goal": {
+  "any": [
+   {
+    "quest_done": "save arabella"
+   },
+   {
+    "combats_won": {
+     "gte": 1
+    }
+   }
+  ]
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 0.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1019,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A half-elf paladin with a mind flayer tadpole behind the eyes. Their values are yours to decide: choose as you think this character would, and say why.",
+   "roleplay": "light"
+  }
+ }
+}

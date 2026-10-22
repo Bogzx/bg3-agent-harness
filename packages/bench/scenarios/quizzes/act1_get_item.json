@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "act1_get_item",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Where in the druids' grove is the idol kept?",
+   "kind": "choice",
+   "choices": [
+    "In the druids' inner ritual chamber",
+    "At the blacksmith's forge",
+    "In a trader's stall in the Hollow",
+    "In the village well"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "Which druid leads the grove while its archdruid is away?",
+   "kind": "text",
+   "answer": "Kagha",
+   "accept": [
+    "\\bkagha\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "What is Silvanus the god of?",
+   "kind": "choice",
+   "choices": [
+    "Wild nature",
+    "War",
+    "The dead",
+    "Trickery"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q4",
+   "q": "What is the druids' ritual that would seal the grove and drive out the refugees called?",
+   "kind": "text",
+   "answer": "The Rite of Thorns",
+   "accept": [
+    "\\brite of thorns\\b"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "schema": 2,
+ "name": "fight_act2_ketheric",
+ "title": "Act 2 boss: Ketheric Thorm under Moonrise",
+ "about": "Fight (family 1), a boss: Ketheric Thorm and his undead in the Mind Flayer Colony beneath Moonrise Towers, with the freed Nightsong (Aylin) fighting beside the party. claude-run-2 S045 lost the first try (Aylin killed); the retry freed her in round 3 and Ketheric died in S046 (round 7). The goal is the journal quest, not a won combat, so a phase change can't end the run early.",
+ "family": "fight",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 2, the Mind Flayer Colony beneath Moonrise Towers, at the chamber where Ketheric Thorm waits, before the fight starts (claude-run-2 S045-pre-ketheric-fight): party level 7, companions (Wyll, Karlach, Shadowheart), full HP after the restoration pod. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Mind Flayer Colony beneath Moonrise Towers, before Ketheric's chamber, out of combat.",
+   "objective": "Defeat Ketheric Thorm.",
+   "party": [
+    "Tav (Paladin 7)",
+    "Wyll (Warlock 7)",
+    "Karlach (Barbarian 7)",
+    "Shadowheart (Cleric 7)"
+   ]
+  }
+ },
+ "goal": {
+  "quest_done": "defeat ketheric thorm"
+ },
+ "runs": 5,
+ "caps": {
+  "run_hours": 1.5,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1012,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "turn_based",
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

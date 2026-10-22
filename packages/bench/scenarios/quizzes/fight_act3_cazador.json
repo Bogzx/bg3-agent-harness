@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "fight_act3_cazador",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "What is the name of the vampire lord of Szarr Palace?",
+   "kind": "text",
+   "answer": "Cazador",
+   "accept": [
+    "\\bcazador\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Which origin companion is one of that vampire lord's spawn?",
+   "kind": "text",
+   "answer": "Astarion",
+   "accept": [
+    "\\bastarion\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "How many souls does the vampire lord's ritual need?",
+   "kind": "choice",
+   "choices": [
+    "Seven thousand",
+    "Seven hundred",
+    "Seventy",
+    "Seven"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q4",
+   "q": "What is that ritual called?",
+   "kind": "choice",
+   "choices": [
+    "The Rite of Profane Ascension",
+    "The Rite of Thorns",
+    "The Nightsong's Prayer",
+    "The Dark Urge"
+   ],
+   "answer": "A"
+  }
+ ]
+}

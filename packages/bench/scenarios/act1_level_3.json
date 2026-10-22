@@ -1,0 +1,58 @@
+{
+ "schema": 2,
+ "name": "act1_level_3",
+ "title": "Act 1 → whole party level 3",
+ "about": "Sandbox (family 2): every party member reaches level 3, by any means the game allows (fights, quests, exploration, level-up screens); the method is reported, never graded. Gale starts a level behind, so the level-up screen is part of the job. Cap to be calibrated by one pilot run.",
+ "family": "sandbox",
+ "holdout": false,
+ "start": {
+  "kind": "save",
+  "save": null,
+  "save_sha1": null,
+  "needs_save": "Act 1, the Overgrown Ruins near the crash site after Gimblebock's looters left (claude-run-2 S005-ruins-bandits-gone): Tav and Shadowheart level 2, Gale level 1, no level-up pending. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "note": {
+   "where": "The Overgrown Ruins near the crash site, out of combat, no dialogue open.",
+   "objective": "Get every party member to level 3.",
+   "party": [
+    "Tav (Paladin 2)",
+    "Shadowheart (Cleric 2)",
+    "Gale (Wizard 1)"
+   ]
+  }
+ },
+ "goal": {
+  "party_level": {
+   "gte": 3
+  }
+ },
+ "runs": 3,
+ "caps": {
+  "run_hours": 1.0,
+  "max_cost": null,
+  "max_tokens": null
+ },
+ "game_settings": {
+  "difficulty": "Balanced",
+  "karmic_dice": false,
+  "seed": 1015,
+  "resolution": null,
+  "ui_scale": null,
+  "language": null
+ },
+ "timing": "realtime",
+ "methods": true,
+ "requires": {
+  "vision": false,
+  "min_context": null
+ },
+ "conditions": [
+  "rules"
+ ],
+ "profile": {
+  "character": {
+   "name": "Tav",
+   "brief": "A level-headed half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant: protects the weak, keeps promises, distrusts mind magic and anyone who offers easy power.",
+   "roleplay": "strict"
+  }
+ }
+}

@@ -1,0 +1,51 @@
+{
+ "schema": 1,
+ "scenario": "fight_act1_gith_patrol",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Name the githyanki officer whose patrol hunts the party's artefact on the roads of Act 1 and the Mountain Pass.",
+   "kind": "text",
+   "answer": "Sarth Baretha",
+   "accept": [
+    "\\bbaretha\\b"
+   ]
+  },
+  {
+   "id": "q2",
+   "q": "Who is the githyanki queen?",
+   "kind": "choice",
+   "choices": [
+    "Vlaakith",
+    "Zariel",
+    "Mizora",
+    "Lolth"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q3",
+   "q": "Which old monastery above the Mountain Pass hides a githyanki crèche?",
+   "kind": "choice",
+   "choices": [
+    "Rosymorn Monastery",
+    "Moonrise Towers",
+    "Last Light Inn",
+    "Waukeen's Rest"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q4",
+   "q": "What does Hold Person do to a humanoid that fails its save?",
+   "kind": "choice",
+   "choices": [
+    "Paralyses it",
+    "Frightens it",
+    "Blinds it",
+    "Knocks it prone"
+   ],
+   "answer": "A"
+  }
+ ]
+}
