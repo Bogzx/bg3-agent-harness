@@ -15,7 +15,7 @@ bg3play-serve = "bg3play.server:main"
 bg3play = "bg3play.memory.bridge_backend"  # the memory tools' backend (bg3ai.memtools.MemoryBackend)
 
 [dependency-groups]
-dev = ["pytest>=8", "playwright==1.64.0", "jsonschema>=4.20"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
+dev = ["pytest>=8", "pytest-timeout>=2.3", "playwright==1.64.0", "jsonschema>=4.20"]  # playwright: tests/e2e; 1.64.0 = the cached chromium 1243
 
 [tool.uv.sources]
 bg3-agent-harness = { workspace = true }
@@ -30,5 +30,8 @@ packages = ["src/bg3play"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["unit", "integration", "e2e: browser tests of the built web app (npm run build first; -m e2e)"]
-addopts = "-m 'not e2e'"
+markers = ["unit", "integration", "e2e: browser tests of the built web app (npm run build first; -m e2e)", "live"]
+addopts = "-m 'not e2e' --strict-markers --strict-config"
+# as the repo root's: a hung test fails after 300 s with every thread's stack
+timeout = 300
+timeout_method = "thread"

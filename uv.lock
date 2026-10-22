@@ -373,6 +373,7 @@ dev = [
     { name = "jsonschema" },
     { name = "playwright" },
     { name = "pytest" },
+    { name = "pytest-timeout" },
 ]
 
 [package.metadata]
@@ -386,6 +387,7 @@ dev = [
     { name = "jsonschema", specifier = ">=4.20" },
     { name = "playwright", specifier = "==1.64.0" },
     { name = "pytest", specifier = ">=8" },
+    { name = "pytest-timeout", specifier = ">=2.3" },
 ]
 
 [[package]]
