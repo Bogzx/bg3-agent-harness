@@ -73,6 +73,7 @@ CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
 MAX_BODY = 64 * 1024
 VIDEO_FILE = re.compile(r"^/api/v1/video/(rec-\d+-\d{4}\.mp4)$")
 KEEPALIVE_S = 15.0
+SHUTDOWN_S = 180.0  # Ctrl-C waits this long for the running session to end (session.py session-end: up to 120 s)
 DEFAULT_WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
 REPO = Path(__file__).resolve().parents[4]
 
@@ -165,9 +166,9 @@ class App:
                 s.stop()
             else:
                 cfg = sup.launch_config(config.load(self.store.playthroughs_dir / pt), body)
-                if self.recorder is not None:
-                    self.recorder.configure(cfg.recording.enabled, cfg.recording.fps, cfg.recording.height)
                 s.start(pt, resume=what == "resume", cfg=cfg)
+                if self.recorder is not None:  # the accepted start's [recording]; a refused one changes nothing
+                    self.recorder.configure(cfg.recording.enabled, cfg.recording.fps, cfg.recording.height)
         except config.ConfigError as e:
             return 400, {"v": v, "error": str(e)}
         except sup.SupervisorError as e:
@@ -607,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
             time.time,
             lambda view: hub.publish("supervisor", view),
             played=lambda pt: len(store.session_logs(pt)),
+            abort=getattr(runner, "abort", lambda: None),  # the legacy CLI's play.py gets the terminal's Ctrl-C
         )
     viewers = Viewers(time.time)
     game = screen = None
@@ -641,6 +643,8 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if supervisor is not None:  # the running session ends now: agent killed, memory ended, history row written
+            supervisor.shutdown(SHUTDOWN_S)
         stop.set()
         if rec_thread:
             rec_thread.join(15)  # the loop stops ffmpeg so the open segment is closed

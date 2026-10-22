@@ -318,3 +318,35 @@ def test_the_oom_streak_counts_game_deaths_by_oom_in_a_row():
     assert oom_streak([{"game_deaths": ["a"]}, {"game_deaths": ["", "b"]}]) == (1, "b")  # a crash that wasn't one
     assert oom_streak([{"game_deaths": ["a"]}, {"game_deaths": []}, {"game_deaths": ["b"]}]) == (1, "b")
     assert oom_streak([{"game_deaths": ["a"]}, {"outcome": "ok"}]) == (0, "")  # a history from before the field
+
+
+def test_a_session_that_never_started_doesnt_count_as_played(tmp_path: Path):
+    # B1: a "?" result (no agent, no game, refused spend) is kept in the history but plays nothing: Start is allowed
+    # again and asks for session 1 as a new game, not a resume of S002
+    sup, runner, _, _ = make(tmp_path, [], hours=0)
+    runner.run_session = lambda req, stop: (runner.requests.append(req), SessionResult("?", "error", detail="x"))[1]
+    sup.start("ilse", wait=True)
+    assert sup.detail == "session error: x" and sup.sessions_played("ilse") == 0
+    with pytest.raises(SupervisorError, match="no sessions to resume"):
+        sup.resume("ilse")
+    sup.start("ilse", wait=True)
+    assert [(r.session, r.resume) for r in runner.requests] == [(1, False), (1, False)]
+
+
+def test_shutdown_ends_the_running_session_now_without_the_keeper(tmp_path: Path):
+    # B3: the server going down aborts the session (the runner's abort), writes its history row, runs no keeper
+    sup, runner, log, _ = make(tmp_path, [], hours=0)
+    entered, aborted = threading.Event(), threading.Event()
+    sup.abort = aborted.set
+
+    def play():
+        entered.set()
+        assert aborted.wait(10)
+
+    runner.during[1] = play
+    sup.start("ilse")  # on a thread
+    assert entered.wait(10)
+    sup.shutdown(10)
+    assert not sup.thread.is_alive() and sup.state == "idle"
+    assert [h["outcome"] for h in sup.history("ilse")] == ["stopped"] and log == [("run", 1)]
+    sup.shutdown(10)  # idle: nothing to do

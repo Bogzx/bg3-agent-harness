@@ -2,6 +2,7 @@
 agent, game and memory on a fake clock."""
 
 import json
+import subprocess
 import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -41,6 +42,10 @@ class FakeAgent:
     def __init__(self, clock: Clock, script: list[tuple[str, float]], during: Callable[[int], None] | None = None):
         self.clock, self.script, self.during = clock, list(script), during
         self.calls: list[AgentCall] = []
+        self.kills = 0
+
+    def kill(self) -> None:
+        self.kills += 1
 
     def run(self, call: AgentCall) -> AgentRun:
         self.calls.append(call)
@@ -408,3 +413,59 @@ def test_session_py_opens_checks_and_ends_the_memory_session(tmp_path: Path):
     assert sp.stop_check({}) is None  # no deadline: a manual session may pause
     sp.end({})  # no wrap-up: left open, with a note in the session log
     assert "ended before wrap-up" in (mem / "sessions" / "S001.md").read_text()
+
+
+def test_abort_kills_the_agent_and_the_session_ends_stopped_with_its_files(tmp_path: Path):
+    # B3: the server shutting down mid-session: the agent is killed, run_session resumes nothing, memory end runs,
+    # runner.json gets the play row and runner.status.json session_ended
+    sup, agent, _, memory, keeper, runtime = make(tmp_path, [("aborted", 5)], blocks=["Keep playing."], hours=0)
+    sup.abort = sup.runner.abort  # type: ignore[attr-defined]
+    agent.during = lambda n: sup.shutdown()  # pyright: ignore[reportUnknownLambdaType]
+    sup.start(PT, wait=True)
+    assert agent.kills == 1 and len(agent.calls) == 1
+    assert [h["outcome"] for h in sup.history(PT)] == ["stopped"] and keeper.ran == []
+    assert [k for k, _ in memory.log] == ["start", "end"]
+    assert json.loads((runtime / "sessions" / PT / "runner.json").read_text())["history"][0]["reason"] == "aborted"
+    assert json.loads((runtime / "runner.status.json").read_text())["session_ended"] == 1300.0
+
+
+class PaidAgent(FakeAgent):
+    client_name = "pi"
+
+
+def test_a_paid_session_is_capped_by_the_global_budget_and_charges_it(tmp_path: Path):
+    # B4: budget.json cap 1.0 spent 0.9 -> the session's 5 USD cap is cut to 0.1; each process's cost is added
+    sup, agent, *_, runtime = make(tmp_path, [("exited", 10), ("exited", 20)], blocks=["Keep playing."], hours=0.5,
+                                   max_cost_usd=5.0)  # fmt: skip
+    paid = PaidAgent(agent.clock, list(agent.script))
+    sup.runner.agent_for = lambda c, d: paid  # type: ignore[attr-defined]
+    runtime.mkdir()
+    (runtime / "budget.json").write_text('{"cap": 1.0, "spent": 0.9}')
+    sup.start(PT, wait=True)
+    assert [c.max_cost_usd for c in paid.calls] == [pytest.approx(0.1), 1e-9]  # the 2nd: nothing left of the cap
+    budget = json.loads((runtime / "budget.json").read_text())
+    assert budget["spent"] == 1.9 and budget["last"] == {"usd": 0.5, "playthrough": PT, "session": "S001",
+                                                         "role": "play"}  # fmt: skip
+    # used up: the next session is refused before it starts, and the refusal is what the UI shows
+    sup.resume(PT, wait=True)
+    assert sup.detail.startswith("session error: the global budget is used up") and len(paid.calls) == 2
+    assert sup.sessions_played(PT) == 1
+
+
+def test_a_paid_session_without_a_budget_is_refused(tmp_path: Path):
+    sup, agent, *_ = make(tmp_path, max_cost_usd=5.0)
+    sup.runner.agent_for = lambda c, d: PaidAgent(agent.clock, [])  # type: ignore[attr-defined]
+    sup.start(PT, wait=True)
+    assert "needs a global budget, runtime/budget.json" in sup.detail and sup.sessions_played(PT) == 0
+
+
+def test_session_py_timeouts_are_no_answer_and_the_session_plays_on(tmp_path: Path):
+    # B5: session.py hanging past its timeout neither opens, blocks nor ends the session; the run goes on
+    def hang(args: list[str], **kw: Any) -> Any:
+        raise subprocess.TimeoutExpired(args, kw["timeout"])
+
+    sup, *_ = make(tmp_path, hours=1.0)
+    sup.runner.memory_for = lambda mem: hr.SessionPy(mem, run=hang)  # type: ignore[attr-defined]
+    sup.start(PT, wait=True)
+    assert [(h["session"], h["outcome"]) for h in sup.history(PT)] == [("S001", "ok"), ("S002", "ok")]
+    assert sup.detail == "hours budget spent"

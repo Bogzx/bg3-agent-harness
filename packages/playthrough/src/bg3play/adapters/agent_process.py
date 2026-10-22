@@ -8,7 +8,8 @@ conversation (pi's agent dir is <sid>.pi).
 
 A watchdog ends the process at its time cap (reason "cap") or when the game watch reports a fault ("crash"/"hang",
 fault_at set); the pump ends it once the cost its usage events report reaches the call's cap ("cost_cap");
-otherwise its exit is reason "exited". Process start, the wait and the clock are passed in, so tests
+`kill` (the server shutting down) ends it at once ("aborted"), also one
+not started yet; otherwise its exit is reason "exited". Process start, the wait and the clock are passed in, so tests
 drive it with a fake process.
 """
 
@@ -44,7 +45,7 @@ def popen(cmd: list[str], cwd: Path, env: dict[str, str]) -> Proc:
 class AgentRun:
     """bg3harness.session.AgentResult for one process."""
 
-    reason: str  # exited | cap | cost_cap | crash | hang
+    reason: str  # exited | cap | cost_cap | crash | hang | aborted
     exit_code: int | None
     started: float
     ended: float
@@ -79,6 +80,18 @@ class ClientAgent:
     ):
         self.client, self.model, self.effort, self.cwd, self.clock = client, model, effort, cwd, clock
         self.fault, self.spawn, self.watch_s = fault, spawn, watch_s
+        self._lock = threading.Lock()
+        self._proc: Proc | None = None
+        self._stopped: list[tuple[str, float]] = []
+        self._killed = False
+
+    def kill(self) -> None:
+        """Ends the running process now and any this agent would start after it (reason "aborted")."""
+        with self._lock:
+            self._killed = True
+            if self._proc is not None and not self._stopped:
+                self._stopped.append(("aborted", self.clock()))
+                self._proc.kill()
 
     @property
     def client_name(self) -> str:
@@ -106,6 +119,11 @@ class ClientAgent:
         proc = self.spawn(self.client.command(req), self.cwd, env)
         done = done or threading.Event()
         stopped: list[tuple[str, float]] = []  # (reason, when) the watchdog stopped it
+        with self._lock:
+            self._proc, self._stopped = proc, stopped
+            if self._killed:
+                stopped.append(("aborted", self.clock()))
+                proc.kill()
         dog = threading.Thread(target=self._watch, args=(proc, start + call.cap_s, done, stopped), daemon=True)
         dog.start()
         cost: float | None = None
@@ -125,6 +143,8 @@ class ClientAgent:
                     for text in clients.format_event(e):
                         human.write(f"{datetime.now():%H:%M:%S} {text}\n")
             code = proc.wait()
+        with self._lock:
+            self._proc = None
         done.set()
         dog.join()
         reason, at = stopped[0] if stopped else ("exited", None)

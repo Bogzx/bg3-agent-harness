@@ -9,9 +9,12 @@
         keeper.run_keeper(pt, result)                     # between sessions, joined before the next start
         history += result                                 # <runtime>/sessions/<pt>/supervisor.json
 
-Stop is soft: the running session is asked to finish (stop event), the loop starts no other. One playthrough runs
-at a time (one game). `Supervisor.run` is synchronous; `start`/`resume` run it on a thread. Clock and runner are
-passed in, so tests drive whole playthroughs with a fake runner and a fake clock.
+Stop is soft: the running session is asked to finish (stop event), the loop starts no other. Shutdown (the server
+going down) is hard: `abort` ends the session's agent now, the session still ends its memory and gets its history
+row, no keeper runs. A session that never started (sid "?": no agent, no game, refused spend) is in the history but
+doesn't count as played. One playthrough runs at a time (one game). `Supervisor.run` is synchronous; `start`/`resume`
+run it on a thread. Clock and runner are passed in, so tests drive whole playthroughs with a fake runner and a fake
+clock.
 """
 
 from __future__ import annotations
@@ -184,10 +187,12 @@ class Supervisor:
     on_change: Callable[[dict[str, Any]], object] = lambda state: None  # the SSE hub ("supervisor" events)
     # sessions played before the supervisor kept a history (the runner's own logs); None = only its history
     played: Callable[[str], int] | None = None
+    abort: Callable[[], None] = lambda: None  # ends the running session's agent now (HarnessRunner.abort)
     pt: str | None = None
     state: str = "idle"  # idle | running | stopping
     detail: str = ""
     session: str | None = None
+    closing: bool = False  # shutdown: the loop runs no keeper and starts nothing
     stop_event: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -196,7 +201,7 @@ class Supervisor:
         return read_history(history_path(self.runtime, pt))
 
     def sessions_played(self, pt: str, hist: list[dict[str, Any]] | None = None) -> int:
-        n = len(self.history(pt) if hist is None else hist)
+        n = sum(1 for h in (self.history(pt) if hist is None else hist) if h.get("session") != "?")
         return max(n, self.played(pt)) if self.played else n
 
     def view(self) -> dict[str, Any]:
@@ -222,6 +227,7 @@ class Supervisor:
                 (self.playthroughs / pt).mkdir(parents=True, exist_ok=True)
                 config.save(self.playthroughs / pt, cfg)
             self.stop_event = threading.Event()
+            self.closing = False
             self._set(pt=pt, state="running", detail="", session=None)
             return cfg
 
@@ -248,6 +254,19 @@ class Supervisor:
             self.stop_event.set()
             self._set(state="stopping", detail="finishing the current session")
 
+    def shutdown(self, timeout: float | None = None) -> None:
+        """The server is going down: the running session ends now and the loop with it; waits up to `timeout` for
+        the session's memory end and history row."""
+        with self.lock:
+            if self.state == "idle":
+                return
+            self.closing = True
+            self.stop_event.set()
+            self._set(state="stopping", detail="the server is shutting down")
+        self.abort()
+        if self.thread is not None:
+            self.thread.join(timeout)
+
     def _run(self, pt: str, cfg: config.PlaythroughConfig, resume: bool) -> None:
         started = self.clock()
         path = history_path(self.runtime, pt)
@@ -272,7 +291,7 @@ class Supervisor:
                 res = self.runner.run_session(req, self.stop_event)
                 hist.append(asdict(res))
                 write_history(path, hist)
-                if cfg.keeper.enabled and res.outcome != "error":
+                if cfg.keeper.enabled and res.outcome != "error" and not self.closing:
                     self._set(detail="memory keeper")
                     self.keeper.run_keeper(pt, res)
                 if res.outcome == "finished":

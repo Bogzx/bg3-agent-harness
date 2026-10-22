@@ -497,3 +497,24 @@ def test_the_recorders_first_spec_is_the_followed_playthroughs(store: RunStore):
     (pts / "broken").mkdir()
     (pts / "broken" / "playthrough.toml").write_text("v = [")
     assert record_spec(store.runtime / "video", "libx264", pts, "broken").height == 720
+
+
+def test_a_refused_start_leaves_the_recorder_alone(store: RunStore, web: Path):
+    # B2: a Start the supervisor refuses (another playthrough running) must not apply its [recording]
+    from bg3play import config
+    from bg3play.recorder import Recorder, RecordSpec
+    from bg3play.supervisor import SupervisorError
+
+    (store.playthroughs_dir / "b").mkdir()
+    config.save(store.playthroughs_dir / "b", config.validate({"v": 1, "name": "b"}))
+
+    class Busy:
+        pt = "a"
+
+        def start(self, pt, resume=False, cfg=None):
+            raise SupervisorError("a is running")
+
+    recorder = Recorder(RecordSpec(store.runtime / "video"), probe=lambda: None, clock=lambda: 1.0)
+    app = App(store, Hub(store, generation="g"), web, recorder=recorder, supervisor=Busy())  # type: ignore[arg-type]
+    assert app.control("b", "start", {"recording": False}) == (409, {"v": 1, "error": "a is running"})
+    assert recorder.enabled

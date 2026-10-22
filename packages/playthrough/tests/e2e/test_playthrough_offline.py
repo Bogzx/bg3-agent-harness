@@ -225,7 +225,11 @@ def test_two_sessions_through_run_session_with_the_keeper_between(played):
     assert [(k["sid"], k["status"], k["client"]) for k in keeps] == [("S001", "ok", "pi"), ("S002", "no_changes", "pi")]
     # each keeper pass: 2 stub responses billed $0.0125 each, under the default cap ($0.05), added to the budget
     assert [k["cost_usd"] for k in keeps] == [0.025, 0.025]
-    assert json.loads((played["runtime"] / "budget.json").read_text())["spent"] == 0.05
+    # and the play sessions' processes too (B4: the app's sessions charge the global budget, as play.py's do)
+    play_cost = sum(h["cost_usd"] for h in hist)
+    assert play_cost > 0
+    spent = json.loads((played["runtime"] / "budget.json").read_text())["spent"]
+    assert spent == pytest.approx(0.05 + play_cost)
     assert QUEST in (played["memory"] / "quests.md").read_text()
 
 

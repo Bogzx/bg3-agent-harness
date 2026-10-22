@@ -28,6 +28,11 @@ controller's notes (an older save loaded after the newest crashed) go into the r
 AttachedGame (`bg3play-serve --attach`) reads a running game over the bridge and can't relaunch it, so a game fault
 ends the session. A game death by OOM counts toward the Supervisor's OOM streak: at OOM_STREAK in a row the game is
 not relaunched and the run ends. `--session-runner legacy` (adapters/legacy_cli.py) runs play.py, which launches it.
+
+Spend: a paid client (bg3harness.spend: pi) plays only with the global budget runtime/budget.json, as play.py does:
+the session is refused without it or once it is used up, its cost cap ([session] max_cost_usd) is cut to what the
+budget has left, and each agent process's cost is added to it when the process ends. `abort` (the server shutting
+down) kills the running agent; the session ends "stopped" with its memory ended and its files written.
 """
 
 from __future__ import annotations
@@ -43,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from bg3harness import client_setup
+from bg3harness import client_setup, spend
 from bg3harness.runner import policy
 from bg3harness.session import (
     RecoverFailure,
@@ -71,6 +76,7 @@ class Agent(Protocol):
     def client_name(self) -> str: ...  # the client CLI (the kickoff's pace pre-flight names its tools)
 
     def run(self, call: AgentCall) -> AgentRun: ...
+    def kill(self) -> None: ...  # ends the running process now and any later one
 
 
 class Game(Protocol):
@@ -127,6 +133,19 @@ def kickoff(
     return prompts.build_kickoff(sid, req.playthrough, loaded, notes, briefing.strip(), pace=pace)
 
 
+def session_cap(client: str, max_cost: float, budget: Path) -> tuple[float, str | None]:
+    """(the session's cost cap, 0 = none; why it is refused). A paid client's cap is cut to what the global budget
+    has left (bg3harness.spend.run_cap); an unreadable budget refuses."""
+    if not spend.is_paid(client):
+        return max_cost, None
+    try:
+        b = spend.read_budget(budget)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        cap, why = spend.run_cap(client, max_cost if max_cost > 0 else None, b)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    except spend.BudgetError as e:
+        return 0.0, str(e)
+    return cap or 0.0, why
+
+
 class OomStreakError(RuntimeError):
     """The game ran out of memory OOM_STREAK times in a row: not relaunched (the Supervisor ends the run)."""
 
@@ -160,6 +179,8 @@ class AppSessionHooks:
         max_cost_usd: float,
         log: Callable[[str], None],
         oom_streak: int = 0,
+        budget: Path | None = None,
+        aborted: Callable[[], bool] = lambda: False,
     ):
         self.agent, self.game, self.memory, self.sdir, self.sid, self.env = agent, game, memory, sdir, sid, env
         self.stop, self.clock, self.grace_s, self.max_cost_usd, self._log = stop, clock, grace_s, max_cost_usd, log
@@ -167,6 +188,8 @@ class AppSessionHooks:
         self.runs: list[AgentRun] = []
         self.oom_streak = oom_streak  # OOM deaths in a row so far (the request's, then this session's)
         self.deaths: list[str] = []
+        self.budget = budget  # runtime/budget.json each process's cost is added to (a paid client); None = unpaid
+        self._aborted = aborted
 
     def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> AgentRun:
         spent = sum(r.cost_usd or 0.0 for r in self.runs)
@@ -176,6 +199,17 @@ class AppSessionHooks:
         )  # fmt: skip
         res = self.agent.run(call)
         self.runs.append(res)
+        if self.budget is not None and res.cost_usd:
+            try:
+                spend.add_spend(  # pyright: ignore[reportUnknownMemberType]
+                    self.budget,
+                    res.cost_usd,
+                    playthrough=self.env.get("BG3AI_PLAYTHROUGH"),
+                    session=self.sid,
+                    role="play",
+                )
+            except (OSError, spend.BudgetError) as e:
+                self._log(f"{self.sid}: budget update failed ({e})")
         return res
 
     def session_end(self, planned_end: float) -> float:
@@ -200,7 +234,7 @@ class AppSessionHooks:
         return self.save
 
     def aborted(self) -> bool:
-        return False
+        return self._aborted()
 
     def stop_requested(self) -> bool:
         return self.stop.is_set()
@@ -256,6 +290,14 @@ class HarnessRunner:
     clock: Callable[[], float]
     recovery: Recovery = field(default_factory=Recovery)
     log: Callable[[str], None] = lambda msg: None
+    _abort: threading.Event = field(default_factory=threading.Event, init=False)
+    _agent: Agent | None = field(default=None, init=False)
+
+    def abort(self) -> None:
+        """The server is going down: the running session's agent is killed and the session ends (no resume)."""
+        self._abort.set()
+        if (agent := self._agent) is not None:
+            agent.kill()
 
     def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         cfg, pt = req.config, req.playthrough
@@ -265,11 +307,29 @@ class HarnessRunner:
             agent = self.agent_for(cfg, sdir)
         except SupervisorError as e:
             return SessionResult("?", "error", detail=str(e))
+        budget = self.runtime / "budget.json"
+        max_cost, refused = session_cap(agent.client_name, cfg.session.max_cost_usd, budget)
+        if refused:
+            return SessionResult("?", "error", detail=refused)
+        self._agent = agent
+        if self._abort.is_set():
+            agent.kill()
+        try:
+            return self._play(req, stop, agent, max_cost, budget if spend.is_paid(agent.client_name) else None)
+        finally:
+            self._agent = None
+
+    def _play(
+        self, req: SessionRequest, stop: threading.Event, agent: Agent, max_cost: float, budget: Path | None
+    ) -> SessionResult:
+        cfg, pt = req.config, req.playthrough
+        sdir = self.runtime / "sessions" / pt
         predicted = f"S{req.session:03d}"
         self.game.begin(sdir, self.playthroughs / pt / "memory")
         hooks = AppSessionHooks(
             agent, self.game, self.memory_for(self.playthroughs / pt / "memory"), sdir, predicted, {}, stop,
-            self.clock, self.recovery.hard_stop_grace_s, cfg.session.max_cost_usd, self.log, req.oom_streak,
+            self.clock, self.recovery.hard_stop_grace_s, max_cost, self.log, req.oom_streak, budget,
+            self._abort.is_set,
         )  # fmt: skip
         if not self.game.ok():
             try:
@@ -321,9 +381,8 @@ class HarnessRunner:
         detail = f"reason={out.result.reason} exit={out.result.exit_code}"
         if out.invalid or out.gave_up:
             detail += f" ({out.invalid or out.gave_up})"
-        return SessionResult(
-            sid, outcome_of(out, stop.is_set()), progress, out.started, ended, cost, detail, tuple(hooks.deaths)
-        )
+        outcome = "stopped" if self._abort.is_set() else outcome_of(out, stop.is_set())
+        return SessionResult(sid, outcome, progress, out.started, ended, cost, detail, tuple(hooks.deaths))
 
 
 def write_status(runtime: Path, **fields: Any) -> None:
@@ -393,18 +452,25 @@ class AttachedGame:
         return []
 
 
+SESSION_PY_TIMEOUT_S = 120
+
+
 class SessionPy:
     """The playthrough memory's session lifecycle (bg3play.memory.session's start, stop, session-end), run as
     runner/play.py runs it: a subprocess with the session's clock env, so its env reads are the session's."""
 
-    def __init__(self, mem: Path, python: str = sys.executable):
-        self.mem, self.python = mem, python
+    def __init__(self, mem: Path, python: str = sys.executable, run: Callable[..., Any] = subprocess.run):
+        self.mem, self.python, self.run = mem, python, run
 
     def _run(self, cmd: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [self.python, "-m", "bg3play.memory.session", cmd, "--memory-dir", str(self.mem)],
-            capture_output=True, text=True, env={**os.environ, **env}, stdin=subprocess.DEVNULL, timeout=120,
-        )  # fmt: skip
+        """session.py's answer; one that times out is no answer (exit 124, no output): no session opened, nothing
+        blocks the stop, the end is skipped, as when session.py fails."""
+        args = [self.python, "-m", "bg3play.memory.session", cmd, "--memory-dir", str(self.mem)]
+        try:
+            return self.run(args, capture_output=True, text=True, env={**os.environ, **env}, stdin=subprocess.DEVNULL,
+                            timeout=SESSION_PY_TIMEOUT_S)  # fmt: skip
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(args, 124, "", f"session.py {cmd} timed out")
 
     def start(self, env: dict[str, str]) -> tuple[str | None, str]:
         r = self._run("start", env)

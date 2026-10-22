@@ -142,3 +142,18 @@ def test_the_cost_cap_stops_the_process(tmp_path: Path):
     a, spawned = agent(usage, hold=True)
     res = a.run(call(tmp_path, max_cost_usd=0.5))
     assert (res.reason, res.cost_usd) == ("cost_cap", 0.6) and spawned[1].killed
+
+
+def test_kill_ends_the_running_process_and_any_later_one(tmp_path: Path):
+    a, spawned = agent([SAY], hold=True)
+    parse = a.client.parse
+
+    def kill_on_first_line(line: str) -> list[clients.Event]:  # the server shuts down while the process plays
+        a.kill()
+        return parse(line)
+
+    a.client.parse = kill_on_first_line  # type: ignore[method-assign]
+    res = a.run(call(tmp_path))
+    assert (res.reason, res.exit_code) == ("aborted", -9) and spawned[1].killed
+    res = a.run(call(tmp_path, resume=True))  # a resume after the kill is ended at once
+    assert res.reason == "aborted" and spawned[3].killed
