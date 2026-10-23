@@ -166,6 +166,8 @@ def test_overlay_transparent_and_panel_flags(browser: Browser, site: Site):
     expect(page.locator(".box.goal")).to_be_visible()
     expect(page.locator(".box.party")).to_be_visible()
     expect(page.locator(".box.tool")).to_be_visible()
+    expect(page.locator(".box.cost")).to_be_visible()
+    expect(page.locator(".box.cost .label")).to_have_text("cost")
     assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgba(0, 0, 0, 0)"
     assert page.evaluate("[document.documentElement.scrollWidth, document.documentElement.scrollHeight]") == [
         1920,
@@ -173,6 +175,9 @@ def test_overlay_transparent_and_panel_flags(browser: Browser, site: Site):
     ]
     page.goto(f"{site['url']}/overlay?pt={PT}&panels=party")
     expect(page.locator(".box.party")).to_be_visible()
+    expect(page.locator(".box")).to_have_count(1)
+    page.goto(f"{site['url']}/overlay?pt={PT}&panels=cost")
+    expect(page.locator(".box.cost")).to_be_visible()
     expect(page.locator(".box")).to_have_count(1)
     ctx.close()
 

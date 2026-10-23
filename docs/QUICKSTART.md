@@ -185,8 +185,8 @@ uv run --project packages/playthrough bg3play-serve --runtime runtime --playthro
 - Recording (`--record`): ffmpeg records the game window into MP4 segments under `runtime/video/`, with a 20 GB
   cap (`--video-cap-gb`) and a pause when RAM or heat runs high. It needs the game's `DISPLAY` and `XAUTHORITY`.
   The NVENC encoder is the default; `--encoder libx264` works without an NVIDIA GPU.
-- Overlay and Replay: `/overlay` is a transparent 1920x1080 page for OBS; Replay steps through a session's
-  events beside its recorded video.
+- Overlay and Replay: `/overlay` is a transparent 1920x1080 page for OBS (goal, speech, party, last action, clock
+  and billed cost); Replay steps through a session's events beside its recorded video.
 
 The server binds to localhost. From another machine, start it with `--host` and `--token` (or `$BG3PLAY_TOKEN`);
 writes then need that bearer token. More in [packages/playthrough/README.md](../packages/playthrough/README.md).

@@ -1,5 +1,5 @@
-// /overlay?pt=<name>&panels=goal,say,party,tool,clock&theme=dark: what the stream overlay shows. Pure.
-export const PANELS = ["goal", "say", "party", "tool", "clock"] as const;
+// /overlay?pt=<name>&panels=goal,say,party,tool,clock,cost&theme=dark: what the stream overlay shows. Pure.
+export const PANELS = ["goal", "say", "party", "tool", "clock", "cost"] as const;
 export type Panel = (typeof PANELS)[number];
 
 export interface OverlayOptions {

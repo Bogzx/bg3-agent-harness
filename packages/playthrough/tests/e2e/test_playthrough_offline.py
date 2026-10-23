@@ -292,6 +292,7 @@ def test_every_screen_and_payload_over_the_played_run(page, played, tmp_path):
         expect(page.get_by_text(sign).first).to_be_visible()
     page.goto(f"{url}/overlay?pt={PT}")
     expect(page.locator(".box.tool")).to_be_visible()
+    expect(page.locator(".box.cost")).to_be_visible()
     found = payloads(url, PT)
     assert {"replay/S001", "replay/S002", "memory/diff quests.md"} <= set(found)
     errors = type_errors(found, tmp_path)

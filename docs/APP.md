@@ -99,7 +99,8 @@ it through `runner/play.py`.
 - **Launch**: pick a name, a client profile, a character brief, difficulty, session minutes, a cost cap and whether
   to record; then Start (a new playthrough) or Resume (the next session of an existing one).
 - **Overlay** (`/overlay`): a transparent 1920x1080 page for OBS as a browser source: last action, goal, what the
-  agent says, party HP and the clock.
+  agent says, party HP, the clock and the billed cost. `?panels=` picks a subset of `goal,say,party,tool,clock,cost`
+  (all of them if omitted); `?pt=` picks the playthrough.
 
 ![Memory](img/app-memory.png)
 
