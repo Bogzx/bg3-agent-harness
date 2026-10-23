@@ -2,7 +2,7 @@
   // /overlay: a transparent 1920x1080 page for OBS (a browser source). No scrolling, big type.
   import { onMount } from "svelte";
   import { api, openStream } from "./lib/api";
-  import { hpPct, mmss } from "./lib/format";
+  import { hpPct, mmss, usd } from "./lib/format";
   import { clip, parseOverlay } from "./lib/overlay";
   import { applyEvent, fromSnapshot, says, secondsLeft, type WatchState } from "./lib/watch";
 
@@ -84,6 +84,13 @@
           <div class="big">{left === null ? "ended" : mmss(left)}</div>
         </div>
       {/if}
+      {#if on("cost")}
+        <div class="box cost">
+          <div class="label">cost</div>
+          <div class="big">{usd(s.cost.total_usd)}</div>
+          <div class="last">last {usd(s.cost.last_session_usd)}</div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -113,7 +120,10 @@
   .bar { grid-column: 1 / -1; height: 6px; background: var(--hp-bg); border-radius: 3px; overflow: hidden; }
   .bar div { height: 100%; background: var(--ok); }
   .bar div.low { background: var(--bad); }
-  .clock { flex: 0 0 170px; text-align: center; display: flex; flex-direction: column; justify-content: center; }
+  .clock, .cost { text-align: center; display: flex; flex-direction: column; justify-content: center; }
+  .clock { flex: 0 0 170px; }
+  .cost { flex: 0 0 200px; }
   .big { font: 700 44px var(--mono); }
+  .last { font-size: 16px; color: var(--muted); margin-top: 2px; }
   .err { position: absolute; bottom: 32px; left: 32px; color: var(--bad); }
 </style>

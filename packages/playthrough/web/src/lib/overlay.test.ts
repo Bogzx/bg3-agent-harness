@@ -5,10 +5,11 @@ describe("overlay options", () => {
   it("parses panels, playthrough and theme", () => {
     const all = parseOverlay("");
     expect([...all.panels]).toEqual([...PANELS]);
+    expect(PANELS).toContain("cost");
     expect(all.pt).toBeNull();
     expect(all.theme).toBe("dark");
-    const o = parseOverlay("?pt=ilse&panels=party,%20goal,bogus&theme=light");
-    expect([...o.panels]).toEqual(["party", "goal"]);
+    const o = parseOverlay("?pt=ilse&panels=party,%20goal,cost,bogus&theme=light");
+    expect([...o.panels]).toEqual(["party", "goal", "cost"]);
     expect(o.pt).toBe("ilse");
     expect(o.theme).toBe("light");
   });
