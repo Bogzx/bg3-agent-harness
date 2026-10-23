@@ -66,6 +66,8 @@ python3 runner/dashboard/seriesview.py
 
 # register a start save for a scenario (copies it, runs the save inspector, writes registration.json)
 uv run --project packages/bench python -m bg3bench.authoring register <save folder> <store> <name>
+# validate a human baseline results file (docs/HUMAN-BASELINE.md)
+uv run --project packages/bench python -m bg3bench.human check runtime/human/owner.json
 ```
 
 `plan` is a dry run: the jobs, the budget reserve, and what a session run (per condition and client) and play.py
