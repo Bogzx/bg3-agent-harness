@@ -207,7 +207,7 @@ def test_check_cli_json(tmp_path, capsys):
     assert got["ok"] is False and any("YYYY-MM-DD" in e for e in got["errors"])
 
 
-def test_check_cli_not_json_or_missing(tmp_path, capsys):
+def test_check_cli_not_json_utf8_or_missing(tmp_path, capsys):
     missing = tmp_path / "gone.json"
     assert human.main(["check", str(missing)]) == 2
     assert "refusing:" in capsys.readouterr().err
@@ -215,6 +215,9 @@ def test_check_cli_not_json_or_missing(tmp_path, capsys):
     path.write_text("{")
     assert human.main(["check", str(path)]) == 2
     assert "not JSON" in capsys.readouterr().err
+    path.write_bytes(b"\xff\xfe{}")
+    assert human.main(["check", str(path)]) == 2
+    assert "not UTF-8" in capsys.readouterr().err
 
 
 def test_check_cli_scenarios_dir(tmp_path, capsys):

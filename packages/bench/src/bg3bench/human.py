@@ -235,6 +235,9 @@ def main(
     except json.JSONDecodeError as e:
         print(f"refusing: {args.file}: not JSON ({e.msg})", file=err)
         return 2
+    except UnicodeDecodeError:
+        print(f"refusing: {args.file}: not UTF-8 text", file=err)
+        return 2
     got = report(data, scenarios)
     if args.json:
         print(json.dumps(got), file=out)
