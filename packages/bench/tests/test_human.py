@@ -154,6 +154,87 @@ def model_run(i, passed):
     return man, res
 
 
+def test_load_suite_reads_the_package_scenarios():
+    sc = human.load_suite()
+    assert "nautiloid" in sc and "fight_act1_windmill" in sc
+    assert sc["fight_act1_windmill"]["family"] == "fight"
+
+
+def test_load_suite_empty_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="no scenario files"):
+        human.load_suite(tmp_path)
+
+
+def test_report_ok_and_errors():
+    data = results_file(attempt(), attempt(n=2, passed=False))
+    assert human.report(data, SCENARIOS) == {"ok": True, "errors": [], "player": "owner", "attempts": 2}
+    bad = human.report(results_file(attempt(), attempt(n=3)), SCENARIOS)
+    assert bad["ok"] is False and bad["attempts"] == 2
+    assert any("numbered 1..2" in e for e in bad["errors"])
+    assert human.report([], SCENARIOS) == {"ok": False, "errors": ["not an object"], "player": None, "attempts": None}
+
+
+def test_check_cli_ok(tmp_path, capsys):
+    path = tmp_path / "owner.json"
+    path.write_text(json.dumps(results_file(attempt(), attempt(n=2, passed=False))))
+    assert human.main(["check", str(path)]) == 0
+    assert capsys.readouterr().out.strip() == "ok: owner, 2 attempts"
+
+
+def test_check_cli_one_attempt_is_singular(tmp_path, capsys):
+    path = tmp_path / "owner.json"
+    path.write_text(json.dumps(results_file(attempt())))
+    assert human.main(["check", str(path)]) == 0
+    assert capsys.readouterr().out.strip() == "ok: owner, 1 attempt"
+
+
+def test_check_cli_refuses(tmp_path, capsys):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(results_file(attempt(), attempt(n=3))))
+    assert human.main(["check", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "refusing:" in err and "numbered 1..2" in err
+
+
+def test_check_cli_json(tmp_path, capsys):
+    path = tmp_path / "owner.json"
+    path.write_text(json.dumps(results_file(attempt())))
+    assert human.main(["check", str(path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "errors": [], "player": "owner", "attempts": 1}
+    path.write_text(json.dumps(results_file(attempt(date="23.10.2026"))))
+    assert human.main(["check", str(path), "--json"]) == 2
+    got = json.loads(capsys.readouterr().out)
+    assert got["ok"] is False and any("YYYY-MM-DD" in e for e in got["errors"])
+
+
+def test_check_cli_not_json_utf8_or_missing(tmp_path, capsys):
+    missing = tmp_path / "gone.json"
+    assert human.main(["check", str(missing)]) == 2
+    assert "refusing:" in capsys.readouterr().err
+    path = tmp_path / "owner.json"
+    path.write_text("{")
+    assert human.main(["check", str(path)]) == 2
+    assert "not JSON" in capsys.readouterr().err
+    path.write_bytes(b"\xff\xfe{}")
+    assert human.main(["check", str(path)]) == 2
+    assert "not UTF-8" in capsys.readouterr().err
+
+
+def test_check_cli_scenarios_dir(tmp_path, capsys):
+    path = tmp_path / "owner.json"
+    path.write_text(json.dumps(results_file(attempt())))
+    empty = tmp_path / "none"
+    empty.mkdir()
+    assert human.main(["check", str(path), "--scenarios", str(empty)]) == 2
+    assert "no scenario files" in capsys.readouterr().err
+    assert human.main(["check", str(path), "--scenarios", str(HERE.parent / "scenarios")]) == 0
+    assert capsys.readouterr().out.strip() == "ok: owner, 1 attempt"
+
+
+def test_the_doc_names_the_check_command():
+    assert "python -m bg3bench.human check" in DOC.read_text(encoding="utf-8")
+
+
 def test_the_human_row_on_the_leaderboard(tmp_path):
     data = results_file(attempt(), attempt(n=2, reloads=1), attempt(n=3, void="crash"), attempt(n=4))
     pairs = [model_run(i, i == 0) for i in range(3)] + human.pairs(data, SCENARIOS, "0.1.0")

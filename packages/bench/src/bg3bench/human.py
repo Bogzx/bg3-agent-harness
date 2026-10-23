@@ -12,18 +12,27 @@ scenario's run cap. An attempt the player reports as passed counts as passed onl
 
 `pairs(data, scenarios)` turns the file into (manifest, result) pairs that results.build_results takes next to the
 models' runs, so the player is one more leaderboard row, "human (<player>)", with no cost and no tokens.
+
+Check a file (docs/HUMAN-BASELINE.md):
+
+    uv run --project packages/bench python -m bg3bench.human check FILE [--json]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
-from collections.abc import Mapping
+import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TextIO, cast
+
+from bg3bench import scenario
 
 SCHEMA = 1
 MODEL_PREFIX = "human"
+SCENARIOS_DIR = Path(__file__).resolve().parents[2] / "scenarios"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _NO_TOKENS = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 _KEYS = {"scenario", "attempt", "date", "passed", "time_s", "t_pass_s", "reloads", "void", "picks", "notes"}
@@ -165,3 +174,81 @@ def pairs(
             res["choices"] = {"picks": a["picks"], "fit": None}
         out.append((man, res))
     return out
+
+
+def load_suite(root: str | Path | None = None) -> dict[str, dict[str, Any]]:
+    """name -> scenario.load for every *.json in the suite dir (this package's scenarios/ unless given)."""
+    d = Path(root) if root is not None else SCENARIOS_DIR
+    files = sorted(p for p in d.glob("*.json") if p.is_file())
+    if not files:
+        raise ValueError(f"{d}: no scenario files")
+    load_fn: Any = cast(Any, scenario).load
+    out: dict[str, dict[str, Any]] = {}
+    for p in files:
+        out[p.stem] = cast(dict[str, Any], load_fn(p))
+    return out
+
+
+def report(data: Any, scenarios: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Validate a loaded human results value. `ok` is true when `errors` is empty."""
+    errors = validate(data, scenarios)
+    if not isinstance(data, dict):
+        return {"ok": not errors, "errors": errors, "player": None, "attempts": None}
+    obj = cast(dict[str, Any], data)
+    player, attempts = obj.get("player"), obj.get("attempts")
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "player": player if isinstance(player, str) else None,
+        "attempts": len(cast(list[Any], attempts)) if isinstance(attempts, list) else None,
+    }
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    out: TextIO | None = None,
+    err: TextIO | None = None,
+) -> int:
+    out = sys.stdout if out is None else out
+    err = sys.stderr if err is None else err
+    ap = argparse.ArgumentParser(
+        prog="python -m bg3bench.human",
+        description="Validate a human baseline results file (docs/HUMAN-BASELINE.md).",
+    )
+    sub = ap.add_subparsers(dest="command", required=True)
+    ck = sub.add_parser("check", help="print ok, or the problems (exit 2)")
+    ck.add_argument("file", type=Path, help="the player's results JSON")
+    ck.add_argument("--scenarios", type=Path, help="directory of scenario files (default: this package's scenarios/)")
+    ck.add_argument("--json", action="store_true", help="print {ok, errors, player, attempts}")
+    args = ap.parse_args(argv)
+    try:
+        scenarios = load_suite(args.scenarios)
+    except (OSError, ValueError) as e:
+        print(f"refusing: {e}", file=err)
+        return 2
+    try:
+        data = json.loads(args.file.read_text(encoding="utf-8"))
+    except OSError as e:
+        print(f"refusing: {e}", file=err)
+        return 2
+    except json.JSONDecodeError as e:
+        print(f"refusing: {args.file}: not JSON ({e.msg})", file=err)
+        return 2
+    except UnicodeDecodeError:
+        print(f"refusing: {args.file}: not UTF-8 text", file=err)
+        return 2
+    got = report(data, scenarios)
+    if args.json:
+        print(json.dumps(got), file=out)
+    elif got["ok"]:
+        n = got["attempts"] or 0
+        print(f"ok: {got['player']}, {n} attempt{'s' if n != 1 else ''}", file=out)
+    else:
+        for e in got["errors"]:
+            print(f"refusing: {e}", file=err)
+    return 0 if got["ok"] else 2
+
+
+if __name__ == "__main__":  # pragma: no cover - python -m bg3bench.human
+    raise SystemExit(main())

@@ -112,13 +112,14 @@ One JSON file per player, kept outside the repo until a release (for example `ru
 Check a file:
 
 ```bash
-cd packages/bench
-uv run python -c "
-import sys; from pathlib import Path
-from bg3bench import human, scenario
-sc = {p.stem: scenario.load(p) for p in Path('scenarios').glob('*.json')}
-human.load(sys.argv[1], sc); print('ok')" ../../runtime/human/owner.json
+uv run --project packages/bench python -m bg3bench.human check runtime/human/owner.json
+uv run --project packages/bench python -m bg3bench.human check runtime/human/owner.json --json
 ```
+
+`check` prints `ok: <player>, N attempts` and exits 0 when the file matches this page and
+`schema/human.v1.schema.json`. It prints each problem as `refusing: ...` and exits 2 when it does not. `--json`
+prints `{ok, errors, player, attempts}` instead (still exit 2 when `ok` is false). `--scenarios DIR` reads the
+scenario files from DIR; the default is this package's `scenarios/`.
 
 ## How it is scored
 
