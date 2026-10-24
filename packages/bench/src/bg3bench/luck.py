@@ -9,6 +9,11 @@ d20 face, null when the source did not see it); `party`, `dc`, `success`, `resul
 The run's luck is stats.luck_z over the party's view of the d20: a party roll counts as its face, a roll by anyone
 else as 21 - face (an enemy's high roll is the party's bad luck). A record without `party` counts as the party's.
 Rolls with advantage or disadvantage are left out (the kept face is not uniform), and so are rolls with no natural.
+
+On the current game build the mod sees natural (and dc) only for passive and skill/ability checks: saving throws and
+attack rolls arrive with natural null (success and the stream counts only), so the covariate is the luck of the checks.
+Two live probe passes (2026-10-24, tools/dev/probe_roll_sources.py) found no engine source for a save's or an
+attack's d20 or DC (research/fix/vis.md "R2", research/fix/live.md Window D2).
 """
 
 from __future__ import annotations

@@ -7,9 +7,9 @@
   "required": ["natural"],
   "properties": {
     "t": {"type": "number", "description": "wall-clock epoch seconds"},
-    "natural": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1, "maximum": 20}], "description": "the d20 face; null when the source did not see it"},
+    "natural": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1, "maximum": 20}], "description": "the d20 face; null when the source did not see it. On the current game build only passive and skill/ability checks expose it (RequestedRoll); saving throws and attack rolls are always null (live 2026-10-24: no engine source found, research/fix/vis.md R2)"},
     "result": {"type": ["number", "null"], "description": "the roll's total with modifiers"},
-    "dc": {"type": ["number", "null"]},
+    "dc": {"type": ["number", "null"], "description": "the difficulty class; like natural, recorded for passive and skill/ability checks only, null for saving throws and attack rolls on the current build"},
     "success": {"type": ["boolean", "null"]},
     "party": {"type": ["boolean", "null"], "description": "the roller is in the party; missing counts as the party's"},
     "advantage": {"type": ["boolean", "null"]},

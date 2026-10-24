@@ -23,6 +23,11 @@
 --   osi       Osiris RollResult/6 (fires live: research/ovh/live1.md §4): success, active, criticality only
 --   dialog    Osiris DialogRollResult/5 (osi reference arity; not yet seen firing)
 -- roll.snapshot reports which sources fired at least once, and which hooks are in place.
+-- So natural/dc are recorded for passive and skill/ability checks only (live, only their RequestedRoll carried a d20
+-- and DC). For saving throws and attack rolls two live probe passes (2026-10-24, tools/dev/probe_roll_sources.py:
+-- the one-frame roll events, SpellCastRolls re-read each tick, HitNotification, AttackedBy, StatusApplied's
+-- ConditionRolls) found no source with their d20 or DC: their records carry success/roller/streams with natural and
+-- dc nil (research/fix/vis.md R2). Closed: no more probing on this build.
 -- Streams: the stream counts are read at each new record; rolls the engine made in one frame arrive as one batch of
 -- records (24 passive checks -> 24 RollResults in a row), so a batch's draws are shared out over its records
 -- (streams_shared = batch size when > 1) instead of all landing on the first.
