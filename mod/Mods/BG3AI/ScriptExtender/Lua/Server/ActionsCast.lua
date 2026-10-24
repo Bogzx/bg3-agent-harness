@@ -62,6 +62,44 @@ function A.point_teleport(spell)
     return false
 end
 
+-- A Target spell that takes only a creature or an object. S094 10:18, S095 11:04/11:06: Karsus' Compulsion
+-- (Target_END_Mindflayer_CrownDomination, TargetConditions Tagged('END_CROWN_OF_KARSUS'), no AreaRadius) cast at a
+-- ground point read "done — no_damage" and did nothing (no Channelling, no portal), twice. A point takes a Target
+-- spell only as an area (AreaRadius), a teleport, a CannotTargetCharacter spell, or one whose functors act there (a
+-- GROUND context, a summon/spawn, a surface, an explosion: GustavDev Spell_Target.txt, 1405 of ~2100 Target entries
+-- have none of these). nil = can't tell (functors with no readable string).
+A.POINT_FUNCTOR = { "summon", "spawn", "surface", "teleportsource", "explosion" }
+local function functor_words(v, depth, out)
+    if type(v) == "string" then out[#out + 1] = v:lower(); return end
+    if depth > 5 or (type(v) ~= "table" and type(v) ~= "userdata") then return end
+    pcall(function()
+        for k, x in pairs(v) do
+            if type(k) == "string" then out[#out + 1] = k:lower() end
+            functor_words(x, depth + 1, out)
+        end
+    end)
+end
+function A.needs_entity(spell)
+    if type(spell) ~= "string" or A.two_step_spell(spell) or A.point_teleport(spell) then return false end
+    local ok, st = pcall(Ext.Stats.Get, spell)
+    if not ok or not st or tostring(st.SpellType or "") ~= "Target" then return false end
+    if (tonumber(st.AreaRadius) or 0) > 0 then return false end
+    local flags = {}
+    pcall(function() for _, f in ipairs(st.SpellFlags) do flags[f] = true end end)
+    if flags.CannotTargetCharacter then return false end
+    local words = {}
+    for _, field in ipairs({ "SpellProperties", "SpellSuccess" }) do
+        local okp, props = pcall(function() return st[field] end)
+        if okp then functor_words(props, 0, words) end
+    end
+    if #words == 0 then return nil end
+    for _, w in ipairs(words) do
+        if w == "ground" then return false end
+        for _, f in ipairs(A.POINT_FUNCTOR) do if w:find(f, 1, true) then return false end end
+    end
+    return true
+end
+
 -- The landing of a teleport (Dimension Door's second pick, Misty Step's point): within its range and on a floor
 -- (stats TargetConditions CanStand; the game's cursor shows no landing in the air), and that floor not a Chasm.
 -- S093 09:47 (the Netherbrain's psyche): Misty Step at (230.5,-55.7,4260.5), 1.5 m off the platform's edge, had no
@@ -337,6 +375,10 @@ reg("cast", function(args)
         if ground then G.refuse("this action needs x,y,z: a ground point (it can't target a character)") end
         if tostring(st.SpellType) ~= "Shout" then G.refuse("this action needs a target") end
         targets[1] = char -- self-centred actions (Dash, Hide, Disengage...)
+    end
+    if pos and #targets == 0 and not ui and A.needs_entity(base) then
+        G.refuse(tostring(base) .. " takes a creature or an object as its target, not a ground point (cast at the"
+            .. " point it does nothing): give target=<its id> (get_nearby lists objects too)")
     end
 
     -- Upcasting to the spell's own level is just a normal cast.
