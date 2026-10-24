@@ -752,6 +752,22 @@ local function precheck(from, target, isEntity)
     return nil
 end
 
+-- A goal in the air over ground the party knows (live9 acceptance: route to a point 60 m above the party said "not
+-- seen or walked yet"): no floor near the goal's height while a floor of that column is known ground (N.known), so a
+-- player sees there is nothing to stand on. The reason, else nil; a column with no known floor stays unknown.
+function N.airGoal(ctx, goal)
+    if nearFloor(goal[1], goal[3], goal[2], N.PATH_FLOOR_SLACK_M) ~= false then return nil end
+    local _, hs = N.floorHeights(goal[1], goal[3])
+    local best
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and (not best or math.abs(h - goal[2]) < math.abs(best - goal[2]))
+            and N.known(ctx, { goal[1], h, goal[3] }) then best = h end
+    end
+    if not best then return nil end
+    return string.format("no floor near that height at the target: the ground there is %.1f m %s",
+        math.abs(goal[2] - best), best < goal[2] and "below" or "above")
+end
+
 -- Async results (N.waysWarm): N.path answers from here before searching. key = N.path's own key.
 N.ASYNC_TTL_MS = 30000
 N.ASYNC_MAX = 256
