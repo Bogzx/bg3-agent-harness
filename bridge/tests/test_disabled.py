@@ -201,6 +201,47 @@ class FearSettle(Base):
         watches = [i for i, (op, _) in enumerate(self.g.calls) if op == "act.watch"]
         self.assertGreater(first, watches[4], "the order went out during the fear walk")
 
+    def _fast_settle(self) -> None:
+        self.addCleanup(setattr, turn_slots, "FEAR_POLL_S", turn_slots.FEAR_POLL_S)
+        self.addCleanup(setattr, turn_slots, "FEAR_STILL_S", turn_slots.FEAR_STILL_S)
+        turn_slots.FEAR_POLL_S, turn_slots.FEAR_STILL_S = 0.0, 0.05
+        self.reads = 100  # no fear walk: its turn group's start already moved it (live D6 B8: Shadowheart, Move 0/6m)
+
+    def _orders(self) -> list[str]:
+        return [op for op, _ in self.g.calls
+                if op.startswith("act.") and op not in ("act.watch", "act.note", "act.target_state")]
+
+    def test_a_fearful_turn_the_game_ended_during_the_settle_plays_nothing(self):
+        # Live D6 B8: the 2nd Fearful member of a shared group; the game ended her turn during the settle, then
+        # "action: Shout_Dash: FAILED — it is not this character's turn" / "turn NOT ended: decide, then continue".
+        self._fast_settle()
+        settle = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "act.watch" and self.reads >= 102:
+                self.g.combat["order"][0]["ended"] = True
+            return settle(op, args, context, timeout)
+        self.g.rpc = rpc
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1))
+        self.assertIn(f"Frightened: the game ended {core.H.get(P1)} Claude's turn by itself before the plan started",
+                      out)
+        self.assertNotIn("turn NOT ended", out)
+        self.assertEqual(self._orders(), [])
+
+    def test_a_fearful_turn_the_game_ends_during_the_plan_says_so(self):
+        self._fast_settle()
+
+        def refuse(op, args):
+            if op == "act.cast":
+                self.g.combat["order"][0]["ended"] = True
+                return "it is not this character's turn"
+            return None
+        self.g.refuse_if = refuse
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1))
+        self.assertIn(f"Frightened: the game ended {core.H.get(P1)} Claude's turn by itself during the plan", out)
+        self.assertNotIn("turn NOT ended", out)
+        self.assertNotIn("act.end_turn", self._orders())
+
 
 if __name__ == "__main__":
     unittest.main()

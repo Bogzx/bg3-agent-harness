@@ -472,10 +472,18 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
             lines.append("reactions set: " + ", ".join(f"{k}={v}" for k, v in p.reactions.items()))
         except GameError as e:
             lines.append(f"reactions: FAILED — {e}")
+    fear = turn.fear_moved(cs, char)
     feared = turn_slots._fear_settle(cs, char)
     if feared:
         lines.append(feared)
+    if fear:
         cs = core.game.try_rpc("state.combat") or cs  # where the fear move left it, for the first step check
+        if cs.get("active") and char not in turn.acting(cs):
+            # Live D6 B8: the 2nd Fearful member of a shared group (Shadowheart, Move 0/6m: her fear walk came at the
+            # group's start) had her turn ended by the game during the settle; the plan then failed "not this
+            # character's turn" and the reply said "turn NOT ended: decide".
+            lines += [turn_slots._turn_over_text(char, fear, "before the plan started"), turn_slots._turn_next(char, party, cs)]
+            return reporting._finish("combat_turn", {"who": who}, "\n".join(lines), t0)
     watcher = turn.TurnWatcher(queueing._watch_conn(), p.on_reaction, turn_slots._answer_reaction, ignore=queueing._parse_ignore(ignore))
     if actq.BATCH_CHECKS:  # the next step check's state.combat comes with the check after each step
         watcher.post_ops = [("state.combat", {})]
@@ -587,6 +595,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     if spent:
         lines.append(spent)
     ended_cs = None  # a read taken by the end step after the turn moved on (the HUD end's), for the NEXT line
+    gone = False  # the game ended the (Fearful) turn mid-plan
     if end and not stopped:
         fatal, why = turn_plan._turn_check(char, None)
         if fatal:
@@ -607,6 +616,10 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
                                          or core.game.try_rpc("state.combat") or {}):
         lines.append(f"{queueing._label(char)} went down: its turn passes by itself (death saving throws); "
                      "get it up with Healing Word / Help from an ally")
+    elif stopped and fear and any("not this character's turn" in ln for ln in lines):
+        cs_now = core.game.try_rpc("state.combat") or {}
+        gone = bool(cs_now.get("active")) and char not in turn.acting(cs_now)
+        lines.append(turn_slots._turn_over_text(char, fear, "during the plan") if gone else held)
     elif stopped:
         lines.append(held)
     turn_plan._turn_cs.clear()
@@ -616,13 +629,13 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     changes = delta.changes_text(core.game, core.H)
     if changes:
         lines.append(changes)
-    if end and not stopped:
+    if (end and not stopped) or gone:
         nxt = turn_slots._turn_next(char, party, ended_cs)
         if nxt:
             lines.append(nxt)
     else:
         lines += turn_slots._disabled_lines()
-    if stopped:
+    if stopped and not gone:
         reporting._batch["last"] = "interrupted"
     return reporting._finish("combat_turn", {"who": who}, "\n".join(lines), t0)
 
