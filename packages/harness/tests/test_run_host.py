@@ -187,13 +187,22 @@ def test_options_of_a_save_start_and_a_new_game():
     )
     assert (opt.keeper, opt.judge, opt.max_cost, opt.tools_expected) == (False, False, 2.0, 90)
     assert opt.scenario_settings == {"difficulty": "Balanced", "karmic_dice": False, "timing": "turn_based"}
-    new = H.options_for({**JOB, "max_cost": 0.5}, NEW_SC, "m-idol", {})
+    new = H.options_for({**JOB, "client": "pi", "max_cost": 0.5}, NEW_SC, "m-idol", {})
     assert (new.start_save, new.save_owner, new.max_cost, new.character_brief) == (
         None,
         "Tav",
         0.5,
         "A careful trader.",
     )
+
+
+def test_the_matrix_max_cost_caps_a_paid_client_only():
+    # fixlive (Window C): the matrix's $0.25 DeepSeek cap stopped a Claude Code nautiloid run at its first end_turn
+    # ($2.12 notional, over_budget); a subscription run is never charged (bg3bench.matrix, BENCHMARK.md)
+    no_cap = {**UNTIL_SC, "caps": {**UNTIL_SC["caps"], "max_cost": None}}
+    assert H.options_for({**JOB, "max_cost": 0.25}, no_cap, "m-naut", {}).max_cost is None
+    assert H.options_for({**JOB, "max_cost": 0.25}, UNTIL_SC, "m-naut", {}).max_cost == 2.0  # the scenario's cap
+    assert H.options_for({**JOB, "client": "pi", "max_cost": 0.25}, no_cap, "m-naut", {}).max_cost == 0.25
 
 
 def test_an_until_scenario_ends_at_its_milestone():
