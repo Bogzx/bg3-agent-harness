@@ -215,6 +215,20 @@ def load_session(run, sid):
     return calls, spans, last_t
 
 
+def split_at_loads(spans, calls):
+    """A load_game inside a combat span ends that try: the next starts when the load is done. S096: the combat samples
+    ran on through each 16 s Netherbrain reload (gaps < GAP_S), so five tries were two fights and the winning one
+    (11:31:49, ended by the ending) was a reload."""
+    out = []
+    for start, end in spans:
+        for c in calls:
+            if c["tool"] == "load_game" and start < c["t"] < end:
+                out.append([start, c["t"]])
+                start = max(c.get("t1") or c["t"], c["t"])
+        out.append([start, end])
+    return out
+
+
 def tough_foes(text, party=(), dead=()):
     """{name: [max_hp, lowest hp %]} of the hostiles with max HP >= BOSS_MIN_HP whose HP these results showed (0 % for
     one that died). S091 Netherbrain try 4 got the brain to 28/210 (13 %), which try 3 never hurt: the furthest try
@@ -260,7 +274,7 @@ def mine(run, sid):
     fights = []
     where = "?"
     ci = 0
-    for start, end in spans:
+    for start, end in split_at_loads(spans, calls):
         if end - start < 5:
             continue
         inside = [c for c in calls if start - 10 <= c["t"] <= end + 5]
@@ -317,7 +331,8 @@ def mine(run, sid):
                 for a in ABIL_RE.findall(c["args"]):
                     abilities[a] += 1
         casts = casts_of(text)
-        reload_c = next((c for c in inside + after if c["tool"] == "load_game"), None)
+        # not the load that began this try (a reload's next try starts as it ends)
+        reload_c = next((c for c in inside + after if c["tool"] == "load_game" and c["t"] >= start), None)
         downed_all = len(party) and len(downs) >= min(4, len(party)) and not enemies
         cut = last_t - end <= GAP_S  # combat still on at the last sample: the session ended mid-fight
         graded = db[0] if db else None   # debrief.py grades: clean / costly / near_wipe / wipe / reloaded
