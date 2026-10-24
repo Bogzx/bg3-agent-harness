@@ -30,6 +30,7 @@ local pressedNo = false
 local defaultName = nil       -- S052: the dialog writes its default name this many frames after it opens
 local overwriteIn = nil
 local savedAs = nil           -- the name the game saved with (the box's text at the accepting RETURN)
+local swallowReturn = false   -- S096: a conversation took the screen; RETURN reaches no save menu
 local function show(n)
     widgets[n] = { name = n, visible = true }
     if n == "SaveGamePopup" then
@@ -59,7 +60,7 @@ local function frame()
     local ks = pendingKey
     pendingKey = {}
     for _, k in ipairs(ks) do
-        if k == "RETURN" then
+        if k == "RETURN" and not swallowReturn then  -- swallowed: it lands on the conversation, not our menus
             if widgets.SaveGamePopup then
                 savedAs = nameBox.t
                 hide("SaveGamePopup") hide("SaveGame")  -- saved: back to the game menu
@@ -162,8 +163,8 @@ end
 
 -- one save, driven frame by frame; ui.state sampled on every frame. While
 -- the game is in its Save state the job doesn't tick (as live may).
-local function runSave(name, probe)
-    local r = ops["ui.menu"]({ action = "save", name = name, probe = probe })
+local function runSave(name, probe, action)
+    local r = ops["ui.menu"]({ action = action or "save", name = name, probe = probe })
     local job = jobs[r.job]
     local seen = { screens = {}, saving = false, doneState = nil }
     for _ = 1, 400 do
@@ -274,6 +275,22 @@ ok(widgets.SaveGamePopup == nil and widgets.SaveGame == nil and widgets.GameMenu
     "a failed save closes its menus (popup/page/game menu)")
 ok(savedAs == nil, "a failed name check writes no save")
 ok(A.pendingSave == nil, "pending save cleared after the failure")
+
+-- S096 11:36:30: the Emperor's conversation took the screen at the 'new' RETURN. The first run asks the bridge for
+-- the key (page left open for it); the save_confirm run after the shim's key is the last try: a RETURN that still
+-- doesn't advance fails the save with its menus closed (it left panels_open=[SaveGame] behind the talk).
+swallowReturn, savedAs = true, nil
+job = runSave("S096-victory")
+ok(job.status == "failed" and job.result and job.result.needs_key == "RETURN" and widgets.SaveGame ~= nil,
+    "first run: needs_key, the page kept open for the shim's key: " .. tostring(job.error))
+job = runSave("S096-victory", nil, "save_confirm")
+swallowReturn = false
+ok(job.status == "failed" and job.result and job.result.needs_key == nil
+    and tostring(job.error):find("nor did the input shim's", 1, true) ~= nil,
+    "save_confirm: a RETURN that still doesn't advance fails, saying so: " .. tostring(job.error))
+ok(widgets.SaveGamePopup == nil and widgets.SaveGame == nil and widgets.GameMenu == nil,
+    "the failed save_confirm closes the save page and the game menu")
+ok(A.pendingSave == nil and savedAs == nil, "pending save cleared, nothing saved")
 
 -- the SavingPanel overlay lingering after the Save state doesn't hold it (S015: 3 s)
 show("AlwaysOnTopOverlay")
