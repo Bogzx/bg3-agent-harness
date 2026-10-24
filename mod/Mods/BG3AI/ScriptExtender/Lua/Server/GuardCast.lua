@@ -380,6 +380,12 @@ G.ACTING_STATUSES = { HASTE_LETHARGY = true }
 -- showed `DISABLED e5 Claude: Lethargic (1 turn)` beside `Move 9/9m` and the agent planned to walk off the Orb of
 -- Negation's platform.
 G.LETHARGY_EFFECT = "cannot move; its turn passes once the rest of its turn group has ended (act with it first)"
+-- A FEAR status (FEARED from Orin's Death Growl: StatusType FEAR, SG_Fleeing, saved with FearStatusSavingCheck() at the
+-- turn start). S065 11:51/11:53: end_turn said "now e4's turn"; the game moved Claude 2 m / 5 m away by itself and his
+-- move_to was refused "not this character's turn" (round 2: his turn ended 6 s in; round 3: still his on the turn
+-- order). S066 #100 / S067 #32: Karlach's first order at such a turn start was dropped, her later ones worked.
+G.FEAR_EFFECT = "the game may move it away by itself at its turn start (orders sent meanwhile are dropped) and may end"
+    .. " that turn itself: read the combat state before planning it"
 -- with_acting: those too (a walk that never started names them, S074).
 function G.blocking_status(char, with_acting)
     local V = BG3AI.Visibility
@@ -447,6 +453,8 @@ function G.disabling_info(id)
                 effect = "cannot act"
             elseif G.ACTING_STATUSES[id] then
                 effect = G.LETHARGY_EFFECT
+            elseif typ == "FEAR" or groups.SG_Fleeing then
+                effect = G.FEAR_EFFECT
             elseif tostring(field("Boosts") or ""):find("ActionResourceBlock(Movement)", 1, true) then
                 effect = "cannot move"
             end
@@ -455,7 +463,7 @@ function G.disabling_info(id)
             for g in pairs(groups) do help = help or G.HELP_GROUPS[g] end
             if help then fix[#fix + 1] = "an adjacent ally's Help (an action) ends it" end
             if flagset(field("RemoveEvents")).OnDamage then fix[#fix + 1] = "any damage ends it" end
-            if tostring(field("RemoveConditions") or ""):find("SavingThrow", 1, true) then
+            if tostring(field("RemoveConditions") or ""):find("Saving", 1, true) then -- SavingThrow(…), FearStatusSavingCheck()
                 fix[#fix + 1] = "it saves again each turn"
             end
             c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil }
