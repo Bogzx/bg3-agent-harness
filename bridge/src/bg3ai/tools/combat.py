@@ -357,6 +357,8 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
     while time.monotonic() < deadline:
         cs = core.game.try_rpc("state.combat") or {}
         if not cs.get("active") or char not in turn.acting(cs):
+            if turn_plan._turn_batch():  # combat_turn's NEXT line reads the turn from this read, not again
+                turn_plan._cs_keep(cs)
             late = time.monotonic() - pressed
             via = ("the HUD's End Turn (the game ignored the order)" if late <= END_HUD_QUICK_S else
                    f"the game, slowly ({late + END_LUA_IGNORED_S:.0f} s after the order: end-of-turn effects; the HUD's "

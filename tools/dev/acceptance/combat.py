@@ -9,21 +9,32 @@ import time
 from .core import BASE, FIGHT_SAVE, S, call, first_line, item, load_verified, log, need, status, took, ui_screen
 
 
-def counted(name: str, **kw) -> tuple[str, float, dict]:
-    """A tool call with every RPC it makes counted by op (job push: one job.poll per short job)."""
+def counted(name: str, **kw) -> tuple[str, float, dict, int]:
+    """A tool call with every RPC it makes counted by op (job push: one job.poll per short job), and the state.combat
+    reads of an end the game ignored (the HUD's End Turn: its check before the press, its polls)."""
+    from bg3ai.tools import combat as ct
+
     counts: dict[str, int] = {}
-    orig = S.game.rpc
+    hud_n = [0]
+    orig, orig_hud = S.game.rpc, ct._end_turn_by_hud
 
     def counting(op, *a, **k):
         counts[op] = counts.get(op, 0) + 1
         return orig(op, *a, **k)
 
-    S.game.rpc = counting
+    def hud(*a, **k):
+        n0 = counts.get("state.combat", 0)
+        try:
+            return orig_hud(*a, **k)
+        finally:
+            hud_n[0] += counts.get("state.combat", 0) - n0
+
+    S.game.rpc, ct._end_turn_by_hud = counting, hud
     try:
         out, dt = took(name, **kw)
     finally:
-        S.game.rpc = orig
-    return out, dt, counts
+        S.game.rpc, ct._end_turn_by_hud = orig, orig_hud
+    return out, dt, counts, hud_n[0]
 
 
 def sec_combat() -> None:
@@ -119,11 +130,11 @@ def sec_combat() -> None:
 
         S.METRICS.tool_done = tool_done
         try:
-            out, dt, counts = counted("combat_turn", plan=plan, who=S.H.get(who_u))
+            out, dt, counts, hud_n = counted("combat_turn", plan=plan, who=S.H.get(who_u))
         finally:
             S.METRICS.tool_done = orig_td
         if recs:
-            rts.append((recs[-1], counts.get("state.combat", 0), out.count("FAILED")))
+            rts.append((recs[-1], counts.get("state.combat", 0), out.count("FAILED"), hud_n))
         ct_raw.append(out)
         log(f"RPCs by op: {dict(sorted(counts.items(), key=lambda kv: -kv[1]))}")
         if "end_turn: ending in the background" in out:  # latency round 2026-10-16 (S.END_ASYNC)
@@ -207,19 +218,21 @@ def sec_combat() -> None:
         )
     # act 2026-10-16 "combat_turn serial RPCs": the step checks ride on the watcher's read after each step (one round
     # trip with its events + act.watch); a read nobody can have changed is reused. Single state.combat RPCs left: the
-    # end_turn tool's own, the NEXT line's, one after each failed alternative (the start one is in a multi).
+    # end_turn tool's own, the NEXT line's, one after each failed alternative (the start one is in a multi). An end the
+    # game ignored (live 2026-10-24, Karlach: 5) presses the HUD's End Turn: its check before the press and its polls
+    # wait for the game, not step checks; the poll that saw the turn move on stands for the NEXT line's read.
     if rts:
         from bg3ai import actq
 
-        ok = actq.BATCH_CHECKS and all("rt_n" in r and n <= 3 + f for r, n, f in rts)
+        ok = actq.BATCH_CHECKS and all("rt_n" in r and n - max(0, h - 1) <= 3 + f for r, n, f, h in rts)
         item(
             "combat_turn batched step checks",
             "PASS" if ok else "FAIL",
             f"BATCH_CHECKS={actq.BATCH_CHECKS}; "
             + "; ".join(
                 f"rt_n={r.get('rt_n')} rpc_n={r.get('rpc_n')} watch_n={r.get('watch_n', 0)} single state.combat={n} "
-                f"failed={f} ms-job={r['ms'] - r.get('job_ms', 0):.0f}"
-                for r, n, f in rts
+                f"failed={f} hud={h} ms-job={r['ms'] - r.get('job_ms', 0):.0f}"
+                for r, n, f, h in rts
             ),
         )
     combat_compaction_check([gc] + ct_raw)

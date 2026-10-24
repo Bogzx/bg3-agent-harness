@@ -19,6 +19,7 @@ import unittest
 import test_turn_macros as T
 from bg3ai import actq, metrics
 from bg3ai.game import GameError
+from bg3ai.tools import combat as combat_tools
 from bg3ai.tools import core, queueing, turn_plan, turn_tool
 
 P1, P2, GOB, IMP = T.P1, T.P2, T.GOB, T.IMP
@@ -153,6 +154,25 @@ def approach_short(r) -> str:
                                      action={"ability": "Target_MainHandAttack", "target": r.gob}))
 
 
+def hud_end(r) -> str:
+    # live window 2026-10-24 (S049-end, Karlach in a shared turn group): the game ignored the end order and the HUD's
+    # End Turn ended the turn; its poll that saw the turn move on was read again for the NEXT line
+    combat_tools.END_HUD_QUICK_S = 60.0
+    r.g.refuse_if = lambda op, a: combat_tools.END_IGNORED if op == "act.end_turn" else None
+    r.g.on_start = None
+    rpc = r.g.rpc
+
+    def press(op, args=None, context="server", timeout=12.0):
+        if op == "ui.command" and (args or {}).get("command") == "EndTurn":
+            r.g._trip(op)
+            r.g.calls.append((op, args))
+            r.g.combat["current"] = GOB
+            return {"ok": True}
+        return rpc(op, args, context, timeout)
+    r.g.rpc = press
+    return turn_tool.combat_turn(r.plan(action={"ability": "Target_MainHandAttack", "target": r.gob}))
+
+
 SHAPES = {"whole_turn": whole_turn, "ranged_fallback": ranged_fallback, "dies_mid_turn": dies_mid_turn,
           "dead_alternative": dead_alternative, "background_end": background_end, "approach_short": approach_short}
 
@@ -192,6 +212,22 @@ class SerialRoundTrips(unittest.TestCase):
         self.assertIn("now 9.9m from", out)
         self.assertIn("melee is out of reach this turn", out)
         self.assertEqual([t for t in trips if t == "state.combat"], ["state.combat", "state.combat"], trips)
+
+    def test_hud_end_read_stands_for_the_next_line(self):
+        """Live window 2026-10-24 'batched step checks' FAIL (single state.combat 5 > 3): end_turn's own read, the HUD
+        end's check before its press and its poll, then the NEXT line read the turn again."""
+        saved = combat_tools.END_HUD_QUICK_S
+        try:
+            out1, dec1, trips = play(True, hud_end)
+            out0, dec0, _ = play(False, hud_end)
+        finally:
+            combat_tools.END_HUD_QUICK_S = saved
+        self.assertIn("ended via=the HUD's End Turn (the game ignored the order)", out1)
+        self.assertIn("NEXT e1 Goblin, e2 Imp, then ", out1)
+        self.assertEqual((out1, dec1), (out0, dec0))
+        # end_turn's own, the HUD's check before the press, its poll that saw the turn move on: no 4th for NEXT
+        self.assertEqual([t for t in trips if t == "state.combat"], ["state.combat"] * 3, trips)
+        self.assertEqual(trips[trips.index("ui.command"):].count("state.combat"), 1, trips)  # the poll only
 
     def test_a_stale_kept_read_is_read_again(self):
         turn_plan._cs_keep({"active": True, "order": []})
