@@ -10,7 +10,9 @@ save start the mod's nav_*.json moved into <run_dir>/reset/, a new game's host i
 at the scenario's start (its start save loaded, or a new game), the settings check and seed, and the kickoff for the
 job's condition. The session's hooks are the runner's
 own (RunnerSessionHooks), so crashes, hangs and caps behave as in a playthrough; SessionRun's Recovery(max_resumes=0)
-makes a fault end the run invalid. A goal scenario's job carries the bench's live verdict (job["verdict"]):
+makes a fault end the run invalid. Their stop check is the run's own (BenchHooks): an agent that ends its turn
+before the run is decided is resumed (-cN), as the kickoff says the run ends only once decided or at its time cap.
+A goal scenario's job carries the bench's live verdict (job["verdict"]):
 GoalWatch asks it while the run plays and ends the run once it says passed or failed.
 
 record: facts.jsonl's run_end, the game stopped (the next run starts a fresh process), the moved nav files put back
@@ -353,10 +355,19 @@ class BenchHooks:
     missing, a leftover agent that survived SIGKILL: OSError, RuntimeError) ends the session as a `setup_failed`
     result instead of raising out of the matrix (H3: the run then went unrecorded with its game up). record lists it
     as a harness failure, so the run is invalid and the matrix reruns it. A playthrough's run loop keeps the raise
-    (it counts setup failures and recovers)."""
+    (it counts setup failures and recovers).
 
-    def __init__(self, hooks: SessionHooks, event: Callable[..., None]):
-        self.hooks, self.event = hooks, event
+    The stop check is `undecided` (the run's: undecided_why), not the runner's, which is the playthrough memory's
+    wrap-up and has nothing to say in a bench run: fixlive D4's agent ended its turn at the Nautiloid's loading
+    screen, 7.9 of 240 min, before the milestone, and the run ended there."""
+
+    def __init__(
+        self, hooks: SessionHooks, event: Callable[..., None], undecided: Callable[[float], str | None] = lambda _: None
+    ):
+        self.hooks, self.event, self.undecided = hooks, event, undecided
+
+    def stop_check(self, session_end: float) -> str | None:
+        return self.undecided(session_end)
 
     def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> Any:
         try:
@@ -371,14 +382,33 @@ class BenchHooks:
         return getattr(self.hooks, name)
 
 
+def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float) -> str | None:
+    """Why the run's agent can't end its turn yet (run_session's stop check): its goal isn't decided (no until
+    milestone or live verdict yet) with time left, and no operator stop or cap. None: it may end."""
+    if r.until_hit or r.cap_hit or r.stop_requested or stop_file().exists() or now >= session_end:
+        return None
+    return (
+        "The run isn't decided: the grader hasn't seen its goal "
+        f"{json.dumps(goal_of(sc), sort_keys=True)} yet, and the run goes on until it is decided or its time cap."
+    )
+
+
 def run_failures(
-    state_dir: Path, t0: float, outcome: SessionOutcome, name: str, why: str, cap: str | None = None
+    state_dir: Path,
+    t0: float,
+    outcome: SessionOutcome,
+    name: str,
+    why: str,
+    cap: str | None = None,
+    session_minutes: float | None = None,
 ) -> list[Json]:
     """Every failure of a bench run, tagged harness/agent/unknown as the legacy series tags them (runs.classify_run
     over the run's runner_events.jsonl, its play streams and the agent's reloads; its one session as the history),
     plus the session's ending when it was ours (runs.reason_failures: mcp_failed, setup_failed, aborted, api_limit).
     A harness failure makes the run invalid (bg3bench results.validity): it doesn't score the model. name: the
-    outcome to classify ("stopped" for an operator stop: listed apart, not a failure)."""
+    outcome to classify ("stopped" for an operator stop: listed apart, not a failure). A `timeout` whose agent ended
+    its turn with more than EARLY_EXIT_MINUTES of the session_minutes left (no stop resume left) says so, not that the
+    time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min)."""
     res = outcome.result
     logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     events = [e for e in logged if e.get("t", 0) >= t0 - 1]
@@ -387,8 +417,12 @@ def run_failures(
     tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
     ending = (res.reason, why)
-    gave_up_why = why or res.reason if name == "gave_up" else ""  # a time-out or a cap says its own why
-    return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, gave_up_why, cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    ending_why = why or res.reason if name == "gave_up" else ""  # a time-out or a cap says its own why
+    if name == "timeout" and session_minutes is not None:
+        left = rpolicy.early_exit_minutes(res.reason, outcome.started, res.ended, session_minutes)
+        if left is not None:
+            ending_why = f"{SID}: the agent ended its turn with {left} min of the run left, before the goal"
+    return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, ending_why, cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
 class LiveRunHost:
@@ -543,9 +577,10 @@ class LiveRunHost:
         man: Json = opt.manifest or {}
         served: Json | None = man.get("prompt")
         kickoff = {"file": "kickoff", "sha256": hashlib.sha256(prompt.encode()).hexdigest()}
+        hooks = r.session_hooks(SID, minutes)
         return HostStart(
             prompt,
-            cast(SessionHooks, BenchHooks(r.session_hooks(SID, minutes), r.event)),
+            cast(SessionHooks, BenchHooks(hooks, r.event, lambda end: undecided_why(r, sc, end, hooks.now()))),
             str(uuid.uuid4()),
             served["sha256"] if served else None,
             (*served["parts"], kickoff) if served else (kickoff,),
@@ -581,7 +616,9 @@ class LiveRunHost:
                 back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         why, cap = getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
-        failures = run_failures(r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap)
+        failures = run_failures(
+            r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes
+        )
         counts = {cls: sum(int(f.get("n") or 1) for f in failures if f["class"] == cls) for cls in runs.CLASSES}
         return (
             {

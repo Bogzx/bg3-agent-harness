@@ -96,8 +96,10 @@ class StubRunner(lpt.Runner):
             result = E.Event("result", subtype="success", turns=3, cost_usd=PAID_USD, tokens={"output": 10})
             base.with_name(base.name + ".events.jsonl").write_text(result.to_json() + "\n")
             self.settle_cost(sid + tag, PAID_USD)
-        now = time.time()  # a whole session: one that exits within a minute is a harness failure (claude_quick_exit)
-        return rstate.SessionResult(sid, claude_session or "", 0, "exited", now, now + 25 * 60)
+        # a whole session, ending now (past its deadline: no stop resume); one that exits within a minute is a harness
+        # failure (claude_quick_exit)
+        now = time.time()
+        return rstate.SessionResult(sid, claude_session or "", 0, "exited", now - 25 * 60, now)
 
 
 class Bench(unittest.TestCase):

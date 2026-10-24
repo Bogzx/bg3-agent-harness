@@ -24,7 +24,7 @@ from bg3harness.runner import env as renv
 from bg3harness.runner import run_host as H  # noqa: N812
 from bg3harness.runner import state as rstate
 from bg3harness.runner.checks_side import ChecksSide
-from bg3harness.session import SessionOutcome
+from bg3harness.session import Recovery, SessionOutcome, SessionSpec, run_session
 from bg3harness.testing.fakemod import FakeMod
 from bg3harness.testing.mcp_bridge import bridge_env, call
 from bg3harness.testing.scripted import FakeClock, GameModel
@@ -86,6 +86,7 @@ class FakeRunner:
         self.settles_budget = True
         self.stop_ends_session = False
         self.stop_requested = False
+        self.abort = False
         self.run_env: dict[str, str] | None = None
         self.game_settings: dict[str, Any] = {"difficulty": "Balanced"}  # game_setup's readout
         if opt.seed is not None:  # the mod applied the run's seed
@@ -93,6 +94,10 @@ class FakeRunner:
         self.facts_fail = False
         self.fail_at: dict[str, BaseException] = {}  # a call -> what it raises
         self.loads: str | None = opt.start_save  # the save folder ensure_game loads
+        self.state["oom_streak"] = None
+        self.plays: list[tuple[str, str, float]] = []  # run_claude's (tag, prompt, minutes)
+        self.play: Callable[[FakeRunner, str], tuple[str, float]] = lambda r, tag: ("exited", 60.0)  # (reason, s)
+        self.clock = 1000.0  # the session hooks' now (run_claude moves it)
 
     def event(self, kind: str, **fields: Any) -> None:
         self.events.append((kind, fields))
@@ -134,8 +139,21 @@ class FakeRunner:
     def kill_agent(self) -> None:
         self.calls.append("kill_agent")
 
+    def run_claude(
+        self, sid: str, prompt: str, minutes: float, session: str | None, resume: bool = False, tag: str = ""
+    ) -> rstate.SessionResult:
+        self.plays.append((tag, prompt, minutes))
+        reason, seconds = self.play(self, tag)
+        start, self.clock = self.clock, self.clock + seconds
+        return rstate.SessionResult(sid, session or "c-1", 0, reason, start, self.clock)
+
+    def stop_check(self, sid: str, deadline: float, minutes: float) -> str | None:
+        return None  # the playthrough memory's wrap-up: nothing in a bench run (no memory session)
+
     def session_hooks(self, sid: str, minutes: float) -> rstate.RunnerSessionHooks:
-        return rstate.RunnerSessionHooks(self, sid, minutes)  # pyright: ignore[reportArgumentType]
+        hooks = rstate.RunnerSessionHooks(self, sid, minutes)  # pyright: ignore[reportArgumentType]
+        hooks.now = lambda: self.clock  # pyright: ignore[reportAttributeAccessIssue]
+        return hooks
 
 
 @dataclass
@@ -704,3 +722,57 @@ def test_bench_hooks_turn_a_play_process_that_cant_start_into_a_setup_failed_res
     inner.raises = ValueError("a bug")
     with pytest.raises(ValueError, match="a bug"):  # not a setup failure: it still ends the matrix (abort)
         hooks.run_agent("KICKOFF", 30, "c-1", False, "")
+
+
+def play_session(rig: Rig, sc: dict[str, Any], name: str) -> tuple[FakeRunner, SessionOutcome]:
+    """The run's one session as bg3bench's SessionRun plays it (run_session, run_hours, no fault resume)."""
+    st = rig.h.start(JOB, sc, run_dir(name))
+    spec = SessionSpec(name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, Recovery(max_resumes=0))
+    return rig.runners[-1], run_session(spec, st.hooks)
+
+
+def test_an_end_turn_before_the_milestone_is_resumed_until_it_is_reached(rig: Rig):
+    # fixlive D4: the agent ended its turn at the Nautiloid's loading screen (7.9 of 240 min, no nautiloid_escaped
+    # yet) and the run ended there, outcome timeout; the runner's stop check was the playthrough memory's (None)
+    sc = {**UNTIL_SC, "caps": {**UNTIL_SC["caps"], "run_hours": 4}}
+
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        if tag == "-c2":  # the progress poller sees the milestone: the runner stops the agent
+            r.until_hit = {"id": "nautiloid_escaped", "label": "Nautiloid escaped", "t": r.clock + 30}
+            return "milestone", 30.0
+        return "exited", 8 * 60.0 if not tag else 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, sc, "m-naut")
+    assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2"] and out.stop_resumes == 2
+    assert 'the grader hasn\'t seen its goal {"milestone": "nautiloid_escaped"} yet' in r.plays[1][1]
+    assert r.plays[1][2] == pytest.approx(232.0)  # the run's time left
+    assert rig.h.record(JOB, sc, run_dir("m-naut"), out)["outcome"] == "reached"
+
+
+@pytest.mark.parametrize("ends", ["cap", "operator", "verdict", "time"])
+def test_no_resume_once_the_run_is_decided_capped_stopped_or_out_of_time(rig: Rig, ends: str):
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        if ends == "cap":
+            r.cap_hit = {"cap": "cost"}
+        elif ends == "operator":
+            r.stop_requested = True
+        elif ends == "verdict":  # GoalWatch decided just as the agent ended its turn
+            r.until_hit = {"id": H.GOAL_HIT, "verdict": "failed"}
+        return "exited", 31 * 60.0 if ends == "time" else 60.0  # past the 30 min run_hours, inside the grace
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, SAVE_SC, "m-grove")
+    assert [t for t, _, _ in r.plays] == [""] and out.stop_resumes == 0
+
+
+def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_time_out(rig: Rig):
+    # D4: failures said "the run's time ran out before the milestone" at 8 of 240 min
+    sc = {**UNTIL_SC, "caps": {**UNTIL_SC["caps"], "run_hours": 4}}
+    r, out = play_session(rig, sc, "m-naut")
+    assert len(r.plays) == 1 + Recovery().max_stop_resumes and out.result.reason == "exited"
+    rec = rig.h.record(JOB, sc, run_dir("m-naut"), out)
+    assert (rec["outcome"], [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]]) == (
+        "timeout",
+        [("timeout", "agent", "S001: the agent ended its turn with 233.0 min of the run left, before the goal")],
+    )
