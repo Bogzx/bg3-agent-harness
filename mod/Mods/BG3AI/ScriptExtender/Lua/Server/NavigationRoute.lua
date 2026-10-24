@@ -422,7 +422,7 @@ end)
 ------------------------------------------------------------------------
 -- Objective markers (what the map/minimap shows for tracked objectives).
 -- Active objective = the objective of each accepted, open quest's latest
--- unlocked step (prototype order). Objective -> markers -> target entity
+-- unlocked step (highest objective Priority). Objective -> markers -> target entity
 -- comes from Server/Data/JournalMarkers.lua (generated from game files).
 ------------------------------------------------------------------------
 
@@ -485,15 +485,24 @@ local function activeObjectives(who)
     local ttl = gen and N.MARKER_GEN_TTL_MS or N.MARKER_CACHE_MS
     if c and c.who == who and c.gen == gen and now - c.t < ttl then return c.list end
     local list = {}
+    local data = journalData()
+    local objs = data and data.objectives or {}
     for _, q in ipairs(stepObjectives()) do
         -- not only accepted quests: an unlocked step is enough (State.journal: SHA_Nightsong, companion quests)
         if not truthy(osi(Osi.QuestIsClosed, q.id)) then
-            local current
+            -- the current step: the unlocked one whose objective comes last in the story (its Priority; ties: the
+            -- later step). The step list is not in unlock order: GLO_DealWithTheBrain lists StandingAtopTheBrain
+            -- (ControlTheCrown, 1800) before the High Hall's GetToTheBrainStem (1700), so atop the Netherbrain o1
+            -- stayed "Netherbrain Stem" and the Crown of Karsus was no objective target (S095 11:05-11:06: not in
+            -- get_nearby 6-9 m from the Emperor).
+            local current, best
             for _, st in ipairs(q.steps) do
                 -- a sub-quest's steps are unlocked under its parent quest (State.stepUnlocked)
                 if st.id and (truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.id, st.id))
                     or (q.parent and q.parent ~= "" and truthy(osi(Osi.QuestUpdateIsUnlocked, who, q.parent, st.id)))) then
-                    current = st
+                    local ob = st.objective and objs[st.objective]
+                    local pri = ob and tonumber(ob.priority) or 0
+                    if not best or pri >= best then current, best = st, pri end
                 end
             end
             if current and current.objective then list[#list + 1] = { quest = q, objective = current.objective } end
