@@ -148,7 +148,7 @@ end
 
 local function set(obj, name, value)
     if obj == nil then return false, "no object" end
-    local ok, err = pcall(obj.SetProperty, obj, name, value)
+    local ok, err = UI.pcall(obj.SetProperty, obj, name, value)
     if not ok then return false, "set " .. name .. ": " .. tostring(err) end
     return true
 end

@@ -128,6 +128,22 @@ local function try(f, ...)
     return nil
 end
 
+-- pcall for a Noesis call that acts (SetProperty, a command's CanExecute/Execute) in code with its own error handling:
+-- gated like a read, and a "UI busy" refusal (bg3le never ran the call, so it is safe to ask again on a later tick)
+-- starts the cooldown and raises like try(). Any other result is pcall's. A slow call did run: not raised.
+local function busyCheck(ok, ...)
+    if not ok and tostring((...)):find("UI busy", 1, true) then
+        UI.busyUntil = mono() + UI.BUSY_COOLDOWN_MS
+        busyRaise()
+    end
+    return ok, ...
+end
+
+function UI.pcall(f, ...)
+    UI.checkBusy()
+    return busyCheck(pcall(f, ...))
+end
+
 -- Property read for names known to exist on the object's type.
 function UI.prop(obj, name)
     if obj == nil then return nil end
@@ -565,12 +581,11 @@ function UI.execute(cmd, param, dry)
     if param ~= nil and not isNoesis(param) then
         return false, "parameter is a " .. type(param) .. " (" .. tostring(param) .. "); bg3le can only pass Noesis objects"
     end
-    UI.checkBusy()
-    local okc, can = pcall(cmd.CanExecute, cmd, param)
+    local okc, can = UI.pcall(cmd.CanExecute, cmd, param)
     if not okc then return false, "CanExecute failed: " .. tostring(can) end
     if not can then return false, "command cannot execute now" end
     if dry then return true end
-    local oke, err = pcall(cmd.Execute, cmd, param)
+    local oke, err = UI.pcall(cmd.Execute, cmd, param)
     UI.lastCommandFrame = UI.frame
     UI.lastCommandMs = Ext.Utils.MonotonicTime()
     if not oke then return false, "Execute failed: " .. tostring(err) end

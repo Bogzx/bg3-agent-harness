@@ -236,10 +236,9 @@ local function probeOf(w, dc, books, sel, icons)
         for gi, group in UI.items(UI.get(book, "ActionGroups"), 8) do
             local g = { props = UI.props(group), cells = {} }
             for _, vm in UI.items(UI.get(group, "Actions"), SB.PROBE_CELLS) do
-                local ok, can = pcall(function()
-                    local cmd = UI.get(dc, "ToggleCharacterAction")
-                    return cmd and cmd:CanExecute(vm)
-                end)
+                local cmd = UI.get(dc, "ToggleCharacterAction")
+                local ok, can = true, nil
+                if cmd then ok, can = UI.pcall(cmd.CanExecute, cmd, vm) end
                 local brush = UI.get(vm, "Icon")
                 local src = UI.get(brush, "ImageSource")
                 local desc = {}

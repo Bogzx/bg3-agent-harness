@@ -248,6 +248,7 @@ local function walk(o, path)
 end
 
 BG3AI.UI = {
+    pcall = pcall,
     prop = function(o, k) if o == nil then return nil end return o:GetProperty(k) end,
     props = function(o) return o and o._p or {} end,
     path = walk,

@@ -23,7 +23,7 @@ Ext = {
 local H = {} -- RPC name -> handler
 BG3AI = { Util = { round = function(x) return x end, comp = function(e, c) return type(e) == "table" and e[c] or nil end,
     vec = function(v) return v and { v[1], v[2], v[3] } end },
-    RPC = { register = function(name, fn) H[name] = fn end } }
+    RPC = { register = function(name, fn) H[name] = fn end }, UI = { pcall = pcall } }
 dofile(LUA .. "/Client/Pick.lua")
 local P = BG3AI.Pick
 

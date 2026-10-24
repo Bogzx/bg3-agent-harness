@@ -62,7 +62,7 @@ function P.camera()
 end
 
 function P.screen_size()
-    local ok, w, h = pcall(function()
+    local ok, w, h = BG3AI.UI.pcall(function()
         local root = Ext.UI.GetRoot()
         return root.ActualWidth, root.ActualHeight
     end)

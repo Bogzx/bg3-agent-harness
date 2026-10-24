@@ -115,6 +115,7 @@ BG3AI.RPC = {
     finish_job = function(j, st, res, err) j.status, j.result, j.error = st, res, err end,
 }
 BG3AI.UI = {
+    pcall = pcall,
     prop = function(o, k) if o == nil then return nil end return o:GetProperty(k) end,
     props = function(o) return o and o._p or {} end,
     typeName = function(o) return type(o) == "table" and o._t or nil end,
