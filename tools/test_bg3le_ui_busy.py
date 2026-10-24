@@ -44,10 +44,11 @@ HARNESS = r"""
 #include <mutex>
 #include <string>
 #include <thread>
-struct lua_State { int (*fn)(lua_State*); };
+struct lua_State { int (*fn)(lua_State*); bool pump = false; };
 typedef int (*lua_CFunction)(lua_State*);
 #define lua_upvalueindex(i) (-10000 - (i))
 static lua_CFunction lua_tocfunction(lua_State* L, int) { return L->fn; }
+static int lua_toboolean(lua_State* L, int i) { return i == lua_upvalueindex(2) && L->pump; }
 struct LuaError { std::string msg; };
 static int luaL_error(lua_State*, char const* fmt, ...) {
   char buf[256]; va_list ap; va_start(ap, fmt); std::vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
@@ -72,6 +73,14 @@ static Tick tick(int n) {
     try { serialized(&L); } catch (LuaError const& e) { if (t.refused++ == 0) t.first = e.msg; }
   }
   t.ran = runs - before; return t;
+}
+// One Ext._Internal.RunTimers: the prelude's pump (a UiTake* call), then the timers and the Tick event, which run
+// only if the pump did not raise
+static int timers_ran = 0;
+static void run_timers() {
+  lua_State L{ ui_call, true };
+  try { serialized(&L); } catch (LuaError const&) { return; }
+  ++timers_ran;
 }
 // The UI thread: takes the lock as a frame does, holds it until told, then ends that frame and runs one more
 struct UiThread {
@@ -114,6 +123,21 @@ int main() {
   { UiThread ui; Tick t = tick(2);
     check("UiBusy(false): every call waits and runs unserialized",
           t.ran == 2 && t.refused == 0 && g_serialize_timeouts == 4);
+    ui.finish(); }
+  g_busy_refuse = true;
+  { UiThread ui; tick(1);  // live D1: a frame holds the lock after a timeout, ticks go on
+    const int before = runs; const auto refused = g_busy_refusals.load();
+    for (int i = 0; i < 10; ++i) run_timers();
+    check("busy: RunTimers' pump takes nothing, the timers and Tick still run every tick", timers_ran == 10);
+    check("busy: the pump left its queue alone (counted as refused)",
+          runs == before && g_busy_refusals == refused + 10);
+    ui.finish(); }
+  { run_timers();
+    check("frame taken again: the pump runs", timers_ran == 11 && !g_busy.load()); }
+  g_strict = true;
+  { UiThread ui; const int before = runs; run_timers();
+    check("strict: a pump call that times out takes nothing, RunTimers goes on",
+          timers_ran == 12 && runs == before && g_serialize_timeouts == 6);
     ui.finish(); }
   return fails;
 }
