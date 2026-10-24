@@ -355,6 +355,35 @@ class ServerSave(Base):
         self.g.try_rpc = lambda op, *a, **kw: {"can": True} if op == "ui.menu" else real(op, *a, **kw)
         self.assertTrue(wait_until(lambda: rig.menus == ["S078-start"]), self.g.calls[-5:])
 
+    def test_a_conversation_starting_behind_a_failed_save_queues_it_once_more(self):
+        """S096 11:36:2x: the save's menus failed ("in-game RETURN did not advance 'new'") as the Emperor's
+        conversation started; its window wasn't up yet, so ui.state read "game" and the save was dropped (SAVE
+        FAILED). The server's dialogue flag counts: the save is queued once more and saves after the talk."""
+        rig = self.rig
+        real_menu, real_rpc = rig.run_menu, self.g.try_rpc
+        tries: list[str] = []
+
+        def run_menu(label):
+            tries.append(label)
+            if len(tries) == 1:
+                self.g.watch["dialogue"] = True   # dialogue_started; the UI still reads "game"
+                return False, "in-game RETURN did not advance 'new'"
+            return real_menu(label)
+        self.g.try_rpc = lambda op, *a, **kw: {"can": True} if op == "ui.menu" else real_rpc(op, *a, **kw)
+        saved = saver.DEFER_POLL_S
+        saver.DEFER_POLL_S = 0.05
+        self.addCleanup(setattr, saver, "DEFER_POLL_S", saved)
+        saving.SAVER = saver.Saver(run_menu, saving._can_save, lambda: rig.dir)
+        saving.save_game("S096-victory")
+        self.assertTrue(wait_until(lambda: saving.SAVER.pending is not None
+                                   and saving.SAVER.pending["phase"] == "queued"))
+        self.assertIn("the save menus were interrupted (a conversation is running or starting); queued",
+                      saving.SAVER.take_notes())
+        self.g.watch["dialogue"] = False          # the conversation ended
+        self.assertTrue(wait_until(lambda: saving.SAVER.pending is None))
+        self.assertEqual(tries, ["S096-victory"] * 2)
+        self.assertIn("SAVED 'S096-victory'", saving.SAVER.take_notes())
+
     def test_a_gated_tool_waits_for_the_menus(self):
         saving.save_game("x")
         t0 = time.monotonic()
