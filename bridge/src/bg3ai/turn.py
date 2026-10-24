@@ -418,6 +418,20 @@ def move_blocked(combat: dict, uuid: str) -> str | None:
     return None
 
 
+FEAR_MOVES = "the game may move it away by itself"  # the start of GuardCast.lua G.FEAR_EFFECT
+
+
+def fear_moved(combat: dict, uuid: str) -> str | None:
+    """The name of uuid's fear status (state.combat `disabled`, effect G.FEAR_EFFECT: the game walks a Fearful member
+    away by itself at its turn start), else None."""
+    for o in (combat or {}).get("order") or []:
+        if o.get("uuid") == uuid and isinstance(o.get("disabled"), list):
+            for d in o["disabled"]:
+                if isinstance(d, dict) and str(d.get("effect") or "").startswith(FEAR_MOVES):
+                    return str(d.get("name") or "?")
+    return None
+
+
 def party_acting(combat: dict, party: set) -> list[str]:
     """Party members (summons too) who may act now; a downed one can't (its turn passes by itself)."""
     down = downed(combat)
