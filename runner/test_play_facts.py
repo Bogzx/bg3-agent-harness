@@ -226,6 +226,7 @@ class FactsWiring(unittest.TestCase):
         events_: list = []
         r.event = lambda kind, **f: events_.append((kind, f))
         r.ring_feed = lambda: mock.Mock()
+        self.logs: list[str] = []
         self.menu = MenuMod()
         fake = FakeMod(self.menu).start()
         self.addCleanup(fake.stop)
@@ -239,6 +240,7 @@ class FactsWiring(unittest.TestCase):
             mock.patch.object(G, "lua_eval", lua_eval),
             mock.patch.object(rstate, "write_status"),
             mock.patch.object(rchecks.facts, "read_inventory", lambda *a, **k: None),
+            mock.patch.object(renv, "log", self.logs.append),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -263,6 +265,13 @@ class FactsWiring(unittest.TestCase):
         self.assertFalse(r.abort)
         marks = [m.get("mark") for m in self.facts(r)]
         self.assertEqual(marks.count("settings"), 1)
+        # live9 #10: the deferred check and the seed leave runner log lines, not only the facts mark
+        self.assertIn(
+            "game settings: difficulty None, roll mode Random, karmic dice False; seed 1001 applied", self.logs
+        )
+        self.assertIn(
+            "settings check passed: no game setting contradicts the scenario (deferred from the main menu)", self.logs
+        )
 
     def test_a_contradiction_found_after_the_load_stops_the_session(self):
         r, events_ = self.menu_runner(karmic=True)
