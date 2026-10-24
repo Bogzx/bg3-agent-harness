@@ -321,8 +321,11 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
         last = t
     end
     if knownGoal == nil then knownGoal = N.known(ctx, goal) end
+    local air = not knownGoal and U.dist(from, goal) <= N.ROUTE_FAR_M and N.airGoal(ctx, goal)
     if U.dist(from, goal) > N.ROUTE_FAR_M then
         out.too_far = true
+    elseif air then
+        out.reachable, out.no_path_reason = false, air
     elseif not knownGoal then
         out.unknown_goal = true
     elseif U.dist(from, goal) > N.PATH_MAX_M then

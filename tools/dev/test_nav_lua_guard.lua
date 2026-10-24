@@ -571,6 +571,26 @@ test("known (C1): an unseen, unwalked coordinate gets the straight line only (pa
     end)
 end)
 
+test("known (C1): a goal in the air over known ground -> no_path_reason, not 'not seen' (live9 acceptance)", function()
+    local savedH = Ext.Level.GetHeightsAt
+    Ext.Level.GetHeightsAt = function() return { 0.0, -40.0 } end
+    seen = function(p) return p[2] < 10 and p[1] > -10 end -- the ground in view; 60 m up is out of sight range
+    local ok, err = pcall(noItems, function()
+        local ctx = BG3AI.Visibility.context()
+        local r = N.routeAhead(ctx, P1, { 4, 60, 0 })
+        eq(r.unknown_goal, nil, "not 'unknown'"); eq(r.reachable, false, "no path")
+        eq(r.no_path_reason, "no floor near that height at the target: the ground there is 60.0 m below", "reason")
+        eq(r.closest, nil, "no closest"); eq(r.legs, nil, "no legs")
+        -- the column's ground is unknown too (behind a wall): still the straight line only (fairness)
+        r = N.routeAhead(ctx, P1, { -20, 60, 0 })
+        eq(r.unknown_goal, true, "unknown column: unknown"); eq(r.no_path_reason, nil, "no reason")
+        -- floor near the goal's height: no air answer, the usual unknown goal
+        eq(N.airGoal(ctx, { 4, 2, 0 }), nil, "a floor 2 m below is ground")
+    end)
+    Ext.Level.GetHeightsAt = savedH
+    if not ok then error(err, 0) end
+end)
+
 test("known (C1): a seen spot stays known; no ray answer is not seen (fail closed)", function()
     eq(N.known(nil, { -30, 0, 0 }), true, "in view")
     seen = function() return false end
