@@ -9,7 +9,9 @@ local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
 
 local P1 = "aaaaaaaa-0000-0000-0000-000000000001"
 local WP_A, WP_B = "bbbbbbbb-0000-0000-0000-00000000000a", "bbbbbbbb-0000-0000-0000-00000000000b"
+local CROWN, STEM = "dddddddd-0000-0000-0000-000000000537", "dddddddd-0000-0000-0000-000000000466"
 local world = { [P1] = { 0, 0, 0 }, [WP_A] = { 10, 0, 0 }, [WP_B] = { -10, 0, 0 } }
+local brainSteps = {}                   -- Q_Brain step id -> unlocked
 local fire = function() return false end
 local seen = function() return true end -- pointSeen(pt) -> true|false|nil
 local unlocked = {}                     -- PartyWaypoints names
@@ -28,16 +30,29 @@ local QUESTS = [[
 <attribute id="QuestVisiblity" type="bool" value="false"/>
 <node id="QuestStep"><attribute id="ID" type="FixedString" value="S1"/><attribute id="Objective" type="FixedString" value="OBJ_TECH"/></node>
 </node>
+<node id="Quest">
+<attribute id="QuestID" type="FixedString" value="Q_Brain"/>
+<attribute id="QuestTitle" type="TranslatedString" handle="hBrain"/>
+<node id="QuestStep"><attribute id="ID" type="FixedString" value="StandingAtopTheBrain"/>
+<attribute id="Objective" type="FixedString" value="OBJ_CROWN"/></node>
+<node id="QuestStep"><attribute id="ID" type="FixedString" value="GetToTheBrainStem"/>
+<attribute id="Objective" type="FixedString" value="OBJ_STEM"/></node>
+</node>
 ]]
 
 local MARKERS = {
     objectives = {
         OBJ_SHOWN = { markers = { "M_SHOWN" }, desc = "dShown" },
         OBJ_TECH = { markers = { "M_TECH" }, desc = "dTech" },
+        -- GLO_DealWithTheBrain: ControlTheCrown (1800) is listed before GetThroughHighHall (1700)
+        OBJ_CROWN = { markers = { "M_CROWN" }, desc = "dCrown", priority = 1800 },
+        OBJ_STEM = { markers = { "M_STEM" }, desc = "dStem", priority = 1700 },
     },
     markers = {
         M_SHOWN = { type = "Item", uuid = WP_A, text = "tShown", level = "", icon = "", radius = 6 },
         M_TECH = { type = "Item", uuid = WP_B, text = "tTech", level = "", icon = "", radius = 0 },
+        M_CROWN = { type = "Item", uuid = CROWN, text = "tCrown", level = "", icon = "", radius = 0 },
+        M_STEM = { type = "Item", uuid = STEM, text = "tStem", level = "", icon = "", radius = 0 },
     },
 }
 
@@ -82,7 +97,10 @@ Osi = {
     GetRegion = function() return "LVL" end,
     QuestIsAccepted = function(_, q) return accepted[q] and 1 or 0 end,
     QuestIsClosed = function() return 0 end,
-    QuestUpdateIsUnlocked = function() return 1 end,
+    QuestUpdateIsUnlocked = function(_, q, st)
+        if q == "Q_Brain" then return brainSteps[st] and 1 or 0 end
+        return 1
+    end,
     DB_WaypointInfo = { Get = function()
         return { { nil, "WAYP_A", WP_A }, { nil, "WAYP_B", WP_B } }
     end },
@@ -113,7 +131,7 @@ local function test(name, fn)
     count = count + 1
     fire = function() return false end
     seen = function() return true end
-    unlocked, accepted, heightsCalls = {}, {}, {}
+    unlocked, accepted, heightsCalls, brainSteps = {}, {}, {}, {}
     N.frame = (N.frame or 0) + 1
     N.activeCache, N.stepObjectives, N.targetsCache = nil, nil, nil
     local ok, err = pcall(fn)
@@ -189,6 +207,23 @@ test("V32 S094: an objective's marked item is its target (interact o1) and seen 
     end)
     MARKERS.markers.M_SHOWN.type = "Item"
     if not ok then error(err, 0) end
+end)
+
+-- S095 11:05-11:06, atop the Netherbrain: o1 read "Netherbrain Stem" (the High Hall step, listed after
+-- StandingAtopTheBrain in quest_prototypes.lsx), so the Crown of Karsus was no objective target and get_nearby missed
+-- it 6-9 m off. The current step is the unlocked one with the highest objective Priority, not the file's last.
+test("markers: the current step is the unlocked one latest in the story (Priority), not the last listed", function()
+    brainSteps = { GetToTheBrainStem = true }
+    local function brain()
+        for _, m in ipairs(N.objectiveMarkers(CTX)) do if m.quest == "L:hBrain" then return m end end
+    end
+    eq(brain() and brain().target, STEM, "only the High Hall step unlocked: the stem")
+    brainSteps.StandingAtopTheBrain = true
+    N.activeCache = nil
+    eq(brain() and brain().target, CROWN, "atop the brain: the Crown")
+    local set = N.objectiveTargets(CTX)
+    eq(set[CROWN], true, "the Crown is an objective target (V.objectivePerceived)")
+    eq(set[STEM], nil, "the stem no longer is")
 end)
 
 test("explored: places are named only after unlocked waypoints", function()
