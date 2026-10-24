@@ -56,6 +56,14 @@ class ContainerClose(unittest.TestCase):
         fn = world_tools.interact.fn if hasattr(world_tools.interact, "fn") else world_tools.interact
         return fn(target="e722")
 
+    def test_interact_waits_past_a_long_walk_and_a_climb(self):
+        # live P4 2026-10-24: a 65.7 m walk round to a ladder's top + the climb ended at 24.5 s of a 25 s wait
+        waits: list = []
+        plumbing._act = lambda tool, op, args, **k: (waits.append(k.get("wait_s")), "interact: done — used")[1]
+        self.interact([None])
+        self.assertEqual(waits, [world_tools.INTERACT_WAIT_S])
+        self.assertGreaterEqual(world_tools.INTERACT_WAIT_S, 40.0)
+
     def test_empty_container_is_closed_and_said(self):
         out = self.interact([{"text": "Take All"}])
         self.assertEqual(core.game.jobs, [("ui.loot", {"close": True})])

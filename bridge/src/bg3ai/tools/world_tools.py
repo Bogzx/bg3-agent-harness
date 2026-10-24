@@ -112,13 +112,20 @@ def _far_move(char: str, target: str | None, pos: list | None) -> tuple[list, fl
     return (list(dest[:3]), d) if d > MOVE_CAP_M else None
 
 
+# Live P4 2026-10-24 (Knotted Roots from the Mausoleum gate): the walk to the ladder's top goes round (route 65.7 m,
+# ETA 17.8 s), then the settle (up to 3 s) and the climb itself: the job ended done at 24.5 s, 0.5 s inside the
+# default 25 s wait. 40 s covers such a walk, the settle and a climb up to A.LADDER_CLIMB_MS (10 s).
+INTERACT_WAIT_S = 40.0
+
+
 @core.mcp.tool()
 @reporting._guard
 def interact(target: str, who: str | None = None, wait: bool = True) -> str:
     """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id."""
     char = plumbing._who(who)
     _EMPTY_CLOSED[0] = -1e9
-    out = plumbing._act("interact", "act.interact", {"char": char, "target": plumbing._interact_uuid(target)}, wait=wait)
+    out = plumbing._act("interact", "act.interact", {"char": char, "target": plumbing._interact_uuid(target)},
+                        wait_s=INTERACT_WAIT_S, wait=wait)
     out = travel._walk_first("interact", out, char, who, target, actq.Step("interact", {"target": target})) or out
     return _container_left_open(out) if wait else out
 

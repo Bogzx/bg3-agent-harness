@@ -490,6 +490,50 @@ test("interact ladder: a settled Use with no UseFinished still watches the climb
     restore()
 end)
 
+-- live P4 2026-10-24 (Knotted Roots from the gate, on1): after the settled Use the actor steps from the settle spot
+-- down onto the top landing (y 36.74 -> 35.59, z 78.47 -> 79.25), stands ~0.3 s, then CLIMBING down to the foot
+local P4_STEP = { { 0.0, 0.03 }, { 0.2, -0.26 }, { 0.34, -0.48 }, { 0.53, -0.77 }, { 0.68, -0.99 }, { 0.78, -1.15 } }
+local function p4_settled_use()
+    world[P1].pos = { 0, 0, 0 }
+    local j = job(op("interact", { char = P1, target = LADDER }))
+    world[P1].pos = { 9.0, 1.15, 0 }
+    A.dispatch("EntityEvent", { P1, j.walk.ev })
+    tick() tick() clock = clock + A.LADDER_SETTLE_MS + 1 tick()
+    eq(#called("Use"), 1, "Use once still")
+    for _, s in ipairs(P4_STEP) do world[P1].pos = { 9.0 + s[1], 1.15 + s[2], 0 } tick() end
+    return j
+end
+
+test("interact ladder: the Use's own step down onto the landing is not the climb (live P4 2026-10-24)", function()
+    local restore = with_tasks(1)
+    local j = p4_settled_use()
+    tick(2)   -- standing on the landing, not climbing yet
+    eq(#called("PurgeOsirisQueue"), 0, "the Use is not purged before the climb")
+    local lp = world[LADDER].pos
+    world[LADDER].pos = { 10, -4, 0 }
+    osiv[key("HasActiveStatus", P1, "CLIMBING")] = 1
+    world[P1].pos = { 9.8, 0.02, 0.3 } tick()
+    eq(#called("PurgeOsirisQueue"), 1, "purged once CLIMBING began")
+    for _, y in ipairs({ -1.0, -2.5, -3.6 }) do world[P1].pos = { 9.8, y, 0.3 } tick() end
+    osiv[key("HasActiveStatus", P1, "CLIMBING")] = nil
+    world[LADDER].pos = lp
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.climbed, "down", "climbed")
+    restore()
+end)
+
+test("interact ladder: a Use that only stepped onto the landing gets its retry (live P4 2026-10-24)", function()
+    local j = p4_settled_use()
+    tick()
+    clock = clock + A.LADDER_RETRY_MS + 1 tick()
+    eq(#called("PurgeOsirisQueue"), 1, "the retry purges the stuck Use")
+    local steps = 0
+    for _, c in ipairs(called("CharacterMoveToPosition")) do
+        if tostring(c[7]):find("lstep") then steps = steps + 1 end
+    end
+    eq(steps, 1, "and steps back for the re-Use")
+    eq(j.status, "running", "status " .. tostring(j.error))
+end)
+
 test("interact ladder: LADDER_WATCH_AT_USE=false keeps the old wait for UseFinished", function()
     A.LADDER_WATCH_AT_USE = false
     local ok, err = pcall(function()
