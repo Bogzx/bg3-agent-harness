@@ -10,7 +10,9 @@
 -- vis V29, S091 08:19-08:29: the Netherbrain (a huge body) hidden 20-22.5 m from its anchor point (V.bigPerceived).
 -- vis V31, S093: in the psyche the floor calibration ray misses (ray rule off): a big foe in the party's fight.
 -- vis V32, S094 High Hall: the item an active objective's marker sits on (the Brain Stem) is seen within sight range.
--- Ext, Osi and RPC are stubbed; Shared/Util.lua, Server/Visibility.lua and Server/State.lua are real.
+-- S064/S065 Temple of Bhaal: a spotted Sanguine Vent stays a disarm target (V.itemKnown) after the CanSee that
+-- spotted it is gone, and get_nearby (S.nearby) lists a discovered standalone trap, kinds=trap or not.
+-- Ext, Osi and RPC are stubbed; Shared/Util.lua and Server/Visibility.lua, State.lua and Events.lua are real.
 -- Run: tools/dev/test_fairness_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
 local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -22,6 +24,7 @@ local GOB = "cccccccc-0000-0000-0000-000000000009"
 local BRAIN = "cccccccc-0000-0000-0000-000000000521"
 local STEM = "dddddddd-0000-0000-0000-000000000466"
 local VASE = "dddddddd-0000-0000-0000-000000000437"
+local VENT = "dddddddd-0000-0000-0000-000000000302"
 
 -- S081: the party arrived at (-1421.2, 8.4, -2601.2); Karlach stands at her camp spot ~35 m off.
 local ents = {
@@ -34,6 +37,8 @@ local ents = {
     -- S094 e466 Brain Stem (usable), 5.7 m SW of Claude by route(o1); e437 a vase beside it
     [STEM] = { pos = { -1425.2, 8.4, -2605.2 }, item = { CanUse = true } },
     [VASE] = { pos = { -1425.2, 8.4, -2605.2 }, item = { CanUse = true } },
+    -- S064 e302 Sanguine Vent: a floor trap (not usable, not pickable: kind "object"), 10 m E of where the walk stopped
+    [VENT] = { pos = { -1411.2, 8.4, -2601.2 }, item = {} },
 }
 local inCamp = {}      -- DB_PlayerInCamp rows
 local sees = {}        -- uuid -> CanSee from Claude
@@ -42,9 +47,12 @@ local los = true       -- HasLineOfSight from any member
 local fight = {}      -- uuid -> CombatGetGuidFor
 local canInteract = {} -- uuid -> false: scenery
 local objectives = {}  -- Nav.objectiveTargets: item uuid -> true
+local traps = {}       -- uuid -> "hidden" | "discovered"
 
 Ext = {
     Utils = { MonotonicTime = function() return 1000 end, PrintWarning = function() end, Print = function() end },
+    Osiris = { RegisterListener = function() end },
+    Loca = { GetTranslatedString = function(h) return h end },
     Events = { Tick = { Subscribe = function() end } },
     Entity = { Get = function(u)
         local d = ents[u]
@@ -68,22 +76,30 @@ Osi = {
     HasLineOfSight = function() return los and 1 or 0 end,
     CombatGetGuidFor = function(u) return fight[u] end,
     GetCanInteract = function(u) return canInteract[u] == false and 0 or 1 end,
-    IsTrap = function() return 0 end,
+    IsTrap = function(u) return traps[u] and 1 or 0 end,
+    IsTrapDiscovered = function(u) return traps[u] == "discovered" and 1 or 0 end,
     DB_PlayerInCamp = { Get = function() if inCamp == "error" then error("no such DB") end return inCamp end },
     DB_Origins = { Get = function() return { { "S_Player_Karlach_" .. KARLACH }, { "S_Player_Claude_" .. CLAUDE } } end },
     GetRegion = function() return "CTY_Main_A" end, -- the camp and the city: one level
-    GetDisplayName = function() return nil end,
+    GetDisplayName = function(u) return u == VENT and "Sanguine Vent" or nil end,
     IsDead = function() return 0 end,
 }
 
 local handlers = {}    -- RPC name -> handler
-BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end },
+local pushed = {}      -- RPC.push events
+BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end,
+        push = function(kind, data) pushed[#pushed + 1] = { kind = kind, data = data } end },
     Nav = { objectiveTargets = function() return objectives end } }
 dofile(LUA .. "/Shared/Util.lua")
 Ext.Require = function(p) return dofile(LUA .. "/" .. p) end -- the modules load their parts
 dofile(LUA .. "/Server/Visibility.lua")
 dofile(LUA .. "/Server/State.lua")
 local V, S = BG3AI.Visibility, BG3AI.State
+local poll -- Events.lua's tick handler
+Ext.Events.Tick.Subscribe = function(_, fn) poll = fn end
+dofile(LUA .. "/Server/Events.lua")
+Ext.Events.Tick.Subscribe = function() end
+local E = BG3AI.Events
 
 local function ctx()
     return { party = { CLAUDE }, is_party = { [CLAUDE] = true },
@@ -94,7 +110,7 @@ local function visible(u) return V.characterVisible(ctx(), u, V.entity(u)) end
 local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
-    inCamp, sees, onStage, los, fight, canInteract, objectives = {}, {}, {}, true, {}, {}, {}
+    inCamp, sees, onStage, los, fight, canInteract, objectives, traps = {}, {}, {}, true, {}, {}, {}, {}
     Ext.Level, V.rayBroken, V.rayCache, V.calib = nil, nil, {}, { t = -1e9, ok = false } -- no ray API: uncalibrated
     ents[BRAIN].size, ents[BRAIN].bounds = nil, nil
     V.boundsCache = {}
@@ -304,6 +320,49 @@ test("V32: no objective on it, past sight range, or scenery: hidden", function()
     canInteract[STEM] = nil
     onStage[STEM] = false
     eq(itemSeen(STEM), false, "off stage")
+end)
+
+-- S064 11:37: Wyll's passive roll discovers e302 while the walkers face it; the poll pushes "spotted" and the walk
+-- stops 10 m short. Then nobody's CanSee/LOS reaches the floor vent, and disarm(e302) was "target is not visible".
+test("S064: a spotted trap stays a disarm target after the CanSee that spotted it is gone", function()
+    local realCtx, realAround, realReady = V.context, V.itemsAround, V.index.ready
+    V.context, V.itemsAround, V.index.ready = ctx, function() return { VENT } end, true
+    V.staticSeen[VENT], E.knownTraps, E.trapsPrimed, pushed = nil, {}, false, {}
+    local ok, err = pcall(function()
+        traps[VENT], canInteract[VENT], los = "hidden", false, false
+        E.lastPoll = -1e9; poll()  -- first pass: learns traps found before the load
+        traps[VENT], sees[VENT] = "discovered", true
+        E.lastPoll = -1e9; poll()
+        eq(pushed[1] and pushed[1].kind, "spotted", "spotted pushed")
+        eq(pushed[1] and pushed[1].data.kind, "trap", "kind")
+        sees[VENT] = false
+        eq((V.itemVisible(ctx(), VENT, V.entity(VENT))), false, "no longer in sight (listings: strict)")
+        eq((V.itemKnown(ctx(), VENT, V.entity(VENT))), true, "disarm's check (V.itemKnown)")
+    end)
+    V.context, V.itemsAround, V.index.ready = realCtx, realAround, realReady
+    if not ok then error(err, 0) end
+end)
+
+test("S065: get_nearby lists a discovered standalone trap (kinds=trap or none), not an undiscovered one", function()
+    local realAround = V.itemsAround
+    V.itemsAround = function() return { VENT, VASE } end
+    local ok, err = pcall(function()
+        canInteract[VENT], sees[VENT] = false, true
+        local function names(args)
+            local out = {}
+            for _, o in ipairs(S.nearby(ctx(), args).items) do out[#out + 1] = o.name .. "<" .. o.kind .. ">" end
+            return table.concat(out, ",")
+        end
+        traps[VENT] = "hidden"
+        eq(names({ kinds = { "trap" } }), "", "undiscovered: kinds=trap")
+        traps[VENT] = "discovered"
+        eq(names({ kinds = { "trap" } }), "Sanguine Vent<trap>", "kinds=trap")
+        eq(names({ kinds = { "trap", "door" } }), "Sanguine Vent<trap>", "kinds=trap,door")
+        eq(names({}), "Sanguine Vent<trap>", "unfiltered (the vase has no name: skipped)")
+        eq(names({ kinds = { "usable" } }), "", "kinds=usable")
+    end)
+    V.itemsAround = realAround
+    if not ok then error(err, 0) end
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

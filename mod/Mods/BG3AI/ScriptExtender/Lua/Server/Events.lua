@@ -475,7 +475,11 @@ local function poll()
                 E.knownTraps[u] = true
                 local e = V.entity(u)
                 local p = e and V.pos(e)
-                if E.trapsPrimed and p and truthy(osi(Osi.IsOnStage, u)) and V.perceived(c, u, p) then
+                -- V.itemVisible, not V.perceived alone: it also notes the trap as seen (V.staticSeen), so a disarm
+                -- right after the stop finds it known (V.itemKnown). S064 11:37 / S065 11:40: "spotted e302", the
+                -- walk stopped 10 m short, then disarm(e302) "target is not visible" (the CanSee that spotted it was
+                -- gone) until the agent walked to 3-5 m.
+                if E.trapsPrimed and p and V.itemVisible(c, u, e, p) then
                     RPC.push("spotted", { item = ref(u), kind = "trap", pos = U.vec(p, 1) })
                 end
             end

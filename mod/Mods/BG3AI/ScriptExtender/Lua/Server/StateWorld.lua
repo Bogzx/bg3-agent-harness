@@ -749,6 +749,13 @@ function S.nearby(ctx, args)
                 local d = U.dist(p, center)
                 if d <= radius then
                     local vis, kind = V.itemVisible(ctx, u, e, p)
+                    -- A discovered standalone trap (a vent, a tripwire: kind "object") is a trap here, before the
+                    -- filter: S064/S065 get_nearby kinds=trap said "Nothing visible" 3-5 m from a spotted Sanguine
+                    -- Vent (and the plain listing dropped it as scenery). Floor plates stay plates (below).
+                    if vis and kind == "object" and truthy(osi(Osi.IsTrap, u)) and truthy(osi(Osi.IsTrapDiscovered, u))
+                        and not V.PLATE_NAMES[V.name(u) or ""] then
+                        kind = "trap"
+                    end
                     -- "object" = non-pickup, non-usable scenery-like interactables; only on request.
                     if vis and ((not kinds and (kind ~= "object" or S.FIXTURE_NAMES[V.name(u)])) or (kinds and (kinds[kind] or (kinds.items and kind ~= "object")))) then
                         items[#items + 1] = { u = u, e = e, p = p, d = d, kind = kind }
