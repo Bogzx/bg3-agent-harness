@@ -115,7 +115,7 @@ rows = [
   {id = "C27", situation = "AutoSkip skips lines in our combat turn", act = "P", save = "S001-start", save_note = "helm", check = [{kind = "acc", section = "se", item = "AutoSkip skips lines in our combat turn"}], baseline = "PASS acc 2026-10-21 (AutoSkip skips lines in our combat turn =PASS)"},
   {id = "C28", situation = "end_turn after a companion's request", act = "2", save = "S027-start", check = [{kind = "acc", section = "combat", item = "end_turn after a companion's request"}], baseline = "not run 2026-10-21 (no fight started)"},
   {id = "C29", situation = "enemy statuses as lesson terms", act = "2", save = "S027-start", check = [{kind = "acc", section = "setup", item = "enemy statuses as lesson terms"}], baseline = "PASS acc 2026-10-21 (enemy statuses as lesson terms=PASS)"},
-  {id = "C30", situation = "referee events in a fight (KilledBy, CombatStarted/Ended)", act = "2", save = "S007-pre-grove-gate", save_note = "grove-path goblins 26-39 m away, as live1 §6 (S025-end has no hostile in reach)", check = [{kind = "probe", script = "tools/stress/probes/c30_fight_events.py"}], baseline = "PASS 2026-10-21 live1 §6 (scripted damage)"},
+  {id = "C30", situation = "referee events in a fight (KilledBy, CombatStarted/Ended)", act = "1", save = "S007-pre-grove-gate", save_note = "grove-path goblins 26-39 m away, as live1 §6 (S025-end has no hostile in reach)", check = [{kind = "probe", script = "tools/stress/probes/c30_fight_events.py"}], baseline = "PASS 2026-10-21 live1 §6 (scripted damage)"},
 ]
 
 [[group]]
