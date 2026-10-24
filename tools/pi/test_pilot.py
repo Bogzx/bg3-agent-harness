@@ -127,10 +127,14 @@ class Pilot(unittest.TestCase):
         self.assertEqual(sum(1 for j in ran if "deepseek" in j), 5)
 
     def test_each_paid_job_caps_its_run(self):
+        from bg3harness.spend import is_paid
+
         sc = self.m["scenarios"]["nautiloid"]
         for j in self.m["jobs"]:
             opt = run_host.options_for(j, sc, "run", {})
-            self.assertEqual(opt.max_cost, j["max_cost"])  # the runner's cost cap (runner/test_pi_e2e.py)
+            # the runner's cost cap (runner/test_pi_e2e.py); a subscription job has none (the matrix's max_cost is its
+            # reserve only)
+            self.assertEqual(opt.max_cost, j["max_cost"] if is_paid(j["client"]) else None)
             self.assertEqual((opt.client, opt.scenario), (j["client"], "nautiloid"))
 
 
