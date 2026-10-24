@@ -206,7 +206,8 @@ def _usd(x: float | None) -> str:
 def print_plan(m: dict, out: TextIO) -> None:
     jobs = m["jobs"]
     paid = [j for j in jobs if j["client"] in matrix.PAID_CLIENTS]
-    # max_cost: the run's cap; reserve: what the budget holds back for it (a subscription run is never charged)
+    # max_cost: a paid run's cap; reserve: what the budget holds back for it. A subscription run is never charged and
+    # not capped by it (run_host.options_for: only its scenario's own caps.max_cost), so both are "-"
     rows = [["job", "client", "effort", "profile", "scenario", "condition", "max_cost", "reserve"]]
     rows += [
         [
@@ -216,7 +217,7 @@ def print_plan(m: dict, out: TextIO) -> None:
             Path(j["profile"]).name if j["profile"] else "-",
             j["scenario"],
             j["condition"],
-            _usd(j["max_cost"]),
+            _usd(j["max_cost"]) if j in paid else "-",
             _usd(j["max_cost"]) if j in paid else "-",
         ]
         for j in jobs
