@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 import bg3harness
-from bg3harness import client_setup, runs
+from bg3harness import client_setup, runs, spend
 from bg3harness.runner import agent_group
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
@@ -261,9 +261,12 @@ def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Optio
     """One bench run's Options: one session of the scenario's run_hours, no keeper, no judge, the start save (none
     for a new game), the dice seed and the settings the check compares. An `until` scenario's run ends at its
     milestone (the runner stops the agent once the progress poller sees it: until_hit). `files`:
-    client_setup.run_files' fields."""
+    client_setup.run_files' fields. The job's max_cost (the matrix's [budget]: a paid run's cap) caps a paid client
+    only, as a subscription run is never charged (fixlive: a Claude Code nautiloid run ended at its first end_turn on
+    the matrix's $0.25 DeepSeek cap, notional $2.12); the scenario's own caps.max_cost caps every client."""
     caps, char, gs = sc["caps"], sc["profile"]["character"], sc["game_settings"]
-    max_cost = job.get("max_cost") if job.get("max_cost") is not None else caps.get("max_cost")
+    paid_cap = job.get("max_cost") if spend.is_paid(job["client"]) else None
+    max_cost = paid_cap if paid_cap is not None else caps.get("max_cost")
     return rstate.Options(
         run_name,
         None,
