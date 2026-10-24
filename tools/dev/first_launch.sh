@@ -19,6 +19,10 @@
 #                 in its own systemd scope bg3ai-game-<stamp>.scope (launch_game.sh: OOMPolicy=continue, MemoryMax
 #                 10G), so an OOM kills only the game, never the agents' unit (2026-10-10: one did)
 #   6 screen      one frame through the screenshot layer (bridge/src/bg3ai/screen.py)
+#   7 load        only for a launch with --load/--continue: wait until the game's own -loadSaveGame/-continueGame
+#                 load has finished (Running, server context up; bg3harness.game.launch_load). The game reaches the
+#                 main menu ~1.5 s before that load starts, so a READY there let the caller's own load race it
+#                 (live D6: the save loaded twice)
 # Then it prints what to do next. The game is left running.
 # BG3AI_LAUNCHER_PIDFILE: the launcher's pid (its own session and process group) is written there (live_window.py
 # kills that group when interrupted during the launch).
@@ -29,6 +33,7 @@ PORT="${BG3LE_DEBUG_PORT:-9998}"
 WANT_BUILD=25605617
 PORT_TIMEOUT="${FIRST_LAUNCH_PORT_TIMEOUT:-300}"
 MOD_TIMEOUT="${FIRST_LAUNCH_MOD_TIMEOUT:-180}"
+LOAD_TIMEOUT="${FIRST_LAUNCH_LOAD_TIMEOUT:-600}"
 
 attach=0
 shim=1
@@ -205,6 +210,15 @@ data = png.read_bytes()
 w, h = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
 print(f"  ok: {w}x{h} frame in {time.monotonic() - t:.2f}s: {png}")
 EOF
+
+# ---------------------------------------------------------------- 7 load
+launch_load=0
+for a in "${launch_args[@]}"; do [ "$a" = --load ] || [ "$a" = --continue ] && launch_load=1; done
+if [ "$attach" = 0 ] && [ "$launch_load" = 1 ]; then
+    step "7 load"
+    PYTHONPATH="$REPO/packages/harness/src:$REPO/bridge/src" python3 -m bg3harness.game.launch_load \
+        --timeout "$LOAD_TIMEOUT" --pid "$launcher" || die "the launch's own load didn't finish"
+fi
 
 cat <<EOF
 

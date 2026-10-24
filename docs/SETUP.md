@@ -61,7 +61,8 @@ tools/vis/test_lua.sh                # and tools/dev/test_*.sh: Lua suites, run 
 
 Steam must be running. `tools/dev/first_launch.sh` does one supervised launch and checks every layer in order
 (install, builds, display, bg3le's Lua debug server, the mod, the GPU, the game's cgroup, one screenshot) and stops
-at the first failure with the reason. By hand:
+at the first failure with the reason. With `-- --load <save>` (or `-- --continue`) it says READY only once the
+game's own load of that save has finished, so don't load it again after READY. By hand:
 
 ```bash
 runner/launch_game.sh
