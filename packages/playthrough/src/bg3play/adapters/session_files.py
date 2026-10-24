@@ -5,9 +5,9 @@
     <sid>.turns.jsonl       the stream's arrival times (ClientAgent feeds bg3ai.metrics.StreamTiming)
     <sid>.progress.jsonl    story progress and stuck records while the session plays (ProgressPoller over
                             bg3ai.progress.Timeline, the playthrough's progress_state.json)
-    <sid>.latency.json      + latency_history.jsonl   } at the session's end (write_session_files), from the same
-    <sid>.progress.json     + progress_history.jsonl  } bg3ai.metrics / bg3ai.progress / bg3harness.triage
-    <sid>.triage.md                                   } functions play.py's write_latency/progress/triage call
+    <sid>.latency.json      + latency_history.jsonl   } at the session's end (write_session_files): play.py's
+    <sid>.progress.json     + progress_history.jsonl  } bg3harness.session_summary
+    <sid>.triage.md                                   }
     <sid>.review.md         after the keeper pass (keeper_side.write_review, play.py's)
     facts.jsonl, rolls.jsonl  the playthrough's (FactsFeed: play.py's facts_poll on every story read, write_choices at
                             a session's end)
@@ -22,10 +22,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from bg3ai import metrics as latency  # pyright: ignore[reportMissingTypeStubs]
 from bg3ai import progress as story  # pyright: ignore[reportMissingTypeStubs]
 from bg3ai.referee import Rpc  # pyright: ignore[reportMissingTypeStubs]
-from bg3harness import choices, events, facts, triage
+from bg3harness import choices, events, facts, session_summary
 
 Log = Callable[[str], None]
 StoryRead = Callable[[], dict[str, Any] | None]  # one poll of the game (bg3ai.progress.read_game), None = no answer
@@ -101,22 +100,8 @@ class ProgressPoller:
 
 def write_session_files(sdir: Path, sid: str, start: float, end: float, log: Log) -> None:
     """<sid>.latency.json, <sid>.progress.json (+ their history rows) and <sid>.triage.md for the session's
-    files."""
+    files (bg3harness.session_summary, play.py's)."""
     base = sdir / sid
-    metrics, turns = Path(f"{base}.metrics.jsonl"), Path(f"{base}.turns.jsonl")
-    try:
-        lat: dict[str, Any] = latency.summarize_files(metrics, turns, start, end)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        latency.write_summary(lat, Path(f"{base}.latency.json"), sdir / "latency_history.jsonl", sid)  # pyright: ignore[reportUnknownMemberType]
-    except Exception as e:
-        log(f"{sid}: latency summary failed: {e}")
-    try:
-        prog: dict[str, Any] = story.summarize(story.load(Path(f"{base}.progress.jsonl")), start, end)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        story.write_summary(prog, Path(f"{base}.progress.json"), sdir / "progress_history.jsonl", sid)  # pyright: ignore[reportUnknownMemberType]
-        pts, stuck = prog["points"], prog["stuck_episodes"]
-        log(f"{sid}: story progress {pts} pts ({prog['per_hour']}/h), {stuck} stuck episode(s)")
-    except Exception as e:
-        log(f"{sid}: progress summary failed: {e}")
-    try:
-        log(f"{sid}: triage {triage.write(base)}")
-    except Exception as e:
-        log(f"{sid}: triage failed: {e}")
+    session_summary.write_latency(sid, base, start, end, sdir, log)
+    session_summary.write_progress(sid, base, start, end, sdir, log)
+    session_summary.write_triage(sid, base, log)
