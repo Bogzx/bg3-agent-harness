@@ -213,7 +213,9 @@ class Window:
     def cmd(self, argv: list[str], log: Path | None = None, timeout: float | None = None,
             env: dict | None = None) -> tuple[int, str]:
         """Run argv in the repo, streaming its output to the window log (and log, a tee); (exit code, output).
-        Exit 124 = timeout. The child never inherits the lock fd (close_fds, and the fd is close-on-exec)."""
+        Exit 124 = timeout. The child never inherits the lock fd (close_fds, and the fd is close-on-exec). It runs in
+        its own session, so the terminal's Ctrl-C never reaches it: an interrupt here kills its process group before
+        it goes on (live9: first_launch.sh went on launching the game after the window stopped)."""
         self.say("  $ " + shlex.join(argv))
         lines = []
         lf = open(log, "a") if log else None
@@ -230,30 +232,42 @@ class Window:
         sel = selectors.DefaultSelector()
         sel.register(p.stdout, selectors.EVENT_READ)
         rc = None
-        while True:
-            left = None if end is None else end - time.monotonic()
-            if left is not None and left <= 0:
-                try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                p.wait()
-                rc = 124
-                break
-            if sel.select(timeout=min(1.0, left) if left is not None else 1.0):
-                ln = p.stdout.readline()
-                if ln == "":
-                    rc = p.wait()
+
+        def kill() -> None:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.wait()
+
+        try:
+            while True:
+                left = None if end is None else end - time.monotonic()
+                if left is not None and left <= 0:
+                    kill()
+                    rc = 124
                     break
-                ln = ln.rstrip("\n")
-                lines.append(ln)
-                self.say("    " + ln)
-                if lf:
-                    lf.write(ln + "\n")
-                    lf.flush()
-            elif p.poll() is not None and not sel.select(timeout=0):
-                rc = p.returncode
-                break
+                if sel.select(timeout=min(1.0, left) if left is not None else 1.0):
+                    ln = p.stdout.readline()
+                    if ln == "":
+                        rc = p.wait()
+                        break
+                    ln = ln.rstrip("\n")
+                    lines.append(ln)
+                    self.say("    " + ln)
+                    if lf:
+                        lf.write(ln + "\n")
+                        lf.flush()
+                elif p.poll() is not None and not sel.select(timeout=0):
+                    rc = p.returncode
+                    break
+        except BaseException:   # Ctrl-C
+            kill()
+            sel.close()
+            p.stdout.close()
+            if lf:
+                lf.close()
+            raise
         sel.close()
         p.stdout.close()
         if lf:
@@ -470,8 +484,8 @@ class Window:
                 return self.row("launch", "FAIL", f"can't find the saves folder: {e}") == "PASS"
             if not save.is_dir():
                 return self.row("launch", "FAIL", f"no save folder {save} (--save takes the folder name)") == "PASS"
+        self.launched = not self.a.attach   # before it returns: a Ctrl-C mid-launch stops what it brought up
         rc, out = self.cmd(self.commands()["launch"], log=self.dir / "launch.log", timeout=self.a.launch_timeout)
-        self.launched = not self.a.attach
         if rc == 0:
             return self.row("launch", "PASS", "attached" if self.a.attach else
                             f"game up on {self.a.save} (first_launch.sh: READY)") == "PASS"
