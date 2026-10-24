@@ -74,6 +74,19 @@ def _connector(c: dict, H: Handles, ends: list | None = None) -> str:
     return "  " + " ".join(bits)
 
 
+def _door(dl: Any, H: Handles) -> tuple[str, str] | None:
+    """nav.route's door_link (B4, S037: Volo 610 m off, inside the Sanctum the camp's doors lead to) -> (the door's
+    handle, the BEHIND A DOOR line), or None."""
+    if not isinstance(dl, dict) or not dl.get("door"):
+        return None
+    h = H.get(dl["uuid"], dl.get("name")) if dl.get("uuid") else "?"
+    dm = dl.get("door_m")
+    where = ("next to you" if isinstance(dm, (int, float)) and dm < 3
+             else " ".join(x for x in (_m(dm), dl.get("dir")) if x) + " of you")
+    return h, (f"BEHIND A DOOR: {h} {dl.get('name') or 'door'} @{pos(dl['door'])} ({where}) took "
+               f"you to {pos(dl.get('to'))} before, {_m(dl.get('to_goal_m'))} from the goal: the way is through it")
+
+
 def route_waypoint(res: dict) -> dict | None:
     """An unlocked waypoint ROUTE_WP_SAVE_M nearer the goal than we are (nav.route's waypoints), or None."""
     if not isinstance(res, dict) or not res.get("from") or not res.get("goal"):
@@ -148,6 +161,9 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
     if res.get("reachable") is False and lo:
         return (f"NEXT: move_to x,y,z = {pos(lo['from'])} (the edge), then jump_to x,y,z = {pos(lo['to'])} "
                 f"({_m(lo.get('drop_m'))} down: a fall that deep hurts without Feather Fall), then route again")
+    door = _door(res.get("door_link"), H)
+    if door:
+        return f"NEXT: travel_to x,y,z = {pos(res['door_link']['door'])} (the door), interact {door[0]}, then route again"
     wp = route_waypoint(res)
     if wp and (res.get("reachable") is False or res.get("unknown_goal")
                or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
@@ -313,6 +329,9 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
     vn = res.get("visited_near")
     if isinstance(vn, dict) and vn.get("pos") and (vn.get("to_goal_m") or 0) < (res.get("straight_m") or 0) - 5:
         out.append(f"CLOSEST YOU HAVE BEEN: {pos(vn['pos'])}, {_m(vn.get('to_goal_m'))} from it")
+    door = _door(res.get("door_link"), H)
+    if door:
+        out.append(door[1])
     for e in (ends or [])[:3]:
         out.append(f"BLOCKED BEFORE (this session): {longnav.dead_end_text(e)}")
     wps = res.get("waypoints") or []
@@ -342,6 +361,9 @@ def hint_text(res: Any, H: Handles) -> str:
     wt = wedged_text(res.get("wedged"))
     if wt:
         out.append(wt.lstrip("; "))
+    door = _door(res.get("door_link"), H)
+    if door:
+        out.append(door[1])
     best = next((x for x in res.get("connectors") or [] if not x.get("unreachable")), None)
     if best:
         out.append(_connector(best, H).strip())

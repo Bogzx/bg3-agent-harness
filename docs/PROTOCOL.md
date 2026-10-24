@@ -121,7 +121,7 @@ in [ARCHITECTURE.md](ARCHITECTURE.md), "The mod"). Ops are registered wherever t
 `spotted{uuid}` (a hidden thing revealed to the party), `cast{caster,spell,target?}` for visible
 casters, and `moved_done{uuid,move_id}`.
 
-### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`; owner: **vis**)
+### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`; owner: **vis**)
 | op | ctx | args | result (sketch) |
 |---|---|---|---|
 | `nav.path` | S | `{char?, pos \| target}` | `{reachable, length_m, nodes, needs_jump?, within_movement?, movement_left, approach_pos?}` or `{reachable:false, straight_m, error_cause}`; points > 80 m → `{estimate:true, straight_m}`; a pos the party hasn't seen or walked (`N.known`) → `{unknown_goal:true, straight_m, dir, dy}` |
@@ -130,7 +130,7 @@ casters, and `moved_done{uuid,move_id}`.
 | `nav.markers` | S | – | Active quest objective markers (what the map shows): `{markers:[{label, quest, objective, kind, level?, here?, pos?, dist?, dir?}], error?, ms}`; `here` = on the current level with a position; sorted here-first, nearest-first. Data: generated `Server/Data/JournalMarkers.lua` |
 | `nav.explored` | S | `{last=10}` | Party breadcrumbs: `{level, cells, cell_m, area_m2, bbox, subregion, recent:[{pos, subregion?, near?, near_m?}]}` |
 | `nav.frontier` | S | `{radius=30, limit=25}` | Perceived leads `{leads:[{kind, uuid, name, dist, dir, pos, dy? (another floor, \|dy\|≥1.5), unvisited?, locked?, relation?, waypoint?, height_m?+leads? (ladders: AI-bounds height, up\|down)}], more?, ms}` |
-| `nav.route` | S | `{char?, pos \| target, connectors=false}` | The way to a goal (bridge `route` tool, walk_toward failure hint): `{straight_m, dir, dy, unknown_goal? (a pos not seen or walked: nothing else probed), reachable, length_m?, needs_jump?, legs?[{to, at_m, m, dir, dy, link?}], links?[{at_m, from, to, dy, m, kind=climb\|drop\|jump}], exposure?, straight_hazard?, closest?{pos, path_m, to_goal_m, dy_to_goal, via, legs?}, connectors?[{uuid, name, kind=ladder\|door, dist, dir, dy, path_m?\|unreachable?, height_m?, leads?, far_dy?, to_goal_m?, helps?, locked?}], standing_in?, too_far?, ms}`. Connectors: visible ladders/doors ≤30 m, listed when there is no path (or connectors=true). Target must be visible |
+| `nav.route` | S | `{char?, pos \| target, connectors=false}` | The way to a goal (bridge `route` tool, walk_toward failure hint): `{straight_m, dir, dy, unknown_goal? (a pos not seen or walked: nothing else probed), reachable, length_m?, needs_jump?, legs?[{to, at_m, m, dir, dy, link?}], links?[{at_m, from, to, dy, m, kind=climb\|drop\|jump}], exposure?, straight_hazard?, closest?{pos, path_m, to_goal_m, dy_to_goal, via, legs?}, connectors?[{uuid, name, kind=ladder\|door, dist, dir, dy, path_m?\|unreachable?, height_m?, leads?, far_dy?, to_goal_m?, helps?, locked?}], standing_in?, too_far?, door_link?{uuid, name, door, to, door_m, dir, to_goal_m}, ms}`. door_link (NavigationDoors.lua): no walk from here, and a door the party used before took it far toward the goal. Connectors: visible ladders/doors ≤30 m, listed when there is no path (or connectors=true). Target must be visible |
 | `nav.set_subregion` | S | `{name}` | Tells breadcrumbs the minimap subregion (the bridge sends it from `ui.state`) |
 
 Directions are 8-point compass from the active character, assuming +X = east, +Z = north (unverified).
