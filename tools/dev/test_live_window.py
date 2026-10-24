@@ -125,8 +125,6 @@ class Base(unittest.TestCase):
         self.write("tools/bg3le_buildinfo.py", 'print("OK: dist has all 10 patches")\n')
         self.write("tools/dev/acceptance.py", FAKE_ACCEPTANCE)
         self.write("tools/dev/first_launch.sh", FAKE_LAUNCH, exe=True)
-        self.write("packages/harness/src/bg3harness/__init__.py", "")
-        self.write("packages/harness/src/bg3harness/ramwatch.py", "import time\ntime.sleep(3)\n")
         self.write("bin/uv", FAKE_UV, exe=True)
         self.xauth = self.repo / "xauth_test"   # a real file: display_env.fill replaces a missing one (stale)
         self.xauth.write_text("")
@@ -504,11 +502,26 @@ class TestWindow(Base):
         self.assertEqual(self.verdict(w, "reload"), ["SKIP"])
 
     def test_ramwatch_started_when_not_running(self):
+        # the spawn is faked: a real detached `python3 -m bg3harness.ramwatch` outlived the test (fix-live A2: its
+        # tmp repo was gone before it imported the fake module, so the real watchdog ran, on this machine's RAM)
+        started = []
+
+        class Proc:
+            pid, returncode = 4343, None
+
+            def poll(self):
+                return None
+
+        def popen(argv, **kw):
+            started.append((argv, kw.get("start_new_session")))
+            return Proc()
         w = self.window(procs=FakeProcs(game=[], saves=None))
         w.dir.mkdir(parents=True)
-        w.ramwatch()
+        with mock.patch.object(LW.subprocess, "Popen", popen):
+            w.ramwatch()
         self.assertEqual(self.verdict(w, "ramwatch"), ["PASS"])
-        self.assertIn("started", w.rows[-1]["evidence"])
+        self.assertIn("started, pid 4343", w.rows[-1]["evidence"])
+        self.assertEqual([(a[-2:], new) for a, new in started], [(["-m", "bg3harness.ramwatch"], True)])
 
 
 class TestHelpers(Base):
