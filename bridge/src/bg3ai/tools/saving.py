@@ -245,6 +245,12 @@ def _server_boot() -> str | None:
 
 def _load_not_done(boot0: str | None) -> str:
     """'' when the load evidently happened, else why not (the game is Running again at this point)."""
+    # A new server Lua state is the load: only a load builds one (from the main menu there was none before).
+    # Live D1 / Window A / 10-22: after a load from the main menu, ui.state still read a menu screen for 5 s+, so
+    # this said "the save did not load" and pressed again: the save loaded twice (pressed=2, 53-60 s).
+    boot = _server_boot()
+    if boot and boot != boot0:
+        return ""
     for _ in range(10):  # the Load page can take a moment to go after the state flips
         ui = core.game.try_rpc("ui.state", context="client") or {}
         scr = ui.get("screen") if isinstance(ui, dict) else None
