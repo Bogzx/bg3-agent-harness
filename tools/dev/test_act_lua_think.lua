@@ -437,7 +437,7 @@ test("teleport: the result says where the caster landed; a fall to death reads F
 end)
 
 -- S095 11:04/11:06: Karsus' Compulsion at a ground point read "done — no_damage" and did nothing (GustavDev data).
-test("cast: a Target spell that takes only a creature/object is refused at a ground point; area/summon spells aren't", function()
+test("cast: a creature/object-only Target spell is refused at a ground point; area/summon spells aren't", function()
     spell("Target_END_Mindflayer_CrownDomination", { SpellType = "Target", TargetRadius = "6", Level = 9,
         TargetConditions = "Tagged('END_CROWN_OF_KARSUS')", SpellFlags = { "IsHarmful", "IsSpell" },
         SpellProperties = { { TextKey = "Default", Functors = { { TypeId = "ApplyStatus", IsSelf = true,
