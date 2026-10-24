@@ -399,12 +399,25 @@ ok(#o == 494 and o[1] == 376 and o[2] == 377, "loadOrder: live5's 376 hint reach
 -- pane shows the selected save's date; RETURN on the page loads it (the page closes).
 local UIx, saved = BG3AI.UI, {}
 for _, k in ipairs({ "findAll", "find", "typeName", "allText", "prop", "name", "text" }) do saved[k] = UIx[k] end
+-- page.lag(n) (ms): the pane shows the n-th selection's date that long after it (nil: at once)
 local page = { pane = nil }
+local function paneTick()
+    for _, u in ipairs(page.queued or {}) do
+        if not u.done and clock >= u.at then page.pane, u.done = u.date, true end
+    end
+end
 local function loadPage(n)
     local items = {}
+    page.queued, page.sel = {}, 0
     for k = 1, n do
         local it = { t = "ls.LSListBoxItem", dc = { t = "ls.VMSavegame" }, date = string.format("%d/10/2026 09:48", k) }
-        it.SetProperty = function(self, prop, v) if prop == "IsSelected" and v then page.pane = self.date end end
+        it.SetProperty = function(self, prop, v)
+            if prop ~= "IsSelected" or not v then return end
+            page.sel = page.sel + 1
+            local lag = page.lag and page.lag(page.sel)
+            if not lag then page.pane = self.date return end
+            page.queued[#page.queued + 1] = { at = clock + lag, date = self.date }
+        end
         items[k] = it
     end
     local ex = { t = "Expander", hdr = "Claude", kids = items }
@@ -438,6 +451,7 @@ local function runLoad(args, ms)
         if #pendingKey > 0 and widgets.LoadGame then hide("LoadGame") end
         pendingKey = {}
         if clock > lj.deadline_at then lj.status = "timeout" break end
+        paneTick()
         lj.on_tick(lj)
         if lj.status ~= "running" then break end
     end
@@ -461,6 +475,31 @@ ok(lj.status == "timeout" and lj.partial.stage == "verify" and lj.partial.tried 
     and lj.partial.picked == lj.partial.tried and lj.partial.saves == 200 and lj.partial.pane ~= nil,
     "load: a scan cut off by the job's time says where it was: "
     .. tostring(lj.status) .. " " .. tostring(lj.partial.tried))
+-- A1 (live 2026-10-24): the right hint was the first try, but the just-opened page's pane took longer than 400 ms
+-- to show it; the candidate was dropped and the scan never came back (timed out 16 rows away).
+loadPage(12)
+page.lag = function(n) return n == 1 and 900 or nil end
+lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 9, date = want })
+ok(lj.status == "done" and lj.result.picked == 9 and lj.partial.tried == 1,
+    "load: a slow pane on the first try waits for it: " .. tostring(lj.status) .. " picked="
+    .. tostring(lj.result and lj.result.picked or lj.partial.picked) .. " tried=" .. tostring(lj.partial.tried))
+-- a pane 500 ms behind every selection: the right save's date shows only after its own selection, never while the
+-- next candidate is selected (that loaded the save below it)
+loadPage(12)
+page.lag = function() return 500 end
+lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 7, date = want })
+ok(lj.status == "done" and lj.result.picked == 9,
+    "load: a lagging pane never accepts the next candidate: picked=" .. tostring(lj.result and lj.result.picked))
+-- two saves in one minute read the same (7 and 8, scanned 7 then 8): the unchanged pane drops 8 after A.LOAD_PANE_MS
+loadPage(12)
+page.lag = nil
+for _, it in ipairs(widgets.LoadGame.kids[1].kids) do
+    if it.date == "8/10/2026 09:48" then it.date = "7/10/2026 09:48" end
+end
+lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 7, date = want })
+ok(lj.status == "done" and lj.result.picked == 9, "load: a same-minute neighbour is passed: " .. tostring(lj.status)
+    .. " picked=" .. tostring(lj.result and lj.result.picked))
+page.lag = nil
 widgets.LoadGame = nil
 for k, f in pairs(saved) do UIx[k] = f end
 
