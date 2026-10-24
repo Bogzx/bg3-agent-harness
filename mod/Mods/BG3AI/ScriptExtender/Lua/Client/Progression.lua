@@ -223,9 +223,11 @@ local function view(coll, selected, opts)
     return out
 end
 
+-- Keyed by norm()'s first 3 letters: norm turns "is" into "iz", so "wis"/"Wisdom" key as "wiz" (a plan's
+-- {wis = 10} never matched the page's Wisdom before).
 local ABILITIES = {
     str = "Strength", dex = "Dexterity", con = "Constitution",
-    int = "Intelligence", wis = "Wisdom", cha = "Charisma",
+    int = "Intelligence", wiz = "Wisdom", cha = "Charisma",
 }
 
 local function abilityName(s)

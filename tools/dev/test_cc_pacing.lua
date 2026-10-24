@@ -20,6 +20,22 @@ end
 -- i/n of it, in list order: "Half-Elf" renders before "Elf"); REBUILD_MS = time from a race pick until
 -- SelectableSubRaces shows that race's subraces (the old race's list until then).
 local G = { RENDER_MS = 120, REBUILD_MS = 60 }
+-- POINT_MS = time from an Increase/DecreaseAbility press until the score reads back changed; ABILITIES = the page
+-- has the point-buy list (DummyCharacter.Stats.Abilities, every score 8).
+G.POINT_MS, G.ABILITIES = 30, false
+
+local function ability(name)
+    local a = obj("ls.VM", { Ability = name, Value = 8, RaceBonus = 0 })
+    a.queue = {}
+    function a.GetProperty(self, k)
+        for i = #self.queue, 1, -1 do
+            local q = self.queue[i]
+            if now >= q.at then self._p.Value = self._p.Value + q.d table.remove(self.queue, i) end
+        end
+        return self._p[k]
+    end
+    return a
+end
 
 local function vm(name) return obj("ls.VM", {}), name end  -- VMs carry no readable name: labels come from rendering
 local NAMES = {}
@@ -57,6 +73,12 @@ local function reset()
             return SUB[page.subFor]
         end
     end })
+    if G.ABILITIES then
+        page.abilities = {}
+        for i, n in ipairs({ "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma" }) do
+            page.abilities[i] = ability(n)
+        end
+    end
     widget.DataContext = dc
     BG3AI.Progression.rendered, BG3AI.Progression.renderedKey = nil, nil
 end
@@ -103,7 +125,13 @@ BG3AI.UI = {
     isVisible = function() return true end,
     cachedByName = function(_, n) return tabs[n] end,
     byName = function() return nil end,
-    command = function(o, n) page.commands[#page.commands + 1] = n return true end,
+    command = function(o, n, arg)
+        page.commands[#page.commands + 1] = n
+        if type(arg) == "table" and arg.queue then
+            arg.queue[#arg.queue + 1] = { at = now + G.POINT_MS, d = n == "IncreaseAbility" and 1 or -1 }
+        end
+        return true
+    end,
     items = function(coll)
         local i = 0
         return function()
@@ -113,7 +141,7 @@ BG3AI.UI = {
         end
     end,
     count = function(coll) return type(coll) == "table" and #coll or 0 end,
-    path = function() return nil end,
+    path = function(_, p) return p == "DummyCharacter.Stats.Abilities" and page.abilities or nil end,
     findAll = function(root, pred)
         if root == widget then return renderedItems() end
         if root and root._p and root._p._tb then return { root._p._tb } end
@@ -210,6 +238,30 @@ j, ms = apply({ race = "Elf", class = "Fighter" })
 check(j.status == "done" and j.result.set.subrace == "High Elf" and (j.result.defaulted or {})[1] == "subrace",
     "default subrace after a slow rebuild: " .. tostring(j.result.set.subrace))
 G.REBUILD_MS = 60
+
+-- 10. a point-buy plan (live9 acceptance: 27 presses at a fixed 120 ms = 3.4 s of cc_apply's 5.6 s): a press waits
+--     until its score reads back changed, same scores as the fixed waits
+G.ABILITIES = true
+local BUY = { race = "Human", class = "Fighter",
+    abilities = { str = 15, dex = 14, con = 14, int = 8, wis = 10, cha = 8 } }
+local function scores()
+    local out = {}
+    for _, a in ipairs(page.abilities) do out[#out + 1] = a:GetProperty("Value") end
+    return table.concat(out, ",")
+end
+j = apply(BUY)
+local fastScores, fastAb = scores(), tonumber(j.result._stage_ms:match("abilities=(%d+)"))
+j = apply(BUY, { paced = true })
+local pacedScores, pacedAb = scores(), tonumber(j.result._stage_ms:match("abilities=(%d+)"))
+check(fastScores == "15,14,14,8,10,8" and pacedScores == fastScores, "point buy: same scores (" .. fastScores .. " / "
+    .. pacedScores .. ")")
+check(pacedAb >= 21 * 120, "point buy, paced: the fixed 120 ms per press (" .. pacedAb .. " ms)")
+check(fastAb < 0.5 * pacedAb, "point buy, state waits: " .. fastAb .. " ms < half of " .. pacedAb .. " ms")
+G.ABILITIES = false
+-- plan keys as players write them: norm() turns "is" into "iz" ({wis = 10} never matched Wisdom)
+local an = P.inner.abilityName
+check(an("wis") == "Wisdom" and an("WIS") == "Wisdom" and an("Wisdom") == "Wisdom" and an("str") == "Strength",
+    "ability names: wis/WIS/Wisdom -> Wisdom (" .. tostring(an("wis")) .. ")")
 
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

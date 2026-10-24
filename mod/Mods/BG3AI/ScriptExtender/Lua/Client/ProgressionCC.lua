@@ -696,10 +696,22 @@ local function abilitiesStage(ctx, plan)
             if UI.prop(dc, "CanResetAbilities") ~= false then UI.command(dc, "ResetAbilities", nil) end
             return "wait", 300
         end
+        local abilities = list(UI.path(dc, "DummyCharacter.Stats.Abilities"))
+        -- live9: a point-buy plan's ~27 presses at a fixed 120 ms each were 3.4 s of cc_apply's 5.6 s. With state
+        -- waits a press waits until its score reads back changed (CC_POLL_MS polls), the 120 ms as the cap.
+        local pend = state.pending
+        if pend then
+            local v
+            for _, a in ipairs(abilities) do
+                if abilityOf(a) == pend.name then v = tonumber(UI.prop(a, "Value")) end
+            end
+            if v == pend.value and RPC.now_ms() - pend.at < P.CC_POINT_MS then return "wait", P.CC_POLL_MS end
+            state.pending = nil
+        end
         -- One point per tick, re-reading the page each time (point-buy costs differ per score).
         state.steps = state.steps + 1
         if state.steps > 80 then return "fail", "point buy did not converge" end
-        for _, a in ipairs(list(UI.path(dc, "DummyCharacter.Stats.Abilities"))) do
+        for _, a in ipairs(abilities) do
             local name = abilityOf(a)
             local target
             for k, v in pairs(want) do
@@ -707,15 +719,15 @@ local function abilitiesStage(ctx, plan)
             end
             local cur = tonumber(UI.prop(a, "Value")) or 0
             local base = cur - (tonumber(UI.prop(a, "RaceBonus")) or 0)
-            if target and base < target and UI.prop(a, "CanIncrease") ~= false then
-                local ok = UI.command(dc, "IncreaseAbility", a)
-                if ok then return "wait", 120 end
-            elseif target and base > target and UI.prop(a, "CanDecrease") ~= false then
-                local ok = UI.command(dc, "DecreaseAbility", a)
-                if ok then return "wait", 120 end
+            local cmd = target and (base < target and UI.prop(a, "CanIncrease") ~= false and "IncreaseAbility"
+                or base > target and UI.prop(a, "CanDecrease") ~= false and "DecreaseAbility") or nil
+            if cmd and UI.command(dc, cmd, a) then
+                if not ctx.fast then return "wait", P.CC_POINT_MS end
+                state.pending = { name = name, value = cur, at = RPC.now_ms() }
+                return "wait", P.CC_POLL_MS
             end
         end
-        return "next", 200
+        return "next", ctx.fast and P.CC_SETTLE_MS or 200
     end
 end
 
@@ -760,6 +772,7 @@ end
 P.CC_STATE_WAITS = true
 P.CC_TAB_MS = 450
 P.CC_PICK_MS = 300
+P.CC_POINT_MS = 120  -- after each point-buy press (abilitiesStage)
 P.CC_SETTLE_MS = 100
 P.CC_POLL_MS = 40
 
