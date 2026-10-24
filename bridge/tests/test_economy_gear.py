@@ -538,5 +538,42 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class ScrollSettleCast(unittest.TestCase):
+    """Live 2026-10-24 (S049-end): Karlach read Revivify on Shadowheart in combat; the scroll was still in her bags
+    2.6 s after Shadowheart stood up (the cast still playing), so the reply said "not used up: no action spent" while
+    her action was spent and the scroll gone a moment later. The settle waits while the mod says the cast plays."""
+
+    def _settle(self, answers):
+        clock, seen = [0.0], []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                seen.append((clock[0], dict(args or {})))
+                return answers(clock[0], args or {})
+
+        def sleep(s):
+            clock[0] += s
+        with mock.patch.object(core, "game", G()), mock.patch.object(time, "monotonic", lambda: clock[0]), \
+                mock.patch.object(time, "sleep", sleep):
+            return world_tools._scroll_settle("c"), seen
+
+    def test_a_cast_still_playing_is_waited_for(self):
+        out, seen = self._settle(lambda t, a: {"read": True, "charged": []} if t >= 4.0 else {"read": False,
+                                 "casting": t < 3.5 or None})
+        self.assertEqual(out, "; its action is spent")
+        self.assertFalse(any(a.get("final") for _, a in seen), "no final while it plays")
+
+    def test_a_cast_that_never_ends_stops_at_the_cap(self):
+        out, seen = self._settle(lambda t, a: {"read": False, "casting": True})
+        self.assertIn("the scroll was not used up", out)
+        self.assertTrue(seen[-1][1].get("final"))
+        self.assertLessEqual(seen[-1][0], world_tools.SCROLL_CAST_MAX_S + world_tools.SCROLL_SETTLE_S + 0.5)
+
+    def test_no_cast_keeps_the_short_window(self):
+        out, seen = self._settle(lambda t, a: {"read": False})
+        self.assertIn("the scroll was not used up", out)
+        self.assertLess(seen[-1][0], world_tools.SCROLL_SETTLE_S + 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

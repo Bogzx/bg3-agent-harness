@@ -343,6 +343,39 @@ test("interact (A7): in combat a carried scroll is read on the reader's turn for
     eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 0, "not below 0")
 end)
 
+test("scroll_settle: a cast still playing says so; a cast that went off is read at final (live 10-24)", function()
+    combat_setup(9)
+    local SCR = "a0a0a0a0-0000-0000-0000-00000000000b"
+    world[SCR] = { pos = { 0, 0, 0 }, comps = { Data = { StatsId = "OBJ_Scroll_Revivify" } } }
+    osiv[key("IsItem", SCR)] = 1
+    osiv[key("GetInventoryOwner", SCR)] = P1
+    osiv[key("GetStackAmount", SCR)] = 1
+    stats.OBJ_Scroll_Revivify = { ItemUseType = "Scroll", UseCosts = "ActionPoint:1" }
+    local function read()
+        local j = job(op("interact", { char = P1, target = SCR }))
+        A.dispatch("UseFinished", { P1, SCR, 1 })
+        tick(10)
+        eq(j.status, "done", "read: " .. tostring(j.error))
+    end
+    read()
+    eq(op("scroll_settle", { char = P1 }).casting, nil, "no cast seen yet")
+    A.dispatch("CastSpell", { P1, "Teleportation_Revivify_Scroll", "Target", "None", 1 })
+    local r = op("scroll_settle", { char = P1 })
+    eq(r.read, false, "still in the bags"); eq(r.casting, true, "its cast plays")
+    A.dispatch("CastedSpell", { P1, "Teleportation_Revivify_Scroll", "Target", "None", 1 })
+    r = op("scroll_settle", { char = P1 })
+    eq(r.read, false, "not gone yet"); eq(r.casting, nil, "the cast is over")
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0   -- the engine charged it
+    r = op("scroll_settle", { char = P1, final = true })
+    eq(r.read, true, "its cast went off: read"); eq(#r.charged, 0, "nothing more charged")
+    eq(op("scroll_settle", { char = P1 }).none, true, "settled")
+    -- no cast at all: final is still "not used up", nothing charged
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    read()
+    r = op("scroll_settle", { char = P1, final = true })
+    eq(r.read, false, "not read"); eq(world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount, 1, "kept")
+end)
+
 test("cast: a Devotion paladin's killing blow on a Temporarily Hostile or neutral target is the player's call (user, 2026-10-18)", function()
     combat_setup(9)
     world[GOB].pos = { 1.2, 0, 0 }
