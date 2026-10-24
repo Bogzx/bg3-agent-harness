@@ -234,7 +234,68 @@ def _game_process_alive(proc: Path = Path("/proc")) -> bool | None:
         return None
 
 
+def _launch_save(proc: Path = Path("/proc")) -> str | None:
+    """The save the running game was launched with (`-loadSaveGame <folder>`: runner/launch_game.sh --load), else
+    None."""
+    try:
+        for d in proc.iterdir():
+            if d.name.isdigit():
+                try:
+                    if (d / "comm").read_text().strip() != "bg3" or \
+                            (metrics.rss_mb(int(d.name), proc) or 0) < GAME_ALIVE_MIN_MB:
+                        continue
+                    args = (d / "cmdline").read_bytes().decode(errors="replace").split("\0")
+                except OSError:
+                    continue
+                if "-loadSaveGame" in args[:-1]:
+                    return args[args.index("-loadSaveGame") + 1]
+                return None
+    except OSError:
+        pass
+    return None
+
+
 LOAD_START_S = 8.0  # a pressed Load leaves the Running state within this
+SETTLE_POLLS = 360  # x 0.5 s: a fresh launch's shader cache + menu took 75 s live (D6), a save load 20-40 s
+LAUNCH_LOAD_POLLS = 16  # x 0.5 s at the main menu: the game starts its -loadSaveGame load ~1.5 s after it (D5/D6)
+
+
+def _game_state() -> str:
+    try:
+        return core.game.game_state()
+    except (GameError, NotReady, OSError):
+        return ""
+
+
+def _launch_load(save: str, boot0: str | None, alive_at_start: bool | None) -> tuple[JobResult | None, str | None]:
+    """Before pressing anything from the main menu (no save in play: boot0 None): a game still loading its menu,
+    or the save it was launched with, is waited for. -> (the result when that is the load asked for, else None;
+    the server boot to verify a press against)."""
+    # Live D1/D6, Window A, 10-13..10-24 (every first load pressed while the client was in LoadMenu, 23 logs): the
+    # Load page opened before the main menu was up stayed on screen over the loaded game (ui.state save_load 34 s+;
+    # before 08102c7 the bridge pressed it again). Live D5: pressed 1.0 s into the launch's own -loadSaveGame load,
+    # the page came up over that load and the job loaded the save a second time (39.7 s). Presses at Menu: fine.
+    st = _game_state() if boot0 is None else "Running"
+    if st in ("", "Running", "Paused"):
+        return None, boot0
+    launch, at_menu = _launch_save(), 0
+    for _ in range(SETTLE_POLLS):
+        if alive_at_start and _game_process_alive() is False:
+            return JobResult("failed", None, "the game CRASHED while loading (its process is gone; the bg3le log in "
+                             "runtime/logs has the crash): it has to be restarted"), boot0
+        if st == "Running" and core.game.server_ready():
+            # nothing was pressed: the game loaded by itself, i.e. its launch's -loadSaveGame (or -continueGame)
+            if launch == save:
+                return JobResult("done", {"loaded": save.split("__", 1)[-1],
+                                          "via": "the game's own load of the save it was launched with"}), boot0
+            return None, _server_boot()
+        at_menu = at_menu + 1 if st == "Menu" else 0
+        if at_menu and (launch is None or at_menu > LAUNCH_LOAD_POLLS):
+            return None, boot0
+        time.sleep(0.5)
+        st = _game_state()
+    return JobResult("failed", None, f"the game stayed in its {st or 'unreadable'} state for "
+                     f"{SETTLE_POLLS // 2} s (neither the main menu nor a loaded save): nothing was pressed"), boot0
 
 
 def _server_boot() -> str | None:
@@ -353,9 +414,9 @@ def load_game(save: str = "latest") -> str:
         save = next(d.name for d in mine if d.name == save or d.name.endswith("__" + save))
     retried_fight, fight_block = _fight_before_load()
     alive_at_start = _game_process_alive()
-    boot0 = _server_boot()
-    retried = 0
-    while True:
+    r, boot0 = _launch_load(save, _server_boot(), alive_at_start)
+    retried, retry = 0, False
+    while r is None or retry:
         r, retry = _load_once(save, boot0, alive_at_start)
         if not retry or retried >= LOAD_RETRIES or _game_process_alive() is False:
             break

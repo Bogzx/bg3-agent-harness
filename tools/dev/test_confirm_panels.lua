@@ -150,6 +150,23 @@ do
     local dc = A.commandDC("OpenLoadGameDialog")
     ok(dc and dc.OpenLoadGameDialog.hud == true, "commandDC skips the loading screen's DC")
     BG3AI.UI.widgets = _ws
+    -- live D1/D6 (pressed while the client was in LoadMenu: the page stayed over the loaded game) and D5 (pressed
+    -- 1 s into the launch's own load, which then loaded twice): no loading screen widget yet, the state says it
+    widgets, opened = {}, 0
+    local _gs = Ext.Utils.GetGameState
+    local gs = "LoadMenu"
+    Ext.Utils.GetGameState = function() return gs end
+    r = ops["ui.menu"]({ action = "load", name = "Claude-4810126690__S027-start" })
+    j = run(r.job, 3000)
+    ok(j.status == "running" and opened == 0 and j.partial and j.partial.state == "LoadMenu",
+        "load waits while the client is in LoadMenu (no press): " .. tostring(j.status) .. " " .. tostring(opened))
+    gs = "StartLoading"
+    j = run(r.job, 3000)
+    ok(j.status == "running" and opened == 0, "and while a save loads by itself (StartLoading): no press")
+    gs = "Menu"
+    j = run(r.job, 1000)
+    ok(opened == 1 and j.partial and j.partial.stage == "select", "main menu up -> load page opened, select stage")
+    Ext.Utils.GetGameState = _gs
     widgets = {}
     A.LOAD_ENABLED, BG3AI.UI.command, BG3AI.UI.get = _le, _cmd, _get
 end
