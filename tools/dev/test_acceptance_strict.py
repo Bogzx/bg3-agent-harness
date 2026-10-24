@@ -75,7 +75,8 @@ class StrictSection(unittest.TestCase):
         got, calls = self._run(lock)
         self.assertEqual([c[0] for c in calls], ["load_game", "load_game", "camp", "long_rest"])
         self.assertTrue(all(c[2] for c in calls))                     # strict was on for every step
-        self.assertEqual([c[1] for c in calls[:2]], [core.BASE, core.HOTBAR_SAVE])
+        # the camp save last (BASE stands at camp): live9 loaded S065-end last, whose Lower City spot blocks camp
+        self.assertEqual([c[1] for c in calls[:2]], [core.HOTBAR_SAVE, core.BASE])
         self.assertFalse(lock.on)                                     # restored to what it was
         name, verdict, ev = got[0]
         self.assertEqual((name, verdict), (strict.STRICT_ITEM, "PASS"))
