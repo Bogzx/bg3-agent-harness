@@ -67,6 +67,7 @@ class FakeGame:
         self.gone: dict[str, str] = {}  # act.target_state gone= for an unseen combatant (Actions.lua gone_why)
         self.combat: dict = {"active": False}
         self.reach: Any = None  # nav.reach_toward reply (or callable(args))
+        self.route: Any = None  # nav.route reply (or callable(args)); None: op unknown
         self.approach: Any = None  # nav.approach reply (None: op unknown, like a mod not reloaded yet)
         self.los_spot: Any = None  # nav.los_spot reply (or callable(args)); None: op unknown
         self.actions: list = [{"spell": "Target_MainHandAttack", "name": "Attack"}]
@@ -183,6 +184,8 @@ class FakeGame:
             if op == "nav.reach_toward":
                 r = self.reach(args) if callable(self.reach) else self.reach
                 return r if r is not None else {"reachable": False}
+            if op == "nav.route" and self.route is not None:
+                return self.route(args) if callable(self.route) else json.loads(json.dumps(self.route))
             if op == "nav.path":
                 return dict(self.path)
             if op == "nav.safe_spot":

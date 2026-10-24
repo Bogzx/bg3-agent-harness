@@ -175,6 +175,8 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
     next to him). Returns (line, metres left after it) or None (no shortcut, or the fast travel failed: walk)."""
     if dist_m is None or dist_m < longnav.FT_MIN_M:
         return None
+    if travel_macro._door_link(char, dest):
+        return None  # B4 (S037): the way is through a door the party used (the trip goes through it), not a waypoint's
     wps = (core.game.try_rpc("nav.waypoints", {"pos": dest}) or {}).get("waypoints")
     here = travel_macro._pos_now(char)
     wp = longnav.pick_waypoint(here, dest, wps) if here else None

@@ -97,6 +97,13 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         if esc:
             lines.append(esc)
             here = _pos_now(char) or here
+        dl = _door_link(char, dest) if start_d >= DOOR_MIN_M and not reporting._batch.get("door_trip") else None
+        if dl:
+            more, stop = _through_door(char, dl, outer, policy)
+            lines += more
+            if stop:
+                return macro_tools._macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+            here = _pos_now(char) or here
         watcher = actq.Watcher(queueing._watch_conn())
         watcher.baseline()
         prog = macros.TravelProgress(here, dest)
@@ -237,6 +244,63 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
         stop += _climb_hint(_pos_now(char) or here, dest)
         stop += _dead_end_note(char, here, dest, what)
     return macro_tools._macro_finish("travel_to", {"to": what}, lines, stop, [], t0)
+
+
+# B4 (S037 Rescue Volo; vis f3b25d2): Volo inside the Shattered Sanctum read 610 m SE of the Goblin Camp, and the
+# trip walked toward the straight line until it was blocked 219 m short; the party had come out through the Sanctum's
+# Heavy Oak Doors (a door that moves you 650 m on the same level). When nav.route says the goal is behind such a door
+# (door_link: no walk from here, the door's arrival far nearer the goal), the trip goes to the door, uses it, and
+# walks on from where it lets out, as a player who remembers where the door led.
+DOOR_MIN_M = 50.0    # nav.route names a door link only this far from the goal (NavigationDoors LINK_GAIN_M)
+DOOR_WALK_M = 30.0   # farther from the door than this: travel_to it first (interact walks the rest)
+DOOR_MOVED_M = 40.0  # the use moved the actor this far from the door: it went through (NavigationDoors LINK_MIN_M)
+
+
+def _door_link(char: str, dest: list) -> dict | None:
+    """nav.route's door_link toward dest, or None (the goal is walkable, or no door the party used helps)."""
+    r = core.game.try_rpc("nav.route", {"char": char, "pos": list(dest)})
+    dl = r.get("door_link") if isinstance(r, dict) else None
+    return dl if isinstance(dl, dict) and dl.get("uuid") and dl.get("door") else None
+
+
+def _through_door(char: str, dl: dict, outer: actq.Executor | None, policy: str) -> tuple[list[str], str | None]:
+    """Walk to the door_link's door (a trip of its own when farther than DOOR_WALK_M), interact it, and check it took
+    the actor through. Returns (lines, stop or None)."""
+    h = core.H.get(dl["uuid"], dl.get("name"))
+    door, name = list(dl["door"]), dl.get("name") or "door"
+    lines = [f"BEHIND A DOOR: {h} {name} @{render.pos(door)} took the party to {render.pos(dl.get('to'))} before, "
+             f"{render.num(dl.get('to_goal_m') or 0)}m from the goal: going through it"]
+    ignore = {"surface", "damage"} if policy != "strict" else set()
+    saved = reporting._batch.get("door_trip")
+    reporting._batch["door_trip"] = True  # the trip to the door looks for no door of its own
+    try:
+        here = _pos_now(char)
+        if here and macros.dist(here, door) > DOOR_WALK_M:
+            w = actq.Watcher(queueing._watch_conn(), ignore=set(ignore))
+            w.baseline()
+            rep, text = turn_plan._run_one(w, char, actq.Step("travel_to", {"x": door[0], "y": door[1], "z": door[2]}),
+                                           outer)
+            lines.append(f"to the door: {text}")
+            here = _pos_now(char) or here
+            if outer is not None and (outer.interrupt or outer.stop.is_set()):
+                return lines, (outer.interrupt or ("cancel", "cancelled"))[1]
+            if macros.dist(here, door) > DOOR_WALK_M:
+                return lines, (f"the door {h} {name} is still {render.num(round(macros.dist(here, door), 1))}m away: "
+                               f"route() to it, then interact {h}")
+        w = actq.Watcher(queueing._watch_conn(), ignore=set(ignore))
+        w.baseline()
+        rep, text = turn_plan._run_one(w, char, actq.Step("interact", {"target": h}), outer)
+        lines.append(f"the door: {text}")
+        if not rep.done:
+            return lines, queueing._label(rep.stopped or "") or f"interact {h} failed"
+    finally:
+        reporting._batch["door_trip"] = saved
+    after = _pos_now(char)
+    if not after or macros.dist(after, door) < DOOR_MOVED_M:
+        return lines, (f"used {h} {name}, but it did not take the party through (still @{render.pos(after)}): is it "
+                       "locked, or used from the other side? route() again")
+    lines.append(f"through {h} {name}: now @{render.pos(after)}")
+    return lines, None
 
 
 # naut2 run 1: travel_to o1 "arrived (0.7m from it)", then o1 Escape Route stood 66.8m W (the objective's marker
