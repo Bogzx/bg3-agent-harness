@@ -171,7 +171,7 @@ class ScrollRead(unittest.TestCase):
     """live9 S002 17:34: Lae'zel's Scroll of Revivify on dead Vessa x2 'no spell in hand after it' while the HUD had
     another member selected; with Lae'zel selected the read put the spell in hand. The target click waits for it."""
 
-    def read(self, fake, arm_wait_s=0.5):
+    def read(self, fake, arm_wait_s=0.5, pos=None):
         for k, v in (("game", fake), ("H", render.Handles())):
             self.addCleanup(setattr, core, k, getattr(core, k))
             setattr(core, k, v)
@@ -187,15 +187,27 @@ class ScrollRead(unittest.TestCase):
             return clicker.ClickResult(True)
         for mod, k, v in ((plumbing, "_act", act), (world_tools, "_inp", Inp), (clicker, "click_entity", click),
                           (world_tools, "_revive_spot", lambda inp, name, char, tgt: " (revive spot)"),
-                          (twostep, "ARM_WAIT_S", arm_wait_s)):
+                          (twostep, "ARM_WAIT_S", arm_wait_s),
+                          (world_tools, "_scroll_ground", lambda inp, name, char, p: " (aimed at the ground)")):
             self.addCleanup(setattr, mod, k, getattr(mod, k))
             setattr(mod, k, v)
+        if pos is not None:
+            return world_tools._use_scroll(ME, {"uuid": "scroll-2", "name": "Scroll of Misty Step", "owner": ME}, "",
+                                           pos=pos)
         return world_tools._use_scroll(ME, {"uuid": "scroll-1", "name": "Scroll of Revivify", "owner": ME}, "e2")
 
     def test_reader_selected_before_the_read(self):
         fake = ScrollReadFake(SH, arm_after=1)
         self.read(fake)
         self.assertEqual(fake.order[:2], ["act.select", "act.interact"])
+
+    def test_point_scroll_reader_selected_too(self):
+        # live9 acceptance A9: Karlach's Scroll of Misty Step with the HUD on another member: "no spell in hand
+        # after the scroll's use"
+        fake = ScrollReadFake(SH, arm_after=1)
+        out = self.read(fake, pos=[6.0, 0.0, 0.0])
+        self.assertEqual(fake.order[:2], ["act.select", "act.interact"])
+        self.assertIn("(aimed at the ground)", out)
 
     def test_selected_reader_not_selected_again(self):
         fake = ScrollReadFake(ME, arm_after=1)
