@@ -285,7 +285,11 @@ class ScrollUse(unittest.TestCase):
                     return {"screen": screen}
                 if rpc is not None and op in rpc:
                     return rpc[op](args or {})
+                if op == "ui.cast_state":
+                    return {"armed": True}   # the scroll's spell in hand after its Use
                 return default
+
+            rpc = try_rpc
 
             def drain_events(self, ctx=None):
                 return []
@@ -392,7 +396,7 @@ class ScrollUse(unittest.TestCase):
         self.assertNotIn("act.scroll_settle", [op for op, _ in self.rpcs])
 
     def test_scorching_ray_scroll_clicks_once_per_beam(self):
-        left = iter([2, 1])
+        left = iter([3, 2, 1])   # the read before the first click (the spell in hand), then after each beam
 
         def cast_state(a):
             r = next(left, None)
