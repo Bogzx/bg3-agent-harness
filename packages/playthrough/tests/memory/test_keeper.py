@@ -712,6 +712,13 @@ class KeeperTest(MemoryTestCase):
         self.assertEqual(keeper.ungrounded_names("- WHEN Nightsong, fall: S012 L5 [seen]", text), [])
         self.assertEqual(keeper.ungrounded_names("- Done. Ketheric fell [seen]", text), [])  # a sentence start
 
+    def test_a_possessive_name_is_grounded_by_the_name(self):  # S071: the true Raging Vortex lesson was dropped
+        text = "raging vortex (air myrmidon) silences everyone in it. ketheric"
+        line = "- Air Myrmidon's Raging Vortex silences everyone inside: keep casters out (S071) [seen]"
+        self.assertEqual(keeper.ungrounded_names(line, text), [])
+        self.assertEqual(keeper.ungrounded_names("- Avoid Ketheric\u2019s aura [seen]", text), [])
+        self.assertEqual(keeper.ungrounded_names("- Avoid Qxzarnath's lair [seen]", text), ["Qxzarnath"])
+
     def test_no_pending_snapshot_after_a_pass(self):
         self.run_keeper("ok")
         self.assertFalse((self.base.parent / keeper.PENDING).exists())
