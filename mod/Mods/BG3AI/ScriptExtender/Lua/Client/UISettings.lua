@@ -102,7 +102,7 @@ function G.apply(name, value)
     if not ok then return false, "cannot set " .. def.switch .. ": " .. tostring(err) end
     if def.ui then
         local o = uiOptions()
-        if o then pcall(o.SetProperty, o, def.ui, value) end
+        if o then UI.pcall(o.SetProperty, o, def.ui, value) end
     end
     return true
 end

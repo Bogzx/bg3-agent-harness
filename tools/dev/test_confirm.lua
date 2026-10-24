@@ -49,6 +49,12 @@ BG3AI = {
         end,
     },
     UI = {
+        -- Client/UI.lua's: a bg3le 0011 "UI busy" refusal (the call never ran) raises busy (here "BUSY ...")
+        pcall = function(f, ...)
+            local r = table.pack(pcall(f, ...))
+            if not r[1] and tostring(r[2]):find("UI busy", 1, true) then error("BUSY " .. tostring(r[2]), 0) end
+            return table.unpack(r, 1, r.n)
+        end,
         widgets = function()
             local out, names = {}, {}
             for n in pairs(widgets) do names[#names + 1] = n end

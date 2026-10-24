@@ -36,6 +36,12 @@ function UI.items(c, max)
 end
 function UI.count(c) return type(c) == "table" and #c or 0 end
 function UI.props(vm) return { Enabled = vm.Enabled, Ask = vm.Ask } end
+-- Client/UI.lua's: a bg3le 0011 "UI busy" refusal (the call never ran) raises busy (here "BUSY ...")
+function UI.pcall(f, ...)
+    local r = table.pack(pcall(f, ...))
+    if not r[1] and tostring(r[2]):find("UI busy", 1, true) then error("BUSY " .. tostring(r[2]), 0) end
+    return table.unpack(r, 1, r.n)
+end
 local sent = {}
 function UI.command(dc, name, vm)   -- the game applies the toggle (deferred live; at once here)
     sent[#sent + 1] = { name = name, vm = vm }
@@ -122,6 +128,22 @@ for _, x in ipairs(res.result.reactions) do modes[x.id] = x.mode end
 ok(modes.Interrupt_Shield_Wizard_3 == "ask" and modes.Interrupt_Shield_Wizard == "never", "an id sets that one only")
 local okn, errn = pcall(ops["ui.reactions"], { char = "gale", set = { Smite = "never" } })
 ok(not okn and tostring(errn):find("no reaction 'Smite'", 1, true), "unknown name refused")
+
+-- ui.settings: the options menu's mirror of a setting refused as busy (bg3le 0011; it never ran) raises busy, so the
+-- op answers busy and is asked again, instead of reporting the setting applied with the menu's copy stale
+local opts = {}
+function opts.SetProperty(self, k, v)
+    if self.refuse then error("bg3le: UI busy (frame lock not taken since a timeout); retry", 0) end
+    self[k] = v
+end
+hud.CurrentPlayer.UIOptions = opts
+opts.refuse = true
+local oka, erra = pcall(G.apply, "subtitles", false)
+ok(not oka and tostring(erra):find("^BUSY ") ~= nil and opts.ShowSubtitles == nil,
+   "G.apply: a busy UI option set raises busy: " .. tostring(erra))
+opts.refuse = nil
+ok(G.apply("subtitles", false) == true and opts.ShowSubtitles == false, "G.apply: free UI, the option is set")
+hud.CurrentPlayer.UIOptions = nil
 
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

@@ -411,6 +411,12 @@ do
         "split box read: Supply Pack 1/3, Cancel/Confirm")
     local okr, err = pcall(ops["ui.confirm"], { answer = "yes", amount = 5 })
     ok(not okr and tostring(err):find("out of range", 1, true) ~= nil, "split amount out of range refused: " .. tostring(err))
+    -- bg3le 0011: the amount's set refused (it never ran) raises busy (the op answers busy), nothing pressed
+    data.SetProperty = function() error("bg3le: UI busy (frame lock not taken since a timeout); retry", 0) end
+    okr, err = pcall(ops["ui.confirm"], { answer = "yes", amount = 2 })
+    ok(not okr and tostring(err):find("^BUSY ") ~= nil and #pressed == 0 and data.TargetCount == 1,
+        "split amount set refused as busy: raises busy, nothing pressed: " .. tostring(err))
+    data.SetProperty = function(self, k, v) self[k] = v end
     local r = ops["ui.confirm"]({ answer = "yes", amount = 2 })
     local j = run(r.job, 4000)
     ok(data.TargetCount == 2 and pressed[1] == "Confirm" and j.status == "done",

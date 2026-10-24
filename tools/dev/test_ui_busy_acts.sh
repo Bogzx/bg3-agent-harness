@@ -8,6 +8,7 @@ for img in nickblah/lua:5.3 nickblah/lua:5.4; do
   echo "== $img"
   docker run --rm -v "$PWD":/repo:ro -w /repo "$img" sh -c "
     luac -p $L/Client/UI.lua $L/Client/Pick.lua $L/Client/ServicesItems.lua $L/Client/Services.lua \
-      $L/Client/Progression.lua $L/Client/Spellbook.lua || exit 1
+      $L/Client/Progression.lua $L/Client/Spellbook.lua $L/Client/UIActions.lua $L/Client/UISettings.lua \
+      $L/Client/UIActionsMenu.lua || exit 1
     lua tools/dev/test_ui_busy_acts.lua $L"
 done

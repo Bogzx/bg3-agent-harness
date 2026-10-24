@@ -524,7 +524,7 @@ function A.answerConfirm(answer, dry, amount)
             return false, "amount " .. tostring(amount) .. " is out of range (1-" .. tostring(box.max or "?") .. ")"
         end
         if not dry then
-            local ok, err = pcall(box.data.SetProperty, box.data, "TargetCount", n)
+            local ok, err = UI.pcall(box.data.SetProperty, box.data, "TargetCount", n)
             if not ok then return false, "couldn't set the amount: " .. tostring(err) end
         end
     end
