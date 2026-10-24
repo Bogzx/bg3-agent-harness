@@ -409,6 +409,40 @@ def _turn_auto_bonus(who: str, watcher: actq.Watcher, lines: list, after: dict) 
     return _turn_slot("bonus (auto: ally downed)", alts, who, watcher, lines, after)[0]
 
 
+# Live D2 P5 (Orin's Death Growl): a Fearful Wyll walked 4.4 m by himself in 0-2.3 s of his turn start, then stood
+# still with the turn his; S066/S067 Karlach's first order (Rage) at such a turn start was dropped ("the game never
+# started it"). The first order waits until the member has stood still FEAR_STILL_S (at most FEAR_SETTLE_MAX_S).
+FEAR_STILL_S, FEAR_SETTLE_MAX_S, FEAR_POLL_S, FEAR_MOVE_M = 1.0, 5.0, 0.1, 0.05
+
+
+def _fear_settle(cs: dict, char: str, clock=time.monotonic, sleep=time.sleep) -> str:
+    """At a Fearful member's turn: wait for the game's own fear move to stop before the plan's first order. -> the
+    line saying how far it moved ("" when it isn't Fearful or never moved)."""
+    name = turn.fear_moved(cs, char)
+    if not name:
+        return ""
+
+    def pos() -> list | None:
+        rows = (queueing._watch_conn().try_rpc("act.watch") or {}).get("party") or []
+        return next((r.get("pos") for r in rows if isinstance(r, dict) and r.get("uuid") == char), None)
+    t0 = clock()
+    p0 = last = pos()
+    still_at = t0
+    while clock() - still_at < FEAR_STILL_S and clock() - t0 < FEAR_SETTLE_MAX_S:
+        sleep(FEAR_POLL_S)
+        p = pos()
+        if p and last and macros.dist(p, last) >= FEAR_MOVE_M:
+            still_at = clock()
+        last = p or last
+    moved = macros.dist(p0, last) if p0 and last else 0.0
+    if moved < FEAR_MOVE_M:
+        return ""
+    waited = still_at - t0
+    return (f"{name}: the game moved {queueing._label(char)} {render.num(round(moved, 1))}m by itself at its turn "
+            f"start (now @{render.pos(last)}); the plan started after it stopped ({waited:.1f}s)"
+            + ("" if clock() - still_at >= FEAR_STILL_S else ", still moving when the wait ended"))
+
+
 def _downed_text(u: str) -> str:
     return (f"{queueing._label(u)} is downed: nothing to play, its turn passes by itself (the game rolls its death "
             "saving throw). Get it up from an ally's turn: Healing Word, Help (adjacent) or a potion.")

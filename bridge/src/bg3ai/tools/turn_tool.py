@@ -472,6 +472,10 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
             lines.append("reactions set: " + ", ".join(f"{k}={v}" for k, v in p.reactions.items()))
         except GameError as e:
             lines.append(f"reactions: FAILED — {e}")
+    feared = turn_slots._fear_settle(cs, char)
+    if feared:
+        lines.append(feared)
+        cs = core.game.try_rpc("state.combat") or cs  # where the fear move left it, for the first step check
     watcher = turn.TurnWatcher(queueing._watch_conn(), p.on_reaction, turn_slots._answer_reaction, ignore=queueing._parse_ignore(ignore))
     if actq.BATCH_CHECKS:  # the next step check's state.combat comes with the check after each step
         watcher.post_ops = [("state.combat", {})]

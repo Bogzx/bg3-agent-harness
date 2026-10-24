@@ -143,5 +143,64 @@ class EveryCombatRead(Base):
             self.assertIn(self.line, c.apply("get_combat_state", observe._combat_state_text()))
 
 
+FEARED = {"name": "Frightened", "turns": 2, "fix": "it saves again each turn",
+          "effect": "the game may move it away by itself at its turn start (orders sent meanwhile are dropped) and may "
+                    "end that turn itself: read the combat state before planning it"}
+
+
+class FearSettle(Base):
+    """B8 (S066 #100/#130, S067 #32): Karlach's first order (Rage) at a turn she started Fearful was dropped. Live D2
+    P5: a Fearful Wyll walked 4.4 m by himself in 0-2.3 s of his turn start, then stood still with the turn his. The
+    plan's first order waits for that walk to stop."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.g.combat = s076_combat()
+        self.g.combat["order"][0]["disabled"] = [dict(FEARED)]
+        self.g.watch["combat"] = True
+        self.reads = 0
+        real = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "act.watch":
+                self.reads += 1
+                if self.reads <= 5:  # the fear walk: 0.9 m per read
+                    self.g.watch["party"][0]["pos"] = [0.9 * self.reads, 0.0, 0.0]
+            return real(op, args, context, timeout)
+        self.g.rpc = rpc
+
+    def test_waits_for_the_fear_walk_to_stop(self):
+        clock = [0.0]
+        out = turn_slots._fear_settle(self.g.combat, P1, clock=lambda: clock[0],
+                                      sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        self.assertEqual(out, f"Frightened: the game moved {core.H.get(P1)} Claude 3.6m by itself at its turn start "
+                              "(now @(4.5,0,0)); the plan started after it stopped (0.4s)")
+        self.assertAlmostEqual(clock[0], 0.4 + turn_slots.FEAR_STILL_S)
+
+    def test_a_member_that_isnt_fearful_waits_for_nothing(self):
+        self.g.combat["order"][0].pop("disabled")
+        self.assertEqual(turn_slots._fear_settle(self.g.combat, P1), "")
+        self.assertEqual(self.reads, 0)
+
+    def test_a_walk_that_never_stops_is_bounded(self):
+        self.reads = -10**6
+        clock = [0.0]
+        out = turn_slots._fear_settle(self.g.combat, P1, clock=lambda: clock[0],
+                                      sleep=lambda s: clock.__setitem__(0, clock[0] + s))
+        self.assertTrue(out.endswith("still moving when the wait ended"), out)
+        self.assertLess(clock[0], turn_slots.FEAR_SETTLE_MAX_S + 0.2)
+
+    def test_combat_turn_sends_its_first_order_after_the_fear_walk(self):
+        self.addCleanup(setattr, turn_slots, "FEAR_POLL_S", turn_slots.FEAR_POLL_S)
+        self.addCleanup(setattr, turn_slots, "FEAR_STILL_S", turn_slots.FEAR_STILL_S)
+        turn_slots.FEAR_POLL_S, turn_slots.FEAR_STILL_S = 0.0, 0.05
+        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1))
+        self.assertIn("Frightened: the game moved", out)
+        first = next(i for i, (op, _) in enumerate(self.g.calls)
+                     if op.startswith("act.") and op not in ("act.watch", "act.note", "act.target_state"))
+        watches = [i for i, (op, _) in enumerate(self.g.calls) if op == "act.watch"]
+        self.assertGreater(first, watches[4], "the order went out during the fear walk")
+
+
 if __name__ == "__main__":
     unittest.main()
