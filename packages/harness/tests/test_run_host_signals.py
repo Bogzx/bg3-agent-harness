@@ -96,7 +96,7 @@ def test_one_signal_ends_the_run_recorded_with_its_game_stopped(tmp_path: Path, 
     assert p.returncode == 0, err
     got = lines(out)
     assert got["RECORD"] == {"outcome": "gave_up", "reason": "stopped", "operator": "stop"}
-    assert got["CALLS"][-2:] == ["end_facts(gave_up)", "end_run_game(run end)"]  # pyright: ignore[reportIndexIssue]
+    assert got["CALLS"][-3:] == ["end_facts(gave_up)", "scenario_undo", "end_run_game(run end)"]  # pyright: ignore[reportIndexIssue]
     assert got["SE"] == ["nav_aa.json", "other.json"]  # the moved nav file is back
 
 
@@ -110,7 +110,7 @@ def test_a_second_signal_exits_at_once_and_still_stops_the_game(tmp_path: Path):
     assert p.returncode != 0 and "KeyboardInterrupt" in err
     got = lines(out)
     assert "RECORD" not in got
-    assert got["CALLS"][-2:] == ["kill_agent", "end_run_game(operator exit)"]  # pyright: ignore[reportIndexIssue]
+    assert got["CALLS"][-3:] == ["kill_agent", "scenario_undo", "end_run_game(operator exit)"]  # pyright: ignore[reportIndexIssue]
     assert got["SE"] == ["nav_aa.json", "other.json"]
 
 
