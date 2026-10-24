@@ -8,6 +8,8 @@
 -- Live D10 (research/fix/live.md "Window D10"): selecting the cell filled InventoryContainer.Tag (1 item), but
 -- UI.press(DonateBtn) gave nothing (CommandParameter nil); DonateItemsCommand(Tag) gave it (the cell left the window,
 -- which stayed open). feed_gale had replied "done — donated=e132 window_open" with the gloves still worn.
+-- Live D11: the first ui.donate in a freshly opened window FAILED "didn't take the selection" (IsSelected false,
+-- Tag 0 after it), a second one worked: Donate.xaml's triggers (modelled below) reset a selection made from code.
 -- Run: tools/vis/test_donate.sh  (Lua 5.3 + 5.4 in Docker)
 
 local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -55,23 +57,50 @@ local dc = { DonateSourceInventories = coll({ source({ [3] = sword, [10] = glove
                                               source({ [9] = boots }), source({}) }) }
 
 -- Widget tree: an "Inventory" ListBox per source (Items empty, as read live), its ListBoxItems = the shown slots.
--- Selecting a cell copies the selection into InventoryContainer.Tag (fillsTag=false: the trigger never ran).
-local selected, fillsTag = {}, true
-local box = { Name = "InventoryContainer", children = {} }
+-- Donate.xaml's triggers on each Inventory ListBox (SelectionMode Single):
+--   SelectionChanged with SelectedIndex ~= -1 -> InventoryContainer.Tag = that ListBox's SelectedItems;
+--   a change of InventoryContainer.Tag -> SelectedIndex = -1 in every section not under the mouse (none: no mouse).
+-- fillsTag=false: the select doesn't take (no selection, no SelectionChanged).
+local selected, fillsTag, lists = {}, true, {}
+local box = { Name = "InventoryContainer", Tag = "", children = {} }
+local function clearSel(lb)
+    for _, c in ipairs(lb.children) do c.IsSelected = false end
+    lb.SelectedItems.list, lb.SelectedItems.Count = {}, 0   -- the same collection object, emptied
+end
+local function setTag(v)
+    if v == box.Tag then return end   -- a dependency property notifies only a changed value
+    box.Tag = v
+    for _, lb in ipairs(lists) do clearSel(lb) end
+end
+box.SetProperty = function(_, k, v) if k == "Tag" then setTag(v) end end
 local function cell(slot)
-    local c = { Type = "ls.LSListBoxItem", DataContext = slot, children = {} }
+    local c = { Type = "ls.LSListBoxItem", DataContext = slot, IsSelected = false, children = {} }
     c.SetProperty = function(self, k, v)
         if k == "IsSelected" and v then
             selected[#selected + 1] = self
-            if fillsTag then box.Tag = coll({ slot }) end
+            if not fillsTag then return end
+            clearSel(self.lb)
+            self.IsSelected = true
+            self.lb.SelectedItems.list, self.lb.SelectedItems.Count = { slot }, 1
+            setTag(self.lb.SelectedItems)
         end
     end
     return c
 end
 local function listBox(slots)
-    local lb = { Name = "Inventory", Type = "ListBox", Items = coll({}), children = {} }
-    for _, s in ipairs(slots) do lb.children[#lb.children + 1] = cell(s) end
+    local lb = { Name = "Inventory", Type = "ListBox", Items = coll({}), SelectedItems = coll({}), children = {} }
+    for _, s in ipairs(slots) do
+        local c = cell(s)
+        c.lb = lb
+        lb.children[#lb.children + 1] = c
+    end
+    lists[#lists + 1] = lb
     return lb
+end
+-- a freshly opened window: nothing selected, Tag ""
+local function freshWindow()
+    box.Tag = ""
+    for _, lb in ipairs(lists) do clearSel(lb) end
 end
 local swordCell = { Index = 3, Object = sword }
 local glovesCell = { Index = 10, Object = gloves }
@@ -86,7 +115,7 @@ local gives, given = true, {}
 dc.DonateItemsCommand = {
     CanExecute = function() return true end,
     Execute = function(_, tag)
-        given[#given + 1] = tag
+        given[#given + 1] = { table.unpack(tag.list) }
         if not gives then return end
         for _, lb in ipairs({ lbClaude, lbSh }) do
             for i = #lb.children, 1, -1 do
@@ -95,7 +124,7 @@ dc.DonateItemsCommand = {
                 end
             end
         end
-        box.Tag = coll({})
+        tag.list, tag.Count = {}, 0
     end,
 }
 
@@ -197,25 +226,38 @@ end
 
 -- the item's cell staying in the window after Donate is not "done" (D10: "done — donated=e132 window_open")
 selected, pressed, gives, given = {}, 0, false, {}
+freshWindow()
 local job = run({ item = "gloves" })
 ok(job.status == "failed" and tostring(job.error):find("still in the donation window", 1, true) ~= nil,
    "cell still listed after Donate -> failed: " .. tostring(job.status) .. " " .. tostring(job.error))
 
 -- a selection that never reaches the Tag gives nothing and says so
-selected, given, fillsTag, box.Tag = {}, {}, false, coll({})
+selected, given, fillsTag = {}, {}, false
+freshWindow()
 job = run({ item = "gloves" })
 ok(job.status == "failed" and tostring(job.error):find("didn't take the selection", 1, true) ~= nil,
    "empty Tag -> failed: " .. tostring(job.error))
 ok(#given == 0, "nothing donated with an empty Tag")
 
--- the job selects the gloves' ListBoxItem (not the sword's), then runs DonateItemsCommand(Tag), not the button
+-- the first donate in a freshly opened window (D11: FAILED "didn't take the selection", the window's Tag-change
+-- reset deselected it): selects the gloves' ListBoxItem (not the sword's), runs DonateItemsCommand(Tag), not the button
 selected, pressed, gives, given, fillsTag = {}, 0, true, {}, true
+freshWindow()
 job = run({ item = "gloves" })
-ok(job.status == "done", "donate done: " .. tostring(job.status) .. " " .. tostring(job.error))
+ok(job.status == "done", "first donate in a fresh window done: " .. tostring(job.status) .. " " .. tostring(job.error))
 ok(#selected == 1 and selected[1].DataContext == glovesCell, "the gloves' cell selected, once")
 ok(pressed == 0, "DonateBtn not pressed (its parameter reads nil): " .. pressed)
-ok(#given == 1 and given[1].list[1] == glovesCell, "DonateItemsCommand ran with the Tag holding the gloves")
+ok(#given == 1 and given[1][1] == glovesCell and #given[1] == 1, "DonateItemsCommand ran with the Tag holding the gloves")
 ok(job.result and job.result.window_open == true, "the window still open is reported (Gale takes it on close)")
+
+-- another section selected before (Tag = Shadowheart's list): Claude's sword alone goes, the boots are deselected
+selected, given = {}, {}
+freshWindow()
+lbSh.children[1]:SetProperty("IsSelected", true)
+job = run({ item = "sword" })
+ok(job.status == "done", "donate after another section's selection done: " .. tostring(job.error))
+ok(#given == 1 and #given[1] == 1 and given[1][1] == swordCell, "only the sword given")
+ok(lbSh.children[1].IsSelected == false, "the boots' section deselected (as a click deselects it)")
 
 -- the close button probe for the bridge's hover-checked click
 local pr = ops["ui.donate_probe"]({})

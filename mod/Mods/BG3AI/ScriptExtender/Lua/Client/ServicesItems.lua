@@ -24,6 +24,12 @@ local inventoriesOf = I.inventoriesOf
 -- DonateItemsCommand(Tag) gave the item (its cell left the window). Gale absorbs it only when the window closes:
 -- CloseBtn is CustomEvent "CloseWidget" (a string bg3le can't pass) and ESCAPE doesn't close it, so the bridge
 -- clicks the X hover-checked (ui.donate_probe) and then checks the hunger.
+-- Live D11: the first select in a freshly opened window never stuck (IsSelected false, Tag 0 after it), a second one
+-- did. Donate.xaml: each Inventory ListBox's SelectionChanged sets InventoryContainer.Tag = its SelectedItems, and a
+-- change of Tag sets SelectedIndex = -1 in every section whose ListBoxItem isn't under the mouse (a click keeps its
+-- own section). Selecting from here changed Tag ("" -> the list's SelectedItems), so the window deselected it again;
+-- a later select set the same Tag object (no change, no reset). So the job first sets Tag to the item's ListBox's
+-- SelectedItems (the other sections clear, as a click clears them) and then selects the item.
 -- Live D8 (probe_donation): the window offered only worn items (bags held no magic ones), and the ListBoxes'
 -- Items/ItemsSource read as empty collections, so a slot is found through the ListBox's item containers.
 local function donateGroups(dc)
@@ -39,8 +45,8 @@ local function donateGroups(dc)
     return groups
 end
 
--- The ListBoxItem (in an "Inventory" ListBox) whose slot holds vmItem; a proxy's printed pointer is stable across
--- reads (Progression.lua same()), as the level-up sub-tabs are found.
+-- The ListBoxItem (in an "Inventory" ListBox) whose slot holds vmItem, and that ListBox; a proxy's printed pointer is
+-- stable across reads (Progression.lua same()), as the level-up sub-tabs are found.
 local function donateSlot(w, vmItem)
     local key = tostring(vmItem)
     local function isItem(e) return (UI.typeName(e) or ""):find("ListBoxItem", 1, true) ~= nil end
@@ -48,7 +54,7 @@ local function donateSlot(w, vmItem)
         for _, it in ipairs(UI.findAll(lb, isItem, { hidden = true, prune = true, max = 4000 })) do
             local slot = UI.get(it, "DataContext") or UI.get(it, "Content")
             local obj = slot and UI.get(slot, "Object")
-            if obj ~= nil and tostring(obj) == key then return it end
+            if obj ~= nil and tostring(obj) == key then return it, lb end
         end
     end
     return nil
@@ -179,13 +185,23 @@ RPC.register("ui.donate", function(args)
     local dc = try(function() return w.DataContext end) or error("the donation window has no DataContext", 0)
     local vmItem, err = memoized(function() return findVMItem(args.item, donateGroups(dc)) end)
     if not vmItem then error(((err or "item not found"):gsub("the trade screen", "the donation window")), 0) end
-    local cell = donateSlot(w, vmItem)
+    local cell, list = donateSlot(w, vmItem)
     if not cell then error("the item is not listed in the donation window (Gale only takes magic items)", 0) end
     local box = UI.byName(w, "InventoryContainer") or error("the donation window has no item box", 0)
     if args.dry then return { can = true } end
-    local phase, t, seen = "select", 0, 0
+    local phase, t, seen = "tag", 0, 0
     return waitJob("ui.donate", 8000, function(job)
         local now = RPC.now_ms()
+        if phase == "tag" then
+            -- Tag = this list's own SelectedItems before the select (see the header: D11), so the select's
+            -- SelectionChanged writes the same Tag and the window's Tag-change reset doesn't undo it
+            local items = UI.get(list, "SelectedItems")
+            if items == nil then return "failed", nil, "the donation window's list has no selection to read" end
+            local ok, terr = UI.pcall(box.SetProperty, box, "Tag", items)
+            if not ok then return "failed", nil, "couldn't set the donation window's selection: " .. tostring(terr) end
+            phase = "select"
+            return nil
+        end
         if phase == "select" then
             local ok, serr = UI.pcall(cell.SetProperty, cell, "IsSelected", true)
             if not ok then return "failed", nil, "couldn't select the item: " .. tostring(serr) end
