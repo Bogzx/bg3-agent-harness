@@ -467,6 +467,21 @@ def _rest_not_at_camp(can: Any) -> str:
             "brought Wyll and the rest went through), then long_rest.")
 
 
+def _woke_here() -> str:
+    """Live 2026-10-24 (T3, T3b, PROBE-DONATE x2): a long_rest at camp after a finished long rest: the press reached the
+    story (requested) and was never answered, every time with the camp story's DB_CAMP_JustWokeUp set (0 in every
+    rest-flow record S030-S065); a retry a minute later the same, until a load. S072 22:01: the party left camp in
+    between and the next rest went on. The game takes no second rest until the party has left camp. '' otherwise."""
+    flow = core.game.try_rpc("camp.rest_flow", {"since_ms": 1})  # the story flags only, no steps
+    story = flow.get("story") if isinstance(flow, dict) else None
+    woke = story.get("DB_CAMP_JustWokeUp") if isinstance(story, dict) else None
+    if not (isinstance(woke, int) and woke > 0):  # -1: the DB couldn't be read
+        return ""
+    return ("long_rest: FAILED — not pressed: the party woke up from a long rest at this camp and hasn't left it since; "
+            "the game doesn't answer another rest request until it has. Leave camp (camp(action=\"leave\")), come "
+            "back with camp(), then long_rest")
+
+
 def _rest_blocked() -> str:
     can = core.game.try_rpc("camp.can_rest")
     core.METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can})
@@ -479,6 +494,10 @@ def _rest_blocked() -> str:
     if away:
         core.METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can, "refused": True, "away": away})
         return away
+    woke = _woke_here()
+    if woke:
+        core.METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can, "refused": True, "woke": True})
+        return woke
     if not _rest_reasons(can, _REST_HARD_FLAGS):
         return ""
     time.sleep(0.5)  # a flag set for a moment (a teleport into camp, a closing conversation) must not refuse a rest
