@@ -1,4 +1,4 @@
-"""Section combat: a fight with the shadow pack W of the Moonrise road (combat_turn, end_turn, melee reach)."""
+"""Section combat: a fight loaded mid-way (FIGHT_SAVE: combat_turn, end_turn, melee reach)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,7 @@ import json
 import re
 import time
 
-from .core import BASE, S, call, first_line, item, load_verified, log, need, status, took, ui_screen
-
-SHADOW_PACK = (-236.0, 31.0, 12.0)  # Wraith, Shadow Mastiff, Shadows and Shadow-Cursed townsfolk W of the Moonrise road
+from .core import BASE, FIGHT_SAVE, S, call, first_line, item, load_verified, log, need, status, took, ui_screen
 
 
 def counted(name: str, **kw) -> tuple[str, float, dict]:
@@ -29,66 +27,20 @@ def counted(name: str, **kw) -> tuple[str, float, dict]:
 
 
 def sec_combat() -> None:
-    """A real fight (reloaded after): the shadow pack W of the Moonrise road. Opens it by walking into their sight,
-    then plays party turns with combat_turn: melee approach + attack by the SHOWN ability name, the RPC count with
-    the job push, and the names in the action lists."""
-    if not load_verified(BASE):
+    """A real fight (BASE reloaded after): FIGHT_SAVE was saved mid-fight, so loading it puts the party in one. Plays
+    party turns with combat_turn: melee approach + attack by the SHOWN ability name, the RPC count with the job push,
+    and the names in the action lists. live2/live9: the old opener (walk BASE's party to the shadow pack W of the
+    Moonrise road, then a Ranged Attack) ended in the House of Healing with nobody in view, and the section played
+    no turn."""
+    if not load_verified(FIGHT_SAVE):
+        load_verified(BASE)
         return
     from bg3ai import jobpush
 
     jp = jobpush.shared(S.game.host, S.game.port)
     jp.ensure()
-    ft = call("fast_travel", waypoint="Moonrise Towers")
-    if not need(
-        "FAILED" not in ft, "combat_turn on a safe fight", "fast_travel Moonrise Towers failed: " + first_line(ft)
-    ):
-        load_verified(BASE)
-        return
-    call("travel_to", x=SHADOW_PACK[0] + 18.0, y=SHADOW_PACK[1], z=SHADOW_PACK[2] + 18.0)
-    end = time.monotonic() + 120
-    cs = {}
-    while time.monotonic() < end:
-        cs = S.game.try_rpc("state.combat") or {}
-        if cs.get("active"):
-            break
-        w = call("wait_for", target="queue", timeout_s=20, lead_s=0)
-        if "still waiting" not in w:
-            break
     cs = S.game.try_rpc("state.combat") or {}
-    opener_u = None
-    if not cs.get("active"):
-        # The pack doesn't notice a party walking up (live 12:5x): open the fight like a player, with an attack.
-        nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
-        chars = nb.get("characters") or []
-        log("in view: " + "; ".join(f"{c.get('name')} {c.get('relation')} dead={c.get('dead')}" for c in chars[:12]))
-        foes = [c for c in chars if c.get("relation") == "hostile" and not c.get("dead")]
-        if foes:
-            opener_u = foes[0]["uuid"]
-            fh = S.H.get(foes[0]["uuid"], foes[0].get("name"))
-            for _ in range(3):
-                ua = call("use_ability", ability="Ranged Attack", target=fh, who="Claude")
-                said = re.search(
-                    r"(?m)^(COMBAT: the attack started a fight.*|combat: (NOT started|none|not started).*)$", ua
-                )
-                if "FAILED" not in first_line(ua):
-                    item(
-                        "opener says whether combat started",
-                        "PASS" if said else "FAIL",
-                        said.group(1)[:160] if said else first_line(ua),
-                    )
-                time.sleep(2.0)
-                cs = S.game.try_rpc("state.combat") or {}
-                dbg = S.game.eval(
-                    f'local h=Osi.GetHostCharacter() local u="{foes[0]["uuid"]}" return "host combat="'
-                    '..tostring(Osi.IsInCombat(h)).." foe combat="..tostring(Osi.IsInCombat(u))'
-                    '.." enemy="..tostring(Osi.IsEnemy(u,h)).." hp="..tostring(Osi.GetHitpoints(u))'
-                    '.." canfight="..tostring(Osi.CanFight and Osi.CanFight(u))',
-                    context="server",
-                )
-                log(f"after the attack: state.combat active={cs.get('active')}; {dbg}")
-                if cs.get("active"):
-                    break
-    if not need(bool(cs.get("active")), "combat_turn on a safe fight", "no fight started walking to the shadow pack"):
+    if not need(bool(cs.get("active")), "combat_turn on a safe fight", f"{FIGHT_SAVE} loaded with no fight on"):
         load_verified(BASE)
         return
     gc = call("get_combat_state")
@@ -140,10 +92,6 @@ def sec_combat() -> None:
         here = party[who_u].get("pos") or [0, 0, 0]
         if foes:
             foe = min(foes, key=lambda c: sum((a - b) ** 2 for a, b in zip(c.get("pos") or [9e9] * 3, here)))
-        elif opener_u:
-            # Nothing in view (a Shadow in Shadow Blend): plan on the opener's target anyway, like an agent
-            # planning on what it last saw; combat_turn must re-aim or say nobody is in sight (round 2).
-            foe = {"uuid": opener_u, "name": "opener target (unseen)"}
         else:
             call("wait", seconds=3)
             continue
