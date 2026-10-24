@@ -119,8 +119,10 @@ def _step_into_range(who: str, step: actq.Step, text: str, watcher: actq.Watcher
     along the real route when the movement left covers it; the caller then casts again. Returns what it
     did ('stepped 0.9m into range'), or '' (not a range failure, too far, no route, not enough movement)."""
     gap = macros.range_gap(text) if step.tool == "use_ability" else None
-    if not gap or gap[0] - gap[1] > (macros.STEP_INTO_RANGE_RANGED_M if gap[1] > turn.MELEE_RANGE_M
-                                     else macros.STEP_INTO_RANGE_M):
+    # S080 02:41:15: Lay on Hands on downed Gale 8.1 m away and the swing 6.9 m away failed (the old 3 m melee cap)
+    # with Claude's whole move unused. A melee/touch step walks as a click on the ability does in the game: as far
+    # as the movement left (the mod refuses a longer walk before it starts).
+    if not gap or (gap[1] > turn.MELEE_RANGE_M and gap[0] - gap[1] > macros.STEP_INTO_RANGE_RANGED_M):
         return ""
     a = step.args
     if gap[1] <= turn.MELEE_RANGE_M and a.get("target"):

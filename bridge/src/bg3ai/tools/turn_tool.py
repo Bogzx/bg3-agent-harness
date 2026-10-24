@@ -495,6 +495,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     else:
         turn_plan._turn_cs["cs"] = cs  # nothing ran since this read: the first step check reuses it
     moved = False
+    acted = False  # an action/bonus/extra slot that worked (S080: none did, and the turn was ended anyway)
     for slot in p.order:
         if turn_plan._hp_held(watcher, lines):
             stopped = True
@@ -538,15 +539,18 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
                 if (res == "none" and alts and lines and lines[-1].startswith(f"extra {i}:")
                         and turn.missed_target(lines[-1])):
                     res = turn_slots._turn_auto_fallback(p, f"extra {i}", alts, char, watcher, lines, after, info)
+                acted = acted or res == "ok"
                 if res == "stop":
                     break
         else:
             res, then_move = turn_slots._turn_slot(slot, p.slots[slot], char, watcher, lines, after, info)
+            acted = acted or (res == "ok" and slot in ("action", "bonus"))
             if res == "ok" and then_move and p.move:
                 res = "stop" if turn_plan._hp_held(watcher, lines) else turn_plan._turn_move(p.move, char, watcher, lines, after, info)
             elif (res == "none" and slot in ("action", "bonus") and p.slots[slot] and lines
                   and lines[-1].startswith(f"{slot}:") and turn.missed_target(lines[-1])):
                 res = turn_slots._turn_auto_fallback(p, slot, p.slots[slot], char, watcher, lines, after, info)
+                acted = acted or res == "ok"
             if res == "none" and slot in ("action", "bonus") and lines and overview._unknown_ability_line(lines[-1], slot):
                 # S035 19:33: action ["Shout_Dodge"] → "unknown action" (refused, nothing spent), then end_turn threw
                 # Wyll's action away. A wrong id/name is a plan slip: keep the turn open for the real choice.
@@ -563,8 +567,17 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     if not stopped and turn_plan._hp_held(watcher, lines):
         stopped = True
     if not stopped and p.auto_bonus and not p.slots["bonus"]:
-        if turn_slots._turn_auto_bonus(char, watcher, lines, after) == "stop" or turn_plan._hp_held(watcher, lines):
+        ab = turn_slots._turn_auto_bonus(char, watcher, lines, after)
+        acted = acted or ab == "ok"
+        if ab == "stop" or turn_plan._hp_held(watcher, lines):
             stopped = True  # M6: a drop during the automatic bonus: "decide the rest", not an end_turn
+    held = "turn NOT ended: decide, then continue (combat_turn again, or single tools)"
+    if not stopped and end and not acted and any(p.slots.get(k) for k in ("action", "bonus", "extra")):
+        # S080 02:41:15 (Viconia r4): Lay on Hands and the swing out of range, Shield of Faith out of slots, then
+        # end_turn threw away the action and the movement. Every planned action/bonus failed: the player decides.
+        stopped = True
+        held = ("turn NOT ended: nothing done (every planned action and bonus step failed; what they would have "
+                "spent is unused): decide, then continue (combat_turn again, single tools, or end_turn to pass)")
     lines.extend(watcher.answered)
     spent = turn_plan._spent_note(char, lines)
     if spent:
@@ -588,7 +601,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
         lines.append(f"{queueing._label(char)} went down: its turn passes by itself (death saving throws); "
                      "get it up with Healing Word / Help from an ally")
     elif stopped:
-        lines.append("turn NOT ended: decide, then continue (combat_turn again, or single tools)")
+        lines.append(held)
     turn_plan._turn_cs.clear()
     now = turn_plan._now_line(after)
     if now:
