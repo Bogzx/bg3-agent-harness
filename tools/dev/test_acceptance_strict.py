@@ -21,8 +21,9 @@ from acceptance import core, strict  # noqa: E402
 class FakeLock:
     """Ext._Internal.UiStrict/UiSerialize as the client eval sees them; each load and the rest add timeouts."""
 
-    def __init__(self, missing=False):
+    def __init__(self, missing=False, busy=True):
         self.on, self.refused, self.lua, self.missing = False, 0, 100, missing
+        self.busy = 0 if busy else -1  # UiBusy's count (patch 0011), -1 = a build without it
         self.evals = []
 
     def eval(self, code, context="client"):
@@ -32,12 +33,14 @@ class FakeLock:
         m = re.search(r"f\((true|false)?\)", code)
         if m and m.group(1):
             self.on = m.group(1) == "true"
-        return f"{str(self.on).lower()} {self.refused} {self.lua} 0"
+        return f"{str(self.on).lower()} {self.refused} {self.lua} 0 {self.busy}"
 
     def step(self):
         self.lua += 2
         if self.on:
             self.refused += 1
+        if self.busy >= 0:
+            self.busy += 5
 
 
 class StrictSection(unittest.TestCase):
@@ -80,8 +83,14 @@ class StrictSection(unittest.TestCase):
         self.assertFalse(lock.on)                                     # restored to what it was
         name, verdict, ev = got[0]
         self.assertEqual((name, verdict), (strict.STRICT_ITEM, "PASS"))
-        self.assertIn(f"load {core.BASE}: ok (refused +1 lua_timeouts +2 ui_timeouts +0)", ev)
-        self.assertIn("total refused +3 lua_timeouts +6 ui_timeouts +0", ev)
+        self.assertIn(f"load {core.BASE}: ok (refused +1 lua_timeouts +2 ui_timeouts +0 busy +5)", ev)
+        self.assertIn("total refused +3 lua_timeouts +6 ui_timeouts +0 busy +15", ev)
+        self.assertIn("UiBusy", lock.evals[0])
+
+    def test_a_build_without_patch_0011_still_runs(self):
+        got, _ = self._run(FakeLock(busy=False))
+        self.assertEqual(got[0][1], "PASS")
+        self.assertIn("busy +0", got[0][2])
 
     def test_restored_after_a_failed_load_and_the_item_fails(self):
         lock = FakeLock()

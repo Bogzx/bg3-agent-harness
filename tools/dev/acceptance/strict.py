@@ -62,29 +62,32 @@ STRICT_LOADS = (HOTBAR_SAVE, BASE)
 
 def strict_counters(set_to: bool | None = None) -> dict:
     """bg3le's strict frame lock (patch 0010), optionally switched first: {strict, refused, lua_timeouts,
-    ui_timeouts} or {error}."""
+    ui_timeouts, busy} or {error}; busy = calls refused at once after a lock timeout (patch 0011, -1 without it)."""
     arg = "" if set_to is None else ("true" if set_to else "false")
     try:
         parts = S.game.eval(
             "local f = Ext._Internal and Ext._Internal.UiStrict if type(f) ~= 'function' then "
             f"return 'missing' end local on, n = f({arg}) local _, lt, ut = Ext._Internal.UiSerialize() "
-            "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut",
+            "local b = Ext._Internal.UiBusy local bn = -1 if type(b) == 'function' then _, bn = b() end "
+            "return tostring(on) .. ' ' .. n .. ' ' .. lt .. ' ' .. ut .. ' ' .. bn",
             context="client",
         ).split()
     except Exception as e:
         return {"error": f"eval error {e}"}
-    if len(parts) != 4:
+    if len(parts) != 5:
         return {"error": " ".join(parts) or "no reply"}
     return {
         "strict": parts[0] == "true",
         "refused": int(parts[1]),
         "lua_timeouts": int(parts[2]),
         "ui_timeouts": int(parts[3]),
+        "busy": int(parts[4]),
     }
 
 
 def strict_delta(a: dict, b: dict) -> str:
-    return " ".join(f"{k} +{b.get(k, 0) - a.get(k, 0)}" for k in ("refused", "lua_timeouts", "ui_timeouts"))
+    keys = ("refused", "lua_timeouts", "ui_timeouts", "busy")
+    return " ".join(f"{k} +{b.get(k, 0) - a.get(k, 0)}" for k in keys)
 
 
 def sec_strict() -> None:
