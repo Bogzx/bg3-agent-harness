@@ -254,9 +254,26 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     assert h.env["BG3AI_PROMPT_CONDITION"] == "rules" and (r.opt.tools_expected, r.opt.manifest) == (90, {"m": 1})
     assert dumped == [(run_dir("m-grove"), "claude", 7, "turn_based")]
     assert st.prompt == H.scenario_kickoff(SAVE_SC, "S001", "SCN-grove_fight")  # rules: no pace pre-flight
-    assert st.prompt_sha == hashlib.sha256(st.prompt.encode()).hexdigest() and st.harness_version
+    kickoff = {"file": "kickoff", "sha256": hashlib.sha256(st.prompt.encode()).hexdigest()}
+    assert (st.prompt_sha, st.prompt_parts, st.tools, st.client_version) == (None, (kickoff,), None, None)
+    assert st.harness_version
     assert isinstance(st.hooks, H.BenchHooks) and isinstance(inner := st.hooks.hooks, rstate.RunnerSessionHooks)
     assert (inner.sid, inner.minutes) == ("S001", 30.0)
+
+
+def test_the_manifest_gets_the_served_prompt_tools_and_client_version(rig: Rig):  # live9: the kickoff's hash only
+    instr = {"file": "server:instructions", "sha256": "a" * 64}
+    tools = {"allowlist_sha256": "b" * 64, "count": 82}
+    man = {"client": {"name": "claude", "version": "2.1.301"}, "prompt": {"sha256": "c" * 64, "parts": [instr]}}
+
+    def run_files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
+        return {"manifest": man | {"tools": tools}}
+
+    rig.h.run_files = run_files
+    st = rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    kickoff = {"file": "kickoff", "sha256": hashlib.sha256(st.prompt.encode()).hexdigest()}
+    assert (st.prompt_sha, st.prompt_parts) == ("c" * 64, (instr, kickoff))
+    assert (st.tools, st.client_version) == (tools, "2.1.301")
 
 
 def test_a_bench_run_serves_no_memory_tools_and_its_own_empty_memory_dir(rig: Rig):

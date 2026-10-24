@@ -113,12 +113,16 @@ class Host:
             raise RuntimeError("the start save would not load")
         self.started.append((job, sc, run_dir))
         self.hooks.append(Hooks(self.scripts.pop(0), self.clock))
-        return Start("KICKOFF", self.hooks[-1], "conv-1", "a" * 64, ({"file": "rules.md", "sha256": "b" * 64},), "0.1")
+        parts = ({"file": "rules.md", "sha256": "b" * 64},)
+        return Start("KICKOFF", self.hooks[-1], "conv-1", "a" * 64, parts, "0.1", TOOLS, "2.1.301")
 
     def record(self, job: dict, sc: dict, run_dir: Path, outcome) -> dict:
         rec = {"outcome": "gave_up" if outcome.invalid else "timeout", "cost_usd": self.cost, "tokens": {}}
         rec["served"] = self.served
         return rec | readout(sc["game_settings"].get("seed"))
+
+
+TOOLS = {"allowlist_sha256": "c" * 64, "count": 82}
 
 
 def job(client: str = "pi", condition: str = "rules", repeat: int = 1) -> dict:
@@ -146,6 +150,8 @@ def test_a_clean_run_is_one_session_and_its_artifacts(tmp_path):
     man = json.loads((run_dir / "manifest.json").read_text())
     assert man["condition"] == "rules" and man["seed"] == 7 and man["versions"]["harness"] == "0.1"
     assert man["prompt"]["sha256"] == "a" * 64
+    # live9: the served tools and the client's version reach manifest.json (they were null)
+    assert (man["tools"], man["client"]) == (TOOLS, {"name": "pi", "version": "2.1.301"})
     assert [m["run_id"] for m, _ in report.load_runs(tmp_path / "sessions")] == [f"{series}-r001"]
 
 
