@@ -427,8 +427,11 @@ end)
 
 -- opts.probe: name check only (acceptance): open, set the name, read the box back after the settle, then ESCAPE
 -- out without accepting; nothing is written. Result {probe=true, read=<box text>, matches=<read == name>}.
+-- opts.final: the bridge's continuation after its input-shim key (save_confirm): a key that still doesn't advance
+-- ends the save, its menus closed.
 local function saveDriver(name, kind, opts)
     local probe = opts and opts.probe
+    local final = opts and opts.final
     if not probe then A.pendingSave = { name = name, started = RPC.now_ms() } end
     local stage, stageSince, keyTries = nil, RPC.now_ms(), 0
     local t0 = RPC.now_ms()
@@ -480,8 +483,14 @@ local function saveDriver(name, kind, opts)
         local function key(k)
             -- one in-game RETURN per stage (retried once); then ask the bridge
             if now - stageSince > 2500 then
+                local why = "in-game " .. k .. " did not advance '" .. tostring(stage) .. "'"
+                -- S096 11:36:30: the Emperor's conversation took the screen; the shim's RETURN didn't advance it
+                -- either, and SAVE FAILED left the SaveGame page open behind the talk (panels_open=[SaveGame]).
+                if final then
+                    return failClosed({ stage = stage, name = name, error = why .. ", nor did the input shim's" })
+                end
                 return "failed", { needs_key = k, stage = stage, name = name,
-                    error = "in-game " .. k .. " did not advance '" .. tostring(stage) .. "'; send it via the input shim, then ui.menu{action:'save_confirm'}" }
+                    error = why .. "; send it via the input shim, then ui.menu{action:'save_confirm'}" }
             end
             if keyTries < 2 and now - (job.lastKey or 0) > 900 then
                 keyTries = keyTries + 1
@@ -634,7 +643,7 @@ function MENU.save_confirm(args)
     if not A.SAVE_ENABLED then error("saving is disabled (UIActions.SAVE_ENABLED=false)") end
     local name = args.name or (A.pendingSave and A.pendingSave.name)
     if not name then error("no pending save; call ui.menu{action:'save', name}") end
-    return saveDriver(name, "ui.menu.save")
+    return saveDriver(name, "ui.menu.save", { final = true })
 end
 
 RPC.register("ui.menu", function(args)
