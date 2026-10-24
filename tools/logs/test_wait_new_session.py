@@ -40,6 +40,21 @@ class WaitNewSession(unittest.TestCase):
         time.sleep(0.02)
         return p
 
+    def run_to_end(self, keeper_max):
+        """The script on files all written before it starts, dated after its stamp: nothing to race; max_wait 2 s
+        ends it when nothing wakes it."""
+        env = dict(os.environ, TMPDIR=str(self.stamps), POLL_S="0.05", REVIEW_GRACE_S="1")
+        return subprocess.run(["bash", str(self.tmp / "tools" / "logs" / "wait_new_session.sh"), "pt", "2",
+                               keeper_max], capture_output=True, text=True, env=env, timeout=20).stdout
+
+    def dated(self, path, t, text):
+        path.write_text(text)
+        os.utime(path, (t, t))
+
+    def runner_event(self, t, kind, sid, **fields):
+        with open(self.sd / "runner_events.jsonl", "a") as f:
+            f.write(json.dumps({"t": t, "kind": kind, "fault": fields.pop("fault"), "session": sid, **fields}) + "\n")
+
     def keeper_event(self, sid):
         with open(self.sd / "runner_events.jsonl", "a") as f:
             f.write(json.dumps({"t": 1.0, "kind": "memory_keeper", "session": sid, "status": "ok"}) + "\n")
@@ -87,21 +102,31 @@ class WaitNewSession(unittest.TestCase):
         out, _ = p.communicate(timeout=20)
         self.assertEqual(out, "review: runtime/sessions/pt/S007.review.md\nNEW SESSION: S007\n")
 
-    def test_a_triage_of_a_fault_the_session_recovered_from_is_not_its_end(self):
-        # S086: S086.triage.md at the 05:19 hang, `recovered` at 05:21; the wait woke at ~05:26 with S086-r1 playing
-        p = self.start(keeper_max="1")
-        (self.sd / "S086.triage.md").write_text("# Triage S086\n")
-        time.sleep(0.2)
-        with open(self.sd / "runner_events.jsonl", "a") as f:
-            rec = {"t": time.time() + 0.1, "kind": "recovered", "fault": "hang", "session": "S086"}
-            f.write(json.dumps(rec) + "\n")
-        time.sleep(1.5)   # past keeper_max: the old wait printed "review: none" + NEW SESSION here
-        self.assertIsNone(p.poll(), "woke on the mid-session triage")
-        (self.sd / "S086-r1.triage.md").write_text("# Triage S086-r1\n")
-        time.sleep(0.02)
-        (self.sd / "S086.review.md").write_text("# Review pt/S086\n")
-        out, _ = p.communicate(timeout=20)
-        self.assertEqual(out, "review: runtime/sessions/pt/S086.review.md\nNEW SESSION: S086\n")
+    def test_a_triage_at_a_fault_is_not_the_end_while_the_runner_recovers(self):
+        # S086: S086.triage.md at the 05:19 hang, `recovered` at 05:21 (136 s); the wait gave the recovery keeper_max
+        # after the triage and woke at ~05:26 with S086-r1 playing
+        t = time.time() + 100
+        self.runner_event(t - 2, "fault", "S086", fault="hang")
+        self.dated(self.sd / "S086.triage.md", t, "# Triage S086\n")
+        self.assertEqual(self.run_to_end(keeper_max="0"), "no new session in 2s\n")
+
+    def test_a_triage_of_a_fault_the_session_resumed_after_is_not_its_end(self):
+        t = time.time() + 100
+        self.runner_event(t - 2, "fault", "S086", fault="hang")
+        self.dated(self.sd / "S086.triage.md", t, "# Triage S086\n")
+        self.runner_event(t + 136, "recovered", "S086", fault="hang", how="game relaunched; claude resumed (-r1)")
+        self.assertEqual(self.run_to_end(keeper_max="0"), "no new session in 2s\n")
+
+    def test_a_recovery_that_ends_the_session_is_its_end(self):
+        # S072: crash, `recovered` "session ended, the next one picks up", then the review; the S086 rule skipped it
+        t = time.time() + 100
+        self.runner_event(t - 2, "fault", "S072", fault="crash")
+        self.dated(self.sd / "S072.triage.md", t, "# Triage S072\n")
+        self.runner_event(t + 124, "recovered", "S072", fault="crash",
+                          how="game relaunched; session ended, the next one picks up")
+        self.dated(self.sd / "S072.review.md", t + 190, "# Review pt/S072\n")
+        self.assertEqual(self.run_to_end(keeper_max="20"),
+                         "review: runtime/sessions/pt/S072.review.md\nNEW SESSION: S072\n")
 
     def test_no_review_falls_back_to_the_keeper_event(self):
         p = self.start(keeper_max="20", grace="1")
