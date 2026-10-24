@@ -194,13 +194,14 @@ def run_logged(
 
 class LiveWindowAcc:
     """tools/dev/live_window.py --only <sections>: it takes game.lock (waiting up to LOCK_WAIT_S), launches,
-    runs the acceptance, stops the game; its window folder holds acceptance/results.json."""
+    runs the acceptance, stops the game; its window folder (in the machine's runtime/live) holds
+    acceptance/results.json."""
 
-    def __init__(self, repo: Path, runtime: Path, timeout_s: float = 4 * 3600):
-        self.repo, self.runtime, self.timeout_s = repo, runtime, timeout_s
+    def __init__(self, repo: Path, runtime: Path, machine: Path, timeout_s: float = 4 * 3600):
+        self.repo, self.runtime, self.machine, self.timeout_s = repo, runtime, machine, timeout_s
 
     def run(self, sections: tuple[str, ...]) -> AccOutcome:
-        live = self.runtime / "live"
+        live = self.machine / "live"
         before = set(live.iterdir()) if live.is_dir() else set()
         argv = [
             "python3",
@@ -226,10 +227,11 @@ class WindowProbe:
     """A probe script against a game started on the save copy by live_window's own steps (display, Steam
     offline, bg3le, ramwatch, launch), then stopped the same way. The launch returns at the main menu, so the probe
     starts once the save is in play (stress_exec.wait_loaded; the wait is the probe log's first line). The caller
-    holds game.lock."""
+    holds game.lock. The window is the machine's (its ramwatch.lock, game.pid, logs, runtime/live folder): with
+    the run's own --runtime it saw no ramwatch and started a second one, which refused (live6)."""
 
-    def __init__(self, repo: Path, runtime: Path):
-        self.repo, self.runtime = repo, runtime
+    def __init__(self, repo: Path, runtime: Path, machine: Path):
+        self.repo, self.runtime, self.machine = repo, runtime, machine
 
     def run(
         self, script: str, args: list[str], save_folder: str | None, out_dir: str, timeout_s: float
@@ -240,7 +242,7 @@ class WindowProbe:
         if not path.is_file():
             return ProbeOutcome(None, "", str(log), f"no probe script {script}")
         lw = load_file("stress_live_window", self.repo / "tools/dev/live_window.py")
-        w = lw.Window(lw.parse(["--save", save_folder] if save_folder else []), repo=self.repo, runtime=self.runtime)
+        w = lw.Window(lw.parse(["--save", save_folder] if save_folder else []), repo=self.repo, runtime=self.machine)
         w.dir.mkdir(parents=True, exist_ok=True)
         c = w.commands()
         up = (
@@ -274,12 +276,12 @@ class WindowProbe:
 class PlaySession:
     """runner/play.py run --scenario on the resolved scenario (written to runtime/stress/scenarios/, which
     BG3AI_SCENARIOS points play.py at), one run, no judge or keeper pass; the run's runs.jsonl line and
-    facts.jsonl from runtime/sessions/<playthrough>/."""
+    facts.jsonl from the machine's runtime/sessions/<playthrough>/ (where play.py writes them)."""
 
     MARGIN_S = 1800  # launch, load and wrap-up beyond the run's own cap
 
-    def __init__(self, repo: Path, runtime: Path):
-        self.repo, self.runtime = repo, runtime
+    def __init__(self, repo: Path, runtime: Path, machine: Path):
+        self.repo, self.runtime, self.machine = repo, runtime, machine
 
     def run(self, scenario: dict, profile: str, max_cost: float | None, playthrough: str) -> SessionOutcome:
         sc_dir = self.runtime / "stress" / "scenarios"
@@ -306,7 +308,7 @@ class PlaySession:
         if max_cost is not None:
             argv += ["--max-cost", f"{max_cost:g}"]
         env = dict(os.environ, BG3AI_SCENARIOS=str(sc_dir))
-        pt_dir = self.runtime / "sessions" / playthrough
+        pt_dir = self.machine / "sessions" / playthrough
         log = self.runtime / "stress" / f"{playthrough}.log"
         rc, out = run_logged(argv, log, self.repo, env, hours * 3600 + self.MARGIN_S)
         if rc == 2:  # play.py refused before playing (its reason is the last line)

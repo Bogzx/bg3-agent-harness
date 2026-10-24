@@ -7,6 +7,7 @@ import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import pytest
@@ -547,3 +548,14 @@ def test_cli_plan_record_render(tmp_path, capsys):
     doc.unlink()
     assert cli.main(["--render", *base]) == 0 and "# Stress-test matrix" in doc.read_text()
     assert cli.main(["--check", *base]) == 0
+
+
+def test_runtime_holds_the_runs_files_and_the_machine_keeps_its_locks(tmp_path):
+    # live6: --runtime runtime/stress-live6 moved game.lock there (a run elsewhere no longer excluded the default
+    # one) and made the probe windows look for ramwatch.lock there (they started a second watchdog, which refused)
+    rt = tmp_path / "rt"
+    d: Any = cli.adapters(cli.parse(["--runtime", str(rt)]), None, lambda r: None)
+    assert d.lock.path == cli.MACHINE / "game.lock" == cli.REPO / "runtime" / "game.lock"
+    assert d.acc.machine == d.probe.machine == d.session.machine == cli.MACHINE
+    assert d.acc.runtime == d.probe.runtime == d.session.runtime == rt
+    assert d.host.stop_file == rt / "stress" / "STOP"
