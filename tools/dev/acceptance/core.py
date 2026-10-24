@@ -322,23 +322,26 @@ def marker_gone() -> bool:
 
 
 def load_verified(label: str, record: bool = False) -> bool:
-    """load_game + independent checks: marker wiped (a new Lua state), party readable, game screen."""
+    """load_game + independent checks: the tool says done, marker wiped (a new Lua state), party readable, game
+    screen. fix-live A1: a 'TIMEOUT — timed out' load that left the Load page up (screen=save_load) passed."""
     try:
         set_marker()
     except Exception as e:
         log(f"marker not set ({e}): the game may be loading")
     out, dt = took("load_game", save=label)
-    ok_tool = "FAILED" not in out and "EXCEPTION" not in out
-    st = {}
+    ok_tool = first_line(out).startswith("load_game: done")
+    st, screen = {}, "?"
     for _ in range(30):
-        st = status()
-        if st.get("party") and ui_screen() == "game":
+        st, screen = status(), ui_screen()
+        if st.get("party") and screen == "game":
             break
         time.sleep(1)
     gone = marker_gone()
     party = [r.get("name") for r in st.get("party") or []]
-    ok = ok_tool and gone and bool(party)
-    ev = f"{first_line(out)} in {dt:.1f}s; new Lua state={gone}; region={st.get('region')} party={party} screen={ui_screen()}"
+    ok = ok_tool and gone and bool(party) and screen == "game"
+    ev = (
+        f"{first_line(out)} in {dt:.1f}s; new Lua state={gone}; region={st.get('region')} party={party} screen={screen}"
+    )
     if record or not ok:
         item(f"load_game verification ({label})", "PASS" if ok else "FAIL", ev)
     else:
