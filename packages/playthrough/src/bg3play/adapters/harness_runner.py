@@ -9,6 +9,9 @@ One play session:
     memory.end                         session.py session-end: commits a finished wrap-up
     end_sig = game.progress()          progress = the save signature changed (runner/play.py made_progress)
     runner.json + runner.status.json   the files the store reads, as play.py writes them
+    the analysis files                 Sxxx.metrics/turns/progress.jsonl while it plays (the bg3 server's
+                                       $BG3AI_METRICS_PATH, ClientAgent, read_story's poll), then latency.json,
+                                       progress.json and triage.md (adapters/session_files.py, play.py's functions)
 
 The kickoff is the runner's (bg3play.runner.prompts.build_kickoff: the memory briefing, the playbooks, WRAP UP, the
 pace pre-flight of a coaching condition, the save the game recovered to) with the request's notes (the Supervisor's
@@ -65,9 +68,11 @@ from .. import config
 from ..jsontypes import is_obj
 from ..memory import memlib
 from ..runner import memory_session, prompts
+from ..runner.keeper_side import write_review
 from ..supervisor import OOM_STREAK, SessionRequest, SessionResult, SupervisorError
 from .agent_process import AgentCall, AgentRun, ClientAgent
 from .launched_game import NoSaveYetError
+from .session_files import ProgressPoller, StoryRead, metrics_path, write_session_files
 
 
 class Agent(Protocol):
@@ -323,6 +328,7 @@ class HarnessRunner:
     clock: Callable[[], float]
     recovery: Recovery = field(default_factory=Recovery)
     log: Callable[[str], None] = lambda msg: None
+    read_story: StoryRead | None = None  # one story poll of the game (Sxxx.progress.jsonl); None = no polling
     _abort: threading.Event = field(default_factory=threading.Event, init=False)
     _agent: Agent | None = field(default=None, init=False)
 
@@ -341,6 +347,10 @@ class HarnessRunner:
         start = kind == "runner_start"
         append_event(sdir, kind, {**fields, "pid": os.getpid()} if start else fields, self.log)
         write_status(self.runtime, playthrough=pt, runner_pid=os.getpid() if start else None, updated=self.clock())
+
+    def review(self, pt: str, result: SessionResult) -> None:
+        """Supervisor.after_session: Sxxx.review.md once the keeper pass is done (play.py's write_review)."""
+        write_review(self.runtime / "sessions" / pt, result.session, self.runtime, self.log)
 
     def run_session(self, req: SessionRequest, stop: threading.Event) -> SessionResult:
         cfg, pt = req.config, req.playthrough
@@ -399,6 +409,7 @@ class HarnessRunner:
         sid = opened or predicted
         env["BG3AI_SESSION"] = sid
         env["BG3AI_FIGHT_HOLD_PATH"] = str(fight_hold_path(sdir, sid))
+        env["BG3AI_METRICS_PATH"] = str(metrics_path(sdir, sid))  # the bg3 server's tool records (and fights)
         hooks.sid, hooks.env = sid, env
         start_sig = self.game.progress()
         write_status(self.runtime, playthrough=pt, session=sid, model=agent.model, effort=agent.effort,
@@ -406,16 +417,22 @@ class HarnessRunner:
         loaded, why = (hooks.save, "") if hooks.save else (req.loaded, LOADED_AFTER_FAULT if req.loaded else "")
         prompt = kickoff(req, sid, briefing, loaded, agent.client_name, [*new_game, *self.game.notes()], why)
         spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
+        polling = threading.Event()
+        if self.read_story is not None:
+            poller = ProgressPoller(sdir, sid, start, self.read_story, self.log)
+            threading.Thread(target=poller.loop, args=(polling,), name="progress", daemon=True).start()
         try:
             out = run_session(spec, hooks)
             if out.result.reason not in ("crash", "hang") and not self._abort.is_set():
                 self.game.ensure_save(out.started)  # before the memory's session end, as play.py
         finally:
+            polling.set()
             memory.end(env)
         progress = (
             None if out.result.reason in ("crash", "hang") else policy.made_progress(start_sig, self.game.progress())  # pyright: ignore[reportUnknownMemberType]
         )
         ended = out.result.ended
+        write_session_files(sdir, sid, out.started, ended, self.log)
         cost = sum(r.cost_usd for r in hooks.runs if r.cost_usd is not None) if hooks.runs else None
         entry = {
             "kind": "play",
@@ -500,6 +517,18 @@ class AttachedGame:
             self.g.try_rpc("state.status"), self.g.try_rpc("state.journal")
         )
         return sig
+
+    def story(self) -> dict[str, Any] | None:
+        """One story-progress poll (bg3ai.progress.read_game, play.py's) over the bridge's eval: HarnessRunner's
+        read_story."""
+        from bg3ai import progress  # pyright: ignore[reportMissingTypeStubs]
+        from bg3harness.game.io import EVAL_TIMEOUT
+
+        def lua_eval(code: str, ctx: str) -> str:
+            return self.g.eval(code, ctx, timeout=EVAL_TIMEOUT)
+
+        got: dict[str, Any] | None = progress.read_game(lua_eval)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        return got
 
     def fault(self) -> str | None:
         """For ClientAgent's game watch: "hang" when the game stopped answering."""

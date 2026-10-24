@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from bg3harness.game import io as game
@@ -135,36 +136,7 @@ class KeeperSide:
         self.keeper_thread.start()
 
     def write_review(self, sid: str) -> Path | None:
-        """Sxxx.review.md (tools/logs/review_session.py) for the logs worker, once the keeper pass is done (its
-        memory/keeper section and the session's runner events are in by then; tools/logs/wait_new_session.sh wakes
-        on it). Covers the session and its resumes. Niced, with a timeout; nothing here raises."""
-        cmd = [
-            "nice",
-            "-n",
-            "15",
-            sys.executable,
-            str(REVIEW_PY),
-            self.state.dir.name,
-            sid,
-            "--runtime",
-            str(renv.RUNTIME),
-            "--sessions",
-            str(self.state.dir.parent),
-        ]
-        try:
-            p = subprocess.run(cmd, capture_output=True, text=True, cwd=renv.REPO, timeout=renv.REVIEW_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            renv.log(f"{sid}: review killed after {renv.REVIEW_TIMEOUT} s")
-            return None
-        except OSError as e:
-            renv.log(f"{sid}: review failed: {e}")
-            return None
-        if p.returncode != 0:
-            renv.log(f"{sid}: review failed (exit {p.returncode}): {(p.stderr or p.stdout).strip()[-300:]}")
-            return None
-        path = self.state.dir / f"{sid}.review.md"
-        renv.log(f"{sid}: review {path}")
-        return path
+        return write_review(self.state.dir, sid, renv.RUNTIME, renv.log)
 
     def recover_keeper(self) -> None:
         """MEM-1: a keeper pass the runner died in (killed, crashed, restarted mid-pass) left its pre-pass snapshot:
@@ -189,3 +161,37 @@ class KeeperSide:
             r = self.session_py("end")
             if r.returncode == 0:
                 renv.log("memory session committed after the keeper pass")
+
+
+def write_review(sdir: Path, sid: str, runtime: Path, log: Callable[[str], None]) -> Path | None:
+    """Sxxx.review.md (tools/logs/review_session.py) for the logs worker, once the keeper pass is done (its
+    memory/keeper section and the session's runner events are in by then; tools/logs/wait_new_session.sh wakes
+    on it). Covers the session and its resumes. Niced, with a timeout; nothing here raises. play.py's Runner and
+    the app (bg3play.adapters.session_files) both write it here."""
+    cmd = [
+        "nice",
+        "-n",
+        "15",
+        sys.executable,
+        str(REVIEW_PY),
+        sdir.name,
+        sid,
+        "--runtime",
+        str(runtime),
+        "--sessions",
+        str(sdir.parent),
+    ]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, cwd=renv.REPO, timeout=renv.REVIEW_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        log(f"{sid}: review killed after {renv.REVIEW_TIMEOUT} s")
+        return None
+    except OSError as e:
+        log(f"{sid}: review failed: {e}")
+        return None
+    if p.returncode != 0:
+        log(f"{sid}: review failed (exit {p.returncode}): {(p.stderr or p.stdout).strip()[-300:]}")
+        return None
+    path = sdir / f"{sid}.review.md"
+    log(f"{sid}: review {path}")
+    return path

@@ -533,7 +533,9 @@ def session_runner(opt: argparse.Namespace) -> tuple[sup.SessionRunner, Any]:
     attached = AttachedGame(bridge_game(opt.debug_port))
     game = attached if opt.attach else launched_game(opt, attached, log)
     agents = ClientAgents(opt.repo / "profiles", opt.repo / "play", time.time, game.fault, repo=opt.repo)
-    runner = HarnessRunner(opt.runtime, opt.playthroughs, agents, game, SessionPy, time.time, log=log)
+    runner = HarnessRunner(
+        opt.runtime, opt.playthroughs, agents, game, SessionPy, time.time, log=log, read_story=attached.story
+    )
     return runner, agents.keeper_client
 
 
@@ -633,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
             played=lambda pt: len(store.session_logs(pt)),
             abort=abort,
             on_run=getattr(runner, "run_event", lambda pt, kind, fields: None),  # play.py writes its own
+            after_session=getattr(runner, "review", lambda pt, res: None),  # play.py writes its own
         )
     viewers = Viewers(time.time)
     game = screen = None
