@@ -439,6 +439,25 @@ class TestWindow(Base):
         self.assertEqual(procs.sent, [])   # nothing left to stop
         self.assertEqual(self.verdict(w, "stop"), ["PASS"])
 
+    def test_ctrl_c_during_the_launch_stops_the_game_it_brought_up(self):
+        # live9 #1: Ctrl-C while first_launch.sh ran left the game running (launched was set only after it returned)
+        procs = FakeProcs(game=[], saves=None)
+        orig = LW.Window.cmd
+
+        def cmd(w, argv, *a, **k):
+            if argv[0].endswith("first_launch.sh"):
+                procs.g.append(4242)   # the game is up, the launcher still waits for its debug server
+                raise KeyboardInterrupt
+            return orig(w, argv, *a, **k)
+        self.hold_ramwatch_lock()
+        with mock.patch.object(LW.Window, "cmd", cmd):
+            w = self.window(procs=procs)
+            w.run()
+        self.assertEqual(self.verdict(w, "window"), ["FAIL"])
+        self.assertEqual(procs.sent, [(4242, signal.SIGTERM), (4242, signal.SIGKILL)])
+        self.assertEqual(self.verdict(w, "stop"), ["PASS"])
+        self.assertFalse(LW.held_by_other(self.rt / "game.lock"))
+
     def test_launch_failure_with_no_game_collects(self):
         procs = FakeProcs(game=[], saves=None)
         self.hold_ramwatch_lock()
@@ -528,6 +547,25 @@ class TestHelpers(Base):
         rc, _ = w.cmd(["sleep", "20"], timeout=0.5)
         self.assertEqual(rc, 124)
         self.assertLess(time.monotonic() - t, 5)
+
+    def test_cmd_interrupted_kills_its_process_group(self):
+        # the child runs in its own session (no terminal Ctrl-C): an interrupt in the window kills it, else the
+        # launcher goes on and brings the game up after the window stopped
+        pidf = self.rt / "child.pid"
+        seen = []
+
+        def out(s):
+            seen.append(s)
+            if s.strip() == "up":
+                raise KeyboardInterrupt
+        w = self.window()
+        w._out = out
+        w.dir.mkdir(parents=True)
+        with self.assertRaises(KeyboardInterrupt):
+            w.cmd(["bash", "-c", f"echo $$ > {pidf}; echo up; exec sleep 30"])
+        pid = int(pidf.read_text())
+        with self.assertRaises(ProcessLookupError):   # killed and reaped
+            os.kill(pid, 0)
 
     def test_held_by_other(self):
         p = self.rt / "x.lock"
