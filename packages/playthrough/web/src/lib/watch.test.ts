@@ -90,6 +90,7 @@ describe("watch reducer", () => {
     expect(s.screenshotRev).toBe(51);
     s = applyEvent(s, "actions_reset", {});
     expect(s.actions).toEqual([]);
+    expect(s.party).toBeNull();
     s = applyEvent(s, "memory", { sha: "a", t: 1, subject: "S001", session: "S001", playthrough: "pt" });
     s = applyEvent(s, "memory", { sha: "b", t: 2, subject: "x", session: null, playthrough: "other" });
     expect(s.memory.map((c) => c.sha)).toEqual(["a"]);

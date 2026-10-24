@@ -90,7 +90,7 @@ export function applyEvent(s: WatchState, type: string, data: unknown): WatchSta
       return actions === s.actions ? s : { ...s, actions, screenshotRev: shot };
     }
     case "actions_reset":
-      return s.live ? { ...s, actions: [] } : s;
+      return s.live ? { ...s, actions: [], party: null } : s; // a new session: the old party is the hub's no more
     case "party":
       return s.live ? { ...s, party: data as Party } : s;
     case "memory": {
