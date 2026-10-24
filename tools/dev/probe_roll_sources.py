@@ -15,6 +15,14 @@ every candidate during the rolls the live worker makes, so the fix can read the 
   components that live longer, polled every tick (new entities only): SpellCastRolls (a cast's per-target rolls),
     RequestedRoll, ServerRollInProgress, RollModifiers, ServerSpellHitRegister, UnresolvedHitNotification
   Osiris (timeline only, they carry no natural): RollResult/6, DialogRollResult/5, AttackedBy/7, CastedSpell/5
+Second pass (Window B 2026-10-24: no source above had natural/DC for the save or the attack; SpellCastRolls read
+{"Rolls":[]} when first seen; bg3le never fires DealDamage/ExecuteFunctor, so a HitDesc is reachable only through
+components and statuses):
+  change   SpellCastRolls re-read every tick for the cast entity's life, a record whenever it changed, with each
+           Rolls[].Casts[].Hit.ConditionRolls[] read field by field (RollType, Difficulty, Roll.Result.NaturalRoll,
+           Total): the attack roll against AC and the target's saving throw, if the cast keeps them
+  status   at Osiris StatusApplied/4, the applied status's own ConditionRolls (esv::Status, through bg3le's
+           ServerCharacter:GetStatus): the save a status-applying spell's target failed (Command: Halt)
 Each record keeps every NaturalRoll / Difficulty / DC / Total / Success / RollType field found anywhere in the
 component (path = value), and the first 3000 chars of the whole component.
 
@@ -71,10 +79,11 @@ local function walk(t, path, out, depth)
         walk(v, p, out, depth + 1)
     end
 end
-local function rec(src, comp, entity, raw)
+local function rec(src, comp, entity, raw, extra)
     if #P.recs >= 2000 then return end
     local t = ser(raw)
     local fields = {}
+    for _, f in ipairs(extra or {}) do fields[#fields + 1] = f end
     walk(t, "", fields, 0)
     local ok, js = pcall(Ext.Json.Stringify, t, { Beautify = false })
     P.recs[#P.recs + 1] = { t = Ext.Utils.MonotonicTime(), frame = P.frame, src = src, comp = comp,
@@ -92,6 +101,58 @@ local function readAll(names, src, once)
                     local okc, c = pcall(function() return e[name] end)
                     rec(src, name, e, okc and c or ("read failed: " .. tostring(c)))
                 end
+            end
+        end
+    end
+end
+-- Every ConditionRoll of a hit or status, field by field (a HitDesc need not serialize whole). HitDesc.ConditionRolls
+-- is the array; esv::Status.ConditionRolls wraps it in .Rolls.
+local function condRolls(x, path, out)
+    local okl, list = pcall(function() return x.ConditionRolls end)
+    if not okl or list == nil then return end
+    local okw, inner = pcall(function() return list.Rolls end)
+    if okw and inner ~= nil then list = inner end
+    local okn, n = pcall(function() return #list end)
+    out[#out + 1] = path .. ".ConditionRolls#=" .. tostring(okn and n or ("? " .. tostring(n)))
+    for i = 1, okn and n or 0 do
+        for _, f in ipairs({ "RollType", "Difficulty", "Roll.Result.NaturalRoll", "Roll.Result.Total", "Ability",
+            "Skill" }) do
+            local okf, v = pcall(function()
+                local y = list[i]
+                for part in f:gmatch("[^.]+") do y = y[part] end
+                return y
+            end)
+            out[#out + 1] = path .. ".ConditionRolls." .. i .. "." .. f .. "=" .. tostring(okf and v or "?")
+        end
+    end
+end
+-- SpellCastRolls.Rolls[].Casts[].Hit: a cast's per-target hits with their attack/save rolls.
+local function castRolls(c)
+    local out = {}
+    pcall(function()
+        for i = 1, #c.Rolls do
+            local r = c.Rolls[i]
+            for j = 1, #r.Casts do condRolls(r.Casts[j].Hit, "Rolls." .. i .. ".Casts." .. j .. ".Hit", out) end
+        end
+    end)
+    return out
+end
+-- Bug 2, second pass: SpellCastRolls was still {"Rolls":[]} when first seen, so it is re-read every tick for the
+-- cast entity's life and recorded again whenever it changed (src "change").
+P.last = {}
+local function readChanges()
+    local ok, list = pcall(Ext.Entity.GetAllEntitiesWithComponent, "SpellCastRolls")
+    if not ok or type(list) ~= "table" then return end
+    for _, e in ipairs(list) do
+        local okc, c = pcall(function() return e.SpellCastRolls end)
+        if okc and c ~= nil then
+            local extra = castRolls(c)
+            local okj, js = pcall(Ext.Json.Stringify, ser(c), { Beautify = false })
+            local sig = table.concat(extra, " ") .. "|" .. (okj and tostring(js) or "")
+            local key = tostring(e)
+            if P.last[key] ~= sig then
+                P.last[key] = sig
+                rec("change", "SpellCastRolls", e, c, extra)
             end
         end
     end
@@ -120,8 +181,33 @@ P.tick = Ext.Events.Tick:Subscribe(function()
     P.frame = P.frame + 1
     readAll(ONE_FRAME, "tick", false)
     readAll(LASTING, "tick", true)
+    readChanges()
 end)
 P.hooks.tick = P.tick ~= nil
+-- The status a failed save applied keeps that save (esv::Status.ConditionRolls): read at StatusApplied. Counted in
+-- P.status (read / with rolls / failed, last error) so a dump tells "no rolls" from "could not read".
+P.status = { read = 0, rolls = 0, failed = 0 }
+local okS, errS = pcall(Ext.Osiris.RegisterListener, "StatusApplied", 4, "after", function(target, status, causee)
+    if P.off then return end
+    local out = {}
+    local ok, err = pcall(function()
+        local s = Ext.Entity.Get(target).ServerCharacter:GetStatus(status)
+        if s == nil then error("no status " .. tostring(status)) end
+        condRolls(s, "Status", out)
+    end)
+    if not ok then
+        P.status.failed, P.status.error = P.status.failed + 1, tostring(err)
+        return
+    end
+    P.status.read = P.status.read + 1
+    local has = false
+    for _, f in ipairs(out) do has = has or (f:find("ConditionRolls#=") ~= nil and not f:find("#=0")) end
+    if has then
+        P.status.rolls = P.status.rolls + 1
+        rec("status", tostring(status), target, { tostring(target), tostring(status), tostring(causee) }, out)
+    end
+end)
+P.hooks["osi:StatusApplied"] = okS and true or tostring(errS)
 P.osi = {}
 for _, ev in ipairs({ { "RollResult", 6 }, { "DialogRollResult", 5 }, { "AttackedBy", 7 }, { "CastedSpell", 5 } }) do
     local ok, err = pcall(Ext.Osiris.RegisterListener, ev[1], ev[2], "after", function(...)
@@ -158,7 +244,7 @@ local ok, err = pcall(function()
     end
     walk(tr, 0)
 end)
-return Ext.Json.Stringify({ hooks = P.hooks, frames = P.frame, recs = P.recs, trace = trace,
+return Ext.Json.Stringify({ hooks = P.hooks, frames = P.frame, recs = P.recs, trace = trace, status = P.status,
     trace_error = (not ok) and tostring(err) or nil }, { Beautify = false })
 """
 
@@ -193,6 +279,11 @@ def summarize(dump: dict[str, Any]) -> list[str]:
         tag = "NATURAL+DC" if nats and dcs else "natural" if nats else "dc" if dcs else "-"
         lines.append(f"{tag:10} {src:28} {comp:36} {len(rs):4} rec  natural {nats[:10]} dc {dcs[:10]}")
     failed = sorted(k for k, v in (dump.get("hooks") or {}).items() if v is not True)
+    st = dump.get("status") or {}
+    lines.append(
+        f"StatusApplied reads: {st.get('read', 0)} read, {st.get('rolls', 0)} with ConditionRolls, "
+        f"{st.get('failed', 0)} failed" + (f" (last error: {st['error']})" if st.get("error") else "")
+    )
     lines.append(f"hooks not in place: {failed or 'none'}; frames {dump.get('frames')}")
     lines.append(
         f"trace (one-frame/created component names with Roll/Hit/SavingThrow): {dump.get('trace') or {}}"

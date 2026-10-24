@@ -46,6 +46,35 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("post:ServerRoll", lines[-2])  # a hook that failed is listed
         self.assertIn("SavingThrowRolledEventOneFrameComponent", lines[-1])
 
+    def test_second_pass_sources(self):
+        """The re-read SpellCastRolls and the applied status name their natural/DC; the status read counts show."""
+        lines = probe.summarize(
+            {
+                "recs": [
+                    rec("tick", "SpellCastRolls"),
+                    rec(
+                        "change",
+                        "SpellCastRolls",
+                        "Rolls.1.Casts.1.Hit.ConditionRolls#=1",
+                        "Rolls.1.Casts.1.Hit.ConditionRolls.1.Difficulty=12",
+                        "Rolls.1.Casts.1.Hit.ConditionRolls.1.Roll.Result.NaturalRoll=14",
+                    ),
+                    rec(
+                        "status",
+                        "COMMAND_HALT",
+                        "Status.ConditionRolls.1.Difficulty=13",
+                        "Status.ConditionRolls.1.Roll.Result.NaturalRoll=3",
+                    ),
+                ],
+                "status": {"read": 5, "rolls": 1, "failed": 2, "error": "no status X"},
+            }
+        )
+        change = next(line for line in lines if line.split()[1] == "change")
+        self.assertTrue(change.startswith("NATURAL+DC"), change)
+        self.assertIn("natural [14] dc [12]", change)
+        self.assertIn("natural [3] dc [13]", next(line for line in lines if "COMMAND_HALT" in line))
+        self.assertIn("5 read, 1 with ConditionRolls, 2 failed (last error: no status X)", lines[-3])
+
     def test_zero_is_no_value(self):
         """A component's unset NaturalRoll/DC reads 0: not a natural."""
         lines = probe.summarize(
