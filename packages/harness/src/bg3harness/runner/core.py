@@ -19,9 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from bg3ai import progress as story
-
-from bg3harness import clients
+from bg3harness import clients, session_summary
 from bg3harness.game import io as game
 from bg3harness.game.io import Save
 from bg3harness.runner import agent_side as ragent
@@ -160,16 +158,8 @@ class SessionRunner(rgame.GameSide, ragent.AgentSide, rchecks.ChecksSide):
             renv.log(f"{when}: stopping the game failed: {e}")
 
     def write_progress(self, session: str, base: Path, start: float, end: float) -> dict | None:
-        """Sxxx.progress.json + a line in progress_history.jsonl."""
-        try:
-            summary = story.summarize(story.load(Path(f"{base}.progress.jsonl")), start, end)
-            story.write_summary(summary, Path(f"{base}.progress.json"), self.state.dir / "progress_history.jsonl", session)
-        except Exception as e:
-            renv.log(f"{session}: progress summary failed: {e}")
-            return None
-        renv.log(f"{session}: story progress {summary['points']} pts ({summary['per_hour']}/h), {summary['events']} events, "
-            f"longest stretch without progress {summary['longest_no_progress_min']} min, {summary['stuck_episodes']} stuck episode(s)")
-        return summary
+        """Sxxx.progress.json + a line in progress_history.jsonl (session_summary, the app's too)."""
+        return session_summary.write_progress(session, base, start, end, self.state.dir, renv.log)
 
     @staticmethod
     def _signal(proc: subprocess.Popen, sig: int) -> None:

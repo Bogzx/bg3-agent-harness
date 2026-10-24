@@ -16,7 +16,17 @@ from pathlib import Path
 
 from bg3ai import metrics as latency
 
-from bg3harness import client_setup, clients, events, pi_client, runs, sandbox, spend, triage
+from bg3harness import (
+    client_setup,
+    clients,
+    events,
+    pi_client,
+    runs,
+    sandbox,
+    session_summary,
+    spend,
+    triage,  # noqa: F401  (re-exported: test_play_between)
+)
 from bg3harness.game import io as game
 from bg3harness.game.io import DEBUG_PORT
 from bg3harness.game.saves import foreign_saves  # noqa: F401  (re-exported: test_play_saves)
@@ -418,35 +428,12 @@ class AgentSide:
         return f"port {DEBUG_PORT} open but {health.limit} liveness evals in a row failed or timed out"
 
     def write_latency(self, session: str, base: Path, start: float, end: float) -> dict | None:
-        """Sxxx.latency.json + a line in latency_history.jsonl (bridge records + stream timing)."""
-        try:
-            summary = latency.summarize_files(Path(f"{base}.metrics.jsonl"), Path(f"{base}.turns.jsonl"), start, end)
-            latency.write_summary(summary, Path(f"{base}.latency.json"), self.state.dir / "latency_history.jsonl", session)
-        except Exception as e:
-            renv.log(f"{session}: latency summary failed: {e}")
-            return None
-        t = summary["targets"]
-        verdict = " ".join(f"{k}={'PASS' if v['pass'] else 'FAIL' if v['pass'] is False else 'n/a'}" for k, v in t.items())
-        renv.log(f"{session}: latency idle median {summary['idle_s']['all'].get('median')}s, "
-            f"{summary['long_gaps']['total']} gaps >10s, think median {summary['think_s'].get('median')}s "
-            f"(API {(summary.get('api') or {}).get('api_s_per_turn')}s/turn, "
-            f"{(summary.get('api') or {}).get('ms_per_out_tok')} ms/out-tok), "
-            f"apm {summary['apm']}, calls/min {(summary.get('rates') or {}).get('calls_pm')} "
-            f"(reads {(summary.get('rates') or {}).get('reads_pm')}, actions {(summary.get('rates') or {}).get('actions_pm')}), "
-            f"busy {summary['busy_pct']}%, pipelined {summary.get('pipelining_pct')}%, "
-            f"think overlap {summary.get('think_overlap_pct')}%, loading {summary.get('loading_s')}s (not idle), "
-            f"wait_for noop {(summary.get('wait_for_noop') or {}).get('n')}/{(summary.get('wait_for_noop') or {}).get('of')}, "
-            + (f"wrap-up {summary['wrapup_s']}s (not counted)" if summary.get('wrapup_s') is not None
-               else "no wrap-up phase") + f" | {verdict}")
-        return summary
+        """Sxxx.latency.json + a line in latency_history.jsonl (session_summary, the app's too)."""
+        return session_summary.write_latency(session, base, start, end, self.state.dir, renv.log)
 
     def write_triage(self, session: str, base: Path) -> Path | None:
-        """Sxxx.triage.md: failed calls by tool + error, long gaps, ToolSearch, clicks, stuck stretches, summary."""
-        try:
-            path = triage.write(base)
-        except Exception as e:
-            renv.log(f"{session}: triage failed: {e}")
-            return None
-        renv.log(f"{session}: triage {path}")
-        self.last_triage = (session, path)
+        """Sxxx.triage.md (session_summary); remembered for the check_all after the session."""
+        path = session_summary.write_triage(session, base, renv.log)
+        if path is not None:
+            self.last_triage = (session, path)
         return path
