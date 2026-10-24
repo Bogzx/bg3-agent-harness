@@ -160,6 +160,11 @@ KEEP_PLAYING = "keep playing: you'll be told when to wrap up"
 # then the normal end. The hold goes to $BG3AI_FIGHT_HOLD_PATH (set by the runner), which the runner's hard stop and
 # session.py's end check read; a restarted server (crash resume) keeps the session's cap from it.
 FIGHT_HOLD_S = 15 * 60
+# S095 10:52-11:10: the Netherbrain fight was still on at the cap; WRAP UP NOW came in the decisive round and the session
+# ended 10 min before the runner's hard stop (REFUSED on Lay on Hands). A fight still on at the cap plays on until it
+# ends, at most FIGHT_OVERRUN_S past the capped end: 2 min before the runner's hard stop (its held deadline is bounded
+# at the capped end, HARD_STOP_GRACE 10 min after it), so a save still fits.
+FIGHT_OVERRUN_S = 8 * 60
 FIGHT_READ_S = 15.0  # a state.combat read is kept this long; combat_started/combat_ended events and load_game drop it
 FIGHT_LINE = "in a fight: finish it, taking each turn the time it needs; the session waits for the fight"
 HOLD_PATH = SETTINGS.hold_path
@@ -183,7 +188,9 @@ def _fight_seen(tool: str, ev: str) -> None:
 
 def _times() -> tuple[float, float, bool]:
     """(WRAP UP, end, held) of this runner session (DEADLINE set), with the fight hold applied. While held, WRAP UP
-    is the cap (what the runner and session.py plan for); when the fight ends (or the cap comes), it is that moment."""
+    is the cap (what the runner and session.py plan for), past the cap (the same fight still on) the last end; when
+    the fight ends (or the last end comes), it is that moment, and the end is its wrap-up length later (not past the
+    last end)."""
     wrap_len = _wrap_left()
     base = DEADLINE - wrap_len
     if _hold["of"] != (DEADLINE, base):  # once per server process (tests change the session)
@@ -194,15 +201,17 @@ def _times() -> tuple[float, float, bool]:
             _hold["held"] = bool(saved.get("held"))
             _hold["wrap"] = None if _hold["held"] else saved.get("wrap")
     now, cap = time.time(), _hold["cap"]
+    last = cap + wrap_len + FIGHT_OVERRUN_S
     wrap = max(base, float(_hold["wrap"] or 0))
-    held = wrap <= now < cap and _fight_now()
-    if _hold["held"] and not held:  # the fight ended (or the cap came): WRAP UP now
-        _hold["wrap"] = wrap = max(wrap, min(now, cap))
+    held = wrap <= now < last and (now < cap or _hold["held"]) and _fight_now()  # past the cap: the held fight only
+    if _hold["held"] and not held:  # the fight ended (or the last end came): WRAP UP now
+        _hold["wrap"] = wrap = max(wrap, min(now, last))
     _hold["held"] = held
     if held:
-        wrap = cap
-    _write_hold(wrap, wrap + wrap_len, held)
-    return wrap, wrap + wrap_len, held
+        wrap = cap if now < cap else last
+    end = min(wrap + wrap_len, last)
+    _write_hold(wrap, end, held)
+    return wrap, end, held
 
 
 def _fighting() -> bool:
@@ -256,7 +265,9 @@ def _clock() -> str:
     # Wrap-up starts at BG3AI_SESSION_WRAPUP (the runner: 3 min before the end, a third of a short session); before
     # it, no minutes and no WRAP UP time (KEEP_PLAYING).
     if now >= wrap:
-        how = f" Reach a safe spot, save_game, then {WRAPUP_HINT}." if coach else ""
+        # a fight here began after the hold (S095: "Reach a safe spot" in the decisive round): no safe spot to reach
+        spot = "Save when the fight allows" if _fight_now() else "Reach a safe spot, save_game"
+        how = f" {spot}, then {WRAPUP_HINT}." if coach else ""
         return f"⏱ {hhmm} · {int(left // 60)}m left: WRAP UP NOW.{how}"
     return f"⏱ {hhmm} · {KEEP_PLAYING}" + stuck
 

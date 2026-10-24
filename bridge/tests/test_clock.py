@@ -191,15 +191,45 @@ class FightHold(unittest.TestCase):
         self.assertTrue(core._session_over())
         self.assertIn("SESSION OVER", core._clock_line())
 
-    def test_the_hold_is_bounded(self):
+    def test_a_fight_still_on_at_the_cap_plays_on_to_the_last_end(self):
+        # S095: still fighting at the cap -> "2m left: WRAP UP NOW. Reach a safe spot" in the decisive round, then
+        # REFUSED 10 min before the runner's hard stop
         self.fight = True
         self.now = self.wrap + 1
         self.assertTrue(core._times()[2])
         cap = self.wrap + core.FIGHT_HOLD_S
-        self.now = cap + 1   # still fighting: the normal end comes
-        self.assertEqual(core._times(), (cap, cap + 180, False))
-        self.assertIn("WRAP UP NOW", core._clock_line())
-        self.now = cap + 181
+        last = cap + 180 + core.FIGHT_OVERRUN_S
+        self.assertEqual(last, self.deadline + core.FIGHT_HOLD_S + 10 * 60 - 120)  # 2 min before the hard stop
+        self.now = cap + 1   # still fighting: held to the last end, no WRAP UP, no refusal
+        self.assertEqual(core._times(), (last, last, True))
+        self.assertEqual(core._clock_line(), f"⏱ {self.hhmm()} · " + core.FIGHT_LINE)
+        self.now = cap + 181   # the capped end: the session goes on
+        self.assertFalse(core._session_over())
+        self.assertEqual(rules.stop_refusal("move_to", core._times()[1], now=self.now), "")
+        held = json.loads(self.hold.read_text())
+        self.assertEqual((held["held"], held["wrap"], held["deadline"]), (True, int(last), int(last)))
+        self.fight = False   # it ends in the overrun: WRAP UP now, the end its 3 min later
+        self.assertEqual(core._times(), (self.now, self.now + 180, False))
+        self.assertIn("3m left: WRAP UP NOW", core._clock_line())
+        self.fight = True   # a new fight after the cap isn't held; the coaching hint names no safe spot in it
+        self.assertFalse(core._times()[2])
+        with mock.patch.object(rules, "coaching", lambda: True):
+            line = core._clock()
+            self.assertIn("WRAP UP NOW. Save when the fight allows, then", line)
+            self.assertNotIn("safe spot", line)
+            self.fight = False
+            self.assertIn("WRAP UP NOW. Reach a safe spot, save_game, then", core._clock())
+
+    def test_the_overrun_is_bounded(self):
+        self.fight = True
+        self.now = self.wrap + 1
+        self.assertTrue(core._times()[2])
+        last = self.wrap + core.FIGHT_HOLD_S + 180 + core.FIGHT_OVERRUN_S
+        self.now = last - 1
+        self.assertTrue(core._times()[2])
+        self.now = last   # still fighting: the session ends
+        self.assertEqual(core._times(), (last, last, False))
+        self.now = last + 1
         self.assertTrue(core._session_over())
 
     def test_a_restarted_server_keeps_the_sessions_cap(self):
