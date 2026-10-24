@@ -1,0 +1,109 @@
+bg3le Ext.UI: after a Lua frame-lock timeout, refuse further calls at once ("UI busy") until the lock is taken again
+
+On top of 0001-0010 (S21/S22, the S086 hang: runtime/logs/bg3le-20261018-050911.log.3126950). The UI
+thread took the frame lock and then waited inside View::Update for the client Lua lock that a long Tick
+held (job 28's on_tick, ui.long_rest after the End-the-Day box); every Ext.UI call of that Tick waited
+the full 50 ms and ran unserialized: Lua lock timeouts #32 -> #954 in 46 s, two Ticks of 10.2 s and
+35.8 s, the RPC pump starved, liveness FAULT hang. Strict mode (0010) refused only after the same 50 ms.
+
+- After a Lua call's lock timeout, later Lua calls do not wait: each tries the lock without blocking and,
+  if it is still held, fails at once with the Lua error "bg3le: UI busy (frame lock not taken since a
+  timeout); retry". The busy state ends when the lock is taken again: by the UI thread
+  (bg3le_ui_frame_begin, a frame or an input hook) or by a Lua call that finds it free. The call that
+  timed out keeps 0010's semantics: strict refuses it ("bg3le: UI busy (frame lock not taken in 50 ms)"),
+  otherwise it runs unserialized. Both errors start "bg3le: UI busy", so the mod can tell them from other
+  errors and retry on the next tick.
+- On by default, strict or not (strict stays off by default). BG3LE_UI_BUSY_REFUSE=0 in the environment
+  or Ext._Internal.UiBusy(false) at run time goes back to a 50 ms wait per call.
+- Ext._Internal.UiBusy([on]) -> on, calls refused at once, busy now. Refusals are logged at counts
+  1, 2, 4, 8, ...: "noesis: UI busy: Lua call #N refused at once (frame lock not taken since a timeout)".
+
+Offline: tools/test_bg3le_ui_busy.py compiles serialized() + the frame hooks from the patched source and
+runs the S086 shape with two threads. Against bg3le 3728a68 (v0.3.6) with 0001-0010. Applied by
+tools/build_bg3le.sh.
+---
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index e23744f..b126beb 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -405,6 +405,16 @@ std::atomic<bool> g_strict{ false };
+ std::atomic<unsigned long long> g_strict_refusals{ 0 };
+ constexpr int kUiStrictWaitMs = 100;
+ 
++// After a Lua lock timeout the UI thread most likely holds the lock while it waits for the client Lua lock
++// that the running Tick holds, so every further call of that Tick would time out too (S086: ~930 waits of
++// 50 ms in one Tick, 46 s, then the liveness hang). Until the lock has been taken again (by a frame, or by a
++// Lua call that finds it free), Lua calls do not wait: they fail at once with "bg3le: UI busy", strict or
++// not, so the Tick can end and the caller retries on a later one. On by default; BG3LE_UI_BUSY_REFUSE=0 or
++// Ext._Internal.UiBusy(false) turns it off (back to a 50 ms wait per call).
++std::atomic<bool> g_busy_refuse{ true };
++std::atomic<bool> g_busy{ false };
++std::atomic<unsigned long long> g_busy_refusals{ 0 };
++
+ // Timeouts are logged at 1, 2, 4, 8, ... so a run of them shows in the log without flooding it.
+ bool log_this_count(unsigned long long n)
+ {
+@@ -428,7 +438,17 @@ int serialized(lua_State* L)
+         return fn(L);
+     }
+     std::unique_lock<std::recursive_timed_mutex> held(g_frame, std::defer_lock);
+-    if (!held.try_lock_for(std::chrono::milliseconds(kFrameWaitMs))) {
++    if (g_busy_refuse.load(std::memory_order_relaxed) && g_busy.load(std::memory_order_relaxed)) {
++        if (!held.try_lock()) {
++            const auto n = g_busy_refusals.fetch_add(1, std::memory_order_relaxed) + 1;
++            if (log_this_count(n))
++                bg3le::logf("noesis: UI busy: Lua call #%llu refused at once (frame lock not taken since a "
++                            "timeout)", n);
++            return luaL_error(L, "bg3le: UI busy (frame lock not taken since a timeout); retry");
++        }
++        g_busy.store(false, std::memory_order_relaxed);
++    } else if (!held.try_lock_for(std::chrono::milliseconds(kFrameWaitMs))) {
++        g_busy.store(true, std::memory_order_relaxed);
+         const auto n = g_serialize_timeouts.fetch_add(1, std::memory_order_relaxed) + 1;
+         const bool strict = g_strict.load(std::memory_order_relaxed);
+         if (log_this_count(n))
+@@ -471,6 +491,16 @@ int l_strict(lua_State* L)
+     return 2;
+ }
+ 
++// UiBusy([on]) -> on, Lua calls refused at once after a lock timeout, busy now (a timeout, lock not taken since)
++int l_busy(lua_State* L)
++{
++    if (!lua_isnoneornil(L, 1)) g_busy_refuse.store(lua_toboolean(L, 1) != 0);
++    lua_pushboolean(L, g_busy_refuse.load() ? 1 : 0);
++    lua_pushinteger(L, (lua_Integer)g_busy_refusals.load());
++    lua_pushboolean(L, g_busy.load() ? 1 : 0);
++    return 3;
++}
++
+ // ---- values: ports of StoredValueHelpers ---------------------------------
+ 
+ void push_floats(lua_State* L, float const* v, int n)
+@@ -1609,7 +1639,10 @@ extern "C" bool bg3le_ui_frame_begin()
+     using namespace Noesis::bg3le_ui;
+     if (!g_serialize.load(std::memory_order_relaxed)) return false;
+     const bool strict = g_strict.load(std::memory_order_relaxed);
+-    if (g_frame.try_lock_for(std::chrono::milliseconds(strict ? kUiStrictWaitMs : kUiWaitMs))) return true;
++    if (g_frame.try_lock_for(std::chrono::milliseconds(strict ? kUiStrictWaitMs : kUiWaitMs))) {
++        g_busy.store(false, std::memory_order_relaxed);  // taken again: Lua calls wait for it again
++        return true;
++    }
+     const auto n = g_ui_timeouts.fetch_add(1, std::memory_order_relaxed) + 1;
+     if (log_this_count(n))
+         bg3le::logf("noesis: UI-thread frame-lock timeout #%llu (%d ms): frame ran unguarded", n,
+@@ -1775,11 +1808,15 @@ extern "C" void bg3le_ui_register(lua_State* L)
+     lua_setfield(L, -2, "UiSerialize");
+     lua_pushcfunction(L, Noesis::bg3le_ui::l_strict);
+     lua_setfield(L, -2, "UiStrict");
++    lua_pushcfunction(L, Noesis::bg3le_ui::l_busy);
++    lua_setfield(L, -2, "UiBusy");
+     static bool from_env = [] {
+         char const* v = std::getenv("BG3LE_UI_SERIALIZE");
+         if (v != nullptr && v[0] != '\0') Noesis::bg3le_ui::g_serialize.store(v[0] != '0');
+         char const* s = std::getenv("BG3LE_UI_STRICT");
+         if (s != nullptr && s[0] != '\0') Noesis::bg3le_ui::g_strict.store(s[0] != '0');
++        char const* b = std::getenv("BG3LE_UI_BUSY_REFUSE");
++        if (b != nullptr && b[0] != '\0') Noesis::bg3le_ui::g_busy_refuse.store(b[0] != '0');
+         return true;
+     }();
+     (void)from_env;
