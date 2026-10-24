@@ -35,6 +35,8 @@ class Fake:
 
     def run_job(self, op, args, context="server", wait_s=25.0, **kw):
         self.jobs.append((op, args))
+        if op == "ui.donate":  # the window was already closed: Gale took it (galefeed checks the bags after)
+            self.items = [it for it in self.items if it.get("uuid") != args["item"]]
         return JobResult(status="done", result={})
 
     def drain_events(self, ctx):

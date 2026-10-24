@@ -5,6 +5,9 @@
 -- (3, 2.7 kg) and Gloves of Power (10, 0.5 kg), Shadowheart's Linebreaker Boots (9, 0.55 kg). The "Inventory"
 -- ListBoxes' Items read as empty collections there; their ListBoxItems hold the slots.
 -- feed_gale(Gloves of Power) FAILED "isn't on this side of the donation window": only bags were matched.
+-- Live D10 (research/fix/live.md "Window D10"): selecting the cell filled InventoryContainer.Tag (1 item), but
+-- UI.press(DonateBtn) gave nothing (CommandParameter nil); DonateItemsCommand(Tag) gave it (the cell left the window,
+-- which stayed open). feed_gale had replied "done — donated=e132 window_open" with the gloves still worn.
 -- Run: tools/vis/test_donate.sh  (Lua 5.3 + 5.4 in Docker)
 
 local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -52,10 +55,17 @@ local dc = { DonateSourceInventories = coll({ source({ [3] = sword, [10] = glove
                                               source({ [9] = boots }), source({}) }) }
 
 -- Widget tree: an "Inventory" ListBox per source (Items empty, as read live), its ListBoxItems = the shown slots.
-local selected = {}
+-- Selecting a cell copies the selection into InventoryContainer.Tag (fillsTag=false: the trigger never ran).
+local selected, fillsTag = {}, true
+local box = { Name = "InventoryContainer", children = {} }
 local function cell(slot)
     local c = { Type = "ls.LSListBoxItem", DataContext = slot, children = {} }
-    c.SetProperty = function(self, k, v) if k == "IsSelected" and v then selected[#selected + 1] = self end end
+    c.SetProperty = function(self, k, v)
+        if k == "IsSelected" and v then
+            selected[#selected + 1] = self
+            if fillsTag then box.Tag = coll({ slot }) end
+        end
+    end
     return c
 end
 local function listBox(slots)
@@ -69,7 +79,25 @@ local bootsCell = { Index = 9, Object = boots }
 local lbClaude, lbSh = listBox({ swordCell, glovesCell }), listBox({ bootsCell })
 local pressed = 0
 local btn = { Name = "DonateBtn", children = {} }
-local widget = { DataContext = dc, visible = true, children = { lbClaude, listBox({}), lbSh, btn } }
+local closeBtn = { Name = "CloseBtn", IsMouseOver = false, children = {} }
+local widget = { DataContext = dc, visible = true, children = { closeBtn, box, lbClaude, listBox({}), lbSh, btn } }
+-- DonateItemsCommand(Tag) gives the Tag's items: their cells leave the window, which stays open (D10).
+local gives, given = true, {}
+dc.DonateItemsCommand = {
+    CanExecute = function() return true end,
+    Execute = function(_, tag)
+        given[#given + 1] = tag
+        if not gives then return end
+        for _, lb in ipairs({ lbClaude, lbSh }) do
+            for i = #lb.children, 1, -1 do
+                for _, s in ipairs(tag.list) do
+                    if lb.children[i] and lb.children[i].DataContext == s then table.remove(lb.children, i) end
+                end
+            end
+        end
+        box.Tag = coll({})
+    end,
+}
 
 Ext = {
     Utils = { MonotonicTime = function() return clock end },
@@ -126,7 +154,15 @@ BG3AI = {
         typeName = function(e) return type(e) == "table" and e.Type or nil end,
         findAll = findAll,
         byName = function(w, n) return findAll(w, function(e) return e.Name == n end)[1] end,
-        press = function(b) if b == btn then pressed = pressed + 1; widget.visible = false end return true end,
+        -- D10: pressing DonateBtn ran its command with a nil parameter: nothing given
+        press = function(b) if b == btn then pressed = pressed + 1 end return true end,
+        command = function(o, name, param)
+            local cmd = o[name]
+            if not cmd then return false, "no command '" .. name .. "'" end
+            cmd.Execute(cmd, param)
+            return true
+        end,
+        count = function(c) return type(c) == "table" and c.Count or 0 end,
         cachedByName = function() return nil end,
         anyDC = function() return dc end,
     },
@@ -149,17 +185,45 @@ okd, r = pcall(ops["ui.donate"], { item = "potion", dry = true })
 ok(not okd and tostring(r):find("isn't on this side of the donation window", 1, true) ~= nil,
    "unlisted bag item refused: " .. tostring(r))
 
--- the job selects the gloves' ListBoxItem (not the sword's), then presses Donate
-selected, pressed = {}, 0
-local job = jobs[ops["ui.donate"]({ item = "gloves" }).job]
-for _ = 1, 40 do
-    clock = clock + 50
-    if job.status ~= "running" then break end
-    job.on_tick(job)
+local function run(args)
+    local job = jobs[ops["ui.donate"](args).job]
+    for _ = 1, 200 do
+        clock = clock + 50
+        if job.status ~= "running" then break end
+        job.on_tick(job)
+    end
+    return job
 end
+
+-- the item's cell staying in the window after Donate is not "done" (D10: "done — donated=e132 window_open")
+selected, pressed, gives, given = {}, 0, false, {}
+local job = run({ item = "gloves" })
+ok(job.status == "failed" and tostring(job.error):find("still in the donation window", 1, true) ~= nil,
+   "cell still listed after Donate -> failed: " .. tostring(job.status) .. " " .. tostring(job.error))
+
+-- a selection that never reaches the Tag gives nothing and says so
+selected, given, fillsTag, box.Tag = {}, {}, false, coll({})
+job = run({ item = "gloves" })
+ok(job.status == "failed" and tostring(job.error):find("didn't take the selection", 1, true) ~= nil,
+   "empty Tag -> failed: " .. tostring(job.error))
+ok(#given == 0, "nothing donated with an empty Tag")
+
+-- the job selects the gloves' ListBoxItem (not the sword's), then runs DonateItemsCommand(Tag), not the button
+selected, pressed, gives, given, fillsTag = {}, 0, true, {}, true
+job = run({ item = "gloves" })
 ok(job.status == "done", "donate done: " .. tostring(job.status) .. " " .. tostring(job.error))
 ok(#selected == 1 and selected[1].DataContext == glovesCell, "the gloves' cell selected, once")
-ok(pressed == 1, "Donate pressed once: " .. pressed)
+ok(pressed == 0, "DonateBtn not pressed (its parameter reads nil): " .. pressed)
+ok(#given == 1 and given[1].list[1] == glovesCell, "DonateItemsCommand ran with the Tag holding the gloves")
+ok(job.result and job.result.window_open == true, "the window still open is reported (Gale takes it on close)")
+
+-- the close button probe for the bridge's hover-checked click
+local pr = ops["ui.donate_probe"]({})
+ok(pr.open and pr.button and pr.over == false and pr.enabled, "probe: open, X found, not hovered")
+closeBtn.IsMouseOver = true
+ok(ops["ui.donate_probe"]({}).over == true, "probe: hovered X")
+widget.visible = false
+ok(ops["ui.donate_probe"]({}).open == false, "probe: closed window")
 
 print(string.format("%d/%d passed", passes, passes + fails))
 if fails > 0 then os.exit(1) end

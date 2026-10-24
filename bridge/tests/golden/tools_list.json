@@ -1897,7 +1897,7 @@
  {
   "name": "feed_gale",
   "title": null,
-  "description": "Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (one in a party bag).",
+  "description": "Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item, donates it and closes the window (Gale absorbs it then). item: name or handle from get_inventory (in a party bag or worn: the window offers both).",
   "input_schema": {
    "properties": {
     "item": {

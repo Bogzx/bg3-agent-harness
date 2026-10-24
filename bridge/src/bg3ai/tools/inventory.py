@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from .. import actq, economy, party
 from ..game import JobResult
-from . import core, overview, plumbing, reporting, travel, world_tools
+from . import core, galefeed, overview, plumbing, reporting, travel, world_tools
 
 # ---------------------------------------------------------------------------
 # act: items, rest, progression
@@ -55,8 +55,8 @@ def _party_item_uuid(item: str) -> str:
 @core.mcp.tool()
 @reporting._guard
 def feed_gale(item: str) -> str:
-    """Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (in a party bag or worn: the window offers both)."""
-    return plumbing._act("feed_gale", "ui.donate", {"item": plumbing._uuid(core.H.get(_item_uuid(item)))}, context="client", wait_s=15)
+    """Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item, donates it and closes the window (Gale absorbs it then). item: name or handle from get_inventory (in a party bag or worn: the window offers both)."""
+    return galefeed.feed(plumbing._uuid(core.H.get(_item_uuid(item))))
 
 
 def _insert_job(args: dict, wait_s: float = 15) -> JobResult:
