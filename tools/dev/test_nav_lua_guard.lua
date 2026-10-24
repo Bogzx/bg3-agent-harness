@@ -390,14 +390,54 @@ test("NAV-2: ways on a killed level searches at most WAYS_SLOW_DIRS directions p
     end)
 end)
 
-test("NAV-3: the guard file is per playthrough (host uuid); the machine-wide file only before a host exists", function()
-    eq(N.guardFile(), N.GUARD_FILE, "no host")
-    onLevel("WLD_Main_A", function()
-        eq(N.guardFile(), "BG3AI/nav_guard_" .. P1 .. ".json", "per host")
-        N.killLevel("WLD_Main_A", "x")
-        assert(N.levelSlow(), "killed in this playthrough")
+-- P2 stands for a companion the player controls (a party switch, its combat turn): its uuid is its template's,
+-- the same in every playthrough, so the files go by the avatar (DB_Avatars), never by GetHostCharacter.
+local P2 = "3ed74f06-3c60-42dc-83f6-f034cb47c679"
+local function asCompanion(fn)
+    local realA = Osi.DB_Avatars
+    Osi.DB_Avatars = { Get = function() return { { P1 } } end }
+    local ok, err = pcall(onLevel, "WLD_Main_A", function()
+        Osi.GetHostCharacter = function() return P2 end
+        fn()
     end)
-    eq(N.levelSlow("WLD_Main_A"), nil, "another file (no host): not killed there")
+    Osi.DB_Avatars = realA
+    if not ok then error(err, 0) end
+end
+
+test("NAV-3: the guard file is per playthrough (avatar uuid); the machine-wide one only before an avatar", function()
+    onLevel("WLD_Main_A", function()
+        eq(N.guardFile(), N.GUARD_FILE, "a host but no avatar yet")
+    end)
+    asCompanion(function()
+        eq(N.guardFile(), "BG3AI/nav_guard_" .. P1 .. ".json", "the avatar's, while a companion is controlled")
+        N.killLevel("WLD_Main_A", "x")
+        assert(N.levelSlow("WLD_Main_A"), "killed in this playthrough")
+    end)
+    eq(N.levelSlow("WLD_Main_A"), nil, "another file (no avatar): not killed there")
+end)
+
+test("the breadcrumb mirror is the avatar's: a controlled companion neither gets this map nor lends its", function()
+    local realL, realS, realPV = Ext.IO.LoadFile, Ext.IO.SaveFile, PersistentVars
+    local read, wrote = {}, {}
+    Ext.IO.LoadFile = function(p) read[#read + 1] = p end
+    Ext.IO.SaveFile = function(p) wrote[#wrote + 1] = p end
+    local ok, err = pcall(function()
+        PersistentVars = {}   -- a fresh Lua state (Ext.Debug.Reset): the store reloads from the mirror
+        asCompanion(function()
+            N.inner.store()
+            N.inner.mirror()
+        end)
+        eq(table.concat(read, ","), "BG3AI/nav_" .. P1 .. ".json", "store read the avatar's file only")
+        eq(table.concat(wrote, ","), "BG3AI/nav_" .. P1 .. ".json", "mirror wrote the avatar's file only")
+        read, wrote, PersistentVars = {}, {}, {}
+        onLevel("WLD_Main_A", function()
+            N.inner.store()
+            N.inner.mirror()
+        end)
+        eq(#read + #wrote, 0, "no avatar yet: no mirror file read or written")
+    end)
+    Ext.IO.LoadFile, Ext.IO.SaveFile, PersistentVars = realL, realS, realPV
+    if not ok then error(err, 0) end
 end)
 
 test("NAV-3: a kill expires after KILL_TTL_S; an undated kill from an older file is dated at load", function()

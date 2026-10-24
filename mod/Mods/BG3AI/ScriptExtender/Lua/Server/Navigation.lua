@@ -29,12 +29,21 @@ N.ROUTE_MAX_NODES = 400
 -- Persistence (PersistentVars travel with the savegame under bg3le/bg3se)
 ------------------------------------------------------------------------
 
--- A file mirror keyed by the host character's uuid (unique per playthrough)
+-- The avatar's uuid (DB_Avatars), the key of this playthrough's files; nil before an avatar exists. Not
+-- GetHostCharacter: that is the character the player controls now, a companion after a party switch or on its
+-- combat turn, and a companion's uuid is its template's, the same in every playthrough (Window C 2026-10-24:
+-- Vessa's map went into nav_<Shadowheart/Lae'zel/Gale>.json over other playthroughs' maps).
+local function avatarUuid()
+    local ok, rows = pcall(function() return Osi.DB_Avatars:Get(nil) end)
+    local a = ok and type(rows) == "table" and rows[1] and rows[1][1]
+    return a and V.uuid(a) or nil
+end
+
+-- A file mirror keyed by the avatar's uuid (unique per playthrough)
 -- keeps breadcrumbs across Ext.Debug.Reset(), which drops in-session
 -- PersistentVars that were never written into a save.
 local function mirrorPath()
-    local host = osi(Osi.GetHostCharacter)
-    local u = host and V.uuid(host)
+    local u = avatarUuid()
     return u and ("BG3AI/nav_" .. u .. ".json") or nil
 end
 
@@ -548,8 +557,7 @@ N.nowS = function() return Ext.Timer and Ext.Timer.ClockEpoch and Ext.Timer.Cloc
 N.slowHits = N.slowHits or {}
 local guard, guardPath
 function N.guardFile()
-    local host = osi(Osi.GetHostCharacter)
-    local u = host and V.uuid(host)
+    local u = avatarUuid()
     return u and ("BG3AI/nav_guard_" .. u .. ".json") or N.GUARD_FILE
 end
 local function guardSave()
@@ -938,8 +946,9 @@ function N.path(charUuid, target, deadline, noSearch)
 end
 
 -- File-local helpers the other parts use.
-N.inner = { store = store, levelStore = levelStore, currentLevel = currentLevel, DIRS = DIRS, DIR_VEC = DIR_VEC,
-    floorAt = floorAt, readResult = readResult, rawPath = rawPath, gatedPath = gatedPath, pathKey = pathKey,
+N.inner = { store = store, mirror = mirror, levelStore = levelStore, currentLevel = currentLevel, DIRS = DIRS,
+    DIR_VEC = DIR_VEC, floorAt = floorAt, readResult = readResult, rawPath = rawPath, gatedPath = gatedPath,
+    pathKey = pathKey,
     helperBox = helperBox, inBox = inBox }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads N and the
