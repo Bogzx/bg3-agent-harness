@@ -7,6 +7,7 @@ Steam-offline guard before any launch, and Runner.run's setup failures, restarts
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
@@ -171,20 +173,31 @@ class SteamGuard(unittest.TestCase):
 
     def test_launcher_agrees(self):
         # launch_game.sh asks `steam_paths.py launch-ok` (exit 0 launch / 3 refuse): the same policy as steam_ready
-        sp = Path(renv.REPO) / "tools" / "steam_paths.py"
+        sp = renv.steam_paths
 
-        def launch_ok() -> int:
-            return rcode.subprocess.run(
-                [sys.executable, str(sp), "launch-ok"], capture_output=True, text=True, env=dict(os.environ)
-            ).returncode
+        def launch_ok(steam_running: bool = True) -> int:
+            with mock.patch.object(sp, "steam_running", lambda: steam_running), redirect_stdout(io.StringIO()):
+                return sp.main(["steam_paths.py", "launch-ok"])
 
         self.write("Starting login")
         self.assertEqual(launch_ok(), 0)
+        self.assertEqual(launch_ok(steam_running=False), 3)
         self.require_offline()
         self.assertEqual(launch_ok(), 3)
         self.write("Start offline - 1")
         self.assertEqual(launch_ok(), 0)
+        # live2: an offline login line from Steam's last run, and no Steam running now: refused, as steam_ready does
+        self.assertEqual(launch_ok(steam_running=False), 3)
+        self.assertEqual(self.steam_ready(steam_running=False)[0], False)
         self.assertIn('steam_paths.py" launch-ok', (Path(renv.REPO) / "runner" / "launch_game.sh").read_text())
+
+    def test_launch_ok_cli_runs(self):
+        # the CLI launch_game.sh runs: one line, exit 0 or 3 (which, depends on this machine's Steam)
+        cli = Path(renv.REPO) / "tools" / "steam_paths.py"
+        r = rcode.subprocess.run([sys.executable, str(cli), "launch-ok"], capture_output=True, text=True,
+                                 env=dict(os.environ))  # fmt: skip
+        self.assertIn(r.returncode, (0, 3), r.stderr)
+        self.assertEqual(len(r.stdout.splitlines()), 1)
 
 
 class RunLoop(unittest.TestCase):

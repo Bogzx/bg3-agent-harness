@@ -7,6 +7,8 @@
     python3 tools/steam_paths.py manifest    # .../steamapps/appmanifest_1086940.acf
     python3 tools/steam_paths.py buildid     # the installed buildid from that manifest
     python3 tools/steam_paths.py offline     # exit 0 if Steam's last login was offline, else 3
+    python3 tools/steam_paths.py launch-ok   # exit 0 if the game may launch: a Steam client runs (offline where
+                                             # required), else 3
     python3 tools/steam_paths.py profile     # the game's Larian profile dir (~/.local/share/Larian Studios/Baldur's Gate 3)
     python3 tools/steam_paths.py saves       # <profile>/PlayerProfiles/Public/Savegames/Story
     python3 tools/steam_paths.py se          # <profile>/Script Extender (the mod's Ext.IO files live in BG3AI/ there)
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -241,19 +244,37 @@ def offline_required(home: Path | None = None) -> tuple[bool, str]:
     return False, f"not required (no {marker}, no BG3AI_REQUIRE_STEAM_OFFLINE=1)"
 
 
+def steam_running() -> bool:
+    """A Steam client process runs (pgrep: `steam`, or the runtime's ubuntu12_32/steam, as launch_game.sh looks).
+    Without one the game's libsteam_api starts Steam itself, maybe online."""
+    return any(subprocess.run(["pgrep", *a], capture_output=True).returncode == 0
+               for a in (["-x", "steam"], ["-f", "ubuntu12_32/steam"]))
+
+
+def launch_ok() -> tuple[bool, str]:
+    """(may launch_game.sh launch the game?, why): the runner's steam_ready policy (bg3harness.game.controller): a
+    Steam client runs and, where offline_required, its last login was offline (live2: a stale offline login line
+    with no Steam running said yes)."""
+    req, req_why = offline_required()
+    if req:
+        ok, why = steam_offline()
+        why = ("offline: " if ok else "NOT offline: ") + why + f" [required: {req_why}]"
+    else:
+        ok, why = True, f"Steam offline not required: {req_why}"
+    if ok and not steam_running():
+        return False, f"Steam isn't running ({why})"
+    return ok, why
+
+
 def main(argv: list[str]) -> int:
     what = argv[1] if len(argv) > 1 else "game"
     if what == "offline":
         ok, why = steam_offline()
         print(("offline: " if ok else "NOT offline: ") + why)
         return 0 if ok else 3
-    if what == "launch-ok":   # launch_game.sh: 0 = launch (offline, or offline not required), 3 = refuse
-        req, req_why = offline_required()
-        if not req:
-            print(f"Steam offline not required: {req_why}")
-            return 0
-        ok, why = steam_offline()
-        print(("offline: " if ok else "NOT offline: ") + why + f" [required: {req_why}]")
+    if what == "launch-ok":   # launch_game.sh: 0 = launch, 3 = refuse
+        ok, why = launch_ok()
+        print(why)
         return 0 if ok else 3
     fn = {"game": game_dir, "data": lambda: game_dir() / "Data", "sniper": sniper_dir,
           "manifest": manifest, "buildid": buildid, "profile": profile_dir, "saves": saves_dir,
