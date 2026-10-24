@@ -214,3 +214,22 @@ def test_a_region_change_after_a_full_status_moves_the_party(rt: Path):
     assert types(events) == ["action", "party", "action", "party", "action"]  # the same region again: no event
     moved = events[3].data
     assert moved["where"] == "Wilderness" and moved["party"][0]["name"] == "Tav" and moved["source"] == "wait_for"
+
+
+def test_calls_from_before_the_running_session_are_not_streamed(rt: Path):
+    # live3: the stream's first tail of the shared actions.jsonl showed run 1's tool calls and party under run 2's S001
+    status = "WHERE Grove | exploring | gold 18\nPARTY *e1 Corwin Fighter1 HP 9/12 []"
+    append(
+        rt / "actions.jsonl",
+        json.dumps({"t": 900.0, "tool": "get_status", "args": {}, "ms": 2, "result": status}),
+        action(1),
+    )
+    st = json.loads((rt / "runner.status.json").read_text())
+    (rt / "runner.status.json").write_text(json.dumps(dict(st, started=1001.5)))
+    hub = make_hub(rt)
+    hub.poll()
+    append(rt / "actions.jsonl", action(2))
+    hub.poll()
+    events, _, _ = hub.read(None)
+    assert [e.data["result"] for e in events if e.type == "action"] == ["r2"]
+    assert "party" not in types(events)
