@@ -436,6 +436,34 @@ test("teleport: the result says where the caster landed; a fall to death reads F
     assert(not j.error:find("refused", 1, true), j.error)
 end)
 
+-- S095 11:04/11:06: Karsus' Compulsion at a ground point read "done — no_damage" and did nothing (GustavDev data).
+test("cast: a Target spell that takes only a creature/object is refused at a ground point; area/summon spells aren't", function()
+    spell("Target_END_Mindflayer_CrownDomination", { SpellType = "Target", TargetRadius = "6", Level = 9,
+        TargetConditions = "Tagged('END_CROWN_OF_KARSUS')", SpellFlags = { "IsHarmful", "IsSpell" },
+        SpellProperties = { { TextKey = "Default", Functors = { { TypeId = "ApplyStatus", IsSelf = true,
+            StatusId = "END_KARSUSCOMPULSION_CHANNEL" }, { TypeId = "ApplyStatus",
+            StatusId = "END_KARSUSCOMPULSION_CHANNEL_TARGET" } } } } })
+    spell("Target_MageHand", { SpellType = "Target", TargetRadius = "18", SpellFlags = { "IsSpell" },
+        SpellProperties = { { TextKey = "Default", Functors = { { TypeId = "Summon", Template = "x" } } } } })
+    spell("Target_FogCloud", { SpellType = "Target", TargetRadius = "18", AreaRadius = "6", SpellFlags = { "IsSpell" },
+        SpellProperties = { { TextKey = "Default", Functors = { { TypeId = "ApplyStatus", StatusId = "FOG" } } } } })
+    spell("Target_Grease", { SpellType = "Target", TargetRadius = "18", SpellFlags = { "IsSpell" },
+        SpellProperties = { { PropertyContext = { "GROUND" }, Functors = { { TypeId = "ApplyStatus" } } } } })
+    local j = job(op("cast", { char = P1, spell = "Target_END_Mindflayer_CrownDomination", pos = { 3, 0, 3 } }))
+    eq(j.status, "failed", "at a point")
+    assert(j.error:find("takes a creature or an object as its target, not a ground point", 1, true), j.error)
+    eq(#called("UseSpellAtPosition"), 0, "nothing cast at the point")
+    eq(A.needs_entity("Target_MageHand"), false, "summon"); eq(A.needs_entity("Target_FogCloud"), false, "area")
+    eq(A.needs_entity("Target_Grease"), false, "GROUND context")
+    spell("Target_Unread", { SpellType = "Target", TargetRadius = "18" })
+    eq(A.needs_entity("Target_Unread"), nil, "no functors read: can't tell")
+    j = job(op("cast", { char = P1, spell = "Target_MageHand", pos = { 3, 0, 3 } }))
+    eq(j.status, "running", "a summon at a point " .. tostring(j.error))
+    world[NPC].pos = { 3, 0, 3 }
+    j = job(op("cast", { char = P1, spell = "Target_END_Mindflayer_CrownDomination", target = NPC }))
+    eq(j.status, "running", "at the Crown itself " .. tostring(j.error))
+end)
+
 test("cast ui=true (ACT-9 player route): Dimension Door alone/with an ally, no order and no task write", function()
     eq(A.TASK_POS2, false, "the write stays off")
     spell("Teleportation_DimensionDoor", DD)
