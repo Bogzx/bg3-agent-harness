@@ -619,6 +619,10 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
         return f"walked to {name} ({render.num(round(d))}m)" + (f": {first[:160]}" if "FAILED" in first else "")
     dest = {"pos": list(pos[:3])} if pos else {"target": uuid}
     r = core.game.run_job("act.move_to", {"char": char, "run": True, **dest}, wait_s=45)
+    if pos and r.status != "done" and "hasn't walked there" in str(r.error or ""):
+        # Live D6 B11b: Wyll's camp spot 44 m off, past sight range: the walk to that point was refused as unseen
+        # ground, while a camp companion itself counts as seen at camp (Visibility: CampPresence). Walk to it.
+        r = core.game.run_job("act.move_to", {"char": char, "run": True, "target": uuid}, wait_s=45)
     return f"walked to {name}" + ("" if r.status == "done" else f" ({plumbing._job_text('move_to', r)[:120]})")
 
 

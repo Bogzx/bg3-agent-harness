@@ -313,6 +313,40 @@ class SwapParty(unittest.TestCase):
         self.assertEqual(moves[0].get("pos"), [-1450.0, 8.0, -2620.0])
         self.assertIn("swap_party: done", out)
 
+    def test_a_camp_spot_on_unseen_ground_walks_to_the_companion(self):
+        # Live D6 B11b: Wyll 44 m off at camp: "walked to Wyll (move_to: FAILED — that spot is not in view and the party
+        # hasn't walked there ...)", then talk "too far away (44m ..., max 40m)". The companion itself is seen at camp.
+        menu = {"options": [{"i": 1, "text": "I'd like you to join me."}]}
+        full = {"options": [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full])
+        fake.far = True
+        real_rpc, real_job = fake.rpc, fake.run_job
+
+        def rpc(op, args=None, context="server"):
+            out = real_rpc(op, args, context)
+            if op == "state.camp" and fake.at_camp:
+                for c in out["camp"]:
+                    if c["uuid"] == HALSIN:
+                        c["pos"] = [-1450.0, 8.0, -2620.0]
+            return out
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            if op == "act.move_to" and "pos" in args:
+                fake.jobs.append((op, args))
+                return JobResult(status="failed", error="that spot is not in view and the party hasn't walked there: "
+                                                        "pick ground you can see")
+            return real_job(op, args, context, wait_s, **kw)
+        fake.rpc, fake.run_job = rpc, run_job
+        self.use(fake)
+        orig = world_tools._far_move
+        world_tools._far_move = lambda *a: None
+        self.addCleanup(setattr, world_tools, "_far_move", orig)
+        out = travel.swap_party(into="Halsin", out="Gale")
+        moves = [a for op, a in fake.jobs if op == "act.move_to"]
+        self.assertEqual([m.get("pos") or m.get("target") for m in moves], [[-1450.0, 8.0, -2620.0], HALSIN])
+        self.assertIn("walked to Halsin; join", out)  # the walk worked
+        self.assertIn("swap_party: done", out)
+
     def settle_fake(self, back_after: int | None):
         """S070 20:59:06: Wyll still at the dream scene's spot 7 s after the long rest: talk 'not visible', walk 'no
         path'. back_after: state.camp reads until Halsin stands on his camp spot (None = never)."""
