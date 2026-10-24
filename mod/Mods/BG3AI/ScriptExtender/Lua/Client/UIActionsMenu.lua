@@ -178,6 +178,10 @@ function A.commandDC(cmd)
 end
 
 A.LOADING_WAIT_MS = 25000   -- the job's own limit is 30 s
+-- Client states the Load page may be opened in ("": unreadable, as before). Live D1/D6/Window A (23 logs since
+-- 10-13): a page opened while the client was still in LoadMenu stayed on screen over the loaded game; D5: one
+-- opened 1 s into the launch's own -loadSaveGame load came up over it and loaded the save a second time.
+A.PRESS_STATES = { Menu = true, Running = true, Paused = true, [""] = true }
 -- The info pane follows a selection some frames later, slowest on a page that just opened. A candidate is dropped
 -- once the pane shows something new that doesn't match, or after LOAD_PANE_MS with the pane unchanged (a neighbour
 -- saved in the same minute reads the same). Live 2026-10-24 (A1): the first candidate (index 404 = S027-start, the
@@ -210,13 +214,13 @@ function MENU.load(args)
         local pageUp = page ~= nil and UI.isVisible(page)
         if stage == "open" then
             if pageUp then enter("select") return nil end
-            if tries == 0 and A.loadingScreenUp() then
+            if tries == 0 and (A.loadingScreenUp() or not A.PRESS_STATES[st]) then
                 -- not pressed yet: wait for the loading screen (the 4 s page timer starts after it)
                 if now - since > A.LOADING_WAIT_MS then
-                    return "failed", { stage = stage, loading = true,
+                    return "failed", { stage = stage, loading = true, state = st,
                         error = "a loading screen stayed up " .. math.floor(A.LOADING_WAIT_MS / 1000) .. " s: the load page can't open" }
                 end
-                job.partial.waiting = "loading screen"
+                job.partial.waiting, job.partial.state = "loading screen", st
                 return nil
             end
             if tries == 0 then

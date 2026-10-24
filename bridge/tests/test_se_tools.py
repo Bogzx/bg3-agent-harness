@@ -531,6 +531,15 @@ class GameProcessAlive(unittest.TestCase):
     def test_no_proc(self):
         self.assertIsNone(saving._game_process_alive(Path("/nonexistent-proc")))
 
+    def test_launch_save_is_the_games_load_argument(self):
+        d = self._proc([(10, "bg3", 60), (11, "bg3", 4800)])
+        (d / "10" / "cmdline").write_bytes(b"./bin/bg3\0-loadSaveGame\0Other-1__S001\0")
+        (d / "11" / "cmdline").write_bytes(b"./bin/bg3\0-loadSaveGame\0Claude-4810126690__S027-start\0")
+        self.assertEqual(saving._launch_save(d), "Claude-4810126690__S027-start")
+        (d / "11" / "cmdline").write_bytes(b"./bin/bg3\0")
+        self.assertIsNone(saving._launch_save(d))
+        self.assertIsNone(saving._launch_save(Path("/nonexistent-proc")))
+
 
 class LoadCrash(unittest.TestCase):
     def test_process_gone_fails_at_once(self):
@@ -599,13 +608,15 @@ class LoadCrash(unittest.TestCase):
 class LoadVerified(unittest.TestCase):
     """load_game is done only when a load really happened: a new server Lua state and no Load page."""
 
-    def run_load(self, boots, screens, states=None):
+    def run_load(self, boots, screens, states=None, launch=None):
         orig = (core.game, core.SAVE_DIR, saving.SAVE_PREFIX, saving.PLAYTHROUGH, time.sleep,
-                saving.LOAD_START_S)
+                saving.LOAD_START_S, saving._launch_save)
         self.addCleanup(lambda: (setattr(core, "game", orig[0]), setattr(core, "SAVE_DIR", orig[1]),
                                  setattr(saving, "SAVE_PREFIX", orig[2]), setattr(saving, "PLAYTHROUGH", orig[3]),
-                                 setattr(time, "sleep", orig[4]), setattr(saving, "LOAD_START_S", orig[5])))
+                                 setattr(time, "sleep", orig[4]), setattr(saving, "LOAD_START_S", orig[5]),
+                                 setattr(saving, "_launch_save", orig[6])))
         saving.LOAD_START_S = 0.3
+        saving._launch_save = lambda: launch  # the game's -loadSaveGame (this machine's /proc is not the test's)
         _game_alive(self)
         import tempfile
         d = Path(tempfile.mkdtemp())
@@ -625,13 +636,15 @@ class LoadVerified(unittest.TestCase):
             try_rpc = rpc
 
             def game_state(self):
-                return next(states)
+                self.state = next(states)
+                return self.state
 
             def server_ready(self):
                 return True
 
             def run_job(self, op, args, context="server", wait_s=25.0, **kw):
                 self.presses = getattr(self, "presses", 0) + 1
+                self.pressed_in = getattr(self, "pressed_in", []) + [getattr(self, "state", None)]
                 return JobResult(status="done", result={"pressed": "Load"})
 
         self.g = G(screens)
@@ -648,11 +661,51 @@ class LoadVerified(unittest.TestCase):
     def test_main_menu_load_with_a_menu_screen_still_read_is_done(self):
         # Live D1 19:38 / Window A / 10-22: from the main menu (no server Lua before: boot None) the save loaded
         # (a new server state), but ui.state read a menu screen for 5 s+; this pressed again and loaded it twice.
-        out = self.run_load([None, "b"], ["save_load"])
+        out = self.run_load([None, "b"], ["save_load"], states=["Menu", "LoadSession"])
         self.assertIn("load_game: done", out)
         self.assertNotIn("pressed", out)
         self.assertEqual(self.g.presses, 1)
         self.assertEqual(self.g.keys, [])
+
+    def test_the_launchs_own_load_of_that_save_is_waited_for_not_pressed(self):
+        # Live D5 (3982018): launched with -loadSaveGame S027-start; load_game came 1.0 s into the game's own load
+        # of it, opened the Load page over it and loaded the save a second time (39.7 s).
+        out = self.run_load([None, "b"], ["game"], states=["StartLoading", "LoadLevel", "PrepareRunning"],
+                            launch="Claude-1__LIVETEST-se")
+        self.assertIn("load_game: done", out)
+        self.assertIn("own load of the save it was launched with", out)
+        self.assertEqual(getattr(self.g, "presses", 0), 0)
+
+    def test_at_the_menu_the_launchs_load_is_given_its_start(self):
+        # Live D5/D6: the game starts its -loadSaveGame load ~1.5 s after the main menu is up
+        out = self.run_load([None, "b"], ["game"], states=["Menu"] * 4 + ["StartLoading", "LoadLevel"],
+                            launch="Claude-1__LIVETEST-se")
+        self.assertIn("own load of the save it was launched with", out)
+        self.assertEqual(getattr(self.g, "presses", 0), 0)
+
+    def test_menu_loading_is_waited_for_before_the_press(self):
+        # Live D1/D6, Window A (23 logs): pressed while the client was in LoadMenu, the Load page stayed up over the
+        # loaded game (ui.state save_load for 34 s+). No launch save: pressed once the menu is up.
+        out = self.run_load([None, "b"], ["game"], states=["LoadMenu", "LoadMenu", "StopLoading", "Menu",
+                                                            "LoadSession"])
+        self.assertIn("load_game: done", out)
+        self.assertEqual(self.g.pressed_in, ["Menu"])
+
+    def test_another_launch_save_loads_first_then_this_one_is_pressed(self):
+        out = self.run_load([None, "b", "c"], ["game"], states=["LoadLevel", "Running", "LoadSession"],
+                            launch="Claude-1__S001-start")
+        self.assertIn("load_game: done", out)
+        self.assertNotIn("own load", out)
+        self.assertEqual(self.g.pressed_in, ["Running"])
+
+    def test_no_load_of_its_own_at_the_menu_is_pressed_after_a_while(self):
+        # launched with that save, but it loaded long ago and this is the main menu again: press after 8 s
+        n = saving.LAUNCH_LOAD_POLLS + 1
+        out = self.run_load([None, "b"], ["game"], states=["Menu"] * (n + 1) + ["LoadSession"],
+                            launch="Claude-1__LIVETEST-se")
+        self.assertIn("load_game: done", out)
+        self.assertNotIn("own load", out)
+        self.assertEqual(self.g.presses, 1)
 
     def test_load_page_still_up_without_a_new_boot_fails(self):
         out = self.run_load(["a", None], ["save_load"])
