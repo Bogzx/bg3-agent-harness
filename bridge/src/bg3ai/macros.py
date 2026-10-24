@@ -23,9 +23,9 @@ TRAVEL_PROGRESS_M = 1.0  # a leg that gets less than this much closer is a stall
 TRAVEL_STALL_LEGS = 2    # stalls in a row before travel_to gives up (S001 retried in place while burning)
 TRAVEL_LEG_RETRIES = 2   # failed legs per trip that get an alternative leg instead of ending it (S002)
 TRAVEL_MIN_GAIN_M = 5.0  # a plain leg gaining less (acceptance 12:xx: 4 m / 2 m legs) asks for a longer one first
-STEP_INTO_RANGE_M = 3.0  # combat_turn: a cast this far past its range steps in first (S002: 18.6 m vs 18 m)
-# ... a ranged one (range > melee) up to this far: S041 22:35:03 Sacred Flame + Guiding Bolt at 22.9 m (range 18)
-# failed with Shadowheart's whole move unused. nav.los_spot / nav.approach cap the step at the movement left.
+# combat_turn: a ranged cast (range > melee) this far past its range steps in first (S002: 18.6 m vs 18 m; S041
+# 22:35:03 Sacred Flame + Guiding Bolt at 22.9 m (range 18) failed with Shadowheart's whole move unused).
+# nav.los_spot / nav.approach cap the step at the movement left; a melee/touch step has no cap but that (S080).
 STEP_INTO_RANGE_RANGED_M = 7.0
 REGROUP_NEAR_M = 6.0
 DIALOGUE_MAX = 12

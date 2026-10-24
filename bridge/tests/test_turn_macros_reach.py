@@ -605,11 +605,57 @@ class CombatTurn(CombatTurnBase):
         self.g.actions = [{"spell": "Target_LayOnHands", "range": 1.5},
                           {"spell": "Projectile_MainHandAttack", "range": 18}]
         self.g.refuse_if = lambda op, a: ("target is out of range (9.0 m, range 1.5 m): move closer first"
-                                          if a.get("spell") == "Target_LayOnHands" else None)
+                                          if a.get("spell") == "Target_LayOnHands" else
+                                          "beyond movement (path 7.6 m, 2.0 m left)" if op == "act.move_to" else None)
         p2 = core.H.get(P2)
         out = turn_tool.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": p2}))
         self.assertEqual(self.casts(), ["Target_LayOnHands"])
         self.assertNotIn("auto fallback", out)
+
+    def test_touch_heal_on_a_downed_ally_beyond_3m_steps_in_and_casts(self):
+        # S080 02:41:15: Lay on Hands on downed Gale 8.1 m away failed "out of range" with Claude's move unused
+        self._ally_at(8.1)
+        self.g.actions = [{"spell": "Target_LayOnHands", "range": 1.5}]
+        n = {"cast": 0}
+
+        def refuse(op, a):
+            if op == "act.cast":
+                n["cast"] += 1
+                return "target is out of range (8.1 m, range 1.5 m): move closer first" if n["cast"] == 1 else None
+            return None
+        self.g.refuse_if = refuse
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": core.H.get(P2)}))
+        mv = self.g.ops("act.move_to")
+        self.assertEqual([(a.get("target"), a.get("within")) for _, a in mv], [(P2, 1.5)])
+        self.assertEqual(self.casts(), ["Target_LayOnHands", "Target_LayOnHands"])
+        self.assertIn("end_turn: done", out)
+
+    def test_turn_where_every_planned_step_failed_is_not_ended(self):
+        # S080 02:41:15: Lay on Hands and the swing out of range, Shield of Faith out of slots → end_turn threw the
+        # action and the movement away
+        self._ally_at(8.1)
+        self.g.actions = [{"spell": "Target_LayOnHands", "range": 1.5}, {"spell": "Target_MainHandAttack", "range": 1.5},
+                          {"spell": "Target_ShieldOfFaith", "range": 18}]
+
+        def refuse(op, a):
+            if op == "act.move_to":
+                return "beyond movement (path 7.6 m, 2.0 m left)"
+            if a.get("spell") == "Target_ShieldOfFaith":
+                return "not enough spell slot"
+            return "target is out of range (8.1 m, range 1.5 m): move closer first" if op == "act.cast" else None
+        self.g.refuse_if = refuse
+        out = turn_tool.combat_turn(self.plan(action=[{"ability": "Target_LayOnHands", "target": core.H.get(P2)},
+                                                   {"ability": "Target_MainHandAttack", "target": self.gob}],
+                                           bonus={"ability": "Target_ShieldOfFaith", "target": core.H.get(P2)},
+                                           retarget=False))
+        self.assertEqual(self.g.ops("act.end_turn"), [])
+        self.assertIn("turn NOT ended: nothing done (every planned action and bonus step failed", out)
+        # one step that worked: the turn ends as planned
+        self.g.refuse_if = lambda op, a: refuse(op, a) if a.get("spell") != "Target_ShieldOfFaith" else None
+        out = turn_tool.combat_turn(self.plan(action={"ability": "Target_LayOnHands", "target": core.H.get(P2)},
+                                           bonus={"ability": "Target_ShieldOfFaith", "target": core.H.get(P2)},
+                                           retarget=False))
+        self.assertIn("end_turn: done", out)
 
     def test_heal_on_an_ally_out_of_range_is_never_retargeted_at_a_hostile(self):
         # (b) Healing Word (L3 slot) planned on an ally went to ENEMY Devastator Stropes

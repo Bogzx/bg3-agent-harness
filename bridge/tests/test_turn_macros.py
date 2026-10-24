@@ -363,8 +363,10 @@ class CombatTurn(CombatTurnBase):
         self.assertIn("Lae'zel (yours). Plan it while they act", out)
 
     def test_out_of_range_falls_back_to_ranged(self):
+        # the step in fails for want of movement (S080: a melee step walks as far as the movement left)
         self.g.refuse_if = lambda op, a: ("target is out of range (6.0 m, range 1.5 m): move closer first"
-                                          if a.get("spell") == "Target_MainHandAttack" else None)
+                                          if a.get("spell") == "Target_MainHandAttack" else
+                                          "beyond movement (path 4.6 m, 2.0 m left)" if op == "act.move_to" else None)
         out = turn_tool.combat_turn(self.plan(action=[{"ability": "Target_MainHandAttack", "target": self.gob},
                                                    {"ability": "Projectile_ThrowWeapon", "target": self.gob}]))
         self.assertEqual(self.casts(), ["Target_MainHandAttack", "Projectile_ThrowWeapon"])
