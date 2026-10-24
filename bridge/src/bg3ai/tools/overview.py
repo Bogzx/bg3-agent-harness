@@ -359,8 +359,18 @@ def stay(who: str, on: bool = True) -> str:
     t0 = time.monotonic()
     u = plumbing._who_uuid(who)
     if on:
+        # a chained member would follow the leader's next walk. live9 S002 17:27-17:33: the unchain was not waited
+        # for and this said "stays put" while the game kept Sazza (an attached follower) in Vessa's group; she
+        # followed Vessa into the statue fire twice
+        r = core.game.run_job("act.unchain", {"char": u}, wait_s=4)
+        if r.status != "done":
+            why = r.error or "the unchain did not take"
+            reporting._batch["last"] = "failed"
+            return reporting._finish("stay", {"who": who}, (
+                f"stay: FAILED — {queueing._label(u)} is still chained to the group ({why}): it follows the next "
+                "walk. To leave it here, unchain the one who goes instead (set_party unchain who=<them>) and walk "
+                "them alone"), t0)
         _stay.add(u)
-        core.game.try_rpc("act.unchain", {"char": u})  # a chained member would follow the leader's next walk
         return reporting._finish("stay", {"who": who}, f"{queueing._label(u)} stays put (stay(who, on=false) or regroup brings it back)", t0)
     _stay.discard(u)
     st = core.game.try_rpc("state.status") or {}
