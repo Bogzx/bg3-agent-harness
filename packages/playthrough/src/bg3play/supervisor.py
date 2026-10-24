@@ -62,7 +62,8 @@ class SessionResult:
     cost_usd: float | None = None
     detail: str = ""
     game_deaths: tuple[str, ...] = ()  # each game death the session recovered from (or refused to): its OOM cause, "" =
-    # not out of memory
+    # not out of memory. A game not answering at the session's start counts too (a fresh serve launches it: S002 and
+    # S003 each have "" for that launch and "" for their crash); its "" ends an OOM streak (oom_streak)
     loaded: str | None = None  # the save the runner recovered the game to when no agent played after it (the
     # session ended on the fault): the next session continues from it, not from HANDOFF.md's save
 
