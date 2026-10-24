@@ -443,6 +443,12 @@ def _fear_settle(cs: dict, char: str, clock=time.monotonic, sleep=time.sleep) ->
             + ("" if clock() - still_at >= FEAR_STILL_S else ", still moving when the wait ended"))
 
 
+def _turn_over_text(char: str, fear: str, when: str) -> str:
+    """The game ended a Fearful member's turn by itself (live D6 B8: Shadowheart's, during the fear settle)."""
+    return (f"{fear}: the game ended {queueing._label(char)}'s turn by itself {when} (a Fearful member's turn may end "
+            "on its own): nothing more to play for it this round")
+
+
 def _downed_text(u: str) -> str:
     return (f"{queueing._label(u)} is downed: nothing to play, its turn passes by itself (the game rolls its death "
             "saving throw). Get it up from an ally's turn: Healing Word, Help (adjacent) or a potion.")
