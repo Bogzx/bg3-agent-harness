@@ -87,6 +87,21 @@ class WaitNewSession(unittest.TestCase):
         out, _ = p.communicate(timeout=20)
         self.assertEqual(out, "review: runtime/sessions/pt/S007.review.md\nNEW SESSION: S007\n")
 
+    def test_a_triage_of_a_fault_the_session_recovered_from_is_not_its_end(self):
+        # S086: S086.triage.md at the 05:19 hang, `recovered` at 05:21; the wait woke at ~05:26 with S086-r1 playing
+        p = self.start(keeper_max="1")
+        (self.sd / "S086.triage.md").write_text("# Triage S086\n")
+        time.sleep(0.2)
+        with open(self.sd / "runner_events.jsonl", "a") as f:
+            f.write(json.dumps({"t": time.time() + 0.1, "kind": "recovered", "fault": "hang", "session": "S086"}) + "\n")
+        time.sleep(1.5)   # past keeper_max: the old wait printed "review: none" + NEW SESSION here
+        self.assertIsNone(p.poll(), "woke on the mid-session triage")
+        (self.sd / "S086-r1.triage.md").write_text("# Triage S086-r1\n")
+        time.sleep(0.02)
+        (self.sd / "S086.review.md").write_text("# Review pt/S086\n")
+        out, _ = p.communicate(timeout=20)
+        self.assertEqual(out, "review: runtime/sessions/pt/S086.review.md\nNEW SESSION: S086\n")
+
     def test_no_review_falls_back_to_the_keeper_event(self):
         p = self.start(keeper_max="20", grace="1")
         (self.sd / "S006.triage.md").write_text("# Triage S006\n")

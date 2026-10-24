@@ -4,7 +4,8 @@
 # once the memory keeper has finished, or right away without a keeper pass), at most keeper_max_s, then print its
 # name and exit. If the review fails, it still wakes on the keeper's memory_keeper event in runner_events.jsonl
 # (plus REVIEW_GRACE_S for a slow review). A triage rewritten after its session's review (the runner's check_all
-# append) is not new. Used by the logs worker as a background wake-up.
+# append) is not new, nor is one written at a fault the runner then recovered from (a `recovered` event of its session
+# after it: the session plays on, its -rN triage comes at the end). Used by the logs worker as a background wake-up.
 # Usage: tools/logs/wait_new_session.sh [run=claude-run-2] [max_wait_s=21600] [keeper_max_s=420]
 run=${1:-claude-run-2}
 max=${2:-21600}
@@ -24,12 +25,22 @@ reviewed() {
     set -- ${t//./}   # integer ns for bash
     [ "$1" != 0000000000 ] && [ "$4" -gt "$1" ] && [ "$4" -le "$6" ]
 }
+# A triage of a fault the session recovered from (S086: S086.triage.md at the 05:19 hang, `recovered` 05:21, the wait
+# printed NEW SESSION at ~05:26 with S086-r1 still playing).
+mid() {
+    local m
+    m=$(stat -c '%.9Y' "$1" 2>/dev/null) || return 1
+    awk -v s="\"session\": \"$2\"" -v m="$m" 'index($0, "\"kind\": \"recovered\"") && index($0, s) &&
+        match($0, /"t": [0-9.]+/) && substr($0, RSTART + 5, RLENGTH - 5) + 0 > m + 0 { f = 1 } END { exit !f }' \
+        "$dir/runner_events.jsonl" 2>/dev/null
+}
 while [ $SECONDS -lt $end ]; do
     new=
     for t in $(find "$dir" -maxdepth 1 -name 'S*.triage.md' -newer "$stamp" 2>/dev/null | sort); do
         sid=$(basename "$t" .triage.md)
         sid=${sid%%-*}   # a resume's triage (S065-r1, S065-c1) belongs to S065
         reviewed "$t" "$dir/$sid.review.md" && continue
+        mid "$t" "$sid" && continue
         new=$t
     done
     if [ -n "$new" ]; then
@@ -39,6 +50,7 @@ while [ $SECONDS -lt $end ]; do
         kend=$((SECONDS + keeper_max))
         kept=
         until [ "$review" -nt "$new" ] || [ $SECONDS -ge $kend ]; do
+            if mid "$new" "$sid"; then new=; break; fi
             if [ -z "$kept" ] && grep -q "\"kind\": \"memory_keeper\", \"session\": \"$sid\"" \
                     "$dir/runner_events.jsonl" 2>/dev/null; then
                 kept=1
@@ -46,6 +58,7 @@ while [ $SECONDS -lt $end ]; do
             fi
             sleep "${POLL_S:-15}"
         done
+        [ -z "$new" ] && continue   # the session went on: wait for its end
         if [ "$review" -nt "$new" ]; then
             echo "review: runtime/sessions/$run/$sid.review.md"
         else
