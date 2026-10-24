@@ -192,6 +192,11 @@ class ChecksSide:
                 renv.log(f"!!!!! scn.seed {self.opt.seed} failed: {e}; this run's dice are NOT seeded !!!!!")
         self.game_settings = got
         self.facts_writer().mark("settings", got)
+        seed = got.get("seed")
+        seeded = "" if seed is None else (f"; seed {seed['seed']} applied" if "applied" in seed else
+                                          f"; seed {seed['seed']} NOT applied")
+        renv.log(f"game settings: difficulty {got['difficulty']}, roll mode {got['roll_mode']}, karmic dice "
+                 f"{got['karmic_dice']}{seeded}")
         return True
 
     def check_settings(self) -> None:
@@ -221,6 +226,8 @@ class ChecksSide:
             rstate.write_status(alert={"t": time.time(), "kind": "settings_mismatch",
                                 "msg": f"runner stopped: game settings contradict the scenario ({msg})"[:600]})
             raise SettingsMismatch(msg)
+        renv.log("settings check passed: no game setting contradicts the scenario"
+                 + (" (deferred from the main menu)" if getattr(self, "settings_deferred", False) else ""))
 
     def scenario_undo(self) -> None:
         """scn.undo at the run's end (the seed record would re-seed the next run's loads; a set Karmic Dice goes back
