@@ -92,6 +92,8 @@ class Start:
     prompt_sha: str | None = None  # sha256 of the assembled prompt
     prompt_parts: Sequence[JSON] = field(default_factory=tuple)  # [{"file", "sha256"}]
     harness_version: str | None = None
+    tools: JSON | None = None  # {"allowlist_sha256", "count"} of the bg3 tools served
+    client_version: str | None = None
 
 
 class RunHost(Protocol):
@@ -168,6 +170,8 @@ class SessionRun:
                 st.harness_version,
                 st.prompt_sha,
                 prompt_parts=st.prompt_parts,
+                tools=st.tools,
+                client_version=st.client_version,
                 scenario_spec=sc,
                 condition=job["condition"],
                 profile=profile,

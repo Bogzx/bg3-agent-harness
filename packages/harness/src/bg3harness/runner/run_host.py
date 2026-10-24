@@ -107,6 +107,8 @@ class HostStart:
     prompt_sha: str | None = None
     prompt_parts: Sequence[Json] = field(default_factory=tuple[Json, ...])
     harness_version: str | None = None
+    tools: Json | None = None
+    client_version: str | None = None
 
 
 def archive_nav_state(se_bg3ai: Path, dest: Path) -> list[str]:
@@ -530,13 +532,20 @@ class LiveRunHost:
             raise RuntimeError("operator stop before the kickoff")
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
         minutes = opt.session_minutes
+        # the manifest's prompt is what the client is served (run_manifest.manifest_fields; none without run files),
+        # its parts that text's and the kickoff's (live9: it was the kickoff's hash alone, no tools, no version)
+        man: Json = opt.manifest or {}
+        served: Json | None = man.get("prompt")
+        kickoff = {"file": "kickoff", "sha256": hashlib.sha256(prompt.encode()).hexdigest()}
         return HostStart(
             prompt,
             cast(SessionHooks, BenchHooks(r.session_hooks(SID, minutes), r.event)),
             str(uuid.uuid4()),
-            hashlib.sha256(prompt.encode()).hexdigest(),
-            (),
+            served["sha256"] if served else None,
+            (*served["parts"], kickoff) if served else (kickoff,),
             bg3harness.__version__,
+            man.get("tools"),
+            cast(Json, man.get("client") or {}).get("version"),
         )
 
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
