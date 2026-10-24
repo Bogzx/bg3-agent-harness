@@ -204,7 +204,8 @@ def ungrounded_names(line: str, text: str) -> list[str]:
     body = re.sub(r"^\s*[-*+]\s+", "", line)
     out: list[str] = []
     for m in _NAME_RE.finditer(body):
-        w = m.group(0).strip("'\u2019-")
+        # S071: "Myrmidon's" isn't in a corpus that has "myrmidon": the possessive goes before the lookup
+        w = re.sub(r"['\u2019]s$", "", m.group(0)).strip("'\u2019-")
         if m.start() == 0 or _SENT_START.search(body[: m.start()]) or w.lower() in _KEEPER_WORDS:
             continue
         if re.fullmatch(r"S\d+|L\d+|[IVX]+", w) or w.lower() in text:
