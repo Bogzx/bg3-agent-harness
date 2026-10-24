@@ -85,8 +85,16 @@ class Fields(unittest.TestCase):
         self.assertNotIn("rules/capabilities/wiki.md", [p["file"] for p in off["prompt"]["parts"]])
         self.assertEqual((off["tools"]["count"], off["seed"], off["timing"]), (92, None, None))
         self.assertNotEqual(off["tools"]["allowlist_sha256"], full["tools"]["allowlist_sha256"])
-        with self.assertRaisesRegex(ValueError, "needs every capability"):  # coaching names the wiki
-            run_manifest.manifest_fields("claude", None, "rules+coaching", less, None, INSTR)
+
+    def test_coaching_is_served_whole_with_tools_off(self) -> None:  # live9 #12: it was an error, no hash
+        less = [t for t in REGISTRY if t not in {"wiki_search", "wiki_page", "load_game", "note"}]
+        full, off = (
+            run_manifest.manifest_fields("claude", None, "rules+coaching", t, None, INSTR) for t in (REGISTRY, less)
+        )
+        self.assertEqual(off["prompt"], full["prompt"])  # play/CLAUDE.md, whatever the server serves
+        self.assertEqual((off["condition"], off["tools"]["count"]), ("rules+coaching", len(less)))
+        with self.assertRaisesRegex(ValueError, "unknown condition"):
+            run_manifest.manifest_fields("pi", None, "rules+persona", REGISTRY, None, INSTR)
 
     def test_tools_digest_ignores_order(self) -> None:
         self.assertEqual(run_manifest.tools_digest(["b", "a"]), run_manifest.tools_digest(["a", "b", "a"]))

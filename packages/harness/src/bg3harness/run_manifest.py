@@ -65,11 +65,17 @@ def manifest_fields(
     client) with the capability groups those tools leave on. instructions: the bg3 server's own instructions for
     those tools (tools/pi/dump_server.py --instructions in the session env), which every client gets in the MCP
     initialize result; the prompt hash is of served_text(instructions, the rules), its parts the instructions' and
-    assemble's. scenario: a v2 spec (packages/bench/scenarios); seed and timing are None without one. Raises
-    ValueError for a condition the tools can't serve (coaching needs every capability), as assemble does."""
+    assemble's. A coaching condition is served with every group's rules whatever tools are off, as the bg3 server
+    serves it (bridge rules.load) and play/CLAUDE.md holds it (live9: a claude bench run with the memory tools off
+    had an error instead of its hash). scenario: a v2 spec (packages/bench/scenarios); seed and timing are None
+    without one. Raises ValueError for an unknown condition or client, as assemble does."""
     on = set(tools)
-    caps = {c for c, names in prompts().CAPABILITIES.items() if set(names) <= on}
-    asm = assemble(condition, "mcp" if client not in prompts().CLIENTS else client, caps=caps)
+    p = prompts()
+    if p.CONDITIONS.get(condition):
+        caps = set(p.ALL_CAPS)
+    else:
+        caps = {c for c, names in p.CAPABILITIES.items() if set(names) <= on}
+    asm = assemble(condition, "mcp" if client not in p.CLIENTS else client, caps=caps)
     text = served_text(instructions, asm.text)
     parts = [{"file": INSTRUCTIONS_PART, "sha256": _sha(instructions.strip())}, *asm.parts]
     sc: dict[str, Any] = scenario or {}
