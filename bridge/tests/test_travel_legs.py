@@ -247,6 +247,25 @@ class DoorLink(Base):
         self.assertIn(f"STOPPED: used {core.H.get(self.DOOR)} Heavy Oak Doors, but it did not take the party through "
                       "(still @(0,0,0))", out)
 
+    def test_a_goal_below_behind_the_door_is_not_another_floor(self):
+        """Live D2 (T7): travel_to(objective) from the Goblin Camp was refused "likely inside an interior ... Goblin
+        Tunnel <exit>" by _other_floor before the trip reached the door; the route's door_link is the way there."""
+        for r in self.g.watch["party"]:
+            r["pos"][1] = 30.0
+        self.door = [20.0, 30.0, 0.0]
+        real = self.g.try_rpc
+
+        def fake(op, args=None, context="server", default=None):
+            if op == "nav.frontier":
+                return {"leads": [{"uuid": CHEST, "name": "Goblin Tunnel", "kind": "exit", "dist": 10.0}]}
+            return real(op, args, context, default)
+        self.g.try_rpc = fake
+        out = travel_macro.travel_to(x=560.0, y=0.0, z=0.0)
+        self.assertNotIn("REFUSED", out)
+        self.assertEqual(self.g.ops("act.interact")[0][1]["target"], self.DOOR)
+        self.assertEqual(self.legs(), ([], [530.0, 560.0]))
+        self.assertIn("arrived", out)
+
     def test_no_door_link_walks_as_before(self):
         self.g.route = {"too_far": True}
         out = travel_macro.travel_to(x=560.0, y=0.0, z=0.0)

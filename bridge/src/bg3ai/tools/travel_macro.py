@@ -258,7 +258,11 @@ DOOR_MOVED_M = 40.0  # the use moved the actor this far from the door: it went t
 
 def _door_link(char: str, dest: list) -> dict | None:
     """nav.route's door_link toward dest, or None (the goal is walkable, or no door the party used helps)."""
-    r = core.game.try_rpc("nav.route", {"char": char, "pos": list(dest)})
+    return _route_door_link(core.game.try_rpc("nav.route", {"char": char, "pos": list(dest)}))
+
+
+def _route_door_link(r: Any) -> dict | None:
+    """A nav.route reply's door_link, or None."""
     dl = r.get("door_link") if isinstance(r, dict) else None
     return dl if isinstance(dl, dict) and dl.get("uuid") and dl.get("door") else None
 
@@ -551,8 +555,8 @@ def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
         return None
     r = core.game.try_rpc("nav.route", {"char": char, "pos": list(dest), "ways": False})
     dy = abs(dest[1] - here[1])
-    if not isinstance(r, dict):
-        return None
+    if not isinstance(r, dict) or _route_door_link(r):
+        return None  # live D2 (T7): behind a door the party used: the trip goes through it (_door_link)
     if r.get("reachable") is True:
         return _floor_detour_note(r, here, dest, dy)
     if r.get("reachable") is not False:
