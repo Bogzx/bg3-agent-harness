@@ -348,6 +348,35 @@ class StoryAreaBlock(Case):
         self.assertIsNone(a.current(LVL))
 
 
+class Stay(Case):
+    """live9 S002 17:27-17:33: stay(Sazza) said "stays put" while the game kept the attached follower in Vessa's
+    group (no PARTY APART row for her); she followed Vessa into the statue fire twice."""
+
+    def stay(self, unchain: JobResult) -> tuple[Fake, str]:
+        fake = self.use(s065_camp_status(wyll_at_camp=True))
+        run_job = fake.run_job
+
+        def jobs(op, args, context="server", wait_s=25.0, **kw):
+            if op == "act.unchain":
+                fake.jobs.append((op, args))
+                return unchain
+            return run_job(op, args, context, wait_s, **kw)
+        fake.run_job = jobs
+        return fake, overview.stay("Wyll")
+
+    def test_unchain_not_taken_is_said_and_not_marked_staying(self):
+        fake, out = self.stay(JobResult("failed", None, "timeout"))
+        self.assertEqual(fake.ops(), ["act.unchain"])
+        self.assertIn("stay: FAILED — e3 Wyll is still chained to the group (timeout): it follows the next walk", out)
+        self.assertIn("set_party unchain who=<them>", out)
+        self.assertNotIn(WYLL, overview._stay)
+
+    def test_unchain_taken_stays(self):
+        _, out = self.stay(JobResult("done", {"unchained": True}))
+        self.assertIn("stays put", out)
+        self.assertIn(WYLL, overview._stay)
+
+
 class PartyPure(unittest.TestCase):
     def test_travel_behind_skips_staying_and_chained(self):
         st = s064_status()
