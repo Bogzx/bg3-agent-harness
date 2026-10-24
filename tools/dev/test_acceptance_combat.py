@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -76,7 +77,7 @@ class HudEndReads(unittest.TestCase):
 
         def took(name, **kw):
             combat.S.game.rpc("state.combat")  # end_turn's own read
-            ct._end_turn_by_hud("c", "r")
+            ct._end_turn_by_hud("c", cast(Any, "r"))
             combat.S.game.rpc("state.combat")  # the NEXT line's
             return "out", 0.1
 
