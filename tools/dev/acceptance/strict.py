@@ -57,6 +57,7 @@ def strict_lock_probe() -> None:
 
 
 STRICT_ITEM = "strict frame lock across loads + rest (S17)"
+STRICT_LOADS = (HOTBAR_SAVE, BASE)
 
 
 def strict_counters(set_to: bool | None = None) -> dict:
@@ -98,7 +99,9 @@ def sec_strict() -> None:
     steps, ok = [], False
     try:
         cur = strict_counters(True)
-        for label in (BASE, HOTBAR_SAVE):
+        # BASE last: it stands at camp. live9 S17: S065-end last, and its Lower City spot blocks camp travel
+        # (Location, the game's own block: S065 12:00) so the rest never ran
+        for label in STRICT_LOADS:
             loaded = load_verified(label)
             nxt = strict_counters()
             steps.append(f"load {label}: {'ok' if loaded else 'FAILED'} ({strict_delta(cur, nxt)})")
