@@ -125,6 +125,9 @@ class FakeRunner:
         if self.facts_fail:
             raise RuntimeError("the game stopped answering")
 
+    def scenario_undo(self) -> None:
+        self.calls.append("scenario_undo")
+
     def end_run_game(self, when: str = "", after: str = "") -> None:
         self.calls.append(f"end_run_game({when})")
 
@@ -393,7 +396,7 @@ def test_a_failed_start_forgets_the_run_stops_the_game_and_raises_runtime_error(
     with pytest.raises(RuntimeError, match=str(exc)) as e:
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     assert not isinstance(e.value, SystemExit) and rig.h.runs == {}
-    assert rig.calls[-1] == "end_run_game(start failed)"
+    assert rig.calls[-2:] == ["scenario_undo", "end_run_game(start failed)"]
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]  # put back
     assert not H.nav_marker().exists()
     rig.prepare = None  # the rerun in a fresh dir starts clean
@@ -409,7 +412,8 @@ def test_a_save_start_whose_save_didnt_load_fails_before_the_kickoff(rig: Rig, l
     rig.prepare = prepare
     with pytest.raises(RuntimeError, match="the start save Lae'zel-12__SCN-grove_fight didn't load"):
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
-    assert rig.calls == ["snapshot", "ensure_game(True)", "end_run_game(start failed)"]  # no reload, no kickoff
+    # no reload, no kickoff
+    assert rig.calls == ["snapshot", "ensure_game(True)", "scenario_undo", "end_run_game(start failed)"]
     assert rig.h.runs == {}
 
 
@@ -423,7 +427,7 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     h.start(JOB, SAVE_SC, run_dir("m-grove"))
     calls.clear()
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
-    assert calls == ["end_facts(timeout)", "end_run_game(run end)"]
+    assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
     assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)
     moved = ["nav_aa.json", "nav_guard_aa.json"]
     assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved})
@@ -473,7 +477,7 @@ def test_record_outcomes_and_the_game_stops_even_when_the_facts_fail(rig: Rig):
     calls.clear()
     with pytest.raises(RuntimeError):
         h.record(JOB, SAVE_SC, run_dir("c"), outcome())
-    assert calls == ["end_facts(timeout)", "end_run_game(run end)"]
+    assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
 
 
 def se_names() -> list[str]:
@@ -532,6 +536,8 @@ def test_a_scenario_record_from_before_the_run_stays(rig: Rig):
     rig.h.start(JOB, NEW_SC, run_dir("m-idol"))
     rig.h.record(JOB, NEW_SC, run_dir("m-idol"), outcome())
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json", "scenario.json"]
+    # it stays, so the run's seed must leave it: scn.undo while the game is still up (it seeded every later load)
+    assert rig.calls[-2:] == ["scenario_undo", "end_run_game(run end)"]
 
 
 def test_the_next_start_restores_what_a_dead_run_left_moved(rig: Rig):
@@ -554,7 +560,7 @@ def test_record_of_a_run_that_reached_its_until_milestone(rig: Rig):
     calls.clear()
     rec = h.record(JOB, UNTIL_SC, run_dir("naut"), outcome())
     assert (rec["outcome"], rec["milestone"]) == ("reached", "nautiloid_escaped")
-    assert calls == ["end_facts(reached)", "end_run_game(run end)"]
+    assert calls == ["end_facts(reached)", "scenario_undo", "end_run_game(run end)"]
     h.start(JOB, SAVE_SC, run_dir("grove"))  # the end credits stop any run; a goal scenario isn't "reached" by them
     runners[-1].until_hit = {"id": "game_end", "label": "The end", "t": 1720.0}
     rec = h.record(JOB, SAVE_SC, run_dir("grove"), outcome())
@@ -584,7 +590,7 @@ def test_a_run_ends_its_session_on_an_operator_stop_and_is_recorded_invalid(rig:
     assert r.stop_requested and rig.h.stopped  # the runner's agent loop ends the session on it
     rig.calls.clear()
     rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), stopped())
-    assert rig.calls == ["end_facts(gave_up)", "end_run_game(run end)"]
+    assert rig.calls == ["end_facts(gave_up)", "scenario_undo", "end_run_game(run end)"]
     assert (rec["outcome"], rec["reason"], rec["operator"]) == ("gave_up", "stopped", "stop")
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"] and not H.nav_marker().exists()
 
@@ -617,7 +623,7 @@ def test_a_stop_while_the_game_comes_up_starts_no_agent_and_stops_the_game(rig: 
     rig.prepare = prepare
     with pytest.raises(RuntimeError, match="operator stop before the kickoff"):
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
-    assert rig.calls[-1] == "end_run_game(start failed)" and rig.h.runs == {}
+    assert rig.calls[-2:] == ["scenario_undo", "end_run_game(start failed)"] and rig.h.runs == {}
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
 
 
@@ -625,10 +631,10 @@ def test_abort_kills_the_agent_stops_the_game_and_puts_the_nav_files_back(rig: R
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     rig.calls.clear()
     rig.h.abort()
-    assert rig.calls == ["kill_agent", "end_run_game(operator exit)"] and rig.h.runs == {}
+    assert rig.calls == ["kill_agent", "scenario_undo", "end_run_game(operator exit)"] and rig.h.runs == {}
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"] and not H.nav_marker().exists()
     rig.h.abort()  # nothing open: a no-op
-    assert rig.calls == ["kill_agent", "end_run_game(operator exit)"]
+    assert rig.calls == ["kill_agent", "scenario_undo", "end_run_game(operator exit)"]
 
 
 def test_a_bench_start_kills_a_leftover_agent_before_the_game_comes_up(rig: Rig, tmp_path: Path):

@@ -93,6 +93,7 @@ class RunRunner(Protocol):
     def check_settings(self) -> None: ...
     def session_hooks(self, sid: str, minutes: float) -> SessionHooks: ...
     def end_facts(self, outcome: str) -> None: ...
+    def scenario_undo(self) -> None: ...
     def end_run_game(self, when: str = ..., after: str = ...) -> None: ...
     def kill_agent(self) -> None: ...
 
@@ -434,6 +435,7 @@ class LiveRunHost:
                 w.stop()
             try:
                 r.kill_agent()
+                r.scenario_undo()
                 r.end_run_game(when, "the run is not recorded")
             finally:
                 restore_nav(nav_marker())
@@ -493,6 +495,7 @@ class LiveRunHost:
             try:
                 if r is not None:
                     self.runs.pop(run_dir, None)
+                    r.scenario_undo()
                     r.end_run_game("start failed", "the rerun launches a new one")
             finally:
                 restore_nav(nav_marker())
@@ -567,6 +570,9 @@ class LiveRunHost:
             r.end_facts(name)
         finally:
             try:
+                # with the game up: scn.undo takes the seed out of BG3AI/scenario.json, which a record from before
+                # the run keeps (restore_nav moves only one the run added), else it seeds every later load
+                r.scenario_undo()
                 r.end_run_game("run end", "the next run launches a new one")
             finally:
                 back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more

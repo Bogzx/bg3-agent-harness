@@ -193,7 +193,8 @@ def test_a_run_the_harness_failed_is_invalid(rig: Rig, case: str):
     assert rec["harness_failures"] >= 1, rec["failures"]
     assert (rec["_result"]["valid"], rec["_result"]["invalid_reason"]) == (False, "harness_failure")
     assert all(f["class"] in ("harness", "agent", "unknown") for f in rec["failures"])
-    assert rig.calls[-2:] == ["end_facts(" + rec["outcome"] + ")", "end_run_game(run end)"]  # the game stopped
+    stop = ["end_facts(" + rec["outcome"] + ")", "scenario_undo", "end_run_game(run end)"]
+    assert rig.calls[-3:] == stop  # the game stopped
 
 
 @pytest.mark.parametrize("case", list(MODEL_ENDINGS))
@@ -240,7 +241,7 @@ def test_a_play_process_that_cant_start_is_recorded_invalid_and_the_matrix_goes_
     assert {f["kind"] for f in rec["failures"]} == {"setup_failed", "gave_up"}
     assert "FileNotFoundError" in rec["failures"][0]["detail"] and rec["reset"]["nav_files"]
     assert (rec["_result"]["valid"], rec["_result"]["invalid_reason"]) == (False, "harness_failure")
-    assert rig.calls[-2:] == ["end_facts(gave_up)", "end_run_game(run end)"]  # the game stopped
+    assert rig.calls[-3:] == ["end_facts(gave_up)", "scenario_undo", "end_run_game(run end)"]  # the game stopped
     assert sorted(p.name for p in renv.SE_BG3AI_DIR.iterdir()) == nav and not H.nav_marker().exists()
     rec = bench_run(rig, Play("exited"), sc=sc)  # the matrix's rerun plays
     assert (rec["run"], rec["outcome"], rec["_result"]["valid"]) == (2, "timeout", True)
