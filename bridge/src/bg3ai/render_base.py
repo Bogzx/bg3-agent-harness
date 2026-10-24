@@ -42,6 +42,10 @@ class Handles:
         r = str(ref).strip()
         if r.lower() in self.by_handle:
             return self.by_handle[r.lower()]
+        # live4: trade(npc=<uuid>) failed "unknown target 'e246'" (the error's uuid scrubbed to its own handle): a uuid
+        # this map already handed a handle for is that target
+        if (UUID_RE.fullmatch(r) or PREFIXED_UUID_RE.fullmatch(r)) and self._bare(r) in self.by_uuid:
+            return self._bare(r)
         matches = self.matches(r)
         if len(matches) == 1:
             return self.by_handle[matches[0]]

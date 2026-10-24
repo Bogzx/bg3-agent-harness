@@ -83,3 +83,19 @@ class ItemRef(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UuidRef(unittest.TestCase):
+    def test_a_known_uuid_resolves_to_itself(self):
+        """live4: trade(npc=<uuid>) failed "unknown target 'e246'" while trade(npc='e246') worked."""
+        h = render.Handles()
+        e = h.get(GALE, "Gale")
+        self.assertEqual(h.resolve(GALE), GALE)
+        self.assertEqual(h.resolve(GALE.upper()), GALE)
+        self.assertEqual(h.resolve("S_Player_Gale_" + GALE), GALE)
+        self.assertEqual(h.resolve(e), GALE)
+
+    def test_an_unknown_uuid_stays_unknown(self):
+        h = render.Handles()
+        with self.assertRaisesRegex(ValueError, "unknown target"):
+            h.resolve(CLAUDE)
