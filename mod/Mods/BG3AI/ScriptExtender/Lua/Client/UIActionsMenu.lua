@@ -98,7 +98,7 @@ function A.collapseOthers(groups, want)
     for _, g in ipairs(groups) do
         local h = g.hdr:lower()
         if not (want and (h == want or h:find(want, 1, true) == 1)) and UI.prop(g.el, "IsExpanded") == true then
-            pcall(g.el.SetProperty, g.el, "IsExpanded", false)
+            UI.pcall(g.el.SetProperty, g.el, "IsExpanded", false)
             done[#done + 1] = g.hdr
         end
     end
@@ -114,7 +114,7 @@ local function loadItems(owner)
         local ex, hdr = g.el, g.hdr
         if not want or hdr:lower() == want or hdr:lower():find(want, 1, true) == 1 then
             matched[#matched + 1] = ex
-            if UI.prop(ex, "IsExpanded") ~= true then pcall(ex.SetProperty, ex, "IsExpanded", true) end
+            if UI.prop(ex, "IsExpanded") ~= true then UI.pcall(ex.SetProperty, ex, "IsExpanded", true) end
             for _, it in ipairs(UI.findAll(ex, function(e)
                 return UI.typeName(e) == "ls.LSListBoxItem"
                     and UI.typeName(UI.prop(e, "DataContext")) == "ls.VMSavegame"
@@ -258,10 +258,12 @@ function MENU.load(args)
                     cand = A.loadOrder(index, #items)
                     job.n_items = #items
                 end
-                local i = table.remove(cand, 1)
+                local i = cand[1]
                 if not i then return "failed", { stage = stage, error = "no save on the page matches the date of '" .. name .. "'", saves = #items } end
                 job.paneBefore = select(2, paneDate(w))  -- the pane's text before this selection
-                pcall(items[i].SetProperty, items[i], "IsSelected", true)
+                -- a busy UI raises here (the select never ran): this candidate again on a later tick
+                UI.pcall(items[i].SetProperty, items[i], "IsSelected", true)
+                table.remove(cand, 1)
                 job.picked, job.tried = i, (job.tried or 0) + 1
                 enter("verify")
                 return nil
@@ -393,9 +395,9 @@ end
 local function setSaveName(name)
     local box, pop, why = saveNameBox()
     if not box then return false, why end
-    local ok = pcall(box.SetProperty, box, "Text", name)
+    local ok = UI.pcall(box.SetProperty, box, "Text", name)
     local dc = try(function() return pop.DataContext end)
-    if dc then pcall(dc.SetProperty, dc, "SavegameNameInput", name) end
+    if dc then UI.pcall(dc.SetProperty, dc, "SavegameNameInput", name) end
     local now = boxText(box, pop)
     if not ok then return false, "could not set the name" end
     return true, now
@@ -561,8 +563,8 @@ local function saveDriver(name, kind, opts)
             if via ~= "text" and via ~= "field" and now - (job.blindAt or 0) > 800 then
                 -- the box itself can't be read (the DC may still hold our name under a default the dialog wrote
                 -- into the box, S052): set it again right before each RETURN
+                setSaveName(name)  -- first: a busy UI raises (nothing set), this re-set again on a later tick
                 job.blindAt = now
-                setSaveName(name)
                 job.blind = (job.blind or 0) + 1
             end
             return key("RETURN")

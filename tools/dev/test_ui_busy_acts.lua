@@ -162,7 +162,7 @@ local function src(name)
     return s
 end
 for _, name in ipairs({ "UI.lua", "Services.lua", "ServicesItems.lua", "Progression.lua", "Spellbook.lua",
-                        "Pick.lua" }) do
+                        "Pick.lua", "UIActions.lua", "UISettings.lua", "UIActionsMenu.lua" }) do
     local s, bare = src(name), {}
     for line in s:gmatch("[^\n]+") do
         local code = line:gsub("%-%-.*", "")

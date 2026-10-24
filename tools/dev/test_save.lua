@@ -31,6 +31,10 @@ local defaultName = nil       -- S052: the dialog writes its default name this m
 local overwriteIn = nil
 local savedAs = nil           -- the name the game saved with (the box's text at the accepting RETURN)
 local swallowReturn = false   -- S096: a conversation took the screen; RETURN reaches no save menu
+-- bg3le 0011: after a frame-lock timeout a UI call is refused at once (it never ran); Client/UI.lua's UI.pcall raises
+-- it as busy and the job's tick is dropped (stubbed below as a "BUSY " error; the run loops drop that tick)
+local REFUSAL = "bg3le: UI busy (frame lock not taken since a timeout); retry"
+local busyTicks = 0
 local function show(n)
     widgets[n] = { name = n, visible = true }
     if n == "SaveGamePopup" then
@@ -99,6 +103,11 @@ BG3AI = {
         end,
     },
     UI = {
+        pcall = function(f, ...)
+            local r = table.pack(pcall(f, ...))
+            if not r[1] and tostring(r[2]):find("UI busy", 1, true) then error("BUSY " .. tostring(r[2]), 0) end
+            return table.unpack(r, 1, r.n)
+        end,
         widget = function(n) return widgets[n] end,
         widgetMap = function()
             local m = { Hotbar = { el = { visible = true } } }
@@ -108,7 +117,10 @@ BG3AI = {
         isVisible = function(el) return el.visible ~= false end,
         byName = function(w, n) if n == "SaveName" then
             return { isNameBox = true, SetProperty = function(_, k, v)
-                if k == "Text" and not nameBox.stuck then nameBox.t = v end end } end end,
+                if k ~= "Text" then return end
+                nameBox.sets = (nameBox.sets or 0) + 1
+                if nameBox.sets == nameBox.refuseSet then error(REFUSAL, 0) end
+                if not nameBox.stuck then nameBox.t = v end end } end end,
         -- live (S056): a TextBox's ToString() is its class name; only the Text property holds the name
         text = function() return "ls.LSTextBox" end,
         clean = function(v) return v end,
@@ -160,6 +172,13 @@ local fails, passes = 0, 0
 local function ok(cond, msg)
     if cond then passes = passes + 1 else fails = fails + 1 print("FAIL " .. msg) end
 end
+-- one job tick; a busy raise drops it (as Shared/RPC.lua does), any other error is the test's
+local function tick(job)
+    local okt, err = pcall(job.on_tick, job)
+    if okt then return end
+    if not tostring(err):find("^BUSY ") then error(err, 0) end
+    busyTicks = busyTicks + 1
+end
 
 -- one save, driven frame by frame; ui.state sampled on every frame. While
 -- the game is in its Save state the job doesn't tick (as live may).
@@ -172,7 +191,7 @@ local function runSave(name, probe, action)
         frame()
         if job.status ~= "running" then break end
         if clock > job.deadline_at then job.status = "timeout" break end
-        if gameState ~= "Save" then job.on_tick(job) end
+        if gameState ~= "Save" then tick(job) end
         if job.status ~= "running" then seen.doneState = gameState break end
         local st = S.state({})
         seen.screens[st.screen] = true
@@ -244,6 +263,15 @@ job = runSave("S099-dc-read")
 defaultName = nil
 ok(job.status == "done" and savedAs == "S099-dc-read", "unreadable Text: the save still goes through under our name: "
     .. tostring(savedAs))
+-- bg3le 0011: the re-set right before RETURN refused as busy (it never ran) is set again on the next tick, not
+-- skipped for 800 ms (the RETURN saved the dialog's default name)
+nameBox.mode, nameBox.sets, nameBox.refuseSet = "none", 0, 2
+defaultName = "Steel Watch Foundry - Lab Level - 16h 14m"
+savedAs, busyTicks = nil, 0
+job = runSave("S099-busy-reset")
+defaultName, nameBox.refuseSet = nil, nil
+ok(job.status == "done" and savedAs == "S099-busy-reset" and busyTicks == 1,
+    "a busy re-set before RETURN is set again: saved as " .. tostring(savedAs) .. ", busy ticks " .. busyTicks)
 nameBox.mode = nil
 
 -- audit UI-6: a save row selected → the "new" RETURN acts on it and an overwrite box comes up before our name.
@@ -413,6 +441,7 @@ local function loadPage(n)
         local it = { t = "ls.LSListBoxItem", dc = { t = "ls.VMSavegame" }, date = string.format("%d/10/2026 09:48", k) }
         it.SetProperty = function(self, prop, v)
             if prop ~= "IsSelected" or not v then return end
+            if (page.refuse or 0) > 0 then page.refuse = page.refuse - 1 error(REFUSAL, 0) end
             page.sel = page.sel + 1
             local lag = page.lag and page.lag(page.sel)
             if not lag then page.pane = self.date return end
@@ -452,7 +481,7 @@ local function runLoad(args, ms)
         pendingKey = {}
         if clock > lj.deadline_at then lj.status = "timeout" break end
         paneTick()
-        lj.on_tick(lj)
+        tick(lj)
         if lj.status ~= "running" then break end
     end
     return lj
@@ -499,7 +528,15 @@ end
 lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 7, date = want })
 ok(lj.status == "done" and lj.result.picked == 9, "load: a same-minute neighbour is passed: " .. tostring(lj.status)
     .. " picked=" .. tostring(lj.result and lj.result.picked))
-page.lag = nil
+-- bg3le 0011: the select refused as busy (it never ran) is tried again on the same save, not dropped as a miss
+loadPage(12)
+page.lag, page.refuse, busyTicks = nil, 1, 0
+lj = runLoad({ action = "load", name = "Claude-1__S027-start", owner = "Claude", index = 9, date = want })
+ok(lj.status == "done" and lj.result.picked == 9 and lj.partial.tried == 1 and busyTicks == 1,
+    "load: a busy select retries the same save: " .. tostring(lj.status) .. " picked="
+    .. tostring(lj.result and lj.result.picked or lj.partial.picked) .. " tried=" .. tostring(lj.partial.tried)
+    .. " busy ticks " .. busyTicks)
+page.lag, page.refuse = nil, nil
 widgets.LoadGame = nil
 for k, f in pairs(saved) do UIx[k] = f end
 
