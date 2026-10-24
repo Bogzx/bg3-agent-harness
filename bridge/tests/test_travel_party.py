@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_turn_macros import (
     Base,  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
+    reset_handles,
 )
 
 from bg3ai import areablock, longnav, party
@@ -119,6 +120,7 @@ class Case(unittest.TestCase):
         self.addCleanup(lambda: (setattr(core, "game", saved[0]), setattr(queueing, "_watch_game", saved[1]),
                                  setattr(travel, "AREA", saved[2]), setattr(travel, "CAMP_GATHER_S", saved[3])))
         core.game, queueing._watch_game = fake, fake
+        reset_handles()  # e1 Claude .. e4 Shadowheart whatever ran before (CI order: Wyll was e8)
         travel.AREA = areablock.AreaBlock()
         travel.CAMP_GATHER_S = 0.3
         overview._stay.clear()
