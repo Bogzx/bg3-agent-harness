@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bg3ai import hotbar, render, twostep  # noqa: E402
+from bg3ai import clicker, hotbar, render, twostep  # noqa: E402
+from bg3ai.game import JobResult  # noqa: E402
 from bg3ai.tools import combat, core, plumbing, world_tools  # noqa: E402
 
 ME = "aaaaaaaa-0000-0000-0000-000000000001"
@@ -136,6 +137,83 @@ class Revive(unittest.TestCase):
         out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
         self.assertIn("no spell in hand after it", out)
         self.assertIn("STILL DEAD", out)
+
+
+class ScrollReadFake(Fake):
+    """The HUD's selection and the spell in hand after a scroll's Use: `arm_after` cast_state reads until armed
+    (None = never)."""
+
+    def __init__(self, hud, arm_after):
+        super().__init__([{"uuid": ME}, {"uuid": SH, "dead": True}])
+        self.hud, self.arm_after, self.order = hud, arm_after, []
+
+    def run_job(self, op, args, context="server", wait_s=25.0):
+        self.order.append(op)
+        if op == "act.select":
+            self.hud = args["char"]
+        return JobResult("done", {})
+
+    def rpc(self, op, args=None, context="server"):
+        if op == "ui.selected":
+            return {"uuid": self.hud}
+        if op == "ui.cast_state":
+            self.order.append("cast_state")
+            if self.arm_after is None:
+                return {"armed": False}
+            self.arm_after -= 1
+            return {"armed": self.arm_after <= 0}
+        return super().rpc(op, args, context)
+
+    try_rpc = rpc
+
+
+class ScrollRead(unittest.TestCase):
+    """live9 S002 17:34: Lae'zel's Scroll of Revivify on dead Vessa x2 'no spell in hand after it' while the HUD had
+    another member selected; with Lae'zel selected the read put the spell in hand. The target click waits for it."""
+
+    def read(self, fake, arm_wait_s=0.5):
+        for k, v in (("game", fake), ("H", render.Handles())):
+            self.addCleanup(setattr, core, k, getattr(core, k))
+            setattr(core, k, v)
+        core.H.get(ME, "Claude")
+        core.H.get(SH, "Shadowheart")
+
+        def act(name, op, args, **kw):
+            fake.order.append(op)
+            return "use_ability: done — used"
+
+        def click(game, inp, u, b):
+            fake.order.append(("click", u))
+            return clicker.ClickResult(True)
+        for mod, k, v in ((plumbing, "_act", act), (world_tools, "_inp", Inp), (clicker, "click_entity", click),
+                          (world_tools, "_revive_spot", lambda inp, name, char, tgt: " (revive spot)"),
+                          (twostep, "ARM_WAIT_S", arm_wait_s)):
+            self.addCleanup(setattr, mod, k, getattr(mod, k))
+            setattr(mod, k, v)
+        return world_tools._use_scroll(ME, {"uuid": "scroll-1", "name": "Scroll of Revivify", "owner": ME}, "e2")
+
+    def test_reader_selected_before_the_read(self):
+        fake = ScrollReadFake(SH, arm_after=1)
+        self.read(fake)
+        self.assertEqual(fake.order[:2], ["act.select", "act.interact"])
+
+    def test_selected_reader_not_selected_again(self):
+        fake = ScrollReadFake(ME, arm_after=1)
+        self.read(fake)
+        self.assertNotIn("act.select", fake.order)
+
+    def test_body_clicked_only_once_the_spell_is_in_hand(self):
+        fake = ScrollReadFake(ME, arm_after=3)
+        out = self.read(fake)
+        i = fake.order.index(("click", SH))
+        self.assertEqual(fake.order[:i].count("cast_state"), 3)
+        self.assertIn("(revive spot)", out)
+
+    def test_nothing_in_hand_no_click(self):
+        fake = ScrollReadFake(ME, arm_after=None)
+        out = self.read(fake, arm_wait_s=0.0)
+        self.assertNotIn(("click", SH), fake.order)
+        self.assertIn("no spell came into hand, so e2 Shadowheart was not clicked", out)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any
 
-from .. import actq, economy, hoverclick, macros, render, twostep
+from .. import actq, economy, hotbar, hoverclick, macros, render, twostep
 from ..game import GameError, JobResult, hold_client, release_client
 from . import core, overview, plumbing, reporting
 
@@ -539,6 +539,7 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         lc = core.game.try_rpc("act.landing_check", {"char": char, "pos": [float(v) for v in pos[:3]]}) or {}
         if lc.get("ok") is False:
             raise GameError(f"{name} not read: {lc.get('why')}")
+    _select_reader(char)
     out = plumbing._act("use_ability", "act.interact", {"char": char, "target": it["uuid"]})
     if reporting._batch.get("last") != "done" or "drunk" in out.partition("\n")[0]:
         return out  # a potion (in combat: for its bonus action) waits for no target
@@ -547,7 +548,8 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         return out + "\nthe game waits for the scroll's target: no input shim to click it (click_on <id>)"
     from ..clicker import click_entity
     tgt = plumbing._uuid(target) if target else char
-    time.sleep(0.3)  # the targeting cursor comes up a few frames after the use
+    # the targeting cursor comes up a few frames after the use; a click before it is a plain click on the world
+    armed, _ = hotbar._wait(core.game, char, lambda s: bool(s.get("armed")), twostep.ARM_WAIT_S)
     scr = (core.game.try_rpc("ui.state", context="client") or {}).get("screen")
     if scr == "book":
         # S031 17:12: use_ability(book, target=pedestal) read the book (its page opened) and the click then turned
@@ -564,6 +566,13 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         if in_combat:
             head += _scroll_settle(char)
         return head + ("\n" + rest if rest else "")
+    if not armed:
+        # live9 S002 17:34 x2: the body click went in with nothing in hand, a plain click on the world
+        head += (f" ({name} read, but no spell came into hand, so {queueing._label(tgt)} was not clicked: it cast at "
+                 "once, or the game did not take the read)")
+        if in_combat:
+            head += _scroll_settle(char)
+        return head + ("\n" + rest if rest else "")
     tgts = [tgt] + [plumbing._uuid(t) for t in targets or []]
     cr = click_entity(core.game, inp, tgt, "L")
     if cr.ok and _two_step_scroll(name) and tgt != char:
@@ -576,6 +585,15 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     if in_combat and cr.ok:
         head += _scroll_settle(char)
     return head + ("\n" + rest if rest else "")
+
+
+def _select_reader(char: str) -> None:
+    """live9 S002 17:34 (x2): Lae'zel read a Scroll of Revivify while the HUD had another member selected; the spell
+    never showed in hand (ui.cast_state reads the HUD's), so the body click did nothing. After set_party select
+    Lae'zel the same read put it in hand. A player selects the reader before using a scroll from their bags."""
+    hud = (core.game.try_rpc("ui.selected", context="client") or {}).get("uuid")
+    if isinstance(hud, str) and hud[-36:] != char[-36:]:
+        core.game.run_job("act.select", {"char": char}, wait_s=5)
 
 
 _TELEPORT_SCROLL = re.compile(r"misty step|thunder step|far step", re.IGNORECASE)
