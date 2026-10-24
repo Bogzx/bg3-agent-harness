@@ -645,8 +645,17 @@ class LoadVerified(unittest.TestCase):
         out = self.run_load(["a", "a"], ["game"])
         self.assertIn("nothing was loaded", out)
 
-    def test_load_page_still_up_fails(self):
-        out = self.run_load(["a", "b"], ["save_load"])
+    def test_main_menu_load_with_a_menu_screen_still_read_is_done(self):
+        # Live D1 19:38 / Window A / 10-22: from the main menu (no server Lua before: boot None) the save loaded
+        # (a new server state), but ui.state read a menu screen for 5 s+; this pressed again and loaded it twice.
+        out = self.run_load([None, "b"], ["save_load"])
+        self.assertIn("load_game: done", out)
+        self.assertNotIn("pressed", out)
+        self.assertEqual(self.g.presses, 1)
+        self.assertEqual(self.g.keys, [])
+
+    def test_load_page_still_up_without_a_new_boot_fails(self):
+        out = self.run_load(["a", None], ["save_load"])
         self.assertIn("nothing was loaded", out)  # page still up, then a 2nd press that didn't start either
         self.assertEqual(self.g.presses, 1 + saving.LOAD_RETRIES)
         self.assertEqual(self.g.keys, ["ESCAPE", "ESCAPE"])
@@ -654,7 +663,7 @@ class LoadVerified(unittest.TestCase):
     def test_press_that_did_nothing_is_pressed_again(self):
         # Acceptance 12:13: the first press left the Load page up (same Lua state); the second press loaded.
         # ui.state reads: 1st attempt 10x save_load (gives up), then game; boots: before, same, new.
-        out = self.run_load(["a", "b"], ["save_load"] * 10 + ["game"],
+        out = self.run_load(["a", "a", "b"], ["save_load"] * 10 + ["game"],
                             states=["LoadSession", "Running", "LoadSession"])
         self.assertIn("load_game: done", out)
         self.assertEqual(self.g.presses, 2)
