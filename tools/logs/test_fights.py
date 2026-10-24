@@ -278,6 +278,38 @@ class S080GameOver(unittest.TestCase):
         self.assertEqual(f["outcome"], "reload")
 
 
+    def test_a_reload_inside_a_combat_span_ends_the_try(self):  # S096: the winning Netherbrain try was a "reload"
+        import json, tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        sd = Path(tmp.name) / "claude-run-2"
+        sd.mkdir()
+        t0 = 1_000_000.0
+        boss = "The Unbreakable Will of the Netherbrain"
+        calls = [(t0 + 5, "combat_turn", "TURN e1 Wyll (round 1)\nend_turn: done\nPARTY e1 Wyll HP 70/80"),
+                 (t0 + 60, "load_game", "load_game: done — loaded=S095-psyche"),   # 16 s, combat samples go on
+                 (t0 + 90, "combat_turn", "TURN e1 Wyll (round 1)\nend_turn: done\nPARTY e1 Wyll HP 80/80"),
+                 (t0 + 200, "combat_turn", f"TURN e1 Wyll (round 4)\ncast: done\nEVENTS\n  died name={boss} e9")]
+        with open(sd / "S999.turns.jsonl", "w") as tf, open(sd / "S999.jsonl", "w") as jf:
+            for i, (t, tool, res) in enumerate(calls):
+                tf.write(json.dumps({"type": "use", "id": f"c{i}", "t": t}) + "\n")
+                tf.write(json.dumps({"type": "result", "id": f"c{i}", "t": t + 16}) + "\n")
+                jf.write(json.dumps({"message": {"content": [{"type": "tool_use", "id": f"c{i}",
+                                                              "name": "mcp__bg3__" + tool, "input": {}}]}}) + "\n")
+                jf.write(json.dumps({"message": {"content": [{"type": "tool_result", "tool_use_id": f"c{i}",
+                                                              "content": json.dumps({"result": res})}]}}) + "\n")
+        with open(sd / "S999.metrics.jsonl", "w") as mf:   # combat every 10 s, 20 s gap at the load: one span
+            mf.writelines(json.dumps({"type": "sample", "t": t0 + k, "combat": True}) + "\n"
+                          for k in [*range(0, 61, 10), *range(80, 211, 10)])
+            mf.write(json.dumps({"type": "sample", "t": t0 + 400, "combat": False}) + "\n")   # the ending
+        old = fights.SESSIONS
+        fights.SESSIONS = Path(tmp.name)
+        self.addCleanup(setattr, fights, "SESSIONS", old)
+        got = fights.mine("claude-run-2", "S999")
+        self.assertEqual([(f["t"] - t0, f["outcome"]) for f in got], [(0, "reload"), (76, "won")])   # old: 1 reload
+        self.assertEqual(got[1]["enemies"], {boss: 1})
+
+
 class NoMetrics(unittest.TestCase):
     def test_a_process_without_a_metrics_file_has_no_fights(self):
         import tempfile
