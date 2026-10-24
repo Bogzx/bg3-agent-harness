@@ -213,10 +213,17 @@ local function inventoriesOf(owner, out)
     return out
 end
 
-local function partyInventories()
+-- worn: also each member's other inventories (the Equipment one: its slots are ItemSlot values, as state.inventory
+-- reads them). Gale's donation window lists worn items too (live D8: Claude's equipped Gloves of Power / Sword of
+-- Justice sat in an EquipmentFlags VM at indexes 10 / 3, and feed_gale FAILED "isn't on this side").
+local function partyInventories(worn)
     local out = {}
     for _, e in ipairs(try(Ext.Entity.GetAllEntitiesWithComponent, "PartyMember") or {}) do
         inventoriesOf(e, out)
+        local io = worn and U.comp(e, "InventoryOwner")
+        for _, inv in ipairs(io and try(function() return io.Inventories end) or {}) do
+            if inv ~= io.PrimaryInventory then out[#out + 1] = inv end
+        end
     end
     return out
 end
