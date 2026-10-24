@@ -44,11 +44,13 @@ def hover_click(
     key: str,
     seed: tuple[float, float],
     budget_s: float | None = None,
+    step: float = STEP,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict:
     """-> {clicked: True, at: (fx, fy), tries} | {gone: True, tries} (the window closed) | {error, tries}.
-    The probe says `open` (the page with the button shows), `over` (the cursor is over the button) and `enabled`."""
+    The probe says `open` (the page with the button shows), `over` (the cursor is over the button) and `enabled`.
+    step: the grid step, finer for a small button (the donation window's X)."""
     first = probe()
     if not isinstance(first, dict) or not first.get("open"):
         return {"gone": True, "tries": 0}
@@ -59,7 +61,7 @@ def hover_click(
     w, h = inp.window_size()
     end = clock() + (BUDGET_S if budget_s is None else budget_s)
     tries = 0
-    for fx, fy in candidates(seed, key):
+    for fx, fy in candidates(seed, key, step):
         if clock() >= end:
             break
         tries += 1

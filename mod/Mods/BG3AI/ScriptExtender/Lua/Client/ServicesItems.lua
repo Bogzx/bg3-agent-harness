@@ -19,7 +19,11 @@ local inventoriesOf = I.inventoriesOf
 -- equipment VM merged, filtered to what Gale takes); selecting a slot copies the ListBox's SelectedItems into
 -- InventoryContainer.Tag, and DonateBtn runs DonateItemsCommand(Tag). So: match the item's VM slot (VM <-> ECS by
 -- slot index + weight, as trade does; worn items by their equipment slot), select its ListBoxItem (what a click
--- does), then press DonateBtn. S020 04:45 / S023 06:14: 5-6 hand clicks + screenshots each.
+-- does), then run DonateItemsCommand(Tag). S020 04:45 / S023 06:14: 5-6 hand clicks + screenshots each.
+-- Live D10: UI.press(DonateBtn) gave nothing (its CommandParameter reads nil: the binding to the Tag isn't read);
+-- DonateItemsCommand(Tag) gave the item (its cell left the window). Gale absorbs it only when the window closes:
+-- CloseBtn is CustomEvent "CloseWidget" (a string bg3le can't pass) and ESCAPE doesn't close it, so the bridge
+-- clicks the X hover-checked (ui.donate_probe) and then checks the hunger.
 -- Live D8 (probe_donation): the window offered only worn items (bags held no magic ones), and the ListBoxes'
 -- Items/ItemsSource read as empty collections, so a slot is found through the ListBox's item containers.
 local function donateGroups(dc)
@@ -177,28 +181,55 @@ RPC.register("ui.donate", function(args)
     if not vmItem then error(((err or "item not found"):gsub("the trade screen", "the donation window")), 0) end
     local cell = donateSlot(w, vmItem)
     if not cell then error("the item is not listed in the donation window (Gale only takes magic items)", 0) end
-    local btn = UI.byName(w, "DonateBtn") or error("the donation window has no Donate button", 0)
+    local box = UI.byName(w, "InventoryContainer") or error("the donation window has no item box", 0)
     if args.dry then return { can = true } end
-    local phase, t = "select", 0
+    local phase, t, seen = "select", 0, 0
     return waitJob("ui.donate", 8000, function(job)
+        local now = RPC.now_ms()
         if phase == "select" then
             local ok, serr = UI.pcall(cell.SetProperty, cell, "IsSelected", true)
             if not ok then return "failed", nil, "couldn't select the item: " .. tostring(serr) end
-            phase, t = "press", RPC.now_ms()
+            phase, t = "donate", now
             return nil
         end
-        if phase == "press" then
-            if RPC.now_ms() - t < 150 then return nil end   -- the SelectionChanged trigger fills the Tag
-            local ok, perr = UI.press(btn)
-            if not ok then return "failed", nil, "selected the item, but Donate didn't work: " .. tostring(perr) end
-            phase, t = "wait", RPC.now_ms()
+        if phase == "donate" then
+            if now - t < 150 then return nil end   -- the SelectionChanged trigger fills the Tag
+            local tag = UI.get(box, "Tag")
+            local n = UI.count(tag)
+            if n == 0 then
+                if now - t < 1000 then return nil end
+                return "failed", nil, "selected the item, but the donation window didn't take the selection"
+            end
+            if n > 1 then
+                return "failed", nil, "more than one item is selected in the donation window; nothing given"
+            end
+            local ok, cerr = UI.command(dc, "DonateItemsCommand", tag)
+            if not ok then return "failed", nil, "selected the item, but Donate didn't work: " .. tostring(cerr) end
+            phase, t = "wait", now
             return nil
         end
-        if not visibleWidget("Donate") or RPC.now_ms() - t > 1500 then
-            return "done", { donated = args.item, window_open = visibleWidget("Donate") ~= nil or nil }
+        -- given = its cell left the window (D10); the cell search walks the ListBoxes, so every 250 ms
+        if now - seen < 250 then return nil end
+        seen = now
+        local open = visibleWidget("Donate")
+        if not open or donateSlot(open, vmItem) == nil then
+            return "done", { donated = args.item, window_open = open ~= nil or nil }
+        end
+        if now - t > 3000 then
+            return "failed", nil, "ran Donate, but the item is still in the donation window: nothing was given"
         end
         return nil
     end)
+end)
+
+-- ui.donate_probe {} -> {open=false} | {open, button, over, enabled}: the window's close button (the X) for the
+-- bridge's hover-checked click (hoverclick.py), as ui.steal_probe. Reads named properties only.
+RPC.register("ui.donate_probe", function()
+    local w = visibleWidget("Donate")
+    if not w then return { open = false } end
+    local btn = UI.byName(w, "CloseBtn")
+    return { open = true, button = btn ~= nil, over = btn ~= nil and UI.get(btn, "IsMouseOver") == true,
+             enabled = btn ~= nil and UI.get(btn, "IsEnabled") ~= false }
 end)
 
 ------------------------------------------------------------------------

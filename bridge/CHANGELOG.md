@@ -5,6 +5,12 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
+
+- feed_gale donates through the window's DonateItemsCommand, clicks the window's X (Gale absorbs the item when it
+  closes) and says done only when the item left the party and Gale's Arcane Hunger is gone. Live D10 it said
+  "done — donated=e132 window_open" with nothing given. Its description says it donates and closes the window.
+
 ## 2026-10-22: served rules follow the served tools; no screenshots for a text-only model
 
 - In the rules condition the served rules (instructions, first briefing, `rules` prompt, bg3://rules, pi's system
