@@ -94,14 +94,16 @@ class PatchTest(unittest.TestCase):
         # retries) instead of running it unserialized; off unless BG3LE_UI_STRICT / UiStrict(true); both
         # sides' timeouts are logged
         for needle in ("std::atomic<bool> g_strict{ false };", '"BG3LE_UI_STRICT"', '"UiStrict"',
-                       'return luaL_error(L, "bg3le: UI busy (frame lock not taken in %d ms); retry", kFrameWaitMs);',
+                       '"bg3le: UI busy (frame lock not taken in %d ms); retry", kFrameWaitMs);',
                        '"noesis: Lua frame-lock timeout #%llu (%d ms)%s"',
                        '"noesis: UI-thread frame-lock timeout #%llu (%d ms): frame ran unguarded"'):
             self.assertIn(needle, inl)
         # 0011 (S22, the S086 hang): after a Lua lock timeout, later calls are refused at once until the
-        # lock is taken again (by a frame or a call that finds it free); on unless BG3LE_UI_BUSY_REFUSE=0
+        # lock is taken again (by a frame or a call that finds it free); on unless BG3LE_UI_BUSY_REFUSE=0;
+        # the prelude's UiTake* pump takes nothing instead of raising, so RunTimers goes on (live D1)
         for needle in ("std::atomic<bool> g_busy_refuse{ true };", '"BG3LE_UI_BUSY_REFUSE"', '"UiBusy"',
-                       'return luaL_error(L, "bg3le: UI busy (frame lock not taken since a timeout); retry");',
+                       'pump ? 0 : luaL_error(L, "bg3le: UI busy (frame lock not taken since a timeout); retry");',
+                       'lua_pushboolean(L, std::strncmp(f->name, "UiTake", 6) == 0 ? 1 : 0);',
                        "g_busy.store(false, std::memory_order_relaxed);  // taken again"):
             self.assertIn(needle, inl)
         # 0003 + 0005: the generation moves on a View replacement and on loads; a reference taken

@@ -13,20 +13,26 @@ the full 50 ms and ran unserialized: Lua lock timeouts #32 -> #954 in 46 s, two 
   timed out keeps 0010's semantics: strict refuses it ("bg3le: UI busy (frame lock not taken in 50 ms)"),
   otherwise it runs unserialized. Both errors start "bg3le: UI busy", so the mod can tell them from other
   errors and retry on the next tick.
+- The prelude's pump (UiTakeCommand/UiTakeWrite/UiTakeEvent, from Ext._Internal.UiPump at the start of
+  RunTimers) is never refused with an error: where another call would be, it takes nothing this tick and
+  the queue keeps its items. A raised refusal aborted RunTimers before the timers and the Tick event, so
+  no Ext.Timer callback or Tick handler ran while a frame held the lock (live Window D1: 1614
+  "RunTimers failed ... prelude:3309/3316 UI busy" in runs of 0.1-0.5 s, the se section's Dimension
+  Door two-step lost its client job ticks; strict mode alone lost 23 ticks in Window A).
 - On by default, strict or not (strict stays off by default). BG3LE_UI_BUSY_REFUSE=0 in the environment
   or Ext._Internal.UiBusy(false) at run time goes back to a 50 ms wait per call.
 - Ext._Internal.UiBusy([on]) -> on, calls refused at once, busy now. Refusals are logged at counts
   1, 2, 4, 8, ...: "noesis: UI busy: Lua call #N refused at once (frame lock not taken since a timeout)".
 
 Offline: tools/test_bg3le_ui_busy.py compiles serialized() + the frame hooks from the patched source and
-runs the S086 shape with two threads. Against bg3le 3728a68 (v0.3.6) with 0001-0010. Applied by
-tools/build_bg3le.sh.
+runs the S086 shape with two threads, and RunTimers' pump under a held lock. Against bg3le 3728a68 (v0.3.6)
+with 0001-0010. Applied by tools/build_bg3le.sh.
 ---
 diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
-index e23744f..b126beb 100644
+index e23744f..b251288 100644
 --- a/src/vendor/bg3le_noesis_lua.inl
 +++ b/src/vendor/bg3le_noesis_lua.inl
-@@ -405,6 +405,16 @@ std::atomic<bool> g_strict{ false };
+@@ -405,6 +405,22 @@ std::atomic<bool> g_strict{ false };
  std::atomic<unsigned long long> g_strict_refusals{ 0 };
  constexpr int kUiStrictWaitMs = 100;
  
@@ -40,10 +46,24 @@ index e23744f..b126beb 100644
 +std::atomic<bool> g_busy{ false };
 +std::atomic<unsigned long long> g_busy_refusals{ 0 };
 +
++// The prelude's pump (UiTakeCommand, UiTakeWrite, UiTakeEvent: Ext._Internal.UiPump, which RunTimers calls before
++// the timers and the Tick event) has a second upvalue, true. Where another call is refused with "UI busy", a pump
++// call takes nothing (returns nothing, as for an empty queue): what is queued stays for a later tick and RunTimers
++// goes on. Raised, the refusal aborted RunTimers, so no Ext.Timer callback and no Tick handler ran while a frame held
++// the lock (live D1: 1614 ticks lost in runs of 0.1-0.5 s; strict mode alone lost 23 in Window A).
++
  // Timeouts are logged at 1, 2, 4, 8, ... so a run of them shows in the log without flooding it.
  bool log_this_count(unsigned long long n)
  {
-@@ -428,7 +438,17 @@ int serialized(lua_State* L)
+@@ -418,6 +434,7 @@ thread_local bool t_framed = false;
+ int serialized(lua_State* L)
+ {
+     auto fn = lua_tocfunction(L, lua_upvalueindex(1));
++    const bool pump = lua_toboolean(L, lua_upvalueindex(2)) != 0;
+     struct Framed
+     {
+         bool Was = t_framed;
+@@ -428,7 +445,17 @@ int serialized(lua_State* L)
          return fn(L);
      }
      std::unique_lock<std::recursive_timed_mutex> held(g_frame, std::defer_lock);
@@ -54,7 +74,7 @@ index e23744f..b126beb 100644
 +            if (log_this_count(n))
 +                bg3le::logf("noesis: UI busy: Lua call #%llu refused at once (frame lock not taken since a "
 +                            "timeout)", n);
-+            return luaL_error(L, "bg3le: UI busy (frame lock not taken since a timeout); retry");
++            return pump ? 0 : luaL_error(L, "bg3le: UI busy (frame lock not taken since a timeout); retry");
 +        }
 +        g_busy.store(false, std::memory_order_relaxed);
 +    } else if (!held.try_lock_for(std::chrono::milliseconds(kFrameWaitMs))) {
@@ -62,7 +82,16 @@ index e23744f..b126beb 100644
          const auto n = g_serialize_timeouts.fetch_add(1, std::memory_order_relaxed) + 1;
          const bool strict = g_strict.load(std::memory_order_relaxed);
          if (log_this_count(n))
-@@ -471,6 +491,16 @@ int l_strict(lua_State* L)
+@@ -436,7 +463,7 @@ int serialized(lua_State* L)
+                         strict ? "; strict: refused" : "; ran unserialized");
+         if (strict) {
+             g_strict_refusals.fetch_add(1, std::memory_order_relaxed);
+-            return luaL_error(L, "bg3le: UI busy (frame lock not taken in %d ms); retry", kFrameWaitMs);
++            return pump ? 0 : luaL_error(L, "bg3le: UI busy (frame lock not taken in %d ms); retry", kFrameWaitMs);
+         }
+     }
+     t_framed = held.owns_lock();
+@@ -471,6 +498,16 @@ int l_strict(lua_State* L)
      return 2;
  }
  
@@ -79,7 +108,7 @@ index e23744f..b126beb 100644
  // ---- values: ports of StoredValueHelpers ---------------------------------
  
  void push_floats(lua_State* L, float const* v, int n)
-@@ -1609,7 +1639,10 @@ extern "C" bool bg3le_ui_frame_begin()
+@@ -1609,7 +1646,10 @@ extern "C" bool bg3le_ui_frame_begin()
      using namespace Noesis::bg3le_ui;
      if (!g_serialize.load(std::memory_order_relaxed)) return false;
      const bool strict = g_strict.load(std::memory_order_relaxed);
@@ -91,7 +120,20 @@ index e23744f..b126beb 100644
      const auto n = g_ui_timeouts.fetch_add(1, std::memory_order_relaxed) + 1;
      if (log_this_count(n))
          bg3le::logf("noesis: UI-thread frame-lock timeout #%llu (%d ms): frame ran unguarded", n,
-@@ -1775,11 +1808,15 @@ extern "C" void bg3le_ui_register(lua_State* L)
+@@ -1765,21 +1805,26 @@ extern "C" void bg3le_ui_register(lua_State* L)
+         {"UiTakeWrite", Noesis::bg3le_ui::l_take_write},
+         {nullptr, nullptr}};
+     // Each goes through serialized(), which calls it directly unless
+-    // UiSerialize is on.
++    // UiSerialize is on; the UiTake* pump is told apart by its second upvalue.
+     for (auto f = functions; f->name != nullptr; ++f) {
+         lua_pushcfunction(L, f->func);
+-        lua_pushcclosure(L, Noesis::bg3le_ui::serialized, 1);
++        lua_pushboolean(L, std::strncmp(f->name, "UiTake", 6) == 0 ? 1 : 0);
++        lua_pushcclosure(L, Noesis::bg3le_ui::serialized, 2);
+         lua_setfield(L, -2, f->name);
+     }
+     lua_pushcfunction(L, Noesis::bg3le_ui::l_serialize);
      lua_setfield(L, -2, "UiSerialize");
      lua_pushcfunction(L, Noesis::bg3le_ui::l_strict);
      lua_setfield(L, -2, "UiStrict");
