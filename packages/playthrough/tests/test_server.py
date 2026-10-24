@@ -140,7 +140,8 @@ def test_sse_stream_live_and_resume(server, store: RunStore):
     assert first[0]["event"] == "status" and first[0]["id"] == "g1-1"
     assert [int(e["id"].split("-")[1]) for e in first] == list(range(1, buffered + 1))
 
-    line = json.dumps({"t": 1.0, "tool": "look", "args": {}, "ms": 3, "result": "live one"})
+    t = store.status()["started"] + 1  # a call of the running session (older ones aren't streamed)
+    line = json.dumps({"t": t, "tool": "look", "args": {}, "ms": 3, "result": "live one"})
     with store.actions_path.open("a") as f:
         f.write(line + "\n")
     hub.poll()

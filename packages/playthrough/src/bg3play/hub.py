@@ -2,7 +2,10 @@
 
 Feeds (each `poll()` returns the new (type, data) pairs since its last call):
 - actions: new actions.jsonl lines -> "action" (a tool call with ms and result), then "party" when its result is a
-  full status (WHERE/PARTY rows) or names a new region (level_changed, get_map); a truncated file -> "actions_reset"
+  full status (WHERE/PARTY rows) or names a new region (level_changed, get_map); a truncated file -> "actions_reset".
+  The file is shared by every playthrough and run: a call from before the running session's start (runner.status.json
+  started) is none of the watched session's (live3: the stream's first tail showed the previous run's tool calls
+  and party under the new run's S001)
 - log: the followed playthrough's agent log -> "log" entries; a new log file -> "session" first
 - status: runner.status.json changed (heartbeat/updated ignored) -> "status"
 - memory: a new commit in the memory repo -> "memory" (checked only when .git/logs/HEAD changes)
@@ -36,6 +39,7 @@ class Event:
 
 class ActionsFeed:
     def __init__(self, store: RunStore):
+        self.store = store
         self.tail = Tailer(store.actions_path, initial_bytes=64 * 1024)
         self.started = False
         self.party: dict[str, Any] | None = None  # the last "party" sent: a later region change updates its place
@@ -44,8 +48,11 @@ class ActionsFeed:
         lines, reset = self.tail.lines()
         out: list[tuple[str, Any]] = [("actions_reset", {})] if reset and self.started else []
         self.started = True
+        since = self.store.status().get("started")
         for ln in lines:
             a = parse.action(ln)
+            if a and isinstance(since, (int, float)) and not (isinstance(a["t"], (int, float)) and a["t"] >= since):
+                continue
             if a:
                 out.append(("action", dict(a, result=parse.scrub(a["result"]))))
                 st = parse.status_text(a["result"])
