@@ -20,7 +20,7 @@ def _item_uuid(item: str, who: str | None = None, worn: bool = False) -> str:
     instead of failing 'ambiguous' (S027: equip "Simple Robe" → ambiguous e14,e148,e165,e169, batch stopped).
     Prefers the item in `who`'s bag, unworn (worn=True for unequip: a worn one)."""
     try:
-        return plumbing._uuid(item)
+        return _party_item_uuid(item)
     except ValueError as e:
         if "ambiguous" not in str(e):
             raise
@@ -40,10 +40,22 @@ def _item_uuid(item: str, who: str | None = None, worn: bool = False) -> str:
         return rows[0]["uuid"]
 
 
+def _party_item_uuid(item: str) -> str:
+    """plumbing._uuid, plus one party inventory read (bags and worn gear) for a name a fresh bridge has not learnt
+    (D8: feed_gale("Gloves of Power"), worn, was 'unknown target' until a get_inventory)."""
+    try:
+        return plumbing._uuid(item)
+    except ValueError as e:
+        if "unknown target" not in str(e):
+            raise
+        plumbing._remember_names(core.game.try_rpc("state.inventory", {"expand": True}))
+        return core.H.resolve(item)
+
+
 @core.mcp.tool()
 @reporting._guard
 def feed_gale(item: str) -> str:
-    """Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (one in a party bag)."""
+    """Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (in a party bag or worn: the window offers both)."""
     return plumbing._act("feed_gale", "ui.donate", {"item": plumbing._uuid(core.H.get(_item_uuid(item)))}, context="client", wait_s=15)
 
 
