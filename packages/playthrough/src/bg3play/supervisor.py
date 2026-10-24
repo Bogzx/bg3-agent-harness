@@ -7,6 +7,7 @@
                                                           # run_session); adapters/legacy_cli.py (runner/play.py
                                                           # run) until Phase D
         keeper.run_keeper(pt, result)                     # between sessions, joined before the next start
+        after_session(pt, result)                         # the harness runner's Sxxx.review.md
         history += result                                 # <runtime>/sessions/<pt>/supervisor.json
 
 Stop is soft: the running session is asked to finish (stop event), the loop starts no other. Shutdown (the server
@@ -207,6 +208,9 @@ class Supervisor:
     # (pt, kind, fields) at a run's start ("runner_start") and end ("runner_stop", why): the harness runner's
     # runner_events.jsonl rows (the dashboard's unattended hours); the legacy CLI's play.py writes its own
     on_run: Callable[[str, str, dict[str, Any]], object] = lambda pt, kind, fields: None
+    # (pt, result) after each played session and its keeper pass: the harness runner's Sxxx.review.md (play.py writes
+    # its own)
+    after_session: Callable[[str, SessionResult], object] = lambda pt, res: None
     pt: str | None = None
     state: str = "idle"  # idle | running | stopping
     detail: str = ""
@@ -317,6 +321,8 @@ class Supervisor:
                 if cfg.keeper.enabled and res.outcome != "error" and not self.closing:
                     self._set(detail="memory keeper")
                     self.keeper.run_keeper(pt, res)
+                if res.session != "?" and not self.closing:
+                    self.after_session(pt, res)
                 if res.outcome == "finished":
                     end = "the story is finished"
                     break

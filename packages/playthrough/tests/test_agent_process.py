@@ -157,3 +157,12 @@ def test_kill_ends_the_running_process_and_any_later_one(tmp_path: Path):
     assert (res.reason, res.exit_code) == ("aborted", -9) and spawned[1].killed
     res = a.run(call(tmp_path, resume=True))  # a resume after the kill is ended at once
     assert res.reason == "aborted" and spawned[3].killed
+
+
+def test_the_stream_is_timed_into_turns_jsonl(tmp_path: Path):
+    # live9 #16: the latency summary reads <sid>.turns.jsonl; the app's processes wrote none. A non-claude client's
+    # events go in claude's stream-json shape (policy.timing_event), stamped by the agent's clock
+    a, _ = agent([SAY, json.dumps({"type": "result", "cost": 0.25}) + "\n"])
+    a.run(call(tmp_path))
+    turns = [json.loads(ln) for ln in (tmp_path / "S004.turns.jsonl").read_text().splitlines()]
+    assert [r["type"] for r in turns] == ["assistant", "session_result"] and {r["t"] for r in turns} == {1000.0}

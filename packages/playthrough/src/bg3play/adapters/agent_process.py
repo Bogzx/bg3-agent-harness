@@ -2,7 +2,8 @@
 
 A bg3harness Client (pi, claude, codex, gemini) spells the command, its config files and its env; this starts it with
 the session's env and pumps its stdout, as runner/play.py does, into <sid>.jsonl (raw), <sid>.events.jsonl (the
-normalized events) and <sid>.log (the human log the store reads). Every process of a session (the kickoff, stop
+normalized events), <sid>.log (the human log the store reads) and <sid>.turns.jsonl (the arrival times the latency
+summary reads: bg3ai.metrics.StreamTiming, fed as play.py feeds it). Every process of a session (the kickoff, stop
 resumes, fault resumes) appends to the same three files and uses the session id as its tag, so a resume finds its
 conversation (pi's agent dir is <sid>.pi).
 
@@ -15,15 +16,18 @@ drive it with a fake process.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
+from bg3ai.metrics import StreamTiming  # pyright: ignore[reportMissingTypeStubs]
 from bg3harness import clients, events
+from bg3harness.runner import policy
 
 WATCH_S = 30.0  # seconds between game checks while the agent plays
 
@@ -112,6 +116,7 @@ class ClientAgent:
         self.client.write_config(req)
         base = call.sdir / call.sid
         evlog = events.EventLog(Path(f"{base}.events.jsonl"), self.clock)
+        timing = StreamTiming(Path(f"{base}.turns.jsonl"))
         start = self.clock()
         evlog.harness("session_start", session=call.sid, client=self.client.name, model=self.model,  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                       conversation=call.conversation, resume=call.resume)  # fmt: skip
@@ -133,7 +138,9 @@ class ClientAgent:
                         f"{call.conversation}\n")  # fmt: skip
             for line in proc.stdout or ():
                 raw.write(line)
-                for e in self.client.parse(line):
+                parsed = self.client.parse(line)
+                self._time(timing, line, parsed)
+                for e in parsed:
                     evlog.write(e)
                     if e.cost_usd is not None:  # usage and result events: the process's cost so far
                         cost = max(cost or 0.0, e.cost_usd)
@@ -150,6 +157,21 @@ class ClientAgent:
         reason, at = stopped[0] if stopped else ("exited", None)
         evlog.end(reason, code, start)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return AgentRun(reason, code, start, self.clock(), call.conversation, at, cost)
+
+    def _time(self, timing: StreamTiming, line: str, parsed: list[clients.Event]) -> None:
+        """The line's arrival into <sid>.turns.jsonl: claude's raw stream-json event, another client's events in
+        that shape (policy.timing_event), as play.py's pump."""
+        if self.client.name == "claude":
+            try:
+                ev: object = json.loads(line)
+            except ValueError:
+                return
+            timed: list[Any] = [ev] if isinstance(ev, dict) else []
+        else:
+            timed = [policy.timing_event(e) for e in parsed]  # pyright: ignore[reportUnknownMemberType]
+        for tev in timed:
+            if tev is not None:
+                timing.on_event(tev, self.clock())  # pyright: ignore[reportUnknownMemberType]
 
     def _watch(self, proc: Proc, deadline: float, done: threading.Event, stopped: list[tuple[str, float]]) -> None:
         while not done.wait(max(0.0, min(self.watch_s, deadline - self.clock()))):
