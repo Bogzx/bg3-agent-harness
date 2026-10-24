@@ -183,7 +183,9 @@ reg("disarm", function(args)
     if not G.b(G.q("IsTrap", trap)) or not G.b(G.q("IsTrapDiscovered", trap)) then
         G.refuse("no known trap there")
     end
-    G.target_visible(trap)
+    -- No sight check: a trap the game marks discovered is one the party spotted (the game outlines it), wherever the
+    -- spotter stands now. S064 11:37: the walk stopped for e302 Sanguine Vent 10 m away ("TRAP spotted on the way"),
+    -- then disarm(e302) was refused "target is not visible" (S065 11:40 the same). The approach walks up to it.
     -- Right-click menu "Disarm", as for Lockpick (S031 17:10: three left-clicks on a trapped bookcase did nothing;
     -- the agent's right-click -> Disarm by hand was the route).
     return approach("disarm", char, trap, function(job) needs_click(job, trap, "roll", "Disarm") end)

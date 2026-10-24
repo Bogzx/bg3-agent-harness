@@ -181,6 +181,19 @@ test("guard (ACT-13): CharacterMoveTo is blocked; G.q runs queries only", functi
     eq(G.query_ok("InSamePartyGroup"), true, "InSamePartyGroup"); eq(G.query_ok("SpeakerGetDialog"), true, "SpeakerGetDialog")
 end)
 
+test("disarm: a discovered trap out of sight is approached and right-clicked (S064 Sanguine Vent); unknown refused", function()
+    osiv[key("IsTrap", GEM)] = 1
+    osiv[key("CanSee", P1, GEM)], osiv[key("HasLineOfSight", P1, GEM)] = nil, nil
+    eq(G.visible(GEM), false, "out of sight")
+    local j = job(op("disarm", { char = P1, target = GEM }))
+    eq(j.status, "failed", "undiscovered"); assert(j.error:find("no known trap there", 1, true), j.error)
+    osiv[key("IsTrapDiscovered", GEM)] = 1
+    j = job(op("disarm", { char = P1, target = GEM }))
+    arrive(j, { 8.5, 0, 0 })
+    eq(j.status, "done", "discovered " .. tostring(j.error))
+    eq(j.result.needs_click, GEM, "needs_click"); eq(j.result.menu, "Disarm", "menu item")
+end)
+
 test("lockpick: a party member carries the key -> refused, points to interact", function()
     keyed_door(P1)
     local j = job(op("lockpick", { char = P1, target = DOOR }))
