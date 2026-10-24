@@ -80,6 +80,21 @@ class ItemRef(unittest.TestCase):
         with self.assertRaises(ValueError):
             inventory._item_uuid("Potion of Superior Healing", "Claude")
 
+    def test_worn_item_by_name_in_a_fresh_bridge(self):
+        # D8: feed_gale("Gloves of Power") on Claude's worn gloves was 'unknown target' until a get_inventory
+        gloves = {"uuid": R[0], "name": "Gloves of Power", "owner": CLAUDE, "rarity": "uncommon",
+                  "slot_type": "Gloves", "equipped_slot": "Gloves"}
+        fake = self.use([])
+        fake.items = [gloves]
+        out = getattr(inventory.feed_gale, "fn", inventory.feed_gale)("Gloves of Power")
+        self.assertEqual(fake.jobs, [("ui.donate", {"item": R[0]})])
+        self.assertIn("feed_gale: done", out)
+
+    def test_name_nobody_carries_stays_unknown(self):
+        self.use([])
+        with self.assertRaisesRegex(ValueError, "unknown target"):
+            inventory._item_uuid("Gloves of Power")
+
 
 if __name__ == "__main__":
     unittest.main()
