@@ -146,6 +146,8 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     spell("FRIGHTENED", { StatusType = "BOOST", StatusGroups = { "SG_Frightened", "SG_Condition" },
         Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll);ActionResourceBlock(Movement)" })
     spell("HASTE_LETHARGY", { StatusType = "INCAPACITATED" })
+    spell("FEARED", { StatusType = "FEAR", StatusGroups = "SG_Frightened;SG_Condition;SG_Fleeing", RemoveEvents = "OnTurn",
+        RemoveConditions = "FearStatusSavingCheck()", Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll)" })
     spell("BLEEDING", { StatusType = "BOOST", StatusGroups = { "SG_Condition" } })
     spell("DOWNED", { StatusType = "DOWNED", StatusGroups = "SG_Unconscious;SG_Incapacitated" })
     local savedV = BG3AI.Visibility
@@ -173,6 +175,12 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     eq(G.move_blocked(P1), nil, "prone stands up and walks")
     on = { { id = "HASTE_LETHARGY", name = "Lethargic" } }
     eq(G.move_blocked(P1), "Lethargic", "lethargic")
+    -- S065 11:51: Claude's FEARED turn: the game moved him and ended it while end_turn said "now e4's turn"
+    on = { { id = "FEARED", name = "Fearful", turns = 2 } }
+    d = G.disabling(P1)
+    assert(tostring(d[1].effect):find("the game may move it away by itself at its turn start", 1, true), d[1].effect)
+    eq(d[1].fix, "it saves again each turn", "fear: FearStatusSavingCheck at the turn start")
+    eq(G.move_blocked(P1), nil, "a fearful member may still walk (S066 Karlach)")
     on = { { id = "FRIGHTENED", name = "Frightened" } }
     eq(G.move_blocked(P1), "Frightened", "movement blocked by a boost")
     -- S076 00:40:39: Gale's Scorching Ray while asleep: the refusal says how to wake her
