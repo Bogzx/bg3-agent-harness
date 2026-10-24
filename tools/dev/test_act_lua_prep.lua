@@ -181,7 +181,7 @@ test("guard (ACT-13): CharacterMoveTo is blocked; G.q runs queries only", functi
     eq(G.query_ok("InSamePartyGroup"), true, "InSamePartyGroup"); eq(G.query_ok("SpeakerGetDialog"), true, "SpeakerGetDialog")
 end)
 
-test("disarm: a discovered trap out of sight is approached and right-clicked (S064 Sanguine Vent); unknown refused", function()
+test("disarm: a discovered trap out of sight is approached and right-clicked (S064); unknown refused", function()
     osiv[key("IsTrap", GEM)] = 1
     osiv[key("CanSee", P1, GEM)], osiv[key("HasLineOfSight", P1, GEM)] = nil, nil
     eq(G.visible(GEM), false, "out of sight")

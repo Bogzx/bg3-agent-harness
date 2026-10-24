@@ -463,7 +463,8 @@ function G.disabling_info(id)
             for g in pairs(groups) do help = help or G.HELP_GROUPS[g] end
             if help then fix[#fix + 1] = "an adjacent ally's Help (an action) ends it" end
             if flagset(field("RemoveEvents")).OnDamage then fix[#fix + 1] = "any damage ends it" end
-            if tostring(field("RemoveConditions") or ""):find("Saving", 1, true) then -- SavingThrow(…), FearStatusSavingCheck()
+            -- SavingThrow(…), FearStatusSavingCheck()
+            if tostring(field("RemoveConditions") or ""):find("Saving", 1, true) then
                 fix[#fix + 1] = "it saves again each turn"
             end
             c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil }

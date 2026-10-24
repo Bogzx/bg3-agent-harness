@@ -146,8 +146,9 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     spell("FRIGHTENED", { StatusType = "BOOST", StatusGroups = { "SG_Frightened", "SG_Condition" },
         Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll);ActionResourceBlock(Movement)" })
     spell("HASTE_LETHARGY", { StatusType = "INCAPACITATED" })
-    spell("FEARED", { StatusType = "FEAR", StatusGroups = "SG_Frightened;SG_Condition;SG_Fleeing", RemoveEvents = "OnTurn",
-        RemoveConditions = "FearStatusSavingCheck()", Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll)" })
+    spell("FEARED", { StatusType = "FEAR", StatusGroups = "SG_Frightened;SG_Condition;SG_Fleeing",
+        RemoveEvents = "OnTurn", RemoveConditions = "FearStatusSavingCheck()",
+        Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll)" })
     spell("BLEEDING", { StatusType = "BOOST", StatusGroups = { "SG_Condition" } })
     spell("DOWNED", { StatusType = "DOWNED", StatusGroups = "SG_Unconscious;SG_Incapacitated" })
     local savedV = BG3AI.Visibility
