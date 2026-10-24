@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from bg3ai import clicker, hotbar, render, twostep  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
-from bg3ai.tools import combat, core, plumbing, world_tools  # noqa: E402
+from bg3ai.tools import combat, core, plumbing, reporting, world_tools  # noqa: E402
 
 ME = "aaaaaaaa-0000-0000-0000-000000000001"
 SH = "aaaaaaaa-0000-0000-0000-000000000002"
@@ -177,9 +177,11 @@ class ScrollRead(unittest.TestCase):
             setattr(core, k, v)
         core.H.get(ME, "Claude")
         core.H.get(SH, "Shadowheart")
+        self.addCleanup(reporting._batch.d.update, dict(reporting._batch.d))
 
-        def act(name, op, args, **kw):
+        def act(name, op, args, **kw):  # as plumbing._act: sets _batch["last"] (else an earlier test's stays)
             fake.order.append(op)
+            reporting._batch["last"] = "done"
             return "use_ability: done — used"
 
         def click(game, inp, u, b):
