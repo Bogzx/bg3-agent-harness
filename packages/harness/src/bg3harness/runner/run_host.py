@@ -127,26 +127,35 @@ def archive_nav_state(se_bg3ai: Path, dest: Path) -> list[str]:
     return moved
 
 
-def isolate_nav(se_bg3ai: Path, dest: Path, marker: Path) -> list[str]:
-    """A save start's nav reset: every nav_*.json moved into dest (archive_nav_state), the marker written first so
-    restore_nav can put them back even after a crash. The decision of 2026-10-22 03:30 is to move only the start
-    host's two (bg3bench.resets.isolate_nav); that needs the save's host uuid, which tools/saves/inspect.py doesn't
-    report yet, so all of them go (and all come back). Returns the moved names."""
+SE_RUN_FILES = ("nav_*.json", "scenario.json")  # what the mod writes in the shared Script Extender/BG3AI folder
+
+
+def se_files(se_bg3ai: Path) -> list[str]:
+    """The names of the mod's files (SE_RUN_FILES) in the shared folder now."""
     try:
-        names = sorted(p.name for p in se_bg3ai.glob("nav_*.json") if p.is_file())
+        return sorted({p.name for pat in SE_RUN_FILES for p in se_bg3ai.glob(pat) if p.is_file()})
     except OSError:
         return []
-    if not names:
-        return []
+
+
+def isolate_nav(se_bg3ai: Path, dest: Path, marker: Path, archive: bool) -> list[str]:
+    """A run's nav reset. The marker, written first, names the mod's files the shared folder held before the run, so
+    restore_nav can move the run's own out after it (live9: a new game left its nav files and scenario.json), even
+    after a crash. A save start (archive) also moves every nav_*.json into dest (archive_nav_state). The decision of
+    2026-10-22 03:30 is to move only the start host's two (bg3bench.resets.isolate_nav); that needs the save's host
+    uuid, which tools/saves/inspect.py doesn't report yet, so all of them go (and all come back). A new game moves
+    none: its host is a new uuid. Returns the moved names."""
+    before = se_files(se_bg3ai)
+    names = [n for n in before if n.startswith("nav_")] if archive else []
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(json.dumps({"se": str(se_bg3ai), "dest": str(dest), "files": names}))
-    return archive_nav_state(se_bg3ai, dest)
+    marker.write_text(json.dumps({"se": str(se_bg3ai), "dest": str(dest), "files": names, "before": before}))
+    return archive_nav_state(se_bg3ai, dest) if names else []
 
 
 def restore_nav(marker: Path) -> list[str]:
     """After the run (or a failed start, or at the next start after a crash): the marker's files go back from dest;
-    a file of the same name the run wrote meanwhile is kept in <dest>/run/. Idempotent; the marker goes last. No
-    marker: nothing was moved, []."""
+    a file of the same name the run wrote meanwhile is kept in <dest>/run/, and so is every file of the mod's that
+    wasn't there before the run. Idempotent; the marker goes last. No marker: nothing was moved, []."""
     try:
         m = json.loads(marker.read_text())
     except (OSError, ValueError):
@@ -161,6 +170,10 @@ def restore_nav(marker: Path) -> list[str]:
             shutil.move(str(se / n), str(dest / "run" / n))
         shutil.move(str(dest / n), str(se / n))
         back.append(n)
+    before: list[str] | None = m.get("before")  # an older marker has no list: it can't tell the run's files
+    for n in [] if before is None else [n for n in se_files(se) if n not in before]:
+        (dest / "run").mkdir(parents=True, exist_ok=True)
+        shutil.move(str(se / n), str(dest / "run" / n))
     marker.unlink(missing_ok=True)
     return back
 
@@ -494,7 +507,7 @@ class LiveRunHost:
         r.state["saves_after"] = t0  # reset.saves: only saves from now on (and the start save) are the run's
         restore_nav(nav_marker())  # what a run that died between start and record left moved
         archive = sc["reset"]["nav_state"] == "archive" and sc["start"]["kind"] == "save"
-        moved = isolate_nav(renv.SE_BG3AI_DIR, run_dir / "reset", nav_marker()) if archive else []
+        moved = isolate_nav(renv.SE_BG3AI_DIR, run_dir / "reset", nav_marker(), archive)
         r.event("run_reset", nav_files=moved)
         self.runs[run_dir] = (r, t0, moved)
         try:
