@@ -132,11 +132,16 @@ SAVE_WALK_WAIT_S = 20.0   # a session-end (sync) save waits this long for a runn
 
 
 def _can_save() -> tuple[bool, str]:
-    """Whether the game takes a save now: no party walk/action running, nothing modal on screen and the Save
-    command enabled."""
+    """Whether the game takes a save now: no party walk/action running, no party member in a conversation,
+    nothing modal on screen and the Save command enabled."""
     busy = _save_blocker()
     if busy:
         return False, busy
+    # S096 11:36:2x: the Emperor's conversation had started (dialogue_started) but its window wasn't up yet, so
+    # ui.state read "game" (our save page masked as "game"): the failed save wasn't requeued. The server knows first.
+    w = core.game.try_rpc("act.watch", {"radius": 0}) or {}
+    if isinstance(w, dict) and w.get("dialogue"):
+        return False, "a conversation is running or starting"
     ui = core.game.try_rpc("ui.state", context="client") or {}
     scr = (ui.get("screen") or "game") if isinstance(ui, dict) else "game"
     if scr not in ("game", "game_menu", "save_load"):
