@@ -105,7 +105,8 @@ def test_plan_is_a_dry_run_table(tmp_path):
     pi = ["anthropic_claude-opus-5.5~nautiloid~rules~r1", "pi", "medium", "pi.toml", "nautiloid", "rules"]
     assert lines[1].split() == [*pi, "$2.50", "$2.50"]
     claude = next(ln.split() for ln in lines if ln.startswith("claude-opus-5-5~grove~rules~r1"))
-    assert claude[1:] == ["claude", "high", "claude.toml", "grove", "rules", "$4.00", "-"]  # never charged
+    # never charged nor capped by the matrix (fixlive: its $0.25 stopped a Claude Code run)
+    assert claude[1:] == ["claude", "high", "claude.toml", "grove", "rules", "-", "-"]
     assert "8 jobs (4 paid), reserve $13.00" in out
     assert "spent: $1.50 of $20.00" not in out and "$1.50 of $20.00 spent" in out
     assert "condition rules: a pilot (allow_gaps); play.py lacks a rules-only prompt" in out
@@ -367,7 +368,7 @@ def test_the_variance_pilot_plan(tmp_path):
     cells = {(r[1], r[4]) for r in rows}
     assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 16  # every model plays every ready scenario
     assert {r[2] for r in rows} == {"medium"} and {r[5] for r in rows} == {"rules"}
-    assert all(r[6:] == ["$0.25", "$0.25" if r[1] == "pi" else "-"] for r in rows)
+    assert all(r[6:] == (["$0.25", "$0.25"] if r[1] == "pi" else ["-", "-"]) for r in rows)
     assert "96 jobs (48 paid), reserve $12.00" in out
     assert "scenario fight_act1_windmill_tactician: skipped, not ready: no start save yet" in out
     assert (
