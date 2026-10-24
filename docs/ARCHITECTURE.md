@@ -112,7 +112,13 @@ The three harness-only files are not agent-facing:
 * **Referee ring** (`Referee.lua`, ops `ref.since` / `ref.snapshot`): what the party really did, hidden facts
   included (trades, pickpockets, thefts, crimes, kills, loot), in the facts v1 event shapes.
 * **Roll log** (`RollLog.lua`, ops `roll.since` / `roll.snapshot`): every die roll the game makes, for the
-  benchmark's luck number (D9).
+  benchmark's luck number (D9). `natural` and `dc` are filled where the game exposes them, which on this build is
+  passive and skill/ability checks (the RequestedRoll component); saving throws and attack rolls are logged with
+  `natural`/`dc` null (success, roller and stream counts only), so the luck number is the checks' luck. Closed
+  2026-10-24 after two live probe passes found no source for them (`tools/dev/probe_roll_sources.py`; evidence in
+  research/fix/vis.md "R2" and research/fix/live.md Window D2: `runtime/probes/fix-live/rolls-dump.txt`,
+  `rolls2-dump.txt`, `runtime/probes/fix-vis/rolls.json`, `rolls2.json`; the passive checks' PASS in
+  `fix-live/rolllog-a.json`).
 * **Scenario setup** (`Scenario.lua`, ops `scn.seed`, `scn.karmic`, `scn.difficulty`, `scn.rename`,
   `scn.rename_avatar`, `scn.undo`, `scn.status`): seeded dice, Karmic Dice, the difficulty read and the
   renames used by benchmark runs and start-save authoring (`tools/saves/make_start_save.py`). Every `scn.*` op is
