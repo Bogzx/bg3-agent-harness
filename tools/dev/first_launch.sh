@@ -20,6 +20,8 @@
 #                 10G), so an OOM kills only the game, never the agents' unit (2026-10-10: one did)
 #   6 screen      one frame through the screenshot layer (bridge/src/bg3ai/screen.py)
 # Then it prints what to do next. The game is left running.
+# BG3AI_LAUNCHER_PIDFILE: the launcher's pid (its own session and process group) is written there (live_window.py
+# kills that group when interrupted during the launch).
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 RUNTIME="${BG3AI_RUNTIME:-$REPO/runtime}"
@@ -123,10 +125,9 @@ else
         die "no usable display: $display_problem. Export DISPLAY/XAUTHORITY of the desktop session (bg3harness.display_env)"
     ok "display: DISPLAY=$DISPLAY XAUTHORITY=${XAUTHORITY:-~/.Xauthority}"
     LAUNCH_LOG="$RUNTIME/logs/first_launch-$(date +%Y%m%d-%H%M%S).log"
-    # Close inherited fds > 2 first: run under `flock runtime/live.lock`, the launcher (which lives as long as the
-    # game) kept the lock fd and held the live lock for the whole game (2026-10-10 10:52, every worker blocked).
-    setsid nohup bash -c 'for f in /proc/$$/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-" 2>/dev/null; done; exec "$@"' \
-        _ "$REPO/runner/launch_game.sh" "${launch_args[@]}" > "$LAUNCH_LOG" 2>&1 < /dev/null &
+    # In its own session, inherited fds > 2 closed, its pid in $BG3AI_LAUNCHER_PIDFILE when set (detached.sh)
+    setsid nohup "$REPO/tools/dev/detached.sh" "$$" \
+        "$REPO/runner/launch_game.sh" "${launch_args[@]}" > "$LAUNCH_LOG" 2>&1 < /dev/null &
     launcher=$!
     ok "runner/launch_game.sh started (launcher log: $LAUNCH_LOG)"
 fi

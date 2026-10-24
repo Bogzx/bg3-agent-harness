@@ -211,11 +211,14 @@ class Window:
         return verdict
 
     def cmd(self, argv: list[str], log: Path | None = None, timeout: float | None = None,
-            env: dict | None = None) -> tuple[int, str]:
+            env: dict | None = None, detached: Path | None = None) -> tuple[int, str]:
         """Run argv in the repo, streaming its output to the window log (and log, a tee); (exit code, output).
         Exit 124 = timeout. The child never inherits the lock fd (close_fds, and the fd is close-on-exec). It runs in
         its own session, so the terminal's Ctrl-C never reaches it: an interrupt here kills its process group before
-        it goes on (live9: first_launch.sh went on launching the game after the window stopped)."""
+        it goes on (live9: first_launch.sh went on launching the game after the window stopped). `detached`: a file
+        the child writes the pid of a session of its own into (first_launch.sh's launcher, detached.sh); a timeout or
+        an interrupt kills that session's group too, after the child's (fix Window C: the launcher's own session
+        brought the game up 20 s after the window stopped)."""
         self.say("  $ " + shlex.join(argv))
         lines = []
         lf = open(log, "a") if log else None
@@ -238,7 +241,13 @@ class Window:
                 os.killpg(p.pid, signal.SIGKILL)
             except OSError:
                 pass
-            p.wait()
+            p.wait()   # reaped first: detached.sh writes its pid before it checks that the child is its parent
+            try:
+                pid = int(detached.read_text()) if detached else 0
+                if pid > 0 and os.getpgid(pid) == pid:   # still its own group's leader: not a reused pid
+                    os.killpg(pid, signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
 
         try:
             while True:
@@ -485,7 +494,9 @@ class Window:
             if not save.is_dir():
                 return self.row("launch", "FAIL", f"no save folder {save} (--save takes the folder name)") == "PASS"
         self.launched = not self.a.attach   # before it returns: a Ctrl-C mid-launch stops what it brought up
-        rc, out = self.cmd(self.commands()["launch"], log=self.dir / "launch.log", timeout=self.a.launch_timeout)
+        pidf = self.dir / "launcher.pid"
+        rc, out = self.cmd(self.commands()["launch"], log=self.dir / "launch.log", timeout=self.a.launch_timeout,
+                           env=dict(self.env, BG3AI_LAUNCHER_PIDFILE=str(pidf)), detached=pidf)
         if rc == 0:
             return self.row("launch", "PASS", "attached" if self.a.attach else
                             f"game up on {self.a.save} (first_launch.sh: READY)") == "PASS"

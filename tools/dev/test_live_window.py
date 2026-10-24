@@ -580,6 +580,52 @@ class TestHelpers(Base):
         with self.assertRaises(ProcessLookupError):   # killed and reaped
             os.kill(pid, 0)
 
+    def gone(self, pid: int) -> bool:
+        """pid dead (a zombie until its new parent reaps it, or reaped); waits up to 5 s for SIGKILL to land."""
+        end = time.monotonic() + 5
+        while time.monotonic() < end:
+            try:
+                if Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                    return True
+            except (OSError, IndexError):
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_cmd_interrupted_kills_the_launchers_own_session(self):
+        # fix Window C: first_launch.sh starts the launcher in a session of its own (detached.sh), so the kill of
+        # first_launch's group missed it and it brought the game up 20 s after the window stopped
+        pidf = self.rt / "launcher.pid"
+        detached = Path(__file__).resolve().parent / "detached.sh"
+
+        def out(s):
+            if s.strip() == "up":
+                raise KeyboardInterrupt
+        w = self.window()
+        w._out = out
+        w.dir.mkdir(parents=True)
+        ran = self.rt / "launcher.ran"   # the launcher really runs (detached.sh found its parent), as in the window
+        script = (f"setsid nohup {detached} $$ bash -c 'touch {ran}; exec sleep 30' >/dev/null 2>&1 </dev/null & "
+                  f"until [ -e {ran} ]; do sleep 0.05; done; echo up; exec sleep 30")
+        with self.assertRaises(KeyboardInterrupt):
+            w.cmd(["bash", "-c", script], env=dict(w.env, BG3AI_LAUNCHER_PIDFILE=str(pidf)), detached=pidf)
+        pid = int(pidf.read_text())
+        self.assertTrue(self.gone(pid))
+
+    def test_launch_tells_first_launch_where_the_launcher_pid_goes(self):
+        procs = FakeProcs(game=[], saves=None)
+        seen = []
+
+        def cmd(w, argv, *a, **k):
+            seen.append((k.get("env", {}).get("BG3AI_LAUNCHER_PIDFILE"), k.get("detached")))
+            return 1, "FAIL: launch"
+        with mock.patch.object(LW.Window, "cmd", cmd):
+            w = self.window(procs=procs)
+            w.dir.mkdir(parents=True)
+            w.launch()
+        self.assertEqual(seen, [(str(w.dir / "launcher.pid"), w.dir / "launcher.pid")])
+
+
     def test_held_by_other(self):
         p = self.rt / "x.lock"
         self.assertFalse(LW.held_by_other(p))
@@ -613,6 +659,32 @@ class TestHelpers(Base):
             self.assertEqual((p.game(), p.foreign()), ([], []))
         with mock.patch.object(gio.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")):
             self.assertEqual(LW.Procs().reporters(), [])
+
+class TestDetached(unittest.TestCase):
+    """tools/dev/detached.sh: first_launch.sh's launcher in a session of its own."""
+
+    SH = str(Path(__file__).resolve().parent / "detached.sh")
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.tmp = Path(td.name)
+        self.env = dict(os.environ, BG3AI_LAUNCHER_PIDFILE=str(self.tmp / "pid"))
+
+    def test_runs_the_command_and_records_its_pid(self):
+        r = subprocess.run([self.SH, str(os.getpid()), "bash", "-c", "echo $$"], env=self.env,
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), (self.tmp / "pid").read_text().strip())   # exec: the same pid
+
+    def test_parent_gone_runs_nothing(self):
+        mark = self.tmp / "ran"
+        r = subprocess.run([self.SH, "1", "touch", str(mark)], env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 130)
+        self.assertIn("parent 1 is gone", r.stderr)
+        self.assertFalse(mark.exists())
+        self.assertTrue((self.tmp / "pid").read_text().strip().isdigit())   # written before the check
+
 
 
 if __name__ == "__main__":
