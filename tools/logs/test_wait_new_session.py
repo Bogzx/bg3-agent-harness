@@ -93,7 +93,8 @@ class WaitNewSession(unittest.TestCase):
         (self.sd / "S086.triage.md").write_text("# Triage S086\n")
         time.sleep(0.2)
         with open(self.sd / "runner_events.jsonl", "a") as f:
-            f.write(json.dumps({"t": time.time() + 0.1, "kind": "recovered", "fault": "hang", "session": "S086"}) + "\n")
+            rec = {"t": time.time() + 0.1, "kind": "recovered", "fault": "hang", "session": "S086"}
+            f.write(json.dumps(rec) + "\n")
         time.sleep(1.5)   # past keeper_max: the old wait printed "review: none" + NEW SESSION here
         self.assertIsNone(p.poll(), "woke on the mid-session triage")
         (self.sd / "S086-r1.triage.md").write_text("# Triage S086-r1\n")
