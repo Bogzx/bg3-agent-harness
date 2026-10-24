@@ -152,7 +152,7 @@ fi
 # player off) requires an offline Steam (RUN-11: only there; a public user's online Steam is fine).
 if [ "$dry_run" != 1 ]; then
     steam_state="$(python3 "$REPO/tools/steam_paths.py" launch-ok)" \
-        || die "REFUSING TO LAUNCH: Steam is not offline ($steam_state). Steam > Go Offline, or BG3AI_REQUIRE_STEAM_OFFLINE=0"
+        || die "REFUSING TO LAUNCH: Steam not ready: $steam_state. Start Steam (in offline mode where offline is required: Steam > Go Offline, or BG3AI_REQUIRE_STEAM_OFFLINE=0) and leave it running"
 fi
 # A display the game can open a window on: unset DISPLAY/XAUTHORITY/... come from the desktop's Xwayland
 # (bg3harness.display_env; an ssh shell has none). Without one the game doesn't fail cleanly: L8 2026-10-18,

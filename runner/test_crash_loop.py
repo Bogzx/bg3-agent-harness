@@ -199,6 +199,28 @@ class SteamGuard(unittest.TestCase):
         self.assertIn(r.returncode, (0, 3), r.stderr)
         self.assertEqual(len(r.stdout.splitlines()), 1)
 
+    def test_launch_game_sh_says_steam_isnt_running(self):
+        # launch_game.sh's refusal said "Steam is not offline (Steam isn't running ...)" with no Steam at all; a fake
+        # pgrep finds no Steam and a fake game/sniper would only write a marker (nothing real can start)
+        bin_, game, sniper = self.tmp / "bin", self.tmp / "game", self.tmp / "sniper"
+        for d in (bin_, game / "bin", sniper):
+            d.mkdir(parents=True)
+        marker = self.tmp / "launched"
+        for exe, body in ((bin_ / "pgrep", "exit 1"), (game / "bin" / "bg3", f"touch {marker}"),
+                          (sniper / "run", f"touch {marker}")):  # fmt: skip
+            exe.write_text(f"#!/bin/sh\n{body}\n")
+            exe.chmod(0o755)
+        env = {**os.environ, "PATH": f"{bin_}:{os.environ['PATH']}", "BG3_DIR": str(game),
+               "BG3AI_SNIPER_DIR": str(sniper), "BG3AI_RUNTIME": str(self.tmp / "runtime"),
+               "BG3AI_PROFILE_DIR": str(self.tmp / "profile"), "BG3AI_REQUIRE_STEAM_OFFLINE": "0",
+               "BG3AI_GAME_SCOPE": "0", "BG3LE_DEBUG_PORT": "59997"}  # fmt: skip
+        sh = Path(renv.REPO) / "runner" / "launch_game.sh"
+        r = rcode.subprocess.run(["bash", str(sh), "--no-bg3le", "--no-input-shim"], capture_output=True, text=True,
+                                 env=env, timeout=60)  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("REFUSING TO LAUNCH: Steam not ready: Steam isn't running (Steam offline not required", r.stderr)
+        self.assertFalse(marker.exists())
+
 
 class RunLoop(unittest.TestCase):
     """Runner.run(): a Steam refusal never counts toward giving up; start/stop land in runner_events.jsonl."""
