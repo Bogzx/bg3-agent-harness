@@ -362,12 +362,21 @@ reg("interact", function(args)
                 -- the climb itself: the actor on another floor and still, or give up after A.LADDER_CLIMB_MS.
                 local lj, here = job.ladder, G.pos(char)
                 local now = RPC.now_ms()
+                local climbing = G.b(G.q("HasActiveStatus", char, "CLIMBING"))
+                -- Live P4 2026-10-24 (Knotted Roots from the gate, 3 of 3): the Use first walks from the settle spot
+                -- (y 36.74) down onto the ladder's top landing (35.6); 0.8 m of that step purged the Use ~0.35 s
+                -- before CLIMBING began, so nothing climbed and `purged` blocked the retry. Until the climb begins,
+                -- a walking tick (it moves sideways at least half as far as up or down: no floor is that steep, a
+                -- ladder is vertical) carries y0 along, so the checks below measure from where the climb starts.
+                if not lj.purged and not climbing and here and lj.last then
+                    local h = math.sqrt((here[1] - lj.last[1]) ^ 2 + (here[3] - lj.last[3]) ^ 2)
+                    if math.abs(here[2] - lj.last[2]) < 2 * h then lj.y0 = here[2] end
+                end
                 -- Root cause (live probe 2026-10-11 01:5x, Knotted Roots): the Use stays in the Osiris queue after
                 -- the climb and climbs again from the other end (down/up/down, < 0.5 s at each end), so the actor
                 -- ended back where it started. Purged once the climb has begun (CLIMBING status, or 0.8 m along), the
                 -- climb runs to its end and the actor stays there (probe: 31.59 held for 5 s).
-                if not lj.purged and here and lj.y0 and (math.abs(here[2] - lj.y0) > 0.8
-                    or G.b(G.q("HasActiveStatus", char, "CLIMBING"))) then
+                if not lj.purged and here and lj.y0 and (math.abs(here[2] - lj.y0) > 0.8 or climbing) then
                     lj.purged = true
                     pcall(G.osi, "PurgeOsirisQueue", char)
                 end
