@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -93,7 +94,15 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
         for exe in (game / "bin" / "bg3", sniper / "run"):
             exe.write_text(f"#!/bin/sh\ntouch {self.marker}\nexit 0\n")
             exe.chmod(0o755)
-        self.env = {**os.environ, "BG3_DIR": str(game), "BG3AI_SNIPER_DIR": str(sniper),
+        # Steam "runs" (launch-ok refuses without a Steam process since 48ff794; CI has none): a pgrep that finds
+        # steam, the real one for anything else
+        bin_ = self.tmp / "bin"
+        bin_.mkdir()
+        real = shutil.which("pgrep")
+        (bin_ / "pgrep").write_text(f'#!/bin/sh\ncase "$*" in *steam*) echo 1; exit 0;; esac\nexec {real} "$@"\n')
+        (bin_ / "pgrep").chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{bin_}:{os.environ['PATH']}", "BG3_DIR": str(game),
+                    "BG3AI_SNIPER_DIR": str(sniper),
                     "BG3AI_RUNTIME": str(self.tmp / "runtime"), "BG3AI_PROFILE_DIR": str(self.tmp / "profile"),
                     "BG3AI_CONFIG_DIR": str(self.tmp / "config"), "BG3AI_REQUIRE_STEAM_OFFLINE": "0",
                     "BG3AI_GAME_SCOPE": "0", "BG3LE_DEBUG_PORT": "59997",
