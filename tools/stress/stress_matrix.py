@@ -176,12 +176,21 @@ def parse(text: str) -> Matrix:
 
 
 def problems(m: Matrix, sections: list[str], milestone_ids: list[str]) -> list[str]:
-    """What parse can't see on its own: acc sections that acceptance.py doesn't have, unknown milestones."""
+    """What parse can't see on its own: acc sections that acceptance.py doesn't have, unknown milestones, rows that
+    put one save in two acts (live6: C30 moved to an Act 1 save and kept act 2, so --act picked it wrongly)."""
     out = []
+    acts: dict[str, dict[str, list[str]]] = {}
     for r in m.rows:
+        if r.save and r.act != "any":  # any: the row tests nothing act-specific on its save
+            acts.setdefault(r.save, {}).setdefault(r.act, []).append(r.id)
         for c in r.checks:
             if c.kind == "acc" and c.spec["section"] not in sections:
                 out.append(f"{c.key}: no acceptance section {c.spec['section']!r} (have {', '.join(sections)})")
             if c.kind == "agent" and c.spec.get("until", "game_end") not in milestone_ids:
                 out.append(f"{c.key}: until {c.spec['until']!r} is not a milestone")
+    for save, by in acts.items():
+        if len(by) > 1:
+            out.append(
+                f"save {save}: rows in acts " + "; ".join(f"{a} ({', '.join(ids)})" for a, ids in sorted(by.items()))
+            )
     return out

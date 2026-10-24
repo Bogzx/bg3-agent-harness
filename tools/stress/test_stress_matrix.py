@@ -168,6 +168,15 @@ def test_problems_names_unknown_sections_and_milestones():
     ]
 
 
+def test_problems_names_a_save_in_two_acts():
+    rows = [
+        '{id = "X1", situation = "s", act = "1", save = "S7", check = [{kind = "manual", what = "w"}]}',
+        '{id = "X2", situation = "s", act = "2", save = "S7", check = [{kind = "manual", what = "w"}]}',
+    ]
+    m = sm.parse(one(",\n  ".join(rows)))
+    assert sm.problems(m, [], []) == ["save S7: rows in acts 1 (X1); 2 (X2)"]
+
+
 def test_check_ids_resolve_and_unknown_ones_are_refused(matrix):
     assert matrix.check("G6#1").kind == "manual"
     for bad in ("G6#9", "G6", "Q1#0", "G6#x"):
