@@ -10,7 +10,7 @@ import json
 import unittest
 
 from bg3ai import macros
-from bg3ai.tools import plumbing, travel_macro, turn_tool
+from bg3ai.tools import core, plumbing, travel_macro, turn_tool
 from test_turn_macros import CHEST, GOB, P1, P2, Base, combat
 
 
@@ -176,6 +176,82 @@ class TravelLegs(Base):
         out = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertLessEqual(len(self.g.ops("act.move_to")), 2)
         self.assertIn("no walkable ground leads further", out)
+
+
+class DoorLink(Base):
+    """B4 (S037 Rescue Volo; vis f3b25d2): Volo inside the Sanctum read 610 m off, and travel_to walked toward the
+    straight line until blocked; nav.route now names the Heavy Oak Doors the party came out of (door_link). The trip
+    goes to the door, uses it, and walks on from where it let the party out."""
+    DOOR = "dddddddd-0000-0000-0000-000000000352"
+
+    def setUp(self) -> None:
+        super().setUp()
+        plumbing.SETTLE_S = 10.0
+        def result(op, a):
+            if op != "act.move_to":
+                return {"used": True}
+            for r in self.g.watch["party"]:
+                if r["uuid"] == a.get("char"):
+                    r["pos"] = list(a["pos"])
+            return {"after": {"pos": a.get("pos")}}
+        self.g.result_for = result
+        self.door, self.through = [20.0, 0.0, 0.0], True
+
+        def route(a):
+            if a["pos"][0] != 560.0:
+                return {"reachable": True}
+            return {"too_far": True, "door_link": {"uuid": self.DOOR, "name": "Heavy Oak Doors", "door": self.door,
+                                                   "to": [500.0, 0.0, 0.0], "door_m": self.door[0], "dir": "E",
+                                                   "to_goal_m": 60.0}}
+        self.g.route = route
+
+        def on_start(op, a):
+            if op == "act.interact" and self.through:
+                for r in self.g.watch["party"]:
+                    r["pos"] = [500.0 + (r["uuid"] == P2), 0.0, 0.0]
+        self.g.on_start = on_start
+
+        def reach(a):
+            x = next(r["pos"][0] for r in self.g.watch["party"] if r["uuid"] == P1)
+            return {"reachable": True, "pos": [min(a["pos"][0], x + a["max_m"]), 0.0, 0.0], "verified": True}
+        self.g.reach = reach
+
+    def legs(self) -> tuple[list, list]:
+        i = self.g.calls.index(self.g.ops("act.interact")[0])
+        moves = [(self.g.calls.index(m), m[1]["pos"][0]) for m in self.g.ops("act.move_to")]
+        return [x for n, x in moves if n < i], [x for n, x in moves if n > i]
+
+    def test_the_trip_goes_through_the_door_then_on(self):
+        out = travel_macro.travel_to(x=560.0, y=0.0, z=0.0)
+        self.assertEqual(self.g.ops("act.interact")[0][1]["target"], self.DOOR)
+        self.assertEqual(self.legs(), ([], [530.0, 560.0]))
+        h = core.H.get(self.DOOR)
+        self.assertIn(f"BEHIND A DOOR: {h} Heavy Oak Doors @(20,0,0) took the party to (500,0,0) before, 60m from "
+                      "the goal: going through it", out)
+        self.assertIn(f"through {h} Heavy Oak Doors: now @(500,0,0)", out)
+        self.assertIn("arrived", out)
+        self.assertEqual(self.g.ops("nav.waypoints"), [])  # no fast travel to a waypoint walk (S037's blocked one)
+
+    def test_a_far_door_is_walked_to_first(self):
+        self.door = [100.0, 0.0, 0.0]
+        out = travel_macro.travel_to(x=560.0, y=0.0, z=0.0)
+        self.assertEqual(self.legs(), ([30.0, 60.0, 90.0, 100.0], [530.0, 560.0]))
+        self.assertIn("to the door: travel_to", out)
+        self.assertTrue(all(a["pos"][0] == 560.0 for _, a in self.g.ops("nav.route")), "the walk to the door asks none")
+        self.assertIn("arrived", out)
+
+    def test_a_door_that_did_not_take_the_party_stops(self):
+        self.through = False
+        out = travel_macro.travel_to(x=560.0, y=0.0, z=0.0)
+        self.assertEqual(self.legs(), ([], []))
+        self.assertIn(f"STOPPED: used {core.H.get(self.DOOR)} Heavy Oak Doors, but it did not take the party through "
+                      "(still @(0,0,0))", out)
+
+    def test_no_door_link_walks_as_before(self):
+        self.g.route = {"too_far": True}
+        out = travel_macro.travel_to(x=560.0, y=0.0, z=0.0)
+        self.assertEqual(self.g.ops("act.interact"), [])
+        self.assertNotIn("BEHIND A DOOR", out)
 
 
 class InTheWay(Base):
