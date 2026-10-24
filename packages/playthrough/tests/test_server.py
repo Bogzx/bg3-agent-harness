@@ -447,6 +447,7 @@ def test_the_session_runner_is_the_harness_unless_legacy_is_asked_for(tmp_path):
     base = ["--supervise", "--runtime", str(tmp_path), "--repo", str(tmp_path)]
     runner, keeper_client = session_runner(parser().parse_args(base))  # the bridge client connects lazily
     assert isinstance(runner, HarnessRunner) and keeper_client.__self__.profiles == tmp_path / "profiles"
+    assert runner.read_story is not None and runner.facts_for is not None  # the story poll and facts.jsonl
     # the app launches the game: GameController over AppHost (launch_game.sh in --repo, the mod snapshot in --runtime)
     assert isinstance(runner.game, LaunchedGame) and isinstance(runner.game.host, AppHost)
     assert runner.game.host.launch_sh == tmp_path / "runner" / "launch_game.sh"

@@ -534,7 +534,15 @@ def session_runner(opt: argparse.Namespace) -> tuple[sup.SessionRunner, Any]:
     game = attached if opt.attach else launched_game(opt, attached, log)
     agents = ClientAgents(opt.repo / "profiles", opt.repo / "play", time.time, game.fault, repo=opt.repo)
     runner = HarnessRunner(
-        opt.runtime, opt.playthroughs, agents, game, SessionPy, time.time, log=log, read_story=attached.story
+        opt.runtime,
+        opt.playthroughs,
+        agents,
+        game,
+        SessionPy,
+        time.time,
+        log=log,
+        read_story=attached.story,
+        facts_for=attached.facts,
     )
     return runner, agents.keeper_client
 
