@@ -495,6 +495,28 @@ def test_a_new_game_moves_no_nav_file(rig: Rig):  # its host is a new uuid: no f
     assert rig.h.record(JOB, NEW_SC, run_dir("m-idol"), outcome())["reset"] == {"nav_files": [], "restored": []}
 
 
+@pytest.mark.parametrize("sc", [NEW_SC, SAVE_SC])
+def test_record_moves_the_runs_own_files_out_of_the_shared_folder(rig: Rig, sc: dict[str, Any]):  # live9 #11
+    rig.h.start(JOB, sc, run_dir("m-idol"))
+    for name in ("nav_bb.json", "nav_guard_bb.json", "scenario.json"):  # the run's new host and its seed record
+        (renv.SE_BG3AI_DIR / name).write_text('{"run": 1}')
+    rig.h.record(JOB, sc, run_dir("m-idol"), outcome())
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
+    assert sorted(p.name for p in (run_dir("m-idol") / "reset" / "run").iterdir()) == [
+        "nav_bb.json",
+        "nav_guard_bb.json",
+        "scenario.json",
+    ]
+    assert not H.nav_marker().exists()
+
+
+def test_a_scenario_record_from_before_the_run_stays(rig: Rig):
+    (renv.SE_BG3AI_DIR / "scenario.json").write_text('{"renames": []}')
+    rig.h.start(JOB, NEW_SC, run_dir("m-idol"))
+    rig.h.record(JOB, NEW_SC, run_dir("m-idol"), outcome())
+    assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json", "scenario.json"]
+
+
 def test_the_next_start_restores_what_a_dead_run_left_moved(rig: Rig):
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))  # the process dies here: no record
 
@@ -504,7 +526,7 @@ def test_the_next_start_restores_what_a_dead_run_left_moved(rig: Rig):
     host = H.LiveRunHost(lambda opt: FakeRunner(opt, []), run_files=no_files, env={}, clock=lambda: 2000.0)
     host.start(JOB, NEW_SC, run_dir("m-idol"))
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
-    assert not H.nav_marker().exists()
+    assert json.loads(H.nav_marker().read_text())["dest"] == str(run_dir("m-idol") / "reset")  # the new run's own
 
 
 def test_record_of_a_run_that_reached_its_until_milestone(rig: Rig):
