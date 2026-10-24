@@ -62,6 +62,14 @@ end
 -- Osiris Use may skip the cost (it does for potions), so A.scroll_pending keeps what reading it owes and
 -- act.scroll_settle charges, once the scroll is used up, whatever the engine did not.
 A.scroll_pending = {}
+-- Live 2026-10-24 (S049-end, Karlach reads Revivify on Shadowheart): the scroll was still in her bags 2.6 s after
+-- Shadowheart stood up, its cast still playing, and gone later (her action spent): the settle said "not used up".
+-- The reader's own cast after the Use (CastSpell, then CastedSpell) is followed, so the settle waits for its end.
+function A.scroll_cast(event, caster)
+    local p = A.scroll_pending[G.guid(caster)]
+    if not p then return end
+    if event == "CastSpell" then p.cast = true else p.casted = true end
+end
 function A.combat_scroll(char, target)
     if not target or not G.in_combat(char) or not G.b(G.q("IsItem", target)) then return nil end
     if not G.same(holder(target), char) then return nil end

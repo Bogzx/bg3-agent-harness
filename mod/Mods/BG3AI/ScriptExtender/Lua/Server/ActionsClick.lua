@@ -311,7 +311,8 @@ end)
 
 -- act.scroll_settle {char, final?} (A7): after a combat scroll's target clicks. Once the scroll is used up (gone from
 -- the reader's bags, or its stack smaller) it charges what reading it owed and the engine did not -> {read = true,
--- charged = [{resource, amount}]}. Not used up yet: {read = false} (the pending entry stays until final=true).
+-- charged = [{resource, amount}]}. Not used up yet: {read = false, casting = true while the reader's cast plays} (the
+-- pending entry stays until final=true). At final=true a scroll still there whose cast went off (CastedSpell) is read.
 RPC.register("act.scroll_settle", function(args)
     local char = G.guid(args.char)
     local p = char and A.scroll_pending[char]
@@ -320,9 +321,9 @@ RPC.register("act.scroll_settle", function(args)
     if G.b(G.q("IsItem", p.item)) and G.same(holder(p.item), char) then
         left = tonumber((G.q("GetStackAmount", p.item))) or 1
     end
-    if left >= p.stack then
+    if left >= p.stack and not (args.final and p.casted) then
         if args.final then A.scroll_pending[char] = nil end
-        return { read = false }
+        return { read = false, casting = (p.cast and not p.casted) or nil }
     end
     A.scroll_pending[char] = nil
     local after, charged = G.resources(char), {}

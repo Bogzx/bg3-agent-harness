@@ -479,6 +479,7 @@ def _carried_scroll(char: str, ability: str) -> dict | None:
 
 SCROLL_MAX_PICKS = 6     # Scorching Ray's beams and the like: one click per pick
 SCROLL_SETTLE_S = 2.5    # a combat scroll: the scroll is used up this long after the last click at most
+SCROLL_CAST_MAX_S = 12.0  # ... or after its cast's end (live 2026-10-24: a Revivify still playing 2.6 s after it)
 
 
 def _scroll_more_picks(inp, char: str, tgts: list[str]) -> str:
@@ -507,15 +508,20 @@ def _scroll_more_picks(inp, char: str, tgts: list[str]) -> str:
 
 def _scroll_settle(char: str) -> str:
     """A scroll read in combat (act.interact's combat_scroll): once it is used up, the mod charges what reading it
-    cost (an action) and the engine did not. What to tell the agent about it."""
-    end = time.monotonic() + SCROLL_SETTLE_S
+    cost (an action) and the engine did not. What to tell the agent about it. While the reader's cast still plays
+    (the mod saw its CastSpell, no CastedSpell yet) the wait runs on, up to SCROLL_CAST_MAX_S."""
+    t0 = time.monotonic()
+    end, cap = t0 + SCROLL_SETTLE_S, t0 + SCROLL_CAST_MAX_S
     while True:
-        last = time.monotonic() >= end
+        now = time.monotonic()
+        last = now >= end
         r = core.game.try_rpc("act.scroll_settle", {"char": char, "final": last}) or {}
         if r.get("read") or r.get("none"):
             break
         if last:
             return "; the scroll was not used up (no target taken?): no action spent"
+        if r.get("casting") and now < cap:
+            end = max(end, now + SCROLL_SETTLE_S)
         time.sleep(0.2)
     if not r.get("read"):
         return ""

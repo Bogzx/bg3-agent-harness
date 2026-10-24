@@ -293,6 +293,7 @@ function A.dispatch(event, args)
         A.stirred(args[1], "a hit on the caster")
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
         A.foe_cast(event, args[1], args[2])
+        A.scroll_cast(event, args[1])
     elseif (event == "Unlocked" or event == "Opened") and args[1] then
         A.unlock_seen(args[1])
     elseif event == "StatusRemoved" and args[1] then
