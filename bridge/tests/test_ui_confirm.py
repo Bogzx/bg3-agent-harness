@@ -192,6 +192,31 @@ class Confirm(Base):
         self.assertIn("done", inventory.long_rest())
         self.assertEqual(seen, ["ui.long_rest"])
 
+    def test_long_rest_refused_right_after_a_rest_at_this_camp(self):
+        # Live 2026-10-24 T3/T3b/PROBE-DONATE: a long_rest after a finished one: 'requested', never answered, with the
+        # camp story's DB_CAMP_JustWokeUp set, until a load (REST FLOW 'a stuck camp state'). Refused before pressing.
+        seen = []
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (
+            seen.append(op) or JobResult("done", {"rest": "full"}))
+        orig = self.g.try_rpc
+        story = {"DB_CAMP_JustWokeUp": 1, "DB_GoingToCamp": 0, "DB_PlayerInCamp": 4}
+
+        def try_rpc(op, args=None, **kw):
+            if op == "camp.can_rest":
+                return {"blocked": [], "global_disabled": 0}
+            if op == "camp.rest_flow":
+                return {"steps": [], "story": dict(story)}
+            return orig(op, args, **kw)
+        self.g.try_rpc = try_rpc
+        out = inventory.long_rest(partial=True)
+        self.assertIn("not pressed: the party woke up from a long rest at this camp", out)
+        self.assertIn('camp(action="leave")', out)
+        self.assertNotIn("DB_CAMP", out)
+        self.assertEqual(seen, [])
+        story["DB_CAMP_JustWokeUp"] = 0  # left camp since (or no rest yet): pressed as before
+        self.assertIn("done", inventory.long_rest())
+        self.assertEqual(seen, ["ui.long_rest"])
+
     def test_long_rest_waits_for_the_end_day_answer(self):
         # S030 16:30: requested -> gathered, the job gave up at 8 s, end_day_failed came ~10 s after the press;
         # the hint said "requested: loading a save clears it" and the agent reloaded (25 s) for nothing.
