@@ -29,6 +29,8 @@ R.combats = R.combats or {} -- combat guid -> {announced, members = {uuid -> tru
 R.ppItems = R.ppItems or {} -- item uuids a CharacterPickpocketSuccess already counted
 R.lastHit = R.lastHit or {} -- defender uuid -> {attacker, owner, t}: the last AttackedBy, for self-kills
 R.HIT_MS = 5000 -- a self-kill goes to the last hit within this time
+R.pendingKills = R.pendingKills or {} -- victim uuid -> {rec, hit, t}: a self-kill waiting for the killing blow
+R.PENDING_MS = 1000 -- how long a self-kill waits for the AttackedBy that follows it
 
 local truthy = U.truthy
 local osi = V.osi
@@ -230,31 +232,61 @@ listen("CrimeIsRegistered", 8, function(victim, crimeType, crimeId, _, criminal)
         criminal = name(c) })
 end)
 
--- Hits: AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, _) (live1 §6), kept per defender.
-listen("AttackedBy", 7, function(defender, owner, attacker)
-    local d, a = uuid(defender), uuid(attacker)
-    if not d or not a or a == d then return end
-    R.lastHit[d] = { attacker = a, owner = uuid(owner), t = now_ms() }
-end)
-
 -- Kills: KilledBy(victim, killerOwner, killer, _): the owner tells a summon's kill from its master's.
 -- live4: Karlach's arrow killed a Young Grease Mephit and KilledBy named the mephit itself as the killer (its death
--- burst; owner its summoner): a self-kill goes to the victim's last attacker within HIT_MS, the engine's names kept
--- as engine_killer / engine_owner with self_kill = true (no recent hit: the engine's names stand, still flagged).
-listen("KilledBy", 4, function(victim, owner, killer)
-    local v, o, k = uuid(victim), uuid(owner), uuid(killer)
-    if not v then return end
-    local rec = {}
-    if k == v then
-        rec.self_kill, rec.engine_killer, rec.engine_owner = true, name(k), o and name(o) or nil
-        local h = R.lastHit[v]
-        if h and now_ms() - h.t <= R.HIT_MS then k, o = h.attacker, h.owner end
-    end
-    R.lastHit[v] = nil
+-- burst; owner its summoner). Window B (S049-end): KilledBy fires ~47 ms BEFORE the killing blow's AttackedBy, so a
+-- self-kill waits up to PENDING_MS for the victim's next AttackedBy and goes to that attacker; none: to the last hit
+-- before the kill within HIT_MS; none either: the engine's names stand. The engine's names are kept as
+-- engine_killer / engine_owner with self_kill = true.
+local function recordKill(v, rec, k, o)
     rec.victim, rec.victim_uuid, rec.killer = name(v) or "Unknown", v, k and name(k) or nil
     rec.owner, rec.by_party = o and name(o) or nil, isParty(o) or isParty(k)
     rec.trader = (R.traders[v] or truthy(osi(Osi.CanTrade, v))) and true or false
     R.record("kill", rec)
+end
+
+-- Self-kills whose wait is over: recorded with the hit before the kill, or as the engine said.
+local function flushKills()
+    local t = now_ms()
+    for v, p in pairs(R.pendingKills) do
+        if t - p.t > R.PENDING_MS then
+            R.pendingKills[v] = nil
+            local h = p.hit
+            if h then recordKill(v, p.rec, h.attacker, h.owner) else recordKill(v, p.rec, p.k, p.o) end
+        end
+    end
+end
+
+if not R.tickSubscribed then
+    R.tickSubscribed = true
+    Ext.Events.Tick:Subscribe(function()
+        local ok, err = pcall(flushKills)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] referee kills: " .. tostring(err)) end
+    end)
+end
+
+-- Hits: AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, _) (live1 §6), kept per defender.
+listen("AttackedBy", 7, function(defender, owner, attacker)
+    local d, a = uuid(defender), uuid(attacker)
+    if not d or not a or a == d then return end
+    flushKills()
+    local p = R.pendingKills[d]
+    if p then
+        R.pendingKills[d] = nil
+        return recordKill(d, p.rec, a, uuid(owner))
+    end
+    R.lastHit[d] = { attacker = a, owner = uuid(owner), t = now_ms() }
+end)
+
+listen("KilledBy", 4, function(victim, owner, killer)
+    local v, o, k = uuid(victim), uuid(owner), uuid(killer)
+    if not v then return end
+    local h = R.lastHit[v]
+    R.lastHit[v] = nil
+    if k ~= v then return recordKill(v, {}, k, o) end
+    local rec = { self_kill = true, engine_killer = name(k), engine_owner = o and name(o) or nil }
+    R.pendingKills[v] = { rec = rec, k = k, o = o, t = now_ms(),
+        hit = h and now_ms() - h.t <= R.HIT_MS and h or nil }
 end)
 
 listen("Died", 1, function(char)
@@ -328,6 +360,7 @@ listen("CharacterLootedCharacter", 2, function() end)
 -- The ring after `seq`: {boot, now, gt, latest, first, events}. `first` is the oldest seq kept: a reader whose
 -- cursor is below first - 1 lost records to the cap. A new `boot` (a load reset the Lua state) restarts seq at 1.
 RPC.register("ref.since", function(args)
+    flushKills()
     local since = tonumber(args.seq) or 0
     local limit = tonumber(args.limit) or 500
     local out = {}

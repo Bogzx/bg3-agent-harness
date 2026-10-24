@@ -15,7 +15,7 @@ local NULL = "NULL_00000000-0000-0000-0000-000000000000"
 local P = "HalfOrcs_Female_Player_" .. HOST
 local T = "S_Trader_" .. TRADER
 
-local listeners, ops, pushed = {}, {}, {}
+local listeners, ops, pushed, ticks = {}, {}, {}, {}
 local clock = 1000
 local gold = 100
 local dead, items, traders = {}, { [CHEST] = true }, {}
@@ -27,6 +27,7 @@ Ext = {
     Osiris = { RegisterListener = function(name, arity, _, fn) listeners[name .. "/" .. arity] = fn end },
     Utils = { MonotonicTime = function() return clock end, GameTime = function() return clock / 1000 end,
         PrintWarning = function(m) print("WARN " .. m) end, Print = function() end },
+    Events = { Tick = { Subscribe = function(_, fn) ticks[#ticks + 1] = fn end } },
 }
 Osi = {
     PartyGetGold = function() return gold end,
@@ -205,20 +206,58 @@ do
     -- live4: a self-kill (a mephit's death burst) goes to the last hit; the engine's names are kept.
     local MEPHIT, MASTER = "dddddddd-0000-0000-0000-00000000000a", "dddddddd-0000-0000-0000-00000000000b"
     names[MEPHIT], names[MASTER] = "Young Grease Mephit", "Grease Mephit"
-    fire("AttackedBy/7", "S_M_" .. MEPHIT, P, SH, "Piercing", 8, "Attack", 0)
-    clock = clock + 100
-    fire("KilledBy/4", "S_M_" .. MEPHIT, "S_G_" .. MASTER, "S_M_" .. MEPHIT, 0)
+    local M, G = "Mephit_Grease_Young_" .. MEPHIT, "S_LOW_GreaseMephit_005_" .. MASTER
+    local function tick() for _, fn in ipairs(ticks) do fn() end end
+    check("one tick listener", #ticks == 1, #ticks)
+    -- Window B (S049-end): KilledBy fires ~47 ms BEFORE the killing blow's AttackedBy (no earlier hit)
+    local nk = #recs("kill")
+    fire("KilledBy/4", M, G, M, 0)
+    check("self-kill waits for its hit", #recs("kill") == nk)
+    clock = clock + 47
+    tick()
+    fire("AttackedBy/7", M, P, P, "Piercing", 4, "Attack", 14319)
     local sk = lastOf("kill")
-    check("self-kill to the last hit", sk.killer == "Shadowheart" and sk.owner == "Tav" and sk.by_party
-        and sk.self_kill and sk.engine_killer == "Young Grease Mephit" and sk.engine_owner == "Grease Mephit", sk.killer)
-    check("hit forgotten after the kill", R.lastHit[MEPHIT] == nil)
-    -- an old hit: the engine's names stand, flagged
-    fire("AttackedBy/7", "S_M_" .. MEPHIT, P, HOST, "Piercing", 8, "Attack", 0)
-    clock = clock + R.HIT_MS + 1
-    fire("KilledBy/4", "S_M_" .. MEPHIT, "S_G_" .. MASTER, "S_M_" .. MEPHIT, 0)
+    check("self-kill to the blow after it", #recs("kill") == nk + 1 and sk.killer == "Tav" and sk.owner == "Tav"
+        and sk.by_party and sk.self_kill and sk.victim == "Young Grease Mephit"
+        and sk.engine_killer == "Young Grease Mephit" and sk.engine_owner == "Grease Mephit", sk.killer)
+    check("blow after the kill not kept as a hit", R.lastHit[MEPHIT] == nil and R.pendingKills[MEPHIT] == nil)
+    -- the death burst hits others afterwards: no second kill
+    fire("AttackedBy/7", "S_LOW_GreaseOoze_004_" .. GUARD, G, M, "Force", 9, "Attack", 0)
+    check("death burst no kill", #recs("kill") == nk + 1)
+    -- an earlier hit by Shadowheart, the killing blow by Tav after the kill: Tav
+    fire("AttackedBy/7", M, P, SH, "Piercing", 8, "Attack", 0)
+    clock = clock + 100
+    fire("KilledBy/4", M, G, M, 0)
+    fire("AttackedBy/7", M, P, HOST, "Piercing", 4, "Attack", 0)
+    check("blow after beats the hit before", lastOf("kill").killer == "Tav", lastOf("kill").killer)
+    -- no blow after the kill: the last hit before it, once the wait is over (the tick records it)
+    fire("AttackedBy/7", M, P, SH, "Piercing", 8, "Attack", 0)
+    clock = clock + 100
+    fire("KilledBy/4", M, G, M, 0)
+    clock = clock + R.PENDING_MS
+    tick()
+    check("still waiting at PENDING_MS", #recs("kill") == nk + 2)
+    clock = clock + 1
+    tick()
     sk = lastOf("kill")
-    check("stale hit: engine names", sk.killer == "Young Grease Mephit" and sk.owner == "Grease Mephit"
-        and sk.self_kill and not sk.by_party)
+    check("self-kill to the last hit", #recs("kill") == nk + 3 and sk.killer == "Shadowheart" and sk.owner == "Tav"
+        and sk.by_party and sk.self_kill and sk.engine_killer == "Young Grease Mephit", sk.killer)
+    check("hit forgotten after the kill", R.lastHit[MEPHIT] == nil)
+    -- an old hit and no blow after: the engine's names stand, flagged; a hit after the wait is no killer
+    fire("AttackedBy/7", M, P, HOST, "Piercing", 8, "Attack", 0)
+    clock = clock + R.HIT_MS + 1
+    fire("KilledBy/4", M, G, M, 0)
+    clock = clock + R.PENDING_MS + 1
+    fire("AttackedBy/7", M, P, HOST, "Piercing", 8, "Attack", 0)
+    sk = lastOf("kill")
+    check("stale hit: engine names", #recs("kill") == nk + 4 and sk.killer == "Young Grease Mephit"
+        and sk.owner == "Grease Mephit" and sk.self_kill and not sk.by_party, sk.killer)
+    R.lastHit[MEPHIT] = nil
+    -- a reader never waits on the tick: ref.since records an expired self-kill first
+    fire("KilledBy/4", M, G, M, 0)
+    clock = clock + R.PENDING_MS + 1
+    local got = since(lastOf("kill").seq)
+    check("ref.since flushes", #got == 1 and got[1].ev == "kill" and got[1].self_kill, #got)
     -- a self-hit is no hit; a normal kill has no self_kill
     fire("AttackedBy/7", "S_M_" .. MEPHIT, "S_M_" .. MEPHIT, "S_M_" .. MEPHIT, "Fire", 3, "Attack", 0)
     check("self-hit ignored", R.lastHit[MEPHIT] == nil)

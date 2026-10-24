@@ -256,7 +256,7 @@
    "W631": 3
   },
   "tools/dev/test_referee_lua.lua": {
-   "W631": 2
+   "W631": 1
   },
   "tools/dev/test_save.lua": {
    "W211": 1,
