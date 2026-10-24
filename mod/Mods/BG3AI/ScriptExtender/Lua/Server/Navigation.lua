@@ -192,6 +192,7 @@ if not N.tickSubscribed then
         if not ok then Ext.Utils.PrintWarning("[BG3AI] nav record: " .. tostring(err)) end
         local t = Ext.Utils.MonotonicTime()
         if N.inflightExpire then pcall(N.inflightExpire, t) end
+        if N.linkWatch then pcall(N.linkWatch, t) end
         if N.waysWarm then
             local okw, errw = pcall(N.waysWarm, t)
             if not okw and not N.waysWarmWarned then
@@ -937,14 +938,14 @@ function N.path(charUuid, target, deadline, noSearch)
 end
 
 -- File-local helpers the other parts use.
-N.inner = { store = store, currentLevel = currentLevel, DIRS = DIRS, DIR_VEC = DIR_VEC, floorAt = floorAt,
-    readResult = readResult, rawPath = rawPath, gatedPath = gatedPath, pathKey = pathKey, helperBox = helperBox,
-    inBox = inBox }
+N.inner = { store = store, levelStore = levelStore, currentLevel = currentLevel, DIRS = DIRS, DIR_VEC = DIR_VEC,
+    floorAt = floorAt, readResult = readResult, rawPath = rawPath, gatedPath = gatedPath, pathKey = pathKey,
+    helperBox = helperBox, inBox = inBox }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads N and the
 -- helpers in N.inner.
 for _, part in ipairs({ "Server/NavigationReach.lua", "Server/NavigationTerrain.lua", "Server/NavigationRoute.lua",
-    "Server/NavigationOps.lua" }) do
+    "Server/NavigationOps.lua", "Server/NavigationDoors.lua" }) do
     Ext.Require(part)
 end
 

@@ -400,6 +400,7 @@ function N.routeAhead(ctx, charUuid, goal, withConnectors, knownGoal)
         while #wps > N.WAYPOINTS_SHOWN do table.remove(wps) end
         if #wps > 0 then out.waypoints = wps end
         out.visited_near = N.nearestVisited(currentLevel(), goal)
+        if not out.reachable then out.door_link = N.doorLink(currentLevel(), from, goal) end -- B4: behind a door
     end
     local under = N.harmfulUnder(charUuid)
     if under then out.standing_in = under end

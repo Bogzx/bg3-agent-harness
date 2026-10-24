@@ -121,7 +121,7 @@ end
 -- ---- the tests: these files, in order, on the stubs above (split for the 1000-line cap) ----
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_nav_lua_reach.lua", "test_nav_lua_ways.lua",
-    "test_nav_lua_guard.lua", "test_nav_lua_legs.lua" }) do dofile(DIR .. "/" .. part) end
+    "test_nav_lua_guard.lua", "test_nav_lua_legs.lua", "test_nav_lua_doors.lua" }) do dofile(DIR .. "/" .. part) end
 
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

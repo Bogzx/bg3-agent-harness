@@ -339,6 +339,32 @@ class Rendering(unittest.TestCase):
         self.assertIn("path not checked", line)
         self.assertNotIn("no walkable path", line)
 
+    def test_goal_behind_a_door_the_party_used(self):
+        # B4 (S037): Volo 609.6 m SE of the Goblin Camp, inside the Sanctum the camp's Heavy Oak Doors lead to
+        oak = "11111111-2222-3333-4444-000000000352"
+        res = {"from": [-100.0, 10.0, 440.0], "goal": [334.0, 40.8, -6.0], "straight_m": 609.6, "dir": "SE",
+               "dy": 29.7, "too_far": True,
+               "waypoints": [{"name": "Overgrown Ruins", "pos": [200.0, 30.0, 100.0], "to_goal_m": 314.0,
+                              "dist": 450.0}],
+               "visited_near": {"pos": [334.0, 40.8, -6.0], "to_goal_m": 1.8},
+               "door_link": {"uuid": oak, "name": "Heavy Oak Doors", "door": [-108.0, 10.8, 460.0],
+                             "to": [297.2, 40.3, -78.2], "door_m": 21.6, "dir": "N", "to_goal_m": 81.0}}
+        H = render.Handles()
+        out = route.render_route(res, H, "objective Volo")
+        h = H.get(oak, "Heavy Oak Doors")
+        self.assertIn(f"BEHIND A DOOR: {h} Heavy Oak Doors @(-108,10.8,460) (21.6m N of you) took you to "
+                      "(297.2,40.3,-78.2) before, 81m from the goal: the way is through it", out)
+        self.assertTrue(out.endswith(f"NEXT: travel_to x,y,z = (-108,10.8,460) (the door), interact {h}, "
+                                     "then route again"), out)
+        self.assertNotIn('NEXT: travel_to waypoint="Overgrown Ruins"', out)  # S037: the walk that got blocked
+        self.assertIn("BEHIND A DOOR", route.hint_text(res, H))
+        res["door_link"]["door_m"] = 1.5
+        self.assertIn("(next to you)", route.render_route(res, H, "objective Volo"))
+        del res["door_link"]
+        out = route.render_route(res, H, "objective Volo")
+        self.assertNotIn("BEHIND A DOOR", out)
+        self.assertNotIn("(the door)", out)
+
     def test_frontier_shows_ladder_way_and_levels(self):
         H = render.Handles()
         res = {"leads": [{"uuid": LADDER, "name": "Arterial Mesh", "kind": "ladder", "dist": 2.5, "dir": "N",
