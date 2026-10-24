@@ -178,6 +178,11 @@ function A.commandDC(cmd)
 end
 
 A.LOADING_WAIT_MS = 25000   -- the job's own limit is 30 s
+-- The info pane follows a selection some frames later, slowest on a page that just opened. A candidate is dropped
+-- once the pane shows something new that doesn't match, or after LOAD_PANE_MS with the pane unchanged (a neighbour
+-- saved in the same minute reads the same). Live 2026-10-24 (A1): the first candidate (index 404 = S027-start, the
+-- right one) was dropped after 400 ms with the pane not yet on it, and the scan timed out 16 rows away at 388.
+A.LOAD_PANE_MS = 2500
 
 function MENU.load(args)
     if not args.dry and not A.LOAD_ENABLED then error("loading is disabled (UIActions.LOAD_ENABLED=false)") end
@@ -255,6 +260,7 @@ function MENU.load(args)
                 end
                 local i = table.remove(cand, 1)
                 if not i then return "failed", { stage = stage, error = "no save on the page matches the date of '" .. name .. "'", saves = #items } end
+                job.paneBefore = select(2, paneDate(w))  -- the pane's text before this selection
                 pcall(items[i].SetProperty, items[i], "IsSelected", true)
                 job.picked, job.tried = i, (job.tried or 0) + 1
                 enter("verify")
@@ -265,7 +271,8 @@ function MENU.load(args)
             local p, raw = paneDate(w)
             job.pane = raw
             if dateMatches(p, want) then enter("accept") return nil end
-            if now - since < 400 then return nil end
+            local followed = raw ~= nil and raw ~= job.paneBefore
+            if not followed and now - since < A.LOAD_PANE_MS then return nil end
             enter("select")
             return nil
         end
