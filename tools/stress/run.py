@@ -24,7 +24,9 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import stress_core as core
 import stress_exec as ex
@@ -33,6 +35,9 @@ import stress_matrix as sm
 REPO = Path(__file__).resolve().parents[2]
 MATRIX = Path(__file__).resolve().parent / "matrix.toml"
 DOC = REPO / "docs" / "STRESS-TEST.md"
+# the machine's runtime: game.lock (live_window, acceptance, every worker), ramwatch.lock, runtime/live windows,
+# play.py's sessions. --runtime never moves them: a run elsewhere must still exclude the others (live6)
+MACHINE = REPO / "runtime"
 
 
 def csv(s: str) -> frozenset[str]:
@@ -59,7 +64,13 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--check", action="store_true", help="validate the matrix offline and stop")
     ap.add_argument("--record", nargs=3, metavar=("CHECK", "VERDICT", "EVIDENCE"), help="record a check's result")
     ap.add_argument("--matrix", type=Path, default=MATRIX)
-    ap.add_argument("--runtime", type=Path, default=REPO / "runtime")
+    ap.add_argument(
+        "--runtime",
+        type=Path,
+        default=MACHINE,
+        help="the run's own files (stress/results.json, probe output, scenarios); game.lock, the live windows, "
+        "ramwatch and play.py's sessions stay in the machine's runtime/ (live6)",
+    )
     ap.add_argument("--doc", type=Path, default=DOC)
     a = ap.parse_args(argv)
     if a.max_cost is not None and a.max_cost <= 0:
@@ -145,20 +156,28 @@ def main(argv: list[str] | None = None) -> int:
             print(describe(s, m, a, paid))
         print(f"{len(steps)} steps")
         return 0
-    deps = ex.Deps(
+    return ex.Runner(m, adapters(a, store, render), ex.Opts(profile=a.profile, max_cost=a.max_cost, hours=a.hours)).run(
+        steps
+    )
+
+
+def adapters(a: argparse.Namespace, store: Any, render: Callable[[dict], None]) -> ex.Deps:
+    import stress_io as io
+    from bg3harness import steam_paths
+
+    return ex.Deps(
         clock=io.SystemClock(),
         host=io.ProcHost(a.runtime / "stress" / "STOP"),
-        saves=io.DirSaves(io.load_file("stress_steam_paths", REPO / "tools" / "steam_paths.py").saves_dir()),
-        lock=io.FlockLock(a.runtime / "game.lock"),
-        acc=io.LiveWindowAcc(REPO, a.runtime),
-        probe=io.WindowProbe(REPO, a.runtime),
-        session=io.PlaySession(REPO, a.runtime),
+        saves=io.DirSaves(steam_paths.saves_dir()),  # (the tools/steam_paths.py shim, loaded as a file, has none)
+        lock=io.FlockLock(MACHINE / "game.lock"),
+        acc=io.LiveWindowAcc(REPO, a.runtime, MACHINE),
+        probe=io.WindowProbe(REPO, a.runtime, MACHINE),
+        session=io.PlaySession(REPO, a.runtime, MACHINE),
         store=store,
         read_profile=lambda p: io.read_profile(p, REPO),
         render=render,
         say=lambda s: print(s, flush=True),
     )
-    return ex.Runner(m, deps, ex.Opts(profile=a.profile, max_cost=a.max_cost, hours=a.hours)).run(steps)
 
 
 if __name__ == "__main__":
