@@ -5,7 +5,9 @@ Feeds (each `poll()` returns the new (type, data) pairs since its last call):
   full status (WHERE/PARTY rows) or names a new region (level_changed, get_map); a truncated file -> "actions_reset".
   The file is shared by every playthrough and run: a call from before the running session's start (runner.status.json
   started) is none of the watched session's (live3: the stream's first tail showed the previous run's tool calls
-  and party under the new run's S001)
+  and party under the new run's S001). A new session's start -> "actions_reset" too, and the hub drops the calls
+  and party before an "actions_reset" from its buffer, so a page opened later doesn't replay them (fix Window C: a
+  server started while runner.status.json was still the bench run's replayed its calls under S004)
 - log: the followed playthrough's agent log -> "log" entries; a new log file -> "session" first
 - status: runner.status.json changed (heartbeat/updated ignored) -> "status"
 - memory: a new commit in the memory repo -> "memory" (checked only when .git/logs/HEAD changes)
@@ -42,13 +44,17 @@ class ActionsFeed:
         self.store = store
         self.tail = Tailer(store.actions_path, initial_bytes=64 * 1024)
         self.started = False
+        self.since: float | None = None  # the session start the calls were filtered against
         self.party: dict[str, Any] | None = None  # the last "party" sent: a later region change updates its place
 
     def poll(self) -> list[tuple[str, Any]]:
         lines, reset = self.tail.lines()
-        out: list[tuple[str, Any]] = [("actions_reset", {})] if reset and self.started else []
-        self.started = True
         since = self.store.status().get("started")
+        new_session = isinstance(since, (int, float)) and since != self.since
+        if new_session:
+            self.since, self.party = since, None
+        out: list[tuple[str, Any]] = [("actions_reset", {})] if (reset or new_session) and self.started else []
+        self.started = True
         for ln in lines:
             a = parse.action(ln)
             if a and isinstance(since, (int, float)) and not (isinstance(a["t"], (int, float)) and a["t"] >= since):
@@ -153,6 +159,9 @@ class Hub:
     def publish(self, type_: str, data: Any) -> None:
         with self.cond:
             self.seq += 1
+            if type_ == "actions_reset":
+                kept = (e for e in self.events if e.type not in ("action", "party"))
+                self.events = deque(kept, maxlen=self.events.maxlen)
             self.events.append(Event(self.seq, type_, data))
             self.cond.notify_all()
 

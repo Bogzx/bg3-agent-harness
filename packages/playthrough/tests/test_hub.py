@@ -233,3 +233,46 @@ def test_calls_from_before_the_running_session_are_not_streamed(rt: Path):
     events, _, _ = hub.read(None)
     assert [e.data["result"] for e in events if e.type == "action"] == ["r2"]
     assert "party" not in types(events)
+
+
+def test_a_new_session_drops_the_previous_sessions_calls_from_the_replay(rt: Path):
+    # fix Window C: serve's first tail ran while runner.status.json was still the bench run's (its calls passed the
+    # filter); a page opened during S004 replayed them from the hub's buffer
+    status = "WHERE Grove | exploring | gold 18\nPARTY *e1 Corwin Fighter1 HP 9/12 []"
+    st = json.loads((rt / "runner.status.json").read_text())
+    (rt / "runner.status.json").write_text(json.dumps(dict(st, started=900.0)))
+    append(
+        rt / "actions.jsonl",
+        json.dumps({"t": 950.0, "tool": "get_status", "args": {}, "ms": 2, "result": status}),
+        action(1),
+    )
+    hub = make_hub(rt)
+    hub.poll()
+    _, _, seen = hub.read(None)
+    (rt / "runner.status.json").write_text(json.dumps(dict(st, session="S002", started=1001.5)))
+    append(rt / "actions.jsonl", action(2))
+    hub.poll()
+    live, reset, _ = hub.read(seen)  # a page already open clears its calls
+    assert not reset and types(live)[:2] == ["status", "actions_reset"]
+    fresh, _, _ = hub.read(None)
+    assert [e.data["result"] for e in fresh if e.type == "action"] == ["r2"]
+    assert "party" not in types(fresh)
+    append(rt / "actions.jsonl", json.dumps({"t": 1003.0, "tool": "look", "args": {}, "ms": 2, "result": "x"}))
+    hub.poll()  # the same session: no second reset
+    assert types(hub.read(None)[0]).count("actions_reset") == 1
+
+
+def test_an_unreadable_status_is_not_a_new_session(rt: Path):
+    st = json.loads((rt / "runner.status.json").read_text())
+    (rt / "runner.status.json").write_text(json.dumps(dict(st, started=900.0)))
+    append(rt / "actions.jsonl", action(1))
+    hub = make_hub(rt)
+    hub.poll()
+    (rt / "runner.status.json").write_text("{")
+    hub.poll()
+    (rt / "runner.status.json").write_text(json.dumps(dict(st, started=900.0)))
+    append(rt / "actions.jsonl", action(2))
+    hub.poll()
+    events, _, _ = hub.read(None)
+    assert "actions_reset" not in types(events)
+    assert [e.data["result"] for e in events if e.type == "action"] == ["r1", "r2"]
