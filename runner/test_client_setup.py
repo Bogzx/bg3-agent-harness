@@ -204,11 +204,13 @@ class RunFiles(unittest.TestCase):
             (got["manifest"]["condition"], got["manifest"]["tools"]["count"]), ("rules", got["tools_expected"])
         )
 
-    def test_coaching_with_a_group_off_records_the_error(self):
-        got, logs = self.run_files("claude", {"BG3AI_TOOLS_OFF": "wiki"})
+    def test_coaching_with_a_group_off_records_the_served_prompt(self):  # live9 #12: it recorded an error
+        got, logs = self.run_files("claude", {"BG3AI_TOOLS_OFF": "memory,reload,wiki"})
+        full, _ = self.run_files("claude", {})
         self.assertEqual(got["manifest"]["condition"], "rules+coaching")
-        self.assertIn("error", got["manifest"])
-        self.assertIn("NO manifest prompt hash", logs[0])
+        self.assertNotIn("error", got["manifest"])
+        self.assertEqual(got["manifest"]["prompt"], full["manifest"]["prompt"])  # play/CLAUDE.md is served whole
+        self.assertIn("prompt rules+coaching sha256 ", logs[0])
 
 
 if __name__ == "__main__":

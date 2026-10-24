@@ -169,9 +169,9 @@ def run_files(
     server's tool list and its instructions dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools
     the init must count (claude: its mcp__bg3__* tools) and the run manifest's fields. The condition is the text the
     client is served: claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION (default
-    rules). A condition the tools can't serve (coaching with a group off) leaves the manifest's error instead of
-    its prompt. environ: the session's env (its tools and condition; a bench job's own, LiveRunHost); dump: the
-    server dump (dump_server in that env)."""
+    rules). A condition the prompts don't know leaves the manifest's error instead of its prompt. environ: the
+    session's env (its tools and condition; a bench job's own, LiveRunHost); dump: the server dump (dump_server in
+    that env)."""
     from bg3harness import run_manifest
 
     d.mkdir(parents=True, exist_ok=True)
