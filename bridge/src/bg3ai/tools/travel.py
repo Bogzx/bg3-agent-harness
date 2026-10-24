@@ -638,6 +638,20 @@ def _swap_settle(inc: dict) -> tuple[dict | None, float]:
     return None, time.monotonic() - t0
 
 
+def _camp_roster_back() -> tuple[list[dict], float]:
+    """After a long rest: wait (<= SWAP_REST_SETTLE_S) for state.camp to list the camp companions again (live D2
+    B11: 0.3 s after long_rest(partial) it listed nobody; Wyll and Halsin were back ~20 s later: the engine gives
+    them CampPresence again after the night). -> (the camp rows, possibly empty, s waited)."""
+    t0 = time.monotonic()
+    rows: list[dict] = []
+    while not rows and time.monotonic() - t0 < SWAP_REST_SETTLE_S:
+        time.sleep(1.0)
+        info = core.game.try_rpc("state.camp") or {}
+        plumbing._remember_names(info)
+        rows = [c for c in info.get("camp") or [] if isinstance(c, dict)]
+    return rows, time.monotonic() - t0
+
+
 @core.mcp.tool()
 @reporting._guard
 def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
@@ -656,13 +670,19 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
         return done("swap_party: REFUSED — not during " + ("combat" if st.get("in_combat") else "a conversation"))
     info = core.game.try_rpc("state.camp") or {}
     plumbing._remember_names(info)
+    steps: list[str] = []
     camp_rows = [c for c in info.get("camp") or st.get("camp") or [] if isinstance(c, dict)]
     party_rows = [r for r in info.get("party") or st.get("party") or [] if isinstance(r, dict) and not r.get("summon")]
     inc = companions.find_row(camp_rows, into, plumbing._uuid)
     if inc is None:
         if companions.find_row(party_rows, into, plumbing._uuid):
             return done(f"swap_party: {into} is already in the party")
-        return done(f"swap_party: FAILED — {into} is not waiting at camp. At camp: "
+        if not camp_rows and time.monotonic() - inventory.LONG_REST_AT[0] < REST_SETTLE_WINDOW_S:
+            camp_rows, waited = _camp_roster_back()
+            inc = companions.find_row(camp_rows, into, plumbing._uuid)
+            steps.append(f"waited {waited:.0f} s for the camp roster after the long rest")
+    if inc is None:
+        return done("".join(x + "\n" for x in steps) + f"swap_party: FAILED — {into} is not waiting at camp. At camp: "
                     + (", ".join(f"{c.get('name')} ({companions.class_text(c)})" for c in camp_rows) or "nobody"))
     outr = companions.find_row(party_rows, out, plumbing._uuid) if out else None
     if out and outr is None:
@@ -675,7 +695,6 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
         sug = companions.swap_out(live, [r for r in live if not r.get("avatar")], inc)
         return done("swap_party: the party is full (4): name who goes to camp, e.g. swap_party(into=\""
                     + str(inc.get("name")) + "\", out=\"" + str((sug or {}).get("name", "?")) + "\")")
-    steps = []
     ui = core.game.try_rpc("ui.state", context="client") or {}
     went = False
     if not overview._at_camp(ui):

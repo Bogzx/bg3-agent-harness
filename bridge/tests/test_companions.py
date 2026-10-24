@@ -378,6 +378,54 @@ class SwapParty(unittest.TestCase):
         self.assertIn("swap_party: FAILED to talk to Halsin", out)
         self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 2)
 
+    def roster_fake(self, back_after: int | None, rested_s: float = 1.0) -> FakeGame:
+        """Live D2 B11: 0.3 s after long_rest(partial) state.camp (and state.status) listed nobody at camp; Wyll and
+        Halsin were back ~20 s later. back_after: state.camp reads that list nobody (None = never back)."""
+        menu = {"options": [{"i": 1, "text": "I'd like you to join me."}]}
+        full = {"options": [{"i": 2, "text": "Gale could do with a rest."}]}
+        fake = FakeGame([menu, full], at_camp=True)
+        fake.talking = False
+        reads = []
+        real_rpc = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            out = real_rpc(op, args, context)
+            if op == "state.camp":
+                reads.append(1)
+            if op in ("state.camp", "state.status") and (back_after is None or len(reads) <= back_after):
+                out["camp"] = []
+            return out
+        fake.rpc = rpc
+        fake.try_rpc = lambda op, args=None, context="server", default=None: rpc(op, args, context)
+        self.use(fake)
+        self.addCleanup(setattr, inventory, "LONG_REST_AT", inventory.LONG_REST_AT)
+        clock = [0.0]
+        real_mono = time.monotonic
+        time.monotonic = lambda: real_mono() + clock[0]
+        self.addCleanup(setattr, time, "monotonic", real_mono)
+        time.sleep = lambda s: clock.__setitem__(0, clock[0] + float(s))
+        inventory.LONG_REST_AT = [time.monotonic() - rested_s]
+        return fake
+
+    def test_right_after_a_long_rest_waits_for_the_camp_roster(self):
+        fake = self.roster_fake(back_after=3)
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        self.assertIn("waited 3 s for the camp roster after the long rest", out)
+        self.assertIn("swap_party: done", out)
+        self.assertEqual(len([j for j in fake.jobs if j[0] == "act.talk"]), 1)
+
+    def test_a_camp_roster_that_stays_empty_after_a_rest_fails_after_the_wait(self):
+        self.roster_fake(back_after=None)
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        self.assertIn("waited 30 s for the camp roster after the long rest", out)
+        self.assertIn("swap_party: FAILED — Halsin is not waiting at camp. At camp: nobody", out)
+
+    def test_an_empty_camp_long_after_a_rest_fails_at_once(self):
+        fake = self.roster_fake(back_after=None, rested_s=2 * travel.REST_SETTLE_WINDOW_S)
+        out = travel.swap_party(into="Halsin", out="Gale", leave_camp=False)
+        self.assertEqual(out.splitlines()[0], "swap_party: FAILED — Halsin is not waiting at camp. At camp: nobody")
+        self.assertEqual(fake.jobs, [])
+
     def test_far_walk_up_stops_short_of_the_companion(self):
         # acceptance 12:2x: the 59 m walk to Wyll ended on his spot, then a 3.4 m second leg; stop short instead
         seen = {}
