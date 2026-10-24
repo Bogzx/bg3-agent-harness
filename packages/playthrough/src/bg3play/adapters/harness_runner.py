@@ -11,7 +11,8 @@ One play session:
     runner.json + runner.status.json   the files the store reads, as play.py writes them
     the analysis files                 Sxxx.metrics/turns/progress.jsonl while it plays (the bg3 server's
                                        $BG3AI_METRICS_PATH, ClientAgent, read_story's poll), then latency.json,
-                                       progress.json and triage.md (adapters/session_files.py, play.py's functions)
+                                       progress.json and triage.md (adapters/session_files.py, play.py's functions);
+                                       the playthrough's facts.jsonl: every story read, then the session's choices
 
 The kickoff is the runner's (bg3play.runner.prompts.build_kickoff: the memory briefing, the playbooks, WRAP UP, the
 pace pre-flight of a coaching condition, the save the game recovered to) with the request's notes (the Supervisor's
@@ -72,7 +73,7 @@ from ..runner.keeper_side import write_review
 from ..supervisor import OOM_STREAK, SessionRequest, SessionResult, SupervisorError
 from .agent_process import AgentCall, AgentRun, ClientAgent
 from .launched_game import NoSaveYetError
-from .session_files import ProgressPoller, StoryRead, metrics_path, write_session_files
+from .session_files import FactsFeed, ProgressPoller, StoryRead, metrics_path, write_session_files
 
 
 class Agent(Protocol):
@@ -329,6 +330,9 @@ class HarnessRunner:
     recovery: Recovery = field(default_factory=Recovery)
     log: Callable[[str], None] = lambda msg: None
     read_story: StoryRead | None = None  # one story poll of the game (Sxxx.progress.jsonl); None = no polling
+    # (session dir, run_start detail) -> the playthrough's facts.jsonl feed; None = no facts
+    facts_for: Callable[[Path, dict[str, Any]], FactsFeed] | None = None
+    _facts: dict[str, FactsFeed] = field(default_factory=dict[str, FactsFeed], init=False)
     _abort: threading.Event = field(default_factory=threading.Event, init=False)
     _agent: Agent | None = field(default=None, init=False)
 
@@ -418,8 +422,12 @@ class HarnessRunner:
         prompt = kickoff(req, sid, briefing, loaded, agent.client_name, [*new_game, *self.game.notes()], why)
         spec = SessionSpec(sid, prompt, cfg.session.minutes, str(uuid.uuid4()), self.recovery)
         polling = threading.Event()
+        feed = self._facts.get(pt)
+        if feed is None and self.facts_for is not None:
+            run_start = {"playthrough": pt, "client": agent.client_name, "model": agent.model}
+            feed = self._facts[pt] = self.facts_for(sdir, run_start)
         if self.read_story is not None:
-            poller = ProgressPoller(sdir, sid, start, self.read_story, self.log)
+            poller = ProgressPoller(sdir, sid, start, self.read_story, self.log, facts=feed and feed.poll)
             threading.Thread(target=poller.loop, args=(polling,), name="progress", daemon=True).start()
         try:
             out = run_session(spec, hooks)
@@ -432,6 +440,8 @@ class HarnessRunner:
             None if out.result.reason in ("crash", "hang") else policy.made_progress(start_sig, self.game.progress())  # pyright: ignore[reportUnknownMemberType]
         )
         ended = out.result.ended
+        if feed is not None:
+            feed.choices(sid, sdir / sid, self.log)
         write_session_files(sdir, sid, out.started, ended, self.log)
         cost = sum(r.cost_usd for r in hooks.runs if r.cost_usd is not None) if hooks.runs else None
         entry = {
@@ -529,6 +539,18 @@ class AttachedGame:
 
         got: dict[str, Any] | None = progress.read_game(lua_eval)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return got
+
+    def facts(self, sdir: Path, run_start: dict[str, Any]) -> FactsFeed:
+        """HarnessRunner's facts_for: the playthrough's facts feed over the bridge's rpc and eval (play.py's)."""
+        from bg3harness.game.io import EVAL_TIMEOUT
+
+        def rpc(op: str, args: dict[str, Any]) -> Any:
+            return self.g.rpc(op, args, timeout=EVAL_TIMEOUT)
+
+        def lua_eval(code: str, ctx: str) -> str:
+            return self.g.eval(code, ctx, timeout=EVAL_TIMEOUT)
+
+        return FactsFeed(sdir, rpc, lua_eval, run_start)
 
     def fault(self) -> str | None:
         """For ClientAgent's game watch: "hang" when the game stopped answering."""
