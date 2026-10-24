@@ -29,6 +29,9 @@ HOTBAR_SAVE = "S065-end"
 MYSTRA_SAVE = "S069-mystra"
 # A9: Karlach carries a Scroll of Misty Step here (S066 #143 read it on herself, then reloaded to get it back)
 SCROLL_SAVE = "S066-end"
+# combat: claude-run-2 S049 03:49 saved mid-fight in the Lower City Sewers (Grease Mephits and Greaseballs, round 2,
+# Claude's turn; Easy): a load puts the party in a fight every time
+FIGHT_SAVE = "S049-end"
 # Run order (se 2026-10-16): read-only sections first, then the ones that change the world (each reloads its save at
 # the end), then the crash guard's reloads, then se, whose last items spend a spell slot (hotbar Bless) and switch
 # bg3le's strict frame lock on and back: a crash there costs no other section. Every section loads its own save first,
@@ -79,20 +82,25 @@ SAVE_NEEDS = {
         "party_has": ["Claude", "Gale", "Shadowheart"],
         "party_not": ["Wyll"],
         "party_min": 3,
-        "used_by": "every section (swap: Gale in, Wyll in camp; nav/combat: fast travel to Moonrise Towers)",
+        "used_by": "every section (swap: Gale in, Wyll in camp; nav: fast travel to Moonrise Towers)",
     },
     HOTBAR_SAVE: {
         "level": "CTY_Main_A",
         "party_has": ["Claude"],
         "party_min": 3,
         "used_by": "se/act hotbar casts (Claude the Paladin's Bless on 3; Dimension Door if Gale is in); "
-        "act prepare_spells (Bless prepared and unprepared on Claude, A5); strict (load 2, then camp "
-        "+ long_rest from Act 3)",
+        "act prepare_spells (Bless prepared and unprepared on Claude, A5); strict (load 1 of 2)",
     },
     SCROLL_SAVE: {
         "party_has": ["Karlach"],
         "party_min": 3,
         "used_by": "act point scroll aimed at the ground (A9: Karlach's Scroll of Misty Step)",
+    },
+    FIGHT_SAVE: {
+        "level": "CTY_Main_A",
+        "party_has": ["Claude", "Karlach", "Shadowheart", "Wyll"],
+        "near": ((-112.5, 14.6, 857.9), 8),
+        "used_by": "combat (saved mid-fight in the Lower City Sewers, Claude's turn)",
     },
     TRADE_SAVE: {
         "level": "SCL_Main_A",
