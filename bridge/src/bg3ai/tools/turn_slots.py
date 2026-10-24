@@ -519,9 +519,10 @@ def _disabled_lines(only: str | None = None) -> list[str]:
     return turn.disabled_lines(cs, queueing._label, only) if cs.get("active") else []
 
 
-def _turn_next(who: str, party: set) -> str:
-    """After the turn: who acts next, and the next party member's actions if it is already their turn."""
-    cs = core.game.try_rpc("state.combat") or {}
+def _turn_next(who: str, party: set, cs: dict | None = None) -> str:
+    """After the turn: who acts next, and the next party member's actions if it is already their turn. cs: a read
+    taken after the turn moved on (the HUD end's last one), else read here."""
+    cs = cs or core.game.try_rpc("state.combat") or {}
     if not cs.get("active"):
         observe._acts_shown.clear()
         observe._light_noted.clear()

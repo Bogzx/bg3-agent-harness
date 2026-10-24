@@ -60,5 +60,35 @@ class FightSource(unittest.TestCase):
         self.assertEqual(core.SAVE_NEEDS[core.FIGHT_SAVE]["level"], "CTY_Main_A")
 
 
+class HudEndReads(unittest.TestCase):
+    def test_counted_names_the_hud_ends_reads(self):
+        """Live window 2026-10-24: 'batched step checks' counted the HUD end's check before its press and its polls
+        (an end the game ignored) as step checks. counted() now returns them apart."""
+        from bg3ai.tools import combat as ct
+
+        fake_s = mock.Mock()
+        fake_s.game.rpc = lambda op, *a, **k: {}
+
+        def hud(char, r):  # its check before the press, the press, two polls
+            for op in ("state.combat", "ui.command", "state.combat", "state.combat"):
+                combat.S.game.rpc(op)
+            return r
+
+        def took(name, **kw):
+            combat.S.game.rpc("state.combat")  # end_turn's own read
+            ct._end_turn_by_hud("c", "r")
+            combat.S.game.rpc("state.combat")  # the NEXT line's
+            return "out", 0.1
+
+        with (
+            mock.patch.object(combat, "S", fake_s),
+            mock.patch.object(combat, "took", took),
+            mock.patch.object(ct, "_end_turn_by_hud", hud),
+        ):
+            out, _, counts, hud_n = combat.counted("combat_turn")
+            self.assertIs(ct._end_turn_by_hud, hud)  # restored after the call
+        self.assertEqual((out, counts["state.combat"], counts["ui.command"], hud_n), ("out", 5, 1, 3))
+
+
 if __name__ == "__main__":
     unittest.main()

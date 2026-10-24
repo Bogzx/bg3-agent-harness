@@ -582,6 +582,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     spent = turn_plan._spent_note(char, lines)
     if spent:
         lines.append(spent)
+    ended_cs = None  # a read taken by the end step after the turn moved on (the HUD end's), for the NEXT line
     if end and not stopped:
         fatal, why = turn_plan._turn_check(char, None)
         if fatal:
@@ -592,7 +593,9 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
                          "plan the next turn now, a combat_turn sent meanwhile waits for it")
         else:
             ex = queueing._new_executor(watcher, queueing._watch_conn(), char)
+            turn_plan._turn_cs.clear()  # the read before the end can't stand for the turn after it
             text, _status, res = ex.call_tool(actq.Step("end_turn", {"wait": wait_next}), char)
+            ended_cs = turn_plan._cs_cached()
             lines.append(re.sub(r" — after=\{[^}]*\}| after=\{[^}]*\}", "", text))
             if isinstance(res, dict) and isinstance(res.get("after"), dict):
                 after.update(res["after"])
@@ -610,7 +613,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     if changes:
         lines.append(changes)
     if end and not stopped:
-        nxt = turn_slots._turn_next(char, party)
+        nxt = turn_slots._turn_next(char, party, ended_cs)
         if nxt:
             lines.append(nxt)
     else:
