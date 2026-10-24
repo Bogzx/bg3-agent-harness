@@ -123,15 +123,15 @@ RPC.register("ui.pickpocket", function(args)
     local out, k, phase, t = {}, 0, "select", 0
     return waitJob("ui.pickpocket", 6000 + 200 * math.min(#rows, max), function(job)
         if phase == "select" then
-            k = k + 1
-            local r = rows[k]
-            if r == nil or k > max then
+            local r = rows[k + 1]
+            if r == nil or k + 1 > max then
                 return "done", { items = out, more = #rows > max and (#rows - max) or nil, slots = got.slots,
                                  named = got.named }
             end
-            local ok, serr = pcall(lb.SetProperty, lb, "SelectedIndex", r.i)
+            -- a busy UI raises here (the select never ran): this row again on a later tick
+            local ok, serr = UI.pcall(lb.SetProperty, lb, "SelectedIndex", r.i)
             if not ok then return "failed", nil, "couldn't select " .. tostring(r.view.name) .. ": " .. tostring(serr) end
-            phase, t = "read", RPC.now_ms()
+            k, phase, t = k + 1, "read", RPC.now_ms()
             return nil
         end
         if phase == "read" then
@@ -178,7 +178,7 @@ RPC.register("ui.donate", function(args)
     local phase, t = "select", 0
     return waitJob("ui.donate", 8000, function(job)
         if phase == "select" then
-            local ok, serr = pcall(lb.SetProperty, lb, "SelectedIndex", idx)
+            local ok, serr = UI.pcall(lb.SetProperty, lb, "SelectedIndex", idx)
             if not ok then return "failed", nil, "couldn't select the item: " .. tostring(serr) end
             phase, t = "press", RPC.now_ms()
             return nil

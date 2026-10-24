@@ -26,7 +26,7 @@ BG3AI = { RPC = RPC }
 
 -- Collections: Lua arrays. Objects: tables.
 local panel = { Name = "CharacterPanel", IsVisible = false, Metadata = "ToggleInventory" }
-local UI = {}
+local UI = { pcall = pcall }
 BG3AI.UI = UI
 function UI.get(o, k) if type(o) ~= "table" then return nil end return o[k] end
 function UI.path(o, p)

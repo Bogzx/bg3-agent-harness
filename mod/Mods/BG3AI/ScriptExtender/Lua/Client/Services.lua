@@ -521,10 +521,10 @@ function SV.answerSplit(want)
     if tonumber(UI.prop(data, "TargetCount")) ~= n then
         -- The VM first (as UIActions' confirm(amount=) does); else the box's slider (x:Name Slider, Value
         -- TwoWay-bound to TargetCount).
-        if not pcall(data.SetProperty, data, "TargetCount", n) then pcall(function() data.TargetCount = n end) end
+        if not UI.pcall(data.SetProperty, data, "TargetCount", n) then UI.pcall(function() data.TargetCount = n end) end
         if tonumber(UI.prop(data, "TargetCount")) ~= n then
             local sl = UI.byName(w, "Slider")
-            if sl then pcall(sl.SetProperty, sl, "Value", n) end
+            if sl then UI.pcall(sl.SetProperty, sl, "Value", n) end
         end
         return w, nil  -- re-read next tick
     end

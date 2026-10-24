@@ -92,6 +92,7 @@ BG3AI = {
         end,
     },
     UI = {
+        pcall = pcall,
         widget = function(n) return n == "Trade" and widget or nil end,
         isVisible = function(w) return w.visible end,
         prop = function(o, k) if type(o) == "table" then return o[k] end end,
