@@ -310,6 +310,13 @@ local function combat_walk_stop(job)
     return false
 end
 
+-- Bench act3_gold_max 12:50:50 (bg3le 82620.6-82629.8): Shadowheart's last leg back to the leader, a 1 m route to a
+-- point 0.3 m from the one Karlach was walking to, ran 31.8 m round the others without getting there until the job's
+-- 9.3 s deadline (move_to TIMEOUT, the run voided). Only standing still or a teleport stopped a walk. A move_to
+-- walker that has run WALK_ROUND_X times its route plus WALK_ROUND_M and is still not there is stopped and fails.
+A.WALK_ROUND_X = 2.0
+A.WALK_ROUND_M = 10.0
+
 -- Per-tick walk bookkeeping: teleports, distance travelled (combat budget)
 -- and stuck detection.
 local function walk_tick(job)
@@ -334,6 +341,17 @@ local function walk_tick(job)
         return
     end
     if w.combat and combat_walk_stop(job) then return end
+    if job.round_cap_m and w.travelled > job.round_cap_m then
+        local d, _, de = walk_dist_left(job)
+        if not walk_close_enough(job, d, de) then
+            w.done = true
+            pcall(G.osi, "PurgeOsirisQueue", job.char)
+            RPC.finish_job(job, "failed", job.partial, string.format("could not get closer to the destination: walked "
+                .. "%.1f m on a %.1f m route and is still %.1f m off (the game walks round someone or something there)",
+                w.travelled, job.route_m or 0, d or 0))
+            return
+        end
+    end
     if w.still_ms >= 5000 then
         local d, _, de = walk_dist_left(job)
         if walk_close_enough(job, d, de) or (d and d <= w.tolerance) then
@@ -730,6 +748,7 @@ reg("move_to", function(args)
     return start("move_to", char, {
         eta_s = walk_eta(route, speed), route_m = route,
         timeout_ms = walk_timeout(route),
+        round_cap_m = A.WALK_ROUND_X * (route or 0) + A.WALK_ROUND_M,
         interrupt = { combat = not combat, dialogue = true, attacked = not combat },
         osi = WALK_OSI,
         start = function(job)

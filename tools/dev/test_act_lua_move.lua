@@ -551,6 +551,32 @@ test("NAV-8: a walk's step after a frame hitch (2 m in 300 ms) is not a teleport
     eq(j.status, "running", "status " .. tostring(j.error))
 end)
 
+-- Bench act3_gold_max 12:50:50: a 1 m leg ran 31.8 m round the others at the spot until its 9.3 s deadline (TIMEOUT).
+local function run_round(n, centre, r)
+    for _ = 1, n do -- 0.3 m per 60 ms tick on a circle of radius r round centre: moving, never closer
+        local p = world[P1].pos
+        local a = math.atan(p[3] - centre[3], p[1] - centre[1]) + 0.3 / r
+        world[P1].pos = { centre[1] + r * math.cos(a), 0, centre[3] + r * math.sin(a) }
+        tick()
+    end
+end
+
+test("move_to: a walker that keeps running round the spot fails once it ran 2x its route + 10 m", function()
+    world[P1].pos = { -3, 0, 0 }
+    nav.fn = function() return { reachable = true, length_m = 1.0 } end -- the engine's route: 1 m
+    local j = job(op("move_to", { char = P1, pos = { 1, 0, 0 } }))
+    run_round(36, { 1, 0, 0 }, 4) -- 10.8 m
+    eq(j.status, "running", "under the cap " .. tostring(j.error))
+    run_round(6, { 1, 0, 0 }, 4) -- 12.6 m: past 2 x 1 + 10, 2.5 s into a 9.25 s deadline
+    eq(j.status, "failed", "status")
+    assert(j.error:find("could not get closer", 1, true) and j.error:find("on a 1.0 m route", 1, true), j.error)
+    assert(#called("PurgeOsirisQueue") >= 1, "purged")
+    reset()
+    local j2 = job(op("move_to", { char = P1, pos = { 20, 0, 0 } })) -- a 20 m route walked round something: 1.5x
+    run_round(100, { 20, 0, 0 }, 20)
+    eq(j2.status, "running", "within the cap " .. tostring(j2.error))
+end)
+
 -- ---- combat movement -------------------------------------------------------
 
 function combat_setup(mv)
