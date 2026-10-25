@@ -75,6 +75,14 @@ def read_meta(lsv: Path) -> tuple[str, float, str] | None:
     return leader, float(saved), session if isinstance(session, str) and session else leader
 
 
+def saved_at(d: Path) -> float | None:
+    """When the game wrote the save in folder d: its meta.lsf SaveTime (read_meta), None when that can't be read.
+    Not a file's mtime: Steam's local cloud restores a moved-aside save folder at each launch with mtime = the
+    launch (bench B3, research/fix/live.md), and only the save's own SaveTime still says when it was made."""
+    m = read_meta(save_file(d))
+    return m[1] if m else None
+
+
 def load_args(save_dir: Path, folder: str, meta: Callable[[Path], tuple[str, float, str] | None] = read_meta) -> dict:
     """Arguments for ui.menu {action: "load"}: name, owner (the playthrough's heading), index (1 = newest of its
     playthrough), date. Each save's leader, time and playthrough come from its meta, else its folder prefix (as

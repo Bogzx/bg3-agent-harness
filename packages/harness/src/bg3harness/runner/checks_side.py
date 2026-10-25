@@ -29,6 +29,8 @@ from bg3harness.runner import state as rstate
 from bg3harness.scenario_file import SettingsMismatch
 from bg3harness.session import GAME_FAULTS
 
+FACTS_LOCK = threading.Lock()  # facts_poll: the progress loop's thread and a bench run's stop check
+
 
 class ChecksSide:
     def between_sessions_check(self) -> dict | None:
@@ -117,7 +119,18 @@ class ChecksSide:
     def facts_poll(self, got: dict | None) -> None:
         """One facts.jsonl poll on a progress read: the referee ring, then the read and the party inventory. A
         settings check that a new game deferred at the main menu runs on the first poll with the server up; a
-        contradiction then stops the session (abort), as it would have at the start."""
+        contradiction then stops the session (abort), as it would have at the start. One poll at a time
+        (FACTS_LOCK): the progress loop's and facts_now's."""
+        with FACTS_LOCK:
+            self._facts_poll(got)
+
+    def facts_now(self) -> None:
+        """One facts poll now, between the progress loop's (story.POLL_S apart): a bench run's stop check grades the
+        game as it is before it resumes the agent (B3 job 10: the Game Over box at 16:23:40, the last downed fact
+        at 16:24:01, the agent resumed in between at 16:23:45)."""
+        self.facts_poll(story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT)))
+
+    def _facts_poll(self, got: dict | None) -> None:
         if got:
             if self.game_setup() and getattr(self, "settings_deferred", False):
                 try:

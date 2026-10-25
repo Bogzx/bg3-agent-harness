@@ -95,10 +95,16 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
 - A party wipe (every real party member dead or downed: the game's Game Over box) ends every run. A goal not passed
   by then fails (`graders.verdict` "wiped", a `{"wipe": true}` violation in result.json; outcome `failed`), and a
   maximise run scores its gain up to the wipe. The kickoff says so. Before, the runner resumed a wiped Balthazar run
-  6 times ("the grader hasn't seen its goal yet").
-- A run plays only from its start save and the saves it wrote. The runner moves every save folder written in the
+  6 times ("the grader hasn't seen its goal yet"). Before it resumes an agent that ended its turn, the runner reads
+  the game's facts once more and asks the verdict, so a wipe the facts poll (every 15-30 s) hasn't written yet is
+  not resumed (B3 job 10 was resumed 5 s after its Game Over box and stopped 22 s later).
+- A run plays only from its start save and the saves it wrote. The runner moves every save folder saved in the
   shared Story folder since the run's start into `<run_dir>/saves/` when the run ends (record, abort, a failed
-  start; the next start does it for a run that died, `runtime/saves-isolate.json`). While the run plays,
+  start; the next start does it for a run that died, `runtime/saves-isolate.json`). "Saved since" is the time in
+  the save's own `meta.lsf` (SaveTime), never the folder's mtime: Steam's local cloud puts the moved saves back in
+  Story at each launch with mtime = the launch (B3: 33 copies, 523 MB, moved into one run's dir). Such a copy is
+  not the run's: it stays in Story, and the bridge's `load_game`/`list_saves` and the runner's recovery leave it out
+  too. While the run plays,
   `run_host.SaveWatch` treats a new server Lua state (the mod's `sys.ping` boot; bg3le rebuilds it only when a
   session unloads, so on a save load or the main menu, never on travel) as a load: one that isn't the agent's
   `load_game` of its own save (the main menu's Continue or Load page) stops the run and records it invalid

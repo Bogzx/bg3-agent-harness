@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 from test_naming import FakeInput, FakePage
+from test_saves import make_save, meta_lsf
 from test_turn_macros import Base, FakeGame  # sets BG3AI_RUNTIME before importing server
 
 from bg3ai import naming, settings
@@ -379,10 +380,11 @@ class Saves(Base):
         self.addCleanup(p.stop)
         self.t = time.time() - 1000
 
-    def save(self, name: str, age: int) -> None:
-        d = self.dir / name
-        d.mkdir()
-        os.utime(d, (self.t + age, self.t + age))
+    def save(self, name: str, age: int, saved_age: int | None = None) -> None:
+        """A save written at t + age, saved (its meta.lsf SaveTime) at t + saved_age (default: age)."""
+        when = self.t + age
+        d = make_save(self.dir, name, when, meta_lsf("Claude", self.t + (age if saved_age is None else saved_age)))
+        os.utime(d, (when, when))
 
     def test_latest_skips_test_saves_autosaves_and_other_characters(self):
         self.save("Claude-1__S003-pre-boss", 10)
@@ -423,6 +425,26 @@ class Saves(Base):
             self.save("Claude-2__S001-start", 60)             # run 2's own
             saving.load_game("latest")
         self.assertEqual(self.loaded, ["Claude-2__S001-start"])
+
+    def test_a_restored_copy_of_an_earlier_runs_save_stays_hidden(self):
+        # bench B3: Steam's local cloud restores the saves earlier runs moved aside at each launch, mtime = the launch
+        self.save("Claude-1__S004-end", 60, saved_age=10)     # run 1's, restored in run 2
+        with mock.patch.object(saving, "SAVES_AFTER", self.t + 50):
+            self.assertNotIn("S004-end", saving.list_saves())
+            self.assertIn("not one of this playthrough's saves", saving.load_game("S004-end"))
+            self.assertIn("no Sxxx- save", saving.load_game("latest"))
+        self.assertEqual(self.loaded, [])
+
+    def test_a_scenario_run_lists_only_its_start_save_and_its_own_saves(self):
+        # B3 job 10: c1's list_saves showed "S001-all-level3 [Tav-502512612935__S001-all-level3] <- latest", another
+        # run's save that Steam restored at the launch, beside the run's own AutoSave_179
+        self.save("Claude-1__SCN-grove", 5)                   # the scenario's start save
+        self.save("Claude-2__S001-all-level3", 70, saved_age=20)  # an earlier run's, restored at this launch
+        self.save("Claude-3__AutoSave_179", 80)               # this run's
+        with mock.patch.object(saving, "SAVES_AFTER", self.t + 50), \
+                mock.patch.object(saving, "START_SAVE", "Claude-1__SCN-grove"):
+            listed = [ln.split("[", 1)[1].split("]", 1)[0] for ln in saving.list_saves().splitlines() if "[" in ln]
+        self.assertEqual(listed, ["Claude-3__AutoSave_179", "Claude-1__SCN-grove"])
 
     def test_another_playthroughs_saves_of_the_same_name_are_hidden(self):
         # claude-run-2's resume: replay-hoh saved S028-lastlight-prep as "Claude" after claude-run-2's S065-end

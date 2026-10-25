@@ -351,8 +351,10 @@ class SeriesRuns(unittest.TestCase):
                                                    "knowledge_files": 1})
         self.assertEqual(r.state["saves_after"], t0)
         # saves older than the run (run 1's, same character name) are never this run's
-        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60),
-                                rpolicy.Save("Claude-2__S001-start", "Claude", "S001-start", t0 + 60)]
+        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60, t0 - 60),
+                                rpolicy.Save("Claude-2__S001-start", "Claude", "S001-start", t0 + 60, t0 + 60),
+                                # run 1's save as Steam's local cloud restores it: written now, saved before the run
+                                rpolicy.Save("Claude-3__S010-end", "Claude", "S010-end", t0 + 90, t0 - 30)]
         self.assertEqual(r.choose_save().folder, "Claude-2__S001-start")
         self.assertEqual(r.save_env()["BG3AI_SAVES_AFTER"], str(int(t0)))
         rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S009-escaped", "Claude", "S009-escaped", t0 - 60)]
