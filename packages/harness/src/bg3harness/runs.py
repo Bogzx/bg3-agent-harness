@@ -236,6 +236,44 @@ def stream_failures(stream: Path) -> list[dict]:
     return out
 
 
+# the kinds stream_failures writes, each detail starting "<session>: " (a history party_wipe says "S001 started at")
+STREAM_KINDS = (
+    "mcp_failed",
+    "claude_api",
+    "fairness_block",
+    "party_wipe",
+    "fairness_leak",
+    "tool_timeout",
+    "tool_exception",
+    "tool_failed",
+    "hand_input",
+    "bg_timeout",
+)
+OUTCOME_KINDS = ("timeout", "cost_cap", "tokens_cap", "time_cap")
+
+
+def restream_failures(record: dict, state_dir: Path) -> list[dict]:
+    """A run record's failures with its play streams' classified again by today's stream_failures, the runner-event,
+    history, progress and reload ones kept and a timeout's or cap's class recomputed: what the record would say now
+    (bg3bench.regrade). Reads the run's files only."""
+    since = record.get("started") or 0
+    streams = [f for f in sorted(state_dir.iterdir()) if PLAY_STREAM_RE.match(f.name) and f.stat().st_mtime >= since]
+    sids = tuple(f"{f.name[: -len('.jsonl')]}: " for f in streams)
+    old = record.get("failures") or []
+    kept = [
+        f
+        for f in old
+        if f["kind"] not in OUTCOME_KINDS
+        and not (f["kind"] in STREAM_KINDS and str(f.get("detail") or "").startswith(sids))
+    ]
+    fails = kept + [f for s in streams for f in stream_failures(s)]
+    for f in old:
+        if f["kind"] in OUTCOME_KINDS:
+            cls = UNKNOWN if any(g["class"] == HARNESS for g in fails) else AGENT
+            fails.append({**f, "class": cls})
+    return sorted(fails, key=lambda f: (f["t"] is not None, f["t"] or 0))
+
+
 def reload_failures(actions: list[dict]) -> list[dict]:
     """Every load_game the agent called (runtime/actions.jsonl): a reload it chose."""
     out = []
