@@ -67,3 +67,20 @@ class BackgroundFailures(unittest.TestCase):
         self.assertIn("## Background failures in EVENTS (1; not the calls' own)", md)
         self.assertIn("**move_to** in `wait_for`'s EVENTS: TIMEOUT: timed out", md)
 
+    def test_restream_reclassifies_an_old_records_stream_failures_only(self) -> None:
+        _session(self.d, WAIT_FOR_RESULT)
+        old_timeout = "S001: move_to: TIMEOUT: timed out — @(N,N,N) purged_tasks=N travelled=N | STOPPED: leg N failed"
+        record = {
+            "started": 0,
+            "failures": [
+                {"t": 1.0, "kind": "game_crash", "class": "harness", "detail": "S001: crash"},
+                {"t": 2.0, "kind": "tool_timeout", "class": "harness", "detail": old_timeout},
+                {"t": 3.0, "kind": "timeout", "class": "unknown", "detail": "the run's time ran out"},
+            ],
+        }
+        got = [(f["kind"], f["class"]) for f in runs.restream_failures(record, self.d)]
+        # the crash (a runner event) stays, so the timeout stays unknown
+        self.assertEqual(sorted(got), [("bg_timeout", "unknown"), ("game_crash", "harness"), ("timeout", "unknown")])
+        record["failures"] = record["failures"][1:]
+        got = [(f["kind"], f["class"]) for f in runs.restream_failures(record, self.d)]
+        self.assertEqual(sorted(got), [("bg_timeout", "unknown"), ("timeout", "agent")])
