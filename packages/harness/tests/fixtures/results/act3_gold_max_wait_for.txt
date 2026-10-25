@@ -1,0 +1,24 @@
+queue e4 Tav: done (2 steps)
+1. travel_to (-4.1,26.2,-80.8): 53m
+leg 1: move_to: done —
+leg 2: move_to: done — @(-4.7,26.2,-82.2) dist=2.0: the game moved e4 Tav the last 23.2m to the walk's end in one jump from @(-24.1,26.3,-69.5), 10.7s after the fast travel (not walked; nothing to undo)
+e5 Gale 26m, e2 Karlach 24m, e3 Shadowheart 26m fell behind: walked back to e4 Tav
+arrived (1.5m from it)
+CHANGES
+  e3 Shadowheart moved 2m N
+  + e1370 Corpse neutral dead 18.6m
+  + e1381 Row of Books <usable> HP 4/4 16.4m
+  (+2 more: props 2)
+  GONE e1369 Animated Armour, e1377 Cauldron
+2. talk_to: done — dialogue
+CHANGES
+  + e1371 Cordrane the Recent neutral HP 42/42 19.7m
+  + <item>: e1311 Scroll of Colour Spray 16.5m, e1382 Potion of Speed 16.5m
+EVENTS
+  moved_after_trip m=23.2 e4 after_trip_s=10.7 to=[-4.7,26.2,-82.2] from=[-24.1,26.3,-69.5]
+  route_jump to=[-7.2,26.3,-82.2] from=[-9.6,26.2,-78.5] e5
+  queue_done done=1 who=e5
+  queue_interrupted why=step 1 travel_to -4.7,26.2,-82.2: leg 2 failed last=1. travel_to (-4.7,26.2,-82.2): 25.7m | leg 2: move_to: TIMEOUT — timed out — @(0,26,-89) purged_tasks=1 travelled=31.8 | STOPPED: leg 2 failed done=0 who=e3
+  died e1353 Conjured Spider
+  queue_done done=1 who=e2
+⏱ 12:51 · keep playing: you'll be told when to wrap up

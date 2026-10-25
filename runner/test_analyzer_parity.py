@@ -67,12 +67,14 @@ def legacy_load_calls(stream_path: Path, turns_path: Path) -> tuple[list[dict], 
                     "failed": False,
                     "text": "",
                     "fails": [],
+                    "bg_fails": [],
                 }
                 order.append(b["id"])
             elif b.get("type") == "tool_result" and b.get("tool_use_id") in calls:
                 c = calls[b["tool_use_id"]]
                 c["text"] = T.result_text(b)
                 c["fails"] = T.failures(c["name"], b, c["text"])
+                c["bg_fails"] = T.background_failures(b, c["text"])
                 c["failed"] = bool(c["fails"])
                 c["t_res"] = times.get(("result", c["id"]))
             elif b.get("type") == "text" and typ == "assistant" and b.get("text", "").strip():
