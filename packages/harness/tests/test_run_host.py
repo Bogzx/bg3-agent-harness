@@ -100,6 +100,7 @@ class FakeRunner:
         self.clock = 1000.0  # the session hooks' now (run_claude moves it)
         self.boot: str | None = "boot-start"  # the server Lua state's id (server_boot): a load makes a new one
         self.marks: list[tuple[str, Any]] = []  # facts.jsonl marks (facts_writer)
+        self.read_now: Callable[[], None] = lambda: None  # what a facts read now (facts_now) finds in the game
 
     def event(self, kind: str, **fields: Any) -> None:
         self.events.append((kind, fields))
@@ -112,6 +113,10 @@ class FakeRunner:
 
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> None:
         self.marks.append((mark, detail))
+
+    def facts_now(self) -> None:
+        self.calls.append("facts_now")
+        self.read_now()
 
     def refresh_mod_snapshot(self) -> list[str]:
         self.calls.append("snapshot")
@@ -793,6 +798,31 @@ def test_no_resume_once_the_run_is_decided_capped_stopped_or_out_of_time(rig: Ri
     rig.prepare = lambda r: setattr(r, "play", play)
     r, out = play_session(rig, SAVE_SC, "m-grove")
     assert [t for t, _, _ in r.plays] == [""] and out.stop_resumes == 0
+
+
+def test_the_stop_check_reads_the_game_now_and_a_wipe_there_is_not_resumed(rig: Rig):
+    # B3 job 10: the agent's wait_for saw the Game Over box at 16:23:40 and it ended its turn; the facts poll (every
+    # story.POLL_S) hadn't written the last downed yet, so the verdict was still None and the runner resumed it at
+    # 16:23:45 ("The run isn't decided"); GoalWatch's stop came at 16:24:07
+    said: list[str | None] = [None]
+    rig.prepare = lambda r: setattr(r, "read_now", lambda: said.__setitem__(0, "wiped"))
+    st = rig.h.start({**JOB, "verdict": lambda: said[0]}, SAVE_SC, run_dir("w"))
+    r = rig.runners[-1]
+    assert rig.h.watches[run_dir("w")].check() is False  # the watch's last poll: undecided
+    spec = SessionSpec("w", st.prompt, 30.0, st.client_session, Recovery(max_resumes=0))
+    out = run_session(spec, st.hooks)
+    assert [t for t, _, _ in r.plays] == [""] and out.stop_resumes == 0 and "facts_now" in rig.calls
+    assert r.until_hit is not None and r.until_hit["verdict"] == "wiped"
+    assert rig.h.record(JOB, SAVE_SC, run_dir("w"), out)["outcome"] == "failed"
+
+
+def test_a_failed_read_now_still_resumes_an_undecided_run(rig: Rig):
+    def read_now() -> None:
+        raise RuntimeError("the debug port didn't answer")
+
+    rig.prepare = lambda r: setattr(r, "read_now", read_now)
+    st = rig.h.start({**JOB, "verdict": lambda: None}, SAVE_SC, run_dir("u"))
+    assert "The run isn't decided" in str(st.hooks.stop_check(1e12))  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_time_out(rig: Rig):

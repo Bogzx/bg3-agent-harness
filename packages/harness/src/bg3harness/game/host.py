@@ -29,11 +29,12 @@ SNAPSHOT_TRIES = 3  # a merge landing during the mod copy is copied again, at mo
 
 
 def own_saves(saves: list[Save], saves_after: float | None, start_save: str | None) -> list[Save]:
-    """saves minus those older than the playthrough's run start (runner.json saves_after, set for a --runs run: a
-    series reuses one character name, and run 2 must never load run 1's saves); the run's start save stays."""
+    """saves minus those saved before the playthrough's run start (runner.json saves_after, set for a --runs run: a
+    series reuses one character name, and run 2 must never load run 1's saves); the run's start save stays. Saved
+    is the save's own time (Save.saved), never its mtime: Steam restores moved-aside saves at each launch (B3)."""
     if not saves_after:
         return saves
-    return [s for s in saves if s.mtime >= saves_after or s.folder == start_save]
+    return [s for s in saves if (s.saved is not None and s.saved >= saves_after) or s.folder == start_save]
 
 
 def ours(state: Any, start_save: str | None) -> set[str]:

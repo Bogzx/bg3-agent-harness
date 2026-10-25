@@ -4,23 +4,28 @@ and AppHost, alone and under a GameController with a fake launch. Temp dirs only
 from __future__ import annotations
 
 import json
+import os
+import struct
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from bg3ai import lsf, lspk
 from bg3harness.game import controller as C  # noqa: N812
 from bg3harness.game import host as H  # noqa: N812
 from bg3harness.game import io as G  # noqa: N812
 from bg3harness.game import oom as O  # noqa: N812
 from bg3harness.runner import codewatch as rcode
 
-NEW = G.Save("Claude-3__S003-end", "Claude", "S003-end", 300.0)
-MID = G.Save("Claude-2__S002-end", "Claude", "S002-end", 200.0)
-OLD = G.Save("Claude-1__S001-end", "Claude", "S001-end", 100.0)
-START = G.Save("Claude-0__start", "Claude", "start", 50.0)
-OTHER = G.Save("Karlach-9__S009-end", "Karlach", "S009-end", 400.0)
+NEW = G.Save("Claude-3__S003-end", "Claude", "S003-end", 300.0, 300.0)
+MID = G.Save("Claude-2__S002-end", "Claude", "S002-end", 200.0, 200.0)
+OLD = G.Save("Claude-1__S001-end", "Claude", "S001-end", 100.0, 100.0)
+START = G.Save("Claude-0__start", "Claude", "start", 50.0, 50.0)
+OTHER = G.Save("Karlach-9__S009-end", "Karlach", "S009-end", 400.0, 400.0)
+# bench B3: Steam's local cloud restored an earlier run's moved-aside save at the launch (mtime = the launch)
+RESTORED = G.Save("Claude-4__S001-all-level3", "Claude", "S001-all-level3", 350.0, 100.0)
 
 
 def tmp() -> Path:
@@ -41,6 +46,26 @@ class SaveFilters(unittest.TestCase):
         self.assertEqual(H.own_saves(saves, None, None), saves)
         self.assertEqual(H.own_saves(saves, 150.0, None), [NEW, MID])
         self.assertEqual(H.own_saves(saves, 150.0, START.folder), [NEW, MID, START])
+
+    def test_own_saves_go_by_the_time_the_save_holds_not_its_mtime(self) -> None:
+        unread = G.Save("Claude-5__S005-end", "Claude", "S005-end", 360.0)  # meta.lsf unreadable: saved None
+        self.assertEqual(H.own_saves([RESTORED, unread, NEW], 150.0, None), [NEW])
+
+    def test_list_saves_reads_each_saves_own_time(self) -> None:
+        root = tmp()
+        d = root / RESTORED.folder
+        d.mkdir()
+        meta = lsf.build(
+            [("MetaData", -1), ("MetaData", 0)],
+            [("LeaderName", 23, 1, b"Claude\0"), ("SaveTime", 24, 1, struct.pack("<Q", 100))],
+        )
+        (d / "S001-all-level3.lsv").write_bytes(lspk.build([("meta.lsf", meta, "none")]))
+        os.utime(d / "S001-all-level3.lsv", (350.0, 350.0))
+        (root / "Claude-5__S005-end").mkdir()
+        (root / "Claude-5__S005-end" / "S005-end.lsv").write_bytes(b"junk")
+        got = {s.folder: s for s in C.list_saves(root, rcode.save_lsv)}
+        self.assertEqual(got[RESTORED.folder], RESTORED)
+        self.assertIsNone(got["Claude-5__S005-end"].saved)
 
     def test_ours(self) -> None:
         st = {"runner_saves": ["a"], "agent_saves": ["b"]}

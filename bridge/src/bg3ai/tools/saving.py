@@ -69,13 +69,21 @@ def _latest_ok(folder: str) -> bool:
 
 
 def _my_saves() -> list[Path]:
-    """This playthrough's save folders, newest first (none older than SAVES_AFTER, except a scenario's START_SAVE:
-    an agent wiped before its first own save can load it)."""
+    """This playthrough's save folders, newest first (none saved before SAVES_AFTER, except a scenario's START_SAVE:
+    an agent wiped before its first own save can load it). A save's time there is the one it holds (saves.saved_at):
+    Steam restores an earlier run's moved-aside saves at each launch with a new mtime (bench B3)."""
     if not core.SAVE_DIR.is_dir():
         return []
     return sorted((d for d in core.SAVE_DIR.iterdir() if d.is_dir() and d.name not in SAVES_EXCLUDE and (
-                   d.name == START_SAVE or (_is_mine(d.name) and d.stat().st_mtime >= SAVES_AFTER))),
+                   d.name == START_SAVE or (_is_mine(d.name) and _saved_since(d)))),
                   key=lambda d: d.stat().st_mtime, reverse=True)
+
+
+def _saved_since(d: Path) -> bool:
+    if not SAVES_AFTER:
+        return True
+    t = saves.saved_at(d)
+    return t is not None and t >= SAVES_AFTER
 
 
 def _enable_save_gates() -> None:

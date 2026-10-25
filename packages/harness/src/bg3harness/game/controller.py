@@ -13,6 +13,7 @@ inputs and the runner's paths. play.py's host reads its module globals on each c
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import os
 import signal
 import subprocess
@@ -21,6 +22,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
+
+from bg3ai import saves as bsaves
 
 from .. import display_env, ramwatch
 from . import io as game
@@ -106,7 +109,8 @@ def bg3le_problems(problems: Callable[[Path], list[str]], dist: Path) -> list[st
 
 
 def list_saves(save_dir: Path, save_lsv: Callable[[Path, str], Path | None]) -> list[game.Save]:
-    """The saves under save_dir; a save's time is its <folder>/<label>.lsv's (save_lsv = runs.save_lsv)."""
+    """The saves under save_dir; a save's time is its <folder>/<label>.lsv's (save_lsv = runs.save_lsv), its saved
+    time the one its meta.lsf holds."""
     out: list[game.Save] = []
     try:
         entries = list(os.scandir(save_dir))
@@ -122,7 +126,8 @@ def list_saves(save_dir: Path, save_lsv: Callable[[Path, str], Path | None]) -> 
             continue
         s = game.parse_save_folder(e.name, mtime)
         if s:
-            out.append(s)
+            meta = bsaves.read_meta(lsv) if lsv is not None else None
+            out.append(dataclasses.replace(s, saved=meta[1]) if meta else s)
     return out
 
 

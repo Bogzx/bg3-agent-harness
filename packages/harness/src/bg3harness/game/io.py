@@ -64,6 +64,7 @@ class Save:
     owner: str
     label: str
     mtime: float
+    saved: float | None = None  # when the game wrote it: its meta.lsf SaveTime (bg3ai.saves.saved_at), None unread
 
 
 def parse_save_folder(name: str, mtime: float = 0.0) -> Save | None:

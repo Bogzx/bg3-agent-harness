@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from bg3ai import saves as bsaves
+
 import bg3harness
 from bg3harness import client_setup, runs, spend
 from bg3harness.game.io import Save
@@ -110,6 +112,7 @@ class RunRunner(Protocol):
     def session_hooks(self, sid: str, minutes: float) -> SessionHooks: ...
     def end_facts(self, outcome: str) -> None: ...
     def facts_writer(self) -> FactsMarks: ...
+    def facts_now(self) -> None: ...
     def server_boot(self) -> str | None: ...
     def scenario_undo(self) -> None: ...
     def end_run_game(self, when: str = ..., after: str = ...) -> None: ...
@@ -214,16 +217,14 @@ def mark_run_saves(marker: Path, story: Path, dest: Path, after: float, start_sa
     marker.write_text(json.dumps({"story": str(story), "dest": str(dest), "after": after, "start": start_save}))
 
 
-def _written_at(d: Path) -> float:
-    """A save folder's last write: the newest of the folder and its files (the game rewrites an AutoSave_N in place)."""
-    return max([d.stat().st_mtime, *(p.stat().st_mtime for p in d.iterdir())])
-
-
 def isolate_saves(marker: Path) -> list[str]:
     """At a run's end (record, abort, a failed start, or the next start after a run that died): every save folder the
-    run wrote into the shared Story folder (written since its start, `after`; its start save never) moves into its
-    run dir (`dest`), so no later run reaches it (bench B3: the main menu's Continue loaded act1_level_3's S001 save
-    in a Balthazar run). Moved, never deleted. Idempotent; the marker goes last. No marker: [] (nothing to do)."""
+    run wrote into the shared Story folder (saved since its start, `after`, by the time its meta.lsf holds; its start
+    save never) moves into its run dir (`dest`), so no later run reaches it (bench B3: the main menu's Continue loaded
+    act1_level_3's S001 save in a Balthazar run). Moved, never deleted. A folder's mtime says nothing: Steam's local
+    cloud restores the moved saves at each launch with mtime = the launch (B3 job 9 moved 33 such copies, 523 MB);
+    a restored copy keeps its own SaveTime and stays where it is. Idempotent; the marker goes last. No marker: []
+    (nothing to do)."""
     try:
         m = json.loads(marker.read_text())
     except (OSError, ValueError):
@@ -236,7 +237,8 @@ def isolate_saves(marker: Path) -> list[str]:
         folders = []
     for d in folders:
         try:
-            if _written_at(d) < m["after"]:
+            saved = bsaves.saved_at(d)
+            if saved is None or saved < m["after"]:
                 continue
             dest.mkdir(parents=True, exist_ok=True)
             shutil.move(str(d), str(dest / d.name))
@@ -248,9 +250,13 @@ def isolate_saves(marker: Path) -> list[str]:
 
 
 def own_save(name: str, saves: Sequence[Save], after: float, start_save: str | None) -> bool:
-    """A save (folder or label) is the run's own: its start save, or one written since the run started (`after`;
-    bg3ai.tools.saving's SAVES_AFTER rule)."""
-    return any(name in (s.folder, s.label) and (s.folder == start_save or s.mtime >= after) for s in saves)
+    """A save (folder or label) is the run's own: its start save, or one saved since the run started (`after`, by the
+    time the save holds, Save.saved; bg3ai.tools.saving's SAVES_AFTER rule). Never by mtime: a restored copy of an
+    earlier run's save (isolate_saves) has mtime = the launch."""
+    return any(
+        name in (s.folder, s.label) and (s.folder == start_save or (s.saved is not None and s.saved >= after))
+        for s in saves
+    )
 
 
 LOADED_RE = re.compile(r"load_game: done — loaded=(\S+)")
@@ -782,7 +788,9 @@ class LiveRunHost:
         hooks = r.session_hooks(SID, minutes)
         return HostStart(
             prompt,
-            cast(SessionHooks, BenchHooks(hooks, r.event, lambda end: undecided_why(r, sc, end, hooks.now()))),
+            cast(
+                SessionHooks, BenchHooks(hooks, r.event, lambda end: self.undecided(r, sc, run_dir, end, hooks.now()))
+            ),
             str(uuid.uuid4()),
             served["sha256"] if served else None,
             (*served["parts"], kickoff) if served else (kickoff,),
@@ -790,6 +798,20 @@ class LiveRunHost:
             man.get("tools"),
             cast(Json, man.get("client") or {}).get("version"),
         )
+
+    def undecided(self, r: RunRunner, sc: Json, run_dir: Path, session_end: float, now: float) -> str | None:
+        """undecided_why on the game as it is now: a run with a live verdict first reads the facts once
+        (r.facts_now) and asks the verdict (GoalWatch.check), so a wipe or a pass since the last polls (facts every
+        story.POLL_S, the verdict every GOAL_POLL_S) ends the run instead of resuming its agent (B3 job 10: the
+        agent's wait_for saw the Game Over box at 16:23:40, the runner resumed it at 16:23:45 as undecided, the wipe
+        stop came at 16:24:07). A failed read leaves the verdict to the facts already written."""
+        if (w := self.watches.get(run_dir)) is not None and not r.until_hit:
+            try:
+                r.facts_now()
+            except Exception as e:  # the game not answering: the stop check still decides on what it has
+                renv.log(f"{SID}: stop check: facts read failed: {type(e).__name__}: {e}")
+            w.check()
+        return undecided_why(r, sc, session_end, now)
 
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
         r, t0, moved = self.runs.pop(run_dir)
