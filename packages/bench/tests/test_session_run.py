@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from test_run_artifacts import assert_valid, readout
@@ -35,8 +35,8 @@ class Result:
 class Hooks:
     """run_session's hooks for one run: each agent process plays the next (reason, minutes) of `script`."""
 
-    def __init__(self, script: list[tuple[str, float]], clock: list[float]):
-        self.script, self.clock = list(script), clock
+    def __init__(self, script: list[tuple[str, float]], clock: list[float], undecided: bool = False):
+        self.script, self.clock, self.undecided = list(script), clock, undecided  # undecided: resume while it plays
         self.runs: list[dict[str, Any]] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
         self.recovered: list[str] = []
@@ -53,7 +53,7 @@ class Hooks:
         return planned_end
 
     def stop_check(self, session_end: float) -> str | None:
-        return None
+        return "the run isn't over" if self.undecided and self.script else None
 
     def game_ok(self) -> bool:
         return False
@@ -101,8 +101,10 @@ class Host:
         cost: float | None = 0.4,
         fail_start: bool = False,
         served: dict | None = None,
+        undecided: bool = False,
     ):
         self.scripts, self.cost, self.fail_start, self.served = list(scripts), cost, fail_start, served
+        self.undecided = undecided
         self.clock = [T0]
         self.started: list[tuple[dict, dict, Path]] = []
         self.hooks: list[Hooks] = []
@@ -112,7 +114,7 @@ class Host:
         if self.fail_start:
             raise RuntimeError("the start save would not load")
         self.started.append((job, sc, run_dir))
-        self.hooks.append(Hooks(self.scripts.pop(0), self.clock))
+        self.hooks.append(Hooks(self.scripts.pop(0), self.clock, self.undecided))
         parts = ({"file": "rules.md", "sha256": "b" * 64},)
         return Start("KICKOFF", self.hooks[-1], "conv-1", "a" * 64, parts, "0.1", TOOLS, "2.1.301")
 
@@ -319,3 +321,12 @@ def test_every_run_hands_the_host_a_verdict_that_ends_it_at_a_wipe(tmp_path):
         assert started["verdict"]() is None  # Wyll dead, Tav standing: the fight goes on
         (run_dir / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
         assert started["verdict"]() == "wiped", sc.get("name")
+
+
+def test_a_maximise_run_has_no_count_on_its_stop_resumes_and_a_goal_run_keeps_it(tmp_path):
+    # bench B3: max_stop_resumes (6) ended Sonnet's act1_gold_max at 20.9 of 45 min; the host's stop check decides
+    max_sc = {k: v for k, v in SC.items() if k != "goal"} | {"maximise": {"fact": "gold"}}
+    for i, (sc, runs) in enumerate(((SC, 1 + cast(int, NO_RESUME.max_stop_resumes)), (max_sc, 10))):
+        host = Host([[("exited", 1)] * 10], undecided=True)
+        SessionRun("m", host, scenarios={"e2e_sell_idol": sc}, sessions=tmp_path / f"s{i}")(job())
+        assert len(host.hooks[0].runs) == runs, sc.get("maximise")

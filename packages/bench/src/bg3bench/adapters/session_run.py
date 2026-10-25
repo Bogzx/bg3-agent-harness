@@ -2,8 +2,9 @@
 
 The bench builds the run: the series (`series_name`: one per scenario, model, client, effort and condition), the run
 number (one after the series' last runs.jsonl record), the run directory (runtime/sessions/<series.run_name>/), the
-SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=0)) and, at the end, the record, its
-runs.jsonl line (its pins carry the harness, bench and suite versions: pins.versions, the host's harness version
+SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=0); a maximise scenario's with no
+count on its stop resumes: the host resumes its agent until the time cap while it acts) and, at the end, the record,
+its runs.jsonl line (its pins carry the harness, bench and suite versions: pins.versions, the host's harness version
 first) and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
 `start` puts the game at the scenario's start and returns the kickoff and the session hooks (the agent process, the
 game, the clock; the job it gets carries "tools_off", the tools its condition removes, and "prompt_condition", the
@@ -44,6 +45,8 @@ from bg3bench.facts import FactsError
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 NO_RESUME = Recovery(max_resumes=0)
+# a maximise run plays its whole cap: resumed while it acts (the host's stop check), not at most max_stop_resumes times
+MAXIMISE = Recovery(max_resumes=0, max_stop_resumes=None)
 JSON = dict[str, Any]
 
 
@@ -146,7 +149,8 @@ class SessionRun:
             with runs.open("a", encoding="utf-8") as f:  # the run number is used: a rerun gets a fresh run_dir
                 f.write(json.dumps(failed) + "\n")
             return RunResult(None, False, False, 0.0, why, True)
-        spec = SessionSpec(run_dir.name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, NO_RESUME)
+        recovery = MAXIMISE if "maximise" in sc else NO_RESUME  # scenario.maximised
+        spec = SessionSpec(run_dir.name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, recovery)
         out = run_session(spec, st.hooks)
         rec: JSON = dict(self.host.record(job, sc, run_dir, out))
         rec.update(series=name, playthrough=run_dir.name, run=k, client=job["client"], model=job["model"])

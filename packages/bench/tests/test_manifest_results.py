@@ -322,6 +322,14 @@ def test_a_maximise_result_has_no_pass_and_carries_its_score():
     assert "score" not in results.from_record(records[0], "r")
 
 
+def test_a_result_carries_the_agents_first_end_of_turn():
+    _, records = load_series()
+    res = results.from_record({**records[0], "first_stop_s": 1254.3}, "r")
+    assert res["first_stop_s"] == 1254.3
+    assert_valid("result.v1.schema.json", res)
+    assert results.from_record(records[0], "r")["first_stop_s"] is None  # never ended its turn, or an older record
+
+
 def test_a_release_leaves_maximise_runs_out_of_the_pass_rates_and_lists_their_score():
     (m1, r1), (m2, r2), _ = naut2_pairs()
     gold = {**m2, "scenario": {**m2["scenario"], "name": "act1_gold_max"}}

@@ -70,6 +70,7 @@
     },
     "wall_s": {"$ref": "#/$defs/num_or_null"},
     "play_s": {"$ref": "#/$defs/num_or_null"},
+    "first_stop_s": {"$ref": "#/$defs/num_or_null", "description": "wall seconds from the run's start to the agent's first end of its turn (a stop resume or the run's end), null if it never ended its turn or the record is older; optional, added 2026-10-25 (still v1)"},
     "think_s": {"$ref": "#/$defs/num_or_null", "description": "the model's own time (model_time.model_s); realtime scenarios report it next to wall_s (D7)"},
     "luck": {
       "description": "bg3bench.luck.summary over the run's roll log (D9); null: no roll log",
