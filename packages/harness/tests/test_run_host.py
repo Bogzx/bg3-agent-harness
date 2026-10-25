@@ -278,7 +278,9 @@ def test_start_resets_the_run_and_puts_the_game_at_the_scenario_start(rig: Rig):
     h, calls, runners, dumped = rig.h, rig.calls, rig.runners, rig.dumped
     st = h.start(JOB, SAVE_SC, run_dir("m-grove"))
     (r,) = runners
-    assert calls == ["snapshot", "ensure_game(True)", "reload", "settings", "check_settings"]
+    # check_settings renames a start save's avatar ("Claude") to the save owner before apply_play_settings decides the
+    # save/load gates from that name (live B2: the gates were closed for every save-start run)
+    assert calls == ["snapshot", "ensure_game(True)", "reload", "check_settings", "settings"]
     assert (r.state["saves_after"], r.run_started) == (1000.0, 1000.0)
     assert not r.settles_budget  # the matrix adds the run's cost to budget.json, not the runner
     assert sorted(p.name for p in (run_dir("m-grove") / "reset").iterdir()) == ["nav_aa.json", "nav_guard_aa.json"]
