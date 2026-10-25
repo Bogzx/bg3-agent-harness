@@ -4,8 +4,8 @@ would be if its record were written now. Prints old -> new and the failures that
 
     uv run --project packages/bench python -m bg3bench.regrade RUN_DIR [RUN_DIR ...]
 
-A run dir is a bench run's state dir (runtime/sessions/<series>/): its runs.jsonl records, play streams and
-result.json. bg3harness.runs.restream_failures re-reads the play streams (the record's other failures are kept);
+A run dir is a bench series' state dir (runtime/sessions/<series>/): its runs.jsonl holds every run's record, and
+run k's play streams are in its own dir, the record's playthrough (<series>-r<k> for k > 1). bg3harness.runs.restream_failures re-reads the play streams (the record's other failures are kept);
 results.validity decides with the record's own seed (its manifest's). diverse-2026-10-25 Opus x act3_gold_max was
 voided by a background companion's move_to TIMEOUT echoed in a wait_for's EVENTS (now bg_timeout, not harness).
 """
@@ -51,7 +51,8 @@ def report(run_dir: Path) -> list[str]:
         return [f"{run_dir.name}: no runs.jsonl record yet"]
     out: list[str] = []
     for rec in recs:
-        r = regrade(rec, run_dir)
+        # run k's streams are in its own dir, not the series dir that holds runs.jsonl (series.run_name)
+        r = regrade(rec, run_dir.parent / rec["playthrough"] if rec.get("playthrough") else run_dir)
         o, n = r["old"], r["new"]
         same = "unchanged" if o == n else "CHANGED"
         out.append(
