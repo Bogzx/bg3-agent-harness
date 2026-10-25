@@ -591,8 +591,8 @@ class LiveRunHost:
                 )
             loaded = loaded or start_save
         r.hot_reload_mod()
-        r.apply_play_settings()
-        r.check_settings()  # the scenario's difficulty / karmic dice against the readout; the seed
+        r.check_settings()  # the scenario's difficulty / karmic dice against the readout; the seed; the avatar's name
+        r.apply_play_settings()  # after the rename: the save/load gates compare the avatar's name with the owner (B2)
         if self.stopped:  # stopped while the game came up: no agent starts (start's handler stops the game)
             raise RuntimeError("operator stop before the kickoff")
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
