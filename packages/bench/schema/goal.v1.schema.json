@@ -21,6 +21,17 @@
       "anyOf": [{"required": ["gte"]}, {"required": ["lte"]}],
       "additionalProperties": false
     },
+    "combats_cmp": {
+      "type": "object",
+      "description": "enemy: count only the won combats in which a character outside the party whose name matches died",
+      "properties": {
+        "gte": {"type": "number", "minimum": 0},
+        "lte": {"type": "number", "minimum": 0},
+        "enemy": {"$ref": "#/$defs/regex"}
+      },
+      "anyOf": [{"required": ["gte"]}, {"required": ["lte"]}],
+      "additionalProperties": false
+    },
     "regex": {"type": "string", "minLength": 1},
     "item": {
       "type": "object",
@@ -47,7 +58,7 @@
         "gold": {"$ref": "#/$defs/cmp"},
         "party_level": {"$ref": "#/$defs/level_cmp"},
         "companions": {"$ref": "#/$defs/cmp"},
-        "combats_won": {"$ref": "#/$defs/cmp"},
+        "combats_won": {"$ref": "#/$defs/combats_cmp"},
         "combats_started": {"$ref": "#/$defs/cmp"},
         "party_dead": {"$ref": "#/$defs/cmp"},
         "elapsed_s": {"$ref": "#/$defs/cmp"},

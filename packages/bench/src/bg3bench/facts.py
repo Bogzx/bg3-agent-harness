@@ -3,7 +3,10 @@
 
 The harness writes the file; the benchmark only reads it. `State` is what the graders test: snapshots replace the
 current party, inventory, gold, region and combat flag; events update them between snapshots; places and quests seen
-accumulate. `from_progress` turns an old `Sxxx.progress.jsonl` (bg3ai.progress) into v1 events so archived runs can
+accumulate. Each won combat keeps the names of the characters outside the party who died in it (`won_kills`, for a
+goal's combats_won enemy): from a `kill` event (KilledBy, before the combat ends) or a `died` one (Died, after the
+dying animation: the last kill's comes after combat_ended), during the combat or at the instant it ended (one poll's
+diff writes combat_ended before its deaths). `from_progress` turns an old `Sxxx.progress.jsonl` (bg3ai.progress) into v1 events so archived runs can
 be graded with the same leaves.
 """
 
@@ -68,6 +71,9 @@ class State:
     combats_started: int = 0
     combats_won: int = 0
     wiped_this_combat: bool = False
+    kills: set[str] = field(default_factory=set)  # non-party deaths in the combat on (or the last one)
+    won_kills: list[set[str]] = field(default_factory=list)  # each won combat's kills
+    ended_t: float | None = None  # when the last combat ended
     game_end: bool = False
 
     def real_party(self) -> list[Member]:
@@ -94,13 +100,22 @@ class State:
             return sum(int(i.get("count", 0)) for i in self.inv if str(i.get("name", "")).lower() == name.lower())
         return sum(int(i.get("count", 0)) for i in self.inv if i.get("tpl") == tpl)
 
-    def _set_combat(self, on: bool) -> None:
+    def _set_combat(self, on: bool, t: float) -> None:
         if on and not self.combat:
             self.combats_started += 1
             self.wiped_this_combat = False
-        elif not on and self.combat and not (self.wiped_this_combat or self.wiped()):
-            self.combats_won += 1
+            self.kills = set()
+        elif not on and self.combat:
+            self.ended_t = t
+            if not (self.wiped_this_combat or self.wiped()):
+                self.combats_won += 1
+                self.won_kills.append(self.kills)
         self.combat = on
+
+    def _killed(self, name: str, t: float) -> None:
+        """A character outside the party died: it counts for the combat on, or the one that ended at this instant."""
+        if self.combat or t == self.ended_t:
+            self.kills.add(name)
 
     def apply(self, r: dict) -> None:
         """Fold one record into the state."""
@@ -127,16 +142,21 @@ class State:
         if r.get("area"):
             self.areas.add(r["area"])
         self.quests_done.update(q for q, done in r["quests"].items() if done)
-        self._set_combat(bool(r["combat"]))
+        self._set_combat(bool(r["combat"]), r["t"])
 
     def _event(self, r: dict) -> None:
         ev = r["ev"]
         if ev == "combat_started":
-            self._set_combat(True)
+            self._set_combat(True, r["t"])
         elif ev == "combat_ended":
-            self._set_combat(False)
+            self._set_combat(False, r["t"])
+        elif ev == "kill":
+            if r["victim"] not in self.party:
+                self._killed(r["victim"], r["t"])
         elif ev in ("died", "downed", "revived"):
-            if r["party"]:
+            if ev == "died" and not r["party"]:
+                self._killed(r["name"], r["t"])
+            elif r["party"]:
                 m = self.party.setdefault(r["name"], Member())
                 if ev == "died":
                     m.dead = True

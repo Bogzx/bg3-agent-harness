@@ -24,9 +24,10 @@ from bg3bench import __version__
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]  # packages/bench
 PINS = PACKAGE_ROOT / "suite.json"
 SCENARIO_DIR = "scenarios"  # every file under it: the v2 scenarios and their quizzes
-# The code that turns a run into a score (bg3bench sources): graders and goal predicates, the choice grader, the
-# conditions, the statistics and the invalid-run rule.
+# The code that turns a run into a score (bg3bench sources): graders, goal predicates and the facts they fold, the
+# choice grader, the conditions, the statistics and the invalid-run rule.
 SUITE_FILES = (
+    "src/bg3bench/facts.py",
     "src/bg3bench/graders.py",
     "src/bg3bench/predicates.py",
     "src/bg3bench/choices.py",

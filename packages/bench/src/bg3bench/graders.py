@@ -63,7 +63,10 @@ def leaf_true(leaf: Leaf, state: State, elapsed: float) -> bool:
     if k == "companions":
         return _cmp(state.companions(), leaf)
     if k == "combats_won":
-        return _cmp(state.combats_won, leaf)
+        if leaf.rx is None:
+            return _cmp(state.combats_won, leaf)
+        rx = leaf.rx
+        return _cmp(sum(1 for kills in state.won_kills if any(rx.search(n) for n in kills)), leaf)
     if k == "combats_started":
         return _cmp(state.combats_started, leaf)
     if k == "party_dead":
@@ -117,13 +120,14 @@ def _describe(node: Node) -> Any:
     """A JSON-able rendering of a parsed node, for violation reports."""
     match node:
         case Leaf(kind=k):
-            if node.rx is not None:
+            if node.rx is not None and k != "combats_won":
                 return {k: node.rx.pattern}
             if k == "item":
                 return {k: {"name" if node.name else "tpl": node.name or node.tpl, "gte": node.gte}}
             if node.gte is None and node.lte is None:
                 return {k: True}
-            return {k: {key: v for key, v in (("gte", node.gte), ("lte", node.lte)) if v is not None}}
+            enemy = {"enemy": node.rx.pattern} if node.rx is not None else {}
+            return {k: {key: v for key, v in (("gte", node.gte), ("lte", node.lte)) if v is not None} | enemy}
         case All(children=kids):
             return {"all": [_describe(c) for c in kids]}
         case Any_(children=kids):

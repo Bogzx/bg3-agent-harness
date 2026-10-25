@@ -122,6 +122,57 @@ def test_wipe_versus_a_single_death():
     assert not grade({"combats_won": {"gte": 1}}, wiped)["passed"]  # a wipe during the fight, even if revived
 
 
+def test_a_fight_goal_names_its_enemies():
+    # diverse-2026-10-25 x fight_act1_windmill: Haiku won a 9-s combat against a sleeping Scrawny Bugbear near the
+    # windmill and passed {"combats_won": {"gte": 1}}; Opus killed the goblins (one Goblin Tracker out of combat first).
+    goal = json.loads((ROOT / "packages/bench/scenarios/fight_act1_windmill.json").read_text())["goal"]
+    haiku = facts.load(TL / "windmill_haiku_bugbear.facts.jsonl")
+    opus = facts.load(TL / "windmill_opus_goblins.facts.jsonl")
+    assert grade({"combats_won": {"gte": 1}}, haiku)["passed"]
+    assert not grade(goal, haiku)["passed"]
+    assert grade(goal, opus)["t_pass_s"] == 249.9  # the combat_ended after Goblin Brawler's kill
+    # Balthazar died, then his guards wiped the party: the fight was not won.
+    wiped = facts.load(TL / "balthazar_haiku_wipe.facts.jsonl")
+    assert not grade({"combats_won": {"gte": 1, "enemy": "^balthazar$"}}, wiped)["passed"]
+
+
+def test_a_won_combat_counts_the_enemies_who_died_in_it():
+    party = [TAV, member("Gale")]
+    boss = {"combats_won": {"gte": 1, "enemy": "^boss$"}}
+    tl = run(
+        snap(10, party=party),
+        ev(15, "died", name="Boss", party=False),  # before the combat: not this fight
+        ev(20, "combat_started"),
+        ev(25, "kill", victim="Gale", killer="Boss"),
+        ev(30, "kill", victim="Rat", killer="Tav"),
+        ev(31, "combat_ended"),
+        ev(32, "died", name="Boss", party=False),  # after it ended
+    )
+    assert grade({"combats_won": {"gte": 1, "enemy": "rat"}}, tl)["t_pass_s"] == 31
+    assert not grade(boss, tl)["passed"]
+    assert not grade({"combats_won": {"gte": 1, "enemy": "gale"}}, tl)["passed"]  # a party member isn't an enemy
+    rat = {"combats_won": {"gte": 1, "enemy": "^rat$"}}
+    assert grade({"all": [{"gold": {"gte": 1}}, {"never": rat}]}, tl)["violations"] == [{"t_s": 31, "node": rat}]
+    # The last kill's Died comes after combat_ended; its KilledBy (the kill event) before.
+    tl = run(
+        snap(10, party=party),
+        ev(20, "combat_started"),
+        ev(30, "kill", victim="Boss"),
+        ev(31, "combat_ended"),
+        ev(32, "died", name="Boss", party=False),
+    )
+    assert grade(boss, tl)["t_pass_s"] == 31
+    # One poll's diff (no referee ring): combat_ended, then the death, at the same instant.
+    tl = run(
+        snap(10, party=party),
+        ev(20, "combat_started"),
+        ev(30, "combat_ended"),
+        ev(30, "died", name="Boss", party=False),
+    )
+    assert grade(boss, tl)["t_pass_s"] == 30
+    assert not grade(boss, tl[:-1] + [ev(31, "died", name="Boss", party=False)])["passed"]
+
+
 def test_a_combat_seen_only_in_snapshots_counts():
     tl = run(snap(10), snap(20, combat=True), snap(30, combat=True), snap(40))
     assert grade({"combats_won": {"gte": 1}}, tl)["t_pass_s"] == 40

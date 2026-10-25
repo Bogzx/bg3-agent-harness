@@ -108,7 +108,11 @@ game unless it says so.
   (every party member dead or downed: the Game Over screen) ends every run: a goal not passed by then fails
   (`graders.verdict` "wiped", a `{"wipe": true}` violation), a maximise run scores its gain up to the wipe; a run
   whose game loaded a save that is not its start save or its own is invalid (`foreign_save`). Pinned into the
-  unreleased bench-v0.8 (diverse-2026-10-25 plays it; its earlier records can be regraded).
+  unreleased bench-v0.8 (diverse-2026-10-25 plays it; its earlier records can be regraded). A fight scenario passes
+  only when its own fight is won: its goal is `{"combats_won": {"gte": 1, "enemy": re}}`, a won combat in which a
+  character outside the party whose name matches the regex died (`kill` or `died` events, `facts.State.won_kills`);
+  `{"combats_won": {"gte": 1}}` passed any won combat (diverse-2026-10-25 Haiku x `fight_act1_windmill` killed a
+  sleeping Scrawny Bugbear in 1.1 min). `facts.py` is a suite file now.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

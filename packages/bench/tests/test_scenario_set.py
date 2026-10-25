@@ -210,8 +210,12 @@ def task_matches_the_grader(sc: dict) -> bool:
         return words[goal["milestone"]] in task
     if sc["family"] == "choice":
         return sc["start"]["note"]["objective"].lower() in task and "fight is won" in sc["scored_by"]
-    if goal == {"combats_won": {"gte": 1}}:
-        return task.startswith("win the fight") and "a fight is won" in sc["scored_by"]
+    if set(goal) == {"combats_won"}:  # the fight's enemies are named: another won fight doesn't pass
+        return (
+            task.startswith("win the fight")
+            and set(goal["combats_won"]) == {"gte", "enemy"}
+            and "the fight ahead of you is won" in sc["scored_by"]
+        )
     if "quest_done" in goal:
         return goal["quest_done"] in task
     if "all" in goal:  # the goblin camp: the Sanctum and never a combat
