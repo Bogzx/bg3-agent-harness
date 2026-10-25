@@ -149,10 +149,21 @@ function G.in_combat(uuid) return b(G.q("IsInCombat", uuid)) end
 -- DialogState.DialogId keeps the last instance id after the dialogue ends
 -- (seen live: 4, 202, 203 with no dialogue running), so it only counts while
 -- that instance still exists.
--- Returns blocked, why ("dialog 12 res=..." / "InDialog" / "SpeakerGetDialog").
+-- An instance counts only while its own DialogId is the id the manager lists
+-- it under. Bench B3 (act3_gold_max r2, 13:32:24/27): 2-5 s after Oliver
+-- Tefoco's dialogue ended, with InDialog false on every party member, the
+-- manager still listed an instance reading DialogId 0 and a building mesh as
+-- its resource; it blocked Wyll's unequip twice "in a conversation".
+-- Returns blocked, why ("dialog 12 res=..." / "InDialog" / "SpeakerGetDialog");
+-- why is for the game log only: it names engine resources a player can't see.
 local function inst_field(inst, k)
     local ok, v = pcall(function() return inst[k] end)
     return ok and v or nil
+end
+
+local function live_inst(inst, id)
+    local d = inst_field(inst, "DialogId")
+    return d ~= nil and d ~= 0 and d == id
 end
 
 local function speaker_is(sp, g)
@@ -178,11 +189,11 @@ function G.dialogue_info(uuid)
         local ok, id = pcall(function() return ds and ds.DialogId end)
         if ok and id ~= nil and id ~= 0 then
             local okd, inst = pcall(function() return dialogs[id] end)
-            if okd and inst ~= nil then insts[#insts + 1] = inst end
+            if okd and inst ~= nil and live_inst(inst, id) then insts[#insts + 1] = inst end
         end
         pcall(function()
-            for _, inst in pairs(dialogs) do
-                local sps = inst_field(inst, "Speakers")
+            for k, inst in pairs(dialogs) do
+                local sps = live_inst(inst, k) and inst_field(inst, "Speakers")
                 if sps then
                     for _, sp in pairs(sps) do
                         if speaker_is(sp, g) then insts[#insts + 1] = inst; break end
@@ -385,7 +396,10 @@ end
 
 function G.not_in_dialogue(char)
     local blocked, why = G.dialogue_info(char)
-    if blocked then G.refuse("character is in a conversation (" .. tostring(why) .. ")") end
+    if blocked then
+        Ext.Utils.Print("[BG3AI] guard: in a conversation: " .. tostring(why))
+        G.refuse("character is in a conversation")
+    end
 end
 
 ------------------------------------------------------------------------
