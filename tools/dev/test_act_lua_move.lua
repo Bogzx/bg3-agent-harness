@@ -860,7 +860,7 @@ local function carried_use()
     return job(op("interact", { char = P1, target = GEM }))
 end
 
-test("interact: a carried item's Use the game never takes from the queue fails at 8 s, not a 38 s TIMEOUT (B3 16:56:45)", function()
+test("interact: a carried Use the game never takes from the queue fails at 8 s, not a 38 s TIMEOUT (B3)", function()
     local j = carried_use()
     tick(130) -- 7.8 s
     eq(j.status, "running", "before 8 s")
@@ -870,7 +870,7 @@ test("interact: a carried item's Use the game never takes from the queue fails a
     eq(j.result.purged_tasks, 1, "the queued Use purged")
 end)
 
-test("interact: a carried item's Use the game ran (UseFinished) is done, and one being run (queue empty) waits", function()
+test("interact: a carried Use the game ran (UseFinished) is done; one being run (queue empty) waits", function()
     local j = carried_use()
     tick(5)
     A.dispatch("UseFinished", { P1, GEM, 1 })
