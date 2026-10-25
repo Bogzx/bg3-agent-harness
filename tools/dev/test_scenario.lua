@@ -1,7 +1,8 @@
 -- Offline tests for Server/Scenario.lua: scenario setup RPCs (B-mod task 3, mod round 6).
 -- Refused without BG3AI_SCENARIO_SETUP=1; seed writes the ServerRollStreams component and is re-applied after a
 -- load; renames are idempotent and undone, also after a load (a fresh Lua state reading the record file); Karmic
--- set/read back, the difficulty read (set refused) and the avatar's CustomName, undone only in the same Lua state.
+-- set/read back, the difficulty read (set refused) and the avatar's name in all three fields, re-applied after a
+-- load of that avatar and undone (the record).
 -- Ext, Osi and RPC are stubbed. Run: tools/dev/test_scenario.sh  (Lua 5.3 + 5.4 in Docker)
 
 local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -10,8 +11,9 @@ local MATTIS = "e1fda08b-45d4-41db-84b5-20e9931ba5af"
 local GALE = "aaaaaaaa-0000-0000-0000-000000000003"
 local env = {}
 local files = {}
-local loca = { hMattis = "Mattis", hGale = "Gale" }
-local handles = { [MATTIS] = "hMattis", [GALE] = "hGale" }
+local loca = { hMattis = "Mattis", hGale = "Gale", hTav = "Claude", hAna = "Ana" }
+local handles = { [MATTIS] = "hMattis", [GALE] = "hGale", ["cccccccc-0000-0000-0000-000000000001"] = "hTav",
+    ["eeeeeeee-0000-0000-0000-000000000002"] = "hAna" }
 local listeners, ops = {}, {}
 local ZERO = "00000000-0000-0000-0000-000000000000"
 
@@ -38,9 +40,16 @@ local rulesets = { BALANCED }
 local TAV = "S_Player_Claude_cccccccc-0000-0000-0000-000000000001"
 local TAV_UUID = "cccccccc-0000-0000-0000-000000000001"
 local replicated = {}
-local avatar = { CustomName = { Name = "Claude" } }
+local avatar = { CustomName = { Name = "Claude" }, CharacterCreationStats = { Name = "Claude" } }
+-- A load of the avatar's save: every field shows the save's own name again (live B1).
+local function loadAvatar()
+    avatar.CustomName.Name, avatar.CharacterCreationStats.Name, loca.hTav = "Claude", "Claude", "Claude"
+end
 function avatar:Replicate(c) replicated[#replicated + 1] = c end
 local host = TAV
+local OTHER_UUID = "eeeeeeee-0000-0000-0000-000000000002"
+local other = { CustomName = { Name = "Ana" }, CharacterCreationStats = { Name = "Ana" } }
+other.Replicate = function() end
 
 -- Ext.Json stand-in: Stringify keeps a deep copy under a token string, Parse returns a fresh copy of it, so the
 -- record file round-trips like JSON would (no shared tables between Lua states).
@@ -83,7 +92,7 @@ Ext = {
             if c == "Ruleset" then return rulesets and { { Ruleset = { Rulesets = rulesets } } } or {} end
             return { { ServerRollStreams = RS } }
         end,
-        Get = function(u) return u == TAV_UUID and avatar or nil end,
+        Get = function(u) return (u == TAV_UUID and avatar) or (u == OTHER_UUID and other) or nil end,
     },
     StaticData = { Get = function(g, t)
         if t ~= "Ruleset" then return nil end
@@ -270,31 +279,61 @@ do
     rulesets = { BALANCED }
 end
 
--- Avatar rename: CustomName written, replicated, read back; the first original kept; undo only while it's ours.
+-- Avatar rename: CustomName, CharacterCreationStats.Name and the DisplayName text written, replicated and read
+-- back; the first originals kept; recorded, so a load of that avatar gets the name again; undo puts them back.
 do
     local res
+    local function named(n)
+        return avatar.CustomName.Name == n and avatar.CharacterCreationStats.Name == n and loca.hTav == n
+    end
     local ok, r = call("scn.rename_avatar", { name = "Tav" })
     check("avatar renamed", ok and r.uuid == TAV_UUID and r.original == "Claude" and r.name == "Tav"
-        and avatar.CustomName.Name == "Tav" and replicated[#replicated] == "CustomName", r)
+        and r.display == "Tav" and r.cc == "Tav" and named("Tav"), r)
+    check("avatar replicated", replicated[#replicated - 1] == "CustomName"
+        and replicated[#replicated] == "CharacterCreationStats")
     ok, r = call("scn.rename_avatar", { name = "Tav Two" })
     check("avatar rename again keeps original", ok and r.original == "Claude" and r.before == "Tav")
     for _, bad in ipairs({ "", " Tav", "Tav.", ("x"):rep(41), 5 }) do
         check("bad avatar name " .. tostring(bad), not call("scn.rename_avatar", { name = bad }))
     end
-    check("bad names change nothing", avatar.CustomName.Name == "Tav Two")
+    check("bad names change nothing", named("Tav Two"))
     ok, res = call("scn.undo")
-    check("undo restores avatar", ok and res.avatar == "Claude" and avatar.CustomName.Name == "Claude", res)
-    -- Someone else renamed it since: undo leaves it.
+    check("undo restores avatar", ok and res.avatar == "Claude" and named("Claude"), res)
+    check("undo clears the avatar record", decode(files[S.RECORD]).avatar == nil)
+    -- Someone else renamed it since: undo leaves CustomName and the stats, the DisplayName text goes back.
     call("scn.rename_avatar", { name = "Tav" })
     avatar.CustomName.Name = "Other"
     ok, res = call("scn.undo")
-    check("undo leaves a foreign name", ok and res.avatar == nil and avatar.CustomName.Name == "Other")
-    -- A load (fresh Lua state): the save keeps the name; undo has nothing to restore and the record has no avatar.
+    check("undo leaves a foreign name", ok and res.avatar == nil and avatar.CustomName.Name == "Other"
+        and avatar.CharacterCreationStats.Name == "Tav" and loca.hTav == "Claude", res)
+    avatar.CustomName.Name, avatar.CharacterCreationStats.Name = "Claude", "Claude"
+    -- A load (fresh Lua state, the save's own name in every field): LevelGameplayStarted renames it again.
     call("scn.rename_avatar", { name = "Tav" })
+    loadAvatar()
     S = boot()
+    check("avatar in the record", decode(files[S.RECORD]).avatar.name == "Tav")
+    listeners["LevelGameplayStarted/2"]("CTY_Main_A", 0)
+    check("avatar re-applied after a load", named("Tav") and S.reapplied.avatar == "Tav", S.reapplied.avatar)
     ok, res = call("scn.undo")
-    check("no avatar undo after a load", ok and res.avatar == nil and avatar.CustomName.Name == "Tav")
-    check("avatar not in the record", decode(files[S.RECORD]).avatar == nil)
+    check("undo after a load", ok and res.avatar == "Claude" and named("Claude"), res)
+    -- Another avatar loaded: not renamed, its undo restores only the recorded DisplayName text.
+    call("scn.rename_avatar", { name = "Tav" })
+    host = OTHER_UUID
+    S = boot()
+    listeners["LevelGameplayStarted/2"]("CTY_Main_A", 0)
+    check("other avatar not renamed", S.reapplied.avatar == "not this save's avatar" and other.CustomName.Name == "Ana"
+        and loca.hAna == "Ana", S.reapplied.avatar)
+    ok, res = call("scn.undo")
+    check("undo with another avatar", ok and res.avatar == nil and loca.hTav == "Claude"
+        and other.CustomName.Name == "Ana", res)
+    host = TAV
+    avatar.CustomName.Name, avatar.CharacterCreationStats.Name = "Claude", "Claude"
+    -- No CharacterCreationStats: the other two fields still renamed.
+    avatar.CharacterCreationStats = nil
+    ok, r = call("scn.rename_avatar", { name = "Tav" })
+    check("no stats component", ok and r.cc == nil and avatar.CustomName.Name == "Tav" and loca.hTav == "Tav", r)
+    call("scn.undo")
+    avatar.CharacterCreationStats = { Name = "Claude" }
     -- No CustomName / no host / no entity.
     avatar.CustomName = nil
     local okn, err = call("scn.rename_avatar", { name = "Tav" })

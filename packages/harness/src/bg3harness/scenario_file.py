@@ -61,7 +61,9 @@ def split(sc: Any) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
 
 def mismatches(want: dict[str, Any], got: dict[str, Any]) -> tuple[list[str], list[str]]:
     """The settings check: (contradictions, settings the game's readout can't tell) for the keys the scenario fixes.
-    A readout of null is unknown, never a contradiction."""
+    A readout of null is unknown, never a contradiction. avatar_name (a bench save start: run_host.options_for) is
+    the name the runner gave the avatar (game_setup): one it couldn't give is a contradiction (the agent would play
+    under the save's name)."""
     bad: list[str] = []
     unknown: list[str] = []
     for k in CHECKED:
@@ -71,4 +73,8 @@ def mismatches(want: dict[str, Any], got: dict[str, Any]) -> tuple[list[str], li
             unknown.append(k)
         elif got[k] != want[k]:
             bad.append(f"{k} is {got[k]!r}, the scenario needs {want[k]!r}")
+    name = want.get("avatar_name")
+    if name is not None and got.get("avatar_name") != name:
+        why = f" ({got['avatar_error']})" if got.get("avatar_error") else ""
+        bad.append(f"the avatar is named {got.get('avatar_name')!r}, the scenario needs {name!r}{why}")
     return bad, unknown

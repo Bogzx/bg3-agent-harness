@@ -12,8 +12,10 @@ STRESS-TEST.md), already moved to the scenario's start spot. Then, through the m
      checks the new folder's owner is --owner (the folder name comes from the avatar's name);
   4. registers the folder: `python -m bg3bench.authoring register <folder> <store> <name>` (a subprocess, in the
      bench package's project).
-Karmic Dice goes back to what it was once the save is written (or the run fails). The avatar's new name stays in
-the loaded game: it's a throwaway PROBE copy. Exit 0 registered, 1 refused or failed (the reason on stderr).
+Once the save is written (or the run fails) scn.undo puts Karmic Dice and the avatar's name back and clears the
+mod's record, which would otherwise rename that avatar at every later load. A bench run names the avatar itself
+(the runner's game_setup: a loaded start save shows the name it was played under, live B1), so the name in the save
+is only the folder's owner. Exit 0 registered, 1 refused or failed (the reason on stderr).
 """
 
 from __future__ import annotations
@@ -76,7 +78,7 @@ def make(
     owner: str = "Tav",
     log: Callable[[str], None] = print,
 ) -> Path:
-    """Steps 1-4 (module docstring); returns the save folder written. Karmic is restored on every way out."""
+    """Steps 1-4 (module docstring); returns the save folder written. scn.undo runs on every way out."""
     if not NAME_RE.match(name):
         raise RefusedError(f"scenario name {name!r}: lowercase letters, digits and _ (start with a letter, <= 36)")
     if not OWNER_RE.match(owner):
@@ -98,9 +100,8 @@ def make(
             )
         log(f"saved {folder}")
     finally:
-        if k.get("before") == "WeightedRandom":
-            rpc("scn.karmic", {"set": True})
-            log("karmic back on")
+        u = rpc("scn.undo")
+        log(f"undone: karmic {u.get('karmic') or 'unchanged'}, avatar {u.get('avatar') or 'unchanged'}")
     register(folder)
     return folder
 

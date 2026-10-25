@@ -110,7 +110,7 @@ class Options:
     manifest: dict[str, Any] | None = None  # pi, claude: run_manifest.manifest_fields (the run record's "manifest")
     pace: str | None = None            # the kickoff's pace pre-flight: client_setup.kickoff_pace ("": none); None: claude's
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
-    scenario_settings: dict[str, Any] | None = None  # run --scenario-file: {difficulty, karmic_dice, timing} (check_settings)
+    scenario_settings: dict[str, Any] | None = None  # {difficulty, karmic_dice, timing, avatar_name?} (check_settings)
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a

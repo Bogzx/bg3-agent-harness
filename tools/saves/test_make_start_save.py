@@ -74,14 +74,17 @@ class Make(unittest.TestCase):
         self.assertEqual(self.karmic_at_save, ["Random"])  # off while saving
         self.assertEqual(self.model.roll_mode, "WeightedRandom")  # back on afterwards
         ops = [op for op in self.fake.ops() if op.startswith("scn.")]
-        self.assertEqual(ops, ["scn.status", "scn.difficulty", "scn.karmic", "scn.rename_avatar", "scn.karmic"])
+        self.assertEqual(ops, ["scn.status", "scn.difficulty", "scn.karmic", "scn.rename_avatar", "scn.undo"])
         self.assertIn("avatar 'Claude' -> 'Tav'", self.logged)
+        self.assertIsNone(self.model.scn_avatar)  # no record left to rename that avatar at a later load
+        self.assertEqual(self.model.party[0].name, "Claude")
 
     def test_karmic_already_off_stays_off(self) -> None:
         self.model.roll_mode = "Random"
         self.make()
         self.assertEqual(self.model.roll_mode, "Random")
         self.assertEqual([op for op in self.fake.ops() if op == "scn.karmic"], ["scn.karmic"])
+        self.assertIn("undone: karmic Random, avatar Tav", self.logged)  # the original, written back
 
     def refused(self, match: str, **kw: Any) -> None:
         with self.assertRaisesRegex((mss.RefusedError, GameError), match):
