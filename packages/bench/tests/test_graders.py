@@ -385,3 +385,31 @@ def test_the_live_verdict_passes_fails_or_waits_as_grade_would():
     assert graders.verdict(either, run(snap(10, combat=True))) is None  # the gold branch can still pass
     after_end = run(snap(10), mark(20, "run_end"), ev(30, "gold", gold=150, delta=150))
     assert graders.verdict(goal, after_end) is None  # nothing after run_end counts, as in grade
+
+
+def test_measure_scores_the_gain_from_the_first_snapshot_to_run_end():
+    tl = run(snap(5, gold=133), ev(60, "gold", gold=400, delta=267), snap(700, gold=900), snap(900, gold=650),
+             mark(2700, "run_end"), snap(2710, gold=5000))  # fmt: skip
+    m = graders.measure("gold", tl)
+    assert {k: m[k] for k in ("fact", "start", "end", "gain", "peak")} == {
+        "fact": "gold",
+        "start": 133,
+        "end": 650,
+        "gain": 517,
+        "peak": 900,
+    }  # the snapshot after run_end is not the run's
+    assert [p["value"] for p in m["curve"]["points"]] == [400, 650, 650]
+
+
+def test_measure_starts_from_the_state_carried_into_run_start_not_from_zero():
+    # before any snapshot State.gold is 0, not the save's gold: a gain from 0 would count the start gold as made
+    carried = [snap(-5, gold=133), mark(0, "run_start"), snap(10, gold=200)]
+    assert graders.measure("gold", carried)["start"] == 133
+    assert graders.measure("gold", run(ev(1, "trade_open"), snap(10, gold=133), snap(20, gold=150)))["gain"] == 17
+    none = graders.measure("gold", run(ev(1, "trade_open")))
+    assert (none["start"], none["end"], none["gain"], none["peak"]) == (None, None, None, None)
+
+
+def test_measure_refuses_an_unknown_fact():
+    with pytest.raises(ValueError, match="unknown numeric fact"):
+        graders.measure("xp", run(snap(1, gold=1)))

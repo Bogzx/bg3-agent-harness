@@ -97,7 +97,10 @@ def test_a_milestone_goal_resolves_to_until(tmp_path):
 def test_each_v2_scenario_resolves_or_is_refused_for_its_goal():
     for path in sorted(V2.glob("*.json")):
         sc = scenario.load(path)
-        if set(scenario.goal_of(sc)) == {"milestone"}:
+        if "maximise" in sc:  # no goal, so no milestone the legacy runner could stop at
+            with pytest.raises(scenario.ScenarioError, match="no milestone"):
+                scenario.resolve(sc)
+        elif set(scenario.goal_of(sc)) == {"milestone"}:
             assert v1_problems(scenario.resolve(sc)) == [], path.name
         else:
             with pytest.raises(scenario.ScenarioError, match="not one milestone"):

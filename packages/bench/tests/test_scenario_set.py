@@ -42,6 +42,8 @@ FAMILIES = {
     "fight_act1_gith_patrol_tactician": "fight",
     "fight_act2_balthazar_tactician": "fight",
     "fight_act3_sarevok_tactician": "fight",
+    "act1_gold_max": "sandbox",
+    "act3_gold_max": "sandbox",
 }
 # The harder variants: the same fight at Tactician (variant -> its Balanced base). The difficulty lives in the save,
 # so each has its own start save; Honour can't be switched to from a Balanced game (docs/BENCHMARK.md).
@@ -60,7 +62,9 @@ HOLDOUT = {
 }  # fmt: skip
 # Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector; the
 # Tactician variants wait for theirs.
-NOT_MADE = {"fight_act2_house_of_healing", *TACTICIAN}
+NOT_MADE = {"fight_act2_house_of_healing", "act3_gold_max", *TACTICIAN}
+# act1_gold_max plays act1_gold_1000's start save (the same start, without the target).
+SHARED_SAVE = {"act1_gold_max": "act1_gold_1000"}
 UNREGISTERED = {"fight_act2_ketheric", "fight_act3_sarevok", "choice_act3_wyll_pact", "fight_act3_cazador"}
 # Scenarios the legacy runner can play today: their goal is one milestone (scenario.resolve).
 RESOLVABLE = {"nautiloid", "crash_site_grove", "act2_last_light"}
@@ -102,7 +106,8 @@ def test_each_scenario_is_valid_v2(path):
     assert isinstance(loaded["game_settings"]["seed"], int)  # D9: every run of it starts from the same rolls
     assert loaded["timing"] == ("turn_based" if loaded["family"] == "fight" else "realtime")
     assert loaded["methods"] is (loaded["family"] == "sandbox")
-    assert predicates.positive(predicates.parse(scenario.goal_of(loaded)))  # D8
+    if "maximise" not in loaded:  # a maximise scenario has no goal: a do-nothing agent gains nothing
+        assert predicates.positive(predicates.parse(scenario.goal_of(loaded)))  # D8
     assert loaded["caps"]["run_hours"] <= 4 and loaded["conditions"] == ["rules"]
 
 
@@ -116,7 +121,8 @@ def test_save_starts_have_their_save_or_say_why_not(path):
         assert st["save"] is None and st["save_sha1"] is None
         assert re.search(r"\bAct [123]\b", st["needs_save"]) and "Tav" in st["needs_save"]
     else:  # made_start_save's folder and the store's lsv sha1
-        assert re.fullmatch(rf"Tav-\d+__SCN-{name}", st["save"]) and re.fullmatch(r"[0-9a-f]{40}", st["save_sha1"])
+        made = SHARED_SAVE.get(name, name)
+        assert re.fullmatch(rf"Tav-\d+__SCN-{made}", st["save"]) and re.fullmatch(r"[0-9a-f]{40}", st["save_sha1"])
         assert "needs_save" not in st
     assert ("not_ready" in st) == (name in UNREGISTERED or name == "fight_act2_house_of_healing")
     why = scenario.not_ready(scenario.load(path))
@@ -179,8 +185,13 @@ def test_choice_scenes_use_a_neutral_brief():
 
 
 def task_matches_the_grader(sc: dict) -> bool:
-    """The task says what the goal checks: its milestone's place, its number, its item, its quest or its fight."""
-    goal, task = scenario.goal_of(sc), sc["task"].lower()
+    """The task says what the goal checks: its milestone's place, its number, its item, its quest or its fight; a
+    maximise scenario's task says to get as much of its fact as it can in its time cap, and its scored_by the gain."""
+    task = sc["task"].lower()
+    if (fact := scenario.maximised(sc)) is not None:
+        cap = f"{round(sc['caps']['run_hours'] * 60)} minutes"
+        return f"as much {fact} as you can in {cap}" in task and f"the {fact} the party gained" in sc["scored_by"]
+    goal = scenario.goal_of(sc)
     words = {
         "nautiloid_escaped": "escape the nautiloid",
         "grove": "emerald grove",
@@ -218,7 +229,8 @@ def test_each_scenario_tells_the_agent_its_task_and_how_it_is_scored(path):
     text = scenario_kickoff(sc, "S001", sc["start"].get("save"))
     head = text.split("\n\n")
     assert head[1] == f"YOUR TASK: {sc['task']}" and head[2] == f"How it is scored: {sc['scored_by']}"
-    assert f"after {round(sc['caps']['run_hours'] * 60)} minutes of play" in head[3]
+    cap = round(sc["caps"]["run_hours"] * 60)
+    assert (f"plays all {cap} minutes" if "maximise" in sc else f"after {cap} minutes of play") in head[3]
     assert "WRAP UP" not in text
 
 
@@ -226,7 +238,7 @@ def test_the_set_covers_the_plan():
     """BENCHMARK-PLAN.md: 20-30 scenarios, fights the core, every act's fights, sandbox goals, choices, exploration."""
     fams = list(FAMILIES.values())
     assert 20 <= len(FAMILIES) <= 30 and fams.count("fight") == 15 and fams.count("fight") > len(fams) / 3
-    assert fams.count("sandbox") == 5 and fams.count("choice") == 5 and fams.count("exploration") == 3
+    assert fams.count("sandbox") == 7 and fams.count("choice") == 5 and fams.count("exploration") == 3
     fights = [n for n, f in FAMILIES.items() if f == "fight"]
     assert {re.match(r"fight_act(\d)_", n)[1] for n in fights} == {"1", "2", "3"}  # pyright: ignore[reportOptionalSubscript]
 
@@ -268,7 +280,7 @@ def test_each_scenario_resolves_only_when_its_goal_is_one_milestone(path):
         assert resolved["game_settings"]["seed"] == sc["game_settings"]["seed"]
         assert "needs_save" not in resolved["start"]
     else:
-        with pytest.raises(scenario.ScenarioError, match="not one milestone"):
+        with pytest.raises(scenario.ScenarioError, match="not one milestone|no milestone"):
             scenario.resolve(sc)
 
 
@@ -295,3 +307,15 @@ def test_each_scenario_has_a_closed_book_quiz(path):
 
 def test_no_stray_quiz():
     assert {p.stem for p in (SET / "quizzes").glob("*.json")} == {p.stem for p in FILES}
+
+
+def test_the_gold_max_runs_are_maximise_twins_of_the_1000_gold_run():
+    """act1_gold_max is act1_gold_1000 without the target (its start save, caps and brief); act3_gold_max is its Act 3
+    twin with the same task and cap, so the acts compare; act1_gold_1000 keeps its target."""
+    a1, m1, m3 = (scenario.load(SET / f"{n}.json") for n in ("act1_gold_1000", "act1_gold_max", "act3_gold_max"))
+    assert a1["goal"] == {"gold": {"gte": 1000}} and "maximise" not in a1
+    assert m1["maximise"] == m3["maximise"] == {"fact": "gold"} and "goal" not in m1 and "goal" not in m3
+    assert m1["start"]["save"] == a1["start"]["save"] and m1["start"]["save_sha1"] == a1["start"]["save_sha1"]
+    assert m1["caps"] == m3["caps"] == a1["caps"] and m1["task"] == m3["task"] and m1["scored_by"] == m3["scored_by"]
+    assert m1["profile"] == m3["profile"] == a1["profile"] and m1["methods"] is m3["methods"] is True
+    assert "Claude-011126099__S047-end" in m3["start"]["needs_save"] and "Act 3" in m3["start"]["needs_save"]

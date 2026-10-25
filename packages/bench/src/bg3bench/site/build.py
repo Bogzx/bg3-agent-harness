@@ -37,10 +37,13 @@ def _median(xs: Sequence[float | None]) -> float | None:
 
 
 def rows(release: Mapping, families: Mapping[str, str] | None = None) -> dict[str, list[dict]]:
-    """family -> one row per (model, condition) that ran a scenario of it, sorted by success rate then cost."""
+    """family -> one row per (model, condition) that ran a scenario of it, sorted by success rate then cost. A
+    maximise scenario's runs (passed null: no pass) have no success rate and are left out."""
     families = families or {}
     runs_by: dict[tuple[str, str, str | None], list[dict]] = {}
     for run in release["runs"]:
+        if run["passed"] is None:
+            continue
         fam = families.get(run["scenario"], DEFAULT_FAMILY)
         runs_by.setdefault((fam, run["model"], run["condition"]), []).append(run)
     out: dict[str, list[dict]] = {}

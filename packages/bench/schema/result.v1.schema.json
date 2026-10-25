@@ -17,7 +17,7 @@
     "outcome": {"enum": ["reached", "failed", "timeout", "over_budget", "gave_up", "runner_error"], "description": "failed (added 2026-10-22, still v1): a goal run its live verdict ended on a fired never"},
     "valid": {"type": "boolean"},
     "invalid_reason": {"enum": [null, "runner_error", "harness_failure", "operator", "off_route", "unseeded"]},
-    "passed": {"type": "boolean"},
+    "passed": {"type": ["boolean", "null"], "description": "null: a maximise scenario's run, which has no pass (its score is score.gain); added 2026-10-25 (still v1)"},
     "t_pass_s": {"$ref": "#/$defs/num_or_null"},
     "grade": {
       "oneOf": [
@@ -111,6 +111,19 @@
         "leak": {"$ref": "#/$defs/count"},
         "check": {"$ref": "#/$defs/count"},
         "blocks": {"$ref": "#/$defs/count"}
+      }
+    },
+    "score": {
+      "description": "a maximise scenario's score (bg3bench.graders.measure): the fact's value at the run's first snapshot (start) and at run_end (end), gain = end - start (the score), its peak; null without a snapshot. Its passed and t_pass_s are null. Optional, added 2026-10-25 (still v1).",
+      "type": "object",
+      "required": ["fact", "start", "end", "gain", "peak"],
+      "additionalProperties": false,
+      "properties": {
+        "fact": {"type": "string", "minLength": 1},
+        "start": {"type": ["number", "null"]},
+        "end": {"type": ["number", "null"]},
+        "gain": {"type": ["number", "null"]},
+        "peak": {"type": ["number", "null"]}
       }
     },
     "pilot": {

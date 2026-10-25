@@ -7,7 +7,9 @@ luck covariate and links to each run's events and facts, as Markdown and as one 
     python -m bg3bench.report RUNS_DIR OUT_DIR [--series NAME] [--links '{"facts": "runs/{run_id}/facts.jsonl"}']
 
 where RUNS_DIR/<run_id>/ holds manifest.json and result.json; it writes OUT_DIR/report.md and OUT_DIR/report.html.
-Invalid runs are listed with their reason and never counted in the success rate (BENCHMARK-PLAN.md).
+Invalid runs are listed with their reason and never counted in the success rate (BENCHMARK-PLAN.md). A maximise
+scenario's runs have no pass: their verdict is the score (the fact's gain, results.py `score`) and the summary has
+the median, lowest and highest gain instead of a success rate.
 """
 
 from __future__ import annotations
@@ -40,6 +42,10 @@ def _median(xs: Iterable[float | None]) -> float | None:
 def verdict(res: Mapping) -> str:
     if not res["valid"]:
         return f"invalid ({res['invalid_reason']})"
+    if (sc := res.get("score")) is not None:
+        if sc["gain"] is None:
+            return f"no {sc['fact']} read ({res['outcome']})"
+        return f"{sc['gain']:+g} {sc['fact']} ({sc['start']:g} -> {sc['end']:g})"
     return "pass" if res["passed"] else f"fail ({res['outcome']})"
 
 
@@ -54,7 +60,8 @@ def _run(man: Mapping, res: Mapping, links: Mapping[str, str]) -> dict:
         "condition": man["condition"],
         "verdict": verdict(res),
         "valid": res["valid"],
-        "passed": res["valid"] and res["passed"],  # an invalid run never shows as passed
+        "passed": bool(res["valid"] and res["passed"]),  # an invalid run never shows as passed
+        "score": res.get("score"),
         "t_pass_s": res["t_pass_s"] if res["valid"] else None,
         "curve": grade.get("curve"),
         "progress": grade.get("progress"),
@@ -91,6 +98,8 @@ def build(pairs: Iterable[tuple[dict, dict]], links: Mapping[str, str] = LINKS) 
     k = sum(r["passed"] for r in valid)
     costs = [r["cost_usd"] for r in valid]
     lucks = [r["luck"]["z"] for r in valid if r["luck"] is not None]
+    gains = [r["score"]["gain"] for r in valid if r["score"] and r["score"]["gain"] is not None]
+    fact = next((r["score"]["fact"] for r in runs if r["score"]), None)
     return {
         "series": man0["series"],
         "scenario": man0["scenario"]["name"],
@@ -109,6 +118,15 @@ def build(pairs: Iterable[tuple[dict, dict]], links: Mapping[str, str] = LINKS) 
             "wall_median": _median(r["wall_s"] for r in valid),
             "think_median": _median(r["think_s"] for r in valid),
             "luck_mean_z": mean(lucks) if lucks else None,
+            "score": None
+            if fact is None
+            else {
+                "fact": fact,
+                "n": len(gains),
+                "median": _median(gains),
+                "min": min(gains, default=None),
+                "max": max(gains, default=None),
+            },
         },
     }
 
@@ -155,12 +173,11 @@ def _methods_text(m: Mapping | None) -> str:
 
 def _head(rep: Mapping) -> list[tuple[str, str]]:
     s = rep["summary"]
-    lo, hi = s["wilson"]
     rows = [
         ("Scenario", rep["scenario"]),
         ("Timing", rep["timing"] or "unknown"),
         ("Dice seed", "–" if rep["seed"] is None else str(rep["seed"])),
-        ("Success", f"{s['k']}/{s['n_valid']} valid runs, {_pct(s['rate'])} [95% Wilson {lo:.0%}, {hi:.0%}]"),
+        _success(s),
         ("Invalid runs", str(s["n_runs"] - s["n_valid"])),
         ("Cost", f"{_usd(s['cost_total'])} total, {_usd(s['cost_median'])} median per run"),
         ("Tokens", f"{_tok(s['tokens_median'])} median per run"),
@@ -168,6 +185,21 @@ def _head(rep: Mapping) -> list[tuple[str, str]]:
         ("Luck", "–" if s["luck_mean_z"] is None else f"mean z {s['luck_mean_z']:+.2f} (0 = average dice)"),
     ]
     return rows
+
+
+def _success(s: Mapping) -> tuple[str, str]:
+    if (sc := s["score"]) is not None:
+        if not sc["n"]:
+            return ("Score", f"no {sc['fact']} read in {s['n_valid']} valid runs")
+        return (
+            "Score",
+            (
+                f"{sc['fact']} gained: median {sc['median']:+g} (lowest {sc['min']:+g}, highest {sc['max']:+g}) "
+                f"over {sc['n']} valid runs"
+            ),
+        )
+    lo, hi = s["wilson"]
+    return ("Success", f"{s['k']}/{s['n_valid']} valid runs, {_pct(s['rate'])} [95% Wilson {lo:.0%}, {hi:.0%}]")
 
 
 RUN_COLS = ("Run", "Model", "Verdict", "Time to goal", "Cost", "Tokens", "Wall", "Thinking", "Luck", "Curve",

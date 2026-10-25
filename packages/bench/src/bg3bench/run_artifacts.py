@@ -3,7 +3,8 @@
 
 The run directory is the run's playthrough directory (runtime/sessions/<run name>/, bg3bench.series.run_name), where
 the harness writes facts.jsonl (and rolls.jsonl when the mod logs rolls). `write_run_artifacts` grades facts.jsonl
-with the scenario's goal (graders.grade, on the scenario's clock), adds the method attribution when the scenario asks
+with the scenario's goal (graders.grade, on the scenario's clock; a maximise scenario's fact by graders.measure,
+its `score`), adds the method attribution when the scenario asks
 for it, the choices grader's picks for a choice scenario (and their persona fit, given a judge client) and the
 luck summary when there is a roll log, and writes:
 
@@ -81,10 +82,15 @@ def write_run_artifacts(
         profile=profile,
         harness_version=harness_version,
     )
-    grade = attribution = luck_summary = picked = None
+    grade = attribution = luck_summary = picked = score = None
     if (run_dir / FACTS).is_file():
         timeline = facts.load(run_dir / FACTS)
-        grade = graders.grade(scenario.goal_of(sc), timeline)
+        if (fact := scenario.maximised(sc)) is not None:
+            m = graders.measure(fact, timeline)
+            score = {k: m[k] for k in ("fact", "start", "end", "gain", "peak")}
+            grade = {"passed": None, "t_pass_s": None, "violations": [], "curve": m["curve"], "progress": None}
+        else:
+            grade = graders.grade(scenario.goal_of(sc), timeline)
         if sc["methods"]:
             attribution = methods.attribute(timeline)
         if sc["family"] == "choice":
@@ -94,7 +100,15 @@ def write_run_artifacts(
     if (run_dir / ROLLS).is_file():
         luck_summary = luck.summary(luck.load(run_dir / ROLLS))
     res = results.from_record(
-        run_record, man["run_id"], grade, attribution, luck_summary, picked, pilot, sc["game_settings"].get("seed")
+        run_record,
+        man["run_id"],
+        grade,
+        attribution,
+        luck_summary,
+        picked,
+        pilot,
+        sc["game_settings"].get("seed"),
+        score,
     )
     manifest.write(man, run_dir / MANIFEST)
     results.write(res, run_dir / RESULT)

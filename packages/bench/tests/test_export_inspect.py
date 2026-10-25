@@ -63,3 +63,17 @@ def test_without_per_run_results_or_any_valid_run():
     release, _ = release_and_results()
     (log, _) = export_inspect.to_evallogs(release)
     assert log.samples[0].model_usage == {} and log.samples[0].target == ""
+
+
+def test_a_maximise_run_exports_its_gain_not_a_failed_goal():
+    (m1, r1), _, _ = naut2_pairs()
+    score = {"fact": "gold", "start": 133, "end": 650, "gain": 517, "peak": 900}
+    unread = {**score, "start": None, "end": None, "gain": None, "peak": None}
+    m2 = {**m1, "run_id": "g2"}
+    pairs = [(m1, {**r1, "passed": None, "t_pass_s": None, "score": score}),
+             (m2, {**r1, "run_id": "g2", "passed": None, "t_pass_s": None, "score": unread})]  # fmt: skip
+    release = results.build_results(pairs, seed=0, created=1792300000.0, b=10)
+    (log,) = export_inspect.to_evallogs(release)
+    gain = log.samples[0].scores["gain"]
+    assert (gain.value, gain.answer, gain.metadata) == (517, "gold", score) and "goal" not in log.samples[0].scores
+    assert log.samples[1].scores == {} and log.results.scores[0].metrics == {}  # no pass: no accuracy

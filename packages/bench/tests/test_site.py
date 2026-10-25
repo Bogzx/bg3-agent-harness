@@ -197,3 +197,13 @@ def test_cli(tmp_path):
     with pytest.raises(ValueError):
         (tmp_path / "bad.json").write_text('{"schema": 3}')
         build.main([str(tmp_path / "bad.json"), str(tmp_path / "c.html")])
+
+
+def test_a_maximise_run_has_no_success_rate_and_stays_off_the_leaderboard():
+    release = fixture_release()
+    rows_before = build.rows(release, FAMILIES)
+    score = {"fact": "gold", "start": 133, "end": 650, "gain": 517, "peak": 900}
+    man, res = run("opus", "gold_max", 0, None, 1.0)
+    max_run = results.build_results([(man, {**res, "score": score})], seed=0, created=1.0, b=10)["runs"][0]
+    release["runs"].append(max_run)
+    assert build.rows(release, {**FAMILIES, "gold_max": "sandbox"}) == rows_before

@@ -10,7 +10,9 @@ marked **live**.
 1. **Pick the family and the goal.** One of `fight`, `sandbox`, `choice`, `exploration`, `puzzle`
    (docs/BENCHMARK-PLAN.md). Write the goal in the predicate language (`bg3bench.predicates`, e.g.
    `{"gold": {"gte": 1000}}`) or use `until: <milestone>`. A goal a do-nothing agent could pass is refused (D8). Add a
-   positive conjunct, such as an area, a level or gold.
+   positive conjunct, such as an area, a level or gold. For "as much as you can" use `maximise: {"fact": "gold"}`
+   instead of a goal: no pass, the run plays its whole cap and scores the fact's gain (`graders.measure`); never
+   dress a maximum up as a high target, or a target as a maximum.
 2. **Make the start save (live).** Use a neutral character: one plain capitalised name (`Tav`, `Ana`), never a
    model, client, person or playthrough name, and a standard build. Turn Karmic Dice off (D9), stand out of combat
    with no dialogue open, and save with the label `SCN-<name>`. Never use one of a playthrough's `Sxxx-` saves.
@@ -133,3 +135,15 @@ ready: <why>". Not ready today: `fight_act2_house_of_healing` (not made: needs a
 inspector refused them on false positives: once a fixed inspector registers the same save, delete `not_ready`) and
 the five Tactician twins, whose `needs_save` now names their base's start save to switch to Tactician and resave.
 
+## Round 22 (2026-10-25): maximise runs
+
+Two sandbox runs with no target (scenario `maximise`, suite bench-v0.7): `act1_gold_max` plays act1_gold_1000's start
+save (its folder and sha1, so the two scenarios share one save) and `act3_gold_max` is its Act 3 twin, with the same
+task and the same 45 minutes so the acts compare. act1_gold_1000 keeps its 1000-gold target. `act3_gold_max` has no
+start save yet (`needs_save`). Its source is claude-run-2's last `S047-end` (folder `Claude-011126099__S047-end`, lsv
+sha1 97bd737ecf85, 2026-10-11 03:00), where the party stands at the Lower City Central Wall plaza 2 m from Mohan with
+410 gold, everyone level 7 at full HP and Gale at camp. Make it as live6 made the others: copy that folder to a
+`PROBE-` copy, launch it with `BG3AI_SCENARIO_SETUP=1`, set Balanced in the game menu, and change nothing else. Then
+run `uv run --project bridge python tools/saves/make_start_save.py act3_gold_max --owner Tav`. Finally set
+`start.save` / `start.save_sha1` from the store's registration.json, drop `needs_save`, and re-pin the suite digest
+(a patch bump: the score rule is unchanged).

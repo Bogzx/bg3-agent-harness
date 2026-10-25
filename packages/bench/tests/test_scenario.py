@@ -101,7 +101,8 @@ BAD = [
     ({"scored_by": 3}, "scored_by must be a non-empty text"),
     ({"family": "showcase"}, "family must be"),
     ({"holdout": "yes"}, "holdout must be"),
-    ({"until": "grove"}, "exactly one of goal or until"),
+    ({"until": "grove"}, "exactly one of goal, until or maximise"),
+    ({"maximise": {"fact": "gold"}}, "exactly one of goal, until or maximise"),
     ({"goal": {"no_combat": True}}, "D8"),
     ({"goal": {"gold": "lots"}}, "gold"),
     ({"runs": 0}, "runs must be"),
@@ -228,3 +229,27 @@ def test_timing_defaults_by_family(tmp_path):
     assert scenario.load(tmp_path / "act1_gold_1000.json")["timing"] == "realtime"
     assert not validator().is_valid({**sandbox, "family": "exploration", "timing": "turn_based"})
     assert validator().is_valid({**fight, "timing": "turn_based"})
+
+
+def maximise_gold():
+    return {k: v for k, v in gold_save().items() if k != "goal"} | {
+        "name": "act1_gold_max",
+        "maximise": {"fact": "gold"},
+    }
+
+
+def test_a_maximise_scenario_has_no_goal_and_scores_a_numeric_fact():
+    sc = maximise_gold()
+    sc["start"] = {**sc["start"], "save": "Tav-123__SCN-act1_gold_max"}
+    assert scenario.validate(sc, "act1_gold_max") == []
+    assert not list(validator().iter_errors(sc))
+    assert scenario.maximised(sc) == "gold" and scenario.maximised(gold_save()) is None
+    with pytest.raises(scenario.ScenarioError, match="no goal"):
+        scenario.goal_of(sc)
+    with pytest.raises(scenario.ScenarioError, match="no milestone"):
+        scenario.resolve(scenario.with_defaults(sc))
+    for bad in ({"fact": "xp"}, {"fact": "gold", "target": 5000}, "gold"):
+        assert scenario.validate({**sc, "maximise": bad}, "act1_gold_max") == [
+            "maximise must be {fact: one of gold, party_level, companions}"
+        ]
+        assert list(validator().iter_errors({**sc, "maximise": bad}))

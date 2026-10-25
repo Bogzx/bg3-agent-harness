@@ -776,3 +776,29 @@ def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_
         "timeout",
         [("timeout", "agent", "S001: the agent ended its turn with 233.0 min of the run left, before the goal")],
     )
+
+
+MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
+    "name": "act1_gold_max",
+    "maximise": {"fact": "gold"},
+    "caps": {**SAVE_SC["caps"], "run_hours": 0.75},
+}
+
+
+def test_the_kickoff_of_a_maximise_scenario_says_it_plays_its_whole_cap_and_how_it_is_scored():
+    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
+    assert "The run has no pass: it plays all 45 minutes of its time cap, then it is scored." in text
+    assert "the party's gold when the time cap ends the run minus its gold at the start save" in text
+    assert "as soon as the task is decided" not in text and "exact goal" not in text
+
+
+def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(rig: Rig):
+    # a maximise goal is never reached: the stop check must not read "no goal yet" as "may end" or as decided
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        return "exited", 10 * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, MAX_SC, "m-gold")
+    assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3", "-c4"] and out.stop_resumes == 4
+    assert "it has no pass, it scores the party's gold gained by its time cap" in r.plays[1][1]
+    assert [round(m) for _, _, m in r.plays[1:]] == [35, 25, 15, 5]  # each resume gets the time left

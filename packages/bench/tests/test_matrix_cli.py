@@ -382,3 +382,14 @@ def test_the_variance_pilot_plan(tmp_path):
     assert fams == ["choice"] * 2 + ["exploration"] * 2 + ["fight"] * 4 + ["sandbox"] * 2
     assert not any(sc["holdout"] for sc in m["scenarios"].values())
     assert {"fight_act1_windmill", "fight_act1_windmill_tactician"} <= set(m["scenarios"])
+
+
+def test_status_shows_a_maximise_runs_score_not_a_pass_or_fail(tmp_path):
+    repo = fake_repo(tmp_path)
+    path = matrix_file(tmp_path, 'name = "m"\nmodels = ["profiles/claude.toml"]\nscenarios = ["grove"]\n'
+                       'conditions = ["rules"]\nrepeats = 2\n')  # fmt: skip
+    answers = iter([RunResult("r1", True, None, 0.0, None, True, 517), RunResult("r2", True, None, 0.0, None, True)])
+    code, _ = cli(repo, "run", "--matrix", str(path), run_one=lambda job: next(answers))
+    code, out = cli(repo, "status", "--matrix", str(path))
+    texts = [line.split(None, 3)[3] for line in out.splitlines()[1:]]
+    assert code == 0 and texts == ["score +517 $0.00 r1", "score ? $0.00 r2"]

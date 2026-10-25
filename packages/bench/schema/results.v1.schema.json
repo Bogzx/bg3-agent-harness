@@ -37,7 +37,7 @@
           "model": {"type": "string", "minLength": 1},
           "condition": {"$ref": "#/$defs/str_or_null"},
           "valid": {"type": "boolean"},
-          "passed": {"type": "boolean"},
+          "passed": {"type": ["boolean", "null"], "description": "null: a maximise scenario's run (no pass); added 2026-10-25"},
           "t_pass_s": {"$ref": "#/$defs/num_or_null"},
           "cost_usd": {"$ref": "#/$defs/num_or_null"},
           "wall_s": {"$ref": "#/$defs/num_or_null"},
@@ -53,6 +53,19 @@
               "output": {"type": "integer", "minimum": 0},
               "cache_read": {"type": "integer", "minimum": 0},
               "cache_write": {"type": "integer", "minimum": 0}
+            }
+          },
+          "score": {
+            "description": "a maximise scenario's score (bg3bench.graders.measure): the fact's value at the run's first snapshot (start) and at run_end (end), gain = end - start (the score), its peak; null without a snapshot. Optional, added 2026-10-25 (still v1).",
+            "type": "object",
+            "required": ["fact", "start", "end", "gain", "peak"],
+            "additionalProperties": false,
+            "properties": {
+              "fact": {"type": "string", "minLength": 1},
+              "start": {"type": ["number", "null"]},
+              "end": {"type": ["number", "null"]},
+              "gain": {"type": ["number", "null"]},
+              "peak": {"type": ["number", "null"]}
             }
           },
           "choices": {
