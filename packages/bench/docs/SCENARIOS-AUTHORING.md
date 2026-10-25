@@ -147,3 +147,18 @@ sha1 97bd737ecf85, 2026-10-11 03:00), where the party stands at the Lower City C
 run `uv run --project bridge python tools/saves/make_start_save.py act3_gold_max --owner Tav`. Finally set
 `start.save` / `start.save_sha1` from the store's registration.json, drop `needs_save`, and re-pin the suite digest
 (a patch bump: the score rule is unchanged).
+
+## Round 23 (2026-10-25): the avatar's race and name
+
+Live made `act3_gold_max`'s start save (research/fix/live.md "Bench B1"; registered in suite bench-v0.8 with the
+start the live worker read: Gale level 6 at camp, the avatar with a level-up to 8 pending, max HP halved by the
+Explorer -> Balanced switch). Two things it found hold for every start save:
+
+- The avatar is a half-orc (the inspector's `Race` HalfOrc, Paladin/Devotion, in all 22 stored saves), so every save
+  scenario's `profile.character.brief` says half-orc paladin. A new save scenario's brief must name the race and
+  class the inspector reads.
+- A loaded `Tav-…__SCN-*` save names its avatar "Claude" again (CustomName, CharacterCreationStats.Name and the
+  DisplayName text): make_start_save's rename only reached the folder's owner. The runner now renames the avatar
+  to `profile.character.name` at a save-start run's start (`scn.rename_avatar`, re-applied by the mod after every
+  load), so no start save has to be made again. make_start_save still renames for the folder name and undoes it
+  after saving.

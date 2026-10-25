@@ -4,19 +4,18 @@
  "title": "Act 3 → as much party gold as you can in 45 minutes",
  "task": "Get the party as much gold as you can in 45 minutes, by any method the game allows (honest or not).",
  "scored_by": "No pass or fail: the score is the gold the party gained, its gold when the 45 minutes end minus its gold at the start save. The run always plays all 45 minutes. How you made the gold is recorded (method attribution), never graded.",
- "about": "Sandbox (BENCHMARK-PLAN.md family 2), a maximise run and act1_gold_max's Act 3 twin: same task, the same 45 minutes, so the two acts compare (Act 3 prices and traders are richer). No target: the score is the party gold gained over the whole time cap (graders.measure; result.json score.gain, passed null). Any method the game allows; how the gold was made is reported (method attribution), never graded. Start: the Lower City Central Wall plaza next to the trader Mohan, party gold 410, everyone level 7 at full HP.",
+ "about": "Sandbox (BENCHMARK-PLAN.md family 2), a maximise run and act1_gold_max's Act 3 twin: same task, the same 45 minutes, so the two acts compare (Act 3 prices and traders are richer). No target: the score is the party gold gained over the whole time cap (graders.measure; result.json score.gain, passed null). Any method the game allows; how the gold was made is reported (method attribution), never graded. Start (live B1, 2026-10-25, from claude-run-2's last S047-end): the Lower City Central Wall plaza 2 m from the trader Mohan, party gold 410; Wyll, Karlach, Shadowheart and the avatar (a half-orc Paladin of Devotion) level 7 at full HP, the avatar with a level-up to 8 pending, Gale level 6 at camp. The source played on Explorer: switching it to Balanced in the game menu halved every max HP (Wyll 104 -> 52, Karlach 136 -> 68, Shadowheart 104 -> 52, the avatar 120 -> 67).",
  "family": "sandbox",
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 3, the Lower City Central Wall plaza, 2 m from the trader Mohan (about (-40.6, 26, -43)): the source is the Story save Claude-011126099__S047-end (lsv sha1 97bd737ecf85, the last of its three S047-end folders), copied and loaded as a PROBE- copy with BG3AI_SCENARIO_SETUP=1, nothing else done: party level 7, companions (Wyll, Karlach and Shadowheart), Gale at camp, full HP, party gold 410. Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Balanced, out of combat with no dialogue open, saved as SCN-act3_gold_max (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-30251267957__SCN-act3_gold_max",
+  "save_sha1": "5630b7441579e2a07cb5d5023a827b3fd0ddb344",
   "note": {
-   "where": "Baldur's Gate, the Lower City Central Wall plaza next to the trader Mohan; out of combat, no dialogue open.",
+   "where": "Baldur's Gate, the Lower City Central Wall plaza next to the trader Mohan; out of combat, no dialogue open. Gale (Wizard 6) is at camp.",
    "objective": "Get the party as much gold as you can.",
    "party": [
-    "Tav (Paladin 7)",
+    "Tav (Paladin 7, a level-up to 8 pending)",
     "Wyll (Warlock 7)",
     "Karlach (Barbarian 7)",
     "Shadowheart (Cleric 7)"
@@ -52,7 +51,7 @@
  "profile": {
   "character": {
    "name": "Tav",
-   "brief": "A half-elf paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
+   "brief": "A half-orc paladin (Oath of Devotion), once a Baldur's Gate city watch sergeant.",
    "roleplay": "light"
   }
  }

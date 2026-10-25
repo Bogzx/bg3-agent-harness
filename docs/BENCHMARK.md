@@ -85,6 +85,10 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
 - A target is never turned into a maximum: `act1_gold_1000` keeps its 1000-gold target and its name;
   `act1_gold_max` plays its start save without one, and `act3_gold_max` is its Act 3 twin (same task, same 45 min).
 - Suite bench-v0.7 (bg3bench 0.7.0).
+- bench-v0.8 (bg3bench 0.8.0): the save scenarios' brief says half-orc (every start save's avatar is one, it said
+  half-elf), a save-start run plays under the scenario's character name (the runner renames the avatar at the
+  run's start and the mod again after every load; the saves themselves still say "Claude"), and `act3_gold_max`
+  has its start save.
 
 ## 3. Running a series
 

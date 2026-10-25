@@ -62,7 +62,7 @@ HOLDOUT = {
 }  # fmt: skip
 # Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector; the
 # Tactician variants wait for theirs.
-NOT_MADE = {"fight_act2_house_of_healing", "act3_gold_max", *TACTICIAN}
+NOT_MADE = {"fight_act2_house_of_healing", *TACTICIAN}
 # act1_gold_max plays act1_gold_1000's start save (the same start, without the target).
 SHARED_SAVE = {"act1_gold_max": "act1_gold_1000"}
 UNREGISTERED = {"fight_act2_ketheric", "fight_act3_sarevok", "choice_act3_wyll_pact", "fight_act3_cazador"}
@@ -109,6 +109,15 @@ def test_each_scenario_is_valid_v2(path):
     if "maximise" not in loaded:  # a maximise scenario has no goal: a do-nothing agent gains nothing
         assert predicates.positive(predicates.parse(scenario.goal_of(loaded)))  # D8
     assert loaded["caps"]["run_hours"] <= 4 and loaded["conditions"] == ["rules"]
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
+def test_a_save_starts_brief_names_the_avatar_the_saves_have(path):
+    # live B1: every stored start save's avatar is a half-orc paladin (the inspector's Race HalfOrc, Paladin/Devotion);
+    # the briefs said half-elf, which the screen contradicts
+    sc = raw(path)
+    if sc["start"]["kind"] == "save":
+        assert sc["profile"]["character"]["brief"].startswith("A half-orc paladin")
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.stem)
@@ -318,4 +327,4 @@ def test_the_gold_max_runs_are_maximise_twins_of_the_1000_gold_run():
     assert m1["start"]["save"] == a1["start"]["save"] and m1["start"]["save_sha1"] == a1["start"]["save_sha1"]
     assert m1["caps"] == m3["caps"] == a1["caps"] and m1["task"] == m3["task"] and m1["scored_by"] == m3["scored_by"]
     assert m1["profile"] == m3["profile"] == a1["profile"] and m1["methods"] is m3["methods"] is True
-    assert "Claude-011126099__S047-end" in m3["start"]["needs_save"] and "Act 3" in m3["start"]["needs_save"]
+    assert m3["start"]["save"] == "Tav-30251267957__SCN-act3_gold_max" and "S047-end" in m3["about"]  # live B1
