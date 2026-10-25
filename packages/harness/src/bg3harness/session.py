@@ -2,7 +2,8 @@
 
 The first process gets the kickoff; then, until the session ends:
 - the agent ended its turn on its own (exit 0) but the stop check says it can't end yet (keep playing until wrap-up,
-  write the handoff, fix lint): the same conversation is resumed with the reason (at most max_stop_resumes);
+  write the handoff, fix lint): the same conversation is resumed with the reason (at most max_stop_resumes; None:
+  no count, the stop check alone decides, as a maximise bench run's does: run_host.undecided_why);
 - the game crashed or hung: the game is recovered (relaunch, load the latest save) and the same conversation is
   resumed for the time left; the agent went silent (agent_hang) with the game fine: only the agent is resumed;
 - with Recovery(max_resumes=0) (a benchmark run: no resume) a fault ends the session at once, invalid, and the game
@@ -46,7 +47,7 @@ def held_deadline(path: Path, deadline: float) -> float:
 class Recovery:
     max_resumes: int = 3  # game crashes / agent hangs per session that resume the same conversation
     resume_min_minutes: float = 8  # less than this left after a fault: end the session, the next one picks up
-    max_stop_resumes: int = 6  # the agent ended its turn but the stop check sent it back
+    max_stop_resumes: int | None = 6  # the agent ended its turn but the stop check sent it back (None: no count)
     hard_stop_grace_s: float = 600  # the deadline + this is the hard stop (no stop resume within a minute of it)
 
 
@@ -82,6 +83,7 @@ class SessionOutcome:
     stop_resumes: int = 0
     gave_up: Exception | None = None  # a fatal RecoverFailure's error
     invalid: str | None = None  # max_resumes=0: the fault that ended the session
+    first_stop: float | None = None  # when the agent first ended its turn on its own (exit 0), resumed or not
 
 
 class SessionHooks(Protocol):
@@ -115,10 +117,12 @@ def run_session(spec: SessionSpec, hooks: SessionHooks) -> SessionOutcome:
     while True:
         session_end = hooks.session_end(planned_end)
         if res.reason not in FAULTS:
+            if res.reason == "exited" and res.exit_code == 0 and out.first_stop is None:
+                out.first_stop = res.ended
             if (
                 res.reason != "exited"
                 or res.exit_code != 0
-                or out.stop_resumes >= rec.max_stop_resumes
+                or (rec.max_stop_resumes is not None and out.stop_resumes >= rec.max_stop_resumes)
                 or hooks.aborted()
                 or hooks.now() > session_end + rec.hard_stop_grace_s - 60
             ):

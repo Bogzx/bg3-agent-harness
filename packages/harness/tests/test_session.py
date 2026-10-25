@@ -141,6 +141,21 @@ class RunSession(unittest.TestCase):
         out = run_session(SessionSpec("S001", "K", 60, "conv-1", Recovery(max_stop_resumes=2)), h)
         self.assertEqual((len(h.runs), out.stop_resumes), (3, 2))
 
+    def test_no_stop_resume_count_leaves_it_to_the_stop_check(self):  # a maximise bench run: resumed while it acts
+        h = Hooks([("exited", 1)] * 9, FakeGame(), ["again"] * 8)
+        out = run_session(SessionSpec("S001", "K", 60, "conv-1", Recovery(max_stop_resumes=None)), h)
+        self.assertEqual((len(h.runs), out.stop_resumes, h.script), (9, 8, []))
+
+    def test_the_first_end_of_turn_is_kept_whether_it_was_resumed_or_ended_the_session(self):
+        h = Hooks([("exited", 20), ("exited", 38)], FakeGame(), ["Keep playing."])
+        self.assertEqual(run_session(SPEC, h).first_stop, 1000.0 + 20 * 60)
+        h = Hooks([("exited", 55)], FakeGame())
+        self.assertEqual(run_session(SPEC, h).first_stop, 1000.0 + 55 * 60)
+        h = Hooks([("agent_hang", 10), ("exited", 30)], FakeGame())  # a fault isn't an end of turn
+        self.assertEqual(run_session(SPEC, h).first_stop, 1000.0 + 40 * 60)
+        h = Hooks([("hard_stop", 70)], FakeGame())
+        self.assertIsNone(run_session(SPEC, h).first_stop)
+
     def test_hard_stop_ends_the_session(self):
         h = Hooks([("hard_stop", 70)], FakeGame(), ["never asked"])
         out = run_session(SPEC, h)

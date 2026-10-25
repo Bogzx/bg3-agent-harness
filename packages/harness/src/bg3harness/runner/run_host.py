@@ -11,7 +11,9 @@ at the scenario's start (its start save loaded, or a new game), the settings che
 job's condition. The session's hooks are the runner's
 own (RunnerSessionHooks), so crashes, hangs and caps behave as in a playthrough; SessionRun's Recovery(max_resumes=0)
 makes a fault end the run invalid. Their stop check is the run's own (BenchHooks): an agent that ends its turn
-before the run is decided is resumed (-cN), as the kickoff says the run ends only once decided or at its time cap.
+before the run is decided is resumed (-cN), as the kickoff says the run ends only once decided or at its time cap; a
+goal run at most Recovery.max_stop_resumes times, a maximise run (no count) as long as the process that just ended
+made an acting call (acted_since).
 A job carries the bench's live verdict (job["verdict"]): GoalWatch asks it while the run plays and ends the run once
 it says passed or failed (a goal scenario) or wiped (any run: the game's Game Over). SaveWatch ends a run whose game
 loads a save that is not its start save or its own (the main menu's Continue, bench B3): the run is invalid.
@@ -47,6 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from bg3ai import metrics as bmetrics
 from bg3ai import saves as bsaves
 
 import bg3harness
@@ -543,17 +546,23 @@ class BenchHooks:
 
     The stop check is `undecided` (the run's: undecided_why), not the runner's, which is the playthrough memory's
     wrap-up and has nothing to say in a bench run: fixlive D4's agent ended its turn at the Nautiloid's loading
-    screen, 7.9 of 240 min, before the milestone, and the run ended there."""
+    screen, 7.9 of 240 min, before the milestone, and the run ended there. It gets the session end and when the play
+    process that just ended started (`since`: what it did is what the agent did since its last resume)."""
 
     def __init__(
-        self, hooks: SessionHooks, event: Callable[..., None], undecided: Callable[[float], str | None] = lambda _: None
+        self,
+        hooks: SessionHooks,
+        event: Callable[..., None],
+        undecided: Callable[[float, float], str | None] = lambda _end, _since: None,
     ):
         self.hooks, self.event, self.undecided = hooks, event, undecided
+        self.since = 0.0  # when the latest play process started
 
     def stop_check(self, session_end: float) -> str | None:
-        return self.undecided(session_end)
+        return self.undecided(session_end, self.since)
 
     def run_agent(self, prompt: str, minutes: float, client_session: str | None, resume: bool, tag: str) -> Any:
+        self.since = self.hooks.now()
         try:
             return self.hooks.run_agent(prompt, minutes, client_session, resume, tag)
         except (OSError, RuntimeError) as e:
@@ -566,13 +575,24 @@ class BenchHooks:
         return getattr(self.hooks, name)
 
 
-def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float) -> str | None:
+def acted_since(since: float) -> bool:
+    """Whether the agent made an acting call since `since`: a tool call (actions.jsonl) that issues a party action,
+    as the session metrics count them (bg3ai.metrics.ISSUE_TOOLS: action tools, batches, queue_actions; not wait,
+    reads, saves or loads)."""
+    actions: list[Json] = rpolicy.read_actions_since(since)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return any(a.get("tool") in bmetrics.ISSUE_TOOLS for a in actions)
+
+
+def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float, acted: bool = True) -> str | None:
     """Why the run's agent can't end its turn yet (run_session's stop check): its goal isn't decided (no until
-    milestone or live verdict yet; a maximise scenario's never is) with time left, and no operator stop or cap.
-    None: it may end."""
+    milestone or live verdict yet; a maximise scenario's never is) with time left, and no operator stop or cap; a
+    maximise run's agent also made an acting call since its last resume (`acted`): a stretch without one ends the
+    run (its session has no count on stop resumes). None: it may end."""
     if r.until_hit or r.cap_hit or r.stop_requested or stop_file().exists() or now >= session_end:
         return None
     if (fact := maximised(sc)) is not None:
+        if not acted:
+            return None
         return (
             f"The run isn't over: it has no pass, it scores the party's {fact} gained by its time cap, and goes on "
             "until then."
@@ -789,7 +809,8 @@ class LiveRunHost:
         return HostStart(
             prompt,
             cast(
-                SessionHooks, BenchHooks(hooks, r.event, lambda end: self.undecided(r, sc, run_dir, end, hooks.now()))
+                SessionHooks,
+                BenchHooks(hooks, r.event, lambda end, since: self.undecided(r, sc, run_dir, end, hooks.now(), since)),
             ),
             str(uuid.uuid4()),
             served["sha256"] if served else None,
@@ -799,19 +820,25 @@ class LiveRunHost:
             cast(Json, man.get("client") or {}).get("version"),
         )
 
-    def undecided(self, r: RunRunner, sc: Json, run_dir: Path, session_end: float, now: float) -> str | None:
+    def undecided(
+        self, r: RunRunner, sc: Json, run_dir: Path, session_end: float, now: float, since: float
+    ) -> str | None:
         """undecided_why on the game as it is now: a run with a live verdict first reads the facts once
         (r.facts_now) and asks the verdict (GoalWatch.check), so a wipe or a pass since the last polls (facts every
         story.POLL_S, the verdict every GOAL_POLL_S) ends the run instead of resuming its agent (B3 job 10: the
         agent's wait_for saw the Game Over box at 16:23:40, the runner resumed it at 16:23:45 as undecided, the wipe
-        stop came at 16:24:07). A failed read leaves the verdict to the facts already written."""
+        stop came at 16:24:07). A failed read leaves the verdict to the facts already written. A maximise run's
+        agent is resumed only if it made an acting call since `since` (its play process's start: acted_since)."""
         if (w := self.watches.get(run_dir)) is not None and not r.until_hit:
             try:
                 r.facts_now()
             except Exception as e:  # the game not answering: the stop check still decides on what it has
                 renv.log(f"{SID}: stop check: facts read failed: {type(e).__name__}: {e}")
             w.check()
-        return undecided_why(r, sc, session_end, now)
+        acted = maximised(sc) is None or acted_since(since)
+        if not acted:
+            renv.log(f"{SID}: no acting call since the agent's last (re)start: the maximise run ends at its turn's end")
+        return undecided_why(r, sc, session_end, now, acted)
 
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
         r, t0, moved = self.runs.pop(run_dir)
@@ -859,6 +886,8 @@ class LiveRunHost:
                 "served": totals["served"],  # what the endpoint served (pi: thinking levels, providers)
                 "turns": totals["turns"],
                 "wall_min": round((res.ended - outcome.started) / 60, 2),
+                # the agent's first end of turn (resumed or not), wall s from the run's start; None: never
+                "first_stop_s": None if outcome.first_stop is None else round(outcome.first_stop - outcome.started, 1),
                 "sessions": 1,
                 "cap_hit": r.cap_hit,
                 "milestone": hit and hit["id"],

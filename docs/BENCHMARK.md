@@ -112,6 +112,20 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
 - Known gaps: a new-game run's first session is whatever the agent starts from the main menu (a Continue there
   isn't caught), and a `reloads:N` condition (pilot only) would need a wipe not to end its run.
 
+### An agent that ends its turn early (decision, user 2026-10-25)
+
+- When the agent ends its turn before the run is decided, the runner resumes the same conversation with the time
+  left (`-c1`, `-c2`, ...). A goal run is resumed at most `Recovery.max_stop_resumes` (6) times.
+- A maximise run has no such count: it is resumed until its time cap as long as the agent made at least one acting
+  call since its last resume. An acting call is a call the session metrics count as issuing a party action
+  (`bg3ai.metrics.ISSUE_TOOLS`: the action tools, the batches and macros, `queue_actions`; not reads, `wait`,
+  `wait_for`, saves or loads), read from the MCP server's tool log (`runtime/actions.jsonl`) since the play
+  process started (`run_host.acted_since`). A stretch with no acting call ends the run at that end of turn.
+  Before, the count of 6 cut maximise runs short (bench B3: Sonnet's `act1_gold_max` at 20.9 of 45 min, Haiku's
+  at 17.6).
+- Every run records when its agent first ended its turn: `first_stop_s` in runs.jsonl and result.json, wall
+  seconds from the run's start (null if it never ended its turn), so it can be shown apart from the score.
+
 ## 3. Running a series
 
 ```bash

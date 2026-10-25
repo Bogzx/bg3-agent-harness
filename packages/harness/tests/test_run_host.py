@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from bg3harness import client_setup
@@ -758,11 +758,23 @@ def test_bench_hooks_turn_a_play_process_that_cant_start_into_a_setup_failed_res
         hooks.run_agent("KICKOFF", 30, "c-1", False, "")
 
 
+STOP_RESUMES = cast(int, Recovery().max_stop_resumes)  # a goal run's count (a maximise run's session has none)
+
+
 def play_session(rig: Rig, sc: dict[str, Any], name: str) -> tuple[FakeRunner, SessionOutcome]:
-    """The run's one session as bg3bench's SessionRun plays it (run_session, run_hours, no fault resume)."""
+    """The run's one session as bg3bench's SessionRun plays it (run_session, run_hours, no fault resume; a maximise
+    scenario's with no count on its stop resumes)."""
     st = rig.h.start(JOB, sc, run_dir(name))
-    spec = SessionSpec(name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, Recovery(max_resumes=0))
+    recovery = Recovery(max_resumes=0, max_stop_resumes=None if H.maximised(sc) else STOP_RESUMES)
+    spec = SessionSpec(name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, recovery)
     return rig.runners[-1], run_session(spec, st.hooks)
+
+
+def called(r: FakeRunner, *tools: str) -> None:
+    """The agent's tool calls in this play process, as the MCP server logs them (runtime/actions.jsonl)."""
+    with open(renv.RUNTIME / "actions.jsonl", "a") as f:
+        for i, tool in enumerate(tools):
+            f.write(json.dumps({"t": r.clock + 1 + i, "tool": tool, "args": {}, "result": f"{tool}: done"}) + "\n")
 
 
 def test_an_end_turn_before_the_milestone_is_resumed_until_it_is_reached(rig: Rig):
@@ -829,7 +841,7 @@ def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_
     # D4: failures said "the run's time ran out before the milestone" at 8 of 240 min
     sc = {**UNTIL_SC, "caps": {**UNTIL_SC["caps"], "run_hours": 4}}
     r, out = play_session(rig, sc, "m-naut")
-    assert len(r.plays) == 1 + Recovery().max_stop_resumes and out.result.reason == "exited"
+    assert len(r.plays) == 1 + STOP_RESUMES and out.result.reason == "exited"
     rec = rig.h.record(JOB, sc, run_dir("m-naut"), out)
     assert (rec["outcome"], [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]]) == (
         "timeout",
@@ -855,6 +867,7 @@ def test_the_kickoff_of_a_maximise_scenario_says_it_plays_its_whole_cap_and_how_
 def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(rig: Rig):
     # a maximise goal is never reached: the stop check must not read "no goal yet" as "may end" or as decided
     def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "get_status", "move_to")
         return "exited", 10 * 60.0
 
     rig.prepare = lambda r: setattr(r, "play", play)
@@ -862,3 +875,50 @@ def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(r
     assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3", "-c4"] and out.stop_resumes == 4
     assert "it has no pass, it scores the party's gold gained by its time cap" in r.plays[1][1]
     assert [round(m) for _, _, m in r.plays[1:]] == [35, 25, 15, 5]  # each resume gets the time left
+
+
+def test_a_maximise_run_that_acts_is_resumed_past_the_goal_runs_count_until_its_cap(rig: Rig):
+    # bench B3: max_stop_resumes (6) ended Sonnet's act1_gold_max at 20.9 of 45 min, Haiku's at 17.6
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "get_nearby", ("trade", "do_actions", "queue_actions", "combat_turn")[len(r.plays) % 4])
+        return "exited", 3 * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, MAX_SC, "m-gold")
+    assert len(r.plays) == 15 and out.stop_resumes == 14 > STOP_RESUMES  # 15 x 3 min = the 45 min cap
+    rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
+    assert (rec["first_stop_s"], rec["wall_min"]) == (180.0, 45.0)
+
+
+def test_a_maximise_run_ends_after_a_stretch_with_no_acting_call(rig: Rig):
+    # reads, waits, saves and loads are not acting calls (bg3ai.metrics.ISSUE_TOOLS)
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(
+            r, *(("get_status", "move_to") if len(r.plays) <= 3 else ("get_status", "wait", "wait_for", "save_game"))
+        )
+        return "exited", 2 * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, MAX_SC, "m-gold")
+    assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3"] and out.result.reason == "exited"
+    rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
+    assert (rec["first_stop_s"], rec["wall_min"], rec["outcome"]) == (120.0, 8.0, "timeout")
+
+
+def test_a_goal_run_keeps_its_stop_resume_count_however_much_it_acts(rig: Rig):
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "move_to")
+        return "exited", 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, _ = play_session(rig, SAVE_SC, "m-grove")
+    assert len(r.plays) == 1 + STOP_RESUMES
+
+
+def test_a_run_whose_agent_never_ended_its_turn_has_no_first_stop(rig: Rig):
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        return "timeout", 30 * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    _, out = play_session(rig, SAVE_SC, "m-grove")
+    assert rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), out)["first_stop_s"] is None

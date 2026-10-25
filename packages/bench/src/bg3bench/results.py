@@ -112,6 +112,7 @@ def from_record(
         "wall_s": _minutes_to_s(record.get("wall_min")),
         "play_s": _minutes_to_s(record.get("play_min")),
         "think_s": (record.get("model_time") or {}).get("model_s"),
+        "first_stop_s": record.get("first_stop_s"),  # the agent's first end of turn (runs.jsonl), None: never or older
         "luck": luck,
         "reloads": int(record.get("reloads") or 0),
         "deaths": {k: int(deaths.get(k) or 0) for k in ("fights", "downs", "deaths", "wipes")},
