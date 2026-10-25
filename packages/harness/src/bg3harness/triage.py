@@ -62,15 +62,43 @@ _STEP_FAIL = re.compile(r"(?:^|\s)([A-Za-z_]+)(?: [^:—\n]*)?:\s*(FAILED|TIMEOU
 _ANY_FAIL = re.compile(r"\b(FAILED|TIMEOUT|NOT READY|REFUSED)\b\s*[—:]?\s*(.*)")
 
 
+def _split_events(text: str) -> tuple[list[str], list[str]]:
+    """(the result's own lines, its EVENTS blocks' lines), stripped. An EVENTS block is the header and the indented
+    lines under it (bg3ai.render_events): what else happened meanwhile, e.g. a companion's background queue."""
+    own: list[str] = []
+    bg: list[str] = []
+    in_events = False
+    for raw in text.strip().splitlines():
+        if raw.strip() == "EVENTS":
+            in_events = True
+        elif not raw.startswith("  "):
+            in_events = False
+        (bg if in_events else own).append(raw.strip())
+    return own, bg
+
+
 def failures(name: str, block: dict, text: str) -> list[tuple[str, str]]:
     """(tool or step, message) for each failure in one result: the call itself (is_error, or the bridge's
     FAILED/NOT READY/REFUSED prefix) and failed steps inside batch/queue results ("2. use_ability: FAILED — …",
-    "leg 1: move_to: FAILED — …", "end_turn: TIMEOUT — …"). STOPPED lines are consequences, not counted."""
+    "leg 1: move_to: FAILED — …", "end_turn: TIMEOUT — …"). STOPPED lines are consequences, not counted. Lines in
+    the result's EVENTS blocks are not the call's (background_failures)."""
     t = text.strip()
     if block.get("is_error") or t.startswith("<tool_use_error>"):
         return [(name, t)]
+    return _line_failures(name, _split_events(t)[0])
+
+
+def background_failures(block: dict, text: str) -> list[tuple[str, str]]:
+    """(step, message) for each failure echoed in a result's EVENTS blocks: a background action the call didn't run
+    (act3_gold_max: a straggler's walk-back queue_interrupted `leg 2: move_to: TIMEOUT` in the leader's wait_for,
+    which returned done)."""
+    if block.get("is_error"):
+        return []
+    return _line_failures("EVENTS", _split_events(text)[1])
+
+
+def _line_failures(name: str, lines: list[str]) -> list[tuple[str, str]]:
     out = []
-    lines = [ln.strip() for ln in t.splitlines()]
     for i, line in enumerate(lines):
         if not line or line.startswith(("STOPPED", "EVENTS", "CHANGES", "NOW")):
             continue
@@ -111,11 +139,12 @@ def load_calls(stream_path: Path, turns_path: Path | None = None) -> tuple[list[
             summary = ev.text or summary
         elif ev.kind == "tool_call" and ev.call_id:
             calls[ev.call_id] = {"id": ev.call_id, "name": ev.tool, "input": ev.args, "t": ev.t, "t_res": None,
-                                 "failed": False, "text": "", "fails": []}
+                                 "failed": False, "text": "", "fails": [], "bg_fails": []}
         elif ev.kind == "tool_result" and ev.call_id in calls:
             c = calls[ev.call_id]
             c["text"] = events.result_text(ev)
             c["fails"] = failures(c["name"], {"is_error": ev.is_error}, c["text"])
+            c["bg_fails"] = background_failures({"is_error": ev.is_error}, c["text"])
             c["failed"] = bool(c["fails"])
             c["t_res"] = ev.t
         elif ev.kind == "text":
@@ -143,6 +172,17 @@ def failures_section(calls: list[dict]) -> list[str]:
         out.append(f"- **{step}** ×{len(hits)}{' (via ' + ', '.join(via) + ')' if via else ''}: `{key}`")
         out.append(f"  - first {hm(first['t'])} `{first['name']}` args `{args_str(first['input'])}`")
         out.append(f"  - → {msg[:300]}")
+    return out + [""]
+
+
+def background_section(calls: list[dict]) -> list[str]:
+    """Failures echoed in results' EVENTS blocks (background_failures): not the calls' own, listed apart."""
+    hits = [(c, step, msg) for c in calls for step, msg in c.get("bg_fails", [])]
+    if not hits:
+        return []
+    out = [f"## Background failures in EVENTS ({len(hits)}; not the calls' own)", ""]
+    for c, step, msg in hits:
+        out.append(f"- {hm(c['t'])} **{step}** in `{c['name']}`'s EVENTS: {msg[:300]}")
     return out + [""]
 
 
@@ -249,6 +289,7 @@ def build(base: Path) -> str:
     calls, summary = load_calls(Path(f"{base}.jsonl"), Path(f"{base}.turns.jsonl"))
     lines = [f"# Triage {base.name}", ""]
     lines += failures_section(calls)
+    lines += background_section(calls)
     turns_path = Path(f"{base}.turns.jsonl")
     turns = latency.read_jsonl(turns_path)
     wrap_t = latency.wrapup_start(turns + latency.wrapup_from_stream(Path(f"{base}.jsonl"), turns))

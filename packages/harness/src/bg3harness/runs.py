@@ -12,7 +12,9 @@ Failure classes (every failure in a run record is one of them):
     agent     the model's: stalls with no story progress, party wipes (Game Over), reloads it chose, early exits,
               running out of the run's time, sandbox/fairness-guard blocks of its own file calls
     unknown   can't tell from the logs: claude silent for minutes (a slow model turn or a stalled API), claude
-              killed by a signal from outside the runner
+              killed by a signal from outside the runner; also listed here, never voiding a run: a tool's own
+              FAILED, raw clicks/keys, and a background action's TIMEOUT echoed in another call's EVENTS
+              (bg_timeout: the call itself returned, so the agent's play wasn't touched)
 Operator actions (a manual restart, a stop, a runner self-restart on changed code, --take-over) are listed apart:
 a run with any of them is not clean.
 """
@@ -164,6 +166,7 @@ def progress_failures(paths: list[Path], since: float) -> list[dict]:
 
 
 HAND_INPUT = ("click", "press_key", "ui_action")  # raw UI input tools
+UNKNOWN_KINDS = ("tool_failed", "hand_input", "bg_timeout")  # stream failures listed, never voiding a run
 MOVE_TOOLS = ("move", "move_to", "walk_toward", "travel_to")  # "FAILED: beyond remaining movement" is routine
 
 
@@ -210,11 +213,16 @@ def stream_failures(stream: Path) -> list[dict]:
             else:
                 continue  # a macro step, a partial walk, NOT READY / REFUSED / a rejected call: the game said no
             groups.setdefault((kind, step, triage.error_key(msg)), []).append(c)
+        for step, msg in c["bg_fails"]:
+            # a background action's TIMEOUT echoed in this call's EVENTS (a companion's walk-back queue): a harness
+            # defect the call didn't depend on (it returned), so listed as unknown, never a harness failure
+            if msg.startswith("TIMEOUT"):
+                groups.setdefault(("bg_timeout", step, triage.error_key(msg)), []).append(c)
         if name in HAND_INPUT:
             # raw clicks and keys: the agent working around a tool (the definition of done wants 0 hand clicks)
             groups.setdefault(("hand_input", name, ""), []).append(c)
     for (kind, tool, key), cs in groups.items():
-        cls = AGENT if kind == "fairness_block" else UNKNOWN if kind in ("tool_failed", "hand_input") else HARNESS
+        cls = AGENT if kind == "fairness_block" else UNKNOWN if kind in UNKNOWN_KINDS else HARNESS
         out.append(failure(cs[0].get("t") or t_end, kind, cls, f"{sid}: {tool}: {key}", len(cs)))
     if wipe is not None:
         out.append(failure(wipe.get("t") or t_end, "party_wipe", AGENT, f"{sid}: Game Over ({wipe['name']})"))
