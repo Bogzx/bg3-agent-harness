@@ -300,17 +300,24 @@ def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Optio
 
 def goal_of(sc: Json) -> Json:
     """The scenario's goal predicate: an `until` milestone (nautiloid) is {"milestone": it} (as bg3bench.scenario's
-    goal_of; the harness never imports the bench)."""
+    goal_of; the harness never imports the bench). A maximise scenario has none (maximised)."""
     return {"milestone": sc["until"]} if "until" in sc else sc["goal"]
+
+
+def maximised(sc: Json) -> str | None:
+    """The fact a maximise scenario scores the gain of (bg3bench.scenario's maximised), None for a goal scenario:
+    such a run has no pass and plays its whole time cap."""
+    return sc["maximise"]["fact"] if "maximise" in sc else None
 
 
 def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> str:
     """A bench run's first message: the task and how it is scored (the scenario's `task` and `scored_by`, first),
     when the run ends (once graded, or at the time cap), its start (`loaded`: the label of the save the harness
     loaded), the grader's exact goal (graders.grade: passed at the first instant it holds, failed by a "never" that
-    happened before), the character. No memory or playbook steps (a bench run has no playthrough memory) and no
-    "play until WRAP UP NOW": the run ends on its verdict (an until milestone, or GoalWatch). `pace`: the coaching
-    condition's pre-flight ("" under rules)."""
+    happened before; a maximise scenario's score instead: the fact's gain at the time cap), the character. No memory
+    or playbook steps (a bench run has no playthrough memory) and no "play until WRAP UP NOW": the run ends on its
+    verdict (an until milestone, or GoalWatch), a maximise run at its time cap. `pace`: the coaching condition's
+    pre-flight ("" under rules)."""
     char, start = sc["profile"]["character"], sc["start"]
     note: Json = start.get("note") or {}
     task = sc.get("task") or note.get("objective") or "Make the goal below hold."
@@ -322,10 +329,14 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     ]
     if sc.get("scored_by"):
         lines.append(f"How it is scored: {sc['scored_by']}")
-    lines.append(
-        f"The run ends as soon as the task is decided (passed, or it can no longer pass) or after {cap} minutes "
-        "of play (the time cap), whichever comes first."
-    )
+    fact = maximised(sc)
+    if fact is None:
+        lines.append(
+            f"The run ends as soon as the task is decided (passed, or it can no longer pass) or after {cap} minutes "
+            "of play (the time cap), whichever comes first."
+        )
+    else:
+        lines.append(f"The run has no pass: it plays all {cap} minutes of its time cap, then it is scored.")
     if start["kind"] == "save":
         lines.append(
             f'The harness has loaded save "{loaded}": the character, party, gear and '
@@ -335,10 +346,16 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     else:
         lines.append(rpolicy.new_game_note(owner_of(sc)))
     since = "the start save" if start["kind"] == "save" else "the new game"
-    lines.append(
-        f'The grader\'s exact goal: the run passes the first moment it holds, from {since} on; anything under "never" '
-        f"fails it if it happens first: {json.dumps(goal_of(sc), sort_keys=True)}."
-    )
+    if fact is None:
+        lines.append(
+            f"The grader's exact goal: the run passes the first moment it holds, from {since} on; anything under "
+            f'"never" fails it if it happens first: {json.dumps(goal_of(sc), sort_keys=True)}.'
+        )
+    else:
+        lines.append(
+            f"The grader's exact score: the party's {fact} when the time cap ends the run minus its {fact} at {since}; "
+            "higher is better."
+        )
     if char.get("brief"):
         lines.append("Character brief:\n> " + char["brief"].strip().replace("\n", "\n> "))
     lines.append(
@@ -384,9 +401,15 @@ class BenchHooks:
 
 def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float) -> str | None:
     """Why the run's agent can't end its turn yet (run_session's stop check): its goal isn't decided (no until
-    milestone or live verdict yet) with time left, and no operator stop or cap. None: it may end."""
+    milestone or live verdict yet; a maximise scenario's never is) with time left, and no operator stop or cap.
+    None: it may end."""
     if r.until_hit or r.cap_hit or r.stop_requested or stop_file().exists() or now >= session_end:
         return None
+    if (fact := maximised(sc)) is not None:
+        return (
+            f"The run isn't over: it has no pass, it scores the party's {fact} gained by its time cap, and goes on "
+            "until then."
+        )
     return (
         "The run isn't decided: the grader hasn't seen its goal "
         f"{json.dumps(goal_of(sc), sort_keys=True)} yet, and the run goes on until it is decided or its time cap."

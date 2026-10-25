@@ -52,6 +52,13 @@ def _usage(result: Mapping | None) -> ModelUsage | None:
     )
 
 
+def _gain(score: Mapping) -> dict[str, Score]:
+    """A maximise run's score (no pass): the fact's gain; none when the run read no value of it."""
+    if score["gain"] is None:
+        return {}
+    return {"gain": Score(value=score["gain"], answer=score["fact"], metadata=dict(score))}
+
+
 def _sample(run: Mapping, epoch: int, goals: Mapping[str, str], result: Mapping | None) -> EvalSample:
     usage = _usage(result)
     return EvalSample(
@@ -65,7 +72,9 @@ def _sample(run: Mapping, epoch: int, goals: Mapping[str, str], result: Mapping 
                 answer="passed" if run["passed"] else "failed",
                 metadata={"t_pass_s": run["t_pass_s"]},
             )
-        },
+        }
+        if run["passed"] is not None
+        else _gain(run["score"]),
         metadata={"run_id": run["run_id"], "cost_usd": run["cost_usd"], "t_pass_s": run["t_pass_s"]},
         model_usage={} if usage is None else {run["model"]: usage},
         total_time=run["wall_s"],

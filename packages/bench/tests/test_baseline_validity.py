@@ -55,6 +55,14 @@ START: dict[str, dict] = {
         "quests": ["Find a Cure"],
         "nearby": ["Arron", "Dammon", "Alfira"],
     },
+    "act3_gold_max": {
+        "area": "Lower City",
+        "level": "LOW_Main_A",
+        "party": [("Tav", "Paladin", 7), ("Wyll", "Warlock", 7), ("Karlach", "Barbarian", 7), ("Shadowheart", "Cleric", 7)],
+        "gold": 410,
+        "quests": [],
+        "nearby": ["Mohan"],
+    },
     "choice_act1_karlach": {
         "area": "Risen Road",
         "level": "WLD_Main_A",
@@ -229,6 +237,8 @@ START: dict[str, dict] = {
 LIVE: dict[str, str] = {
     "nautiloid": "the new-game start (character creation, intro) isn't hosted: the fake starts after it",
     "act1_gold_1000": "random pick_up/loot/interact gathering gold in the real Grove",
+    "act1_gold_max": "how much gold random pick_up/loot/interact gathers in the real Grove (its score, not a pass)",
+    "act3_gold_max": "how much gold random pick_up/loot/interact gathers in the real Lower City (its score)",
     "choice_act1_karlach": "a random fight with Anders' group won, or random dialogue recruiting Karlach",
     "choice_act1_minthara": "a random fight won in the Sanctum, or random travel to the Grove",
     "fight_act1_windmill": "random attacks winning the windmill fight",
@@ -310,6 +320,8 @@ def levels(n: int) -> Callable:
 ORACLE: dict[str, list[Callable]] = {
     "nautiloid": [finish_quest("Escape the Nautiloid")],
     "act1_gold_1000": [lambda m: m.add_gold(1000 - m.gold)],
+    "act1_gold_max": [lambda m: m.add_gold(500)],
+    "act3_gold_max": [lambda m: m.add_gold(500)],
     "act1_get_item": [lambda m: m.add_item("Idol of Silvanus")],
     "act1_level_3": [*fight("Bandit"), levels(3)],
     "act1_recruit_3": [recruit("Gale"), recruit("Karlach")],
@@ -339,6 +351,7 @@ TACTICIAN = sorted(p.stem for p in SCENARIOS.glob("*_tactician.json"))
 for _v in TACTICIAN:
     _b = _v.removesuffix("_tactician")
     START[_v], LIVE[_v], ORACLE[_v] = START[_b], f"{LIVE[_b]} at Tactician", ORACLE[_b]
+START["act1_gold_max"] = START["act1_gold_1000"]  # the same start save, without the target
 
 # Ends one step short of the goal, which the grader must fail: (name, the steps).
 NEAR_MISS: dict[str, list[Callable]] = {
@@ -484,7 +497,8 @@ def play_job(job: dict, sessions: Path, solve: Sequence[Callable] = ()) -> matri
     }
     _, res = run_artifacts.write_run_artifacts(run_dir, series, record, "0.1.0", None, condition=job["condition"])
     assert res["grade"] is not None, "no grade: facts.jsonl missing"
-    return matrix.RunResult(res["run_id"], True, res["passed"], 0.0, charged=True)
+    gain = (res.get("score") or {}).get("gain")
+    return matrix.RunResult(res["run_id"], True, res["passed"], 0.0, charged=True, score=gain)
 
 
 def test_every_scenario_has_a_fake_start_and_a_live_note():
@@ -525,6 +539,9 @@ def test_baselines_fail_every_grader(tmp_path, name):
     assert len(ends) == 2 and all(r["valid"] for r in ends.values()), ends
     passed = sorted(jid for jid, r in ends.items() if r["passed"])
     assert passed == [], f"a baseline passed {name}: {passed}"
+    if "maximise" in json.loads((SCENARIOS / f"{name}.json").read_text()):  # no pass: a do-nothing run gains nothing
+        assert {r["passed"] for r in ends.values()} == {None}
+        assert [r["score"] for jid, r in ends.items() if "donothing" in jid] == [0], ends
 
 
 def solve_job(tmp_path: Path, name: str, solve: Sequence[Callable]) -> dict:
@@ -537,6 +554,9 @@ def solve_job(tmp_path: Path, name: str, solve: Sequence[Callable]) -> dict:
 @pytest.mark.parametrize("name", sorted(ORACLE))
 def test_the_scripted_solve_passes_every_grader(tmp_path, name):
     res = solve_job(tmp_path, name, ORACLE[name])
+    if "score" in res:  # a maximise scenario: the solve's gold is its score
+        assert (res["passed"], res["score"]["gain"]) == (None, 500), res["score"]
+        return
     assert res["passed"] is True, res["grade"]
 
 

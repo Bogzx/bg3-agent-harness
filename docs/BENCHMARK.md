@@ -74,6 +74,18 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
   Shadowheart on the Nautiloid). Choice scenes keep their own neutral brief, since their picks are judged against it.
 - These changed what is measured: suite bench-v0.6 (bg3bench 0.6.0).
 
+### Maximise scenarios (decision, user 2026-10-25)
+
+- "The goal for the gold runs is to reach as much gold as possible, not only 1000": a scenario may set
+  `maximise: {"fact": "gold"}` instead of a goal. It has no pass: the run plays its whole time cap (an agent that
+  ends its turn early is resumed with the time left), and its score is the fact's gain, its value at run_end minus
+  its value at the run's first snapshot (`graders.measure`). result.json has `score` {fact, start, end, gain, peak}
+  and `passed` null; the series report shows the gain per run and the median, lowest and highest gain; pass rates,
+  the release stats and the site leaderboard leave such runs out (the site has no score table yet).
+- A target is never turned into a maximum: `act1_gold_1000` keeps its 1000-gold target and its name;
+  `act1_gold_max` plays its start save without one, and `act3_gold_max` is its Act 3 twin (same task, same 45 min).
+- Suite bench-v0.7 (bg3bench 0.7.0).
+
 ## 3. Running a series
 
 ```bash

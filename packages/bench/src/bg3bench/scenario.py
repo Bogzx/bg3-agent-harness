@@ -7,7 +7,9 @@ v2 adds to the root scenarios/*.json (v1, bg3bench.scenario_v1 `validate_scenari
   (bg3harness.runner.run_host.scenario_kickoff). They must say what the grader does (graders.grade over the goal) and
   nothing it doesn't; every scenario in packages/bench/scenarios has both.
 - `goal`: a predicate of the goal language (predicates.py, D8 checked), or `until: <milestone id>` as the shorthand
-  for `{"milestone": id}`. Exactly one of the two.
+  for `{"milestone": id}`, or `maximise: {"fact": f}` (f one of graders.NUMERIC_FACTS): a run with no pass that plays
+  its whole time cap and scores the fact's gain over it (graders.measure; its result's `passed` is null). Exactly one
+  of the three.
 - `game_settings`: difficulty, karmic_dice (always false, D9), seed (D9: the dice seed the mod writes after every
   load, so each run starts from the same rolls; null = the game's own wall-clock seed), resolution, ui_scale,
   language; null = not fixed by the scenario (the setup check records what the game has). The difficulty moves here
@@ -41,7 +43,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from bg3bench import conditions, predicates
+from bg3bench import conditions, graders, predicates
 
 SCHEMA = 2
 FAMILIES = ("fight", "sandbox", "choice", "exploration", "puzzle")
@@ -76,7 +78,7 @@ RESETS = {  # runs.RESETS: what every run starts without; not tunable
     },
 }
 KEYS = {
-    "schema", "name", "title", "task", "scored_by", "about", "family", "holdout", "start", "goal", "until", "runs",
+    "schema", "name", "title", "task", "scored_by", "about", "family", "holdout", "start", "goal", "until", "maximise", "runs",
     "caps", "profile", "game_settings", "timing", "methods", "requires", "conditions", "reset",
 }  # fmt: skip
 GAME_SETTINGS = {
@@ -192,8 +194,12 @@ def validate(sc: Any, name: str) -> list[str]:
         errs.append(f"family must be one of {', '.join(FAMILIES)}")
     if not isinstance(sc.get("holdout", False), bool):
         errs.append("holdout must be true or false")
-    if ("goal" in sc) == ("until" in sc):
-        errs.append("give exactly one of goal or until")
+    if sum(k in sc for k in ("goal", "until", "maximise")) != 1:
+        errs.append("give exactly one of goal, until or maximise")
+    elif "maximise" in sc:
+        mx = sc["maximise"]
+        if not isinstance(mx, dict) or set(mx) != {"fact"} or mx["fact"] not in graders.NUMERIC_FACTS:
+            errs.append(f"maximise must be {{fact: one of {', '.join(graders.NUMERIC_FACTS)}}}")
     elif "until" in sc and sc["until"] not in predicates.MILESTONES:
         errs.append(f"until {sc['until']!r} is not a milestone id (predicates.MILESTONES)")
     elif "goal" in sc:
@@ -295,8 +301,15 @@ def from_v1(v1: dict, family: str = "exploration") -> dict:
 
 
 def goal_of(sc: dict) -> dict:
-    """The scenario's goal predicate (`until` expanded)."""
+    """The scenario's goal predicate (`until` expanded). A maximise scenario has none (`maximised`)."""
+    if "maximise" in sc:
+        raise ScenarioError(f"{sc['name']}: a maximise scenario has no goal (it is scored by graders.measure)")
     return {"milestone": sc["until"]} if "until" in sc else sc["goal"]
+
+
+def maximised(sc: dict) -> str | None:
+    """The fact a maximise scenario scores the gain of, None for a goal scenario."""
+    return sc["maximise"]["fact"] if "maximise" in sc else None
 
 
 def not_ready(sc: dict) -> str | None:
@@ -348,6 +361,8 @@ def resolve(sc: dict) -> dict:
     is refused. The bench's own fields (family, holdout, methods, requires, conditions) and the settings a run only
     records (resolution, ui_scale, language) are left out; so are `start.needs_save` and `start.not_ready` (v1: a save
     start with save null is a placeholder the runner refuses)."""
+    if "maximise" in sc:
+        raise ScenarioError(f"{sc['name']}: a maximise scenario has no milestone: the legacy runner stops at one only")
     goal = goal_of(sc)
     if set(goal) != {"milestone"}:
         raise ScenarioError(

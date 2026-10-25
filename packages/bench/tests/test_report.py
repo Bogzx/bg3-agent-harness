@@ -134,3 +134,21 @@ def test_cli(tmp_path):
     assert "(https://example.org/naut2-r001/facts.jsonl)" in (out / "report.md").read_text()
     with pytest.raises(ValueError, match="no runs"):
         report.main([str(runs), str(out), "--series", "nope"])
+
+
+def test_a_maximise_series_shows_each_runs_score_and_the_median_gain():
+    pairs = series_pairs()
+    scored = []
+    for (man, res), gain in zip(pairs, (517, 1200, 9999), strict=True):
+        score = {"fact": "gold", "start": 133, "end": 133 + gain, "gain": gain, "peak": 133 + gain}
+        scored.append((man, {**res, "passed": None, "t_pass_s": None, "score": score}))
+    rep = report.build(scored)
+    assert [r["verdict"] for r in rep["runs"]] == ["+517 gold (133 -> 650)", "+1200 gold (133 -> 1333)",
+                                                   "invalid (operator)"]  # fmt: skip
+    assert [r["passed"] for r in rep["runs"]] == [False, False, False] and rep["summary"]["k"] == 0
+    assert rep["summary"]["score"] == {"fact": "gold", "n": 2, "median": 858.5, "min": 517, "max": 1200}
+    md = report.markdown(rep)
+    assert "**Score:** gold gained: median +858.5 (lowest +517, highest +1200) over 2 valid runs" in md
+    assert "**Success:**" not in md and report.build(pairs)["summary"]["score"] is None
+    unread = {"fact": "gold", "start": None, "end": None, "gain": None, "peak": None}
+    assert report.verdict({**scored[0][1], "score": unread}) == "no gold read (reached)"  # the fixture's outcome

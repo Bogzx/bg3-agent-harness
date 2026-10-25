@@ -259,7 +259,11 @@ def print_status(mx: matrix.Matrix, out: TextIO) -> None:
         elif not last["valid"]:
             text = f"invalid: {last['invalid_reason']}"
         else:
-            text = ("pass" if last["passed"] else "fail") + f" {_usd(last['cost_usd'])} {last['run_id']}"
+            if last["passed"] is None:  # a maximise run: its score, not a pass
+                verdict = "score " + ("?" if last.get("score") is None else f"{last['score']:+g}")
+            else:
+                verdict = "pass" if last["passed"] else "fail"
+            text = f"{verdict} {_usd(last['cost_usd'])} {last['run_id']}"
         rows.append([jid, st["status"], str(len(st["attempts"])), text])
     _table(rows, out)
 

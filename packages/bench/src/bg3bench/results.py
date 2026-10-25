@@ -17,6 +17,10 @@ realtime scenarios (D7) report it next to wall time, since the world runs while 
 luck.summary over the run's roll log (D9), null when the run has none. A choice scenario's result has `choices`
 (choices.grade: the picks, the persona fit), and its release run the picks and the fit score (choices.table).
 
+A maximise scenario's result (scenario.py `maximise`) has no pass: `passed` and `t_pass_s` are null and `score`
+is graders.measure's {fact, start, end, gain, peak}, the gain being the score. Its runs are left out of every pass
+rate; a release run carries the score.
+
 `build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs. A
 release is of one suite version (`suite`, bench-vX.Y: its runs' bench versions; its `bench_tag` when tagged), and
 each group lists the harness versions its runs played with.
@@ -75,10 +79,11 @@ def from_record(
     choices: dict | None = None,
     pilot: Sequence[str] | None = None,
     seed: int | None = None,
+    score: dict | None = None,
 ) -> dict:
     """One runs.jsonl record (+ grader output, + method attribution, + luck.summary, + the choices grader's
-    picks and fit for a choice scenario, + what a pilot run didn't play of its condition) -> result v1. `seed`: the
-    scenario's dice seed (validity)."""
+    picks and fit for a choice scenario, + what a pilot run didn't play of its condition, + a maximise scenario's
+    score) -> result v1. `seed`: the scenario's dice seed (validity)."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
     valid, reason = validity(record, seed)
@@ -111,6 +116,8 @@ def from_record(
     }
     if choices is not None:
         out["choices"] = choices
+    if score is not None:
+        out["score"] = score
     if pilot:
         out["pilot"] = list(pilot)
     return out
@@ -164,6 +171,7 @@ def build_results(
                 "luck_z": None if res["luck"] is None else res["luck"]["z"],
                 "tokens": res["tokens"],
                 **({"choices": choices_mod.release_entry(res["choices"])} if res.get("choices") else {}),
+                **({"score": res["score"]} if res.get("score") else {}),
             }
         )
     if len({r["run_id"] for r in runs}) != len(runs):
@@ -188,8 +196,9 @@ def build_results(
         valid = [(s, r) for s, r in members if r["valid"]]
         by_scenario: dict[str, list[bool]] = {}
         for s, r in valid:
-            by_scenario.setdefault(s, []).append(r["passed"])
-        summary = stats.summarize(by_scenario, random.Random(seed), seed=seed, b=b) if valid else None
+            if r["passed"] is not None:  # a maximise run has no pass
+                by_scenario.setdefault(s, []).append(r["passed"])
+        summary = stats.summarize(by_scenario, random.Random(seed), seed=seed, b=b) if by_scenario else None
         walls = [r["wall_s"] for _, r in valid if r["wall_s"] is not None]
         thinks = [r["think_s"] for _, r in valid if r["think_s"] is not None]
         out_groups.append(

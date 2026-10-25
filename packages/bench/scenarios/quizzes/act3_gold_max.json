@@ -1,0 +1,48 @@
+{
+ "schema": 1,
+ "scenario": "act3_gold_max",
+ "questions": [
+  {
+   "id": "q1",
+   "q": "Which magic shop in Baldur's Gate's Lower City does the wizard Lorroakan own?",
+   "kind": "choice",
+   "choices": [
+    "Sorcerous Sundries",
+    "Beehive General Goods",
+    "Stormshore Armoury",
+    "The Blushing Mermaid"
+   ],
+   "answer": "A"
+  },
+  {
+   "id": "q2",
+   "q": "Which tiefling blacksmith from the Emerald Grove works at the Forge of the Nine in the Lower City?",
+   "kind": "text",
+   "answer": "Dammon",
+   "accept": [
+    "\\bdammon\\b"
+   ]
+  },
+  {
+   "id": "q3",
+   "q": "Under which Lower City tavern is the Emperor's old hideout?",
+   "kind": "text",
+   "answer": "The Elfsong Tavern",
+   "accept": [
+    "\\belfsong\\b"
+   ]
+  },
+  {
+   "id": "q4",
+   "q": "Which skill check is rolled to pickpocket an NPC?",
+   "kind": "choice",
+   "choices": [
+    "Stealth",
+    "Sleight of Hand",
+    "Deception",
+    "Perception"
+   ],
+   "answer": "B"
+  }
+ ]
+}

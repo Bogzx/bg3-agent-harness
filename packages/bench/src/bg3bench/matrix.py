@@ -48,10 +48,11 @@ FINISHED, BUDGET, GUARD, COST_UNKNOWN, STOPPED = "finished", "budget", "guard", 
 class RunResult:
     run_id: str | None
     valid: bool
-    passed: bool
+    passed: bool | None  # None: a maximise scenario's run, which has no pass (its score is `score`)
     cost_usd: float | None
     invalid_reason: str | None = None
     charged: bool = False  # the runner already settled cost_usd with the budget file (or it isn't billed)
+    score: float | None = None  # a maximise scenario's gain (results.py score.gain)
 
 
 class RunOne(Protocol):

@@ -120,3 +120,17 @@ def test_a_seeded_scenario_whose_seed_didnt_apply_is_invalid(tmp_path, game_sett
     unseeded_scenario = {**spec, "game_settings": {}}
     _, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=unseeded_scenario)
     assert res["valid"] is True  # a scenario that fixes no seed needs none
+
+
+def test_a_maximise_scenario_is_scored_by_its_gain_with_no_pass(tmp_path):
+    series, records = load_series()
+    (tmp_path / "facts.jsonl").write_text((TL / "gold_spend.facts.jsonl").read_text())
+    base = {k: v for k, v in series["scenario"]["spec"].items() if k != "until"}
+    spec = base | {"schema": 2, "family": "sandbox", "maximise": {"fact": "gold"}}
+    rec = {**records[0], "outcome": "timeout"}  # a maximise run ends at its time cap
+    _, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=spec)
+    assert (res["passed"], res["t_pass_s"]) == (None, None)
+    assert res["score"] == {"fact": "gold", "start": 50, "end": 1100, "gain": 1050, "peak": 1100}
+    assert res["grade"]["curve"]["fact"] == "gold" and res["methods"] is not None
+    assert_valid("result.v1.schema.json", res)
+    assert report.verdict(res) == "+1050 gold (50 -> 1100)"

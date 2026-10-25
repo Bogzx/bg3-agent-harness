@@ -6,7 +6,7 @@
   "type": "object",
   "required": ["schema", "name", "title", "family", "start", "caps", "profile"],
   "additionalProperties": false,
-  "oneOf": [{"required": ["goal"]}, {"required": ["until"]}],
+  "oneOf": [{"required": ["goal"]}, {"required": ["until"]}, {"required": ["maximise"]}],
   "allOf": [
     {
       "if": {"properties": {"family": {"enum": ["exploration", "sandbox"]}}, "required": ["family"]},
@@ -61,6 +61,13 @@
     },
     "goal": {"$ref": "goal.v1.schema.json"},
     "until": {"type": "string", "minLength": 1, "description": "A milestone id; shorthand for goal {\"milestone\": id}."},
+    "maximise": {
+      "description": "No goal and no pass: the run plays its whole time cap and scores the fact's gain over it (bg3bench.graders.measure). Added 2026-10-25.",
+      "type": "object",
+      "required": ["fact"],
+      "additionalProperties": false,
+      "properties": {"fact": {"enum": ["gold", "party_level", "companions"]}}
+    },
     "runs": {"type": "integer", "minimum": 1, "default": 3},
     "caps": {
       "type": "object",

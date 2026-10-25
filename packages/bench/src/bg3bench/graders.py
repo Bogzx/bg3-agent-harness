@@ -16,6 +16,9 @@ the post-run grade is the score.
   `peak` up to it, both null when the run ended earlier.
 - `progress`: with `progress={"fact": f, "target": n}`, min(1, peak / n) over the whole run, so failed runs still
   order against each other; else null.
+
+`measure(fact, timeline)` scores a maximise scenario (scenario.py `maximise`), which has no goal and no pass: the
+fact's gain from run_start to run_end (`{fact, start, end, gain, peak, curve}`), on the same window and clock.
 """
 
 from __future__ import annotations
@@ -180,15 +183,7 @@ def grade(
     peak_progress = None
     for r in records[start : end + 1]:
         state.apply(r)
-        if clock == "wall":
-            elapsed = r["t"] - t0
-        else:
-            if r.get("game_t") is not None:
-                elapsed = r["game_t"]
-            elif r is records[start]:
-                elapsed = 0.0  # the run_start mark is game time zero even when it carries no game_t
-            else:
-                raise FactsError(f"clock='game' but a record at t={r['t']} has no game_t; grade with clock='wall'")
+        elapsed = _elapsed(r, r is records[start], t0, clock)
         samples.append((elapsed, fact(state, curve["fact"])))
         if progress is not None:
             v = fact(state, progress["fact"])
@@ -201,6 +196,60 @@ def grade(
         "violations": ev.violations,
         "curve": _curve(samples, curve),
         "progress": None if progress is None else min(1.0, peak_progress / progress["target"]),
+    }
+
+
+def _elapsed(r: dict, first: bool, t0: float, clock: str) -> float:
+    """A record's time since the run's time zero on `clock` (grade's rules)."""
+    if clock == "wall":
+        return r["t"] - t0
+    if r.get("game_t") is not None:
+        return r["game_t"]
+    if first:
+        return 0.0  # the run_start mark is game time zero even when it carries no game_t
+    raise FactsError(f"clock='game' but a record at t={r['t']} has no game_t; grade with clock='wall'")
+
+
+def measure(name: str, timeline: Iterable[dict], *, clock: str = "game", curve: dict | None = None) -> dict:
+    """A maximise scenario's score over one run: numeric fact `name` (gold) from run_start to run_end.
+
+    `start` is its value at the run's first snapshot (the one carried into run_start, else the first one after it:
+    before any snapshot the state holds no gold, not the save's), `end` its value at run_end, `gain` = end - start
+    (the score), `peak` the highest value in the run; all null when the run has no snapshot. `curve` as grade's."""
+    if clock not in ("game", "wall"):
+        raise ValueError(f"clock is 'game' or 'wall', got {clock!r}")
+    fact(State(), name)
+    records = check(timeline)
+    if not records:
+        raise FactsError("empty timeline")
+    curve = curve or {"fact": name, "at_s": list(CURVE_AT_S)}
+    fact(State(), curve["fact"])
+    start, end = _window(records)
+    t0 = records[start]["t"]
+    state = State()
+    seen = False  # a snapshot has set the state
+    for r in records[:start]:
+        state.apply(r)
+        seen = seen or r["kind"] == "snapshot"
+    first = peak = None
+    samples: list[tuple[float, float]] = []
+    for r in records[start : end + 1]:
+        state.apply(r)
+        seen = seen or r["kind"] == "snapshot"
+        elapsed = _elapsed(r, r is records[start], t0, clock)
+        samples.append((elapsed, fact(state, curve["fact"])))
+        if seen:
+            v = fact(state, name)
+            first = v if first is None else first
+            peak = v if peak is None else max(peak, v)
+    last = fact(state, name) if seen else None
+    return {
+        "fact": name,
+        "start": first,
+        "end": last,
+        "gain": None if first is None or last is None else last - first,
+        "peak": peak,
+        "curve": _curve(samples, curve),
     }
 
 

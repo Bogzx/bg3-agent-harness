@@ -299,3 +299,38 @@ def test_release_refuses_a_judge_that_is_a_contestant():
         results.build_results(clash, seed=0, created=0.0, b=10)
     # a held-out scenario's run is not in the release, so its judge is not checked
     assert results.build_results(clash, seed=0, created=0.0, b=10, holdout={"nautiloid"})["runs"] == []
+
+
+SCORE = {"fact": "gold", "start": 133, "end": 650, "gain": 517, "peak": 900}
+NO_PASS = {
+    "passed": None,
+    "t_pass_s": None,
+    "violations": [],
+    "curve": {"fact": "gold", "points": []},
+    "progress": None,
+}
+
+
+def test_a_maximise_result_has_no_pass_and_carries_its_score():
+    _, records = load_series()
+    res = results.from_record({**records[0], "outcome": "timeout"}, "r", grade=NO_PASS, score=SCORE)
+    assert (res["passed"], res["t_pass_s"], res["score"]) == (None, None, SCORE)
+    assert_valid("result.v1.schema.json", res)
+    assert "score" not in results.from_record(records[0], "r")
+
+
+def test_a_release_leaves_maximise_runs_out_of_the_pass_rates_and_lists_their_score():
+    (m1, r1), (m2, r2), _ = naut2_pairs()
+    gold = {**m2, "scenario": {**m2["scenario"], "name": "act1_gold_max"}}
+    out = results.build_results(
+        [(m1, r1), (gold, {**r2, "passed": None, "t_pass_s": None, "score": SCORE})], seed=0, created=1.0, b=50
+    )
+    assert_valid("results.v1.schema.json", out)
+    assert [(r["scenario"], r["passed"], r.get("score")) for r in out["runs"]] == [
+        ("nautiloid", True, None),
+        ("act1_gold_max", None, SCORE),
+    ]
+    (group,) = out["groups"]
+    assert set(group["stats"]["per_scenario"]) == {"nautiloid"} and group["n_runs"] == 2
+    only_max = results.build_results([(gold, {**r2, "passed": None, "score": SCORE})], seed=0, created=1.0, b=50)
+    assert only_max["groups"][0]["stats"] is None
