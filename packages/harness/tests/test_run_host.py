@@ -13,7 +13,7 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -98,9 +98,20 @@ class FakeRunner:
         self.plays: list[tuple[str, str, float]] = []  # run_claude's (tag, prompt, minutes)
         self.play: Callable[[FakeRunner, str], tuple[str, float]] = lambda r, tag: ("exited", 60.0)  # (reason, s)
         self.clock = 1000.0  # the session hooks' now (run_claude moves it)
+        self.boot: str | None = "boot-start"  # the server Lua state's id (server_boot): a load makes a new one
+        self.marks: list[tuple[str, Any]] = []  # facts.jsonl marks (facts_writer)
 
     def event(self, kind: str, **fields: Any) -> None:
         self.events.append((kind, fields))
+
+    def server_boot(self) -> str | None:
+        return self.boot
+
+    def facts_writer(self) -> FakeRunner:
+        return self
+
+    def mark(self, mark: str, detail: Any = None, now: float | None = None) -> None:
+        self.marks.append((mark, detail))
 
     def refresh_mod_snapshot(self) -> list[str]:
         self.calls.append("snapshot")
@@ -164,6 +175,7 @@ class Rig:
     dumped: list[tuple[Path, str, int | None, str | None]]
     env: dict[str, str]
     prepare: Callable[[FakeRunner], None] | None  # set up each new runner (failures, the save it loads)
+    now: list[float] = field(default_factory=lambda: [1000.0])  # SaveWatch's clock (its thread never polls)
 
 
 @pytest.fixture
@@ -187,6 +199,13 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
         return {"tools_expected": 90, "manifest": {"m": 1}}
 
     rig.h = H.LiveRunHost(make, run_files=run_files, env=rig.env, clock=lambda: 1000.0)
+    monkeypatch.setattr(renv, "SAVE_DIR", tmp_path / "Story")
+    renv.SAVE_DIR.mkdir()
+
+    def save_watch(r: H.RunRunner, own: Callable[[str], bool]) -> H.SaveWatch:
+        return H.SaveWatch(r, own, clock=lambda: rig.now[0], poll_s=1e9)  # the tests call check()
+
+    monkeypatch.setattr(rig.h, "save_watch", save_watch)
     return rig
 
 
@@ -251,6 +270,7 @@ def test_the_kickoff_names_the_start_the_goal_and_the_character_and_no_memory_st
     assert json.dumps(SAVE_SC["goal"], sort_keys=True) in text and "A githyanki warrior." in text
     assert "scored on the game state at its end" not in text  # graders.grade latches the first instant
     assert 'passes the first moment it holds, from the start save on; anything under "never" fails it' in text
+    assert "and so does a party wipe (the Game Over screen)" in text  # graders: a wipe fails a goal run
     assert "YOUR TASK: Win the fight at the gate" in text  # no `task`: the start note's objective
     assert "after 30 minutes of play" in text and "WRAP UP" not in text  # the run ends on its verdict or the cap
     assert "from the new game on" in H.scenario_kickoff(NEW_SC, "S001", None)
@@ -462,7 +482,7 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
     assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)
     moved = ["nav_aa.json", "nav_guard_aa.json"]
-    assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved})
+    assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved, "saves": []})
     assert rec["served"] is None  # runs.claude_totals' served: no stream, nothing served
     assert (rec["game_settings"], rec["manifest"], rec["loaded_save"]) == (
         {"difficulty": "Balanced", "seed": {"seed": 7, "applied": {"seed": 7}}},
@@ -545,7 +565,11 @@ def test_a_new_game_moves_no_nav_file(rig: Rig):  # its host is a new uuid: no f
     rig.h.start(JOB, NEW_SC, run_dir("m-idol"))
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]
     assert rig.runners[-1].events == [("run_reset", {"nav_files": []})]
-    assert rig.h.record(JOB, NEW_SC, run_dir("m-idol"), outcome())["reset"] == {"nav_files": [], "restored": []}
+    assert rig.h.record(JOB, NEW_SC, run_dir("m-idol"), outcome())["reset"] == {
+        "nav_files": [],
+        "restored": [],
+        "saves": [],
+    }
 
 
 @pytest.mark.parametrize("sc", [NEW_SC, SAVE_SC])
@@ -793,7 +817,8 @@ MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
 def test_the_kickoff_of_a_maximise_scenario_says_it_plays_its_whole_cap_and_how_it_is_scored():
     text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
     assert "The run has no pass: it plays all 45 minutes of its time cap, then it is scored." in text
-    assert "the party's gold when the time cap ends the run minus its gold at the start save" in text
+    assert "A party wipe (the Game Over screen) ends it sooner." in text  # graders.measure stops there
+    assert "the party's gold when the run ends minus its gold at the start save" in text
     assert "as soon as the task is decided" not in text and "exact goal" not in text
 
 

@@ -7,9 +7,9 @@ runs.jsonl line (its pins carry the harness, bench and suite versions: pins.vers
 first) and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
 `start` puts the game at the scenario's start and returns the kickoff and the session hooks (the agent process, the
 game, the clock; the job it gets carries "tools_off", the tools its condition removes, and "prompt_condition", the
-harness prompt condition it plays: conditions.Condition.prompt_condition, and for a goal scenario "verdict", a
-callable the host polls while the run plays: live_verdict's "passed" or "failed" ends the run, so it never plays on
-past its grade), `record` returns the run's
+harness prompt condition it plays: conditions.Condition.prompt_condition, and "verdict", a callable the host polls
+while the run plays: live_verdict's "passed" or "failed" ends a goal run, so it never plays on past its grade, and
+"wiped" any run), `record` returns the run's
 record fields once the session is over (facts.jsonl closed). The harness never imports the bench: the scenario
 reaches the host as the v2 dict (scenario.load: with defaults).
 
@@ -52,9 +52,9 @@ def series_name(matrix: str, job: Mapping[str, Any]) -> str:
     return re.sub(r"[^a-z0-9_-]+", "-", "-".join(p for p in parts if p).lower()).strip("-")[:100]
 
 
-def live_verdict(goal: JSON, facts_path: Path) -> str | None:
+def live_verdict(goal: JSON | None, facts_path: Path) -> str | None:
     """graders.verdict over a facts.jsonl the run is still writing: a half-written last line is left for the next
-    poll, and a file the grader can't read yet decides nothing."""
+    poll, and a file the grader can't read yet decides nothing. goal None: a wipe only."""
     try:
         lines = facts_path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -135,9 +135,9 @@ class SessionRun:
         try:
             cond = conditions.parse(job["condition"])
             host_job = {**job, "tools_off": cond.removed_tools(), "prompt_condition": cond.prompt_condition()}
-            if "goal" in sc:  # an until scenario's runner stops at its milestone itself
-                goal, facts_path = sc["goal"], run_dir / run_artifacts.FACTS
-                host_job["verdict"] = lambda: live_verdict(goal, facts_path)
+            # every run ends at a wipe; an until scenario's runner stops at its milestone itself, a maximise one at its cap
+            goal, facts_path = sc.get("goal"), run_dir / run_artifacts.FACTS
+            host_job["verdict"] = lambda: live_verdict(goal, facts_path)
             st = self.host.start(host_job, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
             why = f"start failed: {type(e).__name__}: {e}"

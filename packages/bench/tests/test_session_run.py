@@ -294,4 +294,28 @@ def test_a_goal_run_hands_the_host_its_live_verdict(tmp_path):
     assert live_verdict(SC["goal"], tmp_path / "missing.jsonl") is None
     until_host = Host([[("exited", 5)]])
     SessionRun("m", until_host, scenarios={"e2e_sell_idol": until_sc}, sessions=tmp_path / "s2")(job())
-    assert "verdict" not in until_host.started[0][0]  # the runner ends an until run at its milestone itself
+    until_job, _, until_dir = until_host.started[0]
+    (until_dir / "facts.jsonl").write_text(json.dumps(start) + "\n" + json.dumps(rich) + "\n")
+    assert until_job["verdict"]() is None  # the runner ends an until run at its milestone itself
+
+
+def test_every_run_hands_the_host_a_verdict_that_ends_it_at_a_wipe(tmp_path):
+    # bench B3: a wiped Balthazar run (combats_won >= 1) was resumed 6 times, then its agent left via the main menu
+    party = [{"name": n, "level": 6, "dead": False, "downed": False} for n in ("Tav", "Wyll")]
+    snap = {"v": 1, "kind": "snapshot", "t": T0 + 5, "game_t": 5.0, "gold": 60, "party": party, "region": "SCL",
+            "area": None, "areas": [], "combat": True, "inv": [], "quests": {}}  # fmt: skip
+    lines = [{"v": 1, "kind": "mark", "t": T0, "game_t": 0.0, "mark": "run_start"}, snap]
+    lines += [
+        {"v": 1, "kind": "event", "t": T0 + 9, "game_t": 9.0, "ev": "died", "name": "Wyll", "party": True},
+        {"v": 1, "kind": "event", "t": T0 + 10, "game_t": 10.0, "ev": "downed", "name": "Tav", "party": True},
+    ]
+    max_sc = {k: v for k, v in SC.items() if k != "goal"} | {"maximise": {"fact": "gold"}}
+    until_sc = {k: v for k, v in SC.items() if k != "goal"} | {"until": "grove"}
+    for i, sc in enumerate((SC, max_sc, until_sc)):
+        host = Host([[("exited", 5)]])
+        SessionRun("m", host, scenarios={"e2e_sell_idol": sc}, sessions=tmp_path / f"s{i}")(job())
+        started, _, run_dir = host.started[0]
+        (run_dir / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines[:-1]))
+        assert started["verdict"]() is None  # Wyll dead, Tav standing: the fight goes on
+        (run_dir / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
+        assert started["verdict"]() == "wiped", sc.get("name")

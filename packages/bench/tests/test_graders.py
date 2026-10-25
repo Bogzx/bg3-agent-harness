@@ -413,3 +413,40 @@ def test_measure_starts_from_the_state_carried_into_run_start_not_from_zero():
 def test_measure_refuses_an_unknown_fact():
     with pytest.raises(ValueError, match="unknown numeric fact"):
         graders.measure("xp", run(snap(1, gold=1)))
+
+
+BALTHAZAR = [member(n, 6) for n in ("Wyll", "Karlach", "Shadowheart")] + [{**member("Tav", 6), "avatar": True}]
+
+
+def balthazar_wipe():
+    """Bench B3 Opus x fight_act2_balthazar: the party wiped by round 3 (Game Over), then the agent took the main
+    menu's Continue into another run's Act 1 save, where the fight's goal could have passed."""
+    return run(
+        snap(15, gold=60, party=BALTHAZAR, region="Shadow-Cursed Lands"),
+        ev(33, "combat_started"),
+        ev(226, "died", name="Wyll", party=True),
+        ev(227, "downed", name="Karlach", party=True),
+        ev(248, "died", name="Shadowheart", party=True),
+        ev(302, "downed", name="Tav", party=True),
+        snap(515, gold=1200, party=[member("Gale", 3), {**member("Tav", 3), "avatar": True}], region="Wilderness"),
+        ev(520, "combat_ended"),
+    )
+
+
+def test_a_wipe_fails_a_goal_run_and_nothing_after_it_counts():
+    tl = balthazar_wipe()
+    assert graders.verdict({"combats_won": {"gte": 1}}, tl[:6]) is None  # Tav still standing
+    assert graders.verdict({"combats_won": {"gte": 1}}, tl) == "wiped"
+    assert graders.verdict({"gold": {"gte": 1000}}, tl) == "wiped"  # the 1200 gold after it never passes
+    for goal in ({"combats_won": {"gte": 1}}, {"gold": {"gte": 1000}}):
+        out = grade(goal, tl)
+        assert (out["passed"], out["violations"]) == (False, [{"t_s": 302, "node": {"wipe": True}}])
+    assert grade({"gold": {"gte": 50}}, tl)["t_pass_s"] == 15  # a pass before the wipe stands
+    assert graders.verdict({"gold": {"gte": 50}}, tl) == "passed"
+
+
+def test_a_wipe_ends_a_maximise_run_at_its_gain_so_far():
+    tl = balthazar_wipe()
+    assert graders.verdict(None, tl) == "wiped" and graders.verdict(None, tl[:6]) is None
+    m = graders.measure("gold", tl)
+    assert (m["start"], m["end"], m["gain"], m["peak"]) == (60, 60, 0, 60)  # not the other save's 1200

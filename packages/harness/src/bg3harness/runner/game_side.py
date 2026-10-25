@@ -459,6 +459,15 @@ class GameSide:
             f"runs {now}'s bridge")
         self.event("main_moved", session=label, snapshot=self.mod_rev, head=now)
 
+    def server_boot(self) -> str | None:
+        """The server Lua state's id (the mod's sys.ping boot): a new one after every load (bg3ai.tools.saving's
+        _server_boot). None when the game doesn't answer (a loading screen, the main menu)."""
+        try:
+            p = game.rpc("sys.ping", context="server")
+        except Exception:
+            return None
+        return p.get("boot") if isinstance(p, dict) else None
+
     def hot_reload_mod(self) -> int:
         """Between sessions: if any file under MOD_LIVE changed since the game last loaded it, Ext.Debug.Reset() and
         wait for the mod's RPC table to come back. Returns the number of changed files (0 = nothing done)."""

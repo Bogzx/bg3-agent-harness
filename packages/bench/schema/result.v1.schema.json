@@ -14,9 +14,9 @@
   "properties": {
     "schema": {"const": 1},
     "run_id": {"type": "string", "minLength": 1},
-    "outcome": {"enum": ["reached", "failed", "timeout", "over_budget", "gave_up", "runner_error"], "description": "failed (added 2026-10-22, still v1): a goal run its live verdict ended on a fired never"},
+    "outcome": {"enum": ["reached", "failed", "timeout", "over_budget", "gave_up", "runner_error"], "description": "failed (added 2026-10-22, still v1): a run its live verdict ended on a fired never or (2026-10-25) a party wipe"},
     "valid": {"type": "boolean"},
-    "invalid_reason": {"enum": [null, "runner_error", "harness_failure", "operator", "off_route", "unseeded"]},
+    "invalid_reason": {"enum": [null, "runner_error", "foreign_save", "harness_failure", "operator", "off_route", "unseeded"], "description": "foreign_save (added 2026-10-25, still v1): the run's game loaded a save that is not its start save or its own"},
     "passed": {"type": ["boolean", "null"], "description": "null: a maximise scenario's run, which has no pass (its score is score.gain); added 2026-10-25 (still v1)"},
     "t_pass_s": {"$ref": "#/$defs/num_or_null"},
     "grade": {
