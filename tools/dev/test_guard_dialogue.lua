@@ -7,11 +7,12 @@ local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
 
 local P1 = "aaaaaaaa-0000-0000-0000-000000000001"
 local P2 = "aaaaaaaa-0000-0000-0000-000000000002"
-local comps, dialogs, speaker_dialog, dm_ok = {}, {}, {}, true
+local comps, dialogs, speaker_dialog, dm_ok, logged = {}, {}, {}, true, {}
 
 Ext = {
     Utils = {
         MonotonicTime = function() return 0 end,
+        Print = function(m) logged[#logged + 1] = m end,
         GetDialogManager = function() if dm_ok then return { Dialogs = dialogs } end return nil end,
     },
     Entity = { Get = function(u) return comps[u] or {} end },
@@ -39,7 +40,7 @@ local function reset()
         [P1] = { ServerCharacter = { InDialog = false }, DialogState = { DialogId = 0 } },
         [P2] = { ServerCharacter = { InDialog = false }, DialogState = { DialogId = 0 } },
     }
-    dialogs, speaker_dialog, dm_ok = {}, {}, true
+    dialogs, speaker_dialog, dm_ok, logged = {}, {}, true, {}
 end
 
 local failures, count = 0, 0
@@ -72,14 +73,37 @@ test("InDialog true -> blocked, reason InDialog", function()
     eq(b, true); eq(why, "InDialog")
 end)
 
-test("live player dialogue via DialogState -> blocked with id in reason", function()
+test("live player dialogue via DialogState -> blocked; the dialog id goes to the log, not the refusal", function()
     comps[P1].ServerCharacter.InDialog = true
     comps[P1].DialogState.DialogId = 7
     dialogs[7] = inst(7, { Speakers = { sp(P1) } })
     local ok, err = pcall(G.not_in_dialogue, P1)
     eq(ok, false)
     eq(G.is_refusal(err), true, "refusal")
-    eq(tostring(err), "character is in a conversation (dialog 7 res=res7)")
+    eq(tostring(err), "character is in a conversation")
+    eq(logged[1], "[BG3AI] guard: in a conversation: dialog 7 res=res7")
+end)
+
+-- Bench B3 (act3_gold_max r2, 13:32:24): the refusal carried the dialog's resource
+-- ("res=Generated/Public/Shared/Assets/Buildings/...") to the agent: a fairness leak.
+test("B3: refusal text names no engine resource", function()
+    comps[P1].ServerCharacter.InDialog = true
+    comps[P1].DialogState.DialogId = 9864
+    dialogs[9864] = inst(9864, { Speakers = { sp(P1) }, DialogResourceUUID = "Generated/Public/Shared/x_dummy.0" })
+    local _, err = pcall(G.not_in_dialogue, P1)
+    eq(tostring(err), "character is in a conversation")
+end)
+
+-- Bench B3: 2-5 s after the dialogue ended (InDialog false on the whole party), the manager
+-- still listed it as an instance reading DialogId 0 and a building mesh as its resource.
+test("B3: ended dialog still listed (DialogId 0, stale resource) -> not blocked", function()
+    local mesh = "Generated/Public/Shared/Assets/Buildings/Generic/BLD_GEN_Platform_Floor_Wood_ABC/x_dummy.0"
+    comps[P1].DialogState.DialogId = 9864
+    dialogs[9864] = { DialogId = 0, DialogResourceUUID = mesh, Speakers = { sp(P1) } }
+    eq(G.in_dialogue(P1), false, "via DialogState")
+    comps[P1].DialogState.DialogId = 0
+    eq(G.in_dialogue(P1), false, "via the Speakers scan")
+    G.not_in_dialogue(P1) -- must not throw
 end)
 
 test("listener: DialogState points at a live non-automated instance -> blocked even if InDialog false", function()
@@ -121,6 +145,8 @@ test("no manager and no InDialog: SpeakerGetDialog fallback still blocks", funct
     speaker_dialog[P1] = "Real"
     local b, why = G.dialogue_info(P1)
     eq(b, true); eq(why, "SpeakerGetDialog")
+    local _, err = pcall(G.not_in_dialogue, P1)
+    eq(tostring(err), "character is in a conversation")
 end)
 
 test("no manager but InDialog false: SpeakerGetDialog alone doesn't block", function()
