@@ -3,7 +3,7 @@
  "name": "fight_act2_moonrise_assault",
  "title": "Act 2 fight: the assault on Moonrise Towers",
  "task": "Win the fight: take the main floor of Moonrise Towers.",
- "scored_by": "Passed the first moment a fight is won (a combat that ends with the enemies beaten and the party standing; the one ahead of you is the fight). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
+ "scored_by": "Passed the first moment the fight ahead of you is won (a combat that ends with the enemies beaten and the party standing; a fight with other enemies doesn't count). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
  "about": "Fight (family 1), large with allies: the Harpers' assault on Moonrise Towers' main floor against the Absolute's zealots and their leaders, about seventeen enemies. claude-run-2 S042 lost the first try (7 downs) and won the retry in 7 rounds from the doorway.",
  "family": "fight",
  "holdout": false,
@@ -24,7 +24,8 @@
  },
  "goal": {
   "combats_won": {
-   "gte": 1
+   "gte": 1,
+   "enemy": "^(zealot|acolyte|adept|disciple) .+$"
   }
  },
  "runs": 5,

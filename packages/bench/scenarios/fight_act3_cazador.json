@@ -3,7 +3,7 @@
  "name": "fight_act3_cazador",
  "title": "Act 3 boss: Cazador in his dungeon",
  "task": "Win the fight: defeat Cazador Szarr.",
- "scored_by": "Passed the first moment a fight is won (a combat that ends with the enemies beaten and the party standing; the one ahead of you is the fight). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
+ "scored_by": "Passed the first moment the fight ahead of you is won (a combat that ends with the enemies beaten and the party standing; a fight with other enemies doesn't count). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
  "about": "Fight (family 1), a boss with a large crowd: the vampire lord Cazador Szarr and his werewolves, gur hunters and bats beneath Szarr Palace, about twenty-five enemies. claude-run-2 needed three tries (S074-S077); the winning one took 10 rounds and 1036 party HP.",
  "family": "fight",
  "holdout": true,
@@ -25,7 +25,8 @@
  },
  "goal": {
   "combats_won": {
-   "gte": 1
+   "gte": 1,
+   "enemy": "^(cazador szarr|predator werewolf|fallen gur hunter)$"
   }
  },
  "runs": 5,

@@ -20,6 +20,7 @@ Leaves (`cmp` is `{"gte": n}`, `{"lte": n}` or both):
 | `{"party_level": cmp}` | the lowest level of the real party members (summons excluded); `"agg": "max"` for the highest |
 | `{"companions": cmp}` | party members other than the avatar and summons |
 | `{"combats_won": cmp}` | combats that ended without a wipe while they lasted (hostiles dead or fled) |
+| `{"combats_won": {cmp, "enemy": re}}` | of those, the ones in which a character outside the party whose name matches died |
 | `{"combats_started": cmp}` | combats entered |
 | `{"combat": true}` | a combat is on |
 | `{"party_dead": cmp}` | real party members dead now |
@@ -113,7 +114,7 @@ class Leaf:
     gte: float | None = None
     lte: float | None = None
     agg: str = "min"  # party_level only
-    rx: re.Pattern | None = None  # regex leaves
+    rx: re.Pattern | None = None  # regex leaves; combats_won's enemy
     name: str | None = None  # item
     tpl: str | None = None  # item
 
@@ -154,8 +155,17 @@ def _number(v: Any, where: str) -> float:
     return v
 
 
+def _regex(arg: Any, kind: str, where: str) -> re.Pattern:
+    if not isinstance(arg, str) or not arg:
+        raise GoalError(f"{where}: {kind} takes a regex string, got {arg!r}")
+    try:
+        return re.compile(arg, re.IGNORECASE)
+    except re.error as e:
+        raise GoalError(f"{where}: bad regex {arg!r}: {e}") from e
+
+
 def _cmp(kind: str, arg: Any, where: str) -> Leaf:
-    allowed = {"gte", "lte"} | ({"agg"} if kind == "party_level" else set())
+    allowed = {"gte", "lte"} | {"party_level": {"agg"}, "combats_won": {"enemy"}}.get(kind, set())
     if not isinstance(arg, dict) or not arg or not set(arg) <= allowed or not set(arg) & {"gte", "lte"}:
         raise GoalError(f"{where}: {kind} takes {{'gte': n}} and/or {{'lte': n}}, got {arg!r}")
     agg = arg.get("agg", "min")
@@ -163,19 +173,15 @@ def _cmp(kind: str, arg: Any, where: str) -> Leaf:
         raise GoalError(f"{where}: agg is 'min' or 'max', got {agg!r}")
     gte = _number(arg["gte"], where) if "gte" in arg else None
     lte = _number(arg["lte"], where) if "lte" in arg else None
-    return Leaf(kind, gte=gte, lte=lte, agg=agg)
+    rx = _regex(arg["enemy"], "enemy", where) if "enemy" in arg else None
+    return Leaf(kind, gte=gte, lte=lte, agg=agg, rx=rx)
 
 
 def _leaf(kind: str, arg: Any, where: str) -> Leaf:
     if kind in CMP_LEAVES:
         return _cmp(kind, arg, where)
     if kind in REGEX_LEAVES:
-        if not isinstance(arg, str) or not arg:
-            raise GoalError(f"{where}: {kind} takes a regex string, got {arg!r}")
-        try:
-            return Leaf(kind, rx=re.compile(arg, re.IGNORECASE))
-        except re.error as e:
-            raise GoalError(f"{where}: bad regex {arg!r}: {e}") from e
+        return Leaf(kind, rx=_regex(arg, kind, where))
     if kind in FLAG_LEAVES:
         if arg is not True:
             raise GoalError(f"{where}: {kind} takes true (use not for false), got {arg!r}")

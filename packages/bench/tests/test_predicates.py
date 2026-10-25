@@ -15,6 +15,7 @@ VALID = [
     {"party_level": {"gte": 3, "agg": "max"}},
     {"companions": {"gte": 3}},
     {"combats_won": {"gte": 1}},
+    {"combats_won": {"gte": 1, "enemy": "^goblin .+$"}},
     {"area": "goblin camp|shattered sanctum"},
     {"region": "wilderness"},
     {"quest_done": "escape the nautiloid"},
@@ -47,6 +48,9 @@ MALFORMED = [
     {"item": {}},
     {"item": {"name": ""}},
     {"item": {"name": "a", "count": 2}},
+    {"combats_won": {"enemy": "x"}},
+    {"combats_won": {"gte": 1, "enemy": ""}},
+    {"gold": {"gte": 1, "enemy": "x"}},
     {"combat": False},
     {"no_combat": False},
     {"all": []},
@@ -61,7 +65,9 @@ def test_valid_goals_parse(goal):
     p.parse(goal)
 
 
-@pytest.mark.parametrize("goal", MALFORMED + [{"area": "("}, {"milestone": "nope"}])
+@pytest.mark.parametrize(
+    "goal", MALFORMED + [{"area": "("}, {"combats_won": {"gte": 1, "enemy": "("}}, {"milestone": "nope"}]
+)
 def test_malformed_goals_raise(goal):
     with pytest.raises(p.GoalError):
         p.parse(goal, allow_passive=True)

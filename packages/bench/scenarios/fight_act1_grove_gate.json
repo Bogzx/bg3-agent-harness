@@ -3,7 +3,7 @@
  "name": "fight_act1_grove_gate",
  "title": "Act 1 fight: the goblin raid on the Emerald Grove gate",
  "task": "Win the fight: help the defenders drive off the goblins at the gate.",
- "scored_by": "Passed the first moment a fight is won (a combat that ends with the enemies beaten and the party standing; the one ahead of you is the fight). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
+ "scored_by": "Passed the first moment the fight ahead of you is won (a combat that ends with the enemies beaten and the party standing; a fight with other enemies doesn't count). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
  "about": "Fight (family 1) with allies: the goblin raiders at the Emerald Grove's gate, fought beside the tiefling defenders, the first large Act 1 fight. claude-run-2 S007 won it at level 1-2 with a three-member party.",
  "family": "fight",
  "holdout": false,
@@ -23,7 +23,8 @@
  },
  "goal": {
   "combats_won": {
-   "gte": 1
+   "gte": 1,
+   "enemy": "^(goblin .+|za'krug)$"
   }
  },
  "runs": 5,
