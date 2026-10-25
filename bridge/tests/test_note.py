@@ -58,6 +58,12 @@ class NoteTool(Base):
         with mock.patch.object(session, "_session_log", return_value=None):
             self.assertIn("NOT SAVED", memory.note("x"))
 
+    def test_no_sessions_dir(self):
+        # a bench run's memory dir has no sessions/: the note isn't saved, and it says so (not "empty text")
+        self.log.unlink()
+        self.log.parent.rmdir()
+        self.assertIn("NOT SAVED", memory.note("x"))
+
     def test_note_on_queue_actions(self):
         batch.queue_actions('[{"tool":"wait","seconds":0}]', note="[plan] then the hatch")
         self.assertRegex(self.body()[-1], r"\[plan\] then the hatch$")

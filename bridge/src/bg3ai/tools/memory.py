@@ -37,7 +37,7 @@ def _append_note(text: str, tag: str = "note") -> tuple[int, Path | None]:
     """Append note lines to the session log (append-only, as the memory rules want). -> (lines, path)."""
     lines = _note_lines(text, tag)
     path = session._session_log()
-    if not lines or path is None or not path.parent.is_dir():
+    if not lines or path is None:
         return 0, path
     with open(path, "a+") as f:
         f.seek(0, os.SEEK_END)

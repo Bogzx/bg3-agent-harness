@@ -125,11 +125,15 @@ def session_clock() -> str:
 
 
 def _session_log() -> Path | None:
+    """None when the memory has no sessions/ dir: a bench run's memory dir is its own empty one, never created
+    (bench B3 fight_act1_windmill: end_combat_report's open() raised there and voided the run)."""
     sess = os.environ.get("BG3AI_SESSION")
     d = core.MEMORY / "sessions"
+    if not d.is_dir():
+        return None
     if sess:
         return d / f"{sess}.md"
-    logs = sorted(d.glob("S*.md")) if d.is_dir() else []
+    logs = sorted(d.glob("S*.md"))
     return logs[-1] if logs else None
 
 
