@@ -1,0 +1,5 @@
+# Claude Haiku 5.5 through Claude Code: a labelled condition, not the ranked track (D6). The endpoint is the CLI's own.
+client = "claude"
+model = "claude-haiku-5-5"
+effort = "medium"
+status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)
