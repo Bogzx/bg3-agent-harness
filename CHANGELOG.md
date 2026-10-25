@@ -104,7 +104,11 @@ game unless it says so.
   bench-v0.8: every start save's avatar is a half-orc paladin, so the save scenarios' character brief says so (it
   said half-elf); a save-start run renames the avatar to the scenario's character (the saves still load as
   "Claude", live B1). `act3_gold_max` has its start save (`Tav-30251267957__SCN-act3_gold_max`): Gale level 6 at
-  camp, the avatar with a level-up to 8 pending, max HP halved by the Explorer -> Balanced switch.
+  camp, the avatar with a level-up to 8 pending, max HP halved by the Explorer -> Balanced switch. A party wipe
+  (every party member dead or downed: the Game Over screen) ends every run: a goal not passed by then fails
+  (`graders.verdict` "wiped", a `{"wipe": true}` violation), a maximise run scores its gain up to the wipe; a run
+  whose game loaded a save that is not its start save or its own is invalid (`foreign_save`). Pinned into the
+  unreleased bench-v0.8 (diverse-2026-10-25 plays it; its earlier records can be regraded).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

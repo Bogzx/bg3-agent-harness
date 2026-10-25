@@ -163,6 +163,9 @@ def test_result_with_a_grade_and_methods_from_facts():
         ({"outcome": "runner_error"}, "runner_error"),
         ({"harness_failures": 1}, "harness_failure"),
         ({"operator": [{"t": 1, "what": "reloaded by hand"}]}, "operator"),
+        # bench B3: the main menu's Continue loaded another run's save (run_host.SaveWatch); a pass there scores nothing
+        ({"outcome": "reached", "foreign_save": "the game loaded a save the harness didn't"}, "foreign_save"),
+        ({"outcome": "gave_up", "harness_failures": 1, "foreign_save": "load_game loaded S001-x"}, "foreign_save"),
     ],
 )
 def test_invalid_runs(change, reason):

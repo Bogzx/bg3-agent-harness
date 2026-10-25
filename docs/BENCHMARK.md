@@ -90,6 +90,22 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
   run's start and the mod again after every load; the saves themselves still say "Claude"), and `act3_gold_max`
   has its start save.
 
+### Game Over and the run's own saves (2026-10-25, bench B3)
+
+- A party wipe (every real party member dead or downed: the game's Game Over box) ends every run. A goal not passed
+  by then fails (`graders.verdict` "wiped", a `{"wipe": true}` violation in result.json; outcome `failed`), and a
+  maximise run scores its gain up to the wipe. The kickoff says so. Before, the runner resumed a wiped Balthazar run
+  6 times ("the grader hasn't seen its goal yet").
+- A run plays only from its start save and the saves it wrote. The runner moves every save folder written in the
+  shared Story folder since the run's start into `<run_dir>/saves/` when the run ends (record, abort, a failed
+  start; the next start does it for a run that died, `runtime/saves-isolate.json`). While the run plays,
+  `run_host.SaveWatch` treats a new server Lua state (the mod's `sys.ping` boot; bg3le rebuilds it only when a
+  session unloads, so on a save load or the main menu, never on travel) as a load: one that isn't the agent's
+  `load_game` of its own save (the main menu's Continue or Load page) stops the run and records it invalid
+  (`foreign_save`). In B3 the Game Over box's Main Menu, then Continue, loaded another run's Act 1 save.
+- Known gaps: a new-game run's first session is whatever the agent starts from the main menu (a Continue there
+  isn't caught), and a `reloads:N` condition (pilot only) would need a wipe not to end its run.
+
 ## 3. Running a series
 
 ```bash

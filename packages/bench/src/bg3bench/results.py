@@ -6,7 +6,8 @@ and the method attribution (methods.attribute) when the run has a facts.jsonl. W
 milestone verdict is used (`outcome == "reached"`), which is how series before facts.jsonl were scored.
 
 Validity (docs/BENCHMARK-PLAN.md): a run is invalid, rerun and never scored when the runner itself failed
-(`runner_error`), a harness failure was classified (runs.py `harness_failures`), an operator acted on it, an
+(`runner_error`), its game loaded a save that isn't its start save or its own (`foreign_save`: the record's, set by
+bg3harness.runner.run_host.SaveWatch), a harness failure was classified (runs.py `harness_failures`), an operator acted on it, an
 endpoint served it outside its profile's provider pin (`off_route`: the record's off_route, set by the session
 runner from bg3harness.profiles.off_route), or its scenario fixes a dice seed the game didn't apply
 (`unseeded`: the record's settings readout, game_settings.seed, has no applied seed or another one; live7 played its
@@ -40,7 +41,7 @@ from bg3bench import choices as choices_mod
 from bg3bench import stats, suite
 
 SCHEMA = 1
-# failed: a goal run that its live verdict (a fired never) ended
+# failed: a run that its live verdict ended on a fired never or a party wipe (a maximise run's too: its score stands)
 OUTCOMES = ("reached", "failed", "timeout", "over_budget", "gave_up", "runner_error")
 
 
@@ -55,6 +56,8 @@ def validity(record: dict, seed: int | None = None) -> tuple[bool, str | None]:
     """(valid, reason) of a record; `seed`: the scenario's dice seed, None when it fixes none."""
     if record["outcome"] == "runner_error":
         return False, "runner_error"
+    if record.get("foreign_save"):  # the game left the run's saves: it may have scored on another run's (bench B3)
+        return False, "foreign_save"
     if record.get("harness_failures"):
         return False, "harness_failure"
     if record.get("operator"):

@@ -12,14 +12,17 @@ job's condition. The session's hooks are the runner's
 own (RunnerSessionHooks), so crashes, hangs and caps behave as in a playthrough; SessionRun's Recovery(max_resumes=0)
 makes a fault end the run invalid. Their stop check is the run's own (BenchHooks): an agent that ends its turn
 before the run is decided is resumed (-cN), as the kickoff says the run ends only once decided or at its time cap.
-A goal scenario's job carries the bench's live verdict (job["verdict"]):
-GoalWatch asks it while the run plays and ends the run once it says passed or failed.
+A job carries the bench's live verdict (job["verdict"]): GoalWatch asks it while the run plays and ends the run once
+it says passed or failed (a goal scenario) or wiped (any run: the game's Game Over). SaveWatch ends a run whose game
+loads a save that is not its start save or its own (the main menu's Continue, bench B3): the run is invalid.
 
 record: facts.jsonl's run_end, the game stopped (the next run starts a fresh process), the moved nav files put back
 (the run's own versions kept in <run_dir>/reset/run/; a failed start puts them back too, and a marker,
-runtime/nav-reset.json, lets the next start restore what a run that died left moved), and the run's fields: the
-outcome (the bench grades facts.jsonl; the harness decides no goal: a goal run the live verdict ended is "reached"
-or "failed" by that verdict), cost and tokens of every play process, wall
+runtime/nav-reset.json, lets the next start restore what a run that died left moved), the saves the run wrote moved
+out of the shared Story folder into <run_dir>/saves/ (abort and a failed start too; runtime/saves-isolate.json for a
+run that died), and the run's fields: the
+outcome (the bench grades facts.jsonl; the harness decides no goal: a run the live verdict ended is "reached"
+or "failed" by that verdict, a wipe "failed"), cost and tokens of every play process, wall
 time, the settings readout, the manifest fields and the reset.
 
 stop: an operator stop (play.py bench's first SIGINT/SIGTERM, or runtime/STOP, which the runner reads) ends the run's
@@ -33,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import threading
@@ -45,7 +49,9 @@ from typing import Any, Protocol, cast
 
 import bg3harness
 from bg3harness import client_setup, runs, spend
+from bg3harness.game.io import Save
 from bg3harness.runner import agent_group
+from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
@@ -55,6 +61,8 @@ SID = "S001"  # a bench run is one session
 SCENARIO_DIFFICULTY = "BG3AI_SCENARIO_DIFFICULTY"  # bg3ai.tools.newgame.SCENARIO_DIFFICULTY_ENV
 GOAL_HIT = "goal"  # until_hit's id when the bench's live verdict decided a goal scenario (GoalWatch)
 GOAL_POLL_S = 10.0  # how often GoalWatch asks the verdict: the stop comes one poll + the in-flight tool call late
+FOREIGN_SAVE = "foreign_save"  # until_hit's id when SaveWatch saw the game load a save that isn't the run's
+LOAD_GRACE_S = 60.0  # SaveWatch: a load_game logged this long after its new server boot was seen still explains it
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -66,6 +74,12 @@ class RunState(Protocol):
 
     def __getitem__(self, key: str, /) -> Any: ...
     def __setitem__(self, key: str, value: Any, /) -> None: ...
+
+
+class FactsMarks(Protocol):
+    """The runner's facts.jsonl writer (bg3harness.facts.FactsWriter): its marks."""
+
+    def mark(self, mark: str, detail: Any = None, now: float | None = None) -> Any: ...
 
 
 class RunRunner(Protocol):
@@ -95,6 +109,8 @@ class RunRunner(Protocol):
     def check_settings(self) -> None: ...
     def session_hooks(self, sid: str, minutes: float) -> SessionHooks: ...
     def end_facts(self, outcome: str) -> None: ...
+    def facts_writer(self) -> FactsMarks: ...
+    def server_boot(self) -> str | None: ...
     def scenario_undo(self) -> None: ...
     def end_run_game(self, when: str = ..., after: str = ...) -> None: ...
     def kill_agent(self) -> None: ...
@@ -187,6 +203,69 @@ def nav_marker() -> Path:
     return renv.RUNTIME / "nav-reset.json"
 
 
+def saves_marker() -> Path:
+    return renv.RUNTIME / "saves-isolate.json"
+
+
+def mark_run_saves(marker: Path, story: Path, dest: Path, after: float, start_save: str | None) -> None:
+    """At a run's start: which saves will be the run's (isolate_saves), written before the game loads anything, so
+    a run that dies without a record is isolated by the next start."""
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"story": str(story), "dest": str(dest), "after": after, "start": start_save}))
+
+
+def _written_at(d: Path) -> float:
+    """A save folder's last write: the newest of the folder and its files (the game rewrites an AutoSave_N in place)."""
+    return max([d.stat().st_mtime, *(p.stat().st_mtime for p in d.iterdir())])
+
+
+def isolate_saves(marker: Path) -> list[str]:
+    """At a run's end (record, abort, a failed start, or the next start after a run that died): every save folder the
+    run wrote into the shared Story folder (written since its start, `after`; its start save never) moves into its
+    run dir (`dest`), so no later run reaches it (bench B3: the main menu's Continue loaded act1_level_3's S001 save
+    in a Balthazar run). Moved, never deleted. Idempotent; the marker goes last. No marker: [] (nothing to do)."""
+    try:
+        m = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return []
+    story, dest = Path(m["story"]), Path(m["dest"])
+    moved: list[str] = []
+    try:
+        folders = sorted(d for d in story.iterdir() if d.is_dir() and d.name != m.get("start"))
+    except OSError:
+        folders = []
+    for d in folders:
+        try:
+            if _written_at(d) < m["after"]:
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(d), str(dest / d.name))
+            moved.append(d.name)
+        except OSError as e:
+            renv.log(f"save isolation: {d.name} not moved: {e}")
+    marker.unlink(missing_ok=True)
+    return moved
+
+
+def own_save(name: str, saves: Sequence[Save], after: float, start_save: str | None) -> bool:
+    """A save (folder or label) is the run's own: its start save, or one written since the run started (`after`;
+    bg3ai.tools.saving's SAVES_AFTER rule)."""
+    return any(name in (s.folder, s.label) and (s.folder == start_save or s.mtime >= after) for s in saves)
+
+
+LOADED_RE = re.compile(r"load_game: done — loaded=(\S+)")
+
+
+def agent_loads(since: float) -> list[str]:
+    """What the agent's load_game calls loaded since `since` (actions.jsonl), oldest first."""
+    actions: list[Json] = rpolicy.read_actions_since(since)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return [
+        m.group(1)
+        for a in actions
+        if a.get("tool") == "load_game" and (m := LOADED_RE.match(str(a.get("result") or "")))
+    ]
+
+
 def stop_file() -> Path:
     """runtime/STOP: the operator's stop file (a playthrough stops after its session, a bench run at once)."""
     return renv.RUNTIME / "STOP"
@@ -216,10 +295,11 @@ def stop_on_signals(host: LiveRunHost, fd: int = 2) -> None:
 
 
 class GoalWatch:
-    """A goal scenario's live verdict (SessionRun's job["verdict"]: "passed", "failed" or None) asked every poll_s
+    """A run's live verdict (SessionRun's job["verdict"]: "passed", "failed", "wiped" or None) asked every poll_s
     while the run plays. Once it decides, the runner's until_hit is set to {"id": GOAL_HIT, "verdict": ...}: the
-    agent loop stops the agent on it as on an until milestone (a goal run never plays on past its grade). check()
-    is one poll (the tests call it directly)."""
+    agent loop stops the agent on it as on an until milestone (a goal run never plays on past its grade, and no run
+    plays on past a party wipe, the game's Game Over: bench B3 resumed a wiped Balthazar run 6 times). check() is one
+    poll (the tests call it directly)."""
 
     def __init__(self, r: RunRunner, verdict: Callable[[], str | None], poll_s: float = GOAL_POLL_S):
         self.r, self.verdict, self.poll_s = r, verdict, poll_s
@@ -235,10 +315,11 @@ class GoalWatch:
         except Exception as e:  # a verdict that can't be read doesn't end the run
             renv.log(f"goal verdict failed: {type(e).__name__}: {e}")
             return False
-        if v not in ("passed", "failed"):
+        if v not in ("passed", "failed", "wiped"):
             return False
-        self.r.until_hit = {"id": GOAL_HIT, "label": f"the goal {v}", "verdict": v, "session": SID, "t": time.time()}
-        renv.log(f"{SID}: the scenario's goal {v}: stopping the run")
+        label = "the party was wiped (Game Over)" if v == "wiped" else f"the goal {v}"
+        self.r.until_hit = {"id": GOAL_HIT, "label": label, "verdict": v, "session": SID, "t": time.time()}
+        renv.log(f"{SID}: {label}: stopping the run")
         self.r.event("goal_verdict", verdict=v, session=SID)
         return True
 
@@ -248,6 +329,80 @@ class GoalWatch:
                 return
 
     def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.done.set()
+
+
+class SaveWatch:
+    """The save a run plays, polled every poll_s: a run plays only from its start save and its own saves (own_save).
+    A new server boot (the runner's server_boot: only a load builds one) is a load: it is the run's when the agent's
+    load_game (`loads`, actions.jsonl) loaded one of its own saves, logged up to grace_s after the new boot was seen
+    (the tool answers once the load is done). Any other load (the main menu's Continue or Load page, a new game)
+    can't be told to be the run's: the run leaves its scenario (bench B3: Game Over -> Main Menu -> Continue loaded
+    another run's save and the record stayed valid). That sets `foreign`, stops the agent (until_hit FOREIGN_SAVE,
+    unless a verdict stopped it first) and record makes the run invalid. check(final=True), at record, decides a
+    pending load at once."""
+
+    def __init__(
+        self,
+        r: RunRunner,
+        own: Callable[[str], bool],
+        boot: Callable[[], str | None] | None = None,
+        loads: Callable[[float], list[str]] = agent_loads,
+        clock: Callable[[], float] = time.time,
+        poll_s: float = GOAL_POLL_S,
+        grace_s: float = LOAD_GRACE_S,
+    ):
+        self.r, self.own, self.boot, self.loads, self.clock = r, own, boot or r.server_boot, loads, clock
+        self.poll_s, self.grace_s = poll_s, grace_s
+        self.known: str | None = None  # the boot of the run's game (its start, or its own last load)
+        self.since = clock()  # when it was known: a later load_game explains a new one
+        self.new: str | None = None  # a new boot seen, not explained yet
+        self.seen_at: float | None = None
+        self.foreign: str | None = None  # why the run left its saves
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._loop, name="save-watch", daemon=True)
+
+    def check(self, final: bool = False) -> bool:
+        """One poll; True once the run left its saves."""
+        if self.foreign is not None:
+            return True
+        b, now = self.boot(), self.clock()
+        if self.known is None:
+            self.known = b
+        elif b is not None and b != self.known and b != self.new:
+            self.new, self.seen_at = b, self.seen_at or now
+        if self.seen_at is None:
+            return False
+        loaded = self.loads(self.since)
+        if loaded and self.own(loaded[-1]):
+            self.known, self.since, self.new, self.seen_at = self.new, now, None, None
+            self.r.event("load", save=loaded[-1], session=SID)
+            self.r.facts_writer().mark("load", loaded[-1])
+            return False
+        if loaded:
+            why = f"the agent's load_game loaded {loaded[-1]}, which is not the run's start save or its own save"
+        elif final or now - self.seen_at >= self.grace_s:
+            why = "the game loaded a save the harness didn't (the main menu's Continue or Load page, or a new game)"
+        else:
+            return False
+        self.foreign = why
+        renv.log(f"{SID}: {why}: stopping the run (invalid: {FOREIGN_SAVE})")
+        self.r.event(FOREIGN_SAVE, why=why, session=SID)
+        self.r.facts_writer().mark("load", {"save": loaded[-1] if loaded else None, FOREIGN_SAVE: why})
+        if not self.r.until_hit:
+            self.r.until_hit = {"id": FOREIGN_SAVE, "label": why, "session": SID, "t": now}
+        return True
+
+    def _loop(self) -> None:
+        while not self.done.wait(self.poll_s):
+            if self.check():
+                return
+
+    def start(self) -> None:
+        self.check()  # the start's boot, before the agent plays
         self.thread.start()
 
     def stop(self) -> None:
@@ -338,7 +493,10 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
             "of play (the time cap), whichever comes first."
         )
     else:
-        lines.append(f"The run has no pass: it plays all {cap} minutes of its time cap, then it is scored.")
+        lines.append(
+            f"The run has no pass: it plays all {cap} minutes of its time cap, then it is scored. A party wipe (the "
+            "Game Over screen) ends it sooner."
+        )
     if start["kind"] == "save":
         lines.append(
             f'The harness has loaded save "{loaded}": the character, party, gear and '
@@ -351,11 +509,12 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     if fact is None:
         lines.append(
             f"The grader's exact goal: the run passes the first moment it holds, from {since} on; anything under "
-            f'"never" fails it if it happens first: {json.dumps(goal_of(sc), sort_keys=True)}.'
+            f'"never" fails it if it happens first, and so does a party wipe (the Game Over screen): '
+            f"{json.dumps(goal_of(sc), sort_keys=True)}."
         )
     else:
         lines.append(
-            f"The grader's exact score: the party's {fact} when the time cap ends the run minus its {fact} at {since}; "
+            f"The grader's exact score: the party's {fact} when the run ends minus its {fact} at {since}; "
             "higher is better."
         )
     if char.get("brief"):
@@ -473,7 +632,8 @@ class LiveRunHost:
         self.env: dict[str, str] = dict(self.base)  # the current job's (_setup)
         self.run_files = run_files or self._run_files
         self.runs: dict[Path, tuple[RunRunner, float, list[str]]] = {}
-        self.watches: dict[Path, GoalWatch] = {}  # a goal scenario's live verdict while its run plays
+        self.watches: dict[Path, GoalWatch] = {}  # the run's live verdict (a goal, a wipe) while it plays
+        self.saves: dict[Path, SaveWatch] = {}  # the save each run plays
         self.stopping = False  # stop(): an operator signal
 
     @property
@@ -493,14 +653,19 @@ class LiveRunHost:
         process and the game it brought up, and its moved nav files go back. Its record is not written."""
         while self.runs:
             run_dir, (r, _, _) = self.runs.popitem()
-            if (w := self.watches.pop(run_dir, None)) is not None:
-                w.stop()
+            for w in (self.watches.pop(run_dir, None), self.saves.pop(run_dir, None)):
+                if w is not None:
+                    w.stop()
             try:
                 r.kill_agent()
                 r.scenario_undo()
                 r.end_run_game(when, "the run is not recorded")
             finally:
                 restore_nav(nav_marker())
+                isolate_saves(saves_marker())
+
+    def save_watch(self, r: RunRunner, own: Callable[[str], bool]) -> SaveWatch:
+        return SaveWatch(r, own)
 
     def _run_files(self, d: Path, client: str, seed: int | None, timing: str | None) -> Json:
         return client_setup.run_files(d, client, seed, timing, renv.REPO, renv.log, environ=self.env)
@@ -549,11 +714,20 @@ class LiveRunHost:
             r = self.make_runner(opt)
             r.run_env = self.env
             st = self._begin(r, opt, sc, run_dir)
+            t0, start_save = self.runs[run_dir][1], opt.start_save
+
+            def own(name: str) -> bool:
+                return own_save(name, rcode.list_saves(), t0, start_save)
+
+            self.saves[run_dir] = self.save_watch(r, own)
+            self.saves[run_dir].start()
             if job.get("verdict") is not None:
                 self.watches[run_dir] = GoalWatch(r, job["verdict"])
                 self.watches[run_dir].start()
             return st
         except (Exception, SystemExit) as e:
+            if (w := self.saves.pop(run_dir, None)) is not None:
+                w.stop()
             try:
                 if r is not None:
                     self.runs.pop(run_dir, None)
@@ -561,6 +735,7 @@ class LiveRunHost:
                     r.end_run_game("start failed", "the rerun launches a new one")
             finally:
                 restore_nav(nav_marker())
+                isolate_saves(saves_marker())
             if isinstance(e, SystemExit):
                 raise RuntimeError(f"start failed: {e.code}") from e
             raise
@@ -573,6 +748,8 @@ class LiveRunHost:
         r.stop_requested = self.stopping
         r.state["saves_after"] = t0  # reset.saves: only saves from now on (and the start save) are the run's
         restore_nav(nav_marker())  # what a run that died between start and record left moved
+        isolate_saves(saves_marker())  # and the saves it wrote
+        mark_run_saves(saves_marker(), renv.SAVE_DIR, run_dir / "saves", t0, opt.start_save)
         archive = sc["reset"]["nav_state"] == "archive" and sc["start"]["kind"] == "save"
         moved = isolate_nav(renv.SE_BG3AI_DIR, run_dir / "reset", nav_marker(), archive)
         r.event("run_reset", nav_files=moved)
@@ -618,11 +795,16 @@ class LiveRunHost:
         r, t0, moved = self.runs.pop(run_dir)
         if (w := self.watches.pop(run_dir, None)) is not None:
             w.stop()
+        foreign: str | None = None
+        if (sw := self.saves.pop(run_dir, None)) is not None:
+            sw.stop()
+            sw.check(final=True)  # with the game up: a load seen since the last poll is decided now
+            foreign = sw.foreign
         res = outcome.result
         hit = r.until_hit if r.until_hit and r.until_hit.get("id") == sc.get("until") else None
-        goal = r.until_hit if r.until_hit and r.until_hit.get("id") == GOAL_HIT and "goal" in sc else None
+        goal = r.until_hit if r.until_hit and r.until_hit.get("id") == GOAL_HIT else None
         stopped = res.reason == "stopped"  # an operator stop ended the session: invalid (bench results.validity)
-        invalid = outcome.invalid or outcome.gave_up or stopped or res.reason in runs.HARNESS_REASONS
+        invalid = outcome.invalid or outcome.gave_up or stopped or res.reason in runs.HARNESS_REASONS or foreign
         if invalid:
             name = "gave_up"
         elif goal:
@@ -639,8 +821,9 @@ class LiveRunHost:
                 r.end_run_game("run end", "the next run launches a new one")
             finally:
                 back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more
+                own_saves = isolate_saves(saves_marker())  # nor a save
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        why, cap = getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
+        why, cap = foreign or getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
         failures = run_failures(
             r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes
         )
@@ -659,13 +842,15 @@ class LiveRunHost:
                 "milestone": hit and hit["id"],
                 "game_settings": getattr(r, "game_settings", None),
                 "manifest": r.opt.manifest,
-                "reset": {"nav_files": moved, "restored": back},
+                "reset": {"nav_files": moved, "restored": back, "saves": own_saves},
                 "loaded_save": r.state["loaded_save"],
                 "harness_failures": counts[runs.HARNESS],
                 "agent_failures": counts[runs.AGENT],
                 "unknown_failures": counts[runs.UNKNOWN],
                 "failures": failures,
             }
+            | ({"verdict": goal["verdict"]} if goal else {})
+            | ({FOREIGN_SAVE: foreign} if foreign else {})
             | ({"operator": "stop"} if stopped else {})
             | ({"cost_unknown": True} if totals["cost_unknown"] else {})
         )

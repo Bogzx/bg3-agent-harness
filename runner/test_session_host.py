@@ -70,6 +70,9 @@ class StubRunner(lpt.Runner):
     def hot_reload_mod(self) -> int:
         return 0
 
+    def server_boot(self) -> str | None:  # LiveRunHost's SaveWatch: the stub game never loads another save
+        return "boot-1"
+
     def apply_play_settings(self) -> None:
         pass
 

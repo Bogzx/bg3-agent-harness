@@ -8,17 +8,23 @@ Clock (decision D7): `clock="game"` (default) measures time by the records' `gam
 think-pause excluded); every record in the run needs one, else FactsError (carrying the last snapshot's time forward
 would move gains between snapshots earlier). `clock="wall"` uses `t` minus time zero.
 
+A party wipe (every real party member dead or downed: the game's Game Over, facts.State.wiped) ends the run: a goal
+that didn't hold before it never passes, and a maximise run's score stops there (bench B3: a wiped Balthazar run was
+resumed 6 times and its agent loaded another run's save from the main menu).
+
 Result: `{passed, t_pass_s, violations, curve, progress}`. `verdict(goal, records)` is the live check on a run
-still playing: passed, failed (a fired `never` left the goal unreachable) or undecided; it only ends a run early,
-the post-run grade is the score.
-- `violations`: every `never` that fired before the verdict, `{"t_s", "node"}`; a fired `never` stays false.
+still playing: passed, failed (a fired `never` left the goal unreachable), wiped or undecided; it only ends a run
+early, the post-run grade is the score.
+- `violations`: every `never` that fired before the verdict, `{"t_s", "node"}`; a fired `never` stays false. A wipe
+  is one too: `{"t_s", "node": {"wipe": true}}`, and the grade stops there.
 - `curve`: a numeric fact at fixed run times (default party gold at 10/20/30 min): `value` at that time and the
   `peak` up to it, both null when the run ended earlier.
 - `progress`: with `progress={"fact": f, "target": n}`, min(1, peak / n) over the whole run, so failed runs still
   order against each other; else null.
 
 `measure(fact, timeline)` scores a maximise scenario (scenario.py `maximise`), which has no goal and no pass: the
-fact's gain from run_start to run_end (`{fact, start, end, gain, peak, curve}`), on the same window and clock.
+fact's gain from run_start to run_end, or to a wipe (`{fact, start, end, gain, peak, curve}`), on the same window and
+clock.
 """
 
 from __future__ import annotations
@@ -190,6 +196,9 @@ def grade(
             peak_progress = v if peak_progress is None else max(peak_progress, v)
         if not passed and ev.step(root, state, elapsed):
             passed, t_pass = True, elapsed
+        if not passed and state.wiped():
+            ev.violations.append({"t_s": elapsed, "node": {"wipe": True}})
+            break
     return {
         "passed": passed,
         "t_pass_s": t_pass,
@@ -242,6 +251,8 @@ def measure(name: str, timeline: Iterable[dict], *, clock: str = "game", curve: 
             v = fact(state, name)
             first = v if first is None else first
             peak = v if peak is None else max(peak, v)
+        if state.wiped():
+            break
     last = fact(state, name) if seen else None
     return {
         "fact": name,
@@ -267,13 +278,16 @@ def _curve(samples: list[tuple[float, float]], spec: dict) -> dict:
 
 def verdict(goal: Any, timeline: Iterable[dict[str, Any]]) -> str | None:
     """The live verdict on a run still playing (game clock, as grade): "passed" at the first instant grade would
-    pass, "failed" once a fired `never` makes the goal unreachable, else None (undecided, or no run_start yet)."""
-    root = parse(goal)
+    pass, "failed" once a fired `never` makes the goal unreachable, "wiped" at a party wipe before either, else None
+    (undecided, or no run_start yet). goal None (a maximise or an until scenario, whose milestone the runner checks
+    itself): only "wiped"."""
+    root = None if goal is None else parse(goal)
     records = check(timeline)
     start = next((i for i, r in enumerate(records) if r["kind"] == "mark" and r.get("mark") == "run_start"), None)
     if start is None:
         return None
-    state, ev = State(), _Eval(root)
+    state = State()
+    ev = None if root is None else _Eval(root)
     for r in records[:start]:
         state.apply(r)
     for r in records[start:]:
@@ -281,10 +295,13 @@ def verdict(goal: Any, timeline: Iterable[dict[str, Any]]) -> str | None:
         elapsed = 0.0 if r is records[start] and r.get("game_t") is None else r.get("game_t")
         if elapsed is None:
             continue  # grade refuses such a run; the live check just doesn't decide on that record
-        if ev.step(root, state, elapsed):
-            return "passed"
-        if _doomed(ev, root):
-            return "failed"
+        if root is not None and ev is not None:
+            if ev.step(root, state, elapsed):
+                return "passed"
+            if _doomed(ev, root):
+                return "failed"
+        if state.wiped():
+            return "wiped"
         if r["kind"] == "mark" and r.get("mark") == "run_end":
             break
     return None
