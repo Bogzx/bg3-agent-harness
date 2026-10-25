@@ -121,6 +121,11 @@ A.STILL_LOCKED = "clicked it: still locked"
 -- few frames later); the failure then ended it "could not use that" (the door opened; ~28 s and 2 extra turns).
 -- The game's success counts: a failure after it is ignored, and a failure waits this long for a success after it.
 A.USE_FAIL_GRACE_MS = 300
+-- Bench B3 Haiku x crash_site_grove 16:56:45 (read_all, 2 books): the Use of a carried book sat in Tav's Osiris queue
+-- and never ran (no UseFinished), so each item waited out the 38 s job timeout (TIMEOUT, purged_tasks=1). Tav took no
+-- order after a Revivify (16:47: every walk travelled=0, every jump never started). A carried book or potion is used
+-- in under a second; a Use the game still holds queued this long after it was sent was never started.
+A.USE_NO_START_MS = 8000
 
 -- S083 03:55:56-58 (V24): Knock on e720 "No Entry - No Exit"; look read it unlocked, 2 s later interact read IsLocked
 -- true again (a live read, no cache: the game's own flag flipped back while it opened the door) and refused "nobody
@@ -317,6 +322,7 @@ reg("interact", function(args)
                     j.ladder.held = A.ladder_hold(char)
                 end
                 G.osi("Use", char, target, j.use_ev)
+                j.use_ms = RPC.now_ms()
                 if ladder and A.LADDER_WATCH_AT_USE then j.used_at = RPC.now_ms() end
             end)
         end,
@@ -327,6 +333,12 @@ reg("interact", function(args)
                 RPC.finish_job(job, "failed", nil, key_note and G.b(G.q("IsLocked", target))
                     and ("still locked: " .. key_note.unlocked_with .. " did not open it")
                     or (still_locked() and (relocked and A.RELOCKED or A.STILL_LOCKED)) or "could not use that")
+                return
+            end
+            if carried and not (potion or scroll) and job.use_ms and not job.use_ok and not job.used_at
+                and RPC.now_ms() - job.use_ms >= A.USE_NO_START_MS and osi_tasks(char) > 0 then
+                RPC.finish_job(job, "failed", nil, "the game never started it ("
+                    .. math.floor(A.USE_NO_START_MS / 1000) .. " s, the Use still queued, nothing used)")
                 return
             end
             -- Use walks on its own if still out of range; a jump while far from
