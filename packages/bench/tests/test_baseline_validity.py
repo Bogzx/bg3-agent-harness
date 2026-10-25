@@ -109,7 +109,7 @@ START: dict[str, dict] = {
         "party": [("Tav", "Paladin", 2), ("Shadowheart", "Cleric", 2), ("Gale", "Wizard", 1)],
         "gold": 88,
         "quests": [],
-        "nearby": ["Goblin", "Zevlor"],
+        "nearby": ["Goblin Tracker", "Zevlor"],
     },
     "fight_act1_dror_ragzlin": {
         "area": "Shattered Sanctum",
@@ -125,7 +125,7 @@ START: dict[str, dict] = {
         "party": [("Tav", "Paladin", 4), ("Karlach", "Barbarian", 4), ("Gale", "Wizard", 4), ("Shadowheart", "Cleric", 4)],
         "gold": 178,
         "quests": ["The Githyanki Warrior"],
-        "nearby": ["Githyanki Warrior"],
+        "nearby": ["Sarth Baretha"],
     },
     "fight_act2_moonrise_assault": {
         "area": "Shadow-Cursed Lands",
@@ -317,6 +317,7 @@ def levels(n: int) -> Callable:
 
 
 # name -> the scripted solve: the fake world's steps, one per progress read, ending in the state the goal asks for.
+# A fight's enemies carry the real game's names (claude-run-2's died/kill records): its goal names them.
 ORACLE: dict[str, list[Callable]] = {
     "nautiloid": [finish_quest("Escape the Nautiloid")],
     "act1_gold_1000": [lambda m: m.add_gold(1000 - m.gold)],
@@ -334,12 +335,12 @@ ORACLE: dict[str, list[Callable]] = {
     "choice_act2_nightsong": [finish_quest("The Chosen of Shar")],
     "choice_act3_wyll_pact": [finish_quest("Rescue the Grand Duke")],
     "fight_act1_windmill": fight("Goblin", "Worg"),
-    "fight_act1_grove_gate": fight("Goblin"),
+    "fight_act1_grove_gate": fight("Goblin Tracker"),
     "fight_act1_dror_ragzlin": fight("Dror Ragzlin", "Goblin"),
-    "fight_act1_gith_patrol": fight("Githyanki Warrior"),
+    "fight_act1_gith_patrol": fight("Sarth Baretha"),
     "fight_act2_balthazar": fight("Balthazar", "Flesh Golem"),
     "fight_act2_house_of_healing": fight("Malus Thorm", "Nurse"),
-    "fight_act2_moonrise_assault": fight("Moonrise Guard"),
+    "fight_act2_moonrise_assault": fight("Zealot Brinn"),
     "fight_act2_ketheric": [*fight("Ketheric Thorm"), finish_quest("Defeat Ketheric Thorm")],
     "fight_act3_sarevok": fight("Sarevok Anchev"),
     "fight_act3_cazador": fight("Cazador Szarr", "Predator Werewolf"),
