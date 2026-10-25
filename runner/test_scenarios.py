@@ -187,11 +187,15 @@ class Wiring(TmpDir):
         t0 = time.time()
         r.begin_run(t0)
         self.assertEqual(r.state["saves_after"], t0)
-        old = [rpolicy.Save(START, "Claude", "SCN-beach", t0 - 86400),
-               rpolicy.Save("Claude-9__S040-end", "Claude", "S040-end", t0 - 3600)]     # another playthrough's
+        # each save's saved time is its meta.lsf SaveTime (controller.list_saves), the mtime its files'
+        old = [rpolicy.Save(START, "Claude", "SCN-beach", t0 - 86400, t0 - 86400),
+               rpolicy.Save("Claude-9__S040-end", "Claude", "S040-end", t0 - 3600, t0 - 3600),  # another playthrough's
+               # another run's save as Steam's local cloud restores it at the launch: written now, saved before the run
+               rpolicy.Save("Claude-8__S041-end", "Claude", "S041-end", t0 + 30, t0 - 1800)]
         rcode.list_saves = lambda: old
         self.assertEqual(r.choose_save().folder, START)
-        rcode.list_saves = lambda: old + [rpolicy.Save("Claude-7__S001-start", "Claude", "S001-start", t0 + 60)]
+        mine = rpolicy.Save("Claude-7__S001-start", "Claude", "S001-start", t0 + 60, t0 + 60)
+        rcode.list_saves = lambda: old + [mine]
         self.assertEqual(r.choose_save().folder, "Claude-7__S001-start")
         self.assertEqual(r.save_env()["BG3AI_START_SAVE"], START)
         # without a scenario the old save is never a candidate
