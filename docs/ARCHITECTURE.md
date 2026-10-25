@@ -120,10 +120,12 @@ The three harness-only files are not agent-facing:
   `rolls2-dump.txt`, `runtime/probes/fix-vis/rolls.json`, `rolls2.json`; the passive checks' PASS in
   `fix-live/rolllog-a.json`).
 * **Scenario setup** (`Scenario.lua`, ops `scn.seed`, `scn.karmic`, `scn.difficulty`, `scn.rename`,
-  `scn.rename_avatar`, `scn.undo`, `scn.status`): seeded dice, Karmic Dice, the difficulty read and the
+  `scn.rename_avatar`, `scn.undo`, `scn.status`): seeded dice, Karmic Dice, the difficulty read, the avatar's name
+  (a bench save start plays under the scenario's character; the mod writes it again after every load) and the
   renames used by benchmark runs and start-save authoring (`tools/saves/make_start_save.py`). Every `scn.*` op is
   refused unless the game process runs with `BG3AI_SCENARIO_SETUP=1`. The runner sets it in the game's env only
-  for a run with a seed (`Runner.setup_env` in `runner/play.py`); a normal playthrough never has it.
+  for a run with a seed or a scenario that fixes a setting or the avatar's name (`ChecksSide.setup_env`); a normal
+  playthrough never has it.
 
 The bridge reads the rings through `bridge/src/bg3ai/referee.py`; the harness's facts writer
 (`bg3harness.facts.RingFeed`) drains them into `facts.jsonl` and `rolls.jsonl` in the run's directory.

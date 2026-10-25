@@ -291,10 +291,10 @@ and calls `scn.*` through `packages/harness/src/bg3harness/game_settings.py` and
 | `scn.seed` | S | `{seed}` (integer 0..2000000000) | writes the dice seed now and records it; the mod writes it again after every load (`LevelGameplayStarted`) |
 | `scn.karmic` | S | `{set?: bool}` | reads Karmic Dice, or turns it off/on and reads it back |
 | `scn.difficulty` | S | – | reads the difficulty; a `set` is refused (the game's Options flow owns it) |
-| `scn.rename_avatar` | S | `{name}` | the host avatar's CustomName (1-40 letters, digits, spaces, `_`, `-`) |
+| `scn.rename_avatar` | S | `{name}` | the host avatar's name (1-40 letters, digits, spaces, `_`, `-`) in CustomName, CharacterCreationStats.Name and its DisplayName text, read back; recorded, so the mod writes it again after every load of that avatar; returns `{uuid, original, before, name, handle, display, cc}` |
 | `scn.rename` | S | `{renames:[{uuid, name}]}` | changes display names through `Ext.Loca`; originals are recorded so `scn.undo` restores them after a load |
-| `scn.undo` | S | – | removes the seed record and restores the renames |
-| `scn.status` | S | – | `{seed, applied, reapplied, renames}` |
+| `scn.undo` | S | – | removes the seed record and restores the renames, Karmic Dice and the avatar's name |
+| `scn.status` | S | – | `{seed, applied, reapplied, renames, avatar}` |
 
 Every `scn.*` op fails with `scenario setup is off: the game was not started with BG3AI_SCENARIO_SETUP=1` unless
 the game process has that variable. The runner sets it only for a run with a seed.

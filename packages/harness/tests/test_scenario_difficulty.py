@@ -113,4 +113,5 @@ def test_the_game_gets_the_scn_switch_when_the_scenario_fixes_a_setting():
     assert env(None, {"difficulty": "Balanced", "karmic_dice": None, "timing": "realtime"}) == on
     assert env(None, {"difficulty": None, "karmic_dice": False}) == on
     assert env(7, None) == on
+    assert env(None, {"difficulty": None, "karmic_dice": None, "avatar_name": "Tav"}) == on  # scn.rename_avatar
     assert env(None, {"difficulty": None, "karmic_dice": None, "timing": "turn_based"}) == {}

@@ -204,7 +204,9 @@ def test_options_of_a_save_start_and_a_new_game():
         7,
     )
     assert (opt.keeper, opt.judge, opt.max_cost, opt.tools_expected) == (False, False, 2.0, 90)
-    assert opt.scenario_settings == {"difficulty": "Balanced", "karmic_dice": False, "timing": "turn_based"}
+    assert opt.scenario_settings == {  # a save start plays under the scenario's character (live B1)
+        "difficulty": "Balanced", "karmic_dice": False, "timing": "turn_based", "avatar_name": "Lae'zel"
+    }  # fmt: skip
     new = H.options_for({**JOB, "client": "pi", "max_cost": 0.5}, NEW_SC, "m-idol", {})
     assert (new.start_save, new.save_owner, new.max_cost, new.character_brief) == (
         None,
@@ -212,6 +214,7 @@ def test_options_of_a_save_start_and_a_new_game():
         0.5,
         "A careful trader.",
     )
+    assert new.scenario_settings is not None and new.scenario_settings["avatar_name"] is None  # named in creation
 
 
 def test_the_matrix_max_cost_caps_a_paid_client_only():

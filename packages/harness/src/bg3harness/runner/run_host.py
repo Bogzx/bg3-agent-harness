@@ -262,7 +262,8 @@ def owner_of(sc: Json) -> str:
 def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Options:
     """One bench run's Options: one session of the scenario's run_hours, no keeper, no judge, the start save (none
     for a new game), the dice seed and the settings the check compares. An `until` scenario's run ends at its
-    milestone (the runner stops the agent once the progress poller sees it: until_hit). `files`:
+    milestone (the runner stops the agent once the progress poller sees it: until_hit). A save start's avatar is
+    renamed to the scenario's character at the run's start (scenario_settings avatar_name). `files`:
     client_setup.run_files' fields. The job's max_cost (the matrix's [budget]: a paid run's cap) caps a paid client
     only, as a subscription run is never charged (fixlive: a Claude Code nautiloid run ended at its first end_turn on
     the matrix's $0.25 DeepSeek cap, notional $2.12); the scenario's own caps.max_cost caps every client."""
@@ -293,6 +294,7 @@ def options_for(job: Json, sc: Json, run_name: str, files: Json) -> rstate.Optio
             "difficulty": gs.get("difficulty"),
             "karmic_dice": gs.get("karmic_dice"),
             "timing": sc.get("timing"),
+            "avatar_name": owner_of(sc) if sc["start"]["kind"] == "save" else None,
         },
         **files,
     )

@@ -97,6 +97,12 @@ def apply_karmic(rpc: Rpc, karmic: bool) -> dict[str, Any]:
     return _obj(rpc("scn.karmic", {"set": bool(karmic)}))
 
 
+def apply_avatar_name(rpc: Rpc, name: str) -> dict[str, Any]:
+    """scn.rename_avatar {name}: the start save's avatar plays under the scenario's character name (every field the
+    game and the bridge read it from; the mod re-applies it after each load, scn.undo puts the save's back)."""
+    return _obj(rpc("scn.rename_avatar", {"name": name}))
+
+
 def readout(files: dict[str, Callable[[], Any]], rpc: Rpc) -> dict[str, Any]:
     """{resolution, ui_scale, language, difficulty, roll_mode, karmic_dice}. files: "graphics" -> the lsx text,
     "config" -> config.lsf's attributes, "manifest" -> the parsed app manifest; a reader that fails gives null."""
@@ -124,7 +130,7 @@ def apply_seed(rpc: Rpc, seed: int) -> dict[str, Any]:
 
 
 def undo(rpc: Rpc) -> dict[str, Any]:
-    """scn.undo at the run's end: the seed record and renames go (also after a load)."""
+    """scn.undo at the run's end: the seed record, renames and the avatar's name go (also after a load)."""
     return _obj(rpc("scn.undo", {}))
 
 

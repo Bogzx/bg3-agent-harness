@@ -210,6 +210,52 @@ class FactsWiring(unittest.TestCase):
         marks = [json.loads(x) for x in (r.state.dir / "facts.jsonl").read_text().splitlines()]
         self.assertEqual([m.get("mark") for m in marks], ["run_start", "settings", "run_end"])
 
+    def test_a_save_start_renames_the_avatar_and_undoes(self):  # live B1: the start saves still say "Claude"
+        want = {"difficulty": None, "karmic_dice": None, "timing": None, "avatar_name": "Tav"}
+        r = lpt.Runner(rstate.Options("grove-n", None, 20, "opus", scenario_settings=want))
+        self.assertEqual(r.setup_env(), {"BG3AI_SCENARIO_SETUP": "1"})  # scn.rename_avatar needs the switch
+        calls = []
+
+        def rpc(op, args=None, **kw):
+            calls.append((op, args))
+            return {"display": (args or {})["name"]} if op == "scn.rename_avatar" else {}
+
+        with mock.patch.object(G, "rpc", rpc):
+            r.game_setup()
+            r.scenario_undo()
+        self.assertEqual(
+            [op for op, _ in calls], ["sys.ping", "scn.rename_avatar", "roll.snapshot", "scn.difficulty", "scn.undo"]
+        )
+        self.assertEqual(calls[1][1], {"name": "Tav"})
+        self.assertEqual(r.game_settings["avatar_name"], "Tav")
+        r.settings_checked = False
+        r.check_settings()  # the name took: no contradiction
+
+    def test_an_avatar_rename_that_fails_stops_the_run(self):
+        want = {"difficulty": None, "karmic_dice": None, "timing": None, "avatar_name": "Tav"}
+        r = lpt.Runner(rstate.Options("grove-f", None, 20, "opus", scenario_settings=want))
+        r.event = lambda kind, **f: None
+
+        def rpc(op, args=None, **kw):
+            if op == "scn.rename_avatar":
+                raise RuntimeError("CharacterCreationStats.Name read back Claude")
+            return {}
+
+        with (
+            mock.patch.object(G, "rpc", rpc),
+            mock.patch.object(rstate, "write_status"),
+            self.assertRaisesRegex(
+                rchecks.SettingsMismatch,
+                "the avatar is named None, the scenario needs 'Tav' "
+                r"\(CharacterCreationStats.Name read back Claude\)",
+            ),
+        ):
+            r.check_settings()
+        calls = []
+        with mock.patch.object(G, "rpc", lambda op, args=None, **kw: calls.append(op)):
+            r.scenario_undo()  # the mod recorded the name before its write failed
+        self.assertEqual(calls, ["scn.undo"])
+
     def menu_runner(self, karmic: bool) -> tuple[lpt.Runner, list]:
         """A seeded scenario run on a new game, at the main menu of a fake mod (FakeMod: the bridge's wire) whose
         server context refuses every eval until `menu.loaded`, as the real game's does (live7)."""

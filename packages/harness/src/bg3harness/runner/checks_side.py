@@ -158,17 +158,19 @@ class ChecksSide:
 
     def setup_env(self) -> dict:
         """The game's env: the mod's scn.* ops are refused unless a run seeds the dice or its scenario fixes a setting
-        the scn.* ops read or set (difficulty, karmic dice; game_settings.SETUP_ENV)."""
+        the scn.* ops read or set (difficulty, karmic dice, the avatar's name; game_settings.SETUP_ENV)."""
         opt = getattr(self, "opt", None)   # a bare Runner (tests) has no opt
         want = getattr(opt, "scenario_settings", None) or {}
-        fixed = any(want.get(k) is not None for k in scenario_file.CHECKED)
+        fixed = any(want.get(k) is not None for k in (*scenario_file.CHECKED, "avatar_name"))
         return ghost.setup_env(getattr(opt, "seed", None) is not None or fixed)
 
     def game_setup(self) -> bool:
         """Once per runner, with a level loaded: the settings readout (the run record's game_settings, a facts
-        `settings` mark) and, for a seeded run, scn.seed (the mod re-applies it after every load). At the main menu
-        (a new game before its first load) the server context, where scn.* and roll.snapshot run, doesn't exist yet:
-        nothing is done and the next call tries again (live7). True once done."""
+        `settings` mark), a save start's avatar renamed to the scenario's character (avatar_name: the start saves
+        still name it after the model that played them, live B1) and, for a seeded run, scn.seed (the mod re-applies
+        the seed and the name after every load). At the main menu (a new game before its first load) the server
+        context, where scn.* and roll.snapshot run, doesn't exist yet: nothing is done and the next call tries again
+        (live7). True once done."""
         if getattr(self, "game_settings", None) is not None:
             return True
         if not game.server_ready():
@@ -181,8 +183,18 @@ class ChecksSide:
                 self.karmic_set = True
             except Exception as e:
                 renv.log(f"!!!!! scn.karmic {karmic} failed: {e}; the settings check reads what the game has !!!!!")
+        avatar = (self.opt.scenario_settings or {}).get("avatar_name")
+        named: dict = {}
+        if avatar is not None:   # the settings check refuses a run whose avatar didn't take the name
+            self.avatar_set = True   # also on a failure: the mod records the name before it writes it
+            try:
+                named = {"avatar_name": game_settings.apply_avatar_name(call, avatar).get("display")}
+            except Exception as e:
+                named = {"avatar_name": None, "avatar_error": str(e)[:300]}
+                renv.log(f"!!!!! scn.rename_avatar {avatar} failed: {e} !!!!!")
         got = game_settings.readout(game_settings.profile_files(steam_paths.profile_dir(), steam_paths.manifest(),
                                                                 self.lsf_attributes(), steam_paths.parse_vdf), call)
+        got.update(named)
         if self.opt.seed is not None:
             try:
                 got["seed"] = {"seed": self.opt.seed, "applied": game_settings.apply_seed(call, self.opt.seed)}
@@ -231,12 +243,12 @@ class ChecksSide:
 
     def scenario_undo(self) -> None:
         """scn.undo at the run's end (the seed record would re-seed the next run's loads; a set Karmic Dice goes back
-        to the player's)."""
-        if not (getattr(self, "seeded", False) or getattr(self, "karmic_set", False)):
+        to the player's, the avatar's name to the save's)."""
+        if not any(getattr(self, k, False) for k in ("seeded", "karmic_set", "avatar_set")):
             return
         try:
             game_settings.undo(lambda op, args: game.rpc(op, args, timeout=EVAL_TIMEOUT))
-            self.seeded = self.karmic_set = False
+            self.seeded = self.karmic_set = self.avatar_set = False
         except Exception as e:
             renv.log(f"!!!!! scn.undo failed: {e}; BG3AI/scenario.json keeps seeding every load until undone !!!!!")
 

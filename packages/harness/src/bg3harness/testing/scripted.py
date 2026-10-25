@@ -150,6 +150,8 @@ class GameModel:
         self.scn_renames: list[dict[str, Any]] = []
         self.scn_applied: dict[str, Any] = {}
         self.scn_reapplied: dict[str, Any] = {}
+        self.scn_avatar: dict[str, Any] | None = None  # the record's avatar {uuid, original, name}
+        self.scn_karmic_original: str | None = None  # Lua state only (a load forgets it)
         self.roll_mode = "Random"  # RollModeType (WeightedRandom = Karmic Dice on)
         self.difficulty = "Balanced"
         self.names: dict[str, str] = {}
@@ -333,12 +335,14 @@ class GameModel:
         self.events = {"server": Ring(), "client": Ring()}
         self.ref, self.rolls, self.ref_fired, self.jobs = Ring(), Ring(), {}, {}
         self.combat = self.dialogue = None
-        self.scn_applied, self.scn_reapplied = {}, {}
-        if self.scenario_setup:  # Scenario.reapply: the recorded seed and renames (the renames survive anyway)
+        self.scn_applied, self.scn_reapplied, self.scn_karmic_original = {}, {}, None
+        if self.scenario_setup:  # Scenario.reapply: the recorded seed, renames (they survive anyway) and avatar
             if self.scn_seed is not None:
                 self.scn_applied = {"seed": self.scn_seed, "gt": round(self.clock.game_s, 3), "streams": 4}
                 self.scn_reapplied["seed"] = {"seed": self.scn_seed, "base_seed": self.scn_seed, "streams": 4}
             self.scn_reapplied["renames"] = len(self.scn_renames)
+            if self.scn_avatar is not None and self.party[0].uuid == self.scn_avatar["uuid"]:
+                self.party[0].name = self.scn_reapplied["avatar"] = self.scn_avatar["name"]
 
     # ---- the responder ----
 
@@ -521,6 +525,8 @@ class GameModel:
             if not isinstance(want, bool):
                 raise RuntimeError("set must be true or false")
             self.roll_mode = "WeightedRandom" if want else "Random"
+            if self.scn_karmic_original is None:
+                self.scn_karmic_original = before
         out = {"mode": self.roll_mode, "karmic": self.roll_mode == "WeightedRandom", "component_mode": self.roll_mode}
         return out if want is None else {**out, "before": before}
 
@@ -541,8 +547,12 @@ class GameModel:
         if not isinstance(name, str) or not name:
             raise RuntimeError("name must be 1..40 letters, digits, spaces, _ or -")
         host = self.party[0]
+        if self.scn_avatar is None or self.scn_avatar["uuid"] != host.uuid:
+            self.scn_avatar = {"uuid": host.uuid, "original": host.name}
+        self.scn_avatar["name"] = name
         before, host.name = host.name, name
-        return {"uuid": host.uuid, "original": before, "before": before, "name": name}
+        original = self.scn_avatar["original"]
+        return {"uuid": host.uuid, "original": original, "before": before, "name": name, "display": name, "cc": name}
 
     def op_scn_rename(self, ctx: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         self._scn()
@@ -566,7 +576,14 @@ class GameModel:
             self.names.pop(r["uuid"], None)
             restored.append({"handle": r["handle"], "original": r["original"]})
         self.scn_renames = []
-        return {"restored": restored}
+        out: dict[str, Any] = {"restored": restored}
+        if self.scn_karmic_original is not None:
+            self.roll_mode = out["karmic"] = self.scn_karmic_original
+            self.scn_karmic_original = None
+        a, self.scn_avatar = self.scn_avatar, None
+        if a is not None and self.party[0].uuid == a["uuid"] and self.party[0].name == a["name"]:
+            self.party[0].name = out["avatar"] = a["original"]
+        return out
 
     def op_scn_status(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         self._scn()

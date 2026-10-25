@@ -12,9 +12,11 @@
 --            the system copy is overwritten from it within a tick, §5).
 --   renames: Ext.Loca changes are process-wide and survive loads (§8): the record keeps each original text so
 --            scn.undo restores it even after a load, and re-applies after a game restart.
---   karmic, avatar name: NOT recorded. Both are state of the loaded game (the save keeps them once saved), so their
---            originals live in this Lua state only: a load rebuilds it and scn.undo then has nothing to restore
---            (a recorded original would rename the next save's avatar back at a later run's scn.undo).
+--   avatar:  the name a bench run plays under. A loaded save shows its own name again in every field, also one
+--            saved after a CustomName-only rename (research/fix/live.md "Bench B1"), so the mod re-applies the
+--            recorded name after every load of that avatar (same uuid); scn.undo puts the originals back.
+--   karmic:  NOT recorded. State of the loaded game (the save keeps it once saved), so its original lives in this
+--            Lua state only: a load rebuilds it and scn.undo then has nothing to restore.
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -41,7 +43,9 @@ local function refuse()
 end
 
 ------------------------------------------------------------------------
--- Record: {seed = n|nil, renames = {{uuid, handle, original, name}}} (renames in apply order)
+-- Record: {seed = n|nil, renames = {{uuid, handle, original, name}} (in apply order),
+--          avatar = {uuid, handle, name, original, custom, cc}|nil (the originals: DisplayName text, CustomName,
+--          CharacterCreationStats.Name)}
 ------------------------------------------------------------------------
 
 function S.load()
@@ -128,8 +132,16 @@ function S.difficulty()
 end
 
 ------------------------------------------------------------------------
--- The avatar's name (CustomName: the party panel, the save folder's owner)
+-- The avatar's name, in every field the game shows it from: CustomName (the party panel, the save folder's
+-- owner), CharacterCreationStats.Name, and the text of its DisplayName handle (a ResStr_ handle of its own:
+-- tooltips, the combat log and every bridge read, which goes through Osi.GetDisplayName).
 ------------------------------------------------------------------------
+
+local function handleOf(uuid)
+    local h = Osi.GetDisplayName(uuid)
+    if type(h) ~= "string" or h == "" then error("no display name handle for " .. tostring(uuid)) end
+    return h
+end
 
 local function avatarEntity()
     local host = Osi.GetHostCharacter()
@@ -141,26 +153,70 @@ local function avatarEntity()
     return e, host
 end
 
+local function ccStats(e)
+    local ok, cc = pcall(function() return e.CharacterCreationStats end)
+    return ok and cc or nil
+end
+
+-- Writes and reads back every field; custom/cc nil leaves that field as it is (undo of a field that had none).
+local function writeAvatar(e, h, text, custom, cc)
+    if custom ~= nil then
+        e.CustomName.Name = custom
+        pcall(function() e:Replicate("CustomName") end)
+        if e.CustomName.Name ~= custom then error("CustomName read back " .. tostring(e.CustomName.Name)) end
+    end
+    local stats = ccStats(e)
+    if stats and cc ~= nil then
+        stats.Name = cc
+        pcall(function() e:Replicate("CharacterCreationStats") end)
+        if stats.Name ~= cc then error("CharacterCreationStats.Name read back " .. tostring(stats.Name)) end
+    end
+    if text ~= nil then
+        if not Ext.Loca.UpdateTranslatedString(h, text) then error("UpdateTranslatedString refused " .. h) end
+        local got = Ext.Loca.GetTranslatedString(h)
+        if got ~= text then error("DisplayName text read back " .. tostring(got)) end
+    end
+end
+
+-- Recorded before the write, so a load re-applies it; a second rename of the same avatar keeps the first originals.
 function S.renameAvatar(name)
     local e, host = avatarEntity()
+    local h = handleOf(host)
+    local stats = ccStats(e)
     local before = e.CustomName.Name
-    e.CustomName.Name = name
-    pcall(function() e:Replicate("CustomName") end)
-    if e.CustomName.Name ~= name then error("CustomName read back " .. tostring(e.CustomName.Name)) end
-    if not S.avatar or S.avatar.uuid ~= host then S.avatar = { uuid = host, original = before } end
-    S.avatar.name = name
-    return { uuid = host, original = S.avatar.original, before = before, name = name }
+    local a = S.rec.avatar
+    if not a or a.uuid ~= host then
+        a = { uuid = host, handle = h, original = Ext.Loca.GetTranslatedString(h), custom = before,
+            cc = stats and stats.Name or nil }
+        S.rec.avatar = a
+    end
+    a.name = name
+    save()
+    writeAvatar(e, h, name, name, name)
+    return { uuid = host, original = a.custom, before = before, name = name, handle = h,
+        display = Ext.Loca.GetTranslatedString(h), cc = stats and stats.Name or nil }
+end
+
+-- After a load: the recorded name again, only on the avatar it was set on.
+local function reapplyAvatar(a)
+    local e, host = avatarEntity()
+    if host ~= a.uuid then return "not this save's avatar" end
+    writeAvatar(e, handleOf(host), a.name, a.name, a.name)
+    return a.name
+end
+
+-- The originals back: the DisplayName text always (Ext.Loca is process-wide), CustomName and CharacterCreationStats
+-- only on that avatar while it still has the recorded name (else someone renamed it since).
+local function undoAvatar(a)
+    local ok, e, host = pcall(avatarEntity)
+    local mine = ok and host == a.uuid and e.CustomName.Name == a.name
+    writeAvatar(mine and e or nil, a.handle, a.original, mine and a.custom or nil, mine and a.cc or nil)
+    return mine and a.custom or nil
 end
 
 ------------------------------------------------------------------------
 -- Renames
 ------------------------------------------------------------------------
-
-local function handleOf(uuid)
-    local h = Osi.GetDisplayName(uuid)
-    if type(h) ~= "string" or h == "" then error("no display name handle for " .. tostring(uuid)) end
-    return h
-end
 
 local function findRename(handle)
     for _, r in ipairs(S.rec.renames) do
@@ -183,8 +239,8 @@ function S.rename(uuid, name)
     return { uuid = uuid, handle = h, original = r.original, name = name }
 end
 
--- Restores every original, newest first, then forgets them. Karmic and the avatar's name only when this Lua state
--- changed them (no load since) and, for the name, only while it is still the one set here.
+-- Restores every original, newest first, then forgets them. Karmic only when this Lua state changed it (no load
+-- since); the avatar's name as undoAvatar says.
 function S.undo()
     local restored = {}
     for i = #S.rec.renames, 1, -1 do
@@ -192,8 +248,10 @@ function S.undo()
         if r.original ~= nil then Ext.Loca.UpdateTranslatedString(r.handle, r.original) end
         restored[#restored + 1] = { handle = r.handle, original = r.original }
     end
+    local a = S.rec.avatar
     S.rec.renames = {}
     S.rec.seed = nil
+    S.rec.avatar = nil
     save()
     local out = { restored = restored }
     if S.karmicOriginal ~= nil then
@@ -201,14 +259,9 @@ function S.undo()
         out.karmic = ok and S.karmicOriginal or ("not restored: " .. tostring(err))
         S.karmicOriginal = nil
     end
-    if S.avatar then
-        local ok, e, host = pcall(avatarEntity)
-        if ok and host == S.avatar.uuid and e.CustomName.Name == S.avatar.name then
-            e.CustomName.Name = S.avatar.original
-            pcall(function() e:Replicate("CustomName") end)
-            out.avatar = S.avatar.original
-        end
-        S.avatar = nil
+    if a then
+        local ok, res = pcall(undoAvatar, a)
+        if ok then out.avatar = res else out.avatar_error = tostring(res) end
     end
     return out
 end
@@ -229,6 +282,10 @@ function S.reapply()
         pcall(Ext.Loca.UpdateTranslatedString, r.handle, r.name)
     end
     out.renames = #S.rec.renames
+    if S.rec.avatar then
+        local ok, res = pcall(reapplyAvatar, S.rec.avatar)
+        out.avatar = ok and res or ("not re-applied: " .. tostring(res))
+    end
     S.reapplied = out
     return out
 end
@@ -277,7 +334,7 @@ op("scn.difficulty", function(args)
     return S.difficulty()
 end)
 
--- {name}: the host avatar's CustomName.
+-- {name}: the host avatar's name (every field; re-applied after each load until scn.undo).
 op("scn.rename_avatar", function(args)
     if type(args.name) ~= "string" or not args.name:match("^[%w][%w _-]*$") or #args.name > 40 then
         error("name must be 1..40 letters, digits, spaces, _ or - (it becomes the save folder's owner)")
@@ -300,7 +357,8 @@ end)
 op("scn.undo", function() return S.undo() end)
 
 op("scn.status", function()
-    return { seed = S.rec.seed, applied = S.applied, reapplied = S.reapplied, renames = S.rec.renames }
+    return { seed = S.rec.seed, applied = S.applied, reapplied = S.reapplied, renames = S.rec.renames,
+        avatar = S.rec.avatar }
 end)
 
 return S
