@@ -77,7 +77,7 @@ def test_decisions_for_the_judge() -> None:
 def test_character_of_the_scenario() -> None:
     sc = json.loads(SCENARIO.read_text())
     text = choices.character_of(sc)
-    assert text is not None and text.startswith("Character: Tav\nBrief: A half-elf paladin")
+    assert text is not None and text.startswith("Character: Tav\nBrief: A half-orc paladin")
     assert text.endswith("Roleplay: light")
     assert choices.character_of({"profile": {}}) is None
 
@@ -169,7 +169,7 @@ def test_choice_run_artifacts_to_the_leaderboard(tmp_path: Path) -> None:
     assert res["passed"] is True  # Karlach joined: the goal only ends the run
     assert [p["pick"] for p in res["choices"]["picks"]] == ["What did it do?", "Talk. Quickly.", "Talk. Quickly."]
     assert res["choices"]["fit"]["score"] == 8.0
-    assert "Brief: A half-elf paladin" in fake.prompts[0]
+    assert "Brief: A half-orc paladin" in fake.prompts[0]
     assert_valid("result.v1.schema.json", res)
     assert_valid("manifest.v1.schema.json", man)
     rel = results.build_results([(man, res)], seed=0, created=0.0, b=10)

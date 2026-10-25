@@ -9,8 +9,7 @@
 # Scenarios (family, act, cap):
 #   crash_site_grove      exploration  Act 1  1.0 h   reach the Emerald Grove
 #   act1_gold_max         sandbox      Act 1  0.75 h  as much party gold as possible (maximise: no pass, score = gain)
-#   act3_gold_max         sandbox      Act 3  0.75 h  the same in the Lower City; its start save isn't made yet, so
-#                                                    plan/run skip it until the live worker makes and registers it
+#   act3_gold_max         sandbox      Act 3  0.75 h  the same in the Lower City (start save made live B1, bench-v0.8)
 #   act1_level_3          sandbox      Act 1  1.0 h   every party member to level 3 (the level-up UI)
 #   fight_act1_windmill   fight        Act 1  1.0 h   the windmill ambush
 #   fight_act2_balthazar  fight        Act 2  1.5 h   a boss
@@ -18,10 +17,10 @@
 # and never published.
 #
 # Cost bound, DeepSeek (the only paid client): $0.35 per run (each run's cap and the matrix's reserve), 6 paid runs,
-# $2.10 at most ($1.75 while act3_gold_max is skipped). runtime/budget.json's cap must allow it.
-# Time bound: the caps sum to 6.0 h per client (5.25 h without act3_gold_max), 24 h for all 24 runs if none ends
-# early. The two gold runs always play their whole 45 min (maximise); a goal run may end sooner. The 18 Claude Code
-# runs (up to 18 h) spend account 2's weekly limit.
+# $2.10 at most. runtime/budget.json's cap must allow it.
+# Time bound: the caps sum to 6.0 h per client, 24 h for all 24 runs if none ends early. The two gold runs always
+# play their whole 45 min (maximise); a goal run may end sooner. The 18 Claude Code runs (up to 18 h) spend account
+# 2's weekly limit.
 name = "diverse-2026-10-25"
 allow_gaps = true
 allow_unverified = true

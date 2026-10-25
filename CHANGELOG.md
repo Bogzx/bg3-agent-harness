@@ -6,8 +6,8 @@ version:
 | Package | Version lives in | Now |
 |---|---|---|
 | harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.1.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.7.0 |
-| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.7 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.8.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.8 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
 
 The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
@@ -101,6 +101,10 @@ game unless it says so.
   time cap and scores the fact's gain over it (`graders.measure`; result.json `score`, `passed` null, left out of
   every pass rate). `act1_gold_max` (act1_gold_1000's start save, 45 min) and its Act 3 twin `act3_gold_max` (its
   start save not made yet); act1_gold_1000 keeps its target (user, 2026-10-25).
+  bench-v0.8: every start save's avatar is a half-orc paladin, so the save scenarios' character brief says so (it
+  said half-elf); a save-start run renames the avatar to the scenario's character (the saves still load as
+  "Claude", live B1). `act3_gold_max` has its start save (`Tav-30251267957__SCN-act3_gold_max`): Gale level 6 at
+  camp, the avatar with a level-up to 8 pending, max HP halved by the Explorer -> Balanced switch.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
