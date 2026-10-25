@@ -183,7 +183,9 @@ Classes (`runner/runs.py`):
 - **unknown**: `agent_hang` (claude silent for minutes: a slow turn or a stalled API), `claude_killed` (claude
   ended by a signal from outside the runner).
 
-A game-tool `FAILED:`/`NOT READY`/`REFUSED` result is the game refusing the agent's call, not a failure.
+A game-tool `FAILED:`/`NOT READY`/`REFUSED` result is the game refusing the agent's call, not a failure; so is
+an argument-validation rejection of the agent's call (the MCP server's "Error executing tool X: N validation
+errors for XArguments", claude's `InputValidationError`, pi's "Validation failed for tool").
 **Operator actions**: a second `runner_start` in the run (restarted by hand), a self-restart on changed code, a
 stop, `--take-over`. `clean` = reached, no harness failure, no operator action.
 

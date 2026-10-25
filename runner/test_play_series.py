@@ -508,6 +508,28 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual((tf["n"], tf["detail"][:21]), (2, "S001: create_characte"))
         self.assertTrue(lser.runs.is_clean("reached", fails, []))   # unknown never breaks "clean"
 
+    def test_argument_validation_is_a_rejected_call(self):
+        # bench B4 Haiku x fight_act1_windmill S001: end_combat_report called with {} (FastMCP refused it, exact text)
+        d = self.tmp / "v"
+        d.mkdir()
+        missing = ("  Field required [type=missing, input_value={}, input_type=dict]\n"
+                   "    For further information visit https://errors.pydantic.dev/2.14/v/missing")
+        text = ("Error: Error executing tool end_combat_report: 3 validation errors for end_combat_reportArguments\n"
+                f"what_worked\n{missing}\nwhat_to_change\n{missing}\nnext_goal\n{missing}")
+        s = _stream(d / "S001.jsonl",
+                    _use("1", "mcp__bg3__end_combat_report", {}), _res("1", text, True),
+                    _use("2", "mcp__bg3__end_combat_report", {}),
+                    _res("2", "Error executing tool end_combat_report: 1 validation error for lookArguments", True),
+                    _use("3", "mcp__bg3__look", {}),
+                    _res("3", "Error executing tool look: ValidationError: 1 validation error for Pos\n"
+                              "Traceback (most recent call last):", True))
+        fails = lser.runs.stream_failures(s)
+        self.assertEqual(sorted((f["kind"], f["class"], f["detail"][:20]) for f in fails),
+                         [("tool_exception", "harness", "S001: end_combat_rep"),
+                          ("tool_exception", "harness", "S001: look: Error ex")])
+        clean = _stream(d / "S002.jsonl", _use("1", "mcp__bg3__end_combat_report", {}), _res("1", text, True))
+        self.assertEqual(lser.runs.stream_failures(clean), [])
+
     def test_stalls_reloads_and_the_outcome(self):
         p = _stream(self.tmp / "S001.progress.jsonl", {"type": "stuck", "t": 50, "idle_min": 12.0, "actions": 40},
                     {"type": "stuck", "t": 200, "idle_min": 15.0, "actions": 60}, {"type": "unstuck", "t": 300})

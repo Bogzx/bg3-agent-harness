@@ -15,6 +15,8 @@ Failure classes (every failure in a run record is one of them):
               killed by a signal from outside the runner; also listed here, never voiding a run: a tool's own
               FAILED, raw clicks/keys, and a background action's TIMEOUT echoed in another call's EVENTS
               (bg_timeout: the call itself returned, so the agent's play wasn't touched)
+Not failures: the game refusing a call (FAILED inside a macro, NOT READY, REFUSED) and an argument-validation
+rejection of the agent's own call (ARG_VALIDATION_RE).
 Operator actions (a manual restart, a stop, a runner self-restart on changed code, --take-over) are listed apart:
 a run with any of them is not clean.
 """
@@ -62,6 +64,10 @@ API_ERROR_RE = re.compile(
 TOOL_EXCEPTION_RE = re.compile(
     r"Error executing tool|Traceback \(most recent call last\)|Internal error|MCP error", re.I
 )
+# the MCP server (FastMCP) refusing the agent's arguments before the tool runs: the agent's malformed call, like
+# claude's own <tool_use_error>InputValidationError and pi's 'Validation failed for tool' (bench B4 Haiku x
+# fight_act1_windmill: end_combat_report called with {})
+ARG_VALIDATION_RE = re.compile(r"Error executing tool (\w+): \d+ validation errors? for \1Arguments\b")
 TIMEOUT_RE = re.compile(r"\bTIMEOUT\b|timed out", re.I)
 GUARD_BLOCK = "Blocked by the sandbox/fairness rule"
 GAME_OVER_RE = re.compile(r"\bgame[_ ]over\b", re.I)
@@ -201,6 +207,8 @@ def stream_failures(stream: Path) -> list[dict]:
         if wipe is None and GAME_OVER_RE.search(text):
             wipe = c
         for step, msg in c["fails"]:
+            if ARG_VALIDATION_RE.search(msg):
+                continue  # a rejected call: the server said no to the agent's arguments
             if TOOL_EXCEPTION_RE.search(msg):
                 kind = "tool_timeout" if TIMEOUT_RE.search(msg) else "tool_exception"
             elif TIMEOUT_RE.search(msg.split(":", 1)[0]) or msg.startswith("TIMEOUT"):
