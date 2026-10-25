@@ -852,6 +852,37 @@ test("interact: an item in the actor's own bag is used in place", function()
     eq(#called("Use"), 1, "Use"); eq(#called("CharacterMoveToPosition"), 0, "moves")
 end)
 
+local function carried_use()
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    osiv[key("CanSee", P1, GEM)] = nil
+    world[GEM].pos = { 0, 0, 0 }
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { {} } } } -- the Use, queued
+    return job(op("interact", { char = P1, target = GEM }))
+end
+
+test("interact: a carried item's Use the game never takes from the queue fails at 8 s, not a 38 s TIMEOUT (B3 16:56:45)", function()
+    local j = carried_use()
+    tick(130) -- 7.8 s
+    eq(j.status, "running", "before 8 s")
+    tick(5) -- 8.1 s
+    eq(j.status, "failed", "status " .. tostring(j.error))
+    assert(j.error:find("the game never started it (8 s, the Use still queued", 1, true), j.error)
+    eq(j.result.purged_tasks, 1, "the queued Use purged")
+end)
+
+test("interact: a carried item's Use the game ran (UseFinished) is done, and one being run (queue empty) waits", function()
+    local j = carried_use()
+    tick(5)
+    A.dispatch("UseFinished", { P1, GEM, 1 })
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.used, true, "used")
+    reset()
+    j = carried_use()
+    world[P1].comps.ServerCharacter.OsirisController.Tasks = {}
+    tick(140) -- 8.4 s
+    eq(j.status, "running", "taken from the queue: not 'never started'")
+end)
+
 test("job.notify (ACT-10): a waited job that outlived the wait announces its end as job_finished", function()
     local r = op("interact", { char = P1, target = DOOR })
     local j = job(r)
