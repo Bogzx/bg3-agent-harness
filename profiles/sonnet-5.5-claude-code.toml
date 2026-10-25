@@ -1,0 +1,6 @@
+# Claude Sonnet 5.5 through Claude Code: a labelled condition, not the ranked track (D6). The endpoint is the CLI's own.
+client = "claude"
+model = "claude-sonnet-5-5"
+effort = "medium"
+fallback_model = "claude-haiku-5-5"
+status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)

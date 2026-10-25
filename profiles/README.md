@@ -11,6 +11,8 @@ to write your own.
 | `deepseek-v4.1-flash-pi.toml` | pi | offline | OpenRouter's billed `usage.cost` |
 | `opus-5.5-pi.toml` | pi | offline | OpenRouter's billed `usage.cost` |
 | `opus-5.5-claude-code.toml` | claude | verified | none: a subscription; `total_cost_usd` is recorded, never charged |
+| `sonnet-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |
+| `haiku-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |
 | `codex.toml` | codex | offline | none: a subscription; an estimate from `clients.CODEX_PRICES`, unknown for a model not in it |
 | `gemini-cli.toml` | gemini | unsupported | none: a subscription; an estimate from `clients.GEMINI_PRICES` |
 
