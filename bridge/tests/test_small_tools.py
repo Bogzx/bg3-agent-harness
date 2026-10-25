@@ -80,6 +80,13 @@ class MemoryTools(Base):
             out = combat.end_combat_report("a", "b", "c")
         self.assertTrue(out.startswith("Logged to (no session log)."), out)
 
+    def test_end_combat_report_in_a_run_without_memory(self):
+        # bench B3 fight_act1_windmill: BG3AI_SESSION set, the run's memory dir never created -> tool_exception
+        with mock.patch.dict(os.environ, {"BG3AI_SESSION": "S001"}):
+            out = combat.end_combat_report("a", "b", "c")
+        self.assertTrue(out.startswith("Logged to (no session log)."), out)
+        self.assertFalse((core.MEMORY / "sessions").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
