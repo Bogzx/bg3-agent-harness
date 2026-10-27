@@ -262,7 +262,7 @@ def stream_records(ev: dict, t: float) -> list[dict]:
     elif typ == "result":  # the run's end: exact API time and output tokens for the whole session
         u = ev.get("usage") or {}
         out.append({"type": "session_result", "t": round(t, 3), "api_ms": ev.get("duration_api_ms"),
-                    "out": u.get("output_tokens"), "turns": ev.get("num_turns")})
+                    "out": u.get("output_tokens"), "turns": ev.get("num_turns"), "wall_ms": ev.get("duration_ms")})
     return out
 
 
@@ -282,19 +282,51 @@ def _content_tokens(content: Any) -> int:
     return round(n / 3.5)
 
 
-def api_speed(turns: list[dict]) -> dict:
+def own_api_ms(res: dict, turns: list[dict], parent_api_ms: float | None) -> float | None:
+    """This process's API time (as bg3harness model_time.own_api_ms): a resumed claude session's duration_api_ms
+    includes the session it resumed while its output_tokens and num_turns don't (Opus act1_gold_max S001-c4:
+    1004 s cumulative over 5 turns, 200.8 s/turn). More API time than wall time (duration_ms, else the turns'
+    span) means the parent's is in it: take it off; None when that doesn't fit either."""
+    api = res["api_ms"]
+    ts = [r["t"] for r in turns if "t" in r]
+    wall = res.get("wall_ms") or (1000.0 * (max(ts) - min(ts)) if ts else None)
+    if not wall or api <= wall:
+        return api
+    if parent_api_ms and 0 < api - parent_api_ms <= wall:
+        return api - parent_api_ms
+    return None
+
+
+RESUME_TURNS_RE = re.compile(r"^(S\d{3,})-([rc])(\d+)\.turns\.jsonl$")
+
+
+def parent_api_ms(turns_path: Path) -> float | None:
+    """duration_api_ms of the session a resume continues (S001-c2 -> S001-c1, S001-c1 -> S001, as bg3harness
+    model_time.resume_parent), from its turns file; None: not a resume, or no result recorded there."""
+    m = RESUME_TURNS_RE.match(turns_path.name)
+    if not m:
+        return None
+    n = int(m[3])
+    parent = turns_path.with_name(f"{m[1]}-{m[2]}{n - 1}.turns.jsonl" if n > 1 else f"{m[1]}.turns.jsonl")
+    res = [r for r in read_jsonl(parent) if r.get("type") == "session_result" and r.get("api_ms")]
+    return res[-1]["api_ms"] if res else None
+
+
+def api_speed(turns: list[dict], parent_api_ms: float | None = None) -> dict:
     """API speed next to think time, so an API slowdown shows up as such (impl-act: think rose 1.2 -> 2.9 s
     while tokens per turn stayed flat and ms per output token went 13 -> 22). Per model turn: API seconds =
     the previous tool result to the turn's last streamed block; output tokens = the content estimate plus the
     thinking estimate. The session's final `result` event (exact duration_api_ms / output_tokens / num_turns)
-    replaces the estimate when present. The estimate reads ~1.4x high on ms/token (thinking is redacted in the
-    stream; S003 21 vs 12.7 exact, S013 31 vs 21.9) but follows the same trend."""
+    replaces the estimate when present (a resume's: its own API time, own_api_ms). The estimate reads ~1.4x high
+    on ms/token (thinking is redacted in the stream; S003 21 vs 12.7 exact, S013 31 vs 21.9) but follows the same
+    trend."""
     exact = [r for r in turns if r.get("type") == "session_result" and r.get("api_ms") and r.get("out")]
-    if exact:
+    api = own_api_ms(exact[-1], turns, parent_api_ms) if exact else None
+    if api:
         r = exact[-1]
         n = r.get("turns") or 0
-        return {"source": "result", "ms_per_out_tok": round(r["api_ms"] / r["out"], 1),
-                "api_s_per_turn": round(r["api_ms"] / 1000.0 / n, 2) if n else None,
+        return {"source": "result", "ms_per_out_tok": round(api / r["out"], 1),
+                "api_s_per_turn": round(api / 1000.0 / n, 2) if n else None,
                 "out_tok_per_turn": round(r["out"] / n) if n else None, "turns": n}
     per: list[dict] = []
     last_result, cur, think = None, None, 0
@@ -653,7 +685,7 @@ def _target(value, limit, lower_is_better=True):
 
 
 def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
-              start: float | None = None, end: float | None = None) -> dict:
+              start: float | None = None, end: float | None = None, parent_api_ms: float | None = None) -> dict:
     """Per-session latency summary from bridge tool records, activity samples and stream timing."""
     tool_recs = [r for r in tools if r.get("type", "tool") == "tool" and "t0" in r]
     times = [r["t0"] for r in tool_recs] + [r["t1"] for r in tool_recs] + [s["t"] for s in samples if "t" in s] \
@@ -711,7 +743,7 @@ def summarize(tools: list[dict], samples: list[dict], turns: list[dict],
                       "wrapup": sum(1 for g in wrap_gl if g["s"] > LONG_GAP_S),
                       "worst": sorted(long_, key=lambda g: -g["s"])[:5]},
         "think_s": stats(tt),
-        "api": api_speed(turns),
+        "api": api_speed(turns, parent_api_ms),
         "turns": len(tt),
         "tool_rt_ms": {"all": stats(rt, 1), "read": stats((r["ms"] for r in reads), 1),
                        "read_by_tool": read_by_tool(reads), "wait_for": stats((r["ms"] for r in waits), 1),
@@ -755,16 +787,17 @@ def summarize_files(metrics_path: Path | None, turns_path: Path | None,
     tools = [r for r in recs if r.get("type") == "tool"]
     samples = [r for r in recs if r.get("type") == "sample"]
     turns = read_jsonl(turns_path)
+    parent_api = parent_api_ms(Path(turns_path)) if turns_path else None
     if turns_path:  # older sessions: no "wrapup" record yet, find the clock line in the raw stream next to it
         stream = Path(str(turns_path).removesuffix(".turns.jsonl") + ".jsonl")
         if stream != Path(turns_path):
             turns += wrapup_from_stream(stream, turns)
             if result_token_stats(turns)["total"] is None:  # older turns files: no tok on result records
-                summary = summarize(tools, samples, turns, start, end)
+                summary = summarize(tools, samples, turns, start, end, parent_api)
                 summary["result_tokens"] = dict(result_token_stats(result_tokens_from_stream(stream)),
                                                 source="stream")
                 return summary
-    return summarize(tools, samples, turns, start, end)
+    return summarize(tools, samples, turns, start, end, parent_api)
 
 
 def write_summary(summary: dict, out_path: Path, history_path: Path | None, session: str) -> None:

@@ -507,6 +507,33 @@ class ApiSpeed(unittest.TestCase):
         s = M.summarize([], [], turns)
         self.assertEqual(s["api"]["ms_per_out_tok"], 15.0)
 
+    def test_resume_chain_counts_its_own_api_time(self):
+        # Opus act1_gold_max (diverse-2026-10-25): every --resume reports duration_api_ms summed over the chain,
+        # output_tokens and num_turns per process; S001-c4 read 200.8 s/turn.
+        chain = [("S001", 722255, 44404, 227, 2400000), ("S001-c1", 930684, 13144, 81, 400000),
+                 ("S001-c2", 965245, 2084, 13, 60000), ("S001-c3", 988604, 1289, 9, 40000),
+                 ("S001-c4", 1004097, 902, 5, 30000)]
+        with tempfile.TemporaryDirectory() as d:
+            for name, api, out, n, wall in chain:
+                recs = [{"type": "assistant", "t": T0}, {"type": "session_result", "t": T0 + wall / 1000, "api_ms": api,
+                         "out": out, "turns": n, "wall_ms": wall}]
+                (Path(d) / f"{name}.turns.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+
+            def api(name: str) -> dict:
+                return M.summarize_files(None, Path(d) / f"{name}.turns.jsonl")["api"]
+
+            self.assertEqual(api("S001")["api_s_per_turn"], 3.18)  # no resume: as reported
+            self.assertEqual(api("S001-c1")["api_s_per_turn"], 2.57)  # (930.7 - 722.3) s / 81
+            a = api("S001-c4")
+            self.assertEqual((a["source"], a["api_s_per_turn"], a["ms_per_out_tok"]), ("result", 3.1, 17.2))
+            # the parent's result not recorded: not the cumulative figure, the stream estimate (none here)
+            (Path(d) / "S001-c3.turns.jsonl").write_text("")
+            self.assertEqual(api("S001-c4")["source"], "none")
+        # an older record without wall_ms: the turns' span stands in for it
+        turns = [{"type": "assistant", "t": T0}, {"type": "session_result", "t": T0 + 30, "api_ms": 1004097,
+                                                  "out": 902, "turns": 5}]
+        self.assertEqual(M.api_speed(turns, 988604)["api_s_per_turn"], 3.1)
+
     def test_wrapup_phase_is_not_play(self):
         # Play until the first WRAP UP NOW clock line at 30 s, then save + notes with long gaps.
         clock = "ok\n⏱ 21:40 · 3m left: WRAP UP NOW. Reach a safe spot, save_game, then follow ..."
