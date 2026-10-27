@@ -45,8 +45,13 @@ def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
     """{gold_by_method, spent, lost, crimes, kills, traders_killed, pickpockets, pickpockets_failed, changes}."""
     timeline = list(timeline)
     events = [r for r in timeline if r.get("kind") == "event"]
-    party = {p["name"] for r in timeline if r.get("kind") == "snapshot" for p in r.get("party") or []}
-    party |= {r["name"] for r in events if r["ev"] in ("joined", "died", "downed", "revived") and r.get("party", True)}
+    # the real party, never a summon: its name (an Imp) is also its kind's, so a kill of a same-named enemy must count
+    # (a summon's downed/revived events carry no summon flag: a snapshot or its died event names it one)
+    members = [p for r in timeline if r.get("kind") == "snapshot" for p in r.get("party") or []]
+    party_evs = [r for r in events if r["ev"] in ("joined", "died", "downed", "revived") and r.get("party", True)]
+    summons = {p["name"] for p in members if p.get("summon")} | {r["name"] for r in party_evs if r.get("summon")}
+    party = {p["name"] for p in members} | {r["name"] for r in party_evs}
+    party -= summons
     kills = [r for r in events if r["ev"] == "kill" and party_kill(r, party)]
     trades: list[tuple[float, float | None]] = []
     for r in events:
