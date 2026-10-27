@@ -212,12 +212,12 @@ end)
 ------------------------------------------------------------------------
 
 listen("DialogStarted", 2, function(_, instance)
-    local speakers = {}
+    local speakers, npcs = {}, {}
     local n = osi(Osi.DialogGetNumberOfInvolvedNPCs, instance) or 0
     for i = 1, n do
         local npc = osi(Osi.DialogGetInvolvedNPC, instance, i)
         local u = npc and V.uuid(npc)
-        if u then speakers[#speakers + 1] = ref(u) end
+        if u then speakers[#speakers + 1], npcs[#npcs + 1] = ref(u), u end
     end
     local np = osi(Osi.DialogGetNumberOfInvolvedPlayers, instance) or 0
     local party, at = {}, nil
@@ -233,8 +233,8 @@ listen("DialogStarted", 2, function(_, instance)
         end
     end
     if #party == 0 then return end -- not our dialogue (ambient NPC chatter)
-    E.dialogs = E.dialogs or {}
-    E.dialogs[instance] = true
+    E.dialogs = E.dialogs or {} -- instance -> its NPC speakers' uuids (Referee.lua: a dialogue that offers Trade)
+    E.dialogs[instance] = npcs
     -- Party banter / barks (automated dialogs) play while you walk: flagged so queues don't stop on them.
     local auto = osi(Osi.DialogIsAutomated, instance)
     -- at/level: where the party member stood when the talk began (the bridge's off-limits areas, vis V26).

@@ -29,7 +29,7 @@ BG3AI = {
         cachedByName = function(w, n) if w == "Minimap" and n == "LocationHolder" then return region end end,
         allText = function(e) return e.text end,
         prop = function(obj, k) return obj and obj[k] end,
-        props = function() return {} end,
+        props = function(o) return type(o) == "table" and o.props or {} end, -- a VM's props (the trade test)
         clean = function(v) return v end,
         get = function() return nil end,
         findAll = function() return {} end,
@@ -98,6 +98,31 @@ test("modal priority: a reaction prompt over the dialogue is the reaction", func
     eq(st.page, "ReactionDecisionPopup", "page")
     eq(st.reaction.prompt, "Shield?", "the reaction's content")
     eq(st.blocking, true, "blocking")
+end)
+
+test("a dialogue that offers Trade says so and tells the server (Ext.Net TradeOffered, live N5: Mohan)", function()
+    local sent, realUI = {}, {}
+    Ext.Net = { CreateChannel = function(module, channel)
+        return { SendToServer = function(_, msg) sent[#sent + 1] = { module .. "/" .. channel, msg } end }
+    end }
+    Ext.Utils.PrintWarning = function() end
+    for _, k in ipairs({ "path", "byName", "anyDC" }) do realUI[k] = BG3AI.UI[k] end
+    local ad = { props = { SpeakerName = "Mohan", BodyText = "Wares!", CanTrade = true } }
+    BG3AI.UI.path = function() return ad end
+    BG3AI.UI.anyDC = function() return {} end
+    BG3AI.UI.byName = function() return nil end
+    local ok, err = pcall(function()
+        pages.Dialogue = page()
+        eq(S.dialogue({ Dialogue = { el = { DataContext = {} } } }).can_trade, true, "can_trade")
+        eq(#sent, 1, "one message")
+        eq(sent[1][1], "65734c81-edd1-4b6f-b10e-663fec0e768e/TradeOffered", "the mod's channel")
+        ad.props.CanTrade = false
+        eq(S.dialogue({ Dialogue = { el = { DataContext = {} } } }).can_trade, nil, "no Trade: no can_trade")
+        eq(#sent, 1, "no Trade: no message")
+    end)
+    for k, v in pairs(realUI) do BG3AI.UI[k] = v end
+    Ext.Net = nil
+    if not ok then error(err, 0) end
 end)
 
 test("a hidden page doesn't count", function()

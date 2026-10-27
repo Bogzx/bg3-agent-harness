@@ -91,7 +91,7 @@ Osi = {
 local handlers = {}    -- RPC name -> handler
 local pushed = {}      -- RPC.push events
 BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end,
-        push = function(kind, data) pushed[#pushed + 1] = { kind = kind, data = data } end },
+        push = function(kind, data) pushed[#pushed + 1] = { kind = kind, data = data } end, QUIET_OPS = {} },
     Nav = { objectiveTargets = function() return objectives end } }
 dofile(LUA .. "/Shared/Util.lua")
 Ext.Require = function(p) return dofile(LUA .. "/" .. p) end -- the modules load their parts
@@ -103,6 +103,7 @@ Ext.Events.Tick.Subscribe = function(_, fn) poll = fn end
 dofile(LUA .. "/Server/Events.lua")
 Ext.Events.Tick.Subscribe = function() end
 local E = BG3AI.Events
+dofile(LUA .. "/Server/Referee.lua") -- nearby can_trade asks its R.isTrader
 
 local function ctx()
     return { party = { CLAUDE }, is_party = { [CLAUDE] = true },
@@ -368,7 +369,7 @@ test("S065: get_nearby lists a discovered standalone trap (kinds=trap or none), 
     if not ok then error(err, 0) end
 end)
 
-test("get_nearby marks can_trade on a merchant (the Trader tag) that isn't hostile, not on every CanTrade", function()
+test("get_nearby can_trade: a non-hostile trader (Trader tag or Trade offered), not every CanTrade", function()
     local realChars, gobPos = V.characters, ents[GOB].pos
     ents[GOB].pos = { -1419.0, 8.4, -2590.0 } -- a windmill goblin 11 m off
     V.characters = function() return { { V.entity(WITHERS), ents[WITHERS].pos }, { V.entity(GOB), ents[GOB].pos } } end
@@ -383,9 +384,15 @@ test("get_nearby marks can_trade on a merchant (the Trader tag) that isn't hosti
             return table.concat(out, ",")
         end
         eq(flags(), "009=nil,352=true", "the merchant only")
+        -- a dialogue with the goblin offered Trade (Client/UIState.lua's TradeOffered message): a trader from then on
+        E.dialogs = { [3] = { GOB } }
+        BG3AI.Referee.tradeOffered()
+        E.dialogs = {}
+        eq(flags(), "009=true,352=true", "Trade offered in a dialogue")
         enemies[WITHERS] = true
-        eq(flags(), "009=nil,352=nil", "a hostile merchant: no")
+        eq(flags(), "009=true,352=nil", "a hostile merchant: no")
     end)
+    BG3AI.Referee.traders = {}
     V.characters, ents[WITHERS].Trader, ents[GOB].pos = realChars, nil, gobPos
     if not ok then error(err, 0) end
 end)

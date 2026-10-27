@@ -447,6 +447,15 @@ function S.continueVM(ad)
     return ad and props(ad).ContinueAnswer or nil
 end
 
+-- The dialogue offers Trade (its Trade button, the game's own signal): the server's referee then counts the dialogue's
+-- NPC speakers as traders, a merchant the Trader tag misses included (Mohan, live N3/N5: no static read marks him).
+-- Ext.Net crosses the two contexts in one process (bg3le reference/IMPLEMENTATION-NOTES.md). Module = meta.lsx UUID.
+S.TRADE_NET = { "65734c81-edd1-4b6f-b10e-663fec0e768e", "TradeOffered" }
+function S.tradeOffered()
+    local ok, err = pcall(function() Ext.Net.CreateChannel(S.TRADE_NET[1], S.TRADE_NET[2]):SendToServer({}) end)
+    if not ok then Ext.Utils.PrintWarning("[BG3AI] trade offered: " .. tostring(err)) end
+end
+
 function S.dialogue(wmap)
     local w = wmap.Dialogue
     local dc = (w and try(function() return w.el.DataContext end)) or UI.anyDC()
@@ -489,7 +498,10 @@ function S.dialogue(wmap)
             d.continue = true
         end
     end
-    if p.CanTrade then d.can_trade = true end
+    if p.CanTrade then
+        d.can_trade = true
+        S.tradeOffered()
+    end
     return d
 end
 
