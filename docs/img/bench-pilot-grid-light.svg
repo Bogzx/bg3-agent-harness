@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="602" viewBox="0 0 960 602" font-family='system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif' role="img" aria-label="Benchmark pilot results, 2026-10-25">
+<title>Benchmark pilot results, 2026-10-25</title>
+<rect x="0.5" y="0.5" width="959" height="601" rx="10" fill="#fcfcfb" stroke="#e1e0d9"/>
+<text x="24.0" y="36.0" font-size="19" font-weight="650" fill="#0b0b0b" text-anchor="start">Benchmark pilot, 2026-10-25: 4 models x 6 scenarios</text>
+<text x="24.0" y="58.0" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">Pass or fail on a goal read from game state, with minutes of play to the pass. The two gold</text>
+<text x="24.0" y="76.0" font-size="13" font-weight="400" fill="#52514e" text-anchor="start">scenarios have no pass: the score is the party's gold gain in 45 minutes.</text>
+<rect x="24" y="88.0" width="912" height="26" rx="6" fill="#fdf0d5"/>
+<text x="36.0" y="105.5" font-size="12.5" font-weight="600" fill="#6b4a00" text-anchor="start">PILOT: one run each, not a ranking. Rules condition with known gaps; the harness changed during the matrix.</text>
+<text x="236.0" y="130.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Crash site to Grove</text>
+<text x="236.0" y="146.0" font-size="11" font-weight="400" fill="#6b6a65" text-anchor="middle">Act 1 · 60 min</text>
+<text x="364.0" y="130.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Most gold, Act 1</text>
+<text x="364.0" y="146.0" font-size="11" font-weight="400" fill="#6b6a65" text-anchor="middle">Act 1 · 45 min</text>
+<text x="492.0" y="130.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Most gold, Act 3</text>
+<text x="492.0" y="146.0" font-size="11" font-weight="400" fill="#6b6a65" text-anchor="middle">Act 3 · 45 min</text>
+<text x="620.0" y="130.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Party to level 3</text>
+<text x="620.0" y="146.0" font-size="11" font-weight="400" fill="#6b6a65" text-anchor="middle">Act 1 · 60 min</text>
+<text x="748.0" y="130.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Windmill fight</text>
+<text x="748.0" y="146.0" font-size="11" font-weight="400" fill="#6b6a65" text-anchor="middle">Act 1 · 60 min</text>
+<text x="876.0" y="130.0" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">Balthazar fight</text>
+<text x="876.0" y="146.0" font-size="11" font-weight="400" fill="#6b6a65" text-anchor="middle">Act 2 · 90 min</text>
+<text x="24.0" y="187.0" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="start">Opus 5.5</text>
+<text x="24.0" y="205.0" font-size="12" font-weight="400" fill="#6b6a65" text-anchor="start">Claude Code</text>
+<rect x="174" y="160" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="236.0" y="188.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="236.0" y="207.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">15.9 min</text>
+<rect x="302" y="160" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="364.0" y="188.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+808 gold</text>
+<text x="364.0" y="207.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">wiped at 41.7 min (4)</text>
+<rect x="430" y="160" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="492.0" y="188.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+12,626 gold</text>
+<text x="492.0" y="207.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">45 min (3)</text>
+<rect x="558" y="160" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="620.0" y="188.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="620.0" y="207.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">51.5 min</text>
+<rect x="686" y="160" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="748.0" y="188.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="748.0" y="207.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">5.9 min</text>
+<rect x="814" y="160" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="876.0" y="188.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="876.0" y="207.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 8.7 min</text>
+<text x="24.0" y="253.0" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="start">Sonnet 5.5</text>
+<text x="24.0" y="271.0" font-size="12" font-weight="400" fill="#6b6a65" text-anchor="start">Claude Code</text>
+<rect x="174" y="226" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="236.0" y="254.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="236.0" y="273.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">18.9 min</text>
+<rect x="302" y="226" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="364.0" y="254.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+706 gold</text>
+<text x="364.0" y="273.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">cut at 20.9 min (2)</text>
+<rect x="430" y="226" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="492.0" y="254.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+3,246 gold</text>
+<text x="492.0" y="273.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">wiped at 9.5 min</text>
+<rect x="558" y="226" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="620.0" y="254.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="620.0" y="273.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 8.4 min</text>
+<rect x="686" y="226" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="748.0" y="254.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="748.0" y="273.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">4.3 min</text>
+<rect x="814" y="226" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="876.0" y="254.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="876.0" y="273.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 4.3 min</text>
+<text x="24.0" y="319.0" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="start">Haiku 5.5</text>
+<text x="24.0" y="337.0" font-size="12" font-weight="400" fill="#6b6a65" text-anchor="start">Claude Code</text>
+<rect x="174" y="292" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="236.0" y="320.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="236.0" y="339.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">21.0 min</text>
+<rect x="302" y="292" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="364.0" y="320.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+1,202 gold</text>
+<text x="364.0" y="339.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">cut at 17.6 min (2)</text>
+<rect x="430" y="292" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="492.0" y="320.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+9,156 gold</text>
+<text x="492.0" y="339.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">cut at 18.5 min (2)</text>
+<rect x="558" y="292" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="620.0" y="320.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="620.0" y="339.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 12.9 min</text>
+<rect x="686" y="292" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="748.0" y="320.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="748.0" y="339.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">5.5 min (1)</text>
+<rect x="814" y="292" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="876.0" y="320.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="876.0" y="339.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 6.0 min</text>
+<text x="24.0" y="385.0" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="start">DeepSeek V4.1 Flash</text>
+<text x="24.0" y="403.0" font-size="12" font-weight="400" fill="#6b6a65" text-anchor="start">pi</text>
+<rect x="174" y="358" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="236.0" y="386.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="236.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">cost cap at 41.3 min</text>
+<rect x="302" y="358" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="364.0" y="386.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">-133 gold</text>
+<text x="364.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">arrested, gold taken</text>
+<rect x="430" y="358" width="124" height="62" rx="6" fill="#f0efec"/>
+<text x="492.0" y="386.0" font-size="15" font-weight="650" fill="#0b0b0b" text-anchor="middle">+3,167 gold</text>
+<text x="492.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">wiped at 16.6 min</text>
+<rect x="558" y="358" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="620.0" y="386.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="620.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 35.2 min</text>
+<rect x="686" y="358" width="124" height="62" rx="6" fill="#e4f3e4"/>
+<text x="748.0" y="386.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#0a8a0a">✓</tspan><tspan fill="#0b0b0b"> pass</tspan></text>
+<text x="748.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">13.8 min</text>
+<rect x="814" y="358" width="124" height="62" rx="6" fill="#f8e3e3"/>
+<text x="876.0" y="386.0" font-size="15" font-weight="650" text-anchor="middle"><tspan fill="#d03b3b">✗</tspan><tspan fill="#0b0b0b"> fail</tspan></text>
+<text x="876.0" y="405.0" font-size="11.5" font-weight="400" fill="#52514e" text-anchor="middle">party wiped, 7.2 min</text>
+<text x="24.0" y="448.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">(1) A rerun with the goal fixed to name the windmill goblins. The first run was graded a pass at 1.0 min for</text>
+<text x="24.0" y="466.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">     killing a sleeping bugbear, because the goal then passed any won fight.</text>
+<text x="24.0" y="484.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">(2) Stopped early by a limit of 6 resumes after the agent ended its turn (since removed for gold runs).</text>
+<text x="24.0" y="502.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">(3) Recorded invalid over one move timeout counted as a harness failure; valid on a read-only re-grade.</text>
+<text x="24.0" y="520.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">(4) The agent reloaded after the wipe and ended at +853; a wipe now ends the run, so the score is the gold at</text>
+<text x="24.0" y="538.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">     the wipe.</text>
+<text x="24.0" y="556.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">Times are minutes of play. Claude Code ran on a subscription; at list price the counted runs would have cost</text>
+<text x="24.0" y="574.0" font-size="12" font-weight="400" fill="#52514e" text-anchor="start">$48.35 (Opus), $6.70 (Sonnet) and $2.57 (Haiku). DeepSeek's six runs billed $0.98 in all.</text>
+</svg>
