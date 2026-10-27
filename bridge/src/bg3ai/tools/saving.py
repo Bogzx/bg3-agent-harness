@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 from .. import delta, metrics, saver, saves
@@ -74,9 +75,19 @@ def _my_saves() -> list[Path]:
     Steam restores an earlier run's moved-aside saves at each launch with a new mtime (bench B3)."""
     if not core.SAVE_DIR.is_dir():
         return []
-    return sorted((d for d in core.SAVE_DIR.iterdir() if d.is_dir() and d.name not in SAVES_EXCLUDE and (
-                   d.name == START_SAVE or (_is_mine(d.name) and _saved_since(d)))),
-                  key=lambda d: d.stat().st_mtime, reverse=True)
+    return _newest_first(d for d in core.SAVE_DIR.iterdir() if d.is_dir() and d.name not in SAVES_EXCLUDE and (
+                         d.name == START_SAVE or (_is_mine(d.name) and _saved_since(d))))
+
+
+def _newest_first(dirs: Iterable[Path]) -> list[Path]:
+    """Save folders newest first by the time each save holds (saves.saved_at), never by folder mtime: Steam's local
+    cloud restores old saves at each launch with mtime = the launch, and load_game("latest") took such a copy over
+    the run's own newest save. A save whose meta can't be read sorts after every save with a known time (by mtime
+    among themselves)."""
+    timed = [(saves.saved_at(d), d) for d in dirs]
+    timed.sort(key=lambda td: (td[0] is not None, td[0] if td[0] is not None else td[1].stat().st_mtime),
+               reverse=True)
+    return [d for _, d in timed]
 
 
 def _saved_since(d: Path) -> bool:
@@ -210,12 +221,17 @@ def list_saves(limit: int = 10) -> str:
     if SAVE_PREFIX:
         dirs = _my_saves()
     elif not PLAYTHROUGH and core.SAVE_DIR.is_dir():  # a hand-run server: every save
-        dirs = sorted((d for d in core.SAVE_DIR.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)
+        dirs = _newest_first(d for d in core.SAVE_DIR.iterdir() if d.is_dir())
     else:
         dirs = []
     latest = next((d.name for d in dirs if _latest_ok(d.name)), None) if SAVE_PREFIX else None
-    body = "\n".join(f"{time.strftime('%m-%d %H:%M', time.localtime(d.stat().st_mtime))}  {d.name.split('__', 1)[-1]}  "
-                     f"[{d.name}]{'  <- latest' if d.name == latest else ''}" for d in dirs[:limit])
+
+    def when(d: Path) -> str:
+        t = saves.saved_at(d)
+        return time.strftime("%m-%d %H:%M", time.localtime(t)) if t is not None else "time unknown"
+
+    body = "\n".join(f"{when(d)}  {d.name.split('__', 1)[-1]}  [{d.name}]{'  <- latest' if d.name == latest else ''}"
+                     for d in dirs[:limit])
     if not body and PLAYTHROUGH and not SAVE_PREFIX:
         body = "No saves (this playthrough's character isn't known yet: create it, or save once the runner knows it)."
     return reporting._finish("list_saves", {}, body or "No saves.", t0, events=False)

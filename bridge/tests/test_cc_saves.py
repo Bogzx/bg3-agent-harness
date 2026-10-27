@@ -435,6 +435,24 @@ class Saves(Base):
             self.assertIn("no Sxxx- save", saving.load_game("latest"))
         self.assertEqual(self.loaded, [])
 
+    def test_latest_is_the_newest_save_time_not_the_newest_folder_mtime(self):
+        # app audit 2026-10-27: Steam's local cloud restores an old save at each launch with mtime = the launch; with
+        # no SAVES_AFTER (a playthrough) load_game("latest") took that copy over the newest save by folder mtime
+        self.save("Claude-1__S004-end", 60, saved_age=10)     # restored at this launch: newest mtime, oldest save
+        self.save("Claude-2__S005-end", 30)                   # the playthrough's newest save
+        make_save(self.dir, "Claude-3__S006-broken", self.t + 90)  # no readable meta: after every timed save
+        saving.load_game("latest")
+        self.assertEqual(self.loaded, ["Claude-2__S005-end"])
+        listed = saving.list_saves().splitlines()
+        self.assertEqual([ln.split("[", 1)[1].split("]", 1)[0] for ln in listed if "[" in ln],
+                         ["Claude-2__S005-end", "Claude-1__S004-end", "Claude-3__S006-broken"])
+        shown = time.strftime("%m-%d %H:%M", time.localtime(self.t + 10))  # the save's own time, not the mtime
+        self.assertTrue(listed[1].startswith(f"{shown}  S004-end"), listed[1])
+        self.assertTrue(listed[2].startswith("time unknown  S006-broken"), listed[2])
+        with mock.patch.object(saving, "PLAYTHROUGH", ""), mock.patch.object(saving, "SAVE_PREFIX", ""):
+            hand = [ln.split("[", 1)[1].split("]", 1)[0] for ln in saving.list_saves().splitlines() if "[" in ln]
+        self.assertEqual(hand[:2], ["Claude-2__S005-end", "Claude-1__S004-end"])  # a hand-run server: same order
+
     def test_a_scenario_run_lists_only_its_start_save_and_its_own_saves(self):
         # B3 job 10: c1's list_saves showed "S001-all-level3 [Tav-502512612935__S001-all-level3] <- latest", another
         # run's save that Steam restored at the launch, beside the run's own AutoSave_179
