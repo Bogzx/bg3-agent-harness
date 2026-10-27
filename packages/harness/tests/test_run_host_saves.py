@@ -14,6 +14,7 @@ import contextlib
 import json
 import os
 import struct
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +126,34 @@ def test_the_agents_load_game_of_its_own_save_is_the_runs(rig: Rig):
     rec = rig.h.record(JOB, SAVE_SC, run_dir("b"), outcome())
     assert rec["outcome"] == "timeout" and "foreign_save" not in rec
     assert rec["reloads"] == 2  # bg3bench result.json's reloads (the record had none: always 0)
+
+
+def test_record_waits_for_the_poll_in_flight_and_counts_its_load_once(rig: Rig):
+    # the watch thread is deciding a new boot (its load_game lookup in flight) when the run ends: record's final
+    # check must not decide the same load again (reloads 2, two load marks)
+    rig.h.start(JOB, SAVE_SC, run_dir("b"))
+    r = rig.runners[-1]
+    in_poll, release, final_looked = threading.Event(), threading.Event(), threading.Event()
+
+    def loads(since: float) -> list[str]:
+        if threading.current_thread() is sw.thread:
+            in_poll.set()
+            release.wait()
+        else:
+            final_looked.set()
+        return ["S001-before-gate"]
+
+    sw = H.SaveWatch(r, lambda label: True, loads=loads, clock=lambda: rig.now[0], poll_s=0)
+    rig.h.saves[run_dir("b")] = sw
+    sw.start()  # the start's boot
+    r.boot = "boot-own"  # the agent's load_game
+    assert in_poll.wait(10)
+    ender = threading.Thread(target=rig.h.record, args=(JOB, SAVE_SC, run_dir("b"), outcome()))
+    ender.start()
+    assert not final_looked.wait(0.2)  # record waits for the poll instead of deciding the load itself
+    release.set()
+    ender.join()
+    assert sw.reloads == 1 and r.marks == [("load", "S001-before-gate")]
 
 
 def test_the_agents_load_game_of_a_save_from_before_the_run_is_foreign(rig: Rig):
