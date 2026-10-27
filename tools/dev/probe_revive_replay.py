@@ -192,7 +192,16 @@ def main(argv: list[str] | None = None) -> int:
         force_two_click_revive(twostep, twostep._rpc)
     if t_from is not None and not a.no_setup:
         x, y, z = SETUP_SPOT
-        record({"setup": call("travel_to", x=x, y=y, z=z, who="e2"), "wait": call("wait_for", target="queue")})
+        # N4's first C1: travel_to(who="e2") as the process's first call was "unknown target 'e2'": the eN ids
+        # exist once a read has named the party
+        status = call("get_status")
+        record(
+            {
+                "status": status,
+                "setup": call("travel_to", x=x, y=y, z=z, who="e2"),
+                "wait": call("wait_for", target="queue"),
+            }
+        )
     record({"step": "before", "control": control()})
 
     jobs = JobMap(calls)
