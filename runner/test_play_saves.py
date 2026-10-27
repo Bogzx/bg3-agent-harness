@@ -273,19 +273,24 @@ class HandoffAndSaves(unittest.TestCase):
             self.assertEqual(rgame.play_windows(None, None), [])
 
     def test_foreign_use_since(self):
-        best = G.parse_save_folder("Claude-48__S027-start", 100)
-        mine = [best, G.parse_save_folder("Claude-13__AutoSave_42", 150), G.parse_save_folder("Claude-9__S026-end", 90)]
+        best = sv("Claude-48__S027-start", 100)
+        mine = [best, sv("Claude-13__AutoSave_42", 150), sv("Claude-9__S026-end", 90)]
         f = lambda saves=mine, acts=(), started=None, rs=set(): rpolicy.foreign_use_since(best, saves, list(acts), started, rs, "Claude-")
         self.assertIsNone(f())
-        self.assertIn("LIVETEST-setup", f(mine + [G.parse_save_folder("Claude-21__LIVETEST-setup", 120)]))
-        self.assertIsNone(f(mine + [G.parse_save_folder("Claude-21__LIVETEST-setup", 80)]))   # older: not a sign
-        self.assertIsNone(f(mine + [G.parse_save_folder("Claude-5__QuickSave_1", 130)], rs={"Claude-5__QuickSave_1"}))
+        self.assertIn("LIVETEST-setup", f(mine + [sv("Claude-21__LIVETEST-setup", 120)]))
+        self.assertIsNone(f(mine + [sv("Claude-21__LIVETEST-setup", 80)]))   # older: not a sign
+        # Steam's local cloud restored the older one at a launch: mtime = the launch, its SaveTime still 80
+        self.assertIsNone(f(mine + [sv("Claude-21__LIVETEST-setup", 500, saved=80)]))
+        self.assertIsNone(f(mine + [sv("Claude-5__QuickSave_1", 130)], rs={"Claude-5__QuickSave_1"}))
         load = {"t": 130, "tool": "load_game", "args": {"save": "Claude-9__S026-end"}, "result": "load_game: done — loaded=S026-end"}
         self.assertIn("S026-end", f(acts=[load]))                  # a worker loaded an older playthrough save
         self.assertIsNone(f(acts=[dict(load, t=90)]))              # before our save: irrelevant
         self.assertIsNone(f(acts=[dict(load, result="load_game: done — loaded=S027-start")]))
         self.assertIn("relaunched", f(started=110))
         self.assertIsNone(f(started=95))
+        # our save itself restored by Steam at a launch (mtime 500): the game started at 110 still came after it
+        restored = dataclasses.replace(best, mtime=500.0)
+        self.assertIn("relaunched", rpolicy.foreign_use_since(restored, mine, [], 110, set(), "Claude-"))
 
     def test_read_actions_since(self):
         with tempfile.TemporaryDirectory() as d:
@@ -394,7 +399,7 @@ class Relaunch(unittest.TestCase):
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
                 owns=True, first=False, ram=5000, mod_path=None, acts=(), extra_saves=(), runner_saves=(),
-                save_combat=None, combat_now=False, last_ended=None):
+                save_combat=None, combat_now=False, last_ended=None, save_saved=None):
         self.saved = getattr(self, "saved", None) or (G.port_open, rcode.steam_ready, rcode.list_saves, rpolicy.game_started_at,
                       renv.log, rpolicy.game_ram_mb, rcode.game_mod_path, rpolicy.read_actions_since, G.party_in_combat)  # first call's
         G.port_open = lambda *a, **k: True
@@ -403,7 +408,7 @@ class Relaunch(unittest.TestCase):
         rpolicy.game_ram_mb = lambda: ram
         rcode.game_mod_path = lambda: mod_path   # never the machine's real game
         rcode.steam_ready = lambda: steam
-        rcode.list_saves = lambda: [sv("Claude-1__S032-end", save_mtime), *extra_saves]
+        rcode.list_saves = lambda: [sv("Claude-1__S032-end", save_mtime, saved=save_saved), *extra_saves]
         rpolicy.game_started_at = lambda: launched
         renv.log = lambda m: self.logs.append(m)
         self.logs, self.killed, self.events = [], [], []
@@ -508,6 +513,15 @@ class Relaunch(unittest.TestCase):
             self.assertEqual(self.killed, [])
             self.assertTrue(any("lose play" in m for m in self.logs))
 
+    def test_kept_when_the_newest_save_predates_the_last_session_though_steam_restored_it(self):
+        # Steam's local cloud restored S032-end at the launch: mtime 60 (after S032's start), its SaveTime still 10
+        with tempfile.TemporaryDirectory() as td:
+            r = self._runner(Path(td), launched=time.time() - 600, log_text="ready_failed", save_mtime=60.0,
+                             save_saved=10.0, last_started=50.0)
+            self.assertIsNone(r.maybe_relaunch(False))
+            self.assertEqual(self.killed, [])
+            self.assertTrue(any("lose play" in m for m in self.logs))
+
     # S092 (09:03:17 load_game S090-end, then a refused do_actions, the wrap-up notes and end_session): actions.jsonl
     S092_END = (
         {"t": 60.0, "tool": "use_ability", "args": {}, "result": "ok: Fireball"},
@@ -598,6 +612,17 @@ class Relaunch(unittest.TestCase):
         self.assertIn("no runner quicksave since S093's start", why)
         agents = sv("Claude-5__QuickSave_25", 75.0)    # not the runner's: ignored
         self.assertEqual(rpolicy.boundary_save([*saves, agents], runner, calm, last, [])[0], self.QS)
+        # the previous boundary's quicksave restored by Steam's local cloud at the launch (mtime 90, SaveTime 40): not
+        # written in S093, so not the newer one
+        restored = sv("Claude-3__QuickSave_23", 90.0, saved=40.0)
+        got, why = rpolicy.boundary_save([saves[0], restored], runner, calm | {restored.folder: False}, last, [])
+        self.assertIsNone(got)
+        self.assertIn("no runner quicksave since S093's start", why)
+        # S093's own quicksave restored (mtime 90): a move at 75 still came after it was written
+        qs = sv(self.QS.folder, 90.0, saved=70.0)
+        got, why = rpolicy.boundary_save([saves[0], qs], runner, calm, last, [{"t": 75.0, "tool": "move_to", "result": "ok"}])
+        self.assertIsNone(got)
+        self.assertIn("move_to changed the game after it", why)
 
     def _s093(self, td, **kw):
         # S093 wrote HANDOFF ("Save to load: S090-end") and ended 4 s before the quicksave: choose_save keeps S090-end

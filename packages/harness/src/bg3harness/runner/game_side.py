@@ -23,6 +23,7 @@ from bg3harness.game.saves import (
     pick_save,
     pick_save_why,
     play_windows,
+    saved_key,
     saves_since,
     session_ends,
 )
@@ -176,7 +177,7 @@ class GameSide:
     def foreign_use(self, save: Save) -> str | None:
         """foreign_use_since() for the running game; a relaunch counts only for a game this runner didn't start."""
         started = None if self.owns_game() else rpolicy.game_started_at()
-        return rpolicy.foreign_use_since(save, rcode.list_saves(), rpolicy.read_actions_since(save.mtime), started, self.ours())
+        return rpolicy.foreign_use_since(save, rcode.list_saves(), rpolicy.read_actions_since(saved_key(save)), started, self.ours())
 
     def restart_drift(self) -> str | None:
         """state_drift() between the last play session's end and the running game (a runner restart only). Fails
@@ -327,7 +328,7 @@ class GameSide:
             return None
         acts = rpolicy.read_actions_since(last.get("started", 0)) if last else []
         mark, what = rpolicy.lose_play_mark(last, acts) if last else (0.0, "")
-        if last and save.mtime < mark:
+        if last and saved_key(save) < mark:   # the save's own time: a Steam-restored copy's mtime is the launch
             if rpolicy.ended_on_save(acts, save):
                 renv.log(f"the newest save {save.label} is older than {what}, but {last['session']} "
                     f"ended on load_game {save.label} with nothing changed after it: the game stands at that save")
