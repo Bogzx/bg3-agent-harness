@@ -148,12 +148,13 @@ def learn_owner(
 ) -> str | None:
     """No save owner yet: the owner of the newest agent save written while this playthrough played (its sessions'
     windows, `running` the running session's), as play.py adopts it from the session's own saves (I3). None: it has
-    none."""
+    none. Written is the save's own time (Save.saved): a copy of another playthrough's save that Steam restores at
+    this session's launch has mtime = the launch, inside the running window."""
     raw: object = state.get("history")
     history: list[dict[str, Any]] = [h for h in raw if is_obj(h)] if is_list(raw) else []
     windows = hsaves.play_windows(history, sdir, running)  # pyright: ignore[reportUnknownMemberType]
-    mine = [s for s in saves if hsaves.is_ai_save(s) and hsaves.in_windows(s.mtime, windows)]  # pyright: ignore[reportUnknownMemberType]
-    return max(mine, key=lambda s: s.mtime).owner if mine else None
+    mine = [s for s in saves if hsaves.is_ai_save(s) and s.saved is not None and hsaves.in_windows(s.saved, windows)]  # pyright: ignore[reportUnknownMemberType]
+    return max(mine, key=hsaves.saved_key).owner if mine else None
 
 
 def handoff_session(handoff: str) -> int | None:

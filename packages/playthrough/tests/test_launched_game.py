@@ -233,6 +233,24 @@ def test_a_new_playthroughs_crash_after_its_first_save_learns_the_owner_from_it(
     assert json.loads((sdir / "runner.json").read_text())["save_owner"] == "Vessa"
 
 
+def test_a_save_steam_restored_at_the_launch_names_no_owner(tmp_path: Path):
+    # bench B3: Steam restored another playthrough's save at this session's launch (5000): mtime = the launch, inside
+    # the running window; its SaveTime (4000) is from before this playthrough began
+    now = [6000.0]
+    sdir, mem = tmp_path / "sessions" / "ilse", tmp_path / "ilse" / "memory"
+    sdir.mkdir(parents=True)
+    mem.mkdir(parents=True)
+    (sdir / "runner.json").write_text(json.dumps({"history": []}))
+    saves = [save("Karlach", 1, "S004-end", 5010, saved=4000)]
+    g = lg.LaunchedGame(FakeReads(), FakeCtl(), FakeHost(), lambda: saves, lambda: None, clock=lambda: now[0])
+    now[0] = 5000.0
+    g.begin(sdir, mem)
+    now[0] = 6000.0
+    assert g.is_new()
+    with pytest.raises(lg.NoSaveYetError):
+        g.recover("crashed")
+
+
 def test_a_playthrough_without_saves_is_new_and_launches_to_the_main_menu(tmp_path: Path):
     ctl = FakeCtl(alive=False)
     g, sdir, _ = setup(tmp_path, {"history": []}, [save("Karlach", 2, "S004-end", 5000)], ctl=ctl)
