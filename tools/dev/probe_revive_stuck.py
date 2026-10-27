@@ -314,6 +314,36 @@ local P = Mods.BG3AI.BG3AI.ReviveProbe
 return Ext.Json.Stringify({ t0 = P.t0, watching = P.until_t ~= nil, recs = P.recs }, { Beautify = false })
 """
 
+# Who the game lets act, per party member (N2: the revive moved ClientControl to the reader and swapped CharacterControl
+# for RegisteredForAutomatedDialog on the revived one): control components and flags, Osiris tasks, layers.
+CONTROL = r"""
+local P = Mods.BG3AI.BG3AI.ReviveProbe
+local out = {}
+for _, row in ipairs(Osi.DB_PartyMembers:Get(nil) or {}) do
+    local c = tostring(row[1]):sub(-36)
+    local r = { uuid = c }
+    pcall(function() r.name = Ext.Loca.GetTranslatedString(Osi.GetDisplayName(c)) end)
+    local names = P.comp_names(c)
+    local function has(sub)
+        for k in pairs(names) do if k:find(sub, 1, true) then return true end end
+        return false
+    end
+    r.client_control, r.resurrect, r.falling = has("ClientControl"), has("Resurrect"), has("IsFalling")
+    pcall(function()
+        local sc = Ext.Entity.Get(c).ServerCharacter
+        local f, f2 = P.js(sc.Flags), P.js(sc.Flags2)
+        r.character_control = f:find("CharacterControl", 1, true) ~= nil
+        r.automated_dialog = f:find("RegisteredForAutomatedDialog", 1, true) ~= nil
+        r.resurrected = f2:find("IsResurrected", 1, true) ~= nil
+        r.osi = #sc.OsirisController.Tasks
+    end)
+    local ok, sig = pcall(P.compact, c)
+    r.compact = ok and sig or nil
+    out[#out + 1] = r
+end
+return Ext.Json.Stringify(out, { Beautify = false })
+"""
+
 UNWATCH = r"""
 local P = Mods.BG3AI.BG3AI.ReviveProbe
 if P.tick then pcall(function() Ext.Events.Tick:Unsubscribe(P.tick) end) end
@@ -343,6 +373,19 @@ def move_code(who: str, to: str | None, dx: float) -> str:
 
 def jump_code(who: str, x: float, y: float, z: float) -> str:
     return JUMP % (lua_str(who), x, y, z, x, y, z)
+
+
+def control_line(rows: list[dict[str, Any]], hud: str | None) -> str:
+    """One line per read: the HUD's selected member, then each member's control state (flags set only)."""
+    parts = [f"hud={next((r.get('name') or r['uuid'][:8] for r in rows if r['uuid'] == hud), hud or '?')}"]
+    for r in rows:
+        on = [
+            k
+            for k in ("client_control", "character_control", "automated_dialog", "resurrect", "resurrected", "falling")
+            if r.get(k)
+        ]
+        parts.append(f"{r.get('name') or r['uuid'][:8]}: {','.join(on) or '-'} osi={r.get('osi')}")
+    return " | ".join(parts)
 
 
 def moved_m(start: list[float], end: list[float]) -> float:
@@ -397,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--secs", type=int, default=120)
     sub.add_parser("dump")
     sub.add_parser("unwatch")
+    sub.add_parser("control")
     p = sub.add_parser("move")
     p.add_argument("who")
     p.add_argument("--to", help="walk next to this party member (a spot known walkable)")
@@ -450,6 +494,8 @@ def main(argv: list[str] | None = None) -> int:
         print(ev(WATCH % (lua_list(a.who), a.secs, a.secs)))
     elif a.cmd == "dump":
         print("\n".join(watch_lines(json.loads(ev(DUMP)))))
+    elif a.cmd == "control":
+        print(control_line(json.loads(ev(CONTROL)), None))
     elif a.cmd == "unwatch":
         print(ev(UNWATCH))
     elif a.cmd in ("move", "jump"):
