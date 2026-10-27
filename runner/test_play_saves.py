@@ -53,13 +53,21 @@ def home(name: str):
 class HandoffAndSaves(unittest.TestCase):
     def test_load_menu_args(self):
         t = time.mktime((2026, 10, 9, 22, 39, 30, 0, 0, -1))
-        saves = [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", t - 400),
-                 rpolicy.Save("Claude-2__S001-imps-done", "Claude", "S001-imps-done", t),
-                 rpolicy.Save("Claude-3__S001-end", "Claude", "S001-end", t + 360),
-                 rpolicy.Save("Tav-4__S002-end", "Tav", "S002-end", t + 900)]
+        saves = [sv("Claude-1__S001-start", t - 400),
+                 sv("Claude-2__S001-imps-done", t),
+                 sv("Claude-3__S001-end", t + 360),
+                 sv("Tav-4__S002-end", t + 900)]
         a = G.load_menu_args(saves[1], saves)
         self.assertEqual((a["action"], a["name"], a["owner"], a["index"]), ("load", "Claude-2__S001-imps-done", "Claude", 2))
         self.assertEqual(a["date"], {"y": 2026, "m": 10, "d": 9, "H": 22, "M": 39})
+        # Steam's local cloud restored S001-start and imps-done at a launch (mtime = the launch, SaveTime unchanged):
+        # the game still lists S001-end first; by mtime the runner clicked row 1 for imps-done (S001-end) and checked
+        # the restored copy's mtime as its date
+        saves[0] = sv("Claude-1__S001-start", t + 5000, saved=t - 400)
+        saves[1] = sv("Claude-2__S001-imps-done", t + 5001, saved=t)
+        a = G.load_menu_args(saves[1], saves)
+        self.assertEqual((a["index"], a["date"]["H"], a["date"]["M"]), (2, 22, 39))
+        self.assertNotIn("index", G.load_menu_args(dataclasses.replace(saves[1], saved=None), saves))
 
     def test_parse_handoff(self):
         self.assertEqual(rgame.parse_handoff_save('# Handoff\nSave to load: "S042-end" — party at the well\n'), "S042-end")
