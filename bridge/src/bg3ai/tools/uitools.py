@@ -198,8 +198,12 @@ def _press_escape() -> str:
     t0 = time.monotonic()
     before, panels = _ui_screen()
     if before == "game" and not panels:
-        return reporting._finish("press_key", {"key": "ESCAPE"}, "REFUSED: nothing is open to close: ESCAPE here "
-                       "would open the game menu. Panels our tools open close themselves.", t0)
+        # live N3 (2026-10-28): the world right-click menu is no panel in ui.state, and ESCAPE was refused "nothing
+        # is open to close" while it was open; a player closes it with ESCAPE
+        menu = core.game.try_rpc("ui.context_menu", {}, context="client")
+        if not (isinstance(menu, dict) and menu.get("open")):
+            return reporting._finish("press_key", {"key": "ESCAPE"}, "REFUSED: nothing is open to close: ESCAPE "
+                                     "here would open the game menu. Panels our tools open close themselves.", t0)
     out = plumbing._act("press_key", "ui.key", {"key": "ESCAPE"}, context="client", wait_s=5)
     if before not in ("game_menu", "options", "save_load"):
         time.sleep(0.3)

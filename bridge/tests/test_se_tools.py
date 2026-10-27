@@ -59,6 +59,18 @@ class PressEscape(unittest.TestCase):
         self.assertTrue(out.startswith("REFUSED"), out)
         self.assertEqual(fake.keys, [])
 
+    def test_open_context_menu_closes(self):
+        """Live N3 (2026-10-28): ESCAPE was refused "nothing is open to close" with the world right-click menu open
+        (it is no panel in ui.state); it closes the menu, and no game menu check fires."""
+        fake = self.use(["game"])
+        rpc = fake.rpc
+        fake.rpc = fake.try_rpc = lambda op, args=None, context="server": (
+            {"open": "ESCAPE" not in fake.keys, "items": ["Talk", "Examine"]} if op == "ui.context_menu"
+            else rpc(op, args, context))
+        out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
+        self.assertNotIn("REFUSED", out)
+        self.assertEqual(fake.keys, ["ESCAPE"])
+
     def test_open_panel_closes(self):
         fake = self.use([{"screen": "game", "panels_open": ["Inventory"]}, "game"])
         out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
