@@ -543,6 +543,10 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
                         f"target=...) or give it over first")
     tgt0 = plumbing._uuid(target) if target else char
     if _two_step_scroll(name) and tgt0 != char:
+        # live N4 (2026-10-28): read on a living Claude it answered "Claude REVIVED": the revive check only asked
+        # "not dead" after the read
+        if _is_dead(tgt0) is False:
+            raise GameError(f"{overview._name_of(tgt0)} is not dead: {name} not read")
         far = _body_far(char, tgt0)
         if far:
             raise GameError(far)

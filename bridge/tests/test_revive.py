@@ -128,6 +128,14 @@ class Revive(unittest.TestCase):
         fake.standup = JobResult("done", {"pending": False})   # nothing pending (or in combat): no word
         self.assertTrue(world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH).endswith("beside it))"))
 
+    def test_a_living_member_is_refused_before_the_scroll_is_read(self):
+        """Live N4 C1-invalid (i=17): read on a living Claude, it answered 'Claude REVIVED'."""
+        fake = self.use(Fake([{"uuid": ME, "pos": [0, 0, 0]}, {"uuid": SH, "pos": [2, 0, 0]}]))
+        with self.assertRaises(world_tools.GameError) as e:
+            world_tools._use_scroll(ME, {"name": "Scroll of Revivify", "uuid": "scroll-1"}, SH)
+        self.assertEqual(str(e.exception), "Shadowheart is not dead: Scroll of Revivify not read")
+        self.assertNotIn("act.interact", [op for op, _ in fake.calls])
+
     def test_still_dead_said(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         self.ground(hotbar.HotbarCastResult(True, picked=1))
