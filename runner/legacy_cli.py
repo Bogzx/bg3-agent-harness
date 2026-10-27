@@ -42,6 +42,7 @@ from bg3harness import (
     steam_paths,
 )
 from bg3harness.game import io as game
+from bg3harness.game.host import own_saves
 from bg3harness.game.io import DEBUG_PORT
 from bg3harness.game.saves import (
     foreign_saves,
@@ -304,7 +305,7 @@ def resume_preview(pt: str, save_owner: str | None, session_minutes: float, allo
     ours = set(rs.get("runner_saves") or []) | set(rs.get("agent_saves") or [])
     windows = play_windows(rs.get("history") or [], d)
     saves, after = rcode.list_saves(), rs.get("saves_after")
-    own = [s for s in saves if s.mtime >= after] if after else saves
+    own = own_saves(saves, after, None)  # by SaveTime: Steam restores earlier runs' saves with mtime = the launch
     save, why = pick_save_why(own, label, rs.get("save_owner"), ours, windows=windows,
                               handoff_session=lpt.parse_handoff_session(text), ends=session_ends(rs.get("history"), d))
     owner, prefix = rpolicy.save_identity(save_owner or rs.get("save_owner"))
@@ -488,7 +489,7 @@ def cmd_status(a) -> int:
             print("stuck:    YES, the next kickoff carries a change-approach directive")
         save = pick_save(rcode.list_saves(), None, rs["save_owner"], set(rs["runner_saves"]) | set(rs["agent_saves"] or []),
                          windows=play_windows(hist, rs.dir))
-        print(f"last save: {save.folder + ' (' + _ago(save.mtime) + ')' if save else '-'}")
+        print(f"last save: {save.folder + ' (' + _ago(save.saved or save.mtime) + ')' if save else '-'}")
         logs = sorted(rs.dir.glob("S*.log"), key=lambda p: p.stat().st_mtime)
         logfile = Path(st["log"]) if st.get("log") and Path(st["log"]).exists() else (logs[-1] if logs else None)
         if logfile:

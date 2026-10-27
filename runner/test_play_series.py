@@ -711,6 +711,19 @@ class SeriesRuns(unittest.TestCase):
         self.assertEqual(cmd["env"]["BG3AI_SAVES_EXCLUDE"], "Claude-2__S027-end\nClaude-3__S999-savetest")
         self.assertEqual(cmd["cmd"][cmd["cmd"].index("--effort") + 1], "high")
 
+    def test_plan_of_a_series_run_never_loads_an_earlier_runs_save_steam_restored(self):
+        # run 2 crashed before its first save; run 1's save, restored by Steam's local cloud at run 2's launch (mtime
+        # after saves_after, SaveTime before), passed by mtime as the run's and run 2 would resume on run 1's game
+        from unittest import mock
+        (renv.PLAYTHROUGHS / "np-r2" / "memory").mkdir(parents=True)
+        (d := renv.RUNTIME / "sessions" / "np-r2").mkdir(parents=True)
+        t = 1_000_000.0
+        (d / "runner.json").write_text(json.dumps({"save_owner": "Claude", "saves_after": t, "history": [
+            {"kind": "play", "session": "S001", "started": t, "ended": t + 1800}]}))
+        restored = rpolicy.Save("Claude-2__S002-end", "Claude", "S002-end", t + 1750, t - 500)
+        with mock.patch.object(rcode, "list_saves", lambda: [restored]):
+            self.assertIsNone(lcli.resume_preview("np-r2", "Claude", 30, False)["save"])
+
     def test_plan_of_a_frozen_series_shows_the_next_run_and_drift(self):
         d = renv.RUNTIME / "sessions" / "np"
         d.mkdir(parents=True)
@@ -762,8 +775,10 @@ class SeriesRuns(unittest.TestCase):
         (mem / "CHARACTER.md").write_text("# Character: Brannoc Vale\n")
         (renv.RUNTIME / "saves").mkdir(parents=True, exist_ok=True)
         lser._save_record_path(pt).write_text("Brannoc Vale-51612617911__S001-start\n")
-        saves = [rpolicy.Save("Brannoc Vale-51612617911__S001-start", "Brannoc Vale", "S001-start", 1100.0),
-                 rpolicy.Save("Corran Vell-1__S001-start", "Corran Vell", "S001-start", 900.0)]   # run 1's: older
+        saves = [rpolicy.Save("Brannoc Vale-51612617911__S001-start", "Brannoc Vale", "S001-start", 1100.0, 1100.0),
+                 rpolicy.Save("Corran Vell-1__S001-start", "Corran Vell", "S001-start", 900.0, 900.0),  # run 1's: older
+                 # run 1's end save, restored by Steam's local cloud at this run's launch: mtime 1050, SaveTime 950
+                 rpolicy.Save("Corran Vell-2__S001-end", "Corran Vell", "S001-end", 1050.0, 950.0)]
         rcode.list_saves = lambda: saves
         self.addCleanup(mock.patch.stopall)
         mock.patch.object(rcode, "HANDOVER", self.tmp / "runtime" / "runner-handover.json").start()
