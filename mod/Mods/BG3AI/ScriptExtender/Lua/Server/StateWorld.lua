@@ -71,6 +71,7 @@ end
 -- look/get_status/get_inventory took 140-350 ms in S066-S070). The facts are scalars; a missing entry isn't kept.
 S.statsFactsMemo = {}
 
+-- false: the item names a stats entry that didn't read.
 local function itemStats(ie, o)
     local sid
     pcall(function() sid = ie.Data.StatsId end)
@@ -79,7 +80,7 @@ local function itemStats(ie, o)
     if not f then
         local st
         pcall(function() st = Ext.Stats.Get(sid) end)
-        if not st then return end
+        if not st then return false end
         f = {}
         statsFacts(st, f)
         S.statsFactsMemo[tostring(sid)] = f
@@ -93,10 +94,14 @@ end
 local BOND_STATUSES = { { "PACT_BLADE", "pact" }, { "PACTOFTHEBLADE_HEXBLADE", "pact" },
                         { "WEAPON_BOND", "weapon_bond" }, { "MAG_WEAPON_BOND", "weapon_bond" } }
 
-local function weaponBond(ie, u, o)
+local function isPactWeapon(ie)
     local sid
     pcall(function() sid = ie.Data.StatsId end)
-    if type(sid) == "string" and (sid:find("_Pact$") or sid == "_PactWeapon") then
+    return type(sid) == "string" and (sid:find("_Pact$") ~= nil or sid == "_PactWeapon")
+end
+
+local function weaponBond(f, u, o)
+    if f.pact then
         o.bound, o.summoned = "pact", true
         return
     end
@@ -120,12 +125,17 @@ local function bindsOf(e)
     return out
 end
 
-local function itemView(ie, owner, slot)
-    local u = V.entityUuid(ie)
-    if not u then return nil end
-    local o = { uuid = u, name = V.name(u), owner = owner }
-    local amt = osi(Osi.GetStackAmount, u)
-    if amt and amt > 1 then o.count = amt end
+-- An item's facts that don't change while it exists, read once per item uuid (V12, probe 8fda912 window B: a full
+-- rebuild of 194 items spent ~50 ms on the per-item component reads: value, data, server item, equipable, gold ...,
+-- each a pcall'd proxy read, in both the supplies walk and the item walk). Kept for this Lua state (a load rebuilds
+-- it): .v the view's static fields, .inv the item holds an inventory, .pact a summoned pact weapon. An item whose
+-- stats entry didn't read isn't kept. What can change is read on every view: name, stack, worn slot, bind status.
+S.itemFactsMemo = {}
+
+local function itemFacts(ie, u)
+    local f = u and S.itemFactsMemo[u]
+    if f then return f end
+    local o = {}
     pcall(function()
         local v = ie.Value
         if v then
@@ -139,10 +149,23 @@ local function itemView(ie, owner, slot)
     pcall(function() if ie.ServerItem.IsContainer then o.container = true end end)
     pcall(function() if ie.ServerItem.StoryItem then o.story = true end end)
     pcall(function() local t = ie.Equipable; if t then o.slot_type = tostring(t.Slot) end end)
-    if slot then o.equipped_slot = slot end
     if comp(ie, "IsGold") then o.gold = true end
-    itemStats(ie, o)
-    if o.dmg then weaponBond(ie, u, o) end
+    local read = itemStats(ie, o)
+    f = { v = o, inv = comp(ie, "InventoryOwner") ~= nil, pact = o.dmg ~= nil and isPactWeapon(ie) }
+    if u and read ~= false then S.itemFactsMemo[u] = f end
+    return f
+end
+
+local function itemView(ie, owner, slot)
+    local u = V.entityUuid(ie)
+    if not u then return nil end
+    local f = itemFacts(ie, u)
+    local o = { uuid = u, name = V.name(u), owner = owner }
+    for k, v in pairs(f.v) do o[k] = v end
+    local amt = osi(Osi.GetStackAmount, u)
+    if amt and amt > 1 then o.count = amt end
+    if slot then o.equipped_slot = slot end
+    if o.dmg then weaponBond(f, u, o) end
     return o
 end
 
@@ -153,13 +176,12 @@ local function supplyTotal(invEntity, depth)
     pcall(function()
         for _, it in pairs(invEntity.InventoryContainer.Items) do
             local ie = it.Item
-            local o = {}
-            itemStats(ie, o)
-            if o.supply then
-                local u = V.entityUuid(ie)
-                n = n + o.supply * math.max(1, (u and osi(Osi.GetStackAmount, u)) or 1)
+            local u = V.entityUuid(ie)
+            local f = itemFacts(ie, u)
+            if f.v.supply then
+                n = n + f.v.supply * math.max(1, (u and osi(Osi.GetStackAmount, u)) or 1)
             end
-            local io = depth > 0 and comp(ie, "InventoryOwner")
+            local io = depth > 0 and f.inv and comp(ie, "InventoryOwner")
             if io then n = n + supplyTotal(io.PrimaryInventory, depth - 1) end
         end
     end)
