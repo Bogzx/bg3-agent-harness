@@ -13,8 +13,8 @@ method that fits, in this order:
 4. `quest`: a `quest_done` event in the same window;
 5. `other`: nothing fits (unattributed).
 
-A negative delta is `spent` inside a trade window, else `lost`. Counters: crimes, kills, traders killed, successful
-and failed pickpockets.
+A negative delta is `spent` inside a trade window, else `lost`. Counters: crimes, kills and traders killed (the
+party's kills of real characters: `party_kill`), successful and failed pickpockets.
 """
 
 from __future__ import annotations
@@ -33,9 +33,21 @@ def _trading(trades: list[tuple[float, float | None]], t: float, window: float) 
     return any(start <= t and (end is None or t <= end + window) for start, end in trades)
 
 
+def party_kill(r: dict, party: set[str]) -> bool:
+    """A `kill` event that is the party's kill of a real character: by the party (by_party; a record from before the
+    field, an old progress kill, counts), of no summon or conjured creature (the mod's summon flag: the Act 3 street
+    magicians' cats, 78 kills in diverse-2026-10-25 Opus x act3_gold_max, all by_party false) and of no party member.
+    A `temporary` victim (spawned at run time) still counts: scripted reinforcements are spawned too."""
+    return r.get("by_party") is not False and not r.get("summon") and r["victim"] not in party
+
+
 def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
     """{gold_by_method, spent, lost, crimes, kills, traders_killed, pickpockets, pickpockets_failed, changes}."""
+    timeline = list(timeline)
     events = [r for r in timeline if r.get("kind") == "event"]
+    party = {p["name"] for r in timeline if r.get("kind") == "snapshot" for p in r.get("party") or []}
+    party |= {r["name"] for r in events if r["ev"] in ("joined", "died", "downed", "revived") and r.get("party", True)}
+    kills = [r for r in events if r["ev"] == "kill" and party_kill(r, party)]
     trades: list[tuple[float, float | None]] = []
     for r in events:
         if r["ev"] == "trade_open":
@@ -81,8 +93,8 @@ def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
         "spent": spent,
         "lost": lost,
         "crimes": count("crime"),
-        "kills": count("kill"),
-        "traders_killed": count("kill", trader=True),
+        "kills": len(kills),
+        "traders_killed": sum(1 for r in kills if r.get("trader") is True),
         "pickpockets": count("pickpocket", ok=True),
         "pickpockets_failed": count("pickpocket", ok=False),
         "changes": changes,
