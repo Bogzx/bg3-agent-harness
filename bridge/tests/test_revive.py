@@ -33,6 +33,10 @@ class Fake:
 
     try_rpc = rpc
 
+    def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+        self.calls.append((op, args))
+        return getattr(self, "standup", JobResult("done", {"pending": False}))
+
 
 class Inp:
     def __init__(self):
@@ -104,6 +108,25 @@ class Revive(unittest.TestCase):
         out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
         self.assertEqual(calls, [(ME, "Scroll of Revivify", SH)])
         self.assertIn("REVIVED", out)
+
+    def test_revived_member_walks_out_of_the_stand_up(self):
+        """Live N4 (2026-10-28): a short rest before the revived member's first order left them unable to act for
+        good; the read now ends the stand-up with a walk toward the reader (act.end_standup) and says so."""
+        fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
+        fake.revive_after = 1
+        fake.standup = JobResult("done", {"pending": False, "ended": True, "stepped_m": 1.4})
+        self.ground(hotbar.HotbarCastResult(True, picked=1))
+        out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
+        self.assertIn("Shadowheart REVIVED (clicked the body e2 Shadowheart and the ground beside it); "
+                      "Shadowheart stood up and stepped 1.4 m toward Claude)", out)
+        self.assertIn(("act.end_standup", {"char": SH, "toward": ME}), fake.calls)
+        fake.standup = JobResult("failed", {"pending": True}, "Shadowheart still stands up from the revive 4 s after")
+        for r in fake.party:
+            r.pop("dead", None)
+        self.assertIn("; Shadowheart's stand-up: Shadowheart still stands up from the revive 4 s after",
+                      world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH))
+        fake.standup = JobResult("done", {"pending": False})   # nothing pending (or in combat): no word
+        self.assertTrue(world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH).endswith("beside it))"))
 
     def test_still_dead_said(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))

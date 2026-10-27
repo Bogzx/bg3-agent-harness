@@ -730,7 +730,22 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
         return f" ({name} read: {how}; not a party member, so not checked)"
     if dead:
         return f" ({name} read: {how}, but {overview._name_of(tgt)} is STILL DEAD after {REVIVE_WAIT_S:.0f} s)"
-    return f" ({name} read: {overview._name_of(tgt)} REVIVED ({how}))"
+    return f" ({name} read: {overview._name_of(tgt)} REVIVED ({how}){_end_standup(char, tgt)})"
+
+
+def _end_standup(reader: str, body: str) -> str:
+    """Live N4 (2026-10-28, the bench B3 job 13 replay): the revived member keeps the game's stand-up until its first
+    order, and a short rest before that order left them holding an unfinished action for good (no walk, jump or Use
+    of theirs started again). Out of combat the mod walks them toward the reader, the order that ended it in N2
+    (act.end_standup); the result says so."""
+    r = core.game.run_job("act.end_standup", {"char": body, "toward": reader}, wait_s=8)
+    res = r.result if isinstance(r.result, dict) else {}
+    who = overview._name_of(body)
+    if r.status == "done" and res.get("ended"):
+        return f"; {who} stood up and stepped {res.get('stepped_m', 0)} m toward {overview._name_of(reader)}"
+    if r.status == "done":
+        return ""  # nothing pending (or in combat: their own turn's first order ends it)
+    return f"; {who}'s stand-up: {r.error or r.status}"
 
 
 @core.mcp.tool()

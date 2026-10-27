@@ -304,7 +304,8 @@ local function combat_walk_stop(job)
     if w.travelled < 0.05 and w.still_ms >= A.WALK_NO_START_COMBAT_MS then
         local d, _, de = walk_dist_left(job)
         if not (walk_close_enough(job, d, de) or (d and d <= w.tolerance)) then
-            return stop(string.format("never started moving (%.1f s, the route was there)", w.still_ms / 1000))
+            return stop(string.format("never started moving (%.1f s, the route was there)", w.still_ms / 1000)
+                .. A.held_text(job.char))
         end
     end
     return false
@@ -359,7 +360,7 @@ local function walk_tick(job)
         else
             w.done = true
             pcall(G.osi, "PurgeOsirisQueue", job.char)
-            RPC.finish_job(job, "failed", job.partial, "no path to the destination")
+            RPC.finish_job(job, "failed", job.partial, "no path to the destination" .. A.held_text(job.char))
         end
     end
 end

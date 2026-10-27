@@ -220,6 +220,41 @@ local function osi_tasks(char)
 end
 A.osi_tasks = osi_tasks
 
+-- Live N2/N4 (2026-10-28, bench B3 job 13): a revive stands the character up with an esv::ActionState on layer 1 of
+-- its action machine and a ResurrectComponent; both stay until its first order, which ends them (N2: a walk). A
+-- short rest before that order removed the component and left the action state unfinished: no Osiris task of the
+-- character started again (walks travelled 0, jumps never started, Uses stayed queued; a purge changed nothing).
+local function has_comp(char, part)
+    local ok, names = pcall(function() return Ext.Entity.Get(char):GetAllComponentNames() end)
+    if not ok or type(names) ~= "table" then return nil end
+    for _, n in ipairs(names) do
+        if tostring(n):find(part, 1, true) then return true end
+    end
+    return false
+end
+
+function A.standing_up(char) return has_comp(char, "ResurrectComponent") == true end
+
+-- An unfinished action state on layer 1 with no stand-up pending: { tid = its TransactionId }, else nil.
+function A.held_action(char)
+    local ok, st = pcall(function() return Ext.Entity.Get(char).ServerCharacter.AiActionMachine.Layers[1].State end)
+    if not ok or st == nil then return nil end
+    local okf, fin = pcall(function() return st.Finished end)
+    if okf and fin then return nil end
+    if has_comp(char, "ResurrectComponent") ~= false then return nil end
+    local okt, tid = pcall(function() return st.TransactionId end)
+    return { tid = okt and tid or nil }
+end
+
+-- The fact a failed start adds when the game holds the character that way ("" otherwise).
+function A.held_text(char)
+    local h = A.held_action(char)
+    if not h then return "" end
+    return string.format(": the game holds %s in an unfinished action (layer 1 of its action machine%s, no stand-up"
+        .. " pending): none of its orders starts", U.loca(G.q("GetDisplayName", char)) or "the character",
+        h.tid and (", TransactionId " .. tostring(h.tid)) or "")
+end
+
 -- Loop watchdog: the same item used LOOP_USES times, each within LOOP_GAP_MS
 -- of the last, while Osiris tasks still drive the character, is an engine
 -- task looping (a ladder Use re-climbing, or a route through a ladder that
