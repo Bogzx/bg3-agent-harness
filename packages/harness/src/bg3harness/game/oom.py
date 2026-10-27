@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import io as game
+from .saves import saved_key
 
 OOM_LINE = "killed by the OOM killer"
 OOM_SAVE_LIMIT = 2  # OOM kills in a row right after loading the same save → the runner refuses that save
@@ -93,8 +94,10 @@ def last_loaded_save(actions: list[dict[str, Any]], saves: list[game.Save], fall
         arg = game.parse_save_folder(str(args.get("save") or ""))
         if arg and arg.label == m.group(1):
             return arg.folder
-        same = [sv for sv in saves if sv.label == m.group(1) and sv.mtime <= a.get("t", 0)]
-        return max(same, key=lambda sv: sv.mtime).folder if same else m.group(1)
+        # the newest save of that label written before the load, by its own time (meta.lsf SaveTime): a copy Steam's
+        # local cloud restores has mtime = the launch
+        same = [sv for sv in saves if sv.label == m.group(1) and sv.saved is not None and sv.saved <= a.get("t", 0)]
+        return max(same, key=saved_key).folder if same else m.group(1)
     return fallback
 
 

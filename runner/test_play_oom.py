@@ -150,6 +150,9 @@ class OomGuard(unittest.TestCase):
         self.assertEqual(O.last_loaded_save([], saves, "Claude-0__S078-start"), "Claude-0__S078-start")
         failed = [{"t": 20.0, "tool": "load_game", "args": {"save": "S081-end"}, "result": "FAILED: no such save"}]
         self.assertEqual(O.last_loaded_save(failed, saves, "fallback"), "fallback")
+        # an earlier playthrough's S081-end that Steam's local cloud restored at the launch: mtime 15, SaveTime 5
+        restored = rpolicy.Save("Claude-0__S081-end", "Claude", "S081-end", 15.0, 5.0)
+        self.assertEqual(O.last_loaded_save(by_label, [*saves, restored], "x"), "Claude-1__S081-end")
 
     def test_refused_with_no_other_save_stops(self):
         saves = [rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0, 20.0)]
