@@ -185,7 +185,11 @@ def party_losses(records: Iterable[dict]) -> dict[str, int]:
     """{fights, downs, deaths, wipes} over a run's facts: the combats started (State.combats_started); a real party
     member (no summon) going down or dying, seen by its event or by a snapshot (DeepSeek x Balthazar: Wyll dead in a
     snapshot, no died event), `revived` standing it up again; and the party wiped (every real member down or dead)
-    from not, once a snapshot has listed the party."""
+    from not, once a snapshot has listed the party. A summon is a name any snapshot or died event marks summon (its
+    downed/revived events carry no flag)."""
+    records = list(records)
+    summons = {p["name"] for r in records if r["kind"] == "snapshot" for p in r["party"] if p.get("summon")}
+    summons |= {r["name"] for r in records if r["kind"] == "event" and r["ev"] == "died" and r.get("summon")}
     st, party = State(), {}  # name -> [dead, downed]
     downs = deaths = wipes = 0
     listed = was_wiped = False
@@ -202,7 +206,10 @@ def party_losses(records: Iterable[dict]) -> dict[str, int]:
                 now[p["name"]] = [bool(p.get("dead")), bool(p.get("downed"))]
             party = now
         elif (
-            r["kind"] == "event" and r["ev"] in ("died", "downed", "revived") and r.get("party") and not r.get("summon")
+            r["kind"] == "event"
+            and r["ev"] in ("died", "downed", "revived")
+            and r.get("party")
+            and r["name"] not in summons
         ):
             m = party.setdefault(r["name"], [False, False])
             if r["ev"] == "died":

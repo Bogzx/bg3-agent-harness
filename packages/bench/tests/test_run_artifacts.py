@@ -162,3 +162,6 @@ def test_party_losses_count_a_death_only_a_snapshot_saw_and_no_summons():
         {"v": 1, "kind": "event", "t": 6.0, "ev": "downed", "name": "Tav", "party": True},
     ]
     assert facts.party_losses(tl) == {"fights": 1, "downs": 3, "deaths": 1, "wipes": 2}
+    # the summon's downed event carries no summon flag (the mod flags kill/died): still no party down, no wipe
+    tl[5:5] = [{"v": 1, "kind": "event", "t": 4.5, "ev": "downed", "name": "Scratch", "party": True}]
+    assert facts.party_losses(tl) == {"fights": 1, "downs": 3, "deaths": 1, "wipes": 2}
