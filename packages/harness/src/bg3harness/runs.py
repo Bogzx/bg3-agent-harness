@@ -470,7 +470,9 @@ def own_cost(ev, running: dict) -> float | None:
     """The cost a RUNNING_COST client's result event adds (clients.RUNNING_COST: its cost_usd is the conversation's
     running total over --resume, so a conversation costs the highest total it reported): what the figure adds to
     the conversation's highest so far. running: conversation id -> that highest figure, updated here. A result
-    without a conversation id is its process's own."""
+    without a conversation id is its process's own. Assumed, not yet seen live (research/fix/harness.md L5): a claude
+    process killed before its result (claude_totals adds it at its token estimate, unfinished_result) is NOT in the
+    next resume's total_cost_usd; if claude carries it over, that process is counted twice."""
     if ev.cost_usd is None or not ev.session_id:
         return ev.cost_usd
     prev = running.get(ev.session_id, 0.0)
