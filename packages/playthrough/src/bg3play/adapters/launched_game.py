@@ -272,7 +272,9 @@ class LaunchedGame:
     def ensure_save(self, since: float) -> str | None:
         """play.py ensure_save at a session's end: the newest save this session wrote (the first one names the save
         owner of a new playthrough), else a quicksave the runner asks for and records (runner.json runner_saves, its
-        fight state in runner_save_combat), so the next session doesn't go back to an older save. None: no save."""
+        fight state in runner_save_combat), so the next session doesn't go back to an older save. None: no save. The
+        quicksave is the new folder saved since the request, by its own time (Save.saved): a copy Steam restores has
+        mtime = when it appeared."""
         if self.sdir is None:
             return None
         path = self.sdir / "runner.json"
@@ -304,9 +306,9 @@ class LaunchedGame:
             self.log(f"quicksave request failed: {e}")
             return None
         while True:
-            fresh = [s for s in self.saves() if s.folder not in before and s.mtime >= t0 - 1]
+            fresh = [s for s in self.saves() if s.folder not in before and s.saved is not None and s.saved >= t0 - 1]
             if fresh:
-                s = max(fresh, key=lambda x: x.mtime)
+                s = max(fresh, key=hsaves.saved_key)
                 if owner and s.owner != owner:
                     self.log(f"quicksave {s.folder} has an unexpected owner; not recording it")
                     return None
