@@ -47,3 +47,32 @@ def test_no_cost(tmp_path: Path):
     assert session_cost(tmp_path / "S001") is None
     assert session_cost(tmp_path / "S002") is None
     assert session_cost(tmp_path / "missing" / "S001") is None
+
+
+def _start(client: str) -> dict:
+    return {"src": "harness", "kind": "session_start", "detail": {"session": "S001", "client": client}}
+
+
+def _result(cost: float) -> dict:
+    return {"kind": "result", "session_id": "c1", "turns": 2, "cost_usd": cost, "tokens": {"input": 10}}
+
+
+def test_a_resumed_claude_conversation_costs_its_last_running_total(tmp_path: Path):
+    # bench diverse-2026-10-25 Opus act1_gold_max: claude's result reports the conversation's cost so far over
+    # --resume; the harness writes each resume to its own file (-cN stop resumes, -rN fault resumes)
+    for name, cost in (("S001", 5.43), ("S001-c1", 8.45), ("S001-c2", 9.05), ("S001-r1", 9.70)):
+        _log(tmp_path / f"{name}.events.jsonl", _start("claude"), _result(cost))
+    assert session_cost(tmp_path / "S001") == 9.70
+
+
+def test_the_apps_resumes_append_to_the_sessions_log(tmp_path: Path):
+    # adapters/agent_process: every process of an app session appends to Sxxx.events.jsonl
+    _log(tmp_path / "S001.events.jsonl", _start("claude"), _result(2.0), _start("claude"), _result(3.5))
+    assert session_cost(tmp_path / "S001") == 3.5
+
+
+def test_pi_results_over_one_conversation_are_each_their_process_s_cost(tmp_path: Path):
+    # pi (DeepSeek) bills per process, never a running total
+    _log(tmp_path / "S001.events.jsonl", _start("pi"), _result(0.10))
+    _log(tmp_path / "S001-c1.events.jsonl", _start("pi"), _result(0.20))
+    assert session_cost(tmp_path / "S001") == 0.3
