@@ -31,6 +31,7 @@ from bg3bench import scenario_v1 as bscenario
 from bg3bench import series as bseries
 from bg3harness import bg3le_buildinfo, client_setup, judge, model_time, runs, scenario_file, steam_paths
 from bg3harness.game.io import Save
+from bg3harness.game.saves import saved_key
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
 from bg3harness.runner import judging
@@ -338,7 +339,10 @@ def half_run_state(pt: str) -> dict | None:
         recorded = []
     after = st.get("saves_after")
     try:
-        saves = [s.folder for s in sorted(rcode.list_saves(), key=lambda s: s.mtime) if after and s.mtime >= after]
+        # by the save's own time (meta.lsf SaveTime): Steam's local cloud restores earlier runs' saves with mtime = the
+        # launch
+        saves = [s.folder for s in sorted(rcode.list_saves(), key=saved_key)
+                 if after and s.saved is not None and s.saved >= after]
     except Exception:
         saves = []
     if not (started or finished or streams or open_sid or dirty or commits or recorded):
