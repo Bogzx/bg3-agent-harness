@@ -134,6 +134,18 @@ def test_recover_refuses_a_save_from_elsewhere_or_stale_or_oom_blocked(tmp_path:
     assert ctl.calls == []  # nothing killed when there is nothing to load
 
 
+def test_a_series_earlier_run_save_steam_restored_is_never_the_runs(tmp_path: Path):
+    # bench B3 (PR #14): Steam's local cloud restores a moved-aside save at a launch with mtime = the launch; its
+    # meta.lsf SaveTime still says the series' previous run wrote it (before saves_after)
+    restored = save(OWNER, 5, "S001-end", 2995, saved=500)
+    state = PLAYED | {"saves_after": 900}
+    ctl = FakeCtl()
+    g, *_ = setup(tmp_path, state, [restored], handoff='Save to load: "S001-end"\n', ctl=ctl)
+    with pytest.raises(RuntimeError, match="no save to load: no save of this playthrough"):
+        g.recover("crashed")
+    assert ctl.calls == []
+
+
 def test_recover_follows_handoffs_save_to_load(tmp_path: Path):
     saves = [save(OWNER, 1, "S001-end", 2000), save(OWNER, 2, "S001-fight", 2500)]
     handoff = '# Handoff S001 → S002\n\nSave to load: "S001-end" — before the fight\n'
