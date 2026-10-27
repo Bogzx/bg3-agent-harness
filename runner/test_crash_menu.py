@@ -131,7 +131,8 @@ class SplashMenu(unittest.TestCase):
         G.available_ops = lambda ctx: {"ui.state", "ui.menu"}
         G.server_ready = lambda: g.running
         G.host_character_name = lambda: "Claude"
-        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", time.time() - 60)]
+        t = time.time() - 60
+        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", t, t)]
         r = lpt.Runner(rstate.Options("splash-test", None, 20, "opus", save_owner="Claude"))
         r.mem = self.tmp / "memory"
         r.owns_game = lambda: True
@@ -254,7 +255,8 @@ class RestartDrift(unittest.TestCase):
         G.server_ready = lambda: g.running
         G.host_character_name = lambda: "Claude"
         G.read_progress = lambda log=None: now_sig
-        rcode.list_saves = lambda: saves or [rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", time.time() - 60)]
+        t = time.time() - 60
+        rcode.list_saves = lambda: saves or [rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", t, t)]
         r = lpt.Runner(rstate.Options("drift-test", None, 20, "opus", save_owner="Claude", take_over=take_over))
         r.state["agent_saves"] = agent_saves
         r.mem = self.tmp / "memory"
@@ -290,9 +292,9 @@ class RestartDrift(unittest.TestCase):
         # RUN-6 (S059): the newest good state was the agent's own quicksave; pick_save used to skip every QuickSave_N
         now = time.time()
         saves = [
-            rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", now - 600),
-            rpolicy.Save("Claude-1__QuickSave_7", "Claude", "QuickSave_7", now - 60),  # the agent's (recorded)
-            rpolicy.Save("Claude-1__QuickSave_8", "Claude", "QuickSave_8", now - 30),
+            rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", now - 600, now - 600),
+            rpolicy.Save("Claude-1__QuickSave_7", "Claude", "QuickSave_7", now - 60, now - 60),  # the agent's, recorded
+            rpolicy.Save("Claude-1__QuickSave_8", "Claude", "QuickSave_8", now - 30, now - 30),
         ]  # acceptance's (not)
         act2 = dict(self.END, level="SCL_Main_A")
         g, label, _log = self.run_restart(act2, saves=saves, agent_saves=["Claude-1__QuickSave_7"])

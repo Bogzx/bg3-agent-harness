@@ -67,8 +67,9 @@ class FakeReads:
         return {"level": "TUT"}
 
 
-def save(owner: str, n: int, label: str, mtime: float) -> Save:
-    return Save(f"{owner}-{n}__{label}", owner, label, mtime)
+def save(owner: str, n: int, label: str, mtime: float, saved: float | None = None) -> Save:
+    """A save as controller.list_saves gives it: its .lsv mtime and its meta.lsf SaveTime (default the same)."""
+    return Save(f"{owner}-{n}__{label}", owner, label, mtime, mtime if saved is None else saved)
 
 
 def setup(
@@ -354,9 +355,9 @@ def test_an_app_sessions_bridge_offers_the_playthroughs_own_saves_and_never_anot
         d.mkdir(parents=True)
     (sdir / "runner.json").write_text(json.dumps({"save_owner": VESSA, "history": VESSA_HISTORY}))
     saves = [
-        Save(f"{VESSA}-1__S001-sazza-escape", VESSA, "S001-sazza-escape", 2000),  # S001's
-        Save(f"{VESSA}-2__S027-end", VESSA, "S027-end", 4000),  # same name, another playthrough between sessions
-        Save("Karlach-3__S009-end", "Karlach", "S009-end", 5200),  # another character
+        Save(f"{VESSA}-1__S001-sazza-escape", VESSA, "S001-sazza-escape", 2000, 2000),  # S001's
+        Save(f"{VESSA}-2__S027-end", VESSA, "S027-end", 4000, 4000),  # same name, another playthrough between sessions
+        Save("Karlach-3__S009-end", "Karlach", "S009-end", 5200, 5200),  # another character
     ]
     for s in saves:
         (save_dir / s.folder).mkdir()

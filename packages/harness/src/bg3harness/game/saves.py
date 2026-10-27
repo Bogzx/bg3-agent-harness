@@ -57,6 +57,13 @@ def label_matches(label: str, wanted: str, prefix: str = SAVE_PREFIX) -> bool:
     return label == wanted or label == prefix + wanted
 
 
+def saved_key(s: Save) -> float:
+    """A save's sort time: when the game wrote it (Save.saved, its meta.lsf SaveTime), never its mtime: Steam's local
+    cloud restores a moved-aside or deleted save at a launch with mtime = the launch (bench B3, run_host.own_save).
+    An unread time sorts oldest (save_candidates never takes such a save)."""
+    return s.saved if s.saved is not None else float("-inf")
+
+
 SAVE_WINDOW_SLACK_S = 120.0  # a save this close to one of the playthrough's play windows still counts as written in it
 
 
@@ -136,16 +143,19 @@ def save_candidates(
     runner itself made for this playthrough (recorded by folder). Never anything else. With `windows`
     (play_windows: when this playthrough was played; empty for a new one), a labelled save counts only when it was
     written in one of them or before the first: another playthrough with the same name, or a worker, wrote the rest.
+    Written is the save's own time (Save.saved), never its mtime; a save whose time can't be read is never one.
     """
     cands = []
     for s in saves:
+        if s.saved is None:
+            continue  # when it was written, so whose it is, is unknown (run_host.own_save's rule)
         if s.folder in runner_saves:
             cands.append(s)
         elif is_autosave(s.label):
             continue  # AutoSave_N/QuickSave_N: the game's or a worker's test state (se 18:14 AutoSave_59), never ours
         elif owner is not None and s.owner != owner:
             continue
-        elif played_elsewhere(s.mtime, windows or []):
+        elif played_elsewhere(s.saved, windows or []):
             continue  # same owner, written while another playthrough (or a worker) played
         elif (handoff_label and label_matches(s.label, handoff_label, prefix)) or (
             owner is not None and is_ai_save(s, prefix)
@@ -164,7 +174,7 @@ def pick_save(
 ) -> Save | None:
     """The newest save of this playthrough (save_candidates)."""
     return max(
-        save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows), key=lambda s: s.mtime, default=None
+        save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows), key=saved_key, default=None
     )
 
 
@@ -213,13 +223,13 @@ def pick_save_why(
     quicksave), or HANDOFF's session is unknown. S076 (L8): the newest was S075-fight, saved mid-fight on try 6,
     HANDOFF (S075's) named S075-end; S076's HANDOFF named S075-end again, its S076-end being a losing fight."""
     cands = save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows)
-    newest = max(cands, key=lambda s: s.mtime, default=None)
+    newest = max(cands, key=saved_key, default=None)
     if newest is None:
         return None, "no save of this playthrough"
     if not handoff_label:
         return newest, "the newest save (HANDOFF names no save)"
     named = max(
-        (s for s in cands if label_matches(s.label, handoff_label, prefix)), key=lambda s: s.mtime, default=None
+        (s for s in cands if label_matches(s.label, handoff_label, prefix)), key=saved_key, default=None
     )
     if named is None:
         return newest, f'the newest save (HANDOFF names "{handoff_label}": no such save of this playthrough)'
@@ -233,7 +243,7 @@ def pick_save_why(
             + (f"{sid} never played here" if sid else "has no '# Handoff Sxxx' heading")
             + ": can't tell whether it knew the newer saves)"
         )
-    if newest.mtime > end + HANDOFF_SAVE_SLACK_S:
+    if saved_key(newest) > end + HANDOFF_SAVE_SLACK_S:
         return newest, (
             f'the newest save (HANDOFF names "{handoff_label}", but "{newest.label}" was saved '
             f"after {sid}, which wrote HANDOFF, ended)"

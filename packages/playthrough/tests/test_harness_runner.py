@@ -449,8 +449,8 @@ def test_a_crash_relaunches_through_the_controller_and_the_session_resumes(tmp_p
     (pts / PT).mkdir(parents=True)
     config.save(pts / PT, config.validate({"v": 1, "name": PT, "session": {"minutes": 30.0, "hours": 0.5}}))
     older, newest = (
-        Save("Ilse-1__S001-start", "Ilse", "S001-start", 1100),
-        Save("Ilse-2__S001-x", "Ilse", "S001-x", 1200),
+        Save("Ilse-1__S001-start", "Ilse", "S001-start", 1100, 1100),
+        Save("Ilse-2__S001-x", "Ilse", "S001-x", 1200, 1200),
     )
     host = AppHost(runtime, tmp_path, tmp_path / "saves", saves=lambda: [older, newest])
     ctl = FakeController(host, older)
@@ -526,7 +526,7 @@ def test_a_new_playthroughs_first_session_launches_a_new_game_and_the_second_its
 
     def during(n: int) -> None:  # S001's agent creates Vessa; its create_character queues the first save
         if n == 1:
-            saves.append(Save("Vessa-1__S001-start", "Vessa", "S001-start", clock.t + 60))
+            saves.append(Save("Vessa-1__S001-start", "Vessa", "S001-start", clock.t + 60, clock.t + 60))
 
     agent = FakeAgent(clock, [("exited", 30)], during)
     runner = hr.HarnessRunner(runtime, pts, lambda c, d: agent, game, lambda mem: FakeMemory(), clock)
