@@ -418,7 +418,11 @@ class SaveWatch:
         self.thread.start()
 
     def stop(self) -> None:
+        """Stops polling and waits for a poll in flight, so record's check(final=True) never decides (and counts,
+        and marks) the load that poll is deciding."""
         self.done.set()
+        if self.thread.is_alive():
+            self.thread.join()
 
 
 def owner_of(sc: Json) -> str:
