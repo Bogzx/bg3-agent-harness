@@ -21,7 +21,7 @@ import bg3harness
 from bg3harness import clients, ramwatch, runs
 from bg3harness.game import io as game
 from bg3harness.game.io import Save
-from bg3harness.game.saves import SAVE_PREFIX, foreign_saves, is_ai_save, is_autosave
+from bg3harness.game.saves import SAVE_PREFIX, foreign_saves, is_ai_save, is_autosave, saved_key
 from bg3harness.runner import env as renv
 from bg3harness.runner.profile import (  # noqa: F401  (re-exported)
     DIFFICULTIES,
@@ -219,19 +219,20 @@ def boundary_save(saves: list[Save], runner_saves: set[str], combat: dict[str, b
     call changed the game after it (`actions`: actions.jsonl since the session's start). S093 09:50: HANDOFF named
     S090-end, S093 played on without a named save, and the snapshot relaunch was skipped although the runner's
     QuickSave_24 held where S093 ended. A mid-fight one doesn't: the enemies' turns go on in the running game, and a
-    reload would roll them again. -> (save, "") or (None, why not)."""
+    reload would roll them again. Written is the save's own time (Save.saved, meta.lsf SaveTime), never its folder
+    mtime: Steam's local cloud restores an older quicksave with mtime = the launch. -> (save, "") or (None, why not)."""
     sid = last.get("session") or "the last session"
-    mine = [s for s in saves if s.folder in runner_saves and s.mtime >= last.get("started", 0)]
+    mine = [s for s in saves if s.folder in runner_saves and s.saved is not None and s.saved >= last.get("started", 0)]
     if not mine:
         return None, f"no runner quicksave since {sid}'s start"
-    s = max(mine, key=lambda x: x.mtime)
+    s = max(mine, key=saved_key)
     was = combat.get(s.folder)
     if was is None:
         return None, f"the runner's quicksave {s.label}: unknown whether the party was in a fight"
     if was:
         return None, (f"the runner's quicksave {s.label} was made mid-fight (the enemies' turns go on in the running "
                       "game; a reload would roll them again)")
-    changed = [a for a in actions if a.get("t", 0) > s.mtime and not keeps_state(a)]
+    changed = [a for a in actions if a.get("t", 0) > saved_key(s) and not keeps_state(a)]
     if changed:
         return None, f"the runner's quicksave {s.label}: {changed[-1].get('tool')} changed the game after it"
     return s, ""
@@ -243,20 +244,23 @@ def foreign_use_since(save: Save, saves: list[Save], actions: list[dict], game_s
 
     --take-over plays on from the running game; that's only right if nobody else used it since. Workers' live tests
     load and save their own saves (LIVETEST-*) or older playthrough saves, and a relaunch by tools/dev/first_launch.sh
-    --continue loads the newest save of any kind. Any of these after `save` was written → load `save` instead."""
+    --continue loads the newest save of any kind. Any of these after `save` was written → load `save` instead.
+    Written is a save's own time (saves.saved_key: meta.lsf SaveTime), never its folder mtime: Steam's local cloud
+    restores old saves with mtime = the launch, which read as written after `save` (and the relaunch as before it)."""
+    written = saved_key(save)
     for s in saves:
-        if (s.mtime > save.mtime and s.owner == save.owner and s.folder not in runner_saves
+        if (saved_key(s) > written and s.owner == save.owner and s.folder not in runner_saves
                 and not is_autosave(s.label) and not is_ai_save(s, prefix)):
             return f"save '{s.label}' was written after {save.label}"
     for a in actions:
-        if a.get("t", 0) <= save.mtime or a.get("tool") != "load_game":
+        if a.get("t", 0) <= written or a.get("tool") != "load_game":
             continue
         args = a.get("args") or {}
         m = re.search(r"loaded=(\S+)", str(a.get("result") or ""))
         got = m.group(1) if m else str(args.get("save") or args.get("label") or "")
         if got not in (save.label, save.folder):
             return f"load_game '{got}' ran after {save.label} was written"
-    if game_started and game_started > save.mtime:
+    if game_started and game_started > written:
         return f"the game was relaunched after {save.label} was written (it loads its newest save, not ours)"
     return None
 
