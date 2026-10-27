@@ -453,6 +453,14 @@ class Saves(Base):
             hand = [ln.split("[", 1)[1].split("]", 1)[0] for ln in saving.list_saves().splitlines() if "[" in ln]
         self.assertEqual(hand[:2], ["Claude-2__S005-end", "Claude-1__S004-end"])  # a hand-run server: same order
 
+    def test_saves_in_the_same_second_go_newest_mtime_first(self):
+        # PR #21 review: SaveTime has whole seconds, so two saves made in the same second tied on it
+        self.save("Claude-1__S004-a", 10, saved_age=50)
+        self.save("Claude-2__S004-b", 20, saved_age=50)
+        a, b = self.dir / "Claude-1__S004-a", self.dir / "Claude-2__S004-b"
+        self.assertEqual(saving._newest_first([a, b]), [b, a])
+        self.assertEqual(saving._newest_first([b, a]), [b, a])
+
     def test_a_scenario_run_lists_only_its_start_save_and_its_own_saves(self):
         # B3 job 10: c1's list_saves showed "S001-all-level3 [Tav-502512612935__S001-all-level3] <- latest", another
         # run's save that Steam restored at the launch, beside the run's own AutoSave_179
