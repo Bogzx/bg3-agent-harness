@@ -36,8 +36,12 @@ These are screenshots the agent took for itself with its screenshot tool, at the
 | claude-run-2 (Opus 5.5 through Claude Code), session S021, 2026-10-10: the burning inn at Waukeen's Rest in Act 1. | Benchmark, `crash_site_grove` (Opus 5.5, 2026-10-25): the half-orc paladin on the Ravaged Beach, 40 seconds into a run whose goal is the Emerald Grove. |
 | ![Lae'zel in the tieflings' cage, with dialogue options](docs/img/bench-act1-laezel.jpg) | ![Gale's level-up screen](docs/img/play-act1-level-up.jpg) |
 | Benchmark, `act1_level_3` (Opus 5.5, 2026-10-25): Lae'zel caged by tieflings. The agent reads the options and picks one with a skill check. | claude-run-2, session S021, 2026-10-10: Gale reaches level 4 in Act 1, and the agent picks his new spells on the game's own level-up screens. |
-| ![Goblins attacking the party on the windmill's roof](docs/img/bench-act1-windmill-fight.jpg) | ![The final fight](docs/img/play-netherbrain.jpg) |
-| Benchmark, `fight_act1_windmill` (Opus 5.5, 2026-10-25, the run that counts), 2.6 minutes in, with goblins shooting at the party on the roof. The agent: "A second Booyahg showed up, greased our roof, and is shooting us from hiding." | Spoiler, the end of the game: claude-run-2, session S096, 2026-10-18, the final fight. That session went on to the epilogue. |
+
+![Goblins attacking the party on the windmill's roof](docs/img/bench-act1-windmill-fight.jpg)
+
+<sub>Benchmark, `fight_act1_windmill` (Opus 5.5, 2026-10-25, the run that counts), 2.6 minutes in, with goblins
+shooting at the party on the roof. The agent: "A second Booyahg showed up, greased our roof, and is shooting us from
+hiding."</sub>
 
 The [playthrough app](docs/APP.md) shows the same runs from the outside: the game recording, what the agent says,
 its tool calls, the party, its memory and a timeline of its choices and fights.
