@@ -308,6 +308,11 @@ class HandoffAndSaves(unittest.TestCase):
         new = rgame.saves_since(self._saves(), 150, "Ilse", "")
         self.assertEqual([s.folder for s in new], ["Ilse-4__S001-end"])
         self.assertEqual(rgame.saves_since(self._saves(), 1000, None, ""), [])
+        # bench B3: Steam restored another run's save at this session's launch (1000): mtime = the launch, so it
+        # passed as the session's save and, with no owner known yet, named the owner
+        restored = [sv("Vessa-7__S001-end", 1005.0, saved=400.0), sv("Ilse-8__S002-start", 1200.0),
+                    dataclasses.replace(sv("Ilse-9__S002-x", 1300.0), saved=None)]
+        self.assertEqual([s.folder for s in rgame.saves_since(restored, 1000, None, "")], ["Ilse-8__S002-start"])
 
 
 class AgentSaves(unittest.TestCase):
