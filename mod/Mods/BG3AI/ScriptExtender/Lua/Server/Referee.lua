@@ -24,7 +24,7 @@ R.seq = R.seq or 0
 R.fired = R.fired or {}
 R.registered = R.registered or {}
 R.removed = R.removed or {} -- item uuid -> {holder, t}: the last RemovedFrom, paired with the next AddedTo
-R.traders = R.traders or {} -- npc uuid -> true: every RequestTrade partner this Lua state saw
+R.traders = R.traders or {} -- npc uuid -> true: every RequestTrade partner or Trade-offering speaker this Lua state saw
 R.combats = R.combats or {} -- combat guid -> {announced, members = {uuid -> true}}
 R.ppItems = R.ppItems or {} -- item uuids a CharacterPickpocketSuccess already counted
 R.lastHit = R.lastHit or {} -- defender uuid -> {attacker, owner, t}: the last AttackedBy, for self-kills
@@ -111,6 +111,28 @@ listen("TradeEnds", 2, function(player, trader)
     R.trade = nil
     R.record("trade_end", rec)
 end)
+
+-- A dialogue that offers Trade (Client/UIState.lua S.tradeOffered: the game's Trade button) makes its NPC speakers
+-- traders. Live N3/N5: no static read marks a merchant (the Trader tag misses Mohan; Osi.CanTrade, Flags2 Trader and
+-- the template's TradeTreasures hold for goblins, kids, druids ... too), so this and RequestTrade fill R.traders.
+-- Known gap: an untagged merchant nobody talked to (Mohan before any dialogue) isn't a trader yet.
+function R.tradeOffered()
+    for _, npcs in pairs(BG3AI.Events and BG3AI.Events.dialogs or {}) do
+        for _, u in ipairs(npcs) do R.traders[u] = true end
+    end
+end
+R.fired["net/TradeOffered"] = R.fired["net/TradeOffered"] or 0
+local okNet, errNet = pcall(function()
+    Ext.Net.CreateChannel("65734c81-edd1-4b6f-b10e-663fec0e768e", "TradeOffered", function()
+        R.fired["net/TradeOffered"] = R.fired["net/TradeOffered"] + 1
+        R.tradeOffered()
+    end)
+end)
+R.registered["net/TradeOffered"] = okNet and true or tostring(errNet)
+
+-- A trader: one the party traded with or that offered Trade in a dialogue (R.traders), or a merchant with the
+-- Trader tag. Not Osi.CanTrade: it held for every windmill goblin, Barth, Arka ... (diverse-2026-10-25 facts).
+function R.isTrader(u, e) return u ~= nil and (R.traders[u] or U.comp(e, "Trader") ~= nil) end
 
 -- Gold: one record per change of the party's total (a move between party members nets out).
 listen("GoldChanged", 2, function(holder, delta)
@@ -238,11 +260,9 @@ end)
 -- self-kill waits up to PENDING_MS for the victim's next AttackedBy and goes to that attacker; none: to the last hit
 -- before the kill within HIT_MS; none either: the engine's names stand. The engine's names are kept as
 -- engine_killer / engine_owner with self_kill = true.
--- trader: a RequestTrade partner or a merchant (the Trader tag). Not Osi.CanTrade: it held for every windmill
--- goblin, Barth, Arka ... (diverse-2026-10-25 facts), so graders counted them as traders killed.
--- Conjured victims (diverse-2026-10-25 act3_gold_max: 78 street magicians' Cats killed by their conjurers):
--- summon when the engine marks one (the IsSummon component, as State.lua's party summons; Osi.IsSummon; the
--- ServerCharacter Summon flag), with its summoner when known; temporary when spawned at run time.
+-- trader: R.isTrader. Conjured victims (diverse-2026-10-25 act3_gold_max: 78 street magicians' Cats killed by
+-- their conjurers): summon when the engine marks one (the IsSummon component, as State.lua's party summons;
+-- Osi.IsSummon; the ServerCharacter Summon flag), with its summoner when known; temporary when spawned at run time.
 local function conjured(e, v, rec)
     local flags = {}
     pcall(function() for _, f in pairs(e.ServerCharacter.Flags) do flags[tostring(f)] = true end end)
@@ -260,7 +280,7 @@ local function recordKill(v, rec, k, o)
     rec.victim, rec.victim_uuid, rec.killer = name(v) or "Unknown", v, k and name(k) or nil
     rec.owner, rec.by_party = o and name(o) or nil, isParty(o) or isParty(k)
     local e = V.entity(v)
-    rec.trader = (R.traders[v] or U.comp(e, "Trader") ~= nil) and true or false
+    rec.trader = R.isTrader(v, e) and true or false
     conjured(e, v, rec)
     R.record("kill", rec)
 end

@@ -15,7 +15,7 @@ local NULL = "NULL_00000000-0000-0000-0000-000000000000"
 local P = "HalfOrcs_Female_Player_" .. HOST
 local T = "S_Trader_" .. TRADER
 
-local listeners, ops, pushed, ticks = {}, {}, {}, {}
+local listeners, ops, pushed, ticks, netHandlers = {}, {}, {}, {}, {}
 local clock = 1000
 local gold = 100
 local dead, items, traders = {}, { [CHEST] = true }, {}
@@ -29,6 +29,7 @@ Ext = {
     Utils = { MonotonicTime = function() return clock end, GameTime = function() return clock / 1000 end,
         PrintWarning = function(m) print("WARN " .. m) end, Print = function() end },
     Events = { Tick = { Subscribe = function(_, fn) ticks[#ticks + 1] = fn end } },
+    Net = { CreateChannel = function(module, channel, fn) netHandlers[module .. "/" .. channel] = fn end },
 }
 Osi = {
     PartyGetGold = function() return gold end,
@@ -231,6 +232,24 @@ do
     k = lastOf("kill")
     check("temporary flag", k.summon == nil and k.temporary == true)
     entities[CAT] = nil
+    -- live N5: Mohan (Lower City) sells but has no Trader tag; once a dialogue with him offers Trade (the client's
+    -- TradeOffered message, Client/UIState.lua) he is a trader; before it he isn't (the known gap)
+    local MOHAN, OTHER = "f28c5212-4eaa-476b-bfa7-9c43302d54aa", "dddddddd-0000-0000-0000-00000000000d"
+    names[MOHAN], names[OTHER] = "Mohan", "Citizen"
+    traders[MOHAN] = true -- Osi.CanTrade 1, as on nearly everyone
+    fire("KilledBy/4", "S_LOW_Mohan_" .. MOHAN, P, P, 0)
+    check("untagged merchant before any dialogue", lastOf("kill").trader == false)
+    local net = netHandlers["65734c81-edd1-4b6f-b10e-663fec0e768e/TradeOffered"]
+    check("trade-offered channel", net ~= nil and R.registered["net/TradeOffered"] == true)
+    BG3AI.Events = { dialogs = { [7] = { MOHAN } } }
+    net({}, 65537)
+    BG3AI.Events.dialogs[7] = nil -- the dialogue ended: he stays a trader
+    fire("KilledBy/4", "S_LOW_Mohan_" .. MOHAN, P, P, 0)
+    check("Trade offered in a dialogue: trader", lastOf("kill").trader == true)
+    fire("KilledBy/4", "S_Citizen_" .. OTHER, P, P, 0)
+    check("not every speaker ever: only that dialogue's", lastOf("kill").trader == false)
+    check("net fired counted", R.fired["net/TradeOffered"] == 1, R.fired["net/TradeOffered"])
+    check("isTrader nil uuid", not R.isTrader(nil, nil))
     -- live4: a self-kill (a mephit's death burst) goes to the last hit; the engine's names are kept.
     local MEPHIT, MASTER = "dddddddd-0000-0000-0000-00000000000a", "dddddddd-0000-0000-0000-00000000000b"
     names[MEPHIT], names[MASTER] = "Young Grease Mephit", "Grease Mephit"
