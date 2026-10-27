@@ -24,6 +24,7 @@ a run with any of them is not clean.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import json
 import re
 from collections import Counter
@@ -448,9 +449,40 @@ def stream_events(lines: list[str], parsers: dict | None = None, name: str | Non
     return out
 
 
+def process_client(base: Path) -> str:
+    """The client one process ran (base: its path without the extension): its events log's session_start, else the
+    raw stream's first event (stream_client)."""
+    try:
+        with open(base.with_name(base.name + ".events.jsonl"), encoding="utf-8") as f:
+            first = json.loads(f.readline() or "{}")
+        if first.get("kind") == "session_start" and (first.get("detail") or {}).get("client"):
+            return str(first["detail"]["client"])
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        with open(base.with_name(base.name + ".jsonl"), encoding="utf-8", errors="replace") as f:
+            return stream_client(list(itertools.islice(f, 20)))
+    except OSError:
+        return "claude"
+
+
+def own_cost(ev, running: dict) -> float | None:
+    """The cost a RUNNING_COST client's result event adds (clients.RUNNING_COST: its cost_usd is the conversation's
+    running total over --resume, so a conversation costs the highest total it reported): what the figure adds to
+    the conversation's highest so far. running: conversation id -> that highest figure, updated here. A result
+    without a conversation id is its process's own."""
+    if ev.cost_usd is None or not ev.session_id:
+        return ev.cost_usd
+    prev = running.get(ev.session_id, 0.0)
+    running[ev.session_id] = max(prev, float(ev.cost_usd))
+    return running[ev.session_id] - prev
+
+
 def claude_totals(state_dir: Path, since: float) -> dict:
     """Cost, turns and tokens of every play-agent stream written since `since` (play, resumes, -fix, -keeper; any
-    client): their result events (events.load_events). A process stopped before its result (a cap, a hang, a crash: no
+    client): their result events (events.load_events); a claude conversation costs the highest running total it
+    reported (own_cost; running: conversation id -> that total, UsageMeter's seed), not the sum over its resumes
+    (Opus act1_gold_max: $42.09 for 9.70). A process stopped before its result (a cap, a hang, a crash: no
     result event, its events log's session_end; stopped_usage) counts its usage events, UsageMeter's way: the tokens per
     message id, one turn per message, the cost its client reported as running (pi), else its tokens at the run's cost
     per token so far (claude reports cost only in its result). A process whose cost can't be known (a codex/gemini
@@ -472,20 +504,29 @@ def claude_totals(state_dir: Path, since: float) -> dict:
             continue
     parsers: dict = {}
     served: dict = {}  # what the endpoints served (clients.Event.served), merged in first-seen order
+    running: dict = {}
     for _, _, f in sorted(found):  # in the order written: a resume after the process it resumes
         base = f.with_name(f.name[: -len(".jsonl")])
         evs = events.load_events(base, kinds={"result"}, parsers=parsers)
+        reported = bool(evs) and process_client(base) in clients.RUNNING_COST
         if not evs and (usage := stopped_usage(base)) is not None:
             evs = [unfinished_result(usage, cost, token_total(tokens))]
         for ev in evs:
             unknown = unknown or (ev.cost_usd is None and token_total(ev.tokens) > 0)
-            cost += float(ev.cost_usd or 0)
+            cost += float((own_cost(ev, running) if reported else ev.cost_usd) or 0)
             turns += int(ev.turns or 0)
             for k in clients.TOKEN_KEYS:
                 tokens[k] += int((ev.tokens or {}).get(k) or 0)
             for k, values in (ev.served or {}).items():
                 served.setdefault(k, []).extend(v for v in values if v not in served[k])
-    return {"cost_usd": cost, "turns": turns, "tokens": tokens, "cost_unknown": unknown, "served": served or None}
+    return {
+        "cost_usd": cost,
+        "turns": turns,
+        "tokens": tokens,
+        "cost_unknown": unknown,
+        "served": served or None,
+        "running": running,
+    }
 
 
 def stopped_usage(base: Path) -> list | None:
@@ -519,10 +560,13 @@ class UsageMeter:
     plus this stream's running usage (clients.Event "usage", per message id) until its result event gives the exact
     totals. Claude reports cost only in result events, so the live cost is the live tokens at the run's cost per
     token so far (none before the run's first result: a cost cap then trips at the end of the first process). A
-    client whose usage events carry the process's running cost (pi: billed, or its estimate) is metered by that."""
+    client whose usage events carry the process's running cost (pi: billed, or its estimate) is metered by that.
+    running: for a clients.RUNNING_COST client, claude_totals' running (its results' cost is the conversation's so
+    far: own_cost); None: a result's cost is its process's."""
 
-    def __init__(self, base_cost: float = 0.0, base_tokens: int = 0):
+    def __init__(self, base_cost: float = 0.0, base_tokens: int = 0, running: dict | None = None):
         self.done_cost, self.done_tokens = float(base_cost), int(base_tokens)
+        self.running = running
         self.msgs: dict = {}
         self.live = 0
         self.live_cost: float | None = None
@@ -537,7 +581,7 @@ class UsageMeter:
             if ev.cost_usd is not None:
                 self.live_cost = float(ev.cost_usd)
         elif ev.kind == "result":
-            self.done_cost += float(ev.cost_usd or 0)
+            self.done_cost += float((ev.cost_usd if self.running is None else own_cost(ev, self.running)) or 0)
             self.done_tokens += token_total(ev.tokens)
             self.msgs, self.live, self.live_cost = {}, 0, None
 
