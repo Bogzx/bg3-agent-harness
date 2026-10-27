@@ -492,7 +492,6 @@ reg("cast", function(args)
     local function order(job)
         job.osi_task = "spell"
         job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
-        job.hp0 = job.hp0 or hp_of(char)
         if pos then
             if A.ally_call(spell) then job.ally_before = A.callers_near(pos) end
             if A.point_teleport(base) then -- the result says where the caster landed (A.landing_report)
@@ -520,7 +519,9 @@ reg("cast", function(args)
         end or nil,
         osi = with_walk({
             CastSpell = function(job, a)
-                if matches(a) then job.began = true end
+                -- the HP the jump verdict compares with, read as the cast starts: a hit taken after the order (or
+                -- before a re-order) is not the fall's
+                if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
             end,
             CastedSpell = function(job, a)
                 if matches(a) and not job.casted then
@@ -664,6 +665,14 @@ reg("cast", function(args)
                     elseif p then
                         local function flat(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
                         local off, moved = flat(p, pos), flat(p, job.ordered_pos)
+                        -- how far the jumper ended from the arc (the flat line from the start to the landing): a
+                        -- jump the game shortened or that went nowhere ends on it, a fall that put the body back
+                        -- elsewhere (job 13) off it
+                        local o, ax, az = job.ordered_pos, pos[1] - job.ordered_pos[1], pos[3] - job.ordered_pos[3]
+                        local len2 = ax * ax + az * az
+                        local t = len2 > 0 and ((p[1] - o[1]) * ax + (p[3] - o[3]) * az) / len2 or 0
+                        t = math.max(0, math.min(1, t))
+                        local fell = flat(p, { o[1] + t * ax, 0, o[3] + t * az }) > A.JUMP_OFF_M
                         local drop = (pos[2] or p[2]) - p[2]
                         -- Bench B3 job 13 16:47:04: a jump at a Chasm's edge fell in, the game put the body back on
                         -- the ledge 18.6 m from the landing at the jumper's own height, dead (HP 18->0), and jump_to
@@ -676,10 +685,10 @@ reg("cast", function(args)
                         local dead, downed = G.is_dead(char), G.is_downed(char)
                         local hp = hp_of(char)
                         local lost = (job.hp0 and hp) and job.hp0 - hp or 0
-                        if drop <= A.JUMP_FALL_M and (dead or downed or (off > A.JUMP_OFF_M and lost > 0)) then
+                        if drop <= A.JUMP_FALL_M and (dead or downed or (fell and lost > 0)) then
                             local verdict = dead and "DIED" or downed and "is DOWNED" or ("lost " .. lost .. " HP")
                             local hps = string.format("HP %s->%s", tostring(job.hp0 or "?"), tostring(hp or "?"))
-                            local why = off > A.JUMP_OFF_M and string.format("FELL on the way and %s: ended at"
+                            local why = fell and string.format("FELL on the way and %s: ended at"
                                 .. " (%.1f,%.1f,%.1f), %.1fm from the landing (%s)", verdict, p[1], p[2], p[3], off,
                                 hps)
                                 or string.format("landed and %s (%s) at (%.1f,%.1f,%.1f)", verdict, hps,
