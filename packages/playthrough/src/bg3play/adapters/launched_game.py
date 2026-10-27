@@ -34,6 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from bg3harness.game import host as ghost
 from bg3harness.game import saves as hsaves
 from bg3harness.game.io import Save
 from bg3harness.game.saves import parse_handoff_save, pick_save_why
@@ -119,14 +120,16 @@ def choose_save(
     saves: list[Save], state: dict[str, Any], handoff: str, sdir: Path, running: tuple[float, float] | None = None
 ) -> tuple[Save | None, str]:
     """The save a recovery loads, and why (play.py choose_save + own_saves; the OOM-blocked saves left out).
-    `running`: the running session's start..now, a play window too (its saves count)."""
+    `running`: the running session's start..now, a play window too (its saves count). The run start (saves_after)
+    is judged by the save's own time (game.host.own_saves): a copy of a series' earlier run that Steam restores at a
+    launch has mtime = the launch."""
     owner = state.get("save_owner")
     if not owner:
         return None, "no save owner known for this playthrough (runner.json save_owner): any save could be another's"
     after = state.get("saves_after")
     blocked = set(state.get("oom_blocked") or [])
     ours = set(state.get("runner_saves") or []) | set(state.get("agent_saves") or [])
-    own = [s for s in saves if s.folder not in blocked and not (after and s.mtime < after)]
+    own = [s for s in ghost.own_saves(saves, after, None) if s.folder not in blocked]
     raw: object = state.get("history")
     history: list[dict[str, Any]] = [h for h in raw if is_obj(h)] if is_list(raw) else []
     windows = hsaves.play_windows(history, sdir, running)  # pyright: ignore[reportUnknownMemberType]
