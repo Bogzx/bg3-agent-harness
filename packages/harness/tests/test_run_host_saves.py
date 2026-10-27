@@ -68,7 +68,7 @@ def test_a_wipe_ends_a_goal_run_and_a_maximise_run_as_failed(rig: Rig):
         assert (r.until_hit["verdict"], r.until_hit["label"]) == ("wiped", "the party was wiped (Game Over)")
         assert H.undecided_why(r, sc, 1e12, 1000.0) is None  # no "the grader hasn't seen its goal" resume
         rec = rig.h.record(JOB, sc, run_dir(name), outcome())
-        assert (rec["outcome"], rec["verdict"], rec["harness_failures"]) == ("failed", "wiped", 0)
+        assert (rec["outcome"], rec["verdict"], rec["harness_failures"], rec["reloads"]) == ("failed", "wiped", 0, 0)
         assert "foreign_save" not in rec
 
 
@@ -87,7 +87,7 @@ def test_a_load_the_harness_didnt_make_ends_the_run_invalid(rig: Rig):
     assert r.marks == [("load", {"save": None, "foreign_save": sw.foreign})]  # the facts' load mark
     assert ("foreign_save", {"why": sw.foreign, "session": "S001"}) in r.events
     rec = rig.h.record(JOB, SAVE_SC, run_dir("b"), outcome())
-    assert rec["outcome"] == "gave_up" and rec["foreign_save"] == sw.foreign
+    assert rec["outcome"] == "gave_up" and rec["foreign_save"] == sw.foreign and rec["reloads"] == 1
     assert "the main menu's Continue or Load page" in rec["foreign_save"]
     assert any(f["kind"] == "gave_up" and f["detail"] == sw.foreign for f in rec["failures"])
 
@@ -124,6 +124,7 @@ def test_the_agents_load_game_of_its_own_save_is_the_runs(rig: Rig):
     assert not sw.check() and sw.known == "boot-own-2"
     rec = rig.h.record(JOB, SAVE_SC, run_dir("b"), outcome())
     assert rec["outcome"] == "timeout" and "foreign_save" not in rec
+    assert rec["reloads"] == 2  # bg3bench result.json's reloads (the record had none: always 0)
 
 
 def test_the_agents_load_game_of_a_save_from_before_the_run_is_foreign(rig: Rig):

@@ -371,6 +371,7 @@ class SaveWatch:
         self.new: str | None = None  # a new boot seen, not explained yet
         self.seen_at: float | None = None
         self.foreign: str | None = None  # why the run left its saves
+        self.reloads = 0  # the loads seen after the start (the agent's own and a foreign one): the record's reloads
         self.done = threading.Event()
         self.thread = threading.Thread(target=self._loop, name="save-watch", daemon=True)
 
@@ -388,6 +389,7 @@ class SaveWatch:
         loaded = self.loads(self.since)
         if loaded and self.own(loaded[-1]):
             self.known, self.since, self.new, self.seen_at = self.new, now, None, None
+            self.reloads += 1
             self.r.event("load", save=loaded[-1], session=SID)
             self.r.facts_writer().mark("load", loaded[-1])
             return False
@@ -398,6 +400,7 @@ class SaveWatch:
         else:
             return False
         self.foreign = why
+        self.reloads += 1
         renv.log(f"{SID}: {why}: stopping the run (invalid: {FOREIGN_SAVE})")
         self.r.event(FOREIGN_SAVE, why=why, session=SID)
         self.r.facts_writer().mark("load", {"save": loaded[-1] if loaded else None, FOREIGN_SAVE: why})
@@ -845,10 +848,11 @@ class LiveRunHost:
         if (w := self.watches.pop(run_dir, None)) is not None:
             w.stop()
         foreign: str | None = None
+        reloads = 0
         if (sw := self.saves.pop(run_dir, None)) is not None:
             sw.stop()
             sw.check(final=True)  # with the game up: a load seen since the last poll is decided now
-            foreign = sw.foreign
+            foreign, reloads = sw.foreign, sw.reloads
         res = outcome.result
         hit = r.until_hit if r.until_hit and r.until_hit.get("id") == sc.get("until") else None
         goal = r.until_hit if r.until_hit and r.until_hit.get("id") == GOAL_HIT else None
@@ -895,6 +899,7 @@ class LiveRunHost:
                 "manifest": r.opt.manifest,
                 "reset": {"nav_files": moved, "restored": back, "saves": own_saves},
                 "loaded_save": r.state["loaded_save"],
+                "reloads": reloads,  # bg3bench result.json's (diverse-2026-10-25: 0, the record had none)
                 "harness_failures": counts[runs.HARNESS],
                 "agent_failures": counts[runs.AGENT],
                 "unknown_failures": counts[runs.UNKNOWN],
