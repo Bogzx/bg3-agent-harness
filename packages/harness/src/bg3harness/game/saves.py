@@ -261,7 +261,9 @@ def foreign_saves(
     """The owner's `Sxxx-` saves written outside this playthrough's play windows: another playthrough with the same
     character name (replay-hoh's S027-end / S028-lastlight-prep as "Claude"), a worker's S999-savetest. The MCP
     server's list_saves / load_game("latest") must not offer them (BG3AI_SAVES_EXCLUDE): before claude-run-2's first
-    save after a resume, "latest" was replay-hoh's Act 2 save. [] for a new playthrough (no windows)."""
+    save after a resume, "latest" was replay-hoh's Act 2 save. [] for a new playthrough (no windows). Written is the
+    save's own time (Save.saved): a copy Steam restores at a launch has mtime = the launch, inside the running window.
+    A save whose time can't be read is excluded too (no playthrough's: save_candidates)."""
     if not windows or not owner:
         return []
     return sorted(
@@ -270,7 +272,7 @@ def foreign_saves(
         if s.owner == owner
         and s.folder not in runner_saves
         and is_ai_save(s, prefix)
-        and played_elsewhere(s.mtime, windows)
+        and (s.saved is None or played_elsewhere(s.saved, windows))
     )
 
 

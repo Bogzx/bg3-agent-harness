@@ -236,6 +236,12 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertEqual(ragent.foreign_saves(saves, "Claude", {"Claude-3__S999-savetest"}, windows, "Claude-"),
                          ["Claude-5__S028-lastlight-prep"])
         self.assertEqual(ragent.foreign_saves(saves, "Claude", set(), [], "Claude-"), [])     # a new playthrough
+        # bench B3: Steam restored another playthrough's save at this session's launch (9900): mtime = the launch,
+        # inside the running window; its SaveTime says another playthrough wrote it. Unread times are hidden too.
+        restored = [f("Claude-9__S027-end", 9900.0, saved=3000.0), f("Claude-10__S066-start", 9950.0),
+                    dataclasses.replace(f("Claude-11__S066-x", 9990.0), saved=None)]
+        self.assertEqual(ragent.foreign_saves(restored, "Claude", set(), [(900.0, 1450.0), (9900.0, 10000.0)],
+                                              "Claude-"), ["Claude-11__S066-x", "Claude-9__S027-end"])
         with tempfile.TemporaryDirectory() as d:
             r = lpt.Runner(rstate.Options("solo", None, 20, "opus", save_owner="Claude"))
             r.state.dir = Path(d)
