@@ -11,7 +11,7 @@ local LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
 
 -- ---- stubs ---------------------------------------------------------------
 
-local counts = { find = 0, decode = 0 }
+local counts = { find = 0, decode = 0, comp = 0 }
 local entries = {}   -- StatsId -> attribute table
 
 local function proxy(attrs)
@@ -50,9 +50,11 @@ local members = {
 }
 local CHEST = "cccccccc-0000-0000-0000-00000000c4e5"
 local ents = {}
+local stacks, names, statuses = {}, {}, {}
 Osi = setmetatable({
     PartyGetGold = function() return 1234 end,
-    GetStackAmount = function() return 1 end,
+    GetStackAmount = function(u) return stacks[u] or 1 end,
+    HasActiveStatus = function(u, s) return statuses[u .. s] and 1 or 0 end,
     DB_Camp_UserCampChest = { Get = function() return { { members[1], "CampChest_" .. CHEST } } end },
 }, { __index = function() return function() return nil end end })
 
@@ -63,7 +65,7 @@ BG3AI.Visibility = {
     osi = function(f, ...) if f then local ok, v = pcall(f, ...); if ok then return v end end end,
     entity = function(u) return ents[u] end,
     entityUuid = function(e) return e.uuid end,
-    name = function(u) return "N:" .. u end,
+    name = function(u) return names[u] or ("N:" .. u) end,
     context = function() return { party = members, is_party = { [members[1]] = true, [members[2]] = true,
                                                                [members[3]] = true, [members[4]] = true } } end,
 }
@@ -86,8 +88,10 @@ local function entry(i)
     return { ModifierList = "Object", InventoryTab = "Magical", PassivesOnEquip = "MAG_SpellSaveDC" }
 end
 
+-- an item entity: every component read is counted (bg3le: a proxy lookup per read)
 local function item(u, sid)
-    return { uuid = u, Data = { StatsId = sid, Weight = 500 }, Value = { Value = 10, Rarity = 0 }, ServerItem = {} }
+    local c = { Data = { StatsId = sid, Weight = 500 }, Value = { Value = 10, Rarity = 0 }, ServerItem = {} }
+    return setmetatable({ uuid = u }, { __index = function(_, k) counts.comp = counts.comp + 1 return c[k] end })
 end
 
 local function owner(u, list)
@@ -122,7 +126,7 @@ local function eq(a, b, what) if a ~= b then error((what or "value") .. ": expec
 
 local function rebuild()
     S.invCache = nil  -- the TTL expired (or an item event): a full read
-    counts.find, counts.decode = 0, 0
+    counts.find, counts.decode, counts.comp = 0, 0, 0
     local t = os.clock()
     local out = S.inventory(BG3AI.Visibility.context(), {})
     return out, counts.find, counts.decode, (os.clock() - t) * 1000
@@ -142,7 +146,7 @@ local function flat(out)
 end
 
 test("state.inventory: a full rebuild reads each stats entry once, then none; the reply is the same", function()
-    S.statsFactsMemo = {}
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
     local cold, f1, d1, ms1 = rebuild()
     local warm, f2, d2, ms2 = rebuild()
     print(string.format("     cold rebuild: %4d stats gets, %5d attribute decodes (%.1f ms Lua here)", f1, d1, ms1))
@@ -157,7 +161,7 @@ test("state.inventory: a full rebuild reads each stats entry once, then none; th
 end)
 
 test("state.inventory: the memoised facts match a fresh read of the entry", function()
-    S.statsFactsMemo = {}
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
     local cold = rebuild()
     local fresh = {}
     for _, it in ipairs(cold.items) do fresh[it.uuid] = it end
@@ -174,7 +178,7 @@ test("state.inventory: the memoised facts match a fresh read of the entry", func
 end)
 
 test("state.inventory: an item whose stats entry doesn't read keeps no facts, and is read again next time", function()
-    S.statsFactsMemo = {}
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
     local u = members[1]
     local list = ents[u].InventoryOwner.PrimaryInventory.InventoryContainer.Items
     list[#list + 1] = { Item = item("99999999-1111-0000-0000-000000000001", "STAT_MISSING") }
@@ -186,6 +190,45 @@ test("state.inventory: an item whose stats entry doesn't read keeps no facts, an
     eq(row ~= nil and row.ac == nil and row.supply == nil, true, "listed, no stats facts")
     eq(f2, 2, "warm: only the missing entry is looked up again (supplyTotal + itemView)")
     eq(f > f2, true, "cold read more")
+end)
+
+test("state.inventory: a warm rebuild reads no item component (item facts memo, V12)", function()
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
+    local _, _, _, ms1 = rebuild()
+    local c1 = counts.comp
+    local _, _, _, ms2 = rebuild()
+    print(string.format("     item component reads: cold %d, warm %d (%.1f -> %.1f ms Lua here)", c1, counts.comp, ms1, ms2))
+    eq(c1 >= 3 * 540, true, "cold: each item's components read: " .. c1)
+    eq(counts.comp, 0, "warm: no item component read")
+end)
+
+test("state.inventory: a warm rebuild still shows what changed: stack, name, bind status, items added/removed", function()
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
+    rebuild()
+    local u = members[2]
+    local list = ents[u].InventoryOwner.PrimaryInventory.InventoryContainer.Items
+    local first, sword = list[1].Item.uuid, nil
+    for _, it in ipairs(list) do
+        if entries[it.Item.Data.StatsId].ModifierList == "Weapon" then sword = it.Item.uuid break end
+    end
+    local gone = table.remove(list, #list).Item.uuid
+    local new = "99999999-1111-0000-0000-000000000002"
+    list[#list + 1] = { Item = item(new, "STAT_2") }  -- food: 5 supplies
+    local pact = "99999999-1111-0000-0000-000000000003"
+    entries.WPN_Rapier_Pact = entry(1)
+    list[#list + 1] = { Item = item(pact, "WPN_Rapier_Pact") }
+    stacks[first], names[first], statuses[sword .. "WEAPON_BOND"] = 7, "Renamed", true
+    local out = rebuild()
+    stacks[first], names[first], statuses[sword .. "WEAPON_BOND"] = nil, nil, nil
+    list[#list], list[#list - 1] = nil, nil
+    local rows = {}
+    for _, it in ipairs(out.items) do rows[it.uuid] = it end
+    eq(rows[first].count, 7, "stack read fresh"); eq(rows[first].name, "Renamed", "name read fresh")
+    eq(rows[sword].bound, "weapon_bond", "bind status read fresh")
+    eq(rows[gone], nil, "a removed item is gone"); eq(rows[new] ~= nil and rows[new].supply == 5, true, "a new item listed")
+    eq(rows[pact].bound == "pact" and rows[pact].summoned, true, "a pact weapon")
+    eq(rows[sword].summoned, nil, "a plain weapon is no pact weapon")
+    eq(#out.items, 241, "241 carried items")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

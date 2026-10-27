@@ -46,12 +46,13 @@ INVENTORY = (
 local ctx = V.context()
 local function inv() S.invCache = nil local t = now() local r = S.inventory(ctx, {}) return now() - t, #r.items end
 local out = { cold = {}, warm = {} }
-local keep = S.statsFactsMemo
+local keep, keepI = S.statsFactsMemo, S.itemFactsMemo
 for _ = 1, 5 do
-    S.statsFactsMemo = {}
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
     out.cold[#out.cold + 1], out.items = inv()
     for k, v in pairs(S.statsFactsMemo) do keep[k] = v end
-    S.statsFactsMemo = keep
+    for k, v in pairs(S.itemFactsMemo) do keepI[k] = v end
+    S.statsFactsMemo, S.itemFactsMemo = keep, keepI
     out.warm[#out.warm + 1] = inv()
 end
 out.cold, out.warm = stats(out.cold), stats(out.warm)
