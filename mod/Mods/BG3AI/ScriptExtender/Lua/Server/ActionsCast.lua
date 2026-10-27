@@ -238,6 +238,13 @@ local function name_of(uuid)
     return U.loca(G.q("GetDisplayName", uuid))
 end
 
+local function hp_of(uuid)
+    local e = G.entity(uuid)
+    local h = e and U.comp(e, "Health")
+    local ok, hp = pcall(function() return h.Hp end)
+    return ok and hp or nil
+end
+
 -- A30: the enemy cast seen during our cast, as a player sees it. An unseen caster is "someone", as the combat log
 -- shows it: not named, and not called an enemy either (audit C23).
 function A.react_name(rx)
@@ -485,6 +492,7 @@ reg("cast", function(args)
     local function order(job)
         job.osi_task = "spell"
         job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
+        job.hp0 = job.hp0 or hp_of(char)
         if pos then
             if A.ally_call(spell) then job.ally_before = A.callers_near(pos) end
             if A.point_teleport(base) then -- the result says where the caster landed (A.landing_report)
@@ -656,6 +664,34 @@ reg("cast", function(args)
                     elseif p then
                         local function flat(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
                         local off, moved = flat(p, pos), flat(p, job.ordered_pos)
+                        local drop = (pos[2] or p[2]) - p[2]
+                        -- Bench B3 job 13 16:47:04: a jump at a Chasm's edge fell in, the game put the body back on
+                        -- the ledge 18.6 m from the landing at the jumper's own height, dead (HP 18->0), and jump_to
+                        -- said "done": no drop to read. A jump that ends off its landing or below it waits for the
+                        -- fall damage, then death, a down or lost HP is the verdict, whatever the height.
+                        if off > A.JUMP_OFF_M or drop > A.JUMP_FALL_M then
+                            job.fell_ms = job.fell_ms or now
+                            if now - job.fell_ms < A.JUMP_FALL_CHECK_MS then return end -- the fall damage lands
+                        end
+                        local dead, downed = G.is_dead(char), G.is_downed(char)
+                        local hp = hp_of(char)
+                        local lost = (job.hp0 and hp) and job.hp0 - hp or 0
+                        if drop <= A.JUMP_FALL_M and (dead or downed or (off > A.JUMP_OFF_M and lost > 0)) then
+                            local verdict = dead and "DIED" or downed and "is DOWNED" or ("lost " .. lost .. " HP")
+                            local hps = string.format("HP %s->%s", tostring(job.hp0 or "?"), tostring(hp or "?"))
+                            local next_step = dead and "Revive them or load a save. " or downed and "Help them up. "
+                                or ""
+                            local why = off > A.JUMP_OFF_M and string.format("FELL on the way and %s: ended at"
+                                .. " (%.1f,%.1f,%.1f), %.1fm from the landing (%s): the arc or the landing crossed a"
+                                .. " chasm or a drop, and the game puts a faller back on its edge. %sNever jump there"
+                                .. " again; walk (route / get_layout) or aim at solid floor away from the edge",
+                                verdict, p[1], p[2], p[3], off, hps, next_step)
+                                or string.format("landed and %s (%s) at (%.1f,%.1f,%.1f). %s", verdict, hps,
+                                    p[1], p[2], p[3], next_step)
+                            RPC.finish_job(job, "failed", { cast = spell, now_at = U.vec(p, 1),
+                                landing = U.vec(pos, 1), off_m = U.round(off, 1), hp = hp, hp_before = job.hp0 }, why)
+                            return
+                        end
                         if off > A.JUMP_OFF_M and moved < A.JUMP_NOWHERE_M then
                             RPC.finish_job(job, "failed", { cast = spell, moved_m = U.round(moved, 1) },
                                 string.format("the jump went nowhere: moved %.1fm, the landing is still %.1fm away"
@@ -666,11 +702,7 @@ reg("cast", function(args)
                         elseif off > A.JUMP_OFF_M then
                             landing = U.round(off, 1)
                         end
-                        local drop = (pos[2] or p[2]) - p[2]
                         if drop > A.JUMP_FALL_M then
-                            job.fell_ms = job.fell_ms or now
-                            if now - job.fell_ms < A.JUMP_FALL_CHECK_MS then return end -- the fall damage lands
-                            local dead, downed = G.is_dead(char), G.is_downed(char)
                             if dead or downed then
                                 RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1) },
                                     string.format("FELL %.1fm below the landing (to y=%.1f) and %s: the landing had no"
