@@ -328,6 +328,44 @@ reg("select", function(args)
 end)
 
 ------------------------------------------------------------------------
+-- act.end_standup {char, toward}
+-- Live N4 (2026-10-28, the bench B3 job 13 replay): a revived character keeps the revive's stand-up (a
+-- ResurrectComponent and an action state, A.standing_up) until its first order; a short rest before that order
+-- left the action state unfinished and no order of the character started again until a reload. A walk is the
+-- order that ended it in N2 (2.8 m to the reader). Out of combat this walks the character toward `toward` (the
+-- reader) until the stand-up has ended; in combat its own turn's first order ends it.
+------------------------------------------------------------------------
+
+A.STANDUP_END_MS = 4000
+
+reg("end_standup", function(args)
+    local char = G.actor(args.char)
+    if not A.standing_up(char) then return { pending = false } end
+    if G.in_combat(char) then return { pending = true, in_combat = true } end
+    local to = args.toward and G.pos(args.toward)
+    if not to then G.refuse("no position to walk toward (toward: a party member in view)") end
+    return start("end_standup", char, {
+        timeout_ms = A.STANDUP_END_MS + 2000,
+        start = function(job)
+            job.t0, job.from = RPC.now_ms(), G.pos(char)
+            job.osi_task = true -- the walk is purged once the stand-up has ended (start(): queued tasks)
+            G.osi("CharacterMoveToPosition", char, to[1], to[2], to[3], "Run", I.ev_name(job, "su"), job.id)
+        end,
+        on_tick = function(job)
+            if not A.standing_up(char) then
+                local here = G.pos(char)
+                RPC.finish_job(job, "done", { pending = false, ended = true,
+                    stepped_m = here and job.from and BG3AI.Util.round(BG3AI.Util.dist(here, job.from), 1) or nil })
+            elseif RPC.now_ms() - job.t0 >= A.STANDUP_END_MS then
+                RPC.finish_job(job, "failed", { pending = true }, string.format("%s still stands up from the revive"
+                    .. " %.0f s after a walk was ordered (ResurrectComponent kept)", name_of(char),
+                    A.STANDUP_END_MS / 1000))
+            end
+        end,
+    })
+end)
+
+------------------------------------------------------------------------
 -- act.chain {char, leader} / act.unchain {char}
 ------------------------------------------------------------------------
 

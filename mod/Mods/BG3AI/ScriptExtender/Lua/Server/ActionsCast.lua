@@ -601,7 +601,7 @@ reg("cast", function(args)
                         return
                     end
                     local why = job.ui_failed or ("the game never started it ("
-                        .. tostring(math.floor(no_start_ms / 1000)) .. " s, no cast, no step)")
+                        .. tostring(math.floor(no_start_ms / 1000)) .. " s, no cast, no step)" .. A.held_text(char))
                     if job.reordered then
                         why = why .. " twice: ordered again after " .. job.reorder_why .. " "
                             .. string.format("%.1f s %s the first order", math.abs(job.reordered),

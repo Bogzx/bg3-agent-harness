@@ -338,7 +338,8 @@ reg("interact", function(args)
             if carried and not (potion or scroll) and job.use_ms and not job.use_ok and not job.used_at
                 and RPC.now_ms() - job.use_ms >= A.USE_NO_START_MS and osi_tasks(char) > 0 then
                 RPC.finish_job(job, "failed", nil, "the game never started it ("
-                    .. math.floor(A.USE_NO_START_MS / 1000) .. " s, the Use still queued, nothing used)")
+                    .. math.floor(A.USE_NO_START_MS / 1000) .. " s, the Use still queued, nothing used)"
+                    .. A.held_text(char))
                 return
             end
             -- Use walks on its own if still out of range; a jump while far from

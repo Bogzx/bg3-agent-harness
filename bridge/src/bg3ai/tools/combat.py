@@ -211,6 +211,8 @@ def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
         if res.ok:
             tail += (f"hotbar: {what} clicked in {d['elapsed_s']:g}s"
                     + (f" (OVER the {d['budget_s']:g}s budget)" if d.get("over_budget") else ""))
+            if twostep.is_revive(spell) and first:  # end the revived member's stand-up (live N4)
+                tail += world_tools._end_standup(char, first)
         else:
             tail += (f"hotbar: the two-step route failed at {res.stage} ({d.get('why') or res.reason}); nothing was"
                     " cast" + ("" if landing is not None else
