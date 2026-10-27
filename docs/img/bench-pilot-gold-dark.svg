@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="506" viewBox="0 0 960 506" font-family='system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif' role="img" aria-label="Party gold over time in the pilot's gold scenarios">
+<title>Party gold over time in the pilot's gold scenarios</title>
+<rect x="0.5" y="0.5" width="959" height="505" rx="10" fill="#1a1a19" stroke="#2c2c2a"/>
+<text x="24.0" y="36.0" font-size="19" font-weight="650" fill="#f0efec" text-anchor="start">Party gold over time in the two gold scenarios</text>
+<text x="24.0" y="58.0" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="start">One run per model, 45-minute cap. Score = gold at the end minus gold at the start. A line that stops</text>
+<text x="24.0" y="76.0" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="start">early ended early: the party wiped, or the resume limit cut the run. Opus's Act 1 party wiped at 41.7 min</text>
+<text x="24.0" y="94.0" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="start">and it reloaded (dashed); the score counts the gold at the wipe. Sonnet's drop to 0 in Act 1: its gold was</text>
+<text x="24.0" y="112.0" font-size="13" font-weight="400" fill="#c3c2b7" text-anchor="start">confiscated on an arrest, then taken back.</text>
+<rect x="24" y="124.0" width="912" height="26" rx="6" fill="#3a2f12"/>
+<text x="36.0" y="141.5" font-size="12.5" font-weight="600" fill="#f3d48a" text-anchor="start">PILOT: one run each, not a ranking. Rules condition with known gaps; the harness changed during the matrix.</text>
+<text x="80.0" y="184.0" font-size="13.5" font-weight="600" fill="#f0efec" text-anchor="start">Act 1 (starts with 133 gold)</text>
+<line x1="80" x2="410" y1="428.0" y2="428.0" stroke="#2c2c2a"/>
+<text x="74.0" y="432.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">0</text>
+<line x1="80" x2="410" y1="395.1" y2="395.1" stroke="#2c2c2a"/>
+<text x="74.0" y="399.1" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">200</text>
+<line x1="80" x2="410" y1="362.3" y2="362.3" stroke="#2c2c2a"/>
+<text x="74.0" y="366.3" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">400</text>
+<line x1="80" x2="410" y1="329.4" y2="329.4" stroke="#2c2c2a"/>
+<text x="74.0" y="333.4" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">600</text>
+<line x1="80" x2="410" y1="296.6" y2="296.6" stroke="#2c2c2a"/>
+<text x="74.0" y="300.6" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">800</text>
+<line x1="80" x2="410" y1="263.7" y2="263.7" stroke="#2c2c2a"/>
+<text x="74.0" y="267.7" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">1,000</text>
+<line x1="80" x2="410" y1="230.9" y2="230.9" stroke="#2c2c2a"/>
+<text x="74.0" y="234.9" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">1,200</text>
+<line x1="80" x2="410" y1="198.0" y2="198.0" stroke="#2c2c2a"/>
+<text x="74.0" y="202.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">1,400</text>
+<line x1="80" x2="410" y1="428.0" y2="428.0" stroke="#383835"/>
+<text x="80.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">0</text>
+<text x="190.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">15</text>
+<text x="300.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">30</text>
+<text x="410.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">45</text>
+<text x="410.0" y="460.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">minutes of play</text>
+<path d="M81.9,406.1 H83.2 V362.3 H83.4 V361.5 H86.6 V317.9 H109.3 V298.2 H118.9 V304.0 H137.6 V302.8 H152.5 V301.0 H154.5 V277.5 H155.9 H192.9 V292.3 H204.5 V269.3 H210.5 V271.1 H229.9 H232.8 V266.5 H240.1 V266.3 H266.9 H280.6 V264.9 H282.5 V273.4 H304.5 H341.5 H378.5 H385.9" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M385.9,273.4 H400.9 V273.2 H401.4 V266.0 H410.4" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="3 4" opacity="0.7"/>
+<circle cx="385.9" cy="273.4" r="4.5" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+<path d="M81.9,406.1 H83.2 V362.3 H83.4 V361.5 H118.9 H133.6 V326.6 H146.4 V318.8 H156.6 H169.9 V299.2 H171.8 V301.0 H179.4 V428.0 H193.6 V301.0 H196.7 V290.2 H232.2 H233.3" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="233.3" cy="290.2" r="4.5" fill="#d95926" stroke="#1a1a19" stroke-width="2"/>
+<path d="M81.9,406.1 H82.9 V362.3 H83.1 V361.5 H85.0 V333.7 H97.3 V307.6 H100.1 V286.1 H115.1 V217.2 H118.9 H141.5 V216.1 H155.8 H160.3 V208.7 H192.6 H208.8" fill="none" stroke="#199e70" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="208.8" cy="208.7" r="4.5" fill="#199e70" stroke="#1a1a19" stroke-width="2"/>
+<path d="M81.9,406.1 H83.6 V362.3 H83.8 V361.5 H94.2 V314.0 H118.9 H155.9 H158.8 V428.0 H192.9 H229.9 H266.9 H303.9 H341.9 H379.1 H413.7" fill="none" stroke="#c98500" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="413.7" cy="428.0" r="4.5" fill="#c98500" stroke="#1a1a19" stroke-width="2"/>
+<text x="216.8" y="209.7" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="start">Haiku</text>
+<text x="216.8" y="222.7" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="start">+1,202, cut at 17.6 min</text>
+<text x="381.9" y="322.4" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="end">Opus</text>
+<text x="381.9" y="335.4" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="end">+808, wiped at 41.7 min</text>
+<text x="241.3" y="303.2" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="start">Sonnet</text>
+<text x="241.3" y="316.2" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="start">+706, cut at 20.9 min</text>
+<text x="409.7" y="409.0" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="end">DeepSeek</text>
+<text x="409.7" y="422.0" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="end">-133, arrested, gold taken</text>
+<text x="545.0" y="184.0" font-size="13.5" font-weight="600" fill="#f0efec" text-anchor="start">Act 3, Lower City (starts with 410 gold)</text>
+<line x1="545" x2="875" y1="428.0" y2="428.0" stroke="#2c2c2a"/>
+<text x="539.0" y="432.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">0</text>
+<line x1="545" x2="875" y1="395.1" y2="395.1" stroke="#2c2c2a"/>
+<text x="539.0" y="399.1" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">2,000</text>
+<line x1="545" x2="875" y1="362.3" y2="362.3" stroke="#2c2c2a"/>
+<text x="539.0" y="366.3" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">4,000</text>
+<line x1="545" x2="875" y1="329.4" y2="329.4" stroke="#2c2c2a"/>
+<text x="539.0" y="333.4" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">6,000</text>
+<line x1="545" x2="875" y1="296.6" y2="296.6" stroke="#2c2c2a"/>
+<text x="539.0" y="300.6" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">8,000</text>
+<line x1="545" x2="875" y1="263.7" y2="263.7" stroke="#2c2c2a"/>
+<text x="539.0" y="267.7" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">10,000</text>
+<line x1="545" x2="875" y1="230.9" y2="230.9" stroke="#2c2c2a"/>
+<text x="539.0" y="234.9" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">12,000</text>
+<line x1="545" x2="875" y1="198.0" y2="198.0" stroke="#2c2c2a"/>
+<text x="539.0" y="202.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">14,000</text>
+<line x1="545" x2="875" y1="428.0" y2="428.0" stroke="#383835"/>
+<text x="545.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">0</text>
+<text x="655.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">15</text>
+<text x="765.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">30</text>
+<text x="875.0" y="444.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="middle">45</text>
+<text x="875.0" y="460.0" font-size="11" font-weight="400" fill="#9a9891" text-anchor="end">minutes of play</text>
+<path d="M546.9,421.3 H548.6 V421.0 H550.4 V409.6 H561.6 V380.3 H575.5 V355.4 H579.8 V323.5 H584.1 H603.5 V319.1 H621.2 H638.9 V290.5 H656.0 V272.2 H658.3 H668.4 V261.5 H673.3 V255.2 H695.3 H706.6 V233.0 H719.8 V228.7 H723.1 V227.7 H732.4 H739.6 V219.1 H748.4 V218.3 H761.2 V216.6 H769.6 H772.5 V214.9 H790.0 V214.0 H792.0 V213.8 H808.0 H845.1 H876.2" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="876.2" cy="213.8" r="4.5" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+<path d="M546.9,421.3 H547.1 V421.0 H550.5 V409.4 H569.4 V379.9 H578.7 V367.9 H584.8 H614.8" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="614.8" cy="367.9" r="4.5" fill="#d95926" stroke="#1a1a19" stroke-width="2"/>
+<path d="M546.9,421.3 H562.7 V409.4 H578.2 V394.8 H584.1 H588.0 V382.8 H589.1 V382.5 H590.0 V378.6 H599.3 V373.5 H601.2 V370.8 H604.0 V367.3 H610.9 V355.7 H613.8 V351.7 H617.2 V337.5 H621.2 H622.3 V330.8 H625.2 V325.5 H629.6 V317.6 H631.5 V314.1 H636.3 V306.7 H649.3 V279.4 H655.9 V272.8 H658.2 H665.2 V270.8 H681.0" fill="none" stroke="#199e70" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="681.0" cy="270.8" r="4.5" fill="#199e70" stroke="#1a1a19" stroke-width="2"/>
+<path d="M546.9,421.3 H551.4 V421.0 H554.4 V409.5 H573.2 V379.4 H583.6 V369.2 H584.0 H621.1 H658.2 H666.5" fill="none" stroke="#c98500" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="666.5" cy="369.2" r="4.5" fill="#c98500" stroke="#1a1a19" stroke-width="2"/>
+<text x="884.2" y="214.8" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="start">Opus</text>
+<text x="884.2" y="227.8" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="start">+12,626</text>
+<text x="689.0" y="271.8" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="start">Haiku</text>
+<text x="689.0" y="284.8" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="start">+9,156, cut at 18.5 min</text>
+<text x="622.8" y="368.9" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="start">Sonnet</text>
+<text x="622.8" y="381.9" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="start">+3,246, wiped at 9.5 min</text>
+<text x="674.5" y="400.2" font-size="11.5" font-weight="600" fill="#f0efec" text-anchor="start">DeepSeek</text>
+<text x="674.5" y="413.2" font-size="11" font-weight="400" fill="#c3c2b7" text-anchor="start">+3,167, wiped at 16.6 min</text>
+<line x1="24.0" x2="42.0" y1="480" y2="480" stroke="#3987e5" stroke-width="3" stroke-linecap="round"/>
+<text x="48.0" y="484.0" font-size="12" font-weight="400" fill="#c3c2b7" text-anchor="start">Opus 5.5 (Claude Code)</text>
+<line x1="215.2" x2="233.2" y1="480" y2="480" stroke="#d95926" stroke-width="3" stroke-linecap="round"/>
+<text x="239.2" y="484.0" font-size="12" font-weight="400" fill="#c3c2b7" text-anchor="start">Sonnet 5.5 (Claude Code)</text>
+<line x1="419.59999999999997" x2="437.59999999999997" y1="480" y2="480" stroke="#199e70" stroke-width="3" stroke-linecap="round"/>
+<text x="443.6" y="484.0" font-size="12" font-weight="400" fill="#c3c2b7" text-anchor="start">Haiku 5.5 (Claude Code)</text>
+<line x1="617.4" x2="635.4" y1="480" y2="480" stroke="#c98500" stroke-width="3" stroke-linecap="round"/>
+<text x="641.4" y="484.0" font-size="12" font-weight="400" fill="#c3c2b7" text-anchor="start">DeepSeek V4.1 Flash (pi)</text>
+</svg>

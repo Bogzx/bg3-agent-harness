@@ -35,9 +35,9 @@ These are screenshots the agent took for itself with its screenshot tool, at the
 | ![The burning inn at Waukeen's Rest](docs/img/play-act1-waukeens-rest.jpg) | ![The paladin on the Ravaged Beach](docs/img/bench-crash-site-start.jpg) |
 | claude-run-2 (Opus 5.5 through Claude Code), session S021, 2026-10-10: the burning inn at Waukeen's Rest in Act 1. | Benchmark, `crash_site_grove` (Opus 5.5, 2026-10-25): the half-orc paladin on the Ravaged Beach, 40 seconds into a run whose goal is the Emerald Grove. |
 | ![Lae'zel in the tieflings' cage, with dialogue options](docs/img/bench-act1-laezel.jpg) | ![A rooftop in the Lower City](docs/img/bench-act3-lower-city.jpg) |
-| Benchmark, `act1_level_3` (Opus 5.5, 2026-10-25): Lae'zel caged by tieflings. The agent reads the options and picks one with a skill check. | Benchmark, `act3_gold_max` (Opus 5.5, 2026-10-25): a rooftop in the Lower City, during a 45-minute run scored on the gold the party gains. |
+| Benchmark, `act1_level_3` (Opus 5.5, 2026-10-25): Lae'zel caged by tieflings. The agent reads the options and picks one with a skill check. | Benchmark, `act3_gold_max` (Opus 5.5, 2026-10-25): a rooftop in the Lower City, in a 45-minute run scored on the gold the party gains. This was the second attempt, voided for a harness failure; the first one is the result below. |
 | ![Wyll trading with Rolan](docs/img/bench-act3-trade.jpg) | ![The final fight](docs/img/play-netherbrain.jpg) |
-| The same `act3_gold_max` run: Wyll trading with Rolan. | Spoiler, the end of the game: claude-run-2, session S096, 2026-10-18, the final fight. That session went on to the epilogue. |
+| The same voided attempt: Opus sold through Wyll, who got 39% of each item's value from the traders. In the counted attempt it sold as Tav and got 25%. | Spoiler, the end of the game: claude-run-2, session S096, 2026-10-18, the final fight. That session went on to the epilogue. |
 
 The [playthrough app](docs/APP.md) shows the same runs from the outside: the game recording, what the agent says,
 its tool calls, the party, its memory and a timeline of its choices and fights.
@@ -75,7 +75,53 @@ On the reorganised code, the first live runs were checks, not benchmark results:
 - Through the app, an existing playthrough played two sessions and came back from two forced game crashes, the
   second time resuming the same agent conversation.
 
-<!-- BENCH-PILOT -->
+## Benchmark
+
+The goal is a suite of short scenarios that any model can be scored on: pass or fail on a goal read from game state,
+with time, attempts and cost reported next to it.
+
+- 30 scenarios in four families: 15 fights (five of them Tactician twins of a Balanced fight), 7 sandbox goals,
+  5 choice scenes and 3 exploration legs. Six are held out. Each has a start, a goal (or, for the two gold
+  scenarios, a score), caps and a closed-book quiz for contamination checks. Start saves are not published yet.
+- The ranked track runs every model through one frozen client, pi, with the rules text only. Claude Code, Codex and
+  Gemini CLI are a separate "bring your own agent" condition.
+- Offline, a fake mod and a scripted model play scenarios end to end through the real bridge, and do-nothing and
+  random baselines run against every scenario's start.
+
+[docs/BENCHMARK-PLAN.md](docs/BENCHMARK-PLAN.md) is the plan and [docs/BENCHMARK.md](docs/BENCHMARK.md) the protocol.
+
+### First pilot, 2026-10-25
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/bench-pilot-grid-dark.svg">
+  <img alt="Pilot results: Opus 5.5, Sonnet 5.5, Haiku 5.5 and DeepSeek V4.1 Flash on six scenarios, one run each" src="docs/img/bench-pilot-grid-light.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/bench-pilot-gold-dark.svg">
+  <img alt="Party gold over time for the four models in the Act 1 and Act 3 gold scenarios" src="docs/img/bench-pilot-gold-light.svg">
+</picture>
+
+Treat this as a pilot. Each model played each scenario once, too few runs to rank anything. The runs used the rules
+condition, which the harness can't yet play exactly, and the harness was fixed while the matrix ran: the 24 counted
+runs span eight commits, and four more attempts were voided. Opus, Sonnet and Haiku ran through Claude Code;
+DeepSeek ran through pi. What the pilot does show is how the scenarios and the harness behave with models of
+different sizes.
+
+- Every model won the windmill fight; Haiku's counted win is a rerun, after its first run killed a sleeping bugbear
+  and the goal still counted any won fight (note 1). None beat Balthazar: all four parties wiped within 9 minutes.
+- The three Claude models got from the crash site to the Emerald Grove in 16 to 21 minutes. DeepSeek used up its
+  $0.35 budget at 41 minutes without getting there.
+- Only Opus got the whole party to level 3, at 51.5 of the 60 minutes. The other three parties wiped first.
+- In Act 3, Opus gained 12,626 gold over the full 45 minutes, all of it from selling 370 items to six traders.
+  Haiku had gained 9,156 when the resume limit stopped it at 18.5 minutes.
+- Every Act 1 run got into trouble with the law. Haiku picked up three items from a trader's counter, which set
+  off an arrest and a fight; it killed the trader and sold his whole stock to another one. Sonnet was caught
+  pickpocketing a child and took its confiscated gold back out of the prison. DeepSeek ended up in prison too, lost
+  all its gold and finished 133 down. Opus paid a 90-gold fine for a caught pickpocket, then its party wiped in a
+  chapel fight at 41.7 minutes, so its score counts the 808 gold it had gained by then.
+- Opus took far more screenshots than the others: 140 in 173 minutes of play, about 0.8 a minute, against about 0.3
+  a minute for each of the other three.
 
 ## How it fits together
 
