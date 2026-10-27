@@ -19,6 +19,7 @@ local listeners, ops, pushed, ticks = {}, {}, {}, {}
 local clock = 1000
 local gold = 100
 local dead, items, traders = {}, { [CHEST] = true }, {}
+local entities = {} -- uuid -> stub entity (components as fields)
 local names = { [HOST] = "Tav", [SH] = "Shadowheart", [TRADER] = "Arron", [GOB] = "Goblin", [CHEST] = "Chest",
     [GUARD] = "Guard" }
 local stacks = {}
@@ -52,6 +53,8 @@ BG3AI = {
             return party, seen
         end,
         name = function(u) return names[u] or ("item " .. u:sub(1, 4)) end,
+        entity = function(u) return entities[u] end,
+        entityUuid = function(e) return e and e.uuid end,
     },
 }
 dofile(LUA .. "/Shared/Util.lua")
@@ -178,10 +181,13 @@ end
 
 -- Kill, loot generated into the corpse (no record), then looted from it; a container loot.
 do
-    traders[TRADER] = true
+    -- Osi.CanTrade holds for the windmill goblins too (diverse-2026-10-25): only the Trader tag makes a trader
+    traders[TRADER], traders[GOB] = true, true
+    entities[TRADER], entities[GOB] = { Trader = {} }, { ServerCharacter = { Flags = { "Floating" } } }
     fire("KilledBy/4", "S_GOB_" .. GOB, P, P, 0)
     local k = lastOf("kill")
-    check("kill", k and k.victim == "Goblin" and k.killer == "Tav" and k.by_party and k.trader == false)
+    check("kill", k and k.victim == "Goblin" and k.killer == "Tav" and k.by_party and k.trader == false, k.trader)
+    check("kill not conjured", k.summon == nil and k.temporary == nil and k.summoner == nil)
     dead[GOB] = true
     fire("Died/1", "S_GOB_" .. GOB)
     local d = lastOf("died")
@@ -203,6 +209,28 @@ do
     check("loot container", lastOf("loot").from == "container")
     fire("KilledBy/4", T, NULL, P, 0)
     check("trader kill", lastOf("kill").trader == true)
+    -- a RequestTrade partner with no Trader tag is a trader too
+    entities[TRADER] = nil
+    fire("KilledBy/4", T, NULL, P, 0)
+    check("traded-with kill", lastOf("kill").trader == true)
+    -- act3_gold_max: a street magician's Cat killed by its conjurer: summon, with the summoner
+    local CAT, MAG = "48903e40-6fe8-6443-7c0e-d6536ac251bf", "dddddddd-0000-0000-0000-00000000000c"
+    names[CAT], names[MAG] = "Cat", "Astoundo the Greater"
+    entities[CAT] = { IsSummon = { Owner = { uuid = MAG } }, ServerCharacter = { Flags = { "Summon", "Temporary" } } }
+    fire("KilledBy/4", "Cat_" .. CAT, "S_MAG_" .. MAG, "S_MAG_" .. MAG, 0)
+    k = lastOf("kill")
+    check("summon kill", k.victim == "Cat" and k.summon == true and k.summoner == "Astoundo the Greater"
+        and k.summoner_uuid == MAG and k.temporary == true and not k.by_party and k.trader == false, k.summoner)
+    -- the Summon flag alone (no component): summon, no summoner; Temporary alone: temporary only
+    entities[CAT] = { ServerCharacter = { Flags = { "Summon" } } }
+    fire("KilledBy/4", "Cat_" .. CAT, "S_MAG_" .. MAG, "S_MAG_" .. MAG, 0)
+    k = lastOf("kill")
+    check("summon flag", k.summon == true and k.summoner == nil and k.temporary == nil)
+    entities[CAT] = { ServerCharacter = { Flags = { "Temporary" } } }
+    fire("KilledBy/4", "Cat_" .. CAT, "S_MAG_" .. MAG, "S_MAG_" .. MAG, 0)
+    k = lastOf("kill")
+    check("temporary flag", k.summon == nil and k.temporary == true)
+    entities[CAT] = nil
     -- live4: a self-kill (a mephit's death burst) goes to the last hit; the engine's names are kept.
     local MEPHIT, MASTER = "dddddddd-0000-0000-0000-00000000000a", "dddddddd-0000-0000-0000-00000000000b"
     names[MEPHIT], names[MASTER] = "Young Grease Mephit", "Grease Mephit"

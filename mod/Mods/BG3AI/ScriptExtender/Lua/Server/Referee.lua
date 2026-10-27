@@ -238,10 +238,30 @@ end)
 -- self-kill waits up to PENDING_MS for the victim's next AttackedBy and goes to that attacker; none: to the last hit
 -- before the kill within HIT_MS; none either: the engine's names stand. The engine's names are kept as
 -- engine_killer / engine_owner with self_kill = true.
+-- trader: a RequestTrade partner or a merchant (the Trader tag). Not Osi.CanTrade: it held for every windmill
+-- goblin, Barth, Arka ... (diverse-2026-10-25 facts), so graders counted them as traders killed.
+-- Conjured victims (diverse-2026-10-25 act3_gold_max: 78 street magicians' Cats killed by their conjurers):
+-- summon when the engine marks one (the IsSummon component, as State.lua's party summons; Osi.IsSummon; the
+-- ServerCharacter Summon flag), with its summoner when known; temporary when spawned at run time.
+local function conjured(e, v, rec)
+    local flags = {}
+    pcall(function() for _, f in pairs(e.ServerCharacter.Flags) do flags[tostring(f)] = true end end)
+    local sc = U.comp(e, "IsSummon")
+    if sc or flags.Summon or truthy(osi(Osi.IsSummon, v)) then
+        rec.summon = true
+        local s
+        pcall(function() s = V.entityUuid(sc.Owner) or V.entityUuid(sc.Summoner) end)
+        if s then rec.summoner, rec.summoner_uuid = name(s), s end
+    end
+    if flags.Temporary then rec.temporary = true end
+end
+
 local function recordKill(v, rec, k, o)
     rec.victim, rec.victim_uuid, rec.killer = name(v) or "Unknown", v, k and name(k) or nil
     rec.owner, rec.by_party = o and name(o) or nil, isParty(o) or isParty(k)
-    rec.trader = (R.traders[v] or truthy(osi(Osi.CanTrade, v))) and true or false
+    local e = V.entity(v)
+    rec.trader = (R.traders[v] or U.comp(e, "Trader") ~= nil) and true or false
+    conjured(e, v, rec)
     R.record("kill", rec)
 end
 
