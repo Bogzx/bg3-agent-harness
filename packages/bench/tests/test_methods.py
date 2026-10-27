@@ -135,6 +135,15 @@ def test_kills_are_the_partys_kills_of_real_characters():
     ]
     out = methods.attribute(tl)
     assert (out["kills"], out["traders_killed"]) == (2, 1)
+    # Gale's Imp summon in the party (snapshot summon, its own downed/died events): enemy Imps Gale kills still count
+    tl = [
+        {"v": 1, "kind": "snapshot", "t": 0, "gold": 0, "party": [{"name": "Gale"}, {"name": "Imp", "summon": True}]},
+        ev(1, "downed", name="Imp", party=True),  # the mod flags only kill/died events
+        ev(2, "died", name="Imp", party=True, summon=True),
+        ev(3, "kill", victim="Imp", killer="Gale", by_party=True),
+        ev(4, "kill", victim="Imp", killer="Gale", by_party=True),
+    ]
+    assert methods.attribute(tl)["kills"] == 2
 
 
 def test_empty_timeline():
