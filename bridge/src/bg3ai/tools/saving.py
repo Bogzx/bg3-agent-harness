@@ -83,11 +83,10 @@ def _newest_first(dirs: Iterable[Path]) -> list[Path]:
     """Save folders newest first by the time each save holds (saves.saved_at), never by folder mtime: Steam's local
     cloud restores old saves at each launch with mtime = the launch, and load_game("latest") took such a copy over
     the run's own newest save. A save whose meta can't be read sorts after every save with a known time (by mtime
-    among themselves)."""
-    timed = [(saves.saved_at(d), d) for d in dirs]
-    timed.sort(key=lambda td: (td[0] is not None, td[0] if td[0] is not None else td[1].stat().st_mtime),
-               reverse=True)
-    return [d for _, d in timed]
+    among themselves). SaveTime has whole seconds: saves made in the same second go by mtime."""
+    timed = [(saves.saved_at(d), d.stat().st_mtime, d) for d in dirs]
+    timed.sort(key=lambda td: (td[0] is not None, td[0] if td[0] is not None else td[1], td[1]), reverse=True)
+    return [d for _, _, d in timed]
 
 
 def _saved_since(d: Path) -> bool:
