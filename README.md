@@ -1,14 +1,22 @@
 # bg3-agent-harness
 
-An AI agent playing Baldur's Gate 3. A Lua mod inside the game reads what a player could see and carries out the
-agent's actions. An MCP server (the bridge) turns that into tools any MCP client can call, and a harness launches
-the game, starts the agent and recovers from crashes. On top of the harness sit a benchmark for comparing models and
-an app for watching an agent play the whole game.
+An AI agent playing Baldur's Gate 3, plus the tools to run it, measure it and watch it.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.12-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](docs/SETUP.md)
 [![Status: work in progress](https://img.shields.io/badge/status-work%20in%20progress-orange.svg)](#limits)
+
+![The playthrough app replaying a recorded session: the game on the left, the agent's tool calls on the right](docs/img/cover.jpg)
+
+<sub>The playthrough app's Replay page on a recorded session: the `vessa` playthrough (Claude Opus 5.5, Balanced),
+session S004 on 2026-10-24, a fight in Act 1. On the left, the recording of the game window; on the right, the
+agent's tool calls and what it said, in step with the playhead.</sub>
+
+A Lua mod inside the game reads what a player could see and carries out the agent's actions. An MCP server (the
+bridge) turns that into tools any MCP client can call, and a harness launches the game, starts the agent and
+recovers from crashes. On top of the harness sit a benchmark for comparing models and an app for watching an agent
+play the whole game.
 
 The agent plays fair: it gets only what is on screen or what it remembers having seen, and it acts through the
 game's own UI, engine actions, and mouse and keyboard input. The mod runs through
@@ -18,9 +26,25 @@ game.
 This is a research project and a work in progress. It has finished the game once. Setup needs Linux, a Steam copy of
 the game and some patience, and things break when the game updates.
 
+## See it play
+
+These are screenshots the agent took for itself with its screenshot tool, at the size it saw them.
+
+| | |
+|---|---|
+| ![The burning inn at Waukeen's Rest](docs/img/play-act1-waukeens-rest.jpg) | ![The paladin on the Ravaged Beach](docs/img/bench-crash-site-start.jpg) |
+| claude-run-2 (Opus 5.5 through Claude Code), session S021, 2026-10-10: the burning inn at Waukeen's Rest in Act 1. | Benchmark, `crash_site_grove` (Opus 5.5, 2026-10-25): the half-orc paladin on the Ravaged Beach, 40 seconds into a run whose goal is the Emerald Grove. |
+| ![Lae'zel in the tieflings' cage, with dialogue options](docs/img/bench-act1-laezel.jpg) | ![A rooftop in the Lower City](docs/img/bench-act3-lower-city.jpg) |
+| Benchmark, `act1_level_3` (Opus 5.5, 2026-10-25): Lae'zel caged by tieflings. The agent reads the options and picks one with a skill check. | Benchmark, `act3_gold_max` (Opus 5.5, 2026-10-25): a rooftop in the Lower City, during a 45-minute run scored on the gold the party gains. |
+| ![Wyll trading with Rolan](docs/img/bench-act3-trade.jpg) | ![The final fight](docs/img/play-netherbrain.jpg) |
+| The same `act3_gold_max` run: Wyll trading with Rolan. | Spoiler, the end of the game: claude-run-2, session S096, 2026-10-18, the final fight. That session went on to the epilogue. |
+
+The [playthrough app](docs/APP.md) shows the same runs from the outside: the game recording, what the agent says,
+its tool calls, the party, its memory and a timeline of its choices and fights.
+
 ## What it has done
 
-These runs used the harness from before the current reorganisation (the `main` branch).
+These runs used the harness from before the reorganisation that became `main` on 2026-10-22.
 
 | | claude-run-2 (full game) | Nautiloid series (opening chapter) |
 |---|---|---|
@@ -39,8 +63,7 @@ The harness was fixed and improved while claude-run-2 went on, so the run shows 
 through it. It is not a controlled measurement. Fights are the harness's own records, one per fight, graded when it
 ends.
 
-On the reorganised code (the `overhaul` branch), the live runs so far were checks, and none is a benchmark
-result:
+On the reorganised code, the first live runs were checks, not benchmark results:
 
 - Claude Code (Opus 5.5) escaped the Nautiloid in 15.2 minutes of play, and again in 12.1 minutes through the
   benchmark runner. That second run had unseeded dice and didn't stop at the goal, so it doesn't count.
@@ -51,6 +74,8 @@ result:
   Emerald Grove and beyond) with no party deaths.
 - Through the app, an existing playthrough played two sessions and came back from two forced game crashes, the
   second time resuming the same agent conversation.
+
+<!-- BENCH-PILOT -->
 
 ## How it fits together
 
@@ -112,8 +137,8 @@ uv sync --locked
 
 ### Harness
 
-With the game running and the mod loaded, the bg3 MCP server serves the game to your own client over
-stdio, or over HTTP at `/mcp`:
+With the game running and the mod loaded, the bg3 MCP server serves the game to your own client over stdio, or over
+HTTP at `/mcp`:
 
 ```bash
 uv run --project bridge bg3ai-mcp --transport http --host 127.0.0.1 --port 8770
@@ -130,8 +155,8 @@ Drop `--plan` to play it. To run your own model through pi instead, see [docs/QU
 
 ### Benchmark
 
-The matrix runner queues models x scenarios x conditions x repeats under one budget. `plan` prints the
-jobs and the budget reserve and runs nothing:
+The matrix runner queues models x scenarios x conditions x repeats under one budget. `plan` prints the jobs and the
+budget reserve and runs nothing:
 
 ```bash
 uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/pilot-2026-10-22.toml
@@ -139,8 +164,7 @@ uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages
 
 ### Playthrough app
 
-Build the web app once (`cd packages/playthrough/web && npm ci && npm run build`), then from the
-repo root:
+Build the web app once (`cd packages/playthrough/web && npm ci && npm run build`), then from the repo root:
 
 ```bash
 uv run --project packages/playthrough bg3play-serve --runtime runtime --playthroughs playthroughs
@@ -184,25 +208,6 @@ the app. [runner/README.md](runner/README.md) has the runner's options.
   XT.
 - An agent client (Claude Code by default) and the API budget or subscription to run it.
 
-## Benchmark status
-
-The goal is a suite of short scenarios that any model can be scored on: pass or fail on a goal read from game state,
-with time, attempts and cost reported next to it.
-
-- 28 scenarios in four families: 15 fights (five of them Tactician twins of a Balanced fight), 5 sandbox goals,
-  5 choice scenes and 3 exploration legs. Five are held out. Each has a start, a goal, caps and a closed-book quiz for
-  contamination checks.
-- Only `nautiloid` (a new game to the Nautiloid's escape) has played live. Of the others, 21 have a start save
-  made and 6 still need one. Start saves are not published yet.
-- The ranked track runs every model through one frozen client, pi, with the rules text only. Claude Code, Codex and
-  Gemini CLI are a separate "bring your own agent" condition.
-- Offline, a fake mod and a scripted model play scenarios end to end through the real bridge, and do-nothing and
-  random baselines run against every scenario's start.
-
-The first pilot (Nautiloid, DeepSeek Flash and Claude Code, `packages/bench/matrices/pilot-2026-10-22.toml`) has not
-run yet. There are no benchmark results. [docs/BENCHMARK-PLAN.md](docs/BENCHMARK-PLAN.md) is the plan and
-[docs/BENCHMARK.md](docs/BENCHMARK.md) the protocol.
-
 ## Fair play
 
 The agent receives only what a player could see on screen at that moment, or remember having seen. General game
@@ -228,11 +233,10 @@ enforcement layers, the audit and the judgment calls.
   time.
 - Until 2026-10-17 a harness bug let the agent cast spells its characters had not prepared. It is fixed, but
   claude-run-2 had that advantage before then.
-- Claude through Claude Code is the only client that has played the full game. pi with DeepSeek Flash has played
-  three short runs. The Codex and Gemini clients are tested offline against stubs only.
-- The agent text was tuned on Claude's failures. It is now split into neutral rules and optional coaching, but no
-  scored run has used the split yet. [docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) lists where the old text
-  favoured Claude.
+- Claude through Claude Code is the only client that has played the full game. The Codex and Gemini clients are
+  tested offline against stubs only.
+- The agent text was tuned on Claude's failures. It is now split into neutral rules and optional coaching.
+  [docs/BENCHMARK-BIAS.md](docs/BENCHMARK-BIAS.md) lists where the old text favoured Claude.
 - Nothing is published yet. [docs/LAUNCH-GATE.md](docs/LAUNCH-GATE.md) lists what has to be settled first, including
   Larian's terms on generative AI and whether start saves can be shared.
 
@@ -254,18 +258,17 @@ enforcement layers, the audit and the judgment calls.
 ## Contributing
 
 Bug reports, fixes, new scenarios and runs with other clients are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers
-the offline tests (`uv run tools/ci/task.py --list` prints what CI runs; none of it needs the game or an API key),
-the code style and the
-fairness rule for any change to what the agent sees. Report security issues as [SECURITY.md](SECURITY.md) describes.
-To cite this project, see [CITATION.cff](CITATION.cff).
+the offline tests (`uv run tools/ci/task.py --list` prints what CI runs; none of it needs the game or an API key), the
+code style and the fairness rule for any change to what the agent sees. Report security issues as
+[SECURITY.md](SECURITY.md) describes. To cite this project, see [CITATION.cff](CITATION.cff).
 
 ## Credits
 
 - [bg3le](https://github.com/lenonk/bg3le) by lenonk (MIT), the native Linux port of
   [Norbyte's Script Extender](https://github.com/Norbyte/bg3se). It is a git submodule in `third_party/bg3le`.
 - [bg3.wiki](https://bg3.wiki), the wiki the agent can look things up in.
-- Baldur's Gate 3 is made and owned by Larian Studios. This project is not affiliated with Larian. Nothing from the
-  game is included; you need your own copy on Steam.
+- Baldur's Gate 3 is made and owned by Larian Studios. This project is not affiliated with Larian. The screenshots in
+  `docs/img/` are from the game; nothing else from it is included, and you need your own copy on Steam.
 
 ## License
 
