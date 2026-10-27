@@ -6,6 +6,7 @@ save gates and the session's ensured save (moved from test_play.py). Never launc
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import tempfile
@@ -34,6 +35,13 @@ from bg3harness.game import io as G
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
            and not isinstance(v, type)}
+
+
+def sv(folder: str, t: float, saved: float | None = None) -> G.Save:
+    """A save as controller.list_saves gives it: its .lsv mtime and meta.lsf SaveTime (`saved`, default the same)."""
+    s = G.parse_save_folder(folder, t)
+    assert s is not None
+    return dataclasses.replace(s, saved=t if saved is None else saved)
 
 
 def home(name: str):
@@ -77,7 +85,7 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertFalse(rgame.is_ai_label("S010-end", "pt1-"))
 
     def _saves(self):
-        f = G.parse_save_folder
+        f = sv
         return [
             f("pibooool-1__Dank Crypt - 3h 15m", 900),      # the user's own playthrough
             f("pibooool-2__QuickSave_42", 950),
@@ -90,8 +98,8 @@ class HandoffAndSaves(unittest.TestCase):
     def test_named_saves_with_a_folder_prefix(self):
         # BG3AI_SAVE_PREFIX=Claude- (docs/SETUP.md, the MCP server) names the folder, and the agent's
         # save_game labels are plain "S001-end": the session's named save must count (S001 quicksaved over it).
-        saves = [G.parse_save_folder("Claude-10__S001-end", 200), G.parse_save_folder("Claude-11__QuickSave_0", 300),
-                 G.parse_save_folder("Tav-12__S001-end", 250)]
+        saves = [sv("Claude-10__S001-end", 200), sv("Claude-11__QuickSave_0", 300),
+                 sv("Tav-12__S001-end", 250)]
         self.assertEqual([s.folder for s in rgame.saves_since(saves, 100, "Claude", "Claude-")], ["Claude-10__S001-end"])
         self.assertEqual(rgame.pick_save(saves, None, "Claude", set(), "Claude-").folder, "Claude-10__S001-end")
         # a label prefix still works, and a foreign character never matches
@@ -101,15 +109,15 @@ class HandoffAndSaves(unittest.TestCase):
 
     def test_pick_skips_worker_saves(self):
         # 2026-10-10 live-test break: workers saved LIVETEST-* after S027-start; the playthrough's save stays the pick
-        saves = [G.parse_save_folder("Claude-48__S027-start", 100), G.parse_save_folder("Claude-14__LIVETEST-act", 200),
-                 G.parse_save_folder("Claude-12__LIVETEST-vis-open", 300), G.parse_save_folder("Claude-13__AutoSave_42", 250)]
+        saves = [sv("Claude-48__S027-start", 100), sv("Claude-14__LIVETEST-act", 200),
+                 sv("Claude-12__LIVETEST-vis-open", 300), sv("Claude-13__AutoSave_42", 250)]
         self.assertEqual(rgame.pick_save(saves, "S027-start", "Claude", set(), "Claude-").folder, "Claude-48__S027-start")
 
     def test_pick_only_saves_written_while_this_playthrough_played(self):
         # 2026-10-17: claude-run-2's newest save is S065-end (10-11 12:03), but replay-hoh saved S027-end and
         # S028-lastlight-prep as "Claude" on 10-15 and a worker saved S999-savetest on 10-13: without the play
         # windows the resume would have loaded Act 2's S028-lastlight-prep
-        f = G.parse_save_folder
+        f = sv
         saves = [f("Claude-1__S065-pre-orin", 1000.0), f("Claude-2__S065-end", 1500.0),
                  f("Claude-3__S999-savetest", 5000.0), f("Claude-4__S027-end", 9000.0),
                  f("Claude-5__S028-lastlight-prep", 9500.0), f("Claude-6__QuickSave_9", 9600.0)]
@@ -129,10 +137,27 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertFalse(gsaves.played_elsewhere(-500.0, windows))
         self.assertTrue(gsaves.played_elsewhere(750.0, windows))   # 600 + 120 s slack < 750 < 900 - 120
 
+    def test_pick_goes_by_the_saves_own_time_never_its_mtime(self):
+        # bench B3 (PR #14): Steam's local cloud restores a moved-aside save at a launch with mtime = the launch; only
+        # its meta.lsf SaveTime still says when it was made. S002 launched at 5000 and Steam restored two copies.
+        windows = [(900.0, 1450.0), (5000.0, 6000.0)]
+        own = sv("Claude-2__S001-end", 1400.0)
+        restored = sv("Claude-9__S027-end", 5010.0, saved=3000.0)   # another playthrough's (same name)
+        older = sv("Claude-8__S001-start", 5010.0, saved=950.0)       # this playthrough's older save
+        unread = dataclasses.replace(sv("Claude-7__S002-x", 5500.0), saved=None)   # meta.lsf unreadable
+        saves = [own, restored, older, unread]
+        self.assertEqual(rgame.pick_save(saves, None, "Claude", set(), "Claude-", windows), own)
+        self.assertEqual(rgame.pick_save_why(saves, "S001-end", "Claude", set(), "Claude-", windows, 1, {1: 1450.0}),
+                         (own, 'HANDOFF\'s "Save to load", also the newest save'))
+        self.assertEqual(rgame.pick_save_why(saves, "S001-start", "Claude", set(), "Claude-", windows, 1, {1: 1450.0}),
+                         (older, 'HANDOFF\'s "Save to load" (S001\'s choice), not the newer "S001-end" from the same '
+                                 'session'))
+        self.assertIsNone(rgame.pick_save([unread], None, "Claude", {unread.folder}, "Claude-", windows))
+
     def test_handoff_save_is_the_agents_choice(self):
         # L8: S076 started from S075-fight (newest, mid-fight try 6) while S075's HANDOFF named S075-end; S076's
         # HANDOFF named S075-end again ("S076-end = try 7 mid-fight, losing: don't continue it")
-        f = G.parse_save_folder
+        f = sv
         ends = {75: 2000.0, 76: 3000.0}
         s75 = [f("Claude-1__S074-end", 900.0), f("Claude-2__S075-end", 1500.0), f("Claude-3__S075-fight", 1900.0)]
         save, why = rgame.pick_save_why(s75, "S075-end", "Claude", set(), "Claude-", None, 75, ends)
@@ -179,7 +204,7 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertEqual(rgame.session_ends(None, None), {})
 
     def test_choose_save_follows_handoff_and_tells_the_kickoff(self):
-        f = G.parse_save_folder
+        f = sv
         saves = [f("Claude-2__S075-end", 1500.0), f("Claude-3__S075-fight", 1900.0)]
         with tempfile.TemporaryDirectory() as d:
             mem = Path(d) / "memory"
@@ -201,7 +226,7 @@ class HandoffAndSaves(unittest.TestCase):
                       '"S075-fight" from the same session). Don\'t reload it', k)
 
     def test_foreign_saves_for_the_mcp_server(self):
-        f = G.parse_save_folder
+        f = sv
         saves = [f("Claude-2__S065-end", 1500.0), f("Claude-3__S999-savetest", 5000.0),
                  f("Claude-5__S028-lastlight-prep", 9500.0), f("Claude-6__QuickSave_9", 9600.0),
                  f("Claude-7__LIVETEST-x", 9700.0), f("Tav-8__S001-end", 9800.0)]
@@ -303,8 +328,8 @@ class AgentSaves(unittest.TestCase):
             r.record_agent_saves(0)
         self.assertEqual(len(r.state["agent_saves"]), rpolicy.AGENT_SAVES_KEPT)
         self.assertEqual(r.state["agent_saves"][-1], "Claude-1__QuickSave_59")
-        saves = [G.parse_save_folder("Claude-1__S010-end", 10.0), G.parse_save_folder("Claude-1__QuickSave_59", 20.0),
-                 G.parse_save_folder("Claude-1__QuickSave_99", 30.0)]
+        saves = [sv("Claude-1__S010-end", 10.0), sv("Claude-1__QuickSave_59", 20.0),
+                 sv("Claude-1__QuickSave_99", 30.0)]
         self.assertEqual(rgame.pick_save(saves, None, "Claude", r.ours()).label, "QuickSave_59")
 
     def test_position_keys_are_not_progress(self):
@@ -342,7 +367,7 @@ class Relaunch(unittest.TestCase):
         self.assertIsNone(rpolicy.relaunch_reason(now - 600, now, "", 2, ram_mb=9000, ram_limit_mb=0))   # 0 = off
 
     def test_pick_save_never_an_autosave(self):
-        f = G.parse_save_folder
+        f = sv
         saves = [f("Claude-1__S032-end", 10.0), f("Claude-2__AutoSave_59", 20.0), f("Claude-3__QuickSave_4", 30.0)]
         self.assertEqual(rgame.pick_save(saves, None, "Claude", set()).label, "S032-end")
         self.assertEqual(rgame.pick_save(saves, "AutoSave_59", "Claude", set()).label, "S032-end")   # not even by HANDOFF
@@ -359,7 +384,7 @@ class Relaunch(unittest.TestCase):
         rpolicy.game_ram_mb = lambda: ram
         rcode.game_mod_path = lambda: mod_path   # never the machine's real game
         rcode.steam_ready = lambda: steam
-        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S032-end", "Claude", "S032-end", save_mtime), *extra_saves]
+        rcode.list_saves = lambda: [sv("Claude-1__S032-end", save_mtime), *extra_saves]
         rpolicy.game_started_at = lambda: launched
         renv.log = lambda m: self.logs.append(m)
         self.logs, self.killed, self.events = [], [], []
@@ -478,7 +503,7 @@ class Relaunch(unittest.TestCase):
     )
 
     def test_ended_on_save(self):
-        save = rpolicy.Save("Claude-1__S032-end", "Claude", "S032-end", 10.0)
+        save = sv("Claude-1__S032-end", 10.0)
         self.assertTrue(rpolicy.ended_on_save(self.S092_END, save))
         self.assertTrue(rpolicy.ended_on_save(self.S092_END[1:2], save))    # the load was the last call
         self.assertFalse(rpolicy.ended_on_save([], save))
@@ -522,7 +547,7 @@ class Relaunch(unittest.TestCase):
             self.assertTrue(any("lose play" in m for m in self.logs))
 
     # S093 (09:49:34): the agent didn't save after S090-end; the runner quicksaved at the session's end (QuickSave_24)
-    QS = rpolicy.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", 70.0)
+    QS = sv("Claude-4__QuickSave_24", 70.0)
     S093_END = (
         {"t": 60.0, "tool": "end_turn", "args": {}, "result": "end_turn: done"},
         {"t": 64.0, "tool": "memory_write", "args": {}, "result": "Rewrote memory/HANDOFF.md"},
@@ -533,8 +558,8 @@ class Relaunch(unittest.TestCase):
     def test_boundary_save(self):
         last = {"session": "S093", "started": 50.0}
         calm = {self.QS.folder: False}
-        saves = [rpolicy.Save("Claude-1__S032-end", "Claude", "S032-end", 10.0), self.QS,
-                 rpolicy.Save("Claude-3__QuickSave_23", "Claude", "QuickSave_23", 40.0)]   # the previous boundary's
+        saves = [sv("Claude-1__S032-end", 10.0), self.QS,
+                 sv("Claude-3__QuickSave_23", 40.0)]   # the previous boundary's
         runner = {self.QS.folder, "Claude-3__QuickSave_23"}
         self.assertEqual(rpolicy.boundary_save(saves, runner, calm, last, list(self.S093_END)), (self.QS, ""))
         got, why = rpolicy.boundary_save(saves, runner, {self.QS.folder: True}, last, list(self.S093_END))
@@ -552,7 +577,7 @@ class Relaunch(unittest.TestCase):
         got, why = rpolicy.boundary_save(saves, {"Claude-3__QuickSave_23"}, calm, last, [])   # only one older than S093
         self.assertIsNone(got)
         self.assertIn("no runner quicksave since S093's start", why)
-        agents = rpolicy.Save("Claude-5__QuickSave_25", "Claude", "QuickSave_25", 75.0)    # not the runner's: ignored
+        agents = sv("Claude-5__QuickSave_25", 75.0)    # not the runner's: ignored
         self.assertEqual(rpolicy.boundary_save([*saves, agents], runner, calm, last, [])[0], self.QS)
 
     def _s093(self, td, **kw):
@@ -630,7 +655,7 @@ class Relaunch(unittest.TestCase):
             self.assertEqual(self.killed, [1])
 
     def test_played_on_after_its_save_relaunches_onto_a_newer_boundary_quicksave(self):
-        qs = rpolicy.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", 90.0)
+        qs = sv("Claude-4__QuickSave_24", 90.0)
         for combat, relaunched in ((False, True), (True, False)):
             self.logs, self.killed = [], []
             with tempfile.TemporaryDirectory() as td:
@@ -678,7 +703,7 @@ class EnsureSave(unittest.TestCase):
                 G.available_ops = lambda c: {"ui.menu"}
                 G.party_in_combat = lambda c=combat: c
                 G.rpc = lambda *a, d=disk, **k: d.append(
-                    rpolicy.Save("Claude-4__QuickSave_24", "Claude", "QuickSave_24", time.time()))
+                    sv("Claude-4__QuickSave_24", time.time()))
                 renv.log = logs.append
                 r = lpt.Runner.__new__(lpt.Runner)
                 r.state = {"save_owner": "Claude", "runner_saves": [], "runner_save_combat": None}
@@ -823,7 +848,7 @@ class SaveIdentity(unittest.TestCase):
 
 class ClaudeSaves(unittest.TestCase):
     def test_claude_owner(self):
-        f = G.parse_save_folder
+        f = sv
         saves = [f("Claude-11__S001-start", 10), f("Claude-12__S002-end", 20), f("pibooool-9__S002-end", 30),
                  f("Claude-13__QuickSave_4", 40)]
         best = rgame.pick_save(saves, "S002-end", "Claude", set(), "")

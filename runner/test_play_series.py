@@ -697,9 +697,9 @@ class SeriesRuns(unittest.TestCase):
         (d / "runner.json").write_text(json.dumps({"save_owner": "Claude", "history": [
             {"kind": "play", "session": "S065", "started": t, "ended": t + 1800}]}))
         (d / "session-config.json").write_text(json.dumps({"minutes": 30, "effort": "high"}))
-        saves = [rpolicy.Save("Claude-1__S065-end", "Claude", "S065-end", t + 1700),
-                 rpolicy.Save("Claude-2__S027-end", "Claude", "S027-end", t + 90000),       # another playthrough's
-                 rpolicy.Save("Claude-3__S999-savetest", "Claude", "S999-savetest", t + 95000)]
+        saves = [rpolicy.Save("Claude-1__S065-end", "Claude", "S065-end", t + 1700, t + 1700),
+                 rpolicy.Save("Claude-2__S027-end", "Claude", "S027-end", t + 90000, t + 90000),       # another playthrough's
+                 rpolicy.Save("Claude-3__S999-savetest", "Claude", "S999-savetest", t + 95000, t + 95000)]
         with mock.patch.object(rcode, "list_saves", lambda: saves):
             out = self._plan("--playthrough", "cr", "--save-owner", "Claude", "--session-minutes", "20")
         self.assertIn("resume:         S066; loads Claude-1__S065-end (HANDOFF names S065-end)", out)
