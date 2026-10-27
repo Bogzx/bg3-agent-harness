@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench import methods
+from bg3bench import facts, methods
 
 FACTS_SCHEMA = Path(__file__).resolve().parents[3] / "packages" / "harness" / "schemas" / "facts.v1.schema.json"
 
@@ -118,6 +118,25 @@ def test_mixed_session_with_kills_and_priority():
     ]
 
 
+def test_kills_are_the_partys_kills_of_real_characters():
+    # diverse-2026-10-25 Haiku x fight_act2_balthazar (old facts: no summon field): Balthazar killed his own four
+    # undead and the Defenders killed Tav, Wyll and Shadowheart (by_party false); the party killed Balthazar and one
+    # Defender
+    tl = facts.load(Path(__file__).parent / "fixtures" / "timelines" / "balthazar_haiku_wipe.facts.jsonl")
+    out = methods.attribute(tl)
+    assert (out["kills"], out["traders_killed"]) == (2, 1)  # 9 kill events; the trader flag is the mod's
+    tl = [
+        {"v": 1, "kind": "snapshot", "t": 0, "gold": 0, "party": [{"name": "Tav"}, {"name": "Gale"}]},
+        ev(1, "kill", victim="Cat", killer="Tav", by_party=True, summon=True, summoner="Street Magician"),
+        ev(2, "kill", victim="Gale", killer="Tav", by_party=True),  # friendly fire
+        ev(3, "kill", victim="Goblin", killer="Mattis", by_party=False),
+        ev(4, "kill", victim="Goblin Reinforcement", killer="Tav", by_party=True, temporary=True),
+        ev(5, "kill", victim="Arron", killer="Tav", by_party=True, trader=True),
+    ]
+    out = methods.attribute(tl)
+    assert (out["kills"], out["traders_killed"]) == (2, 1)
+
+
 def test_empty_timeline():
     out = methods.attribute([])
     assert out["gold_by_method"] == dict.fromkeys(methods.METHODS, 0)
@@ -132,6 +151,7 @@ def test_synthetic_events_match_the_facts_schema():
         ev(1, "stole", char="T", item="I"),
         ev(1, "crime", type="Theft"),
         ev(1, "kill", victim="Arron", trader=True),
+        ev(1, "kill", victim="Cat", by_party=False, summon=True, summoner="Street Magician", temporary=True),
         ev(1, "loot", **{"from": "corpse"}),
         ev(1, "trade_open", npc="A"),
         ev(1, "trade_end"),
@@ -140,4 +160,5 @@ def test_synthetic_events_match_the_facts_schema():
     ]:
         assert validator.is_valid(rec), rec
     assert not validator.is_valid(ev(1, "kill"))
+    assert not validator.is_valid(ev(1, "kill", victim="Cat", summon="yes"))
     assert not validator.is_valid(ev(1, "pickpocket"))
