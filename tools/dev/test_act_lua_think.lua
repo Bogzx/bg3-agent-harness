@@ -611,6 +611,26 @@ test("jump: a chasm fall put back on the ledge at the same height says FELL and 
     -- landed short, unhurt: done with the distance, as before
     j = jump_to({ 8, 0, 0 }, { 4, 0, 0 }, 18, false)
     eq(j.status, "done", "short " .. tostring(j.error)); eq(j.result.landed_m_from_target, 4, "off")
+    -- PR #21 review: HP lost on the arc is no fall. A jump that went nowhere while a burning tick cost 3 HP ...
+    j = jump_to({ 6, 0, 0 }, { 0.2, 0, 0 }, 15, false)
+    eq(j.status, "failed", "nowhere " .. tostring(j.error))
+    assert(j.error:find("the jump went nowhere: moved 0.2m", 1, true), j.error)
+    -- ... and a jump the game shortened onto a surface that cost 5 HP: done, 4.5 m from the landing
+    j = jump_to({ 8.5, 0, 0 }, { 4, 0, 0 }, 13, false)
+    eq(j.status, "done", "shortened " .. tostring(j.error)); eq(j.result.landed_m_from_target, 4.5, "off")
+    -- died where the game shortened it: still DIED, but no "FELL on the way" (it ended on the arc)
+    j = jump_to({ 8.5, 0, 0 }, { 4, 0, 0 }, 0, true)
+    eq(j.error, "landed and DIED (HP 18->0) at (4.0,0.0,0.0)", "shortened dead")
+    -- a hit taken after the order, before the cast starts, is not the fall's: HP 18 at the order, 14 at the start
+    world[P1].pos = { 0, 0, 0 }
+    health.Hp = 18
+    j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 7.5, 0, 0 } }))
+    health.Hp = 14
+    A.dispatch("CastSpell", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+    world[P1].pos = { 14, 0.4, 12 }
+    A.dispatch("CastedSpell", { P1, "Projectile_Jump" })
+    tick(60)
+    eq(j.status, "done", "hit before the start " .. tostring(j.error)); eq(j.result.landed_m_from_target, 13.6, "off")
     world[P1].pos = { 0, 0, 0 }
 end)
 
