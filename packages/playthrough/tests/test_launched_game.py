@@ -328,6 +328,23 @@ def test_without_a_session_save_the_runner_quicksaves_and_records_it(tmp_path: P
     assert "quicksave written: Ilse-2__QuickSave_1 (mid-fight)" in logs
 
 
+def test_the_runners_quicksave_is_the_new_folder_by_its_own_time_never_a_steam_restored_copy(tmp_path: Path):
+    # a copy Steam restores while the runner waits is a new folder too, with mtime = when it appeared
+    clock = [5000.0]
+    saves = [save(OWNER, 1, "S001-end", 3100)]
+    restored = save(OWNER, 9, "QuickSave_0", 5001, saved=900)
+
+    class RestoringOps(FakeSaveOps):
+        def quicksave(self) -> None:
+            super().quicksave()
+            self.saves.append(restored)
+
+    ops = RestoringOps(saves, clock, save(OWNER, 2, "QuickSave_1", 5000))
+    g, sdir, _ = saving_game(tmp_path, {"save_owner": OWNER}, saves, ops, clock)
+    assert g.ensure_save(4000) == "Ilse-2__QuickSave_1"
+    assert json.loads((sdir / "runner.json").read_text())["runner_saves"] == ["Ilse-2__QuickSave_1"]
+
+
 def test_a_quicksave_that_never_appears_or_a_game_not_ready_records_nothing(tmp_path: Path):
     clock = [5000.0]
     ops = FakeSaveOps([], clock, None)
