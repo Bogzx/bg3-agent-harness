@@ -598,18 +598,16 @@ test("jump: a chasm fall put back on the ledge at the same height says FELL and 
     -- job 13: aimed 7.5 m on, the body back on the ledge 13.6 m from the landing, 0.4 m higher, dead
     local j = jump_to({ 7.5, 0, 0 }, { 14, 0.4, 12 }, 0, true)
     eq(j.status, "failed", "dead " .. tostring(j.error))
-    assert(j.error:find("FELL on the way and DIED: ended at (14.0,0.4,12.0), 13.6m from the landing (HP 18->0)", 1,
-        true), j.error)
-    assert(j.error:find("Revive them or load a save.", 1, true), j.error)
+    eq(j.error, "FELL on the way and DIED: ended at (14.0,0.4,12.0), 13.6m from the landing (HP 18->0)", "facts only")
     eq(j.result.hp, 0, "hp"); eq(j.result.hp_before, 18, "hp before"); eq(j.result.off_m, 13.6, "off")
     -- survived the fall: still a fall, with the HP it cost
     j = jump_to({ 7.5, 0, 0 }, { 14, 0.4, 12 }, 9, false)
     eq(j.status, "failed", "hurt " .. tostring(j.error))
-    assert(j.error:find("FELL on the way and lost 9 HP: ended at (14.0,0.4,12.0)", 1, true), j.error)
+    eq(j.error, "FELL on the way and lost 9 HP: ended at (14.0,0.4,12.0), 13.6m from the landing (HP 18->9)", "hurt")
     -- died on the landing itself: no fall, but not "done" either
     j = jump_to({ 6, 0, 0 }, { 6, 0, 0 }, 0, true)
     eq(j.status, "failed", "dead on target " .. tostring(j.error))
-    assert(j.error:find("landed and DIED (HP 18->0) at (6.0,0.0,0.0)", 1, true), j.error)
+    eq(j.error, "landed and DIED (HP 18->0) at (6.0,0.0,0.0)", "dead on target")
     -- landed short, unhurt: done with the distance, as before
     j = jump_to({ 8, 0, 0 }, { 4, 0, 0 }, 18, false)
     eq(j.status, "done", "short " .. tostring(j.error)); eq(j.result.landed_m_from_target, 4, "off")

@@ -679,15 +679,11 @@ reg("cast", function(args)
                         if drop <= A.JUMP_FALL_M and (dead or downed or (off > A.JUMP_OFF_M and lost > 0)) then
                             local verdict = dead and "DIED" or downed and "is DOWNED" or ("lost " .. lost .. " HP")
                             local hps = string.format("HP %s->%s", tostring(job.hp0 or "?"), tostring(hp or "?"))
-                            local next_step = dead and "Revive them or load a save. " or downed and "Help them up. "
-                                or ""
                             local why = off > A.JUMP_OFF_M and string.format("FELL on the way and %s: ended at"
-                                .. " (%.1f,%.1f,%.1f), %.1fm from the landing (%s): the arc or the landing crossed a"
-                                .. " chasm or a drop, and the game puts a faller back on its edge. %sNever jump there"
-                                .. " again; walk (route / get_layout) or aim at solid floor away from the edge",
-                                verdict, p[1], p[2], p[3], off, hps, next_step)
-                                or string.format("landed and %s (%s) at (%.1f,%.1f,%.1f). %s", verdict, hps,
-                                    p[1], p[2], p[3], next_step)
+                                .. " (%.1f,%.1f,%.1f), %.1fm from the landing (%s)", verdict, p[1], p[2], p[3], off,
+                                hps)
+                                or string.format("landed and %s (%s) at (%.1f,%.1f,%.1f)", verdict, hps,
+                                    p[1], p[2], p[3])
                             RPC.finish_job(job, "failed", { cast = spell, now_at = U.vec(p, 1),
                                 landing = U.vec(pos, 1), off_m = U.round(off, 1), hp = hp, hp_before = job.hp0 }, why)
                             return
