@@ -761,6 +761,31 @@ class EnsureSave(unittest.TestCase):
              renv.log) = saved
 
 
+    def test_the_quicksave_is_the_new_folder_by_its_own_time_never_a_steam_restored_copy(self):
+        saved = (rgame.saves_since, rcode.list_saves, G.server_ready, G.available_ops, G.rpc, G.party_in_combat, renv.log)
+        try:
+            logs, now = [], time.time()
+            # Steam's local cloud restores an earlier session's save of another character (SaveTime 100) at the launch
+            disk = [sv("Karlach-9__S004-end", now - 5, saved=100.0)]
+            rgame.saves_since = lambda *a: []
+            rcode.list_saves = lambda: list(disk)
+            G.server_ready = lambda: True
+            G.available_ops = lambda c: {"ui.menu"}
+            G.party_in_combat = lambda: False
+            # while the runner waits: its quicksave, and a restored copy of an old quicksave (a new folder, mtime later)
+            G.rpc = lambda *a, **k: disk.extend([sv("Claude-4__QuickSave_24", now), sv("Claude-7__QuickSave_9", now + 2,
+                                                                                          saved=200.0)])
+            renv.log = logs.append
+            r = lpt.Runner.__new__(lpt.Runner)
+            r.state = {"save_owner": "Claude", "runner_saves": [], "runner_save_combat": None}
+            r.game_alive = lambda: True
+            r.ensure_save(now - 60)
+            self.assertEqual(r.state["runner_saves"], ["Claude-4__QuickSave_24"])
+            self.assertIn("the agent didn't save this session; quicksaving", logs)  # not "session saves ['Karlach-9...']"
+        finally:
+            (rgame.saves_since, rcode.list_saves, G.server_ready, G.available_ops, G.rpc, G.party_in_combat,
+             renv.log) = saved
+
 class Gates(unittest.TestCase):
     def setUp(self):
         self.saved = (G.rpc, G.lua_eval, renv.log)

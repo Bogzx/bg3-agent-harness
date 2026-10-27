@@ -531,7 +531,8 @@ class GameSide:
                 self.adopt_owner(new[-1].owner)
             renv.log(f"session saved: {new[-1].folder}")
             return
-        others = [s.folder for s in rcode.list_saves() if s.mtime >= since and is_ai_label(s.label, "")]
+        others = [s.folder for s in rcode.list_saves()
+                  if s.saved is not None and s.saved >= since and is_ai_label(s.label, "")]
         if not self.game_alive() or not game.server_ready():
             renv.log("no save this session and the game isn't ready for one")
             return
@@ -554,9 +555,11 @@ class GameSide:
             return
         end = time.time() + 60
         while time.time() < end:
-            fresh = [s for s in rcode.list_saves() if s.folder not in before and s.mtime >= t0 - 1]
+            # the new folder saved since the request by its own time (meta.lsf SaveTime): a copy Steam's local
+            # cloud restores while the runner waits is a new folder too, with mtime = when it appeared
+            fresh = [s for s in rcode.list_saves() if s.folder not in before and s.saved is not None and s.saved >= t0 - 1]
             if fresh:
-                s = max(fresh, key=lambda x: x.mtime)
+                s = max(fresh, key=saved_key)
                 if owner and s.owner != owner:
                     renv.log(f"quicksave {s.folder} has an unexpected owner; not recording it")
                     return
