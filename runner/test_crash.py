@@ -180,7 +180,8 @@ class FakeGame:
         if code == rgame.MOD_READY_LUA:
             return "false" if self.r.game_proc is not None and self.r.game_proc.pid == self.mod_gone_pid else "true"
         if "F5" in code:  # the runner's quicksave fallback
-            self.saves.append(rpolicy.Save(f"Claude-{900 + len(self.saves)}__QuickSave_1", "Claude", "QuickSave_1", time.time()))
+            t = time.time()
+            self.saves.append(rpolicy.Save(f"Claude-{900 + len(self.saves)}__QuickSave_1", "Claude", "QuickSave_1", t, t))
         return "{}"
 
     def rpc(self, op: str, args=None, context: str = "server", timeout: float = 0):
@@ -243,9 +244,9 @@ class FakeRunBase(unittest.TestCase):
         self.claude = claude
         now = time.time()
         self.wire(rstate.Options("crash-test", None, 20, "opus", save_owner="Claude"),
-                  [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", now - 300),
-                   rpolicy.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100),
-                   rpolicy.Save("Tav-3__my own game", "Tav", "my own game", now - 10)])   # newer, not ours
+                  [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", now - 300, now - 300),
+                   rpolicy.Save("Claude-2__S001-before-imps", "Claude", "S001-before-imps", now - 100, now - 100),
+                   rpolicy.Save("Tav-3__my own game", "Tav", "my own game", now - 10, now - 10)])   # newer, not ours
 
     def wire(self, opt: rstate.Options, saves: list[rpolicy.Save]) -> None:
         r = lpt.Runner(opt)
@@ -683,7 +684,8 @@ class NewRuns(NautiloidBase):
 
         def first_save():   # the agent's create_character + first save, mid-session
             time.sleep(2)
-            self.g.saves.append(rpolicy.Save("Mira-4810126690__S001-start", "Mira", "S001-start", time.time()))
+            t = time.time()
+            self.g.saves.append(rpolicy.Save("Mira-4810126690__S001-start", "Mira", "S001-start", t, t))
         threading.Thread(target=first_save, daemon=True).start()
         self.r.play_session(20, first=True)
 
