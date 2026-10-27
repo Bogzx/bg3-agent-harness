@@ -181,6 +181,44 @@ class State:
             self.game_end = True
 
 
+def party_losses(records: Iterable[dict]) -> dict[str, int]:
+    """{fights, downs, deaths, wipes} over a run's facts: the combats started (State.combats_started); a real party
+    member (no summon) going down or dying, seen by its event or by a snapshot (DeepSeek x Balthazar: Wyll dead in a
+    snapshot, no died event), `revived` standing it up again; and the party wiped (every real member down or dead)
+    from not, once a snapshot has listed the party."""
+    st, party = State(), {}  # name -> [dead, downed]
+    downs = deaths = wipes = 0
+    listed = was_wiped = False
+    for r in records:
+        st.apply(r)
+        if r["kind"] == "snapshot":
+            listed, now = True, {}
+            for p in r["party"]:
+                if p.get("summon"):
+                    continue
+                dead, downed = party.get(p["name"], [False, False])
+                deaths += bool(p.get("dead")) and not dead
+                downs += bool(p.get("downed")) and not p.get("dead") and not (dead or downed)
+                now[p["name"]] = [bool(p.get("dead")), bool(p.get("downed"))]
+            party = now
+        elif (
+            r["kind"] == "event" and r["ev"] in ("died", "downed", "revived") and r.get("party") and not r.get("summon")
+        ):
+            m = party.setdefault(r["name"], [False, False])
+            if r["ev"] == "died":
+                deaths += not m[0]
+                m[0] = True
+            elif r["ev"] == "downed":
+                downs += not (m[0] or m[1])
+                m[1] = True
+            else:
+                m[:] = [False, False]
+        wiped = listed and bool(party) and all(dead or downed for dead, downed in party.values())
+        wipes += wiped and not was_wiped
+        was_wiped = wiped
+    return {"fights": st.combats_started, "downs": downs, "deaths": deaths, "wipes": wipes}
+
+
 # bg3ai.progress record kinds -> v1 events. Kinds with no fact behind them (explore, talk, objective, ...) are
 # dropped; "kill" is kept as a kill event without a killer.
 _PROGRESS_KINDS = {
