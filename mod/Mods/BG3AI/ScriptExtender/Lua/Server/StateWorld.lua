@@ -748,7 +748,9 @@ function S.nearby(ctx, args)
                     if not dead and o.relation ~= "hostile" and (truthy(osi(Osi.GetHasDefaultDialog, u)) or truthy(osi(Osi.GetHasOsirisDialog, u))) then
                         o.can_talk = true
                     end
-                    if not dead and truthy(osi(Osi.CanTrade, u)) then o.can_trade = true end
+                    -- a merchant (the Trader tag), as Referee.lua's kills: Osi.CanTrade held for the windmill goblins,
+                    -- Barth, Arka ... (diverse-2026-10-25). Not hostile: a foe offers no dialogue to trade from.
+                    if not dead and o.relation ~= "hostile" and comp(e, "Trader") then o.can_trade = true end
                     if not dead and comp(e, "HasExclamationDialog") then o.wants_talk = true end  -- the "!" over them
                     tactical(ctx, u, p, o)
                     out.characters[#out.characters + 1] = o

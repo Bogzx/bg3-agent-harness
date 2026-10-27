@@ -48,6 +48,7 @@ local fight = {}      -- uuid -> CombatGetGuidFor
 local canInteract = {} -- uuid -> false: scenery
 local objectives = {}  -- Nav.objectiveTargets: item uuid -> true
 local traps = {}       -- uuid -> "hidden" | "discovered"
+local enemies = {}     -- uuid -> true: IsEnemy
 
 Ext = {
     Utils = { MonotonicTime = function() return 1000 end, PrintWarning = function() end, Print = function() end },
@@ -58,7 +59,7 @@ Ext = {
         local d = ents[u]
         if not d then return nil end
         local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = d.pos } } }
-        e.CampPresence, e.HasExclamationDialog = d.CampPresence, d.HasExclamationDialog
+        e.CampPresence, e.HasExclamationDialog, e.Trader = d.CampPresence, d.HasExclamationDialog, d.Trader
         if d.item then e.ServerItem = d.item return e end
         e.ServerCharacter = {}
         if d.size then e.ObjectSize = { Size = d.size } end
@@ -83,6 +84,8 @@ Osi = {
     GetRegion = function() return "CTY_Main_A" end, -- the camp and the city: one level
     GetDisplayName = function(u) return u == VENT and "Sanguine Vent" or nil end,
     IsDead = function() return 0 end,
+    CanTrade = function() return 1 end, -- diverse-2026-10-25: true for the windmill goblins too
+    IsEnemy = function(_, u) return enemies[u] and 1 or 0 end,
 }
 
 local handlers = {}    -- RPC name -> handler
@@ -110,7 +113,7 @@ local function visible(u) return V.characterVisible(ctx(), u, V.entity(u)) end
 local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
-    inCamp, sees, onStage, los, fight, canInteract, objectives, traps = {}, {}, {}, true, {}, {}, {}, {}
+    inCamp, sees, onStage, los, fight, canInteract, objectives, traps, enemies = {}, {}, {}, true, {}, {}, {}, {}, {}
     Ext.Level, V.rayBroken, V.rayCache, V.calib = nil, nil, {}, { t = -1e9, ok = false } -- no ray API: uncalibrated
     ents[BRAIN].size, ents[BRAIN].bounds = nil, nil
     V.boundsCache = {}
@@ -362,6 +365,28 @@ test("S065: get_nearby lists a discovered standalone trap (kinds=trap or none), 
         eq(names({ kinds = { "usable" } }), "", "kinds=usable")
     end)
     V.itemsAround = realAround
+    if not ok then error(err, 0) end
+end)
+
+test("get_nearby marks can_trade on a merchant (the Trader tag) that isn't hostile, not on every CanTrade", function()
+    local realChars, gobPos = V.characters, ents[GOB].pos
+    ents[GOB].pos = { -1419.0, 8.4, -2590.0 } -- a windmill goblin 11 m off
+    V.characters = function() return { { V.entity(WITHERS), ents[WITHERS].pos }, { V.entity(GOB), ents[GOB].pos } } end
+    local ok, err = pcall(function()
+        sees[WITHERS], sees[GOB], ents[WITHERS].Trader = true, true, {}
+        local function flags()
+            local out = {}
+            for _, o in ipairs(S.nearby(ctx(), { kinds = { "characters" } }).characters) do
+                out[#out + 1] = o.uuid:sub(-3) .. "=" .. tostring(o.can_trade)
+            end
+            table.sort(out)
+            return table.concat(out, ",")
+        end
+        eq(flags(), "009=nil,352=true", "the merchant only")
+        enemies[WITHERS] = true
+        eq(flags(), "009=nil,352=nil", "a hostile merchant: no")
+    end)
+    V.characters, ents[WITHERS].Trader, ents[GOB].pos = realChars, nil, gobPos
     if not ok then error(err, 0) end
 end)
 
