@@ -173,9 +173,7 @@ def pick_save(
     windows: list[tuple[float, float]] | None = None,
 ) -> Save | None:
     """The newest save of this playthrough (save_candidates)."""
-    return max(
-        save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows), key=saved_key, default=None
-    )
+    return max(save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows), key=saved_key, default=None)
 
 
 HANDOFF_SAVE_SLACK_S = 5.0  # a save this soon after the HANDOFF's session ended was still that session's
@@ -228,9 +226,7 @@ def pick_save_why(
         return None, "no save of this playthrough"
     if not handoff_label:
         return newest, "the newest save (HANDOFF names no save)"
-    named = max(
-        (s for s in cands if label_matches(s.label, handoff_label, prefix)), key=saved_key, default=None
-    )
+    named = max((s for s in cands if label_matches(s.label, handoff_label, prefix)), key=saved_key, default=None)
     if named is None:
         return newest, f'the newest save (HANDOFF names "{handoff_label}": no such save of this playthrough)'
     if named is newest:
@@ -277,10 +273,16 @@ def foreign_saves(
 
 
 def saves_since(saves: list[Save], t: float, owner: str | None, prefix: str = SAVE_PREFIX) -> list[Save]:
-    """AI-labelled saves written after t (by this playthrough's owner, when known)."""
+    """AI-labelled saves written after t (by this playthrough's owner, when known), oldest first. Written is the save's
+    own time (Save.saved): a copy Steam restores at the session's launch has mtime = the launch, and its owner would
+    pass as the session's save (a new playthrough's first owner)."""
     return sorted(
-        (s for s in saves if s.mtime >= t and is_ai_save(s, prefix) and (owner is None or s.owner == owner)),
-        key=lambda s: s.mtime,
+        (
+            s
+            for s in saves
+            if s.saved is not None and s.saved >= t and is_ai_save(s, prefix) and (owner is None or s.owner == owner)
+        ),
+        key=saved_key,
     )
 
 
