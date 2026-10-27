@@ -101,8 +101,8 @@ class OomGuard(unittest.TestCase):
 
     def test_second_oom_from_the_same_save_refuses_it(self):
         saves = [
-            rpolicy.Save("Claude-1__S037-end", "Claude", "S037-end", 10.0),
-            rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
+            rpolicy.Save("Claude-1__S037-end", "Claude", "S037-end", 10.0, 10.0),
+            rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0, 20.0),
         ]
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), saves)
@@ -123,8 +123,8 @@ class OomGuard(unittest.TestCase):
     def test_oom_line_names_the_save_loaded_last(self):
         # S082: the line named S078-start (the runner's load at the launch), not the agent's later S081-end reload
         saves = [
-            rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0),
-            rpolicy.Save("Claude-3__S039-end", "Claude", "S039-end", 30.0),
+            rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0, 20.0),
+            rpolicy.Save("Claude-3__S039-end", "Claude", "S039-end", 30.0, 30.0),
         ]
         acts = [
             {
@@ -144,7 +144,7 @@ class OomGuard(unittest.TestCase):
             self.assertEqual(r.state["oom_streak"]["save"], "Claude-3__S039-end")
 
     def test_last_loaded_save(self):
-        saves = [rpolicy.Save("Claude-1__S081-end", "Claude", "S081-end", 10.0)]
+        saves = [rpolicy.Save("Claude-1__S081-end", "Claude", "S081-end", 10.0, 10.0)]
         by_label = [{"t": 20.0, "tool": "load_game", "args": {"save": "S081-end"}, "result": "done loaded=S081-end"}]
         self.assertEqual(O.last_loaded_save(by_label, saves, "x"), "Claude-1__S081-end")
         self.assertEqual(O.last_loaded_save([], saves, "Claude-0__S078-start"), "Claude-0__S078-start")
@@ -152,7 +152,7 @@ class OomGuard(unittest.TestCase):
         self.assertEqual(O.last_loaded_save(failed, saves, "fallback"), "fallback")
 
     def test_refused_with_no_other_save_stops(self):
-        saves = [rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0)]
+        saves = [rpolicy.Save("Claude-2__S038-shadowfell", "Claude", "S038-shadowfell", 20.0, 20.0)]
         with tempfile.TemporaryDirectory() as td:
             r = self._runner(Path(td), saves)
             r.state["oom_blocked"] = ["Claude-2__S038-shadowfell"]

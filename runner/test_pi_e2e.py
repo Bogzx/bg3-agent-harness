@@ -217,7 +217,8 @@ class PiE2EBase(TCR.FakeRunBase):
             system_file=str(system_file),
             tools_expected=len(self.tools) + expected,
         )
-        self.wire(replace(o, **opt), [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", time.time() - 300)])
+        t = time.time() - 300
+        self.wire(replace(o, **opt), [rpolicy.Save("Claude-1__S001-start", "Claude", "S001-start", t, t)])
         r = self.r
         r.agent_cmd = lambda req: lpt.Runner.agent_cmd(r, req)  # the real pi, not test_crash's fake claude
         home = self.tmp / "bridge-home"
