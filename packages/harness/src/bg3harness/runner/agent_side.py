@@ -194,7 +194,8 @@ class AgentSide:
         since = self.run_started if self.run_started is not None else getattr(self, "run_t0", None)
         if self.has_usage_caps() and since is not None:
             done = runs.claude_totals(self.state.dir, since)
-            meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]))
+            meter = runs.UsageMeter(done["cost_usd"], runs.token_total(done["tokens"]),
+                                    done["running"] if client.name in clients.RUNNING_COST else None)
         seen_session = [claude_session]   # the conversation id: assigned up front, or the stream's init event's
         api = {"texts": [], "rejected": False, "resets_at": None, "mcp": None,   # RUN-7/RUN-8, from the stream
                "overflow": None, "raw": collections.deque(maxlen=40),   # pi: its overflow result, stderr tail

@@ -108,6 +108,50 @@ class Caps(TmpDir):
         self.assertEqual(runs.token_total(tot["tokens"]), 10)
         self.assertEqual(runs.claude_totals(self.tmp, time.time() + 60)["cost_usd"], 0.0)  # streams before the run
 
+    def _chain(self, client: str, costs: list[float]) -> None:
+        """One conversation "c1" over len(costs) processes (S001, S001-c1, ...), each an events log whose result
+        reports costs[i], 2 turns and 10 input tokens, written in that order."""
+        t = time.time() - 100
+        for i, c in enumerate(costs):
+            base = self.tmp / ("S001" if i == 0 else f"S001-c{i}")
+            _stream(base.with_name(base.name + ".jsonl"), {"type": "system", "subtype": "init"})
+            log = runs.events.EventLog(base.with_name(base.name + ".events.jsonl"))
+            log.harness("session_start", session=base.name, client=client, resume=i > 0)
+            ev = runs.clients.Event("result", session_id="c1", turns=2, cost_usd=c, tokens=runs.clients.tokens(10))
+            log.write(ev)
+            log.end("exited", 0, t)
+            os.utime(base.with_name(base.name + ".jsonl"), (t + i, t + i))
+
+    def test_a_resumed_claude_conversation_costs_its_last_running_total(self):
+        # bench diverse-2026-10-25 Opus act1_gold_max: claude's result reports the conversation's cost so far over
+        # --resume (its turns and tokens are the process's); the run recorded the sum, $42.09
+        self._chain("claude", [5.43, 8.45, 9.05, 9.46, 9.70])
+        tot = runs.claude_totals(self.tmp, 0)
+        self.assertAlmostEqual(tot["cost_usd"], 9.70)
+        self.assertEqual((tot["turns"], tot["tokens"]["input"]), (10, 50))
+        self.assertEqual(tot["running"], {"c1": 9.70})
+        # the next resume's live meter starts from there: its result adds what the conversation's total grew by
+        meter = runs.UsageMeter(tot["cost_usd"], runs.token_total(tot["tokens"]), tot["running"])
+        meter.on_event(runs.clients.Event("result", session_id="c1", cost_usd=10.0, tokens=runs.clients.tokens(10)))
+        self.assertAlmostEqual(meter.cost, 10.0)
+        # a cost cap of $20 would have tripped on the summed figures (42.09 + 10)
+        self.assertIsNone(runs.cap_exceeded({"max_cost": 20.0}, meter.cost, meter.tokens))
+
+    def test_pi_results_over_one_conversation_are_each_their_process_s_cost(self):
+        self._chain("pi", [0.10, 0.20, 0.05])  # pi (DeepSeek): billed per process, never a running total
+        self.assertAlmostEqual(runs.claude_totals(self.tmp, 0)["cost_usd"], 0.35)
+        meter = runs.UsageMeter(0.35, 30)  # play.py meters pi without running
+        meter.on_event(runs.clients.Event("result", session_id="c1", cost_usd=0.05, tokens=runs.clients.tokens(10)))
+        self.assertAlmostEqual(meter.cost, 0.40)
+
+    def test_a_raw_claude_stream_s_resume_order_does_not_matter(self):
+        # the raw fallback (no events log), streams with one mtime: S001-c1.jsonl sorts before S001.jsonl
+        t = time.time() - 100
+        for name, c in (("S001", 1.0), ("S001-c1", 3.0)):
+            f = _stream(self.tmp / f"{name}.jsonl", {"type": "result", "session_id": "c1", "total_cost_usd": c})
+            os.utime(f, (t, t))
+        self.assertAlmostEqual(runs.claude_totals(self.tmp, 0)["cost_usd"], 3.0)
+
     def test_claude_totals_counts_a_process_stopped_before_its_result(self):
         # the e2e pi run (e2e-naut-pi S001, trimmed to 5 of its 431 usage events): the cost cap stopped pi, no result
         # event, and the run record said cost_usd 0, turns 0, tokens 0

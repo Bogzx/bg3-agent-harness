@@ -188,13 +188,19 @@ def legacy_claude_totals(state_dir: Path, since: float) -> dict:
         if R.CLAUDE_STREAM_RE.match(f.name) and f.stat().st_mtime >= since
     )
     parsers: dict = {}
+    running: dict = {}  # claude's cost is the conversation's running total over --resume: its highest counts
     for _, _, f in found:
         lines = f.read_text(errors="replace").splitlines()
         name = R.stream_client(lines)
         for ev in R.stream_events([ln for ln in lines if any(m in ln for m in R.RESULT_MARKS[name])], parsers, name):
             if ev.kind != "result":
                 continue
-            cost += float(ev.cost_usd or 0)
+            c = float(ev.cost_usd or 0)
+            if name == "claude" and ev.session_id:
+                prev = running.get(ev.session_id, 0.0)
+                running[ev.session_id] = max(prev, c)
+                c = running[ev.session_id] - prev
+            cost += c
             turns += int(ev.turns or 0)
             for k in R.clients.TOKEN_KEYS:
                 tokens[k] += int((ev.tokens or {}).get(k) or 0)
@@ -280,6 +286,7 @@ class Fixtures(Base):
                 totals = R.claude_totals(d, 0)
                 self.assertIs(totals.pop("cost_unknown"), False)  # every process here reported its cost
                 self.assertIsNone(totals.pop("served"))  # claude reports no served levels or providers
+                totals.pop("running")
                 self.assertEqual(totals, legacy_claude_totals(src, 0), f"{how} {src.name}")
         self.assertEqual(n, 8)
 
@@ -293,7 +300,8 @@ class Fixtures(Base):
         info = MT.stream_info(s086)
         self.assertTrue(info["think_ms"] and info["result"] and info["result"]["api_ms"])
         tot = R.claude_totals(FIXTURES / "claude-run-2", 0)
-        self.assertGreater(tot["cost_usd"], 0)
+        # S086 $0.818516, its resume S086-r1 reports the conversation's $8.4118226 (not 0.82 + 8.41), the keeper $0.22
+        self.assertAlmostEqual(tot["cost_usd"], 8.4118226 + 0.2201644)
         self.assertNotIn("/data/", "".join(f.read_text() for f in FIXTURES.rglob("*.jsonl")))
 
     def test_codex_calls_now_read(self):

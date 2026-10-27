@@ -80,7 +80,8 @@ class Event:
     subtype: str | None = None         # result: success | error_during_execution | ...
     turns: int | None = None
     duration_ms: float | None = None
-    cost_usd: float | None = None      # result: the process's cost (None when the client can't know it)
+    cost_usd: float | None = None      # result: the process's cost (None when the client can't know it; a
+                                       # RUNNING_COST client's: the conversation's so far)
     tokens: dict[str, int] | None = None
     message_id: str | None = None      # usage: the message a running token count belongs to
     resets_at: float | None = None     # rate_limit: when the limit resets (epoch s), if the client says
@@ -203,6 +204,12 @@ def format_event(ev: Event) -> list[str]:
 PLAY_TOOLS = "ToolSearch"
 CLAUDE_FLAGS = ["--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
                 "--disable-slash-commands", "--tools", PLAY_TOOLS]
+
+
+# The clients whose result cost_usd and api_ms are the conversation's running totals over --resume, not the process's
+# (Claude Code: Opus act1_gold_max S001 reported $5.43, its resumes c1..c4 8.45, 9.05, 9.46, 9.70; its turns and tokens
+# are per process). The events log keeps the figure as reported; runs.own_cost takes the process's share.
+RUNNING_COST = frozenset({"claude"})
 
 
 class ClaudeClient:
