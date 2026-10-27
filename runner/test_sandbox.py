@@ -90,6 +90,9 @@ def cp(rc: int = 0, out: str = "", err: str = "") -> subprocess.CompletedProcess
     return subprocess.CompletedProcess([], rc, out, err)
 
 
+# the stale-server tests' child: says it runs (exec done), then sleeps until killed
+UP_THEN_SLEEP = "import time; print('up', flush=True); time.sleep(60)"
+
 class FakeServer:
     def __init__(self):
         self.stopped = False
@@ -335,19 +338,32 @@ class Server(unittest.TestCase):
             S.start_server(spec, dict(os.environ), self.d, self.d / "x.log", timeout=20, is_up=lambda: False)
         self.assertIn("exited 3", str(e.exception))
 
+    def running(self, argv: list[str]) -> subprocess.Popen:
+        """argv started and running its own code: Popen returns mid-exec, while /proc/<pid>/cmdline is still empty
+        (292 of 300 reads right after Popen, Python 3.14), so kill_stale_server saw no bg3ai-mcp (CI, 2026-10-27)."""
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, start_new_session=True)
+        assert proc.stdout is not None
+
+        def stop() -> None:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            proc.stdout.close()
+
+        self.addCleanup(stop)
+        self.assertEqual(proc.stdout.readline(), b"up\n")  # its Python runs: exec is done, cmdline is set
+        return proc
+
     def test_stale_server_of_a_dead_runner(self):
         pid_file = self.d / "srv.pid"
         pid_file.write_text("999999999\n")
         self.assertIsNone(S.kill_stale_server(pid_file))   # gone: nothing to kill, file dropped
         self.assertFalse(pid_file.exists())
-        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "bg3ai-mcp", "--transport",
-                              "http"], start_new_session=True)
-        self.addCleanup(lambda: p.poll() is None and p.kill())
+        p = self.running([sys.executable, "-c", UP_THEN_SLEEP, "bg3ai-mcp", "--transport", "http"])
         pid_file.write_text(f"{p.pid}\n")
         self.assertIn("stale", S.kill_stale_server(pid_file))
         self.assertEqual(p.wait(timeout=10), -signal.SIGTERM)
-        q = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
-        self.addCleanup(lambda: q.poll() is None and q.kill())
+        q = self.running([sys.executable, "-c", UP_THEN_SLEEP])
         pid_file.write_text(f"{q.pid}\n")
         self.assertIsNone(S.kill_stale_server(pid_file))   # not a bg3 server (a reused pid): left alone
         self.assertIsNone(q.poll())
