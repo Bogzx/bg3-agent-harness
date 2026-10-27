@@ -134,3 +134,31 @@ def test_a_maximise_scenario_is_scored_by_its_gain_with_no_pass(tmp_path):
     assert res["grade"]["curve"]["fact"] == "gold" and res["methods"] is not None
     assert_valid("result.v1.schema.json", res)
     assert report.verdict(res) == "+1050 gold (50 -> 1100)"
+
+
+def test_result_deaths_are_the_party_losses_in_the_facts(tmp_path):
+    # diverse-2026-10-25 Haiku x fight_act2_balthazar: the bench record has no deaths, result.json said 0 of each
+    series, records = load_series()
+    (tmp_path / "facts.jsonl").write_text((TL / "balthazar_haiku_wipe.facts.jsonl").read_text())
+    _, res = run_artifacts.write_run_artifacts(tmp_path, series, records[0], None, None)
+    # Tav down then dead, Wyll down, revived, down, dead, Shadowheart down then dead, Karlach down: all down at once
+    assert res["deaths"] == {"fights": 1, "downs": 5, "deaths": 3, "wipes": 1}
+    (tmp_path / "none").mkdir()
+    _, res = run_artifacts.write_run_artifacts(tmp_path / "none", series, records[0], None, None)
+    assert res["deaths"] == {"fights": 2, "downs": 0, "deaths": 0, "wipes": 0} == records[0]["deaths"]  # the record's
+
+
+def test_party_losses_count_a_death_only_a_snapshot_saw_and_no_summons():
+    snap = {"v": 1, "kind": "snapshot", "gold": 0, "inv": [], "region": None, "areas": [], "quests": {}, "combat": True}
+    tl = [
+        snap | {"t": 1.0, "party": [{"name": "Wyll"}, {"name": "Tav"}, {"name": "Scratch", "summon": True}]},
+        {"v": 1, "kind": "event", "t": 2.0, "ev": "downed", "name": "Wyll", "party": True},
+        {"v": 1, "kind": "event", "t": 2.5, "ev": "died", "name": "Scratch", "party": True, "summon": True},
+        # DeepSeek x Balthazar: Wyll dead in a snapshot, no died event; the summon down does not wipe the party
+        snap
+        | {"t": 3.0, "party": [{"name": "Wyll", "dead": True}, {"name": "Tav"}, {"name": "Scratch", "summon": True}]},
+        snap | {"t": 4.0, "party": [{"name": "Wyll", "dead": True}, {"name": "Tav", "downed": True}]},
+        {"v": 1, "kind": "event", "t": 5.0, "ev": "revived", "name": "Tav", "party": True},
+        {"v": 1, "kind": "event", "t": 6.0, "ev": "downed", "name": "Tav", "party": True},
+    ]
+    assert facts.party_losses(tl) == {"fights": 1, "downs": 3, "deaths": 1, "wipes": 2}

@@ -83,10 +83,12 @@ def from_record(
     pilot: Sequence[str] | None = None,
     seed: int | None = None,
     score: dict | None = None,
+    losses: dict | None = None,
 ) -> dict:
     """One runs.jsonl record (+ grader output, + method attribution, + luck.summary, + the choices grader's
     picks and fit for a choice scenario, + what a pilot run didn't play of its condition, + a maximise scenario's
-    score) -> result v1. `seed`: the scenario's dice seed (validity)."""
+    score) -> result v1. `seed`: the scenario's dice seed (validity). `losses`: the run's facts.party_losses, its
+    `deaths` (else the record's: a bench record has none, diverse-2026-10-25 wrote 0 for 11 wiped runs)."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
     valid, reason = validity(record, seed)
@@ -95,7 +97,7 @@ def from_record(
     else:
         passed, t_pass = grade["passed"], grade["t_pass_s"]
     tokens = record.get("tokens") or {}
-    deaths = record.get("deaths") or {}
+    deaths = (record.get("deaths") if losses is None else losses) or {}
     fair = record.get("fairness_flags") or {}
     out = {
         "schema": SCHEMA,

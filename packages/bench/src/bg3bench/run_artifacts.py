@@ -11,7 +11,8 @@ luck summary when there is a roll log, and writes:
 - manifest.json: manifest.from_series over series.json and the run's runs.jsonl record, with the harness version,
   the prompt hash, the condition, the dice seed the game applied (results.applied_seed: null when it wasn't seeded)
   and the scenario's timing.
-- result.json: results.from_record with that grade (a seeded scenario whose seed didn't apply is invalid). Without facts.jsonl the runner's own milestone verdict is used
+- result.json: results.from_record with that grade and the party's losses (facts.party_losses: fights, downs,
+  deaths, wipes) (a seeded scenario whose seed didn't apply is invalid). Without facts.jsonl the runner's own milestone verdict is used
   (results.py); a malformed facts.jsonl raises (a harness bug, never a silent fallback to the milestone verdict).
 
 report.load_runs(<runtime/sessions>) then finds every run that has both files.
@@ -82,9 +83,10 @@ def write_run_artifacts(
         profile=profile,
         harness_version=harness_version,
     )
-    grade = attribution = luck_summary = picked = score = None
+    grade = attribution = luck_summary = picked = score = losses = None
     if (run_dir / FACTS).is_file():
         timeline = facts.load(run_dir / FACTS)
+        losses = facts.party_losses(timeline)
         if (fact := scenario.maximised(sc)) is not None:
             m = graders.measure(fact, timeline)
             score = {k: m[k] for k in ("fact", "start", "end", "gain", "peak")}
@@ -109,6 +111,7 @@ def write_run_artifacts(
         pilot,
         sc["game_settings"].get("seed"),
         score,
+        losses,
     )
     manifest.write(man, run_dir / MANIFEST)
     results.write(res, run_dir / RESULT)
