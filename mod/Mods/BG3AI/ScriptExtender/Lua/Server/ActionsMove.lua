@@ -248,6 +248,63 @@ function A.tele_settle(job)
     if job.tele and RPC.now_ms() - job.tele.t >= A.TELEPORT_SETTLE_MS then A.tele_finish(job, nil) end
 end
 
+-- BACKLOG:1743, live N8 step 3 (2026-10-28): Claude's move_to ended at +0.87 s, he stood still, and at +4.52 s the
+-- game put him 15 m off in one 77 ms tick (the Faith-Leap put-back): no job ran, so teleport_check never saw it.
+-- For IDLE_WATCH_MS after one of our jobs for a member ends, a jump over IDLE_TELE_M in one tick with no job of
+-- ours running for them is the game's: event teleported_by_game. Not when another member jumps in the same tick
+-- (a fast travel or a load moves the whole party), while a party-wide job runs (camp), or after a fast travel.
+A.IDLE_WATCH_MS = 10000
+A.IDLE_TELE_M = 4.0
+A.idle_watch = {} -- char -> { t = the job's end, kind }
+A.idle_last = {}  -- party member -> position at the last tick, while a watch runs
+
+function A.watch_idle(char, kind)
+    A.idle_watch[char] = { t = RPC.now_ms(), kind = kind }
+    A.idle_last[char] = G.pos(char) -- from where the job left it (a jump that ended the job was the job's)
+end
+
+function A.idle_tick()
+    if next(A.idle_watch) == nil then
+        A.idle_last = {}
+        return
+    end
+    local now = RPC.now_ms()
+    for char, w in pairs(A.idle_watch) do
+        local j = A.active[char]
+        if (j and j.status == "running") or now - w.t > A.IDLE_WATCH_MS then A.idle_watch[char] = nil end
+    end
+    local wide = false
+    for _, job in pairs(RPC.jobs) do
+        if job.status == "running" and job.act and not job.char then wide = true end
+    end
+    local jumped, last = {}, {}
+    for _, u in ipairs(G.party()) do
+        local here = G.pos(u)
+        local prev = A.idle_last[u]
+        if here and prev and U.dist(prev, here) > A.IDLE_TELE_M then
+            jumped[#jumped + 1] = { u = u, from = prev, to = here, m = U.dist(prev, here) }
+        end
+        last[u] = here
+    end
+    A.idle_last = last
+    if #jumped ~= 1 or wide or trip_age(now) then return end
+    local jp = jumped[1]
+    local w = A.idle_watch[jp.u]
+    if not w then return end
+    A.idle_watch[jp.u] = nil
+    RPC.push("teleported_by_game", { uuid = jp.u, from = pos_view(jp.from), to = pos_view(jp.to),
+        m = U.round(jp.m, 1), why = string.format("%.1f s after its %s ended, with no order of ours running",
+            (now - w.t) / 1000, w.kind) })
+end
+
+if not A.idle_subscribed then
+    A.idle_subscribed = true
+    Ext.Events.Tick:Subscribe(function()
+        local ok, err = pcall(A.idle_tick)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] idle teleport watch: " .. tostring(err)) end
+    end)
+end
+
 local function teleport_check(job, track, armed)
     local here = G.pos(job.char)
     if not here then return nil end
