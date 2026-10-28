@@ -7,6 +7,7 @@ import json
 import os
 import struct
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,56 @@ class Store(unittest.TestCase):
         path = tmp() / "runner.json"
         path.write_text("[1]")
         self.assertIsNone(H.JsonStore(path)["x"])
+
+
+class StatusFile(unittest.TestCase):
+    def test_two_threads_writing_the_status_keep_both_fields(self) -> None:
+        # CI on #41: the agent loop's stream thread wrote runner.status.json (claude_session) while the loop wrote it
+        # (the fight hold's deadline), both through one runner.status.tmp; the second replace found it gone and the
+        # FileNotFoundError killed the stream thread. Here the second writer runs while the first holds its tmp file
+        # (until it waits on the status lock, or is done where there is none).
+        runtime = tmp()
+        cond = threading.Condition()
+        second: dict[str, str | None] = {"state": None}
+        errors: list[Exception] = []
+        real_lock, real_replace = threading.Lock(), Path.replace
+
+        class SeenLock:  # the status lock, saying when the second writer waits on it
+            def __enter__(self) -> None:
+                if threading.current_thread() is writer:
+                    with cond:
+                        second["state"] = "waiting"
+                        cond.notify_all()
+                real_lock.acquire()
+
+            def __exit__(self, *exc: object) -> None:
+                real_lock.release()
+
+        def write_second() -> None:
+            try:
+                H.write_status(runtime, claude_session="conv-1")
+            except Exception as e:
+                errors.append(e)
+            with cond:
+                second["state"] = second["state"] or "done"
+                cond.notify_all()
+
+        writer = threading.Thread(target=write_second)
+
+        def replace(p: Path, target: Any) -> Path:
+            if writer.ident is None:  # the first writer's replace: the second one goes now
+                writer.start()
+                with cond:
+                    cond.wait_for(lambda: second["state"] is not None)
+            return real_replace(p, target)
+
+        with mock.patch.object(H, "_STATUS_LOCK", SeenLock(), create=True), mock.patch.object(Path, "replace", replace):
+            H.write_status(runtime, deadline=123.0)
+            writer.join()
+        self.assertEqual(errors, [])
+        d = json.loads((runtime / "runner.status.json").read_text())
+        self.assertEqual((d["deadline"], d["claude_session"]), (123.0, "conv-1"))
+        self.assertEqual(sorted(p.name for p in runtime.iterdir()), ["runner.status.json"])
 
 
 class App(unittest.TestCase):
