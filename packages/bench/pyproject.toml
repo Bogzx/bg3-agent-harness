@@ -5,6 +5,9 @@ description = "The BG3 benchmark: graders over facts.jsonl, statistics, run mani
 requires-python = ">=3.14"
 dependencies = ["bg3-agent-harness"]  # the LLM judge (bg3harness.judge, D4)
 
+[project.scripts]
+bg3bench-serve = "bg3bench.serve.server:main"  # the local panel
+
 [project.optional-dependencies]
 # Inspect AI .eval export (export_inspect.py). Pinned: Inspect moves event classes and the .eval layout between
 # releases; bump the pin and rerun tests/test_export_inspect.py together.
@@ -13,7 +16,7 @@ inspect = ["inspect-ai==0.3.282"]
 baselines = ["mcp>=2.3,<3"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20"]
+dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20", "playwright==1.64.0"]  # playwright: tests/e2e (the panel), the pin bg3play uses
 # Optional cross-check of the statistics against scipy; the tests skip it when scipy is absent.
 crosscheck = ["scipy>=1.11"]
 

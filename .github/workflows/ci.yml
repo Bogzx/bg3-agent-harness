@@ -79,10 +79,14 @@ jobs:
           cache: npm
           cache-dependency-path: |
             packages/playthrough/web/package-lock.json
+            packages/bench/web/package-lock.json
             tools/pi/package-lock.json
       - run: uv sync --locked
       - name: Build the web app
         working-directory: packages/playthrough/web
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
+      - name: Build the bench panel's web app
+        working-directory: packages/bench/web
         run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
       - name: Install pi (the bench e2e runs it)
         working-directory: tools/pi
