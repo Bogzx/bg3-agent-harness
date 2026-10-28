@@ -389,6 +389,15 @@ test("scroll_settle: a scroll read out of combat settles too, read only once it 
     eq(j.status, "done", "read: " .. tostring(j.error)); eq(j.result.combat_scroll, nil, "not a combat read")
     local r = op("scroll_settle", { char = P1 })
     eq(r.none, nil, "pending"); eq(r.read, false, "still in the bags: nothing cast yet")
+    eq(r.approaching, nil, "standing where it read")
+    -- app review of #31: a touch-range scroll on a member out of reach: the game walks the reader into range first
+    world[P1].pos = { 0.4, 0, 0 }
+    r = op("scroll_settle", { char = P1 })
+    eq(r.read, false, "not cast yet"); eq(r.approaching, true, "walking")
+    world[P1].pos = { 0.8, 0, 0 }
+    eq(op("scroll_settle", { char = P1 }).approaching, true, "still walking")
+    eq(op("scroll_settle", { char = P1 }).approaching, nil, "stopped (in range)")
+    world[P1].pos = { 0, 0, 0 }
     osiv[key("IsItem", SCR)] = 0 -- the click cast it: the scroll is gone
     r = op("scroll_settle", { char = P1 })
     eq(r.read, true, "read"); eq(#r.charged, 0, "nothing charged out of combat")

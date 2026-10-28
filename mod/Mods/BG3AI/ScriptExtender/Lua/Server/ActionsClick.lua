@@ -313,6 +313,9 @@ end)
 -- the reader's bags, or its stack smaller) it charges what reading it owed and the engine did not -> {read = true,
 -- charged = [{resource, amount}]}. Not used up yet: {read = false, casting = true while the reader's cast plays} (the
 -- pending entry stays until final=true). At final=true a scroll still there whose cast went off (CastedSpell) is read.
+-- approaching = true while the reader walks (moved over SCROLL_WALK_M since the last poll): app review of #31, a
+-- touch-range scroll clicked on a member 8-10 m off makes the reader walk into range before the cast starts.
+A.SCROLL_WALK_M = 0.05
 RPC.register("act.scroll_settle", function(args)
     local char = G.guid(args.char)
     local p = char and A.scroll_pending[char]
@@ -323,7 +326,10 @@ RPC.register("act.scroll_settle", function(args)
     end
     if left >= p.stack and not (args.final and p.casted) then
         if args.final then A.scroll_pending[char] = nil end
-        return { read = false, casting = (p.cast and not p.casted) or nil }
+        local here = G.pos(char)
+        local walking = here and p.last_pos and BG3AI.Util.dist(here, p.last_pos) > A.SCROLL_WALK_M or nil
+        p.last_pos = here or p.last_pos
+        return { read = false, casting = (p.cast and not p.casted) or nil, approaching = walking }
     end
     A.scroll_pending[char] = nil
     local after, charged = G.resources(char), {}
