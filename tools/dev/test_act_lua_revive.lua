@@ -15,7 +15,8 @@ local function revived(standing)
     return names
 end
 
-test("end_standup: a revived member still standing up walks 3 m toward the reader until the stand-up ends (N4)", function()
+test("end_standup: a revived member still standing up walks 3 m toward the reader until the stand-up ends (N4)",
+    function()
     local names = revived(true)
     local j = job(op("end_standup", { char = P1, toward = GOB }))
     eq(j.status, "running", "started " .. tostring(j.error))
