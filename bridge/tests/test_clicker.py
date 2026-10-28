@@ -1,6 +1,7 @@
 """Offline tests for clicker.py: the camera moves that bring a click target into view (live S005: lockpick
 'the target is not on screen' x3 on a door 1.5 m away), the door-leaf aims and the off_screen/hover_miss split."""
 
+import math
 import unittest
 from unittest import mock
 
@@ -128,6 +129,25 @@ class FakeGame:
         raise AssertionError(op)
 
 
+class OrbitGame(FakeGame):
+    """A camera turning round its pivot over a point on the ground: phi = the point's angle from the view's forward
+    (0 = ahead, up the window; 180 = toward the camera, below it). Zooming gains nothing (zoomed out as far as it
+    goes); a turn right (drag left) takes 30 degrees off phi, or adds them with `turn_sign` -1."""
+
+    def __init__(self, inp, phi: float, turn_sign: int = 1):
+        super().__init__(inp, ndc=(0.0, 0.0), zoom_gain=0.0)
+        self.phi, self.turn_sign = phi, turn_sign
+
+    def _apply_moves(self):
+        for ev in self.inp.log[self.seen:]:
+            if ev[0] == "drag":
+                self.phi = (self.phi - 30.0 * self.turn_sign * (1 if ev[2] < 0 else -1)) % 360
+        self.seen = len(self.inp.log)
+        r = math.radians(self.phi)
+        self.ndc = [0.8 * math.sin(r), -0.3 + 0.75 * (1 - math.cos(r))]
+        self.side = "right" if self.ndc[0] >= 0 else "left"
+
+
 class CameraMove(unittest.TestCase):
     def test_moves(self):
         self.assertIsNone(clicker.camera_move({"on_screen": True, "ndc": [0.1, 0.3]}))
@@ -164,7 +184,24 @@ class BringIntoView(unittest.TestCase):
         inp = FakeInput()
         g = FakeGame(inp, ndc=(0.2, 1.15), zoom_gain=0.0)
         moves = clicker.bring_into_view(g, inp, "u")
-        self.assertLessEqual(len(moves), 2)
+        self.assertLessEqual(moves.count("zoom_out"), 2)
+
+    def test_zoom_without_progress_stops_in_the_window(self):
+        inp = FakeInput()
+        g = FakeGame(inp, ndc=(0.2, 0.95), zoom_gain=0.0)
+        self.assertEqual(clicker.bring_into_view(g, inp, "u"), ["zoom_out"])   # on screen: the search takes it
+
+    @mock.patch.dict(clicker._drag, {"flip": False})
+    def test_below_the_window_past_the_zoom_turns_round_the_pivot(self):
+        """Live N8 7d: Wyll 9.5 m off below the window, a zoom out gained nothing: off_screen. The camera turns
+        round the pivot (one way, though the point swings out to the side first) until it is in the window."""
+        for flip in (False, True):
+            inp = FakeInput()
+            g = OrbitGame(inp, phi=170.0, turn_sign=-1 if flip else 1)
+            moves = clicker.bring_into_view(g, inp, "u")
+            self.assertEqual(moves[:2], ["zoom_out", "rotate_right"], moves)
+            self.assertEqual({m for m in moves if m.startswith("rotate")}, {"rotate_right"}, moves)   # one way round
+            self.assertTrue(clicker._screen_pos(g, "u")["on_screen"], (flip, moves, g.phi))
 
     def test_in_view_no_moves(self):
         inp = FakeInput()
@@ -307,6 +344,15 @@ class ClickEntity(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertEqual((r.reason, r.screen), ("covered", "book"))
         self.assertEqual([e for e in inp.log if e[0] in ("drag", "wheel", "key", "click")], [])
+
+    @mock.patch.dict(clicker._drag, {"flip": False})
+    def test_target_below_the_window_past_the_zoom_is_clicked(self):
+        """Live N8 7d: the scroll's click on Wyll (9.5 m, below the zoomed camera) failed off_screen."""
+        inp = FakeInput()
+        g = OrbitGame(inp, phi=170.0)
+        r = clicker.click_entity(g, inp, "wyll")
+        self.assertTrue(r.ok, r)
+        self.assertIn("rotate_right", r.detail.get("camera", []))
 
     def test_target_already_in_view_no_center_key(self):
         inp = FakeInput()
