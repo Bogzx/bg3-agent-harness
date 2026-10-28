@@ -1,5 +1,6 @@
 -- Actions, part 6 of 6 (Actions.lua loads the parts in order; split for the 1000-line cap):
--- click-on-entity flows (loot_corpse, lockpick, disarm, pickpocket), act.watch, spell prep reads, act.note.
+-- click-on-entity flows (loot_corpse, lockpick, disarm, pickpocket), act.watch, spell prep reads, act.note, move_to
+-- range's plan (A.range_point) and act.spell_reach.
 local U = BG3AI.Util
 local RPC = BG3AI.RPC
 local G = BG3AI.Guard
@@ -348,6 +349,88 @@ RPC.register("act.note", function(args)
     RPC.push(kind, args.data)
     return { ok = true }
 end)
+
+-- move_to {target, range}: a ranged spell's reach (centres; app review of #37: a Scroll of Fireball read 20 m from a
+-- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, `reach` m
+-- from the target (RANGE_STOP_SLACK inside the range): the walker stops itself there (ActionsMove walk_tick, stop_at).
+A.RANGE_STOP_SLACK = 1.0
+-- Live N10-N13 (Claude 9.4 m from Wyll, Longstrider's 2.5 m touch reach): each walk to the point 1.5 m from him, the
+-- stop point itself, ended 1.8-2.4 m short of it, 3.3-3.9 m off, out of reach. The walk's goal lies RANGE_PAST_M
+-- beyond the stop point (past the target for a short reach, never nearer its centre than RANGE_BODY_M), on the line
+-- toward the walker, then 22.5 and 45 degrees off it; that goal's path may be at most RANGE_DETOUR_M longer than the
+-- straight line (else it is a way round, not in). When none is walkable, the stop point itself is the goal, as before.
+A.RANGE_PAST_M = 4.0
+A.RANGE_BODY_M = 1.0
+A.RANGE_DETOUR_M = 3.0
+-- Live N11 step 2: the first leg ended 3.3 m from Wyll, 1.8 m short of its point; the second leg's path to the same
+-- point had no nodes (0.0 m) and the walk ordered on it went 10.2 m round, ending 7.8 m off. A point more than
+-- RANGE_END_TOL_M away whose path has no nodes is not one the engine walks to: the next angle is tried. (A normal path
+-- ends ~1 m from its goal: that is not this.)
+A.RANGE_END_TOL_M = 1.0
+-- App review of night2/vis: the goal past the target is ground the walker may reach when it does not stop in time, so
+-- it is used only when that ground is clear: no harmful surface from the target to it or around it, no known floor
+-- plate, discovered trap (PAST_TRAP_M) or warned area (args.avoid) on that stretch; else the stop point is the goal.
+A.PAST_TRAP_M = 2.0
+local function past_clear(a, t, goal, avoid)
+    local N, seg = BG3AI.Nav, { t, goal }
+    if N and N.routeHazard then
+        local ok, h = pcall(N.routeHazard, seg, 0)
+        if not ok or h then return false end
+    end
+    if N and N.surfaceNear then
+        local ok, sf = pcall(N.surfaceNear, goal)
+        if not ok or sf then return false end
+    end
+    local rows = A.known_plates(t, goal)
+    for _, ar in ipairs(A.warned_areas(avoid, a, goal)) do rows[#rows + 1] = ar end
+    for u in pairs((BG3AI.Events or {}).knownTraps or {}) do
+        local p = G.pos(u)
+        if p then rows[#rows + 1] = { uuid = u, pos = p, r = A.PAST_TRAP_M } end
+    end
+    return #A.plates_on(seg, rows, {}) == 0
+end
+
+-- -> {here, dist} | {pos (the goal), stop (the stop point: move_to's area/plate checks), length_m, stop_m (the route
+-- to the stop point: a combat walk's budget), dist, tpos}
+function A.range_point(char, target, reach, range, avoid)
+    local a, t = G.pos(char), G.pos(target)
+    if not a or not t then G.refuse("cannot locate target") end
+    local d = U.dist(a, t)
+    if d <= range then return { here = true, dist = d, length_m = 0, tpos = t } end
+    local base = math.atan(a[3] - t[3], a[1] - t[1])
+    local sx, sz = t[1] + reach * math.cos(base), t[3] + reach * math.sin(base)
+    local stop = { sx, G.floor_at(sx, sz, t[2]) or t[2], sz }
+    local past = reach - A.RANGE_PAST_M
+    if past < A.RANGE_BODY_M then past = math.min(past, -A.RANGE_BODY_M) end
+    local short
+    for _, r in ipairs({ past, reach }) do
+        for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
+            local ang = base + k * math.pi / 8
+            local x, z = t[1] + r * math.cos(ang), t[3] + r * math.sin(ang)
+            local y = G.floor_at(x, z, t[2])
+            if y and (r ~= past or past_clear(a, t, { x, y, z }, avoid)) then
+                local p = { x, y, z }
+                local ok, info = G.reachable(char, p)
+                local off = ok and info.no_nodes and U.dist(a, p) or 0
+                local round = r == past and ok and (info.length_m or 0) > U.dist(a, p) + A.RANGE_DETOUR_M
+                if ok and not info.needs_jump and off > A.RANGE_END_TOL_M then
+                    short = math.min(short or off, off)
+                elseif ok and not info.needs_jump and not round then
+                    local len = info.length_m or U.dist(a, p)
+                    if r ~= past then return { pos = p, stop = p, length_m = len, stop_m = len, dist = d, tpos = t } end
+                    local sok, sinfo = G.reachable(char, stop)
+                    return { pos = p, stop = stop, length_m = len, dist = d, tpos = t,
+                        stop_m = sok and sinfo.length_m or math.max(U.dist(a, stop), len - U.dist(stop, p)) }
+                end
+            end
+        end
+    end
+    if short then
+        G.refuse(string.format("no walkable point %.1f m from the target on this side (its range): the game's paths to"
+            .. " them have no nodes (they end where the character stands, %.1f m or more from them)", reach, short))
+    end
+    G.refuse(string.format("no walkable point %.1f m from the target on this side (its range)", reach))
+end
 
 -- act.spell_reach {char, spell, target} -> {range_m, melee, reach_m, dist_m} | {}
 -- Live N9 step 3: a touch-range Scroll of Longstrider read 9.47 m from Wyll: the click on Wyll landed, the game cast
