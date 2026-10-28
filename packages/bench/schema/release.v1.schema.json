@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/release.v1.schema.json",
+  "title": "Released suite v1 (the suite's release file)",
+  "description": "What a released benchmark suite holds for checking submissions and serving start saves, written by `python -m bg3bench.submission.release` at suite freeze: the code versions and game pins a run must have, each scenario's digest, start save and start-state fingerprint, the published start saves, and per condition the bg3 tools a play process is served and the prompt sha256 each client is served. The submission validator (bg3bench.submission.validate) compares a bundle against it; the website serves it as <suite>/suite.json next to the save zips.",
+  "type": "object",
+  "required": ["schema", "kind", "about", "suite", "versions", "pins", "scenarios", "saves", "conditions"],
+  "additionalProperties": false,
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "save_name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]{0,31}-[0-9]{1,20}__SCN-[A-Za-z0-9_]{1,80}$"},
+    "scenario_name": {"type": "string", "pattern": "^[a-z0-9_]{1,80}$"},
+    "fingerprint": {
+      "description": "the first facts snapshot of an honest run from this start: party [name, level] pairs sorted, gold, area, difficulty, avatar name",
+      "type": ["object", "null"],
+      "required": ["party", "gold", "area", "difficulty", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "party": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "string"}, {"type": "integer", "minimum": 0}],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "gold": {"type": ["integer", "null"]},
+        "area": {"type": ["string", "null"]},
+        "difficulty": {"type": ["string", "null"]},
+        "name": {"type": ["string", "null"]}
+      }
+    }
+  },
+  "properties": {
+    "schema": {"const": 1},
+    "kind": {"const": "bg3bench.release"},
+    "about": {"type": "string"},
+    "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"},
+    "versions": {
+      "description": "the harness and bg3bench versions a run of this suite must cite (its manifest's versions)",
+      "type": "object",
+      "required": ["harness", "bench"],
+      "additionalProperties": false,
+      "properties": {"harness": {"type": "string"}, "bench": {"type": "string"}}
+    },
+    "pins": {
+      "description": "the game build, the BG3 Script Extender build (bg3le dll sha256) and the mod (sha1) a run must pin",
+      "type": "object",
+      "required": ["game_build", "bg3le_sha256", "mod_sha1"],
+      "additionalProperties": false,
+      "properties": {
+        "game_build": {"type": "string", "minLength": 1},
+        "bg3le_sha256": {"$ref": "#/$defs/sha256"},
+        "mod_sha1": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "scenarios": {
+      "description": "every non-holdout scenario of the suite by name",
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/scenario_name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["digest", "save", "save_sha1", "fingerprint"],
+        "additionalProperties": false,
+        "properties": {
+          "digest": {"type": "string", "pattern": "^[0-9a-f]{16}$", "description": "bg3bench.scenario.digest of the scenario file"},
+          "save": {"oneOf": [{"$ref": "#/$defs/save_name"}, {"type": "null"}], "description": "the start save's folder; null: a new game"},
+          "save_sha1": {"oneOf": [{"$ref": "#/$defs/sha1"}, {"type": "null"}], "description": "its .lsv's sha1"},
+          "fingerprint": {"$ref": "#/$defs/fingerprint"}
+        }
+      }
+    },
+    "saves": {
+      "description": "the published start saves (saves.json for this suite): the zip's storage key, size and sha256 (null until published)",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "scenarios", "save_sha1", "zip", "key", "bytes", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"$ref": "#/$defs/save_name"},
+          "scenarios": {"type": "array", "items": {"$ref": "#/$defs/scenario_name"}, "minItems": 1},
+          "save_sha1": {"$ref": "#/$defs/sha1"},
+          "zip": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+\\.zip$"},
+          "key": {"type": "string", "pattern": "^saves/bench-v[0-9]+\\.[0-9]+/[A-Za-z0-9_.-]+\\.zip$"},
+          "bytes": {"type": ["integer", "null"], "minimum": 1},
+          "sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+        }
+      }
+    },
+    "conditions": {
+      "description": "per condition id (bg3bench.conditions): the tools every play process is served and each client's served prompt",
+      "type": "object",
+      "propertyNames": {"type": "string", "pattern": "^rules(\\+[a-z0-9@:_-]+)*$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["tools", "prompts"],
+        "additionalProperties": false,
+        "properties": {
+          "tools": {
+            "type": "object",
+            "required": ["allowlist_sha256", "count", "names"],
+            "additionalProperties": false,
+            "properties": {
+              "allowlist_sha256": {"$ref": "#/$defs/sha256", "description": "bg3harness.run_manifest.tools_digest of names"},
+              "count": {"type": "integer", "minimum": 1},
+              "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
+            }
+          },
+          "prompts": {
+            "description": "client name -> the sha256 of the text it is served (a run manifest's prompt.sha256) and the prompt condition it was assembled from",
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "object",
+              "required": ["sha256", "condition"],
+              "additionalProperties": false,
+              "properties": {"sha256": {"$ref": "#/$defs/sha256"}, "condition": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

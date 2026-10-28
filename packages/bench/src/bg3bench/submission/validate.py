@@ -34,6 +34,7 @@ from bg3harness.run_manifest import tools_digest
 import bg3bench
 from bg3bench import facts, luck, scenario
 from bg3bench.submission import bundle, codes, consistency, pack, scrub
+from bg3bench.submission.release import errors as release_errors
 
 Json = dict[str, Any]
 Outcome = tuple[bool | None, str]
@@ -58,6 +59,9 @@ class Release:
 
     @classmethod
     def from_json(cls, doc: Json) -> Release:
+        """From a release file (release.v1); ValueError when it isn't one."""
+        if errs := release_errors(doc):
+            raise ValueError("not a release.v1 file: " + "; ".join(errs[:5]))
         return cls(doc["suite"], doc["versions"], doc["pins"], doc["scenarios"], doc["conditions"])
 
 
