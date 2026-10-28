@@ -188,7 +188,8 @@ end
 -- ---- the tests: these files, in order, on the stubs above (split for the 1000-line cap) ----
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_cast.lua", "test_act_lua_think.lua",
-    "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_revive.lua", "test_act_lua_idle.lua" }) do
+    "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_reach.lua", "test_act_lua_revive.lua",
+    "test_act_lua_idle.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

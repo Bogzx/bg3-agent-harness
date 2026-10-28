@@ -377,14 +377,15 @@ class ScrollUse(unittest.TestCase):
 
     def test_a_target_beyond_the_spells_reach_is_walked_to_first(self):
         """Live N9 step 3: Longstrider (touch) read 9.47 m from Wyll: the click landed, nothing cast, nobody walked.
-        The reader walks (move_to within the spell's range, a melee reach) and spell_reach says when it is in reach."""
+        The reader walks (move_to range = the spell's reach, centres, as for a ranged spell: live N10-N13, move_to
+        within's melee ring ended 3.3-3.9 m off) and spell_reach says when it is in reach."""
         out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
                                        name="Scroll of Longstrider", rpc=self.reach_after(2.0),
                                        jobs={"act.move_to": lambda a: JobResult("done", {"dist": 2.0, "in_reach": True})})
         head = out.split("\n")[0]
         self.assertEqual(self.cancels, [self.SH])   # the spell put back before the walk
         moves = [a for op, a in self.rpcs if op == "act.move_to"]
-        self.assertEqual(moves, [{"char": self.SH, "target": self.GALE, "within": 1.5}])
+        self.assertEqual(moves, [{"char": self.SH, "target": self.GALE, "range": 2.5}])
         self.assertEqual(calls, [("act.interact", {"char": self.SH, "target": self.SCROLL})] * 2)   # read again
         self.assertEqual(clicks, [self.GALE])
         self.assertTrue(head.startswith("use_ability: done"), head)
@@ -438,7 +439,19 @@ class ScrollUse(unittest.TestCase):
         head = out.split("\n")[0]
         self.assertTrue(head.startswith("use_ability: FAILED"), head)
         self.assertIn("beyond Longstrider's 2.5 m reach; the spell in hand was put back (escape); the walk into reach "
-                      "failed: no path to the target, nothing cast", head)
+                      "failed: no path to the target (Shadowheart now 9.5 m from Gale), nothing cast", head)
+        self.assertEqual((len(calls), clicks), (1, []))
+
+    def test_a_failed_walk_into_reach_says_where_it_ended(self):
+        """Live N13 step 1: the walk failed 'could not get closer to the destination' 3.9 m from Wyll and the reply
+        did not say how far from him it ended."""
+        why = "the walk ended 3.9 m from the target, beyond the 2.5 m range"
+        out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
+                                       name="Scroll of Longstrider", rpc=self.reach_after(3.9),
+                                       jobs={"act.move_to": lambda a: JobResult("failed", {"dist": 3.9}, why)})
+        head = out.split("\n")[0]
+        self.assertTrue(head.startswith("use_ability: FAILED"), head)
+        self.assertIn(f"the walk into reach failed: {why} (Shadowheart now 3.9 m from Gale), nothing cast", head)
         self.assertEqual((len(calls), clicks), (1, []))
 
     def test_failed_click_puts_the_spell_back(self):
