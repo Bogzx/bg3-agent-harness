@@ -331,6 +331,12 @@ reg("cast", function(args)
     -- ui: the player's route (hotbar cell, one click per target, the tick), clicked by the bridge once this job runs
     local ui = args.ui == true
     if ui then
+        -- #38 review: a hotbar cast is not parked for a running stand-up (Actions.lua park): the bridge clicks as soon
+        -- as the reply comes, so the clicks would land during the stand-up and the cast run later would get none
+        local up = A.active[char]
+        if up and up.status == "running" and up.kind == "act.end_standup" then
+            G.refuse((name_of(char) or "the character") .. " is still standing up from the revive: not cast")
+        end
         -- a two-step spell (ACT-9's player route): Revivify = the body, then the ground beside it; Dimension Door =
         -- who goes (the caster when nobody is named), then the landing given as pos. The bridge clicks both.
         local two = A.two_step_spell(base)
