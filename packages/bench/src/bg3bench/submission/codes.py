@@ -73,7 +73,7 @@ CHECKS: tuple[Check, ...] = (
     ),
     Check("E02", ("job",), "reject", "the video's duration equals render.json's span, which equals wall_s"),
     Check("E03", _PJ, "reject", "render.json events are a monotone subset of the events log, within the video"),
-    Check("E04", _PJ, "reject", "the contact sheet has one decodable frame per 30 s of run"),
+    Check("E04", _PJ, "reject", "frames.tar holds only frames/<n>.jpg within its cap, one decodable frame per 30 s"),
     Check("S01", _PW, "reject", "no home path, e-mail, Steam ID, key shape or .env value in any file"),
     Check("S02", _PJ, "reject", "no hidden reasoning in the events"),
 )

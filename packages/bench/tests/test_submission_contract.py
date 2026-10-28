@@ -55,14 +55,18 @@ def test_example_envelope_validates():
 
 
 @pytest.mark.parametrize(
-    "name", ["../manifest.json", "/etc/passwd", "a/b.json", "frames/../x.jpg", ".env", "frames/", "x" * 200]
+    "name", ["../manifest.json", "/etc/passwd", "a/b.json", "frames/0001.jpg", ".env", "x..y", "x" * 200]
 )
-def test_file_names_are_bare_or_frames(name):
+def test_file_names_are_bare(name):
     assert errors(envelope(files=[{"name": name, "sha256": "0" * 64, "bytes": 1}]))
 
 
-def test_frames_names_allowed():
-    assert errors(envelope(files=[{"name": "frames/0001.jpg", "sha256": "0" * 64, "bytes": 1}])) == []
+def test_frames_tar_allowed_and_file_count_capped():
+    assert errors(envelope(files=[{"name": bundle.FRAMES_TAR, "sha256": "0" * 64, "bytes": 1}])) == []
+    many = [{"name": f"S001-c{i}.events.jsonl", "sha256": "0" * 64, "bytes": 1} for i in range(bundle.MAX_FILES + 1)]
+    assert errors(envelope(files=many))
+    assert bundle.FRAMES_MEMBER.fullmatch("frames/12.jpg")
+    assert not bundle.FRAMES_MEMBER.fullmatch("frames/../x.jpg")
 
 
 @pytest.mark.parametrize(

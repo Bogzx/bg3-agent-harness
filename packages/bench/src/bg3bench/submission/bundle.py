@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,11 @@ ENVELOPE = "bundle.json"
 
 MAX_TOTAL_BYTES = 20 * 1024 * 1024  # every file, bundle.json included
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_FRAMES_BYTES = 3 * 1024 * 1024  # frames/*.jpg, the contact sheet
-FRAMES_DIR = "frames/"
+MAX_FILES = 32  # bundle.json not counted
+# The contact sheet: one uncompressed tar member whose entries are only frames/<n>.jpg (regular files).
+FRAMES_TAR = "frames.tar"
+FRAMES_MEMBER = re.compile(r"frames/\d{1,5}\.jpg")
+MAX_FRAMES_BYTES = 3 * 1024 * 1024  # frames.tar as a whole
 
 
 def canonical_bytes(envelope: dict[str, Any]) -> bytes:

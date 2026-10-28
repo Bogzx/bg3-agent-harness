@@ -281,7 +281,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "the contact sheet has one decodable frame per 30 s of run"
+      "summary": "frames.tar holds only frames/<n>.jpg within its cap, one decodable frame per 30 s"
     },
     {
       "code": "S01",
