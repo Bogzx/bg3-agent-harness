@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import bg3harness
 from bg3harness import run_manifest
@@ -111,6 +112,17 @@ class Fields(unittest.TestCase):
         self.assertEqual(run_manifest.client_version("pi", cli, lambda: "1.3.0"), "1.3.0")
         self.assertIsNone(run_manifest.client_version("baseline", cli, lambda: "x"))
         self.assertEqual(asked, ["claude"])
+
+    def test_the_client_version_is_the_clis_own_line(self) -> None:
+        # N15: the scripted reload agent's "0.0.0 (... scripted, no model)" was recorded as a bare 0.0.0
+        line = "0.0.0 (bg3harness.testing.reload_agent: scripted, no model)"
+        done = subprocess.CompletedProcess(["claude", "--version"], 0, stdout=f"{line}\nmore\n", stderr="")
+        with mock.patch.object(run_manifest.sandbox, "run", return_value=done):
+            self.assertEqual(run_manifest.client_version("claude"), line)
+            self.assertEqual(run_manifest.sandbox.cli_version("claude"), "0.0.0")  # the image build args' semver
+        failed = subprocess.CompletedProcess(["claude", "--version"], 1, stdout="2.1.301 (Claude Code)", stderr="")
+        with mock.patch.object(run_manifest.sandbox, "run", return_value=failed):
+            self.assertIsNone(run_manifest.client_version("claude"))
 
     def test_artifact_kwargs(self) -> None:
         f = run_manifest.manifest_fields("pi", "1.3.0", "rules", REGISTRY, NAUT, INSTR)

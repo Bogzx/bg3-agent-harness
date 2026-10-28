@@ -630,7 +630,7 @@ def run_failures(
     logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     events = [e for e in logged if e.get("t", 0) >= t0 - 1]
     session = {"kind": "play", "session": SID, "started": outcome.started, "ended": res.ended}
-    session |= {"reason": res.reason, "exit": res.exit_code}
+    session |= {"reason": res.reason, "exit": res.exit_code, "tool_calls": int(getattr(res, "tool_calls", 0))}
     tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
     ending = (res.reason, why)

@@ -158,14 +158,22 @@ def ensure_network() -> None:
         docker("network", "create", "--internal", "--subnet", SUBNET, "--gateway", GW, NET)
 
 
-def cli_version(name: str) -> str | None:
-    """The host CLI's version (`claude --version` → 2.1.301), for the image build args."""
+def cli_version_line(name: str) -> str | None:
+    """The first line the host CLI's `--version` prints (`2.1.301 (Claude Code)`): the run manifest's client version,
+    which names the binary that played (N15: the scripted reload agent's "0.0.0 (... scripted, no model)" was
+    recorded as a bare 0.0.0)."""
     try:
         r = run([name, "--version"], 20)
     except SandboxError:
         return None
-    m = re.search(r"\d+\.\d+\.\d+", r.stdout or "")
-    return m.group(0) if r.returncode == 0 and m else None
+    lines = (r.stdout or "").strip().splitlines()
+    return lines[0].strip() if r.returncode == 0 and lines else None
+
+
+def cli_version(name: str) -> str | None:
+    """The host CLI's version (`claude --version` → 2.1.301), for the image build args."""
+    m = re.search(r"\d+\.\d+\.\d+", cli_version_line(name) or "")
+    return m.group(0) if m else None
 
 
 def pi_version() -> str | None:
