@@ -5,6 +5,9 @@ description = "The BG3 benchmark: graders over facts.jsonl, statistics, run mani
 requires-python = ">=3.14"
 dependencies = ["bg3-agent-harness"]  # the LLM judge (bg3harness.judge, D4)
 
+[project.scripts]
+bg3bench-serve = "bg3bench.serve.server:main"  # the local panel
+
 [project.optional-dependencies]
 # Inspect AI .eval export (export_inspect.py). Pinned: Inspect moves event classes and the .eval layout between
 # releases; bump the pin and rerun tests/test_export_inspect.py together.
