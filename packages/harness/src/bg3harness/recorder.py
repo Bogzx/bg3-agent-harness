@@ -29,7 +29,7 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import IO, Any, Protocol, TypeGuard
@@ -620,3 +620,54 @@ def read_index(out_dir: Path) -> list[dict[str, Any]]:
     except (OSError, ValueError, AttributeError):
         return []
     return sorted(segs, key=lambda s: s.get("start") or 0)
+
+
+# ------------------------------------------------------------ a bench run's recording
+
+
+class RecordingError(RuntimeError):
+    """Recording is on but ffmpeg isn't recording the game."""
+
+
+@dataclass
+class RunRecording:
+    """One run's recorder on its own thread (a bench run: LiveRunHost). start() polls once with the game up and raises
+    RecordingError unless ffmpeg is running, so a run with recording on never starts unrecorded; check() raises it if
+    ffmpeg has exited since (before the kickoff); stop() ends the thread, which stops ffmpeg (the open segment is
+    closed and indexed)."""
+
+    rec: Recorder
+    interval: float = 1.0
+    halt: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        try:
+            self.rec.poll()
+        except OSError as e:  # no ffmpeg binary, an unwritable out dir
+            raise RecordingError(f"recording is on but the recorder can't start: {e}") from e
+        self.check()
+        self.thread = threading.Thread(target=self.rec.loop, args=(self.halt, self.interval), daemon=True)
+        self.thread.start()
+
+    def check(self) -> None:
+        run = self.rec.run
+        if run is None or run.proc.poll() is not None:
+            why = self.rec.reason if run is None else f"ffmpeg exited ({run.proc.poll()})"
+            raise RecordingError(f"recording is on but the recorder isn't recording: {why} (see {self.rec.out})")
+
+    def stop(self) -> None:
+        self.halt.set()
+        if self.thread is not None:
+            self.thread.join()
+            self.thread = None
+        else:
+            self.rec.stop("run end")
+
+
+def run_recording(out_dir: Path, env: Mapping[str, str], runtime: Path, encoder: str = "h264_nvenc") -> RunRecording:
+    """A bench run's recording into out_dir: the game's window on env's DISPLAY, no live view, the resource guard on
+    runtime/thermal.log (low RAM or heat stops it: the run's video then has a gap and is refused at render)."""
+    spec = RecordSpec(out_dir, encoder=encoder, live=False)
+    probe = game_probe(env.get("DISPLAY") or ":1")
+    return RunRecording(Recorder(spec, probe, time.time, resource_guard(runtime / "thermal.log")))

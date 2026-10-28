@@ -56,6 +56,7 @@ from bg3ai import saves as bsaves
 import bg3harness
 from bg3harness import bg3le_buildinfo, client_setup, runs, spend, steam_paths
 from bg3harness import pins as hpins
+from bg3harness import recorder as hrec
 from bg3harness.game.io import Save
 from bg3harness.runner import agent_group
 from bg3harness.runner import codewatch as rcode
@@ -70,6 +71,7 @@ GOAL_HIT = "goal"  # until_hit's id when the bench's live verdict decided a goal
 GOAL_POLL_S = 10.0  # how often GoalWatch asks the verdict: the stop comes one poll + the in-flight tool call late
 FOREIGN_SAVE = "foreign_save"  # until_hit's id when SaveWatch saw the game load a save that isn't the run's
 LOAD_GRACE_S = 60.0  # SaveWatch: a load_game logged this long after its new server boot was seen still explains it
+RECORD_ENV = "BG3AI_BENCH_RECORD"  # 0: play.py bench records no run (bench_recording)
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -436,6 +438,14 @@ def machine_pins(env: Mapping[str, str]) -> Json:
     return hpins.run_pins(renv.REPO, steam_paths.buildid(env), lib.parent, meta, rcode.mod_tree_hashes())
 
 
+def bench_recording(env: Mapping[str, str]) -> Callable[[Path], hrec.RunRecording] | None:
+    """play.py bench records every run (recorder.run_recording, the game's window on env's DISPLAY);
+    BG3AI_BENCH_RECORD=0 turns it off."""
+    if env.get(RECORD_ENV, "1") == "0":
+        return None
+    return lambda out: hrec.run_recording(out, env, renv.RUNTIME)
+
+
 def owner_of(sc: Json) -> str:
     """The save owner: the scenario's character (a save start fixes it), else the new game's name."""
     return (sc["profile"]["character"].get("name") or "Tav").strip()
@@ -663,7 +673,9 @@ class LiveRunHost:
     each job's env is a fresh copy with the job's vars (condition, API key, tools, memory dir), handed to its runner
     (run_env: the play process, its bg3 server and the play settings read it), so nothing of one job reaches the next
     and os.environ is never changed (H1). read_pins(env) reads a run's pins at its start, after the mod snapshot
-    refresh (machine_pins by default)."""
+    refresh (machine_pins by default). recording(out_dir) makes a run's recording (recorder.run_recording; None: off):
+    it starts once the game is up, into <run_dir>/recording/, and a run whose recorder isn't recording then or at
+    the kickoff fails its start (recorder.RecordingError); record stops it after run_end, before the game stops."""
 
     def __init__(
         self,
@@ -673,6 +685,7 @@ class LiveRunHost:
         env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.time,
         read_pins: Callable[[Mapping[str, str]], Json] | None = None,
+        recording: Callable[[Path], hrec.RunRecording] | None = None,
     ):
         self.make_runner, self.clock = make_runner, clock
         self.read_pins = read_pins or machine_pins
@@ -683,6 +696,8 @@ class LiveRunHost:
         self.watches: dict[Path, GoalWatch] = {}  # the run's live verdict (a goal, a wipe) while it plays
         self.saves: dict[Path, SaveWatch] = {}  # the save each run plays
         self.pins: dict[Path, Json] = {}  # what each run plays with (read_pins at its start)
+        self.recording = recording
+        self.recordings: dict[Path, hrec.RunRecording] = {}  # each run's, while it plays
         self.stopping = False  # stop(): an operator signal
 
     @property
@@ -703,7 +718,12 @@ class LiveRunHost:
         while self.runs:
             run_dir, (r, _, _) = self.runs.popitem()
             self.pins.pop(run_dir, None)
-            for w in (self.watches.pop(run_dir, None), self.saves.pop(run_dir, None)):
+            watches = (
+                self.watches.pop(run_dir, None),
+                self.saves.pop(run_dir, None),
+                self.recordings.pop(run_dir, None),
+            )
+            for w in watches:
                 if w is not None:
                     w.stop()
             try:
@@ -776,8 +796,9 @@ class LiveRunHost:
                 self.watches[run_dir].start()
             return st
         except (Exception, SystemExit) as e:
-            if (w := self.saves.pop(run_dir, None)) is not None:
-                w.stop()
+            for w in (self.saves.pop(run_dir, None), self.recordings.pop(run_dir, None)):
+                if w is not None:
+                    w.stop()
             try:
                 if r is not None:
                     self.runs.pop(run_dir, None)
@@ -811,6 +832,9 @@ class LiveRunHost:
             renv.log(f"mod snapshot refresh failed: {e}; the game keeps {r.mod_rev}'s mod")
         self.pins[run_dir] = self.read_pins(self.base)  # the mod tree the game loads from now on
         loaded = r.ensure_game(first=True)
+        if self.recording is not None:  # with the game up (the recorder records its window)
+            self.recordings[run_dir] = self.recording(run_dir / "recording")
+            self.recordings[run_dir].start()
         if sc["start"]["kind"] == "save":
             start_save = sc["start"].get("save")
             if not start_save or r.state["loaded_save"] != start_save:
@@ -824,6 +848,8 @@ class LiveRunHost:
         r.apply_play_settings()  # after the rename: the save/load gates compare the avatar's name with the owner (B2)
         if self.stopped:  # stopped while the game came up: no agent starts (start's handler stops the game)
             raise RuntimeError("operator stop before the kickoff")
+        if (rec := self.recordings.get(run_dir)) is not None:
+            rec.check()  # ffmpeg still up after the settings: the run plays recorded
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
         minutes = opt.session_minutes
         # the manifest's prompt is what the client is served (run_manifest.manifest_fields; none without run files),
@@ -892,6 +918,8 @@ class LiveRunHost:
             r.end_facts(name)
         finally:
             try:
+                if (rec := self.recordings.pop(run_dir, None)) is not None:
+                    rec.stop()  # after run_end, with the game still up: the recording covers the whole run
                 # with the game up: scn.undo takes the seed out of BG3AI/scenario.json, which a record from before
                 # the run keeps (restore_nav moves only one the run added), else it seeds every later load
                 r.scenario_undo()
