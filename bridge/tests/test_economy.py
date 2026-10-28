@@ -609,6 +609,32 @@ class Tools(unittest.TestCase):
         self.assertEqual(calls, [("ui.key", "ESCAPE"), ("ui.short_rest", "game")])
         self.assertTrue(out.startswith("(closed the trade window first)\nshort_rest: done"), out)
 
+    def test_short_rest_keeps_the_closed_trade_note_on_a_failure(self):
+        # live N8 1a/1b: the trade window was closed, then the mod refused ("no short rests left") or Dammon's
+        # conversation came back under the trade: neither reply said the window had been closed
+        class G(FakeGame):
+            screen = "trade"
+            after = "game"
+
+            def rpc(self, op, args=None, context="server", timeout=None):
+                if op == "ui.state":
+                    return {"screen": G.screen}
+                if op == "ui.key":
+                    G.screen = G.after
+                    return {}
+                return super().rpc(op, args, context)
+
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                raise GameError("no short rests left (0/2.0): a long rest restores them")
+        self.use(G(s026_inventory()))
+        with mock.patch.object(plumbing, "_close_left_trade", lambda wait_s=2.0: (setattr(G, "screen", G.after), True)[1]):
+            out = inventory.short_rest()
+            self.assertIn("no short rests left (0/2.0)", out)
+            self.assertIn("(closed the trade window first)", out)
+            G.screen, G.after = "trade", "dialogue"
+            self.assertEqual(inventory.short_rest(), "(closed the trade window first)\nshort_rest: FAILED — not "
+                             "pressed: a conversation is on screen")
+
     def test_short_rest_is_not_pressed_under_a_trade_or_conversation_screen(self):
         jobs: list = []
 

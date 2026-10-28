@@ -7,7 +7,7 @@ import time
 from typing import Any, Callable
 
 from .. import actq, economy, party
-from ..game import JobResult
+from ..game import GameError, JobResult
 from . import core, galefeed, overview, plumbing, reporting, travel, world_tools
 
 # ---------------------------------------------------------------------------
@@ -344,10 +344,16 @@ def short_rest() -> str:
     note = "(closed the trade window first)\n" if plumbing._close_left_trade() else ""
     screen = uitools._ui_screen()[0]
     if screen in ("trade", "dialogue"):
-        return ("short_rest: FAILED — not pressed: the trade screen is open and didn't close" if screen == "trade"
-                else "short_rest: FAILED — not pressed: a conversation is on screen")
+        why = "the trade screen is open and didn't close" if screen == "trade" else "a conversation is on screen"
+        return note + "short_rest: FAILED — not pressed: " + why
     before = core.game.try_rpc("state.status")
-    out = note + world_tools._box_act("short_rest", "ui.short_rest", {}, wait_s=20)
+    try:
+        out = note + world_tools._box_act("short_rest", "ui.short_rest", {}, wait_s=20)
+    except GameError as e:
+        # live N8 1a: the mod's refusal ("no short rests left") came back without the note (the window was closed)
+        if note:
+            raise GameError(f"{e} {note.strip()}") from e
+        raise
     res = reporting._batch.get("result")
     if isinstance(res, dict) and isinstance(res.get("short_rests_left"), int):
         overview.ALERTS.short_rests = res["short_rests_left"]
