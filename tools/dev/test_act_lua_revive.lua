@@ -98,9 +98,32 @@ test("end_standup: nothing pending, or in combat, orders nothing; a stand-up tha
     eq(r.pending, true, "pending"); eq(r.in_combat, true, "in combat: its own turn's order ends it")
     eq(#called("CharacterMoveToPosition"), 0, "no walk in combat")
     local j = job(op("end_standup", { char = P1, toward = GOB }))
-    tick(70) -- 4.2 s
-    eq(j.status, "failed", "status"); assert(j.error:find("still stands up from the revive 4 s after a walk", 1, true),
-        j.error)
+    tick(170) -- 10.2 s, never moving
+    eq(j.status, "failed", "status")
+    eq(j.error, "the character still stands up from the revive 10 s after the first walk order (ResurrectComponent"
+        .. " kept): 7 walk order(s), none of them started (it never moved)", "the facts")
+    eq(j.result.walked, false, "walked")
+end)
+
+test("end_standup: a walk that never starts is ordered again until one walks (live N8 A: osi=1 for 4 s)", function()
+    local names = revived(true)
+    local j = job(op("end_standup", { char = P1, toward = GOB }))
+    tick(20) -- 1.2 s: still the first order
+    eq(#called("CharacterMoveToPosition"), 1, "one order so far")
+    tick(10) -- 1.8 s: never moved -> purged and ordered again
+    eq(#called("CharacterMoveToPosition"), 2, "ordered again"); assert(#called("PurgeOsirisQueue") >= 1, "purged first")
+    tick(25) -- 3.3 s: a third order; this one walks (N8 B: a raw walk ~7 s after the revive walked 2.98 m)
+    eq(#called("CharacterMoveToPosition"), 3, "third order")
+    world[P1].pos = { 1, 0, 0 }
+    tick()
+    tick(30)
+    eq(#called("CharacterMoveToPosition"), 3, "walking: no more orders")
+    world[P1].pos = { 2.98, 0, 0 }
+    names[2] = nil
+    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {}
+    tick()
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.ended, true, "ended")
+    eq(j.result.orders, 3, "orders"); eq(j.result.walked, true, "walked"); eq(j.result.stepped_m, 3, "stepped")
 end)
 
 test("a walk the game never starts names the unfinished action holding the character (N4), not a bare no path",
