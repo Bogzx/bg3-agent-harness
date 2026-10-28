@@ -11,6 +11,10 @@ Three steps, each a request of its own so the user sees what goes out before it 
    to the site (`Site`) as one multipart POST. submission.json keeps the site's id.
 3. `poll`: the submission's status from the site, saved to submission.json.
 
+Render video (video.py) renders from the prepared bundle; once the render has ended well, `add_render` puts its
+render.json and frames into that bundle (bg3bench.submission.pack's add_render) and rewrites prepared.json with the
+new bundle hash and file list. The run_hash, and so the verdict and the video's id line, stay the same.
+
 The site token and the .env values never appear in a response: the values are passed to the pack's scrub and the
 validator's scrub check only.
 """
@@ -50,6 +54,11 @@ class Bundler(Protocol):
         """The validator's verdict as JSON: {"accepted", "flags", "checks": [{code, ok, severity, detail}], ...}."""
         ...
 
+    def add_render(self, render_dir: Path, out_dir: Path, *, literals: Sequence[str]) -> tuple[str, Path]:
+        """Add render_dir's render.json and frames/ to the bundle packed in out_dir: (new bundle sha256, bundle dir).
+        PanelError when it is refused (a render for another run_hash, one there already, the size caps)."""
+        ...
+
 
 class Site(Protocol):
     def post_submission(
@@ -87,6 +96,14 @@ class BenchSubmission:
                 literals=literals,
                 panel_version=self.panel_version,
             )
+        except pack.PackError as e:
+            raise PanelError(str(e)) from None
+        return p.bundle_sha256, p.bundle_dir
+
+    def add_render(self, render_dir: Path, out_dir: Path, *, literals: Sequence[str]) -> tuple[str, Path]:
+        pack = self._mod("pack")
+        try:
+            p = pack.add_render(render_dir, out_dir, literals)
         except pack.PackError as e:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
@@ -340,3 +357,30 @@ def state(root: Path, run: str) -> dict[str, Any]:
     """What the Results screen knows of a run's submission: the prepared bundle and the site's last answer."""
     base = root / _safe_name(run)
     return {"prepared": _read_json(base / PREPARED), "submission": _read_json(base / SUBMISSION)}
+
+
+def add_render(
+    root: Path, run: str, bundler: Bundler, *, bundle_dir: Path, render_dir: Path, literals: Sequence[str], now: float
+) -> dict[str, Any]:
+    """Put a finished render of bundle_dir into it and update prepared.json (bundle hash, files, "render": {"dir",
+    "added"}); a refusal goes into "render" as {"dir", "error"}. PanelError when bundle_dir is no longer the prepared
+    bundle (validated again since) or the run is submitted already."""
+    base = root / _safe_name(run)
+    prepared = _read_json(base / PREPARED)
+    if not isinstance(prepared, dict) or prepared.get("bundle_dir") != str(bundle_dir):
+        raise PanelError(f"{run}: the render was made for a bundle that is no longer the prepared one: render again")
+    if (base / SUBMISSION).is_file():
+        raise PanelError(f"{run} is submitted already")
+    try:
+        sha, bdir = bundler.add_render(render_dir, bundle_dir.parent, literals=literals)
+    except PanelError as e:
+        view = {**prepared, "render": {"dir": str(render_dir), "error": str(e)}}
+    else:
+        view = {
+            **prepared,
+            "bundle_sha256": sha,
+            "files": bundle_listing(bdir),
+            "render": {"dir": str(render_dir), "added": now},
+        }
+    _write_json(base / PREPARED, view)
+    return view

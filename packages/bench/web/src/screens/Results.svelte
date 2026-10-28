@@ -5,7 +5,7 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
-  import { attempts, bytes, minutes, uploadProblem, verdict } from "../lib/run";
+  import { attempts, bytes, minutes, renderNote, uploadProblem, verdict } from "../lib/run";
   import type { Prepared, RenderState, RunRow, Submission } from "../lib/types";
 
   let rows = $state<RunRow[] | null>(null);
@@ -36,6 +36,8 @@
   onMount(() => {
     api.results().then((r) => (rows = r.runs)).catch((e: Error) => (error = e.message));
     loadSubs();
+    const t = setInterval(loadSubs, 5000); // a finished render changes the bundle (its hash and files)
+    return () => clearInterval(t);
   });
 
   async function act(fn: () => Promise<unknown>) {
@@ -139,7 +141,7 @@
         </div>
         {#if render && render.run === open}
           <div class="faint">{render.running ? "rendering…" : render.video ?
-            `video ${render.video} (${bytes(render.video_bytes ?? 0)}); the panel doesn't add its sync table and contact sheet to the bundle yet` :
+            `video ${render.video} (${bytes(render.video_bytes ?? 0)}); ${renderNote(prepared?.render, render.out)}` :
             `render ended (exit ${render.returncode ?? "?"}); see ${render.log}`}</div>
         {/if}
         <label class="row">YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/…" size="40" /></label>

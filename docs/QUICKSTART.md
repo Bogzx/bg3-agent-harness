@@ -157,12 +157,15 @@ names the submissions site, and `--release` the suite's release file that Valida
   `runtime/panel/<name>.toml` and runs `runner/play.py bench run --matrix` on it, one matrix at a time. Record (on by
   default) records the game window of every run into its run dir's `recording/`. Submit when done packs and
   validates each valid run as it ends; it never uploads.
-- Queue: every matrix's progress. Stop ends the run playing now, records it as an operator stop and starts no new
-  one. The panel also finds a matrix it didn't start (from a terminal, or before the panel restarted) through
-  `runtime/runner.lock`, and stops it with `runtime/STOP`.
+- Queue: every matrix's progress. Stop writes `runtime/STOP`: the run playing now ends, is recorded as an operator
+  stop, and no new run starts. If the panel's own matrix still runs two minutes later, the panel sends it one
+  SIGTERM, which stops it the same way. The panel also finds a matrix it didn't start (from a terminal, or before
+  the panel restarted) through `runtime/runner.lock`, and stops it with `runtime/STOP` too.
 - Results: the finished runs. Validate packs a run into `runtime/submissions/<run>/`, checks it with the validator
   the site runs, and shows the verdict and every file that would be sent. Render video makes the evidence video from
-  that bundle and the recording. Upload sends the validated bundle and your YouTube link with the site token.
+  that bundle and the recording, then adds the video's sync table and contact sheet to the bundle (the bundle hash
+  changes; the run hash shown in the video doesn't). Upload sends the validated bundle and your YouTube link with
+  the site token.
 - Settings: API keys are written to the repo's `.env` (refused while git doesn't ignore it) and shown masked; the
   site token goes to `~/.config/bg3bench/site-token`.
 
@@ -170,8 +173,7 @@ Every request must name `127.0.0.1` or `localhost` as its host, and every write 
 its page (also saved to `~/.config/bg3bench/panel-token`). The panel sends no CORS headers.
 
 Not wired yet: Saves can't download, install or remove a save, and it checks that the save's folder is there, not its
-hash. There is no live view of a run. A rendered video's sync table and contact sheet aren't added to the bundle.
-Validate, Render video and Doctor call `bg3bench.submission`, `bg3harness.video` and `bg3harness.doctor`; when one
+hash. There is no live view of a run. Validate, Render video and Doctor call `bg3bench.submission`, `bg3harness.video` and `bg3harness.doctor`; when one
 is missing, the screen says so.
 
 ## Bring your own MCP client

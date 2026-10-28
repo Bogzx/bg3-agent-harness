@@ -4,9 +4,11 @@ The panel adds no second way to run a scenario. Start writes runtime/panel/<name
 plan's profiles, ready scenarios, condition, repeats and per-scenario reserve) and hands it to a `Runner`; the Queue
 screen reads the matrix's progress.json like any other matrix. `MatrixProcess`, the real runner, starts
 `uv run python runner/play.py bench run --matrix <file> --runner session` in the repo (which takes runtime/runner.lock,
-so a second matrix or play.py run can't start beside it) with its output in runtime/panel/<name>.log. Stop sends that
-process one SIGTERM: play.py bench ends the run playing now, records it (invalid: operator) and starts no new one. A
-second signal would exit without recording the run, so Stop refuses to send one.
+so a second matrix or play.py run can't start beside it) with its output in runtime/panel/<name>.log. Stop writes
+runtime/STOP, the operator's stop file: play.py bench ends the run playing now at its next check, records it (invalid:
+operator) and starts no new one. When the process still runs STOP_GRACE_S after that, `escalate` (the panel's ticker)
+sends it one SIGTERM, play.py bench's first-signal stop, which does the same. A second signal would exit without
+recording the run, so the panel never sends one.
 
 Record and Submit when done: Start passes Record to play.py bench as BG3AI_BENCH_RECORD (1 or 0; the run host records
 the game window into <run_dir>/recording/ when it is on) and keeps both choices in runtime/panel/<name>.json, which
@@ -36,6 +38,7 @@ from typing import Any, Protocol, cast
 from bg3bench.serve.panel import PanelError
 
 PANEL_DIR = "panel"  # runtime/panel/: the matrix files, logs and choices of the runs the panel started
+STOP_GRACE_S = 120.0  # Stop's SIGTERM fallback: runtime/STOP had this long to end the matrix
 RECORD_ENV = "BG3AI_BENCH_RECORD"  # play.py bench's run host records the game window unless it is "0"
 
 
@@ -48,8 +51,12 @@ class Runner(Protocol):
         """Ask the running matrix to end the run playing now and start no new one; PanelError when none runs."""
         ...
 
+    def escalate(self) -> bool:
+        """After a Stop the matrix didn't obey in time, its fallback; True when it acted (called by the ticker)."""
+        ...
+
     def state(self) -> dict[str, Any] | None:
-        """{"name", "pid", "started", "log", "running", "returncode", "stopping"} of the last start, or None."""
+        """{"name", "pid", "started", "log", "running", "returncode", "stopping", ...} of the last start, or None."""
         ...
 
 
@@ -130,7 +137,8 @@ class _Started:
     proc: Proc
     started: float
     log: Path
-    stopping: bool = False
+    stopping: float | None = None  # when Stop wrote runtime/STOP
+    signalled: bool = False  # the SIGTERM fallback was sent
 
 
 class MatrixProcess:
@@ -144,8 +152,10 @@ class MatrixProcess:
         which: Callable[[str], str | None] = shutil.which,
         now: Callable[[], float] = time.time,
         environ: Mapping[str, str] = os.environ,
+        runtime: Path | None = None,
     ):
         self.repo, self.popen, self.which, self.now, self.environ = repo, popen, which, now, environ
+        self.runtime = runtime or repo / "runtime"
         self.current: _Started | None = None
 
     def command(self, matrix_file: Path) -> list[str]:
@@ -183,10 +193,20 @@ class MatrixProcess:
         cur = self.current
         if cur is None or cur.proc.poll() is not None:
             raise PanelError("no matrix of this panel is running")
-        if cur.stopping:
+        if cur.stopping is not None:
             raise PanelError("stopping already: the run playing now ends and is recorded")
+        cur.stopping = self.now()
+        request_stop(self.runtime, cur.stopping)
+
+    def escalate(self) -> bool:
+        cur = self.current
+        if cur is None or cur.stopping is None or cur.signalled or cur.proc.poll() is not None:
+            return False
+        if self.now() - cur.stopping < STOP_GRACE_S:
+            return False
         cur.proc.send_signal(signal.SIGTERM)
-        cur.stopping = True
+        cur.signalled = True
+        return True
 
     def state(self) -> dict[str, Any] | None:
         cur = self.current
@@ -200,7 +220,8 @@ class MatrixProcess:
             "log": str(cur.log),
             "running": rc is None,
             "returncode": rc,
-            "stopping": cur.stopping,
+            "stopping": cur.stopping is not None,
+            "signalled": cur.signalled,
         }
 
 

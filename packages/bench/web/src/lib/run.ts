@@ -134,3 +134,10 @@ export function autoSummary(c: RunChoices | null | undefined): string | null {
   if (failed.length) parts.push(`${failed.length} failed: ${failed[0]?.error ?? ""}`);
   return parts.join(", ");
 }
+
+/** Where a finished render stands with its bundle: added (the bundle hash changed), refused, or still to be added. */
+export function renderNote(r: Prepared["render"], out: string | undefined): string {
+  if (!r || r.dir !== out) return "adding its sync table and contact sheet to the bundle…";
+  if (r.error) return `its sync table and contact sheet weren't added to the bundle: ${r.error}`;
+  return "its sync table and contact sheet are in the bundle (the bundle hash changed; the run hash didn't)";
+}

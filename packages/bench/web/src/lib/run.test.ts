@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  attempts, autoSummary, bytes, choicesLine, formProblems, minutes, startProblem, uploadProblem, verdict, youtubeId,
-  youtubeNote,
+  attempts, autoSummary, bytes, choicesLine, formProblems, minutes, renderNote, startProblem, uploadProblem, verdict,
+  youtubeId, youtubeNote,
 } from "./run";
 import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow } from "./types";
 
@@ -139,5 +139,14 @@ describe("choicesLine and autoSummary", () => {
     };
     expect(autoSummary({ ...c, auto })).toBe("2 validated (1 accepted), 1 failed: pack refused it");
     expect(autoSummary({ ...c, auto: { d1: auto.d1 } })).toBe("1 validated (1 accepted)");
+  });
+});
+
+describe("renderNote", () => {
+  it("says whether the render is in the bundle", () => {
+    expect(renderNote(undefined, "/r/render-1")).toMatch(/^adding/);
+    expect(renderNote({ dir: "/r/render-1", added: 1 }, "/r/render-2")).toMatch(/^adding/);
+    expect(renderNote({ dir: "/r/render-1", added: 1 }, "/r/render-1")).toMatch(/are in the bundle/);
+    expect(renderNote({ dir: "/r/render-1", error: "too big" }, "/r/render-1")).toMatch(/weren't added.*too big/);
   });
 });

@@ -2,11 +2,12 @@
 """Render video from the panel: a run's evidence video through a `Renderer`, one render at a time.
 
 `VideoProcess`, the real renderer, starts the harness's renderer in a process of its own
-(`python -m bg3harness.video <bundle_dir> --index <run_dir>/recording/index.json --out <run_dir> --run-hash H ...`),
-with its output in <run_dir>/render.log. It reads the record from the bundle the user validated last (Submit's
-prepare: the packed, scrubbed files, so the side panel shows no path or key the bundle doesn't) and the recording
-from the run dir, and writes render.json, evidence.mp4 and frames/ into the run dir. The id line shows the bundle's
-run_hash (bundle.json), a hash over the record files that the render's own outputs don't change.
+(`python -m bg3harness.video <bundle_dir> --index <run_dir>/recording/index.json --out <out> --run-hash H ...`), with
+its output in <out>/render.log. It reads the record from the bundle the user validated last (Submit's prepare: the
+packed, scrubbed files, so the side panel shows no path or key the bundle doesn't) and the recording from the run dir,
+and writes render.json, evidence.mp4 and frames/ into <out>, a new render-<n>/ beside that bundle. The id line shows
+the bundle's run_hash (bundle.json), a hash over the record files that the render's own outputs don't change; once
+the render ends well, the panel adds render.json and frames/ to the bundle (submit.add_render).
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ VIDEO = "evidence.mp4"
 class Job:
     run_dir: Path
     source: Path  # the prepared bundle's dir: the record files the video shows
+    out: Path  # where the renderer writes render.json, evidence.mp4, frames/ and its log
     run_id: str
     run_hash: str
     title: str = ""
@@ -52,18 +54,20 @@ class Renderer(Protocol):
         ...
 
     def state(self) -> dict[str, Any] | None:
-        """{"run", "running", "returncode", "started", "log", "video", "video_bytes"} of the last start, or None."""
+        """{"run", "source", "out", "running", "returncode", "started", "log", "video", "video_bytes"} of the last
+        start, or None."""
         ...
 
 
 def job_for(run_dir: Path, man: Mapping[str, Any], res: Mapping[str, Any], sc: Mapping[str, Any] | None, *,
-            source: Path, run_hash: str, site: str | None) -> Job:  # fmt: skip
+            source: Path, out: Path, run_hash: str, site: str | None) -> Job:  # fmt: skip
     """The renderer's inputs from a run's manifest and result and its scenario file."""
     sc = sc or {}
     hours = (sc.get("caps") or {}).get("run_hours")
     return Job(
         run_dir=run_dir,
         source=source,
+        out=out,
         run_id=str(res.get("run_id") or man.get("run_id") or run_dir.name),
         run_hash=run_hash,
         title=str(sc.get("title") or (man.get("scenario") or {}).get("name") or ""),
@@ -88,7 +92,7 @@ def run_hash(bundle_dir: Path) -> str:
 
 def command(python: str, job: Job) -> list[str]:
     argv = [python, "-m", "bg3harness.video", str(job.source), "--index", str(job.run_dir / RECORDING_INDEX),
-            "--out", str(job.run_dir), "--run-id", job.run_id, "--run-hash", job.run_hash,
+            "--out", str(job.out), "--run-id", job.run_id, "--run-hash", job.run_hash,
             "--cost-kind", job.cost_kind]  # fmt: skip
     for flag, v in (("--site", job.site), ("--title", job.title), ("--task", job.task)):
         if v:
@@ -119,7 +123,8 @@ class VideoProcess:
             raise PanelError(f"rendering {self.current.job.run_id} already: one render at a time")
         if not (job.run_dir / RECORDING_INDEX).is_file():
             raise PanelError(f"{job.run_id} has no recording ({RECORDING_INDEX} in its run dir)")
-        with (job.run_dir / LOG).open("ab") as out:
+        job.out.mkdir(parents=True, exist_ok=True)
+        with (job.out / LOG).open("ab") as out:
             proc = self.popen(
                 command(self.python, job), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -131,13 +136,22 @@ class VideoProcess:
         if cur is None:
             return None
         rc = cur.proc.poll()
-        video = cur.job.run_dir / VIDEO
+        video = cur.job.out / VIDEO
         return {
             "run": cur.job.run_dir.name,
+            "source": str(cur.job.source),
+            "out": str(cur.job.out),
             "running": rc is None,
             "returncode": rc,
             "started": cur.started,
-            "log": str(cur.job.run_dir / LOG),
+            "log": str(cur.job.out / LOG),
             "video": str(video) if rc == 0 and video.is_file() else None,
             "video_bytes": video.stat().st_size if rc == 0 and video.is_file() else None,
         }
+
+
+def out_dir(bundle_dir: Path) -> Path:
+    """A new render-<n>/ beside the bundle (out_dir/bundle): each render starts with no frames of an earlier one."""
+    base = bundle_dir.parent
+    n = 1 + max((int(p.name[7:]) for p in base.glob("render-*") if p.name[7:].isdigit()), default=0)
+    return base / f"render-{n}"

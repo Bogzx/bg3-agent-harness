@@ -20,7 +20,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from bg3harness import profiles as hprofiles
 
@@ -302,4 +302,30 @@ def harness_doctor() -> dict[str, Any]:
         mod: Any = importlib.import_module("bg3harness.doctor")
     except ImportError:
         raise PanelError("this harness has no bg3harness.doctor yet") from None
-    return mod.report(mod.doctor())
+    rep = mod.report(mod.doctor())
+    if why := doctor_problem(rep):
+        raise PanelError(f"bg3harness.doctor's report isn't what the Doctor screen reads: {why}")
+    return rep
+
+
+DOCTOR_CHECK_KEYS = {"name": str, "status": str, "detail": str, "fix": str}
+
+
+def doctor_problem(rep: Any) -> str | None:
+    """Where a doctor report breaks the shape harness_doctor documents (None: it doesn't)."""
+    if not isinstance(rep, dict):
+        return "not an object"
+    r = cast(dict[str, Any], rep)
+    if not isinstance(r.get("ready"), bool) or not all(type(r.get(k)) is int for k in ("fails", "warns")):
+        return "ready must be a boolean, fails and warns integers"
+    checks = r.get("checks")
+    if not isinstance(checks, list):
+        return "checks must be a list"
+    for i, c in enumerate(cast(list[Any], checks)):
+        if not isinstance(c, dict) or any(
+            not isinstance(cast(dict[str, Any], c).get(k), t) for k, t in DOCTOR_CHECK_KEYS.items()
+        ):
+            return f"checks[{i}] needs string name, status, detail and fix"
+        if c["status"] not in ("PASS", "WARN", "FAIL"):
+            return f"checks[{i}]: status {c['status']!r} is not PASS, WARN or FAIL"
+    return None

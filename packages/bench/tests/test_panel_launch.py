@@ -93,8 +93,9 @@ def test_refusal_of_plans_that_cant_start(repo):
 
 def test_matrix_process_start_state_stop(repo):
     popen = FakePopen()
+    clock = [100.0]
     mp = launch.MatrixProcess(
-        repo, popen=popen, which=lambda n: f"/usr/bin/{n}", now=lambda: 100.0, environ={"DISPLAY": ":1"}
+        repo, popen=popen, which=lambda n: f"/usr/bin/{n}", now=lambda: clock[0], environ={"DISPLAY": ":1"}
     )
     assert mp.state() is None
     with pytest.raises(panel.PanelError, match="no matrix"):
@@ -108,16 +109,23 @@ def test_matrix_process_start_state_stop(repo):
     assert kw["env"] == {"DISPLAY": ":1", "BG3AI_BENCH_RECORD": "0"}  # Record off reaches the run host
     st = mp.state()
     assert st == {"name": "panel-x", "pid": 4242, "started": 100.0, "log": str(log), "running": True,
-                  "returncode": None, "stopping": False}  # fmt: skip
+                  "returncode": None, "stopping": False, "signalled": False}  # fmt: skip
+    assert mp.escalate() is False  # no Stop yet
     with pytest.raises(panel.PanelError, match="is running"):
         mp.start("panel-y", repo / "y.toml", log, record=True)
-    mp.stop()
-    assert popen.procs[0].signals == [signal.SIGTERM] and st_of(mp)["stopping"]
+    mp.stop()  # runtime/STOP, the graceful stop play.py bench reads; no signal yet
+    assert (repo / "runtime" / "STOP").read_text() == "100.0" and popen.procs[0].signals == []
+    assert st_of(mp)["stopping"] and not st_of(mp)["signalled"]
     with pytest.raises(panel.PanelError, match="stopping already"):
-        mp.stop()  # a second SIGTERM would exit without recording the run
+        mp.stop()
+    clock[0] = 100.0 + launch.STOP_GRACE_S - 1
+    assert mp.escalate() is False and popen.procs[0].signals == []
+    clock[0] = 100.0 + launch.STOP_GRACE_S
+    assert mp.escalate() is True and popen.procs[0].signals == [signal.SIGTERM] and st_of(mp)["signalled"]
+    assert mp.escalate() is False  # one signal only: a second would exit without recording the run
     assert popen.procs[0].signals == [signal.SIGTERM]
     popen.procs[0].rc = 0
-    assert st_of(mp)["running"] is False and st_of(mp)["returncode"] == 0
+    assert st_of(mp)["running"] is False and st_of(mp)["returncode"] == 0 and mp.escalate() is False
     mp.start("panel-y", repo / "y.toml", log, record=True)  # the first one ended: a new start is fine
     assert len(popen.calls) == 2 and popen.calls[1][1]["env"]["BG3AI_BENCH_RECORD"] == "1"
 
@@ -256,3 +264,15 @@ def test_read_proc_of_this_process_and_of_none():
 
     assert launch.read_proc(os.getpid()) == (sys.orig_argv, Path.cwd())
     assert launch.read_proc(2**22 + 1) is None  # above Linux's pid_max
+
+
+def test_matrix_process_ended_after_stop_is_not_signalled(repo):
+    popen, clock = FakePopen(), [0.0]
+    mp = launch.MatrixProcess(repo, popen=popen, which=lambda n: n, now=lambda: clock[0], runtime=repo / "elsewhere")
+    (repo / "elsewhere").mkdir()
+    mp.start("panel-x", repo / "x.toml", repo / "x.log", record=True)
+    mp.stop()
+    assert (repo / "elsewhere" / "STOP").is_file()  # the runtime it was given
+    popen.procs[0].rc = 0  # STOP ended it in time
+    clock[0] = launch.STOP_GRACE_S * 2
+    assert mp.escalate() is False and popen.procs[0].signals == []

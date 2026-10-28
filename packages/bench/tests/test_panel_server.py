@@ -37,6 +37,10 @@ class FakeRunner:
     def state(self):
         return self.st
 
+    def escalate(self):
+        self.escalated = getattr(self, "escalated", 0) + 1
+        return self.escalated == 1
+
 
 class FakeBundler:
     def __init__(self) -> None:
@@ -51,6 +55,13 @@ class FakeBundler:
 
     def validate(self, bundle_dir, *, literals):
         return {"accepted": True, "flags": [], "checks": []}
+
+    def add_render(self, render_dir, out_dir, *, literals):
+        self.added = (render_dir, out_dir, list(literals))
+        b = out_dir / "bundle"
+        (b / "render.json").write_text("{}")
+        (b / "bundle.json").write_text(json.dumps({"files": [{"name": "render.json"}], "run_hash": RUN_HASH}))
+        return "ef" * 32, b
 
 
 class FakeSite:
@@ -72,9 +83,14 @@ class FakeRenderer:
 
     def start(self, job):
         self.jobs.append(job)
+        self.rc: int | None = None
 
     def state(self):
-        return {"run": self.jobs[-1].run_dir.name, "running": True} if self.jobs else None
+        if not self.jobs:
+            return None
+        j = self.jobs[-1]
+        return {"run": j.run_dir.name, "source": str(j.source), "out": str(j.out), "running": self.rc is None,
+                "returncode": self.rc}  # fmt: skip
 
 
 @pytest.fixture
@@ -413,12 +429,76 @@ def test_harness_doctor_imports_bg3harness_doctor(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    fake = SimpleNamespace(doctor=lambda: ["c"], report=lambda checks: {"ready": True, "checks": checks})
+    fake = SimpleNamespace(doctor=lambda: DOCTOR["checks"], report=lambda checks: {**DOCTOR, "checks": checks})
     monkeypatch.setitem(sys.modules, "bg3harness.doctor", fake)
-    assert panel.harness_doctor() == {"ready": True, "checks": ["c"]}
+    assert panel.harness_doctor() == DOCTOR
+    fake.report = lambda checks: {"ready": "yes", "checks": checks}
+    with pytest.raises(panel.PanelError, match="isn't what the Doctor screen reads: ready must be a boolean"):
+        panel.harness_doctor()
     monkeypatch.setitem(sys.modules, "bg3harness.doctor", None)  # import raises ImportError
     with pytest.raises(panel.PanelError, match="no bg3harness.doctor"):
         panel.harness_doctor()
+
+
+@pytest.mark.parametrize(
+    ("rep", "why"),
+    [
+        ([], "not an object"),
+        ({**DOCTOR, "fails": "1"}, "fails and warns integers"),
+        ({**DOCTOR, "warns": True}, "fails and warns integers"),
+        ({**DOCTOR, "checks": None}, "checks must be a list"),
+        ({**DOCTOR, "checks": ["x"]}, "checks[0] needs string name"),
+        ({**DOCTOR, "checks": [{"name": "a", "status": "PASS", "detail": "d"}]}, "checks[0] needs string name"),
+        ({**DOCTOR, "checks": [{"name": "a", "status": "ok", "detail": "d", "fix": ""}]}, "status 'ok' is not PASS"),
+    ],
+)
+def test_doctor_problem(rep, why):
+    assert panel.doctor_problem(DOCTOR) is None
+    assert why in (panel.doctor_problem(rep) or "")
+
+
+def test_the_harness_doctor_report_has_the_screens_shape():
+    """Contract with bg3harness.doctor (skipped while the harness has no doctor)."""
+    doctor = pytest.importorskip("bg3harness.doctor")
+    checks = [doctor.Check("ffmpeg", "PASS", "ok"), doctor.Check("shim", "FAIL", "no shim", "build it")]
+    rep = doctor.report(checks)
+    assert panel.doctor_problem(rep) is None and rep["checks"][0]["fix"] == ""
+
+
+def test_render_is_added_to_its_bundle_once_it_ends(server):
+    server.settings.set_site_token("bgb_" + "1" * 40)
+    post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    post(server, "/api/v1/render", {"run": "s1"})
+    assert server.finish_render() is None  # still rendering
+    server.renderer.rc = 1
+    assert server.finish_render() is None  # a failed render adds nothing
+    server.renderer.rc = 0
+    assert server.housekeep() == [
+        "stop: runtime/STOP didn't end the matrix in time, sent it SIGTERM",
+        f"render: s1: bundle {'ef' * 32}",
+    ]
+    render_dir, out_dir, literals = server.bundler.added
+    assert out_dir == server.runtime / "submissions" / "s1" / "1" and render_dir == out_dir / "render-1"
+    assert "bgb_" + "1" * 40 in literals  # the scrub gets the panel's secrets
+    prepared = get(server, "/api/v1/submissions")[1]["submissions"]["s1"]["prepared"]
+    assert prepared["bundle_sha256"] == "ef" * 32 and prepared["render"]["dir"] == str(render_dir)
+    assert server.housekeep() == []  # added once
+    code, r = post(server, "/api/v1/render", {"run": "s1"})
+    assert code == 400 and "has its video's render already" in r["error"]
+    # Upload names the new bundle hash
+    code, r = post(server, "/api/v1/submit/upload",
+                   {"run": "s1", "bundle_sha256": SHA, "youtube_url": "https://youtu.be/dQw4w9WgXcQ"})  # fmt: skip
+    assert code == 400
+
+
+def test_render_for_a_bundle_validated_again_is_reported(server):
+    post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    post(server, "/api/v1/render", {"run": "s1"})
+    post(server, "/api/v1/submit/prepare", {"run": "s1"})  # a new bundle, 2/
+    server.renderer.rc = 0
+    server.runner = None
+    (line,) = server.housekeep()
+    assert line.startswith("render: s1: the render was made for a bundle that is no longer the prepared one")
 
 
 def test_tick_prepares_a_submit_when_done_run(server):
@@ -445,11 +525,14 @@ def test_ticker_runs_tick_until_stopped(app, capsys):
 
     out = iter([[{"run": "d1", "accepted": True}], [{"run": "d2", "error": "pack refused it"}]])
     app.tick = lambda: next(out)
+    house = iter([["stop: sent it SIGTERM"], []])
+    app.housekeep = lambda: next(house)
     from bg3bench.serve import server as srv_mod
 
     srv_mod.ticker(app, Ev(), every=0).join(timeout=10)  # type: ignore[arg-type]
     assert capsys.readouterr().out.splitlines() == [
-        "submit when done: d1: validated, accepted=True", "submit when done: d2: pack refused it"
+        "stop: sent it SIGTERM", "submit when done: d1: validated, accepted=True",
+        "submit when done: d2: pack refused it",
     ]  # fmt: skip
 
 
@@ -509,10 +592,11 @@ def test_render_needs_a_prepared_bundle(server):
     assert code == 400 and "validate the run first" in r["error"]
     post(server, "/api/v1/submit/prepare", {"run": "s1"})
     code, r = post(server, "/api/v1/render", {"run": "s1"})
-    assert code == 200 and r["render"] == {"run": "s1", "running": True}
+    assert code == 200 and r["render"]["run"] == "s1" and r["render"]["running"] is True
     (job,) = server.renderer.jobs
     assert job.run_hash == RUN_HASH and job.run_id == "s1-r001" and job.site == "bench.example"
     assert job.source == server.runtime / "submissions" / "s1" / "1" / "bundle"  # the packed, scrubbed record
+    assert job.out == server.runtime / "submissions" / "s1" / "1" / "render-1"
     assert get(server, "/api/v1/render")[1]["render"]["run"] == "s1"
 
 

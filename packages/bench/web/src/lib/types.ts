@@ -201,6 +201,8 @@ export interface Prepared {
   files: { name: string; bytes: number }[];
   verdict: { accepted: boolean; flags?: string[]; checks: CheckResult[] };
   attempt: { n: number; unsubmitted_valid: number };
+  /** The rendered video's render.json and frames, once added to this bundle (or why they weren't). */
+  render?: { dir: string; added?: number; error?: string };
 }
 
 export interface Submission {
@@ -216,6 +218,8 @@ export interface Submission {
 
 export interface RenderState {
   run: string;
+  source?: string;
+  out?: string;
   running: boolean;
   returncode?: number | null;
   log?: string;

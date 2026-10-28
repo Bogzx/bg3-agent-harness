@@ -32,6 +32,16 @@ class FakeBundler:
         self.calls.append(("validate", bundle_dir.parent.name))
         return {"accepted": self.accepted, "flags": [], "checks": [{"code": "F01", "ok": self.accepted}]}
 
+    def add_render(self, render_dir, out_dir, *, literals):
+        self.calls.append(("add_render", render_dir.name, out_dir.name, list(literals)))
+        if (render_dir / "refuse").exists():
+            raise panel.PanelError("render.json was rendered for another run_hash")
+        b = out_dir / "bundle"
+        (b / "render.json").write_text("{}")
+        names = [{"name": "result.json"}, {"name": "render.json"}]
+        (b / "bundle.json").write_text(json.dumps({"files": names}))
+        return "ef" * 32, b
+
 
 class FakeSite:
     def __init__(self, post=(202, {"id": "sub1", "status": "received", "bundle_sha256": SHA}), get=None) -> None:
@@ -269,14 +279,15 @@ def test_video_job_and_command(run_dir):
     res = {"run_id": "s1-r001", "t_pass_s": 351.0, "cost_kind": "billed"}
     sc = {"title": "Get the item", "task": "Find it.", "caps": {"run_hours": 0.75}}
     bundle = run_dir / "bundle"
-    job = video.job_for(run_dir, man, res, sc, source=bundle, run_hash=SHA, site="https://bench.example")
+    out = run_dir / "render-1"
+    job = video.job_for(run_dir, man, res, sc, source=bundle, out=out, run_hash=SHA, site="https://bench.example")
     assert video.command("py", job) == [
         "py", "-m", "bg3harness.video", str(bundle), "--index", str(run_dir / "recording" / "index.json"),
-        "--out", str(run_dir), "--run-id", "s1-r001", "--run-hash", SHA, "--cost-kind", "billed",
+        "--out", str(out), "--run-id", "s1-r001", "--run-hash", SHA, "--cost-kind", "billed",
         "--site", "bench.example", "--title", "Get the item", "--task", "Find it.", "--cap-min", "45",
         "--t-pass-s", "351",
     ]  # fmt: skip
-    bare = video.job_for(run_dir, {}, {}, None, source=bundle, run_hash=SHA, site=None)
+    bare = video.job_for(run_dir, {}, {}, None, source=bundle, out=out, run_hash=SHA, site=None)
     assert video.command("py", bare)[-4:] == ["--run-hash", SHA, "--cost-kind", "billed"] and bare.run_id == "s1"
 
 
@@ -301,7 +312,8 @@ def test_video_process(run_dir):
         return procs[-1]
 
     vp = video.VideoProcess(popen=popen, python="py", now=lambda: 5.0)
-    job = video.job_for(run_dir, {}, {}, None, source=run_dir / "bundle", run_hash=SHA, site=None)
+    out = run_dir / "render-1"
+    job = video.job_for(run_dir, {}, {}, None, source=run_dir / "bundle", out=out, run_hash=SHA, site=None)
     assert vp.state() is None
     with pytest.raises(panel.PanelError, match="no recording"):
         vp.start(job)
@@ -309,19 +321,16 @@ def test_video_process(run_dir):
     (run_dir / "recording" / "index.json").write_text('{"v": 1, "segments": []}')
     vp.start(job)
     assert calls[0][0][:3] == ["py", "-m", "bg3harness.video"] and calls[0][1]["stderr"] == subprocess.STDOUT
-    assert vp.state() == {"run": "s1", "running": True, "returncode": None, "started": 5.0,
-                          "log": str(run_dir / "render.log"), "video": None, "video_bytes": None}  # fmt: skip
+    assert calls[0][0][calls[0][0].index("--out") + 1] == str(out) and out.is_dir()
+    assert vp.state() == {"run": "s1", "source": str(run_dir / "bundle"), "out": str(out), "running": True,
+                          "returncode": None, "started": 5.0, "log": str(out / "render.log"), "video": None,
+                          "video_bytes": None}  # fmt: skip
     with pytest.raises(panel.PanelError, match="one render at a time"):
         vp.start(job)
-    (run_dir / "evidence.mp4").write_bytes(b"x" * 10)
+    (out / "evidence.mp4").write_bytes(b"x" * 10)
     procs[0].rc = 0
     st = vp.state()
-    assert (
-        st is not None
-        and st["video"] == str(run_dir / "evidence.mp4")
-        and st["video_bytes"] == 10
-        and not st["running"]
-    )
+    assert st is not None and st["video"] == str(out / "evidence.mp4") and st["video_bytes"] == 10 and not st["running"]
 
 
 def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
@@ -346,8 +355,14 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
         seen["validate"] = (bundle_dir, release, where, list(literals))
         return Verdict()
 
+    def add_render(render_dir, out_dir, literals):
+        seen["add_render"] = (render_dir, out_dir, list(literals))
+        if render_dir.name == "other":
+            raise PackError("render.json was rendered for another run_hash")
+        return SimpleNamespace(bundle_sha256="ef" * 32, bundle_dir=out_dir / "bundle")
+
     mods = {
-        "pack": SimpleNamespace(pack=pack, Attempt=lambda n, u: (n, u), PackError=PackError),
+        "pack": SimpleNamespace(pack=pack, add_render=add_render, Attempt=lambda n, u: (n, u), PackError=PackError),
         "validate": SimpleNamespace(validate=validate, Release=SimpleNamespace(from_json=lambda d: d["suite"])),
     }
     monkeypatch.setattr(submit.importlib, "import_module", lambda name: mods[name.rsplit(".", 1)[1]])
@@ -365,6 +380,58 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
     release.write_text('{"suite": "bench-v1"}')
     assert bs.validate(tmp_path / "b", literals=["k"]) == {"accepted": True}
     assert seen["validate"] == (tmp_path / "b", "bench-v1", "panel", ["k"])
+    assert bs.add_render(tmp_path / "render-1", tmp_path / "o", literals=["k"]) == (
+        "ef" * 32,
+        tmp_path / "o" / "bundle",
+    )
+    assert seen["add_render"] == (tmp_path / "render-1", tmp_path / "o", ["k"])
+    with pytest.raises(panel.PanelError, match="another run_hash"):
+        bs.add_render(tmp_path / "other", tmp_path / "o", literals=[])
+
+
+def test_add_render_updates_the_prepared_bundle(run_dir, tmp_path):
+    root, b = tmp_path / "submissions", FakeBundler()
+    view = submit.prepare(run_dir, root, b, attempt_n=1, unsubmitted_valid=0, literals=[])
+    bdir = Path(view["bundle_dir"])
+    render = bdir.parent / "render-1"
+    render.mkdir()
+    got = submit.add_render(root, "s1", b, bundle_dir=bdir, render_dir=render, literals=["k"], now=9.0)
+    assert b.calls[-1] == ("add_render", "render-1", "1", ["k"])
+    assert (
+        got["bundle_sha256"] == "ef" * 32 and got["verdict"] == view["verdict"]
+    )  # the run_hash, so the verdict, stays
+    assert [f["name"] for f in got["files"]] == ["bundle.json", "result.json", "render.json"]
+    assert got["render"] == {"dir": str(render), "added": 9.0} and submit.state(root, "s1")["prepared"] == got
+
+
+def test_add_render_refusals(run_dir, tmp_path):
+    root, b = tmp_path / "submissions", FakeBundler()
+    view = submit.prepare(run_dir, root, b, attempt_n=1, unsubmitted_valid=0, literals=[])
+    bdir = Path(view["bundle_dir"])
+    render = bdir.parent / "render-1"
+    render.mkdir()
+    (render / "refuse").write_text("")
+    got = submit.add_render(root, "s1", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0)
+    assert got["render"] == {"dir": str(render), "error": "render.json was rendered for another run_hash"}
+    assert got["bundle_sha256"] == SHA  # the bundle is unchanged
+    with pytest.raises(panel.PanelError, match="no longer the prepared one"):
+        submit.add_render(
+            root, "s1", b, bundle_dir=tmp_path / "old" / "bundle", render_dir=render, literals=[], now=9.0
+        )
+    with pytest.raises(panel.PanelError, match="no longer the prepared one"):
+        submit.add_render(root, "s2", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0)
+    submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=f"https://youtu.be/{VID}", token="t", site=FakeSite())
+    with pytest.raises(panel.PanelError, match="submitted already"):
+        submit.add_render(root, "s1", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0)
+
+
+def test_video_out_dir_is_new_each_time(tmp_path):
+    b = tmp_path / "1" / "bundle"
+    b.mkdir(parents=True)
+    assert video.out_dir(b) == tmp_path / "1" / "render-1"
+    (tmp_path / "1" / "render-1").mkdir()
+    (tmp_path / "1" / "render-x").mkdir()
+    assert video.out_dir(b) == tmp_path / "1" / "render-2"
 
 
 def test_poll_refusals(run_dir, tmp_path):
