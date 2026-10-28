@@ -44,6 +44,13 @@ def test_a_recording_with_a_gap_over_5_s_is_refused(segs: list[dict[str, Any]], 
         T.clips(segs, T0, 2000.0)
 
 
+def test_a_segment_still_being_written_covers_nothing():
+    segs = [seg("a", 900, 1500), {**seg("b", 1500, 0), "end": None}]
+    assert T.clips(segs, T0, 1500.0) == [T.Clip("a", 100.0, 600.0)]
+    with pytest.raises(T.RenderError, match=r"misses 500\.0 s at run second 500\.0"):
+        T.clips(segs, T0, 2000.0)
+
+
 def test_a_gap_up_to_5_s_is_bridged():
     cut = T.clips([seg("a", 900, 1500), seg("b", 1505, 2100)], T0, 2000.0)
     assert [c.file for c in cut] == ["a", "b"]

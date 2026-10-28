@@ -127,7 +127,11 @@ def render(
     work: Path,
     ffmpeg: compose.Ffmpeg = compose.run_ffmpeg,
 ) -> Path:
-    """render.json, evidence.mp4 and frames/ into `out`; the images and lists into `work`. Returns the video."""
+    """render.json, evidence.mp4 and frames/ into `out`; the images and lists into `work`. Returns the video.
+    RenderError before anything is written when a clip's file is gone (the recorder's disk cap deletes the oldest)."""
+    gone = [c.file for c in p.clips if not (video_dir / c.file).is_file()]
+    if gone:
+        raise RenderError(f"recording segment(s) missing in {video_dir}: {', '.join(gone)}")
     out.mkdir(parents=True, exist_ok=True)
     (out / "render.json").write_text(json.dumps(p.sync, indent=1) + "\n", encoding="utf-8")
     strip_list, side_list = write_images(p, meta, work)

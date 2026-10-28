@@ -42,9 +42,11 @@ def write_run(d: Path, gap: bool = False) -> Path:
     video = d.parent / "video"
     video.mkdir()
     cut = T0 + (1.0 if gap else 4.0)  # a gap: the second segment starts 6 s after the first ends
-    segs = [{"file": "rec-1-0000.mp4", "start": T0 - 2.0, "end": cut}]
+    segs: list[dict[str, Any]] = [{"file": "rec-1-0000.mp4", "start": T0 - 2.0, "end": cut}]
     segs.append({"file": "rec-1-0001.mp4", "start": cut + (6.0 if gap else 0.0), "end": T0 + 20.0})
     (video / "index.json").write_text(json.dumps({"v": 1, "segments": segs}), encoding="utf-8")
+    for s in segs:
+        (video / s["file"]).write_bytes(b"mp4")
     return video / "index.json"
 
 
@@ -153,3 +155,12 @@ def test_a_sample_leaves_out_the_events_after_it(tmp_path: Path):
     assert render.main([*args, "--run-id", "s-r001", "--bundle", "ab" * 32], FakeFfmpeg()) == 0
     sync = json.loads((tmp_path / "out" / "render.json").read_text())
     assert (sync["video_end"], [e["seq"] for e in sync["events"]]) == (T0 + 2.0, [0, 1])
+
+
+def test_a_deleted_segment_is_refused_before_anything_is_written(tmp_path: Path):
+    index = write_run(tmp_path / "run")
+    (index.parent / "rec-1-0001.mp4").unlink()
+    ff = FakeFfmpeg()
+    with pytest.raises(T.RenderError, match=r"missing in .*: rec-1-0001\.mp4"):
+        render.render(make_plan(tmp_path / "run", index), META, index.parent, tmp_path / "out", tmp_path / "w", ff)
+    assert not ff.calls and not (tmp_path / "out").exists()

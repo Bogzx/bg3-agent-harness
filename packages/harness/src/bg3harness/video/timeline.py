@@ -99,12 +99,13 @@ class Meta:
 
 def clips(segments: Sequence[Mapping[str, Any]], start: float, end: float, max_gap: float = MAX_GAP_S) -> list[Clip]:
     """The parts of the recorder's segments that cover [start, end] (epoch s), in order. RenderError when the
-    recording misses more than max_gap seconds anywhere in the window."""
+    recording misses more than max_gap seconds anywhere in the window; a segment still being written (no end yet)
+    covers nothing."""
     if end <= start:
         raise RenderError(f"empty run window: start {start} end {end}")
     covered = start
     out: list[Clip] = []
-    for s in sorted(segments, key=lambda s: float(s["start"])):
+    for s in sorted((s for s in segments if s.get("end") is not None), key=lambda s: float(s["start"])):
         s0, s1 = float(s["start"]), float(s["end"])
         if s1 <= covered or s0 >= end:
             continue
