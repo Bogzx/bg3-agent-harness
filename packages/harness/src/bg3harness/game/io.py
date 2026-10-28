@@ -276,24 +276,6 @@ def read_progress(log: Callable[[str], None] = _quiet) -> dict | None:
     return progress_signature(status, journal)
 
 
-def load_menu_args(save: Save, saves: list[Save]) -> dict:
-    """ui.menu load arguments: the Load page groups saves by owner, newest first by the save's own time (meta.lsf
-    SaveTime, Save.saved; never the folder mtime, which Steam's local cloud sets to the launch on a restored copy),
-    and the mod checks the selected save's date before loading (it can't read save titles there). A save whose time
-    can't be read gets no index: its row is unknown."""
-    same = sorted(
-        (s for s in saves if s.owner == save.owner),
-        key=lambda s: s.saved if s.saved is not None else float("-inf"),  # saves.saved_key (saves imports io)
-        reverse=True,
-    )
-    args: dict = {"action": "load", "name": save.folder, "owner": save.owner}
-    idx = next((i for i, s in enumerate(same, 1) if s.folder == save.folder), None)
-    if idx is not None and save.saved is not None:
-        t = time.localtime(save.saved)
-        args.update(index=idx, date={"y": t.tm_year, "m": t.tm_mon, "d": t.tm_mday, "H": t.tm_hour, "M": t.tm_min})
-    return args
-
-
 def all_bg3_pids() -> list[int]:
     """Every native game process on the machine (./bin/bg3), ours or a user's own; not the pressure-vessel wrapper."""
     r = subprocess.run(["pgrep", "-x", "bg3"], capture_output=True, text=True)
