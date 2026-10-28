@@ -248,8 +248,8 @@ function A.tele_settle(job)
     if job.tele and RPC.now_ms() - job.tele.t >= A.TELEPORT_SETTLE_MS then A.tele_finish(job, nil) end
 end
 
--- BACKLOG:1743, live N8 step 3 (2026-10-28): Claude's move_to ended at +0.87 s, he stood still, and at +4.52 s the
--- game put him 15 m off in one 77 ms tick (the Faith-Leap put-back): no job ran, so teleport_check never saw it.
+-- BACKLOG:1743, live N8 step 3 (2026-10-28): Claude's move_to ended at +0.87 s, Claude stood still, and at +4.52 s the
+-- game put Claude 13.5 m off in one 77 ms tick (the Faith-Leap put-back): no job ran, so teleport_check never saw it.
 -- For IDLE_WATCH_MS after one of our jobs for a member ends, a jump over IDLE_TELE_M in one tick with no job of
 -- ours running for them is the game's: event teleported_by_game. Not when another member jumps in the same tick
 -- (a fast travel or a load moves the whole party), while a party-wide job runs (camp), or after a fast travel.
