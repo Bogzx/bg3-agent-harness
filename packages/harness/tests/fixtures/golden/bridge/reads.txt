@@ -13,7 +13,7 @@ GOLD 100 · CAMP SUPPLIES 0/40 (0 carried + 0 in the camp chest)
   equipped: MeleeMainHand=e3 Longsword
   e4 Potion of Healing x2 50g
 === nearby (server:state.nearby)
-CHAR e5 Arron neutral 5m can_talk @(12,0,12)
+CHAR e5 Arron neutral 5m can_talk can_trade @(12,0,12)
 (+0 more items, 1 scenery objects not listed; narrow with radius= or kinds=)
 === journal (server:state.journal)
 ACTIVE (1)
