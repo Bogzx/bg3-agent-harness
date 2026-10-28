@@ -898,7 +898,10 @@ test("move_to range: a ranged spell's walk stops on the way in, inside its range
         local j = job(op("move_to", { char = P1, target = NPC, range = 18 }))
         eq(j.status, "running", "walking " .. tostring(j.error))
         local mv = called("CharacterMoveToPosition")
-        near(mv[#mv][3], 3, "x: 17 m from the target, on the line toward the reader"); near(mv[#mv][5], 0, "z")
+        near(mv[#mv][3], 7, "x: the goal 13 m from the target (RANGE_PAST_M past the 17 m stop), on the line toward"
+            .. " the reader"); near(mv[#mv][5], 0, "z")
+        world[P1].pos = { 3.5, 0, 0 }; tick()
+        eq(j.status, "done", "stopped on the way in, 16.5 m off"); eq(j.result.in_reach, true, "in_reach")
         reset()
         world[NPC].pos = { 16, 0, 0 }
         j = job(op("move_to", { char = P1, target = NPC, range = 18 }))
@@ -907,7 +910,8 @@ test("move_to range: a ranged spell's walk stops on the way in, inside its range
         world[NPC].pos = { 9.47, 0, 0 } -- live N10 step 2: a touch spell's reach (2.5 m, centres, act.spell_reach)
         op("move_to", { char = P1, target = NPC, range = 2.5 })
         mv = called("CharacterMoveToPosition")
-        near(mv[#mv][3], 7.97, "x: 1.5 m from the target (RANGE_STOP_SLACK inside the reach), no 2.2 m floor")
+        near(mv[#mv][3], 11.97, "x: the goal 2.5 m past the target (stop 1.5 m from it, RANGE_STOP_SLACK inside the"
+            .. " reach; the goal RANGE_PAST_M further), no 2.2 m floor")
         world[P1].pos = { 7.2, 0, 0 } -- the game ended the walk short of its point, 2.27 m off: in the 2.5 m reach
         local jt = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
         eq(jt.status, "done", "in reach already"); eq(jt.result.in_reach, true, "in_reach (the reach, not the aim)")
@@ -920,10 +924,11 @@ test("move_to range: a ranged spell's walk stops on the way in, inside its range
 
 -- Live N11 step 2 (heights 0 here): leg 1 ended at (-38.8,-50.2), 3.3 m from Wyll (-38.5,-53.5), 1.8 m short of its
 -- point 1.5 m from him; leg 2's path to that same point had no nodes (0.0 m) and its walk went 10.2 m round, 7.8 m off.
+-- (The first goal tried is now 2.5 m past Wyll on the line, RANGE_PAST_M: that one's path has no nodes here.)
 test("move_to range: a point the engine's path ends short of is skipped, never walked on a 0.0 m route (N11)",
     function()
     world[P1].pos, world[NPC].pos = { -38.8, 0, -50.2 }, { -38.5, 0, -53.5 }
-    local k0 = { -38.5 - 1.5 * 0.3 / 3.3136, 0, -53.5 + 1.5 * 3.3 / 3.3136 } -- 1.5 m from Wyll toward Claude
+    local k0 = { -38.5 + 2.5 * 0.3 / 3.3136, 0, -53.5 - 2.5 * 3.3 / 3.3136 } -- 2.5 m past Wyll from Claude
     local function at_k0(pos) return U.dist(pos, k0) < 0.05 end
     nav.fn = function(_, pos)
         local from = world[P1].pos
@@ -936,7 +941,7 @@ test("move_to range: a point the engine's path ends short of is skipped, never w
     eq(#mv, 1, "one walk")
     local to = { mv[1][3], mv[1][4], mv[1][5] }
     assert(not at_k0(to), "not the point the path ends short of")
-    near(U.dist(to, world[NPC].pos), 1.5, "another point 1.5 m from Wyll (the next angle)")
+    near(U.dist(to, world[NPC].pos), 2.5, "another point 2.5 m past Wyll (the next angle)")
     assert(j.route_m > 0, "a real route: " .. tostring(j.route_m))
     -- every point's path ends where the walker stands: refused with that fact, no walk
     reset()
@@ -961,5 +966,5 @@ test("move_to range: a normal path, its last node ~1 m from the point, is walked
     local j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
     eq(j.status, "running", "walking " .. tostring(j.error))
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "one walk"); near(U.dist({ mv[1][3], 0, mv[1][5] }, world[NPC].pos), 1.5, "the first point, 1.5 m off")
+    eq(#mv, 1, "one walk"); near(U.dist({ mv[1][3], 0, mv[1][5] }, world[NPC].pos), 2.5, "the first goal, 2.5 m past")
 end)
