@@ -542,11 +542,12 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
                         f"({core.H.get(it['uuid'])}): use_ability(who=\"{overview._name_of(it['owner'])}\", ability=\"{name}\", "
                         f"target=...) or give it over first")
     tgt0 = plumbing._uuid(target) if target else char
+    # live N4 (2026-10-28): read on a living Claude it answered "Claude REVIVED": the revive check only asked "not
+    # dead" after the read. Live N7 2d: on the reader herself (who=target, alive) it skipped this check and read "done
+    # ... cast on e1 Shadowheart by a click" (the click landed; the game took no target, the scroll stayed)
+    if _two_step_scroll(name) and (tgt0 == char or _is_dead(tgt0) is False):
+        raise GameError(f"{overview._name_of(tgt0)} is not dead: {name} not read")
     if _two_step_scroll(name) and tgt0 != char:
-        # live N4 (2026-10-28): read on a living Claude it answered "Claude REVIVED": the revive check only asked
-        # "not dead" after the read
-        if _is_dead(tgt0) is False:
-            raise GameError(f"{overview._name_of(tgt0)} is not dead: {name} not read")
         far = _body_far(char, tgt0)
         if far:
             raise GameError(far)
