@@ -404,7 +404,16 @@ reg("end_standup", function(args)
             local moved = here and job.from and U.dist(here, job.from) or 0
             if moved >= A.STANDUP_MOVED_M then job.walked = true end
             local res = { orders = job.orders, walked = job.walked or false, stepped_m = U.round(moved, 1) }
-            if not A.standing_up(char) then
+            -- app review of #34: a member who dies again loses the ResurrectComponent too (not "stood up"); in a
+            -- fight the queue is the fight's (no more orders or purges, and none at the job's end: stopping)
+            if G.is_dead(char) then
+                RPC.finish_job(job, "failed", res, string.format("%s died again during the stand-up (%d walk order(s)"
+                    .. " sent)", name_of(char) or "the character", job.orders))
+            elseif G.in_combat(char) then
+                job.stopping = true
+                RPC.finish_job(job, "interrupted", res, string.format("combat started: no more stand-up walk orders"
+                    .. " or queue purges for %s (%d sent)", name_of(char) or "the character", job.orders))
+            elseif not A.standing_up(char) then
                 res.pending, res.ended = false, true
                 RPC.finish_job(job, "done", res)
             elseif RPC.now_ms() - job.t0 >= A.STANDUP_END_MS then
