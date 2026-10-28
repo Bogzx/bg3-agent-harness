@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from bg3harness import runs
 from bg3harness.game import io as game
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
@@ -44,6 +45,10 @@ print(sys.argv[2], flush=True)
 if mode == "exits":
     print(json.dumps({"type": "result", "subtype": "success", "num_turns": 1, "total_cost_usd": 0.01,
                       "usage": {"input_tokens": 10, "output_tokens": 2}}), flush=True)
+    sys.exit(0)
+if mode == "auth":  # claude -p with a bad key: an error result, exit 0
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": True, "num_turns": 1, "total_cost_usd": 0,
+                      "result": "Invalid API key · Please run /login"}), flush=True)
     sys.exit(0)
 while True:
     time.sleep(3600)
@@ -154,6 +159,16 @@ def test_an_agent_that_obeys_sigint_ends_at_the_first_signal(loop: Any):
     res = r.run_claude("S001", "KICKOFF", 1, None, needs_game=False)
     assert (res.reason, res.exit_code) == ("hard_stop", -signal.SIGINT)
     assert sent == [("SIGINT", tick(T0 + 60 + renv.HARD_STOP_GRACE))]  # it died of it: nothing after
+
+
+def test_an_auth_error_is_logged_as_a_harness_failure_event(loop: Any):
+    # app review of 0e5fc92: the "auth" API failure was only logged, so a run that played a while before it was valid
+    r, _, _ = loop("auth")
+    res = r.run_claude("S001", "KICKOFF", 1, None, needs_game=False)
+    assert res.reason == "exited"
+    auth = [e for e in events(r) if e["kind"] == "api_auth"]
+    assert [(e["session"], e["error"]) for e in auth] == [("S001", "Invalid API key · Please run /login")]
+    assert [(f["kind"], f["class"]) for f in runs.event_failures(auth)[0]] == [("api_auth", "harness")]
 
 
 def test_a_silent_agent_is_an_agent_hang(loop: Any, monkeypatch: pytest.MonkeyPatch):
