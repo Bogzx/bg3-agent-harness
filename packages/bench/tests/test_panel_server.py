@@ -23,8 +23,9 @@ class FakeRunner:
         self.started: list[tuple[str, Path]] = []
         self.st: dict | None = None
 
-    def start(self, name, matrix_file, log):
+    def start(self, name, matrix_file, log, *, record):
         self.started.append((name, matrix_file))
+        self.record = record
         self.st = {"name": name, "running": True, "stopping": False}
 
     def stop(self):
@@ -135,8 +136,11 @@ def app(tree: Path, web: Path, tmp_path: Path) -> App:
         site_client=lambda base: a.fake_site,  # type: ignore[attr-defined]
         renderer=FakeRenderer(),
         now=lambda: 0.0,
+        proc=lambda pid: a.procs.get(pid),  # type: ignore[attr-defined]
+        doctor=lambda: DOCTOR,
     )
     a.fake_site = FakeSite()  # type: ignore[attr-defined]
+    a.procs = {}  # type: ignore[attr-defined] - pid -> (argv, cwd) of the fake /proc
     return a
 
 
@@ -322,19 +326,130 @@ def test_unknown_paths_and_bad_bodies(server):
     assert request(server, "POST", "/api/v1/plan", b"x" * 20000, h)[0] == 413
 
 
+# bg3harness.doctor's report shape (doctor.report(doctor.doctor()))
+DOCTOR = {
+    "ready": False, "fails": 1, "warns": 0,
+    "checks": [
+        {"name": "ffmpeg", "status": "PASS", "detail": "/usr/bin/ffmpeg with libx264", "fix": ""},
+        {"name": "shim", "status": "FAIL", "detail": "no input shim", "fix": "native/bg3sdl/build.sh"},
+    ],
+}  # fmt: skip
 RUN_FORM = {"profiles": ["deepseek-flash"], "scenarios": ["act1_get_item"], "max_cost_usd": 2.0}
 
 
 def test_start_and_stop_a_run(server):
-    assert get(server, "/api/v1/run")[1] == {"v": 1, "run": None, "can_start": True}
-    code, r = post(server, "/api/v1/run/start", RUN_FORM)
-    assert code == 200 and r["started"]["name"] == "panel-19700101-000000"
+    assert get(server, "/api/v1/run")[1] == {"v": 1, "run": None, "found": None, "can_start": True}
+    code, r = post(server, "/api/v1/run/start", {**RUN_FORM, "record": False})
+    assert code == 200 and r["started"]["name"] == "panel-19700101-000000" and server.runner.record is False
+    run = get(server, "/api/v1/run")[1]["run"]
+    assert run["choices"] == {"name": run["name"], "record": False, "submit_when_done": False, "auto": {}}
     ((name, f),) = server.runner.started
     assert f == server.runtime / "panel" / f"{name}.toml" and 'scenarios = ["act1_get_item"]' in f.read_text()
     code, r = post(server, "/api/v1/run/start", RUN_FORM)
     assert code == 400 and "is running" in r["error"] and len(server.runner.started) == 1
     code, r = post(server, "/api/v1/run/stop", {})
-    assert code == 200 and r["run"]["stopping"] is True
+    assert code == 200 and r["run"]["stopping"] is True and not (server.runtime / "STOP").exists()
+
+
+def test_start_flags(server):
+    code, r = post(server, "/api/v1/run/start", {**RUN_FORM, "record": False, "submit_when_done": True})
+    assert code == 400 and "needs Record" in r["error"] and server.runner.started == []
+    code, r = post(server, "/api/v1/run/start", {**RUN_FORM, "record": "yes"})
+    assert code == 400 and "record must be true or false" in r["error"]
+    code, r = post(server, "/api/v1/run/start", {**RUN_FORM, "submit_when_done": True})
+    assert code == 200 and server.runner.record is True
+    assert get(server, "/api/v1/run")[1]["run"]["choices"]["submit_when_done"] is True
+
+
+def found_matrix(app: App, pid: int = 31) -> None:
+    """play.py bench playing runtime/panel/night2.toml, started by another panel or a terminal."""
+    rt = app.runtime
+    (rt / "panel").mkdir(exist_ok=True)
+    (rt / "panel" / "night2.toml").write_text('name = "night2"\n')
+    (rt / "runner.lock").write_text(str(pid))
+    argv = ["python", "runner/play.py", "bench", "run", "--matrix", "runtime/panel/night2.toml"]
+    app.procs[pid] = (argv, app.repo)  # type: ignore[attr-defined]
+
+
+def test_a_matrix_this_panel_didnt_start_is_found_and_stopped(server):
+    found_matrix(server)
+    r = get(server, "/api/v1/run")[1]
+    assert r["run"] is None and r["found"]["name"] == "night2" and r["found"]["pid"] == 31
+    assert r["found"]["stopping"] is False
+    code, r = post(server, "/api/v1/run/start", RUN_FORM)
+    assert code == 400 and "matrix night2 is running (pid 31)" in r["error"] and server.runner.started == []
+    code, r = post(server, "/api/v1/run/stop", {})
+    assert code == 200 and r["found"]["stopping"] is True and (server.runtime / "STOP").is_file()
+    code, r = post(server, "/api/v1/run/stop", {})
+    assert code == 400 and "stopping already" in r["error"]
+    server.procs.clear()  # type: ignore[attr-defined] - it ended
+    assert get(server, "/api/v1/run")[1]["found"] is None
+    assert post(server, "/api/v1/run/stop", {}) == (400, {"v": 1, "error": "no matrix is running"})
+
+
+def test_own_running_matrix_hides_found(server):
+    assert post(server, "/api/v1/run/start", RUN_FORM)[0] == 200
+    found_matrix(server)  # the lock of the panel's own matrix
+    r = get(server, "/api/v1/run")[1]
+    assert r["run"]["running"] is True and r["found"] is None
+
+
+def test_doctor(server):
+    assert get(server, "/api/v1/doctor")[1] == {"v": 1, "report": DOCTOR, "error": None}
+
+    def missing():
+        raise panel.PanelError("this harness has no bg3harness.doctor yet")
+
+    server.doctor = missing
+    assert get(server, "/api/v1/doctor")[1] == {
+        "v": 1,
+        "report": None,
+        "error": "this harness has no bg3harness.doctor yet",
+    }
+
+
+def test_harness_doctor_imports_bg3harness_doctor(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(doctor=lambda: ["c"], report=lambda checks: {"ready": True, "checks": checks})
+    monkeypatch.setitem(sys.modules, "bg3harness.doctor", fake)
+    assert panel.harness_doctor() == {"ready": True, "checks": ["c"]}
+    monkeypatch.setitem(sys.modules, "bg3harness.doctor", None)  # import raises ImportError
+    with pytest.raises(panel.PanelError, match="no bg3harness.doctor"):
+        panel.harness_doctor()
+
+
+def test_tick_prepares_a_submit_when_done_run(server):
+    assert post(server, "/api/v1/run/start", {**RUN_FORM, "submit_when_done": True})[0] == 200
+    name = server.runner.started[0][0]
+    m = server.runtime / "matrix" / name
+    m.mkdir()
+    (m / "queue.jsonl").write_text(json.dumps({"type": "end", "result": {"run_id": "s1-r001", "valid": True}}) + "\n")
+    assert server.tick() == [{"matrix": name, "run": "s1", "t": 0.0, "bundle_sha256": SHA, "accepted": True}]
+    assert server.tick() == []
+    subs = get(server, "/api/v1/submissions")[1]["submissions"]
+    assert subs["s1"]["prepared"]["bundle_sha256"] == SHA and subs["s1"]["submission"] is None  # never uploaded
+    assert server.fake_site.calls == []
+
+
+def test_ticker_runs_tick_until_stopped(app, capsys):
+    class Ev:
+        def __init__(self):
+            self.waits = 0
+
+        def wait(self, timeout):
+            self.waits += 1
+            return self.waits > 2  # two passes, then set
+
+    out = iter([[{"run": "d1", "accepted": True}], [{"run": "d2", "error": "pack refused it"}]])
+    app.tick = lambda: next(out)
+    from bg3bench.serve import server as srv_mod
+
+    srv_mod.ticker(app, Ev(), every=0).join(timeout=10)  # type: ignore[arg-type]
+    assert capsys.readouterr().out.splitlines() == [
+        "submit when done: d1: validated, accepted=True", "submit when done: d2: pack refused it"
+    ]  # fmt: skip
 
 
 def test_start_refuses_a_plan_over_budget_and_writes_no_matrix(server):
@@ -455,6 +570,8 @@ def test_main_serves_until_interrupted(monkeypatch, tmp_path, capsys):
         return Srv()
 
     monkeypatch.setattr(srv_mod, "serve", fake_serve)
+    monkeypatch.setattr(srv_mod, "ticker", lambda app, stop: stopped.append(stop))
+    stopped: list = []
     monkeypatch.setattr(srv_mod, "steam_paths", SimpleNamespace(saves_dir=lambda: None))
     cfg = tmp_path / "cfg"
     argv = ["--repo", str(tmp_path), "--config-dir", str(cfg), "--site", "https://bench.example"]
@@ -464,6 +581,7 @@ def test_main_serves_until_interrupted(monkeypatch, tmp_path, capsys):
     assert app.renderer is not None and app.bundler is not None and (cfg / security.TOKEN_FILE).is_file()
     assert "http://127.0.0.1:8790/" in capsys.readouterr().out
     assert app.key_names() == []
+    assert stopped[0].is_set()  # the ticker's event is set on the way out
 
 
 def test_verbose_logs_request_lines(app, capsys):

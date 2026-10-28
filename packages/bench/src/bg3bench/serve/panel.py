@@ -9,11 +9,13 @@
   scenarios that aren't ready, the condition gaps, and the scenarios whose cap is longer than a YouTube account
   without phone verification can upload (15 minutes);
 - queue: runtime/matrix/*/progress.json (bg3bench.matrix);
-- results: every run dir under runtime/sessions with manifest.json and result.json.
+- results: every run dir under runtime/sessions with manifest.json and result.json;
+- doctor: bg3harness.doctor's report (imported when asked: a harness without it gives a PanelError).
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -291,3 +293,13 @@ def preflight_view(lines: Sequence[Check]) -> dict[str, Any]:
     fails = sum(r["status"] == "FAIL" for r in rows)
     warns = sum(r["status"] == "WARN" for r in rows)
     return {"checks": rows, "fails": fails, "warns": warns, "ready": fails == 0}
+
+
+def harness_doctor() -> dict[str, Any]:
+    """bg3harness.doctor's report(doctor()): {"ready": bool, "fails": int, "warns": int,
+    "checks": [{"name", "status": PASS|WARN|FAIL, "detail", "fix"}]} ("fix" is "" for a PASS)."""
+    try:
+        mod: Any = importlib.import_module("bg3harness.doctor")
+    except ImportError:
+        raise PanelError("this harness has no bg3harness.doctor yet") from None
+    return mod.report(mod.doctor())
