@@ -89,6 +89,7 @@ end)
 
 test("end_standup: nothing pending, or in combat, orders nothing; a stand-up that outlasts the walk fails", function()
     revived(false)
+    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {} -- no action state held either
     local r = op("end_standup", { char = P1, toward = GOB })
     eq(r.pending, false, "nothing pending"); eq(#called("CharacterMoveToPosition"), 0, "no walk")
     revived(true)
@@ -100,31 +101,53 @@ test("end_standup: nothing pending, or in combat, orders nothing; a stand-up tha
     local j = job(op("end_standup", { char = P1, toward = GOB }))
     tick(170) -- 10.2 s, never moving
     eq(j.status, "failed", "status")
-    eq(j.error, "the character still stands up from the revive 10 s after the first walk order (ResurrectComponent"
-        .. " kept): 7 walk order(s), none of them started (it never moved)", "the facts")
-    eq(j.result.walked, false, "walked")
+    eq(j.error, "the character took no step 10 s after the walk order (it never moved; ResurrectComponent kept)",
+        "the facts")
+    eq(j.result.walked, false, "walked"); eq(j.result.orders, 1, "one order")
 end)
 
-test("end_standup: a walk that never starts is ordered again until one walks (live N8 A: osi=1 for 4 s)", function()
+-- Live N9 (C1 replay, a0e598b): walk ordered at once and re-ordered with purges while Claude still had the revive's
+-- RegisteredForAutomatedDialog: 0.0 m in 3 orders, the ResurrectComponent went by itself, the layer-1 ActionState
+-- stayed, and the reply said "stood up". N8 B: one raw walk ~8 s after the revive, no automated dialog, walked 2.98 m.
+test("end_standup: no order while the revive's automated dialog is up, one walk after it, never purged (N9)", function()
     local names = revived(true)
+    world[P1].comps.ServerCharacter.Flags = { "IsPlayer", "RegisteredForAutomatedDialog" }
     local j = job(op("end_standup", { char = P1, toward = GOB }))
-    tick(20) -- 1.2 s: still the first order
-    eq(#called("CharacterMoveToPosition"), 1, "one order so far")
-    tick(10) -- 1.8 s: never moved -> purged and ordered again
-    eq(#called("CharacterMoveToPosition"), 2, "ordered again"); assert(#called("PurgeOsirisQueue") >= 1, "purged first")
-    tick(25) -- 3.3 s: a third order; this one walks (N8 B: a raw walk ~7 s after the revive walked 2.98 m)
-    eq(#called("CharacterMoveToPosition"), 3, "third order")
-    world[P1].pos = { 1, 0, 0 }
+    tick(40) -- 2.4 s of the dialog
+    eq(#called("CharacterMoveToPosition"), 0, "no order during the dialog")
+    world[P1].comps.ServerCharacter.Flags = { "IsPlayer" }
     tick()
+    eq(#called("CharacterMoveToPosition"), 1, "one walk once the dialog is over")
+    near(j.dialog_s, 2.5, "waited for the dialog")
+    names[2] = nil -- N9: the component goes by itself, no step: not stood up
     tick(30)
-    eq(#called("CharacterMoveToPosition"), 3, "walking: no more orders")
-    world[P1].pos = { 2.98, 0, 0 }
-    names[2] = nil
-    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {}
-    tick()
-    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.ended, true, "ended")
-    eq(j.result.orders, 3, "orders"); eq(j.result.walked, true, "walked"); eq(j.result.stepped_m, 3, "stepped")
+    eq(j.status, "running", "no step yet: not done"); eq(#called("PurgeOsirisQueue"), 0, "no purge while it runs")
+    tick(140)
+    eq(j.status, "failed", "status")
+    eq(j.error, "the character took no step 10 s after the walk order (it never moved; ResurrectComponent gone;"
+        .. " layer-1 action unfinished, TransactionId 55)", "the facts")
+    eq(#called("CharacterMoveToPosition"), 1, "one order"); eq(j.result.walked, false, "walked")
 end)
+
+test("end_standup: a dialog that never ends gets the walk after STANDUP_DIALOG_MS; N9's held action is walked too",
+    function()
+        revived(true)
+        world[P1].comps.ServerCharacter.Flags = { "RegisteredForAutomatedDialog" }
+        op("end_standup", { char = P1, toward = GOB })
+        tick(math.floor(A.STANDUP_DIALOG_MS / 60) - 2)
+        eq(#called("CharacterMoveToPosition"), 0, "still waiting")
+        tick(3)
+        eq(#called("CharacterMoveToPosition"), 1, "ordered at the cap")
+        reset()
+        revived(false) -- N9 after the reply: no ResurrectComponent, layer 1 held (TransactionId 55)
+        local j = job(op("end_standup", { char = P1, toward = GOB }))
+        eq(j.status, "running", "pending: a held action is walked out of too")
+        eq(#called("CharacterMoveToPosition"), 1, "walk")
+        world[P1].pos = { 2.98, 0, 0 }
+        world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {}
+        tick()
+        eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.walked, true, "walked")
+    end)
 
 test("end_standup: a member who dies again is not 'stood up' (app review of #34)", function()
     local names = revived(true)

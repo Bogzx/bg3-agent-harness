@@ -341,12 +341,26 @@ end)
 
 A.STANDUP_STEP_M = 3.0
 -- Live N8 (C1 replay A, 2026-10-28): the step's walk, ordered right after the revive, sat in the Osiris queue (osi=1)
--- and never started for 4 s; a raw CharacterMoveToPosition 3 m ordered ~7 s after the revive (B) walked 2.98 m and
--- ended the stand-up. A walk that hasn't moved STANDUP_MOVED_M after STANDUP_REORDER_MS is purged and ordered again,
--- up to STANDUP_END_MS after the first order.
-A.STANDUP_END_MS = 10000
-A.STANDUP_REORDER_MS = 1500
+-- and never started for 4 s; a raw CharacterMoveToPosition 3 m ordered ~8 s after the revive (B, no automated dialog on
+-- the member by then) walked 2.98 m and took both the ResurrectComponent and the layer-1 ActionState away. Live N9: the
+-- same walk ordered at once and re-ordered with purges every 1.5 s never moved (0.0 m, 3 orders) while the member still
+-- had RegisteredForAutomatedDialog; the ResurrectComponent went by itself, the ActionState stayed, and no order of the
+-- member started again. So no order while that dialog flag is up (up to STANDUP_DIALOG_MS), then ONE walk, no purge
+-- while it runs, and done only on a step (STANDUP_MOVED_M) that left neither the component nor a held layer-1 action.
+A.STANDUP_DIALOG_MS = 8000
+A.STANDUP_END_MS = 10000 -- from the walk order
 A.STANDUP_MOVED_M = 0.3
+
+-- The revive's automated dialog on the member (ServerCharacter.Flags RegisteredForAutomatedDialog; N2: the revive swaps
+-- CharacterControl for it). nil when unreadable.
+local function auto_dialog(char)
+    local ok, flags = pcall(function() return Ext.Entity.Get(char).ServerCharacter.Flags end)
+    if not ok or type(flags) ~= "table" then return nil end
+    for _, f in pairs(flags) do
+        if tostring(f) == "RegisteredForAutomatedDialog" then return true end
+    end
+    return false
+end
 
 -- The point STANDUP_STEP_M from `char` that a plain walk reaches (no jump, no drop, at most twice the step) with no
 -- harmful surface on the straight line there or at its end (N.routeHazard, the first metre skipped: the spot it
@@ -376,7 +390,7 @@ end
 
 reg("end_standup", function(args)
     local char = G.actor(args.char)
-    if not A.standing_up(char) then return { pending = false } end
+    if not A.standing_up(char) and not A.held_action(char) then return { pending = false } end
     if G.in_combat(char) then return { pending = true, in_combat = true } end
     local toward = args.toward and G.pos(args.toward)
     if not toward then G.refuse("no position to walk toward (toward: a party member in view)") end
@@ -388,43 +402,48 @@ reg("end_standup", function(args)
             or string.format("no point %.0f m away a walk reaches", A.STANDUP_STEP_M)))
     end
     local U = BG3AI.Util
+    local who = name_of(char) or "the character"
     local function order(job)
         job.orders, job.ordered = (job.orders or 0) + 1, RPC.now_ms()
+        job.dialog_s = U.round((job.ordered - job.t0) / 1000, 1)
         G.osi("CharacterMoveToPosition", char, to[1], to[2], to[3], "Run", I.ev_name(job, "su" .. job.orders), job.id)
     end
     return start("end_standup", char, {
-        timeout_ms = A.STANDUP_END_MS + 2000,
+        timeout_ms = A.STANDUP_DIALOG_MS + A.STANDUP_END_MS + 2000,
         start = function(job)
             job.t0, job.from = RPC.now_ms(), G.pos(char)
-            job.osi_task = true -- the walk is purged once the stand-up has ended (start(): queued tasks)
-            order(job)
+            if not auto_dialog(char) then order(job) end
         end,
         on_tick = function(job)
             local here = G.pos(char)
             local moved = here and job.from and U.dist(here, job.from) or 0
             if moved >= A.STANDUP_MOVED_M then job.walked = true end
-            local res = { orders = job.orders, walked = job.walked or false, stepped_m = U.round(moved, 1) }
+            local res = { orders = job.orders or 0, walked = job.walked or false, stepped_m = U.round(moved, 1),
+                dialog_s = job.dialog_s }
+            local now = RPC.now_ms()
             -- app review of #34: a member who dies again loses the ResurrectComponent too (not "stood up"); in a
             -- fight the queue is the fight's (no more orders or purges, and none at the job's end: stopping)
             if G.is_dead(char) then
                 RPC.finish_job(job, "failed", res, string.format("%s died again during the stand-up (%d walk order(s)"
-                    .. " sent)", name_of(char) or "the character", job.orders))
+                    .. " sent)", who, res.orders))
             elseif G.in_combat(char) then
                 job.stopping = true
                 RPC.finish_job(job, "interrupted", res, string.format("combat started: no more stand-up walk orders"
-                    .. " or queue purges for %s (%d sent)", name_of(char) or "the character", job.orders))
-            elseif not A.standing_up(char) then
+                    .. " or queue purges for %s (%d sent)", who, res.orders))
+            elseif not job.ordered then
+                if not auto_dialog(char) or now - job.t0 >= A.STANDUP_DIALOG_MS then order(job) end
+            elseif job.walked and not A.standing_up(char) and not A.held_action(char) then
                 res.pending, res.ended = false, true
                 RPC.finish_job(job, "done", res)
-            elseif RPC.now_ms() - job.t0 >= A.STANDUP_END_MS then
+            elseif now - job.ordered >= A.STANDUP_END_MS then
+                local held = A.held_action(char)
                 res.pending = true
-                RPC.finish_job(job, "failed", res, string.format("%s still stands up from the revive %.0f s after the"
-                    .. " first walk order (ResurrectComponent kept): %d walk order(s), %s", name_of(char) or
-                    "the character", A.STANDUP_END_MS / 1000, job.orders, job.walked
-                    and string.format("it walked %.1f m", moved) or "none of them started (it never moved)"))
-            elseif not job.walked and RPC.now_ms() - job.ordered >= A.STANDUP_REORDER_MS then
-                pcall(G.osi, "PurgeOsirisQueue", char)
-                order(job)
+                job.osi_task = true -- the walk that never started is purged now (start(): queued tasks)
+                RPC.finish_job(job, "failed", res, string.format("%s %s %.0f s after the walk order (it %s;"
+                    .. " ResurrectComponent %s%s)", who, job.walked and "still holds the stand-up" or
+                    "took no step", A.STANDUP_END_MS / 1000, job.walked and string.format("walked %.1f m", moved)
+                    or "never moved", A.standing_up(char) and "kept" or "gone",
+                    held and string.format("; layer-1 action unfinished, TransactionId %s", tostring(held.tid)) or ""))
             end
         end,
     })
