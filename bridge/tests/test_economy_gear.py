@@ -377,30 +377,37 @@ class ScrollUse(unittest.TestCase):
 
     def test_a_target_beyond_the_spells_reach_is_walked_to_first(self):
         """Live N9 step 3: Longstrider (touch) read 9.47 m from Wyll: the click landed, nothing cast, nobody walked.
-        Live N10 step 2: the walk (move_to within 1.5, a melee reach) ended 3.3 m off: out of its 2.5 m reach. The
-        walk takes spell_reach's own reach (range, centres), and spell_reach says when it is in reach."""
+        The reader walks (move_to within the spell's range, a melee reach) and spell_reach says when it is in reach."""
         out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
-                                       name="Scroll of Longstrider", rpc=self.reach_after(3.3, 2.0),
-                                       jobs={"act.move_to": lambda a: JobResult("done", {"dist": 3.3, "in_reach": False})})
+                                       name="Scroll of Longstrider", rpc=self.reach_after(2.0),
+                                       jobs={"act.move_to": lambda a: JobResult("done", {"dist": 2.0, "in_reach": True})})
         head = out.split("\n")[0]
         self.assertEqual(self.cancels, [self.SH])   # the spell put back before the walk
         moves = [a for op, a in self.rpcs if op == "act.move_to"]
-        self.assertEqual(moves, [{"char": self.SH, "target": self.GALE, "range": 2.5}] * 2)   # a 2nd leg from 3.3 m
+        self.assertEqual(moves, [{"char": self.SH, "target": self.GALE, "within": 1.5}])
         self.assertEqual(calls, [("act.interact", {"char": self.SH, "target": self.SCROLL})] * 2)   # read again
         self.assertEqual(clicks, [self.GALE])
         self.assertTrue(head.startswith("use_ability: done"), head)
         self.assertIn("; Gale was 9.5 m from Shadowheart, beyond Longstrider's 2.5 m reach; the spell in hand was put back"
-                      " (escape); Shadowheart walked into reach first in 2 legs (now 2.0 m from Gale) and read it again "
+                      " (escape); Shadowheart walked into reach first (now 2.0 m from Gale) and read it again "
                       "(Scroll of Longstrider read, cast on", head)
 
-    def test_a_walk_that_ends_out_of_reach_reads_nothing(self):
+    def test_a_walk_that_ends_out_of_reach_is_not_walked_again(self):
+        """Live N10-N12 step 2: Claude (-42.0,26.4,-44.7), Wyll (-38.5,26.4,-53.5), 9.4 m, Longstrider's 2.5 m reach:
+        the walk ended 3.3 m from Wyll each time; N11/N12's second leg from there walked 10 m on "a 0.0 m route" and
+        ended 7.2 m off, past him. One walk, then an honest FAILED with the distance."""
+        seq = [9.4, 3.3]
+        rpc = dict(self.FAR, **{"act.spell_reach": lambda a: {"range_m": 1.5, "melee": True, "reach_m": 2.5,
+                                                               "dist_m": seq.pop(0) if len(seq) > 1 else seq[0]}})
         out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
-                                       name="Scroll of Longstrider", rpc=self.reach_after(3.3, 3.3),
+                                       name="Scroll of Longstrider", rpc=rpc,
                                        jobs={"act.move_to": lambda a: JobResult("done", {"dist": 3.3})})
         head = out.split("\n")[0]
+        self.assertEqual(len([op for op, _ in self.rpcs if op == "act.move_to"]), 1)
         self.assertTrue(head.startswith("use_ability: FAILED"), head)
-        self.assertIn("; the walk into reach ended 3.3 m from Gale, still beyond the 2.5 m reach (2 leg(s)), nothing "
-                      "cast", head)
+        self.assertIn("Gale was 9.4 m from Shadowheart, beyond Longstrider's 2.5 m reach; the spell in hand was put back"
+                      " (escape); the walk into reach ended 3.3 m from Gale, still beyond the 2.5 m reach, nothing cast",
+                      head)
         self.assertEqual((len(calls), clicks), (1, []))
 
     def test_a_ranged_spell_walks_only_into_its_range(self):
