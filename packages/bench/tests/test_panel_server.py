@@ -14,7 +14,7 @@ from bg3bench.serve.server import TOKEN_SLOT, App, parser, serve
 from bg3bench.serve.settings import Settings
 
 REPO = Path(__file__).resolve().parents[3]
-KEY = "sk-or-v1-0123456789abcdefghij-WXYZ"
+FAKE = "fake-value-0123456789abcdefghij-WXYZ"
 
 
 @pytest.fixture
@@ -132,7 +132,7 @@ def test_localhost_name_is_allowed(server):
 
 
 def test_write_without_or_with_a_wrong_token_is_refused(server):
-    body = {"name": "DEEPSEEK_API_KEY", "value": KEY}
+    body = {"name": "DEEPSEEK_API_KEY", "value": FAKE}
     code, r = post(server, "/api/v1/settings/key", body, headers={security.TOKEN_HEADER: ""})
     assert code == 403 and "X-Panel-Token" in r["error"]
     code, _ = post(server, "/api/v1/settings/key", body, headers={security.TOKEN_HEADER: "t0ken-for-testz"})
@@ -174,20 +174,20 @@ def test_token_is_injected_into_index_only(server):
 
 def test_key_is_written_to_dotenv_and_only_masked_back(server):
     (server.repo / ".env").write_text("# mine\nOTHER=1\nexport DEEPSEEK_API_KEY=old\n")
-    code, r = post(server, "/api/v1/settings/key", {"name": "DEEPSEEK_API_KEY", "value": KEY})
-    assert code == 200 and r["masked"] == "…WXYZ" and KEY not in json.dumps(r)
-    assert (server.repo / ".env").read_text() == f"# mine\nOTHER=1\nexport DEEPSEEK_API_KEY={KEY}\n"
+    code, r = post(server, "/api/v1/settings/key", {"name": "DEEPSEEK_API_KEY", "value": FAKE})
+    assert code == 200 and r["masked"] == "…WXYZ" and FAKE not in json.dumps(r)
+    assert (server.repo / ".env").read_text() == f"# mine\nOTHER=1\nexport DEEPSEEK_API_KEY={FAKE}\n"
     assert stat.S_IMODE((server.repo / ".env").stat().st_mode) == 0o600
     code, s = get(server, "/api/v1/settings")
     assert {"name": "DEEPSEEK_API_KEY", "masked": "…WXYZ"} in s["keys"]
-    assert KEY not in json.dumps(s)
+    assert FAKE not in json.dumps(s)
     code, p = get(server, "/api/v1/profiles")
-    assert KEY not in json.dumps(p)
+    assert FAKE not in json.dumps(p)
     assert next(r for r in p["profiles"] if r["name"] == "deepseek-flash")["key_set"] is True
 
 
 def test_key_name_must_be_a_profiles_key(server):
-    code, r = post(server, "/api/v1/settings/key", {"name": "PATH", "value": KEY})
+    code, r = post(server, "/api/v1/settings/key", {"name": "PATH", "value": FAKE})
     assert code == 400 and "api_key_env" in r["error"]
     code, r = post(server, "/api/v1/settings/key", {"name": "DEEPSEEK_API_KEY", "value": "a b\nEVIL=1"})
     assert code == 400
@@ -195,7 +195,7 @@ def test_key_name_must_be_a_profiles_key(server):
 
 def test_key_refused_when_dotenv_is_not_git_ignored(server):
     server.settings.ignored = lambda _: False
-    code, r = post(server, "/api/v1/settings/key", {"name": "DEEPSEEK_API_KEY", "value": KEY})
+    code, r = post(server, "/api/v1/settings/key", {"name": "DEEPSEEK_API_KEY", "value": FAKE})
     assert code == 400 and ".gitignore" in r["error"] and not (server.repo / ".env").exists()
 
 

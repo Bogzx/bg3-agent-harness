@@ -27,7 +27,12 @@ from bg3bench.adapters import play_flags
 
 YOUTUBE_UNVERIFIED_S = 15 * 60  # an account without phone verification uploads at most 15 minutes
 OFFERED_CLIENTS = ("pi",)
-NOT_OFFERED = "v1 offers pi only: a Claude Code run is a pilot (it reads play/CLAUDE.md) and can't be submitted"
+NOT_OFFERED = "v1 offers pi only"
+CLAUDE_PILOT = ": a Claude Code run is a pilot (it reads play/CLAUDE.md) and can't be submitted"
+
+
+def not_offered(client: str) -> str:
+    return NOT_OFFERED + (CLAUDE_PILOT if client == "claude" else "")
 
 
 class PanelError(ValueError):
@@ -101,7 +106,11 @@ def profile_rows(prof_dir: Path, has_key: Callable[[str], bool]) -> list[dict[st
             continue
         key = prof.endpoint.api_key_env if prof.endpoint else None
         offered = prof.client in OFFERED_CLIENTS and prof.status != "unsupported"
-        why = None if offered else (NOT_OFFERED if prof.client not in OFFERED_CLIENTS else "status unsupported")
+        why = (
+            None
+            if offered
+            else (not_offered(prof.client) if prof.client not in OFFERED_CLIENTS else "status unsupported")
+        )
         rows.append(
             {
                 "name": p.stem,
@@ -164,7 +173,7 @@ def plan_run(
         except (OSError, hprofiles.ProfileError) as e:
             raise PanelError(str(e)) from None
         if prof.client not in OFFERED_CLIENTS:
-            raise PanelError(f"profile {n}: {NOT_OFFERED}")
+            raise PanelError(f"profile {n}: {not_offered(prof.client)}")
         if prof.status == "unsupported" or (prof.status != "verified" and not allow_unverified):
             raise PanelError(f"profile {n}: status {prof.status!r} (never played live; allow unverified to plan it)")
         models.append({"slug": prof.model, "client": prof.client, "effort": prof.effort, "profile": str(n)})

@@ -17,7 +17,7 @@ SCENARIOS = REPO / "packages" / "bench" / "scenarios"
 def profiles(tmp_path: Path) -> Path:
     d = tmp_path / "profiles"
     d.mkdir()
-    for name in ("deepseek-flash", "opus-5.5-pi", "sonnet-5.5-claude-code"):
+    for name in ("deepseek-flash", "opus-5.5-pi", "sonnet-5.5-claude-code", "codex"):
         shutil.copy(REPO / "profiles" / f"{name}.toml", d)
     return d
 
@@ -38,7 +38,7 @@ def plan(scs, prof_dir, tmp_path, budget=None, verified=None, form=None):
 def test_mask_never_shows_more_than_four_characters():
     assert security.mask(None) is None and security.mask("") is None
     assert security.mask("short-key") == "set"
-    assert security.mask("sk-0123456789abcdefXYZW") == "…XYZW"
+    assert security.mask("fake-0123456789abcdefXYZW") == "…XYZW"
 
 
 def test_host_ok():
@@ -63,7 +63,7 @@ def test_set_dotenv_replaces_one_line_and_keeps_the_rest(tmp_path):
 
 
 def test_settings_view_masks_and_rejects_bad_prefs(tmp_path):
-    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-or-abcdefghijklmnop1234\n")
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=fake-abcdefghijklmnop1234\n")
     s = Settings(
         tmp_path / ".env", tmp_path / "cfg", lambda: ["OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"], ignored=lambda _: True
     )
@@ -94,7 +94,9 @@ def test_profiles_offer_pi_only(profiles):
     assert rows["deepseek-flash"]["offered"] and rows["deepseek-flash"]["key_set"] is True
     assert rows["opus-5.5-pi"]["key_set"] is False and rows["opus-5.5-pi"]["status"] == "offline"
     claude = rows["sonnet-5.5-claude-code"]
-    assert not claude["offered"] and "pi only" in claude["why"] and claude["api_key_env"] is None
+    assert not claude["offered"] and claude["why"].startswith("v1 offers pi only: a Claude Code run is a pilot")
+    assert claude["api_key_env"] is None
+    assert rows["codex"]["why"] == "v1 offers pi only"
 
 
 def test_plan_jobs_reserve_and_budget(scenarios, profiles, tmp_path):

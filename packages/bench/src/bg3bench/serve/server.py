@@ -56,7 +56,6 @@ NOT_AFFILIATED = (
     "Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC. Baldur's Gate 3 "
     "is made by Larian Studios. Not affiliated with Larian Studios."
 )
-SITE = "https://benchmark.bogdantruta.com"
 
 
 class App:
@@ -71,9 +70,11 @@ class App:
         checks: Callable[[], Sequence[panel.Check]],
         scenarios_dir: Path = SCENARIOS,
         web_dir: Path | None = DEFAULT_WEB,
+        site: str | None = None,
     ):
         self.token, self.repo, self.runtime, self.settings = token, repo, runtime, settings
         self.saves, self.checks, self.scenarios_dir, self.web_dir = saves, checks, scenarios_dir, web_dir
+        self.site = site  # the submissions site's URL (--site)
         self.port = 0  # set once bound (serve)
 
     def profiles_dir(self) -> Path:
@@ -90,7 +91,7 @@ class App:
                 "bench_version": __version__,
                 "suite": suite.suite_version(),
                 "not_affiliated": NOT_AFFILIATED,
-                "site": SITE,
+                "site": self.site,
             }
         if path == "/api/v1/preflight":
             return panel.preflight_view(self.checks())
@@ -272,6 +273,9 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--runtime", type=Path, help="default <repo>/runtime")
     ap.add_argument("--config-dir", type=Path, default=Path.home() / ".config" / "bg3bench")
     ap.add_argument("--web", type=Path, default=DEFAULT_WEB, help="the built web app (packages/bench/web/dist)")
+    ap.add_argument(
+        "--site", default=os.environ.get("BG3BENCH_SITE"), help="the submissions site's URL ($BG3BENCH_SITE)"
+    )
     ap.add_argument("--verbose", action="store_true", help="log request lines (never bodies)")
     return ap
 
@@ -290,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         saves=panel.StorySaves(steam_paths.saves_dir()),
         checks=default_checks(repo, runtime),
         web_dir=opt.web,
+        site=opt.site,
     )
     srv = serve(app, opt.port, opt.verbose)
     print(f"bg3bench panel: http://{HOST}:{app.port}/  (write token in {config_dir / security.TOKEN_FILE})", flush=True)
