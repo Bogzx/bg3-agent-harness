@@ -223,17 +223,23 @@ def pick_save_why(
     HANDOFF (S075's) named S075-end; S076's HANDOFF named S075-end again, its S076-end being a losing fight."""
     save, why = _pick_save_why(saves, handoff_label, owner, runner_saves, prefix, windows, handoff_session, ends)
     # never silently: a save of this playthrough whose SaveTime can't be read (a corrupt meta.lsf) is named
-    skipped = unreadable_saves(saves, handoff_label, owner, runner_saves, prefix)
+    skipped = unreadable_saves(saves, handoff_label, owner, runner_saves, prefix, windows)
     return save, why + (f"; skipped, SaveTime unreadable: {', '.join(skipped)}" if skipped else "")
 
 
 def unreadable_saves(
-    saves: list[Save], handoff_label: str | None, owner: str | None, runner_saves: set[str], prefix: str = SAVE_PREFIX
+    saves: list[Save],
+    handoff_label: str | None,
+    owner: str | None,
+    runner_saves: set[str],
+    prefix: str = SAVE_PREFIX,
+    windows: list[tuple[float, float]] | None = None,
 ) -> list[str]:
-    """The folders save_candidates would weigh (by owner, label, the runner's or the start save) but can't: their
-    SaveTime is unreadable (Save.saved None)."""
-    unread = [dataclasses.replace(s, saved=0.0) for s in saves if s.saved is None]
-    return [s.folder for s in save_candidates(unread, handoff_label, owner, runner_saves, prefix)]
+    """The folders save_candidates would weigh (by owner, label, the runner's or the start save, inside `windows`)
+    but can't: their SaveTime is unreadable (Save.saved None). With no SaveTime the play windows go by the mtime: only
+    a name in a message, never a pick (a Steam-restored copy's mtime is the launch, inside the running window)."""
+    unread = [dataclasses.replace(s, saved=s.mtime) for s in saves if s.saved is None]
+    return [s.folder for s in save_candidates(unread, handoff_label, owner, runner_saves, prefix, windows)]
 
 
 def _pick_save_why(
