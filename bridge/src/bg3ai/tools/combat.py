@@ -278,6 +278,7 @@ def _log_hotbar(spell: str, res: Any) -> None:
     """Each hotbar cast's stages and time (runtime/hotbar_cast.jsonl): the live acceptance item and the latency
     watch read it, the agent never does."""
     try:
+        core.RUNTIME.mkdir(parents=True, exist_ok=True)  # a new runtime dir (core._log's)
         with open(core.RUNTIME / "hotbar_cast.jsonl", "a") as f:
             f.write(json.dumps({"t": round(time.time(), 1), "spell": spell, **res.as_dict()}, default=str) + "\n")
     except (OSError, AttributeError):
