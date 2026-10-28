@@ -684,17 +684,18 @@ def _walk_into_reach(inp, char: str, tgt: str, name: str, arm: dict) -> tuple[st
     back = _put_back(inp, char)
     if back.startswith("; the spell is still"):
         return f"{far}: not walked{back}, nothing cast", False   # a walk with the spell in hand: unknown ground
-    # Live N10-N12 step 2 (Wyll 9.4 m off, a 2.5 m touch reach): the first walk ended ~3.3 m from him each time; in N11
-    # and N12 the second leg from there (move_to range, "a 0.0 m route") went 10 m round and ended 7.2 m off, past him.
-    # One walk, as in N10: touch = move_to's melee reach, ranged = stop on the way in, inside the range (not at 2.2 m:
-    # a Fireball read 20 m off would walk into its own blast, app review of #37); spell_reach then says if in reach.
-    how = {"within": range_m} if r.get("melee") else {"range": reach_m}
-    j = core.game.run_job("act.move_to", {"char": char, "target": tgt, **how}, wait_s=40)
-    if j.status != "done":
-        return f"{far}{back}; the walk into reach {j.status}: {j.error or 'no reason given'}, nothing cast", False
+    # Live N10-N13 step 2 (Wyll 9.4 m off, a 2.5 m touch reach): each walk to the point 1.5 m from him ended 1.8-2.4 m
+    # short of it (3.3-3.9 m off); in N11 and N12 a second leg from there ("a 0.0 m route") went 10 m round and ended
+    # 7.2 m off, past him. One walk, touch or ranged: move_to range = the reach (centres), which aims past the stop point
+    # and stops on the way in, 1 m inside the reach (not at 2.2 m: a Fireball read 20 m off would walk into its own
+    # blast, app review of #37); spell_reach then says if in reach.
+    j = core.game.run_job("act.move_to", {"char": char, "target": tgt, "range": reach_m}, wait_s=40)
     after = core.game.try_rpc("act.spell_reach", {"char": char, "spell": spell, "target": tgt}) or {}
     d, rch = after.get("dist_m"), after.get("reach_m")
     rch = rch if isinstance(rch, (int, float)) else reach_m
+    if j.status != "done":
+        at = f" ({overview._name_of(char)} now {d:.1f} m from {overview._name_of(tgt)})" if isinstance(d, (int, float)) else ""
+        return f"{far}{back}; the walk into reach {j.status}: {j.error or 'no reason given'}{at}, nothing cast", False
     if not isinstance(d, (int, float)):
         return f"{far}{back}; the walk into reach ended where act.spell_reach can't measure, nothing cast", False
     if d <= rch:

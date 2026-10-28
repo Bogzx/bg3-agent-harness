@@ -14,9 +14,17 @@ local start, osi_tasks = I.start, I.osi_tasks
 ------------------------------------------------------------------------
 
 -- move_to {target, range}: a ranged spell's reach (centres; app review of #37: a Scroll of Fireball read 20 m from a
--- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, at a
--- reachable floor point `reach` m from the target: on the line toward the walker, then 22.5 and 45 degrees off it.
+-- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, `reach` m
+-- from the target (RANGE_STOP_SLACK inside the range): the walker stops itself there (walk_tick, stop_at).
 A.RANGE_STOP_SLACK = 1.0
+-- Live N10-N13 (Claude 9.4 m from Wyll, Longstrider's 2.5 m touch reach): each walk to the point 1.5 m from him, the
+-- stop point itself, ended 1.8-2.4 m short of it, 3.3-3.9 m off, out of reach. The walk's goal lies RANGE_PAST_M
+-- beyond the stop point (past the target for a short reach, never nearer its centre than RANGE_BODY_M), on the line
+-- toward the walker, then 22.5 and 45 degrees off it; that goal's path may be at most RANGE_DETOUR_M longer than the
+-- straight line (else it is a way round, not in). When none is walkable, the stop point itself is the goal, as before.
+A.RANGE_PAST_M = 4.0
+A.RANGE_BODY_M = 1.0
+A.RANGE_DETOUR_M = 3.0
 -- Live N11 step 2: the first leg ended 3.3 m from Wyll, 1.8 m short of its point; the second leg's path to the same
 -- point had no nodes (0.0 m) and the walk ordered on it went 10.2 m round, ending 7.8 m off. A point more than
 -- RANGE_END_TOL_M away whose path has no nodes is not one the engine walks to: the next angle is tried. (A normal path
@@ -28,19 +36,24 @@ local function range_point(char, target, reach, range)
     local d = U.dist(a, t)
     if d <= range then return { here = true, dist = d, length_m = 0, tpos = t } end
     local base = math.atan(a[3] - t[3], a[1] - t[1])
+    local past = reach - A.RANGE_PAST_M
+    if past < A.RANGE_BODY_M then past = math.min(past, -A.RANGE_BODY_M) end
     local short
-    for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
-        local ang = base + k * math.pi / 8
-        local x, z = t[1] + reach * math.cos(ang), t[3] + reach * math.sin(ang)
-        local y = G.floor_at(x, z, t[2])
-        if y then
-            local p = { x, y, z }
-            local ok, info = G.reachable(char, p)
-            local off = ok and info.no_nodes and U.dist(a, p) or 0
-            if ok and not info.needs_jump and off > A.RANGE_END_TOL_M then
-                short = math.min(short or off, off)
-            elseif ok and not info.needs_jump then
-                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = t }
+    for _, r in ipairs({ past, reach }) do
+        for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
+            local ang = base + k * math.pi / 8
+            local x, z = t[1] + r * math.cos(ang), t[3] + r * math.sin(ang)
+            local y = G.floor_at(x, z, t[2])
+            if y then
+                local p = { x, y, z }
+                local ok, info = G.reachable(char, p)
+                local off = ok and info.no_nodes and U.dist(a, p) or 0
+                local round = r == past and (info.length_m or 0) > U.dist(a, p) + A.RANGE_DETOUR_M
+                if ok and not info.needs_jump and off > A.RANGE_END_TOL_M then
+                    short = math.min(short or off, off)
+                elseif ok and not info.needs_jump and not round then
+                    return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = t }
+                end
             end
         end
     end
@@ -68,6 +81,7 @@ local function begin_walk(job, opts)
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
         last_pos = G.pos(job.char), y0 = (G.pos(job.char) or {})[2], still_ms = 0, travelled = 0,
         tolerance = opts.tolerance or 1.5, reach = opts.reach, melee = opts.melee, on_arrive = opts.on_arrive,
+        stop_at = opts.stop_at,
         move_id = opts.move_id or job.id, combat = G.in_combat(job.char),
     }
     local p = opts.pos
@@ -92,9 +106,10 @@ local function walk_dist_left(job)
 end
 
 -- Is the walk close enough? Point walks: within tolerance of the point.
--- Entity walks: within reach of the entity, or at the approach point.
+-- Entity walks: within reach of the entity, or at the approach point. A range walk (stop_at): within the range only.
 local function walk_close_enough(job, d, de)
     local w = job.walk
+    if w.stop_at then return de ~= nil and de <= w.melee end
     if de and w.reach and de <= w.reach + 0.5 then return true end
     return d ~= nil and d <= math.max(w.tolerance, 2.0)
 end
@@ -126,7 +141,8 @@ local function walk_arrived(job)
     end
     if not walk_close_enough(job, d, de) then
         res.reached = false
-        RPC.finish_job(job, "failed", res, "could not get closer to the destination")
+        RPC.finish_job(job, "failed", res, w.stop_at and de and string.format("the walk ended %.1f m from the target,"
+            .. " beyond the %.1f m range", de, w.melee) or "could not get closer to the destination")
     else
         RPC.push("moved_done", { uuid = job.char, move_id = job.id })
         RPC.finish_job(job, "done", res)
@@ -437,6 +453,11 @@ local function walk_tick(job)
     w.travelled = w.travelled + step
     job.partial = { pos = pos_view(here), travelled = U.round(w.travelled, 1) }
     if step < 0.03 then w.still_ms = w.still_ms + dt else w.still_ms = 0 end
+    local tpos = w.stop_at and G.pos(w.target)
+    if tpos and U.dist(here, tpos) <= w.stop_at then -- a range walk: stopped on the way in, its goal lies further
+        pcall(G.osi, "PurgeOsirisQueue", job.char)
+        return walk_arrived(job)
+    end
 
     if w.budget and w.travelled >= w.budget - 0.05 then
         w.done = true
@@ -755,7 +776,7 @@ reg("move_to", function(args)
     G.combat_gate(char, "turn")
     local target = args.target and G.guid(args.target)
     local pos = args.pos
-    local route, melee, reach
+    local route, melee, reach, stop_at
     local plate = target and A.is_plate(target) and target or nil
     if plate then
         -- A floor plate: stand on its centre, as a player's click on it does (the ring point next to it is off it).
@@ -788,6 +809,7 @@ reg("move_to", function(args)
             -- live N10 step 2: the game ended a touch walk (reach 2.5 m, centres) 1.8 m short of its point, 3.3 m off:
             -- aim RANGE_STOP_SLACK inside the reach whatever its size (never nearer than 1 m), as spell_reach measures
             melee, reach = range, math.max(1.0, range - A.RANGE_STOP_SLACK)
+            stop_at = reach
         end
         local plan = range and range_point(char, target, reach, range) or G.approach_point(char, target, reach)
         if plan.here then
@@ -859,7 +881,8 @@ reg("move_to", function(args)
         end
     end
     local final = { pos = pos, target = not plate and target or nil, speed = speed, tolerance = plate and 0.5 or 1.5,
-        reach = reach, melee = melee, on_arrive = plate and on_plate or nil }
+        reach = reach, melee = melee, stop_at = stop_at,
+        on_arrive = plate and on_plate or nil }
 
     return start("move_to", char, {
         eta_s = walk_eta(route, speed), route_m = route,
