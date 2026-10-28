@@ -254,6 +254,22 @@ test("V9 S063: a jump that lands far from where the walk was going is the game's
     assert(j.error:find("landed 22 m from where it was walking", 1, true), j.error)
 end)
 
+test("V9 S036 19:52:10: the Faith-Leap trial's put-back mid-walk is the game's, not a blocked teleport", function()
+    -- runtime/actions.jsonl: move_to (-780,-28.3,-727.2) from (-773.7,-28.3,-727.4) (no drop first) put back at
+    -- (-758.9,-25.9,-727.1): it read "engine teleported the character (not allowed)"
+    local seq = RPC.eventSeq
+    world[P1].pos = { -772, -28.3, -727.2 }
+    local j = job(op("move_to", { char = P1, pos = { -780, -28.3, -727.2 } }))
+    world[P1].pos = { -773.7, -28.3, -727.4 }
+    tick()
+    world[P1].pos = { -758.9, -25.9, -727.1 }
+    tick()
+    eq(j.status, "interrupted", "status " .. tostring(j.error)); eq(j.result.by_game, true, "by_game")
+    eq(j.error, "the game moved the character (it landed 21 m from where it was walking), not our walk", "facts")
+    eq(last_event("teleport_blocked", seq), nil, "not a blocked teleport")
+    world[P1].pos = { 0, 0, 0 }
+end)
+
 -- V15 S073 22:33:39: Lower City Central Wall reached at 23509.9 (bg3le log clock), the walk from the waypoint began 0.5 s later;
 -- at 23518.86, 19 m along it, Claude jumped 29.8 m (7.8 m down) onto the walk's own end, no story signal with it.
 local S073_FROM, S073_END = { -48.5, 27.9, -73.5 }, { -47.7, 20.1, -102.2 }
