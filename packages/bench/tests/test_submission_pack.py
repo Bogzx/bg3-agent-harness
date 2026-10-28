@@ -269,3 +269,12 @@ def test_scrub_replaces_a_secret_and_reads_tars():
     quant = b"\xff\xdb\x00\x04ab"  # a quantisation table: no text in it
     comment = b"\xff\xfe\x00\x07hello"
     assert scrub.jpeg_texts(b"\xff\xd8" + quant + comment + b"\xff\xda\x00\x02") == ["hello"]
+
+
+def test_the_total_cap_is_the_sites_8_mib():
+    cap = 8 * 1024 * 1024
+    assert bundle.MAX_TOTAL_BYTES == cap
+    assert pack.size_problems({"bundle.json": b"{}", "facts.jsonl": b"x" * (cap - 2)}) == []
+    assert pack.size_problems({"bundle.json": b"{}", "facts.jsonl": b"x" * (cap - 1)}) == [
+        f"{cap + 1} bytes in all, over {cap}"
+    ]

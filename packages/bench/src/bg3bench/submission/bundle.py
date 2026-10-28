@@ -28,7 +28,7 @@ ENVELOPE = "bundle.json"
 RECORD_FILES = ("manifest.json", "result.json", "facts.jsonl", "rolls.jsonl")
 EVENTS = re.compile(r"S\d{3,}(?:-[rc]\d+)?\.events\.jsonl")  # one events log per play process
 
-MAX_TOTAL_BYTES = 20 * 1024 * 1024  # every file, bundle.json included
+MAX_TOTAL_BYTES = 8 * 1024 * 1024  # every file, bundle.json included: the site refuses a bigger upload
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_FILES = 32  # bundle.json not counted
 # The contact sheet: one uncompressed tar member whose entries are only frames/<n>.jpg (regular files).

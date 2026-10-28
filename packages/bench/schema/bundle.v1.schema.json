@@ -198,7 +198,7 @@
     },
     "files": {
       "type": "array",
-      "description": "every file of the bundle except bundle.json, sorted by name, names unique",
+      "description": "every file of the bundle except bundle.json, sorted by name, names unique; with bundle.json at most 8 MiB (8388608 bytes) in all, frames.tar at most 3 MiB (bg3bench.submission.bundle's caps)",
       "minItems": 1,
       "maxItems": 32,
       "items": {

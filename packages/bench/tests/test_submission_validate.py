@@ -776,3 +776,12 @@ def test_worker_scope_runs_only_the_workers_checks(good):
     bdir, release = good
     v = validate.validate(bdir, release, where="worker")
     assert {r.code for r in v.checks} == {c.code for c in codes.CHECKS if "worker" in c.where}
+
+
+def test_f01_holds_the_total_to_8_mib(tmp_path):
+    cap = 8 * 1024 * 1024
+    (tmp_path / bundle.ENVELOPE).write_bytes(b"{}")
+    for n, ok in ((cap - 2, True), (cap - 1, False)):
+        (tmp_path / "facts.jsonl").write_bytes(b"x" * n)
+        got = validate.f01_files(tmp_path, {"files": [{"name": "facts.jsonl", "bytes": n}]})
+        assert got[0] is ok, got
