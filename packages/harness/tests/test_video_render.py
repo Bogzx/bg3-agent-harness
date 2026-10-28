@@ -124,7 +124,21 @@ def test_the_same_run_renders_the_same_bytes(tmp_path: Path):
     assert (tmp_path / "out1" / "render.json").read_bytes() == (tmp_path / "out2" / "render.json").read_bytes()
 
 
-def test_the_panels_have_their_fixed_sizes_and_the_id_line_names_the_bundle():
+def test_the_id_line_names_the_run_and_its_run_hash():
+    assert draw.id_line(META) == "run s-r001 · hash abababababab · x.test"
+
+
+def test_the_run_hash_must_be_a_sha256_hex_digest(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    index = write_run(tmp_path / "run")
+    args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out"), "--run-id", "s-r001"]
+    for bad in ("AB" * 32, "ab" * 31, "6f1c-uuid"):
+        with pytest.raises(SystemExit):
+            render.main([*args, "--run-hash", bad], FakeFfmpeg())
+        assert "not a sha256 hex digest" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_panels_have_their_fixed_sizes():
     strip = draw.strip_image(T.Strip(5, 0.42, 410, 133, (T.Member("Tav", 9, 18),), 6.0), META)
     side = draw.side_image([T.Item(1.0, "S001", 0, "call", "get_status")])
     assert (strip.size, side.size) == ((1280, 360), (640, 1080))
@@ -144,7 +158,7 @@ def test_a_run_whose_recording_has_a_gap_is_refused(tmp_path: Path, capsys: pyte
     index = write_run(tmp_path / "run", gap=True)
     ff = FakeFfmpeg()
     args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out")]
-    assert render.main([*args, "--run-id", "s-r001", "--bundle", "ab" * 32], ff) == 2
+    assert render.main([*args, "--run-id", "s-r001", "--run-hash", "ab" * 32], ff) == 2
     assert "refused: the recording misses 6.0 s at run second 1.0" in capsys.readouterr().err
     assert not (tmp_path / "out").exists() and not ff.calls
 
@@ -152,7 +166,7 @@ def test_a_run_whose_recording_has_a_gap_is_refused(tmp_path: Path, capsys: pyte
 def test_a_sample_leaves_out_the_events_after_it(tmp_path: Path):
     index = write_run(tmp_path / "run")
     args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out"), "--sample-s", "2"]
-    assert render.main([*args, "--run-id", "s-r001", "--bundle", "ab" * 32], FakeFfmpeg()) == 0
+    assert render.main([*args, "--run-id", "s-r001", "--run-hash", "ab" * 32], FakeFfmpeg()) == 0
     sync = json.loads((tmp_path / "out" / "render.json").read_text())
     assert (sync["video_end"], [e["seq"] for e in sync["events"]]) == (T0 + 2.0, [0, 1])
 

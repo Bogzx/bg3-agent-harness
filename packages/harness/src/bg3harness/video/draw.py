@@ -114,7 +114,7 @@ def _gold(n: int) -> str:
 
 def strip_image(s: Strip, meta: Meta) -> Image.Image:
     """The strip at one second of run clock: the scenario's title and task; the clock against the cap, the cost so
-    far, the gold and the goal; the party's HP bars; under it the id line (run id, bundle hash, site)."""
+    far, the gold and the goal; the party's HP bars; under it the id line (run id, run hash, site)."""
     img = Image.new("RGB", (STRIP_W, STRIP_H), BG)
     d = ImageDraw.Draw(img)
     width = STRIP_W - 2 * PAD
@@ -156,6 +156,10 @@ def strip_image(s: Strip, meta: Meta) -> Image.Image:
     id_y = STRIP_H - ID_H
     d.rectangle((0, id_y, STRIP_W, STRIP_H), fill=ID_BG)
     id_f = font("mono", 28)
-    line = " · ".join(x for x in (f"run {meta.run_id}", f"bundle {meta.bundle_sha256[:12]}", meta.site) if x)
-    d.text((PAD, id_y + 4), wrap(line, id_f, width, 1)[0], font=id_f, fill=FG)
+    d.text((PAD, id_y + 4), wrap(id_line(meta), id_f, width, 1)[0], font=id_f, fill=FG)
     return img
+
+
+def id_line(meta: Meta) -> str:
+    """The strip's last line: the run id, the run hash's first 12 hex digits and the site."""
+    return " · ".join(x for x in (f"run {meta.run_id}", f"hash {meta.run_sha256[:12]}", meta.site) if x)

@@ -1,6 +1,6 @@
 """Render a run's evidence video: the game recording beside the agent's tool calls and visible text.
 
-    python -m bg3harness.video <run_dir> --index <recording>/index.json --out <dir> --run-id ID --bundle SHA256 \
+    python -m bg3harness.video <run_dir> --index <recording>/index.json --out <dir> --run-id ID --run-hash SHA256 \
         [--site HOST] [--title T] [--task T] [--cap-min N] [--cost-kind billed] [--t-pass-s S] [--sample-s N]
 
 It reads only files that also go into the run's bundle (every Sxxx*.events.jsonl, facts.jsonl) and the recorder's
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -41,6 +42,13 @@ class Plan:
     @property
     def duration(self) -> float:
         return round(self.end - self.start, 3)
+
+
+def run_hash(s: str) -> str:
+    """--run-hash: a lowercase sha256 hex digest (the run's record hash, known before the render)."""
+    if not re.fullmatch(r"[0-9a-f]{64}", s):
+        raise argparse.ArgumentTypeError(f"not a sha256 hex digest: {s!r}")
+    return s
 
 
 def read_jsonl(path: Path) -> list[Json]:
@@ -151,8 +159,10 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     ap.add_argument("--index", type=Path, required=True, help="the recorder's index.json")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--run-id", required=True)
-    ap.add_argument("--bundle", required=True, help="the bundle's sha256 (the id line shows its first 12)")
-    ap.add_argument("--site", default="", help="the leaderboard's host, shown after the bundle hash")
+    ap.add_argument(
+        "--run-hash", type=run_hash, required=True, help="the run hash (64 hex; the id line shows its first 12)"
+    )
+    ap.add_argument("--site", default="", help="the leaderboard's host, shown after the run hash")
     ap.add_argument("--title", default="")
     ap.add_argument("--task", default="")
     ap.add_argument("--cap-min", type=float)
@@ -166,7 +176,7 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     facts = read_jsonl(facts_path) if facts_path.exists() else []
     index = json.loads(a.index.read_text(encoding="utf-8"))
     cap = a.cap_min * 60 if a.cap_min else None
-    meta = Meta(a.run_id, a.bundle, a.title, a.task, cap, a.cost_kind, a.t_pass_s, a.site)
+    meta = Meta(a.run_id, a.run_hash, a.title, a.task, cap, a.cost_kind, a.t_pass_s, a.site)
     try:
         start, end = run_window(facts, logs)
         if a.sample_s:

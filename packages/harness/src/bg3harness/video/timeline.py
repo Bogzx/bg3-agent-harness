@@ -85,10 +85,10 @@ class Strip:
 
 @dataclass(frozen=True)
 class Meta:
-    """What the strip and the id line say about the run (manifest.json, result.json, the bundle)."""
+    """What the strip and the id line say about the run (manifest.json, result.json, the run hash)."""
 
     run_id: str
-    bundle_sha256: str
+    run_sha256: str  # the run's record hash: its record files, known before the render (unlike the bundle's)
     title: str = ""
     task: str = ""
     cap_s: float | None = None
