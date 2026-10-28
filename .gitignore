@@ -1,4 +1,6 @@
 __pycache__/
+# API keys (the bench panel writes them here and refuses a .env git doesn't ignore)
+.env
 *.pyc
 .venv/
 *.egg-info/
