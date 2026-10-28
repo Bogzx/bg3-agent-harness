@@ -156,6 +156,19 @@ class Revive(unittest.TestCase):
         self.assertEqual(str(e.exception), "Shadowheart is not dead: Scroll of Revivify not read")
         self.assertNotIn("act.interact", [op for op, _ in fake.calls])
 
+    def test_a_scroll_aimed_at_a_member_still_standing_up_is_not_read(self):
+        """night2 (live N4, N7-N12 vs N10): a spell on the revived Claude during his stand-up (act.end_standup) left his
+        layer-1 action unfinished for good. act.cast waits for it; a scroll's click would come at once."""
+        fake = self.use(Fake([{"uuid": ME, "pos": [0, 0, 0]}, {"uuid": SH, "pos": [2, 0, 0]}]))
+        rpc = fake.rpc
+        fake.rpc = fake.try_rpc = lambda op, args=None, context="server": (  # type: ignore[method-assign]
+            {"running": [{"uuid": SH, "name": "Shadowheart"}]} if op == "act.standups" else rpc(op, args, context))
+        with self.assertRaises(world_tools.GameError) as e:
+            world_tools._use_scroll(ME, {"name": "Scroll of Longstrider", "uuid": "scroll-1"}, SH)
+        self.assertEqual(str(e.exception), "Shadowheart is still standing up from the revive: Scroll of Longstrider "
+                                           "not read")
+        self.assertNotIn("act.interact", [op for op, _ in fake.calls])
+
     def test_still_dead_said(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         self.ground(hotbar.HotbarCastResult(True, picked=1))

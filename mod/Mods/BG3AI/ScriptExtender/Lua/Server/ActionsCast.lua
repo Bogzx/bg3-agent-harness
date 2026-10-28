@@ -354,6 +354,20 @@ reg("cast", function(args)
         G.refuse("more than two targets is not supported yet")
     end
     for _, t in ipairs(targets) do if not t then G.refuse("bad target") end end
+    -- night2 (live N4, N7-N12 vs N10): every stuck plain C1 replay had Shadowheart's Cure Wounds on the revived Claude
+    -- ~5 s into his stand-up and his layer-1 action never finished; N10's probe, with nothing aimed at him, stood up at
+    -- 8.3 s. A cast at another member whose stand-up job runs waits for it as his own orders do (start(): standup_of);
+    -- a hotbar cast is refused (its clicks come as soon as the reply does).
+    local standup_of
+    for _, t in ipairs(targets) do
+        local up = not G.same(t, char) and A.active[t] or nil
+        if up and up.status == "running" and up.kind == "act.end_standup" then
+            if ui then
+                G.refuse((name_of(t) or "the character") .. " is still standing up from the revive: not cast on them")
+            end
+            standup_of = up
+        end
+    end
     local pos = args.pos
     if not Ext.Stats.Get(base) then
         -- e.g. Shout_Dodge: BG3 has no Dodge action (live: no such stats entry).
@@ -514,6 +528,7 @@ reg("cast", function(args)
         end
     end
     return start("cast", char, {
+        standup_of = standup_of,
         eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
         timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
         interrupt = { combat = walk ~= nil, dialogue = true, attacked = false },
