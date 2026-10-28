@@ -2,7 +2,7 @@
 name = "bg3ai-bridge"
 version = "0.1.0"
 description = "MCP server that lets an AI agent see and play Baldur's Gate 3 through the BG3AI mod"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "mcp>=2.3,<3",
     "pillow>=10",
