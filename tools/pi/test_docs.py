@@ -99,11 +99,12 @@ class QuickstartCommand(unittest.TestCase):
 
     def test_the_documented_run_line_plans_a_pi_series(self):
         cmds = doc_commands()
-        run = next(c for c in cmds if c[1:3] == ["runner/play.py", "run"])
-        self.assertEqual(run[0], "python3")
+        run = next(c for c in cmds if c[3:5] == ["runner/play.py", "run"])
+        self.assertEqual(run[:3], ["uv", "run", "python"])  # the repo's 3.14: the system python3 can't read a save
         profile = self.tmp / "my-model.toml"
         profile.write_text(blocks(quickstart(), "toml")[0])
-        argv = [str(profile) if a == "profiles/my-model.toml" else a for a in run]
+        # this test's own interpreter (the uv venv's) stands in for `uv run python`
+        argv = [sys.executable, *(str(profile) if a == "profiles/my-model.toml" else a for a in run[3:])]
         self.assertIn(str(profile), argv)
         env = {k: v for k, v in os.environ.items() if not k.startswith(("BG3AI_", "OPENROUTER"))}
         rt = self.tmp / "runtime"
@@ -118,8 +119,8 @@ class QuickstartCommand(unittest.TestCase):
         self.assertNotIn(KEY, out.stdout + out.stderr)
         self.assertFalse(rt.exists())  # no series.json, no budget.json
 
-        runs = next(c for c in cmds if c[1:3] == ["runner/play.py", "runs"])
-        out = subprocess.run(runs, cwd=REPO, env=env, capture_output=True, text=True, timeout=60)
+        runs = next(c for c in cmds if c[3:5] == ["runner/play.py", "runs"])
+        out = subprocess.run([sys.executable, *runs[3:]], cwd=REPO, env=env, capture_output=True, text=True, timeout=60)
         self.assertIn("no run records for naut-my-model", out.stdout)
 
 
