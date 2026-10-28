@@ -190,6 +190,7 @@ class ScrollReadFake(Fake):
     def __init__(self, hud, arm_after):
         super().__init__([{"uuid": ME}, {"uuid": SH, "dead": True}])
         self.hud, self.arm_after, self.order = hud, arm_after, []
+        self.casts = arm_after is not None  # the mod's settle: a spell that came into hand was cast by the click
 
     def run_job(self, op, args, context="server", wait_s=25.0):
         self.order.append(op)
@@ -206,6 +207,8 @@ class ScrollReadFake(Fake):
                 return {"armed": False}
             self.arm_after -= 1
             return {"armed": self.arm_after <= 0}
+        if op == "act.scroll_settle":
+            return {"read": self.casts, "charged": []}
         return super().rpc(op, args, context)
 
     try_rpc = rpc
@@ -269,6 +272,8 @@ class ScrollRead(unittest.TestCase):
 
     def test_nothing_in_hand_no_click(self):
         fake = ScrollReadFake(ME, arm_after=None)
+        self.addCleanup(setattr, world_tools, "SCROLL_SETTLE_S", world_tools.SCROLL_SETTLE_S)
+        world_tools.SCROLL_SETTLE_S = 0.0
         out = self.read(fake, arm_wait_s=0.0)
         self.assertNotIn(("click", SH), fake.order)
         self.assertIn("no spell came into hand, so e2 Shadowheart was not clicked", out)
