@@ -9,9 +9,10 @@ out the way the runner works them out for a run (bg3harness.client_setup.run_fil
 in the condition's env, its tool list minus the condition's tools off, the manifest's prompt fields), so a run of
 the suite through an unmodified harness hashes to them.
 
-    python -m bg3bench.submission.release --suite bench-v0.8 --pins-from MANIFEST... --out release.json
+    python -m bg3bench.submission.release --suite bench-v0.8 --pins-from MANIFEST... [--out FILE]
         [--condition rules ...] [--client pi --client claude] [--game-build B --bg3le-sha256 H --mod-sha1 H]
 
+--out defaults to packages/bench/releases/<suite>.json (default_path), where the validator looks for it.
 --pins-from reads the game pins from the reference runs' manifest.json files, which must all cite the same pins;
 the flags override them. The build refuses a suite that isn't the installed one, suite files not pinned for it
 (bg3bench.suite.check), saves.json disagreeing with the scenario files, reference runs with different pins, and
@@ -42,6 +43,7 @@ Json = dict[str, Any]
 SCHEMA = 1
 KIND = "bg3bench.release"
 SCHEMA_PATH = bundle.SCHEMA_PATH.parent / "release.v1.schema.json"
+RELEASES = suite.PACKAGE_ROOT / "releases"  # <suite>.json: committed when the suite is released
 CLIENTS = ("pi", "claude")
 NO_MEMORY = "memory"  # the bridge's memory tool group: off in every bench run (bg3harness.runner.run_host)
 PIN_KEYS = ("game_build", "bg3le_sha256", "mod_sha1")
@@ -64,6 +66,11 @@ class Served:
 
     names: list[str]
     prompts: dict[str, Json]  # client -> {"sha256", "condition"}
+
+
+def default_path(tag: str | None = None) -> Path:
+    """Where a suite's release file lives (default: the installed suite's): packages/bench/releases/<suite>.json."""
+    return RELEASES / f"{tag or suite.suite_version()}.json"
 
 
 def errors(doc: Any) -> list[str]:
@@ -202,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="python -m bg3bench.submission.release", description=(__doc__ or "").split("\n\n")[0]
     )
     ap.add_argument("--suite", required=True, help="the suite tag, e.g. bench-v0.8: must be the installed suite")
-    ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--out", type=Path, help="default: packages/bench/releases/<suite>.json")
     ap.add_argument("--pins-from", type=Path, nargs="+", default=[], help="reference runs' manifest.json files")
     for k in PIN_KEYS:
         ap.add_argument(f"--{k.replace('_', '-')}")
@@ -224,6 +231,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ReleaseError, saves.SavesError, ValueError, OSError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 1
+    a.out = a.out or default_path(a.suite)
+    a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     if missing := unfingerprinted(doc):
         print(f"no start-state fingerprint yet (X01 rejects their runs): {', '.join(missing)}", file=sys.stderr)

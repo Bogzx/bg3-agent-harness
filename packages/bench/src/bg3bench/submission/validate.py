@@ -13,7 +13,9 @@ YouTube lookups (E01, E02) are injected by the caller; without them those checks
 The bundle is untrusted input: the files are read as bytes, JSON depth is capped, frames.tar is listed, never
 extracted, and nothing in it is executed.
 
-    python -m bg3bench.submission.validate BUNDLE_DIR RELEASE_JSON [--where panel|job]
+    python -m bg3bench.submission.validate BUNDLE_DIR [--release FILE] [--where panel|job] [--draft]
+
+--release defaults to the installed suite's release file (packages/bench/releases/<suite>.json).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from bg3harness.run_manifest import tools_digest
 import bg3bench
 from bg3bench import facts, luck, scenario
 from bg3bench.submission import bundle, codes, consistency, pack, scrub
+from bg3bench.submission.release import default_path as release_default_path
 from bg3bench.submission.release import errors as release_errors
 
 Json = dict[str, Any]
@@ -571,13 +574,17 @@ def _ordered(verdict: Verdict) -> Verdict:
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m bg3bench.submission.validate", description="Validate a bundle.")
     ap.add_argument("bundle_dir", type=Path)
-    ap.add_argument("release", type=Path, help="the suite's release file (JSON)")
+    ap.add_argument("--release", type=Path, default=None, help="the suite's release file (default: the installed one)")
     ap.add_argument("--where", choices=("panel", "job"), default="panel")
     ap.add_argument("--draft", action="store_true", help="not rendered yet: don't require the video and frames")
     a = ap.parse_args(argv)
-    v = validate(
-        a.bundle_dir, Release.from_json(json.loads(a.release.read_text())), where=a.where, submission=not a.draft
-    )
+    path = a.release or release_default_path()
+    try:
+        rel = Release.from_json(json.loads(path.read_text()))
+    except (OSError, ValueError) as e:
+        print(f"no usable release file {path}: {e}", file=sys.stderr)
+        return 2
+    v = validate(a.bundle_dir, rel, where=a.where, submission=not a.draft)
     print(json.dumps(v.as_json(), indent=1))
     return 0 if v.accepted else 1
 

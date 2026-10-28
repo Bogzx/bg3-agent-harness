@@ -1,3 +1,4 @@
+# pyright: basic
 """bg3bench.submission.release: the suite's release file, built offline from a server dump, against the hashes a
 real run recorded (the committed pilot fixture), its schema, and its refusals."""
 
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench import saves
+from bg3bench import saves, suite
 from bg3bench.submission import pack, release, validate
 
 FIXTURE = Path(__file__).parent / "fixtures" / "submission" / "fight_act2_balthazar.bundle.tar.gz"
@@ -126,3 +127,12 @@ def test_cli_refuses_another_suite(tmp_path, capsys):
     assert release.main(["--suite", "bench-v0.1", "--out", str(tmp_path / "r.json")]) == 1
     assert "not the installed suite" in capsys.readouterr().err
     assert not (tmp_path / "r.json").exists()
+
+
+def test_default_location_and_the_validator_cli(tmp_path, capsys, served):
+    assert release.default_path("bench-v0.8") == release.RELEASES / "bench-v0.8.json"
+    assert release.default_path().name == f"{suite.suite_version()}.json"
+    assert validate.main([str(tmp_path), "--release", str(tmp_path / "none.json")]) == 2
+    (tmp_path / "bad.json").write_text('{"schema": 1}')
+    assert validate.main([str(tmp_path), "--release", str(tmp_path / "bad.json")]) == 2
+    assert "release.v1" in capsys.readouterr().err
