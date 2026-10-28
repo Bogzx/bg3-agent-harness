@@ -269,7 +269,9 @@ def check_node(ctx: Ctx) -> list[Check]:
     if pi.exists():
         checks.append(Check("pi", PASS, f"the pinned pi: {pi}"))
     else:
-        checks.append(Check("pi", WARN, f"no {pi}: {why}", "cd tools/pi && npm ci --ignore-scripts"))
+        checks.append(
+            Check("pi", WARN, f"no {pi}: only for the non-Claude clients", "cd tools/pi && npm ci --ignore-scripts")
+        )
     return checks
 
 
