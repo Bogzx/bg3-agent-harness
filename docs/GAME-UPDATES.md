@@ -87,7 +87,7 @@ passes.
    must still pass and the baselines must still fail. A start save that no longer works is made again, and the
    scenario gets a new name, because a series freezes the save's sha1.
 8. Move the pin in one commit: `WANT_BUILD` in `tools/dev/first_launch.sh` (after it `tools/ci/game_build.py`
-   exits 0 again), `PINNED_BUILD` in `packages/bench/src/bg3bench/preflight.py` (its fallback), the buildid and
+   exits 0 again), `PINNED_BUILD` in `packages/harness/src/bg3harness/preflight.py` (its fallback), the buildid and
    game version in README.md, docs/SETUP.md, docs/BENCHMARK.md and this file, a CHANGELOG entry, and any bg3le
    patch or mod fix the checks needed. That commit bumps the harness version, and the next benchmark release gets a new
    `bench-v` tag: results from before and after the move are not compared on one leaderboard.

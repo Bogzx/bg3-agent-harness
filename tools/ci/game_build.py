@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import steam_paths  # noqa: E402
 
 PIN_FILE = ROOT / "tools/dev/first_launch.sh"
-STATE_UPDATE_REQUIRED = 2  # EAppState bit (packages/bench/src/bg3bench/preflight.py has the same)
+STATE_UPDATE_REQUIRED = 2  # EAppState bit (packages/harness/src/bg3harness/preflight.py has the same)
 SAME, OTHER_BUILD, UPDATE_PENDING, UNKNOWN, USAGE = 0, 1, 2, 3, 64
 
 

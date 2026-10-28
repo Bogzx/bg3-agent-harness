@@ -1,4 +1,4 @@
-"""Offline tests for bg3bench.preflight (CLI: tools/bench_preflight.py): fixture Steam libraries, manifests,
+"""Offline tests for bg3harness.preflight (CLI: tools/bench_preflight.py): fixture Steam libraries, manifests,
 loginusers.vdf and repo trees in a temp dir; the commands (pgrep, claude, docker, nvidia-smi) stubbed. Nothing real
 is read or run. The checks run with the harness's real tools/steam_paths.py and tools/bg3le_buildinfo.py.
 """
@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bg3bench import preflight as P
+from bg3harness import preflight as P
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools"))  # the harness's helpers, not packaged yet
