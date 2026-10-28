@@ -628,14 +628,41 @@ def test_record_of_a_run_that_reached_its_until_milestone(rig: Rig):
     assert (rec["outcome"], rec["milestone"]) == ("timeout", None)
 
 
-@pytest.mark.parametrize(("tool_calls", "failures"), [(3, []), (0, [("claude_quick_exit", "harness")])])
-def test_a_short_session_is_a_quick_exit_only_without_a_tool_call(
-    rig: Rig, tool_calls: int, failures: list[tuple[str, str]]
+QUICK = [("claude_quick_exit", "harness")]
+
+
+@pytest.mark.parametrize(
+    ("rows", "failures"),
+    [
+        # app review of 0e5fc92: ToolSearch (claude's own, never in actions.jsonl) + one failed bg3 call in 31 s
+        ([(20, "get_status", "FAILED: the game isn't answering")], QUICK),
+        ([(5, "session_start", "opened S001"), (30, "save_game.bg", "")], QUICK),  # the server's own rows only
+        ([(20, "load_game", "load_game: done — loaded=Tav__S001-reload")], []),  # N15: the reload agent played
+        ([(5, "get_status", "HP 12/12"), (25, "get_status", "NOT READY: loading")], []),  # an earlier process did
+        # app review of f8be6e2: the memory and wiki reads work without the game, every game call FAILED
+        (
+            [
+                (10, "memory_read", "# HANDOFF ..."),
+                (12, "wiki_search", "Shadowheart ..."),
+                (14, "list_saves", "No saves."),
+                (20, "get_status", "FAILED: the game isn't answering"),
+                (28, "end_session", "session ended"),
+            ],
+            QUICK,
+        ),
+    ],
+)
+def test_a_short_session_is_a_quick_exit_only_without_a_game_call_that_worked(
+    rig: Rig, rows: list[tuple[float, str, str]], failures: list[tuple[str, str]]
 ):
-    # N15: the scripted reload agent saved and loaded in 31 s; its run was voided as an auth/config failure 3 times
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
-    res = rstate.SessionResult("S001", "c-1", 0, "exited", 1000.0, 1031.0, tool_calls=tool_calls)
-    rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), SessionOutcome(res, 1000.0))
+    t0 = rig.h.runs[run_dir("m-grove")][1]
+    with open(renv.RUNTIME / "actions.jsonl", "a") as f:
+        for dt, tool, result in rows:
+            f.write(json.dumps({"t": t0 + dt, "tool": tool, "args": {}, "result": result}) + "\n")
+    # the session's last process (a stop resume from t0 + 15 s) made the stream's 2 calls: ToolSearch + get_status
+    res = rstate.SessionResult("S001", "c-1", 0, "exited", t0 + 15, t0 + 31, tool_calls=2)
+    rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), SessionOutcome(res, t0))
     assert [(f["kind"], f["class"]) for f in rec["failures"] if f["class"] == "harness"] == failures
     assert rec["harness_failures"] == len(failures)
 
