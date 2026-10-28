@@ -612,7 +612,20 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     from ..clicker import click_entity
     tgt = plumbing._uuid(target) if target else char
     # the targeting cursor comes up a few frames after the use; a click before it is a plain click on the world
-    armed, _ = hotbar._wait(core.game, char, lambda s: bool(s.get("armed")), twostep.ARM_WAIT_S)
+    armed, arm = hotbar._wait(core.game, char, lambda s: bool(s.get("armed")), twostep.ARM_WAIT_S)
+    reach = ""
+    if armed and target and tgt != char and pos is None and not _two_step_scroll(name) \
+            and "combat_scroll" not in out.partition("\n")[0]:
+        reach, again = _walk_into_reach(inp, char, tgt, name, arm)
+        if again:
+            out = plumbing._act("use_ability", "act.interact", {"char": char, "target": it["uuid"]})
+            if reporting._batch.get("last") != "done":
+                return out + reach
+            armed, _ = hotbar._wait(core.game, char, lambda s: bool(s.get("armed")), twostep.ARM_WAIT_S)
+        elif reach:
+            reporting._batch["last"] = "failed"
+            head, _, rest = out.partition("\n")
+            return head.replace(": done", ": FAILED", 1) + reach + ("\n" + rest if rest else "")
     scr = (core.game.try_rpc("ui.state", context="client") or {}).get("screen")
     if scr == "book":
         # S031 17:12: use_ability(book, target=pedestal) read the book (its page opened) and the click then turned
@@ -622,6 +635,7 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
                  f"pedestal or in a slot: insert_item(item, into))")
         return head + ("\n" + rest if rest else "")
     head, _, rest = out.partition("\n")
+    head += reach
     in_combat = "combat_scroll" in head
     head = head.replace(" — combat_scroll", " — read in combat").replace("combat_scroll", "read in combat")
     if pos is not None and not target:
@@ -651,6 +665,31 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         f"; the click on {queueing._label(tgt)} for {name}'s target failed ({cr.reason}): nothing cast"
         + _put_back(inp, char))
     return head + ("\n" + rest if rest else "")
+
+
+def _walk_into_reach(inp, char: str, tgt: str, name: str, arm: dict) -> tuple[str, bool]:
+    """Live N9 step 3: a touch-range Scroll of Longstrider read 9.47 m from Wyll; the click on Wyll landed, nothing was
+    cast and Claude never walked. Out of combat, with the target beyond the spell's reach (the spell in hand, ui.cast_state;
+    act.spell_reach), the spell is put back, the reader walks into reach as a player would (act.move_to within) and the
+    scroll is read again. ("", False) when in reach or unknown; (facts, True) after the walk; (facts, False) when the
+    walk failed (the spell put back, nothing cast)."""
+    spell = arm.get("spell") or (arm.get("cast") or {}).get("spell")
+    r = (core.game.try_rpc("act.spell_reach", {"char": char, "spell": spell, "target": tgt}) or {}) if spell else {}
+    reach_m, dist_m, range_m = r.get("reach_m"), r.get("dist_m"), r.get("range_m")
+    if not all(isinstance(v, (int, float)) for v in (reach_m, dist_m, range_m)) or dist_m <= reach_m:
+        return "", False
+    hotbar.cancel(core.game, inp, char)
+    spell_name = arm.get("spell_name") or name
+    far = (f"; {overview._name_of(tgt)} was {dist_m:.1f} m from {overview._name_of(char)}, beyond {spell_name}'s "
+           f"{reach_m:.1f} m reach")
+    within = range_m if r.get("melee") else max(range_m - 1.0, 0.5)
+    j = core.game.run_job("act.move_to", {"char": char, "target": tgt, "within": within}, wait_s=40)
+    res = j.result if isinstance(j.result, dict) else {}
+    now = f" (now {res['dist']} m from {overview._name_of(tgt)})" if isinstance(res.get("dist"), (int, float)) else ""
+    if j.status != "done" or res.get("in_reach") is False:
+        why = j.error or ("it stopped out of reach" if j.status == "done" else "no reason given")
+        return f"{far}: the walk into reach {j.status}{now}: {why}; the spell was put back, nothing cast", False
+    return f"{far}: {overview._name_of(char)} walked into reach first{now} and read it again", True
 
 
 def _select_reader(char: str) -> None:

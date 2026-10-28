@@ -269,7 +269,7 @@ class ScrollUse(unittest.TestCase):
     cancel_how: str | None = "escape"  # hotbar.cancel's answer: the spell in hand put back with ESCAPE
 
     def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
-             res="use_ability: done — used", screen=None, rpc=None, targets="", pos=None, ground=None):
+             res="use_ability: done — used", screen=None, rpc=None, targets="", pos=None, ground=None, jobs=None):
         from bg3ai import clicker, twostep
         calls, clicks = [], []
         self.grounds = []
@@ -292,6 +292,10 @@ class ScrollUse(unittest.TestCase):
                 return default
 
             rpc = try_rpc
+
+            def run_job(self, op, args=None, wait_s=None):
+                rpcs.append((op, dict(args or {})))
+                return (jobs or {}).get(op, lambda a: JobResult("done", {}))(args or {})
 
             def drain_events(self, ctx=None):
                 return []
@@ -360,6 +364,34 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(clicks, [])
         self.assertIn("opened for reading", out.split("\n")[0])
         self.assertIn("insert_item", out.split("\n")[0])
+
+    FAR = {"ui.cast_state": lambda a: {"armed": True, "spell": "Target_Longstrider", "spell_name": "Longstrider"},
+           "act.spell_reach": lambda a: {"range_m": 1.5, "melee": True, "reach_m": 2.5, "dist_m": 9.47},
+           "act.scroll_settle": lambda a: {"read": True, "charged": []}}
+
+    def test_a_target_beyond_the_spells_reach_is_walked_to_first(self):
+        """Live N9 step 3: Longstrider (touch) read 9.47 m from Wyll: the click landed, nothing cast, nobody walked."""
+        out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
+                                       name="Scroll of Longstrider", rpc=self.FAR,
+                                       jobs={"act.move_to": lambda a: JobResult("done", {"dist": 1.2, "in_reach": True})})
+        head = out.split("\n")[0]
+        self.assertEqual(self.cancels, [self.SH])   # the spell put back before the walk
+        self.assertIn(("act.move_to", {"char": self.SH, "target": self.GALE, "within": 1.5}), self.rpcs)
+        self.assertEqual(calls, [("act.interact", {"char": self.SH, "target": self.SCROLL})] * 2)   # read again
+        self.assertEqual(clicks, [self.GALE])
+        self.assertTrue(head.startswith("use_ability: done"), head)
+        self.assertIn("; Gale was 9.5 m from Shadowheart, beyond Longstrider's 2.5 m reach: Shadowheart walked into reach"
+                      " first (now 1.2 m from Gale) and read it again (Scroll of Longstrider read, cast on", head)
+
+    def test_a_failed_walk_into_reach_reads_nothing_more(self):
+        out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
+                                       name="Scroll of Longstrider", rpc=self.FAR,
+                                       jobs={"act.move_to": lambda a: JobResult("failed", {}, "no path to the target")})
+        head = out.split("\n")[0]
+        self.assertTrue(head.startswith("use_ability: FAILED"), head)
+        self.assertIn("beyond Longstrider's 2.5 m reach: the walk into reach failed: no path to the target; the spell "
+                      "was put back, nothing cast", head)
+        self.assertEqual((len(calls), clicks), (1, []))
 
     def test_failed_click_puts_the_spell_back(self):
         # live N8 7b: after a FAILED the scroll's spell stayed in hand, previewing its target, until a raw Escape
