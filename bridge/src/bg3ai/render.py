@@ -96,7 +96,7 @@ def character_line(c: dict, H: Handles, me: str | None = None) -> str:
     st = _statuses(c)
     if st:
         bits.append(f"[{st}]")
-    for flag in ("downed", "dead", "in_combat", "can_talk", "is_trader", "sneaking", "is_current"):
+    for flag in ("downed", "dead", "in_combat", "can_talk", "can_trade", "sneaking", "is_current"):
         if c.get(flag):
             bits.append(flag)
     if c.get("wants_talk"):  # the "!" over them (State.lua HasExclamationDialog)

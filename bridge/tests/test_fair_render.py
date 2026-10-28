@@ -239,3 +239,18 @@ class CampLine(unittest.TestCase):
         H = Handles()
         self.assertEqual(render.camp_text([{"name": "Minthara"}], H), "Minthara (at camp, not in the party)")
         self.assertIn("can_reach=6", render.camp_text([{"name": "Gale", "level": 5, "can_reach": 6}], H))
+
+
+class TraderMark(unittest.TestCase):
+    """live N7: state.nearby's can_trade (a merchant, a trade partner, or Trade offered in its dialogue; Referee.lua
+    R.isTrader) never reached get_nearby: the CHAR line's flags had a dead is_trader the mod never sets."""
+
+    def test_can_trade_shows_like_can_talk(self):
+        n = {"characters": [
+            {"uuid": "22222222-0000-0000-0000-000000000001", "name": "Mohan", "relation": "neutral", "dist": 2.1,
+             "can_talk": True, "can_trade": True},
+            {"uuid": "22222222-0000-0000-0000-000000000002", "name": "Citizen", "relation": "neutral", "dist": 3.0,
+             "can_talk": True}]}
+        lines = render.render_nearby(n, Handles()).split("\n")
+        self.assertRegex(lines[0], r"^CHAR \S+ Mohan neutral 2.1m can_talk can_trade$")
+        self.assertNotIn("can_trade", lines[1])
