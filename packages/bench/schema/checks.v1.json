@@ -1,0 +1,309 @@
+{
+  "schema": 1,
+  "checks": [
+    {
+      "code": "F01",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the files are exactly those bundle.json lists, sizes match, within the size caps"
+    },
+    {
+      "code": "F02",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "every file's sha256 equals bundle.json files[]; the bundle hash matches"
+    },
+    {
+      "code": "F03",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "bundle, manifest, result and every facts/rolls/events line match their schemas"
+    },
+    {
+      "code": "F04",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "not a pilot, valid, no invalid_reason, not a holdout scenario"
+    },
+    {
+      "code": "P01",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "released suite; harness/bench versions, scenario digest and start save match it"
+    },
+    {
+      "code": "P02",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "game build, bg3le sha256 and mod sha1 equal the suite's pins; repo not dirty"
+    },
+    {
+      "code": "C01",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "prompt sha256 and tool allowlist sha256 equal the condition's"
+    },
+    {
+      "code": "C02",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the tool list names equal the allowlist; the served texts hash to prompt.parts"
+    },
+    {
+      "code": "C03",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "caps, seed (and seed applied) and difficulty equal the scenario's"
+    },
+    {
+      "code": "D01",
+      "where": [
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "no submission with this bundle hash; no accepted one by this user and run id"
+    },
+    {
+      "code": "D02",
+      "where": [
+        "job"
+      ],
+      "severity": "flag",
+      "flag": "duplicate_suspect",
+      "weekly": false,
+      "summary": "the events are not a near-copy of another submission's"
+    },
+    {
+      "code": "X01",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the first facts snapshot matches the scenario's start-state fingerprint"
+    },
+    {
+      "code": "X02",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "run_start and run_end marks; wall_s equals their distance; events lie between"
+    },
+    {
+      "code": "X03",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "acting tool calls have facts counterparts; no load the events don't show"
+    },
+    {
+      "code": "X04",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the rolls agree with the facts; luck recomputed equals result.luck"
+    },
+    {
+      "code": "X05",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "flag",
+      "flag": "cost_mismatch",
+      "weekly": false,
+      "summary": "tokens equal the events' usage; cost within 25 % of the recomputed"
+    },
+    {
+      "code": "X06",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "no resumed process counted twice; first_stop_s consistent with the events"
+    },
+    {
+      "code": "X07",
+      "where": [
+        "job"
+      ],
+      "severity": "flag",
+      "flag": "outlier",
+      "weekly": false,
+      "summary": "the outcome is not far outside the verified distribution"
+    },
+    {
+      "code": "G01",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the graders over the submitted facts give the result's verdict, time and score"
+    },
+    {
+      "code": "G02",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "deaths and reloads equal the facts' party losses and load marks"
+    },
+    {
+      "code": "A01",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the fairness audit over the tool results shows no leak and agrees with the result"
+    },
+    {
+      "code": "A02",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "no tool outside the allowlist; no load_game without the reloads condition"
+    },
+    {
+      "code": "E01",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": "evidence_missing",
+      "weekly": true,
+      "summary": "the YouTube video resolves, its title has the run id, embedding is allowed"
+    },
+    {
+      "code": "E02",
+      "where": [
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the video's duration equals render.json's span, which equals wall_s"
+    },
+    {
+      "code": "E03",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "render.json events are a monotone subset of the events log, within the video"
+    },
+    {
+      "code": "E04",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the contact sheet has one decodable frame per 30 s of run"
+    },
+    {
+      "code": "S01",
+      "where": [
+        "panel",
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "no home path, e-mail, Steam ID, key shape or .env value in any file"
+    },
+    {
+      "code": "S02",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "no hidden reasoning in the events"
+    }
+  ]
+}
