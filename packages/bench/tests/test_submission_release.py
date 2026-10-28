@@ -165,3 +165,14 @@ def test_a_profile_variant_serves_fewer_tools_and_another_prompt(served):
     assert base == {"tools": cond["tools"], "prompts": cond["prompts"]}
     assert release.condition_entry(cond, "0" * 64) == base  # unknown tools: checked against the condition (C01 fails)
     assert release.session_env("rules", {}, ("screenshots",))["BG3AI_TOOLS_OFF"].endswith(",screenshots")
+
+
+def test_release_from_a_server_without_a_memory_backend(served):
+    """Without the playthrough app installed the bg3 server registers no memory tools, so its dump lacks them; the
+    release is the same as from a full install (a bench run serves the memory group off either way)."""
+    files = fixture_files()
+    memory = {"memory_list", "memory_read", "memory_search", "memory_write", "memory_edit", "memory_append"}
+    memory |= {"note", "session_start", "end_session", "recall"}
+    tools = [t for t in json.loads(files["bg3-tools.json"]) if t["name"] not in memory]
+    bare = release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=fake_dump(files, tools))
+    assert bare == served
