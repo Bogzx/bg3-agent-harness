@@ -9,7 +9,12 @@ metrics, screenshots, memory and saves. The archive is deterministic (sorted, fi
 Refused (PackError): a pilot run, an invalid run, a holdout or unknown scenario, a suite version that is not
 released, a run without its manifest, result, facts or events, and a bundle over the size caps.
 
+The evidence video is rendered from the packed bundle (its record files are scrubbed, and its run_hash is in
+bundle.json), then add_render puts the renderer's render.json and its frames/<n>.jpg (tarred into frames.tar) into
+the bundle: they are not record files, so the run_hash stays; bundle.json's files[] and the archive are rewritten.
+
     python -m bg3bench.submission.pack RUN_DIR OUT_DIR --attempt N [--unsubmitted-valid K]
+    python -m bg3bench.submission.pack --add-render RENDER_DIR OUT_DIR    # RENDER_DIR: render.json, frames/
 """
 
 from __future__ import annotations
@@ -162,6 +167,26 @@ def size_problems(files: Mapping[str, bytes]) -> list[str]:
     return out
 
 
+def frames_tar(frames_dir: Path) -> bytes:
+    """The renderer's frames/<n>.jpg as one uncompressed tar (members frames/<n>.jpg in frame order, mtime 0, owner 0,
+    mode 644); refuses any other entry in the folder."""
+    entries = sorted(frames_dir.iterdir(), key=lambda p: (len(p.name), p.name))
+    bad = [
+        p.name
+        for p in entries
+        if not p.is_file() or p.is_symlink() or not bundle.FRAMES_MEMBER.fullmatch(f"frames/{p.name}")
+    ]
+    if bad:
+        raise PackError(f"{frames_dir}: not frames/<n>.jpg: {bad[:3]}")
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        for p in entries:
+            info = tarfile.TarInfo(f"frames/{p.name}")
+            info.size, info.mtime, info.mode = p.stat().st_size, 0, 0o644
+            tar.addfile(info, io.BytesIO(p.read_bytes()))
+    return raw.getvalue()
+
+
 def archive_bytes(files: Mapping[str, bytes]) -> bytes:
     """A deterministic .tar.gz of the files: sorted, mtime 0, owner 0, mode 644."""
     raw = io.BytesIO()
@@ -234,15 +259,49 @@ def pack(
     return Packed(env, bundle.sha256_bytes(files[bundle.ENVELOPE]), bdir, arch)
 
 
+def add_render(render_dir: str | Path, out_dir: str | Path, literals: Iterable[str] = ()) -> Packed:
+    """Put the renderer's render.json and frames/ (as frames.tar) from render_dir into the bundle packed in out_dir.
+    Refuses a bundle that already has them, a render.json made for another run_hash, and the size caps."""
+    render_dir, bdir = Path(render_dir), Path(out_dir) / BUNDLE_DIR
+    files = {p.name: p.read_bytes() for p in sorted(bdir.iterdir()) if p.is_file()}
+    env = json.loads(files.pop(bundle.ENVELOPE))
+    if "render.json" in files or bundle.FRAMES_TAR in files:
+        raise PackError(f"{bdir} already holds a render")
+    scrubber = scrub.Scrubber(literals)
+    render = scrubber.file("render.json", (render_dir / "render.json").read_bytes())
+    if json.loads(render).get("run_hash") != env["run_hash"]:
+        raise PackError(f"{render_dir}/render.json was rendered for another run_hash")
+    new = {"render.json": render}
+    if (render_dir / "frames").is_dir():
+        new[bundle.FRAMES_TAR] = frames_tar(render_dir / "frames")
+    files |= new
+    env["files"] = [{"name": n, "sha256": bundle.sha256_bytes(d), "bytes": len(d)} for n, d in sorted(files.items())]
+    env["scrub"]["replacements"] += scrubber.replacements
+    files[bundle.ENVELOPE] = bundle.canonical_bytes(env)
+    if problems := size_problems(files):
+        raise PackError(f"{bdir}: refused, {'; '.join(problems)}")
+    for n in (*new, bundle.ENVELOPE):
+        (bdir / n).write_bytes(files[n])
+    arch = Path(out_dir) / ARCHIVE
+    arch.write_bytes(archive_bytes(files))
+    return Packed(env, bundle.sha256_bytes(files[bundle.ENVELOPE]), bdir, arch)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m bg3bench.submission.pack", description=(__doc__ or "").splitlines()[0])
-    ap.add_argument("run_dir", type=Path)
+    ap.add_argument("run_dir", type=Path, help="the run dir (--add-render: the renderer's output dir)")
     ap.add_argument("out_dir", type=Path)
-    ap.add_argument("--attempt", type=int, required=True, help="this run's number in its cell on this install")
+    ap.add_argument("--attempt", type=int, help="this run's number in its cell on this install")
     ap.add_argument("--unsubmitted-valid", type=int, default=0, help="earlier valid runs of the cell not submitted")
+    ap.add_argument("--add-render", action="store_true", help="add render.json and frames/ to the bundle in OUT_DIR")
     a = ap.parse_args(argv)
+    if not a.add_render and a.attempt is None:
+        ap.error("--attempt is required")
     try:
-        p = pack(a.run_dir, a.out_dir, attempt=Attempt(a.attempt, a.unsubmitted_valid))
+        if a.add_render:
+            p = add_render(a.run_dir, a.out_dir)
+        else:
+            p = pack(a.run_dir, a.out_dir, attempt=Attempt(a.attempt, a.unsubmitted_valid))
     except PackError as e:
         print(e, file=sys.stderr)
         return 1

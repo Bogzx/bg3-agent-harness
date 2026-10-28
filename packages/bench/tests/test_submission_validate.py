@@ -169,6 +169,54 @@ def test_draft_bundle_before_rendering(tmp_path):
     assert not v.accepted and {"E01", "E03", "E04"} <= set(v.failed)
 
 
+def test_render_from_the_packed_bundle_then_added(tmp_path):
+    """The order the panel runs: pack, render from the packed bundle with its run_hash, add render.json and the
+    frames (tarred by pack), then the whole bundle validates."""
+    d = good_run(tmp_path, FIGHT)
+    render = json.loads((d / "render.json").read_text())
+    (d / "render.json").unlink()
+    (d / bundle.FRAMES_TAR).unlink()
+    p = pack.pack(
+        d,
+        tmp_path / "out",
+        attempt=pack.Attempt(1),
+        video=VIDEO | {"duration_s": render["video_end"] - render["video_start"]},
+    )
+    rdir = tmp_path / "render"
+    (rdir / "frames").mkdir(parents=True)
+    (rdir / "render.json").write_text(json.dumps(render | {"run_hash": p.envelope["run_hash"]}))
+    n = round((render["video_end"] - render["video_start"]) / validate.FRAME_EVERY_S)
+    for i in range(n):
+        (rdir / "frames" / f"{i}.jpg").write_bytes(jpeg())
+    q = pack.add_render(rdir, tmp_path / "out")
+    assert q.envelope["run_hash"] == p.envelope["run_hash"] and q.bundle_sha256 != p.bundle_sha256
+    with tarfile.open(q.bundle_dir / bundle.FRAMES_TAR) as tar:
+        assert tar.getnames() == [f"frames/{i}.jpg" for i in range(n)]
+    with tarfile.open(q.archive) as tar:
+        assert sorted(tar.getnames()) == sorted(x.name for x in q.bundle_dir.iterdir())
+    v = run(q.bundle_dir, release_for(d))
+    assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is False]
+    with pytest.raises(pack.PackError, match="already holds a render"):
+        pack.add_render(rdir, tmp_path / "out")
+
+
+def test_add_render_refuses_another_runs_render(tmp_path):
+    d = good_run(tmp_path, FIGHT)
+    render = json.loads((d / "render.json").read_text())
+    (d / "render.json").unlink()
+    (d / bundle.FRAMES_TAR).unlink()
+    pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1))
+    rdir = tmp_path / "render"
+    (rdir / "frames").mkdir(parents=True)
+    (rdir / "render.json").write_text(json.dumps(render | {"run_hash": "0" * 64}))
+    with pytest.raises(pack.PackError, match="another run_hash"):
+        pack.add_render(rdir, tmp_path / "out")
+    (rdir / "render.json").write_text(json.dumps(render))
+    (rdir / "frames" / "cover.png").write_bytes(b"x")
+    with pytest.raises(pack.PackError, match="not frames"):
+        pack.add_render(rdir, tmp_path / "out")
+
+
 def rehash(bdir: Path, render: bool = True) -> None:
     """bundle.json made to list the files as they are now, with render.json's run_hash to match (a forger's
     re-hash; the video's strip would still show the old run hash)."""
