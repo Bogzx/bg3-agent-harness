@@ -48,7 +48,8 @@
 #   DISPLAY / XAUTHORITY  unset ones are taken from the desktop's Xwayland (bg3harness.display_env); with no usable
 #                      display (no X socket, no auth file) the launch is refused, exit 5 (never a silent iGPU start)
 #   BG3AI_ALLOW_STALE_BG3LE=1   launch even when the bg3le build lacks a patches/bg3le patch (default: refuse,
-#                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library)
+#                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library,
+#                      and for a prebuilt from tools/bg3le_prebuilt.py fetch also every file with its PREBUILT.json)
 #   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
 #                      OOMPolicy=continue and a memory cap, so an OOM kills only the game, never the caller's unit
 #                      (2026-10-10: the game hit 13.3 GB inside the agents' service unit, OOMPolicy=stop, and
@@ -121,7 +122,7 @@ done
 [ -x "$GAME/bin/bg3" ] || die "no native game binary at $GAME/bin/bg3"
 [ -x "$SNIPER_DIR/run" ] || die "no sniper runtime at $SNIPER_DIR (install 'Steam Linux Runtime 3.0 (sniper)')"
 if [ "$use_bg3le" = 1 ] && [ ! -f "$LIB" ]; then
-    [ "$dry_run" = 1 ] || die "no bg3le library at $LIB; run tools/build_bg3le.sh"
+    [ "$dry_run" = 1 ] || die "no bg3le library at $LIB; run tools/build_bg3le.sh (or fetch the prebuilt: tools/bg3le_prebuilt.py fetch)"
     echo "launch_game: warning: no bg3le library at $LIB yet" >&2
 fi
 # A library built before a crash patch was added (UI-1: one machine's dist predated all nine) passes every other

@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 
 import pytest
-from bg3play import recorder
-from bg3play.recorder import Capture, Recorder, RecordSpec
+from bg3harness import recorder
+from bg3harness.recorder import Capture, Recorder, RecordSpec
 
 FAKE = str(Path(__file__).parent / "bin" / "fake-ffmpeg")
 

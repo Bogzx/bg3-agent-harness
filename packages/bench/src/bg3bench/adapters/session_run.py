@@ -21,7 +21,9 @@ rerun plays in a fresh run directory (the failed start may have left a facts.jso
 artifacts can't be written (a facts or roll log the bench refuses) is invalid with the record's cost, so the matrix
 settles what it spent and reruns it instead of stopping on an unknown cost. A run whose condition the session can't
 play exactly (conditions.session_gaps) is labelled a pilot in result.json (the matrix refuses it unless allow_gaps). series.json freezes the scenario from
-the series' first run; a later run of an edited scenario is refused.
+the series' first run; a later run of an edited scenario is refused. It freezes the first recorded run's pins too
+(the host reads them as the run starts: game build, bg3le, mod tree, repo, versions); a later run that played with
+others carries `version_drift` (pins.pin_drift) in its record, as a legacy series run allowed to drift does.
 
 Budget: a paid client's (matrix.PAID_CLIENTS) cost is settled by the matrix (`charged` False), so the host must not
 add it to runtime/budget.json itself (LiveRunHost turns its runner's settles_budget off); a subscription run isn't
@@ -124,6 +126,16 @@ class SessionRun:
         path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         return meta
 
+    def _pins(self, name: str, meta: JSON, run_pins: JSON) -> list[str]:
+        """The run's drift from series.json's pins; a series without them (its first recorded run, or one from
+        before them) freezes this run's."""
+        if meta.get("pins"):
+            return pins.pin_drift(meta["pins"], run_pins)
+        meta["pins"] = run_pins
+        path = self.sessions / name / "series.json"
+        path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        return []
+
     def __call__(self, job: JSON) -> RunResult:
         if job["scenario"] not in self.scenarios:
             raise ValueError(f"no scenario {job['scenario']!r}")
@@ -159,7 +171,10 @@ class SessionRun:
             rec["off_route"] = off  # served outside the profile's provider pin: invalid (results.validity)
         rec.setdefault("started", out.started)
         versions = {**pins.versions(), **({"harness": st.harness_version} if st.harness_version else {})}
-        rec["pins"] = {"versions": versions, **(rec.get("pins") or {})}
+        run_pins: JSON = {"versions": versions, **(rec.get("pins") or {})}
+        rec["pins"] = run_pins
+        if drift := self._pins(name, meta, run_pins):
+            rec["version_drift"] = drift
         if out.invalid:
             rec["harness_failures"] = int(rec.get("harness_failures") or 0) + 1
             rec["session_invalid"] = out.invalid

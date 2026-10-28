@@ -25,7 +25,7 @@ is the tag `bench-vX.Y` with this package at `X.Y.0`; `suite.json` pins the file
 | `conditions.py`, `contamination.py` | condition ids (`rules`, `rules+coaching@<hash8>`, `+wiki`, ...): the tools each removes, the harness prompt condition it plays and what a session run can't play exactly (a pilot); quizzes, holdouts |
 | `matrix.py`, `matrix_cli.py`, `matrices/` | the matrix runner: models x scenarios x conditions x repeats, resumable, under a global budget; its command line and matrix files |
 | `series.py`, `resets.py`, `pins.py`, `records.py` | a series' runs: naming, runs.jsonl records, frozen caps/judge/client/sandbox, per-run resets and the FAIR-2 knowledge lock, version pins, the runs table and summary (moved from runner/runs.py, which re-exports them) |
-| `preflight.py` | can this machine run the benchmark (CLI: `python3 tools/bench_preflight.py`) |
+| `preflight.py` | shim: the machine checks moved to `bg3harness.preflight` (CLI: `python3 tools/bench_preflight.py`) |
 | `adapters/` | `session_run.py`: one matrix job = one `run_session` through a `RunHost` (the live one is `bg3harness.runner.run_host.LiveRunHost`); `legacy_cli.py` and `play_flags.py`: the `--runner legacy` fallback through `runner/play.py run`, until Phase D |
 | `baselines/` | do-nothing and seeded random agents that speak MCP to the bg3 server |
 | `fairness_probes.py` | every bg3 tool has a hidden-fact probe or a written exemption (`fairness_probes.json`) |

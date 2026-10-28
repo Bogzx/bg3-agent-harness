@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Moved to packages/bench: bg3bench.preflight (its docstring lists the checks). This is still the CLI:
+"""Moved to packages/harness: bg3harness.preflight (its docstring lists the checks). This is still the CLI:
 
     python3 tools/bench_preflight.py [--series NAME]
 
@@ -11,10 +11,10 @@ from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
-sys.path.insert(0, str(TOOLS.parent / "packages" / "bench" / "src"))
+sys.path.insert(0, str(TOOLS.parent / "packages" / "harness" / "src"))
 import bg3le_buildinfo  # noqa: E402
 import steam_paths  # noqa: E402
-from bg3bench import preflight as _m  # noqa: E402
+from bg3harness import preflight as _m  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(_m.main(sys.argv[1:], _m.Ctx(repo=TOOLS.parent, steam=steam_paths, bg3le=bg3le_buildinfo)))

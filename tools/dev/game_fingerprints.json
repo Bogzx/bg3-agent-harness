@@ -1,0 +1,37 @@
+{
+ "25605617": {
+  "sha256": "d110d7827fb7fba6943ae11010c6ca7bc00c7752798f9263e78c87f2c0a18796",
+  "files": [
+   {
+    "path": "Data/Game.pak",
+    "bytes": 1116598983,
+    "sha256": "2c26183717b4511dadc00e07906932720b4f813c6a412fb4ea408cb02a08ec11"
+   },
+   {
+    "path": "Data/GustavX.pak",
+    "bytes": 185129297,
+    "sha256": "bfa9f21a8542b80e8a103479cc3c4943f40b4644a2d74968fdd85ec2d0570425"
+   },
+   {
+    "path": "Data/Patch8_HotFix10.pak",
+    "bytes": 131714609,
+    "sha256": "070c292d6b4ce310ae73fa6b967014b68bacba85f6b8abc1ade959978d1b4fb5"
+   },
+   {
+    "path": "Data/Patch8_HotFix9.pak",
+    "bytes": 136753912,
+    "sha256": "9ef03d48751682f3d06443d435a760240bb41faddd96e43f1530a660e7ffe7f4"
+   },
+   {
+    "path": "Data/Shared.pak",
+    "bytes": 162779988,
+    "sha256": "9d63d634dac98f1e864ead6b8ff6452b566372997d61c1bf3a9b156a61536aa7"
+   },
+   {
+    "path": "bin/bg3",
+    "bytes": 224173360,
+    "sha256": "842d8e02af5a13e6a2a1c61123dee05374a6744f73df4be177288eeb70e8e37f"
+   }
+  ]
+ }
+}
