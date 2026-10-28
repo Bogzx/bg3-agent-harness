@@ -628,6 +628,18 @@ def test_record_of_a_run_that_reached_its_until_milestone(rig: Rig):
     assert (rec["outcome"], rec["milestone"]) == ("timeout", None)
 
 
+@pytest.mark.parametrize(("tool_calls", "failures"), [(3, []), (0, [("claude_quick_exit", "harness")])])
+def test_a_short_session_is_a_quick_exit_only_without_a_tool_call(
+    rig: Rig, tool_calls: int, failures: list[tuple[str, str]]
+):
+    # N15: the scripted reload agent saved and loaded in 31 s; its run was voided as an auth/config failure 3 times
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    res = rstate.SessionResult("S001", "c-1", 0, "exited", 1000.0, 1031.0, tool_calls=tool_calls)
+    rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), SessionOutcome(res, 1000.0))
+    assert [(f["kind"], f["class"]) for f in rec["failures"] if f["class"] == "harness"] == failures
+    assert rec["harness_failures"] == len(failures)
+
+
 def test_archive_moves_only_the_nav_files(tmp_path: Path):
     se = tmp_path / "se"
     se.mkdir()

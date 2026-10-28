@@ -131,14 +131,17 @@ def event_failures(events: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 def history_failures(sessions: list[dict]) -> list[dict]:
-    """From runner.json history entries of the run's play sessions."""
+    """From runner.json history entries of the run's play sessions. A quick exit (claude_quick_exit: auth, config or
+    usage) is a process that exited within a minute without a tool call: one that played (`tool_calls`) just finished
+    fast (N15: the scripted reload agent's 31 s save + load voided its run 3 times). An entry without the count is
+    taken by its time alone."""
     out = []
     for h in sessions:
         sid, t = h.get("session"), h.get("ended") or h.get("started")
         dur = (h.get("ended") or 0) - (h.get("started") or 0)
         if h.get("reason") == "killed":
             out.append(failure(t, "claude_killed", UNKNOWN, f"{sid}: claude ended by a signal from outside the runner"))
-        elif h.get("reason") == "exited" and 0 <= dur < 60:
+        elif h.get("reason") == "exited" and 0 <= dur < 60 and not h.get("tool_calls"):
             out.append(
                 failure(
                     t,
