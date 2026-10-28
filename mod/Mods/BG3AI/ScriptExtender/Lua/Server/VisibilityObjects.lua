@@ -316,6 +316,45 @@ end
 -- floor, a cloud)? nil when the ray API is unusable (uncalibrated or broken):
 -- the caller decides (nav hazards keep the patch: fail-safe for walking).
 V.POINT_LIFT = 0.5
+-- Live N14b (2026-10-28, the Gauntlet altar): a spot 8 m off on the ledge 2.3 m below read "not in view": the eye ray
+-- to it ran into the altar floor's own top 3.8 m out, short of the drop edge (Claude later stood at 4 m), while the
+-- player's camera above sees over that edge. A ray to a lower spot that stops on the observer's own floor (within
+-- EDGE_DY_M of its feet) is looked over the edge: along the ray, every EDGE_STEP_M up to EDGE_SCAN_M past the hit, the
+-- first point with no floor within EDGE_DY_M of the feet (Ext.Level.GetHeightsAt) is the edge, and a ray from PEEK_H
+-- above the last floor point to the spot must be clear. A floor that goes on (a storey over a room) is no edge.
+V.EDGE_DY_M = 0.5
+V.EDGE_STEP_M = 0.25
+V.EDGE_SCAN_M = 3.0
+V.PEEK_H = 0.5
+local function overEdge(o, eye, tgt, hit)
+    local y0 = o.pos[2]
+    if tgt[2] >= y0 - V.EDGE_DY_M then return false end
+    local okp, hp = pcall(function() local p = hit.Position; return { p[1], p[2], p[3] } end)
+    if not okp or math.abs(hp[2] - y0) > V.EDGE_DY_M then return false end
+    local dx, dz = tgt[1] - eye[1], tgt[3] - eye[3]
+    local l = math.sqrt(dx * dx + dz * dz)
+    if l < 0.01 then return false end
+    dx, dz = dx / l, dz / l
+    local last = hp
+    for s = V.EDGE_STEP_M, math.min(V.EDGE_SCAN_M, U.dist({ hp[1], 0, hp[3] }, { tgt[1], 0, tgt[3] })), V.EDGE_STEP_M do
+        local x, z = hp[1] + dx * s, hp[3] + dz * s
+        local okh, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+        if not okh or type(hs) ~= "table" then return false end
+        local floor = false
+        for _, h in ipairs(hs) do
+            if type(h) == "number" and math.abs(h - y0) <= V.EDGE_DY_M then floor = true end
+        end
+        if not floor then
+            local from = { last[1], y0 + V.PEEK_H, last[3] }
+            local okr, h2 = pcall(raycast, from, tgt)
+            if not okr then return false end
+            local d = h2 and hitDist(h2, from)
+            return not h2 or (d ~= nil and d >= U.dist(from, tgt) - 0.5)
+        end
+        last = { x, y0, z }
+    end
+    return false
+end
 function V.pointSeen(ctx, pt, lift)
     if V.rayBroken then return nil end
     local o1 = ctx.observers[1]
@@ -329,6 +368,7 @@ function V.pointSeen(ctx, pt, lift)
             if not hit then return true end
             local d = hitDist(hit, eye)
             if d and d >= U.dist(eye, tgt) - 0.5 then return true end
+            if overEdge(o, eye, tgt, hit) then return true end
         end
     end
     return false
