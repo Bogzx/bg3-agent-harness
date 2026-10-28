@@ -132,6 +132,33 @@ class SavesTest(unittest.TestCase):
             self.assertEqual(saves.load_args(root, "Claude-3__b")["index"], 1)
             self.assertEqual(saves.load_args(root, "Claude-1__a")["index"], 3)
 
+    def test_load_args_skips_a_save_folder_deleted_while_it_reads(self):
+        # night: the game's autosave rotation deleted a folder between load_args' listing and its read; with its meta
+        # unreadable the mtime fallback stat()ed the gone folder and FileNotFoundError killed the runner's load
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+
+            def autosave() -> None:
+                t = at(2026, 10, 9, 22, 30)
+                make_save(root, "Claude-2__AutoSave_3", t, meta_lsf("Claude", t))
+
+            make_save(root, "Claude-1__a", at(2026, 10, 9, 22, 0), meta_lsf("Claude", at(2026, 10, 9, 22, 0)))
+            autosave()
+            make_save(root, "Claude-3__b", at(2026, 10, 9, 23, 0), meta_lsf("Claude", at(2026, 10, 9, 23, 0)))
+
+            def rotating(lsv: Path):
+                if lsv.parent.name == "Claude-2__AutoSave_3":
+                    lsv.unlink()
+                    lsv.parent.rmdir()
+                    return None  # the meta read found no file
+                return saves.read_meta(lsv)
+
+            a = saves.load_args(root, "Claude-1__a", rotating)
+            self.assertEqual((a["owner"], a["index"]), ("Claude", 2))  # the gone autosave doesn't count
+            autosave()
+            gone = saves.load_args(root, "Claude-2__AutoSave_3", rotating)
+            self.assertEqual(gone, {"action": "load", "name": "Claude-2__AutoSave_3", "owner": "Claude"})
+
     def test_load_args_counts_the_playthrough_live6(self):
         # live6 §1b: the page groups by playthrough (GameSessionID). Start saves made from claude-run-2 copies
         # under the leader Tav keep run 2's session and sit at the top of the Claude group; the LeaderName count
