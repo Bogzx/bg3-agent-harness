@@ -383,6 +383,23 @@ test("pointSeen over an edge: a wall face hit low, a drop over 4 m, the foot of 
     eq(V.pointSeen(V.context(), { 0, -2.3, 7 }), false, "15 m back")
 end)
 
+test("pointSeen over an edge: an edge 6 m off, or a wall hit 0.1 m up its foot: not seen (app re-review)", function()
+    setup()
+    ray.fn = floor_to(6.0) -- the floor hit 4 m out, its edge 6 m out: past the 5 m bound
+    heights.fn = function(_, z) return z <= 6.0 and { 0.0 } or { -2.3 } end
+    eq(V.pointSeen(V.context(), { 0, -2.3, 8.5 }), false, "edge 6 m off")
+    -- a wall face at z 4 hit 0.1 m up, the floor's height read at its foot: the hit passes as floor, and the look
+    -- 0.3 m back toward the eye runs into the face
+    ray.fn = floor_to(4.0, function(a, b)
+        if a[3] < 4 and b[3] > 4 then
+            local y = a[2] + (b[2] - a[2]) * (4 - a[3]) / (b[3] - a[3])
+            if y >= 0 and y <= 2 then return { Position = { a[1], y, 4 } } end
+        end
+    end)
+    heights.fn = function(_, z) return z <= 4.0 and { 0.0 } or z <= 5 and {} or { -2.3 } end
+    eq(V.pointSeen(V.context(), { 0, -2.3, 9.07 }), false, "the wall's foot")
+end)
+
 -- ---- losFrom (los_spot planning) vs the engine's HasLineOfSight -------------------------
 
 local function enemy(u, pos)
