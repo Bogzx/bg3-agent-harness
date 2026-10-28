@@ -18,3 +18,4 @@ term LICENSE  # the copyright line: the authorship line, like git's author
 term CITATION.cff  # the citation's author entry: the authorship line, like git's author
 term packages/bench/src/bg3bench/authoring.py  # owner decision pending (LAUNCH-GATE.md §4): the forbidden-name list
 term packages/harness/tests/test_fixtures_live4.py  # owner decision pending (LAUNCH-GATE.md §4): the fixtures' scrub regex
+email packages/harness/src/bg3harness/video/fonts/DejaVuSans.ttf L%@T.DuW  # glyph bytes of the bundled DejaVu font, not an address
