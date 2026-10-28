@@ -37,10 +37,11 @@ def tools_digest(names: Collection[str]) -> dict[str, Any]:
 
 def client_version(
     client: str,
-    cli: Callable[[str], str | None] = sandbox.cli_version,
+    cli: Callable[[str], str | None] = sandbox.cli_version_line,
     pinned: Callable[[], str | None] = sandbox.pi_version,
 ) -> str | None:
-    """The client's version: the CLI's own (`claude --version`), pi's pinned one, None when unknown."""
+    """The client's version: the CLI's own `--version` line (`2.1.301 (Claude Code)`), pi's pinned one, None when
+    unknown."""
     if client == "pi":
         return pinned()
     return cli(client) if client in CLI_CLIENTS else None
