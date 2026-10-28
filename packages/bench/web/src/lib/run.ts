@@ -1,6 +1,6 @@
-// Pure helpers for the New run and Results screens.
+// Pure helpers for the New run, Queue and Results screens.
 
-import type { Plan, PlanForm, Prepared, ProfileRow, RunRow, SaveStatus } from "./types";
+import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, SaveStatus } from "./types";
 
 export const YOUTUBE_LIMIT_S = 15 * 60;
 
@@ -81,7 +81,7 @@ export function attempts(runs: RunRow[]): Map<string, [number, number]> {
 
 /** Why Start can't be pressed for a plan (null: it can); the server checks the same again. */
 export function startProblem(plan: Plan | null, running: boolean): string | null {
-  if (running) return "a matrix of this panel is running: stop it first";
+  if (running) return "a matrix is running (see Queue): stop it first";
   if (!plan) return "plan first";
   if (!plan.jobs.length) return "no job to run";
   if (plan.needs_max_cost.length) return `give a max cost for ${plan.needs_max_cost.join(", ")}`;
@@ -115,4 +115,22 @@ export function youtubeId(url: string): string | null {
   else if (host === "youtube.com" && u.pathname === "/watch") id = u.searchParams.get("v");
   else if (host === "youtube.com" && u.pathname.startsWith("/shorts/")) id = u.pathname.slice("/shorts/".length);
   return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+}
+
+/** "Record on · Submit when done off" for a matrix's choices. */
+export function choicesLine(c: RunChoices | null | undefined): string | null {
+  if (!c) return null;
+  return `Record ${c.record ? "on" : "off"} · Submit when done ${c.submit_when_done ? "on" : "off"}`;
+}
+
+/** What Submit when done did: "2 validated (1 accepted), 1 failed: <first error>"; null when nothing yet. */
+export function autoSummary(c: RunChoices | null | undefined): string | null {
+  const outcomes = Object.values(c?.auto ?? {});
+  if (!outcomes.length) return null;
+  const failed = outcomes.filter((o) => o.error);
+  const validated = outcomes.length - failed.length;
+  const accepted = outcomes.filter((o) => !o.error && o.accepted).length;
+  const parts = [`${validated} validated (${accepted} accepted)`];
+  if (failed.length) parts.push(`${failed.length} failed: ${failed[0]?.error ?? ""}`);
+  return parts.join(", ");
 }

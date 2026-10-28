@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { LABELS, parseRoute, SCREENS, type Screen } from "./lib/route";
   import About from "./screens/About.svelte";
+  import Doctor from "./screens/Doctor.svelte";
   import NewRun from "./screens/NewRun.svelte";
   import Preflight from "./screens/Preflight.svelte";
   import Queue from "./screens/Queue.svelte";
@@ -30,6 +31,8 @@
 <main>
   {#if screen === "preflight"}
     <Preflight />
+  {:else if screen === "doctor"}
+    <Doctor />
   {:else if screen === "saves"}
     <Saves />
   {:else if screen === "new"}

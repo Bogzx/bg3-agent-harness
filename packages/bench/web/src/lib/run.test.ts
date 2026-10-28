@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { attempts, bytes, formProblems, minutes, startProblem, uploadProblem, verdict, youtubeId, youtubeNote } from "./run";
-import type { Plan, PlanForm, Prepared, ProfileRow, RunRow } from "./types";
+import {
+  attempts, autoSummary, bytes, choicesLine, formProblems, minutes, startProblem, uploadProblem, verdict, youtubeId,
+  youtubeNote,
+} from "./run";
+import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow } from "./types";
 
 const form: PlanForm = {
   profiles: ["deepseek-flash"], scenarios: ["act1_get_item"], condition: "rules", repeats: 1, max_cost_usd: 2,
@@ -116,5 +119,25 @@ describe("youtubeId and uploadProblem", () => {
     expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, "", true)).toMatch(/rejects/);
     expect(uploadProblem(p, `https://youtu.be/${id}`, false)).toMatch(/site token/);
     expect(uploadProblem(p, "https://vimeo.com/1", true)).toMatch(/YouTube URL/);
+  });
+});
+
+describe("choicesLine and autoSummary", () => {
+  const c: RunChoices = { name: "m", record: true, submit_when_done: true, auto: {} };
+  it("names the choices", () => {
+    expect(choicesLine(c)).toBe("Record on · Submit when done on");
+    expect(choicesLine({ ...c, record: false, submit_when_done: false })).toBe("Record off · Submit when done off");
+    expect(choicesLine(null)).toBeNull();
+  });
+  it("counts what Submit when done did", () => {
+    expect(autoSummary(c)).toBeNull();
+    expect(autoSummary(undefined)).toBeNull();
+    const auto = {
+      d1: { t: 1, bundle_sha256: "ab", accepted: true },
+      d2: { t: 2, bundle_sha256: "cd", accepted: false },
+      d3: { t: 3, error: "pack refused it" },
+    };
+    expect(autoSummary({ ...c, auto })).toBe("2 validated (1 accepted), 1 failed: pack refused it");
+    expect(autoSummary({ ...c, auto: { d1: auto.d1 } })).toBe("1 validated (1 accepted)");
   });
 });

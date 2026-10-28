@@ -1,11 +1,12 @@
 <script lang="ts">
   // New run: pick profiles, scenarios, the condition and repeats; Plan shows what Start would queue (bg3bench.matrix
-  // plan), its budget reserve and the YouTube note, before anything runs. Start plays the same form as a matrix.
+  // plan), its budget reserve and the YouTube note, before anything runs. Start plays the same form as a matrix,
+  // recording each run when Record is ticked; Submit when done packs and validates each valid run (it never uploads).
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
   import { formProblems, minutes, startProblem, youtubeNote } from "../lib/run";
-  import type { Plan, PlanForm, ProfileRow, RunState, ScenarioRow } from "../lib/types";
+  import type { FoundMatrix, Plan, PlanForm, ProfileRow, RunState, ScenarioRow } from "../lib/types";
 
   let profiles = $state<ProfileRow[]>([]);
   let scenarios = $state<ScenarioRow[]>([]);
@@ -19,12 +20,13 @@
   let record = $state(true);
   let submit = $state(false);
   let running = $state<RunState | null>(null);
+  let found = $state<FoundMatrix | null>(null);
   let canStart = $state(false);
   let started = $state<string | null>(null);
 
   const problems = $derived(formProblems(form, profiles));
   const note = $derived(plan ? youtubeNote(plan.youtube) : null);
-  const startWhy = $derived(canStart ? startProblem(plan, !!running?.running) : "this panel starts no run");
+  const startWhy = $derived(canStart ? startProblem(plan, !!running?.running || !!found) : "this panel starts no run");
 
   onMount(() => {
     Promise.all([api.profiles(), api.scenarios(), api.run()])
@@ -32,6 +34,7 @@
         profiles = p.profiles;
         scenarios = s.scenarios;
         running = r.run;
+        found = r.found;
         canStart = r.can_start;
       })
       .catch((e: Error) => (error = e.message));
@@ -45,7 +48,7 @@
     busy = true;
     planError = null;
     try {
-      const r = await api.start($state.snapshot(form));
+      const r = await api.start({ ...$state.snapshot(form), record, submit_when_done: record && submit });
       running = r.started;
       started = `Started ${r.started?.name ?? "the matrix"} (${r.matrix_file}). Its progress is on the Queue screen.`;
     } catch (e) {
@@ -119,7 +122,10 @@
             form.max_cost_usd = v === "" ? null : Number(v);
           }} /></label>
       <label class="row"><input type="checkbox" bind:checked={record} /> Record the game window (the evidence video)</label>
-      <label class="row"><input type="checkbox" bind:checked={submit} /> Submit when done</label>
+      <label class="row" title="Packs and validates each valid run as it ends; uploading stays your click in Results">
+        <input type="checkbox" bind:checked={submit} disabled={!record} /> Submit when done
+        <span class="faint">{record ? "packs and validates each valid run; you upload from Results" : "needs Record"}</span>
+      </label>
       {#if problems.length}<div class="faint">{problems.join(" · ")}</div>{/if}
       <div class="row">
         <button class="primary" onclick={doPlan} disabled={busy || problems.length > 0}>{busy ? "Planning…" : "Plan"}</button>
