@@ -10,6 +10,7 @@ local clock = 0
 local world = {}      -- uuid -> {pos, comps = {...}}
 local osiv = {}       -- "Fn:arg1:arg2" -> value
 local ray = {}        -- ray.fn(a, b) -> hit | nil
+local heights = {}    -- heights.fn(x, z) -> {y...} | nil (Ext.Level.GetHeightsAt)
 local loca = {}
 local charScans = 0
 
@@ -37,7 +38,8 @@ Ext = {
             return out
         end,
     },
-    Level = { RaycastClosest = function(a, b, ...) return ray.fn(a, b, ...) end },
+    Level = { RaycastClosest = function(a, b, ...) return ray.fn(a, b, ...) end,
+        GetHeightsAt = function(x, z) return heights.fn and heights.fn(x, z) end },
     Loca = { GetTranslatedString = function(h) return loca[h] end },
     Require = function(p) return dofile(LUA .. "/" .. p) end,
     IO = { LoadFile = function() return nil end, SaveFile = function() end },
@@ -80,6 +82,7 @@ local function test(name, fn)
     world = {}
     loca = {}
     ray.fn = function() return nil end
+    heights.fn = nil
     local ok, err = pcall(fn)
     if ok then print("ok   " .. name) else failures = failures + 1; print("FAIL " .. name .. ": " .. tostring(err)) end
 end
@@ -304,6 +307,55 @@ test("party members standing together cast one set of rays", function()
     end)
     Osi.DB_PartyMembers = real
     assert(ok, err)
+end)
+
+-- ---- pointSeen: ground below a drop edge ---------------------------------------
+-- Live N14b (the Gauntlet altar): Claude's eye ray to the ledge 2.3 m below, 8 m off, ran into the altar floor's own
+-- top 3.8 m out (he later stood at 4 m), so move_to there was refused "not in view". Here P1's floor (y 0) ends at
+-- z = 4.2 and the ledge is at y -2.3; `floor_to(z)`: the floor plane is solid up to z (a storey: to infinity).
+local function floor_to(zmax, extra)
+    return floorThen(function(a, b)
+        if extra then local h = extra(a, b); if h then return h end end
+        if a[2] > 0 and b[2] < 0 then
+            local t = a[2] / (a[2] - b[2])
+            local z = a[3] + (b[3] - a[3]) * t
+            if z <= zmax then return { Position = { a[1] + (b[1] - a[1]) * t, 0, z } } end
+        end
+        return nil
+    end)
+end
+
+test("pointSeen: a ledge below the floor's edge is looked over (N14b); a floor that goes on is not", function()
+    setup()
+    ray.fn = floor_to(4.2)
+    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -2.3 } end
+    eq(V.pointSeen(V.context(), { 0, -2.3, 8 }), true, "the ledge past the edge")
+    V.rayCache = {}
+    ray.fn = floor_to(1e9) -- a storey: the floor goes on over a room below
+    heights.fn = function() return { 0.0, -3.0 } end
+    eq(V.pointSeen(V.context(), { 0, -3.0, 8 }), false, "the room under the floor")
+    heights.fn = nil -- no heights answer: fail closed
+    ray.fn = floor_to(4.2)
+    eq(V.pointSeen(V.context(), { 0, -2.3, 8 }), false, "no heights: not seen")
+end)
+
+test("pointSeen: a parapet at the edge, or a spot level with the eye's floor, is not looked over", function()
+    setup()
+    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -2.3 } end
+    ray.fn = floor_to(4.2, function(a, b) -- a 1 m parapet at z 4.1..4.2 stops the look over the edge
+        if a[3] < 4.1 and b[3] > 4.2 then
+            local t = (4.1 - a[3]) / (b[3] - a[3])
+            local y = a[2] + (b[2] - a[2]) * t
+            if y <= 1.0 and y >= 0 then return { Position = { a[1], y, 4.1 } } end
+        end
+    end)
+    eq(V.pointSeen(V.context(), { 0, -2.3, 8 }), false, "behind the parapet")
+    ray.fn = function(a, b) -- a wall 3 m off, the spot level with P1's floor
+        if a[1] == b[1] and a[3] == b[3] and b[2] < a[2] then return { Position = { a[1], 0, a[3] }, Distance = a[2] } end
+        return { Position = { 0, 0.2, 3 } }
+    end
+    heights.fn = function() return {} end
+    eq(V.pointSeen(V.context(), { 0, 0, 8 }), false, "a wall, not an edge")
 end)
 
 -- ---- losFrom (los_spot planning) vs the engine's HasLineOfSight -------------------------
