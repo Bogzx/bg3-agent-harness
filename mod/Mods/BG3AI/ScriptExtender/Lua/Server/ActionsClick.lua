@@ -348,3 +348,17 @@ RPC.register("act.note", function(args)
     RPC.push(kind, args.data)
     return { ok = true }
 end)
+
+-- act.spell_reach {char, spell, target} -> {range_m, melee, reach_m, dist_m} | {}
+-- Live N9 step 3: a touch-range Scroll of Longstrider read 9.47 m from Wyll: the click on Wyll landed, the game cast
+-- nothing and Claude never walked. The bridge reads the spell in hand (ui.cast_state) and asks how far it reaches
+-- from the reader to the target (G.spell_range; touch/melee spells edge to edge, G.melee_reach), centre to centre.
+RPC.register("act.spell_reach", function(args)
+    local char, target = G.guid(args.char), G.guid(args.target)
+    local ok, st = pcall(Ext.Stats.Get, tostring(args.spell or ""))
+    local range, melee = G.spell_range(ok and st or nil, char)
+    local p, q = char and G.pos(char), target and G.pos(target)
+    if not range or not p or not q then return {} end
+    return { range_m = range, melee = melee or false, dist_m = U.round(U.dist(p, q), 2),
+        reach_m = U.round(melee and G.melee_reach(char, target, range) or range, 2) }
+end)
