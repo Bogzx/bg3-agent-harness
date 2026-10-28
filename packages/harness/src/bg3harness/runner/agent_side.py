@@ -365,6 +365,7 @@ class AgentSide:
         elif kind == "auth":
             detail = api["texts"][-1]
             renv.log(f"{sid}{tag}: {client.name} API/config error (counts toward the quick-failure stop): {detail[:200]}")
+            self.event("api_auth", session=sid + tag, error=detail[:300])  # a harness failure (runs.HARNESS_EVENTS)
         if reason == "killed":
             detail = f"claude ended by a signal from outside the runner (exit {proc.returncode})"
             renv.log(f"{sid}{tag}: {detail}")

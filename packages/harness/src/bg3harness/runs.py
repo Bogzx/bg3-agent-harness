@@ -29,6 +29,7 @@ import json
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from . import clients, events, fairness, model_time, triage
 
@@ -51,7 +52,27 @@ HARNESS_EVENTS = {
     # the game's settings contradict the scenario, or the readout can't confirm one it fixes: not the run it claims
     "settings_mismatch": "settings_mismatch",
     "settings_unverified": "settings_unverified",
+    # the client's API refused the key, the credit or the model (env.classify_api_failure "auth"): the run never got
+    # to play, however long it took or whatever it called (app review of 0e5fc92)
+    "api_auth": "api_auth",
 }
+# runtime/actions.jsonl rows the bg3 server writes itself, not for an agent's call (core._log's bookkeeping,
+# saving._save_log), and the result prefixes core._log counts as not ok (its metrics' `ok`): a game error comes back
+# as "FAILED: ..." text, not as an MCP error
+BRIDGE_ROWS = frozenset({"session_start", "debrief", "note", "autoskip", "save_game.bg"})
+BRIDGE_NOT_OK = ("FAILED", "NOT READY", "REFUSED")
+
+
+def bg3_calls_ok(actions: list[dict[str, Any]]) -> int:
+    """The agent's bg3 tool calls that worked, from the server's actions.jsonl rows: the evidence a session played
+    (a client's own tools, such as claude's ToolSearch, never reach the server)."""
+    return sum(
+        1
+        for a in actions
+        if a.get("tool") not in BRIDGE_ROWS and not str(a.get("result") or "").startswith(BRIDGE_NOT_OK)
+    )
+
+
 FAULT_KINDS = {"crash": ("game_crash", HARNESS), "hang": ("game_hang", HARNESS), "agent_hang": ("agent_hang", UNKNOWN)}
 
 PLAY_STREAM_RE = re.compile(r"^S\d{3,}(?:-[rc]\d+)?\.jsonl$")  # play sessions and their resumes (crash -rN, stop
@@ -132,16 +153,16 @@ def event_failures(events: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def history_failures(sessions: list[dict]) -> list[dict]:
     """From runner.json history entries of the run's play sessions. A quick exit (claude_quick_exit: auth, config or
-    usage) is a process that exited within a minute without a tool call: one that played (`tool_calls`) just finished
-    fast (N15: the scripted reload agent's 31 s save + load voided its run 3 times). An entry without the count is
-    taken by its time alone."""
+    usage) is a session that exited within a minute without a bg3 call that worked (`bg3_calls_ok`: bg3_calls_ok
+    over the whole session): one that played just finished fast (N15: the scripted reload agent's 31 s save + load
+    voided its run 3 times). An entry without the count is taken by its time alone."""
     out = []
     for h in sessions:
         sid, t = h.get("session"), h.get("ended") or h.get("started")
         dur = (h.get("ended") or 0) - (h.get("started") or 0)
         if h.get("reason") == "killed":
             out.append(failure(t, "claude_killed", UNKNOWN, f"{sid}: claude ended by a signal from outside the runner"))
-        elif h.get("reason") == "exited" and 0 <= dur < 60 and not h.get("tool_calls"):
+        elif h.get("reason") == "exited" and 0 <= dur < 60 and not h.get("bg3_calls_ok"):
             out.append(
                 failure(
                     t,
