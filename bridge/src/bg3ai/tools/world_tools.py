@@ -574,6 +574,13 @@ def _scroll_outcome(head: str, rest: str, name: str, char: str, in_combat: bool,
     return head + ("\n" + rest if rest else "")
 
 
+def _standing_up(uuids: set[str]) -> str:
+    """The name of one of `uuids` whose act.end_standup runs ('' = none; no read for an empty set)."""
+    running = ((core.game.try_rpc("act.standups") or {}).get("running") or []) if uuids else []
+    up = [u for u in running if u.get("uuid") in uuids]
+    return (up[0].get("name") or overview._name_of(up[0]["uuid"])) if up else ""
+
+
 def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = None,
                 pos: list[float] | None = None) -> str:
     """Read a scroll as a player does: use it from the bags (the game then waits for a target), then click the
@@ -598,12 +605,9 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
             raise GameError(far)
     # night2 (live N4, N7-N12 vs N10): a spell on a revived member during their stand-up (act.end_standup) left their
     # layer-1 action unfinished for good; act.cast waits for it, a scroll's click would come at once
-    others = {plumbing._uuid(t) for t in [target, *(targets or [])] if t} - {char}
-    running = ((core.game.try_rpc("act.standups") or {}).get("running") or []) if others else []
-    up = [u for u in running if u.get("uuid") in others]
+    up = _standing_up({plumbing._uuid(t) for t in [target, *(targets or [])] if t} - {char})
     if up:
-        raise GameError(f"{up[0].get('name') or overview._name_of(up[0]['uuid'])} is still standing up from the revive: "
-                        f"{name} not read")
+        raise GameError(f"{up} is still standing up from the revive: {name} not read")
     if pos is not None and not target and _TELEPORT_SCROLL.search(name):
         # S093 09:47: a teleport to a point with no floor under it (Misty Step into the psyche's void: Gale died);
         # the mod's landing check (a floor at that height, no Chasm) before the scroll is read
@@ -880,6 +884,8 @@ def click_on(target: str, button: str = "left") -> str:
     if inp is None:
         raise GameError("input shim not available")
     u, btn = plumbing._world_uuid(target), "R" if button.lower().startswith("r") else "L"
+    if up := _standing_up({u}):  # night2 review: e.g. a scroll read by interact, then its target clicked by hand
+        raise GameError(f"{up} is still standing up from the revive: not clicked")
     head = ""
     if clicker.HOVER_V2 and _click_off_view(u):
         # select the member beside it BEFORE the first look (naut-r2: the off_screen pass cost 7 s before the retry)
