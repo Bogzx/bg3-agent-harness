@@ -1,6 +1,6 @@
 """TEMPORARY SessionRunner over today's runner CLI (remove in Phase D: the harness's run_session replaces it).
 
-One session = one `python3 runner/play.py run --playthrough <pt> --hours <minutes/60> --session-minutes <minutes>`
+One session = one `uv run python runner/play.py run --playthrough <pt> --hours <minutes/60> --session-minutes <minutes>`
 with the config's client/model/effort/character/difficulty as flags. A client profile (profiles/<name>.toml, parsed
 by bg3harness/profiles.py) is mapped to --client/--model/--effort; a pi profile is passed whole as --profile with the
 config's cost cap as --max-cost and no keeper (what play.py --profile requires for pi).

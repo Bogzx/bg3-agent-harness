@@ -495,7 +495,7 @@ def run_series(opt: rstate.Options, n: int, current: dict, allow_drift: bool = F
     recs = bseries.series_records(path, base)
     if recs:
         renv.log(f"series {base}: {len(recs)}/{n} run(s) recorded, {sum(1 for x in recs if x.get('clean'))} clean, "
-            f"{brecords.clean_streak(recs)} clean in a row (python3 runner/play.py runs --playthrough {base})")
+            f"{brecords.clean_streak(recs)} clean in a row (uv run python runner/play.py runs --playthrough {base})")
     return rc
 
 

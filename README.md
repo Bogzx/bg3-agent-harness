@@ -198,7 +198,7 @@ To let the harness run the agent for you, preview a three-run Nautiloid series. 
 what the series would freeze and the agent's command, without launching anything:
 
 ```bash
-python3 runner/play.py run --scenario nautiloid --runs 3 --playthrough naut-demo --plan
+uv run python runner/play.py run --scenario nautiloid --runs 3 --playthrough naut-demo --plan
 ```
 
 Drop `--plan` to play it. To run your own model through pi instead, see [docs/QUICKSTART.md](docs/QUICKSTART.md).
@@ -237,7 +237,7 @@ with no game installed. `--supervise` adds the Launcher (start, stop, resume) an
 
    ```bash
    python3 tools/memory/new_playthrough.py my-run
-   python3 runner/play.py run --playthrough my-run
+   uv run python runner/play.py run --playthrough my-run
    ```
 
    Add `--plan` to the `run` line to see what it would do without starting the game.

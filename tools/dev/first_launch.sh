@@ -224,7 +224,7 @@ cat <<EOF
 
 == READY. The game is running (stop it: kill -9 \$(cat $RUNTIME/game.pid); it ignores SIGTERM). Next:
   1. Load or start a game:
-       existing Claude save: python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --dry-run
+       existing Claude save: uv run python runner/play.py run --playthrough claude-run-1 --save-owner Claude --dry-run
                              (loads the playthrough's save, prints the claude command instead of playing)
        new game:             python3 tools/dev/test_new_game.py   (New Game -> character creation; see its docstring)
   2. With a save loaded, the live checks (each prints PASS/WARN/FAIL):
@@ -239,7 +239,7 @@ for c in check_act check_se; do
     fi
 done
 cat <<EOF
-  3. A supervised session (docs/SETUP.md §5): BG3AI_SAVE_PREFIX=Claude- python3 runner/play.py run \\
+  3. A supervised session (docs/SETUP.md §5): BG3AI_SAVE_PREFIX=Claude- uv run python runner/play.py run \\
        --playthrough claude-run-1 --save-owner Claude --session-minutes 30 --effort medium
      with the dashboard: uv run --project bridge python runner/dashboard/serve.py --port 8765
 EOF

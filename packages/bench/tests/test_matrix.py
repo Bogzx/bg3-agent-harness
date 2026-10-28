@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -404,7 +405,7 @@ def test_legacy_cli_runs_one_more_run_of_the_series(tmp_path):
     res = run_one(job)
     assert res == RunResult("night1-nautiloid-opus-claude-medium-legacy-r001", True, True, 3.349, None, True)
     assert cmds[0] == [
-        "python3", str(repo / "runner" / "play.py"), "run", "--scenario-file", str(tmp_path / "nautiloid.resolved.json"),
+        sys.executable, str(repo / "runner" / "play.py"), "run", "--scenario-file", str(tmp_path / "nautiloid.resolved.json"),
         "--playthrough", "night1-nautiloid-opus-claude-medium-legacy", "--client", "claude", "--model", "opus",
         "--runs", "1", "--effort", "medium", "--no-keeper",
     ]  # fmt: skip

@@ -15,10 +15,10 @@ at, the caps, the character profile and the per-run resets. `play.py run --scena
 model compared on it) starts from the same point under the same rules.
 
 ```bash
-python3 runner/play.py scenarios                              # each scenario: ready / needs a start save
-python3 runner/play.py run --scenario nautiloid --hours 12    # 3 runs (the scenario's N), series "nautiloid"
-python3 runner/play.py run --scenario crash_site_grove --runs 5 --playthrough grove-opus
-python3 runner/play.py runs --playthrough nautiloid           # the runs table, as for any series
+uv run python runner/play.py scenarios                              # each scenario: ready / needs a start save
+uv run python runner/play.py run --scenario nautiloid --hours 12    # 3 runs (the scenario's N), series "nautiloid"
+uv run python runner/play.py run --scenario crash_site_grove --runs 5 --playthrough grove-opus
+uv run python runner/play.py runs --playthrough nautiloid           # the runs table, as for any series
 ```
 
 | Scenario | Start | Until | Caps | Status |
@@ -136,7 +136,7 @@ own save first.
 Steps for each scenario (the runner stopped; Steam offline as always; don't touch the candidate save):
 
 1. Launch the game straight into the candidate: `runner/launch_game.sh --load <candidate folder>` and wait for it
-   to load (`python3 runner/play.py status` shows `state Running`).
+   to load (`uv run python runner/play.py status` shows `state Running`).
 2. Check the state against the scenario: in the right area (the minimap name), out of combat, no dialogue open,
    the party as in `start.note.party`; and the `until` milestone not reached yet (`grove`, `underdark`,
    `last_light` must not be on the screen's area names or in the journal as done). If it isn't a clean moment, walk
@@ -157,8 +157,8 @@ Steps for each scenario (the runner stopped; Steam offline as always; don't touc
    point: correct them to what the save shows.
 5. Put the folder into `start.save`, and optionally `save_sha1`:
    `sha1sum ".../Story/<folder>/SCN-<name>.lsv"` (the game names the .lsv after the label, next to a `.WebP`). Check the profile name equals the folder's owner (`Claude`).
-6. `python3 runner/play.py scenarios` shows it `ready`. Quit the game (the runner launches its own).
-7. First series: `python3 runner/play.py run --scenario <name> --runs 1 --session-minutes 30` supervised; check the
+6. `uv run python runner/play.py scenarios` shows it `ready`. Quit the game (the runner launches its own).
+7. First series: `uv run python runner/play.py run --scenario <name> --runs 1 --session-minutes 30` supervised; check the
    first session's kickoff has the SCENARIO START note, the runner log says `loading save <folder>`, the
    agent's first save supersedes it, and the run ends at the milestone.
 

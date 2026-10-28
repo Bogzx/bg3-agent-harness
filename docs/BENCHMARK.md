@@ -130,9 +130,9 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
 
 ```bash
 python3 tools/bench_preflight.py                                        # everything PASS (WARNs read)
-python3 runner/play.py scenarios                                        # which scenarios are ready
-python3 runner/play.py run --scenario nautiloid --runs 5 --model opus --playthrough naut-opus
-python3 runner/play.py runs --playthrough naut-opus [--failures]        # the table and the spread
+uv run python runner/play.py scenarios                                        # which scenarios are ready
+uv run python runner/play.py run --scenario nautiloid --runs 5 --model opus --playthrough naut-opus
+uv run python runner/play.py runs --playthrough naut-opus [--failures]        # the table and the spread
 ```
 
 - One series per model and scenario: give each its own `--playthrough` name (the series name; default the
@@ -165,7 +165,7 @@ client's credentials in the runner's env (`CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_A
 
 ```bash
 sudo tools/container/firewall.sh up && tools/container/firewall.sh check          # OK: only the bg3 server
-python3 runner/play.py run --scenario nautiloid --runs 5 --client codex --model gpt-5 --sandbox container \
+uv run python runner/play.py run --scenario nautiloid --runs 5 --client codex --model gpt-5 --sandbox container \
     --playthrough naut-gpt5
 ```
 

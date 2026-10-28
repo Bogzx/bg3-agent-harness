@@ -157,12 +157,13 @@ class HandoffAndSaves(unittest.TestCase):
         older = sv("Claude-8__S001-start", 5010.0, saved=950.0)       # this playthrough's older save
         unread = dataclasses.replace(sv("Claude-7__S002-x", 5500.0), saved=None)   # meta.lsf unreadable
         saves = [own, restored, older, unread]
+        SKIPPED = "; skipped, SaveTime unreadable: Claude-7__S002-x"  # named, never silently dropped  # noqa: N806
         self.assertEqual(rgame.pick_save(saves, None, "Claude", set(), "Claude-", windows), own)
         self.assertEqual(rgame.pick_save_why(saves, "S001-end", "Claude", set(), "Claude-", windows, 1, {1: 1450.0}),
-                         (own, 'HANDOFF\'s "Save to load", also the newest save'))
+                         (own, 'HANDOFF\'s "Save to load", also the newest save' + SKIPPED))
         self.assertEqual(rgame.pick_save_why(saves, "S001-start", "Claude", set(), "Claude-", windows, 1, {1: 1450.0}),
                          (older, 'HANDOFF\'s "Save to load" (S001\'s choice), not the newer "S001-end" from the same '
-                                 'session'))
+                                 'session' + SKIPPED))
         self.assertIsNone(rgame.pick_save([unread], None, "Claude", {unread.folder}, "Claude-", windows))
 
     def test_handoff_save_is_the_agents_choice(self):

@@ -56,8 +56,8 @@ uv run --project packages/bench python -m bg3bench.scenario resolve packages/ben
 # the matrix runner on this machine's game: one job is one bg3harness run_session (adapters/session_run.py, no
 # resume: a crash is an invalid run, rerun) through the harness's LiveRunHost; runtime/STOP or Ctrl-C ends the run
 # playing now (recorded invalid) and starts no new one
-python3 runner/play.py bench plan --matrix packages/bench/matrices/<file>.toml
-python3 runner/play.py bench run|resume|status --matrix packages/bench/matrices/<file>.toml
+uv run python runner/play.py bench plan --matrix packages/bench/matrices/<file>.toml
+uv run python runner/play.py bench run|resume|status --matrix packages/bench/matrices/<file>.toml
 # --runner legacy (until Phase D) plays each job as one runner/play.py run --scenario-file <resolved> call instead
 uv run --project packages/bench python -m bg3bench.matrix run --matrix <file>.toml --runner legacy
 
