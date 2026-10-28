@@ -6,6 +6,9 @@ the live game's saves and Script Extender files (live5 §0.4, live6 §3). Every 
 loads bg3harness.testing.pytest_profile (a pytest11 entry point) first; runner/testenv.py does it for unittest. All
 call temp_profile(), so whichever runs first picks the dir and the others reuse it ($BG3AI_TEST_PROFILE). A child
 process inherits the env vars. Forced, not setdefault: a shell that exports the real folders must not leak them.
+The runtime dir too ($BG3AI_RUNTIME, renv.RUNTIME, also read once at import): a harness test module collected first
+imported bg3harness.runner.env with the repo's runtime/, and every later test that didn't patch renv.RUNTIME logged
+to the real runtime/runner.log (runner/test_play_game.py KillGame, 2026-10-28).
 """
 
 from __future__ import annotations
@@ -18,24 +21,29 @@ from pathlib import Path
 
 ENV = "BG3AI_TEST_PROFILE"
 DIR_VARS = ("BG3AI_SAVE_DIR", "BG3AI_SE_DIR", "BG3AI_PROFILE_DIR")
+RUNTIME_VAR = "BG3AI_RUNTIME"
 
 
 def temp_profile(environ: MutableMapping[str, str] = os.environ) -> Path:
-    """The process's temp profile root (made on the first call); points the three profile env vars into it."""
+    """The process's temp profile root (made on the first call); points the three profile env vars and the runtime
+    dir into it."""
     root = Path(environ.get(ENV) or tempfile.mkdtemp(prefix="bg3ai-test-profile-"))
     environ[ENV] = str(root)
     environ["BG3AI_SAVE_DIR"] = str(root / "saves")
     environ["BG3AI_SE_DIR"] = str(root / "se")
     environ["BG3AI_PROFILE_DIR"] = str(root / "profile")
+    environ[RUNTIME_VAR] = str(root / "runtime")
     return root
 
 
 def leaks(environ: Mapping[str, str] = os.environ, modules: Mapping[str, object] = sys.modules) -> list[str]:
     """The profile folders this test process would use that are not under the temp dir: the three env vars, and
-    bg3harness.runner.env's SAVE_DIR and SE_BG3AI_DIR once it is imported (a test may point them at its own tmp)."""
+    bg3harness.runner.env's SAVE_DIR, SE_BG3AI_DIR and RUNTIME once it is imported (a test may point them at its own
+    tmp). $BG3AI_RUNTIME itself isn't checked: a test may unset it for a while (bg3play's option defaults); what its
+    import froze into renv.RUNTIME is what the runner writes to."""
     tmp = Path(tempfile.gettempdir()).resolve()
     dirs = {var: environ.get(var, "") for var in DIR_VARS}
     renv = modules.get("bg3harness.runner.env")
     if renv is not None:
-        dirs |= {f"renv.{n}": str(getattr(renv, n)) for n in ("SAVE_DIR", "SE_BG3AI_DIR")}
+        dirs |= {f"renv.{n}": str(getattr(renv, n)) for n in ("SAVE_DIR", "SE_BG3AI_DIR", "RUNTIME")}
     return [f"{k}={v or '(unset)'}" for k, v in dirs.items() if not v or not Path(v).resolve().is_relative_to(tmp)]
