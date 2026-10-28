@@ -139,7 +139,7 @@
         </div>
         {#if render && render.run === open}
           <div class="faint">{render.running ? "rendering…" : render.video ?
-            `video ${render.video} (${bytes(render.video_bytes ?? 0)}); Validate again so the bundle carries its sync table and contact sheet` :
+            `video ${render.video} (${bytes(render.video_bytes ?? 0)}); the panel doesn't add its sync table and contact sheet to the bundle yet` :
             `render ended (exit ${render.returncode ?? "?"}); see ${render.log}`}</div>
         {/if}
         <label class="row">YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/…" size="40" /></label>

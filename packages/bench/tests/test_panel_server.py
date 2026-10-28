@@ -16,6 +16,7 @@ from bg3bench.serve.settings import Settings
 REPO = Path(__file__).resolve().parents[3]
 FAKE = "fake-value-0123456789abcdefghij-WXYZ"
 SHA = "ab" * 32
+RUN_HASH = "cd" * 32
 
 
 class FakeRunner:
@@ -45,7 +46,7 @@ class FakeBundler:
         self.literals = list(literals)
         b = out_dir / "bundle"
         b.mkdir(parents=True)
-        (b / "bundle.json").write_text(json.dumps({"files": []}))
+        (b / "bundle.json").write_text(json.dumps({"files": [], "run_hash": RUN_HASH}))
         return SHA, b
 
     def validate(self, bundle_dir, *, literals):
@@ -510,7 +511,8 @@ def test_render_needs_a_prepared_bundle(server):
     code, r = post(server, "/api/v1/render", {"run": "s1"})
     assert code == 200 and r["render"] == {"run": "s1", "running": True}
     (job,) = server.renderer.jobs
-    assert job.bundle_sha256 == SHA and job.run_id == "s1-r001" and job.site == "bench.example"
+    assert job.run_hash == RUN_HASH and job.run_id == "s1-r001" and job.site == "bench.example"
+    assert job.source == server.runtime / "submissions" / "s1" / "1" / "bundle"  # the packed, scrubbed record
     assert get(server, "/api/v1/render")[1]["render"]["run"] == "s1"
 
 
@@ -582,6 +584,13 @@ def test_main_serves_until_interrupted(monkeypatch, tmp_path, capsys):
     assert "http://127.0.0.1:8790/" in capsys.readouterr().out
     assert app.key_names() == []
     assert stopped[0].is_set()  # the ticker's event is set on the way out
+
+
+def test_release_defaults_to_the_suites_release_file():
+    from bg3bench.serve import server as srv_mod
+
+    want = srv_mod.suite.PACKAGE_ROOT / "releases" / f"{srv_mod.suite.suite_version()}.json"
+    assert srv_mod.parser().parse_args([]).release == want
 
 
 def test_verbose_logs_request_lines(app, capsys):

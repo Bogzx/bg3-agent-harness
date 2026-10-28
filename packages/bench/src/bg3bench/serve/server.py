@@ -30,7 +30,7 @@ POST (JSON body, token):
     /api/v1/submit/prepare       {"run"}: pack and validate a finished run; the verdict and the exact files
     /api/v1/submit/upload        {"run", "bundle_sha256", "youtube_url"}: send that bundle with the site token
     /api/v1/submit/status        {"run"}: the submission's status from the site
-    /api/v1/render               {"run"}: render the run's evidence video (needs a prepared bundle and a recording)
+    /api/v1/render               {"run"}: render the run's evidence video from its prepared bundle and recording
     /api/v1/settings/key         {"name", "value"}: write a profile's API key to the repo's .env; returns it masked
     /api/v1/settings/site-token  {"value"}: the site token, to <config>/site-token
     /api/v1/settings/prefs       {"youtube_verified"?, "record_cap_gb"?}
@@ -229,11 +229,15 @@ class App:
         renderer = self.need(self.renderer, "renderer")
         prepared = submit.state(self.submissions(), run_dir.name)["prepared"]
         if not prepared:
-            raise panel.PanelError("validate the run first: the video's id line names its bundle")
+            raise panel.PanelError("validate the run first: the video shows the packed record and its run hash")
         man, res = (json.loads((run_dir / f).read_text(encoding="utf-8")) for f in ("manifest.json", "result.json"))
         scenario_of: dict[str, Any] = man.get("scenario") or {}
         sc = panel.load_scenarios(self.scenarios_dir).get(str(scenario_of.get("name")))
-        renderer.start(video.job_for(run_dir, man, res, sc, bundle_sha256=prepared["bundle_sha256"], site=self.site))
+        bundle_dir = Path(prepared["bundle_dir"])
+        job = video.job_for(
+            run_dir, man, res, sc, source=bundle_dir, run_hash=video.run_hash(bundle_dir), site=self.site
+        )
+        renderer.start(job)
         return {"render": renderer.state()}
 
     def plan(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -459,7 +463,12 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--site", default=os.environ.get("BG3BENCH_SITE"), help="the submissions site's URL ($BG3BENCH_SITE)"
     )
-    ap.add_argument("--release", type=Path, help="the suite's release file, what Submit validates against")
+    ap.add_argument(
+        "--release",
+        type=Path,
+        default=suite.PACKAGE_ROOT / "releases" / f"{suite.suite_version()}.json",
+        help="the suite's release file, what Validate checks a run against (default packages/bench/releases/<suite>.json)",
+    )
     ap.add_argument("--verbose", action="store_true", help="log request lines (never bodies)")
     return ap
 

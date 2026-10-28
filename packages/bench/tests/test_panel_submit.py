@@ -268,15 +268,28 @@ def test_video_job_and_command(run_dir):
     man = {"run_id": "s1-r001", "scenario": {"name": "act1_get_item"}}
     res = {"run_id": "s1-r001", "t_pass_s": 351.0, "cost_kind": "billed"}
     sc = {"title": "Get the item", "task": "Find it.", "caps": {"run_hours": 0.75}}
-    job = video.job_for(run_dir, man, res, sc, bundle_sha256=SHA, site="https://bench.example")
+    bundle = run_dir / "bundle"
+    job = video.job_for(run_dir, man, res, sc, source=bundle, run_hash=SHA, site="https://bench.example")
     assert video.command("py", job) == [
-        "py", "-m", "bg3harness.video", str(run_dir), "--index", str(run_dir / "recording" / "index.json"),
-        "--out", str(run_dir), "--run-id", "s1-r001", "--bundle", SHA, "--cost-kind", "billed",
+        "py", "-m", "bg3harness.video", str(bundle), "--index", str(run_dir / "recording" / "index.json"),
+        "--out", str(run_dir), "--run-id", "s1-r001", "--run-hash", SHA, "--cost-kind", "billed",
         "--site", "bench.example", "--title", "Get the item", "--task", "Find it.", "--cap-min", "45",
         "--t-pass-s", "351",
     ]  # fmt: skip
-    bare = video.job_for(run_dir, {}, {}, None, bundle_sha256=SHA, site=None)
-    assert video.command("py", bare)[-4:] == ["--bundle", SHA, "--cost-kind", "billed"] and bare.run_id == "s1"
+    bare = video.job_for(run_dir, {}, {}, None, source=bundle, run_hash=SHA, site=None)
+    assert video.command("py", bare)[-4:] == ["--run-hash", SHA, "--cost-kind", "billed"] and bare.run_id == "s1"
+
+
+def test_video_run_hash_reads_bundle_json(tmp_path):
+    (tmp_path / "bundle.json").write_text(json.dumps({"run_hash": SHA}))
+    assert video.run_hash(tmp_path) == SHA
+    for doc in ({"files": []}, {"run_hash": "AB" * 32}, {"run_hash": 5}, []):
+        (tmp_path / "bundle.json").write_text(json.dumps(doc))
+        with pytest.raises(panel.PanelError, match="no run_hash"):
+            video.run_hash(tmp_path)
+    (tmp_path / "bundle.json").unlink()
+    with pytest.raises(panel.PanelError, match="no run_hash"):
+        video.run_hash(tmp_path)
 
 
 def test_video_process(run_dir):
@@ -288,7 +301,7 @@ def test_video_process(run_dir):
         return procs[-1]
 
     vp = video.VideoProcess(popen=popen, python="py", now=lambda: 5.0)
-    job = video.job_for(run_dir, {}, {}, None, bundle_sha256=SHA, site=None)
+    job = video.job_for(run_dir, {}, {}, None, source=run_dir / "bundle", run_hash=SHA, site=None)
     assert vp.state() is None
     with pytest.raises(panel.PanelError, match="no recording"):
         vp.start(job)
