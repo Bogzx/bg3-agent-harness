@@ -105,6 +105,20 @@ function A.collapseOthers(groups, want)
     return done
 end
 
+-- The playthrough list fills over frames after the page opens, slowest on the first open after a launch (live N8 step
+-- 9: 3 s in it listed only '' and 'Claude'; the same load 0.8 s later found 'Vessa Thornquill'). A missing playthrough
+-- is given up on once the list has not changed for LOAD_GROUPS_SETTLE_MS with every group named, or after
+-- LOAD_GROUPS_MAX_MS (a cold first open) in all. track = {key, at} carries the last list seen between ticks.
+A.LOAD_GROUPS_SETTLE_MS = 3000
+A.LOAD_GROUPS_MAX_MS = 15000
+function A.loadGroupsSettled(track, hdrs, now, since)
+    local key = table.concat(hdrs, "\1")
+    if key ~= track.key then track.key, track.at = key, now end
+    if now - since > A.LOAD_GROUPS_MAX_MS then return true end
+    for _, h in ipairs(hdrs) do if h == "" then return false end end -- a group still being named
+    return #hdrs > 0 and now - track.at > A.LOAD_GROUPS_SETTLE_MS
+end
+
 local function loadItems(owner)
     local w = UI.widget("LoadGame")
     if not w then return nil, {} end
@@ -202,8 +216,8 @@ function MENU.load(args)
     local index = tonumber(args.index) or 1
     local want = type(args.date) == "table" and args.date or nil
     local stage, since, tries, cand = "open", RPC.now_ms(), 0, nil
-    local collapsed
-    local function enter(st) stage, since, tries = st, RPC.now_ms(), 0 end
+    local collapsed, track
+    local function enter(st) stage, since, tries, track = st, RPC.now_ms(), 0, {} end
     return waitJob("ui.menu.load", 30000, function(job)
         local now = RPC.now_ms()
         -- live6: a load from the Lower City timed out at "verify" with no word on how far the scan got
@@ -243,11 +257,15 @@ function MENU.load(args)
                     collapsed = A.collapseOthers(A.loadGroups(w), owner:lower())
                     if #collapsed > 0 then since = now return nil end
                 end
-                if now - since > 3000 then
+                local hdrs = {}
+                for _, g in ipairs(A.loadGroups(w)) do hdrs[#hdrs + 1] = g.hdr end
+                track = track or {}
+                if A.loadGroupsSettled(track, hdrs, now, since) then
                     local seen = {}
-                    for _, g in ipairs(A.loadGroups(w)) do if #seen < 8 then seen[#seen + 1] = g.hdr end end
+                    for i = 1, math.min(#hdrs, 8) do seen[i] = hdrs[i] ~= "" and hdrs[i] or "(unnamed)" end
                     return "failed", { stage = stage, groups = seen, collapsed = collapsed,
-                        error = "no playthrough named '" .. tostring(owner) .. "' on the load page (after 3s"
+                        error = string.format("no playthrough named '%s' on the load page (listed for %.1fs, unchanged"
+                            .. " for %.1fs", tostring(owner), (now - since) / 1000, (now - track.at) / 1000)
                             .. (collapsed and #collapsed > 0 and ("; collapsed " .. table.concat(collapsed, ", ")) or "")
                             .. "; groups shown: " .. (#seen > 0 and table.concat(seen, " | ") or "none") .. ")" }
                 end
