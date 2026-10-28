@@ -292,6 +292,7 @@ crosscheck = [
     { name = "scipy" },
 ]
 dev = [
+    { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -308,6 +309,7 @@ provides-extras = ["inspect", "baselines"]
 [package.metadata.requires-dev]
 crosscheck = [{ name = "scipy", specifier = ">=1.11" }]
 dev = [
+    { name = "playwright", specifier = "==1.64.0" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
 ]

@@ -5,7 +5,7 @@
     uv run tools/ci/task.py check       # job "lint": ruff, ruff format, legacy lists, pyright, import rules, line cap,
                                         # scrub
     uv run tools/ci/task.py test        # job "test": pytest -m "not live and not e2e" with the coverage floors
-    uv run tools/ci/task.py e2e         # job "e2e": builds the web app, installs pi, pytest -m "e2e and not live"
+    uv run tools/ci/task.py e2e         # job "e2e": builds the web apps, installs pi, pytest -m "e2e and not live"
     uv run tools/ci/task.py lua         # job "lua": the Lua suites in Docker
     uv run tools/ci/task.py ts          # job "typescript": npm ci, tsc --noEmit, check, lint, vitest per package
     uv run tools/ci/task.py --list [job...]   # print the commands without running them
@@ -71,6 +71,8 @@ JOBS: dict[str, tuple[Step, ...]] = {
         SYNC,
         Step(NPM_CI, "packages/playthrough/web"),
         Step(("npm", "run", "build"), "packages/playthrough/web"),
+        Step(NPM_CI, "packages/bench/web"),
+        Step(("npm", "run", "build"), "packages/bench/web"),
         Step(NPM_CI, "tools/pi"),
         uv("playwright", "install", "chromium"),
         uv("pytest", "-m", "e2e and not live"),

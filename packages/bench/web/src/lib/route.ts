@@ -1,0 +1,13 @@
+// Hash routes: #/preflight, #/saves, #/new, #/queue, #/results, #/settings, #/about. No server fallback needed.
+
+export type Screen = "preflight" | "saves" | "new" | "queue" | "results" | "settings" | "about";
+export const SCREENS: Screen[] = ["preflight", "saves", "new", "queue", "results", "settings", "about"];
+export const LABELS: Record<Screen, string> = {
+  preflight: "Preflight", saves: "Saves", new: "New run", queue: "Queue", results: "Results", settings: "Settings",
+  about: "About",
+};
+
+export function parseRoute(hash: string): Screen {
+  const first = hash.replace(/^#\/?/, "").split("/")[0] ?? "";
+  return (SCREENS as string[]).includes(first) ? (first as Screen) : "preflight";
+}
