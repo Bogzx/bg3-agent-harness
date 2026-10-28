@@ -31,6 +31,34 @@
         "difficulty": {"type": ["string", "null"]},
         "name": {"type": ["string", "null"]}
       }
+    },
+    "served": {
+      "type": "object",
+      "required": ["tools", "prompts"],
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "object",
+          "required": ["allowlist_sha256", "count", "names"],
+          "additionalProperties": false,
+          "properties": {
+            "allowlist_sha256": {"$ref": "#/$defs/sha256", "description": "bg3harness.run_manifest.tools_digest of names"},
+            "count": {"type": "integer", "minimum": 1},
+            "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
+          }
+        },
+        "prompts": {
+          "description": "client name -> the sha256 of the text it is served (a run manifest's prompt.sha256) and the prompt condition it was assembled from",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["sha256", "condition"],
+            "additionalProperties": false,
+            "properties": {"sha256": {"$ref": "#/$defs/sha256"}, "condition": {"type": "string"}}
+          }
+        }
+      }
     }
   },
   "properties": {
@@ -99,26 +127,13 @@
         "required": ["tools", "prompts"],
         "additionalProperties": false,
         "properties": {
-          "tools": {
+          "tools": {"$ref": "#/$defs/served/properties/tools"},
+          "prompts": {"$ref": "#/$defs/served/properties/prompts"},
+          "variants": {
+            "description": "the condition under a client profile's tool groups off (bg3harness.profiles.tools_off), keyed by those groups joined by '-': a run whose manifest names a variant's allowlist is checked against that variant",
             "type": "object",
-            "required": ["allowlist_sha256", "count", "names"],
-            "additionalProperties": false,
-            "properties": {
-              "allowlist_sha256": {"$ref": "#/$defs/sha256", "description": "bg3harness.run_manifest.tools_digest of names"},
-              "count": {"type": "integer", "minimum": 1},
-              "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
-            }
-          },
-          "prompts": {
-            "description": "client name -> the sha256 of the text it is served (a run manifest's prompt.sha256) and the prompt condition it was assembled from",
-            "type": "object",
-            "minProperties": 1,
-            "additionalProperties": {
-              "type": "object",
-              "required": ["sha256", "condition"],
-              "additionalProperties": false,
-              "properties": {"sha256": {"$ref": "#/$defs/sha256"}, "condition": {"type": "string"}}
-            }
+            "propertyNames": {"pattern": "^[a-z_]+(-[a-z_]+)*$"},
+            "additionalProperties": {"$ref": "#/$defs/served"}
           }
         }
       }

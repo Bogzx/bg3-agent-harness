@@ -35,7 +35,7 @@ import jsonschema
 from bg3harness import client_setup
 from bg3harness.run_manifest import tools_digest
 
-from bg3bench import conditions, pins, saves, scenario, suite
+from bg3bench import conditions, pins, results, saves, scenario, suite
 from bg3bench.submission import bundle, pack
 
 Json = dict[str, Any]
@@ -47,12 +47,17 @@ RELEASES = suite.PACKAGE_ROOT / "releases"  # <suite>.json: committed when the s
 CLIENTS = ("pi", "claude")
 NO_MEMORY = "memory"  # the bridge's memory tool group: off in every bench run (bg3harness.runner.run_host)
 PIN_KEYS = ("game_build", "bg3le_sha256", "mod_sha1")
+# The tool groups a client profile can turn off on top of the condition's (bg3harness.profiles.tools_off: screenshots
+# for a pi model without image input), and the clients whose profiles do. Each is a variant of every condition.
+VARIANTS = (("screenshots",),)
+VARIANT_CLIENTS = ("pi",)
 ABOUT = (
     "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and "
     "pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv "
     "sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size "
     "and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, "
-    "count, allowlist_sha256) and per client the sha256 of the prompt it is served."
+    "count, allowlist_sha256) and per client the sha256 of the prompt it is served; its variants: the same under a client "
+    "profile's tool groups off (keyed by those groups), which a run naming those tools is checked against."
 )
 
 
@@ -79,13 +84,14 @@ def errors(doc: Any) -> list[str]:
     return [f"{'/'.join(map(str, e.absolute_path))}: {e.message}"[:200] for e in v.iter_errors(doc)]
 
 
-def session_env(cid: str, environ: Mapping[str, str]) -> dict[str, str]:
+def session_env(cid: str, environ: Mapping[str, str], groups_off: Sequence[str] = ()) -> dict[str, str]:
     """The env a bench job of condition `cid` gives its play processes' server: the prompt condition and the tools off
-    (memory, then the condition's removed tools), as bg3harness.runner.run_host sets them."""
+    (memory, then the condition's removed tools, then the profile's groups_off), as bg3harness.runner.run_host and
+    bg3harness.profiles.tool_env set them."""
     cond = conditions.parse(cid)
     env = {k: v for k, v in environ.items() if k not in ("BG3AI_TOOLS", "BG3AI_TOOLS_OFF", "BG3AI_PROMPT_CONDITION")}
     env["BG3AI_PROMPT_CONDITION"] = cond.prompt_condition()
-    env["BG3AI_TOOLS_OFF"] = ",".join([NO_MEMORY, *cond.removed_tools()])
+    env["BG3AI_TOOLS_OFF"] = ",".join([NO_MEMORY, *cond.removed_tools(), *groups_off])
     return env
 
 
@@ -95,10 +101,12 @@ def serve(
     repo: Path,
     environ: Mapping[str, str] = os.environ,
     dump: Callable[[Path, Path, Path, Path], None] | None = None,
+    groups_off: Sequence[str] = (),
 ) -> Served:
     """The tools and prompts condition `cid` serves each client, from the bg3 server dumped offline in its env
-    (dump: client_setup.run_files' server dump, default the bridge's tools/pi/dump_server.py)."""
-    env = session_env(cid, environ)
+    (dump: client_setup.run_files' server dump, default the bridge's tools/pi/dump_server.py); groups_off: a profile
+    variant's tool groups off."""
+    env = session_env(cid, environ, groups_off)
     prompts: dict[str, Json] = {}
     names: list[str] | None = None
     with tempfile.TemporaryDirectory(prefix="bg3bench-release-") as tmp:
@@ -127,9 +135,11 @@ def build(
     scenarios: Mapping[str, Json],
     suite_saves: Mapping[str, saves.Save],
     served: Mapping[str, Served],
+    variants: Mapping[str, Mapping[str, Served]] | None = None,
 ) -> Json:
     """The release document. scenarios: the suite's scenario files by name (holdouts are left out); suite_saves: its
-    saves.json entries; served: per condition id what its play processes are served."""
+    saves.json entries; served: per condition id what its play processes are served; variants: per condition id,
+    what they are served under a profile's tools off (variant_key: the groups off)."""
     if missing := [k for k in PIN_KEYS if not game_pins.get(k)]:
         raise ReleaseError(f"missing pins: {', '.join(missing)}")
     if bad := saves.disagreements(suite_saves, scenarios):
@@ -168,10 +178,12 @@ def build(
             for s in sorted(suite_saves.values(), key=lambda s: s.name)
         ],
         "conditions": {
-            cid: {
-                "tools": {**tools_digest(sv.names), "names": sorted(sv.names)},
-                "prompts": dict(sorted(sv.prompts.items())),
-            }
+            cid: _entry(sv)
+            | (
+                {"variants": {k: _entry(v) for k, v in sorted(variants[cid].items())}}
+                if variants and variants.get(cid)
+                else {}
+            )
             for cid, sv in sorted(served.items())
         },
     }
@@ -180,14 +192,26 @@ def build(
     return doc
 
 
+def _entry(sv: Served) -> Json:
+    return {"tools": {**tools_digest(sv.names), "names": sorted(sv.names)}, "prompts": dict(sorted(sv.prompts.items()))}
+
+
+def variant_key(groups_off: Sequence[str]) -> str:
+    return "-".join(sorted(groups_off))
+
+
+def condition_entry(condition: Json, allowlist_sha256: str | None) -> Json:
+    """A release condition's entry a run is checked against: the variant whose tools the run's manifest names (a
+    profile turned those groups off), else the condition's own."""
+    for v in (condition.get("variants") or {}).values():
+        if (v.get("tools") or {}).get("allowlist_sha256") == allowlist_sha256:
+            return v
+    return {k: v for k, v in condition.items() if k != "variants"}
+
+
 def pins_of(manifest: Json) -> Json:
     """The game pins a run's manifest cites, in the release's keys."""
-    p = manifest.get("pins") or {}
-    return {
-        "game_build": p.get("game_build"),
-        "bg3le_sha256": (p.get("bg3le") or {}).get("sha256"),
-        "mod_sha1": (p.get("mod") or {}).get("sha1"),
-    }
+    return results.game_pins(manifest)
 
 
 def common_pins(manifests: Sequence[Json]) -> Json:
@@ -227,7 +251,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         cids = a.condition or ["rules"]
         clients = a.client or list(CLIENTS)
         served = {cid: serve(cid, clients, a.repo) for cid in cids}
-        doc = build(a.suite, pins.versions(), game_pins, pack.load_scenarios(), saves.load().get(a.suite, {}), served)
+        vclients = [c for c in clients if c in VARIANT_CLIENTS]
+        variants = (
+            {cid: {variant_key(g): serve(cid, vclients, a.repo, groups_off=g) for g in VARIANTS} for cid in cids}
+            if vclients
+            else {}
+        )
+        doc = build(
+            a.suite, pins.versions(), game_pins, pack.load_scenarios(), saves.load().get(a.suite, {}), served, variants
+        )
     except (ReleaseError, saves.SavesError, ValueError, OSError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 1

@@ -494,3 +494,25 @@ def test_inserted_party_kill_fails_x03(tmp_path):
     rehash(bdir)
     v = run(bdir, release_for(d))  # G01 fails too: the scenario's goal forbids kills
     assert "X03" in v.failed and "kills by the party" in next(r.detail for r in v.checks if r.code == "X03")
+
+
+def test_a_run_with_a_profiles_tools_off_is_checked_against_the_variant(good):
+    """A pi model without image input is served the condition minus the screenshot tools: the release lists that as
+    a variant, and the run's manifest allowlist picks it."""
+    bdir, release = good
+    rules = release.conditions["rules"]
+    other = {
+        "tools": {"allowlist_sha256": "0" * 64, "count": 1, "names": ["x"]},
+        "prompts": {"pi": {"sha256": "1" * 64}},
+    }
+    without = validate.Release(release.suite, release.versions, release.pins, release.scenarios, {"rules": other})
+    assert {"C01", "C02"} <= set(run(bdir, without).failed)
+    variant = validate.Release(
+        release.suite,
+        release.versions,
+        release.pins,
+        release.scenarios,
+        {"rules": other | {"variants": {"screenshots": rules}}},
+    )
+    v = run(bdir, variant)
+    assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is False]

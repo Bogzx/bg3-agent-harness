@@ -7,7 +7,8 @@ with), severity and detail. A bundle is accepted when no `reject` check failed; 
 
 What the checks compare against is the released suite (Release, from the suite's release file): its versions and
 pins, each scenario's digest, start save sha1 and start-state fingerprint, and each condition's tool list and served
-prompt hash per client. Cross-submission data (D01 duplicates, D02 near-copies, X07 the verified cell) and the
+prompt hash per client (or the condition's variant whose tools the run names: a client profile turned tool groups
+off). Cross-submission data (D01 duplicates, D02 near-copies, X07 the verified cell) and the
 YouTube lookups (E01, E02) are injected by the caller; without them those checks report ok None.
 
 The bundle is untrusted input: the files are read as bytes, JSON depth is capped, frames.tar is listed, never
@@ -37,6 +38,7 @@ from bg3harness.run_manifest import tools_digest
 import bg3bench
 from bg3bench import facts, luck, scenario
 from bg3bench.submission import bundle, codes, consistency, pack, scrub
+from bg3bench.submission.release import condition_entry
 from bg3bench.submission.release import default_path as release_default_path
 from bg3bench.submission.release import errors as release_errors
 
@@ -543,7 +545,9 @@ def validate(
         events={n: _jsonl(data) for n, data in raw.items() if bundle.EVENTS.fullmatch(n)},
         scenario=scenario.with_defaults(sc),
         release_scenario=release.scenarios.get(env["scenario"]) or {},
-        release_condition=release.conditions.get(env["condition"]) or {},
+        release_condition=condition_entry(
+            release.conditions.get(env["condition"]) or {}, (man.get("tools") or {}).get("allowlist_sha256")
+        ),
     )
     add("P01", _guarded(p01_suite, b, release))
     add("P02", _guarded(p02_pins, man, release))

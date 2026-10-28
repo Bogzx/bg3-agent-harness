@@ -136,3 +136,32 @@ def test_default_location_and_the_validator_cli(tmp_path, capsys, served):
     (tmp_path / "bad.json").write_text('{"schema": 1}')
     assert validate.main([str(tmp_path), "--release", str(tmp_path / "bad.json")]) == 2
     assert "release.v1" in capsys.readouterr().err
+
+
+def test_a_profile_variant_serves_fewer_tools_and_another_prompt(served):
+    files = fixture_files()
+    noshot = release.serve(
+        "rules", ["pi"], Path("/nonexistent"), environ={}, dump=fake_dump(files), groups_off=("screenshots",)
+    )
+    gone = set(served.names) - set(noshot.names)
+    assert gone == {"screenshot", "zoom"} and set(noshot.names) < set(served.names)  # the screenshots group
+    assert noshot.prompts["pi"]["sha256"] != served.prompts["pi"]["sha256"]  # no screenshots rules served
+    key = release.variant_key(("screenshots",))
+    doc = release.build(
+        "bench-v0.8",
+        VERSIONS,
+        PINS,
+        pack.load_scenarios(),
+        saves.load()["bench-v0.8"],
+        {"rules": served},
+        {"rules": {key: noshot}},
+    )
+    assert release.errors(doc) == []
+    var = doc["conditions"]["rules"]["variants"][key]
+    assert var["tools"]["count"] == len(noshot.names) and var["prompts"] == {"pi": noshot.prompts["pi"]}
+    cond = doc["conditions"]["rules"]
+    assert release.condition_entry(cond, var["tools"]["allowlist_sha256"]) == var
+    base = release.condition_entry(cond, cond["tools"]["allowlist_sha256"])
+    assert base == {"tools": cond["tools"], "prompts": cond["prompts"]}
+    assert release.condition_entry(cond, "0" * 64) == base  # unknown tools: checked against the condition (C01 fails)
+    assert release.session_env("rules", {}, ("screenshots",))["BG3AI_TOOLS_OFF"].endswith(",screenshots")
