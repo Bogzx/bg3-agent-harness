@@ -29,7 +29,7 @@ from bg3bench import records as brecords
 from bg3bench import resets as bresets
 from bg3bench import scenario_v1 as bscenario
 from bg3bench import series as bseries
-from bg3harness import bg3le_buildinfo, client_setup, judge, model_time, runs, scenario_file, steam_paths
+from bg3harness import bg3le_buildinfo, client_setup, game_fingerprint, judge, model_time, runs, scenario_file
 from bg3harness.game.io import Save
 from bg3harness.game.saves import saved_key
 from bg3harness.runner import codewatch as rcode
@@ -238,11 +238,14 @@ def series_freeze(base: str, n: int, until: str | None, profile: dict, pins: dic
 
 
 def current_pins() -> dict:
-    """The versions a run starting now plays with (bpins.version_pins): the BG3 Steam buildid, the bg3le build the
-    launcher loads, the mod tree and the repo."""
+    """The versions a run starting now plays with (bpins.version_pins): the BG3 build (the Steam buildid, or the pin
+    when the game's files match its fingerprint: a download_depot copy; game_build_by says which), the bg3le build
+    the launcher loads, the mod tree and the repo."""
     lib = Path(os.environ.get("BG3AI_BG3LE_LIB", bg3le_buildinfo.DIST / "libbg3le.so"))
-    return bpins.version_pins(renv.REPO, steam_paths.buildid(), lib.parent, rcode.MOD_DIR / "Mods" / "BG3AI" / "meta.lsx",
-                             rcode.mod_tree_hashes())
+    build, how = game_fingerprint.machine_build(os.environ, renv.REPO)
+    pins = bpins.version_pins(renv.REPO, build, lib.parent, rcode.MOD_DIR / "Mods" / "BG3AI" / "meta.lsx",
+                              rcode.mod_tree_hashes())
+    return {**pins, "game_build_by": how}
 
 
 def gate_series_run(base: str, r: lpt.Runner, pins: dict, allow_drift: bool) -> str | None:
