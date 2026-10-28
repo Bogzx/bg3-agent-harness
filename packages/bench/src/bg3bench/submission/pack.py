@@ -35,7 +35,7 @@ Json = dict[str, Any]
 
 REQUIRED = ("manifest.json", "result.json", "facts.jsonl")
 OPTIONAL = ("rolls.jsonl", "bg3-tools.json", "bg3-instructions.txt", "pi-system.txt", "render.json", bundle.FRAMES_TAR)
-EVENTS = re.compile(r"(?:S\d{3}(?:-c\d+)?\.)?events\.jsonl")
+EVENTS = re.compile(r"S\d{3,}(?:-[rc]\d+)?\.events\.jsonl")  # one per play process
 BUNDLE_DIR = "bundle"
 ARCHIVE = "bundle.tar.gz"
 SCENARIO_DIR = suite.PACKAGE_ROOT / "scenarios"
