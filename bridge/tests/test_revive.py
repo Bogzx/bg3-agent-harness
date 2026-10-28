@@ -169,6 +169,20 @@ class Revive(unittest.TestCase):
                                            "not read")
         self.assertNotIn("act.interact", [op for op, _ in fake.calls])
 
+    def test_a_click_on_a_member_still_standing_up_is_not_sent(self):
+        """night2 review: interact(scroll) then click_on <member> reaches them past act.cast and use_ability's check."""
+        fake = self.use(Fake([{"uuid": ME, "pos": [0, 0, 0]}, {"uuid": SH, "pos": [2, 0, 0]}]))
+        rpc = fake.rpc
+        fake.rpc = fake.try_rpc = lambda op, args=None, context="server": (  # type: ignore[method-assign]
+            {"running": [{"uuid": SH, "name": "Shadowheart"}]} if op == "act.standups" else rpc(op, args, context))
+        inp = Inp()
+        orig = world_tools._inp
+        world_tools._inp = lambda: inp  # type: ignore[assignment]
+        self.addCleanup(setattr, world_tools, "_inp", orig)
+        fake.drain_events = lambda ctx: []  # type: ignore[attr-defined]  (the tool guard's event read)
+        self.assertIn("Shadowheart is still standing up from the revive: not clicked", world_tools.click_on("e2"))
+        self.assertEqual(inp.clicks, [])
+
     def test_still_dead_said(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         self.ground(hotbar.HotbarCastResult(True, picked=1))

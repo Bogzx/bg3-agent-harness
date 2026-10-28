@@ -360,8 +360,8 @@ reg("cast", function(args)
     -- a hotbar cast is refused (its clicks come as soon as the reply does).
     local standup_of
     for _, t in ipairs(targets) do
-        local up = not G.same(t, char) and A.active[t] or nil
-        if up and up.status == "running" and up.kind == "act.end_standup" then
+        local up = not G.same(t, char) and A.standup_job(t) or nil
+        if up then
             if ui then
                 G.refuse((name_of(t) or "the character") .. " is still standing up from the revive: not cast on them")
             end
