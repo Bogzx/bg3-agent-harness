@@ -143,6 +143,8 @@ def test_plan_skips_scenarios_that_are_not_ready(scenarios, profiles, tmp_path):
         ({"repeats": True}, "repeats"),
         ({"max_cost_usd": -1}, "max_cost_usd"),
         ({"condition": "rules+bogus"}, "condition"),
+        ({"condition": 3}, "condition must be"),
+        ({"profiles": ["deepseek-flash", "deepseek-flash"]}, "duplicate"),
     ],
 )
 def test_plan_refusals(scenarios, profiles, tmp_path, body, error):
@@ -183,3 +185,33 @@ def test_panel_checks():
         "warns": 0,
         "ready": True,
     }
+
+
+def test_git_ignored(tmp_path, monkeypatch):
+    from bg3bench.serve import settings
+
+    assert not settings.git_ignored(tmp_path / ".env")  # not a checkout
+    assert settings.git_ignored(REPO / ".env")  # the repo's .gitignore
+
+    def no_git(*a, **kw):
+        raise OSError("no git")
+
+    monkeypatch.setattr(settings.subprocess, "run", no_git)
+    assert not settings.git_ignored(REPO / ".env")
+
+
+def test_broken_profile(profiles, scenarios, tmp_path):
+    (profiles / "broken.toml").write_text("client = [")
+    rows = {r["name"]: r for r in panel.profile_rows(profiles, lambda n: False)}
+    assert rows["broken"]["why"] == "the profile doesn't load" and not rows["broken"]["offered"]
+    with pytest.raises(panel.PanelError, match="broken"):
+        plan(scenarios, profiles, tmp_path, form={"profiles": ["broken"]})
+
+
+def test_settings_odd_inputs(tmp_path):
+    s = Settings(tmp_path / ".env", tmp_path, lambda: ["DEEPSEEK_API_KEY"], ignored=lambda _: True)
+    (tmp_path / "panel.json").write_text("[1]")
+    assert s.prefs()["youtube_verified"] is None
+    for bad in ("two words", '"quoted', "tab\tkey"):
+        with pytest.raises(SettingsError, match="whitespace"):
+            s.set_site_token(bad)

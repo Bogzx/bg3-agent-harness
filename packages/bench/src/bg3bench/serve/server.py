@@ -15,8 +15,17 @@ GET (JSON, Cache-Control: no-store):
     /api/v1/queue        runtime/matrix/*/progress.json
     /api/v1/results      finished runs (runtime/sessions/*/{manifest,result}.json)
     /api/v1/settings     key names with masked values, the site token masked, preferences
+    /api/v1/run          the matrix this panel started (launch.Runner state), or null
+    /api/v1/submissions  per run dir: its prepared bundle and the site's last answer (submit.py)
+    /api/v1/render       the last video render (video.Renderer state), or null
 POST (JSON body, token):
     /api/v1/plan                 a New run form -> the jobs Start would queue (nothing is written or launched)
+    /api/v1/run/start            the same form: write its matrix file and start it (launch.py)
+    /api/v1/run/stop             end the run playing now, start no new one
+    /api/v1/submit/prepare       {"run"}: pack and validate a finished run; the verdict and the exact files
+    /api/v1/submit/upload        {"run", "bundle_sha256", "youtube_url"}: send that bundle with the site token
+    /api/v1/submit/status        {"run"}: the submission's status from the site
+    /api/v1/render               {"run"}: render the run's evidence video (needs a prepared bundle and a recording)
     /api/v1/settings/key         {"name", "value"}: write a profile's API key to the repo's .env; returns it masked
     /api/v1/settings/site-token  {"value"}: the site token, to <config>/site-token
     /api/v1/settings/prefs       {"youtube_verified"?, "record_cap_gb"?}
@@ -30,6 +39,7 @@ import json
 import mimetypes
 import os
 import shutil
+import time
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -41,7 +51,7 @@ from bg3harness.client_setup import read_dotenv
 
 from bg3bench import __version__, preflight, suite
 from bg3bench.adapters.legacy_cli import REPO
-from bg3bench.serve import panel, security
+from bg3bench.serve import launch, panel, security, submit, video
 from bg3bench.serve.settings import Settings, SettingsError
 
 API_VERSION = 1
@@ -71,10 +81,17 @@ class App:
         scenarios_dir: Path = SCENARIOS,
         web_dir: Path | None = DEFAULT_WEB,
         site: str | None = None,
+        runner: launch.Runner | None = None,
+        bundler: submit.Bundler | None = None,
+        site_client: Callable[[str], submit.Site] = submit.HttpSite,
+        renderer: video.Renderer | None = None,
+        now: Callable[[], float] = time.time,
     ):
         self.token, self.repo, self.runtime, self.settings = token, repo, runtime, settings
         self.saves, self.checks, self.scenarios_dir, self.web_dir = saves, checks, scenarios_dir, web_dir
         self.site = site  # the submissions site's URL (--site)
+        self.runner, self.now = runner, now  # runner None: this panel starts no run
+        self.bundler, self.site_client, self.renderer = bundler, site_client, renderer
         self.port = 0  # set once bound (serve)
 
     def profiles_dir(self) -> Path:
@@ -111,17 +128,116 @@ class App:
             return {"runs": panel.results(self.runtime / "sessions")}
         if path == "/api/v1/settings":
             return self.settings.view()
+        if path == "/api/v1/run":
+            return {"run": self.runner.state() if self.runner else None, "can_start": self.runner is not None}
+        if path == "/api/v1/submissions":
+            root = self.submissions()
+            runs = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+            return {"submissions": {r: submit.state(root, r) for r in runs}, "site": self.site}
+        if path == "/api/v1/render":
+            return {"render": self.renderer.state() if self.renderer else None}
         return None
+
+    def submissions(self) -> Path:
+        return self.runtime / submit.SUBMISSIONS
+
+    def finished_run(self, body: dict[str, Any]) -> tuple[Path, list[dict[str, Any]]]:
+        run = body.get("run")
+        rows = panel.results(self.runtime / "sessions")
+        if not isinstance(run, str) or not any(r["dir"] == run for r in rows):
+            raise panel.PanelError(f"no finished run {run!r}")
+        return self.runtime / "sessions" / run, rows
+
+    def literals(self) -> list[str]:
+        """Values the pack scrubs verbatim and the validator must not find: the .env values and the site token."""
+        vals = [v for v in read_dotenv(self.settings.dotenv).values() if v]
+        token = self.settings.site_token()
+        return vals + ([token] if token else [])
+
+    def need(self, what: Any, name: str) -> Any:
+        if what is None:
+            raise panel.PanelError(f"this panel has no {name}")
+        return what
+
+    def prepare(self, body: dict[str, Any]) -> dict[str, Any]:
+        run_dir, rows = self.finished_run(body)
+        root = self.submissions()
+        n, unsubmitted = submit.attempt(rows, run_dir.name, lambda d: submit.submitted(root, d))
+        return submit.prepare(
+            run_dir,
+            root,
+            self.need(self.bundler, "bundler"),
+            attempt_n=n,
+            unsubmitted_valid=unsubmitted,
+            literals=self.literals(),
+        )
+
+    def render(self, body: dict[str, Any]) -> dict[str, Any]:
+        run_dir, _ = self.finished_run(body)
+        renderer = self.need(self.renderer, "renderer")
+        prepared = submit.state(self.submissions(), run_dir.name)["prepared"]
+        if not prepared:
+            raise panel.PanelError("validate the run first: the video's id line names its bundle")
+        man, res = (json.loads((run_dir / f).read_text(encoding="utf-8")) for f in ("manifest.json", "result.json"))
+        scenario_of: dict[str, Any] = man.get("scenario") or {}
+        sc = panel.load_scenarios(self.scenarios_dir).get(str(scenario_of.get("name")))
+        renderer.start(video.job_for(run_dir, man, res, sc, bundle_sha256=prepared["bundle_sha256"], site=self.site))
+        return {"render": renderer.state()}
+
+    def plan(self, body: dict[str, Any]) -> dict[str, Any]:
+        return panel.plan_run(
+            body,
+            scenarios=panel.load_scenarios(self.scenarios_dir),
+            prof_dir=self.profiles_dir(),
+            budget=self.budget(),
+            youtube_verified=self.settings.prefs()["youtube_verified"],
+        )
+
+    def budget(self) -> Path:
+        return self.runtime / "budget.json"
+
+    def run_control(self) -> launch.Runner:
+        if self.runner is None:
+            raise panel.PanelError("this panel starts no run (started without a runner)")
+        return self.runner
 
     def post(self, path: str, body: dict[str, Any]) -> dict[str, Any] | None:
         if path == "/api/v1/plan":
-            return panel.plan_run(
-                body,
-                scenarios=panel.load_scenarios(self.scenarios_dir),
-                prof_dir=self.profiles_dir(),
-                budget=self.runtime / "budget.json",
-                youtube_verified=self.settings.prefs()["youtube_verified"],
+            return self.plan(body)
+        if path == "/api/v1/run/start":
+            runner = self.run_control()
+            return launch.start(
+                runner,
+                self.plan(body),
+                runtime=self.runtime,
+                budget=self.budget(),
+                allow_unverified=body.get("allow_unverified") is True,
+                now=self.now(),
             )
+        if path == "/api/v1/run/stop":
+            runner = self.run_control()
+            runner.stop()
+            return {"run": runner.state()}
+        if path == "/api/v1/submit/prepare":
+            return self.prepare(body)
+        if path == "/api/v1/submit/upload":
+            return submit.upload(
+                self.submissions(),
+                body.get("run"),  # type: ignore[arg-type] - submit checks it
+                bundle_sha256=body.get("bundle_sha256"),
+                youtube_url=body.get("youtube_url"),
+                token=self.settings.site_token(),
+                site=self.site_client(submit.site_url(self.site)),
+            )
+        if path == "/api/v1/submit/status":
+            return submit.poll(
+                self.submissions(),
+                body.get("run"),  # type: ignore[arg-type]
+                token=self.settings.site_token(),
+                site=self.site_client(submit.site_url(self.site)),
+            )
+        if path == "/api/v1/render":
+            return self.render(body)
         if path == "/api/v1/settings/key":
             return self.settings.set_key(body.get("name"), body.get("value"))
         if path == "/api/v1/settings/site-token":
@@ -276,6 +392,7 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--site", default=os.environ.get("BG3BENCH_SITE"), help="the submissions site's URL ($BG3BENCH_SITE)"
     )
+    ap.add_argument("--release", type=Path, help="the suite's release file, what Submit validates against")
     ap.add_argument("--verbose", action="store_true", help="log request lines (never bodies)")
     return ap
 
@@ -295,6 +412,9 @@ def main(argv: list[str] | None = None) -> int:
         checks=default_checks(repo, runtime),
         web_dir=opt.web,
         site=opt.site,
+        runner=launch.MatrixProcess(repo),
+        bundler=submit.BenchSubmission(opt.release, __version__),
+        renderer=video.VideoProcess(),
     )
     srv = serve(app, opt.port, opt.verbose)
     print(f"bg3bench panel: http://{HOST}:{app.port}/  (write token in {config_dir / security.TOKEN_FILE})", flush=True)

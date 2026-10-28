@@ -9,12 +9,70 @@ from pathlib import Path
 
 import pytest
 
-from bg3bench.serve import panel, security
+from bg3bench.serve import panel, security, video
 from bg3bench.serve.server import TOKEN_SLOT, App, parser, serve
 from bg3bench.serve.settings import Settings
 
 REPO = Path(__file__).resolve().parents[3]
 FAKE = "fake-value-0123456789abcdefghij-WXYZ"
+SHA = "ab" * 32
+
+
+class FakeRunner:
+    def __init__(self) -> None:
+        self.started: list[tuple[str, Path]] = []
+        self.st: dict | None = None
+
+    def start(self, name, matrix_file, log):
+        self.started.append((name, matrix_file))
+        self.st = {"name": name, "running": True, "stopping": False}
+
+    def stop(self):
+        if self.st is None or not self.st["running"]:
+            raise panel.PanelError("no matrix of this panel is running")
+        self.st["stopping"] = True
+
+    def state(self):
+        return self.st
+
+
+class FakeBundler:
+    def __init__(self) -> None:
+        self.literals: list[str] = []
+
+    def pack(self, run_dir, out_dir, *, attempt, unsubmitted_valid, literals):
+        self.literals = list(literals)
+        b = out_dir / "bundle"
+        b.mkdir(parents=True)
+        (b / "bundle.json").write_text(json.dumps({"files": []}))
+        return SHA, b
+
+    def validate(self, bundle_dir, *, literals):
+        return {"accepted": True, "flags": [], "checks": []}
+
+
+class FakeSite:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def post_submission(self, token, files, youtube_url):
+        self.calls.append(("post", token, youtube_url))
+        return 202, {"id": "sub1", "status": "received"}
+
+    def get_submission(self, token, submission_id):
+        self.calls.append(("get", token, submission_id))
+        return 200, {"status": "accepted", "flags": []}
+
+
+class FakeRenderer:
+    def __init__(self) -> None:
+        self.jobs: list[video.Job] = []
+
+    def start(self, job):
+        self.jobs.append(job)
+
+    def state(self):
+        return {"run": self.jobs[-1].run_dir.name, "running": True} if self.jobs else None
 
 
 @pytest.fixture
@@ -71,7 +129,14 @@ def app(tree: Path, web: Path, tmp_path: Path) -> App:
         saves=panel.StorySaves(story),
         checks=lambda: [("PASS", "ffmpeg", "/usr/bin/ffmpeg"), ("FAIL", "steam", "no Steam client running")],
         web_dir=web,
+        site="https://bench.example",
+        runner=FakeRunner(),
+        bundler=FakeBundler(),
+        site_client=lambda base: a.fake_site,  # type: ignore[attr-defined]
+        renderer=FakeRenderer(),
+        now=lambda: 0.0,
     )
+    a.fake_site = FakeSite()  # type: ignore[attr-defined]
     return a
 
 
@@ -255,3 +320,159 @@ def test_unknown_paths_and_bad_bodies(server):
     h = {"Content-Type": "application/json", security.TOKEN_HEADER: server.token}
     assert request(server, "POST", "/api/v1/plan", b"{not json", h)[0] == 400
     assert request(server, "POST", "/api/v1/plan", b"x" * 20000, h)[0] == 413
+
+
+RUN_FORM = {"profiles": ["deepseek-flash"], "scenarios": ["act1_get_item"], "max_cost_usd": 2.0}
+
+
+def test_start_and_stop_a_run(server):
+    assert get(server, "/api/v1/run")[1] == {"v": 1, "run": None, "can_start": True}
+    code, r = post(server, "/api/v1/run/start", RUN_FORM)
+    assert code == 200 and r["started"]["name"] == "panel-19700101-000000"
+    ((name, f),) = server.runner.started
+    assert f == server.runtime / "panel" / f"{name}.toml" and 'scenarios = ["act1_get_item"]' in f.read_text()
+    code, r = post(server, "/api/v1/run/start", RUN_FORM)
+    assert code == 400 and "is running" in r["error"] and len(server.runner.started) == 1
+    code, r = post(server, "/api/v1/run/stop", {})
+    assert code == 200 and r["run"]["stopping"] is True
+
+
+def test_start_refuses_a_plan_over_budget_and_writes_no_matrix(server):
+    code, r = post(server, "/api/v1/run/start", {**RUN_FORM, "max_cost_usd": 50.0})
+    assert code == 400 and "doesn't fit the budget" in r["error"]
+    assert server.runner.started == [] and not (server.runtime / "panel").exists()
+    assert post(server, "/api/v1/run/stop", {})[0] == 400
+
+
+def test_start_needs_the_token(server):
+    code, _ = post(server, "/api/v1/run/start", RUN_FORM, headers={security.TOKEN_HEADER: "wrong"})
+    assert code == 403 and server.runner.started == []
+
+
+def test_a_panel_without_runner_starts_nothing(server):
+    server.runner = None
+    code, r = post(server, "/api/v1/run/start", RUN_FORM)
+    assert code == 400 and "starts no run" in r["error"]
+
+
+def test_submit_flow_over_the_endpoints(server):
+    server.settings.set_site_token("bgb_" + "0" * 40)
+    (server.repo / ".env").write_text(f"DEEPSEEK_API_KEY={FAKE}\n")
+    assert post(server, "/api/v1/submit/prepare", {"run": "nope"})[0] == 400
+    code, r = post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    assert code == 200 and r["bundle_sha256"] == SHA and r["verdict"]["accepted"] and r["attempt"]["n"] == 1
+    assert server.bundler.literals == [FAKE, "bgb_" + "0" * 40]  # scrubbed verbatim, never returned
+    code, r = post(
+        server,
+        "/api/v1/submit/upload",
+        {"run": "s1", "bundle_sha256": SHA, "youtube_url": "https://youtu.be/dQw4w9WgXcQ"},
+    )
+    assert code == 200 and r["id"] == "sub1"
+    code, r = post(server, "/api/v1/submit/status", {"run": "s1"})
+    assert code == 200 and r["status"] == "accepted"
+    assert [c[0] for c in server.fake_site.calls] == ["post", "get"]
+    assert all(c[1] == "bgb_" + "0" * 40 for c in server.fake_site.calls)
+    code, r = get(server, "/api/v1/submissions")
+    assert r["submissions"]["s1"]["submission"]["status"] == "accepted"
+    assert FAKE not in json.dumps(r) and "0" * 40 not in json.dumps(r)
+
+
+def test_upload_without_a_site_url_is_refused(server):
+    post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    server.site = None
+    code, r = post(
+        server,
+        "/api/v1/submit/upload",
+        {"run": "s1", "bundle_sha256": SHA, "youtube_url": "https://youtu.be/dQw4w9WgXcQ"},
+    )
+    assert code == 400 and "no site URL" in r["error"] and server.fake_site.calls == []
+
+
+def test_render_needs_a_prepared_bundle(server):
+    code, r = post(server, "/api/v1/render", {"run": "s1"})
+    assert code == 400 and "validate the run first" in r["error"]
+    post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    code, r = post(server, "/api/v1/render", {"run": "s1"})
+    assert code == 200 and r["render"] == {"run": "s1", "running": True}
+    (job,) = server.renderer.jobs
+    assert job.bundle_sha256 == SHA and job.run_id == "s1-r001" and job.site == "bench.example"
+    assert get(server, "/api/v1/render")[1]["render"]["run"] == "s1"
+
+
+def test_static_without_a_build_head_and_errors(server):
+    code, headers, raw = request(server, "HEAD", "/")
+    assert code == 200 and raw == b"" and int(headers["Content-Length"]) > 0
+    server.web_dir = None
+    code, _, raw = request(server, "GET", "/")
+    assert code == 404 and b"npm run build" in raw
+
+    def broken(path):
+        raise OSError("disk gone")
+
+    server.get = broken
+    assert get(server, "/api/v1/about") == (500, {"v": 1, "error": "OSError: disk gone"})
+    assert request(server, "DELETE", "/api/v1/plan", headers={"Host": "evil.example"})[0] == 421
+    h = {"Content-Type": "application/json", security.TOKEN_HEADER: server.token, "Content-Length": "x"}
+    assert request(server, "POST", "/api/v1/plan", None, h)[0] == 413
+
+
+def test_render_and_prepare_need_their_backends(server):
+    server.bundler = None
+    code, r = post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    assert code == 400 and "no bundler" in r["error"]
+    server.renderer = None
+    assert get(server, "/api/v1/render")[1]["render"] is None
+    assert "no renderer" in post(server, "/api/v1/render", {"run": "s1"})[1]["error"]
+
+
+def test_default_checks_add_the_panels_own(monkeypatch, tmp_path):
+    from bg3bench.serve import server as srv_mod
+
+    monkeypatch.setattr(srv_mod.preflight, "preflight", lambda ctx: [("PASS", "game", str(ctx.repo))])
+    lines = srv_mod.default_checks(tmp_path, tmp_path)()
+    assert lines[0] == ("PASS", "game", str(tmp_path)) and {name for _, name, _ in lines[1:]} >= {"ffmpeg"}
+
+
+def test_main_serves_until_interrupted(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+
+    from bg3bench.serve import server as srv_mod
+
+    built: list[App] = []
+
+    class Srv:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            built.append(app_seen[0])
+
+    app_seen: list[App] = []
+
+    def fake_serve(app, port, verbose=False):
+        app_seen.append(app)
+        app.port = 8790
+        return Srv()
+
+    monkeypatch.setattr(srv_mod, "serve", fake_serve)
+    monkeypatch.setattr(srv_mod, "steam_paths", SimpleNamespace(saves_dir=lambda: None))
+    cfg = tmp_path / "cfg"
+    argv = ["--repo", str(tmp_path), "--config-dir", str(cfg), "--site", "https://bench.example"]
+    assert srv_mod.main([*argv, "--release", str(tmp_path / "release.json")]) == 0
+    (app,) = built
+    assert app.site == "https://bench.example" and isinstance(app.runner, srv_mod.launch.MatrixProcess)
+    assert app.renderer is not None and app.bundler is not None and (cfg / security.TOKEN_FILE).is_file()
+    assert "http://127.0.0.1:8790/" in capsys.readouterr().out
+    assert app.key_names() == []
+
+
+def test_verbose_logs_request_lines(app, capsys):
+    srv = serve(app, 0, verbose=True)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        request(app, "GET", "/api/v1/about")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    assert '"GET /api/v1/about HTTP/1.1" 200' in capsys.readouterr().err
