@@ -225,7 +225,8 @@ test("an order for a member whose stand-up job runs waits for it, then starts, a
     local mv = called("CharacterMoveToPosition")
     eq(#mv, 2, "the waiting move started"); near(mv[2][3], 6, "to its own point")
     eq(#called("PurgeOsirisQueue"), 0, "no purge while it waited")
-    arrive(j2, { 6, 0, 0 })
+    arrive(A.active[P1], { 6, 0, 0 }) -- the move run again after the stand-up (#38 review)
+    tick()
     eq(j2.status, "done", "move " .. tostring(j2.error))
     assert(j2.result.waited_for_standup_s >= 0.6, "waited_for_standup_s " .. tostring(j2.result.waited_for_standup_s))
 end)
@@ -243,4 +244,58 @@ test("a waiting order is dropped by a newer one or act.stop, unstarted and unpur
     eq(j2.status, "interrupted", "stopped"); eq(j2.error, "stopped", "why"); eq(js.status, "interrupted", "stand-up")
     tick(3)
     eq(#called("CharacterMoveToPosition"), 0, "neither ever started")
+end)
+
+-- #38 review: the waiting order runs again from scratch after the stand-up (its op: gates, plan, 'already there',
+-- supersede rules), never on its request-time plan.
+local function stood_up(names)
+    world[P1].pos = { 2.98, 0, 0 } -- the step ended the stand-up
+    names[2] = nil
+    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {}
+end
+
+test("a fight that starts while an order waits for the stand-up gates it then: no off-turn walk (#38 review)",
+    function()
+    revived(true)
+    world[P1].comps.ServerCharacter.Flags = { "RegisteredForAutomatedDialog" }
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    local j2 = job(op("move_to", { char = P1, pos = { 6, 0, 0 } }))
+    osiv[key("IsInCombat", P1)] = 1 -- not this member's turn (no TurnBased component)
+    tick(3)
+    eq(js.status, "interrupted", "the stand-up stops for the fight")
+    tick()
+    eq(j2.status, "failed", "the waiting move " .. tostring(j2.error))
+    eq(j2.error, "it is not this character's turn", "the turn gate, at the time it would have walked")
+    eq(#called("CharacterMoveToPosition"), 0, "no walk")
+    osiv[key("IsInCombat", P1)] = nil
+end)
+
+test("'already there' for a waiting order is decided after the stand-up's step (#38 review)", function()
+    local names = revived(true)
+    world[NPC].pos = { 4.5, 0, 0 } -- 4.5 m off at the request, 1.52 m after the 3 m step toward the reader
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    local j2 = job(op("move_to", { char = P1, target = NPC }))
+    eq(j2.status, "running", "waits")
+    stood_up(names)
+    tick()
+    eq(js.status, "done", "stand-up " .. tostring(js.error))
+    tick()
+    eq(j2.status, "done", "move " .. tostring(j2.error)); eq(j2.result.already_there, true, "already there")
+    assert(j2.result.waited_for_standup_s, "waited_for_standup_s")
+    eq(#called("CharacterMoveToPosition"), 1, "the stand-up's own walk only")
+end)
+
+test("an order given after the stand-up ended wins over one still waiting to run again (#38 review)", function()
+    revived(true)
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    local j1 = job(op("move_to", { char = P1, pos = { 6, 0, 0 } }))
+    RPC.ops["job.cancel"]({ id = js.id }) -- the stand-up ends; j1 has not ticked since
+    local j2 = job(op("move_to", { char = P1, pos = { 0, 0, 6 } }))
+    eq(j1.status, "interrupted", "the older order"); eq(j1.error, "superseded by a new action (move_to)", "why")
+    eq(A.active[P1], j2, "the newer order is the member's action")
+    tick(3)
+    eq(j2.status, "running", "still walking " .. tostring(j2.error))
+    local mv = called("CharacterMoveToPosition")
+    near(mv[#mv][5], 6, "the last walk ordered is the newer one's")
+    for _, c in ipairs(mv) do assert(c[3] ~= 6, "the older order never walked") end
 end)
