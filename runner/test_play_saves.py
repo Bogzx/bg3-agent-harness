@@ -316,11 +316,31 @@ class HandoffAndSaves(unittest.TestCase):
 
     def test_play_refuses_a_python_that_cant_read_a_savetime(self):
         err = io.StringIO()
-        with mock.patch.object(lspk, "zstd", None), contextlib.redirect_stderr(err):
-            self.assertEqual(P.main(["run", "--playthrough", "x", "--help"]), 2)  # before argparse, before any work
+        with mock.patch.object(lspk, "zstd", None), contextlib.redirect_stderr(err), \
+                mock.patch.object(P.lcli, "cmd_run") as run, mock.patch.object(P.lcli, "cmd_bench") as bench:
+            self.assertEqual(P.main(["run", "--playthrough", "x"]), 2)
+            self.assertEqual(P.main(["bench", "run", "--matrix", "m.toml"]), 2)
+        run.assert_not_called()
+        bench.assert_not_called()
         self.assertIn("runner/play.py refused: Python ", err.getvalue())
         self.assertIn("needs Python 3.14+", err.getvalue())
-        self.assertIn("uv run python runner/play.py run --playthrough x --help", err.getvalue())
+        self.assertIn("uv run python runner/play.py run --playthrough x\n", err.getvalue())
+        self.assertIn("uv run python runner/play.py bench run --matrix m.toml\n", err.getvalue())
+
+    def test_play_commands_that_read_no_savetime_run_under_any_python(self):
+        # app review of PR #30: `python3 runner/play.py stop` must still stop a runner started with uv run
+        names = ("cmd_stop", "cmd_runs", "cmd_judge", "cmd_bench")
+        with mock.patch.object(lspk, "zstd", None), contextlib.ExitStack() as st:
+            cmds = {n: st.enter_context(mock.patch.object(P.lcli, n, return_value=0)) for n in names}
+            self.assertEqual(P.main(["stop"]), 0)
+            self.assertEqual(P.main(["runs", "--playthrough", "x"]), 0)
+            self.assertEqual(P.main(["judge", "--playthrough", "x"]), 0)
+            self.assertEqual(P.main(["bench", "status", "--matrix", "m.toml"]), 0)
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as e:
+                P.main(["run", "--help"])
+            self.assertEqual(e.exception.code, 0)
+        self.assertTrue(all(c.call_count == 1 for c in cmds.values()), cmds)
+        cmds["cmd_bench"].assert_called_once_with(["status", "--matrix", "m.toml"])
 
     def test_pick_never_takes_foreign_saves(self):
         saves = self._saves()

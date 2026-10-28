@@ -40,14 +40,23 @@ from bg3harness.runner import judging
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 
+SAVETIME_CMDS = {"run", "status", "scenarios"}  # they list saves (controller.list_saves), as do bench run/resume
+
+
+def savetime_refused(argv: list[str]) -> bool:
+    """Every save choice goes by SaveTime (game.saves): a Python that can't read it is refused, in one line."""
+    if (why := controller.savetime_problem()) is None:
+        return False
+    print(f"runner/play.py refused: {why}. Run it with the repo's Python 3.14: uv run python runner/play.py "
+          f"{shlex.join(argv)}", file=sys.stderr)
+    return True
+
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
-    if (why := controller.savetime_problem()) is not None:  # every save choice goes by SaveTime (game.saves)
-        print(f"runner/play.py refused: {why}. Run it with the repo's Python 3.14: uv run python runner/play.py "
-              f"{shlex.join(argv)}", file=sys.stderr)
-        return 2
     if argv[:1] == ["bench"]:  # bg3bench's matrix CLI (its own arguments) with the live RunHost
+        if argv[1:2] in (["run"], ["resume"]) and savetime_refused(argv):
+            return 2
         return lcli.cmd_bench(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -318,6 +327,8 @@ def main(argv: list[str] | None = None) -> int:
     j.add_argument("--allow-judge-change", action="store_true", help="judge with another model than series.json's")
     j.add_argument("--timeout", type=float, default=renv.JUDGE_TIMEOUT_S, help="seconds per run (default %(default)s)")
     a = ap.parse_args(argv)
+    if a.cmd in SAVETIME_CMDS and savetime_refused(argv):
+        return 2
     return {
         "run": lcli.cmd_run,
         "status": lcli.cmd_status,
