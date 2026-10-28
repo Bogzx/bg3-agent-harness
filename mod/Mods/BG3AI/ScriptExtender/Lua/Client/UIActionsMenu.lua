@@ -108,13 +108,23 @@ end
 -- The playthrough list fills over frames after the page opens, slowest on the first open after a launch (live N8 step
 -- 9: 3 s in it listed only '' and 'Claude'; the same load 0.8 s later found 'Vessa Thornquill'). A missing playthrough
 -- is given up on once the list has not changed for LOAD_GROUPS_SETTLE_MS with every group named, or after
--- LOAD_GROUPS_MAX_MS (a cold first open) in all. track = {key, at} carries the last list seen between ticks.
+-- LOAD_GROUPS_MAX_MS (a cold first open) in all. track = {key, at} carries the last list seen between ticks; since =
+-- when the page opened; cap (default LOAD_GROUPS_MAX_MS) from A.loadGroupsCap.
 A.LOAD_GROUPS_SETTLE_MS = 3000
 A.LOAD_GROUPS_MAX_MS = 15000
-function A.loadGroupsSettled(track, hdrs, now, since)
+A.LOAD_JOB_MS = 30000
+-- Job time kept after the cap: a missing playthrough fails with what the page showed, never as the job's timeout
+-- (the cap must outlast a few 80 ms polls).
+A.LOAD_GROUPS_RESERVE_MS = 2000
+-- The longest wait for the playthrough list once the page opened openMs into the job: LOAD_GROUPS_MAX_MS, less when
+-- the open stage (up to LOADING_WAIT_MS + 4 s behind a loading screen) used the job's time.
+function A.loadGroupsCap(openMs)
+    return math.min(A.LOAD_GROUPS_MAX_MS, A.LOAD_JOB_MS - A.LOAD_GROUPS_RESERVE_MS - openMs)
+end
+function A.loadGroupsSettled(track, hdrs, now, since, cap)
     local key = table.concat(hdrs, "\1")
     if key ~= track.key then track.key, track.at = key, now end
-    if now - since > A.LOAD_GROUPS_MAX_MS then return true end
+    if now - since > (cap or A.LOAD_GROUPS_MAX_MS) then return true end
     for _, h in ipairs(hdrs) do if h == "" then return false end end -- a group still being named
     return #hdrs > 0 and now - track.at > A.LOAD_GROUPS_SETTLE_MS
 end
@@ -216,9 +226,9 @@ function MENU.load(args)
     local index = tonumber(args.index) or 1
     local want = type(args.date) == "table" and args.date or nil
     local stage, since, tries, cand = "open", RPC.now_ms(), 0, nil
-    local collapsed, track
+    local started, pageAt, foundAt, collapsed, track = since, nil, nil, nil, nil
     local function enter(st) stage, since, tries, track = st, RPC.now_ms(), 0, {} end
-    return waitJob("ui.menu.load", 30000, function(job)
+    return waitJob("ui.menu.load", A.LOAD_JOB_MS, function(job)
         local now = RPC.now_ms()
         -- live6: a load from the Lower City timed out at "verify" with no word on how far the scan got
         job.partial = { stage = stage, name = name, picked = job.picked, tried = job.tried, saves = job.n_items,
@@ -227,7 +237,7 @@ function MENU.load(args)
         local page = UI.widget("LoadGame")
         local pageUp = page ~= nil and UI.isVisible(page)
         if stage == "open" then
-            if pageUp then enter("select") return nil end
+            if pageUp then pageAt = now enter("select") return nil end
             if tries == 0 and (A.loadingScreenUp() or not A.PRESS_STATES[st]) then
                 -- not pressed yet: wait for the loading screen (the 4 s page timer starts after it)
                 if now - since > A.LOADING_WAIT_MS then
@@ -255,24 +265,26 @@ function MENU.load(args)
                 -- playthrough list fills a few frames after the page shows. Wait like the save list below.
                 if now - since > 1500 and not collapsed and owner then
                     collapsed = A.collapseOthers(A.loadGroups(w), owner:lower())
-                    if #collapsed > 0 then since = now return nil end
+                    -- the list rebuilds under the collapsed groups: the settle wait starts again
+                    if #collapsed > 0 then track.at = now return nil end
                 end
                 local hdrs = {}
                 for _, g in ipairs(A.loadGroups(w)) do hdrs[#hdrs + 1] = g.hdr end
-                track = track or {}
-                if A.loadGroupsSettled(track, hdrs, now, since) then
+                if A.loadGroupsSettled(track, hdrs, now, pageAt, A.loadGroupsCap(pageAt - started)) then
                     local seen = {}
                     for i = 1, math.min(#hdrs, 8) do seen[i] = hdrs[i] ~= "" and hdrs[i] or "(unnamed)" end
                     return "failed", { stage = stage, groups = seen, collapsed = collapsed,
                         error = string.format("no playthrough named '%s' on the load page (listed for %.1fs, unchanged"
-                            .. " for %.1fs", tostring(owner), (now - since) / 1000, (now - track.at) / 1000)
+                            .. " for %.1fs", tostring(owner), (now - pageAt) / 1000, (now - track.at) / 1000)
                             .. (collapsed and #collapsed > 0 and ("; collapsed " .. table.concat(collapsed, ", ")) or "")
                             .. "; groups shown: " .. (#seen > 0 and table.concat(seen, " | ") or "none") .. ")" }
                 end
                 return nil
             end
+            -- a group found late (N8: 3.8 s after the page opened) gets its own 3 s to list its saves once expanded
+            foundAt = foundAt or now
             if #items == 0 then
-                if now - since > 3000 then return "failed", { stage = stage, error = "no saves listed for '" .. tostring(owner) .. "'" } end
+                if now - foundAt > 3000 then return "failed", { stage = stage, error = "no saves listed for '" .. tostring(owner) .. "'" } end
                 return nil -- expanding: items appear on the next frames
             end
             if stage == "select" then
