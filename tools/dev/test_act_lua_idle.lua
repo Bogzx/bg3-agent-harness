@@ -69,3 +69,24 @@ test("idle watch: a jump while the member's next job runs is that job's (one eve
     tick(5)
     eq(count_events("teleported_by_game", seq), 1, "one event")
 end)
+
+-- app review of #34: a scroll's interact ends with its spell in hand, before the bridge's click on the target
+test("idle watch: the member's own teleport (a read scroll pending, or right after their cast) is not the game's",
+    function()
+        local seq = RPC.eventSeq
+        A.scroll_pending[P1] = { item = GEM, stack = 1, payers = {} } -- Scroll of Misty Step read, spell in hand
+        n8_put_back(1500)
+        A.scroll_pending[P1] = nil
+        eq(last_event("teleported_by_game", seq), nil, "a read scroll's spell")
+        reset()
+        world[P1].pos = { 0, 0, 0 }
+        local j = job(op("move_to", { char = P1, pos = { 2, 0, 0 } }))
+        arrive(j, { 2, 0, 0 })
+        tick(3)
+        A.dispatch("CastSpell", { P1, "Target_MistyStep", "Target", "None", 0 }) -- a hotbar / click cast of theirs
+        tick(15)
+        world[P1].pos = { 11, 0, 0 }
+        tick()
+        eq(last_event("teleported_by_game", seq), nil, "their cast")
+    end)
+
