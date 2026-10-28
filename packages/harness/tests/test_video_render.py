@@ -1,9 +1,10 @@
 """bg3harness.video.render, draw and compose without ffmpeg (a fake records its arguments): a run's events and
-recording index become render.json, the panel and strip images with their concat lists and the compose command;
+recording index become render.json, the frame and column images with their concat lists and the compose command;
 the same inputs give the same bytes; a run whose recording has a gap is refused."""
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from collections.abc import Sequence
@@ -85,7 +86,9 @@ def test_a_run_becomes_render_json_images_and_the_compose_command(tmp_path: Path
     assert "inpoint 2.000\noutpoint 6.000" in game and "inpoint 0.000\noutpoint 3.500" in game
     compose_args, sheet = ff.calls
     assert compose_args[compose_args.index("-t") + 1] == "7.500"
-    assert "[g][s]vstack=inputs=2[l]" in compose_args[compose_args.index("-filter_complex") + 1]
+    graph = compose_args[compose_args.index("-filter_complex") + 1]
+    assert "scale=1408:792:force_original_aspect_ratio=decrease:flags=lanczos" in graph
+    assert "[f][g]overlay=24:96[fg]" in graph and "[fg][c]overlay=1456:96,format=yuv420p[v]" in graph
     assert compose_args[-1] == str(video) and sheet[sheet.index("-i") + 1] == str(video)
     assert "fps=1/30,scale=320:180" in sheet
     assert compose_args[compose_args.index("-c:v") + 1 :][:5] == ["libx264", "-preset", "veryfast", "-crf", "24"]
@@ -110,11 +113,11 @@ def durations(listing: str) -> list[float]:
 def test_the_images_cover_the_whole_run(tmp_path: Path):
     index = write_run(tmp_path / "run")
     p = make_plan(tmp_path / "run", index)
-    strip_list, side_list = render.write_images(p, META, tmp_path / "work")
-    assert sum(durations(strip_list.read_text())) == pytest.approx(7.5)
-    assert sum(durations(side_list.read_text())) == pytest.approx(7.5)
-    assert len(durations(strip_list.read_text())) == 8  # one per second of run clock
-    assert len(durations(side_list.read_text())) == len(p.changes)
+    frame_list, column_list = render.write_images(p, META, tmp_path / "work")
+    assert sum(durations(frame_list.read_text())) == pytest.approx(7.5)
+    assert sum(durations(column_list.read_text())) == pytest.approx(7.5)
+    assert len(durations(frame_list.read_text())) == 8  # one per second of run clock
+    assert len(durations(column_list.read_text())) == len(p.changes)
 
 
 def digests(d: Path) -> dict[str, str]:
@@ -151,20 +154,52 @@ def test_the_run_hash_must_be_a_sha256_hex_digest(tmp_path: Path, capsys: pytest
     assert not (tmp_path / "out").exists()
 
 
-def test_the_panels_have_their_fixed_sizes():
-    strip = draw.strip_image(T.Strip(5, 0.42, 410, 133, (T.Member("Tav", 9, 18),), 6.0), META)
-    side = draw.side_image([T.Item(1.0, "S001", 0, "call", "get_status")])
-    assert (strip.size, side.size) == ((1280, 360), (640, 1080))
-    assert (draw.STRIP_W + draw.SIDE_W, draw.GAME_H + draw.STRIP_H) == (1920, 1080)
-    assert draw.clock(65) == "01:05" and draw.clock(3725) == "1:02:05"
+def test_the_images_have_their_fixed_sizes():
+    s = T.Strip(5, 0.42, 410, 133, (T.Member("Tav", 9, 18),), 6.0, 2.0)
+    frame = draw.frame_image(s, META, draw.lanes_image(T.Lanes(), 10.0), 10.0)
+    column = draw.column_image([T.Item(1.0, "S001", 0, "call", "", "get_status")])
+    assert (frame.size, frame.mode, column.size, column.mode) == ((1920, 1080), "RGB", (440, 960), "RGBA")
+    assert draw.lanes_image(T.Lanes(), 10.0).size == (draw.TL_W, draw.TL_H)
+    assert draw.clock(65) == "01:05" and draw.clock(3725) == "1:02:05" and draw.short_clock(65) == "1:05"
+
+
+def test_the_column_is_transparent_where_the_party_card_shows_through():
+    column = draw.column_image([T.Item(1.0, "S001", 0, "text", "hello")])
+    hole = draw.PARTY_Y - draw.COL_Y + draw.PARTY_H // 2
+    assert column.getpixel((200, hole))[3] == 0  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
+    assert column.getpixel((200, 100))[3] == 255  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
+
+
+def test_a_character_the_font_lacks_is_drawn_with_dejavu():
+    runs = draw._runs("a✕b", "mono", 18)  # pyright: ignore[reportPrivateUsage]
+    assert [r for r, _ in runs] == ["a", "✕", "b"]
+    assert runs[1][1] is draw._fallback("mono", 18) and runs[0][1] is draw.font("mono", 18)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_result_goes_under_its_call_and_a_failure_is_marked():
+    items = [
+        T.Item(1.0, "S001", 0, "call", "plan", "combat_turn", "c1"),
+        T.Item(2.0, "S001", 1, "call", "", "look", "c2"),
+        T.Item(3.0, "S001", 2, "error", "FAILED: no path", ref="c1"),
+        T.Item(4.0, "S001", 3, "result", "orphan"),
+    ]
+    groups = draw._groups(items)  # pyright: ignore[reportPrivateUsage]
+    assert [(g.seq, r and r.seq) for g, r in groups] == [(0, 2), (1, None), (3, None)]
+
+
+def test_the_verdict_chip_says_not_yet_then_passed_or_the_ending():
+    meta = dataclasses.replace(META, ending="wiped")
+    assert draw.verdict(T.Strip(3), meta, 100)[0] == "GOAL: NOT YET"
+    assert draw.verdict(T.Strip(96), meta, 100)[:2] == ("WIPED", draw.RUST)
+    assert draw.verdict(T.Strip(70, passed_s=65.0), meta, 100)[:2] == ("PASSED 1:05", draw.TEAL)
 
 
 def test_wrap_keeps_lines_in_the_width_and_marks_a_cut():
-    f = draw.font("sans", 18)
-    lines = draw.wrap("word " * 200 + "x" * 400, f, 300, 4)
+    lines = draw.wrap("word " * 200 + "x" * 400, "sans", 18, 300, 4)
     assert len(lines) == 4 and lines[-1].endswith(" …")
-    assert all(f.getlength(ln) <= 300 for ln in lines)
-    assert draw.wrap("short", f, 300, 4) == ["short"]
+    assert all(draw.length(ln, "sans", 18) <= 300 for ln in lines)
+    assert draw.wrap("short", "sans", 18, 300, 4) == ["short"]
+    assert draw.clip("a " * 100, "mono", 18, 100).endswith("…")
 
 
 def test_a_run_whose_recording_has_a_gap_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]):

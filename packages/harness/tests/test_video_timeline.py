@@ -1,5 +1,5 @@
 """bg3harness.video.timeline: the evidence video's pure core (recording clips, side-panel items and changes, strip
-states, render.json)."""
+states, timeline lanes, tool call summaries, render.json)."""
 
 from __future__ import annotations
 
@@ -73,12 +73,12 @@ def test_the_panel_shows_visible_text_tool_calls_and_result_first_lines_only():
         "S001-c1": [ev(0, 2.0, "tool_call", tool="get_status", args={})],
     }
     items = T.panel_items(logs, T0)
-    assert [(i.at_s, i.file, i.seq, i.kind, i.text) for i in items] == [
-        (2.0, "S001", 2, "call", 'combat_turn action="attack" target="e12"'),
-        (2.0, "S001-c1", 0, "call", "get_status"),
-        (3.0, "S001", 3, "result", "hit e12 for 7"),
-        (4.0, "S001", 4, "error", "out of range"),
-        (6.0, "S001", 6, "text", "Goblin down."),
+    assert [(i.at_s, i.file, i.seq, i.kind, i.text, i.tool, i.ref) for i in items] == [
+        (2.0, "S001", 2, "call", 'action="attack" target="e12"', "combat_turn", "c1"),
+        (2.0, "S001-c1", 0, "call", "", "get_status", ""),
+        (3.0, "S001", 3, "result", "hit e12 for 7", "", "c1"),
+        (4.0, "S001", 4, "error", "out of range", "", "c2"),
+        (6.0, "S001", 6, "text", "Goblin down.", "", ""),
     ]
     assert all("hidden" not in i.text for i in items)
 
@@ -129,6 +129,68 @@ def test_strip_states_carry_the_clock_cost_gold_and_party():
     assert states[2].party == (T.Member("Tav", 0, 18, True),)
     assert states[0].party == ()
     assert {s.passed_s for s in states} == {2.0}
+    assert [s.party_at_s for s in states] == [None, 0.5, 2.0, 2.0]
+
+
+def test_a_down_and_a_revive_show_at_their_own_time_until_a_later_snapshot():
+    def snap(t: float, hp: int) -> dict[str, Any]:
+        party = [{"name": "Vessa Thornquill", "hp": hp, "max_hp": 24}, {"name": "Gale", "hp": 20, "max_hp": 20}]
+        return {"v": 1, "kind": "snapshot", "t": T0 + t, "gold": 0, "party": party}
+
+    def fact(t: float, kind: str) -> dict[str, Any]:
+        return {"v": 1, "kind": "event", "t": T0 + t, "ev": kind, "name": "Vessa Thornquill", "party": True}
+
+    facts = [snap(0.0, 24), fact(2.0, "downed"), fact(4.0, "revived"), fact(5.5, "downed"), snap(6.0, 9)]
+    downs = [tuple(m.down for m in s.party) for s in T.strip_states(7.0, facts, {}, T0)]
+    assert downs == [(False, False)] * 2 + [(True, False)] * 2 + [(False, False)] * 2 + [(False, False)]
+    assert [s.party[0].hp for s in T.strip_states(7.0, facts, {}, T0)] == [24, 24, 0, 0, 24, 24, 9]
+
+
+def test_lanes_mark_fights_kills_downs_fails_and_text():
+    def fact(t: float, kind: str, **kw: Any) -> dict[str, Any]:
+        return {"v": 1, "kind": "event", "t": T0 + t, "ev": kind, **kw}
+
+    facts = [
+        fact(-5.0, "combat_started", combat="a"),  # before the run: the band starts at 0
+        fact(3.0, "combat_ended", combat="a"),
+        fact(4.0, "kill", victim="Imp"),
+        fact(6.0, "combat_started", combat="b"),  # never ends: the band runs to the end
+        fact(7.0, "kill", victim="Gut"),
+        fact(7.5, "downed", name="Vessa"),
+        fact(12.0, "kill", victim="late"),  # after the run
+    ]
+    items = [T.Item(1.0, "S001", 0, "error", "FAILED"), T.Item(2.0, "S001", 1, "text", "hi")]
+    lanes = T.lanes(facts, items, T0, 10.0, t_pass_s=7.4)
+    assert lanes == T.Lanes(((0.0, 3.0), (6.0, 10.0)), ((4.0, False), (7.0, True)), (7.5,), (1.0,), (2.0,))
+    assert T.lanes(facts, items, T0, 10.0).kills == ((4.0, False), (7.0, False))
+
+
+def test_a_call_summary_reads_as_a_line_not_json():
+    plan = [
+        {
+            "who": "Vessa Thornquill",
+            "plan": {
+                "move": {"target": "e299", "within": 10},
+                "action": [{"ability": "Sneak Attack", "target": "e299"}],
+            },
+        },
+        {
+            "who": "Shadowheart",
+            "plan": {
+                "action": [{"ability": "Bless", "targets": ["e4", "e1"]}],
+                "bonus": {"ability": "Spiritual Weapon", "target": "e252"},
+            },
+        },
+    ]
+    assert T.summary("combat_turn", {"plan": plan}) == (
+        "Vessa: Sneak Attack → e299 · move ≤ 10 m; Shadowheart: Bless → e4,e1, bonus Spiritual Weapon → e252"
+    )
+    one = {"who": "Lae'zel", "plan": {"move": "e252", "bonus": [{"ability": "Dash"}]}}
+    assert T.summary("combat_turn", {"plan": one}) == "Lae'zel: bonus Dash · move → e252"
+    assert T.summary("combat_turn", {"who": "Gale", "plan": {"action": []}}) == "Gale: -"
+    assert T.summary("walk_toward", {"objective": "o1", "max_m": 40}) == "→ objective o1, ≤ 40 m"
+    assert T.summary("screenshot", {"scale": 0.4}) == "(0.4\u00d7)"
+    assert T.summary("wait_for", {"target": "my_turn"}) == 'target="my_turn"'
 
 
 def test_render_json_lists_every_panel_item_in_the_video_and_refuses_a_late_one():
