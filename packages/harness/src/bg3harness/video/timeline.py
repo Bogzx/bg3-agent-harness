@@ -24,6 +24,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from ..clients import RUNNING_COST
+
 MAX_GAP_S = 5.0  # the most recording a run may miss anywhere in its window
 MIN_CHANGE_S = 0.5  # the side panel changes at most twice a second
 FPS = 15  # the recorder's
@@ -179,22 +181,42 @@ def _party(snapshot: Mapping[str, Any]) -> tuple[Member, ...]:
     return tuple(out)
 
 
+def result_costs(logs: Mapping[str, Sequence[Mapping[str, Any]]], start: float) -> list[tuple[float, float]]:
+    """(at_s, what it adds) for every play process's `result` cost, in time order. A RUNNING_COST client's (its
+    session_start names it) cost_usd is its conversation's running total over --resume, so it adds what it raises
+    the conversation's highest figure by (runs.own_cost); another client's adds itself."""
+    found: list[tuple[float, str, float, str | None]] = []
+    for events in logs.values():
+        starts = [cast(Mapping[str, Any], e.get("detail") or {}) for e in events if e.get("kind") == "session_start"]
+        client = str(starts[0].get("client")) if starts else ""
+        for e in events:
+            if e.get("kind") == "result" and e.get("cost_usd") is not None:
+                sid = e.get("session_id") if client in RUNNING_COST else None
+                found.append((float(e["t"]) - start, client, float(e["cost_usd"]), sid and str(sid)))
+    running: dict[str, float] = {}
+    out: list[tuple[float, float]] = []
+    for at, _, cost, sid in sorted(found, key=lambda f: f[0]):
+        if sid is None:
+            out.append((at, cost))
+            continue
+        prev = running.get(sid, 0.0)
+        running[sid] = max(prev, cost)
+        out.append((at, running[sid] - prev))
+    return out
+
+
 def strip_states(
     duration_s: float,
     facts: Iterable[Mapping[str, Any]],
-    events: Iterable[Mapping[str, Any]],
+    logs: Mapping[str, Sequence[Mapping[str, Any]]],
     start: float,
     t_pass_s: float | None = None,
 ) -> list[Strip]:
     """One Strip per whole second of the run (0 .. ceil(duration) - 1): the gold and party of the last facts
     snapshot at or before that second (the first snapshot's gold is the start), the cost of the play processes that
-    had ended by then (their `result` events' cost_usd; None until one has)."""
+    had ended by then (result_costs; None until one has)."""
     snaps = sorted(((float(f["t"]) - start, f) for f in facts if f.get("kind") == "snapshot"), key=lambda p: p[0])
-    costs = sorted(
-        (float(e["t"]) - start, float(e["cost_usd"]))
-        for e in events
-        if e.get("kind") == "result" and e.get("cost_usd") is not None
-    )
+    costs = result_costs(logs, start)
     gold_start = next((int(s["gold"]) for _, s in snaps if s.get("gold") is not None), None)
     out: list[Strip] = []
     si = ci = 0

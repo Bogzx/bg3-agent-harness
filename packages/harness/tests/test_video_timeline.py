@@ -110,8 +110,11 @@ def test_strip_states_carry_the_clock_cost_gold_and_party():
             "party": [{"name": "Tav", "hp": 0, "max_hp": 18, "downed": True}],
         },
     ]
-    events = [ev(9, 1.5, "result", cost_usd=0.25), ev(4, 2.5, "result", cost_usd=0.5), ev(5, 2.6, "result")]
-    states = T.strip_states(3.2, facts, events, T0, t_pass_s=2.0)
+    logs = {
+        "S001": [ev(9, 1.5, "result", cost_usd=0.25)],
+        "S002": [ev(4, 2.5, "result", cost_usd=0.5), ev(5, 2.6, "result")],
+    }
+    states = T.strip_states(3.2, facts, logs, T0, t_pass_s=2.0)
     assert [s.clock_s for s in states] == [0, 1, 2, 3]
     assert [s.gold for s in states] == [None, 133, 410, 410]
     assert {s.gold_start for s in states} == {133}
@@ -131,3 +134,18 @@ def test_render_json_lists_every_panel_item_in_the_video_and_refuses_a_late_one(
     }
     with pytest.raises(T.RenderError, match="after the video's end"):
         T.sync_table(items_at(1.0, 11.0), T0, T0 + 10.0)
+
+
+def test_a_resumed_claude_conversation_costs_its_highest_running_total_not_the_sum():
+    def process(client: str, sid: str, t: float, cost: float) -> list[dict[str, Any]]:
+        start = ev(0, t - 1.0, "session_start", src="harness", detail={"client": client})
+        return [start, ev(1, t, "result", cost_usd=cost, session_id=sid)]
+
+    logs = {
+        "S001": process("claude", "conv-a", 10.0, 0.4),  # claude's cost_usd: the conversation's total so far
+        "S001-c1": process("claude", "conv-a", 20.0, 0.9),  # resumed: 0.9 in all, 0.5 of it this process's
+        "S002": process("pi", "p-1", 30.0, 0.3),  # pi's: the process's own
+        "S002-c1": process("pi", "p-1", 40.0, 0.3),
+    }
+    assert T.result_costs(logs, T0) == [(10.0, 0.4), (20.0, 0.5), (30.0, 0.3), (40.0, 0.3)]
+    assert T.strip_states(41.0, [], logs, T0)[-1].cost_usd == 1.5

@@ -92,8 +92,7 @@ def plan(
     if clip_events:
         items = [i for i in items if i.at_s <= end - start]
     sync = timeline.sync_table(items, start, end)
-    events = [e for evs in logs.values() for e in evs]
-    strips = timeline.strip_states(end - start, facts, events, start, t_pass_s)
+    strips = timeline.strip_states(end - start, facts, logs, start, t_pass_s)
     return Plan(start, end, cuts, items, timeline.changes(items), strips, sync)
 
 
