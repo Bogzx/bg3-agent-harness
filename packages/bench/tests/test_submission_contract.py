@@ -98,8 +98,10 @@ def test_bundle_hash_is_canonical():
 
 def test_run_hash_covers_the_record_files_only():
     files = {"manifest.json": b"m", "facts.jsonl": b"f", "S001.events.jsonl": b"e", "S001-c1.events.jsonl": b"c"}
-    lines = "".join(f"{n}\0{bundle.sha256_bytes(files[n])}\n" for n in sorted(files))
-    want = bundle.sha256_bytes(lines.encode())
+    sha = {n: bundle.sha256_bytes(d) for n, d in files.items()}
+    # the canonical JSON of [{name, sha256, bytes}] sorted by name: what the harness's renderer computes too
+    text = ",".join(f'{{"bytes":1,"name":"{n}","sha256":"{sha[n]}"}}' for n in sorted(files))
+    want = bundle.sha256_bytes(f"[{text}]".encode())
     assert bundle.run_hash(files) == want
     assert bundle.run_hash(files | {"render.json": b"r", "frames.tar": b"t", "bg3-tools.json": b"x"}) == want
     assert bundle.run_hash(files | {"rolls.jsonl": b"r"}) != want

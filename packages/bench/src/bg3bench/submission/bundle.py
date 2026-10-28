@@ -7,8 +7,8 @@ evidence video's id line.
 
 The run hash fingerprints the run's record (RECORD_FILES and every play process's events log, as packed: scrubbed),
 the files that exist before the evidence video is rendered: the renderer is given it and draws it in the video's
-strip, and the validator recomputes it. It is the sha256 of one line per record file, sorted by name:
-`<name> NUL <the file's sha256 hex> LF`.
+strip, and the validator recomputes it. It is the sha256 of the canonical JSON (as bundle.json's) of the list
+[{"name", "sha256", "bytes"}] of the record files sorted by name: bundle.json's files[] without the render files.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ FRAMES_MEMBER = re.compile(r"frames/\d{1,5}\.jpg")
 MAX_FRAMES_BYTES = 3 * 1024 * 1024  # frames.tar as a whole
 
 
-def canonical_bytes(envelope: dict[str, Any]) -> bytes:
+def canonical_bytes(envelope: Any) -> bytes:
     return json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
@@ -63,8 +63,12 @@ def is_record_file(name: str) -> bool:
 
 def run_hash(files: Mapping[str, bytes]) -> str:
     """The run hash over the record files among `files` ({name: bytes}); the others are ignored."""
-    lines = "".join(f"{n}\0{sha256_bytes(files[n])}\n" for n in sorted(files) if is_record_file(n))
-    return hashlib.sha256(lines.encode()).hexdigest()
+    listed = [
+        {"name": n, "sha256": sha256_bytes(files[n]), "bytes": len(files[n])}
+        for n in sorted(files)
+        if is_record_file(n)
+    ]
+    return hashlib.sha256(canonical_bytes(listed)).hexdigest()
 
 
 def schema() -> dict[str, Any]:
