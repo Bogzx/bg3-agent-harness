@@ -65,6 +65,14 @@ def make_save(root: Path, folder: str, leader: str, saved: float, session: str) 
     (root / folder / f"{folder.split('__', 1)[1]}.lsv").write_bytes(lspk.build([("meta.lsf", meta, "none")]))
 
 
+def saves_on_disk(root: Path, saves: list[rpolicy.Save]) -> None:
+    """The listed saves as folders under root (renv.SAVE_DIR): the runner's Load-page load reads them (load_args)
+    and refuses a save that isn't there."""
+    for s in saves:
+        if not (root / s.folder).exists():
+            make_save(root, s.folder, s.owner, s.saved or s.mtime, "test-playthrough")
+
+
 class FakeMenuGame:
     """A game at the main menu's splash ("Press any key"): the client state flips LoadMenu/Menu (or stays LoadMenu),
     ui.state shows SplashScreen as a panel, ui.menu fails until a key gets past it; a load takes 3 polls."""
@@ -129,6 +137,7 @@ class SplashMenu(unittest.TestCase):
         "MENU_POLL",
         "SPLASH_LOADMENU_S",
         "LOAD_START_TIMEOUT",
+        "SAVE_DIR",
     )
 
     def setUp(self):
@@ -142,14 +151,18 @@ class SplashMenu(unittest.TestCase):
         for n, v in self.saved.items():
             setattr(home(n), n, v)
 
-    def run_ensure(self, g: FakeMenuGame, saves: list[rpolicy.Save] | None = None):
+    def run_ensure(self, g: FakeMenuGame, saves: list[rpolicy.Save] | None = None, on_disk: bool = True):
         G.port_open = lambda *a, **k: True
         G.game_state, G.rpc, G.press_menu_key = g.game_state, g.rpc, g.press
         G.available_ops = lambda ctx: {"ui.state", "ui.menu"}
         G.server_ready = lambda: g.running
         G.host_character_name = lambda: "Claude"
         t = time.time() - 60
-        rcode.list_saves = lambda: saves or [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", t, t)]
+        saves = saves or [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", t, t)]
+        renv.SAVE_DIR = self.tmp / "saves"
+        if on_disk:
+            saves_on_disk(renv.SAVE_DIR, saves)
+        rcode.list_saves = lambda: saves
         r = lpt.Runner(rstate.Options("splash-test", None, 20, "opus", save_owner="Claude"))
         r.mem = self.tmp / "memory"
         r.owns_game = lambda: True
@@ -195,12 +208,20 @@ class SplashMenu(unittest.TestCase):
         make_save(root, "Claude-9__S001-other", "Claude", t + 9000, "another-playthrough")
         pick = rpolicy.Save("Claude-2__S003-1908", "Claude", "S003-1908", t, t)
         g = FakeMenuGame(splash=False)
-        with mock.patch.object(renv, "SAVE_DIR", root):
-            _r, label, _secs, _log = self.run_ensure(g, [pick])
+        _r, label, _secs, _log = self.run_ensure(g, [pick])  # loads from self.tmp / "saves"
         self.assertEqual(label, "S003-1908")
         (args,) = g.loads
         self.assertEqual((args["name"], args["owner"], args["index"]), ("Claude-2__S003-1908", "Claude", 3))
         self.assertEqual(args["date"], {"y": 2026, "m": 10, "d": 24, "H": 19, "M": 8})
+
+    def test_a_save_gone_from_the_save_dir_is_refused_not_loaded_blind(self):
+        # listed, then deleted before the load (autosave rotation): load_args has no row or date for it, and the mod
+        # would load the playthrough's row 1 unchecked; setup fails instead, and the recovery picks a save again
+        g = FakeMenuGame(splash=False)
+        with self.assertRaises(RuntimeError) as e:
+            self.run_ensure(g, on_disk=False)
+        self.assertEqual(str(e.exception), "Claude-1__S014-start: not on the Load page (gone or unknown)")
+        self.assertEqual(g.loads, [])
 
     def test_load_gates_open_before_the_menu_load(self):
         # RUN-3: the mod refuses ui.menu load while its persisted load gate is off (a fresh profile's default)
@@ -322,7 +343,10 @@ class RestartDrift(unittest.TestCase):
         G.host_character_name = lambda: "Claude"
         G.read_progress = lambda log=None: now_sig
         t = time.time() - 60
-        rcode.list_saves = lambda: saves or [rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", t, t)]
+        saves = saves or [rpolicy.Save("Claude-1__S062-end", "Claude", "S062-end", t, t)]
+        renv.SAVE_DIR = self.tmp / "saves"
+        saves_on_disk(renv.SAVE_DIR, saves)
+        rcode.list_saves = lambda: saves
         r = lpt.Runner(rstate.Options("drift-test", None, 20, "opus", save_owner="Claude", take_over=take_over))
         r.state["agent_saves"] = agent_saves
         r.mem = self.tmp / "memory"
