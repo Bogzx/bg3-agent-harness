@@ -24,7 +24,9 @@ local P = {
     compact = function() compacts = compacts + 1; clock = clock + deepCost; return "sig" .. compacts end,
     comp_names = function() return {} end,
 }
-Mods = { BG3AI = { BG3AI = { ReviveProbe = P, Guard = { osi = function() end }, RPC = { jobs = {}, finish_job = function() end },
+-- The chunk reads the mod through the global Mods, which this file never reads back (luacheck: W131 as a plain global).
+_G.Mods = { BG3AI = { BG3AI = { ReviveProbe = P, Guard = { osi = function() end },
+    RPC = { jobs = {}, finish_job = function() end },
     Util = { dist = function(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2) end },
     Actions = {}, Nav = {} } } }
 dofile(arg[1])
