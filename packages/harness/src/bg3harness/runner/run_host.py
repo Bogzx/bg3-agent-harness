@@ -54,8 +54,9 @@ from bg3ai import metrics as bmetrics
 from bg3ai import saves as bsaves
 
 import bg3harness
-from bg3harness import bg3le_buildinfo, client_setup, runs, spend, steam_paths
+from bg3harness import bg3le_buildinfo, client_setup, game_fingerprint, runs, spend, steam_paths
 from bg3harness import pins as hpins
+from bg3harness import preflight as hpreflight
 from bg3harness import recorder as hrec
 from bg3harness.game.io import Save
 from bg3harness.runner import agent_group
@@ -433,10 +434,18 @@ class SaveWatch:
 def machine_pins(env: Mapping[str, str]) -> Json:
     """The game build, bg3le, mod and repo pins of a run starting now (bg3harness.pins.run_pins), read as the legacy
     series path reads them: the Steam buildid, the bg3le build the launcher loads ($BG3AI_BG3LE_LIB), the mod tree
-    the runner's game loads (codewatch.MOD_LIVE) with the repo mod's version, and the repo."""
+    the runner's game loads (codewatch.MOD_LIVE) with the repo mod's version, and the repo. A game dir whose files match
+    the pinned build's fingerprint (a download_depot copy) plays the pinned build whatever its appmanifest says;
+    game_build_by says which of the two told the build."""
     lib = Path(env.get("BG3AI_BG3LE_LIB") or bg3le_buildinfo.DIST / "libbg3le.so")
     meta = rcode.MOD_DIR / "Mods" / "BG3AI" / "meta.lsx"
-    return hpins.run_pins(renv.REPO, steam_paths.buildid(env), lib.parent, meta, rcode.mod_tree_hashes())
+    fingerprints = renv.REPO / "tools" / "dev" / "game_fingerprints.json"
+    pinned = hpreflight.pinned_build(renv.REPO)
+    build, how = game_fingerprint.installed_build(
+        pinned, steam_paths.game_dir(env), steam_paths.buildid(env), fingerprints
+    )
+    pins = hpins.run_pins(renv.REPO, build, lib.parent, meta, rcode.mod_tree_hashes())
+    return {**pins, "game_build_by": how}
 
 
 def bench_recording(env: Mapping[str, str]) -> Callable[[Path], hrec.RunRecording] | None:

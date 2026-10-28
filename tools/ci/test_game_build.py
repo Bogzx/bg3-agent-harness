@@ -5,6 +5,7 @@ Run: uv run pytest tools/ci/test_game_build.py
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +55,29 @@ def test_check(tmp_path: Path, kw: dict[str, Any], code: int, says: str):
 
 def test_other_build_wins_over_a_pending_update(tmp_path: Path):
     assert gb.check(*files(tmp_path, build="26000000", target="27000000", flags="6")).code == gb.OTHER_BUILD
+
+
+def depot_copy(tmp: Path) -> tuple[Path, Path]:
+    """A game dir with fake files and a fingerprints file that records them for the pinned build."""
+    from bg3harness import game_fingerprint
+
+    game = tmp / "game"
+    (game / "bin").mkdir(parents=True)
+    (game / "bin/bg3").write_bytes(b"exe")
+    fps = tmp / "fingerprints.json"
+    fps.write_text(json.dumps({"25605617": game_fingerprint.make(game, ["bin/bg3"])}))
+    return game, fps
+
+
+def test_a_depot_copy_with_the_pinned_files_is_the_pin(tmp_path: Path):
+    game, fps = depot_copy(tmp_path)
+    m, p = files(tmp_path, build="26000000", target="26000000")
+    v = gb.check(m, p, game, fps)
+    assert v.code == gb.SAME and "match the pinned build 25605617's fingerprint" in v.line, v.line
+    assert gb.check(tmp_path / "nope.acf", p, game, fps).code == gb.SAME  # no Steam manifest at all
+    (game / "bin/bg3").write_bytes(b"ex3")
+    assert gb.check(m, p, game, fps).code == gb.OTHER_BUILD
+    assert gb.check(tmp_path / "nope.acf", p, game, fps).code == gb.UNKNOWN
 
 
 def test_missing_files_are_unknown(tmp_path: Path):

@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from bg3harness import game_fingerprint
 from bg3harness import pins as hpins
 from bg3harness.runner import run_host as H  # noqa: N812
 from test_run_host import JOB, PINS, SAVE_SC, Rig, outcome, rig, run_dir  # noqa: F401  (rig: fixture)
@@ -54,3 +56,24 @@ def test_machine_pins_read_the_game_build_bg3le_the_live_mod_tree_and_the_repo(
         "sha1": hpins.tree_digest({"Mods/x.lua": hashlib.sha1(b"return 1").hexdigest()}),
     }
     assert pins["repo"]["commit"] is None
+    assert pins["game_build_by"] == "appmanifest"
+
+
+def test_a_depot_copy_of_the_pinned_build_pins_the_pinned_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # its appmanifest names the build Steam updated to; its files are the pinned build's (download_depot)
+    game = tmp_path / "steamapps" / "common" / "Baldurs Gate 3"
+    (game / "bin").mkdir(parents=True)
+    (game / "bin" / "bg3").write_bytes(b"pinned exe")
+    (tmp_path / "steamapps" / "appmanifest_1086940.acf").write_text('"AppState"\n{\n\t"buildid"\t\t"26000000"\n}\n')
+    (tmp_path / "tools" / "dev").mkdir(parents=True)
+    (tmp_path / "tools" / "dev" / "first_launch.sh").write_text("WANT_BUILD=25605617\n")
+    fp = game_fingerprint.make(game, ["bin/bg3"])
+    (tmp_path / "tools" / "dev" / "game_fingerprints.json").write_text(json.dumps({"25605617": fp}))
+    monkeypatch.setattr(H.rcode, "MOD_LIVE", tmp_path / "mod-live")
+    monkeypatch.setattr(H.rcode, "MOD_DIR", tmp_path / "mod")
+    monkeypatch.setattr(H.renv, "REPO", tmp_path)
+    env = {"BG3_DIR": str(game), "BG3AI_BG3LE_LIB": str(tmp_path / "dist" / "libbg3le.so")}
+    pins = H.machine_pins(env)
+    assert (pins["game_build"], pins["game_build_by"]) == ("25605617", "fingerprint")
+    (game / "bin" / "bg3").write_bytes(b"other  exe")  # same size, other bytes: the appmanifest's build again
+    assert (H.machine_pins(env)["game_build"], H.machine_pins(env)["game_build_by"]) == ("26000000", "appmanifest")

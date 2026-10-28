@@ -29,6 +29,7 @@ language depot: compare with `steam_paths.py depots` on your machine.
 | the pinned buildid | `WANT_BUILD` in `tools/dev/first_launch.sh`; `tools/bench_preflight.py` reads it from there (its `PINNED_BUILD` is only a fallback) |
 | the installed buildid | `AppState.buildid` in Steam's `appmanifest_1086940.acf`: `python3 tools/steam_paths.py buildid` prints it (`manifest` prints the file it reads) |
 | the pinned build's depots | the table above; `python3 tools/steam_paths.py depots` prints the installed ones |
+| the pinned build's file fingerprint | `tools/dev/game_fingerprints.json` (one per buildid); `python3 tools/game_fingerprint.py make` prints the installed game's, `check` compares it |
 | the check of one against the other | `python3 tools/ci/game_build.py` (below) |
 | the build a series played on | `pins.game_build` in `runtime/sessions/<series>/series.json`, and in every run's manifest |
 | the docs that name it | README.md, docs/SETUP.md, docs/BENCHMARK.md, this file |
@@ -52,14 +53,15 @@ display, screenshot layer, ffmpeg, ...), each failure with what to do.
 
 ## The build check
 
-`python3 tools/ci/game_build.py [--manifest PATH] [--pin-file PATH]` compares the installed buildid with the pin and
-prints one line. It only reads two files (the appmanifest that `tools/steam_paths.py` finds, and `WANT_BUILD` in
-`tools/dev/first_launch.sh`); it never starts or talks to Steam. Unlike the preflight it has no fallback pin: a
+`python3 tools/ci/game_build.py [--manifest PATH] [--pin-file PATH] [--game DIR]` compares the installed buildid with
+the pin and prints one line. It reads the appmanifest that `tools/steam_paths.py` finds and `WANT_BUILD` in
+`tools/dev/first_launch.sh`, and when the manifest is missing or names another build, the game's files against the
+pinned build's fingerprint (a download_depot copy, below); it never starts or talks to Steam. Unlike the preflight it has no fallback pin: a
 `WANT_BUILD` line it can't read is an answer of its own.
 
 | Exit | Meaning | What to do |
 |---|---|---|
-| 0 | the installed build is the pin, no update pending | nothing |
+| 0 | the installed build is the pin (by its manifest or its files' fingerprint), no update pending | nothing |
 | 1 | the installed build is not the pin | a new build is installed: run the procedure below before any run or series |
 | 2 | the installed build is the pin, but Steam has an update pending (`StateFlags` UpdateRequired, or a `TargetBuildID` that differs) | keep Steam offline; update only on purpose, as below |
 | 3 | can't tell: no manifest, no `buildid` in it, or no `WANT_BUILD` pin | fix the install or the pin file |
@@ -90,12 +92,18 @@ its account with one that plays, make sure nobody plays meanwhile).
 4. Put Steam back in offline mode.
 5. Merge the depot folders into one game folder (`cp -a depot_<depot>/. <folder>/` for each) and check that `<folder>/bin/bg3` is there.
 
-What the harness does with that folder today: `BG3_DIR=<folder>` makes the launcher, the preflight and the doctor use
-it, but the build check reads `appmanifest_1086940.acf` two levels above the game folder (`steam_paths.py manifest`
-prints the path), and Steam writes that file only for its own installs. So a downloaded copy is not accepted as the
-pinned build: its check fails or finds Steam's manifest of a newer build. Copying the depots over the Steam install
-doesn't pass it either, since Steam's manifest still names the newer build (and editing Steam's files is out). Use
-the copy as the backup for an update (step 2 below) until the build check can verify a copy's files.
+6. Point the harness at it: `BG3_DIR=<folder>` (the launcher, the preflight, the doctor and the run pins all read
+   it). Check it with `python3 tools/game_fingerprint.py check`.
+
+Steam writes `appmanifest_1086940.acf` only for its own installs, so the copy has none (or the one two levels above
+names the build Steam updated to). The build check then compares the copy's files with the pinned build's
+fingerprint in `tools/dev/game_fingerprints.json`: the executable `bin/bg3` and the main game data paks
+(`Data/Game.pak`, `GustavX.pak`, `Shared.pak` and every `Data/Patch*.pak` hotfix), each by size and sha256, about
+2 GB to read. The large asset paks (textures, sounds, models) are not hashed. A copy that matches is the pinned build:
+the preflight's `install` and `build` lines pass, `tools/ci/game_build.py --game <folder>` exits 0, and a run's pins
+record `game_build` = the pin with `game_build_by: "fingerprint"` (`"appmanifest"` for a Steam install). Copying the
+depots over the Steam install works the same way, since the files then match while Steam's manifest names the newer
+build; Steam may replace them when it next updates, so keep it offline.
 
 ## When a new build comes out
 
@@ -137,7 +145,9 @@ passes.
 8. Move the pin in one commit: `WANT_BUILD` in `tools/dev/first_launch.sh` (after it `tools/ci/game_build.py`
    exits 0 again), `PINNED_BUILD` in `packages/harness/src/bg3harness/preflight.py` (its fallback), the buildid and
    game version in README.md, docs/SETUP.md, docs/BENCHMARK.md and this file, the new build's depots and manifest
-   ids in the table above (keep the old rows), a CHANGELOG entry, and any bg3le patch or mod fix the checks needed.
+   ids in the table above (keep the old rows), the new build's fingerprint in `tools/dev/game_fingerprints.json`
+   (`python3 tools/game_fingerprint.py make` on the updated install, under the new buildid; keep the old entries), a
+   CHANGELOG entry, and any bg3le patch or mod fix the checks needed.
    A changed patch also needs a new prebuilt bg3le: `python3 tools/bg3le_prebuilt.py pack` prints the package and
    its sha256; once it is published, its URL and sha256 go into `patches/bg3le-prebuilt.toml` in the same commit
    (`fetch` refuses a package whose patch list isn't `patches/bg3le`). That commit bumps the harness version, and the next benchmark release gets a new

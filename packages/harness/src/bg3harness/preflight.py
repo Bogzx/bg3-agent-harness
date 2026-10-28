@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from bg3harness import game_fingerprint
+
 PINNED_BUILD = "25605617"  # fallback only: tools/dev/first_launch.sh's WANT_BUILD is the source
 UPDATE_BEHAVIOR = {
     "0": "always keep this game updated (background updates)",
@@ -96,8 +98,30 @@ def app_state(ctx: Ctx) -> tuple[Path, dict]:
     return m, read_vdf(ctx, m).get("AppState", {})
 
 
+def fingerprints(ctx: Ctx) -> Path:
+    return ctx.repo / "tools" / "dev" / "game_fingerprints.json"
+
+
+def installed_build(ctx: Ctx) -> tuple[str, str]:
+    """(the installed build, "appmanifest" | "fingerprint"): bg3harness.game_fingerprint.installed_build."""
+    _, st = app_state(ctx)
+    game = ctx.steam.game_dir(ctx.env, ctx.home)
+    return game_fingerprint.installed_build(pinned_build(ctx.repo), game, st.get("buildid", ""), fingerprints(ctx))
+
+
 def check_install(ctx: Ctx) -> list[tuple[str, str, str]]:
     m, st = app_state(ctx)
+    if not st and installed_build(ctx)[1] == "fingerprint":
+        return [
+            (
+                PASS,
+                "install",
+                (
+                    f"no Steam manifest at {m}, but the game's files match the pinned build's fingerprint "
+                    "(a download_depot copy: Steam neither updates nor verifies it)"
+                ),
+            )
+        ]
     if not st:
         return [
             (
@@ -173,21 +197,18 @@ def series_build(ctx: Ctx, series: str) -> tuple[str | None, str]:
 
 def check_build(ctx: Ctx, series: str | None = None) -> list[tuple[str, str, str]]:
     _, st = app_state(ctx)
-    build, want = st.get("buildid", ""), pinned_build(ctx.repo)
+    listed, want = st.get("buildid", ""), pinned_build(ctx.repo)
+    build, how = installed_build(ctx)
     if not build:
-        return [(FAIL, "build", "no buildid (no manifest)")]
-    out = [
-        (PASS, "build", f"buildid {build} = the pinned build (tools/dev/first_launch.sh)")
-        if build == want
-        else (
-            FAIL,
-            "build",
-            (
-                f"buildid {build}, pinned {want}: bg3le was verified on {want} only, and runs on another "
-                "build don't compare with published ones"
-            ),
-        )
-    ]
+        return [(FAIL, "build", "no buildid (no manifest), and the files don't match the pinned build's fingerprint")]
+    if build != want:
+        why = f"buildid {build}, pinned {want}: bg3le was verified on {want} only, and runs on another build don't "
+        out = [(FAIL, "build", why + "compare with published ones")]
+    elif how == "fingerprint":
+        fp = f"the game's files match the pinned build {want}'s fingerprint (tools/dev/game_fingerprints.json)"
+        out = [(PASS, "build", f"{fp}; the appmanifest says {listed or 'nothing'}")]
+    else:
+        out = [(PASS, "build", f"buildid {build} = the pinned build (tools/dev/first_launch.sh)")]
     if series:
         frozen, where = series_build(ctx, series)
         if frozen is None:
