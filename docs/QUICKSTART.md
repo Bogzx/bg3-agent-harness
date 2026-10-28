@@ -53,15 +53,15 @@ OpenRouter, so no `[routing]`).
 
 ```bash
 python3 tools/bench_preflight.py
-python3 runner/play.py run --scenario nautiloid --runs 3 --playthrough naut-my-model \
+uv run python runner/play.py run --scenario nautiloid --runs 3 --playthrough naut-my-model \
     --profile profiles/my-model.toml --max-cost 5 --budget 20 --no-keeper --no-judge
-python3 runner/play.py runs --playthrough naut-my-model
+uv run python runner/play.py runs --playthrough naut-my-model
 ```
 
 - Add `--plan` to the `run` line first: it checks the profile and the key, and prints what the series would
   freeze and the first session's pi command, without launching or writing anything.
 - `--scenario nautiloid` plays the opening chapter from a new game until the party escapes the Nautiloid. It is
-  the only scenario with a live history; `python3 runner/play.py scenarios` lists which others are ready.
+  the only scenario with a live history; `uv run python runner/play.py scenarios` lists which others are ready.
 - `--max-cost` is required for pi: the runner kills the play process when the billed cost reaches it and records
   the run as over budget. A `--max-cost` at or under the scenario's cost cap (nautiloid sets none) is your spend
   cap: the run record keeps it as `spend_cap`, and the scenario's caps stay what the series measures. A looser one
@@ -125,7 +125,7 @@ name itself, the later runs are `<name>-r2`, `<name>-r3` and so on.
 | `<run>/Sxxx.events.jsonl` | the normalized event log of each play process |
 | `<run>/Sxxx.log` | the readable session log |
 
-`python3 runner/play.py runs --playthrough NAME [--failures]` prints the table, and the series view
+`uv run python runner/play.py runs --playthrough NAME [--failures]` prints the table, and the series view
 (`python3 runner/dashboard/seriesview.py`, http://127.0.0.1:8766/series) shows the same rows and the run in
 progress. The benchmark's per-run manifest
 and result files, the series report (`python3 -m bg3bench.report`) and the leaderboard read the same data once the

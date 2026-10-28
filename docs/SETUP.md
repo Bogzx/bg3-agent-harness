@@ -80,7 +80,7 @@ The window layout doesn't matter: click coordinates come from the input shim's v
 
 ```bash
 python3 tools/memory/new_playthrough.py my-run          # playthroughs/my-run/memory (its own git repo) + play/memory
-BG3AI_SAVE_PREFIX=Claude- python3 runner/play.py run --playthrough my-run --save-owner Claude --session-minutes 60
+BG3AI_SAVE_PREFIX=Claude- uv run python runner/play.py run --playthrough my-run --save-owner Claude --session-minutes 60
 uv run --project bridge python runner/dashboard/serve.py --port 8765    # http://localhost:8765
 ```
 

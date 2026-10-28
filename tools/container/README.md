@@ -44,7 +44,7 @@ The runner does all of this for you: next section.
 sudo tools/container/firewall.sh up                       # once per boot (root); the runner refuses without it
 export CLAUDE_CODE_OAUTH_TOKEN=...                        # or ANTHROPIC_API_KEY (codex: OPENAI_API_KEY, gemini:
                                                           # GEMINI_API_KEY, pi: the profile's api_key_env)
-python3 runner/play.py run --playthrough box1 --sandbox container [--client codex] ...
+uv run python runner/play.py run --playthrough box1 --sandbox container [--client codex] ...
 ```
 
 ```

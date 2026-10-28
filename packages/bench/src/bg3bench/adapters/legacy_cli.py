@@ -2,7 +2,7 @@
 """TEMPORARY (remove in Phase D): the matrix's fallback run_one through the legacy CLI (`--runner legacy`; the
 default is adapters/session_run.py on run_session).
 
-One job = one more run of a series: `python3 runner/play.py run --scenario-file <resolved S> --playthrough <series>
+One job = one more run of a series: `uv run python runner/play.py run --scenario-file <resolved S> --playthrough <series>
 --client C --model M [--effort E] --runs <records + 1> <condition flags>`, where the resolved file is the v2
 scenario as `python -m bg3bench.scenario resolve` writes it (matrix_cli writes one per scenario). play.py's `--runs N` is the series' total (a
 re-run resumes it), so the adapter counts the series' records first and reads the new one after. The series is per
@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -56,7 +57,7 @@ class LegacyCli:
         condition_env: Mapping[str, Mapping[str, str]] | None = None,
         repo: Path = REPO,
         execute: Callable[[Sequence[str], Mapping[str, str]], int] = _execute,
-        python: str = "python3",
+        python: str = sys.executable,  # this Python (3.14: SaveTime), not the system python3 (Night N7: 3.13.5)
     ):
         self.matrix, self.condition_flags, self.repo = matrix, condition_flags, Path(repo)
         self.scenario_files = {k: Path(v) for k, v in scenario_files.items()}

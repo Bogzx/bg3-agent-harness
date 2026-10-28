@@ -14,9 +14,9 @@ and `legacy_cli.py` the commands. `play.py bench run --matrix M.toml` runs bg3be
 
 ```bash
 python3 tools/memory/new_playthrough.py ilse          # once: playthroughs/ilse/memory (git repo)
-python3 runner/play.py run --playthrough ilse --hours 8 --model opus
-python3 runner/play.py status                         # from another terminal
-python3 runner/play.py stop                           # finish the current session, then exit
+uv run python runner/play.py run --playthrough ilse --hours 8 --model opus
+uv run python runner/play.py status                         # from another terminal
+uv run python runner/play.py stop                           # finish the current session, then exit
 ```
 
 Ctrl-C once does the same as `stop`; a second Ctrl-C interrupts the running session (SIGINT to Claude).
@@ -39,7 +39,7 @@ first `Sxxx-` save (a new game: the name the agent gave its character) and keeps
 playthrough its own name. For `claude-run-1`:
 
 ```bash
-python3 runner/play.py run --playthrough claude-run-1 --save-owner Claude --hours 8
+uv run python runner/play.py run --playthrough claude-run-1 --save-owner Claude --hours 8
 ```
 
 **Character brief (phase 0).** `run --character-brief "a pious, short-tempered dwarf cleric who distrusts mind
@@ -68,9 +68,9 @@ and the run ends `over_budget`; the record's `cap` says which (`time` | `cost` |
 **Benchmark series (`--runs N`).** The launch bar is 3 unattended Nautiloid runs in a row:
 
 ```bash
-python3 runner/play.py run --playthrough naut --until nautiloid_escaped --runs 3 --run-hours 4 \
+uv run python runner/play.py run --playthrough naut --until nautiloid_escaped --runs 3 --run-hours 4 \
     --character-brief "a pious, short-tempered dwarf cleric who distrusts mind flayers"
-python3 runner/play.py runs --playthrough naut [--failures]    # the table and "N clean in a row"
+uv run python runner/play.py runs --playthrough naut [--failures]    # the table and "N clean in a row"
 ```
 
 Run 1 is the playthrough itself (`naut`), run k is `naut-r<k>`. Each run gets a fresh memory from
