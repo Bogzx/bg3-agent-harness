@@ -21,7 +21,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "every file's sha256 equals bundle.json files[]; the bundle hash matches"
+      "summary": "every file's sha256 equals bundle.json files[]; canonical bundle.json; run_hash recomputes"
     },
     {
       "code": "F03",
@@ -270,7 +270,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "render.json events are a monotone subset of the events log, within the video"
+      "summary": "render.json is for this run_hash; its (file, seq) events exist, monotone, in the video"
     },
     {
       "code": "E04",

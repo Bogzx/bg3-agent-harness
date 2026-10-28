@@ -74,10 +74,12 @@ def good_run(tmp: Path, name: str) -> Path:
     res["deaths"] = {k: int(losses.get(k) or 0) for k in ("fights", "downs", "deaths", "wipes")}
     (d / "manifest.json").write_text(json.dumps(man, indent=1, sort_keys=True))
     (d / "result.json").write_text(json.dumps(res, indent=1, sort_keys=True))
-    evs = [e for p in sorted(d.glob("*.events.jsonl")) for e in jsonl(p.read_text())]
-    span = res["wall_s"]
-    marks = [{"seq": e["seq"], "at_s": round(e["t"] - evs[0]["t"], 2)} for e in evs[:20]]
-    (d / "render.json").write_text(json.dumps({"video_start": 0, "video_end": span, "fps": 15, "events": marks}))
+    evs = [(p.name, e) for p in sorted(d.glob("*.events.jsonl")) for e in jsonl(p.read_text())]
+    span, t0 = res["wall_s"], evs[0][1]["t"]
+    marks = [{"file": n, "seq": e["seq"], "at_s": round(e["t"] - t0, 2)} for n, e in evs[:20]]
+    run_hash = bundle.run_hash({p.name: p.read_bytes() for p in d.iterdir() if p.is_file()})
+    render = {"schema": 1, "run_hash": run_hash, "video_start": t0, "video_end": t0 + span, "fps": 15, "events": marks}
+    (d / "render.json").write_text(json.dumps(render))
     (d / bundle.FRAMES_TAR).write_bytes(frames_tar(round(span / validate.FRAME_EVERY_S)))
     return d
 
@@ -167,14 +169,19 @@ def test_draft_bundle_before_rendering(tmp_path):
     assert not v.accepted and {"E01", "E03", "E04"} <= set(v.failed)
 
 
-def rehash(bdir: Path) -> None:
-    """bundle.json made to list the files as they are now (a forger's re-hash)."""
+def rehash(bdir: Path, render: bool = True) -> None:
+    """bundle.json made to list the files as they are now, with render.json's run_hash to match (a forger's
+    re-hash; the video's strip would still show the old run hash)."""
     env = env_of(bdir)
+    files = {p.name: p.read_bytes() for p in bdir.iterdir() if p.name != bundle.ENVELOPE}
+    if render and "render.json" in files:
+        edit_json(bdir, "render.json", lambda r: r.update(run_hash=bundle.run_hash(files)))
     env["files"] = [
         {"name": p.name, "sha256": bundle.sha256_bytes(p.read_bytes()), "bytes": p.stat().st_size}
         for p in sorted(bdir.iterdir())
         if p.name != bundle.ENVELOPE
     ]
+    env["run_hash"] = bundle.run_hash({p.name: p.read_bytes() for p in bdir.iterdir() if p.name != bundle.ENVELOPE})
     (bdir / bundle.ENVELOPE).write_bytes(bundle.canonical_bytes(env))
 
 
@@ -256,6 +263,28 @@ def test_tampered_copies_are_rejected_by_their_code(tmp_path, what):
     assert code in v.failed, v.failed
     if what in ("edited gold", "wrong pins", "duplicate run id", "bad start snapshot", "extra tool"):
         assert v.failed == [code]
+
+
+def test_render_for_another_run_fails_e03(good):
+    bdir, release = good
+    edit_json(bdir, "render.json", lambda r: r.update(run_hash="0" * 64))
+    rehash(bdir, render=False)
+    assert run(bdir, release).failed == ["E03"]
+
+
+def test_render_event_names_its_log(good):
+    bdir, release = good
+    edit_json(bdir, "render.json", lambda r: r["events"][0].update(file="S001-c9.events.jsonl"))
+    rehash(bdir)
+    assert run(bdir, release).failed == ["E03"]
+
+
+def test_stale_run_hash_fails_f02(good):
+    bdir, release = good
+    env = env_of(bdir)
+    env["run_hash"] = "0" * 64
+    (bdir / bundle.ENVELOPE).write_bytes(bundle.canonical_bytes(env))
+    assert run(bdir, release).failed == ["F02"]
 
 
 def test_unhashed_edit_fails_f02(good):

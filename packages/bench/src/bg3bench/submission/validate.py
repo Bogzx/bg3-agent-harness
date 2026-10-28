@@ -192,11 +192,15 @@ def f02_hashes(raw: dict[str, bytes], env: Json) -> Outcome:
         return False, f"sha256 differs: {bad}"
     if not bundle.is_canonical(raw[bundle.ENVELOPE]):
         return False, "bundle.json is not in canonical form"
+    if env.get("run_hash") != bundle.run_hash(raw):
+        return False, "run_hash doesn't recompute from the record files"
     return True, ""
 
 
 def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
     errs = [f"bundle.json {e}" for e in _schema_errors(env, "bundle.v1.schema.json")]
+    if "render.json" in raw:
+        errs += [f"render.json {e}" for e in _schema_errors(json.loads(raw["render.json"]), "render.v1.schema.json")]
     for name, schema_file in (("manifest.json", "manifest.v1.schema.json"), ("result.json", "result.v1.schema.json")):
         if name not in raw:
             errs.append(f"{name} missing")
@@ -218,7 +222,7 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
         errs.append(f"facts.jsonl: {e}")
     if "rolls.jsonl" in raw:
         errs += [f"rolls.jsonl: {p}" for i, r in enumerate(_jsonl(raw["rolls.jsonl"])) for p in luck.check(r, f"{i}")]
-    names = [n for n in raw if pack.EVENTS.fullmatch(n)]
+    names = [n for n in raw if bundle.EVENTS.fullmatch(n)]
     if not names:
         errs.append("no events log")
     for n in names:
@@ -386,16 +390,14 @@ def e03_render(b: Loaded, submission: bool) -> Outcome:
     render = b.raw.get("render.json")
     if render is None:
         return (False, "render.json missing") if submission else (None, "not rendered yet")
-    r = json.loads(render)
-    try:
-        span = float(r["video_end"]) - float(r["video_start"])
-        marks = [(int(e["seq"]), float(e["at_s"])) for e in r["events"]]
-    except (KeyError, TypeError, ValueError) as e:
-        return False, f"render.json malformed: {e}"
-    seqs = {e.get("seq") for e in b.all_events()}
-    if unknown := [s for s, _ in marks if s not in seqs]:
-        return False, f"{len(unknown)} render events not in the events log"
-    ats = [a for _, a in marks]
+    r = json.loads(render)  # its shape is F03's
+    if r["run_hash"] != b.envelope["run_hash"]:
+        return False, "render.json was made for another run (run_hash)"
+    span = r["video_end"] - r["video_start"]
+    known = {(name, e.get("seq")) for name, evs in b.events.items() for e in evs}
+    if unknown := [e for e in r["events"] if (e["file"], e["seq"]) not in known]:
+        return False, f"{len(unknown)} render events not in the events logs"
+    ats = [e["at_s"] for e in r["events"]]
     if ats != sorted(ats) or any(not 0 <= a <= span for a in ats):
         return False, "render events not monotone or outside the video"
     return True, ""
@@ -509,7 +511,7 @@ def validate(
         result=res,
         facts=_jsonl(raw["facts.jsonl"]),
         rolls=_jsonl(raw["rolls.jsonl"]) if "rolls.jsonl" in raw else None,
-        events={n: _jsonl(data) for n, data in raw.items() if pack.EVENTS.fullmatch(n)},
+        events={n: _jsonl(data) for n, data in raw.items() if bundle.EVENTS.fullmatch(n)},
         scenario=scenario.with_defaults(sc),
         release_scenario=release.scenarios.get(env["scenario"]) or {},
         release_condition=release.conditions.get(env["condition"]) or {},

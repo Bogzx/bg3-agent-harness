@@ -34,7 +34,12 @@ _PJ: tuple[Where, ...] = ("panel", "job")
 
 CHECKS: tuple[Check, ...] = (
     Check("F01", _PW, "reject", "the files are exactly those bundle.json lists, sizes match, within the size caps"),
-    Check("F02", _PW, "reject", "every file's sha256 equals bundle.json files[]; the bundle hash matches"),
+    Check(
+        "F02",
+        _PW,
+        "reject",
+        "every file's sha256 equals bundle.json files[]; canonical bundle.json; run_hash recomputes",
+    ),
     Check("F03", _PW, "reject", "bundle, manifest, result and every facts/rolls/events line match their schemas"),
     Check("F04", _PW, "reject", "not a pilot, valid, no invalid_reason, not a holdout scenario"),
     Check("P01", _PW, "reject", "released suite; harness/bench versions, scenario digest and start save match it"),
@@ -72,7 +77,9 @@ CHECKS: tuple[Check, ...] = (
         weekly=True,
     ),
     Check("E02", ("job",), "reject", "the video's duration equals render.json's span, which equals wall_s"),
-    Check("E03", _PJ, "reject", "render.json events are a monotone subset of the events log, within the video"),
+    Check(
+        "E03", _PJ, "reject", "render.json is for this run_hash; its (file, seq) events exist, monotone, in the video"
+    ),
     Check("E04", _PJ, "reject", "frames.tar holds only frames/<n>.jpg within its cap, one decodable frame per 30 s"),
     Check("S01", _PW, "reject", "no home path, e-mail, Steam ID, key shape or .env value in any file"),
     Check("S02", _PJ, "reject", "no hidden reasoning in the events"),

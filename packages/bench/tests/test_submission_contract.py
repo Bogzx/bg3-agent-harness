@@ -22,6 +22,7 @@ def envelope(**over) -> dict:
         "suite": "bench-v0.8",
         "scenario": "act1_gold_max",
         "scenario_digest": "0b264d08717b21da",
+        "run_hash": "1" * 64,
         "condition": "rules",
         "model": {"slug": "deepseek-flash", "provider_requested": None, "reasoning_effort": "medium"},
         "client": {"name": "pi", "version": "1.3.0"},
@@ -93,6 +94,26 @@ def test_bundle_hash_is_canonical():
     assert bundle.bundle_hash(a) != bundle.bundle_hash(envelope(run_id="other-r001"))
     # non-ASCII is hashed as UTF-8, not as \u escapes (the site's JSON.stringify keeps it as is)
     assert "é".encode() in bundle.canonical_bytes(envelope(condition="é"))
+
+
+def test_run_hash_covers_the_record_files_only():
+    files = {"manifest.json": b"m", "facts.jsonl": b"f", "S001.events.jsonl": b"e", "S001-c1.events.jsonl": b"c"}
+    lines = "".join(f"{n}\0{bundle.sha256_bytes(files[n])}\n" for n in sorted(files))
+    want = bundle.sha256_bytes(lines.encode())
+    assert bundle.run_hash(files) == want
+    assert bundle.run_hash(files | {"render.json": b"r", "frames.tar": b"t", "bg3-tools.json": b"x"}) == want
+    assert bundle.run_hash(files | {"rolls.jsonl": b"r"}) != want
+    assert bundle.run_hash(files | {"S001-c1.events.jsonl": b"C"}) != want
+
+
+def test_render_schema():
+    v = jsonschema.Draft202012Validator(json.loads((SCHEMA_DIR / "render.v1.schema.json").read_text()))
+    v.check_schema(v.schema)
+    good = {"schema": 1, "run_hash": "a" * 64, "video_start": 1.0, "video_end": 2.0, "fps": 15,
+            "events": [{"file": "S001-c1.events.jsonl", "seq": 3, "at_s": 0.5}]}  # fmt: skip
+    assert list(v.iter_errors(good)) == []
+    assert list(v.iter_errors(good | {"events": [{"seq": 3, "at_s": 0.5}]}))
+    assert list(v.iter_errors(good | {"events": [{"file": "../x", "seq": 3, "at_s": 0.5}]}))
 
 
 def test_is_canonical():

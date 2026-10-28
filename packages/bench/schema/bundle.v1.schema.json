@@ -11,6 +11,7 @@
     "suite",
     "scenario",
     "scenario_digest",
+    "run_hash",
     "condition",
     "model",
     "client",
@@ -71,6 +72,10 @@
       "type": "string",
       "description": "manifest scenario.digest",
       "pattern": "^[0-9a-f]{16}$"
+    },
+    "run_hash": {
+      "description": "sha256 of the run's record files as packed (manifest.json, result.json, facts.jsonl, rolls.jsonl when present, every S*.events.jsonl): one line per file sorted by name, '<name> NUL <sha256 hex> LF' (bg3bench.submission.bundle.run_hash). The evidence video's strip shows it; the validator recomputes it (F02)",
+      "$ref": "#/$defs/sha256"
     },
     "condition": {
       "type": "string",

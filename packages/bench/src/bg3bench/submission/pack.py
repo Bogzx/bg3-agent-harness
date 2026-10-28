@@ -18,7 +18,6 @@ import argparse
 import gzip
 import io
 import json
-import re
 import sys
 import tarfile
 import time
@@ -33,9 +32,9 @@ from bg3bench.submission import bundle, scrub
 
 Json = dict[str, Any]
 
-REQUIRED = ("manifest.json", "result.json", "facts.jsonl")
+REQUIRED = ("manifest.json", "result.json", "facts.jsonl")  # rolls.jsonl only when the mod logged rolls
 OPTIONAL = ("rolls.jsonl", "bg3-tools.json", "bg3-instructions.txt", "pi-system.txt", "render.json", bundle.FRAMES_TAR)
-EVENTS = re.compile(r"S\d{3,}(?:-[rc]\d+)?\.events\.jsonl")  # one per play process
+EVENTS = bundle.EVENTS
 BUNDLE_DIR = "bundle"
 ARCHIVE = "bundle.tar.gz"
 SCENARIO_DIR = suite.PACKAGE_ROOT / "scenarios"
@@ -140,6 +139,7 @@ def envelope(
             "cell": f"{sc['name']}/{model['slug']}/{man['condition']}",
         },
         "cost": {"usd": res.get("cost_usd"), "kind": kind or cost_kind(man, events)},
+        "run_hash": bundle.run_hash(files),
         "files": [{"name": n, "sha256": bundle.sha256_bytes(d), "bytes": len(d)} for n, d in sorted(files.items())],
         "video": video,
         "recording": recording,

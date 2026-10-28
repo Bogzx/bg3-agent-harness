@@ -4,6 +4,11 @@ bundle.json is written in canonical form (keys sorted, no whitespace, UTF-8 with
 is the sha256 of its bytes as stored: a reader hashes the file, never a re-serialisation (JSON number formatting
 differs between languages). It covers every other file through files[].sha256, names the stored bundle and goes on the
 evidence video's id line.
+
+The run hash fingerprints the run's record (RECORD_FILES and every play process's events log, as packed: scrubbed),
+the files that exist before the evidence video is rendered: the renderer is given it and draws it in the video's
+strip, and the validator recomputes it. It is the sha256 of one line per record file, sorted by name:
+`<name> NUL <the file's sha256 hex> LF`.
 """
 
 from __future__ import annotations
@@ -11,12 +16,17 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 SCHEMA = 1
 SCHEMA_PATH = Path(__file__).resolve().parents[3] / "schema" / "bundle.v1.schema.json"
 ENVELOPE = "bundle.json"
+
+# The run's record: what the graders, the luck number and the consistency checks read.
+RECORD_FILES = ("manifest.json", "result.json", "facts.jsonl", "rolls.jsonl")
+EVENTS = re.compile(r"S\d{3,}(?:-[rc]\d+)?\.events\.jsonl")  # one events log per play process
 
 MAX_TOTAL_BYTES = 20 * 1024 * 1024  # every file, bundle.json included
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -45,6 +55,16 @@ def is_canonical(data: bytes) -> bool:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def is_record_file(name: str) -> bool:
+    return name in RECORD_FILES or EVENTS.fullmatch(name) is not None
+
+
+def run_hash(files: Mapping[str, bytes]) -> str:
+    """The run hash over the record files among `files` ({name: bytes}); the others are ignored."""
+    lines = "".join(f"{n}\0{sha256_bytes(files[n])}\n" for n in sorted(files) if is_record_file(n))
+    return hashlib.sha256(lines.encode()).hexdigest()
 
 
 def schema() -> dict[str, Any]:
