@@ -904,6 +904,14 @@ test("move_to range: a ranged spell's walk stops on the way in, inside its range
         j = job(op("move_to", { char = P1, target = NPC, range = 18 }))
         eq(j.status, "done", "in range already"); eq(j.result.in_reach, true, "in_reach")
         reset()
+        world[NPC].pos = { 9.47, 0, 0 } -- live N10 step 2: a touch spell's reach (2.5 m, centres, act.spell_reach)
+        op("move_to", { char = P1, target = NPC, range = 2.5 })
+        mv = called("CharacterMoveToPosition")
+        near(mv[#mv][3], 7.97, "x: 1.5 m from the target (RANGE_STOP_SLACK inside the reach), no 2.2 m floor")
+        world[P1].pos = { 7.2, 0, 0 } -- the game ended the walk short of its point, 2.27 m off: in the 2.5 m reach
+        local jt = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+        eq(jt.status, "done", "in reach already"); eq(jt.result.in_reach, true, "in_reach (the reach, not the aim)")
+        reset()
         world[NPC].pos = { 20, 0, 0 }
         op("move_to", { char = P1, target = NPC, within = 1.5 }) -- touch: the melee ring next to it, as before
         mv = called("CharacterMoveToPosition")
