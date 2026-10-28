@@ -632,8 +632,8 @@ def run_failures(
     session = {"kind": "play", "session": SID, "started": outcome.started, "ended": res.ended}
     tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
-    # the whole session's (every stop resume's) bg3 calls that worked: a quick exit has none
-    session |= {"reason": res.reason, "exit": res.exit_code, "bg3_calls_ok": runs.bg3_calls_ok(actions)}
+    # the whole session's (every stop resume's) game calls that worked: a quick exit has none
+    session |= {"reason": res.reason, "exit": res.exit_code, "game_calls_ok": runs.game_calls_ok(actions)}
     ending = (res.reason, why)
     ending_why = why or res.reason if name == "gave_up" else ""  # a time-out or a cap says its own why
     if name == "timeout" and session_minutes is not None:

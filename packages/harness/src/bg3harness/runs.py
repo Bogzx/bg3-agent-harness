@@ -31,6 +31,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from bg3ai import capabilities
+
 from . import clients, events, fairness, model_time, triage
 
 HARNESS, AGENT, UNKNOWN = "harness", "agent", "unknown"
@@ -61,15 +63,19 @@ HARNESS_EVENTS = {
 # as "FAILED: ..." text, not as an MCP error
 BRIDGE_ROWS = frozenset({"session_start", "debrief", "note", "autoskip", "save_game.bg"})
 BRIDGE_NOT_OK = ("FAILED", "NOT READY", "REFUSED")
+# the bg3 tools that never reach the game: the server's memory and wiki groups (bg3ai.capabilities, checked against
+# its registered tools at startup), and the two of its other groups that read only the disk or the clock
+GAME_FREE = frozenset({*capabilities.GROUPS["memory"], *capabilities.GROUPS["wiki"], "list_saves", "session_clock"})
 
 
-def bg3_calls_ok(actions: list[dict[str, Any]]) -> int:
-    """The agent's bg3 tool calls that worked, from the server's actions.jsonl rows: the evidence a session played
-    (a client's own tools, such as claude's ToolSearch, never reach the server)."""
+def game_calls_ok(actions: list[dict[str, Any]]) -> int:
+    """The agent's bg3 tool calls that reached the game and worked, from the server's actions.jsonl rows: the
+    evidence a session played. A client's own tools (claude's ToolSearch) never reach the server; memory and wiki
+    reads work with the game broken (app review of f8be6e2)."""
     return sum(
         1
         for a in actions
-        if a.get("tool") not in BRIDGE_ROWS and not str(a.get("result") or "").startswith(BRIDGE_NOT_OK)
+        if a.get("tool") not in BRIDGE_ROWS | GAME_FREE and not str(a.get("result") or "").startswith(BRIDGE_NOT_OK)
     )
 
 
@@ -153,7 +159,7 @@ def event_failures(events: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def history_failures(sessions: list[dict]) -> list[dict]:
     """From runner.json history entries of the run's play sessions. A quick exit (claude_quick_exit: auth, config or
-    usage) is a session that exited within a minute without a bg3 call that worked (`bg3_calls_ok`: bg3_calls_ok
+    usage) is a session that exited within a minute without a game call that worked (`game_calls_ok`: game_calls_ok
     over the whole session): one that played just finished fast (N15: the scripted reload agent's 31 s save + load
     voided its run 3 times). An entry without the count is taken by its time alone."""
     out = []
@@ -162,7 +168,7 @@ def history_failures(sessions: list[dict]) -> list[dict]:
         dur = (h.get("ended") or 0) - (h.get("started") or 0)
         if h.get("reason") == "killed":
             out.append(failure(t, "claude_killed", UNKNOWN, f"{sid}: claude ended by a signal from outside the runner"))
-        elif h.get("reason") == "exited" and 0 <= dur < 60 and not h.get("bg3_calls_ok"):
+        elif h.get("reason") == "exited" and 0 <= dur < 60 and not h.get("game_calls_ok"):
             out.append(
                 failure(
                     t,
