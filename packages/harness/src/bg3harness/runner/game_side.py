@@ -9,6 +9,7 @@ import subprocess
 import time
 from datetime import datetime
 
+from bg3ai import saves as bsaves
 from bg3ai.luadebug import LuaDebugError
 
 from bg3harness.game import host as ghost
@@ -244,8 +245,10 @@ class GameSide:
             except Exception as e:
                 renv.log(f"opening the save/load gates before the load failed: {e}")
             try:
-                # ui.menu load works from the main menu and from in-game (it opens the load screen itself).
-                game.rpc("ui.menu", game.load_menu_args(save, rcode.list_saves()), context="client", timeout=30)
+                # ui.menu load works from the main menu and from in-game (it opens the load screen itself). The
+                # page's row hint counts the save's playthrough as the game groups it (meta GameSessionID, as the
+                # agent's load_game): live N7 counted by folder prefix and missed the PROBE- copies in Vessa's group.
+                game.rpc("ui.menu", bsaves.load_args(renv.SAVE_DIR, save.folder), context="client", timeout=30)
             except (RpcError, LuaDebugError) as e:
                 # Refused (gate, no such playthrough or date on the page) or the eval failed: restart the game
                 # with -loadSaveGame, which needs neither the gate nor the Load page.

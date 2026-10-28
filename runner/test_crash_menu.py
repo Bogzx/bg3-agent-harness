@@ -10,18 +10,21 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from types import ModuleType
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import testenv  # first: the game's profile folders are a temp dir before play
 
 os.environ.setdefault("BG3AI_RUNTIME", tempfile.mkdtemp(prefix="bg3ai-test-runtime-"))
 import legacy_playthrough as lpt
+from bg3ai import lsf, lspk
 from bg3harness.game import controller as C  # noqa: N812  (the GameController and its timings)
 from bg3harness.game import io as G  # noqa: N812
 from bg3harness.game import oom as O  # noqa: N812  (the OOM check's journal and ramwatch reads)
@@ -46,6 +49,20 @@ def home(name: str):
     """The module a patched name lives in: the game's I/O functions moved to bg3harness.game.io, the GameController's
     timings to bg3harness.game.controller and the OOM check's reads to bg3harness.game.oom."""
     return MOVED.get(name) or (G if name in G_FUNCS else testenv.home(name))
+
+
+def make_save(root: Path, folder: str, leader: str, saved: float, session: str) -> None:
+    """A save folder whose .lsv holds a meta.lsf as BG3 writes it (LeaderName, SaveTime, GameSessionID)."""
+    meta = lsf.build(
+        [("MetaData", -1), ("MetaData", 0)],
+        [
+            ("GameSessionID", 22, 1, session.encode() + b"\0"),
+            ("LeaderName", 23, 1, leader.encode() + b"\0"),
+            ("SaveTime", 24, 1, struct.pack("<Q", int(saved))),
+        ],
+    )
+    (root / folder).mkdir(parents=True)
+    (root / folder / f"{folder.split('__', 1)[1]}.lsv").write_bytes(lspk.build([("meta.lsf", meta, "none")]))
 
 
 class FakeMenuGame:
@@ -125,14 +142,14 @@ class SplashMenu(unittest.TestCase):
         for n, v in self.saved.items():
             setattr(home(n), n, v)
 
-    def run_ensure(self, g: FakeMenuGame):
+    def run_ensure(self, g: FakeMenuGame, saves: list[rpolicy.Save] | None = None):
         G.port_open = lambda *a, **k: True
         G.game_state, G.rpc, G.press_menu_key = g.game_state, g.rpc, g.press
         G.available_ops = lambda ctx: {"ui.state", "ui.menu"}
         G.server_ready = lambda: g.running
         G.host_character_name = lambda: "Claude"
         t = time.time() - 60
-        rcode.list_saves = lambda: [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", t, t)]
+        rcode.list_saves = lambda: saves or [rpolicy.Save("Claude-1__S014-start", "Claude", "S014-start", t, t)]
         r = lpt.Runner(rstate.Options("splash-test", None, 20, "opus", save_owner="Claude"))
         r.mem = self.tmp / "memory"
         r.owns_game = lambda: True
@@ -163,6 +180,27 @@ class SplashMenu(unittest.TestCase):
         g = FakeMenuGame(splash=False)
         _r, label, _secs, _log = self.run_ensure(g)
         self.assertEqual((label, g.presses, len(g.loads)), ("S014-start", 0, 1))
+
+    def test_the_row_hint_counts_the_playthrough_as_the_page_groups_it(self):
+        # live N7 4b: PROBE-* copies of Vessa's saves keep her GameSessionID, so the Load page lists them in her
+        # group; counted by folder prefix the hint for S003-1908 was row 4 for page row 5 (sazza-escape 22 for 24)
+        t = time.mktime((2026, 10, 24, 19, 8, 29, 0, 0, -1))
+        root = self.tmp / "saves"
+        for folder, saved in (
+            ("Claude-3__S004-end", t + 1253),
+            ("PROBE-3__S004-end", t + 1253),
+            ("Claude-2__S003-1908", t),
+        ):
+            make_save(root, folder, "Claude", saved, "c56ea03d-d05f-9a05-f248-607db4d436d3")
+        make_save(root, "Claude-9__S001-other", "Claude", t + 9000, "another-playthrough")
+        pick = rpolicy.Save("Claude-2__S003-1908", "Claude", "S003-1908", t, t)
+        g = FakeMenuGame(splash=False)
+        with mock.patch.object(renv, "SAVE_DIR", root):
+            _r, label, _secs, _log = self.run_ensure(g, [pick])
+        self.assertEqual(label, "S003-1908")
+        (args,) = g.loads
+        self.assertEqual((args["name"], args["owner"], args["index"]), ("Claude-2__S003-1908", "Claude", 3))
+        self.assertEqual(args["date"], {"y": 2026, "m": 10, "d": 24, "H": 19, "M": 8})
 
     def test_load_gates_open_before_the_menu_load(self):
         # RUN-3: the mod refuses ui.menu load while its persisted load gate is off (a fresh profile's default)
