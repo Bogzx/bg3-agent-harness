@@ -86,19 +86,20 @@ def sec_reads() -> None:
 
 
 # V12: the full state.inventory rebuild (look/get_status/get_inventory; the read cache's 20 s TTL had expired at most
-# reads in S066-S070) and act.prepared's prep_info (every get_status), with the stats and item facts memos emptied
-# (the cost before V12) and then filled. Read-only: the memos are put back, the inventory cache rebuilds on the next
-# read.
+# reads in S066-S070) and act.prepared's prep_info (every get_status), with the stats, item facts and class name
+# memos emptied (the cost before V12) and then filled. Read-only: the memos are put back, the inventory cache
+# rebuilds on the next read.
 READ_COST_LUA = (
     "local B=Mods.BG3AI.BG3AI local S,G,V=B.State,B.Guard,B.Visibility local now=Ext.Utils.MonotonicTime "
     "local function inv() S.invCache=nil local t=now() local r=S.inventory(V.context(),{}) return now()-t,#r.items end "
     "local function prep() local t,n=now(),0 for _,u in ipairs(G.party()) do local g=G.guid(u) "
     "if g then n=n+#G.prep_info(g).prepared end end return now()-t,n end "
-    "local keepS,keepI,keepG=S.statsFactsMemo,S.itemFactsMemo,G.spellFacts "
-    "S.statsFactsMemo,S.itemFactsMemo,G.spellFacts={},{},{} "
+    "local keepS,keepI,keepG,keepC=S.statsFactsMemo,S.itemFactsMemo,G.spellFacts,G.classNames "
+    "S.statsFactsMemo,S.itemFactsMemo,G.spellFacts,G.classNames={},{},{},{} "
     "local ic,items=inv() local pc,rows=prep() local iw=inv() local pw=prep() "
     "for k,v in pairs(S.statsFactsMemo) do keepS[k]=v end for k,v in pairs(S.itemFactsMemo) do keepI[k]=v end "
-    "for k,v in pairs(G.spellFacts) do keepG[k]=v end S.statsFactsMemo,S.itemFactsMemo,G.spellFacts=keepS,keepI,keepG "
+    "for k,v in pairs(G.spellFacts) do keepG[k]=v end for k,v in pairs(G.classNames) do keepC[k]=v end "
+    "S.statsFactsMemo,S.itemFactsMemo,G.spellFacts,G.classNames=keepS,keepI,keepG,keepC "
     "return Ext.Json.Stringify({inv_cold=ic,inv_warm=iw,prep_cold=pc,prep_warm=pw,items=items,prepared=rows})"
 )
 READ_COST_ITEM = "read cost: stats memos cut the inventory + prepared reads (V12)"

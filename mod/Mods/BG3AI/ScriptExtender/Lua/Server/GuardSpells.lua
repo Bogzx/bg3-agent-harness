@@ -42,9 +42,12 @@ end
 -- The spell a SpellBook entry stands for: its OriginatorPrototype (an upcast entry "Target_Bless_2" has Prototype
 -- Target_Bless_2 and OriginatorPrototype Target_Bless; live L4: Claude's book holds level-1 spells x3, level-2 x2),
 -- else its Prototype. nil when neither reads.
+local function originator(entry) return entry.Id.OriginatorPrototype end
+local function prototype(entry) return entry.Id.Prototype end
+local function prepare_type(entry) return tostring(entry.PrepareType) end
 function G.entry_id(entry)
-    local ok, id = pcall(function() return entry.Id.OriginatorPrototype end)
-    if not ok or id == nil or tostring(id) == "" then ok, id = pcall(function() return entry.Id.Prototype end) end
+    local ok, id = pcall(originator, entry)
+    if not ok or id == nil or tostring(id) == "" then ok, id = pcall(prototype, entry) end
     return ok and id ~= nil and tostring(id) or nil
 end
 
@@ -58,15 +61,17 @@ end
 -- A SpellBook entry that needs preparing and isn't prepared (prepared = G.prepared_ids). A container's variant
 -- counts as prepared with its container. An unreadable prepared list counts as nothing prepared: refuse rather than
 -- cast a spell the player could not.
-function G.unprepared(entry, prepared)
-    local ok, kind = pcall(function() return tostring(entry.PrepareType) end)
-    if not ok or kind ~= "RequiresPreparation" then return false end
-    if not prepared then return true end
-    local id = G.entry_id(entry)
-    if id == nil then return true end
+local function unprepared_id(id, prepared)
+    if not prepared or id == nil then return true end
     if prepared[id] then return false end
     local box = G.container_of(id)
     return not (box and prepared[box])
+end
+
+function G.unprepared(entry, prepared)
+    local ok, kind = pcall(prepare_type, entry)
+    if not ok or kind ~= "RequiresPreparation" then return false end
+    return unprepared_id(prepared and G.entry_id(entry), prepared)
 end
 
 -- Spell preparation (A5, 2026-10-17). What the spellbook's prepare page shows: the class spells that need preparing
@@ -135,15 +140,23 @@ local function class_limit(e)
     return n > 0 and sum or nil
 end
 
+-- A class's shown name per ClassUUID (static data: it never changes in a running game; V12 prep_info read it with a
+-- StaticData lookup and a loca read per class on every get_status). A name that doesn't read isn't kept.
+G.classNames = {}
 local function class_names(e)
     local out = {}
     local c = e and U.comp(e, "Classes")
     pcall(function()
         for _, cl in ipairs(c.Classes) do
-            local ok, r = pcall(Ext.StaticData.Get, cl.ClassUUID, "ClassDescription")
-            local okd, h = pcall(function() return r.DisplayName.Handle.Handle end)
-            local n = (okd and U.loca(h)) or (ok and r and r.Name)
-            if n then out[#out + 1] = tostring(n) end
+            local id = tostring(cl.ClassUUID)
+            local n = G.classNames[id]
+            if not n then
+                local ok, r = pcall(Ext.StaticData.Get, cl.ClassUUID, "ClassDescription")
+                local okd, h = pcall(function() return r.DisplayName.Handle.Handle end)
+                n = (okd and U.loca(h)) or (ok and r and r.Name)
+                if n then n = tostring(n) G.classNames[id] = n end
+            end
+            if n then out[#out + 1] = n end
         end
     end)
     return out
@@ -156,18 +169,19 @@ function G.prep_info(char)
     local set = G.prepared_ids(e)
     local info = { prepared = {}, unprepared = {}, always = {}, classes = class_names(e), read = set ~= false }
     local seen = {}
+    -- Each entry's PrepareType and id are read once, the id only for an entry that prepares (V12: the warm read of
+    -- the party's books, 19 ms live N7, read both twice through G.unprepared and the id of every action and cantrip).
     for _, s in ipairs(entries) do
-        local okk, kind = pcall(function() return tostring(s.PrepareType) end)
-        local id = G.entry_id(s)
-        if okk and id and not seen[id] and (kind == "RequiresPreparation" or kind == "AlwaysPrepared")
-                and not G.container_of(id) then
+        local okk, kind = pcall(prepare_type, s)
+        local id = okk and (kind == "RequiresPreparation" or kind == "AlwaysPrepared") and G.entry_id(s) or nil
+        if id and not seen[id] and not G.container_of(id) then
             seen[id] = true
             local f = G.spell_facts(id)
             local level = f and f.level
             local row = { id = id, name = f and f.name or id, level = level, look = f and f.look }
             if kind == "AlwaysPrepared" then
                 if (level or 0) > 0 then info.always[#info.always + 1] = row end
-            elseif G.unprepared(s, set) then
+            elseif unprepared_id(id, set) then
                 info.unprepared[#info.unprepared + 1] = row
             else
                 info.prepared[#info.prepared + 1] = row
