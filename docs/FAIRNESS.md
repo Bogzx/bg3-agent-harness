@@ -70,7 +70,8 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   hit floor (not a wall or parapet face) within 5 m of the member, the edge must lie within 3 m past that hit, the
   spot at most 4 m below the member's feet, and the look over the edge no steeper than 45 degrees down, so the
   dead ground at the foot of a face stays unseen; a floor that goes on (a storey over a room) is no edge
-  (`VisibilityObjects.lua` `overEdge`; live N14b, PROPOSED 2026-10-28, pending the user's decision). Rays that can't answer count as not seen. A goal off that ground gets its straight distance
+  (`VisibilityObjects.lua` `overEdge`; live N14b; user, 2026-10-28). Rays that can't answer count as not seen.
+  A goal off that ground gets its straight distance
   and direction only; walks and move_to/jump_to targets end on it; WAYS, jump solvers, LOWER GROUND, get_layout
   cells (`?`), hazards on a route and teleport-landing floors are limited to it. route prints no floor heights
   (they came through solid floors). Stricter than a human in one way: a spot seen from afar and not asked about
