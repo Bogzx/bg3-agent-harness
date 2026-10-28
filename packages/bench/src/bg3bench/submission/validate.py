@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 from bg3harness.run_manifest import tools_digest
 
 import bg3bench
@@ -154,8 +155,6 @@ def _jsonl(data: bytes) -> list[Any]:
 
 
 def _schema_errors(doc: Any, schema_file: str) -> list[str]:
-    import jsonschema  # the dev/validation dependency; the panel and the job install it
-
     v = jsonschema.Draft202012Validator(json.loads((SCHEMA_DIR / schema_file).read_text()))
     return [f"{'/'.join(map(str, e.absolute_path))}: {e.message}"[:200] for e in v.iter_errors(doc)]
 

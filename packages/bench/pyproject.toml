@@ -3,7 +3,8 @@ name = "bg3bench"
 version = "0.8.0"
 description = "The BG3 benchmark: graders over facts.jsonl, statistics, run manifests and results"
 requires-python = ">=3.14"
-dependencies = ["bg3-agent-harness"]  # the LLM judge (bg3harness.judge, D4)
+# bg3-agent-harness: the LLM judge (bg3harness.judge, D4); jsonschema: the submission validator (panel and job)
+dependencies = ["bg3-agent-harness", "jsonschema>=4.20"]
 
 [project.optional-dependencies]
 # Inspect AI .eval export (export_inspect.py). Pinned: Inspect moves event classes and the .eval layout between
@@ -13,7 +14,7 @@ inspect = ["inspect-ai==0.3.282"]
 baselines = ["mcp>=2.3,<3"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20"]
+dev = ["pytest>=8", "pytest-cov>=5"]
 # Optional cross-check of the statistics against scipy; the tests skip it when scipy is absent.
 crosscheck = ["scipy>=1.11"]
 
