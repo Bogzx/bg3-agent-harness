@@ -17,6 +17,7 @@ from bg3harness import bg3le_buildinfo as bi
 from bg3harness import bg3le_prebuilt as pb
 
 LIB = b"\x7fELF fake libbg3le"
+SHIM = b"\x7fELF fake libbg3sdl"
 
 
 def make_patches(root: Path, names: tuple[str, ...] = ("0001-a.patch", "0002-b.patch")) -> Path:
@@ -29,6 +30,9 @@ def make_patches(root: Path, names: tuple[str, ...] = ("0001-a.patch", "0002-b.p
 def make_dist(root: Path, patches: Path, lib: bytes = LIB) -> Path:
     """A dist as tools/build_bg3le.sh leaves it for `patches`."""
     root.mkdir(parents=True, exist_ok=True)
+    shim = pb.place(root, pb.SHIM)  # build/bg3sdl next to build/bg3le
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_bytes(SHIM)
     (root / "libbg3le.so").write_bytes(lib)
     (root / "bg3lua").write_text("#!/usr/bin/env python3\n")
     lines = ["bg3le commit: 3728a68ef4a98fe0d25e3dac9b7d1f89d96f40ec"]
@@ -41,7 +45,7 @@ def make_dist(root: Path, patches: Path, lib: bytes = LIB) -> Path:
 @pytest.fixture
 def tree(tmp_path: Path) -> tuple[Path, Path]:
     patches = make_patches(tmp_path / "patches")
-    return make_dist(tmp_path / "built", patches), patches
+    return make_dist(tmp_path / "b" / "bg3le" / "dist", patches), patches
 
 
 def packed(tmp_path: Path, tree: tuple[Path, Path]) -> tuple[str, str]:
@@ -55,7 +59,7 @@ def test_pack_is_reproducible_and_names_commit_and_patches(tmp_path: Path, tree:
     assert sha_a == sha_b == hashlib.sha256(a.read_bytes()).hexdigest()
     assert a.name == b.name and a.name.startswith("bg3le-prebuilt-3728a68ef4a9-")
     with tarfile.open(a) as tar:
-        assert sorted(tar.getnames()) == sorted(("PREBUILT.json", "libbg3le.so", "bg3lua", "BUILDINFO"))
+        assert sorted(tar.getnames()) == sorted(("PREBUILT.json", "libbg3le.so", "bg3lua", "BUILDINFO", "libbg3sdl.so"))
         f = tar.extractfile("PREBUILT.json")
         assert f is not None
         m = json.loads(f.read())
@@ -90,8 +94,23 @@ def test_fetch_installs_a_dist_the_stale_check_accepts(tmp_path: Path, tree: tup
     assert sorted(p.name for p in dist.parent.iterdir()) == ["dist"]  # the staging dir is gone
 
 
+def test_fetch_installs_the_shim_into_build_bg3sdl(tmp_path: Path, tree: tuple[Path, Path]):
+    dist = tmp_path / "repo" / "build" / "bg3le" / "dist"
+    pb.fetch(*packed(tmp_path, tree), dist, tree[1])
+    shim = tmp_path / "repo" / "build" / "bg3sdl" / "libbg3sdl.so"
+    assert shim.read_bytes() == SHIM and os.access(shim, os.X_OK)
+    shim.write_bytes(SHIM + b"x")  # a hand-built or changed shim no longer matches the package
+    assert any(b.startswith("prebuilt: libbg3sdl.so differs") for b in bi.problems(dist, tree[1]))
+
+
+def test_pack_needs_the_shim(tmp_path: Path, tree: tuple[Path, Path]):
+    pb.place(tree[0], pb.SHIM).unlink()
+    with pytest.raises(pb.PrebuiltError, match=r"libbg3sdl\.so \(the shim: native/bg3sdl/build\.sh\)"):
+        pb.pack(*tree, tmp_path / "out")
+
+
 def test_a_tampered_prebuilt_is_stale(tmp_path: Path, tree: tuple[Path, Path]):
-    dist = tmp_path / "dist"
+    dist = tmp_path / "t" / "bg3le" / "dist"
     pb.fetch(*packed(tmp_path, tree), dist, tree[1])
     (dist / "libbg3le.so").write_bytes(LIB + b"x")
     bad = bi.problems(dist, tree[1])
@@ -105,7 +124,7 @@ def test_a_built_dist_is_not_a_prebuilt(tree: tuple[Path, Path]):
 
 def test_wrong_sha256_changes_nothing(tmp_path: Path, tree: tuple[Path, Path]):
     url, sha = packed(tmp_path, tree)
-    dist = make_dist(tmp_path / "dist", tree[1], lib=b"old")
+    dist = make_dist(tmp_path / "t" / "bg3le" / "dist", tree[1], lib=b"old")
     with pytest.raises(pb.PrebuiltError, match="sha256"):
         pb.fetch(url, "0" * 64, dist, tree[1])
     assert (dist / "libbg3le.so").read_bytes() == b"old"
@@ -117,8 +136,8 @@ def test_a_package_for_other_patches_is_refused(tmp_path: Path, tree: tuple[Path
     url, sha = packed(tmp_path, tree)
     (tree[1] / "0002-b.patch").write_text("changed\n")
     with pytest.raises(pb.PrebuiltError, match=r"package built with another 0002-b\.patch"):
-        pb.fetch(url, sha, tmp_path / "dist", tree[1])
-    assert not (tmp_path / "dist").exists()
+        pb.fetch(url, sha, tmp_path / "t" / "bg3le" / "dist", tree[1])
+    assert not (tmp_path / "t" / "bg3le" / "dist").exists()
 
 
 @pytest.mark.parametrize(
@@ -134,7 +153,7 @@ def test_bad_url_or_hash_refused_before_any_download(tmp_path: Path, url: str, s
         raise AssertionError(f"downloaded {u}")
 
     with pytest.raises(pb.PrebuiltError, match=match):
-        pb.fetch(url, sha, tmp_path / "dist", make_patches(tmp_path / "patches"), opener)
+        pb.fetch(url, sha, tmp_path / "t" / "bg3le" / "dist", make_patches(tmp_path / "patches"), opener)
 
 
 def test_https_goes_through_the_opener(tmp_path: Path, tree: tuple[Path, Path]):
@@ -145,7 +164,7 @@ def test_https_goes_through_the_opener(tmp_path: Path, tree: tuple[Path, Path]):
         seen.append(u)
         return io.BytesIO(path.read_bytes())
 
-    pb.fetch("https://example.invalid/pkg.tar.gz", sha, tmp_path / "dist", tree[1], opener)
+    pb.fetch("https://example.invalid/pkg.tar.gz", sha, tmp_path / "t" / "bg3le" / "dist", tree[1], opener)
     assert seen == ["https://example.invalid/pkg.tar.gz"]
 
 
@@ -165,7 +184,7 @@ def test_an_extra_member_is_refused(tmp_path: Path, tree: tuple[Path, Path]):
     info = tarfile.TarInfo("../escape")
     info.size = 1
     with pytest.raises(pb.PrebuiltError, match="package members"):
-        pb.fetch(*evil(tmp_path, tree, info, b"x"), tmp_path / "dist", tree[1])
+        pb.fetch(*evil(tmp_path, tree, info, b"x"), tmp_path / "t" / "bg3le" / "dist", tree[1])
     assert not (tmp_path / "escape").exists()
 
 
@@ -173,7 +192,7 @@ def test_a_link_member_is_refused(tmp_path: Path, tree: tuple[Path, Path]):
     info = tarfile.TarInfo("bg3lua")
     info.type, info.linkname = tarfile.SYMTYPE, "/etc/passwd"
     with pytest.raises(pb.PrebuiltError, match="bg3lua is not a regular file"):
-        pb.fetch(*evil(tmp_path, tree, info), tmp_path / "dist", tree[1])
+        pb.fetch(*evil(tmp_path, tree, info), tmp_path / "t" / "bg3le" / "dist", tree[1])
 
 
 def test_config_reads_the_toml_and_the_env_wins(tmp_path: Path):
@@ -195,7 +214,7 @@ def test_cli_pack_then_fetch_then_verify(tmp_path: Path, tree: tuple[Path, Path]
     assert pb.main(["--dist", str(dist), "--patches", str(patches), "pack", "--out", str(tmp_path / "out")]) == 0
     path, label, sha = capsys.readouterr().out.split()
     assert label == "sha256" and sha == hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    target = ["--dist", str(tmp_path / "dist"), "--patches", str(patches)]
+    target = ["--dist", str(tmp_path / "t" / "bg3le" / "dist"), "--patches", str(patches)]
     assert pb.main([*target, "verify"]) == 1
     assert pb.main([*target, "fetch", "--url", Path(path).as_uri(), "--sha256", sha]) == 0
     assert pb.main([*target, "verify"]) == 0
@@ -207,6 +226,12 @@ def test_a_local_build_drops_the_prebuilt_manifest():
     sh = (bi.REPO / "tools" / "build_bg3le.sh").read_text()
     assert 'rm -f "$OUT/dist/PREBUILT.json"' in sh
     assert sh.index('rm -f "$OUT/dist/PREBUILT.json"') < sh.index('install -m 0755 "$LIB"')
+
+
+def test_a_local_shim_build_drops_the_prebuilt_manifest():
+    sh = (bi.REPO / "native" / "bg3sdl" / "build.sh").read_text()
+    drop = 'rm -f "$REPO/build/bg3le/dist/PREBUILT.json"'
+    assert drop in sh and sh.index(drop) < sh.index('objdump -T "$LIB"')
 
 
 class TestLaunchStaleCheck:
@@ -227,9 +252,9 @@ class TestLaunchStaleCheck:
                               capture_output=True, text=True, env=env, timeout=60, check=False)  # fmt: skip
 
     def fetched(self, tmp_path: Path) -> Path:
-        built = make_dist(tmp_path / "built", bi.PATCHES)
+        built = make_dist(tmp_path / "b" / "bg3le" / "dist", bi.PATCHES)
         path, sha = pb.pack(built, bi.PATCHES, tmp_path / "out")
-        dist = tmp_path / "dist"
+        dist = tmp_path / "t" / "bg3le" / "dist"
         pb.fetch(path.as_uri(), sha, dist, bi.PATCHES)
         return dist
 

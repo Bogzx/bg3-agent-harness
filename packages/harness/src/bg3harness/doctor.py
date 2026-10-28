@@ -155,12 +155,10 @@ def check_shim(ctx: Ctx) -> Check:
     lib = Path(ctx.env.get("BG3AI_INPUT_LIB") or ctx.repo / "build/bg3sdl/libbg3sdl.so")
     if preflight.is_elf(lib):
         return Check("shim", PASS, f"SDL input shim {lib}")
-    return Check(
-        "shim",
-        FAIL,
-        f"no input shim at {lib} (the agent's clicks and keys go through it)",
-        "native/bg3sdl/build.sh (needs gcc and the SDL2 headers: apt install gcc libsdl2-dev)",
-    )
+    build = "native/bg3sdl/build.sh after tools/build_bg3le.sh (it compiles against that build's sysroot, in Docker)"
+    url, _ = bg3le_prebuilt.config(ctx.env)
+    fix = f"python3 {bg3le_buildinfo.FETCH} (the prebuilt carries the shim), or {build}" if url else build
+    return Check("shim", FAIL, f"no input shim at {lib} (the agent's clicks and keys go through it)", fix)
 
 
 def check_display(ctx: Ctx) -> Check:

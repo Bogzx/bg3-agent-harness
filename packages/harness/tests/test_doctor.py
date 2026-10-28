@@ -119,7 +119,10 @@ class TestDoctor(DoctorFixture):
         (self.repo / "build/bg3sdl/libbg3sdl.so").write_bytes(b"not an ELF")
         c = self.checks()["shim"]
         self.assertEqual(c.status, FAIL)
-        self.assertIn("native/bg3sdl/build.sh", c.fix)
+        self.assertIn("native/bg3sdl/build.sh after tools/build_bg3le.sh", c.fix)
+        self.assertNotIn("bg3le_prebuilt.py fetch", c.fix)
+        c = self.checks(BG3AI_BG3LE_PREBUILT_URL="https://example.invalid/p.tar.gz")["shim"]
+        self.assertIn("bg3le_prebuilt.py fetch (the prebuilt carries the shim)", c.fix)
 
     def test_display_from_the_desktop_xwayland(self):
         c = self.checks()["display"]

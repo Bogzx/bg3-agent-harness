@@ -2,25 +2,27 @@
 Stdlib only.
 
     python3 tools/bg3le_prebuilt.py pack [--out DIR]           # dist -> bg3le-prebuilt-<commit>-<patches>.tar.gz
-    python3 tools/bg3le_prebuilt.py fetch [--url U --sha256 H] # download, verify, install into dist
+    python3 tools/bg3le_prebuilt.py fetch [--url U --sha256 H] # download, verify, install into dist (+ the shim)
     python3 tools/bg3le_prebuilt.py verify                     # is dist a verified prebuilt?
 
-The package is a gzip'd tar of four regular files at its top level: libbg3le.so, bg3lua, BUILDINFO (as
-tools/build_bg3le.sh wrote them) and PREBUILT.json, the manifest:
+The package is a gzip'd tar of five regular files at its top level: libbg3le.so, bg3lua, BUILDINFO (as
+tools/build_bg3le.sh wrote them), libbg3sdl.so (the SDL input shim native/bg3sdl/build.sh builds into build/bg3sdl:
+its build needs the sysroot of the bg3le build, so a prebuilt carries it too) and PREBUILT.json, the manifest:
 
-    {"format": "bg3le-prebuilt/1", "bg3le_commit": ..., "patches": [{"name", "sha256"}],
+    {"format": "bg3le-prebuilt/2", "bg3le_commit": ..., "patches": [{"name", "sha256"}],
      "files": [{"name", "sha256", "bytes"}]}
 
-`patches` is every patches/bg3le/*.patch the library was built with (full sha256), `files` the other three. pack
+`patches` is every patches/bg3le/*.patch the library was built with (full sha256), `files` the other four. pack
 refuses a stale dist (bg3le_buildinfo.problems) and writes a reproducible tar (sorted, mtime 0, uid 0), so packing
 the same dist twice gives the same sha256.
 
 fetch takes the URL and the package's sha256 from patches/bg3le-prebuilt.toml (`url`, `sha256`; the environment's
 BG3AI_BG3LE_PREBUILT_URL / BG3AI_BG3LE_PREBUILT_SHA256 win, and so do --url / --sha256). It refuses a package whose
-sha256 differs, whose members aren't exactly those four regular files, whose files don't match the manifest, or
-whose patch list isn't this checkout's patches/bg3le. Only then are the files moved into dist, with PREBUILT.json
-recording where the package came from. The launcher's stale check (bg3le_buildinfo.problems) accepts such a dist,
-and refuses it once a file no longer matches the manifest.
+sha256 differs, whose members aren't exactly those five regular files, whose files don't match the manifest, or
+whose patch list isn't this checkout's patches/bg3le. Only then are the files moved into dist (the shim into
+build/bg3sdl), with PREBUILT.json recording where the package came from. The launcher's stale check
+(bg3le_buildinfo.problems) accepts such a dist, and refuses it once a file (the shim too) no longer matches the
+manifest.
 """
 
 from __future__ import annotations
@@ -43,9 +45,10 @@ from typing import IO, Any, cast
 
 from bg3harness import bg3le_buildinfo
 
-FORMAT = "bg3le-prebuilt/1"
+FORMAT = "bg3le-prebuilt/2"
 MANIFEST = "PREBUILT.json"
-FILES = ("libbg3le.so", "bg3lua", "BUILDINFO")
+SHIM = "libbg3sdl.so"
+FILES = ("libbg3le.so", "bg3lua", "BUILDINFO", SHIM)
 CONFIG = bg3le_buildinfo.REPO / "patches" / "bg3le-prebuilt.toml"
 MAX_BYTES = 512 * 2**20  # the library is ~57 MB; a bigger download is not a bg3le package
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -67,13 +70,19 @@ def patch_list(patches: Path) -> list[dict[str, str]]:
     return [{"name": p.name, "sha256": sha256_file(p)} for p in sorted(patches.glob("*.patch"))]
 
 
+def place(dist: Path, name: str) -> Path:
+    """Where a package file lives once installed: dist/<name>, the shim in build/bg3sdl (dist is build/bg3le/dist)."""
+    return dist.parent.parent / "bg3sdl" / name if name == SHIM else dist / name
+
+
 def manifest_for(dist: Path, patches: Path) -> dict[str, Any]:
     m = re.search(r"^bg3le commit: (\S+)", (dist / "BUILDINFO").read_text(), re.M)
+    files = [(n, place(dist, n)) for n in FILES]
     return {
         "format": FORMAT,
         "bg3le_commit": m.group(1) if m else None,
         "patches": patch_list(patches),
-        "files": [{"name": n, "sha256": sha256_file(dist / n), "bytes": (dist / n).stat().st_size} for n in FILES],
+        "files": [{"name": n, "sha256": sha256_file(p), "bytes": p.stat().st_size} for n, p in files],
     }
 
 
@@ -95,9 +104,9 @@ def pack(dist: Path, patches: Path, out_dir: Path) -> tuple[Path, str]:
     bad = bg3le_buildinfo.problems(dist, patches)
     if bad:
         raise PrebuiltError(f"stale bg3le build {dist}: " + "; ".join(bad))
-    missing = [n for n in FILES if not (dist / n).is_file()]
+    missing = [str(place(dist, n)) for n in FILES if not place(dist, n).is_file()]
     if missing:
-        raise PrebuiltError(f"{dist} has no {', '.join(missing)}")
+        raise PrebuiltError(f"no {', '.join(missing)} (the shim: native/bg3sdl/build.sh)")
     manifest = manifest_for(dist, patches)
     built = re.search(r"^sha256: ([0-9a-f]{64})", (dist / "BUILDINFO").read_text(), re.M)
     lib = manifest["files"][0]["sha256"]
@@ -110,7 +119,7 @@ def pack(dist: Path, patches: Path, out_dir: Path) -> tuple[Path, str]:
     with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
         _add(tar, MANIFEST, (json.dumps(manifest, indent=1, sort_keys=True) + "\n").encode(), 0o644)
         for n in FILES:
-            _add(tar, n, (dist / n).read_bytes(), 0o644 if n == "BUILDINFO" else 0o755)
+            _add(tar, n, place(dist, n).read_bytes(), 0o644 if n == "BUILDINFO" else 0o755)
     path.write_bytes(buf.getvalue())
     return path, hashlib.sha256(buf.getvalue()).hexdigest()
 
@@ -126,8 +135,8 @@ def _entries(value: object) -> dict[str, dict[str, Any]]:
     return out
 
 
-def manifest_problems(manifest: object, files: Path, patches: Path) -> list[str]:
-    """What makes the manifest not describe the files in `files` built with exactly `patches`; [] when it does."""
+def manifest_problems(manifest: object, locate: Callable[[str], Path], patches: Path) -> list[str]:
+    """What makes the manifest not describe the files at locate(name) built with exactly `patches`; [] when it does."""
     m = cast(dict[str, Any], manifest) if isinstance(manifest, dict) else {}
     if m.get("format") != FORMAT:
         return [f"not a {FORMAT} manifest"]
@@ -136,7 +145,7 @@ def manifest_problems(manifest: object, files: Path, patches: Path) -> list[str]
     if set(listed) != set(FILES):
         out.append(f"manifest lists {sorted(listed)}, want {sorted(FILES)}")
     for name in FILES:
-        entry, path = listed.get(name), files / name
+        entry, path = listed.get(name), locate(name)
         if entry is None:
             continue
         if not path.is_file():
@@ -166,7 +175,7 @@ def verify(dist: Path, patches: Path) -> list[str] | None:
         manifest = json.loads(text)
     except ValueError:
         return [f"{dist / MANIFEST} is not JSON"]
-    return manifest_problems(manifest, dist, patches)
+    return manifest_problems(manifest, lambda n: place(dist, n), patches)
 
 
 def config(env: dict[str, str], path: Path = CONFIG) -> tuple[str, str]:
@@ -206,7 +215,7 @@ def download(url: str, sha256: str, dest: Path, opener: Opener = _urlopen) -> No
 
 
 def unpack(archive: Path, into: Path) -> None:
-    """The package's four files into `into`; refuses any other member, a link or a path."""
+    """The package's files into `into`; refuses any other member, a link or a path."""
     with tarfile.open(archive, "r:gz") as tar:
         members = tar.getmembers()
         names = sorted(m.name for m in members)
@@ -237,14 +246,15 @@ def fetch(url: str, sha256: str, dist: Path, patches: Path, opener: Opener = _ur
             manifest = json.loads((files / MANIFEST).read_text())
         except ValueError:
             raise PrebuiltError(f"{url}: {MANIFEST} is not JSON") from None
-        bad = manifest_problems(manifest, files, patches)
+        bad = manifest_problems(manifest, lambda n: files / n, patches)
         if bad:
             raise PrebuiltError(f"{url}: " + "; ".join(bad))
         manifest["archive"] = {"url": url, "sha256": sha256}
         (files / MANIFEST).write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
         dist.mkdir(parents=True, exist_ok=True)
+        place(dist, SHIM).parent.mkdir(parents=True, exist_ok=True)
         for name in (*FILES, MANIFEST):  # the manifest last: a dist is a prebuilt only once its files are in
-            os.replace(files / name, dist / name)
+            os.replace(files / name, place(dist, name))
     return manifest
 
 
