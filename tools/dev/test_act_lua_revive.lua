@@ -201,3 +201,46 @@ test("a carried Use the game never starts names the unfinished action holding th
     eq(j.status, "failed", "status")
     assert(j.error:find("nothing used): the game holds the character in an unfinished action", 1, true), j.error)
 end)
+
+-- Live N10 (plain C1 replay, 616e02f): a walk_toward of Claude arrived while end_standup ran; "superseded by a new
+-- action (move_to)" left the stand-up's layer-1 action unfinished and no order of Claude's started again.
+test("an order for a member whose stand-up job runs waits for it, then starts, and says it waited (N10)", function()
+    local names = revived(true)
+    world[P1].comps.ServerCharacter.Flags = { "RegisteredForAutomatedDialog" }
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    tick(5)
+    local j2 = job(op("move_to", { char = P1, pos = { 6, 0, 0 } }))
+    eq(js.status, "running", "the stand-up is not superseded"); eq(j2.status, "running", "the order waits")
+    tick(10)
+    eq(#called("CharacterMoveToPosition"), 0, "nothing ordered: the dialog is up, the move waits")
+    world[P1].comps.ServerCharacter.Flags = {}
+    tick()
+    eq(#called("CharacterMoveToPosition"), 1, "the stand-up's own walk only")
+    world[P1].pos = { 2.98, 0, 0 } -- the step ended the stand-up
+    names[2] = nil
+    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {}
+    tick()
+    eq(js.status, "done", "stand-up " .. tostring(js.error))
+    tick()
+    local mv = called("CharacterMoveToPosition")
+    eq(#mv, 2, "the waiting move started"); near(mv[2][3], 6, "to its own point")
+    eq(#called("PurgeOsirisQueue"), 0, "no purge while it waited")
+    arrive(j2, { 6, 0, 0 })
+    eq(j2.status, "done", "move " .. tostring(j2.error))
+    assert(j2.result.waited_for_standup_s >= 0.6, "waited_for_standup_s " .. tostring(j2.result.waited_for_standup_s))
+end)
+
+test("a waiting order is dropped by a newer one or act.stop, unstarted and unpurged", function()
+    revived(true)
+    world[P1].comps.ServerCharacter.Flags = { "RegisteredForAutomatedDialog" }
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    local j1 = job(op("move_to", { char = P1, pos = { 6, 0, 0 } }))
+    local j2 = job(op("move_to", { char = P1, pos = { 0, 0, 6 } }))
+    eq(j1.status, "interrupted", "the older waiting order"); eq(j1.error, "superseded by a new action (move_to)", "why")
+    eq(j2.status, "running", "the newer one waits"); eq(js.status, "running", "stand-up")
+    eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    op("stop", { char = P1 })
+    eq(j2.status, "interrupted", "stopped"); eq(j2.error, "stopped", "why"); eq(js.status, "interrupted", "stand-up")
+    tick(3)
+    eq(#called("CharacterMoveToPosition"), 0, "neither ever started")
+end)
