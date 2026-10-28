@@ -339,8 +339,14 @@ end)
 -- unfinished action again.
 ------------------------------------------------------------------------
 
-A.STANDUP_END_MS = 4000
 A.STANDUP_STEP_M = 3.0
+-- Live N8 (C1 replay A, 2026-10-28): the step's walk, ordered right after the revive, sat in the Osiris queue (osi=1)
+-- and never started for 4 s; a raw CharacterMoveToPosition 3 m ordered ~7 s after the revive (B) walked 2.98 m and
+-- ended the stand-up. A walk that hasn't moved STANDUP_MOVED_M after STANDUP_REORDER_MS is purged and ordered again,
+-- up to STANDUP_END_MS after the first order.
+A.STANDUP_END_MS = 10000
+A.STANDUP_REORDER_MS = 1500
+A.STANDUP_MOVED_M = 0.3
 
 -- The point STANDUP_STEP_M from `char` that a plain walk reaches (no jump, no drop, at most twice the step) with no
 -- harmful surface on the straight line there or at its end (N.routeHazard, the first metre skipped: the spot it
@@ -381,22 +387,35 @@ reg("end_standup", function(args)
                 A.STANDUP_STEP_M, hazard)
             or string.format("no point %.0f m away a walk reaches", A.STANDUP_STEP_M)))
     end
+    local U = BG3AI.Util
+    local function order(job)
+        job.orders, job.ordered = (job.orders or 0) + 1, RPC.now_ms()
+        G.osi("CharacterMoveToPosition", char, to[1], to[2], to[3], "Run", I.ev_name(job, "su" .. job.orders), job.id)
+    end
     return start("end_standup", char, {
         timeout_ms = A.STANDUP_END_MS + 2000,
         start = function(job)
             job.t0, job.from = RPC.now_ms(), G.pos(char)
             job.osi_task = true -- the walk is purged once the stand-up has ended (start(): queued tasks)
-            G.osi("CharacterMoveToPosition", char, to[1], to[2], to[3], "Run", I.ev_name(job, "su"), job.id)
+            order(job)
         end,
         on_tick = function(job)
+            local here = G.pos(char)
+            local moved = here and job.from and U.dist(here, job.from) or 0
+            if moved >= A.STANDUP_MOVED_M then job.walked = true end
+            local res = { orders = job.orders, walked = job.walked or false, stepped_m = U.round(moved, 1) }
             if not A.standing_up(char) then
-                local here = G.pos(char)
-                RPC.finish_job(job, "done", { pending = false, ended = true,
-                    stepped_m = here and job.from and BG3AI.Util.round(BG3AI.Util.dist(here, job.from), 1) or nil })
+                res.pending, res.ended = false, true
+                RPC.finish_job(job, "done", res)
             elseif RPC.now_ms() - job.t0 >= A.STANDUP_END_MS then
-                RPC.finish_job(job, "failed", { pending = true }, string.format("%s still stands up from the revive"
-                    .. " %.0f s after a walk was ordered (ResurrectComponent kept)", name_of(char),
-                    A.STANDUP_END_MS / 1000))
+                res.pending = true
+                RPC.finish_job(job, "failed", res, string.format("%s still stands up from the revive %.0f s after the"
+                    .. " first walk order (ResurrectComponent kept): %d walk order(s), %s", name_of(char) or
+                    "the character", A.STANDUP_END_MS / 1000, job.orders, job.walked
+                    and string.format("it walked %.1f m", moved) or "none of them started (it never moved)"))
+            elseif not job.walked and RPC.now_ms() - job.ordered >= A.STANDUP_REORDER_MS then
+                pcall(G.osi, "PurgeOsirisQueue", char)
+                order(job)
             end
         end,
     })
