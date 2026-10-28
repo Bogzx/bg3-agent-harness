@@ -310,3 +310,23 @@ test("a hotbar cast (ui) for a member still standing up is refused at once, not 
     assert(j.error:find("is still standing up from the revive: not cast", 1, true), j.error)
     eq(js.status, "running", "the stand-up goes on")
 end)
+
+-- act9 (N11 step 1): the bridge's short_rest asks which stand-ups run; a failed stand-up prints its state trail
+test("act.standups names a running stand-up; a failed one prints what it went through (N11)", function()
+    revived(false) -- N11: ResurrectComponent gone, the layer-1 action unfinished
+    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1].State.TransactionId = 2
+    eq(#RPC.ops["act.standups"]({}).running, 0, "none before")
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    local up = RPC.ops["act.standups"]({}).running
+    eq(#up, 1, "one"); eq(up[1].uuid, P1, "who")
+    local printed = {}
+    local print0 = Ext.Utils.Print
+    Ext.Utils.Print = function(s) printed[#printed + 1] = s end
+    tick(math.ceil(A.STANDUP_END_MS / 60) + 2)
+    Ext.Utils.Print = print0
+    eq(js.status, "failed", "status " .. tostring(js.error))
+    local line
+    for _, s in ipairs(printed) do if s:find("standup trail", 1, true) then line = s end end
+    assert(line and line:find("layer1=2 moved=0.0", 1, true), tostring(line))
+    eq(#RPC.ops["act.standups"]({}).running, 0, "none after")
+end)
