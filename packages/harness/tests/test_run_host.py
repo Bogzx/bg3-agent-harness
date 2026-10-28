@@ -172,6 +172,9 @@ class FakeRunner:
         return hooks
 
 
+PINS: dict[str, Any] = {"game_build": "25605617", "bg3le": {"sha256": "feed"}, "mod": {"sha1": "m"}, "repo": {}}
+
+
 @dataclass
 class Rig:
     h: H.LiveRunHost
@@ -191,6 +194,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
     renv.SE_BG3AI_DIR.mkdir(parents=True)
     for name in ("nav_guard_aa.json", "nav_aa.json", "other.json"):
         (renv.SE_BG3AI_DIR / name).write_text("{}")
+    monkeypatch.setattr(H, "machine_pins", lambda env: dict(PINS))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType] - no git, Steam or mod reads
     rig = Rig(H.LiveRunHost(lambda opt: FakeRunner(opt, [])), [], [], [], {}, None)
 
     def make(opt: rstate.Options) -> FakeRunner:

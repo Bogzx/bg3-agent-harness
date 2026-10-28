@@ -143,6 +143,7 @@ class Bench(unittest.TestCase):
         ):
             p.start()
             self.addCleanup(p.stop)
+        os.environ["BG3AI_BENCH_RECORD"] = "0"  # the stub game has no window to record (run_host.bench_recording)
         self.repo, self.se = repo, se
 
     def bench(self, *argv: str) -> tuple[int, str]:

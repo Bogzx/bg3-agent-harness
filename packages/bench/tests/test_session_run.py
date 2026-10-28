@@ -224,6 +224,29 @@ def test_an_edited_scenario_is_refused_by_its_series(tmp_path):
         run_one(tmp_path, host)({**job(), "scenario": "grove"})
 
 
+def test_a_series_freezes_its_first_runs_pins_and_a_later_run_carries_its_drift(tmp_path):
+    # diverse-2026-10-25: a matrix series' series.json had no pins, so a game patch mid-series went unseen
+    build = ["25605617"]
+
+    class PinnedHost(Host):
+        def record(self, job: dict, sc: dict, run_dir: Path, outcome) -> dict:
+            return super().record(job, sc, run_dir, outcome) | {"pins": {"game_build": build[0], "mod": {"sha1": "m1"}}}
+
+    host = PinnedHost([[("exited", 5)], [("exited", 5)], [("exited", 5)]])
+    sr = run_one(tmp_path, host)
+    sr(job())
+    series = series_name("m", job())
+    meta_path = tmp_path / "sessions" / series / "series.json"
+    first = {"versions": {**pins.versions(), "harness": "0.1"}, "game_build": "25605617", "mod": {"sha1": "m1"}}
+    assert json.loads(meta_path.read_text())["pins"] == first
+    sr(job())  # same versions: no drift
+    build[0] = "25700000"  # the game was patched
+    sr(job())
+    runs = [json.loads(ln) for ln in (tmp_path / "sessions" / series / "runs.jsonl").read_text().splitlines()]
+    assert [r.get("version_drift") for r in runs] == [None, None, ["game_build: 25605617 → 25700000"]]
+    assert json.loads(meta_path.read_text())["pins"] == first  # the first run's stay
+
+
 def test_the_manifest_names_the_profile_a_run_played(tmp_path):
     # two profiles that differ only in their rates are two different setups (pkg-bench-analysis E7)
     flash = (HERE.parents[2] / "profiles" / "deepseek-flash.toml").read_text()

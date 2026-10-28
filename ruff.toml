@@ -252,6 +252,9 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "N"]
 # sys.path before importing it (E402) under the runner's one-letter module aliases (N812). They leave the list when
 # runner/ moves into packages/harness (OVERHAUL-PLAN.md B-harness).
 "packages/harness/src/bg3harness/client_setup.py" = ["N818"]
+# bg3bench.preflight moved unchanged into the harness (the bench package had its own ruff config): legacy, only shrinks.
+"packages/harness/src/bg3harness/preflight.py" = ["E731", "RUF100"]
+"packages/harness/tests/test_preflight.py" = ["E402", "N812"]
 "packages/harness/tests/test_facts.py" = ["N812"]
 "runner/test_pi_run.py" = ["N812", "RUF005"]
 # client_setup.py keeps SetupRefused (N818: renaming it changes the API), test_pi_run.py a list concatenation.

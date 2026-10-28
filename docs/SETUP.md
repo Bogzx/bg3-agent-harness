@@ -46,6 +46,16 @@ native/bg3sdl/build.sh               # -> build/bg3sdl/libbg3sdl.so (the input s
 `python3 tools/bg3le_buildinfo.py` says whether `build/bg3le/dist` has all of them, and `runner/launch_game.sh`
 refuses a stale build (exit 4) unless `BG3AI_ALLOW_STALE_BG3LE=1`.
 
+Instead of building bg3le, `python3 tools/bg3le_prebuilt.py fetch` installs a prebuilt package into
+`build/bg3le/dist` once `patches/bg3le-prebuilt.toml` names one (its URL and sha256; empty until a release carries
+one). It checks the download's sha256, every file against the package's manifest and its patch list against
+`patches/bg3le`, and the launcher refuses the dist later if a file no longer matches. `pack` makes such a package
+from a local build.
+
+`python3 tools/doctor.py` then checks the whole machine (game build, Steam offline, bg3le, the mod, the screenshot
+layer, the input shim, the display, ffmpeg and the recording encoder, RAM, VRAM, disk, uv, Node and pi) and prints
+the fix for each failure; `--json` prints the same as data.
+
 Offline tests:
 
 ```bash

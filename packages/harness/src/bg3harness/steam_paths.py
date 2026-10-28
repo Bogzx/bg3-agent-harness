@@ -6,6 +6,7 @@
     python3 tools/steam_paths.py sniper      # .../SteamLinuxRuntime_sniper
     python3 tools/steam_paths.py manifest    # .../steamapps/appmanifest_1086940.acf
     python3 tools/steam_paths.py buildid     # the installed buildid from that manifest
+    python3 tools/steam_paths.py depots      # its InstalledDepots: one "<depot> <manifest id>" line each
     python3 tools/steam_paths.py offline     # exit 0 if Steam's last login was offline, else 3
     python3 tools/steam_paths.py launch-ok   # exit 0 if the game may launch: a Steam client runs (offline where
                                              # required), else 3
@@ -149,6 +150,15 @@ def buildid(env: Mapping[str, str] = os.environ, home: Path | None = None) -> st
         return ""
 
 
+def depots(env: Mapping[str, str] = os.environ, home: Path | None = None) -> dict[str, str]:
+    """{depot id: manifest id} of the installed build (docs/GAME-UPDATES.md records them per pinned build)."""
+    try:
+        got = parse_vdf(manifest(env, home).read_text(errors="replace")).get("AppState", {}).get("InstalledDepots")
+    except OSError:
+        return {}
+    return {d: v.get("manifest", "") for d, v in got.items() if isinstance(v, dict)} if isinstance(got, dict) else {}
+
+
 PROFILE_REL = Path(".local/share/Larian Studios/Baldur's Gate 3")
 SAVES_REL = Path("PlayerProfiles/Public/Savegames/Story")
 
@@ -278,9 +288,9 @@ def main(argv: list[str]) -> int:
         return 0 if ok else 3
     fn = {"game": game_dir, "data": lambda: game_dir() / "Data", "sniper": sniper_dir,
           "manifest": manifest, "buildid": buildid, "profile": profile_dir, "saves": saves_dir,
-          "se": se_dir}.get(what)
+          "se": se_dir, "depots": lambda: "\n".join(f"{d} {m}" for d, m in depots().items())}.get(what)
     if fn is None:
-        print(f"usage: {argv[0]} game|data|sniper|manifest|buildid|profile|saves|se|offline|launch-ok",
+        print(f"usage: {argv[0]} game|data|sniper|manifest|buildid|depots|profile|saves|se|offline|launch-ok",
               file=sys.stderr)
         return 1
     print(fn())
