@@ -516,3 +516,26 @@ def test_a_run_with_a_profiles_tools_off_is_checked_against_the_variant(good):
     )
     v = run(bdir, variant)
     assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
+def jpeg_with(marker: int, text: str) -> bytes:
+    body = text.encode()
+    return b"\xff\xd8" + bytes([0xFF, marker]) + (len(body) + 2).to_bytes(2, "big") + body + jpeg()[2:]
+
+
+@pytest.mark.parametrize("marker", [0xFE, 0xE1])  # a JPEG comment, an EXIF segment
+def test_job_s01_scans_the_frames_text_segments(good, marker):
+    bdir, release = good
+    with tarfile.open(bdir / bundle.FRAMES_TAR) as old:
+        n = len(old.getnames())
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        for i in range(n):
+            data = jpeg_with(marker, f"rendered from {HOME}") if i == 1 else jpeg()
+            info = tarfile.TarInfo(f"frames/{i}.jpg")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    (bdir / bundle.FRAMES_TAR).write_bytes(out.getvalue())
+    rehash(bdir)
+    v = validate.validate(bdir, release, where="job", ctx=ctx_for(env_of(bdir)))
+    assert v.failed == ["S01"] and "frames.tar" in next(r.detail for r in v.checks if r.code == "S01")

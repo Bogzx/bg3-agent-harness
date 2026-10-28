@@ -287,7 +287,8 @@
       "code": "S01",
       "where": [
         "panel",
-        "worker"
+        "worker",
+        "job"
       ],
       "severity": "reject",
       "flag": null,

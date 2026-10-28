@@ -13,8 +13,10 @@ none (check S01).
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import tarfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -156,11 +158,42 @@ def text_hits(s: str, literals: Iterable[str] = ()) -> list[str]:
     return out
 
 
+def jpeg_texts(data: bytes) -> list[str]:
+    """The text a JPEG can carry before its image data: its comment (COM) and application segments (APP0-15: EXIF,
+    XMP, ...). A malformed marker ends the walk."""
+    out: list[str] = []
+    i = 2
+    while i + 4 <= len(data) and data[i] == 0xFF and data[i + 1] != 0xDA:  # SOS: the image data follows
+        marker, n = data[i + 1], int.from_bytes(data[i + 2 : i + 4], "big")
+        if marker == 0xFE or 0xE0 <= marker <= 0xEF:
+            out.append(data[i + 4 : i + 2 + n].decode(errors="replace"))
+        i += 2 + n
+    return out
+
+
+def tar_texts(data: bytes) -> list[str]:
+    """A tar's member names and the text segments of its JPEG members (the contact sheet, frames.tar)."""
+    out: list[str] = []
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
+            for m in tar.getmembers():
+                out.append(m.name)
+                f = tar.extractfile(m) if m.isreg() else None
+                if f is not None and m.name.lower().endswith((".jpg", ".jpeg")):
+                    out += jpeg_texts(f.read())
+    except tarfile.TarError:
+        pass  # an unreadable tar fails E04
+    return out
+
+
 def file_hits(name: str, data: bytes, literals: Iterable[str] = ()) -> list[str]:
-    """What the scrub would replace in a bundle file; a JSON file that doesn't parse is scanned as text."""
+    """What the scrub would replace in a bundle file; a JSON file that doesn't parse is scanned as text, a tar by its
+    member names and its JPEGs' text segments."""
     texts: Iterable[str]
     try:
-        if name.endswith(".jsonl"):
+        if name.endswith(".tar"):
+            texts = tar_texts(data)
+        elif name.endswith(".jsonl"):
             texts = [s for ln in data.decode().splitlines() if ln.strip() for s in _strings(json.loads(ln))]
         elif name.endswith(".json"):
             texts = list(_strings(json.loads(data)))

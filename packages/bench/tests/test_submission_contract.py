@@ -136,6 +136,8 @@ def test_check_codes_are_the_plan_table():
         assert (c.severity == "flag") <= (c.flag is not None)
     # the panel runs everything but the cross-submission checks and the video duration
     assert {c.code for c in codes.CHECKS if "panel" not in c.where} == {"D01", "D02", "X07", "E02"}
+    # the Worker scans the small files, the job's validate every file (final)
+    assert codes.BY_CODE["S01"].where == ("panel", "worker", "job")
 
 
 def test_checks_json_is_in_sync():

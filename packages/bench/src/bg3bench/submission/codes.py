@@ -31,6 +31,8 @@ class Check:
 
 _PW: tuple[Where, ...] = ("panel", "worker")
 _PJ: tuple[Where, ...] = ("panel", "job")
+# the Worker scans only the small files (CPU); the job's validate scans every file and is final
+_PWJ: tuple[Where, ...] = ("panel", "worker", "job")
 
 CHECKS: tuple[Check, ...] = (
     Check("F01", _PW, "reject", "the files are exactly those bundle.json lists, sizes match, within the size caps"),
@@ -81,7 +83,7 @@ CHECKS: tuple[Check, ...] = (
         "E03", _PJ, "reject", "render.json is for this run_hash; its (file, seq) events exist, monotone, in the video"
     ),
     Check("E04", _PJ, "reject", "frames.tar holds only frames/<n>.jpg within its cap, one decodable frame per 30 s"),
-    Check("S01", _PW, "reject", "no home path, e-mail, Steam ID, key shape or .env value in any file"),
+    Check("S01", _PWJ, "reject", "no home path, e-mail, Steam ID, key shape or .env value in any file"),
     Check("S02", _PJ, "reject", "no hidden reasoning in the events"),
 )
 
