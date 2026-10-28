@@ -1,4 +1,4 @@
-"""Live probe (night2 vis, for N16): what ends Claude's walk toward Wyll ~6 m in, 3.3-3.9 m short of him?
+"""Live probe (night2 vis, for N16/N17): what ends Claude's walk toward Wyll ~6 m in, 3.3-3.9 m short of him?
 
 N10-N13 and N15 step 2 (research/fix/live.md): Claude (-42.0,26.4,-44.7), Wyll unchained at (-38.5,26.4,-53.5), 9.4 m.
 act.move_to {target=Wyll, range=2.5}: in N15 the mod aimed 2.5 m past Wyll (route_m 18.3, ETA 5 s), yet the game's
@@ -12,10 +12,17 @@ ended 3.9 m from the target". So the goal is not what stops it. This probe recor
     StatusApplied/Removed, Attached/DetachedFromPartyGroup, plus a few unknown-to-us names, each tried in a pcall);
   - every G.osi call the mod makes for Claude (the order, purges) and the job's finish (status, error, result);
   - the mod's plan before the order (A.range_point: goal, stop point) and the engine's route to the goal (Nav.route).
-Variants, each from the same start (both teleported, the other members put 1.5 m behind Claude, every queue purged):
+Placement, as N15 set it up (no teleport: N16 step 4's teleport placement left every order unstarted for 7-20 s, all
+five variants walked 0 m): Wyll unchained, the others chained to Claude ((d): unchained), each a waited-on job; Claude
+walks back to the start with act.move_to only when he is more than PLACE_TOL_M off it (on a fresh load he stands
+there), (d)'s others walk to their spots 1.5 m behind him, Wyll walks to his spot with act.move_to (as p10-2.py did);
+then the probe waits until every member stood still SETTLE_S (measured, at most SETTLE_MAX_S). Each step's job status
+and the actual start positions are in the record ("place"); the walk's order time and Claude's first step are in the
+summary (no step within NO_START_MS of the order: the start is suspect, not a stop-short result).
+Variants:
   a  act.move_to {target=Wyll, range=2.5}            the N15 order (goal past Wyll, on the line)
   b  act.move_to {pos=<2 m beside Wyll, off the line>} a plain point walk, nobody on its end
-  c  Wyll teleported 3 m aside first, then as (a)     nobody standing on the straight line
+  c  Wyll walked 3 m aside first, then as (a)         nobody standing on the straight line
   d  as (a) with Karlach and Shadowheart unchained    no party follow behind Claude
   r  raw Osi.CharacterMoveToPosition to (a)'s goal   no mod walker at all (its own event, no job)
 
@@ -52,6 +59,12 @@ BESIDE_M = 2.0  # (b): the point this far from Wyll, perpendicular to the line
 ASIDE_M = 3.0  # (c): Wyll this far off the line
 BEHIND_M = 1.5  # the other members start this far behind Claude, 1 m to each side
 WALK_SECS = 15.0  # the longest wait for the job (or, raw, for the move event)
+PLACE_TOL_M = 0.5  # a member this close to its spot is not walked there
+JOB_SECS = 25.0  # the longest wait for one placement job
+SETTLE_S = 0.75  # placement ends once every member moved < SETTLE_STILL_M over this long...
+SETTLE_STILL_M = 0.05
+SETTLE_MAX_S = 12.0  # ...or after this long (said in the record)
+NO_START_MS = 3000  # no step this long after the order: the start is suspect
 VARIANTS = ("a", "b", "c", "d", "r")
 
 
@@ -193,36 +206,14 @@ local S = Ext.Json.Parse(%s)
 W.on = false
 local claude, wyll = P.who("Claude"), P.who("Wyll")
 W.claude, W.wyll = claude, wyll
-local function tp(u, p)
-    pcall(Osi.PurgeOsirisQueue, u, 1)
-    if not pcall(Osi.TeleportToPosition, u, p[1], p[2], p[3], "", 0, 0, 0, 0, 1) then
-        Osi.TeleportToPosition(u, p[1], p[2], p[3], "")
-    end
-end
-local others = {}
-for _, row in ipairs(Osi.DB_PartyMembers:Get(nil) or {}) do
-    local g = tostring(row[1]):sub(-36)
-    if g ~= claude and g ~= wyll then others[#others + 1] = g end
-end
-if S.phase == "place" then
-    pcall(B.rpc, Ext.Json.Stringify({ op = "act.unchain", args = { char = wyll } }))
-    for _, o in ipairs(others) do -- (d) unchains them; the others chain them to Claude again (a player's party)
-        local req = S.unchain_others and { op = "act.unchain", args = { char = o } }
-            or { op = "act.chain", args = { char = o, leader = claude } }
-        pcall(B.rpc, Ext.Json.Stringify(req))
-    end
-    tp(claude, S.claude); tp(wyll, S.wyll)
-    for i, o in ipairs(others) do tp(o, S.others[i] or S.others[1]) end
-    return Ext.Json.Stringify({ placed = true, others = others })
-end
--- phase "go": record, then order
+-- record, then order
 local near = {}
-local c0 = W.pos(claude)
+local c0, w0 = W.pos(claude), W.pos(wyll)
 for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerCharacter")) do
     local okg, g = pcall(function() return e.Uuid.EntityUuid end)
     if okg and g and g ~= claude and g ~= wyll then
         local p = W.pos(g)
-        if p and c0 and (U.dist(p, c0) <= %s or U.dist(p, S.wyll) <= %s) then near[#near + 1] = g end
+        if p and c0 and (U.dist(p, c0) <= %s or (w0 and U.dist(p, w0) <= %s)) then near[#near + 1] = g end
     end
 end
 W.near, W.log, W.last, W.lastComps, W.job, W.end_at = near, {}, {}, nil, nil, nil
@@ -262,6 +253,18 @@ W.rec("order", { res = P.js(res, 600), plan = plan, route = route, near = names,
 return Ext.Json.Stringify({ ok = true, job = W.job })
 """
 
+# Every party member: uuid, display name, position.
+PARTY = r"""
+local out = {}
+for _, row in ipairs(Osi.DB_PartyMembers:Get(nil) or {}) do
+    local g = tostring(row[1]):sub(-36)
+    local okn, n = pcall(function() return Ext.Loca.GetTranslatedString(Osi.GetDisplayName(g)) end)
+    local x, y, z = Osi.GetPosition(g)
+    out[#out + 1] = { uuid = g, name = okn and n or g, pos = { x, y, z } }
+end
+return Ext.Json.Stringify(out)
+"""
+
 STATUS = r"""
 local W = Mods.BG3AI.BG3AI.ReviveProbe.ws
 return Ext.Json.Stringify({ on = W.on == true, n = #W.log })
@@ -276,9 +279,42 @@ return Ext.Json.Stringify({ log = W.log }, { Beautify = false })
 NEAR_M = 15.0
 
 
-def start_code(setup: dict[str, Any], phase: str) -> str:
-    s = dict(setup, phase=phase)
-    return START % (rs.lua_str(json.dumps(s)), NEAR_M, NEAR_M, int(WALK_SECS * 1000) + 3000)
+def start_code(setup: dict[str, Any]) -> str:
+    return START % (rs.lua_str(json.dumps(setup)), NEAR_M, NEAR_M, int(WALK_SECS * 1000) + 3000)
+
+
+def rpc_code(op: str, args: dict[str, Any]) -> str:
+    return f"return Mods.BG3AI.BG3AI.rpc({rs.lua_str(json.dumps({'op': op, 'args': args}))})"
+
+
+def _member(party: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    return next(m for m in party if str(m.get("name", "")).startswith(name))
+
+
+def place_steps(setup: dict[str, Any], party: list[dict[str, Any]]) -> list[tuple[str, str, dict[str, Any]]]:
+    """The placement jobs for one variant from where the party stands (pure: tested offline): (label, op, args)."""
+    claude, wyll = _member(party, "Claude"), _member(party, "Wyll")
+    others = [m for m in party if m is not claude and m is not wyll]
+    steps: list[tuple[str, str, dict[str, Any]]] = [("unchain Wyll", "act.unchain", {"char": wyll["uuid"]})]
+    for o in others:
+        if setup["unchain_others"]:
+            steps.append((f"unchain {o['name']}", "act.unchain", {"char": o["uuid"]}))
+        else:
+            steps.append((f"chain {o['name']} to Claude", "act.chain", {"char": o["uuid"], "leader": claude["uuid"]}))
+    if math.dist(claude["pos"], setup["claude"]) > PLACE_TOL_M:
+        steps.append(("walk Claude back", "act.move_to", {"char": claude["uuid"], "pos": list(setup["claude"])}))
+    if setup["unchain_others"]:
+        for o, spot in zip(others, setup["others"], strict=False):
+            steps.append((f"walk {o['name']} behind", "act.move_to", {"char": o["uuid"], "pos": list(spot)}))
+    if math.dist(wyll["pos"], setup["wyll"]) > PLACE_TOL_M:
+        steps.append(("walk Wyll", "act.move_to", {"char": wyll["uuid"], "pos": list(setup["wyll"])}))
+    return steps
+
+
+def still(prev: list[dict[str, Any]], cur: list[dict[str, Any]]) -> bool:
+    """Every member moved less than SETTLE_STILL_M between two reads."""
+    at = {m["uuid"]: m["pos"] for m in prev}
+    return all(m["uuid"] in at and math.dist(at[m["uuid"]], m["pos"]) < SETTLE_STILL_M for m in cur)
 
 
 def _dist(a: list[float] | None, b: list[float] | None) -> float | None:
@@ -293,11 +329,19 @@ def summarize(variant: str, log: list[dict[str, Any]]) -> str:
     if not ticks:
         return f"{variant}: no ticks recorded"
     start, end = ticks[0], ticks[-1]
-    stop_t = end["t"]
-    for prev, cur in itertools.pairwise(ticks):  # the last tick Claude still moved
+    stop_t, first_t = end["t"], None
+    for prev, cur in itertools.pairwise(ticks):  # the first and the last tick Claude moved
         if (_dist(prev["c"], cur["c"]) or 0) > 0.02:
             stop_t = cur["t"]
+            first_t = cur["t"] if first_t is None else first_t
     order = next((r for r in log if r.get("k") == "order"), {})
+    order_t = order.get("t", 0)
+    if first_t is None or first_t - order_t > NO_START_MS:
+        return (
+            f"{variant}: SETUP SUSPECT: order at {order_t} ms, "
+            + ("Claude never moved" if first_t is None else f"first step only at {first_t} ms")
+            + f"; start {_dist(start['c'], start['w'])} m from Wyll"
+        )
     plan = order.get("plan")
     goal = plan.get("pos") if isinstance(plan, dict) else None
     fin = next((r for r in log if r.get("k") == "job_finish"), None)
@@ -308,7 +352,8 @@ def summarize(variant: str, log: list[dict[str, Any]]) -> str:
         if r.get("k") not in ("tick", "order") and stop_t - 300 <= r["t"] <= stop_t + 100
     ]
     return (
-        f"{variant}: walked {walked} m in {stop_t / 1000:.2f} s; end {_dist(end['c'], end['w'])} m from Wyll"
+        f"{variant}: order at {order_t} ms, first step at {first_t} ms; walked {walked} m, stopped at"
+        f" {stop_t / 1000:.2f} s; end {_dist(end['c'], end['w'])} m from Wyll"
         + (f", {_dist(end['c'], goal)} m from the goal" if goal else "")
         + (f"; job {fin['status']}: {fin.get('err') or ''}" if fin else "; no job finish")
         + f"; start {_dist(start['c'], start['w'])} m off; around the stop: {', '.join(near) or 'nothing'}"
@@ -329,18 +374,53 @@ def main(argv: list[str] | None = None) -> int:
     def ev(code: str) -> str:
         return c.evaluate(rs.INSTALL + "\n" + INSTALL + "\n" + code, context="server", timeout=30.0)
 
+    def party() -> list[dict[str, Any]]:
+        return json.loads(ev(PARTY))
+
+    def run_job(op: str, args: dict[str, Any]) -> dict[str, Any]:
+        res = json.loads(ev(rpc_code(op, args)))
+        job = (res.get("result") or {}).get("job") if isinstance(res.get("result"), dict) else None
+        if not res.get("ok") or job is None:
+            return {"status": "not started", "error": res.get("error"), "result": res.get("result")}
+        end = time.monotonic() + JOB_SECS
+        while True:
+            view = json.loads(ev(rpc_code("job.poll", {"id": job}))).get("result") or {}
+            if view.get("status") != "running" or time.monotonic() > end:
+                return {k: view.get(k) for k in ("status", "error", "elapsed_ms")}
+            time.sleep(0.2)
+
+    def place(s: dict[str, Any]) -> dict[str, Any]:
+        done = []
+        for label, op, args in place_steps(s, party()):
+            done.append({"step": label, **run_job(op, args)})
+        t0, prev, settled = time.monotonic(), party(), False
+        while time.monotonic() - t0 < SETTLE_MAX_S:
+            time.sleep(SETTLE_S)
+            cur = party()
+            if still(prev, cur):
+                settled = True
+                break
+            prev = cur
+        return {"steps": done, "settled": settled, "settle_s": round(time.monotonic() - t0, 2), "party": prev}
+
     a.out.parent.mkdir(parents=True, exist_ok=True)
     for v in a.variants:
         s = setup_for(v)
-        print(f"{v}: place {ev(start_code(s, 'place'))}", flush=True)
-        time.sleep(3.0)  # the teleports land, followers settle
-        print(f"{v}: go {ev(start_code(s, 'go'))}", flush=True)
+        pl = place(s)
+        c0, w0 = _member(pl["party"], "Claude")["pos"], _member(pl["party"], "Wyll")["pos"]
+        print(
+            f"{v}: placed {[(d['step'], d['status']) for d in pl['steps']]} settled={pl['settled']} "
+            f"in {pl['settle_s']} s; Claude {_dist(c0, list(s['claude']))} m off his start, Wyll "
+            f"{_dist(w0, list(s['wyll']))} m off his",
+            flush=True,
+        )
+        print(f"{v}: go {ev(start_code(s))}", flush=True)
         end = time.monotonic() + WALK_SECS + 4.0
         while time.monotonic() < end and json.loads(ev(STATUS)).get("on"):
             time.sleep(0.5)
         log = json.loads(ev(DUMP)).get("log") or []
         with a.out.open("a") as f:
-            f.write(json.dumps({"variant": v, "setup": s, "log": log}) + "\n")
+            f.write(json.dumps({"variant": v, "setup": s, "place": pl, "log": log}) + "\n")
         print(summarize(v, log), flush=True)
     return 0
 
