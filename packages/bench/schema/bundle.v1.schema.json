@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/bundle.v1.schema.json",
   "title": "Submission bundle v1 (bundle.json)",
-  "description": "The envelope of one run's submission bundle, written by bg3bench.submission.pack. It lists every other file of the bundle with its sha256 and size. The bundle hash is the sha256 of this document in canonical form (keys sorted, no whitespace, UTF-8, non-ASCII kept: bg3bench.submission.bundle.canonical_bytes); it covers every file through files[].sha256. bundle.json itself is not in files[].",
+  "description": "The envelope of one run's submission bundle, written by bg3bench.submission.pack. It lists every other file of the bundle with its sha256 and size. bundle.json is written in canonical form (keys sorted, no whitespace, UTF-8, non-ASCII kept: bg3bench.submission.bundle.canonical_bytes) and the bundle hash is the sha256 of its bytes as stored, so a reader never re-serialises it; a bundle.json not in canonical form fails F02. The hash covers every file through files[].sha256. bundle.json itself is not in files[].",
   "type": "object",
   "required": [
     "schema",

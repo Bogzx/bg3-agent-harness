@@ -91,6 +91,13 @@ def test_bundle_hash_is_canonical():
     assert "é".encode() in bundle.canonical_bytes(envelope(condition="é"))
 
 
+def test_is_canonical():
+    env = envelope()
+    assert bundle.is_canonical(bundle.canonical_bytes(env))
+    assert not bundle.is_canonical(json.dumps(env, indent=1).encode())
+    assert not bundle.is_canonical(b"{not json")
+
+
 def test_check_codes_are_the_plan_table():
     assert [c.code for c in codes.CHECKS] == [
         *("F01", "F02", "F03", "F04", "P01", "P02", "C01", "C02", "C03", "D01", "D02"),

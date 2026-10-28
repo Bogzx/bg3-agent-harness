@@ -1,7 +1,9 @@
 """The bundle envelope (schema/bundle.v1.schema.json): its canonical form, its hash and the size caps.
 
-The bundle hash is the sha256 of bundle.json in canonical form: keys sorted, no whitespace, UTF-8 with non-ASCII kept.
-It covers every other file through files[].sha256, names the stored bundle and goes on the evidence video's id line.
+bundle.json is written in canonical form (keys sorted, no whitespace, UTF-8 with non-ASCII kept) and the bundle hash
+is the sha256 of its bytes as stored: a reader hashes the file, never a re-serialisation (JSON number formatting
+differs between languages). It covers every other file through files[].sha256, names the stored bundle and goes on the
+evidence video's id line.
 """
 
 from __future__ import annotations
@@ -27,6 +29,14 @@ def canonical_bytes(envelope: dict[str, Any]) -> bytes:
 
 def bundle_hash(envelope: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_bytes(envelope)).hexdigest()
+
+
+def is_canonical(data: bytes) -> bool:
+    """Whether bundle.json's bytes are the canonical form of what they parse to."""
+    try:
+        return canonical_bytes(json.loads(data)) == data
+    except (ValueError, UnicodeDecodeError):
+        return False
 
 
 def sha256_bytes(data: bytes) -> str:
