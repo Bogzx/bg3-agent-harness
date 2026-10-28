@@ -621,6 +621,7 @@ reg("talk", function(args)
     end
 
     return start("talk", char, {
+        standup_of = A.standup_job(npc), -- night2: a dialog with a revived member waits for their stand-up
         eta_s = walk_eta(plan.length_m) + 1.5, route_m = plan.length_m,
         timeout_ms = 60000,
         interrupt = { combat = true, dialogue = false, attacked = true },

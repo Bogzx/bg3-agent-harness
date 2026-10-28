@@ -235,6 +235,13 @@ end
 
 function A.standing_up(char) return has_comp(char, "ResurrectComponent") == true end
 
+-- night2: member `t`'s running act.end_standup job, else nil (a cast or a talk aimed at them waits for it: start())
+function A.standup_job(t)
+    local j = t and A.active[G.guid(t)]
+    if j and j.status == "running" and j.kind == "act.end_standup" then return j end
+    return nil
+end
+
 -- An unfinished action state on layer 1 with no stand-up pending: { tid = its TransactionId }, else nil.
 function A.held_action(char)
     local ok, st = pcall(function() return Ext.Entity.Get(char).ServerCharacter.AiActionMachine.Layers[1].State end)
@@ -518,7 +525,7 @@ local function start(kind, char, spec)
                 tostring(prev.id), tostring(prev.kind), kind, tostring(char)))
             interrupt(prev, "superseded by a new action (" .. kind .. ")")
         end
-        -- night2: a cast at another member whose stand-up job runs (act.cast's standup_of) waits for that one
+        -- night2: a cast or a talk aimed at another member whose stand-up job runs (spec.standup_of) waits for it
         local up = spec.standup_of
         if up and up.status == "running" and A.call_now then return park(kind, char, spec, up) end
     end
