@@ -441,6 +441,7 @@ def _log_stage_ms(op: str, r: JobResult) -> None:
         return
     ms = r.result.pop("_stage_ms")
     try:
+        core.RUNTIME.mkdir(parents=True, exist_ok=True)  # a new runtime dir (core._log's)
         with open(core.RUNTIME / "stage_ms.jsonl", "a") as f:
             f.write(json.dumps({"t": round(time.time(), 1), "op": op, "status": r.status,
                                 "elapsed_ms": r.elapsed_ms, "stages": ms}) + "\n")

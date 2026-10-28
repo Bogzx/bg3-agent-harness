@@ -237,6 +237,7 @@ def _log_cc_timing(rec: dict) -> None:
     since the check waits out the CC scene; total_ms = apply + naming + world. SESSION-WATCH / acceptance read time
     and attempts from there (never shown)."""
     try:
+        core.RUNTIME.mkdir(parents=True, exist_ok=True)  # a new runtime dir (core._log's)
         with open(core.RUNTIME / "stage_ms.jsonl", "a") as f:
             f.write(json.dumps({"t": round(time.time(), 1), "op": "create_character", **rec}) + "\n")
     except OSError:
