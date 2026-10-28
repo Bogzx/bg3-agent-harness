@@ -136,6 +136,15 @@ class Revive(unittest.TestCase):
         self.assertEqual(str(e.exception), "Shadowheart is not dead: Scroll of Revivify not read")
         self.assertNotIn("act.interact", [op for op, _ in fake.calls])
 
+    def test_scroll_on_the_reader_herself_is_refused_before_the_read(self):
+        """Live N7 2d (2026-10-28): Shadowheart's Scroll of Revivify with who=target=e1 Shadowheart read "done ... cast
+        on e1 Shadowheart by a click" (the click landed, the game took no target) and the scroll stayed in her bags."""
+        fake = self.use(Fake([{"uuid": ME, "pos": [0, 0, 0]}, {"uuid": SH, "pos": [2, 0, 0]}]))
+        with self.assertRaises(world_tools.GameError) as e:
+            world_tools._use_scroll(SH, {"name": "Scroll of Revivify", "uuid": "scroll-1"}, SH)
+        self.assertEqual(str(e.exception), "Shadowheart is not dead: Scroll of Revivify not read")
+        self.assertNotIn("act.interact", [op for op, _ in fake.calls])
+
     def test_still_dead_said(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         self.ground(hotbar.HotbarCastResult(True, picked=1))
