@@ -1,13 +1,18 @@
 """Live probe (night2 vis, for N16/N17): what ends Claude's walk toward Wyll ~6 m in, 3.3-3.9 m short of him?
 
+LIVE-UNVERIFIED after N17: its per-tick sampler froze the game there (5.9-7.5 s a tick, no walk started); the cheap
+sampler below (deep reads at most every 0.5 s, off when one takes > 50 ms) has only run offline
+(tools/dev/test_probe_walk_stop_lua.sh). The item it was for is closed (research/fix/vis.md, 2026-10-28).
+
 N10-N13 and N15 step 2 (research/fix/live.md): Claude (-42.0,26.4,-44.7), Wyll unchained at (-38.5,26.4,-53.5), 9.4 m.
 act.move_to {target=Wyll, range=2.5}: in N15 the mod aimed 2.5 m past Wyll (route_m 18.3, ETA 5 s), yet the game's
 move event came after ~2.5 s / ~6 m, Claude 3.3 or 3.9 m N of Wyll (the N10/N13 spots), and the job failed "the walk
 ended 3.9 m from the target". So the goal is not what stops it. This probe records the walk, tick by tick:
   - Claude's, Wyll's and every other character's position within PROBE_NEAR_M of the line (once per tick);
-  - Claude's compact state (probe_revive_stuck P.compact: action / movement / steering machine layers, Osiris tasks,
-    statuses, flags) and the serialized active movement and steering states and the Steering / Movement components,
-    each kept only when it changes;
+  - Claude's Osiris task count and the job's status (every tick), and a deep read at most every 0.5 s or 0.1 s after
+    those change: P.compact (probe_revive_stuck: machine layer type names, tasks, statuses, flags), named fields of the
+    Steering / Movement components and the component names, kept only when they change (no Serialize of a machine
+    state: N17's per-tick one froze the game, see the sampler);
   - Osiris events on Claude or Wyll (EntityEvent, CharacterMoveToCancelled, CharacterMoveFailedUseJump, AttackedBy,
     StatusApplied/Removed, Attached/DetachedFromPartyGroup, plus a few unknown-to-us names, each tried in a pcall);
   - every G.osi call the mod makes for Claude (the order, purges) and the job's finish (status, error, result);
@@ -152,19 +157,48 @@ if not W.listening then
         return W.finish0(job, status, result, err)
     end
 end
--- The serialized active state of an AI machine layer (movement / steering), or "-".
-local function layerState(sc, machine)
-    local ok, s = pcall(function()
-        local m = sc[machine]
-        local out = {}
-        for i = 1, 3 do
-            local l = m.Layers[i]
-            local st = l and (l.State or l)
-            if st ~= nil then out[#out + 1] = P.js(st, 700) end
+-- N17 (bg3le-20261028-122412 :709/717/722): the first sampler serialized the AI movement / steering machine states and
+-- the Steering / Movement components every tick (Ext.Types.Serialize via P.js): one tick took 5.9-7.5 s, the game ran a
+-- frame per 6-7.5 s and no order started. Now every tick reads positions, the job's status and the Osiris task count
+-- only (the cheap key: tasks, job status, moving or not); the deep read (P.compact: layer type names, tasks, statuses,
+-- flags; named scalar fields of Movement / Steering; the component names) runs at most every DEEP_MS, or DEEP_MIN_MS
+-- after the cheap key changes, never a Serialize of a machine state. One slower than DEEP_SLOW_MS turns them off.
+W.DEEP_MS, W.DEEP_MIN_MS, W.DEEP_SLOW_MS = 500, 100, 50
+W.FIELDS = { Movement = { "Speed", "Speed2", "Acceleration", "Direction" },
+    Steering = { "TargetRotation", "Speed", "SteeringState", "RequestSteering" } }
+function W.deepDue(now, key)
+    if W.deepOff then return false end
+    local since = now - (W.deepAt or -1e9)
+    return since >= W.DEEP_MS or (key ~= W.deepKey and since >= W.DEEP_MIN_MS)
+end
+local function fieldsOf(e, comp)
+    local okc, c = pcall(function() return e[comp] end)
+    if not okc or c == nil then return nil end
+    local out = {}
+    for _, f in ipairs(W.FIELDS[comp]) do
+        local ok, v = pcall(function() return c[f] end)
+        if ok and v ~= nil then
+            if type(v) == "number" or type(v) == "boolean" then out[#out + 1] = f .. "=" .. tostring(v)
+            else
+                local okv, t = pcall(function() return string.format("%.2f,%.2f,%.2f", v[1], v[2], v[3]) end)
+                out[#out + 1] = f .. "=" .. (okv and t or tostring(v))
+            end
         end
-        return table.concat(out, " | ")
-    end)
-    return ok and s or ("unreadable: " .. tostring(s))
+    end
+    return table.concat(out, " ")
+end
+local function deep(e)
+    local sig = { compact = select(2, pcall(P.compact, W.claude)) }
+    for comp in pairs(W.FIELDS) do sig[comp] = fieldsOf(e, comp) end
+    for k, v in pairs(sig) do
+        if W.last[k] ~= v then rec("state", { key = k, value = v }); W.last[k] = v end
+    end
+    local comps = P.comp_names(W.claude)
+    if W.lastComps then
+        for k in pairs(comps) do if not W.lastComps[k] then rec("comp_added", { name = k }) end end
+        for k in pairs(W.lastComps) do if not comps[k] then rec("comp_removed", { name = k }) end end
+    end
+    W.lastComps = comps
 end
 local function sample()
     if not W.on then return end
@@ -173,24 +207,22 @@ local function sample()
     for _, u in ipairs(W.near) do r.near[#r.near + 1] = rnd(pos(u)) end
     local j = W.job and RPC.jobs[W.job]
     r.job = j and j.status or nil
-    rec("tick", r)
     local e = Ext.Entity.Get(W.claude)
-    local sc = e and e.ServerCharacter
-    local sig = { compact = select(2, pcall(P.compact, W.claude)),
-        move = sc and layerState(sc, "AiMovementMachine"), steer = sc and layerState(sc, "AiSteeringMachine") }
-    for _, k in ipairs({ "Steering", "Movement", "PathingComponent", "ServerPathfinding" }) do
-        local ok, v = pcall(function() return e[k] end)
-        if ok and v ~= nil then sig[k] = P.js(v, 700) end
+    local okt, n = pcall(function() return #e.ServerCharacter.OsirisController.Tasks end)
+    r.tasks = okt and n or nil
+    rec("tick", r)
+    local moving = W.lastC ~= nil and r.c ~= nil and U.dist(W.lastC, r.c) > 0.02
+    W.lastC = r.c
+    local key = tostring(r.tasks) .. "|" .. tostring(r.job) .. "|" .. tostring(moving)
+    if W.deepDue(now, key) then
+        W.deepAt, W.deepKey = now, key
+        deep(e)
+        local ms = Ext.Utils.MonotonicTime() - now
+        if ms > W.DEEP_SLOW_MS then
+            W.deepOff = true
+            rec("deep_off", { ms = ms })
+        end
     end
-    local comps = P.comp_names(W.claude)
-    for k, v in pairs(sig) do
-        if W.last[k] ~= v then rec("state", { key = k, value = v }); W.last[k] = v end
-    end
-    if W.lastComps then
-        for k in pairs(comps) do if not W.lastComps[k] then rec("comp_added", { name = k }) end end
-        for k in pairs(W.lastComps) do if not comps[k] then rec("comp_removed", { name = k }) end end
-    end
-    W.lastComps = comps
     if W.end_at and now >= W.end_at then W.on = false end
     if W.on and j and j.status ~= "running" and not W.end_at then W.end_at = now + 1500 end
     if W.on and now - W.t0 > W.max_ms then W.on = false end
@@ -217,6 +249,7 @@ for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerCharacter")) do
     end
 end
 W.near, W.log, W.last, W.lastComps, W.job, W.end_at = near, {}, {}, nil, nil, nil
+W.deepAt, W.deepKey, W.deepOff, W.lastC = nil, nil, nil, nil
 W.t0, W.max_ms, W.on = Ext.Utils.MonotonicTime(), %d, true
 local names = {}
 for _, g in ipairs(near) do
