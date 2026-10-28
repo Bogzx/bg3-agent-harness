@@ -177,8 +177,11 @@ class TestDoctor(DoctorFixture):
         self.assertNotIn("python", got)
 
     def test_node_and_pi(self):
-        self.cmds["node"] = (0, "v18.19.0")
-        self.assertEqual(self.checks()["node"].status, WARN)
+        for old in ("v18.19.0", "v22.12.0"):  # pi needs 22.19
+            self.cmds["node"] = (0, old)
+            self.assertEqual(self.checks()["node"].status, WARN, old)
+        self.cmds["node"] = (0, "v22.19.0")
+        self.assertEqual(self.checks()["node"].status, PASS)
         self.cmds["node"] = (0, "v24.20.0")
         (self.repo / "tools/pi/node_modules/.bin/pi").unlink()
         c = self.checks()["pi"]
