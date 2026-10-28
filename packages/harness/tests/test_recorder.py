@@ -381,3 +381,14 @@ def test_recorder_restarts_in_a_new_format(tmp_path: Path, fake_env):
     assert rec.run is not first and rec.run is not None and rec.run.spec.fps == 30
     assert "fps=30,scale=1920:1080" in " ".join(rec.run.proc.args)
     rec.stop()
+
+
+def test_a_bench_run_is_recorded_at_the_evidence_videos_game_size(tmp_path: Path):
+    from bg3harness.video import draw
+
+    run = recorder.run_recording(tmp_path, {"DISPLAY": ":9"}, tmp_path, "libx264")
+    spec = run.rec.spec
+    assert (spec.width, spec.height, spec.live, spec.encoder) == (draw.GAME_W, draw.GAME_H, False, "libx264")
+    assert "scale=1408:792:force_original_aspect_ratio=decrease,pad=1408:792" in " ".join(
+        recorder.ffmpeg_args(spec, Capture(":9", None), "rec-1")
+    )
