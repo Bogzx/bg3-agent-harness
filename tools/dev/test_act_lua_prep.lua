@@ -944,6 +944,22 @@ test("move_to range: a point the engine's path ends short of is skipped, never w
     nav.fn = function() return { reachable = true, length_m = 0, nodes = 0, points = { world[P1].pos } } end
     j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
     eq(j.status, "failed", "status")
-    assert(j.error:find("the game's paths to them end 1.%d m or more short of them"), j.error)
+    assert(j.error:find("the game's paths to them have no nodes (they end where the character stands, 1.8 m or more"
+        .. " from them)", 1, true), j.error)
     eq(#called("CharacterMoveToPosition"), 0, "no walk")
+end)
+
+test("move_to range: a normal path, its last node ~1 m from the point, is walked (app review of #40)", function()
+    world[P1].pos, world[NPC].pos = { -42.0, 0, -44.7 }, { -38.5, 0, -53.5 } -- N10/N11's start: 9.4 m off
+    nav.fn = function(_, pos) -- the engine's path ends 1.1 m short, on the walker's side (impl-vis.md: ~1.0 m)
+        local from = world[P1].pos
+        local d = U.dist(from, pos)
+        local f = (d - 1.1) / d
+        local last = { from[1] + (pos[1] - from[1]) * f, 0, from[3] + (pos[3] - from[3]) * f }
+        return { reachable = true, length_m = d - 1.1, nodes = 2, points = { from, last, last } }
+    end
+    local j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+    eq(j.status, "running", "walking " .. tostring(j.error))
+    local mv = called("CharacterMoveToPosition")
+    eq(#mv, 1, "one walk"); near(U.dist({ mv[1][3], 0, mv[1][5] }, world[NPC].pos), 1.5, "the first point, 1.5 m off")
 end)
