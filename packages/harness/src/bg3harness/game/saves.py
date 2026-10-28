@@ -6,6 +6,7 @@ Pure functions over Save lists and the playthrough's history; the runner's Runne
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -220,6 +221,31 @@ def pick_save_why(
     session_ends): later play HANDOFF doesn't know about (a session that crashed before its wrap-up, a runner
     quicksave), or HANDOFF's session is unknown. S076 (L8): the newest was S075-fight, saved mid-fight on try 6,
     HANDOFF (S075's) named S075-end; S076's HANDOFF named S075-end again, its S076-end being a losing fight."""
+    save, why = _pick_save_why(saves, handoff_label, owner, runner_saves, prefix, windows, handoff_session, ends)
+    # never silently: a save of this playthrough whose SaveTime can't be read (a corrupt meta.lsf) is named
+    skipped = unreadable_saves(saves, handoff_label, owner, runner_saves, prefix)
+    return save, why + (f"; skipped, SaveTime unreadable: {', '.join(skipped)}" if skipped else "")
+
+
+def unreadable_saves(
+    saves: list[Save], handoff_label: str | None, owner: str | None, runner_saves: set[str], prefix: str = SAVE_PREFIX
+) -> list[str]:
+    """The folders save_candidates would weigh (by owner, label, the runner's or the start save) but can't: their
+    SaveTime is unreadable (Save.saved None)."""
+    unread = [dataclasses.replace(s, saved=0.0) for s in saves if s.saved is None]
+    return [s.folder for s in save_candidates(unread, handoff_label, owner, runner_saves, prefix)]
+
+
+def _pick_save_why(
+    saves: list[Save],
+    handoff_label: str | None,
+    owner: str | None,
+    runner_saves: set[str],
+    prefix: str,
+    windows: list[tuple[float, float]] | None,
+    handoff_session: int | None,
+    ends: dict[int, float] | None,
+) -> tuple[Save | None, str]:
     cands = save_candidates(saves, handoff_label, owner, runner_saves, prefix, windows)
     newest = max(cands, key=saved_key, default=None)
     if newest is None:

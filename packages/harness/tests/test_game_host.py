@@ -67,6 +67,18 @@ class SaveFilters(unittest.TestCase):
         self.assertEqual(got[RESTORED.folder], RESTORED)
         self.assertIsNone(got["Claude-5__S005-end"].saved)
 
+    def test_list_saves_refuses_a_python_that_cant_read_any_savetime(self) -> None:
+        # Night N7: the system python3 3.13.5 has no compression.zstd (BG3's meta.lsf is zstd): every save came back
+        # with saved None, save_candidates dropped them all and the bench gave up on all 6 runs, without one word why
+        root = tmp()
+        (root / RESTORED.folder).mkdir()
+        with mock.patch.object(lspk, "zstd", None), self.assertRaises(C.SaveTimeError) as e:
+            C.list_saves(root, rcode.save_lsv)
+        self.assertIn("needs Python 3.14+", str(e.exception))
+        with mock.patch.object(lspk, "zstd", None):
+            self.assertIn("compression.zstd", C.savetime_problem() or "")
+        self.assertIsNone(C.savetime_problem() if lspk.zstd is not None else None)
+
     def test_ours(self) -> None:
         st = {"runner_saves": ["a"], "agent_saves": ["b"]}
         self.assertEqual(H.ours(_State(st), "c"), {"a", "b", "c"})

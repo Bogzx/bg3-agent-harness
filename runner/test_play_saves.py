@@ -6,7 +6,9 @@ save gates and the session's ensured save (moved from test_play.py). Never launc
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import io
 import os
 import sys
 import tempfile
@@ -32,6 +34,7 @@ from bg3harness.runner import state as rstate
 import legacy_playthrough as lpt
 from bg3play.runner import prompts as pprompts
 from bg3harness.game import io as G
+from bg3ai import lspk
 
 G_FUNCS = {n for n, v in vars(G).items() if callable(v) and getattr(v, "__module__", None) == G.__name__
            and not isinstance(v, type)}
@@ -298,6 +301,25 @@ class HandoffAndSaves(unittest.TestCase):
             p.write_text('{"t": 5, "tool": "a"}\nnot json\n{"t": 15, "tool": "load_game"}\n')
             self.assertEqual([r["tool"] for r in rpolicy.read_actions_since(10, p)], ["load_game"])
             self.assertEqual(rpolicy.read_actions_since(10, Path(d) / "missing"), [])
+
+    def test_a_save_whose_savetime_cant_be_read_is_named_never_silently_dropped(self):
+        start = G.parse_save_folder("Tav-14221265938__SCN-fight_act2_balthazar", 100.0)  # saved None: meta unreadable
+        mine, other = sv("Tav-2__S001-end", 200.0), G.parse_save_folder("Karlach-3__S004-end", 300.0)
+        save, why = rgame.pick_save_why([start, other], None, "Tav", {start.folder})
+        self.assertIsNone(save)
+        self.assertEqual(why, "no save of this playthrough; skipped, SaveTime unreadable: " + start.folder)
+        save, why = rgame.pick_save_why([start, mine, other], None, "Tav", {start.folder})
+        self.assertEqual(save, mine)
+        self.assertTrue(why.endswith("; skipped, SaveTime unreadable: " + start.folder), why)  # not Karlach's
+        self.assertNotIn("skipped", rgame.pick_save_why([mine], None, "Tav", set())[1])
+
+    def test_play_refuses_a_python_that_cant_read_a_savetime(self):
+        err = io.StringIO()
+        with mock.patch.object(lspk, "zstd", None), contextlib.redirect_stderr(err):
+            self.assertEqual(P.main(["run", "--playthrough", "x", "--help"]), 2)  # before argparse, before any work
+        self.assertIn("runner/play.py refused: Python ", err.getvalue())
+        self.assertIn("needs Python 3.14+", err.getvalue())
+        self.assertIn("uv run python runner/play.py run --playthrough x --help", err.getvalue())
 
     def test_pick_never_takes_foreign_saves(self):
         saves = self._saves()
