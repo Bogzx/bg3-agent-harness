@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 
 from .core import BASE, OUT, S, call, first_line, grab, item, load_verified, lua_server, need, status, took, ui_screen
 
@@ -102,21 +103,48 @@ READ_COST_LUA = (
     "S.statsFactsMemo,S.itemFactsMemo,G.spellFacts,G.classNames=keepS,keepI,keepG,keepC "
     "return Ext.Json.Stringify({inv_cold=ic,inv_warm=iw,prep_cold=pc,prep_warm=pw,items=items,prepared=rows})"
 )
+# The later warm samples (memos filled, as left by READ_COST_LUA): one Lua call each, so each is its own frame.
+READ_COST_WARM_LUA = (
+    "local B=Mods.BG3AI.BG3AI local S,G,V=B.State,B.Guard,B.Visibility local now=Ext.Utils.MonotonicTime "
+    "S.invCache=nil local t=now() S.inventory(V.context(),{}) local iw=now()-t "
+    "t=now() for _,u in ipairs(G.party()) do local g=G.guid(u) if g then G.prep_info(g) end end local pw=now()-t "
+    "return Ext.Json.Stringify({inv_warm=iw,prep_warm=pw})"
+)
 READ_COST_ITEM = "read cost: stats memos cut the inventory + prepared reads (V12)"
+# N7 / N8 / N16 (research/fix/vis.md): one warm sample of the same 194-item rebuild read 33, 34 and 57 ms on the same
+# code, so one sample flipped the verdict window to window. The warm side is the median of READ_COST_WARM_N samples
+# (the first from the cold call, right after its cold read); the cold read stays the one emptied-memo read.
+READ_COST_WARM_N = 5
+
+
+def read_cost_verdict(cold: float, warm: list[float]) -> tuple[bool, float]:
+    """PASS when the median warm sample is <= 60 % of the cold read (or under 15 ms): (ok, median)."""
+    med = statistics.median(warm)
+    return med <= max(0.6 * cold, 15), med
 
 
 def read_cost_probe() -> None:
-    """PASS when the filled memos take each read to <= 60 % of its emptied-memo time (or under 15 ms)."""
+    """V12: each read's emptied-memo (cold) time against the median of its filled-memo (warm) samples."""
     try:
         r = json.loads(lua_server(READ_COST_LUA))
+        inv_w, prep_w = [r["inv_warm"]], [r["prep_warm"]]
+        for _ in range(READ_COST_WARM_N - 1):
+            w = json.loads(lua_server(READ_COST_WARM_LUA))
+            inv_w.append(w["inv_warm"])
+            prep_w.append(w["prep_warm"])
     except Exception as e:
         item(READ_COST_ITEM, "FAIL", f"probe error: {e}")
         return
-    ok = all(r[w] <= max(0.6 * r[c], 15) for c, w in (("inv_cold", "inv_warm"), ("prep_cold", "prep_warm")))
+    inv_ok, inv_med = read_cost_verdict(r["inv_cold"], inv_w)
+    prep_ok, prep_med = read_cost_verdict(r["prep_cold"], prep_w)
+
+    def ms(xs: list[float]) -> str:
+        return " ".join(f"{x:.0f}" for x in xs)
+
     item(
         READ_COST_ITEM,
-        "PASS" if ok else "FAIL",
-        f"state.inventory rebuild {r['inv_cold']:.0f} -> {r['inv_warm']:.0f} ms ({r['items']} items); "
-        f"prep_info (party) {r['prep_cold']:.0f} -> {r['prep_warm']:.0f} ms ({r['prepared']} prepared rows); "
-        "emptied memo -> filled",
+        "PASS" if inv_ok and prep_ok else "FAIL",
+        f"state.inventory rebuild {r['inv_cold']:.0f} -> median {inv_med:.0f} ms [{ms(inv_w)}] ({r['items']} items); "
+        f"prep_info (party) {r['prep_cold']:.0f} -> median {prep_med:.0f} ms [{ms(prep_w)}] ({r['prepared']} "
+        "prepared rows); emptied memo -> filled",
     )
