@@ -314,6 +314,16 @@ class HandoffAndSaves(unittest.TestCase):
         self.assertTrue(why.endswith("; skipped, SaveTime unreadable: " + start.folder), why)  # not Karlach's
         self.assertNotIn("skipped", rgame.pick_save_why([mine], None, "Tav", set())[1])
 
+    def test_an_unreadable_save_of_another_playthrough_is_not_named(self):
+        # app review of PR #30: a same-owner save written while another playthrough played (outside this one's play
+        # windows) is no candidate of this choice, readable or not; with no SaveTime the window goes by its mtime
+        windows = [(1000.0, 2000.0), (5000.0, 6000.0)]
+        ours = G.parse_save_folder("Tav-1__S002-end", 1900.0)
+        theirs = G.parse_save_folder("Tav-2__S007-end", 3000.0)
+        save, why = rgame.pick_save_why([ours, theirs], None, "Tav", set(), windows=windows)
+        self.assertIsNone(save)
+        self.assertEqual(why, "no save of this playthrough; skipped, SaveTime unreadable: " + ours.folder)
+
     def test_play_refuses_a_python_that_cant_read_a_savetime(self):
         err = io.StringIO()
         with mock.patch.object(lspk, "zstd", None), contextlib.redirect_stderr(err), \
