@@ -13,6 +13,8 @@ time, since the app writes the same file too (save_owner, history).
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -71,18 +73,24 @@ def refresh_snapshot(src: Path, dst: Path, repo: Path, log: Callable[[str], None
     return changed, rev
 
 
+_STATUS_LOCK = threading.Lock()
+
+
 def write_status(runtime: Path, **fields: Any) -> None:
-    """runtime/runner.status.json updated with `fields` (and `updated`)."""
+    """runtime/runner.status.json updated with `fields` (and `updated`). One writer at a time: the agent loop's stream
+    thread and the loop itself write it at once (CI #41: both went through one runner.status.tmp, the second replace
+    found it gone and the FileNotFoundError killed the stream thread), and a read-modify-write would lose fields."""
     path = runtime / "runner.status.json"
-    try:
-        cur = json.loads(path.read_text())
-    except (OSError, ValueError):
-        cur = {}
-    cur.update(fields, updated=time.time())
-    runtime.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cur, indent=1))
-    tmp.replace(path)
+    with _STATUS_LOCK:
+        try:
+            cur = json.loads(path.read_text())
+        except (OSError, ValueError):
+            cur = {}
+        cur.update(fields, updated=time.time())
+        runtime.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")  # another process writing it has its own
+        tmp.write_text(json.dumps(cur, indent=1))
+        tmp.replace(path)
 
 
 def setup_env(seeded: bool) -> dict[str, str]:
