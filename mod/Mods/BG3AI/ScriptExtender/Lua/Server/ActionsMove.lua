@@ -257,6 +257,17 @@ A.IDLE_WATCH_MS = 10000
 A.IDLE_TELE_M = 4.0
 A.idle_watch = {} -- char -> { t = the job's end, kind }
 A.idle_last = {}  -- party member -> position at the last tick, while a watch runs
+-- app review of #34: a scroll's interact ends with its spell in hand, before the bridge's target click, so the
+-- agent's own Misty Step / Dimension Door (or a teleport cast by click/hotbar) landed after the job. A jump while
+-- the member has a read scroll pending (A.scroll_pending) or within IDLE_CAST_MS of their own CastSpell/CastedSpell
+-- is their spell, not the game's.
+A.IDLE_CAST_MS = 5000
+A.cast_ms = {}    -- party member -> the time of their last CastSpell/CastedSpell
+
+function A.note_cast(caster)
+    local g = G.guid(caster)
+    if g then A.cast_ms[g] = RPC.now_ms() end
+end
 
 function A.watch_idle(char, kind)
     A.idle_watch[char] = { t = RPC.now_ms(), kind = kind }
@@ -292,6 +303,8 @@ function A.idle_tick()
     local w = A.idle_watch[jp.u]
     if not w then return end
     A.idle_watch[jp.u] = nil
+    local cast = A.cast_ms[jp.u]
+    if (A.scroll_pending or {})[jp.u] or (cast and now - cast <= A.IDLE_CAST_MS) then return end
     RPC.push("teleported_by_game", { uuid = jp.u, from = pos_view(jp.from), to = pos_view(jp.to),
         m = U.round(jp.m, 1), why = string.format("%.1f s after its %s ended, with no order of ours running",
             (now - w.t) / 1000, w.kind) })

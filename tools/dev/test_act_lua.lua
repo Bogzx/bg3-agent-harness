@@ -131,7 +131,7 @@ function reset()
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
     if A then A.trip_t = nil end -- a fast travel's arrival (act.trip_arrived) is per test
-    if A then A.idle_watch, A.idle_last = {}, {} end -- the after-a-job teleport watch (ActionsMove) is per test
+    if A then A.idle_watch, A.idle_last, A.cast_ms = {}, {}, {} end -- the after-a-job teleport watch is per test
     if A then A.unlocked_ms = {} end -- Unlocked/Opened seen on an item (V24) is per test
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
