@@ -65,7 +65,13 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   its in-game consequence (user, 2026-10-18; audit C2/C3).
 * Navigation knows only ground the party has seen or walked (`Navigation.lua` `N.known`): the 4 m breadcrumb
   cell a member stood in, or a point a member sees now (in sight range with a clear eye ray), remembered for the
-  session once seen. Rays that can't answer count as not seen. A goal off that ground gets its straight distance
+  session once seen. Ground below a member's own floor also counts when the eye ray stops on that floor short of
+  its drop edge and a ray over the edge reaches it, as the camera above shows a ledge past an edge: the ray must
+  hit floor (not a wall or parapet face) within 5 m of the member, the edge must lie within 3 m past that hit, the
+  spot at most 4 m below the member's feet, and the look over the edge no steeper than 45 degrees down, so the
+  dead ground at the foot of a face stays unseen; a floor that goes on (a storey over a room) is no edge
+  (`VisibilityObjects.lua` `overEdge`; live N14b; user, 2026-10-28). Rays that can't answer count as not seen.
+  A goal off that ground gets its straight distance
   and direction only; walks and move_to/jump_to targets end on it; WAYS, jump solvers, LOWER GROUND, get_layout
   cells (`?`), hazards on a route and teleport-landing floors are limited to it. route prints no floor heights
   (they came through solid floors). Stricter than a human in one way: a spot seen from afar and not asked about

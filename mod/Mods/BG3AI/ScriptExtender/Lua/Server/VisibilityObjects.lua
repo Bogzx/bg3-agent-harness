@@ -316,6 +316,67 @@ end
 -- floor, a cloud)? nil when the ray API is unusable (uncalibrated or broken):
 -- the caller decides (nav hazards keep the patch: fail-safe for walking).
 V.POINT_LIFT = 0.5
+-- Live N14b (2026-10-28, the Gauntlet altar): a spot 8 m off on the ledge 2.3 m below read "not in view": the eye ray
+-- to it ran into the altar floor's own top 3.8 m out, short of the drop edge (Claude later stood at 4 m), while the
+-- player's camera above sees over that edge. A ray to a lower spot that stops on the observer's own floor is looked
+-- over the edge, within bounds (FAIRNESS.md "Navigation knows only ground"):
+-- - the hit is floor: Ext.Level.GetHeightsAt there has a height within EDGE_FLOOR_M of the hit (not a wall's or a
+--   parapet's face), within EDGE_DY_M of the feet, at most EDGE_NEAR_M (x/z) from the observer;
+-- - the spot is at most EDGE_DROP_M below the feet;
+-- - the edge: along the ray, every EDGE_STEP_M up to EDGE_SCAN_M past the hit and no further than EDGE_NEAR_M from
+--   the observer, the first point with no floor within EDGE_DY_M of the feet; a floor that goes on is no edge;
+-- - the look: from PEEK_H above the last floor point, PEEK_BACK_M back toward the eye (never from the raw hit), no
+--   steeper down than PEEK_MAX_DOWN (tan; the dead ground at a face's foot stays unseen), a clear ray to the spot.
+-- No heights answer or a ray error: not seen.
+V.EDGE_DY_M = 0.5
+V.EDGE_FLOOR_M = 0.15
+V.EDGE_NEAR_M = 5.0
+V.EDGE_DROP_M = 4.0
+V.EDGE_STEP_M = 0.25
+V.EDGE_SCAN_M = 3.0
+V.PEEK_H = 0.5
+V.PEEK_BACK_M = 0.3
+V.PEEK_MAX_DOWN = 1.0
+local function hdist(p, q) return math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2) end
+-- A floor height at (x, z) within tol of y: true / false / nil (no answer).
+local function floorNear(x, z, y, tol)
+    local ok, hs = pcall(Ext.Level.GetHeightsAt, x, z)
+    if not ok or type(hs) ~= "table" then return nil end
+    for _, h in ipairs(hs) do
+        if type(h) == "number" and math.abs(h - y) <= tol then return true end
+    end
+    return false
+end
+local function overEdge(o, eye, pt, tgt, hit)
+    local y0 = o.pos[2]
+    if tgt[2] >= y0 - V.EDGE_DY_M or y0 - pt[2] > V.EDGE_DROP_M then return false end
+    local okp, hp = pcall(function() local p = hit.Position; return { p[1], p[2], p[3] } end)
+    if not okp or math.abs(hp[2] - y0) > V.EDGE_DY_M or hdist(o.pos, hp) > V.EDGE_NEAR_M
+        or floorNear(hp[1], hp[3], hp[2], V.EDGE_FLOOR_M) ~= true then
+        return false
+    end
+    local l = hdist(eye, tgt)
+    if l < 0.01 then return false end
+    local dx, dz = (tgt[1] - eye[1]) / l, (tgt[3] - eye[3]) / l
+    local last = hp -- the edge, like the hit, lies within EDGE_NEAR_M of the observer (app re-review)
+    local scan = math.min(V.EDGE_SCAN_M, hdist(hp, tgt), V.EDGE_NEAR_M - hdist(o.pos, hp))
+    for s = V.EDGE_STEP_M, scan, V.EDGE_STEP_M do
+        local x, z = hp[1] + dx * s, hp[3] + dz * s
+        local f = floorNear(x, z, y0, V.EDGE_DY_M)
+        if f == nil then return false end
+        if not f then
+            local from = { last[1] - dx * V.PEEK_BACK_M, y0 + V.PEEK_H, last[3] - dz * V.PEEK_BACK_M }
+            local h = hdist(from, tgt)
+            if h < 0.01 or (from[2] - tgt[2]) / h > V.PEEK_MAX_DOWN then return false end
+            local okr, h2 = pcall(raycast, from, tgt)
+            if not okr then return false end
+            local d = h2 and hitDist(h2, from)
+            return not h2 or (d ~= nil and d >= U.dist(from, tgt) - 0.5)
+        end
+        last = { x, y0, z }
+    end
+    return false
+end
 function V.pointSeen(ctx, pt, lift)
     if V.rayBroken then return nil end
     local o1 = ctx.observers[1]
@@ -329,6 +390,7 @@ function V.pointSeen(ctx, pt, lift)
             if not hit then return true end
             local d = hitDist(hit, eye)
             if d and d >= U.dist(eye, tgt) - 0.5 then return true end
+            if overEdge(o, eye, pt, tgt, hit) then return true end
         end
     end
     return false
