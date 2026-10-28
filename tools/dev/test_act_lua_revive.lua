@@ -15,12 +15,13 @@ local function revived(standing)
     return names
 end
 
-test("end_standup: a revived member still standing up walks toward the reader until the stand-up ends (N4)", function()
+test("end_standup: a revived member still standing up walks 3 m toward the reader until the stand-up ends (N4)", function()
     local names = revived(true)
     local j = job(op("end_standup", { char = P1, toward = GOB }))
     eq(j.status, "running", "started " .. tostring(j.error))
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "one walk"); eq(mv[1][2], P1, "who"); eq(mv[1][3], 2.4, "toward the reader (x)")
+    eq(#mv, 1, "one walk"); eq(mv[1][2], P1, "who"); near(mv[1][3], 3, "3 m toward the reader (x)")
+    near(mv[1][5], 0, "z")
     tick(10)
     eq(j.status, "running", "still standing up")
     world[P1].pos = { 1.5, 0, 0 }
@@ -29,6 +30,33 @@ test("end_standup: a revived member still standing up walks toward the reader un
     tick()
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.ended, true, "ended")
     eq(j.result.stepped_m, 1.5, "stepped")
+end)
+
+test("end_standup: the step is 3 m to a reachable point, never the reader's own spot 1.4 m off (live N7 C1)", function()
+    revived(true)
+    world[GOB].pos = { 1.4, 0, 0 } -- N7: Claude at (265,0.2,205.8), Shadowheart reading at (263.7,0.3,205.3)
+    op("end_standup", { char = P1, toward = GOB })
+    local mv = called("CharacterMoveToPosition")
+    eq(#mv, 1, "one walk"); near(mv[1][3], 3, "x: past the reader, 3 m out"); near(mv[1][5], 0, "z")
+    -- toward the reader is a chasm: the next direction, 45 degrees off
+    reset()
+    revived(true)
+    world[GOB].pos = { 1.4, 0, 0 }
+    nav.fn = function(_, pos)
+        if math.abs(pos[3]) < 0.1 then return { reachable = false } end
+        return { reachable = true, length_m = U.dist(world[P1].pos, pos) }
+    end
+    op("end_standup", { char = P1, toward = GOB })
+    mv = called("CharacterMoveToPosition")
+    eq(#mv, 1, "one walk"); near(mv[1][3], 2.12, "x 45 degrees off"); near(math.abs(mv[1][5]), 2.12, "z")
+    -- nowhere to step: refused with the fact, no walk
+    reset()
+    revived(true)
+    nav.fn = function() return { reachable = false } end
+    local ok, r = pcall(op, "end_standup", { char = P1, toward = GOB })
+    local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+    eq(msg, "the character still stands up from the revive: no point 3 m away a walk reaches", "the fact")
+    eq(#called("CharacterMoveToPosition"), 0, "no walk")
 end)
 
 test("end_standup: nothing pending, or in combat, orders nothing; a stand-up that outlasts the walk fails", function()
