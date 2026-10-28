@@ -408,8 +408,22 @@ reg("end_standup", function(args)
         job.dialog_s = U.round((job.ordered - job.t0) / 1000, 1)
         G.osi("CharacterMoveToPosition", char, to[1], to[2], to[3], "Run", I.ev_name(job, "su" .. job.orders), job.id)
     end
+    -- act9 (N10 vs N11): what the stand-up went through, each change of its state (s since the job began): printed to
+    -- the game log when it fails, so a live run that stays stuck shows where it stopped
+    local function trail(job, now, moved)
+        local held = A.held_action(char)
+        local st = string.format("dialog=%s osi=%d resurrect=%s layer1=%s moved=%.1f", tostring(auto_dialog(char)),
+            I.osi_tasks(char), tostring(A.standing_up(char)), held and tostring(held.tid) or "-", moved)
+        if st == job.trail_last then return end
+        job.trail_last, job.trail = st, job.trail or {}
+        if #job.trail < 40 then job.trail[#job.trail + 1] = string.format("%.1f %s", (now - job.t0) / 1000, st) end
+    end
+    local function print_trail(job)
+        pcall(Ext.Utils.Print, "[BG3AI] standup trail " .. who .. ": " .. table.concat(job.trail or {}, " | "))
+    end
     return start("end_standup", char, {
         timeout_ms = A.STANDUP_DIALOG_MS + A.STANDUP_END_MS + 2000,
+        on_finish = function(job) if job.status ~= "done" then print_trail(job) end end,
         start = function(job)
             job.t0, job.from = RPC.now_ms(), G.pos(char)
             if not auto_dialog(char) then order(job) end
@@ -421,6 +435,7 @@ reg("end_standup", function(args)
             local res = { orders = job.orders or 0, walked = job.walked or false, stepped_m = U.round(moved, 1),
                 dialog_s = job.dialog_s }
             local now = RPC.now_ms()
+            trail(job, now, moved)
             -- app review of #34: a member who dies again loses the ResurrectComponent too (not "stood up"); in a
             -- fight the queue is the fight's (no more orders or purges, and none at the job's end: stopping)
             if G.is_dead(char) then
@@ -447,6 +462,19 @@ reg("end_standup", function(args)
             end
         end,
     })
+end)
+
+-- act.standups: the members whose act.end_standup job runs. Live N4, N7 and N11 (plain C1 replays): a short rest
+-- while it ran left the member's layer-1 action unfinished for good (N11: still held 34 s later, every walk
+-- travelled=0); N10's probe, with nothing else running, stood up at 8.3 s. The bridge's short_rest asks first.
+RPC.register("act.standups", function()
+    local out = {}
+    for char, j in pairs(A.active) do
+        if j.status == "running" and j.kind == "act.end_standup" then
+            out[#out + 1] = { uuid = char, name = name_of(char) }
+        end
+    end
+    return { running = out }
 end)
 
 ------------------------------------------------------------------------

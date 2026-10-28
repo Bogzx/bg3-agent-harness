@@ -346,6 +346,12 @@ def short_rest() -> str:
     if screen in ("trade", "dialogue"):
         why = "the trade screen is open and didn't close" if screen == "trade" else "a conversation is on screen"
         return note + "short_rest: FAILED — not pressed: " + why
+    # live N4, N7, N11 (C1 replays): a short rest during a revived member's stand-up (act.end_standup) left them in an
+    # unfinished action for good, every later walk of theirs travelled=0; N10's stand-up with nothing else running ended
+    up = (core.game.try_rpc("act.standups") or {}).get("running") or []
+    if up:
+        who = ", ".join(u.get("name") or overview._name_of(u.get("uuid", "")) for u in up)
+        return note + f"short_rest: FAILED — not pressed: {who} is still standing up from the revive"
     before = core.game.try_rpc("state.status")
     try:
         out = note + world_tools._box_act("short_rest", "ui.short_rest", {}, wait_s=20)
