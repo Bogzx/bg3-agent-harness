@@ -63,7 +63,7 @@ JOBS: dict[str, tuple[Step, ...]] = {
         uv("python", "tools/ci/scrub.py", "--no-local-terms"),
     ),
     "test": (
-        SYNC,
+        Step(("uv", "sync", "--locked", "--extra", "inspect")),  # bench's Inspect export (test_export_inspect.py)
         uv("pytest", "-m", "not live and not e2e", "--cov", "--cov-report="),
         uv("python", "tools/ci/coverage_gate.py"),
     ),

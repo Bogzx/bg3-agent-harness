@@ -56,7 +56,8 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - run: uv sync --locked --extra inspect   # bench's Inspect export: tests/test_export_inspect.py skips without it
+      # bench's Inspect export too: packages/bench/tests/test_export_inspect.py skips without it
+      - run: uv sync --locked --extra inspect
       - name: pytest -m "not live and not e2e"
         run: uv run pytest -m "not live and not e2e" --cov --cov-report=
       - name: Coverage per package, with the floors of pyproject [tool.bg3ci.coverage-min]
