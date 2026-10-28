@@ -114,7 +114,7 @@ class Revive(unittest.TestCase):
         good; the read now ends the stand-up with a walk toward the reader (act.end_standup) and says so."""
         fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         fake.revive_after = 1
-        fake.standup = JobResult("done", {"pending": False, "ended": True, "stepped_m": 3.0})
+        fake.standup = JobResult("done", {"pending": False, "ended": True, "walked": True, "stepped_m": 3.0})
         self.ground(hotbar.HotbarCastResult(True, picked=1))
         out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
         self.assertIn("Shadowheart REVIVED (clicked the body e2 Shadowheart and the ground beside it); "
@@ -127,10 +127,17 @@ class Revive(unittest.TestCase):
                       world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH))
         fake.standup = JobResult("done", {"pending": False})   # nothing pending (or in combat): no word
         self.assertTrue(world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH).endswith("beside it))"))
-        # live N8 A: the first walk order never started; the mod ordered it again until one walked
-        fake.standup = JobResult("done", {"pending": False, "ended": True, "stepped_m": 3.0, "orders": 3})
-        self.assertIn("; Shadowheart stood up (stepped 3.0 m, walk ordered 3 times))",
-                      world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH))
+
+    def test_no_step_is_not_stood_up(self):
+        """Live N9: 'Claude stood up (stepped 0.0 m, walk ordered 3 times)', and no order of Claude's started again."""
+        fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
+        fake.revive_after = 1
+        fake.standup = JobResult("done", {"pending": False, "ended": True, "walked": False, "stepped_m": 0.0,
+                                          "orders": 3})
+        self.ground(hotbar.HotbarCastResult(True, picked=1))
+        out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
+        self.assertNotIn("stood up", out)
+        self.assertIn("; Shadowheart's stand-up: no step happened (0.0 m moved, 3 walk order(s)))", out)
 
     def test_a_living_member_is_refused_before_the_scroll_is_read(self):
         """Live N4 C1-invalid (i=17): read on a living Claude, it answered 'Claude REVIVED'."""
