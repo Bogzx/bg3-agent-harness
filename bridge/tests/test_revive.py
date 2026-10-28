@@ -114,11 +114,11 @@ class Revive(unittest.TestCase):
         good; the read now ends the stand-up with a walk toward the reader (act.end_standup) and says so."""
         fake = self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))
         fake.revive_after = 1
-        fake.standup = JobResult("done", {"pending": False, "ended": True, "stepped_m": 1.4})
+        fake.standup = JobResult("done", {"pending": False, "ended": True, "stepped_m": 3.0})
         self.ground(hotbar.HotbarCastResult(True, picked=1))
         out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
         self.assertIn("Shadowheart REVIVED (clicked the body e2 Shadowheart and the ground beside it); "
-                      "Shadowheart stood up and stepped 1.4 m toward Claude)", out)
+                      "Shadowheart stood up (stepped 3.0 m))", out)
         self.assertIn(("act.end_standup", {"char": SH, "toward": ME}), fake.calls)
         fake.standup = JobResult("failed", {"pending": True}, "Shadowheart still stands up from the revive 4 s after")
         for r in fake.party:

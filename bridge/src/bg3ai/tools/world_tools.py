@@ -740,13 +740,13 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
 def _end_standup(reader: str, body: str) -> str:
     """Live N4 (2026-10-28, the bench B3 job 13 replay): the revived member keeps the game's stand-up until its first
     order, and a short rest before that order left them holding an unfinished action for good (no walk, jump or Use
-    of theirs started again). Out of combat the mod walks them toward the reader, the order that ended it in N2
-    (act.end_standup); the result says so."""
+    of theirs started again). Out of combat the mod walks them 3 m to free floor, toward the reader first, the order
+    that ended it in N2 (act.end_standup; N7: a walk onto the reader's own spot 1.4 m off didn't); the result says so."""
     r = core.game.run_job("act.end_standup", {"char": body, "toward": reader}, wait_s=8)
     res = r.result if isinstance(r.result, dict) else {}
     who = overview._name_of(body)
     if r.status == "done" and res.get("ended"):
-        return f"; {who} stood up and stepped {res.get('stepped_m', 0)} m toward {overview._name_of(reader)}"
+        return f"; {who} stood up (stepped {res.get('stepped_m', 0)} m)"
     if r.status == "done":
         return ""  # nothing pending (or in combat: their own turn's first order ends it)
     return f"; {who}'s stand-up: {r.error or r.status}"

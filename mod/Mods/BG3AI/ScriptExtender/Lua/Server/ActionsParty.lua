@@ -332,18 +332,44 @@ end)
 -- Live N4 (2026-10-28, the bench B3 job 13 replay): a revived character keeps the revive's stand-up (a
 -- ResurrectComponent and an action state, A.standing_up) until its first order; a short rest before that order
 -- left the action state unfinished and no order of the character started again until a reload. A walk is the
--- order that ended it in N2 (2.8 m to the reader). Out of combat this walks the character toward `toward` (the
--- reader) until the stand-up has ended; in combat its own turn's first order ends it.
+-- order that ended it in N2 (raw moves of 2.8 and 3 m). Out of combat this walks the character STANDUP_STEP_M to
+-- the first reachable point, toward `toward` (the reader) first, until the stand-up has ended; in combat its own
+-- turn's first order ends it. Live N7 (C1 replay): the walk to the reader's own spot, 1.4 m off, left the stand-up
+-- in place for 4 s (no step: the reader stands there), and the Cure Wounds + short rest after it left the
+-- unfinished action again.
 ------------------------------------------------------------------------
 
 A.STANDUP_END_MS = 4000
+A.STANDUP_STEP_M = 3.0
+
+-- The point STANDUP_STEP_M from `char` that a plain walk reaches (no jump, no drop, at most twice the step), trying
+-- the direction of `toward` first, then 45 degrees either way in turn; nil when there is none.
+local function standup_step(char, toward)
+    local p = G.pos(char)
+    if not p then return nil end
+    local dx, dz = toward[1] - p[1], toward[3] - p[3]
+    local a0 = dx * dx + dz * dz > 0.01 and math.atan(dz, dx) or 0
+    for _, k in ipairs({ 0, 1, -1, 2, -2, 3, -3, 4 }) do
+        local a = a0 + k * math.pi / 4
+        local q = { p[1] + A.STANDUP_STEP_M * math.cos(a), p[2], p[3] + A.STANDUP_STEP_M * math.sin(a) }
+        local ok, info = G.reachable(char, q)
+        if ok and not info.needs_jump and not info.drop and (info.length_m or 0) <= 2 * A.STANDUP_STEP_M then
+            return q
+        end
+    end
+end
 
 reg("end_standup", function(args)
     local char = G.actor(args.char)
     if not A.standing_up(char) then return { pending = false } end
     if G.in_combat(char) then return { pending = true, in_combat = true } end
-    local to = args.toward and G.pos(args.toward)
-    if not to then G.refuse("no position to walk toward (toward: a party member in view)") end
+    local toward = args.toward and G.pos(args.toward)
+    if not toward then G.refuse("no position to walk toward (toward: a party member in view)") end
+    local to = standup_step(char, toward)
+    if not to then
+        G.refuse(string.format("%s still stands up from the revive: no point %.0f m away a walk reaches",
+            name_of(char) or "the character", A.STANDUP_STEP_M))
+    end
     return start("end_standup", char, {
         timeout_ms = A.STANDUP_END_MS + 2000,
         start = function(job)
