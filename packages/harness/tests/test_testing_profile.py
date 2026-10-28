@@ -32,6 +32,7 @@ class TempProfile(unittest.TestCase):
         self.assertEqual(steam_paths.saves_dir(env), root / "saves")
         self.assertEqual(steam_paths.se_dir(env), root / "se")
         self.assertEqual(steam_paths.profile_dir(env), root / "profile")
+        self.assertEqual(env["BG3AI_RUNTIME"], str(root / "runtime"))  # renv.RUNTIME reads it once, at import
 
     def test_a_second_call_reuses_the_first_dir(self) -> None:
         env: dict[str, str] = {}
@@ -57,8 +58,10 @@ class Leaks(unittest.TestCase):
         env: dict[str, str] = {}
         root = temp_profile(env)
         self.addCleanup(root.rmdir)
-        renv = types.SimpleNamespace(SAVE_DIR=root / "saves", SE_BG3AI_DIR=Path(FAR))
+        renv = types.SimpleNamespace(SAVE_DIR=root / "saves", SE_BG3AI_DIR=Path(FAR), RUNTIME=root / "runtime")
         self.assertEqual(leaks(env, {"bg3harness.runner.env": renv}), [f"renv.SE_BG3AI_DIR={FAR}"])
+        renv.RUNTIME = Path(FAR) / "runtime"  # the repo's runtime/: imported before $BG3AI_RUNTIME was set
+        self.assertEqual(leaks(env, {"bg3harness.runner.env": renv})[-1], f"renv.RUNTIME={FAR}/runtime")
 
 
 class PytestPlugin(unittest.TestCase):
@@ -73,6 +76,7 @@ class PytestPlugin(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != ENV and not k.startswith("PYTEST_")}
         real = (steam_paths.saves_dir({}), steam_paths.se_dir({}), steam_paths.profile_dir({}))
         env.update(zip(DIR_VARS, map(str, real), strict=True))
+        env["BG3AI_RUNTIME"] = str(Path(__file__).resolve().parents[3] / "runtime")  # the repo's own runtime/
         cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(d)]
         return subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=120)
 
@@ -82,6 +86,8 @@ class PytestPlugin(unittest.TestCase):
             "def test_dirs():\n"
             "    assert '/bg3ai-test-profile-' in str(renv.SE_BG3AI_DIR), renv.SE_BG3AI_DIR\n"
             "    assert '/bg3ai-test-profile-' in str(renv.SAVE_DIR), renv.SAVE_DIR\n"
+            # 2026-10-28: a module importing renv first kept the repo's runtime/ for every later test in the process
+            "    assert '/bg3ai-test-profile-' in str(renv.RUNTIME), renv.RUNTIME\n"
         )
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
