@@ -419,6 +419,17 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(reporting._batch["last"], "failed")
         self.assertTrue(any(op == "act.scroll_settle" and a.get("final") for op, a in self.rpcs), "final settle")
 
+    def test_out_of_combat_revive_drops_the_reads_settle_entry(self):
+        # app review of #31: the two-step revive route has its own evidence (REVIVED); out of combat no settle ran and
+        # the read's entry stayed in the mod
+        with mock.patch.object(world_tools, "_is_dead", lambda u: True), \
+                mock.patch.object(world_tools, "_body_far", lambda c, t: None), \
+                mock.patch.object(world_tools, "_revive_spot", lambda inp, n, c, t: "; Gale REVIVED"):
+            out, _, clicks = self._run("Shadowheart", "Scroll of Revivify", target=self.GALE, name="Scroll of Revivify")
+        self.assertEqual(clicks, [self.GALE])
+        self.assertIn("; Gale REVIVED", out.split("\n")[0])
+        self.assertIn(("act.scroll_settle", {"char": self.SH, "final": True}), self.rpcs)
+
     def test_a_failed_target_click_is_failed(self):
         out, _, _ = self._run("Shadowheart", "Scroll of Invisibility", target=self.GALE, click_ok=False)
         self.assertTrue(out.startswith("use_ability: FAILED"), out)
@@ -574,7 +585,7 @@ class ScrollSettleCast(unittest.TestCase):
     2.6 s after Shadowheart stood up (the cast still playing), so the reply said "not used up: no action spent" while
     her action was spent and the scroll gone a moment later. The settle waits while the mod says the cast plays."""
 
-    def _settle(self, answers):
+    def _settle(self, answers, raw=False):
         clock, seen = [0.0], []
 
         class G:
@@ -586,8 +597,10 @@ class ScrollSettleCast(unittest.TestCase):
             clock[0] += s
         with mock.patch.object(core, "game", G()), mock.patch.object(time, "monotonic", lambda: clock[0]), \
                 mock.patch.object(time, "sleep", sleep):
-            read, text = world_tools._scroll_settle("c")
-            return (text if read else "the scroll was not used up"), seen
+            got = world_tools._scroll_settle("c")
+            if raw:
+                return got, seen
+            return (got[1] if got[0] else "the scroll was not used up"), seen
 
     def test_a_cast_still_playing_is_waited_for(self):
         out, seen = self._settle(lambda t, a: {"read": True, "charged": []} if t >= 4.0 else {"read": False,
@@ -596,10 +609,30 @@ class ScrollSettleCast(unittest.TestCase):
         self.assertFalse(any(a.get("final") for _, a in seen), "no final while it plays")
 
     def test_a_cast_that_never_ends_stops_at_the_cap(self):
-        out, seen = self._settle(lambda t, a: {"read": False, "casting": True})
-        self.assertIn("the scroll was not used up", out)
-        self.assertTrue(seen[-1][1].get("final"))
-        self.assertLessEqual(seen[-1][0], world_tools.SCROLL_CAST_MAX_S + world_tools.SCROLL_SETTLE_S + 0.5)
+        with mock.patch.object(overview, "_name_of", lambda u: "Karlach"):
+            out, seen = self._settle(lambda t, a: {"read": False, "casting": True}, raw=True)
+        self.assertEqual(out, (False, "; Karlach was still casting it 12 s after the click (the wait's cap): no cast "
+                                      "read"))
+        self.assertFalse(any(a.get("final") for _, a in seen), "the entry is kept (no final)")
+        self.assertLessEqual(seen[-1][0], world_tools.SCROLL_CAST_MAX_S + 0.5)
+
+    def test_a_reader_walking_into_range_is_waited_for(self):
+        # app review of #31: a touch-range scroll clicked on a member 8-10 m off: the reader walks 4 s, then casts
+        def answers(t, a):
+            if t >= 5.0:
+                return {"read": True, "charged": [{"resource": "action", "amount": 1}]}
+            return {"read": False, "approaching": t < 4.0 or None, "casting": t >= 4.0 or None}
+        out, seen = self._settle(answers)
+        self.assertEqual(out, "; its action is spent (charged by the guard: action)")
+        self.assertFalse(any(a.get("final") for _, a in seen), "no final while it walks")
+
+    def test_a_walk_that_never_ends_fails_at_the_cap_and_keeps_the_entry(self):
+        with mock.patch.object(overview, "_name_of", lambda u: "Shadowheart"):
+            out, seen = self._settle(lambda t, a: {"read": False, "approaching": True}, raw=True)
+        self.assertEqual(out, (False, "; Shadowheart was still walking 12 s after the click (the wait's cap): no cast "
+                                      "read"))
+        self.assertFalse(any(a.get("final") for _, a in seen), "the entry is kept (no final)")
+        self.assertLessEqual(seen[-1][0], world_tools.SCROLL_CAST_MAX_S + 0.5)
 
     def test_no_cast_keeps_the_short_window(self):
         out, seen = self._settle(lambda t, a: {"read": False})

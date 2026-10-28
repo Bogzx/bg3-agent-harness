@@ -253,7 +253,7 @@ reg("interact", function(args)
             if job.ladder and job.ladder.held then A.ladder_release(char, job.ladder.held) end
             if (scroll or read) and job.status == "done" then
                 A.scroll_pending[G.guid(char)] = { item = target, stack = (scroll or read).stack,
-                    payers = scroll and scroll.payers or {} }
+                    payers = scroll and scroll.payers or {}, last_pos = G.pos(char) }
                 if scroll and type(job.result) == "table" then job.result.combat_scroll = true end
                 return
             end

@@ -510,9 +510,11 @@ def _scroll_settle(char: str, in_combat: bool = True) -> tuple[bool | None, str]
     """Whether the scroll the reader just read cast anything: act.scroll_settle says read once it is used up (gone from
     the bags or its stack smaller) or, at the last poll, once the reader's cast after it went off. In combat the mod
     then charges what reading it cost (an action) and the engine did not. While the reader's cast still plays (the mod
-    saw its CastSpell, no CastedSpell yet) the wait runs on, up to SCROLL_CAST_MAX_S.
-    Returns (True, what reading it spent) / (False, "") / (None, "") when the mod tracks no read (not a scroll) or
-    doesn't answer."""
+    saw its CastSpell, no CastedSpell yet) or the reader walks (a touch-range scroll clicked on a member out of reach:
+    the game walks the reader into range first, app review of #31) the wait runs on, SCROLL_SETTLE_S after the last
+    such poll, up to SCROLL_CAST_MAX_S; the last poll (final, which clears the mod's entry) only comes once neither is
+    seen. Returns (True, what reading it spent) / (False, "") / (False, why) at the cap with the reader still walking
+    or casting (the entry kept) / (None, "") when the mod tracks no read (not a scroll) or doesn't answer."""
     t0 = time.monotonic()
     end, cap = t0 + SCROLL_SETTLE_S, t0 + SCROLL_CAST_MAX_S
     while True:
@@ -523,9 +525,14 @@ def _scroll_settle(char: str, in_combat: bool = True) -> tuple[bool | None, str]
             return None, ""  # the mod didn't answer: no evidence either way
         if r.get("read") or r.get("none"):
             break
+        busy = "walking" if r.get("approaching") else "casting it" if r.get("casting") else None
+        if busy and now >= cap:
+            who = overview._name_of(char)
+            return False, (f"; {who} was still {busy} {SCROLL_CAST_MAX_S:.0f} s after the click (the wait's cap): "
+                           "no cast read")
         if last:
             return False, ""
-        if r.get("casting") and now < cap:
+        if busy:
             end = max(end, now + SCROLL_SETTLE_S)
         time.sleep(0.2)
     if not r.get("read"):
@@ -544,9 +551,9 @@ def _scroll_outcome(head: str, rest: str, name: str, char: str, in_combat: bool,
     read, spent = _scroll_settle(char, in_combat)
     if read is False:
         reporting._batch["last"] = "failed"
-        head = head.replace(": done", ": FAILED", 1) + undone + (
+        head = head.replace(": done", ": FAILED", 1) + undone + (spent or (
             f"; {name} is still in {overview._name_of(char)}'s bags and {overview._name_of(char)} cast nothing after "
-            f"it: nothing cast" + (", no action spent" if in_combat else ""))
+            f"it: nothing cast" + (", no action spent" if in_combat else "")))
     else:
         head += done + spent
     return head + ("\n" + rest if rest else "")
@@ -616,6 +623,8 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         head += _revive_spot(inp, name, char, tgt)
         if in_combat:
             head += _scroll_settle(char)[1]
+        else:  # REVIVED / STILL DEAD is this route's evidence: the read's settle entry is dropped (app review of #31)
+            core.game.try_rpc("act.scroll_settle", {"char": char, "final": True})
         return head + ("\n" + rest if rest else "")
     if cr.ok:
         more = _scroll_more_picks(inp, char, tgts)
