@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import CallToolResult, TextContent
 
-from .. import boxclick, delta, memtools, metrics, render, rules, settings
+from .. import boxclick, delta, memtools, metrics, render, rules, settings, tool_classes
 from ..game import Game, GameError
 from ..render import Handles
 
@@ -57,7 +58,21 @@ INSTRUCTIONS = instructions()  # every tool on; session.INSTRUCTIONS is the serv
 
 # The assembled rules for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
 RULES = rules.Once(rules.load(required=rules.serve_enabled()))
-mcp = MCPServer("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
+
+
+class Server(MCPServer):
+    """The bg3 server: a tool's text result that reports a failure (tool_classes.failed) goes out with is_error set,
+    so the client's events mark it the way they mark a tool that raised."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
+        res = await super().call_tool(name, arguments, context)
+        texts = [c.text for c in getattr(res, "content", None) or [] if isinstance(c, TextContent)]
+        if isinstance(res, CallToolResult) and not res.is_error and texts and tool_classes.failed(texts[0]):
+            return res.model_copy(update={"is_error": True})
+        return res
+
+
+mcp = Server("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
 game = Game(port=SETTINGS.port, pool_max=SETTINGS.rpc_conns, job_push=SETTINGS.job_push)

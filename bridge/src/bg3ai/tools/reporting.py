@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import busywait, debrief, delta, lessons, lore, memtools, offlimits, render, rules
+from .. import busywait, debrief, delta, lessons, lore, memtools, offlimits, render, rules, tool_classes
 from ..game import GameError, NotReady
 from . import core
 
@@ -366,10 +366,7 @@ NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes wh
 
 # Consecutive wait_for(<event kinds>) answers "nothing is running", with only these reads in between.
 _noop_waits = {"n": 0}
-_READ_TOOLS = {"look", "look_at", "get_status", "get_nearby", "get_frontier", "get_layout", "get_map", "session_clock", "wiki_page",
-               "wiki_search", "get_party", "list_saves", "get_inventory", "screenshot", "zoom", "route", "get_journal",
-               "get_combat_state", "get_dialogue", "ability_preview", "get_level_up_options", "recall",
-               "memory_list", "memory_read", "memory_search", "session_start"}
+_READ_TOOLS = tool_classes.READ_TOOLS
 
 
 def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False,
