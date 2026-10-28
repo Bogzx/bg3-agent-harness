@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import math
 import os
 import re
 import sys
@@ -56,6 +57,8 @@ DAY = "2026-10-25"
 SETUP_SPOT = (255.8, 0.9, 200.3)  # where e2 Tav stood at 16:46:29 (walk_toward j54 done)
 SKIP = ("memory_", "session_")  # the harness's memory and session tools: no game state
 FIRST_CLICK_OFF = (0.2, 0.23, 0.47)  # job's click 1 (264.2,0.43,205.57) minus the reader's feet (264,0.2,205.1)
+SETUP_TOL_M = 1.5  # e2 must stand this close to SETUP_SPOT before the replay starts (N7 try 2 by hand: 0 m)
+SETUP_WAIT_S = 180.0  # the setup travel's whole wait (the walk from the scenario's start is ~70 m)
 
 
 def clock(hms: str) -> float:
@@ -141,6 +144,42 @@ def force_two_click_revive(twostep: Any, rpc: Any) -> None:
     twostep._Run.spots, twostep.ground_ok = spots, ground_ok
 
 
+def setup_walk(
+    call: Any, where: Any, spot: Sequence[float] = SETUP_SPOT, budget_s: float = SETUP_WAIT_S
+) -> tuple[dict[str, Any], str | None]:
+    """Walk e2 to the replay's start and wait until the walk is over: live N7's try 1 waited once with wait_for's 15 s
+    default ('still waiting for queue after 15s', 65 m left) and the replay started short (jump_to refused, nobody
+    died). wait_for("queue") is called again while it says still waiting, up to budget_s; then e2 must stand within
+    SETUP_TOL_M of the spot. Returns (the record, None) or (the record, why the replay must not start)."""
+    x, y, z = spot
+    # N4's first C1: travel_to(who="e2") as the process's first call was "unknown target 'e2'": the eN ids
+    # exist once a read has named the party
+    rec: dict[str, Any] = {
+        "status": call("get_status"),
+        "setup": call("travel_to", x=x, y=y, z=z, who="e2"),
+        "waits": [],
+    }
+    end = time.monotonic() + budget_s
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            break
+        w = call("wait_for", target="queue", timeout_s=round(min(60.0, max(1.0, left)), 1))
+        rec["waits"].append(w)
+        if "still waiting" not in str(w):
+            break
+    p = where()
+    off = math.dist((p[0], p[2]), (x, z)) if p else None
+    rec["off_m"] = None if off is None else round(off, 1)
+    if off is None or off > SETUP_TOL_M:
+        where_txt = "unknown" if off is None else f"{off:.1f} m"
+        return rec, (
+            f"setup: e2 is {where_txt} from the replay's start ({x}, {y}, {z}) after the travel_to and "
+            f"{len(rec['waits'])} wait(s): not replaying (start it by hand, then --no-setup)"
+        )
+    return rec, None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--events", type=Path, default=JOB / "S001.events.jsonl")
@@ -191,17 +230,18 @@ def main(argv: list[str] | None = None) -> int:
     if a.two_click_revive:
         force_two_click_revive(twostep, twostep._rpc)
     if t_from is not None and not a.no_setup:
-        x, y, z = SETUP_SPOT
-        # N4's first C1: travel_to(who="e2") as the process's first call was "unknown target 'e2'": the eN ids
-        # exist once a read has named the party
-        status = call("get_status")
-        record(
-            {
-                "status": status,
-                "setup": call("travel_to", x=x, y=y, z=z, who="e2"),
-                "wait": call("wait_for", target="queue"),
-            }
-        )
+
+        def e2_pos() -> list[float] | None:
+            u = core.H.by_handle.get("e2")
+            st = core.game.try_rpc("state.status") or {}
+            row = next((r for r in st.get("party") or [] if isinstance(r, dict) and r.get("uuid") == u), None)
+            return row.get("pos") if row else None
+
+        rec, why = setup_walk(call, e2_pos)
+        record(rec)
+        if why:
+            print(why, file=sys.stderr, flush=True)
+            return 2
     record({"step": "before", "control": control()})
 
     jobs = JobMap(calls)

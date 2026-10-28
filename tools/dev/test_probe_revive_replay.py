@@ -99,5 +99,39 @@ class ReplayTest(unittest.TestCase):
         )
 
 
+class SetupWalkTest(unittest.TestCase):
+    """Live N7 try 1: one wait_for("queue") with its 15 s default came back still waiting, 65 m short, and the replay
+    started there anyway."""
+
+    def calls(self, waits: list[str]) -> tuple[list, object]:
+        made: list = []
+        answers = iter(waits)
+
+        def call(name, **kw):
+            made.append((name, kw))
+            return next(answers, waits[-1]) if name == "wait_for" else f"{name}: ok"
+
+        return made, call
+
+    def test_waits_again_while_still_waiting_then_checks_the_arrival(self):
+        made, call = self.calls(["still waiting for queue after 60s", "queue e2 Claude: done"])
+        rec, why = replay.setup_walk(call, lambda: [255.9, 0.9, 200.0])
+        self.assertIsNone(why)
+        self.assertEqual([n for n, _ in made], ["get_status", "travel_to", "wait_for", "wait_for"])
+        self.assertEqual(made[2][1]["target"], "queue")
+        self.assertGreater(made[2][1]["timeout_s"], 15)
+        self.assertEqual(rec["off_m"], 0.3)
+
+    def test_short_of_the_start_refuses_the_replay(self):
+        _, call = self.calls(["queue e2 Claude: STOPPED: step 1 travel_to: leg 3 failed"])
+        rec, why = replay.setup_walk(call, lambda: [300.0, 0.0, 250.0])
+        self.assertIn("setup: e2 is 66.5 m from the replay's start (255.8, 0.9, 200.3)", why)
+        self.assertIn("not replaying", why)
+        self.assertEqual(rec["off_m"], 66.5)
+        _, call = self.calls(["still waiting for queue after 1s"])
+        _rec, why = replay.setup_walk(call, lambda: None, budget_s=0.05)
+        self.assertIn("setup: e2 is unknown from the replay's start", why)
+
+
 if __name__ == "__main__":
     unittest.main()
