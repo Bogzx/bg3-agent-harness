@@ -9,6 +9,7 @@ versions. A series freezes its first run's pins in series.json and refuses a dri
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import bg3harness
 from bg3harness.pins import CODE_PATHS, _git, bg3le_pin, buildinfo, mod_version, repo_pin, run_pins, tree_digest
@@ -64,7 +65,7 @@ def _dig(d: dict | None, dotted: str):
     return d
 
 
-def pin_drift(first: dict | None, now: dict) -> list[str]:
+def pin_drift(first: dict[str, Any] | None, now: dict[str, Any]) -> list[str]:
     """`key: first → now` for every DRIFT_KEYS pin that differs from the series' first run (none: no first pins)."""
     if not first:
         return []
