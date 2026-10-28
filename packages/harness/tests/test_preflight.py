@@ -1,4 +1,4 @@
-"""Offline tests for bg3bench.preflight (CLI: tools/bench_preflight.py): fixture Steam libraries, manifests,
+"""Offline tests for bg3harness.preflight (CLI: tools/bench_preflight.py): fixture Steam libraries, manifests,
 loginusers.vdf and repo trees in a temp dir; the commands (pgrep, claude, docker, nvidia-smi) stubbed. Nothing real
 is read or run. The checks run with the harness's real tools/steam_paths.py and tools/bg3le_buildinfo.py.
 """
@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bg3bench import preflight as P
+from bg3harness import preflight as P
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tools"))  # the harness's helpers, not packaged yet
@@ -207,7 +207,46 @@ class TestBuild(Fixture):
 
     def test_no_buildid_fails(self):
         self.install(build="")
-        self.assertEqual(P.check_build(self.ctx()), [(P.FAIL, "build", "no buildid (no manifest)")])
+        self.assertEqual(
+            P.check_build(self.ctx()),
+            [(P.FAIL, "build", "no buildid (no manifest), and the files don't match the pinned build's fingerprint")],
+        )
+
+    def pin_fingerprint(self, game):
+        """Fake game files and their fingerprint recorded for the pinned build in the fixture repo."""
+        from bg3harness import game_fingerprint
+
+        (game / "Data").mkdir(parents=True, exist_ok=True)
+        for rel, data in (("Data/Game.pak", b"game"), ("Data/Patch8_HotFix10.pak", b"hotfix")):
+            (game / rel).write_bytes(data)
+        fp = game_fingerprint.make(game, ["bin/bg3", "Data/Game.pak", "Data/Patch8_HotFix10.pak"])
+        (self.repo / "tools/dev").mkdir(parents=True, exist_ok=True)
+        (self.repo / "tools/dev/first_launch.sh").write_text("WANT_BUILD=25605617\n")
+        (self.repo / "tools/dev/game_fingerprints.json").write_text(json.dumps({"25605617": fp}))
+
+    def test_a_depot_copy_with_the_pinned_files_is_the_pinned_build(self):
+        # download_depot fetched the pinned build's files; Steam's manifest still names the build it updated to
+        game = self.install(build="26000000")
+        self.pin_fingerprint(game)
+        [(status, _, detail)] = P.check_build(self.ctx())
+        self.assertEqual(status, P.PASS, detail)
+        self.assertIn("match the pinned build 25605617's fingerprint", detail)
+        self.assertIn("the appmanifest says 26000000", detail)
+
+    def test_a_depot_copy_without_a_steam_manifest(self):
+        game = self.install()
+        self.pin_fingerprint(game)
+        (self.lib / "steamapps/appmanifest_1086940.acf").unlink()
+        self.assertEqual(self.statuses(P.check_install(self.ctx())), [P.PASS])
+        self.assertEqual(self.statuses(P.check_build(self.ctx())), [P.PASS])
+
+    def test_a_copy_whose_files_differ_is_not_the_pinned_build(self):
+        game = self.install(build="26000000")
+        self.pin_fingerprint(game)
+        (game / "Data/Game.pak").write_bytes(b"gam3")  # same size, other bytes
+        self.assertEqual(self.statuses(P.check_build(self.ctx())), [P.FAIL])
+        (self.lib / "steamapps/appmanifest_1086940.acf").unlink()
+        self.assertEqual(self.statuses(P.check_install(self.ctx())), [P.FAIL])
 
     def series(self, pins):
         d = self.repo / "runtime/sessions/s1"

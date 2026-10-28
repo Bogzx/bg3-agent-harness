@@ -1,0 +1,5 @@
+# The prebuilt bg3le package for this checkout's patches/bg3le (bg3harness.bg3le_prebuilt; docs/SETUP.md). Empty
+# until a release carries one. A new or changed patch needs a new package: its patch list must match patches/bg3le.
+# BG3AI_BG3LE_PREBUILT_URL / BG3AI_BG3LE_PREBUILT_SHA256 override these.
+url = ""
+sha256 = ""

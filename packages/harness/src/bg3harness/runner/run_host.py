@@ -25,7 +25,8 @@ out of the shared Story folder into <run_dir>/saves/ (abort and a failed start t
 run that died), and the run's fields: the
 outcome (the bench grades facts.jsonl; the harness decides no goal: a run the live verdict ended is "reached"
 or "failed" by that verdict, a wipe "failed"), cost and tokens of every play process, wall
-time, the settings readout, the manifest fields and the reset.
+time, the settings readout, the manifest fields, the reset and the pins (machine_pins: the game build, bg3le, the mod
+tree and the repo the run started with; the bench adds the versions).
 
 stop: an operator stop (play.py bench's first SIGINT/SIGTERM, or runtime/STOP, which the runner reads) ends the run's
 session at the runner's next check (reason "stopped"); record then writes it as an invalid run (`operator: stop`) with
@@ -53,7 +54,10 @@ from bg3ai import metrics as bmetrics
 from bg3ai import saves as bsaves
 
 import bg3harness
-from bg3harness import client_setup, runs, spend
+from bg3harness import bg3le_buildinfo, client_setup, game_fingerprint, runs, spend, steam_paths
+from bg3harness import pins as hpins
+from bg3harness import preflight as hpreflight
+from bg3harness import recorder as hrec
 from bg3harness.game.io import Save
 from bg3harness.runner import agent_group
 from bg3harness.runner import codewatch as rcode
@@ -68,6 +72,8 @@ GOAL_HIT = "goal"  # until_hit's id when the bench's live verdict decided a goal
 GOAL_POLL_S = 10.0  # how often GoalWatch asks the verdict: the stop comes one poll + the in-flight tool call late
 FOREIGN_SAVE = "foreign_save"  # until_hit's id when SaveWatch saw the game load a save that isn't the run's
 LOAD_GRACE_S = 60.0  # SaveWatch: a load_game logged this long after its new server boot was seen still explains it
+RECORD_ENV = "BG3AI_BENCH_RECORD"  # 0: play.py bench records no run (bench_recording)
+RECORD_ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"  # the recording's encoder (default h264_nvenc; libx264 on the CPU)
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -425,6 +431,40 @@ class SaveWatch:
             self.thread.join()
 
 
+def machine_pins(env: Mapping[str, str]) -> Json:
+    """The game build, bg3le, mod and repo pins of a run starting now (bg3harness.pins.run_pins), read as the legacy
+    series path reads them: the Steam buildid, the bg3le build the launcher loads ($BG3AI_BG3LE_LIB), the mod tree
+    the runner's game loads (codewatch.MOD_LIVE) with the repo mod's version, and the repo. A game dir whose files match
+    the pinned build's fingerprint (a download_depot copy) plays the pinned build whatever its appmanifest says;
+    game_build_by says which of the two told the build."""
+    lib = Path(env.get("BG3AI_BG3LE_LIB") or bg3le_buildinfo.DIST / "libbg3le.so")
+    meta = rcode.MOD_DIR / "Mods" / "BG3AI" / "meta.lsx"
+    fingerprints = renv.REPO / "tools" / "dev" / "game_fingerprints.json"
+    pinned = hpreflight.pinned_build(renv.REPO)
+    build, how = game_fingerprint.installed_build(
+        pinned, steam_paths.game_dir(env), steam_paths.buildid(env), fingerprints
+    )
+    pins = hpins.run_pins(renv.REPO, build, lib.parent, meta, rcode.mod_tree_hashes())
+    return {**pins, "game_build_by": how}
+
+
+def bench_recording(env: Mapping[str, str]) -> Callable[[Path], hrec.RunRecording] | None:
+    """play.py bench records every run (recorder.run_recording, the game's window on env's DISPLAY);
+    BG3AI_BENCH_RECORD=0 turns it off. BG3AI_BENCH_RECORD_ENCODER picks the encoder (a machine without NVENC sets
+    libx264; bg3harness.doctor checks the one set); an unknown one is refused here, before any run."""
+    if env.get(RECORD_ENV, "1") == "0":
+        return None
+    encoder = bench_encoder(env)
+    return lambda out: hrec.run_recording(out, env, renv.RUNTIME, encoder)
+
+
+def bench_encoder(env: Mapping[str, str]) -> str:
+    encoder = env.get(RECORD_ENCODER_ENV) or "h264_nvenc"
+    if encoder not in hrec.ENCODER_ARGS:
+        raise ValueError(f"{RECORD_ENCODER_ENV}={encoder!r}: one of {sorted(hrec.ENCODER_ARGS)}")
+    return encoder
+
+
 def owner_of(sc: Json) -> str:
     """The save owner: the scenario's character (a save start fixes it), else the new game's name."""
     return (sc["profile"]["character"].get("name") or "Tav").strip()
@@ -651,7 +691,10 @@ class LiveRunHost:
     dumps the client's files (client_setup.run_files by default); env is the base env (this process's, read once):
     each job's env is a fresh copy with the job's vars (condition, API key, tools, memory dir), handed to its runner
     (run_env: the play process, its bg3 server and the play settings read it), so nothing of one job reaches the next
-    and os.environ is never changed (H1)."""
+    and os.environ is never changed (H1). read_pins(env) reads a run's pins at its start, after the mod snapshot
+    refresh (machine_pins by default). recording(out_dir) makes a run's recording (recorder.run_recording; None: off):
+    it starts once the game is up, into <run_dir>/recording/, and a run whose recorder isn't recording then or at
+    the kickoff fails its start (recorder.RecordingError); record stops it after run_end, before the game stops."""
 
     def __init__(
         self,
@@ -660,14 +703,20 @@ class LiveRunHost:
         run_files: Callable[[Path, str, int | None, str | None], Json] | None = None,
         env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.time,
+        read_pins: Callable[[Mapping[str, str]], Json] | None = None,
+        recording: Callable[[Path], hrec.RunRecording] | None = None,
     ):
         self.make_runner, self.clock = make_runner, clock
+        self.read_pins = read_pins or machine_pins
         self.base = dict(os.environ if env is None else env)
         self.env: dict[str, str] = dict(self.base)  # the current job's (_setup)
         self.run_files = run_files or self._run_files
         self.runs: dict[Path, tuple[RunRunner, float, list[str]]] = {}
         self.watches: dict[Path, GoalWatch] = {}  # the run's live verdict (a goal, a wipe) while it plays
         self.saves: dict[Path, SaveWatch] = {}  # the save each run plays
+        self.pins: dict[Path, Json] = {}  # what each run plays with (read_pins at its start)
+        self.recording = recording
+        self.recordings: dict[Path, hrec.RunRecording] = {}  # each run's, while it plays
         self.stopping = False  # stop(): an operator signal
 
     @property
@@ -687,7 +736,13 @@ class LiveRunHost:
         process and the game it brought up, and its moved nav files go back. Its record is not written."""
         while self.runs:
             run_dir, (r, _, _) = self.runs.popitem()
-            for w in (self.watches.pop(run_dir, None), self.saves.pop(run_dir, None)):
+            self.pins.pop(run_dir, None)
+            watches = (
+                self.watches.pop(run_dir, None),
+                self.saves.pop(run_dir, None),
+                self.recordings.pop(run_dir, None),
+            )
+            for w in watches:
                 if w is not None:
                     w.stop()
             try:
@@ -760,11 +815,13 @@ class LiveRunHost:
                 self.watches[run_dir].start()
             return st
         except (Exception, SystemExit) as e:
-            if (w := self.saves.pop(run_dir, None)) is not None:
-                w.stop()
+            for w in (self.saves.pop(run_dir, None), self.recordings.pop(run_dir, None)):
+                if w is not None:
+                    w.stop()
             try:
                 if r is not None:
                     self.runs.pop(run_dir, None)
+                    self.pins.pop(run_dir, None)
                     r.scenario_undo()
                     r.end_run_game("start failed", "the rerun launches a new one")
             finally:
@@ -792,7 +849,11 @@ class LiveRunHost:
             r.refresh_mod_snapshot()
         except OSError as e:
             renv.log(f"mod snapshot refresh failed: {e}; the game keeps {r.mod_rev}'s mod")
+        self.pins[run_dir] = self.read_pins(self.base)  # the mod tree the game loads from now on
         loaded = r.ensure_game(first=True)
+        if self.recording is not None:  # with the game up (the recorder records its window)
+            self.recordings[run_dir] = self.recording(run_dir / "recording")
+            self.recordings[run_dir].start()
         if sc["start"]["kind"] == "save":
             start_save = sc["start"].get("save")
             if not start_save or r.state["loaded_save"] != start_save:
@@ -806,6 +867,8 @@ class LiveRunHost:
         r.apply_play_settings()  # after the rename: the save/load gates compare the avatar's name with the owner (B2)
         if self.stopped:  # stopped while the game came up: no agent starts (start's handler stops the game)
             raise RuntimeError("operator stop before the kickoff")
+        if (rec := self.recordings.get(run_dir)) is not None:
+            rec.check()  # ffmpeg still up after the settings: the run plays recorded
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
         minutes = opt.session_minutes
         # the manifest's prompt is what the client is served (run_manifest.manifest_fields; none without run files),
@@ -850,6 +913,7 @@ class LiveRunHost:
 
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
         r, t0, moved = self.runs.pop(run_dir)
+        pins = self.pins.pop(run_dir, None)
         if (w := self.watches.pop(run_dir, None)) is not None:
             w.stop()
         foreign: str | None = None
@@ -873,6 +937,8 @@ class LiveRunHost:
             r.end_facts(name)
         finally:
             try:
+                if (rec := self.recordings.pop(run_dir, None)) is not None:
+                    rec.stop()  # after run_end, with the game still up: the recording covers the whole run
                 # with the game up: scn.undo takes the seed out of BG3AI/scenario.json, which a record from before
                 # the run keeps (restore_nav moves only one the run added), else it seeds every later load
                 r.scenario_undo()
@@ -902,6 +968,7 @@ class LiveRunHost:
                 "milestone": hit and hit["id"],
                 "game_settings": getattr(r, "game_settings", None),
                 "manifest": r.opt.manifest,
+                "pins": pins,  # the bench adds the versions (bg3bench.pins.versions)
                 "reset": {"nav_files": moved, "restored": back, "saves": own_saves},
                 "loaded_save": r.state["loaded_save"],
                 "reloads": reloads,  # bg3bench result.json's (diverse-2026-10-25: 0, the record had none)
