@@ -70,11 +70,22 @@ function A.scroll_cast(event, caster)
     if not p then return end
     if event == "CastSpell" then p.cast = true else p.casted = true end
 end
-function A.combat_scroll(char, target)
-    if not target or not G.in_combat(char) or not G.b(G.q("IsItem", target)) then return nil end
+-- A scroll in `char`'s own bags (ItemUseType "Scroll"): {stats, stack}, else nil. Every read of one leaves an
+-- A.scroll_pending entry (in a fight with what it owes), so act.scroll_settle tells the bridge whether the read cast
+-- anything (the scroll used up, or the reader's cast after it went off): N7 2d, a Scroll of Revivify on the reader
+-- herself, read "done ... cast on e1 Shadowheart by a click" with the scroll still in her bags.
+function A.carried_scroll(char, target)
+    if not target or not G.b(G.q("IsItem", target)) then return nil end
     if not G.same(holder(target), char) then return nil end
     local ok, st = pcall(function() return Ext.Stats.Get(G.entity(target).Data.StatsId) end)
     if not ok or not st or st.ItemUseType ~= "Scroll" then return nil end
+    return { stats = st, stack = tonumber((G.q("GetStackAmount", target))) or 1 }
+end
+function A.combat_scroll(char, target)
+    if not target or not G.in_combat(char) then return nil end
+    local sc = A.carried_scroll(char, target)
+    if not sc then return nil end
+    local st = sc.stats
     G.combat_gate(char, "turn")
     local snap, payers = G.resources(char), {}
     for _, c in ipairs(G.parse_costs(st.UseCosts)) do
@@ -85,7 +96,7 @@ function A.combat_scroll(char, target)
         end
         payers[#payers + 1] = { name = n, level = l, amount = c.amount, before = (snap[n] or {})[l] or 0 }
     end
-    return { payers = payers, stack = tonumber((G.q("GetStackAmount", target))) or 1 }
+    return { payers = payers, stack = sc.stack }
 end
 
 -- Ladder, 3rd look (acceptance 04:31 still FAIL from the Mausoleum gate after the settle): every passing climb had
@@ -154,6 +165,7 @@ reg("interact", function(args)
     local target = G.guid(args.target)
     local potion = A.combat_potion(char, target)
     local scroll = not potion and A.combat_scroll(char, target)
+    local read = not potion and not scroll and A.carried_scroll(char, target) -- a scroll read out of combat
     if not potion and not scroll and target and G.in_combat(char) then
         -- naut3 ×3: the transponder inside combat_turn was refused "(use the UI)", and each run spent a model turn
         -- finding click_on. Name the tool: in a fight a player uses an object by clicking it.
@@ -237,11 +249,12 @@ reg("interact", function(args)
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
         timeout_ms = 30000 + walk_timeout(plan.length_m),
         interrupt = { combat = not (potion or scroll), dialogue = true, attacked = not (potion or scroll) },
-        on_finish = (potion or scroll or ladder) and function(job)
+        on_finish = (potion or scroll or read or ladder) and function(job)
             if job.ladder and job.ladder.held then A.ladder_release(char, job.ladder.held) end
-            if scroll and job.status == "done" then
-                A.scroll_pending[G.guid(char)] = { item = target, stack = scroll.stack, payers = scroll.payers }
-                if type(job.result) == "table" then job.result.combat_scroll = true end
+            if (scroll or read) and job.status == "done" then
+                A.scroll_pending[G.guid(char)] = { item = target, stack = (scroll or read).stack,
+                    payers = scroll and scroll.payers or {} }
+                if scroll and type(job.result) == "table" then job.result.combat_scroll = true end
                 return
             end
             if not potion or job.status ~= "done" then return end
