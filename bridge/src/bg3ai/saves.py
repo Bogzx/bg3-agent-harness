@@ -35,11 +35,15 @@ def save_file(d: Path) -> Path:
     return next(iter(sorted(d.glob("*.lsv"))), want)
 
 
-def _mtime(d: Path) -> float:
-    try:
-        return save_file(d).stat().st_mtime  # the save file itself; else the folder
-    except OSError:
-        return d.stat().st_mtime
+def _mtime(d: Path) -> float | None:
+    """The save file's mtime, else the folder's; None once the folder is gone (deleted after the listing: the
+    game's autosave rotation)."""
+    for p in (save_file(d), d):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            continue
+    return None
 
 
 def read_meta(lsv: Path) -> tuple[str, float, str] | None:
@@ -87,13 +91,18 @@ def load_args(save_dir: Path, folder: str, meta: Callable[[Path], tuple[str, flo
     """Arguments for ui.menu {action: "load"}: name, owner (the playthrough's heading), index (1 = newest of its
     playthrough), date. Each save's leader, time and playthrough come from its meta, else its folder prefix (as
     leader and playthrough) and .lsv mtime. The heading is the leader of the playthrough's oldest save, not the
-    newest's: live6 loaded under 'Claude' with a Tav-…__SCN save on top of run 2's group."""
+    newest's: live6 loaded under 'Claude' with a Tav-…__SCN save on top of run 2's group. A save folder deleted
+    while this reads the dir isn't listed (no index or date when it is the named one)."""
 
-    def key(d: Path) -> tuple[str, float, str]:
+    def key(d: Path) -> tuple[str, float, str] | None:
         prefix = owner_of(d.name)
-        return meta(save_file(d)) or (prefix, _mtime(d), prefix)
+        found = meta(save_file(d))
+        if found is None and (mtime := _mtime(d)) is not None:
+            found = (prefix, mtime, prefix)
+        return found
 
-    keys = {d.name: key(d) for d in save_dir.iterdir() if d.is_dir()} if save_dir.is_dir() else {}
+    listed = [d for d in save_dir.iterdir() if d.is_dir()] if save_dir.is_dir() else []
+    keys = {d.name: k for d in listed if (k := key(d)) is not None}
     owner, _, group = keys.get(folder) or (owner_of(folder), 0.0, owner_of(folder))
     same = sorted(((t, n, o) for n, (o, t, g) in keys.items() if g == group), reverse=True)
     args: dict = {"action": "load", "name": folder, "owner": same[-1][2] if same else owner}
