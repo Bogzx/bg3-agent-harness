@@ -131,6 +131,7 @@ function reset()
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
     if A then A.trip_t = nil end -- a fast travel's arrival (act.trip_arrived) is per test
+    if A then A.idle_watch, A.idle_last = {}, {} end -- the after-a-job teleport watch (ActionsMove) is per test
     if A then A.unlocked_ms = {} end -- Unlocked/Opened seen on an item (V24) is per test
     world = {
         [P1] = { pos = { 0, 0, 0 }, comps = {} },
@@ -187,7 +188,9 @@ end
 -- ---- the tests: these files, in order, on the stubs above (split for the 1000-line cap) ----
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_cast.lua", "test_act_lua_think.lua",
-    "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_revive.lua" }) do dofile(DIR .. "/" .. part) end
+    "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_revive.lua", "test_act_lua_idle.lua" }) do
+    dofile(DIR .. "/" .. part)
+end
 
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

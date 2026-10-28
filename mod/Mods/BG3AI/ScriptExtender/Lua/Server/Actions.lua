@@ -459,6 +459,7 @@ local function start(kind, char, spec)
     spec.notify = A.notify_next
     spec.on_finish = function(job)
         if char and A.active[char] == job then A.active[char] = nil end
+        if char and not spec.passive and A.watch_idle then A.watch_idle(char, kind) end -- a jump after it (ActionsMove)
         if user_finish then pcall(user_finish, job) end
         -- Leftover tasks this job queued (a timed-out walk, a ladder Use that
         -- keeps climbing after its UseFinished): purge them, or they run on,
