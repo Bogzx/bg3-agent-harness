@@ -196,6 +196,21 @@ def _press_escape() -> str:
     """S021 05:38 / S026 09:42 (sale lost): ESCAPE used as 'close' on the plain game view opened the game menu.
     Refused there; and when a press still lands on the game menu (the panel had closed itself), it is closed again."""
     t0 = time.monotonic()
+    # live N8 7b: with a scroll's spell left in hand (ui.cast_state: in hand, previewing Target_Knock) this said done
+    # and the spell stayed: the ui.key ESCAPE goes to the UI, the targeting is the world's input, which a raw Escape
+    # through the input shim reached. A spell the game names in hand is put back as hotbar.cancel does, checked.
+    st = hotbar.cast_state(core.game, None)
+    inp = world_tools._inp() if st.get("upcast_open") or (st.get("armed") and st.get("spell")) else None
+    if inp is not None:
+        what = st.get("spell_name") or st.get("spell") or "the level picker"
+        how = hotbar.cancel(core.game, inp, st.get("char"))
+        if how is not None and how.startswith("failed"):
+            reporting._batch["last"] = "failed"
+            return reporting._finish("press_key", {"key": "ESCAPE"}, f"press_key: FAILED — {what} is still in hand "
+                                     f"after ESCAPE, a right click and the HUD's cancel ({how})", t0)
+        reporting._batch["last"] = "done"
+        return reporting._finish("press_key", {"key": "ESCAPE"}, f"press_key: done — put {what} back from the hand"
+                                 f" ({how or 'it had left the hand'})", t0)
     before, panels = _ui_screen()
     if before == "game" and not panels:
         # live N3 (2026-10-28): the world right-click menu is no panel in ui.state, and ESCAPE was refused "nothing

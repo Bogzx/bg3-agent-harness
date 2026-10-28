@@ -71,6 +71,28 @@ class PressEscape(unittest.TestCase):
         self.assertNotIn("REFUSED", out)
         self.assertEqual(fake.keys, ["ESCAPE"])
 
+    def test_a_spell_left_in_hand_is_put_back_and_checked(self):
+        """Live N8 7b: after a scroll's FAILED the spell stayed in hand (ui.cast_state previewing Target_Knock);
+        press_key ESCAPE said done through ui.key and left it there. It goes through hotbar.cancel (the input shim's
+        ESCAPE, checked), and says FAILED when the spell stays."""
+        fake = self.use(["game"])
+        rpc = fake.rpc
+        fake.rpc = fake.try_rpc = lambda op, args=None, context="server": (
+            {"armed": True, "spell": "Target_Knock", "spell_name": "Knock", "char": P1} if op == "ui.cast_state"
+            else rpc(op, args, context))
+        got: list = []
+        with unittest.mock.patch.object(world_tools, "_inp", lambda: object()), \
+                unittest.mock.patch.object(uitools.hotbar, "cancel", lambda g, inp, c: (got.append(c), "escape")[1]):
+            out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
+        self.assertIn("press_key: done — put Knock back from the hand (escape)", out)
+        self.assertEqual(got, [P1])
+        self.assertEqual(fake.keys, [], "no ui.key ESCAPE")
+        with unittest.mock.patch.object(world_tools, "_inp", lambda: object()), \
+                unittest.mock.patch.object(uitools.hotbar, "cancel", lambda g, inp, c: "failed (still reads in hand)"):
+            out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")
+        self.assertIn("press_key: FAILED — Knock is still in hand after ESCAPE, a right click and the HUD's cancel",
+                      out)
+
     def test_open_panel_closes(self):
         fake = self.use([{"screen": "game", "panels_open": ["Inventory"]}, "game"])
         out = getattr(uitools.press_key, "fn", uitools.press_key)("ESCAPE")

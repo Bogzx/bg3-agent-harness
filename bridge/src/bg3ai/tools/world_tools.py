@@ -543,7 +543,20 @@ def _scroll_settle(char: str, in_combat: bool = True) -> tuple[bool | None, str]
     return True, "; its action is spent" + (f" (charged by the guard: {paid})" if paid else "")
 
 
-def _scroll_outcome(head: str, rest: str, name: str, char: str, in_combat: bool, done: str, undone: str) -> str:
+def _put_back(inp, char: str) -> str:
+    """Live N8 7b: after a scroll's "nothing cast" FAILED the game still previewed its spell (ui.cast_state: in hand)
+    until a raw Escape. The spell the read put in hand is put back as a player does (hotbar.cancel: ESCAPE, a right
+    click, the HUD's cancel, each checked); what came of it, for the reply."""
+    how = hotbar.cancel(core.game, inp, char)
+    if how is None:
+        return ""
+    if how.startswith("failed"):
+        return f"; the spell is still in {overview._name_of(char)}'s hand ({how})"
+    return f"; the spell in hand was put back ({how})"
+
+
+def _scroll_outcome(head: str, rest: str, name: str, char: str, in_combat: bool, done: str, undone: str,
+                    inp=None) -> str:
     """Live N7 2d (2026-10-28): the scroll route said "done ... cast on <target> by a click" once the click landed,
     with the scroll still in the reader's bags (a Scroll of Revivify on the living reader). The reply is done only on
     evidence the read cast something (act.scroll_settle); with the scroll still there and no cast of the reader's
@@ -554,6 +567,8 @@ def _scroll_outcome(head: str, rest: str, name: str, char: str, in_combat: bool,
         head = head.replace(": done", ": FAILED", 1) + undone + (spent or (
             f"; {name} is still in {overview._name_of(char)}'s bags and {overview._name_of(char)} cast nothing after "
             f"it: nothing cast" + (", no action spent" if in_combat else "")))
+        if not spent and inp is not None:  # nothing cast (not the cap: a walk or a cast still under way)
+            head += _put_back(inp, char)
     else:
         head += done + spent
     return head + ("\n" + rest if rest else "")
@@ -611,12 +626,12 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     head = head.replace(" — combat_scroll", " — read in combat").replace("combat_scroll", "read in combat")
     if pos is not None and not target:
         ground = _scroll_ground(inp, name, char, pos)
-        return _scroll_outcome(head, rest, name, char, in_combat, ground, ground)
+        return _scroll_outcome(head, rest, name, char, in_combat, ground, ground, inp)
     if not armed:
         # live9 S002 17:34 x2: the body click went in with nothing in hand, a plain click on the world
         return _scroll_outcome(
             head, rest, name, char, in_combat, f" ({name} read: no spell came into hand, it cast at once)",
-            f" ({name} read, but no spell came into hand, so {queueing._label(tgt)} was not clicked)")
+            f" ({name} read, but no spell came into hand, so {queueing._label(tgt)} was not clicked)", inp)
     tgts = [tgt] + [plumbing._uuid(t) for t in targets or []]
     cr = click_entity(core.game, inp, tgt, "L")
     if cr.ok and _two_step_scroll(name) and tgt != char:
@@ -630,11 +645,11 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         more = _scroll_more_picks(inp, char, tgts)
         return _scroll_outcome(
             head, rest, name, char, in_combat, f" ({name} read, cast on {queueing._label(tgt)} by a click){more}",
-            f" ({name} read, {queueing._label(tgt)} clicked){more}")
-    reporting._batch["last"] = "failed"  # nothing cast: the spell waits in hand
+            f" ({name} read, {queueing._label(tgt)} clicked){more}", inp)
+    reporting._batch["last"] = "failed"  # nothing cast
     head = head.replace(": done", ": FAILED", 1) + (
-        f"; the game waits for {name}'s target but the click on {queueing._label(tgt)} failed ({cr.reason}): "
-        f"click_on <id>, or press_key ESCAPE to put it away")
+        f"; the click on {queueing._label(tgt)} for {name}'s target failed ({cr.reason}): nothing cast"
+        + _put_back(inp, char))
     return head + ("\n" + rest if rest else "")
 
 

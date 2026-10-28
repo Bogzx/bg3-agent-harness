@@ -7,6 +7,7 @@ import time
 import unittest
 from unittest import mock
 
+from bg3ai import hotbar
 from test_economy import (  # sets BG3AI_RUNTIME before importing bg3ai
     GALE,
     WIZARD,
@@ -265,6 +266,7 @@ class ScrollUse(unittest.TestCase):
     clicked in one call now."""
     SH, GALE, SCROLL = ("11111111-0000-0000-0000-0000000000a1", "11111111-0000-0000-0000-0000000000a2",
                         "11111111-0000-0000-0000-0000000000a3")
+    cancel_how: str | None = "escape"  # hotbar.cancel's answer: the spell in hand put back with ESCAPE
 
     def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
              res="use_ability: done — used", screen=None, rpc=None, targets="", pos=None, ground=None):
@@ -311,8 +313,10 @@ class ScrollUse(unittest.TestCase):
             return ground or HotbarCastResult(True, picked=1)
 
         saved = (core.game, plumbing._act, overview._ability_id, core.H, world_tools._inp, clicker.click_entity,
-                 plumbing._who, twostep.ground_click)
+                 plumbing._who, twostep.ground_click, hotbar.cancel)
         twostep.ground_click = fake_ground
+        self.cancels = []
+        hotbar.cancel = lambda game, inp, char: (self.cancels.append(char), self.cancel_how)[1]
         core.H = Handles()
         for u, n in ((sh, "Shadowheart"), (self.GALE, "Gale"), (scroll, "Scroll of Invisibility")):
             core.H.get(u, n)
@@ -328,7 +332,7 @@ class ScrollUse(unittest.TestCase):
             out = "ERR " + str(e)
         finally:
             (core.game, plumbing._act, overview._ability_id, core.H, world_tools._inp, clicker.click_entity,
-             plumbing._who, twostep.ground_click) = saved
+             plumbing._who, twostep.ground_click, hotbar.cancel) = saved
         return out, calls, clicks
 
     def test_scroll_read_and_target_clicked(self):
@@ -357,9 +361,14 @@ class ScrollUse(unittest.TestCase):
         self.assertIn("opened for reading", out.split("\n")[0])
         self.assertIn("insert_item", out.split("\n")[0])
 
-    def test_failed_click_says_what_to_do(self):
+    def test_failed_click_puts_the_spell_back(self):
+        # live N8 7b: after a FAILED the scroll's spell stayed in hand, previewing its target, until a raw Escape
         out, _, _ = self._run("Shadowheart", "Scroll of Invisibility", click_ok=False)
-        self.assertIn("press_key ESCAPE", out)
+        head = out.split("\n")[0]
+        self.assertTrue(head.startswith("use_ability: FAILED"), head)
+        self.assertIn("for Scroll of Invisibility's target failed (hover_miss): nothing cast; the spell in hand was put "
+                      "back (escape)", head)
+        self.assertEqual(self.cancels, [self.SH])
 
     def test_potion_in_combat_is_drunk_without_a_click(self):
         # S031 17:05: bonus "Potion of Healing" in combat_turn was refused at 7 HP; the mod now drinks it for its
@@ -418,6 +427,14 @@ class ScrollUse(unittest.TestCase):
                       "nothing cast", head)
         self.assertEqual(reporting._batch["last"], "failed")
         self.assertTrue(any(op == "act.scroll_settle" and a.get("final") for op, a in self.rpcs), "final settle")
+        # live N8 7b: Knock at Gale / Remove Curse: FAILED, and the spell stayed in hand; now it is put back
+        self.assertTrue(head.endswith("nothing cast; the spell in hand was put back (escape)"), head)
+        self.assertEqual(self.cancels, [self.SH])
+        self.cancel_how = "failed (still reads in hand: Target_Knock)"
+        out, _, _ = self._run("Shadowheart", "Scroll of Invisibility", target=self.GALE,
+                              rpc={"act.scroll_settle": lambda a: {"read": False}})
+        self.assertTrue(out.split("\n")[0].endswith("; the spell is still in Shadowheart's hand (failed (still reads in "
+                                                     "hand: Target_Knock))"), out)
 
     def test_out_of_combat_revive_drops_the_reads_settle_entry(self):
         # app review of #31: the two-step revive route has its own evidence (REVIVED); out of combat no settle ran and
