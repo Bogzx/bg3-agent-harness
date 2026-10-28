@@ -596,6 +596,14 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
         far = _body_far(char, tgt0)
         if far:
             raise GameError(far)
+    # night2 (live N4, N7-N12 vs N10): a spell on a revived member during their stand-up (act.end_standup) left their
+    # layer-1 action unfinished for good; act.cast waits for it, a scroll's click would come at once
+    others = {plumbing._uuid(t) for t in [target, *(targets or [])] if t} - {char}
+    running = ((core.game.try_rpc("act.standups") or {}).get("running") or []) if others else []
+    up = [u for u in running if u.get("uuid") in others]
+    if up:
+        raise GameError(f"{up[0].get('name') or overview._name_of(up[0]['uuid'])} is still standing up from the revive: "
+                        f"{name} not read")
     if pos is not None and not target and _TELEPORT_SCROLL.search(name):
         # S093 09:47: a teleport to a point with no floor under it (Misty Step into the psyche's void: Gale died);
         # the mod's landing check (a floor at that height, no Chasm) before the scroll is read

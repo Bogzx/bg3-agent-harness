@@ -508,16 +508,19 @@ local function start(kind, char, spec)
         -- the latest order goes, as without a wait; also once the stand-up ended but before the waiting one ran again
         if kind ~= "end_standup" then A.drop_waiting(char, "superseded by a new action (" .. kind .. ")") end
         local prev = A.active[char]
-        if prev and prev.status == "running" and prev.kind == "act.end_standup" and kind ~= "end_standup"
-            and kind ~= "stop" and A.call_now then
-            return park(kind, char, spec, prev)
-        elseif prev and prev.status == "running" then
+        local own = prev and prev.status == "running" and prev.kind == "act.end_standup" and kind ~= "end_standup"
+            and kind ~= "stop"
+        if own and A.call_now then return park(kind, char, spec, prev) end
+        if prev and prev.status == "running" then
             -- naut3-r2 15:51:34: Lae'zel's cast, cast and end_turn were each superseded within 0.3 s by a job that
             -- logged nothing but "done": name the new one, in the result and the log
             pcall(Ext.Utils.Print, string.format("[BG3AI] job %s (%s) superseded by a new %s for %s",
                 tostring(prev.id), tostring(prev.kind), kind, tostring(char)))
             interrupt(prev, "superseded by a new action (" .. kind .. ")")
         end
+        -- night2: a cast at another member whose stand-up job runs (act.cast's standup_of) waits for that one
+        local up = spec.standup_of
+        if up and up.status == "running" and A.call_now then return park(kind, char, spec, up) end
     end
     spec.act = true
     spec.char = char
