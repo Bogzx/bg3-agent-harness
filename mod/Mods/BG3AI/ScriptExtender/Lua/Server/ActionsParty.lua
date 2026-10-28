@@ -342,21 +342,30 @@ end)
 A.STANDUP_END_MS = 4000
 A.STANDUP_STEP_M = 3.0
 
--- The point STANDUP_STEP_M from `char` that a plain walk reaches (no jump, no drop, at most twice the step), trying
--- the direction of `toward` first, then 45 degrees either way in turn; nil when there is none.
+-- The point STANDUP_STEP_M from `char` that a plain walk reaches (no jump, no drop, at most twice the step) with no
+-- harmful surface on the straight line there or at its end (N.routeHazard, the first metre skipped: the spot it
+-- stands on), trying the direction of `toward` first, then 45 degrees either way in turn. Returns the point, or nil
+-- and the first harmful surface a reachable point met (app review of #29: a member revived beside a fire was
+-- walked into it).
 local function standup_step(char, toward)
     local p = G.pos(char)
     if not p then return nil end
+    local N = BG3AI.Nav
     local dx, dz = toward[1] - p[1], toward[3] - p[3]
     local a0 = dx * dx + dz * dz > 0.01 and math.atan(dz, dx) or 0
+    local hazard
     for _, k in ipairs({ 0, 1, -1, 2, -2, 3, -3, 4 }) do
         local a = a0 + k * math.pi / 4
         local q = { p[1] + A.STANDUP_STEP_M * math.cos(a), p[2], p[3] + A.STANDUP_STEP_M * math.sin(a) }
         local ok, info = G.reachable(char, q)
         if ok and not info.needs_jump and not info.drop and (info.length_m or 0) <= 2 * A.STANDUP_STEP_M then
-            return q
+            local hok, h = true, nil
+            if type(N) == "table" and type(N.routeHazard) == "function" then hok, h = pcall(N.routeHazard, { p, q }) end
+            if hok and not h then return q end
+            hazard = hazard or (hok and h.surface) or "unreadable surface"
         end
     end
+    return nil, hazard
 end
 
 reg("end_standup", function(args)
@@ -365,10 +374,12 @@ reg("end_standup", function(args)
     if G.in_combat(char) then return { pending = true, in_combat = true } end
     local toward = args.toward and G.pos(args.toward)
     if not toward then G.refuse("no position to walk toward (toward: a party member in view)") end
-    local to = standup_step(char, toward)
+    local to, hazard = standup_step(char, toward)
     if not to then
-        G.refuse(string.format("%s still stands up from the revive: no point %.0f m away a walk reaches",
-            name_of(char) or "the character", A.STANDUP_STEP_M))
+        G.refuse(string.format("%s still stands up from the revive: %s", name_of(char) or "the character",
+            hazard and string.format("every point %.0f m away a walk reaches is in or behind a harmful surface (%s)",
+                A.STANDUP_STEP_M, hazard)
+            or string.format("no point %.0f m away a walk reaches", A.STANDUP_STEP_M)))
     end
     return start("end_standup", char, {
         timeout_ms = A.STANDUP_END_MS + 2000,

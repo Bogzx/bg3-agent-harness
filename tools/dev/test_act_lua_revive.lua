@@ -60,6 +60,33 @@ test("end_standup: the step is 3 m to a reachable point, never the reader's own 
     eq(#called("CharacterMoveToPosition"), 0, "no walk")
 end)
 
+test("end_standup: never steps into a harmful surface; all of them burning is refused with the fact (#29 review)",
+    function()
+    local saved = BG3AI.Nav.routeHazard
+    local burning = function(q) return q[1] > 2.5 end -- a fire 2.5 m on toward the reader (+x)
+    BG3AI.Nav.routeHazard = function(pts)
+        local q = pts[#pts]
+        if burning(q) then return { surface = "Fire", pos = q, at_m = 3 } end
+    end
+    local ok, err = pcall(function()
+        revived(true)
+        op("end_standup", { char = P1, toward = GOB })
+        local mv = called("CharacterMoveToPosition")
+        eq(#mv, 1, "one walk"); assert(mv[1][3] < 2.5, "not into the fire: x=" .. mv[1][3])
+        near(mv[1][3], 2.12, "45 degrees off, clear of it")
+        reset()
+        revived(true)
+        burning = function() return true end
+        local okr, r = pcall(op, "end_standup", { char = P1, toward = GOB })
+        local msg = (not okr) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
+        eq(msg, "the character still stands up from the revive: every point 3 m away a walk reaches is in or behind"
+            .. " a harmful surface (Fire)", "the fact")
+        eq(#called("CharacterMoveToPosition"), 0, "no walk")
+    end)
+    BG3AI.Nav.routeHazard = saved
+    if not ok then error(err, 0) end
+end)
+
 test("end_standup: nothing pending, or in combat, orders nothing; a stand-up that outlasts the walk fails", function()
     revived(false)
     local r = op("end_standup", { char = P1, toward = GOB })
