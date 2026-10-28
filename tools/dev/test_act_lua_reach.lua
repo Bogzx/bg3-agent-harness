@@ -66,3 +66,85 @@ test("move_to range: no walkable goal past Wyll (or only a way round) -> the sto
         assert(U.dist({ mv[1][3], 0, mv[1][5] }, CLAUDE) < U.dist(WYLL, CLAUDE), past .. ": on Claude's side")
     end
 end)
+
+-- App review of night2/vis: the goal past the target is ground the walker reaches when it does not stop in time.
+local function past_goal_skipped(setup, what)
+    reset()
+    world[P1].pos, world[NPC].pos = { CLAUDE[1], 0, CLAUDE[3] }, WYLL
+    local args = setup() or {}
+    local j = job(op("move_to", { char = P1, target = NPC, range = 2.5, avoid = args.avoid }))
+    eq(j.status, "running", what .. ": " .. tostring(j.error))
+    local mv = called("CharacterMoveToPosition")
+    near(U.dist({ mv[1][3], 0, mv[1][5] }, WYLL), 1.5, what .. ": the stop point 1.5 m from Wyll is the goal")
+    assert(U.dist({ mv[1][3], 0, mv[1][5] }, CLAUDE) < U.dist(WYLL, CLAUDE), what .. ": on Claude's side")
+end
+
+test("move_to range: no goal past Wyll on a harmful surface, a discovered trap or a warned area (app review)",
+    function()
+    local N = BG3AI.Nav
+    local function beyond(p) return U.dist(p, CLAUDE) > U.dist(WYLL, CLAUDE) + 0.5 end
+    past_goal_skipped(function()
+        N.surfaceNear = function(p) return beyond(p) and "Fire" or nil end
+    end, "fire past him")
+    N.surfaceNear = nil
+    past_goal_skipped(function()
+        N.routeHazard = function(pts) return beyond(pts[#pts]) and { surface = "Acid", pos = pts[#pts] } or nil end
+    end, "acid on the way past him")
+    N.routeHazard = nil
+    local saved = BG3AI.Events
+    past_goal_skipped(function()
+        world[GEM].pos = { WYLL[1] + 0.8, 0, WYLL[3] - 2.0 } -- a spotted trap just past Wyll
+        BG3AI.Events = { knownTraps = { [GEM] = true } }
+    end, "a trap past him")
+    BG3AI.Events = saved
+    past_goal_skipped(function() -- a warned area 4 m past Wyll, r 3 m: every goal past him is in it, he and the stop
+        -- point are not
+        return { avoid = { { id = 1, pos = { -37.02, 0, -57.22 }, r = 3.0, name = "the vault" } } }
+    end, "a warned area past him")
+end)
+
+test("move_to range: a target ~1.6 m above the walker's floor: stops at the closest approach in reach (app review)",
+    function()
+    world[P1].pos, world[NPC].pos = { CLAUDE[1], 0, CLAUDE[3] }, { WYLL[1], 1.6, WYLL[3] }
+    local j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+    engine_walk(j, 0)
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.in_reach, true, "in reach")
+    local d = U.dist(world[P1].pos, world[NPC].pos)
+    assert(d <= 2.5, "in spell_reach's 2.5 m (centres): " .. d)
+    -- the closest approach is under him: stopped a tick (0.5 m) after it, on the ground checked past him
+    assert(U.dist(world[P1].pos, CLAUDE) <= U.dist(WYLL, CLAUDE) + 0.6, "not walked on past him")
+end)
+
+test("move_to range in combat: the budget is the route to the stop point, not to the goal past it (app review)",
+    function()
+    world[P1].pos, world[NPC].pos = { CLAUDE[1], 0, CLAUDE[3] }, WYLL
+    combat_setup(9) -- the stop point is 7.9 m away, the goal past Wyll 11.9 m
+    local j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+end)
+
+test("move_to range: a plate detour's first leg stops in reach too, no second leg (app review)", function()
+    local PLATE = "a3a3a3a3-0000-0000-0000-00000000000c"
+    local savedV, savedR, savedF = BG3AI.Visibility, BG3AI.Nav.route, BG3AI.Nav.routeFrom
+    world[NPC].pos = { 10, 0, 0 }
+    world[PLATE] = { pos = { 9, 0, 0 }, comps = {} }
+    for _, k in ipairs({ "IsItem", "IsOnStage" }) do osiv[key(k, PLATE)] = 1 end
+    BG3AI.Visibility = setmetatable({
+        PLATE_NAMES = { ["Marble Plate"] = true }, fixtureSeen = { [PLATE] = { t = clock, level = "L" } },
+        FIXTURE_REMEMBER_MS = 300000, levelNow = function() return "L" end,
+        name = function(u) return u == PLATE and "Marble Plate" or nil end,
+        bounds = function() return { radius = 0.6, height = 0.1 } end,
+    }, { __index = savedV })
+    BG3AI.Nav.route = function(_, to) return { { world[P1].pos[1], 0, world[P1].pos[3] }, to } end
+    BG3AI.Nav.routeFrom = function(_, from, to) return { from, to } end
+    local ok, err = pcall(function()
+        local j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+        eq(j.status, "running", "status " .. tostring(j.error))
+        eq(#called("CharacterMoveToPosition"), 1, "the way round the plate first")
+        engine_walk(j, 0)
+        eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.in_reach, true, "in reach")
+        eq(#called("CharacterMoveToPosition"), 1, "stopped on the first leg, in reach")
+    end)
+    BG3AI.Visibility, BG3AI.Nav.route, BG3AI.Nav.routeFrom = savedV, savedR, savedF
+    if not ok then error(err, 0) end
+end)
