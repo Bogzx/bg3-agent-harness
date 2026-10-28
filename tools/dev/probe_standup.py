@@ -102,6 +102,7 @@ return Ext.Json.Stringify({ t = Ext.Utils.MonotonicTime() - S.t0, first = S.recs
 STOP = r"""
 local B = Mods.BG3AI.BG3AI
 local S = B.ReviveProbe.su
+if not S then return "{}" end
 pcall(function() Ext.Events.Tick:Unsubscribe(S.sub) end)
 if S.osi0 then B.Guard.osi = S.osi0 end
 B.ReviveProbe.su = nil
@@ -126,9 +127,9 @@ def wrap(orig: Callable[[str, str], str], ev: Callable[[str], str], out: Path,
         except Exception as e:  # the reply still matters without samples
             rec["sampler_error"] = str(e)
         t0 = time.monotonic()
-        reply = orig(reader, body)
-        rec["end_standup"] = {"reply": reply, "took_s": round(time.monotonic() - t0, 2)}
         try:
+            reply = orig(reader, body)
+            rec["end_standup"] = {"reply": reply, "took_s": round(time.monotonic() - t0, 2)}
             now = json.loads(ev(NOW))
             rec["end_standup"]["moved_m"] = m = moved(now.get("first"), now.get("last"))
             if m < MOVED_M:
@@ -138,15 +139,21 @@ def wrap(orig: Callable[[str, str], str], ev: Callable[[str], str], out: Path,
                 rec["raw_move"] = {"at_ms": now.get("t"), "call": start, "after_s": raw_secs, "end": end,
                                    "via": "Osi.CharacterMoveToPosition (probe_revive_stuck move)",
                                    "moved_m": probe.moved_m(start["start"], end["pos"])}
-            rec.update(json.loads(ev(STOP)))
-        except Exception as e:  # keep what was read
+        except Exception as e:  # keep what was read; the agent's call still sees end_standup's own error
             rec["probe_error"] = str(e)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("a") as f:
-            f.write(json.dumps(rec, default=str) + "\n")
-        print(json.dumps({k: v for k, v in rec.items() if k not in ("samples", "calls")}, default=str)[:3000],
-              flush=True)
-        return reply
+            if "end_standup" not in rec:
+                raise
+        finally:  # the sampler and the G.osi wrapper never outlive the probe (app review of #37)
+            try:
+                rec.update(json.loads(ev(STOP)))
+            except Exception as e:
+                rec["stop_error"] = str(e)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with out.open("a") as f:
+                f.write(json.dumps(rec, default=str) + "\n")
+            print(json.dumps({k: v for k, v in rec.items() if k not in ("samples", "calls")}, default=str)[:3000],
+                  flush=True)
+        return rec["end_standup"]["reply"]
 
     return wrapped
 

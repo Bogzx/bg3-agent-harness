@@ -57,6 +57,28 @@ class WrapTest(unittest.TestCase):
         self.assertEqual(rec["raw_move"]["at_ms"], 9100)
         self.assertEqual(rec["calls"], [{"name": "CharacterMoveToPosition"}])
 
+    def test_the_sampler_is_stopped_when_end_standup_or_a_read_raises(self):
+        """App review of #37: the tick sampler and the G.osi wrapper must not outlive a failed probe."""
+        out = Path(tempfile.mkdtemp()) / "su.jsonl"
+        lua = FakeLua(0.0)
+
+        def boom(r, b):
+            raise RuntimeError("bridge down")
+        with self.assertRaises(RuntimeError):
+            su.wrap(boom, lua, out, sleep=lambda s: None)("reader", "body")
+        self.assertEqual(lua.sent, ["sampler", "stop"])
+        lua2 = FakeLua(0.0)
+        real = lua2.__call__
+
+        def bad_now(code):
+            if code == su.NOW:
+                raise RuntimeError("debugger timeout")
+            return real(code)
+        reply = su.wrap(lambda r, b: "; ok", bad_now, out, sleep=lambda s: None)("reader", "body")
+        self.assertEqual((reply, lua2.sent), ("; ok", ["sampler", "stop"]))
+        rec = json.loads(out.read_text().splitlines()[-1])
+        self.assertEqual(rec["probe_error"], "debugger timeout")
+
     def test_a_step_needs_no_raw_walk(self):
         _, sent, naps, rec = self.run_probe(2.5)
         self.assertEqual(sent, ["sampler", "now", "stop"])
