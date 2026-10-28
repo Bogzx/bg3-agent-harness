@@ -7,7 +7,7 @@ home_path * /home/someone  # placeholder user in tests
 home_path * /home/u  # placeholder user in tests
 home_path * /home/x  # placeholder user in tests
 home_path bridge/tests/test_rpc_record.py C:\\Users\\steamuser  # Proton's generic Windows user, the scrubber's own test input
-steam_id packages/bench/tests/test_preflight.py 76561190000000001  # made-up SteamID64 in a test
+steam_id packages/harness/tests/test_preflight.py 76561190000000001  # made-up SteamID64 in a test
 steam_id tools/saves/test_inspect.py 76561198000000042  # made-up SteamID64 in a test
 email runner/test_play_oom.py app-term@b676.service  # a systemd unit name, not an address
 email tools/dev/test_acceptance_memory.py user@1000.service  # a systemd unit name, not an address
