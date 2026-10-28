@@ -176,3 +176,51 @@ def test_release_from_a_server_without_a_memory_backend(served):
     tools = [t for t in json.loads(files["bg3-tools.json"]) if t["name"] not in memory]
     bare = release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=fake_dump(files, tools))
     assert bare == served
+
+
+def test_serve_refuses_a_manifest_error_and_no_client(monkeypatch):
+    monkeypatch.setattr(release.client_setup, "run_files", lambda *a, **kw: {"manifest": {"error": "unknown"}})
+    with pytest.raises(release.ReleaseError, match="rules / pi: unknown"):
+        release.serve("rules", ["pi"], Path("/nonexistent"), environ={})
+    with pytest.raises(release.ReleaseError, match="no client"):
+        release.serve("rules", [], Path("/nonexistent"), environ={})
+
+
+def test_build_refuses_what_breaks_the_schema():
+    with pytest.raises(release.ReleaseError, match="not a release.v1 document"):
+        release.build(
+            "bench-v0.8",
+            VERSIONS,
+            PINS,
+            pack.load_scenarios(),
+            saves.load()["bench-v0.8"],
+            {"rules": release.Served([], {})},
+        )
+
+
+def test_cli_writes_the_release(tmp_path, monkeypatch, capsys, served):
+    monkeypatch.setattr(release, "serve", lambda cid, clients, repo, groups_off=(): served)
+    man = {"run_id": "r1", "pins": {"game_build": "1", "bg3le": {"sha256": "a" * 64}, "mod": {"sha1": "b" * 40}}}
+    (tmp_path / "manifest.json").write_text(json.dumps(man))
+    out = tmp_path / "rel" / "release.json"
+    argv = ["--suite", suite.suite_version(), "--out", str(out), "--pins-from", str(tmp_path / "manifest.json")]
+    assert release.main(argv) == 0
+    doc = json.loads(out.read_text())
+    assert doc["pins"]["game_build"] == "1" and set(doc["conditions"]["rules"]["variants"]) == {"screenshots"}
+    assert "no start-state fingerprint yet" in capsys.readouterr().err
+    assert release.main(["--suite", suite.suite_version(), "--out", str(out), "--client", "claude"]) == 1  # no pins
+    assert "missing pins" in capsys.readouterr().err
+
+
+def test_cli_refuses_unpinned_suite_files_and_is_quiet_when_all_are_fingerprinted(
+    tmp_path, monkeypatch, capsys, served
+):
+    argv = ["--suite", suite.suite_version(), "--out", str(tmp_path / "r.json")]
+    argv += ["--game-build", "1", "--bg3le-sha256", "a" * 64, "--mod-sha1", "b" * 40, "--client", "claude"]
+    monkeypatch.setattr(release, "serve", lambda cid, clients, repo, groups_off=(): served)
+    monkeypatch.setattr(release, "unfingerprinted", lambda doc: [])
+    assert release.main(argv) == 0
+    assert "fingerprint" not in capsys.readouterr().err
+    monkeypatch.setattr(release.suite, "check", lambda: ["suite files changed"])
+    assert release.main(argv) == 1
+    assert "suite files changed" in capsys.readouterr().err

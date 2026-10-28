@@ -112,5 +112,5 @@ def main() -> None:
     print(json.dumps(as_json(), indent=2, ensure_ascii=False))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

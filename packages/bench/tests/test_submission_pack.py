@@ -198,3 +198,74 @@ def test_pilot_run_dirs(tmp_path):
         for f in p.envelope["files"]:
             assert scrub.file_hits(f["name"], (p.bundle_dir / f["name"]).read_bytes()) == []
     assert packed >= 5 and refused >= 20
+
+
+def test_refusal_needs_a_scenario_digest(tmp_path):
+    d = run_dir(tmp_path)
+    man, res = json.loads((d / "manifest.json").read_text()), json.loads((d / "result.json").read_text())
+    man["scenario"]["digest"] = None
+    assert (
+        pack.refusal(man, res, pack.load_scenarios(), [man["versions"]["suite"]])
+        == "the manifest has no scenario digest"
+    )
+
+
+def test_size_problems_count_the_total(monkeypatch):
+    monkeypatch.setattr(bundle, "MAX_TOTAL_BYTES", 10)
+    assert pack.size_problems({"a": b"x" * 11}) == ["11 bytes in all, over 10"]
+
+
+def render_dir(tmp_path: Path, run_hash: str, frames: int = 0) -> Path:
+    r = tmp_path / "render"
+    r.mkdir()
+    (r / "render.json").write_text(
+        json.dumps({"schema": 1, "run_hash": run_hash, "video_start": 0, "video_end": 1, "fps": 15, "events": []})
+    )
+    if frames:
+        (r / "frames").mkdir()
+        for i in range(frames):
+            (r / "frames" / f"{i}.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+    return r
+
+
+def test_add_render_without_frames(tmp_path):
+    p = do_pack(run_dir(tmp_path), tmp_path / "out")
+    q = pack.add_render(render_dir(tmp_path, p.envelope["run_hash"]), tmp_path / "out")
+    names = {f["name"] for f in q.envelope["files"]}
+    assert "render.json" in names and bundle.FRAMES_TAR not in names
+
+
+def test_add_render_over_the_caps(tmp_path, monkeypatch):
+    p = do_pack(run_dir(tmp_path), tmp_path / "out")
+    monkeypatch.setattr(bundle, "MAX_TOTAL_BYTES", sum(f.stat().st_size for f in p.bundle_dir.iterdir()) + 1)
+    with pytest.raises(pack.PackError, match="refused"):
+        pack.add_render(render_dir(tmp_path, p.envelope["run_hash"]), tmp_path / "out")
+    assert not (p.bundle_dir / "render.json").exists()
+
+
+def test_cli(tmp_path, capsys):
+    d = run_dir(tmp_path)
+    assert pack.main([str(d), str(tmp_path / "out"), "--attempt", "1"]) == 0
+    env = json.loads((tmp_path / "out" / "bundle" / bundle.ENVELOPE).read_text())
+    assert "bundle " in capsys.readouterr().out
+    assert pack.main([str(d), str(tmp_path / "out"), "--attempt", "1"]) == 1  # the out dir holds a bundle
+    assert "already holds" in capsys.readouterr().err
+    r = render_dir(tmp_path, env["run_hash"], frames=2)
+    assert pack.main([str(r), str(tmp_path / "out"), "--add-render"]) == 0
+    with tarfile.open(tmp_path / "out" / "bundle" / bundle.FRAMES_TAR) as tar:
+        assert tar.getnames() == ["frames/0.jpg", "frames/1.jpg"]
+    with pytest.raises(SystemExit):
+        pack.main([str(d), str(tmp_path / "x")])  # --attempt is required to pack
+    assert pack.main([str(tmp_path / "nothing"), str(tmp_path / "y"), "--attempt", "1"]) == 1
+    assert "not a run dir" in capsys.readouterr().err
+
+
+def test_scrub_replaces_a_secret_and_reads_tars():
+    s = scrub.Scrubber()
+    assert s.text("API_KEY=" + "x" * 20 + " rest") == "API_KEY=<secret> rest"
+    assert scrub.file_hits("x.bin", b"API_KEY=" + b"x" * 20) == []  # an unknown binary: not text
+    assert scrub.file_hits("x.json", b"{broken API_KEY=" + b"x" * 20 + b" ") == ["secret"]  # scanned as text
+    assert scrub.tar_texts(b"not a tar" * 100) == []
+    quant = b"\xff\xdb\x00\x04ab"  # a quantisation table: no text in it
+    comment = b"\xff\xfe\x00\x07hello"
+    assert scrub.jpeg_texts(b"\xff\xd8" + quant + comment + b"\xff\xda\x00\x02") == ["hello"]

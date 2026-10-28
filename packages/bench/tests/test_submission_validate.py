@@ -9,6 +9,7 @@ each tamper reaches the check meant to catch it.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import tarfile
@@ -539,3 +540,239 @@ def test_job_s01_scans_the_frames_text_segments(good, marker):
     rehash(bdir)
     v = validate.validate(bdir, release, where="job", ctx=ctx_for(env_of(bdir)))
     assert v.failed == ["S01"] and "frames.tar" in next(r.detail for r in v.checks if r.code == "S01")
+
+
+def edit_env(bdir: Path, fn: Callable[[dict], None]) -> None:
+    env = env_of(bdir)
+    fn(env)
+    (bdir / bundle.ENVELOPE).write_bytes(bundle.canonical_bytes(env))
+
+
+def settings(rows: list[dict]) -> dict:
+    return first(rows, "mark", mark="settings")["detail"]
+
+
+def frames(bdir: Path, jpegs: list[bytes]) -> None:
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+        for i, data in enumerate(jpegs):
+            info = tarfile.TarInfo(f"frames/{i}.jpg")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    (bdir / bundle.FRAMES_TAR).write_bytes(out.getvalue())
+
+
+def frame_count(bdir: Path) -> int:
+    with tarfile.open(bdir / bundle.FRAMES_TAR) as tar:
+        return len(tar.getnames())
+
+
+def nested(depth: int) -> object:
+    return [nested(depth - 1)] if depth else 0
+
+
+def bad_gold(rows: list[dict]) -> None:
+    for r in rows:
+        if r["kind"] == "snapshot":
+            r["gold"] = "x"
+
+
+def replace_dir(bdir: Path, name: str) -> None:
+    (bdir / name).unlink()
+    (bdir / name).mkdir()
+
+
+def rel(**kw) -> Callable[[validate.Release], validate.Release]:
+    return lambda r: dataclasses.replace(r, **{k: (v(r) if callable(v) else v) for k, v in kw.items()})
+
+
+def cond(fn: Callable[[dict], dict]) -> Callable[[validate.Release], dict]:
+    return lambda r: {"rules": fn(dict(r.conditions["rules"]))}
+
+
+def unlinked(name: str) -> Callable[[Path], None]:
+    return lambda b: (b / name).unlink()
+
+
+# (code, tamper, rehash it, the release changed, the context's lookups changed): one failure branch each.
+ERRORS: dict[str, tuple] = {
+    "unreadable bundle.json": ("F01", lambda b: (b / bundle.ENVELOPE).write_bytes(b"{"), False, None, {}),
+    "a listed name is a folder": ("F01", lambda b: replace_dir(b, "rolls.jsonl"), False, None, {}),
+    "a size differs": (
+        "F01",
+        lambda b: (b / "facts.jsonl").write_bytes((b / "facts.jsonl").read_bytes() + b"\n"),
+        False,
+        None,
+        {},
+    ),
+    "many schema errors": (
+        "F03",
+        lambda b: edit_facts(b, bad_gold),
+        True,
+        None,
+        {},
+    ),
+    "manifest missing": ("F03", unlinked("manifest.json"), True, None, {}),
+    "deep JSON": (
+        "F03",
+        lambda b: (b / "bg3-tools.json").write_text(json.dumps([{"name": "deep", "x": nested(40)}])),
+        True,
+        None,
+        {},
+    ),
+    "facts back in time": ("F03", lambda b: edit_facts(b, lambda rows: rows[-1].update(t=0)), True, None, {}),
+    "no events log": ("F03", unlinked("S001.events.jsonl"), True, None, {}),
+    "events out of order": (
+        "F03",
+        lambda b: edit_events(b, lambda rows: rows[2].update(seq=rows[1]["seq"])),
+        True,
+        None,
+        {},
+    ),
+    "model differs": ("F03", lambda b: edit_env(b, lambda e: e["model"].update(slug="x")), False, None, {}),
+    "client differs": ("F03", lambda b: edit_env(b, lambda e: e["client"].update(version="0")), False, None, {}),
+    "invalid run": (
+        "F04",
+        lambda b: edit_json(b, "result.json", lambda r: r.update(valid=False, invalid_reason="operator")),
+        True,
+        None,
+        {},
+    ),
+    "another suite": ("P01", None, False, rel(suite="bench-v9.9"), {}),
+    "another harness": ("P01", None, False, rel(versions=lambda r: {**r.versions, "harness": "0.0.0"}), {}),
+    "scenario not released": ("P01", None, False, rel(scenarios={}), {}),
+    "scenario digest": (
+        "P01",
+        None,
+        False,
+        rel(scenarios=lambda r: {n: {**s, "digest": "0" * 16} for n, s in r.scenarios.items()}),
+        {},
+    ),
+    "dirty repo": (
+        "P02",
+        lambda b: edit_json(b, "manifest.json", lambda m: m["pins"]["repo"].update(dirty=True)),
+        True,
+        None,
+        {},
+    ),
+    "condition not released": ("C01", None, False, rel(conditions={}), {}),
+    "no prompt for the client": (
+        "C01",
+        None,
+        False,
+        rel(conditions=cond(lambda c: {**c, "prompts": {"claude": {"sha256": "0" * 64}}})),
+        {},
+    ),
+    "allowlist differs": (
+        "C01",
+        None,
+        False,
+        rel(conditions=cond(lambda c: {**c, "tools": {**c["tools"], "allowlist_sha256": "0" * 64}})),
+        {},
+    ),
+    "tool list missing": ("C02", unlinked("bg3-tools.json"), True, None, {}),
+    "a tool not served": (
+        "C02",
+        lambda b: (b / "bg3-tools.json").write_text(json.dumps(json.loads((b / "bg3-tools.json").read_text())[1:])),
+        True,
+        None,
+        {},
+    ),
+    "instructions missing": ("C02", unlinked("bg3-instructions.txt"), True, None, {}),
+    "instructions edited": ("C02", lambda b: (b / "bg3-instructions.txt").write_text("other"), True, None, {}),
+    "caps differ": (
+        "C03",
+        lambda b: edit_json(b, "manifest.json", lambda m: m["caps"].update(run_hours=9)),
+        True,
+        None,
+        {},
+    ),
+    "seed differs": ("C03", lambda b: edit_json(b, "manifest.json", lambda m: m.update(seed=1)), True, None, {}),
+    "seed not applied": (
+        "C03",
+        lambda b: edit_facts(b, lambda rows: settings(rows)["seed"]["applied"].update(base_seed=1)),
+        True,
+        None,
+        {},
+    ),
+    "difficulty differs": (
+        "C03",
+        lambda b: edit_facts(b, lambda rows: settings(rows).update(difficulty="Tactician")),
+        True,
+        None,
+        {},
+    ),
+    "video doesn't resolve": ("E01", None, False, None, {"oembed": lambda vid: None}),
+    "video of another run": ("E01", None, False, None, {"oembed": lambda vid: {"title": "something else"}}),
+    "video too long": ("E02", None, False, None, {"duration": lambda vid: 99999.0}),
+    "render out of order": (
+        "E03",
+        lambda b: edit_json(b, "render.json", lambda r: r["events"].reverse()),
+        True,
+        None,
+        {},
+    ),
+    "rolls missing": ("X04", unlinked("rolls.jsonl"), True, None, {}),  # result.luck stays
+    "frames unreadable": ("E04", lambda b: (b / bundle.FRAMES_TAR).write_bytes(b"x" * 1024), True, None, {}),
+    "a frame not a JPEG": ("E04", lambda b: frames(b, [b"GIF89a"] * frame_count(b)), True, None, {}),
+    "too few frames": ("E04", lambda b: frames(b, [jpeg()]), True, None, {}),
+}
+
+
+@pytest.mark.parametrize("what", sorted(ERRORS))
+def test_each_failure_branch_names_its_code(tmp_path, what):
+    code, tamper, reseal, change, lookups = ERRORS[what]
+    d = good_run(tmp_path, FIGHT)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    if tamper is not None:
+        tamper(bdir)
+    if reseal:
+        rehash(bdir)
+    release = release_for(d)
+    if change is not None:
+        release = change(release)
+    base = ctx_for({} if what == "unreadable bundle.json" else env_of(bdir))  # its lookups read env when called
+    ctx = dataclasses.replace(base, **lookups)
+    v = validate.validate(bdir, release, where="job", ctx=ctx)
+    assert code in v.failed, [(r.code, r.detail) for r in v.checks if r.ok is False]
+    assert not v.accepted
+
+
+def test_lookups_that_cannot_answer_leave_e02_open(good):
+    bdir, release = good
+    for ctx in (validate.Context(), dataclasses.replace(ctx_for(env_of(bdir)), duration=lambda vid: None)):
+        e02 = next(r for r in validate.validate(bdir, release, where="job", ctx=ctx).checks if r.code == "E02")
+        assert e02.ok is None
+
+
+def test_validate_cli_prints_the_verdict(good, tmp_path, capsys):
+    bdir, release = good
+    doc = {
+        "schema": 1,
+        "kind": "bg3bench.release",
+        "about": "test",
+        "suite": release.suite,
+        "versions": release.versions,
+        "pins": release.pins,
+        "scenarios": {n: {**s, "save": None} for n, s in release.scenarios.items()},
+        "saves": [],
+        "conditions": {
+            c: {
+                **e,
+                "tools": {**e["tools"], "count": len(e["tools"]["names"])},
+                "prompts": {k: {**p, "condition": "rules"} for k, p in e["prompts"].items()},
+            }
+            for c, e in release.conditions.items()
+        },
+    }
+    (tmp_path / "release.json").write_text(json.dumps(doc))
+    code = validate.main([str(bdir), "--release", str(tmp_path / "release.json"), "--draft"])
+    out = json.loads(capsys.readouterr().out)
+    assert code == (0 if out["accepted"] else 1) and out["checks"]
+
+
+def test_worker_scope_runs_only_the_workers_checks(good):
+    bdir, release = good
+    v = validate.validate(bdir, release, where="worker")
+    assert {r.code for r in v.checks} == {c.code for c in codes.CHECKS if "worker" in c.where}

@@ -220,6 +220,8 @@ def pack(
     `released` default to the installed suite's scenario files and pinned suite versions; `literals` are values
     to scrub verbatim (the submitter's .env values)."""
     run_dir, out_dir = Path(run_dir), Path(out_dir)
+    if not run_dir.is_dir():
+        raise PackError(f"{run_dir}: not a run dir")
     names = bundle_files(run_dir)
     missing = [n for n in REQUIRED if n not in names]
     if missing or not any(EVENTS.fullmatch(n) for n in names):
@@ -309,5 +311,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

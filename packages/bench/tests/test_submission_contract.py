@@ -140,5 +140,10 @@ def test_check_codes_are_the_plan_table():
     assert codes.BY_CODE["S01"].where == ("panel", "worker", "job")
 
 
+def test_codes_prints_the_checks_file(capsys):
+    codes.main()
+    assert json.loads(capsys.readouterr().out) == codes.as_json()
+
+
 def test_checks_json_is_in_sync():
     assert json.loads((SCHEMA_DIR / "checks.v1.json").read_text()) == codes.as_json()

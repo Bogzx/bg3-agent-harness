@@ -225,3 +225,37 @@ def test_dir_story_store_and_record(tmp_path):
 def test_for_suite_without_a_story_folder(tmp_path):
     p = saves.for_suite(None, tmp_path / "installed.json")
     assert p.index and p.status(next(iter(p.index)), None)["status"] == "unknown"
+
+
+@pytest.mark.parametrize("over", [{"save_sha1": "xyz"}, {"sha256": "nothex"}])
+def test_bad_hashes_refused(over):
+    with pytest.raises(saves.SavesError, match="bad save_sha1|bad sha256"):
+        entry(**over)
+
+
+def test_load_refuses_another_version_and_a_listed_saveless_scenario(tmp_path):
+    (tmp_path / "s.json").write_text('{"schema": 2, "suites": {}}')
+    with pytest.raises(saves.SavesError, match="not a v1 saves file"):
+        saves.load(tmp_path / "s.json")
+    found = saves.disagreements({NAME: entry()}, {"test_start": {"start": {"kind": "new_game"}}})
+    assert found == ["test_start: has no start save but is listed"]
+
+
+def test_unpack_takes_a_folder_entry_and_caps_the_unzipped_size(monkeypatch):
+    with_dir = make_zip({f"{NAME}/": b"", f"{NAME}/{NAME}.lsv": LSV})
+    assert saves.unpack(with_dir, NAME) == {f"{NAME}.lsv": LSV}
+    monkeypatch.setattr(saves, "MAX_UNZIPPED_BYTES", 4)
+    with pytest.raises(saves.SavesError, match="unzips to over 4 bytes"):
+        saves.unpack(GOOD_ZIP, NAME)
+
+
+def test_install_needs_a_story_folder_and_remove_takes_a_folder_already_gone(tmp_path):
+    with pytest.raises(saves.SavesError, match="no Story folder"):
+        panel(story=FakeStory(present=False)).install(NAME, FakeStore(GOOD_ZIP))
+    p = panel()
+    p.install(NAME, FakeStore(GOOD_ZIP))
+    p.story.remove(NAME)  # deleted by hand (or by Steam) since
+    p.remove(NAME)
+    assert p.record.names() == set()
+    with pytest.raises(saves.SavesError, match="bad save name"):
+        saves.DirStory(tmp_path).write("../x", {})
