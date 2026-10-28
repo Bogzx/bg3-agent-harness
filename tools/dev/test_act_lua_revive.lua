@@ -299,3 +299,14 @@ test("an order given after the stand-up ended wins over one still waiting to run
     near(mv[#mv][5], 6, "the last walk ordered is the newer one's")
     for _, c in ipairs(mv) do assert(c[3] ~= 6, "the older order never walked") end
 end)
+
+test("a hotbar cast (ui) for a member still standing up is refused at once, not parked (#38 re-review)", function()
+    spell("Target_Bless", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 1 })
+    revived(true)
+    world[P1].comps.ServerCharacter.Flags = { "RegisteredForAutomatedDialog" }
+    local js = job(op("end_standup", { char = P1, toward = GOB }))
+    local j = job(op("cast", { char = P1, spell = "Target_Bless", target = GOB, ui = true }))
+    eq(j.status, "failed", "status")
+    assert(j.error:find("is still standing up from the revive: not cast", 1, true), j.error)
+    eq(js.status, "running", "the stand-up goes on")
+end)
