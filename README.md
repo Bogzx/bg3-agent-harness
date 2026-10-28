@@ -3,7 +3,7 @@
 An AI agent playing Baldur's Gate 3, plus the tools to run it, measure it and watch it.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-%E2%89%A53.12-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.14-3776AB.svg?logo=python&logoColor=white)](packages/harness/pyproject.toml)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](docs/SETUP.md)
 [![Status: work in progress](https://img.shields.io/badge/status-work%20in%20progress-orange.svg)](#limits)
 
@@ -212,6 +212,20 @@ budget reserve and runs nothing:
 uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/pilot-2026-10-22.toml
 ```
 
+### Benchmark panel
+
+A local web panel for running the benchmark on your own machine. Build its web app once
+(`cd packages/bench/web && npm ci && npm run build`), then from the repo root:
+
+```bash
+uv run --project packages/bench bg3bench-serve
+```
+
+It serves http://127.0.0.1:8790/ and binds to 127.0.0.1 only. Preflight and Doctor check the machine; New run plans
+and starts a matrix, with Record and Submit when done; Queue shows progress and stops the running matrix; Results
+validates a finished run and uploads it with your site token. Saves shows status only so far. What each screen does
+and what isn't wired yet: [docs/QUICKSTART.md](docs/QUICKSTART.md#the-benchmark-panel).
+
 ### Playthrough app
 
 Build the web app once (`cd packages/playthrough/web && npm ci && npm run build`), then from the repo root:
@@ -252,7 +266,7 @@ the app. [runner/README.md](runner/README.md) has the runner's options.
   re-resolved ([docs/GAME-UPDATES.md](docs/GAME-UPDATES.md)).
 - bg3le, the Script Extender port, built from the pinned submodule with the patches in `patches/bg3le/`
   (`tools/build_bg3le.sh`, Docker, about 10 GB RAM once).
-- Linux with systemd user sessions, Mesa's `VK_LAYER_MESA_screenshot` Vulkan layer, Docker, Python 3.12+, uv, and
+- Linux with systemd user sessions, Mesa's `VK_LAYER_MESA_screenshot` Vulkan layer, Docker, Python 3.14+, uv, and
   Node 22 for the app and the pi client.
 - 16 GB RAM and a GPU with 4 GB or more. Tested on a 4 GB NVIDIA laptop GPU under PRIME offload and on an AMD RX 6900
   XT.

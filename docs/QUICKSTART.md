@@ -1,7 +1,7 @@
 # Quickstart
 
-Three ways in: run your own model through the harness, plug your own MCP client into the bg3 server, or start the
-playthrough app to watch a long run. All three need the game set up first: [SETUP.md](SETUP.md) (Linux, a Steam
+Three ways in: run your own model through the harness (from the command line or the benchmark panel), plug your own
+MCP client into the bg3 server, or start the playthrough app to watch a long run. All three need the game set up first: [SETUP.md](SETUP.md) (Linux, a Steam
 copy of BG3 on the pinned build, bg3le built), then `python3 tools/bench_preflight.py` with no FAIL line.
 
 Status on 2026-10-22: Claude through Claude Code and DeepSeek Flash through pi (`profiles/deepseek-flash.toml`)
@@ -134,6 +134,45 @@ harness writes them per run ([packages/bench/README.md](../packages/bench/README
 Every published result cites the benchmark tag (`bench-vX.Y`) and the harness version
 ([CHANGELOG.md](../CHANGELOG.md)). Don't compare runs made at different pins: the runner refuses a run of a series
 whose pins changed, unless `--allow-version-drift`, which it records.
+
+## The benchmark panel
+
+The same matrix runs from a local web page instead of the command line.
+
+```bash
+(cd packages/bench/web && npm ci && npm run build)    # once
+uv run --project packages/bench bg3bench-serve        # http://127.0.0.1:8790/
+```
+
+`--port` changes the port, `--repo` and `--runtime` point it at another checkout, `--site` (or `$BG3BENCH_SITE`)
+names the submissions site, and `--release` the suite's release file that Validate checks against (default
+`packages/bench/releases/<suite>.json`).
+
+- Preflight: the bench preflight's checks, plus ffmpeg, a display and free disk space.
+- Doctor: `bg3harness.doctor`'s checks of the whole machine, each failure with what to do about it.
+- Saves: each scenario's start save, installed or missing.
+- New run: pick profiles (pi profiles only for now), scenarios, the condition, repeats and a cost cap per run.
+  Plan shows the jobs, the reserve against `runtime/budget.json` and a note when a scenario can run longer than
+  15 minutes (the longest video a YouTube account without phone verification can upload). Start writes
+  `runtime/panel/<name>.toml` and runs `runner/play.py bench run --matrix` on it, one matrix at a time. Record (on by
+  default) records the game window of every run into its run dir's `recording/`. Submit when done packs and
+  validates each valid run as it ends; it never uploads.
+- Queue: every matrix's progress. Stop ends the run playing now, records it as an operator stop and starts no new
+  one. The panel also finds a matrix it didn't start (from a terminal, or before the panel restarted) through
+  `runtime/runner.lock`, and stops it with `runtime/STOP`.
+- Results: the finished runs. Validate packs a run into `runtime/submissions/<run>/`, checks it with the validator
+  the site runs, and shows the verdict and every file that would be sent. Render video makes the evidence video from
+  that bundle and the recording. Upload sends the validated bundle and your YouTube link with the site token.
+- Settings: API keys are written to the repo's `.env` (refused while git doesn't ignore it) and shown masked; the
+  site token goes to `~/.config/bg3bench/site-token`.
+
+Every request must name `127.0.0.1` or `localhost` as its host, and every write needs the token the panel puts into
+its page (also saved to `~/.config/bg3bench/panel-token`). The panel sends no CORS headers.
+
+Not wired yet: Saves can't download, install or remove a save, and it checks that the save's folder is there, not its
+hash. There is no live view of a run. A rendered video's sync table and contact sheet aren't added to the bundle.
+Validate, Render video and Doctor call `bg3bench.submission`, `bg3harness.video` and `bg3harness.doctor`; when one
+is missing, the screen says so.
 
 ## Bring your own MCP client
 
