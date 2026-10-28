@@ -339,8 +339,15 @@ def equip_best(who: str | None = None) -> str:
 @reporting._guard
 def short_rest() -> str:
     """Short rest (2 per long rest): restores some HP and short-rest resources. The result shows HP before→after per member and the short rests left."""
+    # live N6 01:53:39: short_rest with a trade screen left open: the press did nothing under it and the rest waited
+    # 15 s ("TIMEOUT — timed out"). A player closes the trade window first; a conversation on screen is said as such.
+    note = "(closed the trade window first)\n" if plumbing._close_left_trade() else ""
+    screen = uitools._ui_screen()[0]
+    if screen in ("trade", "dialogue"):
+        return ("short_rest: FAILED — not pressed: the trade screen is open and didn't close" if screen == "trade"
+                else "short_rest: FAILED — not pressed: a conversation is on screen")
     before = core.game.try_rpc("state.status")
-    out = world_tools._box_act("short_rest", "ui.short_rest", {}, wait_s=20)
+    out = note + world_tools._box_act("short_rest", "ui.short_rest", {}, wait_s=20)
     res = reporting._batch.get("result")
     if isinstance(res, dict) and isinstance(res.get("short_rests_left"), int):
         overview.ALERTS.short_rests = res["short_rests_left"]
