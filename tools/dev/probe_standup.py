@@ -116,8 +116,13 @@ def moved(first: Any, last: Any) -> float:
     return probe.moved_m(first, last)
 
 
-def wrap(orig: Callable[[str, str], str], ev: Callable[[str], str], out: Path,
-         raw_secs: float = RAW_SECS, sleep: Callable[[float], None] = time.sleep) -> Callable[[str, str], str]:
+def wrap(
+    orig: Callable[[str, str], str],
+    ev: Callable[[str], str],
+    out: Path,
+    raw_secs: float = RAW_SECS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Callable[[str, str], str]:
     """world_tools._end_standup, sampled, then the raw walk when it didn't step; one record line in `out`."""
 
     def wrapped(reader: str, body: str) -> str:
@@ -136,9 +141,14 @@ def wrap(orig: Callable[[str, str], str], ev: Callable[[str], str], out: Path,
                 start = json.loads(ev(probe.move_code(body, None, RAW_DX)))
                 sleep(raw_secs)
                 end = json.loads(ev(probe.AFTER % probe.lua_str(start["uuid"])))
-                rec["raw_move"] = {"at_ms": now.get("t"), "call": start, "after_s": raw_secs, "end": end,
-                                   "via": "Osi.CharacterMoveToPosition (probe_revive_stuck move)",
-                                   "moved_m": probe.moved_m(start["start"], end["pos"])}
+                rec["raw_move"] = {
+                    "at_ms": now.get("t"),
+                    "call": start,
+                    "after_s": raw_secs,
+                    "end": end,
+                    "via": "Osi.CharacterMoveToPosition (probe_revive_stuck move)",
+                    "moved_m": probe.moved_m(start["start"], end["pos"]),
+                }
         except Exception as e:  # keep what was read; the agent's call still sees end_standup's own error
             rec["probe_error"] = str(e)
             if "end_standup" not in rec:
@@ -151,8 +161,10 @@ def wrap(orig: Callable[[str, str], str], ev: Callable[[str], str], out: Path,
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open("a") as f:
                 f.write(json.dumps(rec, default=str) + "\n")
-            print(json.dumps({k: v for k, v in rec.items() if k not in ("samples", "calls")}, default=str)[:3000],
-                  flush=True)
+            print(
+                json.dumps({k: v for k, v in rec.items() if k not in ("samples", "calls")}, default=str)[:3000],
+                flush=True,
+            )
         return rec["end_standup"]["reply"]
 
     return wrapped
@@ -164,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--standup-out" in args:
         i = args.index("--standup-out")
         out = Path(args[i + 1])
-        del args[i:i + 2]
+        del args[i : i + 2]
     if "--dry-run" not in args:
         from bg3ai import luadebug
         from bg3ai.tools import world_tools

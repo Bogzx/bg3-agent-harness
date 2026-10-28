@@ -49,7 +49,7 @@ class WrapTest(unittest.TestCase):
 
     def test_no_step_runs_the_raw_walk_after_end_standup(self):
         reply, sent, naps, rec = self.run_probe(0.0)
-        self.assertEqual(reply, "; body stood up")   # the agent's reply is end_standup's own
+        self.assertEqual(reply, "; body stood up")  # the agent's reply is end_standup's own
         self.assertEqual(sent, ["sampler", "now", "raw_move", "after", "stop"])
         self.assertEqual(naps, [6.0])
         self.assertEqual(rec["end_standup"]["moved_m"], 0.0)
@@ -64,6 +64,7 @@ class WrapTest(unittest.TestCase):
 
         def boom(r, b):
             raise RuntimeError("bridge down")
+
         with self.assertRaises(RuntimeError):
             su.wrap(boom, lua, out, sleep=lambda s: None)("reader", "body")
         self.assertEqual(lua.sent, ["sampler", "stop"])
@@ -74,6 +75,7 @@ class WrapTest(unittest.TestCase):
             if code == su.NOW:
                 raise RuntimeError("debugger timeout")
             return real(code)
+
         reply = su.wrap(lambda r, b: "; ok", bad_now, out, sleep=lambda s: None)("reader", "body")
         self.assertEqual((reply, lua2.sent), ("; ok", ["sampler", "stop"]))
         rec = json.loads(out.read_text().splitlines()[-1])
