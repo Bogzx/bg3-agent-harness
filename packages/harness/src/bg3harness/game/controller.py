@@ -15,14 +15,17 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import os
+import platform
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from bg3ai import lspk
 from bg3ai import saves as bsaves
 
 from .. import display_env, ramwatch
@@ -108,9 +111,29 @@ def bg3le_problems(problems: Callable[[Path], list[str]], dist: Path) -> list[st
     return problems(lib.parent)
 
 
+class SaveTimeError(RuntimeError):
+    """This Python can't read any save's SaveTime (savetime_problem): every save would look unreadable, and a save
+    choice by SaveTime (game.saves) would find none."""
+
+
+def savetime_problem() -> str | None:
+    """Why this Python can't read a save's SaveTime, None when it can. BG3 compresses a save's meta.lsf with zstd,
+    which bg3ai.lspk reads with compression.zstd (Python 3.14+). Night N7: under the system python3 3.13.5 every
+    Save.saved was None, every save choice found "no save of this playthrough", and the bench gave up on all 6 runs."""
+    if lspk.zstd is not None:
+        return None
+    return (
+        f"Python {platform.python_version()} ({sys.executable}) can't read a save's SaveTime: BG3 compresses meta.lsf "
+        "with zstd, which needs Python 3.14+ (compression.zstd)"
+    )
+
+
 def list_saves(save_dir: Path, save_lsv: Callable[[Path, str], Path | None]) -> list[game.Save]:
     """The saves under save_dir; a save's time is its <folder>/<label>.lsv's (save_lsv = runs.save_lsv), its saved
-    time the one its meta.lsf holds."""
+    time the one its meta.lsf holds (None: that save's meta is unreadable). SaveTimeError when no save's can be
+    read in this Python (savetime_problem), never a list of saves without one."""
+    if (why := savetime_problem()) is not None:
+        raise SaveTimeError(why)
     out: list[game.Save] = []
     try:
         entries = list(os.scandir(save_dir))

@@ -27,12 +27,14 @@ game it didn't start that is already in a loaded save, unless --take-over is giv
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 
 import _harness  # noqa: F401  (packages/harness/src and bridge/src on sys.path)
 import legacy_cli as lcli
 from bg3ai import milestones
 from bg3harness import clients, sandbox
+from bg3harness.game import controller
 from bg3harness.runner import env as renv
 from bg3harness.runner import judging
 from bg3harness.runner import policy as rpolicy
@@ -41,6 +43,10 @@ from bg3harness.runner import state as rstate
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    if (why := controller.savetime_problem()) is not None:  # every save choice goes by SaveTime (game.saves)
+        print(f"runner/play.py refused: {why}. Run it with the repo's Python 3.14: uv run python runner/play.py "
+              f"{shlex.join(argv)}", file=sys.stderr)
+        return 2
     if argv[:1] == ["bench"]:  # bg3bench's matrix CLI (its own arguments) with the live RunHost
         return lcli.cmd_bench(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
