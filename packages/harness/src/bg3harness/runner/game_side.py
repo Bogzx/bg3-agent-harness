@@ -249,9 +249,10 @@ class GameSide:
                 # page's row hint counts the save's playthrough as the game groups it (meta GameSessionID, as the
                 # agent's load_game): live N7 counted by folder prefix and missed the PROBE- copies in Vessa's group.
                 game.rpc("ui.menu", bsaves.load_args(renv.SAVE_DIR, save.folder), context="client", timeout=30)
-            except (RpcError, LuaDebugError) as e:
-                # Refused (gate, no such playthrough or date on the page) or the eval failed: restart the game
-                # with -loadSaveGame, which needs neither the gate nor the Load page.
+            except (RpcError, LuaDebugError, OSError) as e:
+                # Refused (gate, no such playthrough or date on the page), the eval failed, or a save folder went
+                # while load_args read the save dir (autosave rotation; without a row hint the mod would load row 1
+                # unchecked): restart the game with -loadSaveGame, which needs neither the gate nor the Load page.
                 renv.log(f"ui.menu load of {save.folder} refused ({e}); relaunching the game with --load instead")
                 self.event("load_refused", save=save.folder, error=str(e)[:300])
                 use_menu = False

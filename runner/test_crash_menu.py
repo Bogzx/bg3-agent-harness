@@ -238,6 +238,34 @@ class SplashMenu(unittest.TestCase):
         ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
         self.assertEqual(ev[-1]["kind"], "load_refused")
 
+    def test_a_save_folder_gone_while_the_row_hint_is_read_relaunches_with_the_save(self):
+        # app review of #33: load_args walks the save dir; an autosave rotated away between its listing and its stat
+        # raised FileNotFoundError past the refusal handler and the runner died
+        g = FakeMenuGame(splash=False)
+        relaunched = []
+        real_runner = lpt.Runner
+
+        class R(real_runner):
+            def kill_game(self):
+                relaunched.append("kill")
+
+            def launch_and_load(self, save):
+                relaunched.append(save.folder)
+                return save
+
+        gone = FileNotFoundError(2, "No such file or directory", "Story/Claude-1__AutoSave_3")
+        lpt.Runner = R
+        try:
+            with mock.patch.object(rgame.bsaves, "load_args", side_effect=gone):
+                r, label, _secs, log = self.run_ensure(g)
+        finally:
+            lpt.Runner = real_runner
+        self.assertEqual((label, g.loads), ("S014-start", []))
+        self.assertEqual(relaunched, ["kill", "Claude-1__S014-start"])
+        self.assertIn("Claude-1__AutoSave_3", log)
+        ev = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
+        self.assertEqual((ev[-1]["kind"], ev[-1]["save"]), ("load_refused", "Claude-1__S014-start"))
+
     def test_a_load_that_never_starts_fails_fast_instead_of_waiting_for_running(self):
         g = FakeMenuGame(load_starts=False)
         t0 = time.time()
