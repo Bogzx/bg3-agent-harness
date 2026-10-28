@@ -18,8 +18,9 @@ local start, osi_tasks = I.start, I.osi_tasks
 -- reachable floor point `reach` m from the target: on the line toward the walker, then 22.5 and 45 degrees off it.
 A.RANGE_STOP_SLACK = 1.0
 -- Live N11 step 2: the first leg ended 3.3 m from Wyll, 1.8 m short of its point; the second leg's path to the same
--- point had no nodes (0.0 m) and the walk ordered on it went 10.2 m round, ending 7.8 m off. A point the engine's path
--- ends more than RANGE_END_TOL_M from is not one it walks to: the next angle is tried.
+-- point had no nodes (0.0 m) and the walk ordered on it went 10.2 m round, ending 7.8 m off. A point more than
+-- RANGE_END_TOL_M away whose path has no nodes is not one the engine walks to: the next angle is tried. (A normal path
+-- ends ~1 m from its goal: that is not this.)
 A.RANGE_END_TOL_M = 1.0
 local function range_point(char, target, reach, range)
     local a, t = G.pos(char), G.pos(target)
@@ -35,7 +36,7 @@ local function range_point(char, target, reach, range)
         if y then
             local p = { x, y, z }
             local ok, info = G.reachable(char, p)
-            local off = ok and info.end_at and U.dist(info.end_at, p) or 0
+            local off = ok and info.no_nodes and U.dist(a, p) or 0
             if ok and not info.needs_jump and off > A.RANGE_END_TOL_M then
                 short = math.min(short or off, off)
             elseif ok and not info.needs_jump then
@@ -45,7 +46,7 @@ local function range_point(char, target, reach, range)
     end
     if short then
         G.refuse(string.format("no walkable point %.1f m from the target on this side (its range): the game's paths to"
-            .. " them end %.1f m or more short of them", reach, short))
+            .. " them have no nodes (they end where the character stands, %.1f m or more from them)", reach, short))
     end
     G.refuse(string.format("no walkable point %.1f m from the target on this side (its range)", reach))
 end
