@@ -380,8 +380,30 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(calls, [("act.interact", {"char": self.SH, "target": self.SCROLL})] * 2)   # read again
         self.assertEqual(clicks, [self.GALE])
         self.assertTrue(head.startswith("use_ability: done"), head)
-        self.assertIn("; Gale was 9.5 m from Shadowheart, beyond Longstrider's 2.5 m reach: Shadowheart walked into reach"
-                      " first (now 1.2 m from Gale) and read it again (Scroll of Longstrider read, cast on", head)
+        self.assertIn("; Gale was 9.5 m from Shadowheart, beyond Longstrider's 2.5 m reach; the spell in hand was put back"
+                      " (escape); Shadowheart walked into reach first (now 1.2 m from Gale) and read it again (Scroll of "
+                      "Longstrider read, cast on", head)
+
+    def test_a_ranged_spell_walks_only_into_its_range(self):
+        """App review of #37: move_to `within` is a melee reach (2.2 m at most): a Fireball read 20 m off walked the
+        reader into its own blast. A ranged spell's walk is move_to `range` (stop on the way in)."""
+        far = dict(self.FAR, **{"act.spell_reach": lambda a: {"range_m": 18, "melee": False, "reach_m": 18,
+                                                                "dist_m": 20.0}})
+        self._run("Shadowheart", "Scroll of Fireball", target=self.GALE, name="Scroll of Fireball", rpc=far,
+                  jobs={"act.move_to": lambda a: JobResult("done", {"dist": 17.0, "in_reach": True})})
+        moves = [a for op, a in self.rpcs if op == "act.move_to"]
+        self.assertEqual(moves, [{"char": self.SH, "target": self.GALE, "range": 18}])
+
+    def test_a_spell_that_stays_in_hand_is_not_walked_with(self):
+        self.cancel_how = "failed (still armed)"
+        out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
+                                       name="Scroll of Longstrider", rpc=self.FAR)
+        head = out.split("\n")[0]
+        self.assertTrue(head.startswith("use_ability: FAILED"), head)
+        self.assertIn("beyond Longstrider's 2.5 m reach: not walked; the spell is still in Shadowheart's hand (failed "
+                      "(still armed)), nothing cast", head)
+        self.assertEqual([op for op, _ in self.rpcs if op == "act.move_to"], [])
+        self.assertEqual((len(calls), clicks), (1, []))
 
     def test_a_failed_walk_into_reach_reads_nothing_more(self):
         out, calls, clicks = self._run("Shadowheart", "Scroll of Longstrider", target=self.GALE,
@@ -389,8 +411,8 @@ class ScrollUse(unittest.TestCase):
                                        jobs={"act.move_to": lambda a: JobResult("failed", {}, "no path to the target")})
         head = out.split("\n")[0]
         self.assertTrue(head.startswith("use_ability: FAILED"), head)
-        self.assertIn("beyond Longstrider's 2.5 m reach: the walk into reach failed: no path to the target; the spell "
-                      "was put back, nothing cast", head)
+        self.assertIn("beyond Longstrider's 2.5 m reach; the spell in hand was put back (escape); the walk into reach "
+                      "failed: no path to the target, nothing cast", head)
         self.assertEqual((len(calls), clicks), (1, []))
 
     def test_failed_click_puts_the_spell_back(self):
