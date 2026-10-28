@@ -370,8 +370,11 @@ def _load_once(save: str, boot0: str | None, alive_at_start: bool | None) -> tup
     (worth pressing again); a crash, a timeout or a real load is final."""
     # The mod selects the save on the Load page (by playthrough, position and date) and presses Load; the
     # load then resets the mod's Lua, so a poll may fail mid-way: wait for the game to be Running again.
+    args = saves.load_args(core.SAVE_DIR, save)
+    if "index" not in args:  # without a row and a date the mod would load the playthrough's row 1 unchecked
+        return JobResult("failed", None, f"{save}: not on the Load page (gone or unknown)"), False
     try:
-        r = core.game.run_job("ui.menu", saves.load_args(core.SAVE_DIR, save), context="client", wait_s=40)
+        r = core.game.run_job("ui.menu", args, context="client", wait_s=40)
         if r.status == "failed" and isinstance(r.result, dict) and r.result.get("needs_key") and world_tools._inp() is not None:
             world_tools._inp().key(r.result["needs_key"])
             r = JobResult("done", {"loading": True, "via": "shim"})

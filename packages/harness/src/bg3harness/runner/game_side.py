@@ -248,11 +248,14 @@ class GameSide:
                 # ui.menu load works from the main menu and from in-game (it opens the load screen itself). The
                 # page's row hint counts the save's playthrough as the game groups it (meta GameSessionID, as the
                 # agent's load_game): live N7 counted by folder prefix and missed the PROBE- copies in Vessa's group.
-                game.rpc("ui.menu", bsaves.load_args(renv.SAVE_DIR, save.folder), context="client", timeout=30)
+                args = bsaves.load_args(renv.SAVE_DIR, save.folder)
+                if "index" not in args:  # without a row and a date the mod would load row 1 unchecked: setup fails,
+                    # and the recovery picks a save again
+                    raise RuntimeError(f"{save.folder}: not on the Load page (gone or unknown)")
+                game.rpc("ui.menu", args, context="client", timeout=30)
             except (RpcError, LuaDebugError, OSError) as e:
-                # Refused (gate, no such playthrough or date on the page), the eval failed, or a save folder went
-                # while load_args read the save dir (autosave rotation; without a row hint the mod would load row 1
-                # unchecked): restart the game with -loadSaveGame, which needs neither the gate nor the Load page.
+                # Refused (gate, no such playthrough or date on the page), the eval failed, or the save dir couldn't
+                # be read: restart the game with -loadSaveGame, which needs neither the gate nor the Load page.
                 renv.log(f"ui.menu load of {save.folder} refused ({e}); relaunching the game with --load instead")
                 self.event("load_refused", save=save.folder, error=str(e)[:300])
                 use_menu = False
