@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -80,6 +81,37 @@ class WrapTest(unittest.TestCase):
         self.assertEqual((reply, lua2.sent), ("; ok", ["sampler", "stop"]))
         rec = json.loads(out.read_text().splitlines()[-1])
         self.assertEqual(rec["probe_error"], "debugger timeout")
+
+    def test_arm_b_casts_on_the_member_during_end_standup_and_records_it(self):
+        """night2: arm B sends the spell CAST_AFTER_S into end_standup on its own thread; the record says when (the
+        sampler's clock), what it replied and how long it took, and the sampler stops only after it ended."""
+        lua, naps, cast_done = FakeLua(0.0), [], threading.Event()
+        out = Path(tempfile.mkdtemp()) / "su.jsonl"
+
+        def cure() -> str:
+            cast_done.set()
+            return "use_ability: done — cast=Target_CureWounds target={e2}"
+
+        def end_standup(r, b):  # the stand-up job runs while the spell is cast (N12: ~5 s into it)
+            self.assertTrue(cast_done.wait(5), "the cast ran during end_standup")
+            return "; body took no step"
+
+        f = su.wrap(end_standup, lua, out, raw_secs=6.0, sleep=naps.append, during=cure, cast_after=2.5)
+        self.assertEqual(f("reader", "body"), "; body took no step")
+        rec = json.loads(out.read_text().splitlines()[0])
+        self.assertEqual(rec["arm"], "B")
+        self.assertEqual(rec["cast"]["after_s"], 2.5)
+        self.assertEqual(rec["cast"]["at_ms"], 9100)
+        self.assertEqual(rec["cast"]["reply"], "use_ability: done — cast=Target_CureWounds target={e2}")
+        self.assertIn("took_s", rec["cast"])
+        self.assertEqual(naps, [2.5, 6.0])  # the cast's delay, then the raw walk's
+        self.assertEqual(lua.sent, ["sampler", "now", "now", "raw_move", "after", "stop"])
+
+    def test_arm_a_casts_nothing(self):
+        _, _, naps, rec = self.run_probe(0.0)
+        self.assertEqual(rec["arm"], "A")
+        self.assertNotIn("cast", rec)
+        self.assertEqual(naps, [6.0])
 
     def test_a_step_needs_no_raw_walk(self):
         _, sent, naps, rec = self.run_probe(2.5)
