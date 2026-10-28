@@ -173,8 +173,8 @@ Every request must name `127.0.0.1` or `localhost` as its host, and every write 
 its page (also saved to `~/.config/bg3bench/panel-token`). The panel sends no CORS headers.
 
 Not wired yet: Saves can't download, install or remove a save, and it checks that the save's folder is there, not its
-hash. There is no live view of a run. Validate, Render video and Doctor call `bg3bench.submission`, `bg3harness.video` and `bg3harness.doctor`; when one
-is missing, the screen says so.
+hash. There is no live view of a run. Validate and Render video call `bg3bench.submission` to pack and check a run; until the bench has that module, they
+say so.
 
 ## Bring your own MCP client
 

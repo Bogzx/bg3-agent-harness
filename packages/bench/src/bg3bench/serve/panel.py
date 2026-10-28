@@ -10,18 +10,18 @@
   without phone verification can upload (15 minutes);
 - queue: runtime/matrix/*/progress.json (bg3bench.matrix);
 - results: every run dir under runtime/sessions with manifest.json and result.json;
-- doctor: bg3harness.doctor's report (imported when asked: a harness without it gives a PanelError).
+- doctor: bg3harness.doctor's report, refused when it isn't the shape the Doctor screen reads.
 """
 
 from __future__ import annotations
 
-import importlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from bg3harness import doctor as hdoctor
 from bg3harness import profiles as hprofiles
 
 from bg3bench import conditions, matrix, scenario
@@ -298,11 +298,7 @@ def preflight_view(lines: Sequence[Check]) -> dict[str, Any]:
 def harness_doctor() -> dict[str, Any]:
     """bg3harness.doctor's report(doctor()): {"ready": bool, "fails": int, "warns": int,
     "checks": [{"name", "status": PASS|WARN|FAIL, "detail", "fix"}]} ("fix" is "" for a PASS)."""
-    try:
-        mod: Any = importlib.import_module("bg3harness.doctor")
-    except ImportError:
-        raise PanelError("this harness has no bg3harness.doctor yet") from None
-    rep = mod.report(mod.doctor())
+    rep = hdoctor.report(hdoctor.doctor())
     if why := doctor_problem(rep):
         raise PanelError(f"bg3harness.doctor's report isn't what the Doctor screen reads: {why}")
     return rep

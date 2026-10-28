@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from bg3harness import doctor as hdoctor
 
 from bg3bench.serve import panel, security, video
 from bg3bench.serve.server import TOKEN_SLOT, App, parser, serve
@@ -425,18 +426,18 @@ def test_doctor(server):
     }
 
 
-def test_harness_doctor_imports_bg3harness_doctor(monkeypatch):
-    import sys
-    from types import SimpleNamespace
+def test_harness_doctor_runs_bg3harness_doctor(monkeypatch):
+    seen = []
 
-    fake = SimpleNamespace(doctor=lambda: DOCTOR["checks"], report=lambda checks: {**DOCTOR, "checks": checks})
-    monkeypatch.setitem(sys.modules, "bg3harness.doctor", fake)
-    assert panel.harness_doctor() == DOCTOR
-    fake.report = lambda checks: {"ready": "yes", "checks": checks}
+    def doctor():
+        seen.append("doctor")
+        return [hdoctor.Check("ffmpeg", "PASS", "/usr/bin/ffmpeg with libx264"),
+                hdoctor.Check("shim", "FAIL", "no input shim", "native/bg3sdl/build.sh")]  # fmt: skip
+
+    monkeypatch.setattr(panel.hdoctor, "doctor", doctor)
+    assert panel.harness_doctor() == DOCTOR and seen == ["doctor"]  # the real report() of those checks
+    monkeypatch.setattr(panel.hdoctor, "report", lambda checks: {"ready": "yes", "checks": []})
     with pytest.raises(panel.PanelError, match="isn't what the Doctor screen reads: ready must be a boolean"):
-        panel.harness_doctor()
-    monkeypatch.setitem(sys.modules, "bg3harness.doctor", None)  # import raises ImportError
-    with pytest.raises(panel.PanelError, match="no bg3harness.doctor"):
         panel.harness_doctor()
 
 
@@ -458,10 +459,9 @@ def test_doctor_problem(rep, why):
 
 
 def test_the_harness_doctor_report_has_the_screens_shape():
-    """Contract with bg3harness.doctor (skipped while the harness has no doctor)."""
-    doctor = pytest.importorskip("bg3harness.doctor")
-    checks = [doctor.Check("ffmpeg", "PASS", "ok"), doctor.Check("shim", "FAIL", "no shim", "build it")]
-    rep = doctor.report(checks)
+    """Contract with bg3harness.doctor: its report is what the Doctor screen reads."""
+    checks = [hdoctor.Check("ffmpeg", "PASS", "ok"), hdoctor.Check("shim", "FAIL", "no shim", "build it")]
+    rep = hdoctor.report(checks)
     assert panel.doctor_problem(rep) is None and rep["checks"][0]["fix"] == ""
 
 
