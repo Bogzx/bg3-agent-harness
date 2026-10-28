@@ -5,7 +5,9 @@ pytest.importorskip("inspect_ai")
 from inspect_ai.log import read_eval_log
 from test_manifest_results import naut2_pairs
 
-from bg3bench import export_inspect, results
+from bg3bench import export_inspect, results, suite
+
+TAG = suite.suite_version()  # the installed bench's: a release holds runs of its own suite
 
 
 def release_and_results():
@@ -17,7 +19,7 @@ def release_and_results():
         (m3, r3),
         (other, {**r3, "run_id": "x-r001", "passed": False, "t_pass_s": None}),
     ]
-    release = results.build_results(pairs, seed=0, created=1792300000.0, bench_tag="bench-v0.1", b=200)
+    release = results.build_results(pairs, seed=0, created=1792300000.0, bench_tag=TAG, b=200)
     return release, {r["run_id"]: r for _, r in pairs}
 
 
@@ -31,7 +33,7 @@ def test_eval_logs_round_trip(tmp_path):
     ]
     back = read_eval_log(str(paths[1]))
     assert back.status == "success" and back.eval.model == "opus" and back.eval.task == "bg3-bench"
-    assert back.eval.metadata == {"bench_tag": "bench-v0.1", "seed": 0, "n_runs": 3, "n_invalid": 1}
+    assert back.eval.metadata == {"bench_tag": TAG, "seed": 0, "n_runs": 3, "n_invalid": 1}
     assert back.eval.config.epochs == 2 and back.eval.dataset.samples == 1
     # the invalid run (r002) is not a sample; epochs count the valid runs per scenario
     assert [(s.id, s.epoch, s.metadata["run_id"]) for s in back.samples] == [
