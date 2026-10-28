@@ -4,7 +4,8 @@ Protocol, so the arguments are tested without it.
 
     game clips ─┐ (fps, 1280x720)
     strip pngs ─┴ vstack ─┐
-    side pngs ────────────┴ hstack -> libx264 -preset veryfast -crf 24, 15 fps, yuv420p, +faststart
+    side pngs ────────────┴ hstack -> libx264 -preset veryfast -crf 24 (or h264_nvenc -cq 24 on an NVIDIA GPU),
+                                      15 fps, yuv420p, +faststart
 """
 
 from __future__ import annotations
@@ -18,7 +19,10 @@ from .draw import GAME_H, GAME_W
 from .timeline import FPS, Clip, RenderError
 
 CRF = 24
-PRESET = "veryfast"
+ENCODERS: dict[str, tuple[str, ...]] = {
+    "libx264": ("-preset", "veryfast", "-crf", str(CRF)),  # the default: any machine
+    "h264_nvenc": ("-preset", "p5", "-rc", "vbr", "-cq", str(CRF), "-b:v", "0"),  # an NVIDIA GPU: the CPU stays free
+}
 SHEET_EVERY_S = 30  # the contact sheet: one frame per 30 s of run
 SHEET_W, SHEET_H = 320, 180
 
@@ -62,8 +66,13 @@ def images_list(images: Sequence[tuple[Path, float]]) -> str:
     return "\n".join(out) + "\n"
 
 
-def compose_args(game: Path, strip: Path, side: Path, out: Path, duration: float, fps: int = FPS) -> list[str]:
-    """ffmpeg's arguments: the three concat lists composed into one 1920x1080 H.264 video of `duration` seconds."""
+def compose_args(
+    game: Path, strip: Path, side: Path, out: Path, duration: float, fps: int = FPS, encoder: str = "libx264"
+) -> list[str]:
+    """ffmpeg's arguments: the three concat lists composed into one 1920x1080 H.264 video of `duration` seconds,
+    encoded with `encoder` (ENCODERS)."""
+    if encoder not in ENCODERS:
+        raise ValueError(f"unknown encoder {encoder!r} (one of {sorted(ENCODERS)})")
     norm = f"fps={fps},format=yuv420p,setsar=1"
     graph = ";".join(
         [
@@ -83,7 +92,7 @@ def compose_args(game: Path, strip: Path, side: Path, out: Path, duration: float
         *concat, "-i", str(side),
         "-filter_complex", graph, "-map", "[v]", "-an",
         "-t", f"{duration:.3f}", "-r", str(fps),
-        "-c:v", "libx264", "-preset", PRESET, "-crf", str(CRF), "-pix_fmt", "yuv420p",
+        "-c:v", encoder, *ENCODERS[encoder], "-pix_fmt", "yuv420p",
         "-movflags", "+faststart", str(out),
     ]  # fmt: skip
 

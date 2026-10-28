@@ -1,7 +1,8 @@
 """Render a run's evidence video: the game recording beside the agent's tool calls and visible text.
 
     python -m bg3harness.video <run_dir> --index <recording>/index.json --out <dir> --run-id ID --run-hash SHA256 \
-        [--site HOST] [--title T] [--task T] [--cap-min N] [--cost-kind billed] [--t-pass-s S] [--sample-s N]
+        [--site HOST] [--title T] [--task T] [--cap-min N] [--cost-kind billed] [--t-pass-s S] [--sample-s N] \
+        [--encoder libx264|h264_nvenc]
 
 It reads only files that also go into the run's bundle (every Sxxx*.events.jsonl, facts.jsonl) and the recorder's
 segments, and writes into --out: render.json (the sync table), evidence.mp4 (1920x1080) and frames/*.jpg (the
@@ -134,8 +135,10 @@ def render(
     out: Path,
     work: Path,
     ffmpeg: compose.Ffmpeg = compose.run_ffmpeg,
+    encoder: str = "libx264",
 ) -> Path:
-    """render.json, evidence.mp4 and frames/ into `out`; the images and lists into `work`. Returns the video.
+    """render.json, evidence.mp4 (encoded with `encoder`: compose.ENCODERS) and frames/ into `out`; the images and
+    lists into `work`. Returns the video.
     RenderError before anything is written when a clip's file is gone (the recorder's disk cap deletes the oldest)."""
     gone = [c.file for c in p.clips if not (video_dir / c.file).is_file()]
     if gone:
@@ -146,7 +149,7 @@ def render(
     game_list = work / "game.ffconcat"
     game_list.write_text(compose.clips_list(p.clips, video_dir), encoding="utf-8")
     video = out / "evidence.mp4"
-    ffmpeg(compose.compose_args(game_list, strip_list, side_list, video, p.duration))
+    ffmpeg(compose.compose_args(game_list, strip_list, side_list, video, p.duration, encoder=encoder))
     frames = out / "frames"
     frames.mkdir(exist_ok=True)
     ffmpeg(compose.sheet_args(video, frames))
@@ -169,6 +172,9 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     ap.add_argument("--cost-kind", default="billed", choices=("billed", "notional", "estimated"))
     ap.add_argument("--t-pass-s", type=float)
     ap.add_argument("--sample-s", type=float, help="render only the run's first N seconds")
+    ap.add_argument(
+        "--encoder", default="libx264", choices=sorted(compose.ENCODERS), help="h264_nvenc: an NVIDIA GPU encodes"
+    )
     ap.add_argument("--work", type=Path, help="where the images go (default: a temporary directory)")
     a = ap.parse_args(argv)
     logs = events_logs(a.run_dir)
@@ -183,10 +189,10 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
             end = min(end, start + a.sample_s)
         p = plan(index.get("segments") or [], logs, facts, start, end, a.t_pass_s, clip_events=bool(a.sample_s))
         if a.work:
-            video = render(p, meta, a.index.parent, a.out, a.work, ffmpeg)
+            video = render(p, meta, a.index.parent, a.out, a.work, ffmpeg, a.encoder)
         else:
             with tempfile.TemporaryDirectory(prefix="bg3-video-") as tmp:
-                video = render(p, meta, a.index.parent, a.out, Path(tmp), ffmpeg)
+                video = render(p, meta, a.index.parent, a.out, Path(tmp), ffmpeg, a.encoder)
     except RenderError as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2

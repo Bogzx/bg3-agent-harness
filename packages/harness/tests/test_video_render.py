@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from bg3harness.video import draw, render
+from bg3harness.video import compose, draw, render
 from bg3harness.video import timeline as T  # noqa: N812
 
 T0 = 1000.0
@@ -88,6 +88,19 @@ def test_a_run_becomes_render_json_images_and_the_compose_command(tmp_path: Path
     assert "[g][s]vstack=inputs=2[l]" in compose_args[compose_args.index("-filter_complex") + 1]
     assert compose_args[-1] == str(video) and sheet[sheet.index("-i") + 1] == str(video)
     assert "fps=1/30,scale=320:180" in sheet
+    assert compose_args[compose_args.index("-c:v") + 1 :][:5] == ["libx264", "-preset", "veryfast", "-crf", "24"]
+
+
+def test_the_encoder_is_libx264_unless_nvenc_is_asked_for(tmp_path: Path):
+    index = write_run(tmp_path / "run")
+    args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out"), "--run-id", "s-r001"]
+    ff = FakeFfmpeg()
+    assert render.main([*args, "--run-hash", "ab" * 32, "--encoder", "h264_nvenc"], ff) == 0
+    compose_args = ff.calls[0]
+    assert compose_args[compose_args.index("-c:v") + 1 :][:3] == ["h264_nvenc", "-preset", "p5"]
+    assert compose_args[compose_args.index("-cq") + 1] == "24"
+    with pytest.raises(ValueError, match="unknown encoder 'vp9'"):
+        compose.compose_args(tmp_path, tmp_path, tmp_path, tmp_path / "v.mp4", 1.0, encoder="vp9")
 
 
 def durations(listing: str) -> list[float]:
