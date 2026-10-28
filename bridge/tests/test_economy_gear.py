@@ -3,8 +3,10 @@ gear), scroll use and the level-up stage log. Fixtures: test_economy.py."""
 
 from __future__ import annotations
 
+import json
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from bg3ai import hotbar
@@ -258,6 +260,36 @@ class StageMs(unittest.TestCase):
         self.assertNotIn("_stage_ms", r.result)
         lines = (core.RUNTIME / "stage_ms.jsonl").read_text().strip().splitlines()
         self.assertEqual(_json.loads(lines[-1])["stages"], "open=900 spells=4200")
+
+
+class RuntimeLogsMakeTheirDir(unittest.TestCase):
+    """The runtime logs a tool writes before any actions.jsonl line made runtime/ (a new BG3AI_RUNTIME: the test
+    profile's, 2026-10-28) create it as core._log does; they lost every record to the swallowed OSError."""
+
+    def setUp(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.runtime = Path(tmp.name) / "runtime"  # not made yet
+        patcher = mock.patch.object(core, "RUNTIME", self.runtime)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def rows(self, name: str) -> list[dict]:
+        return [json.loads(x) for x in (self.runtime / name).read_text().splitlines()]
+
+    def test_stage_ms(self):
+        plumbing._log_stage_ms("ui.level_up", JobResult(status="done", result={"_stage_ms": "open=900"}, elapsed_ms=900))
+        self.assertEqual(self.rows("stage_ms.jsonl")[0]["stages"], "open=900")
+
+    def test_character_creation_timing(self):
+        from bg3ai.tools import newgame
+        newgame._log_cc_timing({"apply_ms": 1200})
+        self.assertEqual(self.rows("stage_ms.jsonl")[0]["op"], "create_character")
+
+    def test_hotbar_cast(self):
+        combat._log_hotbar("Target_Bless", HotbarCastResult(ok=True))
+        self.assertEqual(self.rows("hotbar_cast.jsonl")[0]["spell"], "Target_Bless")
 
 
 class ScrollUse(unittest.TestCase):
