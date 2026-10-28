@@ -17,11 +17,11 @@ local start, osi_tasks = I.start, I.osi_tasks
 -- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, at a
 -- reachable floor point `reach` m from the target: on the line toward the walker, then 22.5 and 45 degrees off it.
 A.RANGE_STOP_SLACK = 1.0
-local function range_point(char, target, reach)
+local function range_point(char, target, reach, range)
     local a, t = G.pos(char), G.pos(target)
     if not a or not t then G.refuse("cannot locate target") end
     local d = U.dist(a, t)
-    if d <= reach then return { here = true, dist = d, length_m = 0, tpos = t } end
+    if d <= range then return { here = true, dist = d, length_m = 0, tpos = t } end
     local base = math.atan(a[3] - t[3], a[1] - t[1])
     for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
         local ang = base + k * math.pi / 8
@@ -771,9 +771,11 @@ reg("move_to", function(args)
         reach = melee and math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK)) or A.MOVE_REACH
         local range = not melee and tonumber(args.range)
         if range then -- in_reach is tested against the range itself (centres, walk_arrived)
-            melee, reach = range, math.max(A.MOVE_REACH, range - A.RANGE_STOP_SLACK)
+            -- live N10 step 2: the game ended a touch walk (reach 2.5 m, centres) 1.8 m short of its point, 3.3 m off:
+            -- aim RANGE_STOP_SLACK inside the reach whatever its size (never nearer than 1 m), as spell_reach measures
+            melee, reach = range, math.max(1.0, range - A.RANGE_STOP_SLACK)
         end
-        local plan = range and range_point(char, target, reach) or G.approach_point(char, target, reach)
+        local plan = range and range_point(char, target, reach, range) or G.approach_point(char, target, reach)
         if plan.here then
             return start("move_to", char, {
                 timeout_ms = 1000,
