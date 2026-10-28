@@ -126,6 +126,31 @@ test("end_standup: a walk that never starts is ordered again until one walks (li
     eq(j.result.orders, 3, "orders"); eq(j.result.walked, true, "walked"); eq(j.result.stepped_m, 3, "stepped")
 end)
 
+test("end_standup: a member who dies again is not 'stood up' (app review of #34)", function()
+    local names = revived(true)
+    local j = job(op("end_standup", { char = P1, toward = GOB }))
+    tick(5)
+    osiv[key("IsDead", P1)] = 1 -- the death takes the ResurrectComponent and the action state with it
+    names[2] = nil
+    world[P1].comps.ServerCharacter.AiActionMachine.Layers[1] = {}
+    tick()
+    eq(j.status, "failed", "status"); eq(j.result.ended, nil, "not ended")
+    eq(j.error, "the character died again during the stand-up (1 walk order(s) sent)", "the facts")
+end)
+
+test("end_standup: combat starting mid-job stops the orders and purges at once (app review of #34)", function()
+    revived(true)
+    local j = job(op("end_standup", { char = P1, toward = GOB }))
+    tick(5)
+    local purges = #called("PurgeOsirisQueue")
+    osiv[key("IsInCombat", P1)] = 1
+    tick()
+    eq(j.status, "interrupted", "status")
+    eq(j.error, "combat started: no more stand-up walk orders or queue purges for the character (1 sent)", "facts")
+    tick(40)
+    eq(#called("CharacterMoveToPosition"), 1, "no more orders"); eq(#called("PurgeOsirisQueue"), purges, "no purge")
+end)
+
 test("a walk the game never starts names the unfinished action holding the character (N4), not a bare no path",
     function()
     revived(false)
