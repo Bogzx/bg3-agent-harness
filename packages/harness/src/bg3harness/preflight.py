@@ -37,6 +37,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,9 +70,9 @@ class Ctx:
     steam: Any  # tools/steam_paths.py (Steam libraries, manifests, offline state)
     bg3le: Any  # tools/bg3le_buildinfo.py (the stale-build check)
     home: Path = field(default_factory=Path.home)
-    env: dict = field(default_factory=lambda: dict(os.environ))
-    run: object = _run  # (cmd) -> (returncode, output)
-    which: object = shutil.which
+    env: dict[str, str] = field(default_factory=lambda: dict(os.environ))
+    run: Callable[[list[str]], tuple[int, str]] = _run  # (cmd) -> (returncode, output)
+    which: Callable[[str], str | None] = shutil.which
     meminfo: Path = Path("/proc/meminfo")
 
 

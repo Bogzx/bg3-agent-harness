@@ -48,7 +48,8 @@ def wayland_socket(runtime_dir: str) -> str | None:
     return names[0] if names else None
 
 
-def fill(env: dict, default_display: str = DEFAULT_DISPLAY, uid: int | None = None, ps_text: str | None = None) -> dict:
+def fill(env: dict[str, str], default_display: str = DEFAULT_DISPLAY, uid: int | None = None,
+         ps_text: str | None = None) -> dict[str, str]:
     """Set the unset KEYS in env (in place) from the desktop session; returns {key: value} of what was set.
     XAUTHORITY stays unset when no Xwayland runs (the caller decides whether that's fatal). An XAUTHORITY whose
     file is gone counts as unset (and is dropped): Xwayland makes a new one when it restarts (naut3 2026-10-17:
@@ -77,11 +78,11 @@ def fill(env: dict, default_display: str = DEFAULT_DISPLAY, uid: int | None = No
     return got
 
 
-def describe(env: dict) -> str:
+def describe(env: dict[str, str]) -> str:
     return " ".join(f"{k}={env.get(k) or 'unset'}" for k in KEYS)
 
 
-def problem(env: dict, home: str | None = None, x11_dir: str = "/tmp/.X11-unix") -> str | None:
+def problem(env: dict[str, str], home: str | None = None, x11_dir: str = "/tmp/.X11-unix") -> str | None:
     """Why the game can't open a window with env (after fill), or None. DISPLAY must be set and, when local (":N"),
     its X socket must exist; XAUTHORITY must name an existing file, or be unset with a ~/.Xauthority (Xlib's
     default)."""

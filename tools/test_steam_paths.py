@@ -72,6 +72,16 @@ class SteamPathsTest(unittest.TestCase):
         self.assertEqual(sp.manifest({}, self.home), lib / "steamapps/appmanifest_1086940.acf")
         self.assertEqual(sp.buildid({}, self.home), "25605617")
 
+    def test_depots(self):
+        _, lib = self.debian_layout()
+        acf = lib / "steamapps/appmanifest_1086940.acf"
+        acf.write_text(acf.read_text().replace('\t"InstalledDepots"\n\t{\n\t}',
+                                               '\t"InstalledDepots"\n\t{\n\t\t"2378501"\n\t\t{\n'
+                                               '\t\t\t"manifest"\t\t"3452110053832236087"\n\t\t}\n\t}'))
+        self.assertEqual(sp.depots({}, self.home), {"2378501": "3452110053832236087"})
+        acf.unlink()
+        self.assertEqual(sp.depots({}, self.home), {})
+
     def test_env_overrides(self):
         self.debian_layout()
         self.assertEqual(sp.game_dir({"BG3_DIR": "/g"}, self.home), Path("/g"))
