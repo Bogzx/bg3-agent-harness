@@ -154,7 +154,12 @@ def bring_into_view(game: Game, inp: InputClient, uuid: str | None = None, steps
     prev_x: float | None = None
     prev_edge: float | None = None
     prev_behind, prev_side = False, None
-    for _ in range(steps):
+    # live N8 7d (2026-10-28): Wyll 9.5 m off below the window, a zoom out gained nothing: off_screen. Past the zoom's
+    # reach the camera turns one way round the pivot (`stall`) until the point is in the window, `steps` more moves.
+    stall: str | None = None
+    stalled, left = False, steps
+    while left > 0:
+        left -= 1
         try:
             sp = _screen_pos(game, uuid, pos=pos)
         except GameError as e:
@@ -169,7 +174,9 @@ def bring_into_view(game: Game, inp: InputClient, uuid: str | None = None, steps
         nd = sp.get("ndc")
         behind, side = bool(sp.get("behind")), sp.get("side")
         rotated = bool(moves) and moves[-1].startswith("rotate")
-        if rotated and nd is not None and prev_x is not None and abs(nd[0]) > abs(prev_x) + 0.05:
+        if stall is not None and not sp.get("on_screen") and not behind and mv is not None:
+            mv = stall   # a point coming round the pivot swings out to the side before it comes up: no flip test
+        elif rotated and nd is not None and prev_x is not None and abs(nd[0]) > abs(prev_x) + 0.05:
             flip = not flip
             if v2:
                 _drag["flip"] = flip
@@ -182,7 +189,10 @@ def bring_into_view(game: Game, inp: InputClient, uuid: str | None = None, steps
         edge = max(abs(nd[0]), abs(nd[1])) if nd is not None else None
         if moves and moves[-1] == "zoom_out" and mv == "zoom_out" and edge is not None and prev_edge is not None \
                 and edge > prev_edge - 0.02:
-            break  # zoomed out as far as it goes
+            if sp.get("on_screen") or stalled:
+                break  # zoomed out as far as it goes
+            stall = "rotate_left" if side == "left" else "rotate_right"
+            stalled, mv, left = True, stall, left + steps
         prev_x = nd[0] if nd is not None else None
         prev_edge = edge
         if mv is None:
