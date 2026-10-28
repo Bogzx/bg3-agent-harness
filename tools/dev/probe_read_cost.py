@@ -69,12 +69,13 @@ if G and G.prep_info and G.party then
         for _, u in ipairs(G.party()) do local g = G.guid(u) if g then G.prep_info(g) end end
         return now() - t
     end
-    local keepG, pc, pw = G.spellFacts, {}, {}
+    local keepG, keepC, pc, pw = G.spellFacts, G.classNames, {}, {}
     for _ = 1, 5 do
-        G.spellFacts = {}
+        G.spellFacts, G.classNames = {}, {}
         pc[#pc + 1] = prep()
         for k, v in pairs(G.spellFacts) do keepG[k] = v end
-        G.spellFacts = keepG
+        for k, v in pairs(G.classNames) do keepC[k] = v end
+        G.spellFacts, G.classNames = keepG, keepC
         pw[#pw + 1] = prep()
     end
     out.prep_cold, out.prep_warm = stats(pc), stats(pw)

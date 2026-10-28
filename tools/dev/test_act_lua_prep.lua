@@ -528,6 +528,34 @@ test("prep_info: prepared / unprepared / always-prepared rows and the game's lim
     eq(info.max, 3, "limit = Stats.MaxPreparedSpells"); eq(info.count, 2, "count"); eq(info.prepares, true, "prepares")
 end)
 
+test("prep_info (V12, live N7): each entry's PrepareType once, the id only of a preparing one", function()
+    local undo = paladin()
+    local reads, sd = {}, 0
+    local spells = world[P1].comps.SpellBook.Spells
+    for i, raw in ipairs(spells) do  -- bg3le: every field of a SpellBook entry is a proxy read
+        spells[i] = setmetatable({}, { __index = function(_, k) reads[k] = (reads[k] or 0) + 1 return raw[k] end })
+    end
+    world[P1].comps.Classes = { Classes = { { ClassUUID = "c1a55000-0000-0000-0000-000000000001" } } }
+    local get = Ext.StaticData.Get
+    Ext.StaticData.Get = function(...) sd = sd + 1 return get(...) end
+    local cold = G.prep_info(P1)
+    reads, sd = {}, 0
+    local warm = G.prep_info(P1)
+    Ext.StaticData.Get = get
+    world[P1].comps.Classes = nil
+    undo()
+    eq(reads.PrepareType, 6, "PrepareType: once per entry (6 entries)")
+    eq(reads.Id, 5, "Id: the 5 preparing entries, not the weapon action")
+    eq(sd, 0, "class name: no StaticData read once known")
+    eq(warm.classes[1], cold.classes[1], "same class name")
+    local function ids(rows)
+        local o = {}
+        for _, r in ipairs(rows) do o[#o + 1] = r.name end
+        return table.concat(o, ",")
+    end
+    eq(ids(warm.prepared) .. "|" .. ids(warm.unprepared), "Cure Wounds,Shield of Faith|Bless,Command", "same rows")
+end)
+
 test("prep_plan: add within the limit, names or ids in any case; notes for no-ops", function()
     local undo = paladin()
     local p = G.prep_plan(P1, { "bless", "Target_ShieldOfFaith", "Sanctuary" }, { "Command" })
