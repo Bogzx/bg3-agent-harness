@@ -1,4 +1,3 @@
-# pyright: basic
 """The desktop session's display env for the game, found when a shell lacks it (stdlib only).
 
 A multiplexer pane or an ssh shell has no DISPLAY/XAUTHORITY/WAYLAND_DISPLAY/XDG_RUNTIME_DIR, so the game can't open a
