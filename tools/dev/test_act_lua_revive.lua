@@ -330,3 +330,51 @@ test("act.standups names a running stand-up; a failed one prints what it went th
     assert(line and line:find("layer1=2 moved=0.0", 1, true), tostring(line))
     eq(#RPC.ops["act.standups"]({}).running, 0, "none after")
 end)
+
+-- night2 (live N4, N7-N12 vs N10): every stuck plain C1 replay had Shadowheart's Cure Wounds on the revived Claude
+-- ~5 s into his stand-up; N10's probe, with nothing aimed at him, stood up at 8.3 s.
+local function healer()
+    party_rows = { P1, P2 }
+    world[P2] = { pos = { -1.5, 0, 0 }, comps = {} }
+    world[P2].comps.SpellBook = { Spells = { { Id = { Prototype = "Target_Cure" } } } }
+    stats["Target_Cure"] = { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 }
+    osiv[key("IsCharacter", P2)] = 1
+    osiv[key("IsOnStage", P2)] = 1
+    osiv[key("CanSee", P2, P1)] = 1
+    osiv[key("HasLineOfSight", P2, P1)] = 1
+end
+
+test("a spell another member aims at one whose stand-up job runs waits for it, then is cast (night2)", function()
+    local names = revived(true)
+    healer()
+    local js = job(op("end_standup", { char = P1, toward = P2 }))
+    local j = job(op("cast", { char = P2, spell = "Target_Cure", target = P1 }))
+    eq(j.status, "running", "waits " .. tostring(j.error))
+    tick(3)
+    eq(#called("UseSpell"), 0, "not cast during the stand-up")
+    eq(js.status, "running", "the stand-up goes on")
+    stood_up(names)
+    tick()
+    eq(js.status, "done", "stand-up " .. tostring(js.error))
+    tick()
+    local c = called("UseSpell")
+    eq(#c, 1, "cast after it"); eq(c[1][2], P2, "by the healer"); eq(c[1][4], P1, "on the member")
+    A.dispatch("CastedSpell", { P2, "Target_Cure" })
+    tick(30)
+    eq(j.status, "done", "cast " .. tostring(j.error))
+    assert(j.result.waited_for_standup_s, "waited_for_standup_s")
+end)
+
+test("a hotbar cast (ui) aimed at a member still standing up is refused at once; on oneself it is not (night2)",
+    function()
+    revived(true)
+    healer()
+    local js = job(op("end_standup", { char = P1, toward = P2 }))
+    local j = job(op("cast", { char = P2, spell = "Target_Cure", target = P1, ui = true }))
+    eq(j.status, "failed", "status")
+    eq(j.error, "the character is still standing up from the revive: not cast on them", "the fact")
+    eq(js.status, "running", "the stand-up goes on")
+    local self = job(op("cast", { char = P2, spell = "Target_Cure", target = P2 }))
+    eq(self.status, "running", "a cast on the caster itself " .. tostring(self.error))
+    eq(#called("UseSpell"), 1, "cast at once")
+end)
