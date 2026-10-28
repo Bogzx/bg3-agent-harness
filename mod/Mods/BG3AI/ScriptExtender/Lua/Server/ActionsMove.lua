@@ -13,56 +13,7 @@ local start, osi_tasks = I.start, I.osi_tasks
 -- reach (centres); both target only)
 ------------------------------------------------------------------------
 
--- move_to {target, range}: a ranged spell's reach (centres; app review of #37: a Scroll of Fireball read 20 m from a
--- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, `reach` m
--- from the target (RANGE_STOP_SLACK inside the range): the walker stops itself there (walk_tick, stop_at).
-A.RANGE_STOP_SLACK = 1.0
--- Live N10-N13 (Claude 9.4 m from Wyll, Longstrider's 2.5 m touch reach): each walk to the point 1.5 m from him, the
--- stop point itself, ended 1.8-2.4 m short of it, 3.3-3.9 m off, out of reach. The walk's goal lies RANGE_PAST_M
--- beyond the stop point (past the target for a short reach, never nearer its centre than RANGE_BODY_M), on the line
--- toward the walker, then 22.5 and 45 degrees off it; that goal's path may be at most RANGE_DETOUR_M longer than the
--- straight line (else it is a way round, not in). When none is walkable, the stop point itself is the goal, as before.
-A.RANGE_PAST_M = 4.0
-A.RANGE_BODY_M = 1.0
-A.RANGE_DETOUR_M = 3.0
--- Live N11 step 2: the first leg ended 3.3 m from Wyll, 1.8 m short of its point; the second leg's path to the same
--- point had no nodes (0.0 m) and the walk ordered on it went 10.2 m round, ending 7.8 m off. A point more than
--- RANGE_END_TOL_M away whose path has no nodes is not one the engine walks to: the next angle is tried. (A normal path
--- ends ~1 m from its goal: that is not this.)
-A.RANGE_END_TOL_M = 1.0
-local function range_point(char, target, reach, range)
-    local a, t = G.pos(char), G.pos(target)
-    if not a or not t then G.refuse("cannot locate target") end
-    local d = U.dist(a, t)
-    if d <= range then return { here = true, dist = d, length_m = 0, tpos = t } end
-    local base = math.atan(a[3] - t[3], a[1] - t[1])
-    local past = reach - A.RANGE_PAST_M
-    if past < A.RANGE_BODY_M then past = math.min(past, -A.RANGE_BODY_M) end
-    local short
-    for _, r in ipairs({ past, reach }) do
-        for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
-            local ang = base + k * math.pi / 8
-            local x, z = t[1] + r * math.cos(ang), t[3] + r * math.sin(ang)
-            local y = G.floor_at(x, z, t[2])
-            if y then
-                local p = { x, y, z }
-                local ok, info = G.reachable(char, p)
-                local off = ok and info.no_nodes and U.dist(a, p) or 0
-                local round = r == past and (info.length_m or 0) > U.dist(a, p) + A.RANGE_DETOUR_M
-                if ok and not info.needs_jump and off > A.RANGE_END_TOL_M then
-                    short = math.min(short or off, off)
-                elseif ok and not info.needs_jump and not round then
-                    return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = t }
-                end
-            end
-        end
-    end
-    if short then
-        G.refuse(string.format("no walkable point %.1f m from the target on this side (its range): the game's paths to"
-            .. " them have no nodes (they end where the character stands, %.1f m or more from them)", reach, short))
-    end
-    G.refuse(string.format("no walkable point %.1f m from the target on this side (its range)", reach))
-end
+-- move_to {target, range}: A.range_point (ActionsClick.lua, by act.spell_reach) plans the walk; walk_tick stops it.
 
 local function movement_left(char)
     local snap = G.resources(char)
@@ -453,11 +404,17 @@ local function walk_tick(job)
     w.travelled = w.travelled + step
     job.partial = { pos = pos_view(here), travelled = U.round(w.travelled, 1) }
     if step < 0.03 then w.still_ms = w.still_ms + dt else w.still_ms = 0 end
+    -- a range walk stops on the way in (its goal lies further): at the stop distance, or once within the range and
+    -- no nearer than the tick before (a path arcing round the target, a target above or below: app review of
+    -- night2/vis), on spell_reach's measure (centres); a plate detour's first leg too, so on_arrive is not run
     local tpos = w.stop_at and G.pos(w.target)
-    if tpos and U.dist(here, tpos) <= w.stop_at then -- a range walk: stopped on the way in, its goal lies further
+    local dt_m = tpos and U.dist(here, tpos)
+    if dt_m and (dt_m <= w.stop_at or (dt_m <= w.melee and w.last_de and dt_m >= w.last_de)) then
         pcall(G.osi, "PurgeOsirisQueue", job.char)
+        w.on_arrive = nil
         return walk_arrived(job)
     end
+    w.last_de = dt_m
 
     if w.budget and w.travelled >= w.budget - 0.05 then
         w.done = true
@@ -776,7 +733,7 @@ reg("move_to", function(args)
     G.combat_gate(char, "turn")
     local target = args.target and G.guid(args.target)
     local pos = args.pos
-    local route, melee, reach, stop_at
+    local route, melee, reach, stop_at, stop_pos, stop_route
     local plate = target and A.is_plate(target) and target or nil
     if plate then
         -- A floor plate: stand on its centre, as a player's click on it does (the ring point next to it is off it).
@@ -811,7 +768,8 @@ reg("move_to", function(args)
             melee, reach = range, math.max(1.0, range - A.RANGE_STOP_SLACK)
             stop_at = reach
         end
-        local plan = range and range_point(char, target, reach, range) or G.approach_point(char, target, reach)
+        local plan = range and A.range_point(char, target, reach, range, (not args.trespass) and args.avoid or nil)
+            or G.approach_point(char, target, reach)
         if plan.here then
             return start("move_to", char, {
                 timeout_ms = 1000,
@@ -822,7 +780,7 @@ reg("move_to", function(args)
                 end,
             })
         end
-        pos, route = plan.pos, plan.length_m
+        pos, route, stop_pos, stop_route = plan.pos, plan.length_m, plan.stop, plan.stop_m
     elseif pos then
         G.point_ok(char, pos)
         route = G.point_reachable(char, pos).length_m or U.dist(G.pos(char), pos)
@@ -830,17 +788,18 @@ reg("move_to", function(args)
         G.refuse("no destination given")
     end
 
-    local budget, mv_before = combat_budget(char, route)
+    local budget, mv_before = combat_budget(char, stop_route or route)
     local combat = budget ~= nil
     local speed = (args.run == false and not combat) and "Walk" or "Run"
 
     local via, crossed, areas
     if not combat then
         local from = G.pos(char)
-        local plates = from and A.known_plates(from, pos) or {}
-        areas = (not args.trespass) and A.warned_areas(args.avoid, from, pos) or {}
+        local dest = stop_pos or pos -- a range walk: checked to where it stops (its goal's ground: A.range_point)
+        local plates = from and A.known_plates(from, dest) or {}
+        areas = (not args.trespass) and A.warned_areas(args.avoid, from, dest) or {}
         for _, a in ipairs(areas) do
-            if in_area(pos, a) then
+            if in_area(dest, a) then
                 G.refuse("the destination is inside " .. a.area .. " you were warned about (a second offence"
                     .. " there can start a fight): talk to its guard first (a pass, a check), or trespass=true to"
                     .. " walk in anyway")
@@ -853,8 +812,8 @@ reg("move_to", function(args)
             for _, pl in ipairs(plates) do -- stepping off the plate the character stands on can't be helped
                 if not pl.area and dist_xz(from, pl.pos) <= pl.r + A.PLATE_CLEAR_M then skip[pl.uuid] = true end
             end
-            via, crossed = A.plate_detour(char, from, pos, plates, skip)
-            if via then route = route + math.max(0, U.dist(from, via) + U.dist(via, pos) - U.dist(from, pos)) end
+            via, crossed = A.plate_detour(char, from, dest, plates, skip)
+            if via then route = route + math.max(0, U.dist(from, via) + U.dist(via, dest) - U.dist(from, dest)) end
             local through = {}
             for _, pl in ipairs(crossed or {}) do if pl.area then through[#through + 1] = pl end end
             areas = through
@@ -892,7 +851,8 @@ reg("move_to", function(args)
         osi = WALK_OSI,
         start = function(job)
             if via then
-                begin_walk(job, { pos = via, speed = speed, tolerance = 1.0, on_arrive = function(j)
+                begin_walk(job, { pos = via, speed = speed, tolerance = 1.0, target = final.target, melee = melee,
+                    stop_at = stop_at, on_arrive = function(j)
                     begin_walk(j, final)
                     j.walk.budget = budget
                 end })
