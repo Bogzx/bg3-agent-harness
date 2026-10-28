@@ -520,6 +520,11 @@ function G.reachable(char, pos)
         if ok and type(r) == "table" then
             local info = { length_m = r.length_m, needs_jump = r.needs_jump, reason = r.error_cause or r.reason,
                 drop = r.drop, budget = r.budget }
+            -- where the engine's path ends, when the route lists all of it (N.ROUTE_MAX_NODES): live N11 step 2, a path
+            -- with no nodes (the walker's own spot, 0.0 m) to a point 1.8 m off read "reachable"
+            if type(r.points) == "table" and r.nodes and #r.points == r.nodes + 1 then
+                info.end_at = r.points[#r.points]
+            end
             -- A found path that ends short of the point (N.path's partial: end_off > 2 m) does not reach it (live L3
             -- helm probe 2026-10-17: a ring point on the floor above a ladder's foot read "reachable 1.8 m"; the
             -- engine then walked there up the ladder, and the interact's own Use climbed back down). N.verifyPoint

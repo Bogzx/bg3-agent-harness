@@ -917,3 +917,33 @@ test("move_to range: a ranged spell's walk stops on the way in, inside its range
         mv = called("CharacterMoveToPosition")
         assert(mv[#mv][3] > 17.5, "within stays a melee reach: x " .. tostring(mv[#mv][3]))
     end)
+
+-- Live N11 step 2 (heights 0 here): leg 1 ended at (-38.8,-50.2), 3.3 m from Wyll (-38.5,-53.5), 1.8 m short of its
+-- point 1.5 m from him; leg 2's path to that same point had no nodes (0.0 m) and its walk went 10.2 m round, 7.8 m off.
+test("move_to range: a point the engine's path ends short of is skipped, never walked on a 0.0 m route (N11)",
+    function()
+    world[P1].pos, world[NPC].pos = { -38.8, 0, -50.2 }, { -38.5, 0, -53.5 }
+    local k0 = { -38.5 - 1.5 * 0.3 / 3.3136, 0, -53.5 + 1.5 * 3.3 / 3.3136 } -- 1.5 m from Wyll toward Claude
+    local function at_k0(pos) return U.dist(pos, k0) < 0.05 end
+    nav.fn = function(_, pos)
+        local from = world[P1].pos
+        if at_k0(pos) then return { reachable = true, length_m = 0, nodes = 0, points = { from } } end
+        return { reachable = true, length_m = U.dist(from, pos), nodes = 1, points = { from, pos } }
+    end
+    local j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+    eq(j.status, "running", "walking " .. tostring(j.error))
+    local mv = called("CharacterMoveToPosition")
+    eq(#mv, 1, "one walk")
+    local to = { mv[1][3], mv[1][4], mv[1][5] }
+    assert(not at_k0(to), "not the point the path ends short of")
+    near(U.dist(to, world[NPC].pos), 1.5, "another point 1.5 m from Wyll (the next angle)")
+    assert(j.route_m > 0, "a real route: " .. tostring(j.route_m))
+    -- every point's path ends where the walker stands: refused with that fact, no walk
+    reset()
+    world[P1].pos, world[NPC].pos = { -38.8, 0, -50.2 }, { -38.5, 0, -53.5 }
+    nav.fn = function() return { reachable = true, length_m = 0, nodes = 0, points = { world[P1].pos } } end
+    j = job(op("move_to", { char = P1, target = NPC, range = 2.5 }))
+    eq(j.status, "failed", "status")
+    assert(j.error:find("the game's paths to them end 1.%d m or more short of them"), j.error)
+    eq(#called("CharacterMoveToPosition"), 0, "no walk")
+end)

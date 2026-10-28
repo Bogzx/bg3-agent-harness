@@ -17,22 +17,35 @@ local start, osi_tasks = I.start, I.osi_tasks
 -- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, at a
 -- reachable floor point `reach` m from the target: on the line toward the walker, then 22.5 and 45 degrees off it.
 A.RANGE_STOP_SLACK = 1.0
+-- Live N11 step 2: the first leg ended 3.3 m from Wyll, 1.8 m short of its point; the second leg's path to the same
+-- point had no nodes (0.0 m) and the walk ordered on it went 10.2 m round, ending 7.8 m off. A point the engine's path
+-- ends more than RANGE_END_TOL_M from is not one it walks to: the next angle is tried.
+A.RANGE_END_TOL_M = 1.0
 local function range_point(char, target, reach, range)
     local a, t = G.pos(char), G.pos(target)
     if not a or not t then G.refuse("cannot locate target") end
     local d = U.dist(a, t)
     if d <= range then return { here = true, dist = d, length_m = 0, tpos = t } end
     local base = math.atan(a[3] - t[3], a[1] - t[1])
+    local short
     for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
         local ang = base + k * math.pi / 8
         local x, z = t[1] + reach * math.cos(ang), t[3] + reach * math.sin(ang)
         local y = G.floor_at(x, z, t[2])
         if y then
-            local ok, info = G.reachable(char, { x, y, z })
-            if ok and not info.needs_jump then
-                return { pos = { x, y, z }, length_m = info.length_m or U.dist(a, { x, y, z }), dist = d, tpos = t }
+            local p = { x, y, z }
+            local ok, info = G.reachable(char, p)
+            local off = ok and info.end_at and U.dist(info.end_at, p) or 0
+            if ok and not info.needs_jump and off > A.RANGE_END_TOL_M then
+                short = math.min(short or off, off)
+            elseif ok and not info.needs_jump then
+                return { pos = p, length_m = info.length_m or U.dist(a, p), dist = d, tpos = t }
             end
         end
+    end
+    if short then
+        G.refuse(string.format("no walkable point %.1f m from the target on this side (its range): the game's paths to"
+            .. " them end %.1f m or more short of them", reach, short))
     end
     G.refuse(string.format("no walkable point %.1f m from the target on this side (its range)", reach))
 end
