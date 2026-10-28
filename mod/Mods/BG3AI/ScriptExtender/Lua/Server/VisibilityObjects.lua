@@ -323,8 +323,8 @@ V.POINT_LIFT = 0.5
 -- - the hit is floor: Ext.Level.GetHeightsAt there has a height within EDGE_FLOOR_M of the hit (not a wall's or a
 --   parapet's face), within EDGE_DY_M of the feet, at most EDGE_NEAR_M (x/z) from the observer;
 -- - the spot is at most EDGE_DROP_M below the feet;
--- - the edge: along the ray, every EDGE_STEP_M up to EDGE_SCAN_M past the hit, the first point with no floor within
---   EDGE_DY_M of the feet; a floor that goes on (a storey over a room) is no edge;
+-- - the edge: along the ray, every EDGE_STEP_M up to EDGE_SCAN_M past the hit and no further than EDGE_NEAR_M from
+--   the observer, the first point with no floor within EDGE_DY_M of the feet; a floor that goes on is no edge;
 -- - the look: from PEEK_H above the last floor point, PEEK_BACK_M back toward the eye (never from the raw hit), no
 --   steeper down than PEEK_MAX_DOWN (tan; the dead ground at a face's foot stays unseen), a clear ray to the spot.
 -- No heights answer or a ray error: not seen.
@@ -358,8 +358,9 @@ local function overEdge(o, eye, pt, tgt, hit)
     local l = hdist(eye, tgt)
     if l < 0.01 then return false end
     local dx, dz = (tgt[1] - eye[1]) / l, (tgt[3] - eye[3]) / l
-    local last = hp
-    for s = V.EDGE_STEP_M, math.min(V.EDGE_SCAN_M, hdist(hp, tgt)), V.EDGE_STEP_M do
+    local last = hp -- the edge, like the hit, lies within EDGE_NEAR_M of the observer (app re-review)
+    local scan = math.min(V.EDGE_SCAN_M, hdist(hp, tgt), V.EDGE_NEAR_M - hdist(o.pos, hp))
+    for s = V.EDGE_STEP_M, scan, V.EDGE_STEP_M do
         local x, z = hp[1] + dx * s, hp[3] + dz * s
         local f = floorNear(x, z, y0, V.EDGE_DY_M)
         if f == nil then return false end
