@@ -24,12 +24,22 @@ Run like probe_revive_replay (night-live/lib, a fresh load of the job's start sa
     cd /data/Repos/ovh-e2e/runtime/probes/night-live/lib && uv run -q --project /data/Repos/ovh-e2e/bridge python \\
         /data/Repos/ovh-e2e/tools/dev/probe_standup.py --two-click-revive --to 16:47:30 \\
         --out ../revive/C1-N10.jsonl --standup-out ../revive/C1-N10-standup.jsonl
+
+A/B (night2, for N14): N10's PASS above (--to 16:47:30: the replay stops at the revive) had nothing else aimed at
+Claude during the stand-up; every stuck plain replay (N4, N7-N12) had Shadowheart's Cure Wounds on him at +66.44 s,
+~5 s into it (the revive's cast ended ~+61), with the short rest refused in N12. --arm A (the default) is N10's run;
+--arm B also sends the replay's own call use_ability(Cure Wounds, target=e2, who=e1) through the bridge
+CAST_AFTER_S into end_standup (--cast-after S), and records its time on the sampler's clock, its reply and how long
+it took ("cast"). The G.osi log holds every mod call naming the member (B: Shadowheart's UseSpell on him).
 """
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -44,6 +54,8 @@ import probe_revive_stuck as probe  # noqa: E402
 RAW_DX = 3.0
 RAW_SECS = 6.0
 MOVED_M = 0.3  # end_standup's own "it stepped" (A.STANDUP_MOVED_M)
+CAST_AFTER_S = 3.0  # arm B: the spell on the member this long into end_standup
+B_CAST = {"ability": "Cure Wounds", "target": "e2", "who": "e1"}  # the replay's own call at +66.44 (i=22)
 
 SAMPLER = r"""
 local B = Mods.BG3AI.BG3AI
@@ -82,9 +94,12 @@ local G = B.Guard
 S.osi0 = G.osi
 G.osi = function(name, ...)
     local n, a = select("#", ...), { ... }
-    if tostring(a[1] or ""):sub(-36) == c then
-        local args = {}
-        for i = 1, n do args[i] = tostring(a[i]) end
+    local args, mine = {}, false
+    for i = 1, n do
+        args[i] = tostring(a[i])
+        if args[i]:sub(-36) == c then mine = true end -- the member as the actor or a target (UseSpell on him)
+    end
+    if mine then
         S.calls[#S.calls + 1] = { t = Ext.Utils.MonotonicTime() - S.t0, via = "G.osi (mod)", name = name, args = args }
     end
     return S.osi0(name, ...)
@@ -122,15 +137,39 @@ def wrap(
     out: Path,
     raw_secs: float = RAW_SECS,
     sleep: Callable[[float], None] = time.sleep,
+    during: Callable[[], str] | None = None,
+    cast_after: float = CAST_AFTER_S,
 ) -> Callable[[str, str], str]:
-    """world_tools._end_standup, sampled, then the raw walk when it didn't step; one record line in `out`."""
+    """world_tools._end_standup, sampled, then the raw walk when it didn't step; one record line in `out`. With
+    `during` (arm B) that call runs on its own thread `cast_after` s into end_standup, as the replay's Cure Wounds
+    did; the record's "cast" says when (sampler ms), what it replied and how long it took."""
 
     def wrapped(reader: str, body: str) -> str:
-        rec: dict[str, Any] = {"step": "standup_probe", "reader": reader, "body": body}
+        rec: dict[str, Any] = {"step": "standup_probe", "reader": reader, "body": body, "arm": "B" if during else "A"}
         try:
             rec["sampler"] = ev(SAMPLER % probe.lua_str(body))
         except Exception as e:  # the reply still matters without samples
             rec["sampler_error"] = str(e)
+        th = None
+        if during is not None:
+            cast: dict[str, Any] = {"after_s": cast_after}
+            rec["cast"] = cast
+
+            def run_cast(during: Callable[[], str] = during) -> None:
+                sleep(cast_after)
+                try:
+                    cast["at_ms"] = json.loads(ev(NOW)).get("t")
+                except Exception as e:
+                    cast["at_error"] = str(e)
+                c0 = time.monotonic()
+                try:
+                    cast["reply"] = during()
+                except Exception as e:  # a refusal or a bridge error is the result too
+                    cast["reply"] = f"EXC {type(e).__name__}: {e}"
+                cast["took_s"] = round(time.monotonic() - c0, 2)
+
+            th = threading.Thread(target=run_cast, daemon=True)
+            th.start()
         t0 = time.monotonic()
         try:
             reply = orig(reader, body)
@@ -154,6 +193,8 @@ def wrap(
             if "end_standup" not in rec:
                 raise
         finally:  # the sampler and the G.osi wrapper never outlive the probe (app review of #37)
+            if th is not None:
+                th.join(timeout=60)  # the cast's own G.osi calls land in the log before it stops
             try:
                 rec.update(json.loads(ev(STOP)))
             except Exception as e:
@@ -177,6 +218,17 @@ def main(argv: list[str] | None = None) -> int:
         i = args.index("--standup-out")
         out = Path(args[i + 1])
         del args[i : i + 2]
+    arm, cast_after = "A", CAST_AFTER_S
+    if "--arm" in args:
+        i = args.index("--arm")
+        arm = args[i + 1].upper()
+        del args[i : i + 2]
+        if arm not in ("A", "B"):
+            raise SystemExit("--arm A (nothing else during the stand-up) or B (Cure Wounds on the member)")
+    if "--cast-after" in args:
+        i = args.index("--cast-after")
+        cast_after = float(args[i + 1])
+        del args[i : i + 2]
     if "--dry-run" not in args:
         from bg3ai import luadebug
         from bg3ai.tools import world_tools
@@ -194,7 +246,14 @@ def main(argv: list[str] | None = None) -> int:
         def ev(code: str) -> str:
             return made[0].evaluate(probe.INSTALL + "\n" + code, context="server", timeout=30.0)
 
-        world_tools._end_standup = wrap(world_tools._end_standup, ev, out)
+        def cure() -> str:  # the replay's in-process tools (srv.S, imported by replay.main from the cwd)
+            if os.getcwd() not in sys.path:
+                sys.path.insert(0, os.getcwd())
+            fn = importlib.import_module("srv").S.use_ability
+            return str(getattr(fn, "fn", fn)(**B_CAST))
+
+        during = cure if arm == "B" else None
+        world_tools._end_standup = wrap(world_tools._end_standup, ev, out, during=during, cast_after=cast_after)
     return replay.main(args)
 
 
