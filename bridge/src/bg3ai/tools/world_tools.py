@@ -506,27 +506,50 @@ def _scroll_more_picks(inp, char: str, tgts: list[str]) -> str:
     return f" ({n} picks)" if n > 1 else ""
 
 
-def _scroll_settle(char: str) -> str:
-    """A scroll read in combat (act.interact's combat_scroll): once it is used up, the mod charges what reading it
-    cost (an action) and the engine did not. What to tell the agent about it. While the reader's cast still plays
-    (the mod saw its CastSpell, no CastedSpell yet) the wait runs on, up to SCROLL_CAST_MAX_S."""
+def _scroll_settle(char: str, in_combat: bool = True) -> tuple[bool | None, str]:
+    """Whether the scroll the reader just read cast anything: act.scroll_settle says read once it is used up (gone from
+    the bags or its stack smaller) or, at the last poll, once the reader's cast after it went off. In combat the mod
+    then charges what reading it cost (an action) and the engine did not. While the reader's cast still plays (the mod
+    saw its CastSpell, no CastedSpell yet) the wait runs on, up to SCROLL_CAST_MAX_S.
+    Returns (True, what reading it spent) / (False, "") / (None, "") when the mod tracks no read (not a scroll) or
+    doesn't answer."""
     t0 = time.monotonic()
     end, cap = t0 + SCROLL_SETTLE_S, t0 + SCROLL_CAST_MAX_S
     while True:
         now = time.monotonic()
         last = now >= end
-        r = core.game.try_rpc("act.scroll_settle", {"char": char, "final": last}) or {}
+        r = core.game.try_rpc("act.scroll_settle", {"char": char, "final": last})
+        if not isinstance(r, dict):
+            return None, ""  # the mod didn't answer: no evidence either way
         if r.get("read") or r.get("none"):
             break
         if last:
-            return "; the scroll was not used up (no target taken?): no action spent"
+            return False, ""
         if r.get("casting") and now < cap:
             end = max(end, now + SCROLL_SETTLE_S)
         time.sleep(0.2)
     if not r.get("read"):
-        return ""
+        return None, ""
+    if not in_combat:
+        return True, ""
     paid = ", ".join(str(c.get("resource")) for c in r.get("charged") or [] if isinstance(c, dict))
-    return "; its action is spent" + (f" (charged by the guard: {paid})" if paid else "")
+    return True, "; its action is spent" + (f" (charged by the guard: {paid})" if paid else "")
+
+
+def _scroll_outcome(head: str, rest: str, name: str, char: str, in_combat: bool, done: str, undone: str) -> str:
+    """Live N7 2d (2026-10-28): the scroll route said "done ... cast on <target> by a click" once the click landed,
+    with the scroll still in the reader's bags (a Scroll of Revivify on the living reader). The reply is done only on
+    evidence the read cast something (act.scroll_settle); with the scroll still there and no cast of the reader's
+    after the click it is FAILED with those facts. `done` / `undone`: what the click route did, said each way."""
+    read, spent = _scroll_settle(char, in_combat)
+    if read is False:
+        reporting._batch["last"] = "failed"
+        head = head.replace(": done", ": FAILED", 1) + undone + (
+            f"; {name} is still in {overview._name_of(char)}'s bags and {overview._name_of(char)} cast nothing after "
+            f"it: nothing cast" + (", no action spent" if in_combat else ""))
+    else:
+        head += done + spent
+    return head + ("\n" + rest if rest else "")
 
 
 def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = None,
@@ -580,28 +603,29 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     in_combat = "combat_scroll" in head
     head = head.replace(" — combat_scroll", " — read in combat").replace("combat_scroll", "read in combat")
     if pos is not None and not target:
-        head += _scroll_ground(inp, name, char, pos)
-        if in_combat:
-            head += _scroll_settle(char)
-        return head + ("\n" + rest if rest else "")
+        ground = _scroll_ground(inp, name, char, pos)
+        return _scroll_outcome(head, rest, name, char, in_combat, ground, ground)
     if not armed:
         # live9 S002 17:34 x2: the body click went in with nothing in hand, a plain click on the world
-        head += (f" ({name} read, but no spell came into hand, so {queueing._label(tgt)} was not clicked: it cast at "
-                 "once, or the game did not take the read)")
-        if in_combat:
-            head += _scroll_settle(char)
-        return head + ("\n" + rest if rest else "")
+        return _scroll_outcome(
+            head, rest, name, char, in_combat, f" ({name} read: no spell came into hand, it cast at once)",
+            f" ({name} read, but no spell came into hand, so {queueing._label(tgt)} was not clicked)")
     tgts = [tgt] + [plumbing._uuid(t) for t in targets or []]
     cr = click_entity(core.game, inp, tgt, "L")
     if cr.ok and _two_step_scroll(name) and tgt != char:
         head += _revive_spot(inp, name, char, tgt)
-    elif cr.ok:
-        head += f" ({name} read, cast on {queueing._label(tgt)} by a click)" + _scroll_more_picks(inp, char, tgts)
-    else:
-        head += (f"; the game waits for {name}'s target but the click on {queueing._label(tgt)} failed ({cr.reason}): "
-                 f"click_on <id>, or press_key ESCAPE to put it away")
-    if in_combat and cr.ok:
-        head += _scroll_settle(char)
+        if in_combat:
+            head += _scroll_settle(char)[1]
+        return head + ("\n" + rest if rest else "")
+    if cr.ok:
+        more = _scroll_more_picks(inp, char, tgts)
+        return _scroll_outcome(
+            head, rest, name, char, in_combat, f" ({name} read, cast on {queueing._label(tgt)} by a click){more}",
+            f" ({name} read, {queueing._label(tgt)} clicked){more}")
+    reporting._batch["last"] = "failed"  # nothing cast: the spell waits in hand
+    head = head.replace(": done", ": FAILED", 1) + (
+        f"; the game waits for {name}'s target but the click on {queueing._label(tgt)} failed ({cr.reason}): "
+        f"click_on <id>, or press_key ESCAPE to put it away")
     return head + ("\n" + rest if rest else "")
 
 

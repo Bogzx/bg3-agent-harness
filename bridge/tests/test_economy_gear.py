@@ -388,12 +388,41 @@ class ScrollUse(unittest.TestCase):
         out, _, _ = self._run("Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
                               res="use_ability: done — combat_scroll",
                               rpc={"act.scroll_settle": lambda a: {"read": False}})
-        self.assertIn("the scroll was not used up (no target taken?): no action spent", out.split("\n")[0])
+        head = out.split("\n")[0]
+        self.assertTrue(head.startswith("use_ability: FAILED — read in combat"), head)
+        self.assertIn("is still in Shadowheart's bags and Shadowheart cast nothing after it: nothing cast, no action "
+                      "spent", head)
         self.assertTrue(any(op == "act.scroll_settle" and a.get("final") for op, a in self.rpcs), "final settle")
 
-    def test_out_of_combat_scroll_has_no_settle(self):
-        self._run("Shadowheart", "Scroll of Invisibility", target=self.SH)
-        self.assertNotIn("act.scroll_settle", [op for op, _ in self.rpcs])
+    def test_out_of_combat_scroll_is_done_on_evidence_it_cast(self):
+        out, _, clicks = self._run("Shadowheart", "Scroll of Invisibility", target=self.GALE,
+                                   rpc={"act.scroll_settle": lambda a: {"read": True, "charged": []}})
+        head = out.split("\n")[0]
+        self.assertEqual(clicks, [self.GALE])
+        self.assertTrue(head.startswith("use_ability: done — used (Scroll of Invisibility read, cast on"), head)
+        self.assertNotIn("action is spent", head)
+        self.assertEqual(reporting._batch["last"], "done")
+
+    def test_a_click_that_casts_nothing_is_failed_with_the_facts(self):
+        # live N7 2d (2026-10-28): "use_ability: done ... cast on e1 Shadowheart by a click", the scroll still in her
+        # bags: the click landed, the game took no target
+        saved, world_tools.SCROLL_SETTLE_S = world_tools.SCROLL_SETTLE_S, 0.0
+        self.addCleanup(setattr, world_tools, "SCROLL_SETTLE_S", saved)
+        out, _, clicks = self._run("Shadowheart", "Scroll of Invisibility", target=self.GALE,
+                                   rpc={"act.scroll_settle": lambda a: {"read": False}})
+        head = out.split("\n")[0]
+        self.assertEqual(clicks, [self.GALE])
+        self.assertTrue(head.startswith("use_ability: FAILED — used (Scroll of Invisibility read, "), head)
+        self.assertNotIn("cast on", head)
+        self.assertIn("; Scroll of Invisibility is still in Shadowheart's bags and Shadowheart cast nothing after it: "
+                      "nothing cast", head)
+        self.assertEqual(reporting._batch["last"], "failed")
+        self.assertTrue(any(op == "act.scroll_settle" and a.get("final") for op, a in self.rpcs), "final settle")
+
+    def test_a_failed_target_click_is_failed(self):
+        out, _, _ = self._run("Shadowheart", "Scroll of Invisibility", target=self.GALE, click_ok=False)
+        self.assertTrue(out.startswith("use_ability: FAILED"), out)
+        self.assertEqual(reporting._batch["last"], "failed")
 
     def test_scorching_ray_scroll_clicks_once_per_beam(self):
         left = iter([3, 2, 1])   # the read before the first click (the spell in hand), then after each beam
@@ -436,7 +465,7 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(clicks, [])
         self.assertIn("aimed at the ground at (24,-43,1005) by a click); Shadowheart moved 6 m, now (23.9,-43,1005)",
                       head)
-        self.assertNotIn("act.scroll_settle", [op for op, _ in self.rpcs])
+        self.assertIn("act.scroll_settle", [op for op, _ in self.rpcs])  # no answer here: no evidence either way
 
     def test_misty_step_scroll_into_the_void_is_not_read(self):
         # S093 09:47: Misty Step at (230.5,-55.7,4260.5), off the psyche's platform: Gale fell into the void and died
@@ -472,7 +501,9 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(clicks, [])
         self.assertIn("the ground at (56,-53,996.5) was not taken (the game shows a CastWarning cursor there); the "
                       "spell was put back, nothing cast", head)
-        self.assertIn("the scroll was not used up (no target taken?): no action spent", head)
+        self.assertTrue(head.startswith("use_ability: FAILED — read in combat"), head)
+        self.assertIn("Scroll of Cone of Cold is still in Shadowheart's bags and Shadowheart cast nothing after it: "
+                      "nothing cast, no action spent", head)
 
     def test_a17_misty_step_not_taken_says_the_looks_and_a_move_anyway(self):
         # L8 23:58: "a character is under the cursor (3ed74f06…)" x5, "nothing cast", and Karlach stood 5.1 m on
@@ -555,7 +586,8 @@ class ScrollSettleCast(unittest.TestCase):
             clock[0] += s
         with mock.patch.object(core, "game", G()), mock.patch.object(time, "monotonic", lambda: clock[0]), \
                 mock.patch.object(time, "sleep", sleep):
-            return world_tools._scroll_settle("c"), seen
+            read, text = world_tools._scroll_settle("c")
+            return (text if read else "the scroll was not used up"), seen
 
     def test_a_cast_still_playing_is_waited_for(self):
         out, seen = self._settle(lambda t, a: {"read": True, "charged": []} if t >= 4.0 else {"read": False,
