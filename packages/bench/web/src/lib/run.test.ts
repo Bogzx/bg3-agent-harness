@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { attempts, bytes, formProblems, minutes, verdict, youtubeNote } from "./run";
-import type { PlanForm, ProfileRow, RunRow } from "./types";
+import { attempts, bytes, formProblems, minutes, startProblem, uploadProblem, verdict, youtubeId, youtubeNote } from "./run";
+import type { Plan, PlanForm, Prepared, ProfileRow, RunRow } from "./types";
 
 const form: PlanForm = {
   profiles: ["deepseek-flash"], scenarios: ["act1_get_item"], condition: "rules", repeats: 1, max_cost_usd: 2,
@@ -74,5 +74,47 @@ describe("formatters", () => {
     expect(bytes(1.5 * 1024 ** 3)).toBe("1.5 GB");
     expect(minutes(2700)).toBe("45 min");
     expect(minutes(null)).toBe("–");
+  });
+});
+
+const okPlan: Plan = {
+  jobs: [{ id: "j", model: "m", client: "pi", profile: "p", scenario: "s", condition: "rules", repeat: 1, max_cost: 1 }],
+  reserve_usd: 1, budget: { file: "b", cap: 5, spent: 0, error: null }, fits_budget: true, needs_max_cost: [],
+  skipped: {}, gaps: { p: [] }, youtube: { verified: true, long_scenarios: [], warn: false },
+};
+
+describe("startProblem", () => {
+  it("allows a plan that fits and refuses the rest", () => {
+    expect(startProblem(okPlan, false)).toBeNull();
+    expect(startProblem(okPlan, true)).toMatch(/running/);
+    expect(startProblem(null, false)).toBe("plan first");
+    expect(startProblem({ ...okPlan, jobs: [] }, false)).toBe("no job to run");
+    expect(startProblem({ ...okPlan, needs_max_cost: ["s"] }, false)).toMatch(/max cost for s/);
+    expect(startProblem({ ...okPlan, budget: { ...okPlan.budget, error: "gone" } }, false)).toMatch(/budget file/);
+    expect(startProblem({ ...okPlan, fits_budget: false }, false)).toMatch(/doesn't fit/);
+    expect(startProblem({ ...okPlan, gaps: { p: ["memory"] } }, false)).toMatch(/pilot/);
+  });
+});
+
+describe("youtubeId and uploadProblem", () => {
+  const id = "dQw4w9WgXcQ";
+  it("reads the three URL shapes only", () => {
+    for (const u of [`https://www.youtube.com/watch?v=${id}`, `https://youtu.be/${id}`, `https://m.youtube.com/shorts/${id}`]) {
+      expect(youtubeId(u)).toBe(id);
+    }
+    for (const u of ["", id, `https://evil.example/watch?v=${id}`, `ftp://youtu.be/${id}`, "https://youtu.be/short"]) {
+      expect(youtubeId(u)).toBeNull();
+    }
+  });
+  it("needs an accepted bundle, the site token and a video URL", () => {
+    const p: Prepared = {
+      run: "r", bundle_sha256: "ab", bundle_dir: "d", files: [], attempt: { n: 1, unsubmitted_valid: 0 },
+      verdict: { accepted: true, checks: [] },
+    };
+    expect(uploadProblem(p, `https://youtu.be/${id}`, true)).toBeNull();
+    expect(uploadProblem(null, "", true)).toBe("validate first");
+    expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, "", true)).toMatch(/rejects/);
+    expect(uploadProblem(p, `https://youtu.be/${id}`, false)).toMatch(/site token/);
+    expect(uploadProblem(p, "https://vimeo.com/1", true)).toMatch(/YouTube URL/);
   });
 });

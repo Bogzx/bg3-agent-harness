@@ -1,11 +1,11 @@
 <script lang="ts">
   // New run: pick profiles, scenarios, the condition and repeats; Plan shows what Start would queue (bg3bench.matrix
-  // plan), its budget reserve and the YouTube note, before anything runs.
+  // plan), its budget reserve and the YouTube note, before anything runs. Start plays the same form as a matrix.
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
-  import { formProblems, minutes, youtubeNote } from "../lib/run";
-  import type { Plan, PlanForm, ProfileRow, ScenarioRow } from "../lib/types";
+  import { formProblems, minutes, startProblem, youtubeNote } from "../lib/run";
+  import type { Plan, PlanForm, ProfileRow, RunState, ScenarioRow } from "../lib/types";
 
   let profiles = $state<ProfileRow[]>([]);
   let scenarios = $state<ScenarioRow[]>([]);
@@ -18,15 +18,21 @@
   });
   let record = $state(true);
   let submit = $state(false);
+  let running = $state<RunState | null>(null);
+  let canStart = $state(false);
+  let started = $state<string | null>(null);
 
   const problems = $derived(formProblems(form, profiles));
   const note = $derived(plan ? youtubeNote(plan.youtube) : null);
+  const startWhy = $derived(canStart ? startProblem(plan, !!running?.running) : "this panel starts no run");
 
   onMount(() => {
-    Promise.all([api.profiles(), api.scenarios()])
-      .then(([p, s]) => {
+    Promise.all([api.profiles(), api.scenarios(), api.run()])
+      .then(([p, s, r]) => {
         profiles = p.profiles;
         scenarios = s.scenarios;
+        running = r.run;
+        canStart = r.can_start;
       })
       .catch((e: Error) => (error = e.message));
   });
@@ -35,9 +41,24 @@
     return list.includes(name) ? list.filter((x) => x !== name) : [...list, name];
   }
 
+  async function doStart() {
+    busy = true;
+    planError = null;
+    try {
+      const r = await api.start($state.snapshot(form));
+      running = r.started;
+      started = `Started ${r.started?.name ?? "the matrix"} (${r.matrix_file}). Its progress is on the Queue screen.`;
+    } catch (e) {
+      planError = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
+
   async function doPlan() {
     busy = true;
     planError = null;
+    started = null;
     plan = null;
     try {
       plan = await api.plan($state.snapshot(form));
@@ -102,12 +123,14 @@
       {#if problems.length}<div class="faint">{problems.join(" · ")}</div>{/if}
       <div class="row">
         <button class="primary" onclick={doPlan} disabled={busy || problems.length > 0}>{busy ? "Planning…" : "Plan"}</button>
-        <button class="plain" disabled title="Starting runs from the panel isn't wired yet: run the plan with the matrix CLI">Start</button>
+        <button class="plain" onclick={doStart} disabled={busy || startWhy !== null} title={startWhy ?? "Play this plan now"}>Start</button>
+        {#if startWhy && plan}<span class="faint">{startWhy}</span>{/if}
       </div>
     </div>
   </section>
 
   {#if planError}<div class="note bad">{planError}</div>{/if}
+  {#if started}<div class="note" role="status">{started}</div>{/if}
   {#if plan}
     <section class="panel" aria-label="Plan">
       <h2>Plan <span class="right">{plan.jobs.length} jobs · reserve {usd(plan.reserve_usd)}</span></h2>

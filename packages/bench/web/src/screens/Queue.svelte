@@ -1,18 +1,32 @@
 <script lang="ts">
-  // The matrices on this machine and their progress (runtime/matrix/*/progress.json), refreshed every 5 s.
+  // The matrices on this machine and their progress (runtime/matrix/*/progress.json), refreshed every 5 s, and the
+  // one this panel started, with Stop.
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { date, usd } from "../lib/format";
-  import type { MatrixProgress } from "../lib/types";
+  import type { MatrixProgress, RunState } from "../lib/types";
 
   let rows = $state<MatrixProgress[] | null>(null);
   let error = $state<string | null>(null);
+  let mine = $state<RunState | null>(null);
+  let stopError = $state<string | null>(null);
 
   function load() {
-    api.queue().then((r) => {
-      rows = r.matrices;
+    Promise.all([api.queue(), api.run()]).then(([q, r]) => {
+      rows = q.matrices;
+      mine = r.run;
       error = null;
     }).catch((e: Error) => (error = e.message));
+  }
+
+  async function stop() {
+    if (!confirm("Stop: the run playing now ends (recorded as an operator stop) and no new run starts. Stop?")) return;
+    stopError = null;
+    try {
+      mine = (await api.stop()).run;
+    } catch (e) {
+      stopError = (e as Error).message;
+    }
   }
 
   onMount(() => {
@@ -21,6 +35,19 @@
     return () => clearInterval(t);
   });
 </script>
+
+{#if mine}
+  <section class="panel" aria-label="This panel's run">
+    <h2>Started here: {mine.name}</h2>
+    <div class="body row">
+      <span>{mine.running ? (mine.stopping ? "stopping: the run playing now ends and is recorded" : "running") :
+        `ended (exit ${mine.returncode ?? "?"})`}</span>
+      {#if mine.log}<span class="faint">log {mine.log}</span>{/if}
+      {#if mine.running && !mine.stopping}<button class="plain" onclick={stop}>Stop</button>{/if}
+    </div>
+    {#if stopError}<div class="note bad">{stopError}</div>{/if}
+  </section>
+{/if}
 
 <section class="panel">
   <h2>Queue</h2>

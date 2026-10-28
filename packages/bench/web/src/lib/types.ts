@@ -138,3 +138,49 @@ export interface About {
   not_affiliated: string;
   site: string | null;
 }
+
+export interface RunState {
+  name: string;
+  pid?: number;
+  started?: number;
+  log?: string;
+  running: boolean;
+  returncode?: number | null;
+  stopping: boolean;
+}
+
+export interface CheckResult {
+  code: string;
+  ok: boolean | null;
+  severity?: string;
+  detail?: string;
+}
+
+export interface Prepared {
+  run: string;
+  bundle_sha256: string;
+  bundle_dir: string;
+  files: { name: string; bytes: number }[];
+  verdict: { accepted: boolean; flags?: string[]; checks: CheckResult[] };
+  attempt: { n: number; unsubmitted_valid: number };
+}
+
+export interface Submission {
+  id: string;
+  status: string;
+  bundle_sha256: string;
+  youtube_id: string;
+  flags?: string[];
+  checks?: CheckResult[];
+  run_url?: string;
+  retry_after?: string;
+}
+
+export interface RenderState {
+  run: string;
+  running: boolean;
+  returncode?: number | null;
+  log?: string;
+  video?: string | null;
+  video_bytes?: number | null;
+}

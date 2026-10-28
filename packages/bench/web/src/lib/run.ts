@@ -1,6 +1,6 @@
 // Pure helpers for the New run and Results screens.
 
-import type { Plan, PlanForm, ProfileRow, RunRow, SaveStatus } from "./types";
+import type { Plan, PlanForm, Prepared, ProfileRow, RunRow, SaveStatus } from "./types";
 
 export const YOUTUBE_LIMIT_S = 15 * 60;
 
@@ -77,4 +77,42 @@ export function attempts(runs: RunRow[]): Map<string, [number, number]> {
     sorted.forEach((r, i) => out.set(r.dir, [i + 1, sorted.length]));
   }
   return out;
+}
+
+/** Why Start can't be pressed for a plan (null: it can); the server checks the same again. */
+export function startProblem(plan: Plan | null, running: boolean): string | null {
+  if (running) return "a matrix of this panel is running: stop it first";
+  if (!plan) return "plan first";
+  if (!plan.jobs.length) return "no job to run";
+  if (plan.needs_max_cost.length) return `give a max cost for ${plan.needs_max_cost.join(", ")}`;
+  if (plan.budget.error) return "no usable budget file";
+  if (!plan.fits_budget) return "the reserve doesn't fit the budget";
+  if (Object.values(plan.gaps).some((g) => g.length)) return "the condition can't be played exactly (a pilot)";
+  return null;
+}
+
+/** Why Upload can't be pressed for a prepared bundle (null: it can). */
+export function uploadProblem(p: Prepared | null, youtubeUrl: string, siteToken: boolean): string | null {
+  if (!p) return "validate first";
+  if (!p.verdict.accepted) return "the local validation rejects this bundle";
+  if (!siteToken) return "save the site token in Settings";
+  if (!youtubeId(youtubeUrl)) return "paste the YouTube URL of the evidence video";
+  return null;
+}
+
+/** The 11-character id of a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL (null: not one). */
+export function youtubeId(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url.trim());
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  const host = u.hostname.toLowerCase().replace(/^(www|m)\./, "");
+  let id: string | null = null;
+  if (host === "youtu.be") id = u.pathname.slice(1);
+  else if (host === "youtube.com" && u.pathname === "/watch") id = u.searchParams.get("v");
+  else if (host === "youtube.com" && u.pathname.startsWith("/shorts/")) id = u.pathname.slice("/shorts/".length);
+  return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
 }

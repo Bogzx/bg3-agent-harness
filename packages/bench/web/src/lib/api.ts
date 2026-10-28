@@ -1,4 +1,7 @@
-import type { About, MatrixProgress, Plan, PlanForm, Prefs, Preflight, ProfileRow, RunRow, ScenarioRow, SettingsView } from "./types";
+import type {
+  About, MatrixProgress, Plan, PlanForm, Prefs, Preflight, Prepared, ProfileRow, RenderState, RunRow, RunState,
+  ScenarioRow, SettingsView, Submission,
+} from "./types";
 import { HEADER } from "./token";
 
 export class ApiError extends Error {
@@ -46,4 +49,17 @@ export const api = {
   setKey: (name: string, value: string) => post<{ name: string; masked: string | null }>("/api/v1/settings/key", { name, value }),
   setSiteToken: (value: string) => post<{ site_token: string | null }>("/api/v1/settings/site-token", { value }),
   setPrefs: (prefs: Partial<Prefs>) => post<{ prefs: Prefs }>("/api/v1/settings/prefs", prefs),
+  run: () => call<{ run: RunState | null; can_start: boolean }>("/api/v1/run"),
+  start: (form: PlanForm) => post<{ started: RunState | null; matrix_file: string }>("/api/v1/run/start", form),
+  stop: () => post<{ run: RunState | null }>("/api/v1/run/stop", {}),
+  submissions: () =>
+    call<{ submissions: Record<string, { prepared: Prepared | null; submission: Submission | null }>; site: string | null }>(
+      "/api/v1/submissions",
+    ),
+  prepare: (run: string) => post<Prepared>("/api/v1/submit/prepare", { run }),
+  upload: (run: string, bundle_sha256: string, youtube_url: string) =>
+    post<Submission>("/api/v1/submit/upload", { run, bundle_sha256, youtube_url }),
+  submissionStatus: (run: string) => post<Submission>("/api/v1/submit/status", { run }),
+  render: (run: string) => post<{ render: RenderState | null }>("/api/v1/render", { run }),
+  renderState: () => call<{ render: RenderState | null }>("/api/v1/render"),
 };

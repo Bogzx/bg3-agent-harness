@@ -3,8 +3,9 @@
 
     cd packages/bench/web && npm ci && npm run build; uv run pytest -m e2e packages/bench/tests/test_panel_web.py
 
-Every screen renders without a console error; New run plans a job and shows the YouTube note; Settings saves a key
-through the token the server put into index.html, and the page shows it masked.
+Every screen renders without a console error; New run plans a job, shows the YouTube note and starts it (a fake
+runner), and the Queue stops it; Results validates a run (a fake bundler) and uploads it to a fake site; Settings saves
+a key through the token the server put into index.html, and the page shows it masked.
 """
 
 import json
@@ -50,6 +51,48 @@ def browser() -> Iterator[Browser]:
         b.close()
 
 
+SHA = "ab" * 32
+
+
+class FakeRunner:
+    def __init__(self) -> None:
+        self.st: dict | None = None
+
+    def start(self, name, matrix_file, log):
+        self.st = {"name": name, "running": True, "stopping": False, "log": str(log)}
+
+    def stop(self):
+        assert self.st is not None
+        self.st["stopping"] = True
+
+    def state(self):
+        return self.st
+
+
+class FakeBundler:
+    def pack(self, run_dir, out_dir, *, attempt, unsubmitted_valid, literals):
+        b = out_dir / "bundle"
+        b.mkdir(parents=True)
+        (b / "result.json").write_text('{"valid": true}')
+        (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}]}))
+        return SHA, b
+
+    def validate(self, bundle_dir, *, literals):
+        return {"accepted": True, "flags": [], "checks": [{"code": "E01", "ok": None, "detail": "no lookup"}]}
+
+
+class FakeSite:
+    def __init__(self) -> None:
+        self.posts: list[str] = []
+
+    def post_submission(self, token, files, youtube_url):
+        self.posts.append(youtube_url)
+        return 202, {"id": "sub1", "status": "received"}
+
+    def get_submission(self, token, submission_id):
+        return 200, {"status": "accepted", "flags": []}
+
+
 @pytest.fixture
 def app(tmp_path: Path) -> Iterator[App]:
     repo = tmp_path / "repo"
@@ -66,7 +109,14 @@ def app(tmp_path: Path) -> Iterator[App]:
         saves=panel.StorySaves(tmp_path / "Story"),
         checks=lambda: [("PASS", "ffmpeg", "/usr/bin/ffmpeg")],
         web_dir=WEB / "dist",
+        site="https://bench.example",
+        runner=FakeRunner(),
+        bundler=FakeBundler(),
+        site_client=lambda base: site,
+        now=lambda: 0.0,
     )
+    site = FakeSite()
+    a.fake_site = site  # type: ignore[attr-defined]
     srv = serve(a, 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield a
@@ -116,6 +166,37 @@ def test_new_run_plans_and_warns_about_youtube(app, page):
     plan.wait_for(timeout=15000)
     assert "deepseek-flash~act1_get_item~rules~r1" in plan.inner_text()
     assert "15 minutes" in pg.get_by_role("alert").inner_text()
+    pg.get_by_role("button", name="Start").click()
+    pg.get_by_text("Started panel-19700101-000000").wait_for(timeout=15000)
+    assert (app.runtime / "panel" / "panel-19700101-000000.toml").is_file()
+    pg.goto(f"http://127.0.0.1:{app.port}/#/queue")
+    pg.get_by_text("Started here: panel-19700101-000000").wait_for(timeout=15000)
+    pg.on("dialog", lambda d: d.accept())
+    pg.get_by_role("button", name="Stop").click()
+    pg.get_by_text("stopping: the run playing now ends").wait_for(timeout=15000)
+    assert errors == []
+
+
+def test_results_validate_and_upload(app, page):
+    pg, errors = page
+    run = app.runtime / "sessions" / "s1"
+    run.mkdir(parents=True)
+    (run / "manifest.json").write_text(json.dumps({"run_id": "s1-r001", "scenario": {"name": "act1_get_item"}}))
+    (run / "result.json").write_text(json.dumps({"run_id": "s1-r001", "valid": True, "passed": True}))
+    app.settings.set_site_token("bgb_" + "0" * 40)
+    pg.goto(f"http://127.0.0.1:{app.port}/#/results")
+    pg.get_by_role("button", name="Validate").click()
+    box = pg.locator("section[aria-label=Submit]")
+    box.get_by_text("by the local validator").wait_for(timeout=15000)
+    assert "result.json" in box.locator("table").inner_text()
+    upload = box.get_by_role("button", name="Upload")
+    assert upload.is_disabled()
+    box.locator("input[type=url]").fill("https://youtu.be/dQw4w9WgXcQ")
+    upload.click()
+    box.get_by_text("Refresh status").wait_for(timeout=15000)
+    assert app.fake_site.posts == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    box.get_by_role("button", name="Refresh status").click()
+    box.get_by_text("accepted").wait_for(timeout=15000)
     assert errors == []
 
 
