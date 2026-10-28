@@ -9,6 +9,7 @@
 #   build/bg3le/dist/libbg3le.so           copy of the library that runner/launch_game.sh uses
 #   build/bg3le/dist/bg3lua                bg3le's console/debugger client (Python script)
 #   build/bg3le/dist/BUILDINFO             commit, clang version, glibc check
+# Instead of building, tools/bg3le_prebuilt.py fetch installs a verified prebuilt package into build/bg3le/dist.
 # Fetched third-party sources land in third_party/bg3le/external/third_party/ (gitignored by bg3le).
 #
 # Our fixes to bg3le live in patches/bg3le/*.patch (git diffs against the pinned commit, applied in
@@ -120,6 +121,8 @@ docker run --rm \
     bash -c 'git config --global --add safe.directory "*" && tools/build-sniper.sh'
 
 LIB="$OUT/sniper/bg3le/libbg3le.so"
+# A local build replaces a downloaded prebuilt (tools/bg3le_prebuilt.py): its manifest would no longer match
+rm -f "$OUT/dist/PREBUILT.json"
 install -m 0755 "$LIB" "$OUT/dist/libbg3le.so"
 install -m 0755 "$SRC/client/bg3lua" "$OUT/dist/bg3lua"
 {
