@@ -9,8 +9,33 @@ local reg, interrupt, ev_name, pos_view, walk_eta = I.reg, I.interrupt, I.ev_nam
 local start, osi_tasks = I.start, I.osi_tasks
 
 ------------------------------------------------------------------------
--- act.move_to {char, target | pos, run=true, within?}  (within: a melee reach, target only)
+-- act.move_to {char, target | pos, run=true, within?, range?}  (within: a melee reach, range: a ranged spell's
+-- reach (centres); both target only)
 ------------------------------------------------------------------------
+
+-- move_to {target, range}: a ranged spell's reach (centres; app review of #37: a Scroll of Fireball read 20 m from a
+-- goblin walked the reader to the 2.2 m approach ring, inside its own blast). The walk ends on the way in, at a
+-- reachable floor point `reach` m from the target: on the line toward the walker, then 22.5 and 45 degrees off it.
+A.RANGE_STOP_SLACK = 1.0
+local function range_point(char, target, reach)
+    local a, t = G.pos(char), G.pos(target)
+    if not a or not t then G.refuse("cannot locate target") end
+    local d = U.dist(a, t)
+    if d <= reach then return { here = true, dist = d, length_m = 0, tpos = t } end
+    local base = math.atan(a[3] - t[3], a[1] - t[1])
+    for _, k in ipairs({ 0, 1, -1, 2, -2 }) do
+        local ang = base + k * math.pi / 8
+        local x, z = t[1] + reach * math.cos(ang), t[3] + reach * math.sin(ang)
+        local y = G.floor_at(x, z, t[2])
+        if y then
+            local ok, info = G.reachable(char, { x, y, z })
+            if ok and not info.needs_jump then
+                return { pos = { x, y, z }, length_m = info.length_m or U.dist(a, { x, y, z }), dist = d, tpos = t }
+            end
+        end
+    end
+    G.refuse(string.format("no walkable point %.1f m from the target on this side (its range)", reach))
+end
 
 local function movement_left(char)
     local snap = G.resources(char)
@@ -744,7 +769,11 @@ reg("move_to", function(args)
         -- said done; a Spiritual Weapon is small, so 2.2-2.7 m was outside its reach).
         melee = tonumber(args.within) and G.melee_reach(char, target, tonumber(args.within)) or nil
         reach = melee and math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK)) or A.MOVE_REACH
-        local plan = G.approach_point(char, target, reach)
+        local range = not melee and tonumber(args.range)
+        if range then -- in_reach is tested against the range itself (centres, walk_arrived)
+            melee, reach = range, math.max(A.MOVE_REACH, range - A.RANGE_STOP_SLACK)
+        end
+        local plan = range and range_point(char, target, reach) or G.approach_point(char, target, reach)
         if plan.here then
             return start("move_to", char, {
                 timeout_ms = 1000,

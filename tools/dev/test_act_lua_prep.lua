@@ -891,3 +891,21 @@ test("spell_reach: a touch spell reaches edge to edge, a ranged one centre to ce
     eq(r.melee, false, "ranged"); eq(r.reach_m, 9, "reach")
     eq(next(RPC.ops["act.spell_reach"]({ char = P1, spell = "Nope", target = NPC })), nil, "unknown spell: {}")
 end)
+
+test("move_to range: a ranged spell's walk stops on the way in, inside its range, not at the 2.2 m ring (#37 review)",
+    function()
+        world[NPC].pos = { 20, 0, 0 } -- a Scroll of Fireball (18 m) read 20 m from a goblin
+        local j = job(op("move_to", { char = P1, target = NPC, range = 18 }))
+        eq(j.status, "running", "walking " .. tostring(j.error))
+        local mv = called("CharacterMoveToPosition")
+        near(mv[#mv][3], 3, "x: 17 m from the target, on the line toward the reader"); near(mv[#mv][5], 0, "z")
+        reset()
+        world[NPC].pos = { 16, 0, 0 }
+        j = job(op("move_to", { char = P1, target = NPC, range = 18 }))
+        eq(j.status, "done", "in range already"); eq(j.result.in_reach, true, "in_reach")
+        reset()
+        world[NPC].pos = { 20, 0, 0 }
+        op("move_to", { char = P1, target = NPC, within = 1.5 }) -- touch: the melee ring next to it, as before
+        mv = called("CharacterMoveToPosition")
+        assert(mv[#mv][3] > 17.5, "within stays a melee reach: x " .. tostring(mv[#mv][3]))
+    end)

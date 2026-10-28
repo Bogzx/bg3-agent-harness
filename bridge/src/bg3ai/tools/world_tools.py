@@ -670,26 +670,30 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
 def _walk_into_reach(inp, char: str, tgt: str, name: str, arm: dict) -> tuple[str, bool]:
     """Live N9 step 3: a touch-range Scroll of Longstrider read 9.47 m from Wyll; the click on Wyll landed, nothing was
     cast and Claude never walked. Out of combat, with the target beyond the spell's reach (the spell in hand, ui.cast_state;
-    act.spell_reach), the spell is put back, the reader walks into reach as a player would (act.move_to within) and the
-    scroll is read again. ("", False) when in reach or unknown; (facts, True) after the walk; (facts, False) when the
+    act.spell_reach), the spell is put back, the reader walks into reach as a player would (act.move_to within / range)
+    and the scroll is read again. ("", False) when in reach or unknown; (facts, True) after the walk; (facts, False) when the
     walk failed (the spell put back, nothing cast)."""
     spell = arm.get("spell") or (arm.get("cast") or {}).get("spell")
     r = (core.game.try_rpc("act.spell_reach", {"char": char, "spell": spell, "target": tgt}) or {}) if spell else {}
     reach_m, dist_m, range_m = r.get("reach_m"), r.get("dist_m"), r.get("range_m")
     if not all(isinstance(v, (int, float)) for v in (reach_m, dist_m, range_m)) or dist_m <= reach_m:
         return "", False
-    hotbar.cancel(core.game, inp, char)
     spell_name = arm.get("spell_name") or name
     far = (f"; {overview._name_of(tgt)} was {dist_m:.1f} m from {overview._name_of(char)}, beyond {spell_name}'s "
            f"{reach_m:.1f} m reach")
-    within = range_m if r.get("melee") else max(range_m - 1.0, 0.5)
-    j = core.game.run_job("act.move_to", {"char": char, "target": tgt, "within": within}, wait_s=40)
+    back = _put_back(inp, char)
+    if back.startswith("; the spell is still"):
+        return f"{far}: not walked{back}, nothing cast", False   # a walk with the spell in hand: unknown ground
+    # touch: move_to's melee reach (edge to edge); ranged: stop on the way in, inside the range (not at 2.2 m: a
+    # Fireball read 20 m off would walk into its own blast, app review of #37)
+    how = {"within": range_m} if r.get("melee") else {"range": range_m}
+    j = core.game.run_job("act.move_to", {"char": char, "target": tgt, **how}, wait_s=40)
     res = j.result if isinstance(j.result, dict) else {}
     now = f" (now {res['dist']} m from {overview._name_of(tgt)})" if isinstance(res.get("dist"), (int, float)) else ""
     if j.status != "done" or res.get("in_reach") is False:
         why = j.error or ("it stopped out of reach" if j.status == "done" else "no reason given")
-        return f"{far}: the walk into reach {j.status}{now}: {why}; the spell was put back, nothing cast", False
-    return f"{far}: {overview._name_of(char)} walked into reach first{now} and read it again", True
+        return f"{far}{back}; the walk into reach {j.status}{now}: {why}, nothing cast", False
+    return f"{far}{back}; {overview._name_of(char)} walked into reach first{now} and read it again", True
 
 
 def _select_reader(char: str) -> None:
