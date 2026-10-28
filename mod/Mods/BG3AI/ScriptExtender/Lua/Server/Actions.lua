@@ -155,7 +155,7 @@ local registered = {}
 
 local function each_running(fn)
     for _, job in pairs(RPC.jobs) do
-        if job.status == "running" and job.act then
+        if job.status == "running" and job.act and not job.wait_standup then -- waiting: nothing of its own started
             local ok, err = pcall(fn, job)
             if not ok then RPC.finish_job(job, "failed", nil, tostring(err)) end
         end
@@ -433,10 +433,43 @@ end
 -- nor becomes A.active (L8 23:58 helm ladders / trade travel: an act.select of the walker at its arrival
 -- interrupted interact e39 and a 43 m move_to, "superseded by a new action (select)"; picking a portrait doesn't stop a
 -- player's walk or climb).
+-- Live N10 (C1 replay, 616e02f): a walk_toward of the revived Claude arrived while act.end_standup was still running
+-- (it waits out the revive's dialog, then walks: ~8.6 s in N10's probe run); superseding it left the stand-up's layer-1
+-- action unfinished and no order of his started again. A new order for a member whose stand-up job runs waits for that
+-- job to end (bounded by its own limit) and then starts: no game call, no Osiris event, no purge while it waits
+-- (job.wait_standup); its result says how long it waited (waited_for_standup_s).
+local function after_standup(job, user_start)
+    local prev = job.wait_standup
+    if prev.status == "running" then return end
+    job.wait_standup = nil
+    job.waited_for_standup_s = U.round((RPC.now_ms() - job.started) / 1000, 1)
+    A.active[job.char] = job
+    local ok, err = pcall(user_start, job)
+    if not ok then
+        local reason = G.is_refusal(err) and err.reason or tostring(err)
+        RPC.finish_job(job, "failed", nil, reason)
+    end
+end
+
+-- Orders waiting for `char`'s stand-up end without having started anything (no purge): a newer order, act.stop.
+function A.drop_waiting(char, why)
+    for _, j in pairs(RPC.jobs) do
+        if j.status == "running" and j.wait_standup and j.char == char then
+            j.stopping = true
+            RPC.finish_job(j, "interrupted", nil, why)
+        end
+    end
+end
+
 local function start(kind, char, spec)
+    local wait
     if char and not spec.passive then
         local prev = A.active[char]
-        if prev and prev.status == "running" then
+        if prev and prev.status == "running" and prev.kind == "act.end_standup" and kind ~= "end_standup"
+            and kind ~= "stop" then
+            wait = prev
+            spec.timeout_ms = (spec.timeout_ms or 20000) + math.max(0, prev.deadline - RPC.now_ms())
+        elseif prev and prev.status == "running" then
             -- naut3-r2 15:51:34: Lae'zel's cast, cast and end_turn were each superseded within 0.3 s by a job that
             -- logged nothing but "done": name the new one, in the result and the log
             pcall(Ext.Utils.Print, string.format("[BG3AI] job %s (%s) superseded by a new %s for %s",
@@ -447,9 +480,11 @@ local function start(kind, char, spec)
     spec.act = true
     spec.char = char
     spec.interrupt = spec.interrupt or {}
-    local user_tick = spec.on_tick
+    local user_tick, user_start = spec.on_tick, spec.start
     local last = 0
-    spec.on_tick = user_tick and function(job)
+    spec.on_tick = (user_tick or wait) and function(job)
+        if job.wait_standup then return after_standup(job, user_start) end
+        if not user_tick then return end
         local t = RPC.now_ms()
         if t - last < TICK_MS then return end
         last = t
@@ -459,6 +494,11 @@ local function start(kind, char, spec)
     local user_finish = spec.on_finish
     spec.notify = A.notify_next
     spec.on_finish = function(job)
+        if job.waited_for_standup_s or job.wait_standup then
+            if type(job.result) ~= "table" then job.result = {} end
+            job.result.waited_for_standup_s = job.waited_for_standup_s
+                or U.round((RPC.now_ms() - job.started) / 1000, 1)
+        end
         if char and A.active[char] == job then A.active[char] = nil end
         if char and not spec.passive and A.watch_idle then A.watch_idle(char, kind) end -- a jump after it (ActionsMove)
         if user_finish then pcall(user_finish, job) end
@@ -489,11 +529,20 @@ local function start(kind, char, spec)
                 error = job.error, dist = r.dist, pos = r.pos })
         end
     end
-    spec.on_cancel = spec.on_cancel or function(job)
+    local user_cancel = spec.on_cancel or function(job)
         job.stopping = true
         if job.char then pcall(G.osi, "PurgeOsirisQueue", job.char) end
     end
+    spec.on_cancel = function(job)
+        if job.wait_standup then job.stopping = true return end -- nothing of its own queued yet: no purge
+        user_cancel(job)
+    end
     local job = RPC.start_job("act." .. kind, spec)
+    if wait then
+        A.drop_waiting(char, "superseded by a new action (" .. kind .. ")") -- the latest order goes, as without a wait
+        job.wait_standup = wait
+        return A.reply(job)
+    end
     if char and not spec.passive then A.active[char] = job end
     local ok, err = pcall(spec.start, job)
     if not ok then

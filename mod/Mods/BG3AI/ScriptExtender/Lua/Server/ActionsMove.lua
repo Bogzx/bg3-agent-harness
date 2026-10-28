@@ -891,6 +891,7 @@ reg("stop", function(args)
     local stopped = job and job.status == "running" and job.id or nil
     local n = osi_tasks(char)
     if stopped then interrupt(job, "stopped") end -- purges too
+    A.drop_waiting(char, "stopped") -- orders that waited for a stand-up (Actions.lua start)
     if osi_tasks(char) > 0 then pcall(G.osi, "PurgeOsirisQueue", char) end
     A.use_streak[char] = nil
     return start("stop", char, {
