@@ -77,7 +77,8 @@ class SaveFilters(unittest.TestCase):
         self.assertIn("needs Python 3.14+", str(e.exception))
         with mock.patch.object(lspk, "zstd", None):
             self.assertIn("compression.zstd", C.savetime_problem() or "")
-        self.assertIsNone(C.savetime_problem() if lspk.zstd is not None else None)
+        with mock.patch.object(lspk, "zstd", object()):
+            self.assertIsNone(C.savetime_problem())
 
     def test_ours(self) -> None:
         st = {"runner_saves": ["a"], "agent_saves": ["b"]}

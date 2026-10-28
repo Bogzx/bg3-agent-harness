@@ -33,3 +33,4 @@ markers = ["unit", "integration", "e2e"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py312"  # the root ruff.toml's: requires-python 3.14 would make ruff rewrite to 3.14 syntax

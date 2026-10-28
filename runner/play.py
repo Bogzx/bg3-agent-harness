@@ -47,8 +47,11 @@ def savetime_refused(argv: list[str]) -> bool:
     """Every save choice goes by SaveTime (game.saves): a Python that can't read it is refused, in one line."""
     if (why := controller.savetime_problem()) is None:
         return False
-    print(f"runner/play.py refused: {why}. Run it with the repo's Python 3.14: uv run python runner/play.py "
-          f"{shlex.join(argv)}", file=sys.stderr)
+    print(
+        f"runner/play.py refused: {why}. Run it with the repo's Python 3.14: uv run python runner/play.py "
+        f"{shlex.join(argv)}",
+        file=sys.stderr,
+    )
     return True
 
 
