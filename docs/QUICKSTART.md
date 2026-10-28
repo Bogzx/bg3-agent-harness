@@ -2,7 +2,7 @@
 
 Three ways in: run your own model through the harness, plug your own MCP client into the bg3 server, or start the
 playthrough app to watch a long run. All three need the game set up first: [SETUP.md](SETUP.md) (Linux, a Steam
-copy of BG3 on the pinned build, bg3le built), then `python3 tools/bench_preflight.py` with no FAIL line.
+copy of BG3 on the pinned build, bg3le built), then `python3 tools/doctor.py` with no FAIL line.
 
 Status on 2026-10-22: Claude through Claude Code and DeepSeek Flash through pi (`profiles/deepseek-flash.toml`)
 have played the Nautiloid live on the overhaul code, one run each (research/ovh/live3.md). No other model has played
