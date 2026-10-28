@@ -292,6 +292,7 @@ crosscheck = [
 ]
 dev = [
     { name = "jsonschema" },
+    { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -308,6 +309,7 @@ provides-extras = ["inspect", "baselines"]
 crosscheck = [{ name = "scipy", specifier = ">=1.11" }]
 dev = [
     { name = "jsonschema", specifier = ">=4.20" },
+    { name = "playwright", specifier = "==1.64.0" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },
 ]

@@ -16,7 +16,7 @@ inspect = ["inspect-ai==0.3.282"]
 baselines = ["mcp>=2.3,<3"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20"]
+dev = ["pytest>=8", "pytest-cov>=5", "jsonschema>=4.20", "playwright==1.64.0"]  # playwright: tests/e2e (the panel), the pin bg3play uses
 # Optional cross-check of the statistics against scipy; the tests skip it when scipy is absent.
 crosscheck = ["scipy>=1.11"]
 
