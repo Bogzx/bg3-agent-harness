@@ -125,11 +125,13 @@ class SetupWalkTest(unittest.TestCase):
     def test_short_of_the_start_refuses_the_replay(self):
         _, call = self.calls(["queue e2 Claude: STOPPED: step 1 travel_to: leg 3 failed"])
         rec, why = replay.setup_walk(call, lambda: [300.0, 0.0, 250.0])
+        assert why is not None
         self.assertIn("setup: e2 is 66.5 m from the replay's start (255.8, 0.9, 200.3)", why)
         self.assertIn("not replaying", why)
         self.assertEqual(rec["off_m"], 66.5)
         _, call = self.calls(["still waiting for queue after 1s"])
         _rec, why = replay.setup_walk(call, lambda: None, budget_s=0.05)
+        assert why is not None
         self.assertIn("setup: e2 is unknown from the replay's start", why)
 
 
