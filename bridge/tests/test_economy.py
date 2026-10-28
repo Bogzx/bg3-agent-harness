@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from typing import Any
+from unittest import mock
 
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
@@ -581,6 +582,54 @@ class Tools(unittest.TestCase):
         out = inventory.short_rest()
         self.assertIn("HP Claude 34→70/88 · short rests left 1/2", out)
         self.assertEqual(overview.ALERTS.short_rests, 1)
+
+    def test_short_rest_closes_a_trade_screen_first(self):
+        # live N6 01:53:39: short_rest with the trade screen left open timed out after 15 s
+        calls: list = []
+
+        class G(FakeGame):
+            screen = "trade"
+
+            def rpc(self, op, args=None, context="server", timeout=None):
+                if op == "ui.state":
+                    return {"screen": G.screen}
+                if op == "ui.key":
+                    calls.append(("ui.key", args["key"]))
+                    G.screen = "game"
+                    return {}
+                return super().rpc(op, args, context)
+
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                calls.append((op, G.screen))
+                if G.screen != "game":
+                    return JobResult(status="timeout", error="timed out")
+                return JobResult(status="done", result={"short_rests_left": 1, "of": 2})
+        self.use(G(s026_inventory()))
+        out = inventory.short_rest()
+        self.assertEqual(calls, [("ui.key", "ESCAPE"), ("ui.short_rest", "game")])
+        self.assertTrue(out.startswith("(closed the trade window first)\nshort_rest: done"), out)
+
+    def test_short_rest_is_not_pressed_under_a_trade_or_conversation_screen(self):
+        jobs: list = []
+
+        class G(FakeGame):
+            screen = "trade"
+
+            def rpc(self, op, args=None, context="server", timeout=None):
+                if op == "ui.state":
+                    return {"screen": G.screen}
+                return super().rpc(op, args, context)
+
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                jobs.append(op)
+                return JobResult(status="timeout", error="timed out")
+        self.use(G(s026_inventory()))
+        with mock.patch.object(plumbing, "_close_left_trade", lambda wait_s=2.0: False):
+            self.assertEqual(inventory.short_rest(),
+                             "short_rest: FAILED — not pressed: the trade screen is open and didn't close")
+            G.screen = "dialogue"
+            self.assertEqual(inventory.short_rest(), "short_rest: FAILED — not pressed: a conversation is on screen")
+        self.assertEqual(jobs, [])
 
     def test_alerts_line_never_raises(self):
         self.assertEqual(overview._alerts_line(None, {"items": "bad"}), "")
