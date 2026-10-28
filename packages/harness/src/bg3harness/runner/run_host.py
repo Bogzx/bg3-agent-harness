@@ -72,6 +72,7 @@ GOAL_POLL_S = 10.0  # how often GoalWatch asks the verdict: the stop comes one p
 FOREIGN_SAVE = "foreign_save"  # until_hit's id when SaveWatch saw the game load a save that isn't the run's
 LOAD_GRACE_S = 60.0  # SaveWatch: a load_game logged this long after its new server boot was seen still explains it
 RECORD_ENV = "BG3AI_BENCH_RECORD"  # 0: play.py bench records no run (bench_recording)
+RECORD_ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"  # the recording's encoder (default h264_nvenc; libx264 on the CPU)
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -440,10 +441,19 @@ def machine_pins(env: Mapping[str, str]) -> Json:
 
 def bench_recording(env: Mapping[str, str]) -> Callable[[Path], hrec.RunRecording] | None:
     """play.py bench records every run (recorder.run_recording, the game's window on env's DISPLAY);
-    BG3AI_BENCH_RECORD=0 turns it off."""
+    BG3AI_BENCH_RECORD=0 turns it off. BG3AI_BENCH_RECORD_ENCODER picks the encoder (a machine without NVENC sets
+    libx264; bg3harness.doctor checks the one set); an unknown one is refused here, before any run."""
     if env.get(RECORD_ENV, "1") == "0":
         return None
-    return lambda out: hrec.run_recording(out, env, renv.RUNTIME)
+    encoder = bench_encoder(env)
+    return lambda out: hrec.run_recording(out, env, renv.RUNTIME, encoder)
+
+
+def bench_encoder(env: Mapping[str, str]) -> str:
+    encoder = env.get(RECORD_ENCODER_ENV) or "h264_nvenc"
+    if encoder not in hrec.ENCODER_ARGS:
+        raise ValueError(f"{RECORD_ENCODER_ENV}={encoder!r}: one of {sorted(hrec.ENCODER_ARGS)}")
+    return encoder
 
 
 def owner_of(sc: Json) -> str:

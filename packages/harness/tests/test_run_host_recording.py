@@ -104,3 +104,19 @@ def test_an_abort_stops_the_recording(rig: Rig):
 def test_play_py_bench_records_every_run_unless_turned_off():
     assert H.bench_recording({}) is not None and H.bench_recording({"BG3AI_BENCH_RECORD": "1"}) is not None
     assert H.bench_recording({"BG3AI_BENCH_RECORD": "0"}) is None
+
+
+def test_the_bench_encoder_comes_from_the_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    seen: list[str] = []
+
+    def run_recording(out: Path, env: object, runtime: Path, encoder: str) -> None:
+        seen.append(encoder)
+
+    monkeypatch.setattr(hrec, "run_recording", run_recording)
+    for env in ({}, {"BG3AI_BENCH_RECORD_ENCODER": "libx264"}):
+        make = H.bench_recording(env)
+        assert make is not None
+        make(tmp_path)
+    assert seen == ["h264_nvenc", "libx264"]
+    with pytest.raises(ValueError, match="BG3AI_BENCH_RECORD_ENCODER='vp9'"):
+        H.bench_recording({"BG3AI_BENCH_RECORD_ENCODER": "vp9"})
