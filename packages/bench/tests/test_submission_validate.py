@@ -389,3 +389,108 @@ def test_pilot_bundle_reports_missing_pins(tmp_path):
     failed = set(v.failed)
     assert {"P01", "P02", "G02"} <= failed and not any(c.startswith("F") for c in failed)
     assert "missing pins" in next(r.detail for r in v.checks if r.code == "P02")
+
+
+def first(rows: list[dict], kind: str, **match) -> dict:
+    return next(r for r in rows if r["kind"] == kind and all(r.get(k) == v for k, v in match.items()))
+
+
+def edit_events(bdir: Path, fn: Callable[[list[dict]], None]) -> None:
+    rows = jsonl((bdir / "S001.events.jsonl").read_text())
+    fn(rows)
+    write_jsonl(bdir / "S001.events.jsonl", rows)
+
+
+def insert_fact(rows: list[dict], at: int, **rec) -> None:
+    rows.insert(at + 1, {"v": 1, "kind": "event", "t": rows[at]["t"]} | rec)
+
+
+# Records that are valid JSON and pass the old F03 (version, kind, time order) but break what later checks read:
+# each is rejected with a code, never a crash.
+MALFORMED: dict[str, tuple[str, Callable[[Path], None]]] = {
+    "party not a list": ("F03", lambda b: edit_facts(b, lambda rows: first(rows, "snapshot").update(party="x"))),
+    "level a string": (
+        "F03",
+        lambda b: edit_facts(b, lambda rows: first(rows, "snapshot")["party"][0].update(level="9")),
+    ),
+    "gold a string": ("F03", lambda b: edit_facts(b, lambda rows: first(rows, "snapshot").update(gold="x"))),
+    "snapshot without party": ("F03", lambda b: edit_facts(b, lambda rows: first(rows, "snapshot").pop("party"))),
+    "event without ev": ("F03", lambda b: edit_facts(b, lambda rows: first(rows, "event").pop("ev"))),
+    "mark name a list": ("F03", lambda b: edit_facts(b, lambda rows: first(rows, "mark").update(mark=["run_start"]))),
+    "tokens a string": ("F03", lambda b: edit_events(b, lambda rows: first(rows, "usage").update(tokens="x"))),
+    "token count a string": (
+        "F03",
+        lambda b: edit_events(b, lambda rows: first(rows, "usage").update(tokens={"input": "1"})),
+    ),
+    "cost a dict": ("F03", lambda b: edit_events(b, lambda rows: first(rows, "usage").update(cost_usd={}))),
+    "tool a list": ("F03", lambda b: edit_events(b, lambda rows: first(rows, "tool_call").update(tool=["a"]))),
+    "session detail a list": (
+        "F03",
+        lambda b: edit_events(b, lambda rows: first(rows, "session_start").update(detail=[1])),
+    ),
+    "NaN args": ("F03", lambda b: edit_events(b, lambda rows: first(rows, "tool_call").update(args=float("nan")))),
+    "session id a list": (
+        "X06",
+        lambda b: edit_events(b, lambda rows: first(rows, "session_start")["detail"].update(session=["S001"])),
+    ),
+}
+
+
+@pytest.mark.parametrize("what", sorted(MALFORMED))
+def test_malformed_records_are_rejected_by_a_code(tmp_path, what):
+    d = good_run(tmp_path, FIGHT)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    code, tamper = MALFORMED[what]
+    tamper(bdir)
+    rehash(bdir)
+    v = run(bdir, release_for(d))
+    assert not v.accepted and v.failed == [code], [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
+def test_a_check_that_cannot_read_its_input_fails_its_code():
+    def broken(b):
+        return b["missing"]
+
+    ok, detail = validate._guarded(broken, {})
+    assert ok is False and detail.startswith("malformed input: KeyError")
+
+
+def loaded(facts_rows: list[dict], events: list[dict]) -> validate.Loaded:
+    return validate.Loaded(Path("."), {}, {}, {}, {}, facts_rows, None, {"S001.events.jsonl": events}, {}, {}, {})
+
+
+def call(t: float, tool: str) -> dict:
+    return {"v": 1, "kind": "tool_call", "t": t, "tool": tool, "args": {}}
+
+
+def ev(t: float, name: str, **kw) -> dict:
+    return {"v": 1, "kind": "event", "t": t, "ev": name} | kw
+
+
+def test_x03_trades_follow_a_trade_or_dialogue_call():
+    assert consistency.x03_events_vs_facts(loaded([ev(110, "trade_open")], [call(100, "trade")])) == (True, "")
+    assert consistency.x03_events_vs_facts(loaded([ev(150, "trade_open")], [call(100, "choose_dialogue")]))[0]
+    for calls in ([call(100, "get_status")], [call(30, "trade")], [call(120, "trade")]):
+        ok, detail = consistency.x03_events_vs_facts(loaded([ev(110, "trade_open")], calls))
+        assert ok is False and "trades opened" in detail
+    assert consistency.x03_events_vs_facts(loaded([], [call(100, "trade")])) == (True, "")  # a failed trade call
+
+
+def test_x03_party_kills_follow_a_tool_call():
+    kill = ev(200, "kill", victim="Goblin", by_party=True)
+    assert consistency.x03_events_vs_facts(loaded([kill], [call(100, "combat_turn")])) == (True, "")
+    ok, detail = consistency.x03_events_vs_facts(loaded([kill], [call(50, "combat_turn")]))
+    assert ok is False and "kills by the party" in detail
+    other = ev(200, "kill", victim="Goblin", by_party=False)  # an ally's or a trap's: no call needed
+    assert consistency.x03_events_vs_facts(loaded([other], [])) == (True, "")
+
+
+def test_inserted_party_kill_fails_x03(tmp_path):
+    d = good_run(tmp_path, GOLD)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    edit_facts(bdir, lambda rows: insert_fact(rows, 0, ev="kill", victim="Someone", by_party=True))  # before any call
+    rehash(bdir)
+    v = run(bdir, release_for(d))  # G01 fails too: the scenario's goal forbids kills
+    assert "X03" in v.failed and "kills by the party" in next(r.detail for r in v.checks if r.code == "X03")

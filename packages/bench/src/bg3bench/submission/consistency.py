@@ -1,6 +1,6 @@
 # pyright: basic
 """The validator's consistency checks over a bundle's own files: the start state (X01), the run's time marks (X02),
-the events against the facts (X03), the rolls (X04), tokens and cost (X05), resumed processes (X06), the outcome
+the facts against the tool calls: loads, trades, kills (X03), the rolls (X04), tokens and cost (X05), resumed processes (X06), the outcome
 against the verified cell (X07), the re-grade (G01, G02) and the fairness audit (A01, A02).
 
 Each check takes the loaded bundle (validate.Loaded) and returns (ok, detail); validate.py runs them.
@@ -24,6 +24,9 @@ Outcome = tuple[bool | None, str]
 
 WALL_SLACK_S = 5.0
 LOAD_WINDOW_S = 60.0
+TRADE_WINDOW_S = 60.0
+TRADE_TOOLS = ("trade", "choose_dialogue")
+KILL_WINDOW_S = 120.0
 COST_TOLERANCE = 0.25
 
 
@@ -87,9 +90,21 @@ def _near(ts: Iterable[float], t: float, window: float) -> bool:
     return any(abs(x - t) <= window for x in ts)
 
 
+def _events(timeline: list[Json], ev: str) -> list[Json]:
+    return [r for r in timeline if r.get("kind") == "event" and r.get("ev") == ev]
+
+
+def _after(ts: Iterable[float], t: float, window: float) -> bool:
+    """Some call in ts came at most `window` seconds before t."""
+    return any(0 <= t - x <= window for x in ts)
+
+
 def x03_events_vs_facts(b: Loaded) -> Outcome:
-    """Loads: every load_game call has a load mark within 60 s and every load mark after the start a load_game call
-    (or ended the run). Covers loads only today; trades and kills are not cross-checked yet."""
+    """The facts against the agent's tool calls. Loads: every load_game call has a load mark within 60 s and every
+    load mark after the start a load_game call (or ended the run). Trades: every trade_open has a trade or
+    choose_dialogue call at most 60 s before it (pilot: at most 16 s). Kills by the party: each comes at most 120 s
+    after some tool call (pilot: 62 s; a combat_turn call plays the allies' turns too). A failed trade call opens
+    no trade, so calls without a trade are fine."""
     calls = [e["t"] for e in _tool_calls(b, "load_game")]
     loads = [m["t"] for m in _marks(b.facts, "load")][1:]  # the first is the start save
     ends = [m["t"] for m in _marks(b.facts, "run_end")]
@@ -97,6 +112,13 @@ def x03_events_vs_facts(b: Loaded) -> Outcome:
     orphan_loads = [t for t in loads if not _near(calls, t, LOAD_WINDOW_S) and not _near(ends, t, LOAD_WINDOW_S)]
     if orphan_calls or orphan_loads:
         return False, f"{len(orphan_calls)} load_game calls without a load, {len(orphan_loads)} loads without a call"
+    opens = [e["t"] for e in _tool_calls(b) if e.get("tool") in TRADE_TOOLS]
+    if trades := [r["t"] for r in _events(b.facts, "trade_open") if not _after(opens, r["t"], TRADE_WINDOW_S)]:
+        return False, f"{len(trades)} trades opened without a trade or dialogue call before them"
+    every = [e["t"] for e in _tool_calls(b)]
+    kills = [r for r in _events(b.facts, "kill") if r.get("by_party") and not _after(every, r["t"], KILL_WINDOW_S)]
+    if kills:
+        return False, f"{len(kills)} kills by the party with no tool call in the {KILL_WINDOW_S:.0f} s before"
     return True, ""
 
 

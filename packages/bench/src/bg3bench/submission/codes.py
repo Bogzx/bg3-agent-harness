@@ -57,7 +57,7 @@ CHECKS: tuple[Check, ...] = (
     ),
     Check("X01", _PJ, "reject", "the first facts snapshot matches the scenario's start-state fingerprint"),
     Check("X02", _PJ, "reject", "run_start and run_end marks; wall_s equals their distance; events lie between"),
-    Check("X03", _PJ, "reject", "acting tool calls have facts counterparts; no load the events don't show"),
+    Check("X03", _PJ, "reject", "loads match load_game calls; trades and party kills follow the agent's tool calls"),
     Check("X04", _PJ, "reject", "the rolls agree with the facts; luck recomputed equals result.luck"),
     Check(
         "X05", _PJ, "flag", "tokens equal the events' usage; cost within 25 % of the recomputed", flag="cost_mismatch"

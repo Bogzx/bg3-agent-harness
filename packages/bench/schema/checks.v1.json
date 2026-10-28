@@ -151,7 +151,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "acting tool calls have facts counterparts; no load the events don't show"
+      "summary": "loads match load_game calls; trades and party kills follow the agent's tool calls"
     },
     {
       "code": "X04",

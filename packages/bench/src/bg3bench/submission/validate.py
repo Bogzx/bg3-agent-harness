@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import bg3harness
 import jsonschema
 from bg3harness.run_manifest import tools_digest
 
@@ -157,13 +158,34 @@ def _num(v: Any) -> bool:
     return isinstance(v, int | float) and not isinstance(v, bool)
 
 
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON")  # Python reads NaN and Infinity; JSON (and the site's parser) doesn't
+
+
+def _loads(data: bytes | str) -> Any:
+    return json.loads(data, parse_constant=_no_constant)
+
+
 def _jsonl(data: bytes) -> list[Any]:
-    return [json.loads(ln) for ln in data.decode().splitlines() if ln.strip()]
+    return [_loads(ln) for ln in data.decode().splitlines() if ln.strip()]
 
 
 def _schema_errors(doc: Any, schema_file: str) -> list[str]:
     v = jsonschema.Draft202012Validator(json.loads((SCHEMA_DIR / schema_file).read_text()))
     return [f"{'/'.join(map(str, e.absolute_path))}: {e.message}"[:200] for e in v.iter_errors(doc)]
+
+
+def _record_errors(name: str, rows: list[Any], schema_name: str, limit: int = 3) -> list[str]:
+    """The first `limit` records of a JSONL file that break the harness's schema (facts.v1, events.v1): the later
+    checks read their fields as the schema types them."""
+    v = jsonschema.Draft202012Validator(bg3harness.schema(schema_name))
+    out = []
+    for i, r in enumerate(rows):
+        if (e := next(iter(v.iter_errors(r)), None)) is not None:
+            out.append(f"{name}: line {i + 1} {'/'.join(map(str, e.absolute_path))}: {e.message}"[:200])
+            if len(out) >= limit:
+                break
+    return out
 
 
 # ------------------------------------------------------------------------------------------------- format checks
@@ -211,11 +233,11 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
         if name not in raw:
             errs.append(f"{name} missing")
             continue
-        doc = json.loads(raw[name])
+        doc = _loads(raw[name])
         errs += [f"{name} {e}" for e in _schema_errors(doc, schema_file)]
     for name, data in raw.items():
         if name.endswith(".json"):
-            docs = [json.loads(data)]
+            docs = [_loads(data)]
         elif name.endswith(".jsonl"):
             docs = _jsonl(data)
         else:
@@ -223,7 +245,7 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
         if any(_depth(x) > MAX_JSON_DEPTH for x in docs):
             errs.append(f"{name}: JSON nested deeper than {MAX_JSON_DEPTH}")
     try:
-        facts.check(_jsonl(raw["facts.jsonl"]))
+        errs += _record_errors("facts.jsonl", facts.check(_jsonl(raw["facts.jsonl"])), "facts.v1")
     except (KeyError, facts.FactsError) as e:
         errs.append(f"facts.jsonl: {e}")
     if "rolls.jsonl" in raw:
@@ -232,6 +254,7 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
     if not names:
         errs.append("no events log")
     for n in names:
+        errs += _record_errors(n, _jsonl(raw[n]), "events.v1")
         last = -1
         for i, e in enumerate(_jsonl(raw[n])):
             ok = isinstance(e, dict) and e.get("v") == 1 and isinstance(e.get("kind"), str)
@@ -460,7 +483,7 @@ def _tool_sequence(b: Loaded) -> list[tuple[str, str]]:
 def _read(d: Path) -> tuple[Json | None, dict[str, bytes]]:
     raw = {p.name: p.read_bytes() for p in sorted(d.iterdir()) if p.is_file() and not p.is_symlink()}
     try:
-        env = json.loads(raw[bundle.ENVELOPE])
+        env = _loads(raw[bundle.ENVELOPE])
     except (KeyError, ValueError, UnicodeDecodeError):
         return None, raw
     return (env if isinstance(env, dict) else None), raw
@@ -505,7 +528,7 @@ def validate(
         return _skip_rest(verdict, runs_here, "the format checks failed")
     assert env is not None
     man, res = json.loads(raw["manifest.json"]), json.loads(raw["result.json"])
-    add("F04", f04_eligible(man, res, scenarios))
+    add("F04", _guarded(f04_eligible, man, res, scenarios))
     if verdict.failed:
         return _skip_rest(verdict, runs_here, "not an eligible run")
     sc = scenarios[man["scenario"]["name"]]
@@ -522,35 +545,49 @@ def validate(
         release_scenario=release.scenarios.get(env["scenario"]) or {},
         release_condition=release.conditions.get(env["condition"]) or {},
     )
-    add("P01", p01_suite(b, release))
-    add("P02", p02_pins(man, release))
-    add("C01", c01_prompt_tools(b))
-    add("C02", c02_served(b))
-    add("C03", c03_settings(b))
+    add("P01", _guarded(p01_suite, b, release))
+    add("P02", _guarded(p02_pins, man, release))
+    add("C01", _guarded(c01_prompt_tools, b))
+    add("C02", _guarded(c02_served, b))
+    add("C03", _guarded(c03_settings, b))
     if "D01" in runs_here:
         add("D01", (None, "no submission store here") if ctx.duplicate is None else _dup(ctx.duplicate, verdict, env))
     if "D02" in runs_here:
         found = None if ctx.near_copy is None else ctx.near_copy(_tool_sequence(b))
         add("D02", (None, "no submission store here") if ctx.near_copy is None else (found is None, found or ""))
-    add("X01", consistency.x01_start_state(b))
-    add("X02", consistency.x02_time_marks(b))
-    add("X03", consistency.x03_events_vs_facts(b))
-    add("X04", consistency.x04_rolls(b))
-    add("X05", consistency.x05_tokens_cost(b))
-    add("X06", consistency.x06_resumes(b))
+    add("X01", _guarded(consistency.x01_start_state, b))
+    add("X02", _guarded(consistency.x02_time_marks, b))
+    add("X03", _guarded(consistency.x03_events_vs_facts, b))
+    add("X04", _guarded(consistency.x04_rolls, b))
+    add("X05", _guarded(consistency.x05_tokens_cost, b))
+    add("X06", _guarded(consistency.x06_resumes, b))
     if "X07" in runs_here:
-        add("X07", consistency.x07_outlier(b, None if ctx.reference is None else ctx.reference(env["attempt"]["cell"])))
-    add("G01", consistency.g01_regrade(b))
-    add("G02", consistency.g02_losses(b))
-    add("A01", consistency.a01_fairness(b))
-    add("A02", consistency.a02_allowlist(b))
-    add("E01", e01_video(b, ctx, submission))
+        add(
+            "X07",
+            _guarded(
+                consistency.x07_outlier, b, None if ctx.reference is None else ctx.reference(env["attempt"]["cell"])
+            ),
+        )
+    add("G01", _guarded(consistency.g01_regrade, b))
+    add("G02", _guarded(consistency.g02_losses, b))
+    add("A01", _guarded(consistency.a01_fairness, b))
+    add("A02", _guarded(consistency.a02_allowlist, b))
+    add("E01", _guarded(e01_video, b, ctx, submission))
     if "E02" in runs_here:
-        add("E02", e02_duration(b, ctx))
-    add("E03", e03_render(b, submission))
-    add("E04", e04_frames(b, submission))
-    add("S02", s02_reasoning(b))
+        add("E02", _guarded(e02_duration, b, ctx))
+    add("E03", _guarded(e03_render, b, submission))
+    add("E04", _guarded(e04_frames, b, submission))
+    add("S02", _guarded(s02_reasoning, b))
     return _ordered(verdict)
+
+
+def _guarded(check: Callable[..., Outcome], *args: Any) -> Outcome:
+    """A check over the bundle's parsed files. F03 holds them to their schemas; what a check still can't read (a
+    shape the schemas allow and the check doesn't expect) fails that check's code instead of the validation."""
+    try:
+        return check(*args)
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError, ArithmeticError) as e:
+        return False, f"malformed input: {type(e).__name__}: {e}"[:300]
 
 
 def _dup(duplicate: Callable[[str, str], str | None], verdict: Verdict, env: Json) -> Outcome:
