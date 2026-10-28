@@ -155,7 +155,7 @@ local registered = {}
 
 local function each_running(fn)
     for _, job in pairs(RPC.jobs) do
-        if job.status == "running" and job.act and not job.wait_standup then -- waiting: nothing of its own started
+        if job.status == "running" and job.act and not job.call then -- parked for a stand-up: nothing of its own
             local ok, err = pcall(fn, job)
             if not ok then RPC.finish_job(job, "failed", nil, tostring(err)) end
         end
@@ -436,19 +436,31 @@ end
 -- Live N10 (C1 replay, 616e02f): a walk_toward of the revived Claude arrived while act.end_standup was still running
 -- (it waits out the revive's dialog, then walks: ~8.6 s in N10's probe run); superseding it left the stand-up's layer-1
 -- action unfinished and no order of his started again. A new order for a member whose stand-up job runs waits for that
--- job to end (bounded by its own limit) and then starts: no game call, no Osiris event, no purge while it waits
--- (job.wait_standup); its result says how long it waited (waited_for_standup_s).
-local function after_standup(job, user_start)
-    local prev = job.wait_standup
-    if prev.status == "running" then return end
+-- job to end (bounded by its own limit) and then runs: no game call, no Osiris event, no purge while it waits
+-- (job.wait_standup); its result says how long it waited (waited_for_standup_s). #38 review: the order is run again
+-- from scratch through its op (guarded: gates, plan, 'already there', supersede rules, A.active), not started on its
+-- request-time plan (a fight starting during the wait got an off-turn walk with no budget). The parked job (the id
+-- the bridge holds) then mirrors that job (job.real): its status, result and error, and a job.cancel reaches it.
+local function after_standup(job)
+    local real = job.real
+    if real then
+        if real.status == "running" then return end
+        local res = {}
+        for k, v in pairs(type(real.result) == "table" and real.result or {}) do res[k] = v end
+        return RPC.finish_job(job, real.status, res, real.error)
+    end
+    if job.wait_standup.status == "running" then return end
     job.wait_standup = nil
     job.waited_for_standup_s = U.round((RPC.now_ms() - job.started) / 1000, 1)
-    A.active[job.char] = job
-    local ok, err = pcall(user_start, job)
-    if not ok then
-        local reason = G.is_refusal(err) and err.reason or tostring(err)
-        RPC.finish_job(job, "failed", nil, reason)
-    end
+    local args = {}
+    for k, v in pairs(job.call.args) do args[k] = v end
+    args.notify = nil -- the parked job announces the end: its id is the one the bridge has
+    local ok, rep = pcall(job.call.run, args)
+    real = ok and type(rep) == "table" and RPC.jobs[rep.job] or nil
+    if not real then return RPC.finish_job(job, "failed", nil, ok and "the order started no job" or tostring(rep)) end
+    job.real = real
+    job.deadline = real.deadline + 2000 -- the real job times out by itself; this one follows it
+    return after_standup(job)
 end
 
 -- Orders waiting for `char`'s stand-up end without having started anything (no purge): a newer order, act.stop.
@@ -461,14 +473,44 @@ function A.drop_waiting(char, why)
     end
 end
 
+-- The parked job for an order that waits for `prev` (char's running act.end_standup); A.call_now is that order's call.
+local function park(kind, char, spec, prev)
+    local job = RPC.start_job("act." .. kind, {
+        act = true, char = char, interrupt = {}, call = A.call_now, wait_standup = prev, notify = A.notify_next,
+        timeout_ms = (spec.timeout_ms or 20000) + math.max(0, prev.deadline - RPC.now_ms()),
+        on_tick = after_standup,
+        on_cancel = function(j)
+            j.stopping = true -- nothing of its own queued: no purge
+            local real = j.real
+            if real and real.status == "running" then
+                if real.on_cancel then pcall(real.on_cancel, real) end
+                RPC.finish_job(real, "interrupted", nil, "cancelled")
+            end
+        end,
+        on_finish = function(j)
+            if type(j.result) ~= "table" then j.result = {} end
+            j.result.waited_for_standup_s = j.waited_for_standup_s or U.round((RPC.now_ms() - j.started) / 1000, 1)
+            if not j.result.after then
+                local ok, sum = pcall(A.summary, char)
+                if ok then j.result.after = sum end
+            end
+            if j.notify then
+                RPC.push("job_finished", { job = "j" .. tostring(j.id), op = j.kind, status = j.status,
+                    error = j.error, dist = j.result.dist, pos = j.result.pos })
+            end
+        end,
+    })
+    return A.reply(job)
+end
+
 local function start(kind, char, spec)
-    local wait
     if char and not spec.passive then
+        -- the latest order goes, as without a wait; also once the stand-up ended but before the waiting one ran again
+        if kind ~= "end_standup" then A.drop_waiting(char, "superseded by a new action (" .. kind .. ")") end
         local prev = A.active[char]
         if prev and prev.status == "running" and prev.kind == "act.end_standup" and kind ~= "end_standup"
-            and kind ~= "stop" then
-            wait = prev
-            spec.timeout_ms = (spec.timeout_ms or 20000) + math.max(0, prev.deadline - RPC.now_ms())
+            and kind ~= "stop" and A.call_now then
+            return park(kind, char, spec, prev)
         elseif prev and prev.status == "running" then
             -- naut3-r2 15:51:34: Lae'zel's cast, cast and end_turn were each superseded within 0.3 s by a job that
             -- logged nothing but "done": name the new one, in the result and the log
@@ -480,11 +522,9 @@ local function start(kind, char, spec)
     spec.act = true
     spec.char = char
     spec.interrupt = spec.interrupt or {}
-    local user_tick, user_start = spec.on_tick, spec.start
+    local user_tick = spec.on_tick
     local last = 0
-    spec.on_tick = (user_tick or wait) and function(job)
-        if job.wait_standup then return after_standup(job, user_start) end
-        if not user_tick then return end
+    spec.on_tick = user_tick and function(job)
         local t = RPC.now_ms()
         if t - last < TICK_MS then return end
         last = t
@@ -494,11 +534,6 @@ local function start(kind, char, spec)
     local user_finish = spec.on_finish
     spec.notify = A.notify_next
     spec.on_finish = function(job)
-        if job.waited_for_standup_s or job.wait_standup then
-            if type(job.result) ~= "table" then job.result = {} end
-            job.result.waited_for_standup_s = job.waited_for_standup_s
-                or U.round((RPC.now_ms() - job.started) / 1000, 1)
-        end
         if char and A.active[char] == job then A.active[char] = nil end
         if char and not spec.passive and A.watch_idle then A.watch_idle(char, kind) end -- a jump after it (ActionsMove)
         if user_finish then pcall(user_finish, job) end
@@ -529,20 +564,11 @@ local function start(kind, char, spec)
                 error = job.error, dist = r.dist, pos = r.pos })
         end
     end
-    local user_cancel = spec.on_cancel or function(job)
+    spec.on_cancel = spec.on_cancel or function(job)
         job.stopping = true
         if job.char then pcall(G.osi, "PurgeOsirisQueue", job.char) end
     end
-    spec.on_cancel = function(job)
-        if job.wait_standup then job.stopping = true return end -- nothing of its own queued yet: no purge
-        user_cancel(job)
-    end
     local job = RPC.start_job("act." .. kind, spec)
-    if wait then
-        A.drop_waiting(char, "superseded by a new action (" .. kind .. ")") -- the latest order goes, as without a wait
-        job.wait_standup = wait
-        return A.reply(job)
-    end
     if char and not spec.passive then A.active[char] = job end
     local ok, err = pcall(spec.start, job)
     if not ok then
@@ -588,14 +614,18 @@ function A.tb_gate(kind, args)
 end
 
 local function guarded(kind, fn)
-    return function(args)
+    local run
+    run = function(args)
         args = args or {}
         A.notify_next = args.notify == true -- read by start(); Lua runs one op at a time
+        local outer = A.call_now
+        A.call_now = { run = run, args = args } -- start() parks it for a stand-up and runs it again after
         local ok, res = pcall(function()
             A.tb_gate(kind, args)
             return fn(args)
         end)
         A.notify_next = false
+        A.call_now = outer
         if ok then return res end
         if G.is_refusal(res) then
             local job = RPC.start_job("act." .. kind, { act = true })
@@ -604,6 +634,7 @@ local function guarded(kind, fn)
         end
         error(res, 0)
     end
+    return run
 end
 
 local function reg(name, fn) RPC.register("act." .. name, guarded(name, fn)) end
