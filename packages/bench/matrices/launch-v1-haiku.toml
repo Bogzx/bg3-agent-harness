@@ -6,8 +6,9 @@
 #     act3_gold_max (maximise: a gain, no pass)
 # max_cost: each scenario's time cap x the per-minute cost below x 1.25, so it rarely ends a run (a run it ends is
 # scored over_budget); it is also what the budget holds back before the run starts.
-# Per minute: $0.049 (pilot diverse-2026-10-25 tokens at list price, prompts over 100K tokens). Estimate $37 for
-# the 36 runs (pilot play times; never-played scenarios assumed), $86 if every run played its whole cap.
+# Per minute: $0.056 (pilot diverse-2026-10-25 tokens at the 2026-10-29 list price for prompts over 100K tokens;
+# its notional figure was $0.033). Estimate $42 for the 36 runs (pilot play times; never-played scenarios
+# assumed), $98 if every run played its whole cap.
 # The Claude profiles must be verified (one live pilot run, launch-v1-pilot.toml) before this runs.
 name = "launch-v1-haiku"
 allow_gaps = false
@@ -35,15 +36,15 @@ repeats = 3
 file = "runtime/budget-anthropic.json"
 
 [budget.max_cost]
-crash_site_grove = 3.70
-act1_goblin_camp_no_fight = 2.77
-act1_gold_1000 = 2.77
-act1_level_3 = 3.70
-fight_act1_grove_gate = 1.85
-fight_act1_windmill = 3.70
-fight_act2_balthazar = 5.54
-fight_act2_moonrise_assault = 3.70
-choice_act1_karlach = 1.85
-choice_act1_minthara = 1.85
-choice_act2_nightsong = 1.85
-act3_gold_max = 2.77
+crash_site_grove = 4.21
+act1_goblin_camp_no_fight = 3.16
+act1_gold_1000 = 3.16
+act1_level_3 = 4.21
+fight_act1_grove_gate = 2.11
+fight_act1_windmill = 4.21
+fight_act2_balthazar = 6.31
+fight_act2_moonrise_assault = 4.21
+choice_act1_karlach = 2.11
+choice_act1_minthara = 2.11
+choice_act2_nightsong = 2.11
+act3_gold_max = 3.16
