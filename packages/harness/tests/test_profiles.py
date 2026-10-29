@@ -97,13 +97,15 @@ class Examples(unittest.TestCase):
 
     def test_golden_models_json(self):
         pi = [p for p in sorted(EXAMPLES.glob("*.toml")) if pr.load(p).client == "pi"]
-        self.assertEqual(len(pi), 4)
+        self.assertGreaterEqual(len(pi), 4)
         for p in pi:
             got = json.dumps(pr.models_json(pr.load(p)), indent=1) + "\n"
             golden = GOLDEN / f"models.{p.stem}.json"
             if os.environ.get("BG3AI_UPDATE_GOLDEN"):
                 golden.write_text(got)
             self.assertEqual(got, golden.read_text(), f"{golden.name}: regenerate with BG3AI_UPDATE_GOLDEN=1")
+        goldens = {g.name for g in GOLDEN.glob("models.*.json")}
+        self.assertEqual(goldens, {f"models.{p.stem}.json" for p in pi}, "one golden per pi profile")
 
 
 class Parse(unittest.TestCase):
