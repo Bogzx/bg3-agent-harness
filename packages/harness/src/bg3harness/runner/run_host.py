@@ -89,6 +89,9 @@ class RunState(Protocol):
 class FactsMarks(Protocol):
     """The runner's facts.jsonl writer (bg3harness.facts.FactsWriter): its marks."""
 
+    t0: float | None  # its run_start mark's time: the run's time zero
+    game_over: float | None  # when its reads first showed the game's Game Over screen (a game_over event)
+
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> Any: ...
 
 
@@ -118,7 +121,7 @@ class RunRunner(Protocol):
     def apply_play_settings(self) -> None: ...
     def check_settings(self) -> None: ...
     def session_hooks(self, sid: str, minutes: float) -> SessionHooks: ...
-    def end_facts(self, outcome: str) -> None: ...
+    def end_facts(self, outcome: str) -> float: ...
     def facts_writer(self) -> FactsMarks: ...
     def facts_now(self) -> None: ...
     def server_boot(self) -> str | None: ...
@@ -312,8 +315,9 @@ class GoalWatch:
     """A run's live verdict (SessionRun's job["verdict"]: "passed", "failed", "wiped" or None) asked every poll_s
     while the run plays. Once it decides, the runner's until_hit is set to {"id": GOAL_HIT, "verdict": ...}: the
     agent loop stops the agent on it as on an until milestone (a goal run never plays on past its grade, and no run
-    plays on past a party wipe, the game's Game Over: bench B3 resumed a wiped Balthazar run 6 times). check() is one
-    poll (the tests call it directly)."""
+    plays on past a party wipe, the game's Game Over: bench B3 resumed a wiped Balthazar run 6 times). The Game Over
+    screen in the runner's facts (its game_over event) is "wiped" before the verdict is asked. check() is one poll
+    (the tests call it directly)."""
 
     def __init__(self, r: RunRunner, verdict: Callable[[], str | None], poll_s: float = GOAL_POLL_S):
         self.r, self.verdict, self.poll_s = r, verdict, poll_s
@@ -324,8 +328,8 @@ class GoalWatch:
         """True once the run is decided (by this verdict or an earlier stop): nothing left to watch."""
         if self.r.until_hit:
             return True
-        try:
-            v = self.verdict()
+        try:  # the game's Game Over is a wipe whatever the party rows say (S2: "Us" up, Tav and Lae'zel down)
+            v = "wiped" if self.r.facts_writer().game_over is not None else self.verdict()
         except Exception as e:  # a verdict that can't be read doesn't end the run
             renv.log(f"goal verdict failed: {type(e).__name__}: {e}")
             return False
@@ -805,9 +809,9 @@ class LiveRunHost:
 
             self.saves[run_dir] = self.save_watch(r, own)
             self.saves[run_dir].start()
-            if job.get("verdict") is not None:
-                self.watches[run_dir] = GoalWatch(r, job["verdict"])
-                self.watches[run_dir].start()
+            # every run: a party wipe (the Game Over screen) ends any run, with or without a goal verdict
+            self.watches[run_dir] = GoalWatch(r, job.get("verdict") or (lambda: None))
+            self.watches[run_dir].start()
             return st
         except (Exception, SystemExit) as e:
             for w in (self.saves.pop(run_dir, None), self.recordings.pop(run_dir, None)):
@@ -864,6 +868,10 @@ class LiveRunHost:
             raise RuntimeError("operator stop before the kickoff")
         if (rec := self.recordings.get(run_dir)) is not None:
             rec.check()  # ffmpeg still up after the settings: the run plays recorded
+        # the run's time zero, before the agent's first event: facts.jsonl's run_start (a save start's came with its
+        # load; a new game's is written now, not at its first level's load 15 s into the run). wall_s, the facts'
+        # game_t and the evidence video all count from it; the recording runs since ensure_game.
+        r.facts_writer()
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
         minutes = opt.session_minutes
         # the manifest's prompt is what the client is served (run_manifest.manifest_fields; none without run files),
@@ -929,7 +937,7 @@ class LiveRunHost:
         else:
             name = "reached" if hit else "over_budget" if r.cap_hit else "timeout"
         try:
-            r.end_facts(name)
+            ended = r.end_facts(name)
         finally:
             try:
                 if (rec := self.recordings.pop(run_dir, None)) is not None:
@@ -941,6 +949,7 @@ class LiveRunHost:
             finally:
                 back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more
                 own_saves = isolate_saves(saves_marker())  # nor a save
+        t_zero = cast(float, r.facts_writer().t0)  # _begin's facts_writer() wrote run_start before the kickoff
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         why, cap = foreign or getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
         failures = run_failures(
@@ -955,9 +964,9 @@ class LiveRunHost:
                 "tokens": totals["tokens"],
                 "served": totals["served"],  # what the endpoint served (pi: thinking levels, providers)
                 "turns": totals["turns"],
-                "wall_min": round((res.ended - outcome.started) / 60, 2),
+                "wall_min": round((ended - t_zero) / 60, 2),  # run_start to run_end: the marks' and the video's span
                 # the agent's first end of turn (resumed or not), wall s from the run's start; None: never
-                "first_stop_s": None if outcome.first_stop is None else round(outcome.first_stop - outcome.started, 1),
+                "first_stop_s": None if outcome.first_stop is None else round(outcome.first_stop - t_zero, 1),
                 "sessions": 1,
                 "cap_hit": r.cap_hit,
                 # an until run that the live verdict passed reached its milestone (the bench's verdict is its goal)

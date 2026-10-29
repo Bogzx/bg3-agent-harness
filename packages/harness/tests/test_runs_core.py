@@ -382,3 +382,22 @@ class Backfill(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HistoryFailures(TmpDir):
+    def test_a_killed_or_quick_session_names_its_client(self):  # S2 (2026-10-29): "claude ended ..." for a pi run
+        start = {"v": 1, "seq": 0, "t": 1.0, "src": "harness", "kind": "session_start", "detail": {"client": "pi"}}
+        (self.tmp / "S001.events.jsonl").write_text(json.dumps(start) + "\n")
+        sessions = [
+            {"session": "S001", "reason": "killed", "started": 0, "ended": 900},
+            {"session": "S001", "reason": "exited", "started": 1000, "ended": 1020, "exit": 1},
+        ]
+        got = [f["detail"] for f in runs.history_failures(sessions, self.tmp)]
+        assert got == [
+            "S001: pi ended by a signal from outside the runner",
+            "S001: pi exited after 20 s (exit 1: auth, config or usage)",
+        ]
+        assert (
+            runs.history_failures(sessions[:1])[0]["detail"]
+            == "S001: the agent ended by a signal from outside the runner"
+        )

@@ -59,6 +59,6 @@ async def call(session: ClientSession, tool: str, args: dict[str, Any] | None = 
     the tool reports (FAILED, NOT READY, ...: bg3ai.tool_classes.failed) is an error result too, and is returned."""
     res = await session.call_tool(tool, args or {})
     text = "\n".join(getattr(c, "text", "") for c in res.content)
-    if res.is_error and not tool_classes.failed(text):
+    if res.is_error and not tool_classes.failed(text, tool):
         raise AssertionError(f"{tool} failed: {text[:500]}")
     return text

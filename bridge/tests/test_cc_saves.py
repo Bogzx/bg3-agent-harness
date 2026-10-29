@@ -118,7 +118,7 @@ class NewGameAsync(Base):
             opts = newgame.character_creation_options()          # waits for the load
         self.assertTrue(g.loaded.is_set())
         self.assertIn("(new_game's load finished; waited", opts)
-        self.assertLess(opts.index("waited"), opts.index("Elf"))
+        self.assertLess(opts.index("Elf"), opts.index("waited"))  # the call's own outcome first (tool_classes.failed)
         self.assertIsNone(newgame._new_game["thread"])
 
     def test_a_failed_load_is_reported_by_the_next_game_tool(self):

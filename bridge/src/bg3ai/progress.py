@@ -93,6 +93,8 @@ STUCK_MIN_ACTIONS = 10
 FINALE_RX = re.compile(r"^(upper city|END_Main)$", re.I)
 EPILOGUE_RX = re.compile(r"^(epilogue|EPI_\w+)$", re.I)
 
+# Screens a read reports with no game session (status None): the end credits, the Game Over screen (a party wipe).
+NO_SESSION_SCREENS = ("credits", "game_over")
 SERVER_OPS = (("status", "state.status"), ("journal", "state.journal"), ("map", "state.map"),
               ("markers", "nav.markers"), ("explored", "nav.explored"))
 
@@ -130,7 +132,7 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
     except Exception:
         # at the main menu the server context may not answer; the end credits can still roll there
         ui = _ui(lua_eval)
-        if (ui or {}).get("screen") == "credits":
+        if (ui or {}).get("screen") in NO_SESSION_SCREENS:
             return {"status": None, "ui": ui}
         raise
     replies = json.loads(raw) if raw and raw not in ("nil", "") else []
@@ -138,9 +140,10 @@ def read_game(lua_eval: Callable[..., str]) -> dict | None:
     for (key, _), r in zip(SERVER_OPS, replies):
         got[key] = r.get("result") if isinstance(r, dict) and r.get("ok") else None
     if got.get("status") is None:
-        # no game session; the end credits may still roll (after the finale the game can leave the level)
+        # no game session; the end credits may still roll (after the finale the game can leave the level), or the
+        # Game Over screen be up
         ui = _ui(lua_eval)
-        return {"status": None, "ui": ui} if (ui or {}).get("screen") == "credits" else None
+        return {"status": None, "ui": ui} if (ui or {}).get("screen") in NO_SESSION_SCREENS else None
     er = replies[len(SERVER_OPS)] if len(replies) > len(SERVER_OPS) else None
     er = er.get("result") if isinstance(er, dict) and er.get("ok") else None
     if isinstance(er, dict) and isinstance(er.get("latest"), int):

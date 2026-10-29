@@ -157,24 +157,26 @@ def event_failures(events: list[dict]) -> tuple[list[dict], list[dict]]:
     return fails, ops
 
 
-def history_failures(sessions: list[dict]) -> list[dict]:
+def history_failures(sessions: list[dict], state_dir: Path | None = None) -> list[dict]:
     """From runner.json history entries of the run's play sessions. A quick exit (claude_quick_exit: auth, config or
     usage) is a session that exited within a minute without a game call that worked (`game_calls_ok`: game_calls_ok
     over the whole session): one that played just finished fast (N15: the scripted reload agent's 31 s save + load
-    voided its run 3 times). An entry without the count is taken by its time alone."""
+    voided its run 3 times). An entry without the count is taken by its time alone. The details name the session's
+    client (process_client on its files in state_dir; "the agent" without them)."""
     out = []
     for h in sessions:
         sid, t = h.get("session"), h.get("ended") or h.get("started")
         dur = (h.get("ended") or 0) - (h.get("started") or 0)
+        who = process_client(state_dir / str(sid)) if state_dir is not None and sid else "the agent"
         if h.get("reason") == "killed":
-            out.append(failure(t, "claude_killed", UNKNOWN, f"{sid}: claude ended by a signal from outside the runner"))
+            out.append(failure(t, "claude_killed", UNKNOWN, f"{sid}: {who} ended by a signal from outside the runner"))
         elif h.get("reason") == "exited" and 0 <= dur < 60 and not h.get("game_calls_ok"):
             out.append(
                 failure(
                     t,
                     "claude_quick_exit",
                     HARNESS,
-                    f"{sid}: claude exited after {dur:.0f} s (exit {h.get('exit')}: auth, config or usage)",
+                    f"{sid}: {who} exited after {dur:.0f} s (exit {h.get('exit')}: auth, config or usage)",
                 )
             )
         if h.get("early_exit_min") is not None:
@@ -384,7 +386,7 @@ def classify_run(
     """Every failure of one run, in time order (failures without a time first). ending: the session path's last
     process (reason, detail) when there is no run loop (reason_failures)."""
     fails, _ = event_failures(events)
-    fails += history_failures(sessions)
+    fails += history_failures(sessions, state_dir)
     files = []
     with contextlib.suppress(OSError):
         files = sorted(state_dir.iterdir()) if state_dir.is_dir() else []

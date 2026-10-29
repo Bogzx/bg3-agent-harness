@@ -9,6 +9,7 @@ plus the party inventory, so it costs one extra eval per poll.
 - events from the difference of two reads: combat, died/downed/revived (party members; other characters' deaths
   from the mod's `died` events), level_up, joined, gold (with delta), item_added (gold: true for a gold stack),
   quest_added/quest_done, region, area;
+- game_over: the game's Game Over screen (ui.state screen game_over: the party wiped), when a read first shows it;
 - marks: run_start (time zero), load, run_end;
 - the referee ring's events (RingFeed: trade, pickpocket, stole, crime, kill, loot and, while it answers, gold,
   item_added, died and combat exactly per change) and the roll log into rolls.jsonl.
@@ -161,6 +162,8 @@ class FactsWriter:
         self.last_t: float | None = None
         self.referee_live = False            # the referee ring answered the last poll: it owns REFEREE_KINDS
         self.area_due = False                # a region event came after the last area event (the minimap lags)
+        self.game_over: float | None = None  # when a read first showed the Game Over screen in this run
+        self.on_game_over = False            # the last read with a screen showed it
         self.lock = threading.Lock()
         try:   # a later process of the same run: time zero is the file's run_start
             with open(self.path) as f:
@@ -195,9 +198,10 @@ class FactsWriter:
     def observe(self, got: dict | None, inv: Any = None, now: float | None = None) -> list[dict]:
         """One poll: its events, then a snapshot when one is due. Returns the records written."""
         now = self.clock() if now is None else now
+        over = self._game_over(got, now)
         snap = snapshot(got, inv, self.areas) if got else None
         if snap is None:
-            return []
+            return over
         if snap["area"] and snap["area"] not in self.areas:
             self.areas.append(snap["area"])
             snap["areas"] = list(self.areas)
@@ -211,7 +215,7 @@ class FactsWriter:
                 self.area_due = e["ev"] == "region"
         if self.referee_live:
             evs = [e for e in evs if e["ev"] not in REFEREE_KINDS]
-        out = [self._write({"kind": "event", **e}, now) for e in evs]
+        out = over + [self._write({"kind": "event", **e}, now) for e in evs]
         self.last = snap
         fight_hp = snap["combat"] and _hp(snap) != self.snap_hp
         if self.snap_t is None or now - self.snap_t >= self.snapshot_s or fight_hp:
@@ -219,6 +223,20 @@ class FactsWriter:
             out.append(self._write({"kind": "snapshot", **snap, "quests": snap["quests"] or {}}, now))
         return out
 
+
+    def _game_over(self, got: dict | None, now: float) -> list[dict]:
+        """A game_over event when a read shows the Game Over screen and the last read with a screen didn't. The game
+        shows it when its own party wipe rule holds, which the party rows can't tell (the prologue's "Us" stays up
+        while Tav and Lae'zel are down)."""
+        screen = ((got or {}).get("ui") or {}).get("screen")
+        if screen is None:  # no ui read: nothing known either way
+            return []
+        was, self.on_game_over = self.on_game_over, screen == "game_over"
+        if not self.on_game_over or was:
+            return []
+        if self.game_over is None:
+            self.game_over = now
+        return [self._write({"kind": "event", "ev": "game_over"}, now)]
 
     def timed_events(self, facts: list[dict]) -> list[dict]:
         """Events that carry their own time `t` (referee.to_fact records, choices.choices), in time order; `game_t`
