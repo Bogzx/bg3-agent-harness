@@ -1,11 +1,11 @@
-"""The evidence video's ffmpeg side: the concat lists (the game's clips, the strip's and the side panel's images with
+"""The evidence video's ffmpeg side: the concat lists (the game's clips, the frame's and the column's images with
 their durations), the compose command into 1920x1080 and the contact sheet. The ffmpeg process is behind the Ffmpeg
 Protocol, so the arguments are tested without it.
 
-    game clips ─┐ (fps, 1280x720)
-    strip pngs ─┴ vstack ─┐
-    side pngs ────────────┴ hstack -> libx264 -preset veryfast -crf 24 (or h264_nvenc -cq 24 on an NVIDIA GPU),
-                                      15 fps, yuv420p, +faststart
+    frame pngs (1920x1080, one per second) ─┐
+    game clips (scaled to 1408x792, Lanczos) ┴ overlay at 24,96 ─┐
+    column pngs (440x960 RGBA, one per panel change) ─────────────┴ overlay at 1456,96
+        -> libx264 -preset veryfast -crf 24 (or h264_nvenc -cq 24 on an NVIDIA GPU), 15 fps, yuv420p, +faststart
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-from .draw import GAME_H, GAME_W
+from .draw import COL_X, COL_Y, GAME_H, GAME_W, GAME_X, GAME_Y
 from .timeline import FPS, Clip, RenderError
 
 CRF = 24
@@ -67,29 +67,30 @@ def images_list(images: Sequence[tuple[Path, float]]) -> str:
 
 
 def compose_args(
-    game: Path, strip: Path, side: Path, out: Path, duration: float, fps: int = FPS, encoder: str = "libx264"
+    game: Path, frame: Path, column: Path, out: Path, duration: float, fps: int = FPS, encoder: str = "libx264"
 ) -> list[str]:
     """ffmpeg's arguments: the three concat lists composed into one 1920x1080 H.264 video of `duration` seconds,
-    encoded with `encoder` (ENCODERS)."""
+    encoded with `encoder` (ENCODERS). The game is scaled to GAME_W x GAME_H (Lanczos; a recording made at that
+    size passes through)."""
     if encoder not in ENCODERS:
         raise ValueError(f"unknown encoder {encoder!r} (one of {sorted(ENCODERS)})")
-    norm = f"fps={fps},format=yuv420p,setsar=1"
+    norm = f"fps={fps},setsar=1"
     graph = ";".join(
         [
-            f"[0:v]scale={GAME_W}:{GAME_H}:force_original_aspect_ratio=decrease,"
+            f"[0:v]scale={GAME_W}:{GAME_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
             f"pad={GAME_W}:{GAME_H}:(ow-iw)/2:(oh-ih)/2,{norm}[g]",
-            f"[1:v]{norm}[s]",
-            f"[2:v]{norm}[p]",
-            "[g][s]vstack=inputs=2[l]",
-            "[l][p]hstack=inputs=2[v]",
+            f"[1:v]{norm}[f]",
+            f"[2:v]{norm},format=rgba[c]",
+            f"[f][g]overlay={GAME_X}:{GAME_Y}[fg]",
+            f"[fg][c]overlay={COL_X}:{COL_Y},format=yuv420p[v]",
         ]
     )
     concat = ["-f", "concat", "-safe", "0"]
     return [
         "-y", "-hide_banner", "-loglevel", "error",
         *concat, "-i", str(game),
-        *concat, "-i", str(strip),
-        *concat, "-i", str(side),
+        *concat, "-i", str(frame),
+        *concat, "-i", str(column),
         "-filter_complex", graph, "-map", "[v]", "-an",
         "-t", f"{duration:.3f}", "-r", str(fps),
         "-c:v", encoder, *ENCODERS[encoder], "-pix_fmt", "yuv420p",

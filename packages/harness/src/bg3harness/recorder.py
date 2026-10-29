@@ -665,9 +665,15 @@ class RunRecording:
             self.rec.stop("run end")
 
 
+# A bench run is recorded at the evidence video's game size (bg3harness.video.draw GAME_W x GAME_H), so the render
+# places it unscaled
+RUN_W, RUN_H = 1408, 792
+
+
 def run_recording(out_dir: Path, env: Mapping[str, str], runtime: Path, encoder: str = "h264_nvenc") -> RunRecording:
-    """A bench run's recording into out_dir: the game's window on env's DISPLAY, no live view, the resource guard on
-    runtime/thermal.log (low RAM or heat stops it: the run's video then has a gap and is refused at render)."""
-    spec = RecordSpec(out_dir, encoder=encoder, live=False)
+    """A bench run's recording into out_dir: the game's window on env's DISPLAY at RUN_W x RUN_H, no live view, the
+    resource guard on runtime/thermal.log (low RAM or heat stops it: the run's video then has a gap and is refused at
+    render)."""
+    spec = RecordSpec(out_dir, RUN_W, RUN_H, encoder=encoder, live=False)
     probe = game_probe(env.get("DISPLAY") or ":1")
     return RunRecording(Recorder(spec, probe, time.time, resource_guard(runtime / "thermal.log")))

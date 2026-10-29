@@ -17,7 +17,7 @@ this adds what a first install misses:
              ($BG3AI_BENCH_RECORD_ENCODER, default h264_nvenc)
   disk       free space for the runtime dir: recordings take 1-2 GB per hour
   uv/python  uv on PATH and a Python >= 3.14 it can use (the packages require it)
-  node/pi    Node.js >= 20 and tools/pi's pinned pi (only for the non-Claude clients: WARN, never FAIL)
+  node/pi    Node.js >= 22.19 and tools/pi's pinned pi (only for the non-Claude clients: WARN, never FAIL)
 """
 
 from __future__ import annotations
@@ -36,7 +36,8 @@ from bg3harness import bg3le_buildinfo, bg3le_prebuilt, display_env, preflight, 
 from bg3harness.preflight import FAIL, PASS, WARN
 
 MIN_PYTHON = (3, 14)
-MIN_NODE = 20
+MIN_NODE = (22, 19)  # pi 1.3.0's engines (the web apps' Vite needs 20.19+ or 22.12+)
+NODE = ".".join(map(str, MIN_NODE))
 DISK_WARN_GB, DISK_FAIL_GB = 20, 5
 LAYER = "VkLayer_MESA_screenshot.json"
 RECORD_ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"  # bg3harness.runner.run_host reads the same variable
@@ -155,12 +156,10 @@ def check_shim(ctx: Ctx) -> Check:
     lib = Path(ctx.env.get("BG3AI_INPUT_LIB") or ctx.repo / "build/bg3sdl/libbg3sdl.so")
     if preflight.is_elf(lib):
         return Check("shim", PASS, f"SDL input shim {lib}")
-    return Check(
-        "shim",
-        FAIL,
-        f"no input shim at {lib} (the agent's clicks and keys go through it)",
-        "native/bg3sdl/build.sh (needs gcc and the SDL2 headers: apt install gcc libsdl2-dev)",
-    )
+    build = "native/bg3sdl/build.sh after tools/build_bg3le.sh (it compiles against that build's sysroot, in Docker)"
+    url, _ = bg3le_prebuilt.config(ctx.env)
+    fix = f"python3 {bg3le_buildinfo.FETCH} (the prebuilt carries the shim), or {build}" if url else build
+    return Check("shim", FAIL, f"no input shim at {lib} (the agent's clicks and keys go through it)", fix)
 
 
 def check_display(ctx: Ctx) -> Check:
@@ -257,20 +256,22 @@ def check_python(ctx: Ctx) -> list[Check]:
 
 
 def check_node(ctx: Ctx) -> list[Check]:
-    why = "only for the non-Claude clients (pi)"
+    why = "only for the non-Claude clients (pi) and to build the web apps (the bench panel, the playthrough app)"
     node = ctx.which("node")
     if not node:
-        return [Check("node", WARN, f"no node on PATH: {why}", f"install Node.js >= {MIN_NODE}")]
+        return [Check("node", WARN, f"no node on PATH: {why}", f"install Node.js >= {NODE}")]
     rc, out = ctx.run([node, "--version"])
     ver = _version(out) if rc == 0 else ()
-    if not ver or ver[0] < MIN_NODE:
-        return [Check("node", WARN, f"node {out.strip() or '?'} < {MIN_NODE}: {why}", f"install Node.js >= {MIN_NODE}")]
+    if not ver or ver < MIN_NODE:
+        return [Check("node", WARN, f"node {out.strip() or '?'} < {NODE}: {why}", f"install Node.js >= {NODE}")]
     checks = [Check("node", PASS, f"node {out.strip()}")]
     pi = ctx.repo / "tools/pi/node_modules/.bin/pi"
     if pi.exists():
         checks.append(Check("pi", PASS, f"the pinned pi: {pi}"))
     else:
-        checks.append(Check("pi", WARN, f"no {pi}: {why}", "cd tools/pi && npm ci --ignore-scripts"))
+        checks.append(
+            Check("pi", WARN, f"no {pi}: only for the non-Claude clients", "cd tools/pi && npm ci --ignore-scripts")
+        )
     return checks
 
 

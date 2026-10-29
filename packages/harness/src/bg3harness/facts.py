@@ -3,7 +3,9 @@
 benchmark's graders; the agent never sees it. Built from the progress poller's reads (bridge progress.read_game)
 plus the party inventory, so it costs one extra eval per poll.
 
-- a snapshot (the full state) on the first good read, after a load and every SNAPSHOT_S;
+- a snapshot (the full state) on the first good read, after a load, every SNAPSHOT_S and, in combat, on every read
+  whose party HP (or downed / dead) differs from the last snapshot's, so the party's HP is at most one poll old in a
+  fight;
 - events from the difference of two reads: combat, died/downed/revived (party members; other characters' deaths
   from the mod's `died` events), level_up, joined, gold (with delta), item_added (gold: true for a gold stack),
   quest_added/quest_done, region, area;
@@ -142,6 +144,10 @@ def events(old: dict, new: dict, game_events: list | None = None) -> list[dict]:
     return out
 
 
+def _hp(snap: dict) -> list:
+    return [(m["name"], m.get("hp"), m["downed"], m["dead"]) for m in snap["party"]]
+
+
 class FactsWriter:
     """Appends facts.jsonl records (thread-safe; a write failure is dropped, facts never break a session)."""
 
@@ -150,6 +156,7 @@ class FactsWriter:
         self.t0: float | None = None
         self.last: dict | None = None        # the last read's snapshot fields
         self.snap_t: float | None = None     # when the last snapshot record was written
+        self.snap_hp: list | None = None     # the last snapshot's party HP (_hp)
         self.areas: list[str] = []
         self.last_t: float | None = None
         self.referee_live = False            # the referee ring answered the last poll: it owns REFEREE_KINDS
@@ -206,8 +213,9 @@ class FactsWriter:
             evs = [e for e in evs if e["ev"] not in REFEREE_KINDS]
         out = [self._write({"kind": "event", **e}, now) for e in evs]
         self.last = snap
-        if self.snap_t is None or now - self.snap_t >= self.snapshot_s:
-            self.snap_t = now
+        fight_hp = snap["combat"] and _hp(snap) != self.snap_hp
+        if self.snap_t is None or now - self.snap_t >= self.snapshot_s or fight_hp:
+            self.snap_t, self.snap_hp = now, _hp(snap)
             out.append(self._write({"kind": "snapshot", **snap, "quests": snap["quests"] or {}}, now))
         return out
 

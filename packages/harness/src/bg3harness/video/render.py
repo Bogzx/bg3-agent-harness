@@ -1,8 +1,8 @@
 """Render a run's evidence video: the game recording beside the agent's tool calls and visible text.
 
     python -m bg3harness.video <run_dir> --index <recording>/index.json --out <dir> --run-id ID --run-hash SHA256 \
-        [--site HOST] [--title T] [--task T] [--cap-min N] [--cost-kind billed] [--t-pass-s S] [--sample-s N] \
-        [--encoder libx264|h264_nvenc]
+        [--site HOST] [--title T] [--task T] [--cap-min N] [--cost-kind billed] [--t-pass-s S] [--pilot] \
+        [--ending WIPED|"COST CAP"|"TIME CAP"] [--sample-s N] [--encoder libx264|h264_nvenc]
 
 It reads only files that also go into the run's bundle (every Sxxx*.events.jsonl, facts.jsonl) and the recorder's
 segments, and writes into --out: render.json (the sync table), evidence.mp4 (1920x1080) and frames/*.jpg (the
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import compose, draw, timeline
-from .timeline import Clip, Item, Json, Meta, RenderError, Strip
+from .timeline import Clip, Item, Json, Lanes, Meta, RenderError, Strip
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,7 @@ class Plan:
     changes: list[tuple[float, int]]
     strips: list[Strip]
     sync: Json
+    lanes: Lanes
 
     @property
     def duration(self) -> float:
@@ -66,8 +67,8 @@ def read_jsonl(path: Path) -> list[Json]:
 
 
 def events_logs(run_dir: Path) -> dict[str, list[Json]]:
-    """{file stem: events} for every play process's events log (S001.events.jsonl, S001-c1.events.jsonl, ...)."""
-    return {p.name.removesuffix(".events.jsonl"): read_jsonl(p) for p in sorted(run_dir.glob("*.events.jsonl"))}
+    """{log name: events} for every play process's events log (S001.events.jsonl, S001-c1.events.jsonl, ...)."""
+    return {p.name: read_jsonl(p) for p in sorted(run_dir.glob("*.events.jsonl"))}
 
 
 def run_window(
@@ -91,41 +92,44 @@ def plan(
     facts: Sequence[Mapping[str, Any]],
     start: float,
     end: float,
+    run_hash: str,
     t_pass_s: float | None = None,
     clip_events: bool = False,
 ) -> Plan:
-    """The video of [start, end]: its clips, panel items and changes, strip states and render.json. clip_events:
-    leave out the events after `end` (a sample) instead of refusing the run."""
+    """The video of [start, end] for the run with this run hash: its clips, panel items and changes, strip states and
+    render.json. clip_events: leave out the events after `end` (a sample) instead of refusing the run."""
     cuts = timeline.clips(segments, start, end)
     items = timeline.panel_items(logs, start)
     if clip_events:
         items = [i for i in items if i.at_s <= end - start]
-    sync = timeline.sync_table(items, start, end)
+    sync = timeline.sync_table(items, start, end, run_hash)
     strips = timeline.strip_states(end - start, facts, logs, start, t_pass_s)
-    return Plan(start, end, cuts, items, timeline.changes(items), strips, sync)
+    lanes = timeline.lanes(facts, items, start, end - start, t_pass_s)
+    return Plan(start, end, cuts, items, timeline.changes(items), strips, sync, lanes)
 
 
 def write_images(p: Plan, meta: Meta, work: Path) -> tuple[Path, Path]:
-    """The side panel's images (one per change) and the strip's (one per second) with their concat lists; returns
-    the lists (strip, side)."""
+    """The column's images (one per panel change) and the frame's (one per second) with their concat lists; returns
+    the lists (frame, column)."""
     work.mkdir(parents=True, exist_ok=True)
-    side: list[tuple[Path, float]] = []
+    column: list[tuple[Path, float]] = []
     for k, (at, n) in enumerate(p.changes):
         nxt = p.changes[k + 1][0] if k + 1 < len(p.changes) else p.duration
         if nxt <= at:
             continue
-        path = work / f"side-{k:05d}.png"
-        draw.side_image(p.items[:n]).save(path)
-        side.append((path, round(nxt - at, 3)))
-    strip: list[tuple[Path, float]] = []
+        path = work / f"column-{k:05d}.png"
+        draw.column_image(p.items[:n]).save(path)
+        column.append((path, round(nxt - at, 3)))
+    frame: list[tuple[Path, float]] = []
+    lanes = draw.lanes_image(p.lanes, p.duration)
     for s in p.strips:
-        path = work / f"strip-{s.clock_s:05d}.png"
-        draw.strip_image(s, meta).save(path)
-        strip.append((path, round(min(1.0, p.duration - s.clock_s), 3)))
-    side_list, strip_list = work / "side.ffconcat", work / "strip.ffconcat"
-    side_list.write_text(compose.images_list(side), encoding="utf-8")
-    strip_list.write_text(compose.images_list(strip), encoding="utf-8")
-    return strip_list, side_list
+        path = work / f"frame-{s.clock_s:05d}.png"
+        draw.frame_image(s, meta, lanes, p.duration).save(path, compress_level=1)
+        frame.append((path, round(min(1.0, p.duration - s.clock_s), 3)))
+    column_list, frame_list = work / "column.ffconcat", work / "frame.ffconcat"
+    column_list.write_text(compose.images_list(column), encoding="utf-8")
+    frame_list.write_text(compose.images_list(frame), encoding="utf-8")
+    return frame_list, column_list
 
 
 def render(
@@ -145,11 +149,11 @@ def render(
         raise RenderError(f"recording segment(s) missing in {video_dir}: {', '.join(gone)}")
     out.mkdir(parents=True, exist_ok=True)
     (out / "render.json").write_text(json.dumps(p.sync, indent=1) + "\n", encoding="utf-8")
-    strip_list, side_list = write_images(p, meta, work)
+    frame_list, column_list = write_images(p, meta, work)
     game_list = work / "game.ffconcat"
     game_list.write_text(compose.clips_list(p.clips, video_dir), encoding="utf-8")
     video = out / "evidence.mp4"
-    ffmpeg(compose.compose_args(game_list, strip_list, side_list, video, p.duration, encoder=encoder))
+    ffmpeg(compose.compose_args(game_list, frame_list, column_list, video, p.duration, encoder=encoder))
     frames = out / "frames"
     frames.mkdir(exist_ok=True)
     ffmpeg(compose.sheet_args(video, frames))
@@ -171,6 +175,8 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     ap.add_argument("--cap-min", type=float)
     ap.add_argument("--cost-kind", default="billed", choices=("billed", "notional", "estimated"))
     ap.add_argument("--t-pass-s", type=float)
+    ap.add_argument("--pilot", action="store_true", help="a pilot run: the header carries a pilot badge")
+    ap.add_argument("--ending", default="", help="how a run that didn't pass ended (WIPED, COST CAP, TIME CAP)")
     ap.add_argument("--sample-s", type=float, help="render only the run's first N seconds")
     ap.add_argument(
         "--encoder", default="libx264", choices=sorted(compose.ENCODERS), help="h264_nvenc: an NVIDIA GPU encodes"
@@ -182,12 +188,13 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     facts = read_jsonl(facts_path) if facts_path.exists() else []
     index = json.loads(a.index.read_text(encoding="utf-8"))
     cap = a.cap_min * 60 if a.cap_min else None
-    meta = Meta(a.run_id, a.run_hash, a.title, a.task, cap, a.cost_kind, a.t_pass_s, a.site)
+    meta = Meta(a.run_id, a.run_hash, a.title, a.task, cap, a.cost_kind, a.t_pass_s, a.site, a.pilot, a.ending)
     try:
         start, end = run_window(facts, logs)
         if a.sample_s:
             end = min(end, start + a.sample_s)
-        p = plan(index.get("segments") or [], logs, facts, start, end, a.t_pass_s, clip_events=bool(a.sample_s))
+        segments: list[Any] = index.get("segments") or []
+        p = plan(segments, logs, facts, start, end, a.run_hash, a.t_pass_s, clip_events=bool(a.sample_s))
         if a.work:
             video = render(p, meta, a.index.parent, a.out, a.work, ffmpeg, a.encoder)
         else:

@@ -11,6 +11,7 @@
 # * Also builds build/bg3sdl/sdltest (a host-side test program linked against the game's own libSDL2.so).
 #
 # Outputs: build/bg3sdl/libbg3sdl.so, build/bg3sdl/sdltest
+# Without a bg3le build (no sysroot), tools/bg3le_prebuilt.py fetch installs a prebuilt shim with the prebuilt bg3le.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -43,6 +44,8 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$REPO:$REPO" -w "$SRC" "$IMAGE" \
         -o "$OUT/libbg3sdl.so" bg3sdl.c -lpthread -ldl
 
 LIB="$OUT/libbg3sdl.so"
+# A local shim replaces a downloaded prebuilt's (tools/bg3le_prebuilt.py): its manifest would no longer match
+rm -f "$REPO/build/bg3le/dist/PREBUILT.json"
 newest="$(objdump -T "$LIB" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' | sort -V | tail -1)"
 echo "libbg3sdl.so: newest glibc symbol version $newest (limit $GLIBC_MAX)"
 if [ "$(printf '%s\n%s\n' "$newest" "$GLIBC_MAX" | sort -V | tail -1)" != "$GLIBC_MAX" ]; then

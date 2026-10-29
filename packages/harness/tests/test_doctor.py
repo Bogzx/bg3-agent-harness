@@ -119,7 +119,10 @@ class TestDoctor(DoctorFixture):
         (self.repo / "build/bg3sdl/libbg3sdl.so").write_bytes(b"not an ELF")
         c = self.checks()["shim"]
         self.assertEqual(c.status, FAIL)
-        self.assertIn("native/bg3sdl/build.sh", c.fix)
+        self.assertIn("native/bg3sdl/build.sh after tools/build_bg3le.sh", c.fix)
+        self.assertNotIn("bg3le_prebuilt.py fetch", c.fix)
+        c = self.checks(BG3AI_BG3LE_PREBUILT_URL="https://example.invalid/p.tar.gz")["shim"]
+        self.assertIn("bg3le_prebuilt.py fetch (the prebuilt carries the shim)", c.fix)
 
     def test_display_from_the_desktop_xwayland(self):
         c = self.checks()["display"]
@@ -174,8 +177,11 @@ class TestDoctor(DoctorFixture):
         self.assertNotIn("python", got)
 
     def test_node_and_pi(self):
-        self.cmds["node"] = (0, "v18.19.0")
-        self.assertEqual(self.checks()["node"].status, WARN)
+        for old in ("v18.19.0", "v22.12.0"):  # pi needs 22.19
+            self.cmds["node"] = (0, old)
+            self.assertEqual(self.checks()["node"].status, WARN, old)
+        self.cmds["node"] = (0, "v22.19.0")
+        self.assertEqual(self.checks()["node"].status, PASS)
         self.cmds["node"] = (0, "v24.20.0")
         (self.repo / "tools/pi/node_modules/.bin/pi").unlink()
         c = self.checks()["pi"]

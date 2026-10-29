@@ -98,6 +98,17 @@ def installed_build(pinned: str, game: Path, manifest_build: str, pins: Path = P
     return manifest_build, "appmanifest"
 
 
+def machine_build(env: Mapping[str, str], repo: Path = REPO) -> tuple[str, str]:
+    """installed_build for the game a run on this machine plays: the pin in repo's tools/dev/first_launch.sh, the game
+    dir and appmanifest tools/steam_paths.py finds from env, repo's tools/dev/game_fingerprints.json."""
+    from bg3harness import preflight  # it imports this module
+
+    pinned = preflight.pinned_build(repo)
+    game = steam_paths.game_dir(env)  # pyright: ignore[reportUnknownMemberType]
+    listed = steam_paths.buildid(env)  # pyright: ignore[reportUnknownMemberType]
+    return installed_build(pinned, game, listed, repo / "tools" / "dev" / "game_fingerprints.json")
+
+
 def main(argv: list[str] | None = None, env: Mapping[str, str] = os.environ) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", choices=("make", "check"))

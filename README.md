@@ -240,11 +240,12 @@ with no game installed. `--supervise` adds the Launcher (start, stop, resume) an
 ## Getting started
 
 1. Set up the machine, build bg3le and do the first supervised launch: [docs/SETUP.md](docs/SETUP.md).
-2. Run the read-only preflight. It checks the game build, bg3le, the mod, RAM and VRAM, and prints PASS, WARN or FAIL
-   per line. Fix every FAIL first.
+2. Run the read-only doctor. It checks the game build, Steam, bg3le, the mod, the screenshot layer, the input shim,
+   the display, ffmpeg, RAM, VRAM, disk, uv and Node, and prints PASS, WARN or FAIL per line with the fix for each
+   failure. Fix every FAIL first.
 
    ```bash
-   python3 tools/bench_preflight.py
+   python3 tools/doctor.py
    ```
 
 3. Create a memory for a playthrough, then play it:
@@ -265,9 +266,10 @@ the app. [runner/README.md](runner/README.md) has the runner's options.
   Proton. Built and tested on Steam buildid 25605617 (Patch 8 Hotfix 10); other builds may need bg3le's addresses
   re-resolved ([docs/GAME-UPDATES.md](docs/GAME-UPDATES.md)).
 - bg3le, the Script Extender port, built from the pinned submodule with the patches in `patches/bg3le/`
-  (`tools/build_bg3le.sh`, Docker, about 10 GB RAM once).
-- Linux with systemd user sessions, Mesa's `VK_LAYER_MESA_screenshot` Vulkan layer, Docker, Python 3.14+, uv, and
-  Node 22 for the app and the pi client.
+  (`tools/build_bg3le.sh`, Docker, about 10 GB RAM once), and the SDL input shim built against that build
+  (`native/bg3sdl/build.sh`).
+- Linux with systemd user sessions, Mesa's `VK_LAYER_MESA_screenshot` Vulkan layer, Docker, ffmpeg, uv (it installs
+  the Python 3.14 the packages need), and Node.js 22.19+ for the pi client and the web apps.
 - 16 GB RAM and a GPU with 4 GB or more. Tested on a 4 GB NVIDIA laptop GPU under PRIME offload and on an AMD RX 6900
   XT.
 - An agent client (Claude Code by default) and the API budget or subscription to run it.
