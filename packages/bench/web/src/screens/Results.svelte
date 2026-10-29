@@ -6,7 +6,7 @@
   import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
-  import { attempts, bytes, minutes, renderNote, uploadProblem, verdict } from "../lib/run";
+  import { attempts, bytes, minutes, renderNote, uploadProblem, validateProblem, verdict } from "../lib/run";
   import type { Prepared, RenderState, RunRow, Submission } from "../lib/types";
 
   let rows = $state<RunRow[] | null>(null);
@@ -80,6 +80,7 @@
         <tbody>
           {#each rows as r (r.dir)}
             {@const a = n.get(r.dir)}
+            {@const why = validateProblem(r)}
             <tr>
               <td><code>{r.run_id ?? r.dir}</code>{#if r.pilot.length}<div class="faint">pilot</div>{/if}</td>
               <td>{r.scenario ?? "–"}</td>
@@ -94,6 +95,8 @@
               <td>
                 {#if subs[r.dir]?.submission}
                   <button class="plain" onclick={() => (open = r.dir)}>{subs[r.dir]?.submission?.status}</button>
+                {:else if why}
+                  <button class="plain" disabled title={why}>Validate</button><div class="faint">{why}</div>
                 {:else}
                   <button class="plain" disabled={busy} onclick={() => validate(r.dir)}>Validate</button>
                 {/if}

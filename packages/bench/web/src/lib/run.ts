@@ -91,6 +91,11 @@ export function startProblem(plan: Plan | null, running: boolean): string | null
   return null;
 }
 
+/** Why Validate can't be pressed for a finished run (null: it can). A pilot run is refused by the pack. */
+export function validateProblem(r: RunRow): string | null {
+  return r.pilot.length ? `a pilot run can't be submitted: ${r.pilot.join("; ")}` : null;
+}
+
 /** Why Upload can't be pressed for a prepared bundle (null: it can). */
 export function uploadProblem(p: Prepared | null, youtubeUrl: string, siteToken: boolean): string | null {
   if (!p) return "validate first";

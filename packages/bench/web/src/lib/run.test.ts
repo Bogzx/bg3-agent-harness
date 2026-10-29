@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
-  uploadProblem, verdict, youtubeId, youtubeNote,
+  uploadProblem, validateProblem, verdict, youtubeId, youtubeNote,
 } from "./run";
 import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
@@ -120,6 +120,15 @@ describe("youtubeId and uploadProblem", () => {
     expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, "", true)).toMatch(/rejects/);
     expect(uploadProblem(p, `https://youtu.be/${id}`, false)).toMatch(/site token/);
     expect(uploadProblem(p, "https://vimeo.com/1", true)).toMatch(/YouTube URL/);
+  });
+});
+
+describe("validateProblem", () => {
+  it("refuses a pilot run with its reasons", () => {
+    expect(validateProblem(run({ pilot: [] }))).toBeNull();
+    expect(validateProblem(run({ pilot: ["claude reads play/CLAUDE.md"] }))).toBe(
+      "a pilot run can't be submitted: claude reads play/CLAUDE.md",
+    );
   });
 });
 
