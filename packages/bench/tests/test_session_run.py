@@ -448,7 +448,8 @@ class FilesHost(Host):
 def test_a_runs_result_fairness_is_its_streams_audit_and_passes_a01(tmp_path):
     """bench live S3 windmill: A01 rejected a clean pi run, `audit [0, 3, 0] != result.fairness {... 0}`: a session
     run's record had no fairness_flags (only a legacy series record had run_metrics), so result.json said zero. The
-    fixture is that run's S001 streams cut to its three flagged calls (the party's own Hide) and two others."""
+    fixture is that run's S001 streams cut to its three flagged calls (the party's own Hide, no longer flagged since
+    the audit skips the party's own state) and two others."""
     s3 = HERE / "fixtures" / "s3_windmill"
     host = FilesHost([[("exited", 5)]], {f.name: f.read_text() for f in s3.iterdir()})
     run_one(tmp_path, host)(job())
@@ -457,8 +458,8 @@ def test_a_runs_result_fairness_is_its_streams_audit_and_passes_a01(tmp_path):
     events = [json.loads(ln) for ln in (run_dir / "S001.events.jsonl").read_text().splitlines()]
     b = validate.Loaded(run_dir, {}, {}, {}, res, [], None, {"S001.events.jsonl": events}, SC, {}, {})
     assert consistency.a01_fairness(b) == (True, "")
-    assert res["fairness"] == {"leak": 0, "check": 3, "blocks": 0}
-    assert json.loads((run_dir / "runs.jsonl").read_text())["fairness_flags"]["kinds"] == {"hidden_state": 3}
+    assert res["fairness"] == {"leak": 0, "check": 0, "blocks": 0}
+    assert json.loads((run_dir / "runs.jsonl").read_text())["fairness_flags"]["kinds"] == {}
 
 
 def test_a_runs_record_carries_the_legacy_run_metrics(tmp_path):
