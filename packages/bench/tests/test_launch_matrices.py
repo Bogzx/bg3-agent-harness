@@ -1,11 +1,15 @@
 # pyright: basic
-"""The launch campaign's matrix files (packages/bench/matrices/launch-v1-*.toml): the scenario set, the per-run caps
-and that the DeepSeek one plans as written (its profile is verified; the Claude ones load once their profiles are)."""
+"""The launch campaign's matrix files (packages/bench/matrices/launch-v1-*.toml): the scenario set, the per-run caps,
+that the DeepSeek one and the pilot plan as written, and that the Claude campaign waits for its profiles to be
+verified (the pilot)."""
 
 from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+
+import pytest
+from bg3harness import profiles
 
 from bg3bench import matrix_cli, scenario
 
@@ -51,3 +55,24 @@ def test_the_deepseek_matrix_plans_24_jobs_repeat_major():
     assert not m["skipped"] and len(m["jobs"]) == 24
     assert [j["repeat"] for j in m["jobs"]] == sorted(j["repeat"] for j in m["jobs"])
     assert {j["client"] for j in m["jobs"]} == {"pi"} and all(j["max_cost"] for j in m["jobs"])
+
+
+def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():
+    m = matrix_cli.load(MATRICES / "launch-v1-pilot.toml", REPO)
+    assert not m["skipped"] and len(m["jobs"]) == 3
+    assert {j["client"] for j in m["jobs"]} == {"pi"} and {j["max_cost"] for j in m["jobs"]} == {20.98}
+    for name in ("haiku", "sonnet", "opus"):
+        p = profiles.load(REPO / "profiles" / f"claude-{name}-5-5.toml")
+        assert p.endpoint is not None
+        assert (p.model, p.endpoint.api, p.status) == (f"claude-{name}-5-5", "anthropic-messages", "offline")
+
+
+@pytest.mark.parametrize(("name", "jobs"), [("haiku", 36), ("sonnet", 36), ("opus", 12)])
+def test_the_claude_campaign_waits_for_verified_profiles(tmp_path, name, jobs):
+    with pytest.raises(matrix_cli.MatrixFileError, match="status 'offline'"):
+        matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)
+    verified = tmp_path / f"launch-v1-{name}.toml"
+    text = (MATRICES / verified.name).read_text().replace("allow_unverified = false", "allow_unverified = true")
+    verified.write_text(text)
+    m = matrix_cli.load(verified, REPO)
+    assert not m["skipped"] and len(m["jobs"]) == jobs and all(j["max_cost"] for j in m["jobs"])
