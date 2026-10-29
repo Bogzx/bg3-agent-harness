@@ -355,6 +355,58 @@ def add_video(
     return view
 
 
+def videos_todo(root: Path) -> list[dict[str, Any]]:
+    """Every rendered run (its bundle is final with the render added) that has no YouTube link and isn't submitted yet:
+    the run, its bundle hash, the evidence.mp4 path and size, and the title and description to upload it with. The
+    title holds the run id, which E01 checks against the video's YouTube title."""
+    out: list[dict[str, Any]] = []
+    for d in sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []:
+        prepared = _read_json(d / PREPARED)
+        if not isinstance(prepared, dict) or (d / SUBMISSION).is_file() or not prepared.get("final"):
+            continue
+        render = prepared.get("render")
+        if not isinstance(render, dict) or "added" not in render or prepared.get("video"):
+            continue
+        bdir = Path(prepared["bundle_dir"])
+        env = _read_json(bdir / ENVELOPE)
+        mp4 = Path(render["dir"]) / VIDEO
+        if not isinstance(env, dict) or not mp4.is_file() or bundle_video(bdir):
+            continue
+        run_id, model = str(env["run_id"]), (env.get("model") or {}).get("slug")
+        out.append({
+            "run": d.name,
+            "run_id": run_id,
+            "bundle_sha256": prepared["bundle_sha256"],
+            "path": str(mp4),
+            "bytes": mp4.stat().st_size,
+            "title": f"BG3 Bench {run_id}",
+            "description": f"BG3 Bench run {run_id}: {env.get('scenario')}, {model}. Evidence video of the recorded run.",
+        })  # fmt: skip
+    return out
+
+
+def add_videos(root: Path, items: Any, bundler: Bundler, *, literals: Sequence[str]) -> list[dict[str, Any]]:
+    """add_video for each {"run", "bundle_sha256", "youtube_url"} (the hash videos_todo listed, so a re-pack in
+    between is refused): a result {"run", "ok": true, "video": {...}} or {"run", "ok": false, "error"} per item; one
+    refusal doesn't stop the rest."""
+    if not isinstance(items, list) or not items:
+        raise PanelError("items must be a list of {run, bundle_sha256, youtube_url}")
+    results: list[dict[str, Any]] = []
+    for it in items:
+        run = it.get("run") if isinstance(it, dict) else None
+        try:
+            if not isinstance(run, str):
+                raise PanelError("each item needs a run")
+            view = add_video(
+                root, run, bundler, bundle_sha256=it.get("bundle_sha256"), youtube_url=it.get("youtube_url"),
+                literals=literals,
+            )  # fmt: skip
+            results.append({"run": run, "ok": True, "video": view["video"]})
+        except PanelError as e:
+            results.append({"run": run, "ok": False, "error": str(e)})
+    return results
+
+
 def upload(root: Path, run: str, *, bundle_sha256: Any, token: str | None, site: Site) -> dict[str, Any]:
     base = root / _safe_name(run)
     prepared = _prepared(base, run, bundle_sha256)

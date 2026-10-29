@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""A stub OpenAI-compatible model for the pi conformance suite: chat completions over SSE, standard library only.
+"""A stub model for the pi conformance suite: OpenAI chat completions over SSE, or Anthropic's Messages API over
+SSE for a request to .../messages; standard library only.
 
     python3 stub_llm.py <script.json> <request log.jsonl> <port file>
 
@@ -11,8 +12,9 @@ repeating; a step is one of
     {"text": "..."}
     {"error": 529, "body": {...}}            an HTTP error
 and may add "usage": {...} (merged into the final chunk's usage) or "delay": <s> (before answering). The final
-chunk carries OpenRouter-style usage with `cost`, plus `provider`, like OpenRouter's streams. Every request
-(headers + body) is appended to the log.
+chunk carries OpenRouter-style usage with `cost`, plus `provider`, like OpenRouter's streams. A Messages API answer
+carries Anthropic's usage instead (token counts, no cost: ANTHROPIC_USAGE, "usage" merged into it) on message_start
+and message_delta, the way Anthropic streams it. Every request (headers + body) is appended to the log.
 """
 
 from __future__ import annotations
@@ -23,9 +25,16 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 PROVIDER = "StubProvider"
 COST = 0.0125  # billed USD per response
+ANTHROPIC_USAGE = {
+    "input_tokens": 1000,
+    "cache_creation_input_tokens": 2000,
+    "cache_read_input_tokens": 8000,
+    "output_tokens": 50,
+}
 
 
 def chunk(cid: str, delta: dict, finish: str | None = None) -> bytes:
@@ -87,6 +96,48 @@ def events(step: dict, n: int) -> list[bytes]:
     return out
 
 
+def sse(event: str, data: dict) -> bytes:
+    return f"event: {event}\ndata: {json.dumps({'type': event, **data})}\n\n".encode()
+
+
+def anthropic_events(step: dict, n: int) -> list[bytes]:
+    """One Messages API stream: message_start (the input side of the usage), a block per text or tool call,
+    message_delta (the final usage and the stop reason), message_stop."""
+    usage = {**ANTHROPIC_USAGE, **(step.get("usage") or {})}
+    start = {k: v for k, v in usage.items() if k != "output_tokens"} | {"output_tokens": 1}
+    msg = {
+        "id": f"msg_stub_{n}",
+        "type": "message",
+        "role": "assistant",
+        "model": "stub",
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": start,
+    }
+    out = [sse("message_start", {"message": msg})]
+    blocks: list[tuple[dict, dict]] = []
+    if "text" in step:
+        blocks.append(({"type": "text", "text": ""}, {"type": "text_delta", "text": step["text"]}))
+    calls = step.get("tool_calls") or []
+    for i, c in enumerate(calls):
+        args = c.get("arguments", {})
+        blocks.append(
+            (
+                {"type": "tool_use", "id": f"toolu_{n}_{i}", "name": c["name"], "input": {}},
+                {"type": "input_json_delta", "partial_json": args if isinstance(args, str) else json.dumps(args)},
+            )
+        )
+    for i, (block, delta) in enumerate(blocks):
+        out += [
+            sse("content_block_start", {"index": i, "content_block": block}),
+            sse("content_block_delta", {"index": i, "delta": delta}),
+            sse("content_block_stop", {"index": i}),
+        ]
+    stop = {"stop_reason": "tool_use" if calls else "end_turn", "stop_sequence": None}
+    return [*out, sse("message_delta", {"delta": stop, "usage": usage}), sse("message_stop", {})]
+
+
 def serve(script: list[dict], log: Path, port_file: Path) -> None:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -113,7 +164,7 @@ def serve(script: list[dict], log: Path, port_file: Path) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            for e in events(step, n):
+            for e in (anthropic_events if urlparse(self.path).path.endswith("/messages") else events)(step, n):
                 self.wfile.write(e)
                 self.wfile.flush()
 

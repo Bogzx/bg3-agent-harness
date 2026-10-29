@@ -40,7 +40,7 @@ from bg3harness.runner import judging
 from bg3harness.runner import policy as rpolicy
 from bg3harness.runner import state as rstate
 
-SAVETIME_CMDS = {"run", "status", "scenarios"}  # they list saves (controller.list_saves), as do bench run/resume
+SAVETIME_CMDS = {"run", "status", "scenarios"}  # they list saves (controller.list_saves), as do lcli.BENCH_LIVE
 
 
 def savetime_refused(argv: list[str]) -> bool:
@@ -58,7 +58,7 @@ def savetime_refused(argv: list[str]) -> bool:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["bench"]:  # bg3bench's matrix CLI (its own arguments) with the live RunHost
-        if argv[1:2] in (["run"], ["resume"]) and savetime_refused(argv):
+        if argv[1:2] and argv[1] in lcli.BENCH_LIVE and savetime_refused(argv):
             return 2
         return lcli.cmd_bench(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

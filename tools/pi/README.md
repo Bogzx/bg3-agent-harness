@@ -9,8 +9,13 @@ The harness runs non-Claude models (and Claude on the ranked track, D6 in docs/O
   registers every tool as `mcp__bg3__<name>` with `executionMode: "sequential"` (pi has no other way to run tool
   calls one at a time), sets the system text verbatim from a file, and records each response's id, served
   provider and raw usage (OpenRouter's billed `usage.cost`) as a `bg3.billing` session entry.
-- `conformance/`: offline checks of that setup against a stub model and a stub MCP server (no key, no game). Marked
-  `e2e`: CI's e2e job installs tools/pi and runs it; it skips without node_modules, except under CI where it fails.
+- A profile whose endpoint says `api = "anthropic-messages"` plays through pi's native Anthropic provider (Claude on
+  Anthropic's own API). Anthropic reports tokens only, so the cost a run counts is pi's estimate at the profile's
+  rates: 5-minute cache writes, cache reads, and a model's prompt-length tiers (Claude Haiku 5.5 over 100K tokens).
+- `conformance/`: offline checks of that setup against a stub model (OpenAI chat completions, or Anthropic's
+  Messages API for a request to `.../messages`) and a stub MCP server (no key, no game). Marked `e2e`: CI's e2e job
+  installs tools/pi and runs it; it skips without node_modules, except under CI where it fails.
+  `live_check.py` makes real calls (it costs money): see its docstring for the cheapest settings.
 - `test_pi_install.py`: the pinned version.
 
 The design and the evidence behind it: research/arch/pi-client.md (local). The runner side is `bg3harness/pi_client.py`
