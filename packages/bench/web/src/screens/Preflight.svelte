@@ -1,6 +1,7 @@
 <script lang="ts">
   // Can this machine run the benchmark: bg3bench.preflight's checks and the panel's (ffmpeg, display, disk).
   import { onMount } from "svelte";
+  import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import type { Preflight } from "../lib/types";
 
@@ -37,7 +38,7 @@
   {:else if !data}
     <div class="empty">Checking…</div>
   {:else}
-    <div class="tbl-wrap">
+    <TableWrap label="Preflight checks">
       <table>
         <tbody>
           {#each data.checks as c, i (i)}
@@ -45,6 +46,6 @@
           {/each}
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   {/if}
 </section>

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  attempts, autoSummary, bytes, choicesLine, formProblems, minutes, renderNote, startProblem, uploadProblem, verdict,
-  youtubeId, youtubeNote,
+  attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
+  uploadProblem, verdict, youtubeId, youtubeNote,
 } from "./run";
-import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow } from "./types";
+import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
 const form: PlanForm = {
   profiles: ["deepseek-flash"], scenarios: ["act1_get_item"], condition: "rules", repeats: 1, max_cost_usd: 2,
@@ -148,5 +148,30 @@ describe("renderNote", () => {
     expect(renderNote({ dir: "/r/render-1", added: 1 }, "/r/render-2")).toMatch(/^adding/);
     expect(renderNote({ dir: "/r/render-1", added: 1 }, "/r/render-1")).toMatch(/are in the bundle/);
     expect(renderNote({ dir: "/r/render-1", error: "too big" }, "/r/render-1")).toMatch(/weren't added.*too big/);
+  });
+});
+
+describe("saveChip", () => {
+  const row: ScenarioRow = {
+    name: "s", title: null, task: null, family: null, holdout: false, save: "Tav__SCN-s", save_sha1: null, seed: 1,
+    difficulty: null, goal: null, cap_s: 600, max_cost: null, conditions: [], not_ready: null,
+    save_status: { status: "installed", detail: "folder present" },
+  };
+  it("shows the save's status", () => {
+    expect(saveChip(row)).toEqual({ label: "installed", cls: "PASS", title: "folder present" });
+    expect(saveChip({ ...row, save_status: { status: "missing", detail: "d" } }).cls).toBe("FAIL");
+  });
+  it("says not ready, never installed, for a scenario that isn't ready", () => {
+    expect(saveChip({ ...row, not_ready: "still being checked" })).toEqual({
+      label: "not ready", cls: "WARN", title: "still being checked",
+    });
+  });
+});
+
+describe("matrixState", () => {
+  it("adds the stop reason only when it says more", () => {
+    expect(matrixState({ matrix: "m", state: "finished", stop_reason: "finished" })).toBe("finished");
+    expect(matrixState({ matrix: "m", state: "stopped", stop_reason: "budget" })).toBe("stopped (budget)");
+    expect(matrixState({ matrix: "m" })).toBe("?");
   });
 });

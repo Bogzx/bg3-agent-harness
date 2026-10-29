@@ -3,6 +3,7 @@
   // plan), its budget reserve and the YouTube note, before anything runs. Start plays the same form as a matrix,
   // recording each run when Record is ticked; Submit when done packs and validates each valid run (it never uploads).
   import { onMount } from "svelte";
+  import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
   import { formProblems, minutes, startProblem, youtubeNote } from "../lib/run";
@@ -90,8 +91,8 @@
           {#if p.why}<span class="faint">{p.why}</span>{/if}
         </label>
       {/each}
-      <label class="row"><input type="checkbox" bind:checked={form.allow_unverified} /> allow profiles that never played
-        live (status offline)</label>
+      <label class="row"><input type="checkbox" bind:checked={form.allow_unverified} />
+        <span class="grow">allow profiles that never played live (status offline)</span></label>
     </div>
   </section>
 
@@ -120,7 +121,8 @@
           oninput={(e) => {
             const v = (e.currentTarget as HTMLInputElement).value;
             form.max_cost_usd = v === "" ? null : Number(v);
-          }} /></label>
+          }} />
+        <span class="faint">empty: each scenario's own cap; a paid run without one won't start</span></label>
       <label class="row"><input type="checkbox" bind:checked={record} /> Record the game window (the evidence video)</label>
       <label class="row" title="Packs and validates each valid run as it ends; uploading stays your click in Results">
         <input type="checkbox" bind:checked={submit} disabled={!record} /> Submit when done
@@ -154,7 +156,7 @@
           {#if gaps.length}<div class="faint">{prof}: a run lacks {gaps.join("; ")}</div>{/if}
         {/each}
         {#if !record}<div class="note">Without a recording the run has no evidence video and can't be submitted.</div>{/if}
-        <div class="tbl-wrap">
+        <TableWrap label="Planned jobs">
           <table>
             <thead><tr><th>job</th><th>scenario</th><th>model</th><th class="num">repeat</th><th class="num">max cost</th></tr></thead>
             <tbody>
@@ -164,7 +166,7 @@
               {/each}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
       </div>
     </section>
   {/if}

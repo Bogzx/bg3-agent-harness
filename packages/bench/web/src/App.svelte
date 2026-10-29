@@ -12,6 +12,10 @@
 
   let screen = $state<Screen>(parseRoute(location.hash));
 
+  $effect(() => {
+    document.title = `${LABELS[screen]} · BG3 bench panel`;
+  });
+
   onMount(() => {
     const onHash = () => (screen = parseRoute(location.hash));
     window.addEventListener("hashchange", onHash);
@@ -21,14 +25,15 @@
 
 <header>
   <div class="brand"><span class="mark">BG3</span> bench</div>
-  <nav>
+  <nav aria-label="Screens">
     {#each SCREENS as s (s)}
-      <a class:active={screen === s} href="#/{s}">{LABELS[s]}</a>
+      <a class:active={screen === s} aria-current={screen === s ? "page" : undefined} href="#/{s}">{LABELS[s]}</a>
     {/each}
   </nav>
 </header>
 
 <main>
+  <h1 class="sr-only">{LABELS[screen]}</h1>
   {#if screen === "preflight"}
     <Preflight />
   {:else if screen === "doctor"}
@@ -55,7 +60,8 @@
   }
   .brand { font-weight: 650; letter-spacing: 0.03em; white-space: nowrap; }
   .mark { color: var(--accent); }
-  nav { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+  nav { display: flex; gap: 4px; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: thin; }
+  nav a { white-space: nowrap; }
   nav a { padding: 4px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; font-weight: 550; }
   nav a:hover { color: var(--text); background: var(--panel-2); }
   nav a.active { color: var(--text); background: var(--panel-2); box-shadow: inset 0 -2px 0 var(--accent); }

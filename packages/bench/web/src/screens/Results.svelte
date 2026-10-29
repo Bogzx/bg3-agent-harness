@@ -3,6 +3,7 @@
   // attempt number within the run's cell, and the size of its kept saves. Validate packs and checks a run locally and
   // shows the verdict and the exact files before Upload sends them; Render video makes the evidence video.
   import { onMount } from "svelte";
+  import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
   import { attempts, bytes, minutes, renderNote, uploadProblem, verdict } from "../lib/run";
@@ -72,7 +73,7 @@
   {:else if !rows.length}
     <div class="empty">No finished run yet.</div>
   {:else}
-    <div class="tbl-wrap">
+    <TableWrap label="Finished runs">
       <table>
         <thead><tr><th>run</th><th>scenario</th><th>model</th><th>verdict</th><th class="num">wall</th>
           <th class="num">cost</th><th class="num">luck z</th><th class="num">attempt</th><th class="num">saves</th><th></th></tr></thead>
@@ -101,7 +102,7 @@
           {/each}
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   {/if}
   {#if actionError}<div class="note bad">{actionError}</div>{/if}
 </section>
@@ -127,14 +128,14 @@
         {#each prepared.verdict.checks.filter((c) => c.ok === false) as c (c.code)}
           <div class="faint">{c.code} ({c.severity ?? "?"}): {c.detail ?? ""}</div>
         {/each}
-        <div class="tbl-wrap">
+        <TableWrap label="Bundle files">
           <table aria-label="Files to upload">
             <thead><tr><th>file</th><th class="num">size</th></tr></thead>
             <tbody>
               {#each prepared.files as f (f.name)}<tr><td><code>{f.name}</code></td><td class="num">{bytes(f.bytes)}</td></tr>{/each}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
         <div class="row">
           <button class="plain" disabled={busy || (render?.running ?? false)} onclick={() => doRender(open!)}>Render video</button>
           <span class="faint">expect 1-2 GB per hour of run; upload it to YouTube yourself (public or unlisted)</span>

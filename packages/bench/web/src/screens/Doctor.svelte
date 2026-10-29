@@ -1,6 +1,7 @@
 <script lang="ts">
   // Can this machine run the harness at all: bg3harness.doctor's checks, each failure with what to do about it.
   import { onMount } from "svelte";
+  import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import type { DoctorReport } from "../lib/types";
 
@@ -39,7 +40,7 @@
   {:else if !report}
     <div class="empty">Checking…</div>
   {:else}
-    <div class="tbl-wrap">
+    <TableWrap label="Doctor checks">
       <table>
         <tbody>
           {#each report.checks as c, i (i)}
@@ -51,7 +52,7 @@
           {/each}
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   {/if}
 </section>
 

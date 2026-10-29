@@ -1,6 +1,6 @@
 // Pure helpers for the New run, Queue and Results screens.
 
-import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, SaveStatus } from "./types";
+import type { MatrixProgress, Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, SaveStatus, ScenarioRow } from "./types";
 
 export const YOUTUBE_LIMIT_S = 15 * 60;
 
@@ -140,4 +140,22 @@ export function renderNote(r: Prepared["render"], out: string | undefined): stri
   if (!r || r.dir !== out) return "adding its sync table and contact sheet to the bundle…";
   if (r.error) return `its sync table and contact sheet weren't added to the bundle: ${r.error}`;
   return "its sync table and contact sheet are in the bundle (the bundle hash changed; the run hash didn't)";
+}
+
+const SAVE_CLASS: Record<SaveStatus, string> = {
+  installed: "PASS", missing: "FAIL", wrong_hash: "FAIL", stray: "WARN", unknown: "WARN", none: "none",
+};
+
+/** The Saves screen's status chip: a scenario that isn't ready is "not ready", whatever its save folder shows. */
+export function saveChip(s: ScenarioRow): { label: string; cls: string; title: string } {
+  if (s.not_ready) return { label: "not ready", cls: "WARN", title: s.not_ready };
+  const st = s.save_status;
+  return { label: SAVE_LABELS[st.status], cls: SAVE_CLASS[st.status], title: st.detail };
+}
+
+/** A matrix's state, with the stop reason when it says more than the state ("stopped (budget)", not "finished
+ * (finished)"). */
+export function matrixState(m: MatrixProgress): string {
+  const state = m.state ?? "?";
+  return m.stop_reason && m.stop_reason !== state ? `${state} (${m.stop_reason})` : state;
 }

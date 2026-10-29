@@ -3,9 +3,10 @@
   // one playing now with Stop: the one this panel started, or one it found running (another panel, a terminal, this
   // panel before a restart), which Stop ends through runtime/STOP.
   import { onMount } from "svelte";
+  import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { date, usd } from "../lib/format";
-  import { autoSummary, choicesLine } from "../lib/run";
+  import { autoSummary, choicesLine, matrixState } from "../lib/run";
   import type { FoundMatrix, MatrixProgress, RunState } from "../lib/types";
 
   let rows = $state<MatrixProgress[] | null>(null);
@@ -81,7 +82,7 @@
   {:else if !rows.length}
     <div class="empty">No matrix has run on this machine yet.</div>
   {:else}
-    <div class="tbl-wrap">
+    <TableWrap label="Matrices">
       <table>
         <thead><tr><th>matrix</th><th>state</th><th>current</th><th class="num">done / jobs</th><th class="num">runs</th>
           <th class="num">invalid</th><th class="num">spent / cap</th><th>updated</th></tr></thead>
@@ -89,7 +90,7 @@
           {#each rows as m (m.matrix)}
             <tr>
               <td><b>{m.matrix}</b></td>
-              <td>{m.state ?? "?"}{m.stop_reason ? ` (${m.stop_reason})` : ""}</td>
+              <td>{matrixState(m)}</td>
               <td>{m.current?.id ?? "–"}{m.current?.attempt ? ` · attempt ${m.current.attempt}` : ""}</td>
               <td class="num">{m.done ?? 0} / {m.jobs ?? 0}</td>
               <td class="num">{m.runs ?? 0}</td>
@@ -100,6 +101,6 @@
           {/each}
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   {/if}
 </section>
