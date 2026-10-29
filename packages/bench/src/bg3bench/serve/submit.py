@@ -66,9 +66,9 @@ class Bundler(Protocol):
         PanelError when it is refused (a render for another run_hash, one there already, the size caps)."""
         ...
 
-    def add_video(self, mp4: Path, out_dir: Path, *, youtube_id: str) -> tuple[str, Path]:
-        """Name the YouTube upload of the rendered mp4 in bundle.json's `video` of the bundle packed in out_dir:
-        (new bundle sha256, bundle dir). PanelError when it is refused."""
+    def add_video(self, render_dir: Path, out_dir: Path, *, youtube_id: str) -> tuple[str, Path]:
+        """Name the YouTube upload of render_dir's evidence.mp4 in bundle.json's `video` of the bundle packed in
+        out_dir: (new bundle sha256, bundle dir). PanelError when it is refused (a render for another run_hash)."""
         ...
 
 
@@ -120,10 +120,10 @@ class BenchSubmission:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
 
-    def add_video(self, mp4: Path, out_dir: Path, *, youtube_id: str) -> tuple[str, Path]:
+    def add_video(self, render_dir: Path, out_dir: Path, *, youtube_id: str) -> tuple[str, Path]:
         pack = self._mod("pack")
         try:
-            p = pack.add_video(out_dir, youtube_id=youtube_id, mp4=mp4)
+            p = pack.add_video(render_dir, out_dir, youtube_id)
         except pack.PackError as e:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
@@ -357,7 +357,7 @@ def add_video(
     if not mp4.is_file():
         raise PanelError(f"{run}: the rendered {mp4} is gone: render the video again")
     vid = youtube_id(youtube_url)
-    sha, bdir = bundler.add_video(mp4, Path(prepared["bundle_dir"]).parent, youtube_id=vid)
+    sha, bdir = bundler.add_video(mp4.parent, Path(prepared["bundle_dir"]).parent, youtube_id=vid)
     view = {
         **prepared,
         "bundle_sha256": sha,

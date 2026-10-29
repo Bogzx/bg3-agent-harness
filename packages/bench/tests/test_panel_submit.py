@@ -42,10 +42,10 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": names}))
         return "ef" * 32, b
 
-    def add_video(self, mp4, out_dir, *, youtube_id):
-        self.calls.append(("add_video", mp4.parent.name, out_dir.name, youtube_id))
-        if mp4.read_text() == "refuse":
-            raise panel.PanelError("bundle.json names a video already")
+    def add_video(self, render_dir, out_dir, *, youtube_id):
+        self.calls.append(("add_video", render_dir.name, out_dir.name, youtube_id))
+        if (render_dir / video.VIDEO).read_text() == "refuse":
+            raise panel.PanelError("render.json was rendered for another run_hash")
         b = out_dir / "bundle"
         env = json.loads((b / "bundle.json").read_text())
         (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
@@ -406,10 +406,10 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
             raise PackError("render.json was rendered for another run_hash")
         return SimpleNamespace(bundle_sha256="ef" * 32, bundle_dir=out_dir / "bundle")
 
-    def add_video(out_dir, *, youtube_id, mp4):
-        seen["add_video"] = (out_dir, youtube_id, mp4)
-        if youtube_id == "x" * 11:
-            raise PackError("bundle.json names a video already")
+    def add_video(render_dir, out_dir, youtube):
+        seen["add_video"] = (render_dir, out_dir, youtube)
+        if youtube == "x" * 11:
+            raise PackError("render.json was rendered for another run_hash")
         return SimpleNamespace(bundle_sha256="0a" * 32, bundle_dir=out_dir / "bundle")
 
     mods = {
@@ -440,11 +440,10 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
     assert seen["add_render"] == (tmp_path / "render-1", tmp_path / "o", ["k"])
     with pytest.raises(panel.PanelError, match="another run_hash"):
         bs.add_render(tmp_path / "other", tmp_path / "o", literals=[])
-    mp4 = tmp_path / "render-1" / "evidence.mp4"
-    assert bs.add_video(mp4, tmp_path / "o", youtube_id=VID) == ("0a" * 32, tmp_path / "o" / "bundle")
-    assert seen["add_video"] == (tmp_path / "o", VID, mp4)
-    with pytest.raises(panel.PanelError, match="names a video already"):
-        bs.add_video(mp4, tmp_path / "o", youtube_id="x" * 11)
+    assert bs.add_video(tmp_path / "render-1", tmp_path / "o", youtube_id=VID) == ("0a" * 32, tmp_path / "o" / "bundle")
+    assert seen["add_video"] == (tmp_path / "render-1", tmp_path / "o", VID)
+    with pytest.raises(panel.PanelError, match="another run_hash"):
+        bs.add_video(tmp_path / "render-1", tmp_path / "o", youtube_id="x" * 11)
 
 
 def test_add_render_updates_the_prepared_bundle(run_dir, tmp_path):
@@ -528,7 +527,7 @@ def test_add_video_refusals(run_dir, tmp_path):
         submit.add_video(root, "s1", b, bundle_sha256=SHA, youtube_url=yt, literals=[])
     with pytest.raises(panel.PanelError, match="youtube_url"):
         submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url="https://vimeo.com/1", literals=[])
-    with pytest.raises(panel.PanelError, match="names a video already"):
+    with pytest.raises(panel.PanelError, match="another run_hash"):
         submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url=yt, literals=[])  # the pack's refusal
     (render / video.VIDEO).unlink()
     with pytest.raises(panel.PanelError, match="evidence.mp4 is gone: render the video again"):
