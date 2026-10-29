@@ -1,6 +1,6 @@
 import type {
   About, DoctorReport, MatrixProgress, Plan, PlanForm, Prefs, Preflight, Prepared, ProfileRow, RenderState, RunRow,
-  RunState, RunView, ScenarioRow, SettingsView, StartForm, Submission,
+  RunState, RunView, ScenarioRow, SettingsView, StartForm, Submission, VideoResult, VideoTodo,
 } from "./types";
 import { HEADER } from "./token";
 
@@ -63,5 +63,8 @@ export const api = {
   upload: (run: string, bundle_sha256: string) => post<Submission>("/api/v1/submit/upload", { run, bundle_sha256 }),
   submissionStatus: (run: string) => post<Submission>("/api/v1/submit/status", { run }),
   render: (run: string) => post<{ render: RenderState | null }>("/api/v1/render", { run }),
+  videos: () => call<{ videos: VideoTodo[] }>("/api/v1/videos"),
+  addVideos: (items: { run: string; bundle_sha256: string; youtube_url: string }[]) =>
+    post<{ results: VideoResult[] }>("/api/v1/submit/videos", { items }),
   renderState: () => call<{ render: RenderState | null }>("/api/v1/render"),
 };

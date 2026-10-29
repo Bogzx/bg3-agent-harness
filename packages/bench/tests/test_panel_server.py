@@ -726,3 +726,35 @@ def test_verbose_logs_request_lines(app, capsys):
         srv.shutdown()
         srv.server_close()
     assert '"GET /api/v1/about HTTP/1.1" 200' in capsys.readouterr().err
+
+
+def test_housekeeping_polls_the_children_so_they_are_reaped(server):
+    polled = []
+    server.runner.state = lambda: polled.append("runner")
+    server.renderer.state = lambda: polled.append("renderer")
+    server.housekeep()
+    assert polled[:2] == ["runner", "renderer"]  # before anything else reads them
+
+
+def test_videos_endpoints_list_and_link_many(server):
+    assert get(server, "/api/v1/videos")[1]["videos"] == []
+    post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    post(server, "/api/v1/render", {"run": "s1"})
+    server.renderer.rc = 0
+    server.runner = None
+    server.housekeep()
+    prepared = get(server, "/api/v1/submissions")[1]["submissions"]["s1"]["prepared"]
+    mp4 = Path(prepared["render"]["dir"]) / video.VIDEO
+    mp4.parent.mkdir()
+    mp4.write_bytes(b"mp4")
+    bdir = Path(prepared["bundle_dir"])
+    (bdir / "bundle.json").write_text(
+        json.dumps({**json.loads((bdir / "bundle.json").read_text()), "run_id": "s1-r001"})
+    )
+    (todo,) = get(server, "/api/v1/videos")[1]["videos"]
+    assert todo["run_id"] == "s1-r001" and todo["bytes"] == 3 and todo["path"] == str(mp4)
+    assert post(server, "/api/v1/submit/videos", {"items": []})[0] == 400
+    code, r = post(server, "/api/v1/submit/videos",
+                   {"items": [{"run": "s1", "bundle_sha256": todo["bundle_sha256"], "youtube_url": "https://youtu.be/dQw4w9WgXcQ"}]})  # fmt: skip
+    assert code == 200 and r["results"] == [{"run": "s1", "ok": True, "video": {"youtube_id": "dQw4w9WgXcQ"}}]
+    assert get(server, "/api/v1/videos")[1]["videos"] == []
