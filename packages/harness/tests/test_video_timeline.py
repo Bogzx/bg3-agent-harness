@@ -221,5 +221,49 @@ def test_a_resumed_claude_conversation_costs_its_highest_running_total_not_the_s
         "S002": process("pi", "p-1", 30.0, 0.3),  # pi's: the process's own
         "S002-c1": process("pi", "p-1", 40.0, 0.3),
     }
-    assert T.result_costs(logs, T0) == [(10.0, 0.4), (20.0, 0.5), (30.0, 0.3), (40.0, 0.3)]
+    assert [(at, round(c, 6)) for at, c in T.running_costs(logs, T0)] == [
+        (10.0, 0.4),
+        (20.0, 0.9),
+        (30.0, 1.2),
+        (40.0, 1.5),
+    ]
     assert T.strip_states(41.0, [], logs, T0)[-1].cost_usd == 1.5
+
+
+def test_the_cost_runs_with_the_usage_events_and_the_result_replaces_it():
+    # S2 (2026-10-29): the pi nautiloid run showed no cost at all (pi's process was stopped, no result event); the
+    # spec's item 6 is the cost so far under the clock, summed while the run goes
+    def start(seq: int, t: float, client: str) -> dict[str, Any]:
+        return ev(seq, t, "session_start", src="harness", detail={"client": client})
+
+    def usage(seq: int, t: float, mid: str, n: int, **kw: Any) -> dict[str, Any]:
+        return ev(seq, t, "usage", message_id=mid, tokens={"input": n, "output": 0}, **kw)
+
+    pi = {"S001": [start(0, 0.5, "pi"), usage(1, 1.0, "a", 10, cost_usd=0.01), usage(2, 3.0, "b", 10, cost_usd=0.03)]}
+    assert [s.cost_usd for s in T.strip_states(5.0, [], pi, T0)] == [None, 0.01, 0.01, 0.03, 0.03]  # no result: kept
+    claude = {
+        "S001": [
+            start(0, 0.5, "claude"),
+            usage(1, 1.0, "m1", 100),
+            ev(2, 2.0, "result", cost_usd=0.5, session_id="c", tokens={"input": 100}),
+        ],
+        "S001-c1": [start(0, 2.5, "claude"), usage(1, 3.0, "m2", 40), usage(2, 3.5, "m2", 60)],
+    }
+    # nothing prices claude's first tokens; then $0.005 a token: 60 tokens of the resume so far add $0.30
+    assert [s.cost_usd for s in T.strip_states(5.0, [], claude, T0)] == [None, None, 0.5, 0.7, 0.8]
+
+
+def test_a_wipe_is_the_game_over_event_or_every_member_down():
+    def snap(t: float, *down: str) -> dict[str, Any]:
+        party = [{"name": n, "hp": 0 if n in down else 9, "max_hp": 9, "downed": n in down} for n in ("Tav", "Us")]
+        return {"v": 1, "kind": "snapshot", "t": T0 + t, "gold": 0, "party": party}
+
+    def fact(t: float, name: str, what: str = "downed") -> dict[str, Any]:
+        return {"v": 1, "kind": "event", "t": T0 + t, "ev": what, "name": name, "party": True}
+
+    over = {"v": 1, "kind": "event", "t": T0 + 9.0, "ev": "game_over"}
+    assert T.wiped_at([snap(1.0), fact(5.0, "Tav"), over], T0) == 9.0  # S2 prologue: "Us" up, the game's Game Over
+    assert T.wiped_at([snap(1.0), fact(5.0, "Tav"), fact(7.0, "Us")], T0) == 7.0
+    assert T.wiped_at([snap(1.0), fact(5.0, "Tav"), fact(6.0, "Tav", "revived"), fact(7.0, "Us")], T0) is None
+    assert T.wiped_at([snap(1.0), snap(4.0, "Tav", "Us")], T0) == 4.0
+    assert T.strip_states(3.0, [snap(1.0), over], {}, T0)[0].wiped_s == 9.0

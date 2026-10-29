@@ -367,7 +367,7 @@ class AgentSide:
             renv.log(f"{sid}{tag}: {client.name} API/config error (counts toward the quick-failure stop): {detail[:200]}")
             self.event("api_auth", session=sid + tag, error=detail[:300])  # a harness failure (runs.HARNESS_EVENTS)
         if reason == "killed":
-            detail = f"claude ended by a signal from outside the runner (exit {proc.returncode})"
+            detail = f"{client.name} ended by a signal from outside the runner (exit {proc.returncode})"
             renv.log(f"{sid}{tag}: {detail}")
         poll_stop.set()
         poller.join(timeout=20)
@@ -381,7 +381,7 @@ class AgentSide:
                                     conversation=seen_session[0])
         if not self.opt.dry_run:
             self.write_choices(sid + tag, base)
-        renv.log(f"{sid}{tag}: claude finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
+        renv.log(f"{sid}{tag}: {client.name} finished ({reason}, exit {proc.returncode}, {(end - start) / 60:.1f} min)")
         if spend.is_paid(client.name):
             self.settle_cost(sid + tag, cost.usd)
         self.code_moved(sid + tag)
