@@ -3,6 +3,7 @@ import json
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,19 @@ from bg3bench.serve import launch, panel
 
 REPO = Path(__file__).resolve().parents[3]
 SCENARIOS = REPO / "packages" / "bench" / "scenarios"
+
+
+@pytest.fixture
+def tz(monkeypatch):
+    """Sets the process's local time zone (a POSIX TZ string) for one test."""
+
+    def set_tz(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield set_tz
+    monkeypatch.undo()
+    time.tzset()
 
 
 class FakeProc:
@@ -140,7 +154,15 @@ def no_proc(pid):
     return None
 
 
-def test_start_writes_a_new_matrix_file_and_starts_it(repo):
+def test_matrix_name_is_local_time(tz):
+    tz("XYZ-2")  # UTC+2
+    assert launch.matrix_name(1793268257.0) == "panel-20261029-120417"  # 10:04:17 UTC
+    tz("UTC0")
+    assert launch.matrix_name(1793268257.0) == "panel-20261029-100417"
+
+
+def test_start_writes_a_new_matrix_file_and_starts_it(repo, tz):
+    tz("UTC0")
     popen = FakePopen()
     mp = launch.MatrixProcess(repo, popen=popen, which=lambda n: n)
     rt = repo / "runtime"

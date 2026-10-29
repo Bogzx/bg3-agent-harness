@@ -61,7 +61,8 @@ class Runner(Protocol):
 
 
 def matrix_name(now: float) -> str:
-    return "panel-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime(now))
+    """panel-<date>-<time> in this machine's local time, the time the user sees on the clock."""
+    return "panel-" + time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
 
 
 def refusal(plan: Mapping[str, Any]) -> str | None:

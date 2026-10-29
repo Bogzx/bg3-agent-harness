@@ -91,18 +91,37 @@ export function startProblem(plan: Plan | null, running: boolean): string | null
   return null;
 }
 
-/** Why Upload can't be pressed for a prepared bundle (null: it can). */
-export function uploadProblem(p: Prepared | null, youtubeUrl: string, siteToken: boolean): string | null {
-  if (!p) return "validate first";
-  if (!p.final) return "render the evidence video first: the site takes the bundle with its render";
-  if (!p.verdict.accepted) return "the local validation rejects this bundle";
-  if (!siteToken) return "save the site token in Settings";
+/** Why Validate can't be pressed for a finished run (null: it can). A pilot run is refused by the pack. */
+export function validateProblem(r: RunRow): string | null {
+  return r.pilot.length ? `a pilot run can't be submitted: ${r.pilot.join("; ")}` : null;
+}
+
+/** Whether a prepared bundle has its render and waits for the YouTube link of its evidence video (Add video). */
+export function wantsVideo(p: Prepared | null): boolean {
+  return !!p && !!p.final && p.render?.added !== undefined && !p.video;
+}
+
+/** Why Add video can't be pressed (null: it can). */
+export function videoProblem(p: Prepared | null, youtubeUrl: string): string | null {
+  if (!wantsVideo(p)) return "render the evidence video first";
   if (!youtubeId(youtubeUrl)) return "paste the YouTube URL of the evidence video";
   return null;
 }
 
-/** The 11-character id of a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL (null: not one). */
+/** Why Upload can't be pressed for a prepared bundle (null: it can). */
+export function uploadProblem(p: Prepared | null, siteToken: boolean): string | null {
+  if (!p) return "validate first";
+  if (!p.final) return "render the evidence video first: the site takes the bundle with its render";
+  if (!p.video) return "add the YouTube link of the evidence video first";
+  if (!p.verdict.accepted) return "the local validation rejects this bundle";
+  if (!siteToken) return "save the site token in Settings";
+  return null;
+}
+
+/** The 11-character id of a YouTube video: the id itself, or a youtube.com/watch?v=, youtu.be/ or
+ * youtube.com/shorts/ URL of it (null: neither). The pack reads the pasted text the same way. */
 export function youtubeId(url: string): string | null {
+  if (/^[A-Za-z0-9_-]{11}$/.test(url.trim())) return url.trim();
   let u: URL;
   try {
     u = new URL(url.trim());

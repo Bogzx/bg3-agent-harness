@@ -174,6 +174,17 @@ def test_results_and_queue_ignore_broken_files(tmp_path):
     assert panel.queue(tmp_path / "matrix") == []
 
 
+@pytest.mark.parametrize(("state", "live", "shown"), [
+    ("running", (), "unknown"), ("waiting", (), "unknown"), ("running", ("m",), "running"),
+    ("stopped", (), "stopped"), ("finished", (), "finished"),
+])  # fmt: skip
+def test_queue_trusts_a_live_state_only_with_a_live_process(tmp_path, state, live, shown):
+    (tmp_path / "m").mkdir()
+    (tmp_path / "m" / "progress.json").write_text(json.dumps({"state": state, "stop_reason": None}))
+    (row,) = panel.queue(tmp_path, live)
+    assert row["state"] == shown and (row["stop_reason"] is None) == (shown == state)
+
+
 def test_results_send_created_as_epoch_seconds_newest_first(tmp_path):
     """manifest.v1's created is epoch seconds: the API sends a number (or null), sorted as a number."""
     for name, created in (("a", 9.5), ("b", 10), ("c", "2026-10-25T10:00:00Z"), ("d", True), ("e", None)):

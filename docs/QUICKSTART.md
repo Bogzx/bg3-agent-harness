@@ -158,15 +158,17 @@ names the submissions site, and `--release` the suite's release file that Valida
   `runtime/panel/<name>.toml` and runs `runner/play.py bench run --matrix` on it, one matrix at a time. Record (on by
   default) records the game window of every run into its run dir's `recording/`. Submit when done packs and
   validates each valid run as it ends; it never uploads.
-- Queue: every matrix's progress. Stop writes `runtime/STOP`: the run playing now ends, is recorded as an operator
-  stop, and no new run starts. If the panel's own matrix still runs two minutes later, the panel sends it one
-  SIGTERM, which stops it the same way. The panel also finds a matrix it didn't start (from a terminal, or before
+- Queue: every matrix's progress (one whose file says running while no process plays it shows as unknown). Stop
+  writes `runtime/STOP`: the run playing now ends, is recorded as an operator stop, and no new run starts. If the
+  panel's own matrix still runs two minutes later, the panel sends it one SIGTERM, which stops it the same way. The panel also finds a matrix it didn't start (from a terminal, or before
   the panel restarted) through `runtime/runner.lock`, and stops it with `runtime/STOP` too.
 - Results: the finished runs. Validate packs a run into `runtime/submissions/<run>/`, checks it with the validator
-  the site runs, and shows the verdict and every file that would be sent. Render video makes the evidence video from
-  that bundle and the recording, then adds the video's sync table and contact sheet to the bundle (the bundle hash
-  changes; the run hash shown in the video doesn't) and validates it again, now as a submission. Upload sends that
-  bundle and your YouTube link with the site token; it waits until the render is in.
+  the site runs, and shows the verdict and every file that would be sent (a pilot run can't be submitted, so it has
+  no Validate). Render video makes the evidence video from that bundle and the recording, then adds the video's sync
+  table and contact sheet to the bundle (the bundle hash changes; the run hash shown in the video doesn't) and
+  validates it again, now as a submission. Then upload the rendered `evidence.mp4` to YouTube yourself (public or
+  unlisted, with the run id in its title) and paste its link: Add video puts it into `bundle.json` and validates
+  again. Upload sends that bundle with the site token; it waits until the bundle names its video.
 - Settings: API keys are written to the repo's `.env` (refused while git doesn't ignore it) and shown masked; the
   site token goes to `~/.config/bg3bench/site-token`.
 

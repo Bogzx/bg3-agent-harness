@@ -16,7 +16,7 @@ GET (JSON, Cache-Control: no-store):
     /api/v1/preflight    bg3bench.preflight's checks + the panel's (ffmpeg, display, disk)
     /api/v1/scenarios    the suite's scenarios with their start save's status
     /api/v1/profiles     client profiles; which ones the panel offers and why not
-    /api/v1/queue        runtime/matrix/*/progress.json
+    /api/v1/queue        runtime/matrix/*/progress.json; one that says running with no live process is "unknown"
     /api/v1/results      finished runs (runtime/sessions/*/{manifest,result}.json)
     /api/v1/settings     key names with masked values, the site token masked, preferences
     /api/v1/run          the matrix this panel started (launch.Runner state) with its Record/Submit choices, and
@@ -29,7 +29,9 @@ POST (JSON body, token):
     /api/v1/run/start            the same form + "record", "submit_when_done": write its matrix file, start it
     /api/v1/run/stop             end the run playing now, start no new one (this panel's matrix or the found one)
     /api/v1/submit/prepare       {"run"}: pack and validate a finished run; the verdict and the exact files
-    /api/v1/submit/upload        {"run", "bundle_sha256", "youtube_url"}: send that bundle with the site token
+    /api/v1/submit/video         {"run", "bundle_sha256", "youtube_url"}: after Render, the user's YouTube upload of
+                                 evidence.mp4 into bundle.json's video (submit.add_video); validated again
+    /api/v1/submit/upload        {"run", "bundle_sha256"}: send that bundle (with its video) with the site token
     /api/v1/submit/status        {"run"}: the submission's status from the site
     /api/v1/render               {"run"}: render the run's evidence video from its prepared bundle and recording
     /api/v1/settings/key         {"name", "value"}: write a profile's API key to the repo's .env; returns it masked
@@ -135,7 +137,7 @@ class App:
 
             return {"profiles": panel.profile_rows(self.profiles_dir(), has), "offered_clients": panel.OFFERED_CLIENTS}
         if path == "/api/v1/queue":
-            return {"matrices": panel.queue(self.runtime / "matrix")}
+            return {"matrices": panel.queue(self.runtime / "matrix", self.live())}
         if path == "/api/v1/results":
             return {"runs": panel.results(self.runtime / "sessions")}
         if path == "/api/v1/settings":
@@ -166,6 +168,11 @@ class App:
         """A matrix playing now that this panel's runner isn't running."""
         own = self.runner.state() if self.runner else None
         return None if own and own["running"] else launch.found(self.runtime, self.proc)
+
+    def live(self) -> set[str]:
+        """The matrices a live process plays now: this panel's and the one found from runtime/runner.lock."""
+        own, other = self.runner.state() if self.runner else None, launch.found(self.runtime, self.proc)
+        return {m["name"] for m in (own, other) if m and m["running"]}
 
     def run_view(self) -> dict[str, Any]:
         return {"run": self.own_run(), "found": self.found(), "can_start": self.runner is not None}
@@ -319,12 +326,21 @@ class App:
             return self.stop()
         if path == "/api/v1/submit/prepare":
             return self.prepare(body)
+        if path == "/api/v1/submit/video":
+            with self.prepare_lock:
+                return submit.add_video(
+                    self.submissions(),
+                    body.get("run"),  # type: ignore[arg-type] - submit checks it
+                    self.need(self.bundler, "bundler"),
+                    bundle_sha256=body.get("bundle_sha256"),
+                    youtube_url=body.get("youtube_url"),
+                    literals=self.literals(),
+                )
         if path == "/api/v1/submit/upload":
             return submit.upload(
                 self.submissions(),
                 body.get("run"),  # type: ignore[arg-type] - submit checks it
                 bundle_sha256=body.get("bundle_sha256"),
-                youtube_url=body.get("youtube_url"),
                 token=self.settings.site_token(),
                 site=self.site_client(submit.site_url(self.site)),
             )

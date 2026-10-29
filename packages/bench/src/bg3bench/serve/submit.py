@@ -1,21 +1,24 @@
 # pyright: basic
 """Submit from the panel: pack and validate a run locally, show the result and the exact files, upload, poll.
 
-Three steps, each a request of its own so the user sees what goes out before it goes:
+Four steps, each a request of its own so the user sees what goes out before it goes:
 
 1. `prepare`: the run is packed (bg3bench.submission.pack, through a `Bundler`) into
    runtime/submissions/<run_id>/<k>/ (a new k each time: pack never overwrites) and validated there (the same
    validator the site runs). prepared.json keeps the bundle hash, the verdict and the file list.
-2. `upload`: only the bundle prepare made (the caller names its hash, so a re-pack in between is refused), only when
-   its verdict is accepted, with the site token from Settings: bundle.json, the files it lists and the YouTube URL go
-   to the site (`Site`) as one multipart POST. submission.json keeps the site's id.
-3. `poll`: the submission's status from the site, saved to submission.json.
+2. `add_video`: once the evidence video is rendered (below) and the user has uploaded its evidence.mp4 to YouTube,
+   the link they paste goes into bundle.json's `video` (bg3bench.submission.pack's video operation, through the
+   `Bundler`), and the bundle is validated again.
+3. `upload`: only the bundle the user saw last (the caller names its hash, so a re-pack in between is refused), only
+   when bundle.json names its video and its verdict is accepted, with the site token from Settings: bundle.json, the
+   files it lists and the video's URL go to the site (`Site`) as one multipart POST. submission.json keeps the site's id.
+4. `poll`: the submission's status from the site, saved to submission.json.
 
 Prepare validates the record only (the validator's submission=False: no render yet). Render video (video.py)
 renders from the prepared bundle; once the render has ended well, `add_render` puts its render.json and frames into
 that bundle (bg3bench.submission.pack's add_render), validates it again as a submission (render and frames required)
 and rewrites prepared.json with the new bundle hash, file list and that verdict ("final": true). The run_hash, and so
-the video's id line, stays the same. Upload takes only a final bundle.
+the video's id line, stays the same. Upload takes only a final bundle with its video.
 
 The site token and the .env values never appear in a response: the values are passed to the pack's scrub and the
 validator's scrub check only.
@@ -33,9 +36,10 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from bg3bench.serve.panel import PanelError
+from bg3bench.serve.video import VIDEO
 
 SUBMISSIONS = "submissions"  # runtime/submissions/<run_id>/
 PREPARED = "prepared.json"
@@ -60,6 +64,12 @@ class Bundler(Protocol):
     def add_render(self, render_dir: Path, out_dir: Path, *, literals: Sequence[str]) -> tuple[str, Path]:
         """Add render_dir's render.json and frames/ to the bundle packed in out_dir: (new bundle sha256, bundle dir).
         PanelError when it is refused (a render for another run_hash, one there already, the size caps)."""
+        ...
+
+    def add_video(self, render_dir: Path, out_dir: Path, *, youtube: str) -> tuple[str, Path]:
+        """Name the YouTube upload of render_dir's evidence.mp4 (`youtube`: its id or a watch, youtu.be or shorts URL)
+        in bundle.json's `video` of the bundle packed in out_dir: (new bundle sha256, bundle dir). PanelError when it
+        is refused (not a YouTube video id or URL, a render for another run_hash)."""
         ...
 
 
@@ -107,6 +117,14 @@ class BenchSubmission:
         pack = self._mod("pack")
         try:
             p = pack.add_render(render_dir, out_dir, literals)
+        except pack.PackError as e:
+            raise PanelError(str(e)) from None
+        return p.bundle_sha256, p.bundle_dir
+
+    def add_video(self, render_dir: Path, out_dir: Path, *, youtube: str) -> tuple[str, Path]:
+        pack = self._mod("pack")
+        try:
+            p = pack.add_video(render_dir, out_dir, youtube)
         except pack.PackError as e:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
@@ -196,25 +214,6 @@ class HttpSite:
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         return self._call(req)
-
-
-def youtube_id(url: Any) -> str:
-    """The 11-character video id of a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL."""
-    if not isinstance(url, str):
-        raise PanelError("youtube_url must be a YouTube video URL")
-    u = urlparse(url.strip())
-    host = (u.hostname or "").lower().removeprefix("www.").removeprefix("m.")
-    vid = None
-    if u.scheme in ("http", "https"):
-        if host == "youtu.be":
-            vid = u.path.lstrip("/")
-        elif host == "youtube.com" and u.path == "/watch":
-            vid = (parse_qs(u.query).get("v") or [""])[0]
-        elif host == "youtube.com" and u.path.startswith("/shorts/"):
-            vid = u.path.removeprefix("/shorts/")
-    if vid is None or not YOUTUBE_ID.fullmatch(vid):
-        raise PanelError("youtube_url must be a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL of a video")
-    return vid
 
 
 def attempt(rows: Sequence[Mapping[str, Any]], run_dir: str, submitted: Callable[[str], bool]) -> tuple[int, int]:
@@ -307,10 +306,8 @@ def _site_error(status: int, body: Mapping[str, Any]) -> str:
     return msg
 
 
-def upload(
-    root: Path, run: str, *, bundle_sha256: Any, youtube_url: Any, token: str | None, site: Site
-) -> dict[str, Any]:
-    base = root / _safe_name(run)
+def _prepared(base: Path, run: str, bundle_sha256: Any) -> dict[str, Any]:
+    """The prepared view the user saw (they name its bundle hash) of a run not submitted yet."""
     prepared = _read_json(base / PREPARED)
     if not isinstance(prepared, dict):
         raise PanelError(f"{run}: validate it first (no prepared bundle)")
@@ -318,14 +315,59 @@ def upload(
         raise PanelError(f"{run}: the bundle changed since you saw it: validate again")
     if (base / SUBMISSION).is_file():
         raise PanelError(f"{run} is submitted already")
+    return prepared
+
+
+def bundle_video(bundle_dir: Path) -> str | None:
+    """The YouTube id bundle.json's `video` names, or None (not added yet)."""
+    env = _read_json(bundle_dir / ENVELOPE)
+    vid = (env.get("video") or {}).get("youtube_id") if isinstance(env, dict) else None
+    return vid if isinstance(vid, str) and YOUTUBE_ID.fullmatch(vid) else None
+
+
+def add_video(
+    root: Path, run: str, bundler: Bundler, *, bundle_sha256: Any, youtube_url: Any, literals: Sequence[str]
+) -> dict[str, Any]:
+    """Name the user's YouTube upload of the rendered evidence.mp4 in the prepared bundle's bundle.json, validate it
+    again as a submission and update prepared.json (bundle hash, files, verdict, "video": {"youtube_id"})."""
+    base = root / _safe_name(run)
+    prepared = _prepared(base, run, bundle_sha256)
+    render: dict[str, Any] = prepared.get("render") or {}
+    if not prepared.get("final") or "added" not in render:
+        raise PanelError(f"{run}: render the evidence video first, then upload its {VIDEO} to YouTube")
+    mp4 = Path(render["dir"]) / VIDEO
+    if not mp4.is_file():
+        raise PanelError(f"{run}: the rendered {mp4} is gone: render the video again")
+    if not isinstance(youtube_url, str) or not youtube_url.strip():
+        raise PanelError("youtube_url must be the YouTube video's URL or id")
+    sha, bdir = bundler.add_video(mp4.parent, Path(prepared["bundle_dir"]).parent, youtube=youtube_url)
+    vid = bundle_video(bdir)
+    if vid is None:
+        raise PanelError(f"{run}: the pack wrote no YouTube id into bundle.json")
+    view = {
+        **prepared,
+        "bundle_sha256": sha,
+        "files": bundle_listing(bdir),
+        "verdict": bundler.validate(bdir, literals=literals, submission=True),
+        "video": {"youtube_id": vid},
+    }
+    _write_json(base / PREPARED, view)
+    return view
+
+
+def upload(root: Path, run: str, *, bundle_sha256: Any, token: str | None, site: Site) -> dict[str, Any]:
+    base = root / _safe_name(run)
+    prepared = _prepared(base, run, bundle_sha256)
     if not prepared.get("final"):
         raise PanelError(f"{run}: render the evidence video first: the site takes the bundle with its render")
+    bdir = Path(prepared["bundle_dir"])
+    vid = bundle_video(bdir)
+    if vid is None:
+        raise PanelError(f"{run}: add the YouTube link of its evidence video first: the site needs it in bundle.json")
     if not prepared["verdict"].get("accepted"):
         raise PanelError(f"{run}: the local validation rejects this bundle; the site would too")
     if not token:
         raise PanelError("no site token: create one on the site and save it in Settings")
-    vid = youtube_id(youtube_url)
-    bdir = Path(prepared["bundle_dir"])
     listing = bundle_listing(bdir)
     if listing != prepared["files"]:
         raise PanelError(f"{run}: the bundle's files changed since validation: validate again")

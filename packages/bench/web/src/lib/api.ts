@@ -58,8 +58,9 @@ export const api = {
       "/api/v1/submissions",
     ),
   prepare: (run: string) => post<Prepared>("/api/v1/submit/prepare", { run }),
-  upload: (run: string, bundle_sha256: string, youtube_url: string) =>
-    post<Submission>("/api/v1/submit/upload", { run, bundle_sha256, youtube_url }),
+  addVideo: (run: string, bundle_sha256: string, youtube_url: string) =>
+    post<Prepared>("/api/v1/submit/video", { run, bundle_sha256, youtube_url }),
+  upload: (run: string, bundle_sha256: string) => post<Submission>("/api/v1/submit/upload", { run, bundle_sha256 }),
   submissionStatus: (run: string) => post<Submission>("/api/v1/submit/status", { run }),
   render: (run: string) => post<{ render: RenderState | null }>("/api/v1/render", { run }),
   renderState: () => call<{ render: RenderState | null }>("/api/v1/render"),
