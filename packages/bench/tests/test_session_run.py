@@ -6,17 +6,19 @@ and the matrix's budget for a paid and a subscription client."""
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from bg3harness.runs import METRIC_FIELDS
 from test_run_artifacts import assert_valid, readout
 
 from bg3bench import conditions, graders, matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, live_verdict, series_name
 from bg3bench.matrix import Matrix, RunResult
-from bg3bench.submission import pack, validate
+from bg3bench.submission import consistency, pack, validate
 
 HERE = Path(__file__).resolve().parent
 SC = scenario.load(HERE / "fixtures" / "e2e" / "e2e_sell_idol.json")
@@ -426,3 +428,52 @@ def test_a_new_game_runs_manifest_cites_no_start_save_and_passes_p01(tmp_path):
     man = json.loads((host.started[0][2] / "manifest.json").read_text())
     assert man["scenario"]["start_save_sha1"] is None
     assert p01(man, naut, naut["start"].get("save_sha1")) == (True, "")
+
+
+class FilesHost(Host):
+    """A host whose run leaves `files` in its run dir as the session ends (written at the fake clock's time, inside
+    the run's window) and whose record has `fields` too."""
+
+    def __init__(self, scripts: list[list[tuple[str, float]]], files: dict[str, str], fields: dict | None = None):
+        super().__init__(scripts)
+        self.files, self.fields = files, fields or {}
+
+    def record(self, job: dict, sc: dict, run_dir: Path, outcome) -> dict:
+        for name, text in self.files.items():
+            (run_dir / name).write_text(text)
+            os.utime(run_dir / name, (self.clock[0], self.clock[0]))
+        return super().record(job, sc, run_dir, outcome) | self.fields
+
+
+def test_a_runs_result_fairness_is_its_streams_audit_and_passes_a01(tmp_path):
+    """bench live S3 windmill: A01 rejected a clean pi run, `audit [0, 3, 0] != result.fairness {... 0}`: a session
+    run's record had no fairness_flags (only a legacy series record had run_metrics), so result.json said zero. The
+    fixture is that run's S001 streams cut to its three flagged calls (the party's own Hide) and two others."""
+    s3 = HERE / "fixtures" / "s3_windmill"
+    host = FilesHost([[("exited", 5)]], {f.name: f.read_text() for f in s3.iterdir()})
+    run_one(tmp_path, host)(job())
+    run_dir = host.started[0][2]
+    res = json.loads((run_dir / "result.json").read_text())
+    events = [json.loads(ln) for ln in (run_dir / "S001.events.jsonl").read_text().splitlines()]
+    b = validate.Loaded(run_dir, {}, {}, {}, res, [], None, {"S001.events.jsonl": events}, SC, {}, {})
+    assert consistency.a01_fairness(b) == (True, "")
+    assert res["fairness"] == {"leak": 0, "check": 3, "blocks": 0}
+    assert json.loads((run_dir / "runs.jsonl").read_text())["fairness_flags"]["kinds"] == {"hidden_state": 3}
+
+
+def test_a_runs_record_carries_the_legacy_run_metrics(tmp_path):
+    # the session runner's record had none of runs.METRIC_FIELDS: no deaths, no time to the milestone
+    fight = {"party": [{"name": "Tav", "downed": 2, "died": True}, {"name": "Wyll", "downed": 1, "died": False}]}
+    hit = {"t": T0 + 90.04, "kind": "milestone", "milestone": "grove", "session": "S001"}
+    files = {"S001.fights.jsonl": json.dumps(fight) + "\n", "runner_events.jsonl": json.dumps(hit) + "\n"}
+    host = FilesHost([[("exited", 5)]], files, {"outcome": "reached", "milestone": "grove"})
+    run_one(tmp_path, host)(job())
+    rec = json.loads((host.started[0][2] / "runs.jsonl").read_text())
+    assert set(METRIC_FIELDS) <= set(rec)
+    assert rec["deaths"] == {"fights": 1, "downs": 3, "deaths": 1, "wipes": 0}
+    assert rec["time_to_milestone_s"] == 90.0
+    wipe = {"t": T0 + 60, "kind": "party_wipe", "class": "agent", "detail": "Game Over"}
+    host = FilesHost([[("exited", 5)]], files, {"outcome": "failed", "verdict": "wiped", "failures": [wipe]})
+    run_one(tmp_path / "w", host)(job())
+    rec = json.loads((host.started[0][2] / "runs.jsonl").read_text())
+    assert rec["deaths"]["wipes"] == 1 and rec["time_to_milestone_s"] is None  # failed: no milestone time
