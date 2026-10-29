@@ -16,6 +16,7 @@ from test_run_artifacts import assert_valid, readout
 from bg3bench import conditions, graders, matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, live_verdict, series_name
 from bg3bench.matrix import Matrix, RunResult
+from bg3bench.submission import pack, validate
 
 HERE = Path(__file__).resolve().parent
 SC = scenario.load(HERE / "fixtures" / "e2e" / "e2e_sell_idol.json")
@@ -372,3 +373,56 @@ def test_a_maximise_run_has_no_count_on_its_stop_resumes_and_a_goal_run_keeps_it
         host = Host([[("exited", 1)] * 10], undecided=True)
         SessionRun("m", host, scenarios={"e2e_sell_idol": sc}, sessions=tmp_path / f"s{i}")(job())
         assert len(host.hooks[0].runs) == runs, sc.get("maximise")
+
+
+def p01(man: dict, sc: dict, release_sha1: str | None) -> validate.Outcome:
+    """validate.p01_suite for a run's manifest against a release that lists `sc` with the start save `release_sha1`
+    (what release.build takes from the scenario file's start.save_sha1)."""
+    versions = {"harness": man["versions"]["harness"], "bench": man["versions"]["bench"]}
+    rs = {"digest": scenario.digest(sc), "save_sha1": release_sha1, "fingerprint": None}
+    rel = validate.Release(man["versions"]["suite"], versions, {}, {sc["name"]: rs}, {})
+    env = {"suite": rel.suite, "versions": versions, "scenario": sc["name"], "scenario_digest": rs["digest"]}
+    return validate.p01_suite(validate.Loaded(Path("."), env, {}, man, {}, [], None, {}, sc, rs, {}), rel)
+
+
+def test_a_save_start_runs_manifest_cites_its_start_saves_sha1_and_passes_p01(tmp_path):
+    # bench live S2 windmill: the session runner wrote start_save_sha1 None into every series, so P01 rejected every
+    # save-start run ("start save sha1 None != ca8dae13...")
+    wm = pack.load_scenarios()["fight_act1_windmill"]
+    save, want = wm["start"]["save"], wm["start"]["save_sha1"]
+    host = Host([[("exited", 5)], [("exited", 5)]])
+    sr = SessionRun("m", host, scenarios={"e2e_sell_idol": wm}, sessions=tmp_path, save_sha1={save: want}.get)
+    sr(job())
+    sr(job())
+    for _, _, run_dir in host.started:
+        man = json.loads((run_dir / "manifest.json").read_text())
+        assert man["scenario"]["start_save_sha1"] == want
+        assert p01(man, wm, want) == (True, "")
+    # the sha1 is the save the run found, not the scenario's copy: another save is P01's to reject
+    other = {save: "f" * 40}.get
+    SessionRun("m", Host([[("exited", 5)]]), scenarios={"e2e_sell_idol": wm}, sessions=tmp_path / "o", save_sha1=other)(
+        job()
+    )
+    man = json.loads(next((tmp_path / "o").glob("*/manifest.json")).read_text())
+    assert man["scenario"]["start_save_sha1"] == "f" * 40 and p01(man, wm, want)[0] is False
+    with pytest.raises(ValueError, match="start save .* changed since its first run"):  # a series holds one save
+        SessionRun("m", host, scenarios={"e2e_sell_idol": wm}, sessions=tmp_path, save_sha1={save: "f" * 40}.get)(job())
+
+
+def test_a_series_frozen_without_its_start_saves_sha1_takes_it(tmp_path):
+    wm = pack.load_scenarios()["fight_act1_windmill"]
+    save, want = wm["start"]["save"], wm["start"]["save_sha1"]
+    host = Host([[("exited", 5)], [("exited", 5)]])
+    SessionRun("m", host, scenarios={"e2e_sell_idol": wm}, sessions=tmp_path, save_sha1={}.get)(job())  # not there
+    SessionRun("m", host, scenarios={"e2e_sell_idol": wm}, sessions=tmp_path, save_sha1={save: want}.get)(job())
+    second = json.loads((host.started[1][2] / "manifest.json").read_text())
+    assert second["scenario"]["start_save_sha1"] == want
+
+
+def test_a_new_game_runs_manifest_cites_no_start_save_and_passes_p01(tmp_path):
+    naut = scenario.load(HERE.parent / "scenarios" / "nautiloid.json")
+    host = Host([[("exited", 5)]])
+    SessionRun("m", host, scenarios={"e2e_sell_idol": naut}, sessions=tmp_path, save_sha1={"x": "y"}.get)(job())
+    man = json.loads((host.started[0][2] / "manifest.json").read_text())
+    assert man["scenario"]["start_save_sha1"] is None
+    assert p01(man, naut, naut["start"].get("save_sha1")) == (True, "")
