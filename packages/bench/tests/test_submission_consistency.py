@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bg3bench import scenario
+from bg3bench import facts, scenario
 from bg3bench.submission import consistency as c
 from bg3bench.submission import pack, validate
 
@@ -58,6 +58,25 @@ def test_x02_time_marks():
     late = {"S001.events.jsonl": [ev(500, "text")]}
     assert c.x02_time_marks(loaded(marks, late, {"wall_s": 100})) == (False, "1 events outside the run's marks")
     assert c.x02_time_marks(loaded(marks, {"S001.events.jsonl": [ev(50, "text")]}, {"wall_s": 100})) == (True, "")
+
+
+def test_x02_on_a_new_game_timed_from_its_run_start():
+    """bench live S2: a new game's run_start came at its first level's load, ~15 s after the session start that wall_s
+    counted from, so X02 failed every new-game run (pi nautiloid: wall_s 2695.2 vs the marks' 2682.9). The harness
+    now writes run_start before the kickoff and records wall_min as run_end - run_start (to 0.01 min); replayed on a
+    real nautiloid timeline whose agent called a tool before the level loaded, X02 holds."""
+    rows = facts.load(Path(__file__).parent / "fixtures" / "timelines" / "nautiloid_sonnet_r2.facts.jsonl")
+    level = rows[0]["t"]  # where S2's run_start was: the first level's load
+    kickoff, end = level - 15.6, next(r["t"] for r in rows if r.get("mark") == "run_end")
+    agent = {"S001.events.jsonl": [ev(kickoff + 2, "tool_call", tool="get_status"), ev(end - 1, "text")]}
+
+    def wall_s(start: float) -> float:
+        return round(round((end - start) / 60, 2) * 60, 1)  # the record's wall_min -> result.wall_s (results.py)
+
+    timed = [{**rows[0], "t": kickoff}, *rows[1:]]  # run_start before the kickoff
+    assert c.x02_time_marks(loaded(timed, agent, {"wall_s": wall_s(kickoff)})) == (True, "")
+    s2 = c.x02_time_marks(loaded(rows, agent, {"wall_s": wall_s(kickoff)}))  # S2: the marks from the level load
+    assert s2[0] is False and "wall_s" in s2[1]
 
 
 def test_x04_rolls():
