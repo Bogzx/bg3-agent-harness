@@ -3,8 +3,9 @@
 A profile names the client, the model and the reasoning effort. For pi it also names the endpoint (provider id,
 base URL, the env var that holds the key: the key itself never lives in a profile), OpenRouter's provider pin and
 the full model definition, which `models_json` turns into pi's models.json so a run never depends on pi's bundled
-catalog (research/arch/pi-client.md §3.3). Every model goes through pi as `openai-completions` (D6 in
-docs/OVERHAUL-PLAN.md), Claude included.
+catalog (research/arch/pi-client.md §3.3). A model goes through pi as `openai-completions` (D6 in
+docs/OVERHAUL-PLAN.md) unless its endpoint says `api = "anthropic-messages"`: Claude on Anthropic's own API, where
+pi's estimate from the profile's rates is the bill (below).
 
     client = "pi"
     model = "anthropic/claude-opus-5.5"
@@ -27,6 +28,29 @@ docs/OVERHAUL-PLAN.md), Claude included.
 cost is required with input, output and cache_read (cache_write defaults to 0): it is what a response costs when
 the endpoint bills nothing (any OpenAI-compatible endpoint but OpenRouter, which reports usage.cost; DeepSeek's own
 API is priced from these rates), so a profile without it would run as a $0 run no cost cap ever stops.
+
+Anthropic's API reports tokens, not dollars: pi prices each response from the rates (uncached input, cache writes,
+cache reads, output; pi asks for 5-minute cache writes, and would price a 1-hour write at 2x input). So an
+anthropic-messages profile needs cache_write too, and a model priced by prompt length (Claude Haiku 5.5) lists its
+higher rates as tiers, each for a request whose input (uncached + cache reads + cache writes) is above a threshold;
+the highest matching tier prices the whole request, output included:
+
+    [endpoint]
+    provider = "anthropic"
+    base_url = "https://api.anthropic.com"
+    api = "anthropic-messages"
+    api_key_env = "BG3AI_ANTHROPIC_API_KEY"
+    [model_info.cost]
+    input = 0.1
+    output = 0.5
+    cache_read = 0.01
+    cache_write = 0.125
+    [[model_info.cost.tiers]]
+    input_tokens_above = 100000
+    input = 0.5
+    output = 2.5
+    cache_read = 0.05
+    cache_write = 0.625
 
 A pi model definition replaces pi's catalog entry of the same id, catalog compat flags included: copy the ones the
 model needs into compat (pi detects the provider's defaults from the provider id and base_url).
@@ -57,11 +81,13 @@ from urllib.parse import urlparse
 CLIENT_NAMES = ("claude", "codex", "gemini", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # play.EFFORTS
 STATUSES = ("verified", "offline", "unsupported")
-API = "openai-completions"  # the one wire format for pi (D6)
+API = "openai-completions"  # pi's default wire format (D6)
+APIS = (API, "anthropic-messages")  # anthropic-messages: Anthropic's own API (pi's native provider)
 INPUTS = ("text", "image")
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")  # pi's thinkingLevelMap keys
 COST_KEYS = {"input": "input", "output": "output", "cache_read": "cacheRead", "cache_write": "cacheWrite"}
 COST_REQUIRED = ("input", "output", "cache_read")  # deepseek_bill.RATES: enough to price any response
+TIER_ABOVE = "input_tokens_above"  # a cost tier's threshold (pi's inputTokensAbove)
 ROUTING_KEYS = ("only", "allow_fallbacks", "require_parameters")
 PI_ONLY = ("endpoint", "routing", "model_info")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
@@ -78,6 +104,7 @@ class Endpoint:
     provider: str  # pi's provider id; models.json defines it (a built-in id like openrouter is overridden)
     base_url: str
     api_key_env: str  # the runner passes this env var to pi; models.json refers to it as ${NAME}
+    api: str = API  # APIS: pi's wire format for this endpoint
 
 
 @dataclass(frozen=True)
@@ -91,6 +118,8 @@ class ModelInfo:
     # USD per M tokens, COST_KEYS: pi's estimate of an unbilled response
     cost: dict[str, float] = field(default_factory=dict[str, float])
     compat: Json = field(default_factory=Json)  # pi's model compat flags, as written
+    # prompt-length pricing: each {TIER_ABOVE: n, <COST_KEYS>...} prices a request whose input is above n
+    cost_tiers: tuple[dict[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -143,8 +172,9 @@ def _endpoint(raw: object, where: str) -> Endpoint:
         raise ProfileError(f"{where}: pi needs an [endpoint] table (provider, base_url, api_key_env)")
     w = f"{where} [endpoint]"
     _take(t, w, ("provider", "base_url", "api", "api_key_env"))
-    if t.get("api", API) != API:
-        raise ProfileError(f"{w}: api must be {API!r} (every pi model uses one wire format)")
+    api = t.get("api", API)
+    if api not in APIS:
+        raise ProfileError(f"{w}: api must be one of {', '.join(map(repr, APIS))} (got {api!r})")
     provider, base_url, key = (_str(t, k, w) for k in ("provider", "base_url", "api_key_env"))
     if not PROVIDER_RE.match(provider):
         raise ProfileError(f"{w}: provider {provider!r} is not a pi provider id (lower case, digits, . _ -)")
@@ -155,7 +185,7 @@ def _endpoint(raw: object, where: str) -> Endpoint:
     if is_openrouter(base_url) and provider != "openrouter":
         # pi turns on OpenRouter's Anthropic cache_control by the provider id, not the URL
         raise ProfileError(f'{w}: an OpenRouter base_url needs provider = "openrouter" (got {provider!r})')
-    return Endpoint(provider, base_url, key)
+    return Endpoint(provider, base_url, key, api)
 
 
 def is_openrouter(base_url: str) -> bool:
@@ -195,7 +225,37 @@ def _strings(v: object) -> list[str] | None:
     return [x for x in items if isinstance(x, str)] if all(isinstance(x, str) for x in items) else None
 
 
-def _model_info(raw: object, where: str) -> ModelInfo:
+def _rates(cost: Json, where: str, required: tuple[str, ...]) -> dict[str, float]:
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in cost.values()):
+        raise ProfileError(f"{where}: cost values must be non-negative numbers (USD per million tokens)")
+    missing = [k for k in required if k not in cost]
+    if missing:
+        raise ProfileError(
+            f"{where}: cost needs {', '.join(missing)} (USD per million tokens): a response the endpoint doesn't bill "
+            "is priced from it, and a run without it would count $0 against its cost cap"
+        )
+    return {k: float(v) for k, v in cost.items()}
+
+
+def _tiers(raw: object, where: str) -> tuple[dict[str, float], ...]:
+    """cost.tiers: every tier sets all four rates (it replaces the base rates for its whole request)."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ProfileError(f"{where}: cost tiers must be a list of tables")
+    out: list[dict[str, float]] = []
+    for i, item in enumerate(cast(list[object], raw)):
+        w = f"{where} cost tiers[{i}]"
+        t = _take(_table(item) or {}, w, (TIER_ABOVE, *COST_KEYS))
+        above = _int(t, TIER_ABOVE, w)
+        rates = _rates({k: v for k, v in t.items() if k != TIER_ABOVE}, w, tuple(COST_KEYS))
+        if out and above <= out[-1][TIER_ABOVE]:
+            raise ProfileError(f"{w}: {TIER_ABOVE} must rise from tier to tier")
+        out.append({TIER_ABOVE: above, **rates})
+    return tuple(out)
+
+
+def _model_info(raw: object, where: str, endpoint: Endpoint) -> ModelInfo:
     w = f"{where} [model_info]"
     t = _table(raw)
     if t is None:
@@ -212,15 +272,11 @@ def _model_info(raw: object, where: str) -> ModelInfo:
     tlm = _take(_table(t.get("thinking_level_map")) or {}, f"{w} thinking_level_map", THINKING_LEVELS)
     if not all(isinstance(v, str) or v is False for v in tlm.values()):
         raise ProfileError(f"{w}: thinking_level_map values must be strings, or false for an unsupported level")
-    cost = _take(_table(t.get("cost")) or {}, f"{w} cost", tuple(COST_KEYS))
-    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in cost.values()):
-        raise ProfileError(f"{w}: cost values must be non-negative numbers (USD per million tokens)")
-    missing = [k for k in COST_REQUIRED if k not in cost]
-    if missing:
-        raise ProfileError(
-            f"{w}: cost needs {', '.join(missing)} (USD per million tokens): a response the endpoint doesn't bill is "
-            "priced from it, and a run without it would count $0 against its cost cap"
-        )
+    cost = dict(_take(_table(t.get("cost")) or {}, f"{w} cost", (*COST_KEYS, "tiers")))
+    tiers = _tiers(cost.pop("tiers", None), w)
+    # Anthropic bills cache writes (pi marks the prompt for caching): a missing rate would price them at $0
+    anthropic = endpoint.api == "anthropic-messages"
+    rates = _rates(cost, w, (*COST_REQUIRED, "cache_write") if anthropic else COST_REQUIRED)
     compat = _table(t.get("compat") or {})
     if compat is None or "openRouterRouting" in compat:
         raise ProfileError(f"{w}: compat must be a table of pi compat flags; the provider pin goes in [routing]")
@@ -230,8 +286,9 @@ def _model_info(raw: object, where: str) -> ModelInfo:
         ctx,
         max_tokens,
         {k: None if v is False else v for k, v in tlm.items()},
-        {k: float(v) for k, v in cost.items()},
+        rates,
         dict(compat),
+        tiers,
     )
 
 
@@ -268,7 +325,7 @@ def parse(raw: Json, source: str = "<profile>") -> Profile:
         None,
         endpoint,
         routing,
-        _model_info(raw.get("model_info"), source),
+        _model_info(raw.get("model_info"), source, endpoint),
         status=status,
         source=source,
     )
@@ -288,6 +345,11 @@ def digest(p: Profile) -> str:
     don't count, a changed rate, pin or thinking map does; nor does the status), for the run manifest."""
     fields = asdict(p)
     del fields["source"], fields["status"]
+    # fields added later count only when set, so a profile that doesn't use them keeps the digest its runs recorded
+    if fields["endpoint"] is not None and fields["endpoint"]["api"] == API:
+        del fields["endpoint"]["api"]
+    if fields["model_info"] is not None and not fields["model_info"]["cost_tiers"]:
+        del fields["model_info"]["cost_tiers"]
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
@@ -322,16 +384,21 @@ def models_json(p: Profile) -> Json:
     (it replaces a catalog model of the same id). The key stays an env reference."""
     if p.client != "pi" or p.endpoint is None or p.model_info is None:
         raise ProfileError(f"{p.source}: models.json is for pi profiles only")
-    mi = p.model_info
+    mi, api = p.model_info, p.endpoint.api
+    cost: Json = {COST_KEYS[k]: mi.cost.get(k, 0.0) for k in COST_KEYS}
+    if mi.cost_tiers:
+        cost["tiers"] = [
+            {"inputTokensAbove": int(t[TIER_ABOVE]), **{COST_KEYS[k]: t[k] for k in COST_KEYS}} for t in mi.cost_tiers
+        ]
     model: Json = {
         "id": p.model,
         "name": p.model,
-        "api": API,
+        "api": api,
         "reasoning": mi.reasoning,
         "input": list(mi.input),
         "contextWindow": mi.context_window,
         "maxTokens": mi.max_tokens,
-        "cost": {COST_KEYS[k]: mi.cost.get(k, 0.0) for k in COST_KEYS},
+        "cost": cost,
     }
     if mi.thinking_level_map:
         model["thinkingLevelMap"] = dict(mi.thinking_level_map)
@@ -342,7 +409,7 @@ def models_json(p: Profile) -> Json:
         "providers": {
             p.endpoint.provider: {
                 "baseUrl": p.endpoint.base_url,
-                "api": API,
+                "api": api,
                 "apiKey": "${" + p.endpoint.api_key_env + "}",
                 "models": [model],
             }
