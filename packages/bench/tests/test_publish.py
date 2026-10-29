@@ -21,6 +21,7 @@ def make_release(root: Path) -> Path:
     pairs = []
     for rec in records:
         man = manifest.from_series(series, rec, timing="realtime", seed=1001)
+        man["client"]["name"] = "pi"  # naut2 played through Claude Code, whose runs are never released
         res = results.from_record(rec, man["run_id"])
         pairs.append((man, res))
         d = root / "runs" / man["run_id"]

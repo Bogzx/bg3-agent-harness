@@ -33,10 +33,13 @@ def assert_valid(name, data):
 
 
 def naut2_pairs():
+    """naut2's runs as pi runs: its series played through Claude Code, whose runs never enter a release
+    (results.PILOT_CLIENTS)."""
     series, records = load_series()
     pairs = []
     for rec in records:
         man = manifest.from_series(series, rec)
+        man["client"]["name"] = "pi"
         pairs.append((man, results.from_record(rec, man["run_id"])))
     return pairs
 
@@ -231,7 +234,7 @@ def test_release_refuses_a_cell_whose_runs_differ_in_game_pins():
     same = [({**m, "pins": {**m.get("pins", {}), **pinned}}, r) for m, r in pairs]
     assert results.build_results(same, seed=0, created=1.0, b=20)["groups"][0]["n_runs"] == 3
     rebuilt = {**same[2][0], "pins": {**same[2][0]["pins"], "mod": {"sha1": "c" * 40}}}
-    with pytest.raises(ValueError, match=r"different game pins: nautiloid/opus/None \(mod_sha1\)"):
+    with pytest.raises(ValueError, match=r"different game pins: nautiloid/pi/opus/None \(mod_sha1\)"):
         results.build_results([*same[:2], (rebuilt, r3)], seed=0, created=1.0, b=20)
     # another cell may play another setup: only the runs of one cell are compared
     other = {**rebuilt, "model": {**rebuilt["model"], "slug": "deepseek"}}
@@ -280,6 +283,7 @@ def test_thinking_time_timing_and_luck_reach_the_release():
     pairs = []
     for i, rec in enumerate(records):
         man = manifest.from_series(series, rec, seed=1729, timing="realtime")
+        man["client"]["name"] = "pi"
         rec = {**rec, "model_time": {"model_s": 100.0 + i, "wall_s": 600.0}}
         res = results.from_record(rec, man["run_id"], luck=luck if i == 0 else None)
         assert_valid("result.v1.schema.json", res)
