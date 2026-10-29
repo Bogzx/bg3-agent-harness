@@ -229,6 +229,66 @@ class Build(unittest.TestCase):
         self.assertEqual(rec["joined_round"], 4)
         self.assertEqual(rec["rounds"], 4)
 
+    def test_a_wipe_ends_the_fight(self):
+        # The Game Over screen comes instead of combat_ended: the fight ends when every member is down at once.
+        tr = debrief.Tracker()
+        tr.observe({"order": [{"uuid": "u-sw", "name": "Spiritual Weapon", "relation": "party", "summon": True}]},
+                   PARTY | {"u-sw"})
+        _, ended = tr.feed([ev("combat_started"), dmg(AV, "Justiciar Avenger", C, "Claude", 30, "Slashing"),
+                            ev("downed", **ref(C, "Claude")), ev("downed", **ref(SH, "Shadowheart"))],
+                           PARTY | {"u-sw"})
+        self.assertFalse(ended)
+        _, ended = tr.feed([ev("downed", **ref(W, "Wyll"))], PARTY | {"u-sw"})   # the summon still stands
+        self.assertTrue(ended)
+        rec = tr.close(ROWS)
+        self.assertEqual((rec["grade"], rec["end"]), ("wipe", "wipe"))
+
+    def test_why_the_fight_closed(self):
+        tr, rec, _ = self.run_fight()
+        self.assertEqual(rec["end"], "combat_ended")
+        tr.feed([ev("combat_started"), dmg(AV, "Justiciar Avenger", C, "Claude", 5, "Slashing")], PARTY)
+        self.assertEqual(tr.close(ROWS, reloaded=True)["end"], "reloaded")
+        tr.feed([ev("combat_started"), dmg(AV, "Justiciar Avenger", C, "Claude", 5, "Slashing")], PARTY)
+        self.assertEqual(tr.close(ROWS, end="session_end")["end"], "session_end")
+
+    def test_hp_at_the_end(self):
+        _, rec, _ = self.run_fight()
+        party = {p["name"]: p for p in rec["party"]}
+        self.assertEqual((party["Claude"]["hp"], party["Claude"]["max_hp"]), (13, 104))
+        self.assertEqual((party["Shadowheart"]["hp"], party["Shadowheart"]["max_hp"]), (0, 90))
+
+    def test_friendly_fire(self):
+        J = "u-jaheira"
+        tr = debrief.Tracker()
+        tr.feed([ev("combat_started"), ev("round_started", round=1)], PARTY)
+        tr.observe({"order": [{"uuid": J, "name": "Jaheira", "relation": "ally"}]}, PARTY)
+        tr.feed([
+            # a Fireball: one hit on Wyll in two types, then its cast; a made save (0) is no hit
+            dmg(SH, "Shadowheart", W, "Wyll", 14, "Fire"), dmg(SH, "Shadowheart", W, "Wyll", 3, "Radiant"),
+            dmg(SH, "Shadowheart", C, "Claude", 0, "Fire"),
+            dmg(SH, "Shadowheart", AV, "Justiciar Avenger", 17, "Fire"),
+            cast(SH, "Shadowheart", "Fireball"),
+            dmg(C, "Claude", J, "Jaheira", 8, "Slashing"), cast(C, "Claude", "Cleave"),
+            ev("round_started", round=2),
+            dmg(W, "Wyll", W, "Wyll", 4, "Fire"),   # no cast before or after it: no ability
+            ev("turn_started", **ref(AV, "Justiciar Avenger")),
+            ev("combat_ended"),
+        ], PARTY)
+        rec = tr.close(ROWS)
+        self.assertEqual(rec["friendly"], [
+            {"caster": "Shadowheart", "target": "Wyll", "dmg": 17, "types": ["Fire", "Radiant"], "round": 1,
+             "ability": "Fireball", "ally": False},
+            {"caster": "Claude", "target": "Jaheira", "dmg": 8, "types": ["Slashing"], "round": 1,
+             "ability": "Cleave", "ally": True},
+            {"caster": "Wyll", "target": "Wyll", "dmg": 4, "types": ["Fire"], "round": 2, "ability": None,
+             "ally": False},
+        ])
+        party = {p["name"]: p for p in rec["party"]}
+        self.assertEqual(party["Wyll"]["taken"], 21)   # counted as taken, as before
+        tr.feed([ev("combat_started"), dmg(AV, "Justiciar Avenger", C, "Claude", 5, "Slashing"), ev("combat_ended")],
+                PARTY)
+        self.assertEqual(tr.close(ROWS)["friendly"], [])
+
 
 class Warnings(unittest.TestCase):
     def test_repeated_patterns_warn_once(self):

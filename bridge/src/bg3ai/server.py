@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 
 from . import memtools, metrics, skipper
 from .game import Game
-from .tools import core, session
+from .tools import core, reporting, session
 
 mcp = core.mcp  # the server every tools/ module registers its tools on (tools/__init__.py has the order)
 INSTRUCTIONS = session.INSTRUCTIONS  # for the served tool set; tools/pi/dump_server.py reads these two
@@ -145,6 +145,7 @@ def main(argv: list[str] | None = None) -> None:
             core.mcp.run("stdio")
     finally:
         stop.set()
+        reporting._fight_at_exit()
 
 
 def http_options(host: str, port: int) -> dict:

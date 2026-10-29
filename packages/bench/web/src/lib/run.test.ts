@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
-  uploadProblem, validateProblem, verdict, videoProblem, wantsVideo, youtubeId, youtubeNote,
+  pairLinks, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo, youtubeId, youtubeNote,
 } from "./run";
-import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
+import type { Plan, VideoTodo, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
 const form: PlanForm = {
   profiles: ["deepseek-flash"], scenarios: ["act1_get_item"], condition: "rules", repeats: 1, max_cost_usd: 2,
@@ -195,5 +195,32 @@ describe("matrixState", () => {
     expect(matrixState({ matrix: "m", state: "finished", stop_reason: "finished" })).toBe("finished");
     expect(matrixState({ matrix: "m", state: "stopped", stop_reason: "budget" })).toBe("stopped (budget)");
     expect(matrixState({ matrix: "m" })).toBe("?");
+  });
+});
+
+describe("pairLinks", () => {
+  const todo = (n: string): VideoTodo => ({
+    run: `d${n}`, run_id: `r${n}`, bundle_sha256: `h${n}`, path: "/x", bytes: 1, title: "t", description: "d",
+  });
+  const A = "dQw4w9WgXcQ";
+  const B = "https://youtu.be/abcdefghijk";
+  it("gives bare links to the runs in list order", () => {
+    const { items, unmatched } = pairLinks([todo("1"), todo("2")], `${A}\n\n${B}\n`);
+    expect(items).toEqual([
+      { run: "d1", bundle_sha256: "h1", youtube_url: A }, { run: "d2", bundle_sha256: "h2", youtube_url: B },
+    ]);
+    expect(unmatched).toEqual([]);
+  });
+  it("lets a named line take its run and the bare ones fill the rest", () => {
+    const { items } = pairLinks([todo("1"), todo("2")], `r1 ${B}\n${A}`);
+    expect(items).toEqual([
+      { run: "d1", bundle_sha256: "h1", youtube_url: B }, { run: "d2", bundle_sha256: "h2", youtube_url: A },
+    ]);
+    expect(pairLinks([todo("1"), todo("2")], `r2 ${A}`).items.map((i) => i.run)).toEqual(["d2"]);
+  });
+  it("reports lines it can't use", () => {
+    const { items, unmatched } = pairLinks([todo("1")], `nope ${A}\nnot a link\n${A}\n${B}`);
+    expect(items.map((i) => i.run)).toEqual(["d1"]);
+    expect(unmatched).toEqual([`nope ${A}`, "not a link", B]);
   });
 });

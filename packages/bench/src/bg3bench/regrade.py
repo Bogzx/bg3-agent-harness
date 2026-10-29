@@ -1,6 +1,8 @@
 # pyright: basic
 """Re-grade finished runs with today's failure classifier, read-only: what each run's harness failures and validity
-would be if its record were written now. Prints old -> new and the failures that changed; never writes a file.
+would be if its record were written now, and its party losses (result.json `deaths`) recounted from its facts.jsonl
+(facts.party_losses: result.json files written before that counter have all zeros). Prints old -> new and the
+failures that changed; never writes a file.
 
     uv run --project packages/bench python -m bg3bench.regrade RUN_DIR [RUN_DIR ...]
 
@@ -13,13 +15,14 @@ voided by a background companion's move_to TIMEOUT echoed in a wait_for's EVENTS
 from __future__ import annotations
 
 import argparse
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from bg3harness import runs
 
-from bg3bench import results
+from bg3bench import facts, results
 
 Json = dict[str, Any]
 
@@ -28,8 +31,17 @@ def _key(f: Json) -> tuple[str, str, str]:
     return f["kind"], f["class"], str(f.get("detail") or "")
 
 
+def losses(record: Json, run_dir: Path) -> tuple[Json | None, Json | None]:
+    """(old, new) party losses: result.json's deaths (else the record's) and facts.party_losses over the run's facts;
+    new is None without a facts.jsonl."""
+    res = run_dir / "result.json"
+    old = json.loads(res.read_text(encoding="utf-8")).get("deaths") if res.is_file() else record.get("deaths")
+    path = run_dir / "facts.jsonl"
+    return old, facts.party_losses(facts.load(path)) if path.is_file() else None
+
+
 def regrade(record: Json, run_dir: Path) -> Json:
-    """{harness, valid, reason} old and new, and the failures only in the old or the new list."""
+    """{harness, valid, reason} old and new, the failures only in the old or the new list, the losses old and new."""
     fails: list[Json] = runs.restream_failures(record, run_dir)
     new = record | {"harness_failures": sum(int(f.get("n") or 1) for f in fails if f["class"] == runs.HARNESS)}
     seed = (record.get("manifest") or {}).get("seed")
@@ -42,6 +54,7 @@ def regrade(record: Json, run_dir: Path) -> Json:
         "new": {"harness": new["harness_failures"], **dict(zip(("valid", "reason"), results.validity(new, seed)))},
         "dropped": sorted((old_c - new_c).elements()),
         "added": sorted((new_c - old_c).elements()),
+        "deaths": dict(zip(("old", "new"), losses(record, run_dir))),
     }
 
 
@@ -59,6 +72,9 @@ def report(run_dir: Path) -> list[str]:
             f"{run_dir.name} run {rec.get('run')}: {same}: harness_failures {o['harness']} -> {n['harness']}, "
             f"valid {o['valid']} ({o['reason']}) -> {n['valid']} ({n['reason']})"
         )
+        d_old, d_new = r["deaths"]["old"], r["deaths"]["new"]
+        if d_new is not None and d_old != d_new:
+            out.append(f"  deaths {d_old} -> {d_new}")
         out += [f"  - {k} [{c}] {d}" for k, c, d in r["dropped"]]
         out += [f"  + {k} [{c}] {d}" for k, c, d in r["added"]]
     return out

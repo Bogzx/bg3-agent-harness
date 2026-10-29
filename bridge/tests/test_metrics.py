@@ -246,6 +246,11 @@ class Summary(unittest.TestCase):
         self.assertIs(rec.sample(T0, False, 0, False, True, party_turn=False)["pturn"], False)
         self.assertNotIn("pturn", rec.sample(T0, False, 0, False, True))  # older mod: unknown
 
+    def test_sample_lead(self):
+        rec = M.Recorder(None)
+        self.assertEqual(rec.sample(T0, True, 0, False, False, lead=[1.5, 0.0, -2.25])["lead"], [1.5, 0.0, -2.25])
+        self.assertNotIn("lead", rec.sample(T0, False, 0, False, False))  # older mod: no `active`
+
     def test_rt_excludes_job_time(self):
         s = M.summarize(self.tools, self.samples, [], start=T0, end=T0 + 60)
         self.assertLess(s["tool_rt_ms"]["all"]["max"], 1000)
@@ -341,7 +346,7 @@ class Recording(unittest.TestCase):
                 if G.n >= 3:
                     stop.set()
                 return {"pos": {"p": [G.n * 2.0, 0, 0]}, "jobs": 0, "in_dialogue": False, "in_combat": G.n == 2,
-                        **({"party_turn": False} if G.n == 2 else {})}
+                        **({"party_turn": False} if G.n == 2 else {}), **({"active": "p"} if G.n >= 2 else {})}
 
         stop = threading.Event()
         rec = M.Recorder(None)
@@ -350,6 +355,7 @@ class Recording(unittest.TestCase):
         M.sampler_loop(rec, G(), stop, interval=0.001)
         self.assertEqual([(s[1], s[4], s[5]) for s in seen], [(False, False, None), (True, True, False),
                                                               (True, False, None)])
+        self.assertEqual([s[6] for s in seen], [None, [4.0, 0, 0], [6.0, 0, 0]])   # the selected member's position
 
 
     def test_sampler_loop_client_loading_screen(self):

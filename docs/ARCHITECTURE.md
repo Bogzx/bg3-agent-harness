@@ -313,6 +313,14 @@ other enemy are not compared. The row carries `compared`, `got`, `expected`; the
 avg 3.3 vs 13.5 from the same attacks on other enemies)`. v2 records' `low` flags (they compared a type with the
 other attacks' damage and counted killing blows) are dropped on load like v1's.
 
+**Fields for the benchmark (2026-10-29).** `end` says why the record was written: `combat_ended`; `wipe` (every
+party member down at once, the summons aside: the Game Over screen comes instead of combat_ended, so the fight ends
+there); `reloaded`; `session_end` (the server stopped with the fight open: it drains the events no tool read, so a
+wipe the agent never saw a result after is still a `wipe`). `party[]` carries `hp` / `max_hp` from the status read
+at the close. `friendly` lists the party's hits on its own members (itself included) and on allied NPCs: {caster,
+target, dmg, types, round, ability (the caster's cast that follows, else its latest; null when none), ally}, one per
+hit; a made save or miss (0) is none. They still count in `taken` as before.
+
 **Since vis V18 (2026-10-18, S076 Gale asleep 3 rounds).** state.combat's party entries carry `disabled`
 (Guard.disabling: statuses of StatusType INCAPACITATED/FEAR/KNOCKED_DOWN or a disabling StatusGroup, DOWNED
 excluded), each `{name, turns, effect, fix}` read from the game's stats: `cannot act` / `cannot move` / Prone's
