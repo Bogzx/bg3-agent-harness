@@ -23,6 +23,8 @@ local entities = {} -- uuid -> stub entity (components as fields)
 local names = { [HOST] = "Tav", [SH] = "Shadowheart", [TRADER] = "Arron", [GOB] = "Goblin", [CHEST] = "Chest",
     [GUARD] = "Guard" }
 local stacks = {}
+local enemies, inCombat, approval = {}, {}, {} -- "a|b" -> true; uuid -> true; "companion|rated" -> rating
+local approvalReads = 0
 
 Ext = {
     Osiris = { RegisterListener = function(name, arity, _, fn) listeners[name .. "/" .. arity] = fn end },
@@ -40,6 +42,13 @@ Osi = {
     CanTrade = function(u) return traders[u] and 1 or 0 end,
     CombatGetGuidFor = function() return nil end,
     GetTemplate = function() return "TPL_Ring_" .. "dddddddd-0000-0000-0000-000000000001" end,
+    IsEnemy = function(a, b) return enemies[a .. "|" .. b] and 1 or 0 end,
+    IsInCombat = function(u) return inCombat[u] and 1 or 0 end,
+    GetHostCharacter = function() return P end,
+    GetApprovalRating = function(c, r)
+        approvalReads = approvalReads + 1
+        return approval[c .. "|" .. r]
+    end,
 }
 local party = { HOST, SH }
 BG3AI = {
@@ -87,7 +96,8 @@ local function item(tag, n) return string.format("%s_%08x-0000-0000-0000-0000000
 -- Listeners are registered at the live arities, and the quiet op list knows the poll.
 for _, key in ipairs({ "RequestTrade/4", "TradeEnds/2", "GoldChanged/2", "AddedTo/3", "TemplateAddedTo/4",
     "RemovedFrom/2", "RequestPickpocket/2", "CharacterPickpocketFailed/2", "CrimeIsRegistered/8", "KilledBy/4",
-    "AttackedBy/7", "Died/1", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2" }) do
+    "AttackedBy/7", "Died/1", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2",
+    "ApprovalRatingChanged/3" }) do
     check("listens " .. key, listeners[key] ~= nil)
 end
 check("ref.since quiet", BG3AI.RPC.QUIET_OPS["ref.since"] == true)
@@ -160,16 +170,24 @@ do
     fire("CrimeIsRegistered/8", T, "PickPocketFailed", 126, NULL, P, NULL, NULL, NULL)
     fire("CrimeIsRegistered/8", "Elf_" .. GUARD, "Guard_NPCInterrogate_Fallback", 127, NULL, T, NULL, NULL, NULL)
     local f = lastOf("pickpocket")
-    check("pickpocket failed", f and f.ok == false and f.npc == "Arron")
+    check("pickpocket failed", f and f.ok == false and f.npc == "Arron" and f.attempt == 1, f and f.attempt)
     local c = recs("crime")
     check("party crime only", #c == 1 and c[1].type == "PickPocketFailed" and c[1].victim == "Arron"
         and c[1].criminal == "Tav" and c[1].id == 126, #c)
+    check("crime context", c[1].victim_uuid == TRADER and c[1].enemy == false and c[1].in_combat == false)
+    -- the failure ended the window: a later item from the same NPC (bought, given) is no pickpocket
+    local gift = item("GIFT", 10)
+    fire("RemovedFrom/2", gift, T)
+    fire("AddedTo/3", gift, P, "Regular")
+    check("failure ends the window", #recs("pickpocket") == 1 and R.pickpocket == nil, #recs("pickpocket"))
+    fire("RequestPickpocket/2", HOST, TRADER)
     local ring = item("RING", 4)
     stacks[ring] = 1
     fire("RemovedFrom/2", ring, T)
     fire("AddedTo/3", ring, P, "Regular")
     local s = lastOf("pickpocket")
-    check("pickpocket ok", s and s.ok == true and s.npc_uuid == TRADER and s.count == 1, s and tostring(s.ok))
+    check("pickpocket ok", s and s.ok == true and s.npc_uuid == TRADER and s.count == 1 and s.attempt == 2,
+        s and tostring(s.ok))
     -- a Success event for an item counts once (the pairing skips it)
     local ring2 = item("RING", 5)
     fire("CharacterPickpocketSuccess/6", P, T, ring2, NULL, 1, 0)
@@ -178,6 +196,64 @@ do
     local n = 0
     for _, r in ipairs(recs("pickpocket")) do if r.ok then n = n + 1 end end
     check("success counted once", n == 2, n)
+    check("success event carries the attempt", lastOf("pickpocket").attempt == 2)
+    -- a window nobody ended expires: an item from that NPC PP_WINDOW_MS later is no pickpocket
+    local np = #recs("pickpocket")
+    clock = clock + R.PP_WINDOW_MS + 1
+    local late = item("LATE", 11)
+    fire("RemovedFrom/2", late, T)
+    fire("AddedTo/3", late, P, "Regular")
+    check("window expires", #recs("pickpocket") == np and R.pickpocket == nil, #recs("pickpocket") - np)
+    -- a new request ends the old window: an item from the first NPC is no pickpocket
+    fire("RequestPickpocket/2", HOST, TRADER)
+    fire("RequestPickpocket/2", HOST, GUARD)
+    local other = item("OTHER", 12)
+    fire("RemovedFrom/2", other, T)
+    fire("AddedTo/3", other, P, "Regular")
+    check("new request ends the window", #recs("pickpocket") == np and R.pickpocket.attempt == 4)
+    -- a failure on another NPC than the open window's: no attempt to borrow, the window still ends
+    fire("CharacterPickpocketFailed/2", P, T)
+    check("failure elsewhere: no attempt", lastOf("pickpocket").attempt == nil and R.pickpocket == nil)
+end
+
+-- Murder: the game registers it for a fight's target too; the record says enemy / in combat.
+do
+    enemies[HOST .. "|" .. GOB], inCombat[HOST] = true, true
+    fire("CrimeIsRegistered/8", "S_GOB_" .. GOB, "Murder", 130, NULL, P, NULL, NULL, NULL)
+    local c = lastOf("crime")
+    check("murder of an enemy in combat", c.type == "Murder" and c.victim == "Goblin" and c.victim_uuid == GOB
+        and c.enemy == true and c.in_combat == true)
+    enemies[HOST .. "|" .. GOB], inCombat[HOST] = nil, nil
+    fire("CrimeIsRegistered/8", "S_Trader_" .. TRADER, "Murder", 131, NULL, P, NULL, NULL, NULL)
+    c = lastOf("crime")
+    check("murder of a non-enemy", c.victim == "Arron" and c.enemy == false and c.in_combat == false)
+end
+
+-- Approval: ApprovalRatingChanged(companion, rated, newValue); the delta from the value seeded on the tick.
+do
+    local S = "S_Player_ShadowHeart_" .. SH
+    approval[SH .. "|" .. HOST] = 12
+    for _, fn in ipairs(ticks) do fn() end
+    check("seeded once", R.approval[SH .. "|" .. HOST] == 12 and approvalReads == 1, approvalReads)
+    clock = clock + R.SEED_MS
+    for _, fn in ipairs(ticks) do fn() end
+    check("seeded pair not read again", approvalReads == 1, approvalReads)
+    fire("ApprovalRatingChanged/3", S, P, 14)
+    local a = lastOf("approval")
+    check("approval delta", a and a.companion == "Shadowheart" and a.companion_uuid == SH and a.toward == "Tav"
+        and a.delta == 2 and a.total == 14, a and a.delta)
+    fire("ApprovalRatingChanged/3", S, P, 9)
+    check("disapproval delta", lastOf("approval").delta == -5 and lastOf("approval").total == 9)
+    fire("ApprovalRatingChanged/3", S, P, 9)
+    check("same value: no record", #recs("approval") == 2)
+    -- unseeded (a companion with no rating at seed time): the total, delta unknown; the next one has a delta
+    local KAR = "dddddddd-0000-0000-0000-00000000000e"
+    names[KAR] = "Karlach"
+    fire("ApprovalRatingChanged/3", "S_Player_Karlach_" .. KAR, P, 3)
+    a = lastOf("approval")
+    check("unseeded: no delta", a.companion == "Karlach" and a.delta == nil and a.total == 3)
+    fire("ApprovalRatingChanged/3", "S_Player_Karlach_" .. KAR, P, 4)
+    check("then a delta", lastOf("approval").delta == 1)
 end
 
 -- Kill, loot generated into the corpse (no record), then looted from it; a container loot.

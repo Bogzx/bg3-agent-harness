@@ -15,8 +15,8 @@ plus the party inventory, so it costs one extra eval per poll.
   quest_added/quest_done, region, area;
 - game_over: the game's Game Over screen (ui.state screen game_over: the party wiped), when a read first shows it;
 - marks: run_start (time zero), load, run_end;
-- the referee ring's events (RingFeed: trade, pickpocket, stole, crime, kill, loot and, while it answers, gold,
-  item_added, died and combat exactly per change) and the roll log into rolls.jsonl.
+- the referee ring's events (RingFeed: trade, pickpocket, stole, crime, kill, loot, approval and, while it answers,
+  gold, item_added, died and combat exactly per change) and the roll log into rolls.jsonl.
 
 `game_t` is on every record: seconds since run_start. D7 (revised 2026-10-21): BG3 has no pause the harness can
 use, so game time is wall time since run_start (null before it).
