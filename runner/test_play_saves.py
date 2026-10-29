@@ -312,12 +312,29 @@ class HandoffAndSaves(unittest.TestCase):
                 mock.patch.object(P.lcli, "cmd_run") as run, mock.patch.object(P.lcli, "cmd_bench") as bench:
             self.assertEqual(P.main(["run", "--playthrough", "x"]), 2)
             self.assertEqual(P.main(["bench", "run", "--matrix", "m.toml"]), 2)
+            self.assertEqual(P.main(["bench", "start-states", "--matrix", "m.toml"]), 2)
         run.assert_not_called()
         bench.assert_not_called()
         self.assertIn("runner/play.py refused: Python ", err.getvalue())
         self.assertIn("needs Python 3.14+", err.getvalue())
         self.assertIn("uv run python runner/play.py run --playthrough x\n", err.getvalue())
         self.assertIn("uv run python runner/play.py bench run --matrix m.toml\n", err.getvalue())
+
+    def test_bench_start_states_drives_the_game_like_bench_run(self):
+        # bench's start-states loads each save in the game: the runner lock, the cutscene skipper and the RAM watch
+        from bg3bench import matrix_cli  # play puts packages/bench/src on sys.path
+
+        started: list[str] = []
+        for cmd in ("start-states", "run", "status"):
+            started.clear()
+            with mock.patch.object(P.lcli, "acquire_lock", lambda: started.append("lock")), \
+                    mock.patch("bg3ai.skipper.start_background", lambda *a: started.append("skipper")), \
+                    mock.patch.object(P.lcli.ramwatch, "start_background", lambda *a: started.append("ramwatch")), \
+                    mock.patch("bg3harness.runner.run_host.stop_on_signals", lambda host: None), \
+                    mock.patch.object(matrix_cli, "main", return_value=0) as main:
+                self.assertEqual(P.lcli.cmd_bench([cmd, "--matrix", "m.toml"]), 0)
+            main.assert_called_once()
+            self.assertEqual(started, [] if cmd == "status" else ["lock", "skipper", "ramwatch"], cmd)
 
     def test_play_commands_that_read_no_savetime_run_under_any_python(self):
         # app review of PR #30: `python3 runner/play.py stop` must still stop a runner started with uv run

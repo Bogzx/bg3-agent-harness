@@ -63,7 +63,7 @@ What `bg3harness/sandbox.py` does:
   CLIs, the play client's version pinned to the host's `<cli> --version`, + pi at `/opt/pi`: `npm ci` of
   `tools/pi`'s package-lock with `bg3.ts`, passed as the build context `pi`); the **firewall gate**; play/keeper
   containers a dead runner left are removed; the egress proxy is (re)started for the client's API hosts
-  (`sandbox.EGRESS`; override with `BG3AI_SANDBOX_EGRESS=host1,host2`).
+  (`sandbox.EGRESS`; pi: its profile's endpoint host; override with `BG3AI_SANDBOX_EGRESS=host1,host2`).
 - **Firewall gate**: `nft list table inet bg3ai_sandbox` (or `sudo -n nft list ...`; read-only) must show the table
   with the accept rule for `172.30.99.1:8770`: missing or stale → refused with the `sudo ... firewall.sh up` hint.
   Then `firewall.sh check` from a container must print OK (nothing but the server reachable). Where nft can't be
@@ -85,9 +85,10 @@ What `bg3harness/sandbox.py` does:
 - **Credentials**: passed by name (`docker run -e NAME`: never in argv or logs) when set in the runner's env:
   claude `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`), codex `OPENAI_API_KEY` /
   `CODEX_API_KEY`, gemini `GEMINI_API_KEY` / `GOOGLE_API_KEY`, pi the variable its profile names
-  (`[endpoint] api_key_env`, `prepare(..., auth_env=...)`). A login kept in the sandbox home works too. The
+  (`[endpoint] api_key_env`, `prepare(..., profile=...)`). A login kept in the sandbox home works too. The
   host's own `~/.claude` / `~/.codex` are never mounted.
-- **pi**: egress `openrouter.ai` and `api.deepseek.com` (the profiles' endpoints). The runner builds the client with
+- **pi**: egress is the profile's endpoint host and nothing else (`openrouter.ai`, `api.deepseek.com` or
+  `api.anthropic.com`); `prepare` refuses pi without a profile. The runner builds the client with
   `clients.make_http("pi", url, profile=..., system_file=..., binary=sandbox.PI_BIN, extension=sandbox.PI_EXTENSION)`
   and runs it with `run_argv(..., files=[*written, system_file], writable=[client.agent_dir(req)])`: the system
   text read-only, pi's agent dir (its config and session files) read-write at the same path. pi's HTTP client

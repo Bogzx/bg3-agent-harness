@@ -625,3 +625,33 @@ def test_add_render_keeps_a_failed_final_validation(run_dir, tmp_path):
     got = submit.add_render(root, "s1", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0)
     assert got["bundle_sha256"] == "ef" * 32 and got["final"] is False and got["render"]["added"] == 9.0
     assert "couldn't be validated: no release file" in got["render"]["error"]
+
+
+def test_videos_todo_lists_each_rendered_run_without_a_link_and_add_videos_links_many(run_dir, tmp_path):
+    root, b = tmp_path / "submissions", FakeBundler()
+    assert submit.videos_todo(root) == []
+    view, render = rendered(run_dir, root, b, mp4="mp4mp4")  # s1: rendered; its mp4 is 6 bytes
+    env = Path(view["bundle_dir"]) / "bundle.json"
+    env.write_text(json.dumps({**json.loads(env.read_text()), "run_id": "s1-r001", "scenario": "act1_gold_max",
+                               "model": {"slug": "deepseek-flash"}}))  # fmt: skip
+    d2 = tmp_path / "sessions" / "s2"
+    d2.mkdir()
+    submit.prepare(d2, root, b, attempt_n=1, unsubmitted_valid=0, literals=[])  # s2: not rendered yet
+    (todo,) = submit.videos_todo(root)
+    assert todo["run"] == "s1" and todo["run_id"] == "s1-r001" and todo["bundle_sha256"] == "ef" * 32
+    assert todo["path"] == str(render / video.VIDEO) and todo["bytes"] == 6
+    assert "s1-r001" in todo["title"] and "s1-r001" in todo["description"]  # E01 wants the run id in the title
+    ok = submit.add_videos(
+        root, [{"run": "s1", "bundle_sha256": "ef" * 32, "youtube_url": f"https://youtu.be/{VID}"}], b, literals=[]
+    )
+    assert ok == [{"run": "s1", "ok": True, "video": {"youtube_id": VID}}]
+    assert submit.videos_todo(root) == []  # it has its link now
+    bad = submit.add_videos(
+        root,
+        [{"run": "s2", "bundle_sha256": SHA, "youtube_url": "x"}, {"run": "../x"}, {"bundle_sha256": SHA}, 3],
+        b, literals=[],
+    )  # fmt: skip
+    assert [r["ok"] for r in bad] == [False] * 4
+    assert "render the evidence video first" in bad[0]["error"] and "bad run" in bad[1]["error"]
+    with pytest.raises(panel.PanelError, match="items must be a list"):
+        submit.add_videos(root, [], b, literals=[])
