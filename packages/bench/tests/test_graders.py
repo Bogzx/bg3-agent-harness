@@ -419,6 +419,7 @@ def test_fixtures_match_the_facts_schema():
             errors = list(validator.iter_errors(rec))
             assert not errors, f"{path.name}:{i + 1}: {errors[0].message}"
     assert not validator.is_valid({"v": 1, "kind": "event", "t": 1, "ev": "gold", "gold": 5})  # delta missing
+    assert validator.is_valid(ev(805, "game_over"))  # the harness's Game Over event, as the wipe tests write it
     assert not validator.is_valid({"v": 1, "kind": "snapshot", "t": 1, "gold": 5})
     assert not validator.is_valid({"v": 1, "kind": "event", "t": 1, "ev": "died", "name": "Gale"})  # party?
 
