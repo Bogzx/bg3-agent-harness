@@ -2,6 +2,10 @@
 
     uv run --project packages/bench bg3bench-serve [--port 8790]
 
+While it runs, a ticker thread packs and validates the valid runs of the matrices started with Submit when done
+(auto.py) every TICK_S seconds (it never uploads), sends Stop's SIGTERM fallback (launch.STOP_GRACE_S) and adds a
+finished render to its bundle (submit.add_render).
+
 Binds 127.0.0.1 only (there is no --host). Every request must name the panel as `127.0.0.1:<port>` or
 `localhost:<port>` in its Host (else 421); every non-GET request needs the write token in X-Panel-Token and a JSON
 body (security.py). The token is new at each start, saved to <config>/panel-token (mode 600) and put into the served
@@ -15,17 +19,19 @@ GET (JSON, Cache-Control: no-store):
     /api/v1/queue        runtime/matrix/*/progress.json
     /api/v1/results      finished runs (runtime/sessions/*/{manifest,result}.json)
     /api/v1/settings     key names with masked values, the site token masked, preferences
-    /api/v1/run          the matrix this panel started (launch.Runner state), or null
+    /api/v1/run          the matrix this panel started (launch.Runner state) with its Record/Submit choices, and
+                         `found`: a matrix playing that this panel didn't start (launch.found), each or null
+    /api/v1/doctor       bg3harness.doctor's report: can this machine run the harness, each failure with its fix
     /api/v1/submissions  per run dir: its prepared bundle and the site's last answer (submit.py)
     /api/v1/render       the last video render (video.Renderer state), or null
 POST (JSON body, token):
     /api/v1/plan                 a New run form -> the jobs Start would queue (nothing is written or launched)
-    /api/v1/run/start            the same form: write its matrix file and start it (launch.py)
-    /api/v1/run/stop             end the run playing now, start no new one
+    /api/v1/run/start            the same form + "record", "submit_when_done": write its matrix file, start it
+    /api/v1/run/stop             end the run playing now, start no new one (this panel's matrix or the found one)
     /api/v1/submit/prepare       {"run"}: pack and validate a finished run; the verdict and the exact files
     /api/v1/submit/upload        {"run", "bundle_sha256", "youtube_url"}: send that bundle with the site token
     /api/v1/submit/status        {"run"}: the submission's status from the site
-    /api/v1/render               {"run"}: render the run's evidence video (needs a prepared bundle and a recording)
+    /api/v1/render               {"run"}: render the run's evidence video from its prepared bundle and recording
     /api/v1/settings/key         {"name", "value"}: write a profile's API key to the repo's .env; returns it masked
     /api/v1/settings/site-token  {"value"}: the site token, to <config>/site-token
     /api/v1/settings/prefs       {"youtube_verified"?, "record_cap_gb"?}
@@ -39,6 +45,7 @@ import json
 import mimetypes
 import os
 import shutil
+import threading
 import time
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,13 +58,14 @@ from bg3harness.client_setup import read_dotenv
 
 from bg3bench import __version__, preflight, suite
 from bg3bench.adapters.legacy_cli import REPO
-from bg3bench.serve import launch, panel, security, submit, video
+from bg3bench.serve import auto, launch, panel, security, submit, video
 from bg3bench.serve.settings import Settings, SettingsError
 
 API_VERSION = 1
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8790
 MAX_BODY = 16 * 1024
+TICK_S = 10.0
 DEFAULT_WEB = Path(__file__).resolve().parents[3] / "web" / "dist"
 SCENARIOS = Path(__file__).resolve().parents[3] / "scenarios"
 TOKEN_SLOT = "__BG3BENCH_PANEL_TOKEN__"  # index.html's <meta name="bg3bench-panel-token" content="...">
@@ -86,12 +94,16 @@ class App:
         site_client: Callable[[str], submit.Site] = submit.HttpSite,
         renderer: video.Renderer | None = None,
         now: Callable[[], float] = time.time,
+        proc: launch.ProcReader = launch.read_proc,
+        doctor: Callable[[], dict[str, Any]] = panel.harness_doctor,
     ):
         self.token, self.repo, self.runtime, self.settings = token, repo, runtime, settings
         self.saves, self.checks, self.scenarios_dir, self.web_dir = saves, checks, scenarios_dir, web_dir
         self.site = site  # the submissions site's URL (--site)
         self.runner, self.now = runner, now  # runner None: this panel starts no run
         self.bundler, self.site_client, self.renderer = bundler, site_client, renderer
+        self.proc, self.doctor = proc, doctor
+        self.prepare_lock = threading.Lock()  # the ticker and a Validate click never pack the same run at once
         self.port = 0  # set once bound (serve)
 
     def profiles_dir(self) -> Path:
@@ -129,7 +141,12 @@ class App:
         if path == "/api/v1/settings":
             return self.settings.view()
         if path == "/api/v1/run":
-            return {"run": self.runner.state() if self.runner else None, "can_start": self.runner is not None}
+            return self.run_view()
+        if path == "/api/v1/doctor":
+            try:
+                return {"report": self.doctor(), "error": None}
+            except panel.PanelError as e:
+                return {"report": None, "error": str(e)}
         if path == "/api/v1/submissions":
             root = self.submissions()
             runs = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
@@ -140,6 +157,78 @@ class App:
 
     def submissions(self) -> Path:
         return self.runtime / submit.SUBMISSIONS
+
+    def own_run(self) -> dict[str, Any] | None:
+        st = self.runner.state() if self.runner else None
+        return {**st, "choices": launch.read_choices(self.runtime, st["name"])} if st else None
+
+    def found(self) -> dict[str, Any] | None:
+        """A matrix playing now that this panel's runner isn't running."""
+        own = self.runner.state() if self.runner else None
+        return None if own and own["running"] else launch.found(self.runtime, self.proc)
+
+    def run_view(self) -> dict[str, Any]:
+        return {"run": self.own_run(), "found": self.found(), "can_start": self.runner is not None}
+
+    def stop(self) -> dict[str, Any]:
+        own = self.runner.state() if self.runner else None
+        if self.runner and own and own["running"]:
+            self.runner.stop()
+        elif other := launch.found(self.runtime, self.proc):
+            if other["stopping"]:
+                raise panel.PanelError("stopping already: the run playing now ends and is recorded")
+            launch.request_stop(self.runtime, self.now())
+        else:
+            raise panel.PanelError("no matrix is running")
+        return self.run_view()
+
+    def tick(self) -> list[dict[str, Any]]:
+        """One Submit-when-done pass (auto.tick)."""
+        root = self.submissions()
+        return auto.tick(
+            self.runtime,
+            panel.results(self.runtime / "sessions"),
+            prepared=lambda run: bool(submit.state(root, run)["prepared"]),
+            prepare=lambda run: self.prepare({"run": run}),
+            now=self.now(),
+        )
+
+    def finish_render(self) -> dict[str, Any] | None:
+        """The last render, once it ended well and isn't in its bundle yet: submit.add_render; the new prepared view."""
+        st = self.renderer.state() if self.renderer else None
+        if not st or st["running"] or st["returncode"] != 0:
+            return None
+        prepared: dict[str, Any] = submit.state(self.submissions(), st["run"])["prepared"] or {}
+        render: dict[str, Any] = prepared.get("render") or {}
+        if render.get("dir") == st["out"]:
+            return None  # added (or refused) already
+        with self.prepare_lock:
+            return submit.add_render(
+                self.submissions(),
+                st["run"],
+                self.need(self.bundler, "bundler"),
+                bundle_dir=Path(st["source"]),
+                render_dir=Path(st["out"]),
+                literals=self.literals(),
+                now=self.now(),
+            )
+
+    def housekeep(self) -> list[str]:
+        """The ticker's other jobs: Stop's SIGTERM fallback and putting a finished render into its bundle."""
+        out: list[str] = []
+        if self.runner and self.runner.escalate():
+            out.append("stop: runtime/STOP didn't end the matrix in time, sent it SIGTERM")
+        try:
+            view = self.finish_render()
+        except panel.PanelError as e:
+            out.append(f"render: {e}")
+        else:
+            if view:
+                r = view["render"]
+                out.append(
+                    f"render: {view['run']}: " + (r["error"] if "error" in r else f"bundle {view['bundle_sha256']}")
+                )
+        return out
 
     def finished_run(self, body: dict[str, Any]) -> tuple[Path, list[dict[str, Any]]]:
         run = body.get("run")
@@ -162,26 +251,35 @@ class App:
     def prepare(self, body: dict[str, Any]) -> dict[str, Any]:
         run_dir, rows = self.finished_run(body)
         root = self.submissions()
-        n, unsubmitted = submit.attempt(rows, run_dir.name, lambda d: submit.submitted(root, d))
-        return submit.prepare(
-            run_dir,
-            root,
-            self.need(self.bundler, "bundler"),
-            attempt_n=n,
-            unsubmitted_valid=unsubmitted,
-            literals=self.literals(),
-        )
+        with self.prepare_lock:
+            n, unsubmitted = submit.attempt(rows, run_dir.name, lambda d: submit.submitted(root, d))
+            return submit.prepare(
+                run_dir,
+                root,
+                self.need(self.bundler, "bundler"),
+                attempt_n=n,
+                unsubmitted_valid=unsubmitted,
+                literals=self.literals(),
+            )
 
     def render(self, body: dict[str, Any]) -> dict[str, Any]:
         run_dir, _ = self.finished_run(body)
         renderer = self.need(self.renderer, "renderer")
-        prepared = submit.state(self.submissions(), run_dir.name)["prepared"]
+        prepared: dict[str, Any] | None = submit.state(self.submissions(), run_dir.name)["prepared"]
         if not prepared:
-            raise panel.PanelError("validate the run first: the video's id line names its bundle")
+            raise panel.PanelError("validate the run first: the video shows the packed record and its run hash")
+        done: dict[str, Any] = prepared.get("render") or {}
+        if "added" in done:
+            raise panel.PanelError("this bundle has its video's render already: validate again for a new bundle")
         man, res = (json.loads((run_dir / f).read_text(encoding="utf-8")) for f in ("manifest.json", "result.json"))
         scenario_of: dict[str, Any] = man.get("scenario") or {}
         sc = panel.load_scenarios(self.scenarios_dir).get(str(scenario_of.get("name")))
-        renderer.start(video.job_for(run_dir, man, res, sc, bundle_sha256=prepared["bundle_sha256"], site=self.site))
+        bundle_dir = Path(prepared["bundle_dir"])
+        job = video.job_for(
+            run_dir, man, res, sc, source=bundle_dir, out=video.out_dir(bundle_dir), run_hash=video.run_hash(bundle_dir),
+            site=self.site,
+        )  # fmt: skip
+        renderer.start(job)
         return {"render": renderer.state()}
 
     def plan(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -213,11 +311,12 @@ class App:
                 budget=self.budget(),
                 allow_unverified=body.get("allow_unverified") is True,
                 now=self.now(),
+                record=launch.flag(body, "record", True),
+                submit_when_done=launch.flag(body, "submit_when_done", False),
+                proc=self.proc,
             )
         if path == "/api/v1/run/stop":
-            runner = self.run_control()
-            runner.stop()
-            return {"run": runner.state()}
+            return self.stop()
         if path == "/api/v1/submit/prepare":
             return self.prepare(body)
         if path == "/api/v1/submit/upload":
@@ -372,6 +471,22 @@ def serve(app: App, port: int, verbose: bool = False) -> ThreadingHTTPServer:
     return srv
 
 
+def ticker(app: App, stop: threading.Event, every: float = TICK_S) -> threading.Thread:
+    """A daemon thread running app.tick every `every` seconds until `stop` is set; each run it prepared is printed."""
+
+    def loop() -> None:
+        while not stop.wait(every):
+            for line in app.housekeep():
+                print(line, flush=True)
+            for d in app.tick():
+                what = d["error"] if "error" in d else f"validated, accepted={d['accepted']}"
+                print(f"submit when done: {d['run']}: {what}", flush=True)
+
+    t = threading.Thread(target=loop, name="bg3bench-auto", daemon=True)
+    t.start()
+    return t
+
+
 def default_checks(repo: Path, runtime: Path) -> Callable[[], list[panel.Check]]:
     def run() -> list[panel.Check]:
         ctx = preflight.Ctx(repo=repo, steam=steam_paths, bg3le=bg3le_buildinfo)
@@ -392,7 +507,12 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--site", default=os.environ.get("BG3BENCH_SITE"), help="the submissions site's URL ($BG3BENCH_SITE)"
     )
-    ap.add_argument("--release", type=Path, help="the suite's release file, what Submit validates against")
+    ap.add_argument(
+        "--release",
+        type=Path,
+        default=suite.PACKAGE_ROOT / "releases" / f"{suite.suite_version()}.json",
+        help="the suite's release file, what Validate checks a run against (default packages/bench/releases/<suite>.json)",
+    )
     ap.add_argument("--verbose", action="store_true", help="log request lines (never bodies)")
     return ap
 
@@ -412,17 +532,20 @@ def main(argv: list[str] | None = None) -> int:
         checks=default_checks(repo, runtime),
         web_dir=opt.web,
         site=opt.site,
-        runner=launch.MatrixProcess(repo),
+        runner=launch.MatrixProcess(repo, runtime=runtime),
         bundler=submit.BenchSubmission(opt.release, __version__),
         renderer=video.VideoProcess(),
     )
     srv = serve(app, opt.port, opt.verbose)
+    stop = threading.Event()
+    ticker(app, stop)
     print(f"bg3bench panel: http://{HOST}:{app.port}/  (write token in {config_dir / security.TOKEN_FILE})", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
         srv.server_close()
     return 0
 
