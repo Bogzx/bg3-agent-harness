@@ -16,7 +16,7 @@ GET (JSON, Cache-Control: no-store):
     /api/v1/preflight    bg3bench.preflight's checks + the panel's (ffmpeg, display, disk)
     /api/v1/scenarios    the suite's scenarios with their start save's status
     /api/v1/profiles     client profiles; which ones the panel offers and why not
-    /api/v1/queue        runtime/matrix/*/progress.json
+    /api/v1/queue        runtime/matrix/*/progress.json; one that says running with no live process is "unknown"
     /api/v1/results      finished runs (runtime/sessions/*/{manifest,result}.json)
     /api/v1/settings     key names with masked values, the site token masked, preferences
     /api/v1/run          the matrix this panel started (launch.Runner state) with its Record/Submit choices, and
@@ -135,7 +135,7 @@ class App:
 
             return {"profiles": panel.profile_rows(self.profiles_dir(), has), "offered_clients": panel.OFFERED_CLIENTS}
         if path == "/api/v1/queue":
-            return {"matrices": panel.queue(self.runtime / "matrix")}
+            return {"matrices": panel.queue(self.runtime / "matrix", self.live())}
         if path == "/api/v1/results":
             return {"runs": panel.results(self.runtime / "sessions")}
         if path == "/api/v1/settings":
@@ -166,6 +166,11 @@ class App:
         """A matrix playing now that this panel's runner isn't running."""
         own = self.runner.state() if self.runner else None
         return None if own and own["running"] else launch.found(self.runtime, self.proc)
+
+    def live(self) -> set[str]:
+        """The matrices a live process plays now: this panel's and the one found from runtime/runner.lock."""
+        own, other = self.runner.state() if self.runner else None, launch.found(self.runtime, self.proc)
+        return {m["name"] for m in (own, other) if m and m["running"]}
 
     def run_view(self) -> dict[str, Any]:
         return {"run": self.own_run(), "found": self.found(), "can_start": self.runner is not None}

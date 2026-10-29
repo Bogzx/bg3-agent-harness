@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -214,13 +214,24 @@ def plan_run(
     }
 
 
-def queue(matrix_root: Path) -> list[dict[str, Any]]:
-    """Each matrix's progress.json (status only), newest update first."""
+LIVE_STATES = ("running", "waiting")  # progress.json states only a live matrix process writes
+
+
+def queue(matrix_root: Path, live: Container[str] = ()) -> list[dict[str, Any]]:
+    """Each matrix's progress.json (status only), newest update first. `live` names the matrices a live process plays
+    now; one whose progress.json still says running or waiting without one (killed, or the machine went down) is
+    "unknown", with what its file last said as the stop reason."""
     out = []
     for p in sorted(matrix_root.glob("*/progress.json")):
         prog = _read_json(p)
         if isinstance(prog, dict):
-            out.append({"matrix": p.parent.name, **prog})
+            row = {"matrix": p.parent.name, **prog}
+            if row.get("state") in LIVE_STATES and row["matrix"] not in live:
+                row |= {
+                    "state": "unknown",
+                    "stop_reason": f"no process plays it; its progress.json says {row['state']}",
+                }
+            out.append(row)
     return sorted(out, key=lambda r: -(r.get("updated") or 0))
 
 

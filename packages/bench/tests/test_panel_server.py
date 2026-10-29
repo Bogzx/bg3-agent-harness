@@ -318,8 +318,9 @@ def test_scenarios_with_save_status(server):
 def test_queue_and_results(server):
     code, q = get(server, "/api/v1/queue")
     assert code == 200 and q["matrices"] == [
-        {"matrix": "night1", "state": "running", "jobs": 3, "done": 1, "updated": 5}
-    ]
+        {"matrix": "night1", "state": "unknown", "jobs": 3, "done": 1, "updated": 5,
+         "stop_reason": "no process plays it; its progress.json says running"}
+    ]  # fmt: skip
     code, r = get(server, "/api/v1/results")
     (run,) = r["runs"]
     assert run["run_id"] == "s1-r001" and run["score"] == 12 and run["scenario"] == "act1_gold_max"
@@ -403,6 +404,24 @@ def test_a_matrix_this_panel_didnt_start_is_found_and_stopped(server):
     server.procs.clear()  # type: ignore[attr-defined] - it ended
     assert get(server, "/api/v1/run")[1]["found"] is None
     assert post(server, "/api/v1/run/stop", {}) == (400, {"v": 1, "error": "no matrix is running"})
+
+
+def test_queue_shows_running_only_for_a_matrix_a_live_process_plays(server):
+    m = server.runtime / "matrix" / "night2"
+    m.mkdir()
+    (m / "progress.json").write_text(json.dumps({"state": "waiting", "updated": 6}))
+    found_matrix(server)
+    states = {r["matrix"]: r["state"] for r in get(server, "/api/v1/queue")[1]["matrices"]}
+    assert states == {"night2": "waiting", "night1": "unknown"}  # night1: a stale progress.json, its process gone
+    server.procs.clear()  # type: ignore[attr-defined] - night2 ended without writing its last state
+    assert {r["state"] for r in get(server, "/api/v1/queue")[1]["matrices"]} == {"unknown"}
+    assert post(server, "/api/v1/run/start", RUN_FORM)[0] == 200
+    name = server.runner.started[0][0]
+    (server.runtime / "matrix" / name).mkdir()
+    (server.runtime / "matrix" / name / "progress.json").write_text(json.dumps({"state": "running", "updated": 7}))
+    assert get(server, "/api/v1/queue")[1]["matrices"][0] == {"matrix": name, "state": "running", "updated": 7}
+    server.runner.st["running"] = False
+    assert get(server, "/api/v1/queue")[1]["matrices"][0]["state"] == "unknown"
 
 
 def test_own_running_matrix_hides_found(server):
