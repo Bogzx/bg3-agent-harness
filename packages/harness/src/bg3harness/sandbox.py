@@ -32,6 +32,9 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
+
+from .profiles import Profile
 
 REPO = Path(__file__).resolve().parents[4]
 CONTAINER_DIR = REPO / "tools" / "container"
@@ -57,17 +60,17 @@ BUILD_TIMEOUT_S = 1800       # the first agent-client build downloads the CLIs
 URL = f"http://{GW}:{PORT}/mcp"
 
 # What each client needs outside: its model API (and its auth refresh). Override with BG3AI_SANDBOX_EGRESS
-# ("host1,host2"). CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC keeps claude off its telemetry hosts.
+# ("host1,host2"). CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC keeps claude off its telemetry hosts. pi has no list:
+# it reaches its profile's endpoint host and nothing else (egress_hosts).
 EGRESS = {
     "claude": ("api.anthropic.com", "console.anthropic.com"),
     "codex": ("api.openai.com", "chatgpt.com", "auth.openai.com"),
     "gemini": ("generativelanguage.googleapis.com", "cloudcode-pa.googleapis.com", "oauth2.googleapis.com"),
-    "pi": ("openrouter.ai", "api.deepseek.com"),   # the profiles' endpoints (profiles/*.toml)
 }
 # Credentials passed into the container by name (`docker run -e NAME`: the value never shows in argv or logs), when
 # set in the runner's env. A login kept in the sandbox home (e.g. `claude setup-token` → CLAUDE_CODE_OAUTH_TOKEN, or
 # the CLI's own login run once in the container) works too. pi's key is the one its profile names
-# (`[endpoint] api_key_env`): prepare(..., auth_env=(profile.endpoint.api_key_env,)).
+# (`[endpoint] api_key_env`): prepare(..., profile=profile).
 AUTH_ENV = {
     "claude": ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
     "codex": ("OPENAI_API_KEY", "CODEX_API_KEY"),
@@ -198,15 +201,23 @@ def build_images(client: str) -> dict:
     return {"client_version": version}
 
 
-def egress_hosts(client: str) -> list[str]:
+def egress_hosts(client: str, profile: Profile | None = None) -> list[str]:
+    """The hosts the client may reach: BG3AI_SANDBOX_EGRESS when set, else a profile endpoint's host (pi), else
+    EGRESS[client] (a CLI's own endpoint)."""
     raw = os.environ.get("BG3AI_SANDBOX_EGRESS")
-    return [h.strip() for h in raw.split(",") if h.strip()] if raw else list(EGRESS.get(client, ()))
+    if raw:
+        return [h.strip() for h in raw.split(",") if h.strip()]
+    if profile is not None and profile.endpoint is not None:
+        return [urlparse(profile.endpoint.base_url).hostname or ""]
+    return list(EGRESS.get(client, ()))
 
 
-def start_proxy(client: str) -> list[str]:
+def start_proxy(client: str, profile: Profile | None = None) -> list[str]:
     """(Re)creates the egress proxy for this client's hosts: on the sandbox network at PROXY_IP, and on Docker's
     default bridge for its way out."""
-    hosts = egress_hosts(client)
+    hosts = egress_hosts(client, profile)
+    if not hosts:
+        raise SandboxError(f"no egress host for {client}: pi needs its profile (the endpoint's host is its egress)")
     docker("rm", "-f", PROXY_NAME, check=False)
     docker("run", "-d", "--name", PROXY_NAME, "--label", f"{LABEL}=egress", "--network", NET, "--ip", PROXY_IP,
            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--entrypoint", "python3",
@@ -380,10 +391,13 @@ class Sandbox:
 
 
 def prepare(client: str, home: Path | None = None, unfirewalled: bool = False, log=print, pid_file: Path | None = None,
-            gate=firewall_gate, auth_env: tuple[str, ...] | None = None) -> Sandbox:
+            gate=firewall_gate, auth_env: tuple[str, ...] | None = None, profile: Profile | None = None) -> Sandbox:
     """Once per runner start: docker answers, the network and images exist, the firewall is up (or the dev flag),
     the egress proxy runs, no play container of a dead runner is left. SandboxError says what's missing. auth_env:
-    the credential env names to pass in (pi: its profile's api_key_env; default AUTH_ENV[client])."""
+    the credential env names to pass in (default: a profile endpoint's api_key_env, else AUTH_ENV[client]);
+    profile: pi's, whose endpoint host is the only egress."""
+    if auth_env is None and profile is not None and profile.endpoint is not None:
+        auth_env = (profile.endpoint.api_key_env,)
     if docker("version", "--format", "{{.Server.Version}}", check=False, timeout=30).returncode != 0:
         raise SandboxError("docker doesn't answer (is the daemon running and the user in the docker group?)")
     ensure_network()
@@ -392,7 +406,7 @@ def prepare(client: str, home: Path | None = None, unfirewalled: bool = False, l
     info.update(gate(unfirewalled, log))
     remove_containers("play")
     remove_containers("keeper")
-    info["egress"] = start_proxy(client)
+    info["egress"] = start_proxy(client, profile)
     log(f"sandbox: {client} in {CLIENT_IMAGE} on {NET}; bg3 server {URL}; egress {', '.join(info['egress'])}; "
         f"firewall {'OFF (--sandbox-unfirewalled)' if unfirewalled else info.get('table')}")
     return Sandbox(client, home, unfirewalled, info, pid_file, auth_env)

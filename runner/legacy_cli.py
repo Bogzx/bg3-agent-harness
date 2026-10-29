@@ -210,7 +210,8 @@ def cmd_run(a) -> int:
     box = None
     if a.sandbox == "container":   # once per runner: docker, network, images, firewall, egress proxy
         try:
-            box = sandbox.prepare(client, None, a.sandbox_unfirewalled, renv.log, renv.RUNTIME / "sandbox-server.pid")
+            box = sandbox.prepare(client, None, a.sandbox_unfirewalled, renv.log, renv.RUNTIME / "sandbox-server.pid",
+                                  profile=choice.profile)
         except sandbox.SandboxError as e:
             print(f"refusing --sandbox container: {e}", file=sys.stderr)
             renv.log(f"runner stopped (sandbox not ready: {str(e).splitlines()[0][:200]})")

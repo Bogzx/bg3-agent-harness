@@ -13,8 +13,8 @@ throwaway memory dir (no game needed for initialize/tools/list), then the agent 
      lists bg3 as connected (the http server through the container network); with no login the API call fails
      with an auth error through the proxy and costs nothing.
 With --client pi, instead of 1's API CONNECT and 2 (no real network at all; nothing leaves the machine):
-  1. the proxy runs with pi's egress (openrouter.ai, api.deepseek.com); it refuses example.com:443 and
-     api.deepseek.com:80 (decided before any connection);
+  1. the proxy runs with pi's egress (its profile's endpoint host: the stub's address); it refuses example.com:443
+     and the stub's port 80 (decided before any connection);
   3. the stub model (tools/pi/conformance/stub_llm.py) in a container on the sandbox network, and the image's pi
      (bg3harness/pi_client.py's command with the image's pi and bg3.ts) against it: init lists bg3 connected with every
      tool, the model's tool call reaches the bg3 server over http, pi ends with the stub's final text; the stub saw
@@ -175,7 +175,7 @@ def main() -> int:
     box = srv = None
     try:
         box = S.prepare(client_name, tmp / "home", unfirewalled=not firewalled, log=print, pid_file=tmp / "srv.pid",
-                        auth_env=(STUB_KEY_ENV,) if client_name == "pi" else None)
+                        profile=PR.parse(PI_PROFILE, "smoke") if client_name == "pi" else None)
         check("prepare (network, images, proxy)", True, json.dumps(box.info))
         mem = tmp / "memory"
         mem.mkdir()
@@ -185,7 +185,7 @@ def main() -> int:
         check("bg3 server listening on the gateway", S.listening(), S.URL)
 
         name = box.container_name("smoke-node")
-        allowed, refused80 = ("", "api.deepseek.com") if client_name == "pi" else ("api.anthropic.com",) * 2
+        allowed, refused80 = ("", STUB_IP) if client_name == "pi" else ("api.anthropic.com",) * 2
         r = subprocess.run(box.run_argv(name, ["node", "-e", NODE_PROBE, S.URL, S.PROXY_IP, str(S.PROXY_PORT),
                                                allowed, refused80]), capture_output=True, text=True, timeout=120)
         box.remove(name)
@@ -203,7 +203,7 @@ def main() -> int:
             check("no direct route out (internal network)", got.get("direct") != "connected", got.get("direct"))
 
         if client_name == "pi":
-            check("proxy: pi's egress", box.info["egress"] == ["openrouter.ai", "api.deepseek.com"],
+            check("proxy: pi's egress is its profile's endpoint host", box.info["egress"] == [STUB_IP],
                   str(box.info["egress"]))
         (pi_smoke if client_name == "pi" else claude_smoke)(box, tmp, check)
     except S.SandboxError as e:
