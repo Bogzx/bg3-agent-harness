@@ -222,10 +222,16 @@ def tool_names(path: Path) -> list[str]:
 
 def served_tools(registry: list[str], env: Mapping[str, str]) -> list[str]:
     """The bg3 tools a play process with this session env gets, sorted (the server removes the rest at startup:
-    bridge/src/bg3ai/capabilities.py). Raises ValueError for an unknown group or name, as the server would."""
+    bridge/src/bg3ai/capabilities.py). A registry without the memory group is a server with no memory backend
+    installed (the playthrough app registers it): it serves the memory group off, as the server itself has it
+    (bg3ai.tools.session). Raises ValueError for an unknown group or name, as the server would."""
     from bg3ai import capabilities
 
-    return sorted(set(registry) - capabilities.disabled(registry, env))
+    tools, memory = set(registry), set(capabilities.GROUPS["memory"])
+    if not tools & memory:
+        tools |= memory
+        env = {**env, "BG3AI_TOOLS_OFF": ",".join(filter(None, (env.get("BG3AI_TOOLS_OFF"), "memory")))}
+    return sorted(tools - capabilities.disabled(tools, env))
 
 
 def expected_tools(registry: list[str], env: Mapping[str, str]) -> int:

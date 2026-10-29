@@ -78,6 +78,21 @@ class ToolCount(unittest.TestCase):
         with self.assertRaises(ValueError):
             cs.expected_tools(names, {"BG3AI_TOOLS": "nope"})
 
+    def test_a_server_without_a_memory_backend_serves_memory_off(self):
+        """The dump of a server with no memory backend (the playthrough app not installed) has no memory group: the
+        served set is the full registry's with memory off, not a refused registry."""
+        from bg3ai import capabilities
+
+        names = cs.tool_names(TOOLS)
+        bare = [n for n in names if n not in capabilities.GROUPS["memory"]]
+        for off in ("memory", "memory,wiki_search,wiki_page,load_game", ""):
+            env = {"BG3AI_TOOLS_OFF": off} if off else {}
+            want = cs.served_tools(names, {"BG3AI_TOOLS_OFF": ",".join(filter(None, (off, "memory")))})
+            self.assertEqual(cs.served_tools(bare, env), want)
+        partial = [n for n in names if n != "recall"]  # a renamed tool is still refused
+        with self.assertRaisesRegex(ValueError, "not registered: recall"):
+            cs.served_tools(partial, {})
+
     def test_problem(self):
         self.assertIsNone(cs.tool_count_problem(94, 94, {}))
         self.assertIsNone(cs.tool_count_problem(94, None, {}))
