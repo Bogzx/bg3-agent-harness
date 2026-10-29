@@ -24,7 +24,9 @@ rate; a release run carries the score.
 
 `build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs. A
 release is of one suite version (`suite`, bench-vX.Y: its runs' bench versions; its `bench_tag` when tagged), and
-each group lists the harness versions its runs played with.
+each group lists the harness versions its runs played with. The runs of one cell (scenario, model, condition) cite
+the same game pins (game_pins: the game build, the bg3le build, the mod), or the release is refused: a run's
+version_drift is a flag, but a cell's rate never mixes game setups.
 """
 
 from __future__ import annotations
@@ -129,6 +131,30 @@ def from_record(
     return out
 
 
+def game_pins(manifest: dict) -> dict:
+    """The game setup a run's manifest pins: the game build, the bg3le build's sha256 and the mod's sha1."""
+    p = manifest.get("pins") or {}
+    return {
+        "game_build": p.get("game_build"),
+        "bg3le_sha256": (p.get("bg3le") or {}).get("sha256"),
+        "mod_sha1": (p.get("mod") or {}).get("sha1"),
+    }
+
+
+def _mixed_pins(pairs: Iterable[tuple[dict, dict]]) -> list[str]:
+    """The cells (scenario/model/condition) whose runs cite different game pins, with the pins that differ."""
+    cells: dict[str, list[dict]] = {}
+    for man, _ in pairs:
+        cells.setdefault(f"{man['scenario']['name']}/{man['model']['slug']}/{man['condition']}", []).append(
+            game_pins(man)
+        )
+    out = []
+    for cell, pins in sorted(cells.items()):
+        if differ := sorted(k for k in pins[0] if len({p[k] for p in pins}) > 1):
+            out.append(f"{cell} ({', '.join(differ)})")
+    return out
+
+
 def _costs(results: list[dict]) -> dict:
     costs = [r["cost_usd"] for r in results]
     if not costs or any(c is None for c in costs):
@@ -150,7 +176,8 @@ def build_results(
         numbers do not depend on which other groups are in the release. Runs of a `holdout` scenario are left out
         entirely (a published release never contains them; contamination.holdout_names lists them). A release whose
     judge (manifest `judge`) is the same model or family as a contestant is refused: the judge never scores itself.
-    So is one whose runs are of more than one suite version, or of another suite than its `bench_tag`."""
+    So is one whose runs are of more than one suite version, or of another suite than its `bench_tag`, or one with a
+    cell whose runs cite different game pins."""
     runs, groups, pairs_kept = [], {}, []
     for man, res in pairs:
         if man["run_id"] != res["run_id"]:
@@ -187,6 +214,8 @@ def build_results(
         raise ValueError(f"runs of {len(suites)} suite versions ({', '.join(suites)}): scores don't compare")
     if bench_tag is not None and suites and suites != [bench_tag]:
         raise ValueError(f"release {bench_tag} holds runs of {suites[0]}")
+    if mixed := _mixed_pins(pairs_kept):
+        raise ValueError(f"runs of one cell with different game pins: {'; '.join(mixed)}")
     contestants = {model for model, _ in groups}
     for man, _ in pairs_kept:
         judge = (man.get("judge") or {}).get("model")

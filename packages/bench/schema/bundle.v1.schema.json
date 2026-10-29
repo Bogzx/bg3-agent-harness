@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/bundle.v1.schema.json",
+  "title": "Submission bundle v1 (bundle.json)",
+  "description": "The envelope of one run's submission bundle, written by bg3bench.submission.pack. It lists every other file of the bundle with its sha256 and size. bundle.json is written in canonical form (keys sorted, no whitespace, UTF-8, non-ASCII kept: bg3bench.submission.bundle.canonical_bytes) and the bundle hash is the sha256 of its bytes as stored, so a reader never re-serialises it; a bundle.json not in canonical form fails F02. The hash covers every file through files[].sha256. bundle.json itself is not in files[].",
+  "type": "object",
+  "required": [
+    "schema",
+    "bundle_id",
+    "run_id",
+    "suite",
+    "scenario",
+    "scenario_digest",
+    "run_hash",
+    "condition",
+    "model",
+    "client",
+    "versions",
+    "attempt",
+    "cost",
+    "files",
+    "video",
+    "recording",
+    "scrub",
+    "packed"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "str_or_null": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "file_name": {
+      "description": "a bare file name: no directories, no '..', no absolute paths. The contact sheet is one uncompressed tar member, frames.tar, holding only frames/<n>.jpg",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+      "not": {
+        "pattern": "\\.\\."
+      }
+    }
+  },
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "bundle_id": {
+      "type": "string",
+      "description": "a UUID made at pack time",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "manifest.json run_id (<series>-r%03d); not unique across submitters",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "suite": {
+      "type": "string",
+      "description": "the suite tag the run played (manifest versions.suite)",
+      "pattern": "^bench-v[0-9]+\\.[0-9]+$"
+    },
+    "scenario": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,100}$"
+    },
+    "scenario_digest": {
+      "type": "string",
+      "description": "manifest scenario.digest",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "run_hash": {
+      "description": "sha256 of the run's record files as packed (manifest.json, result.json, facts.jsonl, rolls.jsonl when present, every S*.events.jsonl): the list [{name, sha256, bytes}] of those files sorted by name (files[] without render.json and frames.tar) as canonical JSON (sorted keys, separators ',' ':', UTF-8, non-ASCII kept) (bg3bench.submission.bundle.run_hash). The evidence video's strip shows it; the validator recomputes it (F02)",
+      "$ref": "#/$defs/sha256"
+    },
+    "condition": {
+      "type": "string",
+      "description": "rules | rules+coaching@<hash8> | byo:<client>",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "slug",
+        "provider_requested",
+        "reasoning_effort"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "provider_requested": {
+          "$ref": "#/$defs/str_or_null"
+        },
+        "reasoning_effort": {
+          "$ref": "#/$defs/str_or_null"
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "version": {
+          "$ref": "#/$defs/str_or_null"
+        }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "description": "the harness and bench versions the run played with (manifest versions) and the panel that packed it (null: packed from the command line)",
+      "required": [
+        "harness",
+        "bench",
+        "panel"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "harness": {
+          "$ref": "#/$defs/str_or_null"
+        },
+        "bench": {
+          "type": "string",
+          "minLength": 1
+        },
+        "panel": {
+          "$ref": "#/$defs/str_or_null"
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "description": "self-reported: this run's number in its cell (scenario, model slug, condition) on this install, and the earlier valid runs of the cell not submitted",
+      "required": [
+        "n",
+        "unsubmitted_valid",
+        "cell"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unsubmitted_valid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cell": {
+          "type": "string",
+          "description": "<scenario>/<model slug>/<condition>",
+          "minLength": 5,
+          "maxLength": 400
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": [
+        "usd",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "kind": {
+          "description": "billed: the endpoint's own usage.cost or a computed provider bill; notional: a subscription client's self-reported figure; estimated: priced from the profile's cost table",
+          "enum": [
+            "billed",
+            "notional",
+            "estimated"
+          ]
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "description": "every file of the bundle except bundle.json, sorted by name, names unique; with bundle.json at most 8 MiB (8388608 bytes) in all, frames.tar at most 3 MiB (bg3bench.submission.bundle's caps)",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "sha256",
+          "bytes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/file_name"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10485760
+          }
+        }
+      }
+    },
+    "video": {
+      "description": "the evidence video; null until it is rendered and uploaded (a submission requires it)",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "youtube_id",
+            "duration_s",
+            "mp4_sha256"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "youtube_id": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{11}$"
+                }
+              ]
+            },
+            "duration_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "mp4_sha256": {
+              "description": "informational: the rendered MP4 before YouTube re-encodes it",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/sha256"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "recording": {
+      "description": "the game recording's epoch start and end and its frame rate; null when the run was not recorded",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "started",
+            "ended",
+            "fps"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "started": {
+              "type": "number"
+            },
+            "ended": {
+              "type": "number"
+            },
+            "fps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "scrub": {
+      "type": "object",
+      "required": [
+        "version",
+        "replacements"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replacements": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "packed": {
+      "type": "number",
+      "description": "epoch seconds the bundle was packed"
+    }
+  }
+}
