@@ -4,12 +4,11 @@
 #     act1_level_3 (sandbox), fight_act1_grove_gate, fight_act1_windmill, fight_act2_balthazar, fight_act2_moonrise_assault
 #   not scored: choice_act1_karlach, choice_act1_minthara, choice_act2_nightsong (choice: no right answer),
 #     act3_gold_max (maximise: a gain, no pass)
-# max_cost: each scenario's time cap x the per-minute cost below x 1.25, so it rarely ends a run (a run it ends is
-# scored over_budget); it is also what the budget holds back before the run starts.
-# Per minute: $0.056 (pilot diverse-2026-10-25 tokens at the 2026-10-29 list price for prompts over 100K tokens;
-# its notional figure was $0.033). Estimate $42 for the 36 runs (pilot play times; never-played scenarios
-# assumed), $98 if every run played its whole cap.
-# The Claude profiles must be verified (one live pilot run, launch-v1-pilot.toml) before this runs.
+# max_cost: each scenario's time cap x $0.056 per minute (the estimate before the pilot) x 1.25, kept: a run it ends
+# is scored over_budget, and it is only what the budget holds back while that run plays.
+# Per minute measured: $0.0117 (launch-v1-pilot, 2026-10-29: windmill 12.0 min, $0.14, 99% cache reads), so the caps
+# sit 4.7x above it. Estimate $9 for the 36 runs (771 play minutes: earlier pilots' play times, never-played
+# scenarios assumed), $21 if every run played its whole cap (1755 min).
 name = "launch-v1-haiku"
 allow_gaps = false
 allow_unverified = false
