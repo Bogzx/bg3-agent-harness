@@ -193,7 +193,7 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
         start, end = run_window(facts, logs)
         if a.sample_s:
             end = min(end, start + a.sample_s)
-        segments = index.get("segments") or []
+        segments: list[Any] = index.get("segments") or []
         p = plan(segments, logs, facts, start, end, a.run_hash, a.t_pass_s, clip_events=bool(a.sample_s))
         if a.work:
             video = render(p, meta, a.index.parent, a.out, a.work, ffmpeg, a.encoder)
