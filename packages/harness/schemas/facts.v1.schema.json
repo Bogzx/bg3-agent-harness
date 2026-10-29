@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/harness/schemas/facts.v1.schema.json",
   "title": "facts.jsonl v1: one record per line",
-  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark.",
+  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule).",
   "type": "object",
   "required": ["v", "kind", "t"],
   "properties": {
@@ -66,7 +66,8 @@
         "ev": {"enum": [
           "combat_started", "combat_ended", "died", "downed", "revived", "level_up", "joined",
           "gold", "item_added", "trade_open", "trade_end", "pickpocket", "stole", "crime", "kill", "loot",
-          "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice"
+          "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
+          "game_over"
         ]}
       },
       "allOf": [

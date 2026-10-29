@@ -551,6 +551,9 @@ class ReadGame(unittest.TestCase):
             return credits
         for ev in (no_status, server_down):
             self.assertEqual(P.read_game(ev), {"status": None, "ui": {"screen": "credits", "page": "Credits"}})
+        over = json.dumps([{"ok": True, "result": {"screen": "game_over", "popup": "Game Over"}}])
+        self.assertEqual(P.read_game(lambda code, ctx: over if ctx == "client" else no_status(code, ctx)),
+                         {"status": None, "ui": {"screen": "game_over", "popup": "Game Over"}})  # a party wipe
 
         def menu_down(code: str, ctx: str) -> str:
             if ctx == "server":

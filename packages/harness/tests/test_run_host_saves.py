@@ -1,6 +1,7 @@
 # pyright: basic
 # ruff: noqa: F811  (the tests take test_run_host's rig fixture by name)
-"""bg3harness.runner.run_host: a run ends at a party wipe, plays only from its own saves, and leaves none behind.
+"""bg3harness.runner.run_host: a run ends at a party wipe (the Game Over screen too), plays only from its own saves,
+leaves none behind, and counts its time from one zero (run_start).
 
 Bench B3 (research/fix/live.md, Job 6, Opus x fight_act2_balthazar): the party wiped and the runner resumed the agent 6
 times ("the grader hasn't seen its goal yet"); then the agent took the Game Over box's Main Menu and the main menu's
@@ -21,7 +22,20 @@ from typing import Any
 from bg3ai import lsf, lspk
 from bg3harness.runner import env as renv
 from bg3harness.runner import run_host as H  # noqa: N812
-from test_run_host import JOB, MAX_SC, SAVE_SC, FakeRunner, Rig, outcome, rig, run_dir  # noqa: F401  (rig: fixture)
+from bg3harness.session import Recovery, SessionSpec, run_session
+from test_run_host import (  # noqa: F401  (rig: fixture)
+    JOB,
+    MAX_SC,
+    NEW_SC,
+    SAVE_SC,
+    UNTIL_SC,
+    FakeRunner,
+    Rig,
+    outcome,
+    play_session,
+    rig,
+    run_dir,
+)
 
 START = SAVE_SC["start"]["save"]
 
@@ -246,3 +260,34 @@ def test_a_save_whose_meta_cant_be_read_is_not_the_runs(rig: Rig):
     assert not H.own_save("S001-x", H.rcode.list_saves(), 1000.0, None)
     assert rig.h.record(JOB, SAVE_SC, run_dir("b"), outcome())["reset"]["saves"] == []
     assert story() == ["Lae'zel-77__S001-x"]
+
+
+def test_a_new_games_time_zero_is_before_its_agent_and_wall_s_is_the_marks_span(rig: Rig):
+    # S2 (2026-10-29): a new game's run_start came at its first level's load, 15 s after the session start that
+    # wall_s counted from: the bench's X02 failed every new-game run and render.json had negative at_s
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        assert r.marks[:1] == [("run_start", None)] and r.t0 is not None and r.t0 <= r.clock  # before the agent
+        return "exited", 600.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, NEW_SC, "m-idol")
+    r.end_at = end = r.clock + 3.0  # the run_end mark comes after the end reads
+    rec = rig.h.record(JOB, NEW_SC, run_dir("m-idol"), out)
+    assert r.plays and r.t0 == 1000.0
+    assert rec["wall_min"] == round((end - 1000.0) / 60, 2)  # run_start to run_end, as the bench's X02 reads
+
+
+def test_the_game_over_screen_ends_any_run_as_a_wipe_and_is_never_resumed(rig: Rig):
+    # S2 (2026-10-29) Sonnet nautiloid: Tav and Lae'zel down, "Us" up: the game showed Game Over, the verdict (party
+    # rows) said nothing, the stop check resumed the agent on the Game Over screen, it loaded a save through the UI
+    # and the run was voided (foreign_save) and rerun. A run without a goal verdict ends on it too.
+    for job, name in (({**JOB, "verdict": lambda: None}, "a"), (JOB, "b")):
+        rig.prepare = lambda r: setattr(r, "read_now", lambda: setattr(r, "game_over", r.clock))
+        st = rig.h.start(job, UNTIL_SC, run_dir(name))
+        r = rig.runners[-1]
+        spec = SessionSpec(name, st.prompt, 30.0, st.client_session, Recovery(max_resumes=0))
+        out = run_session(spec, st.hooks)
+        assert [t for t, _, _ in r.plays] == [""] and out.stop_resumes == 0 and "facts_now" in rig.calls
+        assert r.until_hit is not None and r.until_hit["label"] == "the party was wiped (Game Over)"
+        rec = rig.h.record(job, UNTIL_SC, run_dir(name), out)
+        assert (rec["outcome"], rec["verdict"], rec["milestone"]) == ("failed", "wiped", None)

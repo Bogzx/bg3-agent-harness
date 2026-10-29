@@ -90,6 +90,7 @@ class FactsMarks(Protocol):
     """The runner's facts.jsonl writer (bg3harness.facts.FactsWriter): its marks."""
 
     t0: float | None  # its run_start mark's time: the run's time zero
+    game_over: float | None  # when its reads first showed the game's Game Over screen (a game_over event)
 
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> Any: ...
 
@@ -314,8 +315,9 @@ class GoalWatch:
     """A run's live verdict (SessionRun's job["verdict"]: "passed", "failed", "wiped" or None) asked every poll_s
     while the run plays. Once it decides, the runner's until_hit is set to {"id": GOAL_HIT, "verdict": ...}: the
     agent loop stops the agent on it as on an until milestone (a goal run never plays on past its grade, and no run
-    plays on past a party wipe, the game's Game Over: bench B3 resumed a wiped Balthazar run 6 times). check() is one
-    poll (the tests call it directly)."""
+    plays on past a party wipe, the game's Game Over: bench B3 resumed a wiped Balthazar run 6 times). The Game Over
+    screen in the runner's facts (its game_over event) is "wiped" before the verdict is asked. check() is one poll
+    (the tests call it directly)."""
 
     def __init__(self, r: RunRunner, verdict: Callable[[], str | None], poll_s: float = GOAL_POLL_S):
         self.r, self.verdict, self.poll_s = r, verdict, poll_s
@@ -326,8 +328,8 @@ class GoalWatch:
         """True once the run is decided (by this verdict or an earlier stop): nothing left to watch."""
         if self.r.until_hit:
             return True
-        try:
-            v = self.verdict()
+        try:  # the game's Game Over is a wipe whatever the party rows say (S2: "Us" up, Tav and Lae'zel down)
+            v = "wiped" if self.r.facts_writer().game_over is not None else self.verdict()
         except Exception as e:  # a verdict that can't be read doesn't end the run
             renv.log(f"goal verdict failed: {type(e).__name__}: {e}")
             return False
@@ -807,9 +809,9 @@ class LiveRunHost:
 
             self.saves[run_dir] = self.save_watch(r, own)
             self.saves[run_dir].start()
-            if job.get("verdict") is not None:
-                self.watches[run_dir] = GoalWatch(r, job["verdict"])
-                self.watches[run_dir].start()
+            # every run: a party wipe (the Game Over screen) ends any run, with or without a goal verdict
+            self.watches[run_dir] = GoalWatch(r, job.get("verdict") or (lambda: None))
+            self.watches[run_dir].start()
             return st
         except (Exception, SystemExit) as e:
             for w in (self.saves.pop(run_dir, None), self.recordings.pop(run_dir, None)):

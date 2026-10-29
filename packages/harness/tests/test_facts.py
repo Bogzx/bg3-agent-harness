@@ -177,6 +177,21 @@ class Facts(unittest.TestCase):
         self.assertEqual([r["kind"] for r in self.records()][-2:], ["mark", "snapshot"])
         self.assertEqual(self.records()[-1]["game_t"], 601.0)
 
+    def test_the_game_over_screen_is_a_game_over_event_once_per_time_it_comes_up(self):
+        # S2 (2026-10-29): Tav and Lae'zel down, "Us" up: the game's Game Over, which the party rows can't tell
+        over = copy.deepcopy(READ) | {"ui": {"screen": "game_over", "popup": "Game Over"}}
+        self.w.mark("run_start", now=0.0)
+        self.w.observe(READ, INV, now=1.0)
+        self.assertEqual([r["ev"] for r in self.w.observe(over, INV, now=2.0) if r["kind"] == "event"], ["game_over"])
+        self.assertEqual(self.w.observe({"status": None, "ui": over["ui"]}, None, now=3.0), [])  # still up
+        self.w.observe({"status": None, "ui": None}, None, now=4.0)  # a failed ui read says nothing
+        self.assertEqual(self.w.observe(over, INV, now=5.0), [])
+        self.assertEqual(self.w.game_over, 2.0)
+        self.w.observe(READ, INV, now=6.0)  # loaded a save (a play run plays on)
+        again = self.w.observe({"status": None, "ui": over["ui"]}, None, now=7.0)  # no session: still written
+        self.assertEqual([(r["ev"], r["game_t"]) for r in again], [("game_over", 7.0)])
+        self.assertEqual(self.w.game_over, 2.0)  # the run's first
+
     def test_no_session_and_failed_reads(self):
         self.assertEqual(self.w.observe(None, None, now=1.0), [])
         self.assertEqual(self.w.observe({"status": None, "ui": {"screen": "credits"}}, None, now=2.0), [])
@@ -300,6 +315,8 @@ class Facts(unittest.TestCase):
                 }
             ]
         )
+        self.w.observe(copy.deepcopy(READ) | {"ui": {"screen": "game_over"}}, INV, now=1600.0)
+        self.assertIn("game_over", [r.get("ev") for r in self.records()])
         v = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text()))
         for r in self.records():
             v.validate(r)
