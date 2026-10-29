@@ -20,9 +20,11 @@ GOLD = "gold_max"
 def test_rank_ranges_separate_a_clear_gap_and_share_a_tie():
     good = {s: [1.0, 1.0, 1.0] for s in SCORED}
     bad = {s: [0.0, 0.0, 0.0] for s in SCORED}
-    assert stats.rank_ranges({"a": good, "b": bad}, random.Random(0), b=200) == {"a": (1, 1), "b": (2, 2)}
-    assert stats.rank_ranges({"a": good, "b": dict(good)}, random.Random(0), b=200) == {"a": (1, 1), "b": (1, 1)}
-    assert stats.rank_ranges({"a": good}, random.Random(0), b=50) == {"a": (1, 1)}
+    got = stats.rank_ranges({"a": good, "b": bad}, random.Random(0), b=200)
+    assert got == {"a": {"rank": (1, 1), "ci": (1.0, 1.0)}, "b": {"rank": (2, 2), "ci": (0.0, 0.0)}}
+    tie = stats.rank_ranges({"a": good, "b": dict(good)}, random.Random(0), b=200)
+    assert tie["a"]["rank"] == tie["b"]["rank"] == (1, 1)
+    assert stats.rank_ranges({"a": good}, random.Random(0), b=50)["a"]["rank"] == (1, 1)
     assert stats.rank_ranges({}, random.Random(0)) == {}
 
 
@@ -30,7 +32,9 @@ def test_rank_ranges_overlap_on_close_models_and_are_seeded():
     a = {s: [1.0, 0.0, 1.0] if i % 2 else [0.0, 1.0, 0.0] for i, s in enumerate(SCORED)}
     b = {s: [1.0, 1.0, 0.0] if i % 3 else [0.0, 0.0, 1.0] for i, s in enumerate(SCORED)}
     got = stats.rank_ranges({"a": a, "b": b}, random.Random(7), b=500)
-    assert got == {"a": (1, 2), "b": (1, 2)}
+    assert (got["a"]["rank"], got["b"]["rank"]) == ((1, 2), (1, 2))
+    lo, hi = got["a"]["ci"]
+    assert lo < sum(map(sum, a.values())) / 24 < hi  # the interval holds the estimate
     assert got == stats.rank_ranges({"a": a, "b": b}, random.Random(7), b=500)
     with pytest.raises(ValueError, match="different scenarios"):
         stats.rank_ranges({"a": a, "b": {s: b[s] for s in SCORED[:4]}}, random.Random(0))
@@ -61,13 +65,15 @@ def test_the_release_ranks_on_the_common_pass_fail_set_and_leaves_partial_models
     kind = {**dict.fromkeys(CHOICE, "choice"), GOLD: "maximise"}
     full = SCORED + CHOICE + [GOLD]  # the 12 launch scenarios
     sonnet = {s: [True, True, False] for s in full}
-    haiku: dict[str, list[bool | None]] = {s: [False, False, True] for s in full}
-    haiku["s07"] = [None, None, None]  # no valid run: 11 of 12 cells, still ranked, s07 leaves the common set
-    deepseek = {s: [False, False, False] for s in SCORED}  # 8 of 12: ranked
-    opus = {s: [True, True, True] for s in SCORED[:4]}  # 4 of 12: listed, not ranked
+    # no choice or gold runs and no valid run of s07: 7 of the 8 pass/fail scenarios, ranked (6 needed); s07 leaves
+    # the common set
+    haiku: dict[str, list[bool | None]] = {s: [False, False, True] for s in SCORED}
+    haiku["s07"] = [None, None, None]
+    deepseek = {s: [False, False, False] for s in SCORED}  # 8 of 8: ranked
+    opus = {s: [True, True, True] for s in SCORED[:4]}  # 4 of 8: listed, not ranked
     pairs = [
         *pairs_for("sonnet", sonnet, kind),
-        *pairs_for("haiku", haiku, kind),
+        *pairs_for("haiku", haiku),
         *pairs_for("deepseek", deepseek),
         *pairs_for("opus", opus),
     ]
@@ -77,8 +83,8 @@ def test_the_release_ranks_on_the_common_pass_fail_set_and_leaves_partial_models
     assert rank == {
         "condition": "rules",
         "scenarios": SCORED[:7],  # no choice, no maximise, not s07 (haiku has no valid run of it)
-        "of": 12,
-        "min_cells": 8,
+        "of": 8,
+        "min_cells": 6,
         "models": ["sonnet", "haiku", "deepseek", "opus"],
     }
     g = {x["model"]: x for x in out["groups"]}
@@ -92,6 +98,9 @@ def test_the_release_ranks_on_the_common_pass_fail_set_and_leaves_partial_models
     assert all(g[m]["ranked"] for m in ("sonnet", "haiku", "deepseek"))
     assert (g["opus"]["ranked"], g["opus"]["rank_range"], g["opus"]["suite_n"]) == (False, None, 4)
     assert g["opus"]["suite_score"] == 1.0  # over its own cells of the common set: "partial", not a rank
+    assert g["opus"]["suite_score_ci"] == [1.0, 1.0] and g["deepseek"]["suite_score_ci"] == [0.0, 0.0]
+    lo, hi = g["sonnet"]["suite_score_ci"]
+    assert lo < 2 / 3 < hi <= 1.0
     # the per-model pooled stats and per-cell Wilson intervals stay as they were
     assert g["sonnet"]["stats"]["per_scenario"]["s00"]["wilson"] == list(stats.wilson(2, 3))
     assert out == results.build_results(pairs, seed=3, created=0.0, b=300)
@@ -105,4 +114,5 @@ def test_a_model_below_the_share_is_unranked_and_scores_only_on_the_common_set()
     g = {x["model"]: x for x in out["groups"]}
     assert (g["haiku"]["ranked"], g["haiku"]["rank_range"], g["haiku"]["suite_score"]) == (True, [1, 1], 0.0)
     assert (g["opus"]["ranked"], g["opus"]["suite_score"], g["opus"]["suite_n"]) == (False, None, 0)
+    assert g["opus"]["suite_score_ci"] is None
     assert results.build_results([], seed=0, created=0.0, b=10)["ranking"] == []

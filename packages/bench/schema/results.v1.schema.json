@@ -153,9 +153,10 @@
             "properties": {"median": {"$ref": "#/$defs/num_or_null"}}
           },
           "suite_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "the mean pass rate over the condition's common set (ranking.scenarios; an unranked model: over its own cells of it); null: none of them. Optional, added 2026-10-29"},
+          "suite_score_ci": {"oneOf": [{"type": "null"}, {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 2, "maxItems": 2}], "description": "[lo, hi]: the 95% interval of suite_score from the same scenario bootstrap (an unranked model: stats.bootstrap_mean over its cells); null: no suite_score"},
           "suite_n": {"type": "integer", "minimum": 0, "description": "the scenarios suite_score is over"},
           "rank_range": {"oneOf": [{"type": "null"}, {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2}], "description": "[lo, hi]: the rank (1 = best) the scenario bootstrap gives the model in 95% of its draws (stats.rank_ranges); null: not ranked"},
-          "ranked": {"type": "boolean", "description": "valid runs in at least ranking.min_cells of the condition's scenarios, and a common set to rank on"}
+          "ranked": {"type": "boolean", "description": "valid runs in at least ranking.min_cells of the condition's pass/fail scenarios, and a common set to rank on"}
         }
       }
     },
@@ -169,8 +170,8 @@
         "properties": {
           "condition": {"$ref": "#/$defs/str_or_null"},
           "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "the common set: pass/fail scenarios (no choice, no maximise) every ranked model has a valid run of"},
-          "of": {"type": "integer", "minimum": 0, "description": "the condition's scenarios (any run)"},
-          "min_cells": {"type": "integer", "minimum": 0, "description": "the scenarios with a valid run a model needs to be ranked (results.RANKED_SHARE of `of`)"},
+          "of": {"type": "integer", "minimum": 0, "description": "the condition's pass/fail scenarios (no choice, no maximise; any run)"},
+          "min_cells": {"type": "integer", "minimum": 0, "description": "the pass/fail scenarios with a valid run a model needs to be ranked (results.RANKED_SHARE of `of`, rounded up)"},
           "models": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "the ranked models by suite_score (best first), then the unranked"}
         }
       }

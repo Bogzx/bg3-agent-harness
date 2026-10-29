@@ -24,9 +24,10 @@ rate; a release run carries the score.
 
 `build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs, and
 ranks the models of each condition (`ranking`): a model is ranked when it has valid runs in at least RANKED_SHARE of
-the condition's scenarios (8 of 12); the suite score is the mean pass rate over the common set, the pass/fail
-scenarios (no choice, no maximise) every ranked model has a valid run of; its rank range comes from
-stats.rank_ranges (seeded). An unranked model's suite score is over its own cells of that set, with no range. A
+the condition's pass/fail scenarios (no choice, no maximise: 6 of 8); the suite score is the mean pass rate over the
+common set, the pass/fail scenarios every ranked model has a valid run of; its rank range and interval come from
+stats.rank_ranges (seeded). An unranked model's suite score and interval (stats.bootstrap_mean) are over its own
+cells of that set, with no rank. A
 release is of one suite version (`suite`, bench-vX.Y: its runs' bench versions; its `bench_tag` when tagged), and
 each group lists the harness versions its runs played with. The runs of one cell (scenario, model, condition) cite
 the same game pins (game_pins: the game build, the bg3le build, the mod), or the release is refused: a run's
@@ -50,7 +51,7 @@ from bg3bench import stats, suite
 SCHEMA = 1
 # failed: a run that its live verdict ended on a fired never or a party wipe (a maximise run's too: its score stands)
 OUTCOMES = ("reached", "failed", "timeout", "over_budget", "gave_up", "runner_error")
-RANKED_SHARE = 2 / 3  # a model is ranked with valid runs in at least this share of its condition's scenarios
+RANKED_SHARE = 2 / 3  # a model is ranked with valid runs in at least this share of its condition's pass/fail scenarios
 
 
 def applied_seed(record: dict) -> int | None:
@@ -273,31 +274,33 @@ def build_results(
 def _rank(
     condition: str | None, out_groups: list[dict], groups: dict[tuple, list[tuple[str, dict]]], seed: int, b: int
 ) -> dict:
-    """One condition's ranking; sets each of its groups' suite_score, suite_n, rank_range and ranked."""
+    """One condition's ranking; sets each of its groups' suite_score, suite_score_ci, suite_n, rank_range, ranked."""
     members = {m: rs for (m, c), rs in groups.items() if c == condition}
-    scenarios = {s for rs in members.values() for s, _ in rs}
-    need = math.ceil(RANKED_SHARE * len(scenarios) - 1e-9)
-    listed = {m: {s for s, r in rs if r["valid"]} for m, rs in members.items()}
+    passfail = {s for rs in members.values() for s, r in rs if r["passed"] is not None and not r.get("choices")}
+    need = math.ceil(RANKED_SHARE * len(passfail) - 1e-9)
     scored: dict[str, dict[str, list[float]]] = {}
     for m, rs in members.items():
         scored[m] = {}
         for s, r in rs:
-            if r["valid"] and r["passed"] is not None and not r.get("choices"):
+            if r["valid"] and s in passfail:
                 scored[m].setdefault(s, []).append(1.0 if r["passed"] else 0.0)
-    ranked = sorted(m for m in members if len(listed[m]) >= need)
+    ranked = sorted(m for m in members if len(scored[m]) >= need)
     common = set.intersection(*(set(scored[m]) for m in ranked)) if ranked else set()
     ranked = ranked if common else []
     ranges = stats.rank_ranges({m: {s: scored[m][s] for s in common} for m in ranked}, random.Random(seed), b)
     for g in out_groups:
         if g["condition"] != condition:
             continue
-        mine = sorted(common & set(scored[g["model"]]))
-        rates = [sum(scored[g["model"]][s]) / len(scored[g["model"]][s]) for s in mine]
+        cells = {s: scored[g["model"]][s] for s in sorted(common & set(scored[g["model"]]))}
         rr = ranges.get(g["model"])
+        if rr is None and cells:  # unranked: the same two-level bootstrap over its own cells of the common set
+            _, lo, hi = stats.bootstrap_mean(cells, random.Random(seed), b)
+            rr = {"rank": None, "ci": (lo, hi)}
         g.update(
-            suite_score=sum(rates) / len(rates) if rates else None,
-            suite_n=len(mine),
-            rank_range=list(rr) if rr else None,
+            suite_score=sum(sum(v) / len(v) for v in cells.values()) / len(cells) if cells else None,
+            suite_score_ci=list(rr["ci"]) if rr else None,
+            suite_n=len(cells),
+            rank_range=list(rr["rank"]) if rr and rr["rank"] else None,
             ranked=g["model"] in ranges,
         )
     mine_groups = [g for g in out_groups if g["condition"] == condition]
@@ -305,7 +308,7 @@ def _rank(
     return {
         "condition": condition,
         "scenarios": sorted(common),
-        "of": len(scenarios),
+        "of": len(passfail),
         "min_cells": need,
         "models": [g["model"] for g in order],
     }
