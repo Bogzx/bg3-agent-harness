@@ -4,7 +4,8 @@
 client = "pi"
 model = "claude-haiku-5-5"
 effort = "medium"
-status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)
+# Played live: launch-v1-pilot on fight_act1_windmill, main c740b1bd, 2026-10-29: passed, valid ($0.14, 12.0 min).
+status = "verified"  # played live through the game (bg3harness/profiles.py)
 
 [endpoint]
 provider = "anthropic"

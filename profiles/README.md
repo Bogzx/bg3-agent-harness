@@ -10,9 +10,9 @@ to write your own.
 | `deepseek-v4-pro.toml` | pi | offline | DeepSeek's bill, computed from its usage fields (`deepseek_bill.py`) |
 | `deepseek-v4.1-flash-pi.toml` | pi | offline | OpenRouter's billed `usage.cost` |
 | `opus-5.5-pi.toml` | pi | offline | OpenRouter's billed `usage.cost` |
-| `claude-opus-5-5.toml` | pi | offline | the profile's `cost` table (Anthropic's API reports tokens, not dollars) |
-| `claude-sonnet-5-5.toml` | pi | offline | the profile's `cost` table (Anthropic's API reports tokens, not dollars) |
-| `claude-haiku-5-5.toml` | pi | offline | the profile's `cost` table (Anthropic's API reports tokens, not dollars) and its over-100K-token tier |
+| `claude-opus-5-5.toml` | pi | verified | the profile's `cost` table (Anthropic's API reports tokens, not dollars) |
+| `claude-sonnet-5-5.toml` | pi | verified | the profile's `cost` table (Anthropic's API reports tokens, not dollars) |
+| `claude-haiku-5-5.toml` | pi | verified | the profile's `cost` table (Anthropic's API reports tokens, not dollars) and its over-100K-token tier |
 | `opus-5.5-claude-code.toml` | claude | verified | none: a subscription; `total_cost_usd` is recorded, never charged |
 | `sonnet-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |
 | `haiku-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |

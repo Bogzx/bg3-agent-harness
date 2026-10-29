@@ -1,6 +1,8 @@
 # Launch campaign v1, the pilot: one run per Claude model through pi and the Anthropic API on fight_act1_windmill, to
-# check the profiles live (they stay "offline" until a run plays, hence allow_unverified) and the per-run cost before
+# check the profiles live (they were "offline" until a run played, hence allow_unverified) and the per-run cost before
 # the campaign's caps are set. Pilot diverse-2026-10-25 windmill runs: Opus $1.11, Sonnet $0.33, Haiku $0.03 notional.
+# Played 2026-10-29 on main c740b1bd: all 3 passed and valid; Haiku $0.140 (12.0 min), Sonnet $0.487 (7.3 min), Opus
+# $0.498 (3.2 min), cache reads 96-99% of the input. The three profiles are verified from it.
 # max_cost: Opus's campaign cap for the scenario (the highest of the three).
 name = "launch-v1-pilot"
 allow_gaps = false

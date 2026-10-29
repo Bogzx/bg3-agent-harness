@@ -1,7 +1,6 @@
 # pyright: basic
 """The launch campaign's matrix files (packages/bench/matrices/launch-v1-*.toml): the scenario set, the per-run caps,
-that the DeepSeek one and the pilot plan as written, and that the Claude campaign waits for its profiles to be
-verified (the pilot)."""
+and that every one plans as written: the Claude profiles are verified by the pilot (2026-10-29)."""
 
 from __future__ import annotations
 
@@ -64,15 +63,11 @@ def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():
     for name in ("haiku", "sonnet", "opus"):
         p = profiles.load(REPO / "profiles" / f"claude-{name}-5-5.toml")
         assert p.endpoint is not None
-        assert (p.model, p.endpoint.api, p.status) == (f"claude-{name}-5-5", "anthropic-messages", "offline")
+        assert (p.model, p.endpoint.api, p.status) == (f"claude-{name}-5-5", "anthropic-messages", "verified")
 
 
 @pytest.mark.parametrize(("name", "jobs"), [("haiku", 36), ("sonnet", 36), ("opus", 12)])
-def test_the_claude_campaign_waits_for_verified_profiles(tmp_path, name, jobs):
-    with pytest.raises(matrix_cli.MatrixFileError, match="status 'offline'"):
-        matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)
-    verified = tmp_path / f"launch-v1-{name}.toml"
-    text = (MATRICES / verified.name).read_text().replace("allow_unverified = false", "allow_unverified = true")
-    verified.write_text(text)
-    m = matrix_cli.load(verified, REPO)
+def test_the_claude_campaign_plans_on_its_verified_profiles(name, jobs):
+    m = matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)  # allow_unverified = false
     assert not m["skipped"] and len(m["jobs"]) == jobs and all(j["max_cost"] for j in m["jobs"])
+    assert {j["client"] for j in m["jobs"]} == {"pi"} and {j["model"] for j in m["jobs"]} == {f"claude-{name}-5-5"}
