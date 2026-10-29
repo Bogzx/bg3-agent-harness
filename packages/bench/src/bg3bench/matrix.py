@@ -11,8 +11,10 @@ Files in the matrix folder (runtime/matrix/<name>/):
 
 The budget file is the harness's (bg3harness.spend, which reads and updates it here too): one per machine,
 runtime/budget.json `{"cap": USD, "spent": USD}`, shared by every matrix and every paid play.py run, updated under the
-same lock (`budget.json.lock`). A job does not
-start when `spent + its reserve > cap` (reserve = a paid client's per-run `max_cost` for the scenario, 0 when it has
+same lock (`budget.json.lock`). A matrix may also name `shared` budget files: then its own file caps this matrix
+and each shared one caps everything that charges it (several matrices sharing one API key's money, each with its
+own share): every file is checked before a job and charged when it ends. A job does not
+start when `spent + its reserve > cap` of any of them (reserve = a paid client's per-run `max_cost` for the scenario, 0 when it has
 none: then the overshoot is at most one run; 0 for a subscription client, never charged); a missing or broken file
 stops the matrix (`budget`), also one gone or broken when a run's cost is added (the end record keeps the cost). A run's cost is added as it ends unless the runner already settled it (`RunResult.charged`:
 play.py adds a paid run's cost itself, and subscription runs aren't billed). A paid run whose cost is unknown stops
@@ -138,11 +140,13 @@ class Matrix:
         guard: Callable[[], str | None] | None = None,
         stopped: Callable[[], bool] | None = None,
         disk: Callable[[dict[str, Any]], str | None] | None = None,
+        shared: Sequence[str | Path] = (),
         max_reruns: int = MAX_RERUNS,
         guard_poll_s: float = 60.0,
         guard_max_wait_s: float = 3600.0,
     ):
         self.root, self.run_one, self.budget = Path(root), run_one, Path(budget)
+        self.budgets = [self.budget, *(Path(p) for p in shared)]  # the matrix's own first: each is checked, charged
         self.now, self.sleep, self.guard, self.stopped, self.disk = now, sleep, guard, stopped, disk
         self.max_reruns, self.guard_poll_s, self.guard_max_wait_s = max_reruns, guard_poll_s, guard_max_wait_s
         self.queue = self.root / "queue.jsonl"
@@ -236,13 +240,14 @@ class Matrix:
         added (the budget file gone or broken since the run started: the end record keeps the cost)."""
         self._append({"type": "end", "job": job["id"], "attempt": attempt, "t": self.now(), "result": asdict(result)})
         if result.cost_usd and not result.charged:
-            try:
-                b = spend.add_spend(
-                    self.budget, result.cost_usd, self.now(), matrix=self._plan()["name"], job=job["id"]
-                )
-            except (OSError, ValueError):
-                return False
-            return b is not None
+            ok = True
+            for path in self.budgets:  # every one, even after a failure: each keeps what it can
+                try:
+                    b = spend.add_spend(path, result.cost_usd, self.now(), matrix=self._plan()["name"], job=job["id"])
+                except (OSError, ValueError):
+                    b = None
+                ok = ok and b is not None
+            return ok
         return True
 
     def _wait_for_guard(self, jobs: dict, job: dict) -> str | None:
@@ -286,11 +291,11 @@ class Matrix:
             st = todo[0]
             job = st["job"]
             try:
-                budget = read_budget(self.budget)
+                budgets = [read_budget(p) for p in self.budgets]
             except (OSError, ValueError):
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET
-            if budget["spent"] + reserve(job) > budget["cap"]:
+            if any(b["spent"] + reserve(job) > b["cap"] for b in budgets):
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET
             if self.disk is not None and (why := self.disk(job)) is not None:

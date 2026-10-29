@@ -12,7 +12,11 @@ The matrix file (paths relative to the repo):
 
     [budget]
     file = "runtime/budget.json"                      # the machine's shared budget (the default)
+    shared = ["runtime/budget-anthropic.json"]        # optional: budgets this matrix also counts against
     max_cost = { nautiloid = 5.0 }                    # USD per run of a scenario: the reserve and a paid run's cap
+
+With `shared`, `file` is this matrix's own share: a job starts only if it fits every file, and its cost goes into
+every file (bench.matrix).
 
 Cells that differ by model (e.g. 3 paid runs × 2 conditions plus 1 subscription run) go in `[[group]]` tables, each
 with its own models, scenarios, conditions and repeats, instead of the top-level four. The groups' jobs merge
@@ -149,6 +153,12 @@ def load(path: str | Path, repo: Path) -> dict:
         isinstance(v, int | float) and not isinstance(v, bool) and v > 0 for v in max_cost.values()
     ):
         raise MatrixFileError(f"{path}: budget.max_cost maps scenarios to USD > 0")
+    shared = budget.get("shared", [])
+    if not isinstance(shared, list) or not all(isinstance(f, str) and f for f in shared):
+        raise MatrixFileError(f"{path}: budget.shared lists budget files")
+    own = budget.get("file", BUDGET)
+    if own in shared or len(set(shared)) != len(shared):
+        raise MatrixFileError(f"{path}: budget.shared lists a budget file twice")
     groups = raw.get("group")
     if groups is None:
         groups = [raw]
@@ -180,7 +190,8 @@ def load(path: str | Path, repo: Path) -> dict:
         "name": name,
         "path": path,
         "jobs": jobs,
-        "budget": repo / budget.get("file", BUDGET),
+        "budget": repo / own,
+        "shared": [repo / f for f in shared],
         "conditions": conds,
         "allow_gaps": bool(raw.get("allow_gaps", False)),
         "scenarios": loaded,
@@ -230,11 +241,12 @@ def print_plan(m: dict, out: TextIO) -> None:
     _table(rows, out)
     reserve = sum(j["max_cost"] for j in paid)
     print(f"\n{len(jobs)} jobs ({len(paid)} paid), reserve {_usd(reserve)}", file=out)
-    try:
-        b = matrix.read_budget(m["budget"])
-        print(f"budget {m['budget']}: {_usd(b['spent'])} of {_usd(b['cap'])} spent", file=out)
-    except (OSError, ValueError) as e:
-        print(f"budget {m['budget']}: unreadable ({e}): run stops before its first job", file=out)
+    for path in [m["budget"], *m["shared"]]:
+        try:
+            b = matrix.read_budget(path)
+            print(f"budget {path}: {_usd(b['spent'])} of {_usd(b['cap'])} spent", file=out)
+        except (OSError, ValueError) as e:
+            print(f"budget {path}: unreadable ({e}): run stops before its first job", file=out)
     for name, why in m["skipped"].items():
         print(f"scenario {name}: skipped, not ready: {why}", file=out)
     for c, client in sorted({(j["condition"], j["client"]) for j in m["jobs"]}):
@@ -343,7 +355,7 @@ def main(
     def disk(job: dict) -> str | None:  # the job's recording and video must fit (bg3harness.diskguard)
         return diskguard.start_refusal(runtime, m["scenarios"][job["scenario"]]["caps"]["run_hours"] * 60)
 
-    mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep, stopped=stopped, disk=disk)
+    mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep, stopped=stopped, disk=disk, shared=m["shared"])
     try:
         mx.create(m["name"], m["jobs"])
     except ValueError as e:

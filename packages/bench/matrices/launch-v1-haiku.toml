@@ -32,7 +32,11 @@ conditions = ["rules"]
 repeats = 3
 
 [budget]
-file = "runtime/budget-anthropic.json"
+# Its own share (cap $35 in runtime/budget-haiku.json: Haiku 35 + Sonnet 65 + Opus 70 = 170) and the shared Anthropic
+# budget (runtime/budget-anthropic.json, cap 175, which holds the pilot's and earlier spend): a job starts only if
+# its max_cost fits both, and its cost goes into both.
+file = "runtime/budget-haiku.json"
+shared = ["runtime/budget-anthropic.json"]
 
 [budget.max_cost]
 crash_site_grove = 4.21

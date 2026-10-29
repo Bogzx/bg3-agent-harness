@@ -461,3 +461,39 @@ def test_legacy_cli_profile_jobs(tmp_path):
     sub = {"slug": "claude-opus-5-5", "client": "claude", "profile": "profiles/opus-5.5-claude-code.toml"}
     cmd = run_one.command(matrix.plan([sub], ["grove"], ["rules"], 1)[0], "s", 1)
     assert cmd[-2:] == ["--profile", "profiles/opus-5.5-claude-code.toml"] and "--max-cost" not in cmd
+
+
+def test_a_shared_budget_is_checked_and_charged_with_the_matrix_own(tmp_path):
+    jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 3, max_cost={"nautiloid": 2.0, "grove": 2.0})
+    shared = tmp_path / "budget-anthropic.json"
+    shared.write_text(json.dumps({"cap": 175.0, "spent": 170.5}))  # another matrix's spend: $4.5 left
+    run = FakeRun()
+    m, own, _ = make(tmp_path, run, cap=35.0, jobs=jobs, shared=[shared])
+    # own: $35, plenty; shared: 170.5 + 2 <= 175 (run, $1), 171.5 + 2 (run), 172.5 + 2 (run), 173.5 + 2 > 175: stop
+    assert m.run() == matrix.BUDGET and len(run.calls) == 3
+    assert json.loads(own.read_text())["spent"] == 3.0
+    b = json.loads(shared.read_text())
+    assert b["spent"] == 173.5 and b["last"]["matrix"] == "night1"
+    assert progress(tmp_path)["spent_usd"] == 3.0  # the matrix's own share
+    shared.write_text(json.dumps({"cap": 175.0, "spent": 0.0}))
+    own.write_text(json.dumps({"cap": 4.5, "spent": 3.0}))  # now the matrix's own cap binds
+    assert m.run() == matrix.BUDGET and len(run.calls) == 3
+    own.write_text(json.dumps({"cap": 35.0, "spent": 3.0}))
+    assert m.run() == matrix.FINISHED and len(run.calls) == 6
+    assert (json.loads(own.read_text())["spent"], json.loads(shared.read_text())["spent"]) == (6.0, 3.0)
+
+
+def test_a_missing_shared_budget_stops_before_a_job_and_one_gone_at_the_end_stops_after(tmp_path):
+    shared = tmp_path / "budget-anthropic.json"
+    run = FakeRun()
+    m, own, _ = make(tmp_path, run, shared=[shared])
+    assert m.run() == matrix.BUDGET and run.calls == []  # the shared file isn't there
+    shared.write_text(json.dumps({"cap": 100.0, "spent": 0.0}))
+
+    def gone(job):
+        shared.unlink()
+        return RunResult("x", True, True, 1.0)
+
+    m2, own, _ = make(tmp_path, gone, shared=[shared])
+    assert m2.run() == matrix.BUDGET
+    assert json.loads(own.read_text())["spent"] == 1.0  # the own file still took the cost
