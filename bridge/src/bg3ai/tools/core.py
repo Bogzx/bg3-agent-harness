@@ -90,8 +90,7 @@ _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 
 def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = None) -> None:
     # Every tool result passes here (via _finish): one latency record per call (metrics.py).
-    METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not result.startswith(("FAILED", "NOT READY", "REFUSED")),
-                      extra=extra)
+    METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not tool_classes.failed(result, tool), extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with open(RUNTIME / "actions.jsonl", "a") as f:

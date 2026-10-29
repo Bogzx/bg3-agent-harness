@@ -15,7 +15,7 @@ from pathlib import Path
 from bg3ai import tool_classes
 from bg3ai.game import JobResult
 from bg3ai.tools import core, plumbing
-from test_turn_macros import Base  # noqa: F401  (a test runtime for the server)
+from test_turn_macros import Base  # a test runtime for the server (and LatencyMetrics)
 
 SRC = Path(tool_classes.__file__).parent
 _WORD = re.compile(r"\b(?:FAILED|NOT READY|REFUSED|CHAIN STOPPED)\b")
@@ -169,6 +169,19 @@ class FailedResults(unittest.TestCase):
         self.assertTrue(noted.is_error)  # the server passes the called tool's name
         self.assertEqual(bad.content[0].text, "act: FAILED — no path")
         self.assertIsInstance(core.mcp, core.Server)
+
+
+class LatencyMetrics(Base):
+    def test_a_failed_result_in_any_form_is_not_ok_in_the_latency_record(self):
+        # core._log's ok flag checked startswith("FAILED", ...): "jump_to: FAILED — ..." counted as a success
+        seen: list[bool] = []
+        real = core.METRICS.tool_done
+        core.METRICS.tool_done = lambda tool, ms, nested=False, ok=True, extra=None: seen.append(ok)  # type: ignore[method-assign]
+        self.addCleanup(setattr, core.METRICS, "tool_done", real)
+        core._log("jump_to", {}, "jump_to: FAILED — that spot is not in view", 5.0)
+        core._log("combat_turn", {}, "TURN e4 Tav (round 2)\naction: x: FAILED — no line of sight", 5.0)
+        core._log("move_to", {}, "move_to: done — dist=0", 5.0)
+        self.assertEqual(seen, [False, True, True])
 
 
 if __name__ == "__main__":
