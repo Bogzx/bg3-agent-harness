@@ -28,8 +28,8 @@ def test_eval_logs_round_trip(tmp_path):
     logs = export_inspect.to_evallogs(release, goals={"nautiloid": "nautiloid_escaped"}, run_results=per_run)
     paths = export_inspect.write(logs, tmp_path / "logs")
     assert [p.name for p in paths] == [
-        "bg3-bench_openrouter_x_y_rules_c_1a2b.eval",
-        "bg3-bench_opus_default.eval",
+        "bg3-bench_openrouter_x_y_pi_rules_c_1a2b.eval",
+        "bg3-bench_opus_pi_default.eval",
     ]
     back = read_eval_log(str(paths[1]))
     assert back.status == "success" and back.eval.model == "opus" and back.eval.task == "bg3-bench"
@@ -50,7 +50,7 @@ def test_eval_logs_round_trip(tmp_path):
     assert score.metrics["accuracy"].value == 1.0
     assert score.metrics["ci_lo"].value <= 1.0 == score.metrics["ci_hi"].value
     other = read_eval_log(str(paths[0]))
-    assert other.eval.task_args == {"condition": "rules+c@1a2b"}
+    assert other.eval.task_args == {"condition": "rules+c@1a2b", "client": "pi"}
     assert other.samples[0].scores["goal"].value == 0.0 and other.samples[0].scores["goal"].answer == "failed"
 
 
@@ -79,3 +79,17 @@ def test_a_maximise_run_exports_its_gain_not_a_failed_goal():
     gain = log.samples[0].scores["gain"]
     assert (gain.value, gain.answer, gain.metadata) == (517, "gold", score) and "goal" not in log.samples[0].scores
     assert log.samples[1].scores == {} and log.results.scores[0].metrics == {}  # no pass: no accuracy
+
+
+def test_one_model_through_two_clients_is_two_logs(tmp_path):
+    release, _ = release_and_results()
+    twin = [{**g, "client": "codex"} for g in release["groups"] if g["model"] == "opus"]
+    release["groups"] += twin
+    release["runs"] += [
+        {**r, "client": "codex", "run_id": r["run_id"] + "-c"} for r in release["runs"] if r["model"] == "opus"
+    ]
+    paths = export_inspect.write(export_inspect.to_evallogs(release), tmp_path)
+    assert sorted(p.name for p in paths if "_opus_" in p.name) == [
+        "bg3-bench_opus_codex_default.eval",
+        "bg3-bench_opus_pi_default.eval",
+    ]

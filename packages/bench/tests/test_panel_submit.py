@@ -1,5 +1,6 @@
 # pyright: basic
 import email.message
+import hashlib
 import io
 import json
 import subprocess
@@ -14,6 +15,11 @@ SHA = "ab" * 32
 VID = "dQw4w9WgXcQ"
 
 
+def write_archive(b: Path) -> None:
+    """The pack keeps bundle.tar.gz beside the bundle dir, rewritten with each step; here its bytes name bundle.json's."""
+    (b.parent / "bundle.tar.gz").write_bytes(b"tgz:" + (b / "bundle.json").read_bytes())
+
+
 class FakeBundler:
     """Packs a run as bundle.json + result.json; the verdict is set by the test."""
 
@@ -26,6 +32,7 @@ class FakeBundler:
         b.mkdir(parents=True)
         (b / "result.json").write_text('{"valid": true}')
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}]}))
+        write_archive(b)
         return SHA, b
 
     def validate(self, bundle_dir, *, literals, submission):
@@ -40,6 +47,7 @@ class FakeBundler:
         (b / "render.json").write_text("{}")
         names = [{"name": "result.json"}, {"name": "render.json"}]
         (b / "bundle.json").write_text(json.dumps({"files": names}))
+        write_archive(b)
         return "ef" * 32, b
 
     def add_video(self, render_dir, out_dir, *, youtube):
@@ -53,15 +61,18 @@ class FakeBundler:
         b = out_dir / "bundle"
         env = json.loads((b / "bundle.json").read_text())
         (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
+        write_archive(b)
         return "0a" * 32, b
 
 
 class FakeSite:
-    def __init__(self, post=(202, {"id": "sub1", "status": "received", "bundle_sha256": SHA}), get=None) -> None:
+    def __init__(
+        self, post=(202, {"id": "sub1", "status": "queued", "archive_sha256": "cc" * 32, "flags": []}), get=None
+    ) -> None:
         self.post, self.get, self.calls = post, get or (200, {"status": "validating", "checks": []}), []
 
-    def post_submission(self, token, files, youtube_url):
-        self.calls.append(("post", token, [n for n, _ in files], youtube_url))
+    def post_submission(self, token, archive):
+        self.calls.append(("post", token, archive))
         return self.post
 
     def get_submission(self, token, submission_id):
@@ -142,8 +153,10 @@ def test_prepare_upload_poll(run_dir, tmp_path):
     )
     final(root)
     doc = submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
-    assert doc["id"] == "sub1" and doc["status"] == "received" and doc["youtube_id"] == VID
-    assert site.calls == [("post", "tok", ["bundle.json", "result.json"], f"https://www.youtube.com/watch?v={VID}")]
+    assert doc["id"] == "sub1" and doc["status"] == "queued" and doc["youtube_id"] == VID
+    assert doc["archive_sha256"] == "cc" * 32
+    (bdir,) = [Path(json.loads((root / "s1" / submit.PREPARED).read_text())["bundle_dir"])]
+    assert site.calls == [("post", "tok", (bdir.parent / "bundle.tar.gz").read_bytes())]  # the archive, whole
     assert submit.submitted(root, "s1")
     with pytest.raises(panel.PanelError, match="submitted already"):
         submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
@@ -189,7 +202,7 @@ def test_upload_refusals(run_dir, tmp_path):
         ((422, {"error": {"code": "checks", "checks": [{"code": "S01", "ok": False}, {"code": "F01", "ok": True}]}}),
          "failed checks: S01$"),
         ((429, {"error": {"code": "rate"}, "retry_after": "120"}), "try again in 120 s"),
-        ((202, {"status": "received"}), "HTTP 202"),
+        ((202, {"status": "queued"}), "HTTP 202"),
     ],
 )  # fmt: skip
 def test_site_refusals_are_shown_and_nothing_is_recorded(run_dir, tmp_path, answer, message):
@@ -213,26 +226,22 @@ class FakeResponse(io.BytesIO):
         self.status, self.headers = status, headers or {}
 
 
-def test_http_site_posts_multipart_with_the_bearer_token():
+def test_http_site_posts_the_archive_with_its_checksum_and_the_bearer_token():
     seen = []
 
     def urlopen(req, timeout):
         seen.append(req)
-        return FakeResponse(202, b'{"id": "sub1", "status": "received"}')
+        return FakeResponse(202, b'{"id": "sub1", "status": "queued"}')
 
-    site = submit.HttpSite("https://bench.example", urlopen=urlopen, new_boundary=lambda: "BOUND")
-    status, body = site.post_submission("bgb_tok", [("bundle.json", b"{}")], "https://www.youtube.com/watch?v=x")
+    site = submit.HttpSite("https://bench.example", urlopen=urlopen)
+    status, body = site.post_submission("bgb_tok", b"\x1f\x8bgzip bytes")
     assert status == 202 and body["id"] == "sub1"
     (req,) = seen
     assert req.full_url == "https://bench.example/api/submissions" and req.get_method() == "POST"
     assert req.get_header("Authorization") == "Bearer bgb_tok"
-    assert req.get_header("Content-type") == "multipart/form-data; boundary=BOUND"
-    assert req.data == (
-        b'--BOUND\r\nContent-Disposition: form-data; name="bundle.json"; filename="bundle.json"\r\n'
-        b"Content-Type: application/octet-stream\r\n\r\n{}\r\n"
-        b'--BOUND\r\nContent-Disposition: form-data; name="youtube_url"\r\n'
-        b"Content-Type: text/plain; charset=utf-8\r\n\r\nhttps://www.youtube.com/watch?v=x\r\n--BOUND--\r\n"
-    )
+    assert req.get_header("Content-type") == "application/gzip"
+    assert req.get_header("X-archive-sha256") == hashlib.sha256(b"\x1f\x8bgzip bytes").hexdigest()
+    assert req.data == b"\x1f\x8bgzip bytes"  # the body is the archive itself: no multipart, no youtube_url
 
 
 def test_http_site_errors_and_status():
@@ -492,8 +501,8 @@ def test_add_video_names_the_upload_in_bundle_json_and_upload_sends_it(run_dir, 
         submit.upload(root, "s1", bundle_sha256="ef" * 32, token="tok", site=site)
     doc = submit.upload(root, "s1", bundle_sha256="0a" * 32, token="tok", site=site)
     assert doc["youtube_id"] == VID
-    assert site.calls == [("post", "tok", ["bundle.json", "result.json", "render.json"],
-                           f"https://www.youtube.com/watch?v={VID}")]  # fmt: skip
+    (call,) = site.calls
+    assert call[:2] == ("post", "tok") and call[2].startswith(b"tgz:") and VID.encode() in call[2]  # the video's id
 
 
 def test_add_video_refusals(run_dir, tmp_path):
@@ -541,7 +550,7 @@ def test_poll_refusals(run_dir, tmp_path):
     gone = FakeSite(get=(404, {"error": {"code": "not_found"}}))
     with pytest.raises(panel.PanelError, match="HTTP 404.*not_found"):
         submit.poll(root, "s1", token="t", site=gone)
-    assert submit.state(root, "s1")["submission"]["status"] == "received"
+    assert submit.state(root, "s1")["submission"]["status"] == "queued"
 
 
 def test_bundle_listing_needs_an_envelope(tmp_path):
@@ -655,3 +664,19 @@ def test_videos_todo_lists_each_rendered_run_without_a_link_and_add_videos_links
     assert "render the evidence video first" in bad[0]["error"] and "bad run" in bad[1]["error"]
     with pytest.raises(panel.PanelError, match="items must be a list"):
         submit.add_videos(root, [], b, literals=[])
+
+
+def test_upload_needs_the_archive_and_reports_the_sites_refusals(run_dir, tmp_path):
+    root, b = tmp_path / "submissions", FakeBundler()
+    submit.prepare(run_dir, root, b, attempt_n=1, unsubmitted_valid=0, literals=[])
+    final(root)
+    archive = next(root.glob("s1/*/bundle.tar.gz"))
+    archive.unlink()
+    with pytest.raises(panel.PanelError, match="bundle.tar.gz is missing: validate again"):
+        submit.upload(root, "s1", bundle_sha256=SHA, token="t", site=FakeSite())
+    archive.write_bytes(b"tgz")
+    for status, code in ((409, "duplicate"), (422, "checksum_mismatch")):
+        site = FakeSite((status, {"error": {"code": code}}))
+        with pytest.raises(panel.PanelError, match=f"HTTP {status}.*{code}"):
+            submit.upload(root, "s1", bundle_sha256=SHA, token="t", site=site)
+        assert not submit.submitted(root, "s1")

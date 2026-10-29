@@ -22,8 +22,10 @@ A maximise scenario's result (scenario.py `maximise`) has no pass: `passed` and 
 is graders.measure's {fact, start, end, gain, peak}, the gain being the score. Its runs are left out of every pass
 rate; a release run carries the score.
 
-`build_results` aggregates (manifest, result) pairs per (model, condition) with stats.summarize over valid runs, and
-ranks the models of each condition (`ranking`): a model is ranked when it has valid runs in at least RANKED_SHARE of
+`build_results` aggregates (manifest, result) pairs per (client, model, condition) with stats.summarize over valid
+runs: a leaderboard row is a model played through one client (the manifest's `client.name`; null for a human), so
+one model through two clients is two rows. A Claude Code run (PILOT_CLIENTS: a subscription CLI, played as a pilot)
+never enters a release. Each condition's rows are ranked (`ranking`): a model is ranked when it has valid runs in at least RANKED_SHARE of
 the condition's pass/fail scenarios (no choice, no maximise: 6 of 8); the suite score is the mean pass rate over the
 common set, the pass/fail scenarios every ranked model has a valid run of; its rank range and interval come from
 stats.rank_ranges (seeded). An unranked model's suite score and interval (stats.bootstrap_mean) are over its own
@@ -52,6 +54,7 @@ SCHEMA = 1
 # failed: a run that its live verdict ended on a fired never or a party wipe (a maximise run's too: its score stands)
 OUTCOMES = ("reached", "failed", "timeout", "over_budget", "gave_up", "runner_error")
 RANKED_SHARE = 2 / 3  # a model is ranked with valid runs in at least this share of its condition's pass/fail scenarios
+PILOT_CLIENTS = frozenset({"claude"})  # their runs are pilots: build_results leaves them out of a release
 
 
 def applied_seed(record: dict) -> int | None:
@@ -148,13 +151,22 @@ def game_pins(manifest: dict) -> dict:
     }
 
 
+def client_of(manifest: dict) -> str | None:
+    """The client a run played through (manifest `client.name`); None for a human's run."""
+    return (manifest.get("client") or {}).get("name")
+
+
+def _row(client: str | None, model: str) -> str:
+    """A leaderboard row's key inside the build: the model through one client."""
+    return f"{client}/{model}" if client else model
+
+
 def _mixed_pins(pairs: Iterable[tuple[dict, dict]]) -> list[str]:
-    """The cells (scenario/model/condition) whose runs cite different game pins, with the pins that differ."""
+    """The cells (scenario/client model/condition) whose runs cite different game pins, with the pins that differ."""
     cells: dict[str, list[dict]] = {}
     for man, _ in pairs:
-        cells.setdefault(f"{man['scenario']['name']}/{man['model']['slug']}/{man['condition']}", []).append(
-            game_pins(man)
-        )
+        row = _row(client_of(man), man["model"]["slug"])
+        cells.setdefault(f"{man['scenario']['name']}/{row}/{man['condition']}", []).append(game_pins(man))
     out = []
     for cell, pins in sorted(cells.items()):
         if differ := sorted(k for k in pins[0] if len({p[k] for p in pins}) > 1):
@@ -181,7 +193,8 @@ def build_results(
 ) -> dict:
     """(manifest, result) pairs -> results v1. Each group's bootstrap gets a fresh random.Random(seed), so its
         numbers do not depend on which other groups are in the release. Runs of a `holdout` scenario are left out
-        entirely (a published release never contains them; contamination.holdout_names lists them). A release whose
+        entirely (a published release never contains them; contamination.holdout_names lists them), and so are the
+    runs of a PILOT_CLIENTS client. A release whose
     judge (manifest `judge`) is the same model or family as a contestant is refused: the judge never scores itself.
     So is one whose runs are of more than one suite version, or of another suite than its `bench_tag`, or one with a
     cell whose runs cite different game pins."""
@@ -189,18 +202,19 @@ def build_results(
     for man, res in pairs:
         if man["run_id"] != res["run_id"]:
             raise ValueError(f"manifest {man['run_id']!r} paired with result {res['run_id']!r}")
-        if man["scenario"]["name"] in holdout:
+        if man["scenario"]["name"] in holdout or client_of(man) in PILOT_CLIENTS:
             continue
         pairs_kept.append((man, res))
-        key = (man["model"]["slug"], man["condition"])
+        key = (client_of(man), man["model"]["slug"], man["condition"])
         groups.setdefault(key, []).append((man["scenario"]["name"], res))
         runs.append(
             {
                 "run_id": res["run_id"],
                 "versions": {**man["versions"], "suite": suite.suite_version(man["versions"]["bench"])},
                 "scenario": man["scenario"]["name"],
-                "model": key[0],
-                "condition": key[1],
+                "client": key[0],
+                "model": key[1],
+                "condition": key[2],
                 "valid": res["valid"],
                 "passed": res["passed"],
                 "t_pass_s": res["t_pass_s"],
@@ -223,7 +237,7 @@ def build_results(
         raise ValueError(f"release {bench_tag} holds runs of {suites[0]}")
     if mixed := _mixed_pins(pairs_kept):
         raise ValueError(f"runs of one cell with different game pins: {'; '.join(mixed)}")
-    contestants = {model for model, _ in groups}
+    contestants = {model for _, model, _ in groups}
     for man, _ in pairs_kept:
         judge = (man.get("judge") or {}).get("model")
         clash = sorted(m for m in contestants if same_model(judge, m))
@@ -234,7 +248,9 @@ def build_results(
             )
     harness_of = {r["run_id"]: r["versions"]["harness"] for r in runs}
     out_groups = []
-    for (model, condition), members in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
+    for (client, model, condition), members in sorted(
+        groups.items(), key=lambda kv: (kv[0][1], kv[0][0] or "", kv[0][2] or "")
+    ):
         valid = [(s, r) for s, r in members if r["valid"]]
         by_scenario: dict[str, list[bool]] = {}
         for s, r in valid:
@@ -245,6 +261,7 @@ def build_results(
         thinks = [r["think_s"] for _, r in valid if r["think_s"] is not None]
         out_groups.append(
             {
+                "client": client,
                 "model": model,
                 "condition": condition,
                 "n_runs": len(members),
@@ -257,7 +274,8 @@ def build_results(
                 "harness": sorted({v for _, r in members if (v := harness_of[r["run_id"]]) is not None}),
             }
         )
-    ranking = [_rank(c, out_groups, groups, seed, b) for c in sorted({c for _, c in groups}, key=lambda c: c or "")]
+    conditions = sorted({c for _, _, c in groups}, key=lambda c: c or "")
+    ranking = [_rank(c, out_groups, groups, seed, b) for c in conditions]
     return {
         "schema": SCHEMA,
         "bench_tag": bench_tag,
@@ -275,7 +293,7 @@ def _rank(
     condition: str | None, out_groups: list[dict], groups: dict[tuple, list[tuple[str, dict]]], seed: int, b: int
 ) -> dict:
     """One condition's ranking; sets each of its groups' suite_score, suite_score_ci, suite_n, rank_range, ranked."""
-    members = {m: rs for (m, c), rs in groups.items() if c == condition}
+    members = {_row(cl, m): rs for (cl, m, c), rs in groups.items() if c == condition}
     passfail = {s for rs in members.values() for s, r in rs if r["passed"] is not None and not r.get("choices")}
     need = math.ceil(RANKED_SHARE * len(passfail) - 1e-9)
     scored: dict[str, dict[str, list[float]]] = {}
@@ -291,8 +309,9 @@ def _rank(
     for g in out_groups:
         if g["condition"] != condition:
             continue
-        cells = {s: scored[g["model"]][s] for s in sorted(common & set(scored[g["model"]]))}
-        rr = ranges.get(g["model"])
+        row = _row(g["client"], g["model"])
+        cells = {s: scored[row][s] for s in sorted(common & set(scored[row]))}
+        rr = ranges.get(row)
         if rr is None and cells:  # unranked: the same two-level bootstrap over its own cells of the common set
             _, lo, hi = stats.bootstrap_mean(cells, random.Random(seed), b)
             rr = {"rank": None, "ci": (lo, hi)}
@@ -301,16 +320,18 @@ def _rank(
             suite_score_ci=list(rr["ci"]) if rr else None,
             suite_n=len(cells),
             rank_range=list(rr["rank"]) if rr and rr["rank"] else None,
-            ranked=g["model"] in ranges,
+            ranked=row in ranges,
         )
     mine_groups = [g for g in out_groups if g["condition"] == condition]
-    order = sorted(mine_groups, key=lambda g: (not g["ranked"], -(g["suite_score"] or 0.0), g["model"]))
+    order = sorted(
+        mine_groups, key=lambda g: (not g["ranked"], -(g["suite_score"] or 0.0), g["model"], g["client"] or "")
+    )
     return {
         "condition": condition,
         "scenarios": sorted(common),
         "of": len(passfail),
         "min_cells": need,
-        "models": [g["model"] for g in order],
+        "models": [{"client": g["client"], "model": g["model"]} for g in order],
     }
 
 

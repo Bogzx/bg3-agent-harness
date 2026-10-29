@@ -1,10 +1,10 @@
-"""Inspect AI export: a release (results.json v1) -> one `.eval` log per (model, condition).
+"""Inspect AI export: a release (results.json v1) -> one `.eval` log per group (client, model, condition).
 
 Optional: needs the `inspect` extra (`uv sync --extra inspect`, inspect-ai pinned in pyproject.toml). Our JSON stays
 canonical; the `.eval` files are a view of it for Inspect's log viewer (`inspect view bundle --log-dir <dir>
 --output-dir <www>` builds a static site; it needs a server with HTTP range requests).
 
-Mapping (research/arch/bench.md 2.4): task `bg3-bench`, the condition in `task_args`; one sample per valid run with
+Mapping (research/arch/bench.md 2.4): task `bg3-bench`, the condition and the client in `task_args`; one sample per valid run with
 `id` = scenario and `epoch` = the run's 1-based index among that scenario's valid runs (in results order), `target` =
 the scenario's goal text; score `goal` is 1.0/0.0; `model_usage` carries the billed cost and tokens when the per-run
 result is given. Invalid runs are not scored, so they are not samples; their count is in the log metadata.
@@ -93,8 +93,8 @@ def to_evallogs(
     created = _iso(release["created"])
     logs = []
     for group in release["groups"]:
-        key = (group["model"], group["condition"])
-        runs = [r for r in release["runs"] if (r["model"], r["condition"]) == key and r["valid"]]
+        key = (group.get("client"), group["model"], group["condition"])  # a group: a model through one client
+        runs = [r for r in release["runs"] if (r.get("client"), r["model"], r["condition"]) == key and r["valid"]]
         seen: dict[str, int] = {}
         samples = []
         for run in runs:
@@ -114,7 +114,7 @@ def to_evallogs(
                 eval=EvalSpec(
                     created=created,
                     task=TASK,
-                    task_args={"condition": group["condition"]},
+                    task_args={"condition": group["condition"], "client": group.get("client")},
                     dataset=EvalDataset(name=TASK, samples=len(seen)),
                     model=group["model"],
                     config=EvalConfig(epochs=max(seen.values(), default=1)),
@@ -143,7 +143,8 @@ def _slug(text: str) -> str:
 
 def log_name(log: EvalLog) -> str:
     cond = log.eval.task_args.get("condition") or "default"
-    return f"{TASK}_{_slug(log.eval.model)}_{_slug(cond)}.eval"
+    client = log.eval.task_args.get("client")
+    return f"{TASK}_{_slug(log.eval.model)}{f'_{_slug(client)}' if client else ''}_{_slug(cond)}.eval"
 
 
 def write(logs: list[EvalLog], out_dir: str | Path) -> list[Path]:

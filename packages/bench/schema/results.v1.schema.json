@@ -2,14 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/results.v1.schema.json",
   "title": "Release results v1 (results.json)",
-  "description": "Every run of a release and the statistics per (model, condition), from valid runs only. `stats` is bg3bench.stats.summarize output (null when a group has no valid run). Built by bg3bench.results.build_results.",
+  "description": "Every run of a release and the statistics per (client, model, condition), from valid runs only (no Claude Code run: those are pilots). `stats` is bg3bench.stats.summarize output (null when a group has no valid run). Built by bg3bench.results.build_results.",
   "type": "object",
   "required": ["schema", "bench_tag", "created", "seed", "b", "runs", "groups"],
   "additionalProperties": false,
   "$defs": {
     "num_or_null": {"type": ["number", "null"], "minimum": 0},
     "str_or_null": {"type": ["string", "null"]},
-    "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"}
+    "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"},
+    "client": {"type": ["string", "null"], "minLength": 1, "description": "the client the run played through (manifest client.name; null: a human). A group is a model through one client. Optional, added 2026-10-29"}
   },
   "properties": {
     "schema": {"const": 1},
@@ -34,6 +35,7 @@
             "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}, "suite": {"$ref": "#/$defs/suite"}}
           },
           "scenario": {"type": "string", "minLength": 1},
+          "client": {"$ref": "#/$defs/client"},
           "model": {"type": "string", "minLength": 1},
           "condition": {"$ref": "#/$defs/str_or_null"},
           "valid": {"type": "boolean"},
@@ -89,6 +91,7 @@
         "required": ["model", "condition", "n_runs", "n_invalid", "invalid_rate", "stats", "cost_usd", "wall_s", "think_s"],
         "additionalProperties": false,
         "properties": {
+          "client": {"$ref": "#/$defs/client"},
           "model": {"type": "string", "minLength": 1},
           "condition": {"$ref": "#/$defs/str_or_null"},
           "n_runs": {"type": "integer", "minimum": 1},
@@ -172,7 +175,7 @@
           "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "the common set: pass/fail scenarios (no choice, no maximise) every ranked model has a valid run of"},
           "of": {"type": "integer", "minimum": 0, "description": "the condition's pass/fail scenarios (no choice, no maximise; any run)"},
           "min_cells": {"type": "integer", "minimum": 0, "description": "the pass/fail scenarios with a valid run a model needs to be ranked (results.RANKED_SHARE of `of`, rounded up)"},
-          "models": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "the ranked models by suite_score (best first), then the unranked"}
+          "models": {"type": "array", "items": {"type": "object", "required": ["client", "model"], "additionalProperties": false, "properties": {"client": {"$ref": "#/$defs/client"}, "model": {"type": "string", "minLength": 1}}}, "description": "the condition's groups (a model through one client) ranked by suite_score (best first), then the unranked"}
         }
       }
     }

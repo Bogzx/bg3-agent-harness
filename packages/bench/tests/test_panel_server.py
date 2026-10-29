@@ -43,6 +43,10 @@ class FakeRunner:
         return self.escalated == 1
 
 
+def write_archive(b: Path) -> None:
+    (b.parent / "bundle.tar.gz").write_bytes(b"tgz:" + (b / "bundle.json").read_bytes())
+
+
 class FakeBundler:
     def __init__(self) -> None:
         self.literals: list[str] = []
@@ -52,6 +56,7 @@ class FakeBundler:
         b = out_dir / "bundle"
         b.mkdir(parents=True)
         (b / "bundle.json").write_text(json.dumps({"files": [], "run_hash": RUN_HASH}))
+        write_archive(b)
         return SHA, b
 
     def validate(self, bundle_dir, *, literals, submission):
@@ -62,6 +67,7 @@ class FakeBundler:
         b = out_dir / "bundle"
         (b / "render.json").write_text("{}")
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "render.json"}], "run_hash": RUN_HASH}))
+        write_archive(b)
         return "ef" * 32, b
 
     def add_video(self, render_dir, out_dir, *, youtube):
@@ -70,6 +76,7 @@ class FakeBundler:
         b = out_dir / "bundle"
         env = json.loads((b / "bundle.json").read_text())
         (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
+        write_archive(b)
         return "0a" * 32, b
 
 
@@ -77,9 +84,9 @@ class FakeSite:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def post_submission(self, token, files, youtube_url):
-        self.calls.append(("post", token, youtube_url))
-        return 202, {"id": "sub1", "status": "received"}
+    def post_submission(self, token, archive):
+        self.calls.append(("post", token, archive))
+        return 202, {"id": "sub1", "status": "queued", "flags": []}
 
     def get_submission(self, token, submission_id):
         self.calls.append(("get", token, submission_id))
@@ -608,7 +615,7 @@ def test_submit_flow_over_the_endpoints(server):
     assert server.bundler.video == (mp4.parent, mp4.parent.parent, yt)  # the pasted text: the pack reads the id
     code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": "0a" * 32})
     assert code == 200 and r["id"] == "sub1"
-    assert server.fake_site.calls[0][2] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # bundle.json's video
+    assert b"dQw4w9WgXcQ" in server.fake_site.calls[0][2]  # the archive holds bundle.json with the video
     code, r = post(server, "/api/v1/submit/status", {"run": "s1"})
     assert code == 200 and r["status"] == "accepted"
     assert [c[0] for c in server.fake_site.calls] == ["post", "get"]

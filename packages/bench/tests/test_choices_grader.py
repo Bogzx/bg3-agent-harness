@@ -155,7 +155,7 @@ def test_release_entry() -> None:
 
 def series_and_record() -> tuple[dict[str, Any], dict[str, Any]]:
     sc = json.loads(SCENARIO.read_text())
-    series = {"series": "karlach", "client": "claude", "scenario": {"name": sc["name"], "spec": sc}, "sandbox": "none"}
+    series = {"series": "karlach", "client": "pi", "scenario": {"name": sc["name"], "spec": sc}, "sandbox": "none"}
     record = {"series": "karlach", "run": 1, "started": 1_800_000_000.0, "outcome": "reached", "model": "opus"}
     record |= readout(sc["game_settings"].get("seed"))
     return series, record
