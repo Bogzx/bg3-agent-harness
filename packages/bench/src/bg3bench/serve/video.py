@@ -46,6 +46,8 @@ class Job:
     cost_kind: str = "billed"
     t_pass_s: float | None = None
     site: str = ""
+    pilot: bool = False  # the header's pilot badge
+    ending: str = ""  # how a run that didn't pass ended: WIPED, COST CAP or TIME CAP ("" none of them)
 
 
 class Renderer(Protocol):
@@ -57,6 +59,17 @@ class Renderer(Protocol):
         """{"run", "source", "out", "running", "returncode", "started", "log", "video", "video_bytes"} of the last
         start, or None."""
         ...
+
+
+def ending(res: Mapping[str, Any]) -> str:
+    """The renderer's --ending for a run that didn't pass (result.v1): its time or cost cap, else a party wipe."""
+    if res.get("passed") is True:
+        return ""
+    if res.get("outcome") == "timeout":
+        return "TIME CAP"
+    if res.get("outcome") == "over_budget":
+        return "COST CAP"
+    return "WIPED" if ((res.get("deaths") or {}).get("wipes") or 0) > 0 else ""
 
 
 def job_for(run_dir: Path, man: Mapping[str, Any], res: Mapping[str, Any], sc: Mapping[str, Any] | None, *,
@@ -76,6 +89,8 @@ def job_for(run_dir: Path, man: Mapping[str, Any], res: Mapping[str, Any], sc: M
         cost_kind=str(res.get("cost_kind") or "billed"),
         t_pass_s=res.get("t_pass_s"),
         site=(urlparse(site).hostname or "") if site else "",
+        pilot=bool(res.get("pilot")),
+        ending=ending(res),
     )
 
 
@@ -101,6 +116,10 @@ def command(python: str, job: Job) -> list[str]:
         argv += ["--cap-min", f"{job.cap_min:g}"]
     if job.t_pass_s is not None:
         argv += ["--t-pass-s", f"{job.t_pass_s:g}"]
+    if job.pilot:
+        argv.append("--pilot")
+    if job.ending:
+        argv += ["--ending", job.ending]
     return argv
 
 

@@ -305,6 +305,25 @@ def test_video_job_and_command(run_dir):
     assert video.command("py", bare)[-4:] == ["--run-hash", SHA, "--cost-kind", "billed"] and bare.run_id == "s1"
 
 
+@pytest.mark.parametrize(
+    ("res", "flags"),
+    [
+        ({"passed": True, "outcome": "reached", "deaths": {"wipes": 1}}, []),  # a pass has no ending
+        ({"passed": False, "outcome": "timeout"}, ["--ending", "TIME CAP"]),
+        ({"passed": None, "outcome": "timeout"}, ["--ending", "TIME CAP"]),  # a maximise run ends on its cap
+        ({"passed": False, "outcome": "over_budget"}, ["--ending", "COST CAP"]),
+        ({"passed": False, "outcome": "failed", "deaths": {"fights": 2, "wipes": 1}}, ["--ending", "WIPED"]),
+        ({"passed": False, "outcome": "failed", "deaths": {"wipes": 0}}, []),  # a fired never: no ending to show
+        ({"passed": False, "outcome": "timeout", "pilot": ["memory"]}, ["--pilot", "--ending", "TIME CAP"]),
+        ({"passed": True, "outcome": "reached", "pilot": ["memory"]}, ["--pilot"]),
+    ],
+)
+def test_video_command_passes_pilot_and_ending_from_the_result(run_dir, res, flags):
+    job = video.job_for(run_dir, {}, res, None, source=run_dir / "b", out=run_dir / "r", run_hash=SHA, site=None)
+    argv = video.command("py", job)
+    assert argv[argv.index("billed") + 1 :] == flags
+
+
 def test_video_run_hash_reads_bundle_json(tmp_path):
     (tmp_path / "bundle.json").write_text(json.dumps({"run_hash": SHA}))
     assert video.run_hash(tmp_path) == SHA
