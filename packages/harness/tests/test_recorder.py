@@ -158,12 +158,36 @@ def test_resource_guard(tmp_path: Path):
     assert guard() is None  # no thermal log
     therm.write_text("old\n2026-10-21 22:44:18 cpu=91 acpi=80 amdgpu=71 nvme=51 nv=[70,1,1,1,0x4] profile=b\n")
     assert guard() == "heat: cpu 91 C >= 90"
+    therm.write_text("2026-10-21 22:44:18 cpu=88 acpi=80 amdgpu=71 nvme=51 nv=[70,1,1,1,0x4] profile=b\n")
+    assert guard() == "heat: cpu 88 C >= 87"  # tripped: it clears 3 C under the limit
+    therm.write_text("2026-10-21 22:44:18 cpu=86 acpi=80 amdgpu=71 nvme=51 nv=[70,1,1,1,0x4] profile=b\n")
+    assert guard() is None
     therm.write_text("2026-10-21 22:44:18 cpu=60 acpi=80 amdgpu=71 nvme=51 nv=[83,1,1,1,0x4] profile=b\n")
     assert guard() == "heat: gpu 83 C >= 82"
     clock.t = therm.stat().st_mtime + 31  # stale thermal line: ignored
     assert guard() is None
     mem.write_text("MemAvailable: 1024000 kB\n")
     assert guard() == "ram: 1000 MB available < 1500"
+
+
+def test_resource_guard_resumes_inside_the_limits_and_watches_the_disk(tmp_path: Path):
+    """Launch pilot 2026-10-29: RAM fell to 1860 MB available around the stop. Once tripped, the guard holds until
+    RAM is 400 MB above the floor (ffmpeg's own ~300 MB would trip it again at once); under 1 GB free disk stops it."""
+    mem, free = tmp_path / "meminfo", {"mb": 50_000}
+    guard = recorder.resource_guard(tmp_path / "thermal.log", meminfo=mem, disk=tmp_path, free_mb=lambda p: free["mb"])
+    mem.write_text("MemAvailable: 1460000 kB\n")
+    assert guard() == "ram: 1425 MB available < 1500"
+    mem.write_text("MemAvailable: 1700000 kB\n")
+    assert guard() == "ram: 1660 MB available < 1900"
+    mem.write_text("MemAvailable: 2000000 kB\n")
+    assert guard() is None
+    free["mb"] = 900
+    assert guard() == "disk: 900 MB free < 1024"
+    free["mb"] = 1300
+    assert guard() == "disk: 1300 MB free < 1536"
+    free["mb"] = 1600
+    assert guard() is None
+    assert recorder.disk_free_mb(tmp_path) is not None and recorder.disk_free_mb(tmp_path / "gone") is None
 
 
 # ------------------------------------------------------------ the recorder over a fake ffmpeg
@@ -267,15 +291,54 @@ def test_recorder_guard_stops_and_cools_down(tmp_path: Path, fake_env):
     rec.poll()
     assert rec.run is None and rec.reason == "guard: heat: gpu 83 C >= 82"
     guard["why"] = None
-    clock.t = 1100.0
+    clock.t = 1014.0
     rec.poll()
     assert rec.run is None and rec.reason == "guard cooldown"
-    clock.t = 1130.0
+    clock.t = 1015.0  # GUARD_COOLDOWN_S after it cleared: a dip loses seconds (was 120 s)
     rec.poll()
     assert rec.run is not None
     rec.enabled = False
     rec.poll()
     assert rec.run is None and rec.reason == "disabled"
+
+
+def test_recorder_logs_every_stop_and_start_with_its_reason(tmp_path: Path, fake_env):
+    """Launch pilot 2026-10-29: Opus's recording stopped at 111.8 s of 192.6 s and nothing said why."""
+    clock, game, guard = Clock(1000.0), {"cap": Capture()}, {"why": None}
+    rec = make(tmp_path, clock, game, guard)
+    rec.poll()
+    rec.live.get(after=0, timeout=10)
+    guard["why"] = "ram: 1425 MB available < 1500"
+    clock.t = 1111.8
+    rec.poll()
+    clock.t = 1112.8
+    rec.poll()
+    guard["why"] = None
+    clock.t = 1118.0
+    rec.poll()
+    assert rec.run is not None
+    rec.live.get(after=1, timeout=10)
+    clock.t = 1192.6
+    rec.stop("run end")
+    evs = json.loads((tmp_path / "video" / "index.json").read_text())["events"]
+    assert evs == [
+        {"t": 1000.0, "ev": "start", "after": "starting"},
+        {"t": 1111.8, "ev": "stop", "reason": "ram: 1425 MB available < 1500"},
+        {"t": 1118.0, "ev": "start", "after": "guard: ram: 1425 MB available < 1500"},
+        {"t": 1192.6, "ev": "stop", "reason": "run end"},
+    ]
+    assert make(tmp_path, clock, game).events == evs  # kept across a restart of the recorder
+
+
+def test_recorder_logs_a_crash(tmp_path: Path, fake_env):
+    fake_env.setenv("FAKE_EXIT", "1")
+    clock, game = Clock(1000.0), {"cap": Capture()}
+    rec = make(tmp_path, clock, game)
+    rec.poll()
+    rec.run.proc.wait(10)
+    clock.t = 1002.0
+    rec.poll()
+    assert rec.events[-1] == {"t": 1002.0, "ev": "exit", "code": 1, "restart_in": 5.0}
 
 
 def test_recorder_restarts_when_the_window_changes(tmp_path: Path, fake_env):
@@ -392,3 +455,12 @@ def test_a_bench_run_is_recorded_at_the_evidence_videos_game_size(tmp_path: Path
     assert "scale=1408:792:force_original_aspect_ratio=decrease,pad=1408:792" in " ".join(
         recorder.ffmpeg_args(spec, Capture(":9", None), "rec-1")
     )
+
+
+def test_a_bench_runs_recording_stops_under_1_gb_free(tmp_path: Path, monkeypatch):
+    seen: list[Path] = []
+    monkeypatch.setattr(recorder, "disk_free_mb", lambda p: seen.append(p) or 900)
+    monkeypatch.setattr(recorder, "mem_available_mb", lambda text: 8000)  # not this host's RAM
+    run = recorder.run_recording(tmp_path / "rec", {"DISPLAY": ":9"}, tmp_path, "libx264")
+    assert run.rec.guard() == "disk: 900 MB free < 1024"
+    assert seen == [tmp_path / "rec"]
