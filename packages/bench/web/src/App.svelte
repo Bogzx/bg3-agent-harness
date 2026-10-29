@@ -8,6 +8,7 @@
   import Queue from "./screens/Queue.svelte";
   import Results from "./screens/Results.svelte";
   import Saves from "./screens/Saves.svelte";
+  import Videos from "./screens/Videos.svelte";
   import Settings from "./screens/Settings.svelte";
 
   let screen = $state<Screen>(parseRoute(location.hash));
@@ -46,6 +47,8 @@
     <Queue />
   {:else if screen === "results"}
     <Results />
+  {:else if screen === "videos"}
+    <Videos />
   {:else if screen === "settings"}
     <Settings />
   {:else}
