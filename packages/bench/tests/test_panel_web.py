@@ -75,12 +75,17 @@ class FakeRunner:
         return False
 
 
+def write_archive(b: Path) -> None:
+    (b.parent / "bundle.tar.gz").write_bytes(b"tgz:" + (b / "bundle.json").read_bytes())
+
+
 class FakeBundler:
     def pack(self, run_dir, out_dir, *, attempt, unsubmitted_valid, literals):
         b = out_dir / "bundle"
         b.mkdir(parents=True)
         (b / "result.json").write_text('{"valid": true}')
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}]}))
+        write_archive(b)
         return SHA, b
 
     def validate(self, bundle_dir, *, literals, submission):
@@ -90,6 +95,7 @@ class FakeBundler:
         b = out_dir / "bundle"
         (b / "render.json").write_text("{}")
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}, {"name": "render.json"}]}))
+        write_archive(b)
         return "ef" * 32, b
 
     def add_video(self, render_dir, out_dir, *, youtube):
@@ -97,16 +103,17 @@ class FakeBundler:
         b = out_dir / "bundle"
         env = json.loads((b / "bundle.json").read_text())
         (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
+        write_archive(b)
         return "0a" * 32, b
 
 
 class FakeSite:
     def __init__(self) -> None:
-        self.posts: list[str] = []
+        self.posts: list[bytes] = []
 
-    def post_submission(self, token, files, youtube_url):
-        self.posts.append(youtube_url)
-        return 202, {"id": "sub1", "status": "received"}
+    def post_submission(self, token, archive):
+        self.posts.append(archive)
+        return 202, {"id": "sub1", "status": "queued", "flags": []}
 
     def get_submission(self, token, submission_id):
         return 200, {"status": "accepted", "flags": []}
@@ -263,7 +270,8 @@ def test_results_validate_and_upload(app, page):
     box.get_by_text("0a" * 6).wait_for(timeout=15000)
     upload.click()
     box.get_by_text("Refresh status").wait_for(timeout=15000)
-    assert app.fake_site.posts == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    (posted,) = app.fake_site.posts
+    assert posted.startswith(b"tgz:") and b"dQw4w9WgXcQ" in posted  # the archive, with bundle.json's video
     box.get_by_role("button", name="Refresh status").click()
     box.get_by_text("accepted").wait_for(timeout=15000)
     assert errors == []
