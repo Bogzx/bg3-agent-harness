@@ -67,8 +67,8 @@ def read_jsonl(path: Path) -> list[Json]:
 
 
 def events_logs(run_dir: Path) -> dict[str, list[Json]]:
-    """{file stem: events} for every play process's events log (S001.events.jsonl, S001-c1.events.jsonl, ...)."""
-    return {p.name.removesuffix(".events.jsonl"): read_jsonl(p) for p in sorted(run_dir.glob("*.events.jsonl"))}
+    """{log name: events} for every play process's events log (S001.events.jsonl, S001-c1.events.jsonl, ...)."""
+    return {p.name: read_jsonl(p) for p in sorted(run_dir.glob("*.events.jsonl"))}
 
 
 def run_window(
@@ -92,16 +92,17 @@ def plan(
     facts: Sequence[Mapping[str, Any]],
     start: float,
     end: float,
+    run_hash: str,
     t_pass_s: float | None = None,
     clip_events: bool = False,
 ) -> Plan:
-    """The video of [start, end]: its clips, panel items and changes, strip states and render.json. clip_events:
-    leave out the events after `end` (a sample) instead of refusing the run."""
+    """The video of [start, end] for the run with this run hash: its clips, panel items and changes, strip states and
+    render.json. clip_events: leave out the events after `end` (a sample) instead of refusing the run."""
     cuts = timeline.clips(segments, start, end)
     items = timeline.panel_items(logs, start)
     if clip_events:
         items = [i for i in items if i.at_s <= end - start]
-    sync = timeline.sync_table(items, start, end)
+    sync = timeline.sync_table(items, start, end, run_hash)
     strips = timeline.strip_states(end - start, facts, logs, start, t_pass_s)
     lanes = timeline.lanes(facts, items, start, end - start, t_pass_s)
     return Plan(start, end, cuts, items, timeline.changes(items), strips, sync, lanes)
@@ -192,7 +193,8 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
         start, end = run_window(facts, logs)
         if a.sample_s:
             end = min(end, start + a.sample_s)
-        p = plan(index.get("segments") or [], logs, facts, start, end, a.t_pass_s, clip_events=bool(a.sample_s))
+        segments = index.get("segments") or []
+        p = plan(segments, logs, facts, start, end, a.run_hash, a.t_pass_s, clip_events=bool(a.sample_s))
         if a.work:
             video = render(p, meta, a.index.parent, a.out, a.work, ffmpeg, a.encoder)
         else:

@@ -12,8 +12,8 @@
   gold and the party's HP from facts.jsonl snapshots with their time, a member downed or revived since by the facts
   event's own time, the goal).
 - lanes(): the timeline under the game over the whole run: fights, kills, downs, failed tool results, agent text.
-- sync_table(): render.json, which the run page and the validator read: {video_start, video_end, fps, events:
-  [{file, seq, at_s}]}.
+- sync_table(): render.json (render.v1), which the run page and the validator read: {schema: 1, run_hash,
+  video_start, video_end, fps, events: [{file, seq, at_s}]}, `file` the events log's name (S001.events.jsonl).
 
 Times in the video are seconds from the run's start (`at_s`); the events carry epoch `t`.
 """
@@ -32,6 +32,7 @@ from ..clients import RUNNING_COST
 MAX_GAP_S = 5.0  # the most recording a run may miss anywhere in its window
 MIN_CHANGE_S = 0.5  # the side panel changes at most twice a second
 FPS = 15  # the recorder's
+RENDER_SCHEMA = 1  # render.json's version (the bench's render.v1 schema)
 # Claude's tool results name the image file it saved ("[Image: source: /home/<user>/.claude/...jpg]"): a local path
 IMAGE_SOURCE = re.compile(r"\s*\[Image: source: [^\]]*\]")
 Json = dict[str, Any]
@@ -208,7 +209,7 @@ def summary(tool: str, args: Mapping[str, Any]) -> str:
 
 
 def panel_items(logs: Mapping[str, Iterable[Mapping[str, Any]]], start: float) -> list[Item]:
-    """The side panel's entries from {events file stem: its events}, in time order (file and seq break ties).
+    """The side panel's entries from {events log name: its events}, in time order (file and seq break ties).
     Only visible output: text, tool calls and results; thinking, usage, results and the harness's own events are
     left out."""
     out: list[Item] = []
@@ -376,13 +377,15 @@ def lanes(
     )
 
 
-def sync_table(items: Sequence[Item], start: float, end: float, fps: int = FPS) -> Json:
-    """render.json: the video's window (epoch s), its fps and every panel item's place in the video. RenderError when
-    an item lies past the video's end."""
+def sync_table(items: Sequence[Item], start: float, end: float, run_hash: str, fps: int = FPS) -> Json:
+    """render.json (render.v1): the run it was rendered for (its run hash), the video's window (epoch s), its fps and
+    every panel item's place in the video. RenderError when an item lies past the video's end."""
     late = [i for i in items if i.at_s > end - start + 1e-6]
     if late:
         raise RenderError(f"{len(late)} event(s) after the video's end, the first {late[0].file}#{late[0].seq}")
     return {
+        "schema": RENDER_SCHEMA,
+        "run_hash": run_hash,
         "video_start": start,
         "video_end": end,
         "fps": fps,

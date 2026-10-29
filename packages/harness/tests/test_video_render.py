@@ -64,7 +64,7 @@ def make_plan(run: Path, index: Path) -> render.Plan:
     logs, facts = render.events_logs(run), render.read_jsonl(run / "facts.jsonl")
     start, end = render.run_window(facts, logs)
     segs: list[dict[str, Any]] = json.loads(index.read_text())["segments"]
-    return render.plan(segs, logs, facts, start, end, META.t_pass_s)
+    return render.plan(segs, logs, facts, start, end, META.run_sha256, META.t_pass_s)
 
 
 def test_a_run_becomes_render_json_images_and_the_compose_command(tmp_path: Path):
@@ -76,12 +76,13 @@ def test_a_run_becomes_render_json_images_and_the_compose_command(tmp_path: Path
     assert video == tmp_path / "out" / "evidence.mp4"
     sync = json.loads((tmp_path / "out" / "render.json").read_text())
     assert sync["events"] == [
-        {"file": "S001", "seq": 0, "at_s": 0.5},
-        {"file": "S001", "seq": 1, "at_s": 1.0},
-        {"file": "S001", "seq": 3, "at_s": 3.0},
-        {"file": "S001-c1", "seq": 0, "at_s": 6.0},
+        {"file": "S001.events.jsonl", "seq": 0, "at_s": 0.5},
+        {"file": "S001.events.jsonl", "seq": 1, "at_s": 1.0},
+        {"file": "S001.events.jsonl", "seq": 3, "at_s": 3.0},
+        {"file": "S001-c1.events.jsonl", "seq": 0, "at_s": 6.0},
     ]
     assert (sync["video_start"], sync["video_end"], sync["fps"]) == (T0, T0 + 7.5, 15)
+    assert (sync["schema"], sync["run_hash"]) == (1, "ab" * 32)
     game = (tmp_path / "work" / "game.ffconcat").read_text()
     assert "inpoint 2.000\noutpoint 6.000" in game and "inpoint 0.000\noutpoint 3.500" in game
     compose_args, sheet = ff.calls

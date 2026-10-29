@@ -195,14 +195,16 @@ def test_a_call_summary_reads_as_a_line_not_json():
 
 def test_render_json_lists_every_panel_item_in_the_video_and_refuses_a_late_one():
     items = items_at(1.0, 2.5)
-    assert T.sync_table(items, T0, T0 + 10.0) == {
+    assert T.sync_table(items, T0, T0 + 10.0, "ab" * 32) == {
+        "schema": 1,
+        "run_hash": "ab" * 32,
         "video_start": T0,
         "video_end": T0 + 10.0,
         "fps": 15,
         "events": [{"file": "S001", "seq": 0, "at_s": 1.0}, {"file": "S001", "seq": 1, "at_s": 2.5}],
     }
     with pytest.raises(T.RenderError, match="after the video's end"):
-        T.sync_table(items_at(1.0, 11.0), T0, T0 + 10.0)
+        T.sync_table(items_at(1.0, 11.0), T0, T0 + 10.0, "ab" * 32)
 
 
 def test_a_resumed_claude_conversation_costs_its_highest_running_total_not_the_sum():
