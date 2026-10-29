@@ -33,8 +33,8 @@ def raw(name: str) -> dict:
 
 def test_the_campaign_covers_every_family_with_saves_and_caps_per_scenario():
     sets = {m: set(raw(m)["scenarios"]) for m in ("haiku", "sonnet", "opus", "deepseek")}
-    assert sets["haiku"] == sets["sonnet"] == SCORED | UNSCORED
-    assert sets["deepseek"] == SCORED and len(sets["opus"]) == 4 and sets["opus"] <= SCORED
+    assert sets["haiku"] == sets["sonnet"] == sets["opus"] == SCORED | UNSCORED
+    assert sets["deepseek"] == SCORED
     families = set()
     for name in SCORED | UNSCORED:
         sc = scenario.load(MATRICES.parent / "scenarios" / f"{name}.json")
@@ -66,7 +66,7 @@ def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():
         assert (p.model, p.endpoint.api, p.status) == (f"claude-{name}-5-5", "anthropic-messages", "verified")
 
 
-@pytest.mark.parametrize(("name", "jobs"), [("haiku", 36), ("sonnet", 36), ("opus", 12)])
+@pytest.mark.parametrize(("name", "jobs"), [("haiku", 36), ("sonnet", 36), ("opus", 36)])
 def test_the_claude_campaign_plans_on_its_verified_profiles(name, jobs):
     m = matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)  # allow_unverified = false
     assert not m["skipped"] and len(m["jobs"]) == jobs and all(j["max_cost"] for j in m["jobs"])

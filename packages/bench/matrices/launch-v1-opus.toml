@@ -1,11 +1,11 @@
-# Launch campaign v1, Claude Opus 5.5 through pi and the Anthropic API: 4 scored scenarios x 3 runs = 12 runs
-# (crash_site_grove, fight_act1_grove_gate, fight_act1_windmill, fight_act2_balthazar: the short ones; with 4 of
-# the 12 scenarios Opus is listed but not ranked).
+# Launch campaign v1, Claude Opus 5.5 through pi and the Anthropic API (12 scenarios x 3 runs = 36 runs), the same
+# set as Haiku and Sonnet (orchestrator 2026-10-29: Opus on all 12, ranked like the others).
 # max_cost: each scenario's time cap x $0.28 per minute (the estimate before the pilot) x 1.25, kept: a run it ends
 # is scored over_budget, and it is only what the budget holds back while that run plays.
 # Per minute measured: $0.155 (launch-v1-pilot, 2026-10-29: windmill 3.2 min, $0.50, 96% cache reads), so the caps
-# sit 2.3x above it. Estimate $18 for the 12 runs (114 play minutes), $112 if every run played its whole cap
-# (720 min). Run it last, on what the budget has left.
+# sit 2.3x above it. Estimate $132 for the 36 runs (854 play minutes: earlier pilots' play times, never-played
+# scenarios assumed), $272 if every run played its whole cap (1755 min). Run it last: the budget file's cap stops it
+# when the Anthropic spend reaches it, and the jobs go repeat-major, so what plays is whole repeats first.
 name = "launch-v1-opus"
 allow_gaps = false
 allow_unverified = false
@@ -13,9 +13,17 @@ allow_unverified = false
 models = ["profiles/claude-opus-5-5.toml"]
 scenarios = [
   "crash_site_grove",
+  "act1_goblin_camp_no_fight",
+  "act1_gold_1000",
+  "act1_level_3",
   "fight_act1_grove_gate",
   "fight_act1_windmill",
   "fight_act2_balthazar",
+  "fight_act2_moonrise_assault",
+  "choice_act1_karlach",
+  "choice_act1_minthara",
+  "choice_act2_nightsong",
+  "act3_gold_max",
 ]
 conditions = ["rules"]
 repeats = 3
@@ -25,6 +33,14 @@ file = "runtime/budget-anthropic.json"
 
 [budget.max_cost]
 crash_site_grove = 20.98
+act1_goblin_camp_no_fight = 15.73
+act1_gold_1000 = 15.73
+act1_level_3 = 20.98
 fight_act1_grove_gate = 10.49
 fight_act1_windmill = 20.98
 fight_act2_balthazar = 31.46
+fight_act2_moonrise_assault = 20.98
+choice_act1_karlach = 10.49
+choice_act1_minthara = 10.49
+choice_act2_nightsong = 10.49
+act3_gold_max = 15.73
