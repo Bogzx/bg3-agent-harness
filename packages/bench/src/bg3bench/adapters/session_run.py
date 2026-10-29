@@ -37,7 +37,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from bg3harness import profiles
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
@@ -150,8 +150,10 @@ class SessionRun:
         try:
             cond = conditions.parse(job["condition"])
             host_job = {**job, "tools_off": cond.removed_tools(), "prompt_condition": cond.prompt_condition()}
-            # every run ends at a wipe; an until scenario's runner stops at its milestone itself, a maximise one at its cap
-            goal, facts_path = sc.get("goal"), run_dir / run_artifacts.FACTS
+            # every run ends at a wipe, a goal or until run at its goal's verdict (scenario.goal_of: until is a milestone
+            # goal; the runner's own until check alone missed the nautiloid escape), a maximise one at its cap
+            goal: JSON | None = None if "maximise" in sc else cast(JSON, scenario.goal_of(sc))  # pyright: ignore[reportUnknownMemberType]
+            facts_path = run_dir / run_artifacts.FACTS
             host_job["verdict"] = lambda: live_verdict(goal, facts_path)
             st = self.host.start(host_job, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
