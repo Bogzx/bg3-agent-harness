@@ -871,6 +871,21 @@ def test_the_stop_check_reads_the_game_now_and_a_wipe_there_is_not_resumed(rig: 
     assert rig.h.record(JOB, SAVE_SC, run_dir("w"), out)["outcome"] == "failed"
 
 
+def test_an_until_run_the_live_verdict_passed_ends_reached_at_its_milestone(rig: Rig):
+    # bench live S2 nautiloid r2: the escape was in the facts, but the until run's verdict saw wipes only, so the agent
+    # was resumed 6 times and the record said timeout; the bench's verdict is now the milestone goal, and the record
+    # names the milestone as the runner's own until check does
+    said: list[str | None] = [None]
+    rig.prepare = lambda r: setattr(r, "read_now", lambda: said.__setitem__(0, "passed"))
+    st = rig.h.start({**JOB, "verdict": lambda: said[0]}, UNTIL_SC, run_dir("n"))
+    r = rig.runners[-1]
+    spec = SessionSpec("n", st.prompt, 30.0, st.client_session, Recovery(max_resumes=0))
+    out = run_session(spec, st.hooks)
+    assert [t for t, _, _ in r.plays] == [""] and out.stop_resumes == 0
+    rec = rig.h.record(JOB, UNTIL_SC, run_dir("n"), out)
+    assert (rec["outcome"], rec["milestone"]) == ("reached", "nautiloid_escaped")
+
+
 def test_a_failed_read_now_still_resumes_an_undecided_run(rig: Rig):
     def read_now() -> None:
         raise RuntimeError("the debug port didn't answer")
