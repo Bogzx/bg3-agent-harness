@@ -1,0 +1,28 @@
+# Launch campaign v1, Claude Opus 5.5 through pi and the Anthropic API: 4 scored scenarios x 3 runs = 12 runs
+# (crash_site_grove, fight_act1_grove_gate, fight_act1_windmill, fight_act2_balthazar: the short ones; with 4 of
+# the 12 scenarios Opus is listed but not ranked).
+# max_cost: each scenario's time cap x $0.28 per minute (pilot diverse-2026-10-25) x 1.25. Estimate $34 for the
+# 12 runs, $201 if every run played its whole cap. Run it last, on what the budget has left.
+# The Claude profiles must be verified (one live pilot run, launch-v1-pilot.toml) before this runs.
+name = "launch-v1-opus"
+allow_gaps = false
+allow_unverified = false
+
+models = ["profiles/claude-opus-5-5.toml"]
+scenarios = [
+  "crash_site_grove",
+  "fight_act1_grove_gate",
+  "fight_act1_windmill",
+  "fight_act2_balthazar",
+]
+conditions = ["rules"]
+repeats = 3
+
+[budget]
+file = "runtime/budget-anthropic.json"
+
+[budget.max_cost]
+crash_site_grove = 20.98
+fight_act1_grove_gate = 10.49
+fight_act1_windmill = 20.98
+fight_act2_balthazar = 31.46

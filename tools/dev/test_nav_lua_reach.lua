@@ -614,6 +614,19 @@ test("nav.activity reports a harmful surface under a party member", function()
     eq(r.surfaces[P1], "Fire", "surface")
 end)
 
+test("nav.activity names the selected member (ClientControl), else the first", function()
+    Osi.IsOnStage = function() return 1 end
+    local V, P2 = BG3AI.Visibility, "aaaaaaaa-0000-0000-0000-000000000002"
+    local party, entity = V.party, V.entity
+    world[P2] = { 5, 0, 0 }
+    V.party = function() return { P1, P2 } end
+    eq(RPC.ops["nav.activity"]({}).active, P1, "no ClientControl: the first")
+    V.entity = function(u) local e = entity(u); if u == P2 then e.ClientControl = {} end return e end
+    local r = RPC.ops["nav.activity"]({})
+    V.party, V.entity, world[P2] = party, entity, nil
+    eq(r.active, P2, "selected"); eq(r.pos[P2][1], 5, "its position")
+end)
+
 -- ---- connectors: probe budget + unreachable memo (live 2026-10-10: one unreachable ladder, 189 ms) ----------
 
 L1, L2, D1 = "ladder-1", "ladder-2", "door-1"

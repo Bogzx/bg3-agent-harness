@@ -149,8 +149,10 @@ class Facts(unittest.TestCase):
         self.assertEqual(last["quests"], {"Escape the Nautiloid": False, "Rescue the Illithid's Captive": True})
         self.assertEqual(len(last["inv"]), 3)  # the cached reply kept the last items
         self.assertEqual(
-            last["party"][0], {"name": "Tav", "level": 3, "dead": False, "downed": False, "hp": 10, "max_hp": 12}
+            last["party"][0],
+            {"name": "Tav", "level": 3, "dead": False, "downed": False, "hp": 10, "max_hp": 12, "pos": [1, 2, 3]},
         )
+        self.assertEqual(last["leader"], "Tav")
         ts = [r["t"] for r in recs]
         self.assertEqual(ts, sorted(ts))
 
@@ -166,7 +168,8 @@ class Facts(unittest.TestCase):
         for k, r in enumerate([fight, hit, hit, out_of_fight]):
             self.w.observe(r, INV, now=1020.0 + 15 * k)
         snaps = [(r["t"], r["party"][0]["hp"]) for r in self.records() if r["kind"] == "snapshot"]
-        self.assertEqual(snaps, [(1010.0, 10), (1035.0, 3)])  # same HP in a fight, or out of one: no snapshot
+        # same HP in a fight: no snapshot; the first read after it: one (the party's HP at the fight's end)
+        self.assertEqual(snaps, [(1010.0, 10), (1035.0, 3), (1065.0, 5)])
 
     def test_load_forces_a_snapshot_and_a_new_process_keeps_time_zero(self):
         self.play()
@@ -258,6 +261,39 @@ class Facts(unittest.TestCase):
         flags = [(m.get("avatar"), m.get("summon")) for m in party]
         self.assertEqual(flags, [(True, None), (None, None), (None, True)])
 
+    def test_the_leaders_path_is_pos_events_between_snapshots(self):
+        def at(pos, leader="Tav", region="Nautiloid"):
+            r = copy.deepcopy(READ)
+            for m in r["status"]["party"]:
+                m["active"] = m["name"] == leader
+            r["status"]["party"][0]["pos"] = pos
+            r["status"]["party"][1]["pos"] = [9, 9, 9]
+            r["status"]["region"] = region
+            return r
+
+        self.w.mark("run_start", now=1000.0)
+        self.w.observe(at([0, 0, 0]), INV, now=1010.0)  # the snapshot holds the start
+        steps = [
+            at([0.5, 0, 0]),
+            at([3, 0, 4]),
+            at([3, 0, 4]),
+            at([3, 0, 4], leader="Shadowheart"),
+            at([9, 9, 9], leader="Shadowheart", region="Ravaged Beach"),
+        ]
+        for k, r in enumerate(steps):
+            self.w.observe(r, INV, now=1025.0 + 15 * k)
+        pos = [(r["name"], r["pos"], r["region"]) for r in self.records() if r.get("ev") == "pos"]
+        self.assertEqual(
+            pos,
+            [
+                ("Tav", [3.0, 0.0, 4.0], "Nautiloid"),  # 0.5 m is no move; 5 m is
+                ("Shadowheart", [9.0, 9.0, 9.0], "Nautiloid"),  # another leader
+                ("Shadowheart", [9.0, 9.0, 9.0], "Ravaged Beach"),
+            ],
+        )  # another region
+        snap = next(r for r in self.records() if r["kind"] == "snapshot")
+        self.assertEqual((snap["leader"], snap["party"][0]["pos"]), ("Tav", [0.0, 0.0, 0.0]))
+
     def test_read_inventory(self):
         self.assertEqual(
             F.read_inventory(lambda c, ctx: json.dumps([{"ok": True, "result": INV}]), lambda ops: ""), INV
@@ -317,6 +353,7 @@ class Facts(unittest.TestCase):
         )
         self.w.observe(copy.deepcopy(READ) | {"ui": {"screen": "game_over"}}, INV, now=1600.0)
         self.assertIn("game_over", [r.get("ev") for r in self.records()])
+        self.assertIn("pos", [r.get("ev") for r in self.records()])  # back to the Nautiloid: another region
         v = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text()))
         for r in self.records():
             v.validate(r)

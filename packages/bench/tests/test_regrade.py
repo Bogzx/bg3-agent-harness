@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from bg3bench import regrade
 
@@ -62,3 +63,35 @@ def test_run_k_is_regraded_from_its_own_dir_not_the_series_dir(tmp_path: Path) -
     assert regrade.report(series) == [
         "base run 3: unchanged: harness_failures 0 -> 0, valid False (runner_error) -> False (runner_error)"
     ]
+
+
+def test_deaths_are_recounted_from_the_facts(tmp_path: Path) -> None:
+    """METRICS #4: result.json deaths were zeros in the 2026-10-25 dirs, written before the facts losses counter."""
+    (tmp_path / "S001.jsonl").write_text("")
+    (tmp_path / "S001.events.jsonl").write_text("")
+    zeros = {"fights": 0, "downs": 0, "deaths": 0, "wipes": 0}
+    (tmp_path / "result.json").write_text(json.dumps({"deaths": zeros}))
+    rows: list[dict[str, Any]] = [
+        {"v": 1, "kind": "mark", "t": 0.0, "game_t": 0.0, "mark": "run_start"},
+        {
+            "v": 1,
+            "kind": "snapshot",
+            "t": 1.0,
+            "game_t": 1.0,
+            "gold": 0,
+            "region": None,
+            "area": None,
+            "areas": [],
+            "combat": False,
+            "inv": [],
+            "quests": {},
+            "party": [{"name": n, "level": 3, "dead": False, "downed": False} for n in ("Tav", "Gale")],
+        },
+        {"v": 1, "kind": "event", "t": 2.0, "game_t": 2.0, "ev": "combat_started"},
+        {"v": 1, "kind": "event", "t": 3.0, "game_t": 3.0, "ev": "downed", "name": "Gale", "party": True},
+    ]
+    (tmp_path / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    rec = {"run": 1, "outcome": "failed", "started": 0, "harness_failures": 0, "manifest": {"seed": None}}
+    (tmp_path / "runs.jsonl").write_text(json.dumps(rec) + "\n")
+    out = regrade.report(tmp_path)
+    assert f"  deaths {zeros} -> {{'fights': 1, 'downs': 1, 'deaths': 0, 'wipes': 0}}" in out
