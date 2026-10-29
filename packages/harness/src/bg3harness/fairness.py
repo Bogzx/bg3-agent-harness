@@ -42,6 +42,11 @@ _FLAG_WORDS = re.compile(r"\b(?:story ?flag|dialog(?:ue)? ?resource|DialogResour
 # A listing line about an entity (handle e12) that names a hidden state.
 _HIDDEN_STATE = re.compile(r"\b(?:invisible|hidden|sneaking|stealthed|ambushing)\b", re.I)
 _HANDLE = re.compile(r"\be\d+\b")
+# The party's own state is no hidden information: a tool's after={..} (the acting member's portrait, bridge
+# plumbing._trim_after) and the party's handles (get_status `PARTY *e4 Tav ..` rows, render.state_text). Live S3
+# windmill: 3 CHECK hits, all Tav's own `after={.. sneaking ..}` after Shout_Hide.
+_OWN_AFTER = re.compile(r"\bafter=\{[^{}]*\}")
+_PARTY_ROW = re.compile(r"^\s*PARTY \*?(e\d+) ")
 # the Invisibility status/potion by name is what the party sees on its own portraits: old event form
 # "status_applied name=Invisibility target=..", compacted (bridge compact.py) "status_applied e2 Name: Invisibility"
 # and CHANGES "e2 Name +Invisibility"
@@ -101,6 +106,7 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
         a, b = max(0, m.start() - 70), min(len(line), m.end() + 50)
         hits[rule].append((call, line[a:b].strip()))
 
+    party = {m.group(1) for c in calls for line in _lines(c.get("text") or "") if (m := _PARTY_ROW.match(line))}
     for c in calls:
         name = c.get("name") or ""
         text = c.get("text") or ""
@@ -131,9 +137,12 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
                 for m in rx.finditer(clean):
                     hit(rule, c, clean, m)
             if not re.search(r"spotted|status_removed|dialogue_line|text=|^\s*\d+\. ", clean):
-                if _HANDLE.search(clean) and not _INVIS_STATUS.search(clean):
-                    for m in _HIDDEN_STATE.finditer(clean):
-                        hit("hidden_state", c, clean, m)
+                others = _OWN_AFTER.sub("", clean)
+                if _HANDLE.search(others) and not _INVIS_STATUS.search(others):
+                    for m in _HIDDEN_STATE.finditer(others):
+                        owner = _HANDLE.findall(others, 0, m.start())  # the entity the word is about: the last before it
+                        if not (owner and owner[-1] in party):
+                            hit("hidden_state", c, others, m)
     return hits
 
 
