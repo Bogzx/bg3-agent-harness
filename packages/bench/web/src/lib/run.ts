@@ -96,13 +96,25 @@ export function validateProblem(r: RunRow): string | null {
   return r.pilot.length ? `a pilot run can't be submitted: ${r.pilot.join("; ")}` : null;
 }
 
+/** Whether a prepared bundle has its render and waits for the YouTube link of its evidence video (Add video). */
+export function wantsVideo(p: Prepared | null): boolean {
+  return !!p && !!p.final && p.render?.added !== undefined && !p.video;
+}
+
+/** Why Add video can't be pressed (null: it can). */
+export function videoProblem(p: Prepared | null, youtubeUrl: string): string | null {
+  if (!wantsVideo(p)) return "render the evidence video first";
+  if (!youtubeId(youtubeUrl)) return "paste the YouTube URL of the evidence video";
+  return null;
+}
+
 /** Why Upload can't be pressed for a prepared bundle (null: it can). */
-export function uploadProblem(p: Prepared | null, youtubeUrl: string, siteToken: boolean): string | null {
+export function uploadProblem(p: Prepared | null, siteToken: boolean): string | null {
   if (!p) return "validate first";
   if (!p.final) return "render the evidence video first: the site takes the bundle with its render";
+  if (!p.video) return "add the YouTube link of the evidence video first";
   if (!p.verdict.accepted) return "the local validation rejects this bundle";
   if (!siteToken) return "save the site token in Settings";
-  if (!youtubeId(youtubeUrl)) return "paste the YouTube URL of the evidence video";
   return null;
 }
 

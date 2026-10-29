@@ -64,6 +64,13 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "render.json"}], "run_hash": RUN_HASH}))
         return "ef" * 32, b
 
+    def add_video(self, mp4, out_dir, *, youtube_id):
+        self.video = (mp4, out_dir, youtube_id)
+        b = out_dir / "bundle"
+        env = json.loads((b / "bundle.json").read_text())
+        (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
+        return "0a" * 32, b
+
 
 class FakeSite:
     def __init__(self) -> None:
@@ -505,9 +512,8 @@ def test_render_is_added_to_its_bundle_once_it_ends(server):
     code, r = post(server, "/api/v1/render", {"run": "s1"})
     assert code == 400 and "has its video's render already" in r["error"]
     # Upload names the new bundle hash
-    code, r = post(server, "/api/v1/submit/upload",
-                   {"run": "s1", "bundle_sha256": SHA, "youtube_url": "https://youtu.be/dQw4w9WgXcQ"})  # fmt: skip
-    assert code == 400
+    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": SHA})
+    assert code == 400 and "changed since you saw it" in r["error"]
 
 
 def test_render_for_a_bundle_validated_again_is_reported(server):
@@ -581,16 +587,27 @@ def test_submit_flow_over_the_endpoints(server):
     assert code == 200 and r["bundle_sha256"] == SHA and r["verdict"]["accepted"] and r["attempt"]["n"] == 1
     assert server.bundler.literals == [FAKE, "bgb_" + "0" * 40]  # scrubbed verbatim, never returned
     yt = "https://youtu.be/dQw4w9WgXcQ"
-    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": SHA, "youtube_url": yt})
+    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": SHA})
     assert code == 400 and "render the evidence video first" in r["error"] and server.fake_site.calls == []
+    code, r = post(server, "/api/v1/submit/video", {"run": "s1", "bundle_sha256": SHA, "youtube_url": yt})
+    assert code == 400 and "render the evidence video first" in r["error"]
     assert post(server, "/api/v1/render", {"run": "s1"})[0] == 200
     server.renderer.rc = 0
     server.runner = None
     assert server.housekeep() == [f"render: s1: bundle {'ef' * 32}"]  # the ticker adds it to the bundle
     prepared = get(server, "/api/v1/submissions")[1]["submissions"]["s1"]["prepared"]
     assert prepared["final"] is True and prepared["verdict"]["submission"] is True
-    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": "ef" * 32, "youtube_url": yt})
+    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": "ef" * 32})
+    assert code == 400 and "add the YouTube link" in r["error"] and server.fake_site.calls == []  # no video yet
+    mp4 = Path(prepared["render"]["dir"]) / video.VIDEO
+    mp4.parent.mkdir()
+    mp4.write_bytes(b"mp4")  # the renderer's output
+    code, r = post(server, "/api/v1/submit/video", {"run": "s1", "bundle_sha256": "ef" * 32, "youtube_url": yt})
+    assert code == 200 and r["video"] == {"youtube_id": "dQw4w9WgXcQ"} and r["bundle_sha256"] == "0a" * 32
+    assert server.bundler.video == (mp4, mp4.parent.parent, "dQw4w9WgXcQ")
+    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": "0a" * 32})
     assert code == 200 and r["id"] == "sub1"
+    assert server.fake_site.calls[0][2] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # bundle.json's video
     code, r = post(server, "/api/v1/submit/status", {"run": "s1"})
     assert code == 200 and r["status"] == "accepted"
     assert [c[0] for c in server.fake_site.calls] == ["post", "get"]
@@ -603,11 +620,7 @@ def test_submit_flow_over_the_endpoints(server):
 def test_upload_without_a_site_url_is_refused(server):
     post(server, "/api/v1/submit/prepare", {"run": "s1"})
     server.site = None
-    code, r = post(
-        server,
-        "/api/v1/submit/upload",
-        {"run": "s1", "bundle_sha256": SHA, "youtube_url": "https://youtu.be/dQw4w9WgXcQ"},
-    )
+    code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": SHA})
     assert code == 400 and "no site URL" in r["error"] and server.fake_site.calls == []
 
 
@@ -645,6 +658,7 @@ def test_render_and_prepare_need_their_backends(server):
     server.bundler = None
     code, r = post(server, "/api/v1/submit/prepare", {"run": "s1"})
     assert code == 400 and "no bundler" in r["error"]
+    assert "no bundler" in post(server, "/api/v1/submit/video", {"run": "s1"})[1]["error"]
     server.renderer = None
     assert get(server, "/api/v1/render")[1]["render"] is None
     assert "no renderer" in post(server, "/api/v1/render", {"run": "s1"})[1]["error"]

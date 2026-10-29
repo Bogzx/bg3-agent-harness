@@ -205,6 +205,8 @@ export interface Prepared {
   final?: boolean;
   /** The rendered video's render.json and frames, once added to this bundle (or why they weren't). */
   render?: { dir: string; added?: number; error?: string };
+  /** The user's YouTube upload of the rendered evidence.mp4, once it is in bundle.json (Add video). */
+  video?: { youtube_id: string };
 }
 
 export interface Submission {

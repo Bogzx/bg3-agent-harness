@@ -1,12 +1,15 @@
 <script lang="ts">
   // Finished runs on this machine (result.json + manifest.json): verdict or score, time, cost, validity, the
   // attempt number within the run's cell, and the size of its kept saves. Validate packs and checks a run locally and
-  // shows the verdict and the exact files before Upload sends them; Render video makes the evidence video.
+  // shows the verdict and the exact files before Upload sends them; Render video makes the evidence video, which the
+  // user uploads to YouTube and links here (Add video puts the link into bundle.json); only then is Upload offered.
   import { onMount } from "svelte";
   import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
-  import { attempts, bytes, minutes, renderNote, uploadProblem, validateProblem, verdict } from "../lib/run";
+  import {
+    attempts, bytes, minutes, renderNote, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo,
+  } from "../lib/run";
   import type { Prepared, RenderState, RunRow, Submission } from "../lib/types";
 
   let rows = $state<RunRow[] | null>(null);
@@ -22,7 +25,9 @@
 
   const prepared = $derived(open ? (subs[open]?.prepared ?? null) : null);
   const submission = $derived(open ? (subs[open]?.submission ?? null) : null);
-  const uploadWhy = $derived(uploadProblem(prepared, youtubeUrl, siteToken));
+  const uploadWhy = $derived(uploadProblem(prepared, siteToken));
+  const videoWhy = $derived(videoProblem(prepared, youtubeUrl));
+  const openRunId = $derived(rows?.find((r) => r.dir === open)?.run_id ?? open);
 
   function loadSubs() {
     Promise.all([api.submissions(), api.settings(), api.renderState()])
@@ -59,7 +64,12 @@
     const p = await api.prepare(dir);
     subs = { ...subs, [dir]: { prepared: p, submission: null } };
   });
-  const upload = () => act(() => api.upload(open!, prepared!.bundle_sha256, youtubeUrl));
+  const addVideo = () => act(async () => {
+    const p = await api.addVideo(open!, prepared!.bundle_sha256, youtubeUrl);
+    subs = { ...subs, [open!]: { prepared: p, submission: null } };
+    youtubeUrl = "";
+  });
+  const upload = () => act(() => api.upload(open!, prepared!.bundle_sha256));
   const refresh = () => act(() => api.submissionStatus(open!));
   const doRender = (dir: string) => act(async () => (render = (await api.render(dir)).render));
 </script>
@@ -148,7 +158,17 @@
             `video ${render.video} (${bytes(render.video_bytes ?? 0)}); ${renderNote(prepared?.render, render.out)}` :
             `render ended (exit ${render.returncode ?? "?"}); see ${render.log}`}</div>
         {/if}
-        <label class="row">YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/…" size="40" /></label>
+        {#if wantsVideo(prepared)}
+          <p class="note">Next: upload <code>{prepared.render?.dir}/evidence.mp4</code> to YouTube (public or unlisted,
+            with <code>{openRunId}</code> in its title), then paste the video's link here.</p>
+          <div class="row">
+            <label>YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/…" size="40" /></label>
+            <button class="plain" disabled={busy || videoWhy !== null} onclick={addVideo}>Add video</button>
+          </div>
+        {:else if prepared.video}
+          <p>Video <a href={`https://www.youtube.com/watch?v=${prepared.video.youtube_id}`} target="_blank"
+            rel="noreferrer"><code>{prepared.video.youtube_id}</code></a> is in bundle.json.</p>
+        {/if}
         <div class="row">
           <button class="primary" disabled={busy || uploadWhy !== null} onclick={upload}>Upload</button>
           {#if uploadWhy}<span class="faint">{uploadWhy}</span>{/if}

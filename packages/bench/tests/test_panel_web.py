@@ -5,8 +5,9 @@
 
 Every screen renders without a console error (Doctor with a fake report); New run plans a job, shows the YouTube note
 and starts it with Record and Submit when done (a fake runner), and the Queue stops it; the Queue shows a matrix the
-panel didn't start (a fake runner.lock process) and stops it through runtime/STOP; Results validates a run (a fake bundler) and uploads it to a fake site; Settings saves
-a key through the token the server put into index.html, and the page shows it masked.
+panel didn't start (a fake runner.lock process) and stops it through runtime/STOP; Results disables Validate on a
+pilot run, validates a run (a fake bundler), asks for its video's YouTube link once the render is in and uploads it
+to a fake site; Settings saves a key through the token the server put into index.html, and the page shows it masked.
 """
 
 import json
@@ -90,6 +91,12 @@ class FakeBundler:
         (b / "render.json").write_text("{}")
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}, {"name": "render.json"}]}))
         return "ef" * 32, b
+
+    def add_video(self, mp4, out_dir, *, youtube_id):
+        b = out_dir / "bundle"
+        env = json.loads((b / "bundle.json").read_text())
+        (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
+        return "0a" * 32, b
 
 
 class FakeSite:
@@ -219,23 +226,40 @@ def test_results_validate_and_upload(app, page):
     man = {"run_id": "s1-r001", "created": 1792953630.85, "scenario": {"name": "act1_get_item"}}  # epoch seconds
     (run / "manifest.json").write_text(json.dumps(man))
     (run / "result.json").write_text(json.dumps({"run_id": "s1-r001", "valid": True, "passed": True}))
+    pilot = app.runtime / "sessions" / "p1"
+    pilot.mkdir()
+    (pilot / "manifest.json").write_text(json.dumps({**man, "run_id": "p1-r001", "created": 1792953000.0}))
+    (pilot / "result.json").write_text(json.dumps({"run_id": "p1-r001", "valid": True, "pilot": ["reads CLAUDE.md"]}))
     app.settings.set_site_token("bgb_" + "0" * 40)
     pg.goto(f"http://127.0.0.1:{app.port}/#/results")
-    pg.get_by_role("button", name="Validate").click()
+    pg.get_by_text("a pilot run can't be submitted: reads CLAUDE.md").wait_for(timeout=15000)
+    validate = pg.get_by_role("button", name="Validate")
+    assert [b.is_disabled() for b in validate.all()] == [False, True]  # s1, then the older pilot p1
+    validate.first.click()
     box = pg.locator("section[aria-label=Submit]")
     box.get_by_text("by the local validator").wait_for(timeout=15000)
     assert "result.json" in box.locator("table").inner_text()
     upload = box.get_by_role("button", name="Upload")
     assert upload.is_disabled()
-    box.locator("input[type=url]").fill("https://youtu.be/dQw4w9WgXcQ")
     box.get_by_text("render the evidence video first").wait_for(timeout=15000)
-    assert upload.is_disabled()
+    assert box.locator("input[type=url]").count() == 0  # no link to paste before the render
     # the render ended and the panel's ticker put it into the bundle (App.finish_render -> submit.add_render)
     bdir = Path(submit.state(app.submissions(), "s1")["prepared"]["bundle_dir"])
-    (bdir.parent / "render-1").mkdir()
-    submit.add_render(app.submissions(), "s1", app.bundler, bundle_dir=bdir, render_dir=bdir.parent / "render-1",
-                      literals=[], now=1.0)  # fmt: skip
+    render = bdir.parent / "render-1"
+    render.mkdir()
+    (render / "evidence.mp4").write_bytes(b"mp4")
+    submit.add_render(app.submissions(), "s1", app.bundler, bundle_dir=bdir, render_dir=render, literals=[], now=1.0)
     box.get_by_text("ef" * 6).wait_for(timeout=15000)  # the page polls: the new bundle hash
+    box.get_by_text(f"{render}/evidence.mp4").wait_for(timeout=15000)  # upload it to YouTube, with the run id
+    assert "s1-r001" in box.locator("p.note").inner_text()
+    box.get_by_text("add the YouTube link of the evidence video first").wait_for(timeout=15000)
+    assert upload.is_disabled()
+    add = box.get_by_role("button", name="Add video")
+    assert add.is_disabled()
+    box.locator("input[type=url]").fill("https://youtu.be/dQw4w9WgXcQ")
+    add.click()
+    box.get_by_text("is in bundle.json").wait_for(timeout=15000)
+    box.get_by_text("0a" * 6).wait_for(timeout=15000)
     upload.click()
     box.get_by_text("Refresh status").wait_for(timeout=15000)
     assert app.fake_site.posts == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
-  uploadProblem, validateProblem, verdict, youtubeId, youtubeNote,
+  uploadProblem, validateProblem, verdict, videoProblem, wantsVideo, youtubeId, youtubeNote,
 } from "./run";
 import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
@@ -109,17 +109,29 @@ describe("youtubeId and uploadProblem", () => {
       expect(youtubeId(u)).toBeNull();
     }
   });
-  it("needs an accepted bundle, the site token and a video URL", () => {
-    const p: Prepared = {
-      run: "r", bundle_sha256: "ab", bundle_dir: "d", files: [], attempt: { n: 1, unsubmitted_valid: 0 },
-      verdict: { accepted: true, checks: [] }, final: true,
-    };
-    expect(uploadProblem(p, `https://youtu.be/${id}`, true)).toBeNull();
-    expect(uploadProblem({ ...p, final: false }, `https://youtu.be/${id}`, true)).toMatch(/render the evidence video/);
-    expect(uploadProblem(null, "", true)).toBe("validate first");
-    expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, "", true)).toMatch(/rejects/);
-    expect(uploadProblem(p, `https://youtu.be/${id}`, false)).toMatch(/site token/);
-    expect(uploadProblem(p, "https://vimeo.com/1", true)).toMatch(/YouTube URL/);
+  const p: Prepared = {
+    run: "r", bundle_sha256: "ab", bundle_dir: "d", files: [], attempt: { n: 1, unsubmitted_valid: 0 },
+    verdict: { accepted: true, checks: [] }, final: true, render: { dir: "d/render-1", added: 1 },
+    video: { youtube_id: id },
+  };
+  it("asks for the video's link once the render is in the bundle, and only then", () => {
+    const rendered = { ...p, video: undefined };
+    expect(wantsVideo(rendered)).toBe(true);
+    expect(videoProblem(rendered, `https://youtu.be/${id}`)).toBeNull();
+    expect(videoProblem(rendered, "https://vimeo.com/1")).toMatch(/YouTube URL/);
+    expect(wantsVideo(p)).toBe(false); // added already
+    expect(wantsVideo({ ...rendered, final: false })).toBe(false);
+    expect(wantsVideo({ ...rendered, render: { dir: "d/render-1", error: "refused" } })).toBe(false);
+    expect(wantsVideo(null)).toBe(false);
+    expect(videoProblem({ ...rendered, final: false }, `https://youtu.be/${id}`)).toMatch(/render the evidence video/);
+  });
+  it("needs a rendered, accepted bundle with its video in bundle.json and the site token", () => {
+    expect(uploadProblem(p, true)).toBeNull();
+    expect(uploadProblem({ ...p, final: false }, true)).toMatch(/render the evidence video/);
+    expect(uploadProblem({ ...p, video: undefined }, true)).toMatch(/YouTube link/);
+    expect(uploadProblem(null, true)).toBe("validate first");
+    expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, true)).toMatch(/rejects/);
+    expect(uploadProblem(p, false)).toMatch(/site token/);
   });
 });
 

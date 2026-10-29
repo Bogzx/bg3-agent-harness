@@ -42,6 +42,15 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": names}))
         return "ef" * 32, b
 
+    def add_video(self, mp4, out_dir, *, youtube_id):
+        self.calls.append(("add_video", mp4.parent.name, out_dir.name, youtube_id))
+        if mp4.read_text() == "refuse":
+            raise panel.PanelError("bundle.json names a video already")
+        b = out_dir / "bundle"
+        env = json.loads((b / "bundle.json").read_text())
+        (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
+        return "0a" * 32, b
+
 
 class FakeSite:
     def __init__(self, post=(202, {"id": "sub1", "status": "received", "bundle_sha256": SHA}), get=None) -> None:
@@ -126,10 +135,15 @@ def run_dir(tmp_path: Path) -> Path:
     return d
 
 
-def final(root: Path, run: str = "s1") -> None:
-    """The prepared bundle as add_render leaves it (its render in, validated as a submission): Upload takes it."""
+def final(root: Path, run: str = "s1", video: bool = True) -> None:
+    """The prepared bundle as add_render (its render in, validated as a submission) and, with `video`, add_video leave
+    it: Upload takes it."""
     f = root / run / submit.PREPARED
-    f.write_text(json.dumps({**json.loads(f.read_text()), "final": True}))
+    prepared, bdir = json.loads(f.read_text()), Path(json.loads(f.read_text())["bundle_dir"])
+    if video:
+        env = bdir / "bundle.json"
+        env.write_text(json.dumps({**json.loads(env.read_text()), "video": {"youtube_id": VID}}))
+    f.write_text(json.dumps({**prepared, "final": True, "files": submit.bundle_listing(bdir)}))
 
 
 def test_prepare_upload_poll(run_dir, tmp_path):
@@ -147,12 +161,12 @@ def test_prepare_upload_poll(run_dir, tmp_path):
         "/2/bundle"
     )
     final(root)
-    doc = submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=f"https://youtu.be/{VID}", token="tok", site=site)
+    doc = submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
     assert doc["id"] == "sub1" and doc["status"] == "received" and doc["youtube_id"] == VID
     assert site.calls == [("post", "tok", ["bundle.json", "result.json"], f"https://www.youtube.com/watch?v={VID}")]
     assert submit.submitted(root, "s1")
     with pytest.raises(panel.PanelError, match="submitted already"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=f"https://youtu.be/{VID}", token="tok", site=site)
+        submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
     with pytest.raises(panel.PanelError, match="submitted already"):
         submit.prepare(run_dir, root, b, attempt_n=2, unsubmitted_valid=1, literals=[])
     site.get = (200, {"status": "accepted", "flags": ["quarantined"], "run_url": "https://b/runs/1", "secret": "x"})
@@ -163,28 +177,28 @@ def test_prepare_upload_poll(run_dir, tmp_path):
 
 def test_upload_refusals(run_dir, tmp_path):
     root, site = tmp_path / "submissions", FakeSite()
-    yt = f"https://youtu.be/{VID}"
     with pytest.raises(panel.PanelError, match="validate it first"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=yt, token="tok", site=site)
+        submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
     with pytest.raises(panel.PanelError, match="bad run"):
-        submit.upload(root, "../x", bundle_sha256=SHA, youtube_url=yt, token="tok", site=site)
+        submit.upload(root, "../x", bundle_sha256=SHA, token="tok", site=site)
     submit.prepare(run_dir, root, FakeBundler(accepted=False), attempt_n=1, unsubmitted_valid=0, literals=[])
     final(root)
     with pytest.raises(panel.PanelError, match="rejects this bundle"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=yt, token="tok", site=site)
+        submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
     submit.prepare(run_dir, root, FakeBundler(), attempt_n=1, unsubmitted_valid=0, literals=[])
     with pytest.raises(panel.PanelError, match="render the evidence video first"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=yt, token="tok", site=site)  # accepted, no render
+        submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)  # accepted, no render
+    final(root, video=False)
+    with pytest.raises(panel.PanelError, match="add the YouTube link of its evidence video first"):
+        submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)  # rendered, bundle.json has no video
     final(root)
     with pytest.raises(panel.PanelError, match="changed since you saw it"):
-        submit.upload(root, "s1", bundle_sha256="cd" * 32, youtube_url=yt, token="tok", site=site)
+        submit.upload(root, "s1", bundle_sha256="cd" * 32, token="tok", site=site)
     with pytest.raises(panel.PanelError, match="no site token"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=yt, token=None, site=site)
-    with pytest.raises(panel.PanelError, match="youtube_url"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url="https://vimeo.com/1", token="tok", site=site)
+        submit.upload(root, "s1", bundle_sha256=SHA, token=None, site=site)
     (root / "s1" / "2" / "bundle" / "result.json").write_text('{"valid": true, "more": 1}')
     with pytest.raises(panel.PanelError, match="files changed since validation"):
-        submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=yt, token="tok", site=site)
+        submit.upload(root, "s1", bundle_sha256=SHA, token="tok", site=site)
     assert site.calls == [] and not submit.submitted(root, "s1")
 
 
@@ -203,9 +217,7 @@ def test_site_refusals_are_shown_and_nothing_is_recorded(run_dir, tmp_path, answ
     submit.prepare(run_dir, root, FakeBundler(), attempt_n=1, unsubmitted_valid=0, literals=[])
     final(root)
     with pytest.raises(panel.PanelError, match=message):
-        submit.upload(
-            root, "s1", bundle_sha256=SHA, youtube_url=f"https://youtu.be/{VID}", token="t", site=FakeSite(answer)
-        )
+        submit.upload(root, "s1", bundle_sha256=SHA, token="t", site=FakeSite(answer))
     assert not submit.submitted(root, "s1")
 
 
@@ -394,8 +406,16 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
             raise PackError("render.json was rendered for another run_hash")
         return SimpleNamespace(bundle_sha256="ef" * 32, bundle_dir=out_dir / "bundle")
 
+    def add_video(out_dir, *, youtube_id, mp4):
+        seen["add_video"] = (out_dir, youtube_id, mp4)
+        if youtube_id == "x" * 11:
+            raise PackError("bundle.json names a video already")
+        return SimpleNamespace(bundle_sha256="0a" * 32, bundle_dir=out_dir / "bundle")
+
     mods = {
-        "pack": SimpleNamespace(pack=pack, add_render=add_render, Attempt=lambda n, u: (n, u), PackError=PackError),
+        "pack": SimpleNamespace(
+            pack=pack, add_render=add_render, add_video=add_video, Attempt=lambda n, u: (n, u), PackError=PackError
+        ),
         "validate": SimpleNamespace(validate=validate, Release=SimpleNamespace(from_json=lambda d: d["suite"])),
     }
     monkeypatch.setattr(submit.importlib, "import_module", lambda name: mods[name.rsplit(".", 1)[1]])
@@ -420,6 +440,11 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
     assert seen["add_render"] == (tmp_path / "render-1", tmp_path / "o", ["k"])
     with pytest.raises(panel.PanelError, match="another run_hash"):
         bs.add_render(tmp_path / "other", tmp_path / "o", literals=[])
+    mp4 = tmp_path / "render-1" / "evidence.mp4"
+    assert bs.add_video(mp4, tmp_path / "o", youtube_id=VID) == ("0a" * 32, tmp_path / "o" / "bundle")
+    assert seen["add_video"] == (tmp_path / "o", VID, mp4)
+    with pytest.raises(panel.PanelError, match="names a video already"):
+        bs.add_video(mp4, tmp_path / "o", youtube_id="x" * 11)
 
 
 def test_add_render_updates_the_prepared_bundle(run_dir, tmp_path):
@@ -455,9 +480,60 @@ def test_add_render_refusals(run_dir, tmp_path):
     with pytest.raises(panel.PanelError, match="no longer the prepared one"):
         submit.add_render(root, "s2", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0)
     final(root)
-    submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=f"https://youtu.be/{VID}", token="t", site=FakeSite())
+    submit.upload(root, "s1", bundle_sha256=SHA, token="t", site=FakeSite())
     with pytest.raises(panel.PanelError, match="submitted already"):
         submit.add_render(root, "s1", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0)
+
+
+def rendered(run_dir: Path, root: Path, b: FakeBundler, mp4: str = "mp4") -> tuple[dict, Path]:
+    """A prepared bundle with its render added, the render's evidence.mp4 beside it: (the prepared view, render dir)."""
+    bdir = Path(submit.prepare(run_dir, root, b, attempt_n=1, unsubmitted_valid=0, literals=[])["bundle_dir"])
+    render = bdir.parent / "render-1"
+    render.mkdir()
+    (render / video.VIDEO).write_text(mp4)
+    return submit.add_render(root, "s1", b, bundle_dir=bdir, render_dir=render, literals=[], now=9.0), render
+
+
+def test_add_video_names_the_upload_in_bundle_json_and_upload_sends_it(run_dir, tmp_path):
+    root, b, site = tmp_path / "submissions", FakeBundler(), FakeSite()
+    view, _ = rendered(run_dir, root, b)
+    assert "video" not in view and submit.bundle_video(Path(view["bundle_dir"])) is None
+    with pytest.raises(panel.PanelError, match="add the YouTube link"):
+        submit.upload(root, "s1", bundle_sha256=view["bundle_sha256"], token="tok", site=site)
+    got = submit.add_video(
+        root, "s1", b, bundle_sha256="ef" * 32, youtube_url=f"https://www.youtube.com/watch?v={VID}", literals=["k"]
+    )
+    assert b.calls[-2:] == [("add_video", "render-1", "1", VID), ("validate", "1", True)]  # validated again
+    assert got["bundle_sha256"] == "0a" * 32 and got["video"] == {"youtube_id": VID} and got["final"] is True
+    assert submit.state(root, "s1")["prepared"] == got and submit.bundle_video(Path(got["bundle_dir"])) == VID
+    with pytest.raises(panel.PanelError, match="changed since you saw it"):
+        submit.upload(root, "s1", bundle_sha256="ef" * 32, token="tok", site=site)
+    doc = submit.upload(root, "s1", bundle_sha256="0a" * 32, token="tok", site=site)
+    assert doc["youtube_id"] == VID
+    assert site.calls == [("post", "tok", ["bundle.json", "result.json", "render.json"],
+                           f"https://www.youtube.com/watch?v={VID}")]  # fmt: skip
+
+
+def test_add_video_refusals(run_dir, tmp_path):
+    root, b = tmp_path / "submissions", FakeBundler()
+    yt = f"https://youtu.be/{VID}"
+    with pytest.raises(panel.PanelError, match="validate it first"):
+        submit.add_video(root, "s1", b, bundle_sha256=SHA, youtube_url=yt, literals=[])
+    submit.prepare(run_dir, root, b, attempt_n=1, unsubmitted_valid=0, literals=[])
+    with pytest.raises(panel.PanelError, match="render the evidence video first"):
+        submit.add_video(root, "s1", b, bundle_sha256=SHA, youtube_url=yt, literals=[])
+    view, render = rendered(run_dir, root, b, mp4="refuse")
+    sha = view["bundle_sha256"]
+    with pytest.raises(panel.PanelError, match="changed since you saw it"):
+        submit.add_video(root, "s1", b, bundle_sha256=SHA, youtube_url=yt, literals=[])
+    with pytest.raises(panel.PanelError, match="youtube_url"):
+        submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url="https://vimeo.com/1", literals=[])
+    with pytest.raises(panel.PanelError, match="names a video already"):
+        submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url=yt, literals=[])  # the pack's refusal
+    (render / video.VIDEO).unlink()
+    with pytest.raises(panel.PanelError, match="evidence.mp4 is gone: render the video again"):
+        submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url=yt, literals=[])
+    assert submit.state(root, "s1")["prepared"] == view  # nothing changed
 
 
 def test_video_out_dir_is_new_each_time(tmp_path):
@@ -475,7 +551,7 @@ def test_poll_refusals(run_dir, tmp_path):
         submit.poll(root, "s1", token="t", site=FakeSite())
     submit.prepare(run_dir, root, FakeBundler(), attempt_n=1, unsubmitted_valid=0, literals=[])
     final(root)
-    submit.upload(root, "s1", bundle_sha256=SHA, youtube_url=f"https://youtu.be/{VID}", token="t", site=FakeSite())
+    submit.upload(root, "s1", bundle_sha256=SHA, token="t", site=FakeSite())
     with pytest.raises(panel.PanelError, match="no site token"):
         submit.poll(root, "s1", token=None, site=FakeSite())
     gone = FakeSite(get=(404, {"error": {"code": "not_found"}}))
