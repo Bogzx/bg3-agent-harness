@@ -12,9 +12,9 @@
     "save_name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]{0,31}-[0-9]{1,20}__SCN-[A-Za-z0-9_]{1,80}$"},
     "scenario_name": {"type": "string", "pattern": "^[a-z0-9_]{1,80}$"},
     "fingerprint": {
-      "description": "the first facts snapshot of an honest run from this start: party [name, level] pairs sorted, gold, area, difficulty, avatar name",
+      "description": "the first facts snapshot of an honest run from this start: party [name, level] pairs sorted, gold, region, area, difficulty, avatar name (region added 2026-10-29: it pins the place when the party stands outside a named area)",
       "type": ["object", "null"],
-      "required": ["party", "gold", "area", "difficulty", "name"],
+      "required": ["party", "gold", "region", "area", "difficulty", "name"],
       "additionalProperties": false,
       "properties": {
         "party": {
@@ -27,6 +27,7 @@
           }
         },
         "gold": {"type": ["integer", "null"]},
+        "region": {"type": ["string", "null"]},
         "area": {"type": ["string", "null"]},
         "difficulty": {"type": ["string", "null"]},
         "name": {"type": ["string", "null"]}

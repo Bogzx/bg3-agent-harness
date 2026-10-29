@@ -17,7 +17,31 @@
    "digest": "d87a7d09f1f7b7db",
    "save": "Tav-41221265956__SCN-act1_goblin_camp_no_fight",
    "save_sha1": "76ed7b41595cdd910bdd2f6f70f5cbf9b4b07d70",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Goblin Camp",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "act1_gold_1000": {
    "digest": "49a6754ea7166c0d",
@@ -39,6 +63,7 @@
      ]
     ],
     "gold": 133,
+    "region": "Wilderness",
     "area": "The Hollow",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -64,6 +89,7 @@
      ]
     ],
     "gold": 133,
+    "region": "Wilderness",
     "area": "The Hollow",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -89,6 +115,7 @@
      ]
     ],
     "gold": 88,
+    "region": "Wilderness",
     "area": "Chapel Entrance",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -98,7 +125,23 @@
    "digest": "28bf7ce2a900463e",
    "save": "Tav-40221263931__SCN-act1_recruit_3",
    "save_sha1": "13287171ea6b91f71e221b857b27a17b7efcf394",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 88,
+    "region": "Wilderness",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "act3_gold_max": {
    "digest": "dfb2ba4e59bfe54d",
@@ -124,6 +167,7 @@
      ]
     ],
     "gold": 410,
+    "region": "Lower City",
     "area": "Lower City",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -133,25 +177,117 @@
    "digest": "df02ebf8929bc48a",
    "save": "Tav-21221264940__SCN-choice_act1_arabella",
    "save_sha1": "ca983b576ea987fb18483d94e76b38daa8ea351a",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ],
+     [
+      "Wyll",
+      1
+     ]
+    ],
+    "gold": 133,
+    "region": "Wilderness",
+    "area": "Emerald Grove",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "choice_act1_karlach": {
    "digest": "30cc86c8e9358647",
    "save": "Tav-56221264931__SCN-choice_act1_karlach",
    "save_sha1": "5b416c5db765b664712dd87466dcfc87c82dce3e",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Shadowheart",
+      4
+     ],
+     [
+      "Tav",
+      4
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "The Risen Road",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "choice_act1_minthara": {
    "digest": "c96744cc4d10547f",
    "save": "Tav-47221264946__SCN-choice_act1_minthara",
    "save_sha1": "2e6408acbebdf9f529adf419f757ad128b819c7c",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Shattered Sanctum",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "choice_act2_nightsong": {
    "digest": "2d928764622d1423",
    "save": "Tav-18221265949__SCN-choice_act2_nightsong",
    "save_sha1": "be5f850108d7bf3df1509a8303e173b4185bd889",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      6
+     ],
+     [
+      "Shadowheart",
+      6
+     ],
+     [
+      "Tav",
+      6
+     ],
+     [
+      "Wyll",
+      6
+     ]
+    ],
+    "gold": 60,
+    "region": "Shadow-Cursed Lands",
+    "area": "Nightsong's Prison",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "crash_site_grove": {
    "digest": "3728ead931bfc630",
@@ -169,6 +305,7 @@
      ]
     ],
     "gold": 33,
+    "region": "Wilderness",
     "area": null,
     "difficulty": "Balanced",
     "name": "Tav"
@@ -178,7 +315,31 @@
    "digest": "a8a40fac9192cb42",
    "save": "Tav-5122126499__SCN-fight_act1_dror_ragzlin",
    "save_sha1": "d8ab62ff9b7979bbc5788f1f633e888a4d00c742",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Shattered Sanctum",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "fight_act1_dror_ragzlin_tactician": {
    "digest": "c4ec97e7e6ed0438",
@@ -190,7 +351,27 @@
    "digest": "1a75a66de27e4a4f",
    "save": "Tav-1522126493__SCN-fight_act1_grove_gate",
    "save_sha1": "65fdc7d172d7f21253eb36454255a58dd368efa9",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 88,
+    "region": "Wilderness",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "fight_act1_windmill": {
    "digest": "f9d67d62725f50d0",
@@ -216,6 +397,7 @@
      ]
     ],
     "gold": 156,
+    "region": "Wilderness",
     "area": "Blighted Village",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -251,6 +433,7 @@
      ]
     ],
     "gold": 60,
+    "region": "Shadow-Cursed Lands",
     "area": "Nightsong's Prison",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -272,19 +455,91 @@
    "digest": "737de265c0b77ebc",
    "save": "Tav-2622126592__SCN-fight_act2_ketheric",
    "save_sha1": "a852ea1fc1406f30bc5c51b9073232a71f57501e",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      7
+     ],
+     [
+      "Shadowheart",
+      7
+     ],
+     [
+      "Tav",
+      7
+     ],
+     [
+      "Wyll",
+      7
+     ]
+    ],
+    "gold": 379,
+    "region": "Shadow-Cursed Lands",
+    "area": "Mind Flayer Colony",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "fight_act2_moonrise_assault": {
    "digest": "901628156e36cf5a",
    "save": "Tav-22221265932__SCN-fight_act2_moonrise_assault",
    "save_sha1": "7a223384a912d8cca0706bfea39d0386c410c101",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      6
+     ],
+     [
+      "Shadowheart",
+      6
+     ],
+     [
+      "Tav",
+      6
+     ],
+     [
+      "Wyll",
+      6
+     ]
+    ],
+    "gold": 152,
+    "region": "Shadow-Cursed Lands",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "fight_act3_sarevok": {
    "digest": "23cea139b0511d07",
    "save": "Tav-29221265940__SCN-fight_act3_sarevok",
    "save_sha1": "77283ecc232d865ae8ea38c514796cc0b4d3c07d",
-   "fingerprint": null
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      8
+     ],
+     [
+      "Shadowheart",
+      8
+     ],
+     [
+      "Tav",
+      8
+     ],
+     [
+      "Wyll",
+      8
+     ]
+    ],
+    "gold": 410,
+    "region": "Lower City",
+    "area": "Bhaalist Crypt",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
   },
   "fight_act3_sarevok_tactician": {
    "digest": "7cd7c14fa325a163",
@@ -299,6 +554,7 @@
    "fingerprint": {
     "party": [],
     "gold": 0,
+    "region": null,
     "area": null,
     "difficulty": "Balanced",
     "name": null
