@@ -180,10 +180,22 @@ GROVE = "Tav-1522126493__SCN-fight_act1_grove_gate"
 GROVE_FP = {"party": [["Tav", 4]], "gold": 10, "area": "Emerald Grove", "difficulty": "Balanced", "name": "Tav"}
 
 
-def test_apply_writes_saves_json_and_the_release_as_the_release_tool_builds_them(tmp_path):
-    sha1 = saves.load()[TAG][GROVE].save_sha1
+def docs_without_grove() -> tuple[dict, dict]:
+    """saves.json's and the shipped release's documents with grove_gate's save not fingerprinted yet."""
     saves_doc = json.loads(saves.SAVES_JSON.read_text())
     release_doc = json.loads(release.default_path().read_text())
+    for s in saves_doc["suites"][TAG]["saves"]:
+        if s["name"] == GROVE:
+            s["fingerprint"] = None
+    for sc in release_doc["scenarios"].values():
+        if sc["save"] == GROVE:
+            sc["fingerprint"] = None
+    return saves_doc, release_doc
+
+
+def test_apply_writes_saves_json_and_the_release_as_the_release_tool_builds_them(tmp_path):
+    sha1 = saves.load()[TAG][GROVE].save_sha1
+    saves_doc, release_doc = docs_without_grove()
     assert "fight_act1_grove_gate" in release.unfingerprinted(release_doc)
     before = json.loads(json.dumps(release_doc))
     assert start_states.apply(capture_doc(GROVE, GROVE_FP, sha1), saves_doc, release_doc) == [GROVE]
@@ -205,8 +217,7 @@ def test_apply_writes_saves_json_and_the_release_as_the_release_tool_builds_them
 
 def test_apply_refuses_another_sha1_suite_or_fingerprint():
     sha1 = saves.load()[TAG][GROVE].save_sha1
-    saves_doc = json.loads(saves.SAVES_JSON.read_text())
-    release_doc = json.loads(release.default_path().read_text())
+    saves_doc, release_doc = docs_without_grove()
     keep = json.dumps([saves_doc, release_doc])
     with pytest.raises(ValueError, match="not listed"):
         start_states.apply(capture_doc(GROVE, GROVE_FP, "1" * 40), saves_doc, release_doc)
@@ -224,8 +235,9 @@ def test_apply_refuses_another_sha1_suite_or_fingerprint():
 def test_the_cli_apply_and_capture_through_the_matrix_cli(tmp_path, capsys, monkeypatch):
     sha1 = saves.load()[TAG][GROVE].save_sha1
     saves_path, rel = tmp_path / "saves.json", tmp_path / "release.json"
-    saves_path.write_text(saves.SAVES_JSON.read_text())
-    rel.write_text(release.default_path().read_text())
+    saves_doc, release_doc = docs_without_grove()
+    saves_path.write_text(json.dumps(saves_doc))
+    rel.write_text(json.dumps(release_doc))
     cap = tmp_path / "cap.json"
     cap.write_text(json.dumps(capture_doc(GROVE, GROVE_FP, sha1)))
     args = ["apply", str(cap), "--saves-json", str(saves_path), "--release", str(rel)]
