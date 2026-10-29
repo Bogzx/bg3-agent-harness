@@ -35,14 +35,17 @@ def test_scenario_entries_have_the_sites_fields():
     assert catalog.scenario_entry(odd)["cap_min"] == 18
 
 
-def test_the_catalog_lists_the_release_scenarios_and_every_profile_model():
+def test_the_catalog_lists_the_release_scenarios_and_a_row_per_client_and_model():
     rel = json.loads(release.default_path().read_text())
-    slugs = catalog.model_slugs()
-    doc = catalog.build(rel, SCS, slugs, catalog.load_names())
+    rows = catalog.model_rows()
+    doc = catalog.build(rel, SCS, rows, catalog.load_names())
     assert [s["id"] for s in doc["scenarios"]] == list(rel["scenarios"])
     assert not any(s["holdout"] for s in doc["scenarios"])
-    assert "gemini-2.5-pro" not in slugs  # its profile is unsupported
-    assert {"claude-opus-5-5", "deepseek-flash"} <= set(slugs)
+    assert ("gemini", "gemini-2.5-pro") not in rows  # its profile is unsupported
+    assert not any(c == "claude" for c, _ in rows)  # Claude Code runs never enter a release
+    assert {("pi", "deepseek-flash"), ("codex", "gpt-5")} <= set(rows)
+    assert all(list(m) == ["client", "slug", "name"] for m in doc["models"])
+    assert len({(m["client"], m["slug"]) for m in doc["models"]}) == len(doc["models"])
     names = [m["name"] for m in doc["models"]]
     assert len(set(names)) == len(names)  # one model through two endpoints: two names
 
@@ -52,7 +55,7 @@ def test_build_refuses_a_missing_scenario_or_an_unnamed_model():
     with pytest.raises(catalog.CatalogError, match="no scenario file for gone"):
         catalog.build(rel, SCS, [], {})
     with pytest.raises(catalog.CatalogError, match="no display name in models.json for new-model"):
-        catalog.build({"suite": "s", "scenarios": {}}, SCS, ["claude-opus-5-5", "new-model"], {"claude-opus-5-5": "x"})
+        catalog.build({"suite": "s", "scenarios": {}}, SCS, [("pi", "a"), ("pi", "new-model")], {"a": "x"})
 
 
 def test_names_file_version(tmp_path: Path):
@@ -68,6 +71,6 @@ def test_cli_writes_the_catalog_and_reports_a_missing_release(tmp_path: Path, ca
     doc = json.loads(out.read_text())
     assert set(doc) == {"scenarios", "models"} and doc["scenarios"] and doc["models"]
     assert all(list(s) == SITE_FIELDS for s in doc["scenarios"])
-    assert all(set(m) == {"slug", "name"} for m in doc["models"])
+    assert all(set(m) == {"client", "slug", "name"} for m in doc["models"])
     assert catalog.main(["--suite", "bench-v0.0"]) == 2
     assert "catalog:" in capsys.readouterr().err

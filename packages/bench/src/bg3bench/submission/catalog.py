@@ -3,13 +3,14 @@
 results.json): what the board shows about each scenario and each model's display name.
 
     {"scenarios": [{"id", "title", "family", "mode", "cap_min", "seed", "difficulty", "holdout", "task"}],
-     "models": [{"slug", "name"}]}
+     "models": [{"client", "slug", "name"}]}
 
 The scenarios are the release file's (every non-holdout scenario of the suite), read from their scenario files:
 `mode` is "maximise" for a maximise scenario, else "pass" (a choice scene too: the board leaves the choice family out
 of the suite score itself), `cap_min` the time cap in minutes, `seed` and `difficulty` the game settings'. The models
-are every profile's model slug (profiles/*.toml, an unsupported one left out) with its name from
-packages/bench/models.json; a profile whose slug has no name there is refused. Offline: uploading it is a later step.
+are the leaderboard's rows: one per (client, model slug) of the profiles (profiles/*.toml; an unsupported profile and
+a results.PILOT_CLIENTS one, whose runs never enter a release, left out), named from packages/bench/models.json by
+slug; a slug with no name there is refused. Offline: uploading it is a later step.
 
     python -m bg3bench.submission.catalog [--suite bench-v0.8] [--out FILE]
 """
@@ -25,7 +26,7 @@ from typing import Any
 
 from bg3harness import profiles
 
-from bg3bench import suite
+from bg3bench import results, suite
 from bg3bench.submission import pack, release
 
 Json = dict[str, Any]
@@ -61,22 +62,23 @@ def load_names(path: Path = NAMES) -> dict[str, str]:
     return dict(doc["models"])
 
 
-def model_slugs(root: Path = PROFILES) -> list[str]:
-    """Every profile's model slug, an unsupported profile left out."""
+def model_rows(root: Path = PROFILES) -> list[tuple[str, str]]:
+    """Every (client, model slug) of the profiles, an unsupported or a PILOT_CLIENTS profile left out."""
     loaded = [profiles.load(p) for p in sorted(root.glob("*.toml"))]
-    return sorted({p.model for p in loaded if p.status != "unsupported"})
+    keep = [p for p in loaded if p.status != "unsupported" and p.client not in results.PILOT_CLIENTS]
+    return sorted({(p.client, p.model) for p in keep})
 
 
-def build(rel: Json, scenarios: Mapping[str, Json], slugs: Sequence[str], names: Mapping[str, str]) -> Json:
+def build(rel: Json, scenarios: Mapping[str, Json], rows: Sequence[tuple[str, str]], names: Mapping[str, str]) -> Json:
     missing = [s for s in rel["scenarios"] if s not in scenarios]
     if missing:
         raise CatalogError(f"{rel['suite']}: no scenario file for {', '.join(missing)}")
-    unnamed = [s for s in slugs if s not in names]
+    unnamed = sorted({s for _, s in rows if s not in names})
     if unnamed:
         raise CatalogError(f"no display name in {NAMES.name} for {', '.join(unnamed)}")
     return {
         "scenarios": [scenario_entry(scenarios[s]) for s in rel["scenarios"]],
-        "models": [{"slug": s, "name": names[s]} for s in slugs],
+        "models": [{"client": c, "slug": s, "name": names[s]} for c, s in rows],
     }
 
 
@@ -90,7 +92,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     path = release.default_path(a.suite)
     try:
         rel = json.loads(path.read_text(encoding="utf-8"))
-        doc = build(rel, pack.load_scenarios(), model_slugs(), load_names())
+        doc = build(rel, pack.load_scenarios(), model_rows(), load_names())
     except (OSError, CatalogError, profiles.ProfileError) as e:
         print(f"catalog: {e}", file=sys.stderr)
         return 2
