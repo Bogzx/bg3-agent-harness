@@ -21,12 +21,17 @@ makes the launcher refuse to start the game while Steam is online.
 
 ## 2. Packages
 
-- `git`, `docker.io` (add your user to the `docker` group, then log in again), `python3`, `gcc`.
+- `git`, `docker.io` (add your user to the `docker` group, then log in again), `python3`, `gcc`, `curl`.
+- `ffmpeg`: every bench run is screen-recorded, and the evidence video is rendered with it.
+- `vulkan-tools` (vkcube, for `tools/dev/check_screenshot_layer.sh` below).
 - `mesa-vulkan-drivers` **with the screenshot layer**: check that
   `/usr/share/vulkan/explicit_layer.d/VkLayer_MESA_screenshot.json` exists. Debian 13 needs Mesa from
   trixie-backports (26.x) for it. The layer works on NVIDIA too, under PRIME offload; check it without the game
   with `tools/dev/check_screenshot_layer.sh` (it runs vkcube).
-- `uv` (https://docs.astral.sh/uv/).
+- `uv` (https://docs.astral.sh/uv/). It installs the Python the packages need (3.14); the system `python3` only runs
+  the stdlib tools (`tools/doctor.py`, `tools/steam_paths.py`, `tools/bg3le_prebuilt.py`, ...).
+- Node.js 22.19 or newer with npm, for the pi client (non-Claude models) and to build the web apps (the bench panel
+  and the playthrough app). Not needed to play with Claude Code.
 - An MCP client for the agent. The runner drives Claude Code (`claude`) by default; `--client codex|gemini` are
   wired but not tested live.
 
@@ -38,34 +43,37 @@ On hybrid NVIDIA laptops `runner/launch_game.sh` turns on PRIME offload by itsel
 git clone <this repo> && cd bg3-agent-harness
 git submodule update --init --recursive
 tools/build_bg3le.sh                 # ~10-20 min the first time (Docker, ~10 GB RAM) -> build/bg3le/dist/libbg3le.so
-native/bg3sdl/build.sh               # -> build/bg3sdl/libbg3sdl.so (the input shim)
-(cd bridge && uv sync)
+native/bg3sdl/build.sh               # -> build/bg3sdl/libbg3sdl.so (the input shim; needs the bg3le build's sysroot)
+uv sync --locked                     # every package and the dev tools, into .venv (from the repo root)
 ```
+
+Run `uv sync` from the repo root, not inside a package: `cd bridge && uv sync` syncs the bridge alone and uninstalls
+the other packages from the shared `.venv`.
 
 `tools/build_bg3le.sh` applies every patch in `patches/bg3le/` (crash fixes for this game build).
 `python3 tools/bg3le_buildinfo.py` says whether `build/bg3le/dist` has all of them, and `runner/launch_game.sh`
 refuses a stale build (exit 4) unless `BG3AI_ALLOW_STALE_BG3LE=1`.
 
-Instead of building bg3le, `python3 tools/bg3le_prebuilt.py fetch` installs a prebuilt package into
-`build/bg3le/dist` once `patches/bg3le-prebuilt.toml` names one (its URL and sha256; empty until a release carries
-one). It checks the download's sha256, every file against the package's manifest and its patch list against
-`patches/bg3le`, and the launcher refuses the dist later if a file no longer matches. `pack` makes such a package
-from a local build.
+Instead of the two builds, `python3 tools/bg3le_prebuilt.py fetch` installs a prebuilt package (bg3le into
+`build/bg3le/dist`, the input shim into `build/bg3sdl`) once `patches/bg3le-prebuilt.toml` names one (its URL and
+sha256; empty until a release carries one). It checks the download's sha256, every file against the package's
+manifest and its patch list against `patches/bg3le`, and the launcher refuses the dist later if a file no longer
+matches. `pack` makes such a package from a local build of both.
 
 `python3 tools/doctor.py` then checks the whole machine (game build, Steam offline, bg3le, the mod, the screenshot
 layer, the input shim, the display, ffmpeg and the recording encoder, RAM, VRAM, disk, uv, Node and pi) and prints
 the fix for each failure; `--json` prints the same as data.
 
-Offline tests:
+Offline tests, as CI runs them (`tools/ci/task.py` lists every job):
 
 ```bash
-(cd bridge && uv run python -m unittest discover -s tests -p 'test_*.py')
-python3 -m unittest runner/test_play.py
-python3 -m unittest discover -s tools/memory -p 'test_*.py'
-python3 -m unittest discover -s runner/dashboard -p 'test_*.py'
-uv run --with lz4 --with zstandard python -m unittest tools/test_pak.py
-tools/vis/test_lua.sh                # and tools/dev/test_*.sh: Lua suites, run in Docker
+uv run tools/ci/task.py quick        # seconds: ruff, ruff format, pytest's collection
+uv run pytest -q -m "not live and not e2e" runner/test_play.py   # one file
+systemd-run --user --scope -p MemoryMax=8G nice -n 15 uv run tools/ci/task.py test   # all of them (~12 min, 4 cores)
+uv run tools/ci/task.py lua          # the Lua suites, in Docker
 ```
+
+The runner needs the repo's Python 3.14: `python3 -m unittest runner/test_play.py` with an older system Python fails.
 
 ## 4. First launch
 

@@ -141,7 +141,9 @@ class Facts(unittest.TestCase):
             ],
         )
         snaps = [r for r in recs if r["kind"] == "snapshot"]
-        self.assertEqual(len(snaps), 2)  # the first read, then 300 s later
+        self.assertEqual(len(snaps), 3)  # the first read, the fight's HP change, then 300 s later
+        self.assertEqual([s["t"] for s in snaps], [1010.0, 1025.0, 1400.0])
+        self.assertEqual(snaps[1]["party"][1]["hp"], 0)
         last = snaps[-1]
         self.assertEqual(last["areas"], ["Ruined Battlefield", "Helm"])
         self.assertEqual(last["quests"], {"Escape the Nautiloid": False, "Rescue the Illithid's Captive": True})
@@ -151,6 +153,20 @@ class Facts(unittest.TestCase):
         )
         ts = [r["t"] for r in recs]
         self.assertEqual(ts, sorted(ts))
+
+    def test_in_combat_a_read_whose_party_hp_changed_is_a_snapshot(self):
+        self.w.mark("run_start", now=1000.0)
+        self.w.observe(READ, INV, now=1010.0)
+        fight = copy.deepcopy(READ)
+        fight["status"]["in_combat"] = True
+        hit = copy.deepcopy(fight)
+        hit["status"]["party"][0]["hp"] = 3
+        out_of_fight = copy.deepcopy(READ)
+        out_of_fight["status"]["party"][0]["hp"] = 5
+        for k, r in enumerate([fight, hit, hit, out_of_fight]):
+            self.w.observe(r, INV, now=1020.0 + 15 * k)
+        snaps = [(r["t"], r["party"][0]["hp"]) for r in self.records() if r["kind"] == "snapshot"]
+        self.assertEqual(snaps, [(1010.0, 10), (1035.0, 3)])  # same HP in a fight, or out of one: no snapshot
 
     def test_load_forces_a_snapshot_and_a_new_process_keeps_time_zero(self):
         self.play()

@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from bg3ai import tool_classes
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -54,9 +55,10 @@ async def bridge_session(
 
 
 async def call(session: ClientSession, tool: str, args: dict[str, Any] | None = None) -> str:
-    """The tool's text; raises AssertionError when the MCP call itself failed (an exception in the tool)."""
+    """The tool's text; raises AssertionError when the MCP call itself failed (an exception in the tool). A failure
+    the tool reports (FAILED, NOT READY, ...: bg3ai.tool_classes.failed) is an error result too, and is returned."""
     res = await session.call_tool(tool, args or {})
     text = "\n".join(getattr(c, "text", "") for c in res.content)
-    if res.is_error:
+    if res.is_error and not tool_classes.failed(text):
         raise AssertionError(f"{tool} failed: {text[:500]}")
     return text

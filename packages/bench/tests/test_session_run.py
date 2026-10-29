@@ -13,7 +13,7 @@ from typing import Any, cast
 import pytest
 from test_run_artifacts import assert_valid, readout
 
-from bg3bench import conditions, matrix, pins, report, results, scenario
+from bg3bench import conditions, graders, matrix, pins, report, results, scenario
 from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, live_verdict, series_name
 from bg3bench.matrix import Matrix, RunResult
 
@@ -321,7 +321,26 @@ def test_a_goal_run_hands_the_host_its_live_verdict(tmp_path):
     SessionRun("m", until_host, scenarios={"e2e_sell_idol": until_sc}, sessions=tmp_path / "s2")(job())
     until_job, _, until_dir = until_host.started[0]
     (until_dir / "facts.jsonl").write_text(json.dumps(start) + "\n" + json.dumps(rich) + "\n")
-    assert until_job["verdict"]() is None  # the runner ends an until run at its milestone itself
+    assert until_job["verdict"]() is None  # until grove: not reached yet, gold doesn't decide it
+
+
+def test_an_until_run_is_decided_at_its_milestone(tmp_path):
+    """bench live S2 nautiloid r2: the escape was in facts.jsonl at game_t 672.4, but an until scenario's live verdict
+    saw wipes only, so the agent was resumed 6 times "the grader hasn't seen its goal" and the run was recorded as a
+    timeout. Its verdict is the until milestone as a goal: replaying r2's timeline, it passes at the escape."""
+    lines = (HERE / "fixtures" / "timelines" / "nautiloid_sonnet_r2.facts.jsonl").read_text().splitlines(keepends=True)
+    escape = next(i for i, ln in enumerate(lines) if '"quest_done"' in ln and "Escape the Nautiloid" in ln)
+    naut = scenario.load(HERE.parent / "scenarios" / "nautiloid.json")
+    assert "until" in naut and "goal" not in naut
+    host = Host([[("exited", 5)]])
+    SessionRun("m", host, scenarios={"e2e_sell_idol": naut}, sessions=tmp_path)(job())
+    started, _, run_dir = host.started[0]
+    facts = run_dir / "facts.jsonl"
+    facts.write_text("".join(lines[:escape]))
+    assert started["verdict"]() is None  # on the ship still
+    facts.write_text("".join(lines[: escape + 1]))
+    assert started["verdict"]() == "passed"  # GoalWatch ends the run here: no stop resume
+    assert graders.verdict(scenario.goal_of(naut), [json.loads(ln) for ln in lines[: escape + 1]]) == "passed"
 
 
 def test_every_run_hands_the_host_a_verdict_that_ends_it_at_a_wipe(tmp_path):
