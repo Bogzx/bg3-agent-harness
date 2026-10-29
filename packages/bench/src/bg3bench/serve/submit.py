@@ -222,7 +222,7 @@ def attempt(rows: Sequence[Mapping[str, Any]], run_dir: str, submitted: Callable
     cell = [
         r for r in rows if (r["scenario"], r["model"], r["condition"]) == (me["scenario"], me["model"], me["condition"])
     ]
-    cell.sort(key=lambda r: (str(r["created"] or ""), r["dir"]))
+    cell.sort(key=lambda r: (r["created"] or 0.0, r["dir"]))
     i = cell.index(me)
     return i + 1, sum(1 for r in cell[:i] if r["valid"] and not submitted(r["dir"]))
 

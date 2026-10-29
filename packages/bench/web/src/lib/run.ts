@@ -73,7 +73,7 @@ export function attempts(runs: RunRow[]): Map<string, [number, number]> {
   }
   const out = new Map<string, [number, number]>();
   for (const list of cells.values()) {
-    const sorted = [...list].sort((a, b) => (a.created ?? "").localeCompare(b.created ?? "") || a.dir.localeCompare(b.dir));
+    const sorted = [...list].sort((a, b) => (a.created ?? 0) - (b.created ?? 0) || a.dir.localeCompare(b.dir));
     sorted.forEach((r, i) => out.set(r.dir, [i + 1, sorted.length]));
   }
   return out;

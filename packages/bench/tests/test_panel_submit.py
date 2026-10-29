@@ -106,7 +106,8 @@ def rows():
             "condition": "rules",
         }
 
-    return [r("a", "1"), r("b", "2", valid=False), r("c", "3"), r("d", "4"), r("x", "0", model="other")]
+    # epoch seconds (panel.results): d's 10.0 sorts after c's 9.5 as a number, not as text
+    return [r("a", 1.0), r("b", 2.0, valid=False), r("c", 9.5), r("d", 10.0), r("x", 0.0, model="other")]
 
 
 def test_attempt_counts_the_cell_and_earlier_unsubmitted_valid_runs():

@@ -110,7 +110,7 @@ export interface RunRow {
   model: string | null;
   client: string | null;
   condition: string | null;
-  created: string | null;
+  created: number | null; // epoch seconds (manifest.v1)
   passed: boolean | null;
   score: number | null;
   outcome: string | null;

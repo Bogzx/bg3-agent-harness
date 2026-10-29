@@ -174,6 +174,19 @@ def test_results_and_queue_ignore_broken_files(tmp_path):
     assert panel.queue(tmp_path / "matrix") == []
 
 
+def test_results_send_created_as_epoch_seconds_newest_first(tmp_path):
+    """manifest.v1's created is epoch seconds: the API sends a number (or null), sorted as a number."""
+    for name, created in (("a", 9.5), ("b", 10), ("c", "2026-10-25T10:00:00Z"), ("d", True), ("e", None)):
+        run = tmp_path / "sessions" / name
+        run.mkdir(parents=True)
+        (run / "manifest.json").write_text(json.dumps({"run_id": name, "created": created}))
+        (run / "result.json").write_text("{}")
+    rows = panel.results(tmp_path / "sessions")
+    assert [(r["dir"], r["created"]) for r in rows] == [
+        ("b", 10.0), ("a", 9.5), ("c", None), ("d", None), ("e", None)
+    ]  # fmt: skip
+
+
 def test_panel_checks():
     lines = panel.panel_checks(which=lambda _: None, env={}, disk_free=lambda: 5 * 2**30)
     assert [s for s, _, _ in lines] == ["FAIL", "FAIL", "WARN"]

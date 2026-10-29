@@ -228,6 +228,11 @@ def _dir_size(d: Path) -> int:
     return sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) if d.is_dir() else 0
 
 
+def epoch(v: Any) -> float | None:
+    """A manifest's `created` (manifest.v1: epoch seconds, a number) as the API sends it; None when it isn't one."""
+    return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+
+
 def result_row(run_dir: Path, man: dict, res: dict) -> dict[str, Any]:
     sc, model = man.get("scenario") or {}, man.get("model") or {}
     score = res.get("score") or {}
@@ -239,7 +244,7 @@ def result_row(run_dir: Path, man: dict, res: dict) -> dict[str, Any]:
         "model": model.get("slug"),
         "client": (man.get("client") or {}).get("name"),
         "condition": man.get("condition"),
-        "created": man.get("created"),
+        "created": epoch(man.get("created")),
         "passed": res.get("passed"),
         "score": score.get("gain"),
         "outcome": res.get("outcome"),
@@ -263,7 +268,7 @@ def results(sessions: Path) -> list[dict[str, Any]]:
         man, res = _read_json(d / "manifest.json"), _read_json(d / "result.json")
         if isinstance(man, dict) and isinstance(res, dict):
             rows.append(result_row(d, man, res))
-    return sorted(rows, key=lambda r: str(r["created"] or ""), reverse=True)
+    return sorted(rows, key=lambda r: r["created"] or 0.0, reverse=True)
 
 
 Check = tuple[str, str, str]

@@ -212,7 +212,8 @@ def test_results_validate_and_upload(app, page):
     pg, errors = page
     run = app.runtime / "sessions" / "s1"
     run.mkdir(parents=True)
-    (run / "manifest.json").write_text(json.dumps({"run_id": "s1-r001", "scenario": {"name": "act1_get_item"}}))
+    man = {"run_id": "s1-r001", "created": 1792953630.85, "scenario": {"name": "act1_get_item"}}  # epoch seconds
+    (run / "manifest.json").write_text(json.dumps(man))
     (run / "result.json").write_text(json.dumps({"run_id": "s1-r001", "valid": True, "passed": True}))
     app.settings.set_site_token("bgb_" + "0" * 40)
     pg.goto(f"http://127.0.0.1:{app.port}/#/results")

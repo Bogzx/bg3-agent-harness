@@ -108,7 +108,7 @@ def tree(tmp_path: Path) -> Path:
             {
                 "run_id": "s1-r001",
                 "series": "s1",
-                "created": "2026-10-25T10:00:00Z",
+                "created": 1792953630.85,  # manifest.v1: epoch seconds
                 "scenario": {"name": "act1_gold_max"},
                 "model": {"slug": "deepseek-flash"},
                 "client": {"name": "pi"},

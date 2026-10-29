@@ -59,9 +59,9 @@ describe("verdict", () => {
 describe("attempts", () => {
   it("numbers the runs of a cell oldest first", () => {
     const rs = [
-      run({ dir: "b", created: "2026-10-26" }),
-      run({ dir: "a", created: "2026-10-25" }),
-      run({ dir: "c", created: "2026-10-25", model: "other" }),
+      run({ dir: "b", created: 1792953630.85 }), // epoch seconds, as the server sends them
+      run({ dir: "a", created: 999 }), // older: as text "999" would sort after "1792..."
+      run({ dir: "c", created: 999, model: "other" }),
     ];
     const n = attempts(rs);
     expect(n.get("a")).toEqual([1, 2]);
