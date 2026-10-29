@@ -3,16 +3,19 @@
 against and what the website serves as `<suite>/suite.json` next to the start save zips.
 
 It holds the harness and bg3bench versions and the game pins a run must cite, every non-holdout scenario's digest,
-start save, .lsv sha1 and start-state fingerprint (saves.json), the published save zips, and per condition the bg3
-tools a play process is served and the sha256 of the prompt each client is served. The tools and prompts are worked
-out the way the runner works them out for a run (bg3harness.client_setup.run_files: the bg3 server dumped offline
-in the condition's env, its tool list minus the condition's tools off, the manifest's prompt fields), so a run of
-the suite through an unmodified harness hashes to them.
+start save, .lsv sha1 and start-state fingerprint (saves.json; a new game's: consistency.new_game_fingerprint), the
+published save zips, and per condition the bg3 tools a play process is served and the sha256 of the prompt each
+client is served. The tools and prompts are worked out the way the runner works them out for a run
+(bg3harness.client_setup.run_files: the bg3 server dumped offline in the condition's env, its tool list minus the
+condition's tools off, the manifest's prompt fields), so a run of the suite through an unmodified harness hashes to
+them.
 
     python -m bg3bench.submission.release --suite bench-v0.8 --pins-from MANIFEST... [--out FILE]
         [--condition rules ...] [--client pi --client claude] [--game-build B --bg3le-sha256 H --mod-sha1 H]
 
---out defaults to packages/bench/releases/<suite>.json (default_path), where the validator looks for it.
+--out defaults to packages/bench/releases/<suite>.json (default_path), where the validator and the panel look for
+it. That file ships with the repo, so a fresh checkout validates against the released suite; the bench's tests fail
+when this tree builds another one (a scenario, saves.json, a version, the mod, the tools or a prompt changed).
 --pins-from reads the game pins from the reference runs' manifest.json files, which must all cite the same pins;
 the flags override them. The build refuses a suite that isn't the installed one, suite files not pinned for it
 (bg3bench.suite.check), saves.json disagreeing with the scenario files, reference runs with different pins, and
@@ -36,7 +39,7 @@ from bg3harness import client_setup
 from bg3harness.run_manifest import tools_digest
 
 from bg3bench import conditions, pins, results, saves, scenario, suite
-from bg3bench.submission import bundle, pack
+from bg3bench.submission import bundle, consistency, pack
 
 Json = dict[str, Any]
 
@@ -151,11 +154,12 @@ def build(
             continue
         start = sc.get("start") or {}
         s = by_save.get(start.get("save") or "")
+        new_game = start.get("kind") == "new_game"
         out_sc[name] = {
             "digest": scenario.digest(sc),
             "save": start.get("save"),
             "save_sha1": start.get("save_sha1"),
-            "fingerprint": s.fingerprint if s else None,
+            "fingerprint": consistency.new_game_fingerprint(sc) if new_game else s.fingerprint if s else None,
         }
     doc = {
         "schema": SCHEMA,

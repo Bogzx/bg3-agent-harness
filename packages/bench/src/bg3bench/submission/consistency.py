@@ -57,6 +57,18 @@ def fingerprint(timeline: list[Json]) -> Json | None:
     }
 
 
+def new_game_fingerprint(sc: Json) -> Json:
+    """The start state a new game's first snapshot shows (character creation, before any party or level loads): no
+    party, gold or area, the scenario's difficulty and no avatar name yet. A run that loaded a save has a party."""
+    return {
+        "party": [],
+        "gold": 0,
+        "area": None,
+        "difficulty": (sc.get("game_settings") or {}).get("difficulty"),
+        "name": None,
+    }
+
+
 def x01_start_state(b: Loaded) -> Outcome:
     want = b.release_scenario.get("fingerprint")
     if not want:
