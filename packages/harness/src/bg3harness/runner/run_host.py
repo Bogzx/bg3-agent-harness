@@ -960,7 +960,8 @@ class LiveRunHost:
                 "first_stop_s": None if outcome.first_stop is None else round(outcome.first_stop - outcome.started, 1),
                 "sessions": 1,
                 "cap_hit": r.cap_hit,
-                "milestone": hit and hit["id"],
+                # an until run that the live verdict passed reached its milestone (the bench's verdict is its goal)
+                "milestone": hit["id"] if hit else sc.get("until") if goal and goal["verdict"] == "passed" else None,
                 "game_settings": getattr(r, "game_settings", None),
                 "manifest": r.opt.manifest,
                 "pins": pins,  # the bench adds the versions (bg3bench.pins.versions)

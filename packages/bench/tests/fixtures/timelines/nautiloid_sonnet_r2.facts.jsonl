@@ -1,0 +1,264 @@
+{"v":1,"kind":"mark","t":1793207938.0,"game_t":0.0,"mark":"run_start","detail":{"playthrough":"bp-stress-nautiloid-claude-sonnet-5-5-claude-medium-rules-r2","client":"claude","model":"claude-sonnet-5-5"}}
+{"v":1,"kind":"mark","t":1793207938.0,"game_t":0.0,"mark":"settings","detail":{"resolution":"1920x1080","ui_scale":null,"language":"english","difficulty":"Balanced","roll_mode":"Random","karmic_dice":false,"seed":{"seed":1001,"applied":{"seed":1001,"streams":1,"base_seed":1001}}}}
+{"v":1,"kind":"snapshot","t":1793207938.17,"game_t":0.2,"gold":0,"party":[],"region":null,"area":null,"areas":[],"combat":false,"inv":[],"quests":{}}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.665,"count":1,"name":"Underwear","tpl":"f328179e-f5e1-4fd4-bd41-efad411223e8","uuid":"72ffe6ce-23ec-862f-5f0b-64d8a25847ac","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.666,"count":1,"name":"Leather Boots","tpl":"969bab00-b269-46a5-a7e9-dd4887814719","uuid":"cfd6a735-e8b0-7e6a-9400-f4a41e3bf78a","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.666,"count":1,"name":"Scale Mail","tpl":"ca0aafad-0f1e-4d76-8e3b-925397bb436b","uuid":"b7ffd980-5de0-6147-59d2-bdd84b87dfa2","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.667,"count":1,"name":"Homely Clothes","tpl":"f369f4fa-2da7-4693-a147-16cfaf02bca5","uuid":"328390c0-7d77-546a-efd3-08a86ad23317","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.667,"count":1,"name":"Tasteful Boots","tpl":"6bb7a595-7646-48a9-9c44-d39f16c1c5cb","uuid":"57492678-0027-b51e-02ff-4c0ad071b2ed","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.668,"count":1,"name":"Longsword","tpl":"1865323f-b428-4791-a0a9-578841e57463","uuid":"395c4b6f-4108-9be8-fd97-e24d56182932","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.36,"game_t":10.4,"gt":17.669,"count":1,"name":"Shortbow","tpl":"c5403c1d-f372-43e1-927a-9189e9e3545d","uuid":"951f7acc-ec08-a9b3-acdd-8a3c8abed573","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.725,"count":1,"name":"Supply Pack","tpl":"398e7328-ce90-4c02-94a2-93341fac499a","uuid":"13478d18-829b-b381-c51e-3bd3b06586a7","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.725,"count":2,"name":"Potion of Healing","tpl":"d47006e9-8a51-453d-b200-9e0d42e9bbab","uuid":"ae2d1c90-472e-0c61-fd24-edc22a8ce783","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.726,"count":2,"name":"Potion of Healing","tpl":"d47006e9-8a51-453d-b200-9e0d42e9bbab","uuid":"ae2d1c90-472e-0c61-fd24-edc22a8ce783","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.726,"count":1,"name":"Scroll of Revivify","tpl":"c1c3e4fb-d68c-4e10-afdc-d4550238d50e","uuid":"e759126f-ab42-d6ab-271e-5ab10cf2f20b","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.726,"count":1,"name":"Keychain","tpl":"ee329627-dbee-405f-b9a6-b260de9ad34c","uuid":"af507c2b-8821-286d-0224-c888bcec8270","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.726,"count":1,"name":"Alchemy Pouch","tpl":"b7543ff4-5010-4c01-9bcd-4da1047aebfc","uuid":"af425a8e-ecf1-cad6-a5cb-486a8cd2fa5d","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207948.42,"game_t":10.4,"gt":17.727,"count":1,"name":"Camp Supply Sack","tpl":"efcb70b7-868b-4214-968a-e23f6ad586bc","uuid":"3d7b3cd7-3a9a-2c4e-c95c-0ae4e7d4c7e6","add_type":"Regular","ev":"item_added"}
+{"v":1,"kind":"event","t":1793207951.15,"game_t":13.1,"party":false,"gt":20.46,"ev":"died","uuid":"06b30605-e1da-47a0-85da-370541af4976","name":"Cambion Lieutenant"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.462,"ev":"died","uuid":"9bc3ea1a-e9a9-4a28-9665-53a959b74df3","name":"Goblin"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.463,"ev":"died","uuid":"16bebcc5-41d7-4fea-9e34-6f042fbc5ca2","name":"Incinerated Mind Flayer"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.464,"ev":"died","uuid":"8e467fbc-c0a4-4d82-a952-646e15d57028","name":"Mind Flayer"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.465,"ev":"died","uuid":"d516de66-e974-4855-a85d-80b91391f0f3","name":"Mind Flayer"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.466,"ev":"died","uuid":"21c044a2-e506-45fa-a34f-8ffbe7bfddac","name":"Lesser Imp"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.467,"ev":"died","uuid":"2a6c8e02-f886-46bf-ab79-cf69f523abb0","name":"Lesser Imp"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.468,"ev":"died","uuid":"2e51d3cc-8102-4bb9-9272-d9846f2810af","name":"Mind Flayer"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.469,"ev":"died","uuid":"542fcc67-3f17-43bf-b637-d9893be10677","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.47,"ev":"died","uuid":"af055273-29fb-4e83-bef3-9dbec5c66211","name":"Mind Flayer"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.47,"ev":"died","uuid":"1b804a0e-1914-4905-b624-4553525510a8","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.16,"game_t":13.2,"party":false,"gt":20.471,"ev":"died","uuid":"9cbdd9c3-6282-49e0-8cff-a61d0df6ae67","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.472,"ev":"died","uuid":"307d7d95-96f3-40db-9c2b-65ed63aa5c1d","name":"Cambion"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.473,"ev":"died","uuid":"41017b52-e7e9-4215-bff3-191e5b2d124d","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.473,"ev":"died","uuid":"50eaf702-4a99-44d3-91df-69bb0e74ee17","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.474,"ev":"died","uuid":"aa98efa1-bd02-4e31-bc60-5354627cd29b","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.475,"ev":"died","uuid":"44779e34-e013-4b03-b452-8c1cd9e3a658","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.475,"ev":"died","uuid":"4827c8bd-c911-440d-bb94-42d94df44e17","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.476,"ev":"died","uuid":"54ca156b-744d-4e1c-83cd-a81b5b18c32a","name":"Dead Thrall"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.477,"ev":"died","uuid":"47131a3d-fcf0-4cea-86c2-d894a7bdb069","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.478,"ev":"died","uuid":"4b8e0dc2-bd97-4f80-8aee-8b5ffb15ac75","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.478,"ev":"died","uuid":"a3f9c8e3-d9ce-47b0-bc16-d28f70f57f0b","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.479,"ev":"died","uuid":"e64fbb96-81b1-49ab-8364-42b6486607c1","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.48,"ev":"died","uuid":"f7ff624a-6363-4791-9659-bf8cc7418904","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.481,"ev":"died","uuid":"5063e607-a739-43bd-8270-52f0bc81238a","name":"Lesser Imp"}
+{"v":1,"kind":"event","t":1793207951.17,"game_t":13.2,"party":false,"gt":20.481,"ev":"died","uuid":"c4eed3f6-e494-4d72-938b-dd1bb425e00a","name":"Lesser Imp"}
+{"v":1,"kind":"event","t":1793207951.18,"game_t":13.2,"party":false,"gt":20.482,"ev":"died","uuid":"249cc14e-c0d3-4139-abc0-a5b22d567131","name":"Imp"}
+{"v":1,"kind":"event","t":1793207951.18,"game_t":13.2,"party":false,"gt":20.483,"ev":"died","uuid":"d66ae305-e613-4a03-82eb-365d2240dd2a","name":"Imp"}
+{"v":1,"kind":"event","t":1793207953.52,"game_t":15.5,"ev":"region","name":"Nautiloid"}
+{"v":1,"kind":"event","t":1793207953.52,"game_t":15.5,"ev":"joined","name":"Tav"}
+{"v":1,"kind":"event","t":1793207983.74,"game_t":45.7,"ev":"quest_added","title":"Escape the Nautiloid"}
+{"v":1,"kind":"event","t":1793208086.15,"game_t":148.1,"ev":"combat_started","combat":"18da2ad4-fdb9-b1ae-9ae5-338267b3e3ed","gt":155.456}
+{"v":1,"kind":"event","t":1793208089.69,"game_t":151.7,"ev":"joined","name":"Lae'zel"}
+{"v":1,"kind":"event","t":1793208093.07,"game_t":155.1,"ev":"kill","by_party":true,"killer":"Lae'zel","victim":"Imp","trader":false,"owner":"Lae'zel","victim_uuid":"5c5bd50b-147e-42e5-93cb-59a754df91ec","gt":162.376}
+{"v":1,"kind":"event","t":1793208094.85,"game_t":156.8,"party":false,"gt":164.156,"ev":"died","uuid":"5c5bd50b-147e-42e5-93cb-59a754df91ec","name":"Imp"}
+{"v":1,"kind":"event","t":1793208097.69,"game_t":159.7,"ev":"kill","by_party":true,"killer":"Tav","victim":"Imp","trader":false,"owner":"Tav","victim_uuid":"07f1512b-efe9-4eb8-8ade-783435e9d7c9","gt":166.996}
+{"v":1,"kind":"event","t":1793208099.37,"game_t":161.4,"party":false,"gt":168.676,"ev":"died","uuid":"07f1512b-efe9-4eb8-8ade-783435e9d7c9","name":"Imp"}
+{"v":1,"kind":"event","t":1793208110.22,"game_t":172.2,"ev":"kill","by_party":true,"killer":"Lae'zel","victim":"Imp","trader":false,"owner":"Lae'zel","victim_uuid":"38d1ce2f-4f19-4266-971d-61f08bc1a895","gt":179.53}
+{"v":1,"kind":"event","t":1793208110.29,"game_t":172.3,"ev":"combat_ended","combat":"18da2ad4-fdb9-b1ae-9ae5-338267b3e3ed","gt":179.594}
+{"v":1,"kind":"event","t":1793208111.99,"game_t":174.0,"party":false,"gt":181.3,"ev":"died","uuid":"38d1ce2f-4f19-4266-971d-61f08bc1a895","name":"Imp"}
+{"v":1,"kind":"snapshot","t":1793208241.0,"game_t":303.0,"gold":0,"party":[{"name":"Lae'zel","level":1,"dead":false,"downed":false,"hp":12,"max_hp":12},{"name":"Tav","level":1,"dead":false,"downed":false,"hp":12,"max_hp":12}],"region":"Nautiloid","area":null,"areas":[],"combat":false,"inv":[{"name":"Camp Supply Sack","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Alchemy Pouch","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Keychain","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Scroll of Revivify","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Potion of Healing","count":2,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Lae'zel's Underwear","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Tasteful Boots","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Lae'zel's Clothes","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Githyanki Half Plate","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Githyanki Boots","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Shortbow","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Longsword","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Potion of Healing","count":2,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Scroll of Revivify","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Keychain","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Alchemy Pouch","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Camp Supply Sack","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Underwear","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Longsword","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Tasteful Boots","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Leather Boots","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Scale Mail","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Homely Clothes","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"}],"quests":{"Escape the Nautiloid":false}}
+{"v":1,"kind":"event","t":1793208326.92,"game_t":388.9,"ev":"combat_started","combat":"268b1a85-1831-d74f-65fa-ff8d745032ee","gt":396.224}
+{"v":1,"kind":"event","t":1793208367.27,"game_t":429.3,"ev":"kill","by_party":true,"killer":"Tav","victim":"Lesser Hellsboar","trader":false,"owner":"Tav","victim_uuid":"1650c758-c9c2-d487-387d-22a269fd7918","gt":436.574}
+{"v":1,"kind":"event","t":1793208369.54,"game_t":431.5,"party":false,"gt":438.85,"ev":"died","uuid":"1650c758-c9c2-d487-387d-22a269fd7918","name":"Lesser Hellsboar"}
+{"v":1,"kind":"event","t":1793208399.45,"game_t":461.4,"ev":"kill","by_party":true,"killer":"Lae'zel","victim":"Lesser Imp","trader":false,"owner":"Lae'zel","victim_uuid":"8262153a-b469-d119-2041-8316e0648ae0","gt":468.756}
+{"v":1,"kind":"event","t":1793208401.22,"game_t":463.2,"party":false,"gt":470.532,"ev":"died","uuid":"8262153a-b469-d119-2041-8316e0648ae0","name":"Lesser Imp"}
+{"v":1,"kind":"event","t":1793208421.44,"game_t":483.4,"ev":"kill","by_party":true,"killer":"Lae'zel","victim":"Lesser Imp","trader":false,"owner":"Lae'zel","victim_uuid":"139971a8-86c5-4ee9-b201-18da4a2cb0ed","gt":490.752}
+{"v":1,"kind":"event","t":1793208423.3,"game_t":485.3,"party":false,"gt":492.604,"ev":"died","uuid":"139971a8-86c5-4ee9-b201-18da4a2cb0ed","name":"Lesser Imp"}
+{"v":1,"kind":"event","t":1793208482.42,"game_t":544.4,"ev":"kill","by_party":false,"killer":"Commander Zhalk","victim":"Mind Flayer","trader":false,"owner":"Commander Zhalk","victim_uuid":"22a400ec-5f01-4659-82e1-aed0b203c846","gt":551.73}
+{"v":1,"kind":"event","t":1793208482.75,"game_t":544.7,"party":false,"gt":552.059,"ev":"died","uuid":"22a400ec-5f01-4659-82e1-aed0b203c846","name":"Mind Flayer"}
+{"v":1,"kind":"snapshot","t":1793208543.54,"game_t":605.5,"gold":0,"party":[{"name":"Lae'zel","level":1,"dead":false,"downed":false,"hp":12,"max_hp":12},{"name":"Tav","level":1,"dead":false,"downed":false,"hp":8,"max_hp":12}],"region":"Nautiloid","area":null,"areas":[],"combat":true,"inv":[{"name":"Camp Supply Sack","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Alchemy Pouch","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Keychain","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Scroll of Revivify","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Potion of Healing","count":2,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Lae'zel's Underwear","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Tasteful Boots","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Lae'zel's Clothes","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Githyanki Half Plate","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Githyanki Boots","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Shortbow","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Longsword","count":1,"owner":"58a69333-40bf-8358-1d17-fff240d7fb12"},{"name":"Potion of Healing","count":2,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Scroll of Revivify","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Keychain","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Alchemy Pouch","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Camp Supply Sack","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Underwear","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Longsword","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Tasteful Boots","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Leather Boots","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Scale Mail","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Homely Clothes","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"}],"quests":{"Escape the Nautiloid":false}}
+{"v":1,"kind":"event","t":1793208570.63,"game_t":632.6,"ev":"combat_ended","combat":"268b1a85-1831-d74f-65fa-ff8d745032ee","gt":639.937}
+{"v":1,"kind":"event","t":1793208575.06,"game_t":637.1,"ev":"quest_added","title":"Rescue the Illithids' Captive"}
+{"v":1,"kind":"event","t":1793208575.06,"game_t":637.1,"ev":"quest_done","title":"Rescue the Illithids' Captive"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.041,"ev":"died","uuid":"039598c3-6f98-4001-9f23-d7c8634be120","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.041,"ev":"died","uuid":"0ce8aa3c-cfbd-4527-8b0b-4bcb79a12635","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.042,"ev":"died","uuid":"5f2b2080-16d2-4ee0-bda0-020ec8223f20","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.043,"ev":"died","uuid":"0028d0c1-1fb1-4c0f-baad-bf44eeae6dc1","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.044,"ev":"died","uuid":"6da6d51e-8cf6-4b49-a780-3f46971d5b33","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.044,"ev":"died","uuid":"e4687c8e-047a-46a6-9b37-59371d45071f","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.045,"ev":"died","uuid":"1d14e1c6-a511-45d4-b8b7-2999fb0a213b","name":"Chell"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.046,"ev":"died","uuid":"3230e60f-b9b7-4778-bb47-db8238bb8cd3","name":"Rhy"}
+{"v":1,"kind":"event","t":1793208584.74,"game_t":646.7,"party":false,"gt":654.046,"ev":"died","uuid":"44934e3b-b1bf-4e48-99c0-5a5fa70dd694","name":"Vatas"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.047,"ev":"died","uuid":"6ec5367a-0be0-412b-b47e-0384f73992c3","name":"Kavil"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.048,"ev":"died","uuid":"c580968f-020c-4189-bd2d-6b80edad3ead","name":"Kivak"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.048,"ev":"died","uuid":"d0684723-1675-4ff3-bebb-91ccbc423493","name":"Zae"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.049,"ev":"died","uuid":"725b6250-8df8-4dad-a276-639aa262c9b0","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.05,"ev":"died","uuid":"9c406179-6f8c-421d-8eb1-d2d23b4fdd5c","name":"Executed Drow"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.051,"ev":"died","uuid":"a1802fd3-5f0a-4e1b-9c0b-9f3671e3f104","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.052,"ev":"died","uuid":"ad1c88ec-9f08-405a-9b35-38f0e0b6da15","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.052,"ev":"died","uuid":"f3128b07-1354-4b84-a580-5901f11b1321","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.053,"ev":"died","uuid":"b7e903e1-9f6e-4f5c-828c-79854006d9f6","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.054,"ev":"died","uuid":"01973f38-1fd2-4035-abb3-27429f49bd47","name":"Dead Caravan Agent"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.054,"ev":"died","uuid":"031970f5-60d6-44fe-aa68-4cf6406a377d","name":"Dead Adventurer"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.7,"party":false,"gt":654.055,"ev":"died","uuid":"0b7bd9d6-1521-840d-35bc-b88d77b64195","name":"Mangled Fisher"}
+{"v":1,"kind":"event","t":1793208584.75,"game_t":646.8,"party":false,"gt":654.056,"ev":"died","uuid":"0c810727-31ba-46e4-aba9-dbc6dcf5510a","name":"Dead Halfling"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.057,"ev":"died","uuid":"1e367bd5-da56-4fb3-9f49-d0ecc3b45599","name":"Dead Drow Raider"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.058,"ev":"died","uuid":"43421d3b-74b7-4107-b0a3-c765ee282700","name":"Dead Toll Collector"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.058,"ev":"died","uuid":"482f39d8-b77e-443b-ab56-0e53b518c133","name":"Dead Adventurer"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.059,"ev":"died","uuid":"ca9c8acf-286b-4189-b301-fae53e0665c3","name":"Mangled Corpse"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.06,"ev":"died","uuid":"f35c29c6-d643-8423-1c50-577ac06ee5de","name":"Abducted Nobleman"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.061,"ev":"died","uuid":"3c3f7d7c-6d91-4aa4-bec4-dbb7c2c12ea6","name":"Dead Caravan Agent"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.061,"ev":"died","uuid":"b5f84785-b4a5-4eea-b839-84a33b0b88fa","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.062,"ev":"died","uuid":"7bfd54db-db93-477b-a48d-cc1e3cfbf44e","name":"Exsanguinated Boar"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.062,"ev":"died","uuid":"cf23c889-7f52-4944-b8d7-1fe8145a5ea3","name":"Exsanguinated Boar"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.063,"ev":"died","uuid":"e2517108-9e22-4bb5-aa2e-4f9e1a3decf8","name":"Exsanguinated Boar"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.064,"ev":"died","uuid":"e903999f-6a90-44ed-9469-d1388ea338ea","name":"Exsanguinated Boar"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.064,"ev":"died","uuid":"4ca99c0d-f580-4705-8517-8f8f9b6cde56","name":"Dead Human"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.065,"ev":"died","uuid":"d302b76d-9c59-41ff-bd0b-8cfc8cfb65bb","name":"Exsanguinated Boar"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.066,"ev":"died","uuid":"034518b5-36f4-405c-946e-d8f18a441f7d","name":"Dead Myconid"}
+{"v":1,"kind":"event","t":1793208584.76,"game_t":646.8,"party":false,"gt":654.066,"ev":"died","uuid":"1a0dc8bb-dfe3-4e25-b169-902bf7554435","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.067,"ev":"died","uuid":"2934295e-c05f-4653-aa61-6eb37b304acf","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.068,"ev":"died","uuid":"3e235097-9e0e-4236-8a9d-2a9015c430d1","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.068,"ev":"died","uuid":"4b026c61-6aaf-449c-b23e-dd8c5078ace5","name":"Dead Myconid"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.069,"ev":"died","uuid":"5e1d5291-f414-4d01-a5f1-abcd18457554","name":"Dead Myconid Sprout"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.07,"ev":"died","uuid":"71b08352-7612-4b53-9db4-8c209bed0b66","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.07,"ev":"died","uuid":"dda1c4f9-b2a3-45d1-a13c-18a73f27073a","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.071,"ev":"died","uuid":"5c1b4ca4-71f9-4524-92d7-57f048a085a0","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.072,"ev":"died","uuid":"7e1fe416-d408-4a53-9f18-1207c47d5eda","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.073,"ev":"died","uuid":"acbbaa5b-b7c3-4a48-b576-215de1b738fb","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.073,"ev":"died","uuid":"e632220b-2710-4aa3-ac06-b0fedd9cfe6a","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.074,"ev":"died","uuid":"f6b4adcc-b1d9-4b38-8621-87984dd91dda","name":"Dead Goblin Raider"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.075,"ev":"died","uuid":"f8d0fdd9-db98-45dd-9e79-0c314249ccf4","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.076,"ev":"died","uuid":"146166f2-83c2-4795-80cd-3e87f452b44e","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.77,"game_t":646.8,"party":false,"gt":654.076,"ev":"died","uuid":"20f14574-46a5-4e2e-a7d6-e1ac67dba701","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.077,"ev":"died","uuid":"443c5517-894f-4f39-9c3a-3c0485a7299d","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.077,"ev":"died","uuid":"495014fe-a600-437c-9b18-735e82c49b4d","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.078,"ev":"died","uuid":"95c18bac-a030-4377-b827-ef8beeaf066f","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.079,"ev":"died","uuid":"ab537441-af16-4b39-96d4-ace4fba280d4","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.079,"ev":"died","uuid":"c619fd7e-804a-49fc-9f41-a084d4398d64","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.08,"ev":"died","uuid":"cbf5fca9-0fa8-4040-b3af-92d77305203c","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.081,"ev":"died","uuid":"df428bb0-9854-4f33-8c82-7b287cce4115","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.081,"ev":"died","uuid":"1ed658d0-e88a-4b7b-ab9e-1e520ae7d0c7","name":"Mirileth"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.082,"ev":"died","uuid":"751644b1-44aa-4a85-944e-94419313d27f","name":"Blinded Elf"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.083,"ev":"died","uuid":"8ea9039f-a700-4388-8f05-1031d827fa60","name":"Dead Goblin Raider"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.083,"ev":"died","uuid":"a0df7df5-1ced-4024-938b-af4616811370","name":"Dead Goblin Raider"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.084,"ev":"died","uuid":"a809c7d4-00ff-478f-ba73-6090e0e94a7a","name":"Dead Drow Raider"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.084,"ev":"died","uuid":"cc07f778-019d-4705-b7f4-1ec82655b975","name":"Dead Goblin Raider"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.085,"ev":"died","uuid":"dbab2024-e7d5-4e1b-99cf-abc15c71755a","name":"Dead Goblin Raider"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.086,"ev":"died","uuid":"de3e1f50-ff58-4475-ab41-84995bc39a96","name":"Dead Adventurer"}
+{"v":1,"kind":"event","t":1793208584.78,"game_t":646.8,"party":false,"gt":654.086,"ev":"died","uuid":"e80339dc-6e88-49c4-a638-ef1c4914077f","name":"Dead Drow Raider"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.087,"ev":"died","uuid":"2e5a05d0-66ef-407c-806d-a12d4ab0c1df","name":"Yul"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.088,"ev":"died","uuid":"725e0b57-9573-43c8-a97e-13adabbc1579","name":"Half-Eaten Gnome"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.089,"ev":"died","uuid":"d2b7c8d1-facf-46aa-b864-ae0adce14451","name":"Dead Goblin Raider"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.09,"ev":"died","uuid":"0ba41cd1-e1f6-4f17-8e92-10ebef850268","name":"Flaming Fist Jacek"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.09,"ev":"died","uuid":"0960a318-decb-4e9a-a7bf-7e46720d5928","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.091,"ev":"died","uuid":"0cb0cdde-16f8-440d-b73a-ceb385183ea9","name":"Dissected Drow"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.092,"ev":"died","uuid":"480abd75-0662-4e7a-8d7b-76d509820c42","name":"Eviscerated Goblin"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.092,"ev":"died","uuid":"6f61c90d-b130-4d37-b10d-8e4b958d3d22","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.093,"ev":"died","uuid":"1f2818a7-ead4-4a9a-bc56-3e635d567324","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.094,"ev":"died","uuid":"27934f30-fdfe-4b01-aa46-1a708e76741d","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.094,"ev":"died","uuid":"70a96a65-6975-40b2-b464-ff2cb2c781f9","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.095,"ev":"died","uuid":"8c289941-8261-43cd-857a-cbab5943978b","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.096,"ev":"died","uuid":"a38523e2-7630-402e-8036-17cfe5397fe0","name":"Pale Corpse"}
+{"v":1,"kind":"event","t":1793208584.79,"game_t":646.8,"party":false,"gt":654.096,"ev":"died","uuid":"a3d3846a-713a-4ef7-9120-a13862ddd063","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.097,"ev":"died","uuid":"ef9ff510-c334-45d4-bade-a3a0f4c6e63b","name":"Dead Tiefling"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.097,"ev":"died","uuid":"f23fc89a-e17a-4815-910c-91d39f68b6ab","name":"Dead Goblin"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.098,"ev":"died","uuid":"142dadb4-96c1-474f-aa57-9acfecb5947c","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.099,"ev":"died","uuid":"2405be53-e275-42a8-ad7c-b61e692c882f","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.099,"ev":"died","uuid":"4d7453d5-46d8-4ebd-806b-c346b52e223d","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.1,"ev":"died","uuid":"9a4f3e82-c6fb-4a16-a1a1-d62d4ba9c8ef","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.101,"ev":"died","uuid":"ad8fa893-c3b2-4259-993c-d069815b3702","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.101,"ev":"died","uuid":"ba34f54d-c3b0-4a72-b936-c44984ef2b40","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.102,"ev":"died","uuid":"bd8002d9-dc85-4fe3-b07a-08c9892f5171","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.103,"ev":"died","uuid":"39347c20-ce2f-444e-ac39-7fd71f957f34","name":"Mangled Corpse"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.103,"ev":"died","uuid":"bcdd092c-4185-41c9-8f85-6669a0cd9681","name":"Dead Goblin Child"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.104,"ev":"died","uuid":"f52a2d24-e75e-44e3-8209-268c66dad728","name":"Kuo-Toa Skirmisher"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.105,"ev":"died","uuid":"b4a42845-33fa-4773-aa79-7148a464f3e1","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.8,"game_t":646.8,"party":false,"gt":654.106,"ev":"died","uuid":"1b755641-562f-4139-b469-382f7ff7e197","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.107,"ev":"died","uuid":"2c1c98fa-21c0-421d-9e92-3a936538f856","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.107,"ev":"died","uuid":"3231df47-59cd-44f4-ba2a-501a897fb868","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.108,"ev":"died","uuid":"54df129f-7a19-43e4-9ff5-7246bf5a32d3","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.109,"ev":"died","uuid":"66fdace2-0525-4750-8e73-4005af1e4f14","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.109,"ev":"died","uuid":"7b6ce714-5b70-4773-bba9-d9041076014a","name":"Headless Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.11,"ev":"died","uuid":"b08db52b-5760-4793-a1e0-fbfd2ee9e896","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.111,"ev":"died","uuid":"b1222c74-84a2-4403-be62-a64048652cd5","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.111,"ev":"died","uuid":"b7490f8a-a54f-4896-a7d2-ff881223ecd1","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.112,"ev":"died","uuid":"e40d9b2f-3aba-49db-87df-3f7ac54189e6","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.112,"ev":"died","uuid":"e566c174-a688-4327-a152-965969e89aeb","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.113,"ev":"died","uuid":"1d5cb4c7-86e2-4499-bbc1-1ce373b75959","name":"Shattered Duergar"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.114,"ev":"died","uuid":"2ceb6505-2f48-4e56-80d1-a6cff28a6331","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.114,"ev":"died","uuid":"2fb4f2a1-8bba-4697-96b3-368efe0f3552","name":"Dead Tiefling"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.115,"ev":"died","uuid":"375692e9-48ba-47a7-9a94-0abdfb8bbd3b","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.116,"ev":"died","uuid":"42d1200f-5c18-45a6-b528-36add0b60fa3","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.81,"game_t":646.8,"party":false,"gt":654.116,"ev":"died","uuid":"48d7c293-1cee-4823-8ec6-fcf0828a7237","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.117,"ev":"died","uuid":"5d2f0915-c987-4cab-988a-0998992a8fb6","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.118,"ev":"died","uuid":"847e7c72-857f-4f7e-a71b-758b0037bd25","name":"Shattered Duergar"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.118,"ev":"died","uuid":"9b34ab44-3419-4157-aff7-ee1735bab39f","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.119,"ev":"died","uuid":"9b535b9d-576a-4d94-8e6e-628a142c1153","name":"Shattered Duergar"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.12,"ev":"died","uuid":"b864d045-138d-4dd9-a7cd-de90fdbf91e9","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.12,"ev":"died","uuid":"cb30e918-7cf9-405c-b2df-bf91b7432726","name":"Shattered Duergar"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.121,"ev":"died","uuid":"cfc94aad-17e7-4c5c-a977-58d9a1afc5d3","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.122,"ev":"died","uuid":"d4b1e753-7579-4309-9be7-6b59ed4003c3","name":"Shattered Duergar"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.123,"ev":"died","uuid":"da429f13-abee-413e-b357-27dfbbe22bed","name":"Dead Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.124,"ev":"died","uuid":"243d2dfc-571b-43f1-a5de-94a5efe28ed9","name":"Dead Elf"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.125,"ev":"died","uuid":"f3abae02-ca65-4453-8487-40cbb36527ba","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.126,"ev":"died","uuid":"4236bbe2-3464-4dab-81a8-24818006cf67","name":"Myconid"}
+{"v":1,"kind":"event","t":1793208584.82,"game_t":646.8,"party":false,"gt":654.126,"ev":"died","uuid":"aa07a632-9873-439e-b1b2-1b1a71bbbb07","name":"Myconid"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.127,"ev":"died","uuid":"ed5fdd4b-11c0-4bd2-abec-28bdb0bac435","name":"Myconid"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.128,"ev":"died","uuid":"378132a5-bb80-48d3-afc9-f7e0dfe06f34","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.129,"ev":"died","uuid":"614fbdae-73f2-41cc-b658-5906259819cc","name":"Dead Duergar"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.129,"ev":"died","uuid":"6c56e327-4b01-4640-9f7a-894e34961c59","name":"Executed Drow"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.13,"ev":"died","uuid":"8a79ab3c-1b49-485c-8359-5d2b7f01ec6a","name":"Executed Drow"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.13,"ev":"died","uuid":"4a0b46d1-6e90-4449-b750-c4dda67ff4a1","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.131,"ev":"died","uuid":"540a1de2-0b7b-4146-b3eb-369f636e6ca9","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.132,"ev":"died","uuid":"f76ca5e9-b3c5-4dc9-aa27-1dce05cecf48","name":"Myconid"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.132,"ev":"died","uuid":"fd8fe54e-020b-416b-9866-db64e59b96e3","name":"Dead Gnoll"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.133,"ev":"died","uuid":"2e532705-85da-4168-a06c-2631d25f67b8","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.134,"ev":"died","uuid":"72d00313-3d21-498d-a315-a9fa7987a09a","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.135,"ev":"died","uuid":"804a1920-5990-49ea-9d31-7b2d2901fd37","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.135,"ev":"died","uuid":"8e810936-faab-448e-8e1d-1554d70bdebc","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.136,"ev":"died","uuid":"f6ef9bd3-54c5-48ba-a78c-460b990d0a7f","name":"Intellect Devourer"}
+{"v":1,"kind":"event","t":1793208584.83,"game_t":646.8,"party":false,"gt":654.136,"ev":"died","uuid":"1d63fb51-7ec7-87be-458e-4cb1049a4408","name":"Mangled Fisher"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.137,"ev":"died","uuid":"369ab256-ae65-4bd8-b449-53ea48e0284c","name":"Dead Mind Flayer"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.138,"ev":"died","uuid":"45ce79e2-7b25-8259-4d4f-74c2570fbc65","name":"Mangled Fisher"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.138,"ev":"died","uuid":"5ba4768a-4aa6-885a-4d91-d1ebd5575c67","name":"Abducted Commoner"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.139,"ev":"died","uuid":"64fb4d4e-a6ee-4fde-b563-85149db9349b","name":"Mangled Corpse"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.14,"ev":"died","uuid":"67757711-8525-8fa0-1bf7-63f1a66be8b3","name":"Abducted Commoner"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.14,"ev":"died","uuid":"6fec0fac-6b4b-8581-4d41-f8fa3af32e9b","name":"Abducted Commoner"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.141,"ev":"died","uuid":"789d1b41-040e-48d2-9554-5a1c278f69d0","name":"Mangled Corpse"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.142,"ev":"died","uuid":"91fea478-3bb3-4c73-92ce-7f2ca1acad95","name":"Dead Mind Flayer"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.143,"ev":"died","uuid":"a54e7520-3ec1-835e-2bc0-ec97289e3e73","name":"Dead Fisher"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.143,"ev":"died","uuid":"a7a962bd-408d-4d76-8d8b-9820aa0fb360","name":"Dead Mind Flayer"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.144,"ev":"died","uuid":"abe4e897-f8d0-8ad9-22d2-1fd83f99091c","name":"Dead Fisher"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.145,"ev":"died","uuid":"d11a407d-9d16-40f1-a4de-fce659462383","name":"Dead Toll Collector"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.145,"ev":"died","uuid":"8e292ff0-dead-4a57-acff-7773ee16bf7e","name":"Dead Hyena"}
+{"v":1,"kind":"event","t":1793208584.84,"game_t":646.8,"party":false,"gt":654.146,"ev":"died","uuid":"8c93ab9c-9717-4a89-a7df-afbb033436a7","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.147,"ev":"died","uuid":"cfd9d50a-14b1-4a25-9d2e-ca626818dcd2","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.147,"ev":"died","uuid":"eccc2652-f5b0-4b35-894f-a26f70524f3b","name":"Flaming Fist Mercenary"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.148,"ev":"died","uuid":"f511d70c-cfab-8672-1d4f-5304b3d73dfa","name":"Mangled Fisher"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.149,"ev":"died","uuid":"eecfdb49-f726-4d23-9081-dca9b2481e7a","name":"Refugee"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.149,"ev":"died","uuid":"f9a08948-c909-499e-8fa0-6caf8fdd1e69","name":"Dead Adventurer"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.15,"ev":"died","uuid":"f8d0a86d-4df7-443c-81fd-b267703b48ab","name":"Dead Adventurer"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.151,"ev":"died","uuid":"249866db-c3e0-40fb-8cf7-ea46a56fdf48","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.151,"ev":"died","uuid":"43670d05-39b7-4831-96ce-a625e64fb137","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.152,"ev":"died","uuid":"47d5eaa1-7c60-4dd4-a6d6-4ce567583ada","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.153,"ev":"died","uuid":"a906f266-56db-475e-b810-cc6eeb851c01","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.153,"ev":"died","uuid":"b46f0307-a84b-4484-986f-03fe933a6933","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.154,"ev":"died","uuid":"d9504cbc-0d49-4a47-b7b3-ce185f0981cd","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.155,"ev":"died","uuid":"29a25fdc-f809-49fc-8ec4-2c05148f15fa","name":"Dead Drow"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.8,"party":false,"gt":654.155,"ev":"died","uuid":"483715a3-12e8-4cd7-87c1-6692b0a3703c","name":"Executed Deep Gnome"}
+{"v":1,"kind":"event","t":1793208584.85,"game_t":646.9,"party":false,"gt":654.156,"ev":"died","uuid":"4c3ede9d-7c2f-44da-bc9a-892ca2c0b00b","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.157,"ev":"died","uuid":"74dfd8c3-78eb-40d7-9377-a3c17bc1cb9c","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.158,"ev":"died","uuid":"85683ca6-3a5c-4dfa-b758-690dd722dfa2","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.159,"ev":"died","uuid":"9c5c5c4a-68f5-4eb9-b601-85d791a78af1","name":"Skeleton"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.159,"ev":"died","uuid":"54ff0ce1-7b5d-4c06-ab18-2dcf0eac23bf","name":"Buckle"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.16,"ev":"died","uuid":"56f89b9d-c9f7-45ff-9159-12e770cbb0a6","name":"Wicky"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.161,"ev":"died","uuid":"a043a111-4a15-4d4a-ac83-5dc93bc8ee76","name":"Dead Mind Flayer"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.161,"ev":"died","uuid":"cb6095ed-2795-4ffc-b89b-d1c1b13dcdbf","name":"Mauled Sheep"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.162,"ev":"died","uuid":"e1b5cbdd-3287-4836-9697-73be95502f62","name":"Ox"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.163,"ev":"died","uuid":"0d9a9811-27b3-48ae-84a6-8a85c65a092e","name":"Goblin Brawler"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.163,"ev":"died","uuid":"dfcc8342-4357-4b3f-9fb4-0d3eb2542830","name":"Goblin Tracker"}
+{"v":1,"kind":"event","t":1793208584.86,"game_t":646.9,"party":false,"gt":654.164,"ev":"died","uuid":"ef627a66-5b5a-4339-8901-27744a4fa05d","name":"Ochre Jelly"}
+{"v":1,"kind":"event","t":1793208588.04,"game_t":650.0,"party":false,"gt":657.344,"ev":"died","uuid":"cb4c2c8f-b6db-4c53-b7e3-395aef311a39","name":"Entombed Scribe"}
+{"v":1,"kind":"event","t":1793208588.04,"game_t":650.0,"party":false,"gt":657.344,"ev":"died","uuid":"462f0982-35c4-4a34-a3bf-399f37e686ee","name":"Entombed Scribe"}
+{"v":1,"kind":"event","t":1793208588.04,"game_t":650.0,"party":false,"gt":657.345,"ev":"died","uuid":"1535feb9-7ff9-4132-be09-191ba3f8c2e1","name":"Entombed Scribe"}
+{"v":1,"kind":"event","t":1793208588.04,"game_t":650.0,"party":false,"gt":657.345,"ev":"died","uuid":"7af3fa6c-7f7a-4920-acaf-f091e7c62373","name":"Entombed Scribe"}
+{"v":1,"kind":"event","t":1793208588.04,"game_t":650.0,"party":false,"gt":657.345,"ev":"died","uuid":"ebf854f1-7971-4f81-a2b7-e4b79b550b85","name":"Entombed Warrior"}
+{"v":1,"kind":"event","t":1793208590.92,"game_t":652.9,"ev":"region","name":"Wilderness"}
+{"v":1,"kind":"event","t":1793208590.92,"game_t":652.9,"ev":"choice","scene":"Lae'zel: Tsk'va. You are no thrall - Vlaakith blesses me this day! Together we might survive.","options":[{"i":1,"text":"What made you think I was a thrall?"},{"i":2,"text":"Who are you?"},{"i":3,"text":"We need to figure out where we are."},{"i":4,"text":"What do you suggest?"}],"picked":4,"picked_text":"What do you suggest?","at":1793208081.09}
+{"v":1,"kind":"event","t":1793208591.75,"game_t":653.7,"party":false,"gt":661.055,"ev":"died","uuid":"bf842d88-0c39-48b8-b4a1-f9ab140ee6ca","name":"Gomwick"}
+{"v":1,"kind":"event","t":1793208603.21,"game_t":665.2,"ev":"choice","scene":"Narrator: *As you wake, the tadpole squirms in your skull.*","options":[{"i":1,"text":"Check yourself for injuries."},{"i":2,"text":"Orient yourself - where did you land?"}],"picked":2,"picked_text":"Orient yourself - where did you land?"}
+{"v":1,"kind":"event","t":1793208610.38,"game_t":672.4,"ev":"area","name":"Ravaged Beach"}
+{"v":1,"kind":"event","t":1793208610.38,"game_t":672.4,"ev":"quest_added","title":"Find a Cure"}
+{"v":1,"kind":"event","t":1793208610.38,"game_t":672.4,"ev":"quest_done","title":"Escape the Nautiloid"}
+{"v":1,"kind":"snapshot","t":1793208669.23,"game_t":731.2,"gold":0,"party":[{"name":"Tav","level":1,"dead":false,"downed":false,"hp":12,"max_hp":12}],"region":"Wilderness","area":"Ravaged Beach","areas":["Ravaged Beach"],"combat":false,"inv":[{"name":"Potion of Healing","count":2,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Scroll of Revivify","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Keychain","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Alchemy Pouch","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Camp Supply Sack","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Underwear","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Longsword","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Tasteful Boots","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Leather Boots","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Scale Mail","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"},{"name":"Homely Clothes","count":1,"owner":"0c41a938-accf-9421-1c59-d9b1d280384f"}],"quests":{"Find a Cure":false,"Escape the Nautiloid":true,"Rescue the Illithids' Captive":true}}
+{"v":1,"kind":"mark","t":1793208669.23,"game_t":731.2,"mark":"run_end","detail":{"outcome":"timeout"}}
