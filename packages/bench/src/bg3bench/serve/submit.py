@@ -11,7 +11,9 @@ Four steps, each a request of its own so the user sees what goes out before it g
    `Bundler`), and the bundle is validated again.
 3. `upload`: only the bundle the user saw last (the caller names its hash, so a re-pack in between is refused), only
    when bundle.json names its video and its verdict is accepted, with the site token from Settings: bundle.json, the
-   files it lists and the video's URL go to the site (`Site`) as one multipart POST. submission.json keeps the site's id.
+   bundle.tar.gz beside the bundle dir (the same files; the site reads the video from bundle.json) goes to the site
+   (`Site`) as the body of one POST with its sha256 in X-Archive-Sha256. The site only queues it: its job runs every
+   check, so the answer is "queued" and a bad bundle shows in `poll`, not at upload. submission.json keeps the id.
 4. `poll`: the submission's status from the site, saved to submission.json.
 
 Prepare validates the record only (the validator's submission=False: no render yet). Render video (video.py)
@@ -26,10 +28,10 @@ validator's scrub check only.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import re
-import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +47,7 @@ SUBMISSIONS = "submissions"  # runtime/submissions/<run_id>/
 PREPARED = "prepared.json"
 SUBMISSION = "submission.json"
 ENVELOPE = "bundle.json"
+ARCHIVE = "bundle.tar.gz"  # beside the bundle dir: what Upload sends
 YOUTUBE_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 TIMEOUT_S = 60.0
 
@@ -74,10 +77,8 @@ class Bundler(Protocol):
 
 
 class Site(Protocol):
-    def post_submission(
-        self, token: str, files: Sequence[tuple[str, bytes]], youtube_url: str
-    ) -> tuple[int, dict[str, Any]]:
-        """POST /api/submissions: (HTTP status, JSON body)."""
+    def post_submission(self, token: str, archive: bytes) -> tuple[int, dict[str, Any]]:
+        """POST /api/submissions with the bundle.tar.gz bytes as the body: (HTTP status, JSON body)."""
         ...
 
     def get_submission(self, token: str, submission_id: str) -> tuple[int, dict[str, Any]]:
@@ -149,18 +150,6 @@ def site_url(url: str | None) -> str:
     return f"{u.scheme}://{u.netloc}"
 
 
-def multipart(fields: Sequence[tuple[str, bytes, str | None]], boundary: str) -> bytes:
-    """(name, data, filename or None) parts as multipart/form-data."""
-    out = bytearray()
-    for name, data, filename in fields:
-        disp = f'form-data; name="{name}"' + (f'; filename="{filename}"' if filename else "")
-        ctype = "application/octet-stream" if filename else "text/plain; charset=utf-8"
-        out += f"--{boundary}\r\nContent-Disposition: {disp}\r\nContent-Type: {ctype}\r\n\r\n".encode()
-        out += data + b"\r\n"
-    out += f"--{boundary}--\r\n".encode()
-    return bytes(out)
-
-
 Open = Callable[..., Any]
 
 
@@ -170,7 +159,6 @@ class HttpSite:
 
     base: str
     urlopen: Open = urlrequest.urlopen
-    new_boundary: Callable[[], str] = lambda: uuid.uuid4().hex
 
     def _call(self, req: urlrequest.Request) -> tuple[int, dict[str, Any]]:
         try:
@@ -189,18 +177,15 @@ class HttpSite:
             body = {**body, "retry_after": retry}
         return status, body
 
-    def post_submission(
-        self, token: str, files: Sequence[tuple[str, bytes]], youtube_url: str
-    ) -> tuple[int, dict[str, Any]]:
-        boundary = self.new_boundary()
-        parts = [(name, data, name) for name, data in files] + [("youtube_url", youtube_url.encode(), None)]
+    def post_submission(self, token: str, archive: bytes) -> tuple[int, dict[str, Any]]:
         req = urlrequest.Request(
             f"{self.base}/api/submissions",
-            data=multipart(parts, boundary),
+            data=archive,
             method="POST",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Type": "application/gzip",
+                "X-Archive-Sha256": hashlib.sha256(archive).hexdigest(),
                 "Accept": "application/json",
             },
         )
@@ -423,15 +408,18 @@ def upload(root: Path, run: str, *, bundle_sha256: Any, token: str | None, site:
     listing = bundle_listing(bdir)
     if listing != prepared["files"]:
         raise PanelError(f"{run}: the bundle's files changed since validation: validate again")
-    files = [(f["name"], (bdir / f["name"]).read_bytes()) for f in listing]
-    status, body = site.post_submission(token, files, f"https://www.youtube.com/watch?v={vid}")
+    archive = bdir.parent / ARCHIVE
+    if not archive.is_file():
+        raise PanelError(f"{run}: {archive} is missing: validate again")
+    status, body = site.post_submission(token, archive.read_bytes())
     if status != 202 or not isinstance(body.get("id"), str):
         raise PanelError(_site_error(status, body))
     doc = {
         "id": body["id"],
-        "status": body.get("status", "received"),
+        "status": body.get("status", "queued"),
         "bundle_sha256": prepared["bundle_sha256"],
-        "site_bundle_sha256": body.get("bundle_sha256"),
+        "archive_sha256": body.get("archive_sha256"),
+        "flags": body.get("flags", []),
         "youtube_id": vid,
     }
     _write_json(base / SUBMISSION, doc)

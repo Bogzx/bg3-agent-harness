@@ -1,0 +1,14 @@
+{
+ "schema": 1,
+ "about": "Each model slug's display name (a profile's `model`, the slug a run's manifest cites), for the website's catalog (bg3bench.submission.catalog). Profiles hold no display name. One model through two endpoints has two slugs and two names, so the board never shows two rows under one name.",
+ "models": {
+  "anthropic/claude-opus-5.5": "Claude Opus 5.5 (OpenRouter)",
+  "claude-haiku-5-5": "Claude Haiku 5.5",
+  "claude-opus-5-5": "Claude Opus 5.5",
+  "claude-sonnet-5-5": "Claude Sonnet 5.5",
+  "deepseek-flash": "DeepSeek V4.1 Flash",
+  "deepseek-v4-pro": "DeepSeek V4 Pro",
+  "deepseek/deepseek-v4.1-flash": "DeepSeek V4.1 Flash (OpenRouter)",
+  "gpt-5": "GPT-5"
+ }
+}

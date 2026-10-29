@@ -40,15 +40,18 @@ def test_rank_ranges_overlap_on_close_models_and_are_seeded():
         stats.rank_ranges({"a": a, "b": {s: b[s] for s in SCORED[:4]}}, random.Random(0))
 
 
-def pairs_for(model: str, cells: Mapping[str, Sequence[bool | None]], kind: dict[str, str] | None = None):
-    """(manifest, result) pairs of `model`: per scenario its runs' passed (None: an invalid run); kind marks a
-    scenario's runs as choice or maximise."""
+def pairs_for(
+    model: str, cells: Mapping[str, Sequence[bool | None]], kind: dict[str, str] | None = None, client: str = "pi"
+):
+    """(manifest, result) pairs of `model` through `client`: per scenario its runs' passed (None: an invalid run);
+    kind marks a scenario's runs as choice or maximise."""
     (m0, r0) = naut2_pairs()[0]
     out = []
     for s, runs in cells.items():
         for i, p in enumerate(runs):
-            rid = f"{model}-{s}-{i}"
+            rid = f"{client}-{model}-{s}-{i}"
             man = {**m0, "run_id": rid, "model": {**m0["model"], "slug": model}, "condition": "rules", "judge": None}
+            man["client"] = {**m0["client"], "name": client}
             man["scenario"] = {**m0["scenario"], "name": s}
             res = {**r0, "run_id": rid, "valid": p is not None, "passed": bool(p), "t_pass_s": None}
             if p is None:
@@ -85,7 +88,7 @@ def test_the_release_ranks_on_the_common_pass_fail_set_and_leaves_partial_models
         "scenarios": SCORED[:7],  # no choice, no maximise, not s07 (haiku has no valid run of it)
         "of": 8,
         "min_cells": 6,
-        "models": ["sonnet", "haiku", "deepseek", "opus"],
+        "models": [{"client": "pi", "model": m} for m in ("sonnet", "haiku", "deepseek", "opus")],
     }
     g = {x["model"]: x for x in out["groups"]}
     assert g["sonnet"]["suite_score"] == pytest.approx(2 / 3) and g["haiku"]["suite_score"] == pytest.approx(1 / 3)
@@ -116,3 +119,30 @@ def test_a_model_below_the_share_is_unranked_and_scores_only_on_the_common_set()
     assert (g["opus"]["ranked"], g["opus"]["suite_score"], g["opus"]["suite_n"]) == (False, None, 0)
     assert g["opus"]["suite_score_ci"] is None
     assert results.build_results([], seed=0, created=0.0, b=10)["ranking"] == []
+
+
+def test_a_row_is_a_model_through_one_client_and_claude_code_runs_stay_out():
+    cells = {s: [True, True, False] for s in SCORED}
+    worse = {s: [False, False, True] for s in SCORED}
+    pairs = (
+        pairs_for("claude-opus-5-5", cells)
+        + pairs_for("claude-opus-5-5", worse, client="codex")
+        + pairs_for("claude-opus-5-5", cells, client="claude")
+    )
+    out = results.build_results(pairs, seed=0, created=1.0, b=200)
+    assert_valid("results.v1.schema.json", out)
+    assert {r["client"] for r in out["runs"]} == {"pi", "codex"} and len(out["runs"]) == 2 * 3 * len(SCORED)
+    by = {(g["client"], g["model"]): g for g in out["groups"]}
+    assert set(by) == {("pi", "claude-opus-5-5"), ("codex", "claude-opus-5-5")}
+    assert by["pi", "claude-opus-5-5"]["n_runs"] == by["codex", "claude-opus-5-5"]["n_runs"] == 3 * len(SCORED)
+    assert by["pi", "claude-opus-5-5"]["suite_score"] == pytest.approx(2 / 3)
+    assert by["codex", "claude-opus-5-5"]["suite_score"] == pytest.approx(1 / 3)
+    (rank,) = out["ranking"]
+    assert rank["models"] == [
+        {"client": "pi", "model": "claude-opus-5-5"},
+        {"client": "codex", "model": "claude-opus-5-5"},
+    ]
+    assert (
+        results.build_results(pairs_for("claude-opus-5-5", cells, client="claude"), seed=0, created=1.0, b=10)["groups"]
+        == []
+    )
