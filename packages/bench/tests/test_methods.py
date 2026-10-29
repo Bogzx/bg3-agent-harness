@@ -171,3 +171,26 @@ def test_synthetic_events_match_the_facts_schema():
     assert not validator.is_valid(ev(1, "kill"))
     assert not validator.is_valid(ev(1, "kill", victim="Cat", summon="yes"))
     assert not validator.is_valid(ev(1, "pickpocket"))
+
+
+def test_selling_what_it_stole_is_stolen_gold_not_trade():
+    """METRICS #6: Haiku took 17 items from Arron's counter and sold them back; that gold counted as sold."""
+    tl = [
+        ev(5, "stole", item="Bowl", owner="Arron", char="Tav"),
+        ev(6, "stole", item="Bowl", owner="Arron", char="Tav"),
+        ev(10, "trade_open", npc="Arron", npc_uuid="u1"),
+        gold(12, 100, 100),
+        ev(20, "trade_end", npc="Arron", sold=[{"name": "Bowl", "count": 2}, {"name": "Sword", "count": 2}]),
+        ev(30, "trade_open", npc="Arron", npc_uuid="u1"),
+        gold(32, 160, 60),
+        ev(40, "trade_end", npc="Arron", sold=[{"name": "Bowl", "count": 1}]),  # both stolen bowls already sold
+    ]
+    out = methods.attribute(tl)
+    assert by(out) == {"sold": 110, "stolen": 50}
+    assert out["changes"][0] == {"t": 12, "delta": 100, "method": "sold", "stolen": 50}
+    assert out["changes"][1] == {"t": 32, "delta": 60, "method": "sold"}
+    valued = [
+        *tl[:4],
+        ev(20, "trade_end", sold=[{"name": "Bowl", "count": 2, "value": 1}, {"name": "Sword", "value": 8}]),
+    ]
+    assert by(methods.attribute(valued)) == {"sold": 80, "stolen": 20}  # by value when the rows carry one

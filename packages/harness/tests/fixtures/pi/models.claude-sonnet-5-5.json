@@ -1,0 +1,41 @@
+{
+ "providers": {
+  "anthropic": {
+   "baseUrl": "https://api.anthropic.com",
+   "api": "anthropic-messages",
+   "apiKey": "${BG3AI_ANTHROPIC_API_KEY}",
+   "models": [
+    {
+     "id": "claude-sonnet-5-5",
+     "name": "claude-sonnet-5-5",
+     "api": "anthropic-messages",
+     "reasoning": true,
+     "input": [
+      "text",
+      "image"
+     ],
+     "contextWindow": 1000000,
+     "maxTokens": 32000,
+     "cost": {
+      "input": 2.0,
+      "output": 10.0,
+      "cacheRead": 0.1,
+      "cacheWrite": 2.5
+     },
+     "thinkingLevelMap": {
+      "off": null,
+      "minimal": null
+     },
+     "compat": {
+      "supportsMidConvoEffort": true,
+      "supportsMidConvoSystemMessages": true,
+      "supportsMidConvoToolChanges": true,
+      "forceAdaptiveThinking": true,
+      "supportsTemperature": false,
+      "supportsStrictTools": true
+     }
+    }
+   ]
+  }
+ }
+}

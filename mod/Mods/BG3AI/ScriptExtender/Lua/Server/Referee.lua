@@ -31,6 +31,11 @@ R.lastHit = R.lastHit or {} -- defender uuid -> {attacker, owner, t}: the last A
 R.HIT_MS = 5000 -- a self-kill goes to the last hit within this time
 R.pendingKills = R.pendingKills or {} -- victim uuid -> {rec, hit, t}: a self-kill waiting for the killing blow
 R.PENDING_MS = 1000 -- how long a self-kill waits for the AttackedBy that follows it
+R.PP_WINDOW_MS = 300000 -- an item from the pickpocketed NPC within this time of the request is a pickpocket
+R.ppAttempt = R.ppAttempt or 0 -- RequestPickpocket count: the `attempt` of every pickpocket record it leads to
+R.approval = R.approval or {} -- "companion|rated" -> the last approval rating seen
+R.approvalAsked = R.approvalAsked or {} -- pairs already seeded from GetApprovalRating (once per pair and Lua state)
+R.SEED_MS = 1000 -- approval seeding runs at most this often (from the tick)
 
 local truthy = U.truthy
 local osi = V.osi
@@ -171,9 +176,15 @@ local function source(i)
     return nil
 end
 
+-- The open pickpocket window when `src` is its NPC. A failure or a new request ends a window; one nobody ended
+-- (the player took items and left) expires after PP_WINDOW_MS, so later items from that NPC are no pickpocket.
 local function pickpocketFrom(src)
     local pp = R.pickpocket
-    return pp and src == pp.npc
+    if pp and now_ms() - pp.t > R.PP_WINDOW_MS then
+        R.pickpocket = nil
+        return nil
+    end
+    return pp and src == pp.npc and pp or nil
 end
 
 listen("AddedTo", 3, function(item, holder, addType)
@@ -198,7 +209,7 @@ listen("AddedTo", 3, function(item, holder, addType)
     elseif src and pickpocketFrom(src) then
         if not R.ppItems[i] then
             R.record("pickpocket", { ok = true, npc = name(src), npc_uuid = src, item = entry.name,
-                count = entry.count, char = name(h) })
+                count = entry.count, char = name(h), attempt = R.pickpocket.attempt })
         end
     elseif src then
         local from
@@ -220,22 +231,29 @@ listen("TemplateAddedTo", 4, function(tpl, item)
     end
 end)
 
--- Pickpocket: the window opens (bare uuids), then a failure, or the item arrives (paired in AddedTo).
+-- Pickpocket: the window opens (bare uuids), then a failure, or the item arrives (paired in AddedTo). Every
+-- record of one window carries the same `attempt`: one failure, or one record per item taken.
 listen("RequestPickpocket", 2, function(player, npc)
-    R.pickpocket = { npc = uuid(npc), char = uuid(player), t = now_ms() }
+    R.ppAttempt = R.ppAttempt + 1
+    R.pickpocket = { npc = uuid(npc), char = uuid(player), t = now_ms(), attempt = R.ppAttempt }
 end)
 
 listen("CharacterPickpocketFailed", 2, function(player, npc)
     local n = uuid(npc)
-    R.record("pickpocket", { ok = false, npc = name(n), npc_uuid = n, char = name(uuid(player)) })
+    local pp = R.pickpocket
+    R.pickpocket = nil
+    R.record("pickpocket", { ok = false, npc = name(n), npc_uuid = n, char = name(uuid(player)),
+        attempt = pp and pp.npc == n and pp.attempt or nil })
 end)
 
 -- Not seen firing on the live build yet (live1 §6); arity from the osi reference.
 listen("CharacterPickpocketSuccess", 6, function(player, npc, item, _, amount)
     local i, n = uuid(item), uuid(npc)
     if i then R.ppItems[i] = true end
+    local pp = R.pickpocket
     R.record("pickpocket", { ok = true, npc = name(n), npc_uuid = n, item = name(i),
-        count = math.max(1, math.floor(tonumber(amount) or 1)), char = name(uuid(player)) })
+        count = math.max(1, math.floor(tonumber(amount) or 1)), char = name(uuid(player)),
+        attempt = pp and pp.npc == n and pp.attempt or nil })
 end)
 
 listen("CharacterStoleItem", 10, function(char, item, _, _, _, _, owner)
@@ -246,12 +264,16 @@ end)
 
 -- Crimes the party committed (CrimeIsRegistered(victim, type, id, _, criminal, ...)). Follow-up registrations
 -- (KeepAnEyeOnMe, WaitingForCalledGuard, ...) are kept with their crime id; graders dedupe.
+-- The game registers Murder for a kill it saw as one, a fight's target included (a sneak kill that starts the
+-- fight), so the record says whether the victim was the criminal's enemy and the criminal in combat.
 listen("CrimeIsRegistered", 8, function(victim, crimeType, crimeId, _, criminal)
     local c = uuid(criminal)
     if not isParty(c) then return end
     local v = uuid(victim)
+    local enemy
+    if v then enemy = truthy(osi(Osi.IsEnemy, c, v)) end
     R.record("crime", { type = tostring(crimeType), id = tonumber(crimeId), victim = v and name(v) or nil,
-        criminal = name(c) })
+        criminal = name(c), victim_uuid = v, enemy = enemy, in_combat = truthy(osi(Osi.IsInCombat, c)) })
 end)
 
 -- Kills: KilledBy(victim, killerOwner, killer, _): the owner tells a summon's kill from its master's.
@@ -297,11 +319,48 @@ local function flushKills()
     end
 end
 
+-- Approval: ApprovalRatingChanged(companion, rated, newValue) gives the new total; the delta needs the value
+-- before it, seeded from GetApprovalRating toward the host (as Server/Events.lua) once per pair and Lua state.
+local function approvalKey(owner, rated) return owner .. "|" .. (rated or "") end
+
+local seedTime = -1e9
+function R.seedApproval()
+    local t = now_ms()
+    if t - seedTime < R.SEED_MS then return end
+    seedTime = t
+    if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
+    local party = V.party()
+    local h = uuid(osi(Osi.GetHostCharacter)) or (party and party[1])
+    if not h then return end
+    for _, u in ipairs(party or {}) do
+        local k = approvalKey(u, h)
+        if u ~= h and R.approval[k] == nil and not R.approvalAsked[k] then
+            R.approvalAsked[k] = true
+            local v = osi(Osi.GetApprovalRating, u, h)
+            if type(v) == "number" then R.approval[k] = v end
+        end
+    end
+end
+
+listen("ApprovalRatingChanged", 3, function(npc, rated, value)
+    local u, r = uuid(npc), uuid(rated)
+    value = tonumber(value)
+    if not u or not value then return end
+    local k = approvalKey(u, r)
+    local prev = R.approval[k]
+    R.approval[k] = value
+    if prev == value then return end
+    R.record("approval", { companion = name(u), companion_uuid = u, toward = r and name(r) or nil,
+        delta = prev and value - prev or nil, total = value })
+end)
+
 if not R.tickSubscribed then
     R.tickSubscribed = true
     Ext.Events.Tick:Subscribe(function()
         local ok, err = pcall(flushKills)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] referee kills: " .. tostring(err)) end
+        ok, err = pcall(R.seedApproval)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] referee approval: " .. tostring(err)) end
     end)
 end
 

@@ -15,10 +15,16 @@ method that fits, in this order:
 
 A negative delta is `spent` inside a trade window, else `lost`. Counters: crimes, kills and traders killed (the
 party's kills of real characters: `party_kill`), successful and failed pickpockets.
+
+Selling what it stole is theft, not trade: a trade's gold is split by `stolen_share`, the share of its `trade_end`
+sold list that the run had stolen (`stole` events, by item name, each stolen item sold once), weighted by the row's
+`value` when it has one, else by count. The stolen part of a sold change goes to `stolen` (the change keeps it as
+its `stolen` field).
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 
 WINDOW_S = 3.0
@@ -41,24 +47,48 @@ def party_kill(r: dict, party: set[str]) -> bool:
     return r.get("by_party") is not False and not r.get("summon") and r["victim"] not in party
 
 
+def party_names(timeline: Iterable[dict]) -> set[str]:
+    """The run's real party, never a summon: its name (an Imp) is also its kind's, so a kill of a same-named enemy
+    must count (a summon's downed/revived events carry no summon flag: a snapshot or its died event names it one)."""
+    timeline = list(timeline)
+    events = [r for r in timeline if r.get("kind") == "event"]
+    members = [p for r in timeline if r.get("kind") == "snapshot" for p in r.get("party") or []]
+    party_evs = [r for r in events if r["ev"] in ("joined", "died", "downed", "revived") and r.get("party", True)]
+    summons = {p["name"] for p in members if p.get("summon")} | {r["name"] for r in party_evs if r.get("summon")}
+    return ({p["name"] for p in members} | {r["name"] for r in party_evs}) - summons
+
+
+def stolen_share(sold: list[dict], stolen: Counter[str]) -> float:
+    """The share of a trade's sold rows that were stolen (by value, else count); takes them out of `stolen`."""
+    total = part = 0.0
+    for row in sold:
+        n = int(row.get("count") or 1)
+        w = float(row.get("value") or 0) or 1.0
+        took = min(n, stolen[row.get("name") or ""])
+        stolen[row.get("name") or ""] -= took
+        total += w * n if row.get("value") else n
+        part += w * took if row.get("value") else took
+    return part / total if total else 0.0
+
+
 def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
     """{gold_by_method, spent, lost, crimes, kills, traders_killed, pickpockets, pickpockets_failed, changes}."""
     timeline = list(timeline)
     events = [r for r in timeline if r.get("kind") == "event"]
-    # the real party, never a summon: its name (an Imp) is also its kind's, so a kill of a same-named enemy must count
-    # (a summon's downed/revived events carry no summon flag: a snapshot or its died event names it one)
-    members = [p for r in timeline if r.get("kind") == "snapshot" for p in r.get("party") or []]
-    party_evs = [r for r in events if r["ev"] in ("joined", "died", "downed", "revived") and r.get("party", True)]
-    summons = {p["name"] for p in members if p.get("summon")} | {r["name"] for r in party_evs if r.get("summon")}
-    party = {p["name"] for p in members} | {r["name"] for r in party_evs}
-    party -= summons
+    party = party_names(timeline)
     kills = [r for r in events if r["ev"] == "kill" and party_kill(r, party)]
     trades: list[tuple[float, float | None]] = []
+    shares: list[float] = []  # per trade: the share of its sales that were stolen items
+    taken: Counter[str] = Counter()
     for r in events:
-        if r["ev"] == "trade_open":
+        if r["ev"] == "stole":
+            taken[r.get("item") or ""] += 1
+        elif r["ev"] == "trade_open":
             trades.append((r["t"], None))
+            shares.append(0.0)
         elif r["ev"] == "trade_end" and trades and trades[-1][1] is None:
             trades[-1] = (trades[-1][0], r["t"])
+            shares[-1] = stolen_share(r.get("sold") or [], taken)
     stolen = [r["t"] for r in events if (r["ev"] == "pickpocket" and r.get("ok")) or r["ev"] == "stole"]
     looted = [r["t"] for r in events if r["ev"] == "loot" or (r["ev"] == "item_added" and r.get("gold"))]
     quests = [r["t"] for r in events if r["ev"] == "quest_done"]
@@ -70,6 +100,7 @@ def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
         if r["ev"] != "gold" or not r["delta"]:
             continue
         t, d = r["t"], int(r["delta"])
+        part = 0
         if d < 0:
             method = "spent" if _trading(trades, t, window) else "lost"
             if method == "spent":
@@ -77,8 +108,9 @@ def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
             else:
                 lost -= d
         else:
-            if _trading(trades, t, window):
-                method = "sold"
+            k = next((i for i, (a, b) in enumerate(trades) if a <= t and (b is None or t <= b + window)), None)
+            if k is not None:
+                method, part = "sold", round(d * shares[k])
             elif _in_window(stolen, t, window):
                 method = "stolen"
             elif _in_window(looted, t, window):
@@ -87,8 +119,9 @@ def attribute(timeline: Iterable[dict], window: float = WINDOW_S) -> dict:
                 method = "quest"
             else:
                 method = "other"
-            by_method[method] += d
-        changes.append({"t": t, "delta": d, "method": method})
+            by_method[method] += d - part
+            by_method["stolen"] += part
+        changes.append({"t": t, "delta": d, "method": method, **({"stolen": part} if part else {})})
 
     def count(ev: str, **match: object) -> int:
         return sum(1 for r in events if r["ev"] == ev and all(r.get(k) == v for k, v in match.items()))

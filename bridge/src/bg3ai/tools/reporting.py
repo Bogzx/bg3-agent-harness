@@ -55,17 +55,37 @@ def _fight_feed(evs: list) -> str:
         return ""
 
 
+def _fight_at_exit() -> None:
+    """The server is stopping (its client exited): a fight still open is written, with the events no tool drained (a
+    wipe the agent never saw a result after; a session that ended mid-fight: end session_end)."""
+    tr = _FIGHTS["tr"]
+    if tr is None:
+        return
+    try:
+        evs = []
+        for ctx in ("server", "client"):
+            try:
+                evs += core.game.drain_events(ctx)
+            except GameError:
+                pass
+        _warns, ended = tr.feed(evs, turn_plan._party_cached())
+        if tr.cur is not None:
+            _close_fight(end=None if ended else "session_end")
+    except Exception as e:
+        core._log("debrief", {}, f"close at exit failed: {e}", 0)
+
+
 _UNUSED_RX = re.compile(r"(?i)\b(potion|elixir|scroll|grenade|flask|bomb)\b")
 
 
-def _close_fight(reloaded: bool = False) -> str:
+def _close_fight(reloaded: bool = False, end: str | None = None) -> str:
     """Close the open fight: the debrief block, a [fight] line in the session log, a fights.jsonl record."""
     st = core.game.try_rpc("state.status") or {}
     rows = [r for r in st.get("party") or [] if isinstance(r, dict) and not r.get("summon")]
     m = os.environ.get("BG3AI_METRICS_PATH", "")
     sess = os.environ.get("BG3AI_SESSION") or (Path(m).name.split(".")[0] if m.endswith(".metrics.jsonl") else None)
     meta = {"session": sess, "region": st.get("region")}   # the runner sets only the metrics path (S035: null)
-    rec = _fights().close(rows, [], meta, reloaded=reloaded)
+    rec = _fights().close(rows, [], meta, reloaded=reloaded, end=end)
     if rec is None:
         return ""
     if rec["grade"] != "clean":

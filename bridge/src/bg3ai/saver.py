@@ -204,12 +204,13 @@ class Saver:
                 # the game can't save now (a conversation, a cutscene) is that interruption: queue it once again.
                 can, why = self.can_save()
                 if not can:
-                    job["requeued"] = True
-                    job["phase"] = "queued"
+                    with self.cv:  # the phase and its note together: a reader that sees "queued" sees the note
+                        job["requeued"] = True
+                        job["phase"] = "queued"
+                        self.notes.append(f"save '{name}': the save menus were interrupted ({why}); queued, it "
+                                          "saves at the next moment it can")
                     self.log({"save": name, "ok": False, "menu_s": round(menu_s, 2), "detail": detail,
                               "requeued": why})
-                    self._note(f"save '{name}': the save menus were interrupted ({why}); queued, it saves at the "
-                               "next moment it can")
                     return self._run(job)
             if not ok:
                 self._note(f"⚠ SAVE FAILED '{name}': {detail}; call save_game again")

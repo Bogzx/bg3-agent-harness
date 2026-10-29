@@ -355,34 +355,73 @@ class ServerSave(Base):
         self.g.try_rpc = lambda op, *a, **kw: {"can": True} if op == "ui.menu" else real(op, *a, **kw)
         self.assertTrue(wait_until(lambda: rig.menus == ["S078-start"]), self.g.calls[-5:])
 
-    def test_a_conversation_starting_behind_a_failed_save_queues_it_once_more(self):
+    def requeue_behind_a_conversation(self, note_before_result: bool) -> tuple[str, str]:
         """S096 11:36:2x: the save's menus failed ("in-game RETURN did not advance 'new'") as the Emperor's
         conversation started; its window wasn't up yet, so ui.state read "game" and the save was dropped (SAVE
-        FAILED). The server's dialogue flag counts: the save is queued once more and saves after the talk."""
+        FAILED). The server's dialogue flag counts: the save is queued once more and saves after the talk.
+        The requeue note goes to the first result that reads the notes: save_game's own when the saver thread gets
+        there before save_game's result is finished (note_before_result), else the next one. Both orders are forced:
+        #64 CI read the notes after save_game's result had taken them. Returns (save_game's result, the notes
+        read at the requeue)."""
         rig = self.rig
         real_menu, real_rpc = rig.run_menu, self.g.try_rpc
         tries: list[str] = []
+        menu_go = threading.Event()   # the first menu run starts once the test lets it
+        self.addCleanup(menu_go.set)
 
         def run_menu(label):
             tries.append(label)
             if len(tries) == 1:
+                menu_go.wait(30)
                 self.g.watch["dialogue"] = True   # dialogue_started; the UI still reads "game"
                 return False, "in-game RETURN did not advance 'new'"
             return real_menu(label)
         self.g.try_rpc = lambda op, *a, **kw: {"can": True} if op == "ui.menu" else real_rpc(op, *a, **kw)
         saved = saver.DEFER_POLL_S
-        saver.DEFER_POLL_S = 0.05
+        saver.DEFER_POLL_S = 0.01
         self.addCleanup(setattr, saver, "DEFER_POLL_S", saved)
-        saving.SAVER = saver.Saver(run_menu, saving._can_save, lambda: rig.dir)
-        saving.save_game("S096-victory")
-        self.assertTrue(wait_until(lambda: saving.SAVER.pending is not None
-                                   and saving.SAVER.pending["phase"] == "queued"))
-        self.assertIn("the save menus were interrupted (a conversation is running or starting); queued",
-                      saving.SAVER.take_notes())
+        # The saver thread stops at its requeue log line until the test has read the state: a reader there (#57 CI:
+        # phase "queued" read before the note was added) sees the phase and the note together.
+        at_log, go = threading.Event(), threading.Event()
+        self.addCleanup(go.set)
+
+        def log(rec):
+            if rec.get("requeued"):
+                at_log.set()
+                go.wait(30)
+        saving.SAVER = saver.Saver(run_menu, saving._can_save, lambda: rig.dir, log=log)
+        real_save = saving.SAVER.save
+
+        def save(label, sync=False):
+            line = real_save(label, sync)   # the saver thread is started
+            if note_before_result:
+                menu_go.set()
+                self.assertTrue(at_log.wait(30))   # it requeued before save_game's result reads the notes
+            return line
+        saving.SAVER.save = save
+        out = saving.save_game("S096-victory")
+        menu_go.set()
+        self.assertTrue(at_log.wait(30))
+        self.assertEqual(saving.SAVER.pending["phase"], "queued")
+        notes = saving.SAVER.take_notes()
+        go.set()
         self.g.watch["dialogue"] = False          # the conversation ended
-        self.assertTrue(wait_until(lambda: saving.SAVER.pending is None))
+        saving.SAVER.thread.join(30)
+        self.assertFalse(saving.SAVER.thread.is_alive())
+        self.assertIsNone(saving.SAVER.pending)
         self.assertEqual(tries, ["S096-victory"] * 2)
         self.assertIn("SAVED 'S096-victory'", saving.SAVER.take_notes())
+        return out, notes
+
+    def test_a_conversation_starting_behind_a_failed_save_queues_it_once_more(self):
+        out, notes = self.requeue_behind_a_conversation(note_before_result=False)
+        self.assertIn("saving 'S096-victory' in the background", out)
+        self.assertIn("the save menus were interrupted (a conversation is running or starting); queued", notes)
+
+    def test_a_requeue_before_save_games_result_is_in_that_result(self):
+        out, notes = self.requeue_behind_a_conversation(note_before_result=True)
+        self.assertIn("the save menus were interrupted (a conversation is running or starting); queued", out)
+        self.assertEqual(notes, "")   # shown once
 
     def test_a_gated_tool_waits_for_the_menus(self):
         saving.save_game("x")
