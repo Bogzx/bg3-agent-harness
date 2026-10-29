@@ -1,0 +1,49 @@
+# Launch campaign v1, Claude Sonnet 5.5 through pi and the Anthropic API (12 scenarios x 3 runs = 36 runs).
+# Scenario set (12, condition rules, 3 runs each):
+#   scored (pass/fail, in the suite score): crash_site_grove (exploration), act1_goblin_camp_no_fight, act1_gold_1000,
+#     act1_level_3 (sandbox), fight_act1_grove_gate, fight_act1_windmill, fight_act2_balthazar, fight_act2_moonrise_assault
+#   not scored: choice_act1_karlach, choice_act1_minthara, choice_act2_nightsong (choice: no right answer),
+#     act3_gold_max (maximise: a gain, no pass)
+# max_cost: each scenario's time cap x the per-minute cost below x 1.25, so it rarely ends a run (a run it ends is
+# scored over_budget); it is also what the budget holds back before the run starts.
+# Per minute: $0.157 (pilot diverse-2026-10-25 tokens at list price; its notional figure was $0.10). Estimate
+# $114 for the 36 runs, $276 if every run played its whole cap.
+# The Claude profiles must be verified (one live pilot run, launch-v1-pilot.toml) before this runs.
+name = "launch-v1-sonnet"
+allow_gaps = false
+allow_unverified = false
+
+models = ["profiles/claude-sonnet-5-5.toml"]
+scenarios = [
+  "crash_site_grove",
+  "act1_goblin_camp_no_fight",
+  "act1_gold_1000",
+  "act1_level_3",
+  "fight_act1_grove_gate",
+  "fight_act1_windmill",
+  "fight_act2_balthazar",
+  "fight_act2_moonrise_assault",
+  "choice_act1_karlach",
+  "choice_act1_minthara",
+  "choice_act2_nightsong",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 3
+
+[budget]
+file = "runtime/budget-anthropic.json"
+
+[budget.max_cost]
+crash_site_grove = 11.79
+act1_goblin_camp_no_fight = 8.84
+act1_gold_1000 = 8.84
+act1_level_3 = 11.79
+fight_act1_grove_gate = 5.90
+fight_act1_windmill = 11.79
+fight_act2_balthazar = 17.68
+fight_act2_moonrise_assault = 11.79
+choice_act1_karlach = 5.90
+choice_act1_minthara = 5.90
+choice_act2_nightsong = 5.90
+act3_gold_max = 8.84
