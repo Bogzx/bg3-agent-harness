@@ -236,7 +236,7 @@ def test_a_new_game_scenario_is_released_with_its_start_state_and_a_real_run_pas
         suite.suite_version(), VERSIONS, PINS, scs, saves.load()[suite.suite_version()], {"rules": served}
     )
     want = doc["scenarios"]["nautiloid"]["fingerprint"]
-    assert want == {"party": [], "gold": 0, "area": None, "difficulty": "Balanced", "name": None}
+    assert want == {"party": [], "gold": 0, "region": None, "area": None, "difficulty": "Balanced", "name": None}
     assert "nautiloid" not in release.unfingerprinted(doc)
     timeline = Path(__file__).parent / "fixtures" / "timelines" / "nautiloid_sonnet_r2.facts.jsonl"
     rows = [json.loads(ln) for ln in timeline.read_text().splitlines()]

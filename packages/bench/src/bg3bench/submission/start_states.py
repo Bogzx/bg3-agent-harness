@@ -15,8 +15,13 @@ scenario of each save, as `python -m bg3bench.submission.release` would build th
 release's sync test keeps passing. It refuses another suite, a save that isn't listed with that sha1, and a save
 whose recorded fingerprint differs (unless --replace).
 
+refresh recomputes a capture file's fingerprints from its probes' run directories (their facts.jsonl, through
+`checked`), so a change to consistency.fingerprint needs no new capture; a save whose run directory is missing or
+whose facts no longer check is refused, and the file is left as it was.
+
     play.py bench start-states [--save NAME ...] [--all] [--out FILE] [--wait-s 15]   (live, the harness's host)
     python -m bg3bench.submission.start_states apply FILE [--replace]                  (offline)
+    python -m bg3bench.submission.start_states refresh FILE [--sessions DIR]           (offline)
 
 capture's default saves: the installed suite's saves.json entries without a fingerprint. --out defaults to
 runtime/start-states/<suite>.json; a later capture adds to it (one entry per save, the newest kept).
@@ -214,6 +219,24 @@ def capture(
     return doc
 
 
+def refresh(cap: Json, sessions: Path) -> list[str]:
+    """Recompute each save's fingerprint in `cap` (in place) from sessions/<run_dir>/facts.jsonl. Returns the saves
+    whose fingerprint changed; raises ValueError (nothing changed) when a probe's facts are missing or don't check."""
+    got = {}
+    for name, entry in sorted((cap.get("saves") or {}).items()):
+        facts = sessions / entry["run_dir"] / "facts.jsonl"
+        if not facts.is_file():
+            raise ValueError(f"{name}: no {facts}")
+        fp, why = checked(read_facts(facts), name)
+        if fp is None:
+            raise ValueError(f"{name}: {why}")
+        got[name] = fp
+    changed = [n for n, fp in got.items() if cap["saves"][n]["fingerprint"] != fp]
+    for n, fp in got.items():
+        cap["saves"][n]["fingerprint"] = fp
+    return changed
+
+
 def apply(cap: Json, saves_doc: Json, release_doc: Json, *, replace: bool = False) -> list[str]:
     """Write a capture's fingerprints into saves.json's and the release's documents (in place). Returns the saves
     whose fingerprint changed; raises ValueError (nothing changed) on a refusal."""
@@ -268,8 +291,21 @@ def main(
     ap_apply.add_argument("--replace", action="store_true")
     ap_apply.add_argument("--saves-json", type=Path, default=saves.SAVES_JSON)
     ap_apply.add_argument("--release", type=Path)
+    ap_refresh = sub.add_parser("refresh", help="recompute a capture file's fingerprints from its probes' run dirs")
+    ap_refresh.add_argument("file", type=Path)
+    ap_refresh.add_argument("--sessions", type=Path, help="the probes' run dirs' parent (default: runtime/sessions)")
     a = ap.parse_args(argv)
     tag = suite.suite_version()
+    if a.command == "refresh":
+        try:
+            cap = read_capture(a.file, tag)
+            changed = refresh(cap, a.sessions or repo / SESSIONS)
+        except (ValueError, OSError) as e:
+            print(f"refused: {e}", file=sys.stderr)
+            return 1
+        _write(a.file, cap)
+        print(f"fingerprints recomputed for {len(cap['saves'])} saves, {len(changed)} changed", file=out)
+        return 0
     if a.command == "apply":
         rel = a.release or release.default_path(tag)
         try:

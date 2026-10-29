@@ -107,6 +107,7 @@ def test_a_probe_records_the_first_snapshot_of_a_run_without_an_agent_and_x01_ac
     assert got["fingerprint"] == {
         "party": [["Gale", 3], ["Shadowheart", 3], ["Tav", 3], ["Wyll", 3]],
         "gold": 156,
+        "region": "Wilderness",
         "area": "Blighted Village",
         "difficulty": "Balanced",
         "name": "Tav",
@@ -177,7 +178,14 @@ def capture_doc(name: str, fp: dict, sha1: str) -> dict:
 
 
 GROVE = "Tav-1522126493__SCN-fight_act1_grove_gate"
-GROVE_FP = {"party": [["Tav", 4]], "gold": 10, "area": "Emerald Grove", "difficulty": "Balanced", "name": "Tav"}
+GROVE_FP = {
+    "party": [["Tav", 4]],
+    "gold": 10,
+    "region": "Wilderness",
+    "area": "Emerald Grove",
+    "difficulty": "Balanced",
+    "name": "Tav",
+}
 
 
 def docs_without_grove() -> tuple[dict, dict]:
@@ -268,3 +276,37 @@ def test_the_harness_live_host_is_what_capture_drives():
 
     host: start_states.LiveHost = LiveRunHost(cast(Any, lambda _opt: None), run_files=lambda *_a: {}, env={})
     assert host.runs == {}
+
+
+def test_the_region_tells_apart_two_starts_outside_any_named_area():
+    rows = windmill_rows()
+    snap = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
+    outside = [*rows[:snap], {**rows[snap], "area": None, "areas": []}, *rows[snap + 1 :]]
+    fp = consistency.fingerprint(outside)
+    assert fp is not None and (fp["region"], fp["area"]) == ("Wilderness", None)
+    elsewhere = [*rows[:snap], {**rows[snap], "area": None, "areas": [], "region": "Shadow-Cursed Lands"}]
+    assert x01(outside, fp) == (True, "")
+    assert x01(elsewhere + rows[snap + 1 :], fp)[0] is False
+
+
+def test_refresh_recomputes_fingerprints_from_the_probe_run_dirs(tmp_path, capsys):
+    run_dir = tmp_path / "sessions" / "start-state-windmill"
+    run_dir.mkdir(parents=True)
+    (run_dir / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in windmill_rows()))
+    old = {k: v for k, v in (saves.load()[TAG][WINDMILL].fingerprint or {}).items() if k != "region"}
+    cap = capture_doc(WINDMILL, old, WINDMILL_SHA1)
+    cap["saves"][WINDMILL]["run_dir"] = run_dir.name
+    path = tmp_path / "cap.json"
+    path.write_text(json.dumps(cap))
+    assert start_states.main(["refresh", str(path), "--sessions", str(tmp_path / "sessions")]) == 0
+    assert "recomputed for 1 saves, 1 changed" in capsys.readouterr().out
+    got = json.loads(path.read_text())["saves"][WINDMILL]["fingerprint"]
+    assert got == saves.load()[TAG][WINDMILL].fingerprint and got["region"] == "Wilderness"
+    cap["saves"][WINDMILL]["run_dir"] = "gone"
+    path.write_text(json.dumps(cap))
+    assert start_states.main(["refresh", str(path), "--sessions", str(tmp_path / "sessions")]) == 1
+    assert "no " in capsys.readouterr().err and json.loads(path.read_text()) == cap  # left as it was
+    wrong = capture_doc(GROVE, GROVE_FP, "0" * 40)
+    wrong["saves"][GROVE]["run_dir"] = run_dir.name  # the windmill probe's facts under grove_gate's name
+    with pytest.raises(ValueError, match="first load mark"):
+        start_states.refresh(wrong, tmp_path / "sessions")

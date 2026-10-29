@@ -37,6 +37,7 @@
      ]
     ],
     "gold": 156,
+    "region": "Wilderness",
     "area": "Goblin Camp",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -62,6 +63,7 @@
      ]
     ],
     "gold": 133,
+    "region": "Wilderness",
     "area": "The Hollow",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -87,6 +89,7 @@
      ]
     ],
     "gold": 133,
+    "region": "Wilderness",
     "area": "The Hollow",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -112,6 +115,7 @@
      ]
     ],
     "gold": 88,
+    "region": "Wilderness",
     "area": "Chapel Entrance",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -133,6 +137,7 @@
      ]
     ],
     "gold": 88,
+    "region": "Wilderness",
     "area": null,
     "difficulty": "Balanced",
     "name": "Tav"
@@ -162,6 +167,7 @@
      ]
     ],
     "gold": 410,
+    "region": "Lower City",
     "area": "Lower City",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -191,6 +197,7 @@
      ]
     ],
     "gold": 133,
+    "region": "Wilderness",
     "area": "Emerald Grove",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -216,6 +223,7 @@
      ]
     ],
     "gold": 156,
+    "region": "Wilderness",
     "area": "The Risen Road",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -245,6 +253,7 @@
      ]
     ],
     "gold": 156,
+    "region": "Wilderness",
     "area": "Shattered Sanctum",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -274,6 +283,7 @@
      ]
     ],
     "gold": 60,
+    "region": "Shadow-Cursed Lands",
     "area": "Nightsong's Prison",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -295,6 +305,7 @@
      ]
     ],
     "gold": 33,
+    "region": "Wilderness",
     "area": null,
     "difficulty": "Balanced",
     "name": "Tav"
@@ -324,6 +335,7 @@
      ]
     ],
     "gold": 156,
+    "region": "Wilderness",
     "area": "Shattered Sanctum",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -355,6 +367,7 @@
      ]
     ],
     "gold": 88,
+    "region": "Wilderness",
     "area": null,
     "difficulty": "Balanced",
     "name": "Tav"
@@ -384,6 +397,7 @@
      ]
     ],
     "gold": 156,
+    "region": "Wilderness",
     "area": "Blighted Village",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -419,6 +433,7 @@
      ]
     ],
     "gold": 60,
+    "region": "Shadow-Cursed Lands",
     "area": "Nightsong's Prison",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -460,6 +475,7 @@
      ]
     ],
     "gold": 379,
+    "region": "Shadow-Cursed Lands",
     "area": "Mind Flayer Colony",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -489,6 +505,7 @@
      ]
     ],
     "gold": 152,
+    "region": "Shadow-Cursed Lands",
     "area": null,
     "difficulty": "Balanced",
     "name": "Tav"
@@ -518,6 +535,7 @@
      ]
     ],
     "gold": 410,
+    "region": "Lower City",
     "area": "Bhaalist Crypt",
     "difficulty": "Balanced",
     "name": "Tav"
@@ -536,6 +554,7 @@
    "fingerprint": {
     "party": [],
     "gold": 0,
+    "region": null,
     "area": null,
     "difficulty": "Balanced",
     "name": null
