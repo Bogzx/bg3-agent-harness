@@ -371,16 +371,28 @@ class ServerSave(Base):
             return real_menu(label)
         self.g.try_rpc = lambda op, *a, **kw: {"can": True} if op == "ui.menu" else real_rpc(op, *a, **kw)
         saved = saver.DEFER_POLL_S
-        saver.DEFER_POLL_S = 0.05
+        saver.DEFER_POLL_S = 0.01
         self.addCleanup(setattr, saver, "DEFER_POLL_S", saved)
-        saving.SAVER = saver.Saver(run_menu, saving._can_save, lambda: rig.dir)
+        # The saver thread stops at its requeue log line until the test has read the state: a reader there (#57 CI:
+        # phase "queued" read before the note was added) sees the phase and the note together.
+        at_log, go = threading.Event(), threading.Event()
+        self.addCleanup(go.set)
+
+        def log(rec):
+            if rec.get("requeued"):
+                at_log.set()
+                go.wait(30)
+        saving.SAVER = saver.Saver(run_menu, saving._can_save, lambda: rig.dir, log=log)
         saving.save_game("S096-victory")
-        self.assertTrue(wait_until(lambda: saving.SAVER.pending is not None
-                                   and saving.SAVER.pending["phase"] == "queued"))
+        self.assertTrue(at_log.wait(30))
+        self.assertEqual(saving.SAVER.pending["phase"], "queued")
         self.assertIn("the save menus were interrupted (a conversation is running or starting); queued",
                       saving.SAVER.take_notes())
+        go.set()
         self.g.watch["dialogue"] = False          # the conversation ended
-        self.assertTrue(wait_until(lambda: saving.SAVER.pending is None))
+        saving.SAVER.thread.join(30)
+        self.assertFalse(saving.SAVER.thread.is_alive())
+        self.assertIsNone(saving.SAVER.pending)
         self.assertEqual(tries, ["S096-victory"] * 2)
         self.assertIn("SAVED 'S096-victory'", saving.SAVER.take_notes())
 
