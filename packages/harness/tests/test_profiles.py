@@ -41,6 +41,37 @@ PI = {
 }
 
 
+# Claude Haiku 5.5 on Anthropic's own API (prices: platform.claude.com/docs/en/about-claude/pricing, 2026-10-29)
+ANTHROPIC = {
+    "client": "pi",
+    "model": "claude-haiku-5-5",
+    "effort": "low",
+    "endpoint": {
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "api": "anthropic-messages",
+        "api_key_env": "BG3AI_ANTHROPIC_API_KEY",
+    },
+    "model_info": {
+        "input": ["text", "image"],
+        "reasoning": True,
+        "context_window": 1000000,
+        "max_tokens": 32000,
+        "thinking_level_map": {"off": False, "minimal": False},
+        "compat": {"forceAdaptiveThinking": True, "supportsTemperature": False},
+        "cost": {
+            "input": 0.1,
+            "output": 0.5,
+            "cache_read": 0.01,
+            "cache_write": 0.125,
+            "tiers": [
+                {"input_tokens_above": 100000, "input": 0.5, "output": 2.5, "cache_read": 0.05, "cache_write": 0.625}
+            ],
+        },
+    },
+}
+
+
 def pi(**changes: Any) -> dict[str, Any]:
     """PI with top-level keys replaced (None removes one) and dotted keys ("endpoint.provider") set inside."""
     raw: dict[str, Any] = json.loads(json.dumps(PI))
@@ -66,13 +97,15 @@ class Examples(unittest.TestCase):
 
     def test_golden_models_json(self):
         pi = [p for p in sorted(EXAMPLES.glob("*.toml")) if pr.load(p).client == "pi"]
-        self.assertEqual(len(pi), 4)
+        self.assertGreaterEqual(len(pi), 4)
         for p in pi:
             got = json.dumps(pr.models_json(pr.load(p)), indent=1) + "\n"
             golden = GOLDEN / f"models.{p.stem}.json"
             if os.environ.get("BG3AI_UPDATE_GOLDEN"):
                 golden.write_text(got)
             self.assertEqual(got, golden.read_text(), f"{golden.name}: regenerate with BG3AI_UPDATE_GOLDEN=1")
+        goldens = {g.name for g in GOLDEN.glob("models.*.json")}
+        self.assertEqual(goldens, {f"models.{p.stem}.json" for p in pi}, "one golden per pi profile")
 
 
 class Parse(unittest.TestCase):
@@ -113,7 +146,7 @@ class Parse(unittest.TestCase):
 
     def test_endpoint_validation(self):
         self.err(pi(endpoint=None), r"pi needs an \[endpoint\]")
-        self.err(pi(endpoint__api="anthropic-messages"), "api must be 'openai-completions'")
+        self.err(pi(endpoint__api="openai-responses"), "api must be one of 'openai-completions', 'anthropic-messages'")
         self.err(pi(endpoint__api_key="sk-x"), "unknown key.*api_key")
         self.err(pi(endpoint__api_key_env="sk-or-v1-abc"), "must name an environment variable")
         self.err(pi(endpoint__base_url="openrouter.ai"), "not an http")
@@ -155,6 +188,39 @@ class Parse(unittest.TestCase):
         mi = pr.parse(pi(model_info__cost={"input": 1, "output": 2, "cache_read": 0})).model_info
         assert mi is not None
         self.assertEqual(mi.cost, {"input": 1.0, "output": 2.0, "cache_read": 0.0})  # cache_write: 0 in models.json
+
+    def test_anthropic_messages(self):
+        p = pr.parse(json.loads(json.dumps(ANTHROPIC)), "haiku.toml")
+        assert p.endpoint is not None and p.model_info is not None
+        self.assertEqual(p.endpoint.api, "anthropic-messages")
+        self.assertEqual(p.pi_model, "anthropic/claude-haiku-5-5")
+        self.assertEqual(p.model_info.cost, {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125})
+        self.assertEqual(
+            p.model_info.cost_tiers,
+            ({"input_tokens_above": 100000, "input": 0.5, "output": 2.5, "cache_read": 0.05, "cache_write": 0.625},),
+        )
+
+    def test_anthropic_needs_the_cache_write_rate(self):
+        # Anthropic bills the prompt's cache writes; without the rate pi would price them at $0
+        raw = json.loads(json.dumps(ANTHROPIC))
+        del raw["model_info"]["cost"]["cache_write"]
+        self.err(raw, "cost needs cache_write")
+        openai = pr.parse(pi(model_info__cost={"input": 1, "output": 2, "cache_read": 0})).endpoint
+        self.assertEqual(openai and openai.api, pr.API)  # an OpenAI-compatible endpoint: cache_write stays optional
+
+    def test_cost_tiers_validation(self):
+        def tiers(t: object) -> dict[str, Any]:
+            return pi(model_info__cost={"input": 1, "output": 2, "cache_read": 0.1, "tiers": t})
+
+        full = {"input": 2, "output": 4, "cache_read": 0.2, "cache_write": 2.5}
+        self.err(tiers({"x": 1}), "tiers must be a list")
+        self.err(tiers([full]), "input_tokens_above must be a positive integer")
+        self.err(tiers([{"input_tokens_above": 10, "input": 2}]), "cost needs output, cache_read, cache_write")
+        self.err(tiers([{"input_tokens_above": 10, "speed": 2, **full}]), "unknown key.*speed")
+        self.err(tiers([{"input_tokens_above": 10, **full}, {"input_tokens_above": 10, **full}]), "must rise")
+        mi = pr.parse(tiers([{"input_tokens_above": 10, **full}])).model_info
+        assert mi is not None
+        self.assertEqual(mi.cost_tiers[0]["input_tokens_above"], 10)
 
     def test_load_reports_bad_toml(self):
         with tempfile.TemporaryDirectory() as d:
@@ -208,6 +274,22 @@ class Digest(unittest.TestCase):
         for changed in (pi(model_info__cost={"input": 1.0, "output": 4.0, "cache_read": 0.2}), pi(effort="low")):
             self.assertNotEqual(pr.digest(pr.parse(changed)), base)
         self.assertEqual(pr.digest(pr.parse(pi(status="verified"))), base)  # what it played, not how far it's checked
+        anthropic = pr.digest(pr.parse(json.loads(json.dumps(ANTHROPIC))))
+        no_tier = json.loads(json.dumps(ANTHROPIC))
+        del no_tier["model_info"]["cost"]["tiers"]
+        self.assertNotEqual(pr.digest(pr.parse(no_tier)), anthropic)
+        same_wire = json.loads(json.dumps(ANTHROPIC))
+        same_wire["endpoint"]["api"] = pr.API
+        self.assertNotEqual(pr.digest(pr.parse(same_wire)), anthropic)  # the wire format counts once it is set
+
+    def test_the_wire_format_and_tiers_left_the_digests_runs_recorded(self):
+        # the digests these profiles had before endpoint.api and cost tiers existed (their runs' manifests hold them)
+        before = {
+            "deepseek-flash.toml": "51d6940f00d73dc3b38941cf1336b96f41bce7107c4224d2a66b49cb9fece7b9",
+            "opus-5.5-pi.toml": "ac1f29915f46e30eef54d152e180adad61ebf1b9aad84c43db71368d05464d7a",
+            "codex.toml": "0511448169675f7e5888506a5dfa6f742fd224ea65e8a380230d72f1c6275488",
+        }
+        self.assertEqual({n: pr.digest(pr.load(EXAMPLES / n)) for n in before}, before)
 
 
 class ToolsOff(unittest.TestCase):
@@ -271,6 +353,30 @@ class ModelsJson(unittest.TestCase):
         model = pr.models_json(pr.parse(raw))["providers"]["deepseek"]["models"][0]
         self.assertNotIn("compat", model)
         self.assertNotIn("thinkingLevelMap", model)
+
+    def test_anthropic_messages_with_tiers(self):
+        got = pr.models_json(pr.parse(json.loads(json.dumps(ANTHROPIC))))
+        provider = got["providers"]["anthropic"]
+        self.assertEqual(
+            (provider["baseUrl"], provider["api"], provider["apiKey"]),
+            ("https://api.anthropic.com", "anthropic-messages", "${BG3AI_ANTHROPIC_API_KEY}"),
+        )
+        model = provider["models"][0]
+        self.assertEqual(model["api"], "anthropic-messages")
+        self.assertEqual(
+            model["cost"],
+            {
+                "input": 0.1,
+                "output": 0.5,
+                "cacheRead": 0.01,
+                "cacheWrite": 0.125,
+                "tiers": [
+                    {"inputTokensAbove": 100000, "input": 0.5, "output": 2.5, "cacheRead": 0.05, "cacheWrite": 0.625}
+                ],
+            },
+        )
+        self.assertEqual(model["compat"], {"forceAdaptiveThinking": True, "supportsTemperature": False})
+        self.assertEqual(model["thinkingLevelMap"], {"off": None, "minimal": None})
 
     def test_only_for_pi(self):
         with self.assertRaisesRegex(pr.ProfileError, "pi profiles only"):
