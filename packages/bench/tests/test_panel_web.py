@@ -70,6 +70,9 @@ class FakeRunner:
     def state(self):
         return self.st
 
+    def escalate(self):
+        return False
+
 
 class FakeBundler:
     def pack(self, run_dir, out_dir, *, attempt, unsubmitted_valid, literals):
@@ -81,6 +84,9 @@ class FakeBundler:
 
     def validate(self, bundle_dir, *, literals):
         return {"accepted": True, "flags": [], "checks": [{"code": "E01", "ok": None, "detail": "no lookup"}]}
+
+    def add_render(self, render_dir, out_dir, *, literals):  # pragma: no cover - no render in these tests
+        raise AssertionError("no render here")
 
 
 class FakeSite:
