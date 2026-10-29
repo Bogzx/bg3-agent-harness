@@ -224,6 +224,20 @@ def test_release_is_of_one_suite_version_and_lists_harness_versions():
     assert results.build_results([], seed=0, created=1.0, b=20)["suite"] is None
 
 
+def test_release_refuses_a_cell_whose_runs_differ_in_game_pins():
+    pairs = naut2_pairs()
+    r3 = pairs[2][1]
+    pinned = {"game_build": "20981537", "bg3le": {"sha256": "a" * 64}, "mod": {"sha1": "b" * 40}}
+    same = [({**m, "pins": {**m.get("pins", {}), **pinned}}, r) for m, r in pairs]
+    assert results.build_results(same, seed=0, created=1.0, b=20)["groups"][0]["n_runs"] == 3
+    rebuilt = {**same[2][0], "pins": {**same[2][0]["pins"], "mod": {"sha1": "c" * 40}}}
+    with pytest.raises(ValueError, match=r"different game pins: nautiloid/opus/None \(mod_sha1\)"):
+        results.build_results([*same[:2], (rebuilt, r3)], seed=0, created=1.0, b=20)
+    # another cell may play another setup: only the runs of one cell are compared
+    other = {**rebuilt, "model": {**rebuilt["model"], "slug": "deepseek"}}
+    assert len(results.build_results([*same[:2], (other, r3)], seed=0, created=1.0, b=20)["groups"]) == 2
+
+
 def test_release_groups_invalid_runs_and_missing_costs():
     pairs = naut2_pairs()
     (m1, r1), (m2, r2), (m3, r3) = pairs

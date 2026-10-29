@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/render.v1.schema.json",
+  "title": "Evidence video sync table v1 (render.json)",
+  "description": "Written by the evidence video renderer next to the video: the run it was rendered for (the bundle's run_hash, shown in the video's strip), the recording's epoch span and frame rate, and when each shown event appears in the video. An event is named by its events log and its seq in that log (a resumed run has several logs, each counting seq from 0). Checked by the validator (F03 schema, E03 events, E02 duration).",
+  "type": "object",
+  "required": ["schema", "run_hash", "video_start", "video_end", "fps", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": 1},
+    "run_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "video_start": {"type": "number", "description": "epoch seconds of the video's first frame"},
+    "video_end": {"type": "number", "description": "epoch seconds of the video's last frame"},
+    "fps": {"type": "number", "exclusiveMinimum": 0},
+    "events": {
+      "type": "array",
+      "description": "in video order",
+      "items": {
+        "type": "object",
+        "required": ["file", "seq", "at_s"],
+        "additionalProperties": false,
+        "properties": {
+          "file": {"type": "string", "pattern": "^S[0-9]{3,}(?:-[rc][0-9]+)?\\.events\\.jsonl$"},
+          "seq": {"type": "integer", "minimum": 0},
+          "at_s": {"type": "number", "minimum": 0, "description": "seconds from the video's start"}
+        }
+      }
+    }
+  }
+}

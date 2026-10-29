@@ -276,6 +276,7 @@ version = "0.8.0"
 source = { editable = "packages/bench" }
 dependencies = [
     { name = "bg3-agent-harness" },
+    { name = "jsonschema" },
 ]
 
 [package.optional-dependencies]
@@ -291,7 +292,6 @@ crosscheck = [
     { name = "scipy" },
 ]
 dev = [
-    { name = "jsonschema" },
     { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -301,6 +301,7 @@ dev = [
 requires-dist = [
     { name = "bg3-agent-harness", editable = "packages/harness" },
     { name = "inspect-ai", marker = "extra == 'inspect'", specifier = "==0.3.282" },
+    { name = "jsonschema", specifier = ">=4.20" },
     { name = "mcp", marker = "extra == 'baselines'", specifier = ">=2.3,<3" },
 ]
 provides-extras = ["inspect", "baselines"]
@@ -308,7 +309,6 @@ provides-extras = ["inspect", "baselines"]
 [package.metadata.requires-dev]
 crosscheck = [{ name = "scipy", specifier = ">=1.11" }]
 dev = [
-    { name = "jsonschema", specifier = ">=4.20" },
     { name = "playwright", specifier = "==1.64.0" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=5" },

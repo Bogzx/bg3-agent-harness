@@ -1,9 +1,14 @@
 # Benchmark protocol: comparing models on BG3
 
 For someone who wants to measure a model (or a client) playing Baldur's Gate 3 through this harness and compare it
-with other models. This file is the protocol; the details live in the files it links. Status as of 2026-10-16:
-**only the Nautiloid series has run live** (3/3 clean, Claude Opus); everything marked *(not live-tested)* is built
-and unit-tested but has not played a real run yet.
+with other models. This file is the protocol; the details live in the files it links. Status as of 2026-10-28:
+**one multi-model pilot has run live** (2026-10-25, `packages/bench/matrices/diverse-2026-10-25.toml`): Opus 5.5,
+Sonnet 5.5 and Haiku 5.5 through Claude Code and DeepSeek V4.1 Flash through pi, one rules run each of
+`crash_site_grove`, `act1_gold_max`, `act3_gold_max`, `act1_level_3`, `fight_act1_windmill` and
+`fight_act2_balthazar` on the unreleased bench-v0.8. That is 24 counted runs, one per cell, with the harness fixed
+while the matrix ran, so it is a pilot and not a ranking; the README's Benchmark section has its results. Before it,
+only the Nautiloid series had run live (3/3 clean, Claude Opus, 2026-10-16). Everything still marked *(not
+live-tested)* below is built and unit-tested but has not played a real run yet.
 
 To run your own model, start with [QUICKSTART.md](QUICKSTART.md). What to do when the game updates is in
 [GAME-UPDATES.md](GAME-UPDATES.md).
