@@ -118,8 +118,10 @@ export function uploadProblem(p: Prepared | null, siteToken: boolean): string | 
   return null;
 }
 
-/** The 11-character id of a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL (null: not one). */
+/** The 11-character id of a YouTube video: the id itself, or a youtube.com/watch?v=, youtu.be/ or
+ * youtube.com/shorts/ URL of it (null: neither). The pack reads the pasted text the same way. */
 export function youtubeId(url: string): string | null {
+  if (/^[A-Za-z0-9_-]{11}$/.test(url.trim())) return url.trim();
   let u: URL;
   try {
     u = new URL(url.trim());

@@ -42,8 +42,12 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": names}))
         return "ef" * 32, b
 
-    def add_video(self, render_dir, out_dir, *, youtube_id):
-        self.calls.append(("add_video", render_dir.name, out_dir.name, youtube_id))
+    def add_video(self, render_dir, out_dir, *, youtube):
+        """Takes youtu.be/<id> or watch?v=<id> URLs, like pack.youtube_id (tested in the bench)."""
+        self.calls.append(("add_video", render_dir.name, out_dir.name, youtube))
+        youtube_id = youtube.rsplit("/", 1)[-1].rsplit("=", 1)[-1]
+        if "youtu" not in youtube:
+            raise panel.PanelError(f"{youtube!r} is not a YouTube video id or a youtube.com/watch?v=, youtu.be/ URL")
         if (render_dir / video.VIDEO).read_text() == "refuse":
             raise panel.PanelError("render.json was rendered for another run_hash")
         b = out_dir / "bundle"
@@ -63,30 +67,6 @@ class FakeSite:
     def get_submission(self, token, submission_id):
         self.calls.append(("get", token, submission_id))
         return self.get
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        f"https://www.youtube.com/watch?v={VID}",
-        f"https://youtube.com/watch?v={VID}&t=30",
-        f"https://youtu.be/{VID}",
-        f"https://m.youtube.com/shorts/{VID}",
-        f" https://www.youtube.com/watch?v={VID} ",
-    ],
-)
-def test_youtube_id(url):
-    assert submit.youtube_id(url) == VID
-
-
-@pytest.mark.parametrize(
-    "url",
-    [None, "", VID, f"ftp://youtu.be/{VID}", f"https://evil.example/watch?v={VID}", "https://youtu.be/short",
-     f"https://youtube.com/embed/{VID}", f"https://youtu.be/{VID}x", "https://youtube.com/watch?v=../../etc/pass"],
-)  # fmt: skip
-def test_youtube_id_refusals(url):
-    with pytest.raises(panel.PanelError):
-        submit.youtube_id(url)
 
 
 @pytest.mark.parametrize(
@@ -406,7 +386,7 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
             raise PackError("render.json was rendered for another run_hash")
         return SimpleNamespace(bundle_sha256="ef" * 32, bundle_dir=out_dir / "bundle")
 
-    def add_video(render_dir, out_dir, youtube):
+    def add_video(render_dir, out_dir, youtube):  # pack.add_video(render_dir, out_dir, youtube) -> Packed
         seen["add_video"] = (render_dir, out_dir, youtube)
         if youtube == "x" * 11:
             raise PackError("render.json was rendered for another run_hash")
@@ -440,10 +420,10 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
     assert seen["add_render"] == (tmp_path / "render-1", tmp_path / "o", ["k"])
     with pytest.raises(panel.PanelError, match="another run_hash"):
         bs.add_render(tmp_path / "other", tmp_path / "o", literals=[])
-    assert bs.add_video(tmp_path / "render-1", tmp_path / "o", youtube_id=VID) == ("0a" * 32, tmp_path / "o" / "bundle")
+    assert bs.add_video(tmp_path / "render-1", tmp_path / "o", youtube=VID) == ("0a" * 32, tmp_path / "o" / "bundle")
     assert seen["add_video"] == (tmp_path / "render-1", tmp_path / "o", VID)
     with pytest.raises(panel.PanelError, match="another run_hash"):
-        bs.add_video(tmp_path / "render-1", tmp_path / "o", youtube_id="x" * 11)
+        bs.add_video(tmp_path / "render-1", tmp_path / "o", youtube="x" * 11)
 
 
 def test_add_render_updates_the_prepared_bundle(run_dir, tmp_path):
@@ -502,7 +482,10 @@ def test_add_video_names_the_upload_in_bundle_json_and_upload_sends_it(run_dir, 
     got = submit.add_video(
         root, "s1", b, bundle_sha256="ef" * 32, youtube_url=f"https://www.youtube.com/watch?v={VID}", literals=["k"]
     )
-    assert b.calls[-2:] == [("add_video", "render-1", "1", VID), ("validate", "1", True)]  # validated again
+    assert b.calls[-2:] == [
+        ("add_video", "render-1", "1", f"https://www.youtube.com/watch?v={VID}"),
+        ("validate", "1", True),
+    ]  # validated again
     assert got["bundle_sha256"] == "0a" * 32 and got["video"] == {"youtube_id": VID} and got["final"] is True
     assert submit.state(root, "s1")["prepared"] == got and submit.bundle_video(Path(got["bundle_dir"])) == VID
     with pytest.raises(panel.PanelError, match="changed since you saw it"):
@@ -526,6 +509,8 @@ def test_add_video_refusals(run_dir, tmp_path):
     with pytest.raises(panel.PanelError, match="changed since you saw it"):
         submit.add_video(root, "s1", b, bundle_sha256=SHA, youtube_url=yt, literals=[])
     with pytest.raises(panel.PanelError, match="youtube_url"):
+        submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url=None, literals=[])
+    with pytest.raises(panel.PanelError, match="not a YouTube video id"):  # the pack's check
         submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url="https://vimeo.com/1", literals=[])
     with pytest.raises(panel.PanelError, match="another run_hash"):
         submit.add_video(root, "s1", b, bundle_sha256=sha, youtube_url=yt, literals=[])  # the pack's refusal
@@ -565,7 +550,7 @@ def test_bundle_listing_needs_an_envelope(tmp_path):
 
 
 class PackOnly(submit.BenchSubmission):
-    """The real pack and add_render; a fixed verdict (validating needs a release file, which this test isn't about)."""
+    """The real pack, add_render and add_video; a fixed verdict (validating needs a release file, which this test isn't about)."""
 
     def validate(self, bundle_dir, *, literals, submission):
         return {"accepted": submission, "flags": [], "checks": []}
@@ -573,7 +558,8 @@ class PackOnly(submit.BenchSubmission):
 
 def test_add_render_with_the_real_pack(tmp_path):
     """Real integration: bench's pack.pack makes the bundle from its fixture run, the panel reads the run_hash the
-    renderer gets, and bench's pack.add_render puts the render into it through submit.add_render."""
+    renderer gets, bench's pack.add_render puts the render into it through submit.add_render, and pack.add_video
+    names the YouTube upload of its evidence.mp4 in bundle.json through submit.add_video."""
     import hashlib
     import tarfile
 
@@ -609,6 +595,20 @@ def test_add_render_with_the_real_pack(tmp_path):
     # a second render of the same bundle is refused by pack and kept in prepared.json, the bundle unchanged
     again = submit.add_render(root, "balthazar", bs, bundle_dir=bdir, render_dir=render, literals=[], now=6.0)
     assert "already holds a render" in again["render"]["error"] and again["bundle_sha256"] == got["bundle_sha256"]
+    # the user uploaded evidence.mp4 (a 12 s movie header, as ffmpeg writes it) and pastes its link
+    mvhd = bytes(12) + (1000).to_bytes(4, "big") + (12000).to_bytes(4, "big") + bytes(80)
+    mp4 = b"\0\0\0\x10ftypisom\0\0\2\0" + (8 + 8 + 8 + len(mvhd)).to_bytes(4, "big") + b"moov"
+    mp4 += b"\0\0\0\x08trak" + (8 + len(mvhd)).to_bytes(4, "big") + b"mvhd" + mvhd
+    (render / video.VIDEO).write_bytes(mp4)
+    with pytest.raises(panel.PanelError, match="not a YouTube video id"):
+        submit.add_video(root, "balthazar", bs, bundle_sha256=got["bundle_sha256"], youtube_url="x", literals=[])
+    yt = f"https://youtu.be/{VID}"
+    done = submit.add_video(root, "balthazar", bs, bundle_sha256=got["bundle_sha256"], youtube_url=yt, literals=[])
+    env = json.loads((bdir / bundle.ENVELOPE).read_bytes())
+    assert env["video"] == {"youtube_id": VID, "duration_s": 12.0, "mp4_sha256": hashlib.sha256(mp4).hexdigest()}
+    assert env["run_hash"] == run_hash and done["video"] == {"youtube_id": VID}
+    assert done["bundle_sha256"] == hashlib.sha256((bdir / bundle.ENVELOPE).read_bytes()).hexdigest()
+    assert done["verdict"]["accepted"] is True and submit.state(root, "balthazar")["prepared"] == done
 
 
 def test_add_render_keeps_a_failed_final_validation(run_dir, tmp_path):

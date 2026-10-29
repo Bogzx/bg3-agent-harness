@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from bg3bench.serve.panel import PanelError
 from bg3bench.serve.video import VIDEO
@@ -66,9 +66,10 @@ class Bundler(Protocol):
         PanelError when it is refused (a render for another run_hash, one there already, the size caps)."""
         ...
 
-    def add_video(self, render_dir: Path, out_dir: Path, *, youtube_id: str) -> tuple[str, Path]:
-        """Name the YouTube upload of render_dir's evidence.mp4 in bundle.json's `video` of the bundle packed in
-        out_dir: (new bundle sha256, bundle dir). PanelError when it is refused (a render for another run_hash)."""
+    def add_video(self, render_dir: Path, out_dir: Path, *, youtube: str) -> tuple[str, Path]:
+        """Name the YouTube upload of render_dir's evidence.mp4 (`youtube`: its id or a watch, youtu.be or shorts URL)
+        in bundle.json's `video` of the bundle packed in out_dir: (new bundle sha256, bundle dir). PanelError when it
+        is refused (not a YouTube video id or URL, a render for another run_hash)."""
         ...
 
 
@@ -120,10 +121,10 @@ class BenchSubmission:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
 
-    def add_video(self, render_dir: Path, out_dir: Path, *, youtube_id: str) -> tuple[str, Path]:
+    def add_video(self, render_dir: Path, out_dir: Path, *, youtube: str) -> tuple[str, Path]:
         pack = self._mod("pack")
         try:
-            p = pack.add_video(render_dir, out_dir, youtube_id)
+            p = pack.add_video(render_dir, out_dir, youtube)
         except pack.PackError as e:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
@@ -213,25 +214,6 @@ class HttpSite:
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         return self._call(req)
-
-
-def youtube_id(url: Any) -> str:
-    """The 11-character video id of a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL."""
-    if not isinstance(url, str):
-        raise PanelError("youtube_url must be a YouTube video URL")
-    u = urlparse(url.strip())
-    host = (u.hostname or "").lower().removeprefix("www.").removeprefix("m.")
-    vid = None
-    if u.scheme in ("http", "https"):
-        if host == "youtu.be":
-            vid = u.path.lstrip("/")
-        elif host == "youtube.com" and u.path == "/watch":
-            vid = (parse_qs(u.query).get("v") or [""])[0]
-        elif host == "youtube.com" and u.path.startswith("/shorts/"):
-            vid = u.path.removeprefix("/shorts/")
-    if vid is None or not YOUTUBE_ID.fullmatch(vid):
-        raise PanelError("youtube_url must be a youtube.com/watch?v=, youtu.be/ or youtube.com/shorts/ URL of a video")
-    return vid
 
 
 def attempt(rows: Sequence[Mapping[str, Any]], run_dir: str, submitted: Callable[[str], bool]) -> tuple[int, int]:
@@ -356,8 +338,12 @@ def add_video(
     mp4 = Path(render["dir"]) / VIDEO
     if not mp4.is_file():
         raise PanelError(f"{run}: the rendered {mp4} is gone: render the video again")
-    vid = youtube_id(youtube_url)
-    sha, bdir = bundler.add_video(mp4.parent, Path(prepared["bundle_dir"]).parent, youtube_id=vid)
+    if not isinstance(youtube_url, str) or not youtube_url.strip():
+        raise PanelError("youtube_url must be the YouTube video's URL or id")
+    sha, bdir = bundler.add_video(mp4.parent, Path(prepared["bundle_dir"]).parent, youtube=youtube_url)
+    vid = bundle_video(bdir)
+    if vid is None:
+        raise PanelError(f"{run}: the pack wrote no YouTube id into bundle.json")
     view = {
         **prepared,
         "bundle_sha256": sha,

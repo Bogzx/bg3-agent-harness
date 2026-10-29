@@ -92,7 +92,8 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}, {"name": "render.json"}]}))
         return "ef" * 32, b
 
-    def add_video(self, render_dir, out_dir, *, youtube_id):
+    def add_video(self, render_dir, out_dir, *, youtube):
+        youtube_id = youtube.rsplit("/", 1)[-1]  # a youtu.be URL here
         b = out_dir / "bundle"
         env = json.loads((b / "bundle.json").read_text())
         (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))

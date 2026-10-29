@@ -160,9 +160,9 @@
         {/if}
         {#if wantsVideo(prepared)}
           <p class="note">Next: upload <code>{prepared.render?.dir}/evidence.mp4</code> to YouTube (public or unlisted,
-            with <code>{openRunId}</code> in its title), then paste the video's link here.</p>
+            with <code>{openRunId}</code> in its title), then paste the video's link or id here.</p>
           <div class="row">
-            <label>YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/…" size="40" /></label>
+            <label>YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/… or the video id" size="40" /></label>
             <button class="plain" disabled={busy || videoWhy !== null} onclick={addVideo}>Add video</button>
           </div>
         {:else if prepared.video}

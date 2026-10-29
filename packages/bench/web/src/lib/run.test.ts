@@ -101,11 +101,11 @@ describe("startProblem", () => {
 
 describe("youtubeId and uploadProblem", () => {
   const id = "dQw4w9WgXcQ";
-  it("reads the three URL shapes only", () => {
-    for (const u of [`https://www.youtube.com/watch?v=${id}`, `https://youtu.be/${id}`, `https://m.youtube.com/shorts/${id}`]) {
+  it("reads the id itself and the three URL shapes only", () => {
+    for (const u of [id, ` ${id} `, `https://www.youtube.com/watch?v=${id}`, `https://youtu.be/${id}`, `https://m.youtube.com/shorts/${id}`]) {
       expect(youtubeId(u)).toBe(id);
     }
-    for (const u of ["", id, `https://evil.example/watch?v=${id}`, `ftp://youtu.be/${id}`, "https://youtu.be/short"]) {
+    for (const u of ["", `${id}x`, `https://evil.example/watch?v=${id}`, `ftp://youtu.be/${id}`, "https://youtu.be/short"]) {
       expect(youtubeId(u)).toBeNull();
     }
   });

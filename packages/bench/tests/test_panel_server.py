@@ -64,8 +64,9 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "render.json"}], "run_hash": RUN_HASH}))
         return "ef" * 32, b
 
-    def add_video(self, render_dir, out_dir, *, youtube_id):
-        self.video = (render_dir, out_dir, youtube_id)
+    def add_video(self, render_dir, out_dir, *, youtube):
+        youtube_id = youtube.rsplit("/", 1)[-1]  # a youtu.be URL here
+        self.video = (render_dir, out_dir, youtube)
         b = out_dir / "bundle"
         env = json.loads((b / "bundle.json").read_text())
         (b / "bundle.json").write_text(json.dumps({**env, "video": {"youtube_id": youtube_id}}))
@@ -604,7 +605,7 @@ def test_submit_flow_over_the_endpoints(server):
     mp4.write_bytes(b"mp4")  # the renderer's output
     code, r = post(server, "/api/v1/submit/video", {"run": "s1", "bundle_sha256": "ef" * 32, "youtube_url": yt})
     assert code == 200 and r["video"] == {"youtube_id": "dQw4w9WgXcQ"} and r["bundle_sha256"] == "0a" * 32
-    assert server.bundler.video == (mp4.parent, mp4.parent.parent, "dQw4w9WgXcQ")
+    assert server.bundler.video == (mp4.parent, mp4.parent.parent, yt)  # the pasted text: the pack reads the id
     code, r = post(server, "/api/v1/submit/upload", {"run": "s1", "bundle_sha256": "0a" * 32})
     assert code == 200 and r["id"] == "sub1"
     assert server.fake_site.calls[0][2] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # bundle.json's video
