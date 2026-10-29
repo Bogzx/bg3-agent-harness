@@ -1,9 +1,10 @@
-/* Tokens: dark by default (today's dashboard colours), light when the system or the toggle asks for it. */
+/* Tokens: dark by default (today's dashboard colours), light when the system or the toggle asks for it. Text tokens
+   reach WCAG AA (4.5:1) on --bg, --panel and --panel-2, and the status colours on their own 14 % chip wash. */
 :root {
   --bg: #0d0f14; --panel: #151922; --panel-2: #1b2030; --line: #262c3d;
-  --text: #e4e7ef; --muted: #8b93a7; --faint: #5b6377;
+  --text: #e4e7ef; --muted: #8b93a7; --faint: #848ca0;
   --accent: #d4a24c; --accent-2: #8a6cff;
-  --ok: #4cc38a; --warn: #e6b450; --bad: #ef5f6b; --info: #5aa9ff;
+  --ok: #4cc38a; --warn: #e6b450; --bad: #f47480; --info: #5aa9ff;
   --read: #5aa9ff; --act: #d4a24c; --vision: #c678dd; --save: #4cc38a;
   --hp-bg: #262c3d; --header-bg: rgba(13, 15, 20, 0.92);
   --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
@@ -13,25 +14,23 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --bg: #f5f3ee; --panel: #ffffff; --panel-2: #f0ede6; --line: #dfdad0;
-    --text: #1d1f24; --muted: #5e6472; --faint: #8d93a0;
-    --accent: #9a6a12; --accent-2: #5b3fd6;
-    --ok: #1f8a57; --warn: #a66d00; --bad: #c4303d; --info: #1f6fc4;
-    --read: #1f6fc4; --act: #9a6a12; --vision: #8e3fb0; --save: #1f8a57;
+    --text: #1d1f24; --muted: #5e6472; --faint: #646a78;
+    --accent: #835a0e; --accent-2: #5b3fd6;
+    --ok: #166f45; --warn: #7f5300; --bad: #a8283a; --info: #1a62ad;
+    --read: #1a62ad; --act: #835a0e; --vision: #8e3fb0; --save: #166f45;
     --hp-bg: #e6e1d6; --header-bg: rgba(245, 243, 238, 0.92);
     color-scheme: light;
   }
 }
 :root[data-theme="light"] {
   --bg: #f5f3ee; --panel: #ffffff; --panel-2: #f0ede6; --line: #dfdad0;
-  --text: #1d1f24; --muted: #5e6472; --faint: #8d93a0;
-  --accent: #9a6a12; --accent-2: #5b3fd6;
-  --ok: #1f8a57; --warn: #a66d00; --bad: #c4303d; --info: #1f6fc4;
-  --read: #1f6fc4; --act: #9a6a12; --vision: #8e3fb0; --save: #1f8a57;
+  --text: #1d1f24; --muted: #5e6472; --faint: #646a78;
+  --accent: #835a0e; --accent-2: #5b3fd6;
+  --ok: #166f45; --warn: #7f5300; --bad: #a8283a; --info: #1a62ad;
+  --read: #1a62ad; --act: #835a0e; --vision: #8e3fb0; --save: #166f45;
   --hp-bg: #e6e1d6; --header-bg: rgba(245, 243, 238, 0.92);
   color-scheme: light;
 }
-
-* { box-sizing: border-box; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
@@ -55,10 +54,14 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .note.bad { border-left-color: var(--bad); }
 
 .tbl-wrap { overflow-x: auto; }
+.tbl-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
+.grow { flex: 1 1 12em; min-width: 0; }
+details > summary { cursor: pointer; }
 
 .st { font-family: var(--mono); font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 4px; }
 .st.PASS, .st.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
@@ -74,4 +77,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 input[type="text"], input[type="password"], input[type="number"], select {
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; max-width: 100%;
 }
-label.row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+label.row { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; min-height: 28px; cursor: pointer; }
+input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}

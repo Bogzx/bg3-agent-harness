@@ -4,42 +4,59 @@ The panel adds no second way to run a scenario. Start writes runtime/panel/<name
 plan's profiles, ready scenarios, condition, repeats and per-scenario reserve) and hands it to a `Runner`; the Queue
 screen reads the matrix's progress.json like any other matrix. `MatrixProcess`, the real runner, starts
 `uv run python runner/play.py bench run --matrix <file> --runner session` in the repo (which takes runtime/runner.lock,
-so a second matrix or play.py run can't start beside it) with its output in runtime/panel/<name>.log. Stop sends that
-process one SIGTERM: play.py bench ends the run playing now, records it (invalid: operator) and starts no new one. A
-second signal would exit without recording the run, so Stop refuses to send one.
+so a second matrix or play.py run can't start beside it) with its output in runtime/panel/<name>.log. Stop writes
+runtime/STOP, the operator's stop file: play.py bench ends the run playing now at its next check, records it (invalid:
+operator) and starts no new one. When the process still runs STOP_GRACE_S after that, `escalate` (the panel's ticker)
+sends it one SIGTERM, play.py bench's first-signal stop, which does the same. A second signal would exit without
+recording the run, so the panel never sends one.
 
-One matrix at a time, and only the one this panel started: a panel restarted while its matrix runs no longer holds
-the process (the matrix itself goes on, its progress still shows in the queue).
+Record and Submit when done: Start passes Record to play.py bench as BG3AI_BENCH_RECORD (1 or 0; the run host records
+the game window into <run_dir>/recording/ when it is on) and keeps both choices in runtime/panel/<name>.json, which
+auto.py reads to pack and validate the matrix's valid runs (never to upload them). Submit when done needs Record: a
+run without a recording has no evidence video.
+
+One matrix at a time. A matrix this panel didn't start (another panel, a terminal, or this panel before a restart) is
+found from runtime/runner.lock: play.py writes its pid there and holds the lock while it runs, and that process's
+command line names the matrix file (`found`). Stop for such a matrix writes runtime/STOP, the operator's stop file the
+run host reads: the run playing now ends, recorded, and no new run starts, as with the signal.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import signal
 import subprocess
 import time
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from bg3bench.serve.panel import PanelError
 
-PANEL_DIR = "panel"  # runtime/panel/: the matrix files and logs of the runs the panel started
+PANEL_DIR = "panel"  # runtime/panel/: the matrix files, logs and choices of the runs the panel started
+STOP_GRACE_S = 120.0  # Stop's SIGTERM fallback: runtime/STOP had this long to end the matrix
+RECORD_ENV = "BG3AI_BENCH_RECORD"  # play.py bench's run host records the game window unless it is "0"
 
 
 class Runner(Protocol):
-    def start(self, name: str, matrix_file: Path, log: Path) -> None:
-        """Start playing the matrix file; PanelError when one is running already."""
+    def start(self, name: str, matrix_file: Path, log: Path, *, record: bool) -> None:
+        """Start playing the matrix file, recording each run or not; PanelError when one is running already."""
         ...
 
     def stop(self) -> None:
         """Ask the running matrix to end the run playing now and start no new one; PanelError when none runs."""
         ...
 
+    def escalate(self) -> bool:
+        """After a Stop the matrix didn't obey in time, its fallback; True when it acted (called by the ticker)."""
+        ...
+
     def state(self) -> dict[str, Any] | None:
-        """{"name", "pid", "started", "log", "running", "returncode", "stopping"} of the last start, or None."""
+        """{"name", "pid", "started", "log", "running", "returncode", "stopping", ...} of the last start, or None."""
         ...
 
 
@@ -120,7 +137,8 @@ class _Started:
     proc: Proc
     started: float
     log: Path
-    stopping: bool = False
+    stopping: float | None = None  # when Stop wrote runtime/STOP
+    signalled: bool = False  # the SIGTERM fallback was sent
 
 
 class MatrixProcess:
@@ -133,8 +151,11 @@ class MatrixProcess:
         popen: Popen = subprocess.Popen,
         which: Callable[[str], str | None] = shutil.which,
         now: Callable[[], float] = time.time,
+        environ: Mapping[str, str] = os.environ,
+        runtime: Path | None = None,
     ):
-        self.repo, self.popen, self.which, self.now = repo, popen, which, now
+        self.repo, self.popen, self.which, self.now, self.environ = repo, popen, which, now, environ
+        self.runtime = runtime or repo / "runtime"
         self.current: _Started | None = None
 
     def command(self, matrix_file: Path) -> list[str]:
@@ -157,14 +178,14 @@ class MatrixProcess:
     def running(self) -> bool:
         return self.current is not None and self.current.proc.poll() is None
 
-    def start(self, name: str, matrix_file: Path, log: Path) -> None:
+    def start(self, name: str, matrix_file: Path, log: Path, *, record: bool) -> None:
         if self.running():
             raise PanelError(f"matrix {self.current.name if self.current else ''} is running: stop it first")
         argv = self.command(matrix_file)
         with log.open("ab") as out:
             proc = self.popen(
                 argv, cwd=self.repo, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                start_new_session=True,
+                start_new_session=True, env={**self.environ, RECORD_ENV: "1" if record else "0"},
             )  # fmt: skip
         self.current = _Started(name, proc, self.now(), log)
 
@@ -172,10 +193,20 @@ class MatrixProcess:
         cur = self.current
         if cur is None or cur.proc.poll() is not None:
             raise PanelError("no matrix of this panel is running")
-        if cur.stopping:
+        if cur.stopping is not None:
             raise PanelError("stopping already: the run playing now ends and is recorded")
+        cur.stopping = self.now()
+        request_stop(self.runtime, cur.stopping)
+
+    def escalate(self) -> bool:
+        cur = self.current
+        if cur is None or cur.stopping is None or cur.signalled or cur.proc.poll() is not None:
+            return False
+        if self.now() - cur.stopping < STOP_GRACE_S:
+            return False
         cur.proc.send_signal(signal.SIGTERM)
-        cur.stopping = True
+        cur.signalled = True
+        return True
 
     def state(self) -> dict[str, Any] | None:
         cur = self.current
@@ -189,8 +220,100 @@ class MatrixProcess:
             "log": str(cur.log),
             "running": rc is None,
             "returncode": rc,
-            "stopping": cur.stopping,
+            "stopping": cur.stopping is not None,
+            "signalled": cur.signalled,
         }
+
+
+def choices_path(runtime: Path, name: str) -> Path:
+    return runtime / PANEL_DIR / f"{name}.json"
+
+
+def read_choices(runtime: Path, name: str) -> dict[str, Any] | None:
+    """runtime/panel/<name>.json: {"name", "record", "submit_when_done", "auto": {run dir: outcome}}, or None."""
+    try:
+        doc: Any = json.loads(choices_path(runtime, name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return cast(dict[str, Any], doc) if isinstance(doc, dict) else None
+
+
+def write_choices(runtime: Path, doc: Mapping[str, Any]) -> None:
+    path = choices_path(runtime, str(doc["name"]))
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def flag(body: Mapping[str, Any], key: str, default: bool) -> bool:
+    v = body.get(key, default)
+    if not isinstance(v, bool):
+        raise PanelError(f"{key} must be true or false")
+    return v
+
+
+# (argv, cwd) of a live process by pid, or None when there is none
+ProcReader = Callable[[int], tuple[list[str], Path] | None]
+
+
+def read_proc(pid: int) -> tuple[list[str], Path] | None:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        cwd = Path(os.readlink(f"/proc/{pid}/cwd"))
+    except OSError:
+        return None
+    return [a.decode(errors="replace") for a in raw.split(b"\0") if a], cwd
+
+
+def bench_matrix_arg(argv: Sequence[str]) -> str | None:
+    """The --matrix of a `... play.py bench run|resume --matrix F ...` command line, else None."""
+    i = next((k for k, a in enumerate(argv) if Path(a).name == "play.py"), None)
+    if i is None or list(argv[i + 1 : i + 2]) != ["bench"] or argv[i + 2 : i + 3] not in (["run"], ["resume"]):
+        return None
+    rest = list(argv[i + 3 :])
+    for k, a in enumerate(rest):
+        if a == "--matrix" and k + 1 < len(rest):
+            return rest[k + 1]
+        if a.startswith("--matrix="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def stop_file(runtime: Path) -> Path:
+    return runtime / "STOP"
+
+
+def found(runtime: Path, proc: ProcReader = read_proc) -> dict[str, Any] | None:
+    """The matrix play.py bench is playing on this machine now, whoever started it, or None.
+
+    runtime/runner.lock holds the runner's pid; only a live process whose command line is `play.py bench run|resume
+    --matrix F` counts (the lock of a playthrough run, or a stale pid, is no matrix). The name is the matrix file's."""
+    try:
+        pid = int((runtime / "runner.lock").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    got = proc(pid)
+    arg = bench_matrix_arg(got[0]) if got else None
+    if got is None or arg is None:
+        return None
+    matrix_file = got[1] / arg
+    try:
+        name = str(tomllib.loads(matrix_file.read_text(encoding="utf-8"))["name"])
+    except (OSError, ValueError, KeyError):
+        name = matrix_file.stem
+    return {
+        "name": name,
+        "pid": pid,
+        "matrix_file": str(matrix_file),
+        "running": True,
+        "stopping": stop_file(runtime).exists(),
+        "choices": read_choices(runtime, name),
+    }
+
+
+def request_stop(runtime: Path, now: float) -> None:
+    """runtime/STOP: the run host ends the run playing now (recorded) and the matrix starts no new one."""
+    stop_file(runtime).write_text(str(now), encoding="utf-8")
 
 
 def start(
@@ -201,11 +324,18 @@ def start(
     budget: Path,
     allow_unverified: bool,
     now: float,
+    record: bool = True,
+    submit_when_done: bool = False,
+    proc: ProcReader | None = None,
 ) -> dict[str, Any]:
     """Start a plan's jobs: refuses a plan that can't start or a second matrix; returns the runner's state."""
     st = runner.state()
     if st is not None and st["running"]:
         raise PanelError(f"matrix {st['name']} is running: stop it first")
+    if other := found(runtime, proc or read_proc):
+        raise PanelError(f"matrix {other['name']} is running (pid {other['pid']}): stop it first")
+    if submit_when_done and not record:
+        raise PanelError("Submit when done needs Record: a run without a recording has no evidence video")
     if why := refusal(plan):
         raise PanelError(f"can't start: {why}")
     name = matrix_name(now)  # a slug: matrix_cli refuses a name with other characters
@@ -215,5 +345,6 @@ def start(
         )
     except FileExistsError:
         raise PanelError(f"matrix {name} was started this second already") from None
-    runner.start(name, path, log)
+    write_choices(runtime, {"name": name, "record": record, "submit_when_done": submit_when_done, "auto": {}})
+    runner.start(name, path, log, record=record)
     return {"started": runner.state(), "matrix_file": str(path)}

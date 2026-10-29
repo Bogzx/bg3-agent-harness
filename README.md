@@ -3,7 +3,7 @@
 An AI agent playing Baldur's Gate 3, plus the tools to run it, measure it and watch it.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-%E2%89%A53.12-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.14-3776AB.svg?logo=python&logoColor=white)](packages/harness/pyproject.toml)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](docs/SETUP.md)
 [![Status: work in progress](https://img.shields.io/badge/status-work%20in%20progress-orange.svg)](#limits)
 
@@ -211,6 +211,20 @@ budget reserve and runs nothing:
 ```bash
 uv run --project packages/bench python -m bg3bench.matrix plan --matrix packages/bench/matrices/pilot-2026-10-22.toml
 ```
+
+### Benchmark panel
+
+A local web panel for running the benchmark on your own machine. Build its web app once
+(`cd packages/bench/web && npm ci && npm run build`), then from the repo root:
+
+```bash
+uv run --project packages/bench bg3bench-serve
+```
+
+It serves http://127.0.0.1:8790/ and binds to 127.0.0.1 only. Preflight and Doctor check the machine; New run plans
+and starts a matrix, with Record and Submit when done; Queue shows progress and stops the running matrix; Results
+validates a finished run and uploads it with your site token. Saves shows status only so far. What each screen does
+and what isn't wired yet: [docs/QUICKSTART.md](docs/QUICKSTART.md#the-benchmark-panel).
 
 ### Playthrough app
 

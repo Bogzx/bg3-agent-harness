@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { attempts, bytes, formProblems, minutes, startProblem, uploadProblem, verdict, youtubeId, youtubeNote } from "./run";
-import type { Plan, PlanForm, Prepared, ProfileRow, RunRow } from "./types";
+import {
+  attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
+  uploadProblem, verdict, youtubeId, youtubeNote,
+} from "./run";
+import type { Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
 const form: PlanForm = {
   profiles: ["deepseek-flash"], scenarios: ["act1_get_item"], condition: "rules", repeats: 1, max_cost_usd: 2,
@@ -56,9 +59,9 @@ describe("verdict", () => {
 describe("attempts", () => {
   it("numbers the runs of a cell oldest first", () => {
     const rs = [
-      run({ dir: "b", created: "2026-10-26" }),
-      run({ dir: "a", created: "2026-10-25" }),
-      run({ dir: "c", created: "2026-10-25", model: "other" }),
+      run({ dir: "b", created: 1792953630.85 }), // epoch seconds, as the server sends them
+      run({ dir: "a", created: 999 }), // older: as text "999" would sort after "1792..."
+      run({ dir: "c", created: 999, model: "other" }),
     ];
     const n = attempts(rs);
     expect(n.get("a")).toEqual([1, 2]);
@@ -109,12 +112,67 @@ describe("youtubeId and uploadProblem", () => {
   it("needs an accepted bundle, the site token and a video URL", () => {
     const p: Prepared = {
       run: "r", bundle_sha256: "ab", bundle_dir: "d", files: [], attempt: { n: 1, unsubmitted_valid: 0 },
-      verdict: { accepted: true, checks: [] },
+      verdict: { accepted: true, checks: [] }, final: true,
     };
     expect(uploadProblem(p, `https://youtu.be/${id}`, true)).toBeNull();
+    expect(uploadProblem({ ...p, final: false }, `https://youtu.be/${id}`, true)).toMatch(/render the evidence video/);
     expect(uploadProblem(null, "", true)).toBe("validate first");
     expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, "", true)).toMatch(/rejects/);
     expect(uploadProblem(p, `https://youtu.be/${id}`, false)).toMatch(/site token/);
     expect(uploadProblem(p, "https://vimeo.com/1", true)).toMatch(/YouTube URL/);
+  });
+});
+
+describe("choicesLine and autoSummary", () => {
+  const c: RunChoices = { name: "m", record: true, submit_when_done: true, auto: {} };
+  it("names the choices", () => {
+    expect(choicesLine(c)).toBe("Record on · Submit when done on");
+    expect(choicesLine({ ...c, record: false, submit_when_done: false })).toBe("Record off · Submit when done off");
+    expect(choicesLine(null)).toBeNull();
+  });
+  it("counts what Submit when done did", () => {
+    expect(autoSummary(c)).toBeNull();
+    expect(autoSummary(undefined)).toBeNull();
+    const auto = {
+      d1: { t: 1, bundle_sha256: "ab", accepted: true },
+      d2: { t: 2, bundle_sha256: "cd", accepted: false },
+      d3: { t: 3, error: "pack refused it" },
+    };
+    expect(autoSummary({ ...c, auto })).toBe("2 validated (1 accepted), 1 failed: pack refused it");
+    expect(autoSummary({ ...c, auto: { d1: auto.d1 } })).toBe("1 validated (1 accepted)");
+  });
+});
+
+describe("renderNote", () => {
+  it("says whether the render is in the bundle", () => {
+    expect(renderNote(undefined, "/r/render-1")).toMatch(/^adding/);
+    expect(renderNote({ dir: "/r/render-1", added: 1 }, "/r/render-2")).toMatch(/^adding/);
+    expect(renderNote({ dir: "/r/render-1", added: 1 }, "/r/render-1")).toMatch(/are in the bundle/);
+    expect(renderNote({ dir: "/r/render-1", error: "too big" }, "/r/render-1")).toMatch(/weren't added.*too big/);
+  });
+});
+
+describe("saveChip", () => {
+  const row: ScenarioRow = {
+    name: "s", title: null, task: null, family: null, holdout: false, save: "Tav__SCN-s", save_sha1: null, seed: 1,
+    difficulty: null, goal: null, cap_s: 600, max_cost: null, conditions: [], not_ready: null,
+    save_status: { status: "installed", detail: "folder present" },
+  };
+  it("shows the save's status", () => {
+    expect(saveChip(row)).toEqual({ label: "installed", cls: "PASS", title: "folder present" });
+    expect(saveChip({ ...row, save_status: { status: "missing", detail: "d" } }).cls).toBe("FAIL");
+  });
+  it("says not ready, never installed, for a scenario that isn't ready", () => {
+    expect(saveChip({ ...row, not_ready: "still being checked" })).toEqual({
+      label: "not ready", cls: "WARN", title: "still being checked",
+    });
+  });
+});
+
+describe("matrixState", () => {
+  it("adds the stop reason only when it says more", () => {
+    expect(matrixState({ matrix: "m", state: "finished", stop_reason: "finished" })).toBe("finished");
+    expect(matrixState({ matrix: "m", state: "stopped", stop_reason: "budget" })).toBe("stopped (budget)");
+    expect(matrixState({ matrix: "m" })).toBe("?");
   });
 });

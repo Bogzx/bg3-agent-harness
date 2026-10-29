@@ -1,9 +1,9 @@
-// Hash routes: #/preflight, #/saves, #/new, #/queue, #/results, #/settings, #/about. No server fallback needed.
+// Hash routes: #/preflight, #/doctor, #/saves, #/new, #/queue, #/results, #/settings, #/about. No server fallback needed.
 
-export type Screen = "preflight" | "saves" | "new" | "queue" | "results" | "settings" | "about";
-export const SCREENS: Screen[] = ["preflight", "saves", "new", "queue", "results", "settings", "about"];
+export type Screen = "preflight" | "doctor" | "saves" | "new" | "queue" | "results" | "settings" | "about";
+export const SCREENS: Screen[] = ["preflight", "doctor", "saves", "new", "queue", "results", "settings", "about"];
 export const LABELS: Record<Screen, string> = {
-  preflight: "Preflight", saves: "Saves", new: "New run", queue: "Queue", results: "Results", settings: "Settings",
+  preflight: "Preflight", doctor: "Doctor", saves: "Saves", new: "New run", queue: "Queue", results: "Results", settings: "Settings",
   about: "About",
 };
 

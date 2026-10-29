@@ -9,7 +9,8 @@
   scenarios that aren't ready, the condition gaps, and the scenarios whose cap is longer than a YouTube account
   without phone verification can upload (15 minutes);
 - queue: runtime/matrix/*/progress.json (bg3bench.matrix);
-- results: every run dir under runtime/sessions with manifest.json and result.json.
+- results: every run dir under runtime/sessions with manifest.json and result.json;
+- doctor: bg3harness.doctor's report, refused when it isn't the shape the Doctor screen reads.
 """
 
 from __future__ import annotations
@@ -18,8 +19,9 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
+from bg3harness import doctor as hdoctor
 from bg3harness import profiles as hprofiles
 
 from bg3bench import conditions, matrix, scenario
@@ -226,6 +228,11 @@ def _dir_size(d: Path) -> int:
     return sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) if d.is_dir() else 0
 
 
+def epoch(v: Any) -> float | None:
+    """A manifest's `created` (manifest.v1: epoch seconds, a number) as the API sends it; None when it isn't one."""
+    return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+
+
 def result_row(run_dir: Path, man: dict, res: dict) -> dict[str, Any]:
     sc, model = man.get("scenario") or {}, man.get("model") or {}
     score = res.get("score") or {}
@@ -237,7 +244,7 @@ def result_row(run_dir: Path, man: dict, res: dict) -> dict[str, Any]:
         "model": model.get("slug"),
         "client": (man.get("client") or {}).get("name"),
         "condition": man.get("condition"),
-        "created": man.get("created"),
+        "created": epoch(man.get("created")),
         "passed": res.get("passed"),
         "score": score.get("gain"),
         "outcome": res.get("outcome"),
@@ -261,7 +268,7 @@ def results(sessions: Path) -> list[dict[str, Any]]:
         man, res = _read_json(d / "manifest.json"), _read_json(d / "result.json")
         if isinstance(man, dict) and isinstance(res, dict):
             rows.append(result_row(d, man, res))
-    return sorted(rows, key=lambda r: str(r["created"] or ""), reverse=True)
+    return sorted(rows, key=lambda r: r["created"] or 0.0, reverse=True)
 
 
 Check = tuple[str, str, str]
@@ -291,3 +298,35 @@ def preflight_view(lines: Sequence[Check]) -> dict[str, Any]:
     fails = sum(r["status"] == "FAIL" for r in rows)
     warns = sum(r["status"] == "WARN" for r in rows)
     return {"checks": rows, "fails": fails, "warns": warns, "ready": fails == 0}
+
+
+def harness_doctor() -> dict[str, Any]:
+    """bg3harness.doctor's report(doctor()): {"ready": bool, "fails": int, "warns": int,
+    "checks": [{"name", "status": PASS|WARN|FAIL, "detail", "fix"}]} ("fix" is "" for a PASS)."""
+    rep = hdoctor.report(hdoctor.doctor())
+    if why := doctor_problem(rep):
+        raise PanelError(f"bg3harness.doctor's report isn't what the Doctor screen reads: {why}")
+    return rep
+
+
+DOCTOR_CHECK_KEYS = {"name": str, "status": str, "detail": str, "fix": str}
+
+
+def doctor_problem(rep: Any) -> str | None:
+    """Where a doctor report breaks the shape harness_doctor documents (None: it doesn't)."""
+    if not isinstance(rep, dict):
+        return "not an object"
+    r = cast(dict[str, Any], rep)
+    if not isinstance(r.get("ready"), bool) or not all(type(r.get(k)) is int for k in ("fails", "warns")):
+        return "ready must be a boolean, fails and warns integers"
+    checks = r.get("checks")
+    if not isinstance(checks, list):
+        return "checks must be a list"
+    for i, c in enumerate(cast(list[Any], checks)):
+        if not isinstance(c, dict) or any(
+            not isinstance(cast(dict[str, Any], c).get(k), t) for k, t in DOCTOR_CHECK_KEYS.items()
+        ):
+            return f"checks[{i}] needs string name, status, detail and fix"
+        if c["status"] not in ("PASS", "WARN", "FAIL"):
+            return f"checks[{i}]: status {c['status']!r} is not PASS, WARN or FAIL"
+    return None
