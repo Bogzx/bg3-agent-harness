@@ -112,9 +112,10 @@ describe("youtubeId and uploadProblem", () => {
   it("needs an accepted bundle, the site token and a video URL", () => {
     const p: Prepared = {
       run: "r", bundle_sha256: "ab", bundle_dir: "d", files: [], attempt: { n: 1, unsubmitted_valid: 0 },
-      verdict: { accepted: true, checks: [] },
+      verdict: { accepted: true, checks: [] }, final: true,
     };
     expect(uploadProblem(p, `https://youtu.be/${id}`, true)).toBeNull();
+    expect(uploadProblem({ ...p, final: false }, `https://youtu.be/${id}`, true)).toMatch(/render the evidence video/);
     expect(uploadProblem(null, "", true)).toBe("validate first");
     expect(uploadProblem({ ...p, verdict: { accepted: false, checks: [] } }, "", true)).toMatch(/rejects/);
     expect(uploadProblem(p, `https://youtu.be/${id}`, false)).toMatch(/site token/);

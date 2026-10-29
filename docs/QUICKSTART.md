@@ -164,8 +164,8 @@ names the submissions site, and `--release` the suite's release file that Valida
 - Results: the finished runs. Validate packs a run into `runtime/submissions/<run>/`, checks it with the validator
   the site runs, and shows the verdict and every file that would be sent. Render video makes the evidence video from
   that bundle and the recording, then adds the video's sync table and contact sheet to the bundle (the bundle hash
-  changes; the run hash shown in the video doesn't). Upload sends the validated bundle and your YouTube link with
-  the site token.
+  changes; the run hash shown in the video doesn't) and validates it again, now as a submission. Upload sends that
+  bundle and your YouTube link with the site token; it waits until the render is in.
 - Settings: API keys are written to the repo's `.env` (refused while git doesn't ignore it) and shown masked; the
   site token goes to `~/.config/bg3bench/site-token`.
 

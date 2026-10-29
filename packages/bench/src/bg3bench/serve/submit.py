@@ -11,9 +11,11 @@ Three steps, each a request of its own so the user sees what goes out before it 
    to the site (`Site`) as one multipart POST. submission.json keeps the site's id.
 3. `poll`: the submission's status from the site, saved to submission.json.
 
-Render video (video.py) renders from the prepared bundle; once the render has ended well, `add_render` puts its
-render.json and frames into that bundle (bg3bench.submission.pack's add_render) and rewrites prepared.json with the
-new bundle hash and file list. The run_hash, and so the verdict and the video's id line, stay the same.
+Prepare validates the record only (the validator's submission=False: no render yet). Render video (video.py)
+renders from the prepared bundle; once the render has ended well, `add_render` puts its render.json and frames into
+that bundle (bg3bench.submission.pack's add_render), validates it again as a submission (render and frames required)
+and rewrites prepared.json with the new bundle hash, file list and that verdict ("final": true). The run_hash, and so
+the video's id line, stays the same. Upload takes only a final bundle.
 
 The site token and the .env values never appear in a response: the values are passed to the pack's scrub and the
 validator's scrub check only.
@@ -50,8 +52,9 @@ class Bundler(Protocol):
         """Pack run_dir into out_dir: (bundle sha256, bundle dir). PanelError when the run can't be packed."""
         ...
 
-    def validate(self, bundle_dir: Path, *, literals: Sequence[str]) -> dict[str, Any]:
-        """The validator's verdict as JSON: {"accepted", "flags", "checks": [{code, ok, severity, detail}], ...}."""
+    def validate(self, bundle_dir: Path, *, literals: Sequence[str], submission: bool) -> dict[str, Any]:
+        """The validator's verdict as JSON: {"accepted", "flags", "checks": [{code, ok, severity, detail}], ...};
+        submission=False leaves out the render's checks (before the render), True requires the render."""
         ...
 
     def add_render(self, render_dir: Path, out_dir: Path, *, literals: Sequence[str]) -> tuple[str, Path]:
@@ -108,12 +111,13 @@ class BenchSubmission:
             raise PanelError(str(e)) from None
         return p.bundle_sha256, p.bundle_dir
 
-    def validate(self, bundle_dir: Path, *, literals: Sequence[str]) -> dict[str, Any]:
+    def validate(self, bundle_dir: Path, *, literals: Sequence[str], submission: bool) -> dict[str, Any]:
         validate = self._mod("validate")
         if self.release is None or not self.release.is_file():
             raise PanelError(f"no release file of the suite to validate against ({self.release}): see --release")
         release = validate.Release.from_json(json.loads(self.release.read_text(encoding="utf-8")))
-        return validate.validate(bundle_dir, release, where="panel", literals=literals).as_json()
+        verdict = validate.validate(bundle_dir, release, where="panel", submission=submission, literals=literals)
+        return verdict.as_json()
 
 
 def site_url(url: str | None) -> str:
@@ -278,7 +282,7 @@ def prepare(
     sha, bdir = bundler.pack(
         run_dir, base / str(k), attempt=attempt_n, unsubmitted_valid=unsubmitted_valid, literals=literals
     )
-    verdict = bundler.validate(bdir, literals=literals)
+    verdict = bundler.validate(bdir, literals=literals, submission=False)
     view = {
         "run": run_dir.name,
         "bundle_sha256": sha,
@@ -286,6 +290,7 @@ def prepare(
         "files": bundle_listing(bdir),
         "verdict": verdict,
         "attempt": {"n": attempt_n, "unsubmitted_valid": unsubmitted_valid},
+        "final": False,  # validated without its render: Upload waits for the render (add_render)
     }
     _write_json(base / PREPARED, view)
     return view
@@ -313,6 +318,8 @@ def upload(
         raise PanelError(f"{run}: the bundle changed since you saw it: validate again")
     if (base / SUBMISSION).is_file():
         raise PanelError(f"{run} is submitted already")
+    if not prepared.get("final"):
+        raise PanelError(f"{run}: render the evidence video first: the site takes the bundle with its render")
     if not prepared["verdict"].get("accepted"):
         raise PanelError(f"{run}: the local validation rejects this bundle; the site would too")
     if not token:
@@ -362,8 +369,8 @@ def state(root: Path, run: str) -> dict[str, Any]:
 def add_render(
     root: Path, run: str, bundler: Bundler, *, bundle_dir: Path, render_dir: Path, literals: Sequence[str], now: float
 ) -> dict[str, Any]:
-    """Put a finished render of bundle_dir into it and update prepared.json (bundle hash, files, "render": {"dir",
-    "added"}); a refusal goes into "render" as {"dir", "error"}. PanelError when bundle_dir is no longer the prepared
+    """Put a finished render of bundle_dir into it, validate it as a submission and update prepared.json (bundle hash,
+    files, the verdict, "final", "render": {"dir", "added"}); a refusal goes into "render" as {"dir", "error"}. PanelError when bundle_dir is no longer the prepared
     bundle (validated again since) or the run is submitted already."""
     base = root / _safe_name(run)
     prepared = _read_json(base / PREPARED)
@@ -382,5 +389,10 @@ def add_render(
             "files": bundle_listing(bdir),
             "render": {"dir": str(render_dir), "added": now},
         }
+        try:
+            view["verdict"] = bundler.validate(bdir, literals=literals, submission=True)
+            view["final"] = True
+        except PanelError as e:
+            view["render"]["error"] = f"the bundle with its render couldn't be validated: {e}"
     _write_json(base / PREPARED, view)
     return view

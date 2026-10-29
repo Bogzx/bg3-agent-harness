@@ -94,6 +94,7 @@ export function startProblem(plan: Plan | null, running: boolean): string | null
 /** Why Upload can't be pressed for a prepared bundle (null: it can). */
 export function uploadProblem(p: Prepared | null, youtubeUrl: string, siteToken: boolean): string | null {
   if (!p) return "validate first";
+  if (!p.final) return "render the evidence video first: the site takes the bundle with its render";
   if (!p.verdict.accepted) return "the local validation rejects this bundle";
   if (!siteToken) return "save the site token in Settings";
   if (!youtubeId(youtubeUrl)) return "paste the YouTube URL of the evidence video";

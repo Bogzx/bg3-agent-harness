@@ -124,7 +124,7 @@
           {#if prepared.attempt.unsubmitted_valid}· {prepared.attempt.unsubmitted_valid} earlier valid run(s) of the
             cell not submitted (submit every valid run of a cell, or none){/if}</p>
         <p><span class="st {prepared.verdict.accepted ? 'PASS' : 'FAIL'}">{prepared.verdict.accepted ? "accepted" :
-          "rejected"}</span> by the local validator</p>
+          "rejected"}</span> by the local validator{prepared.final ? "" : " (the record only: render the video for the final check)"}</p>
         {#each prepared.verdict.checks.filter((c) => c.ok === false) as c (c.code)}
           <div class="faint">{c.code} ({c.severity ?? "?"}): {c.detail ?? ""}</div>
         {/each}

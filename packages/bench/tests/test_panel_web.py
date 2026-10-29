@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Browser, Page, sync_playwright
 
-from bg3bench.serve import panel
+from bg3bench.serve import panel, submit
 from bg3bench.serve.server import App, serve
 from bg3bench.serve.settings import Settings
 
@@ -82,11 +82,14 @@ class FakeBundler:
         (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}]}))
         return SHA, b
 
-    def validate(self, bundle_dir, *, literals):
+    def validate(self, bundle_dir, *, literals, submission):
         return {"accepted": True, "flags": [], "checks": [{"code": "E01", "ok": None, "detail": "no lookup"}]}
 
-    def add_render(self, render_dir, out_dir, *, literals):  # pragma: no cover - no render in these tests
-        raise AssertionError("no render here")
+    def add_render(self, render_dir, out_dir, *, literals):
+        b = out_dir / "bundle"
+        (b / "render.json").write_text("{}")
+        (b / "bundle.json").write_text(json.dumps({"files": [{"name": "result.json"}, {"name": "render.json"}]}))
+        return "ef" * 32, b
 
 
 class FakeSite:
@@ -224,6 +227,14 @@ def test_results_validate_and_upload(app, page):
     upload = box.get_by_role("button", name="Upload")
     assert upload.is_disabled()
     box.locator("input[type=url]").fill("https://youtu.be/dQw4w9WgXcQ")
+    box.get_by_text("render the evidence video first").wait_for(timeout=15000)
+    assert upload.is_disabled()
+    # the render ended and the panel's ticker put it into the bundle (App.finish_render -> submit.add_render)
+    bdir = Path(submit.state(app.submissions(), "s1")["prepared"]["bundle_dir"])
+    (bdir.parent / "render-1").mkdir()
+    submit.add_render(app.submissions(), "s1", app.bundler, bundle_dir=bdir, render_dir=bdir.parent / "render-1",
+                      literals=[], now=1.0)  # fmt: skip
+    box.get_by_text("ef" * 6).wait_for(timeout=15000)  # the page polls: the new bundle hash
     upload.click()
     box.get_by_text("Refresh status").wait_for(timeout=15000)
     assert app.fake_site.posts == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]

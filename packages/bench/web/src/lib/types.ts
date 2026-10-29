@@ -201,6 +201,8 @@ export interface Prepared {
   files: { name: string; bytes: number }[];
   verdict: { accepted: boolean; flags?: string[]; checks: CheckResult[] };
   attempt: { n: number; unsubmitted_valid: number };
+  /** false: validated without its render (the record only); true: the bundle with its render, what Upload sends. */
+  final?: boolean;
   /** The rendered video's render.json and frames, once added to this bundle (or why they weren't). */
   render?: { dir: string; added?: number; error?: string };
 }
