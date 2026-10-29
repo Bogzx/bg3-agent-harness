@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from bg3bench import regrade
 
@@ -70,7 +71,7 @@ def test_deaths_are_recounted_from_the_facts(tmp_path: Path) -> None:
     (tmp_path / "S001.events.jsonl").write_text("")
     zeros = {"fights": 0, "downs": 0, "deaths": 0, "wipes": 0}
     (tmp_path / "result.json").write_text(json.dumps({"deaths": zeros}))
-    rows = [
+    rows: list[dict[str, Any]] = [
         {"v": 1, "kind": "mark", "t": 0.0, "game_t": 0.0, "mark": "run_start"},
         {
             "v": 1,
