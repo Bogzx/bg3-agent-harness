@@ -323,6 +323,8 @@ def test_a_changed_matrix_file_is_refused(tmp_path, capsys):
         ("name = 'm'\nscenarios = ['grove', 'grove']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']",
          "duplicate"),
         ("name = 'm'\nscenarios = ['grove']\nmodels = ['profiles/claude.toml']\nconditions = ['nope']", "nope"),
+        ("name = 'm'\nscenarios = ['grove']\n[budget]\nshared = 'runtime/b.json'", "lists budget files"),
+        ("name = 'm'\nscenarios = ['grove']\n[budget]\nshared = ['runtime/budget.json']", "twice"),
         ("not toml =", "night1.toml"),
         ("name = 'm'\nscenarios = ['grove']\n[[group]]\nscenarios = ['grove']", "either [[group]]"),
         ("name = 'm'\n[[group]]\nscenarios = ['nope']", "no scenario 'nope'"),
@@ -430,3 +432,36 @@ def test_status_shows_a_maximise_runs_score_not_a_pass_or_fail(tmp_path):
     code, out = cli(repo, "status", "--matrix", str(path))
     texts = [line.split(None, 3)[3] for line in out.splitlines()[1:]]
     assert code == 0 and texts == ["score +517 $0.00 r1", "score ? $0.00 r2"]
+
+
+SHARED = """
+name = "night1"
+models = ["profiles/pi.toml"]
+scenarios = ["nautiloid", "grove"]
+conditions = ["rules"]
+allow_gaps = true
+
+[budget]
+file = "runtime/budget-pi.json"
+shared = ["runtime/budget.json"]
+max_cost = { nautiloid = 2.5, grove = 4 }
+"""
+
+
+def test_a_matrix_share_and_the_shared_budget_both_count(tmp_path):
+    repo = fake_repo(tmp_path, spent=15.0)  # the shared budget.json: $5 left
+    (repo / "runtime" / "budget-pi.json").write_text(json.dumps({"cap": 10.0, "spent": 0.0}))
+    code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, SHARED)))
+    assert code == 0 and "budget-pi.json: $0.00 of $10.00 spent" in out and "budget.json: $15.00 of $20.00 spent" in out
+    runs = []
+
+    def run_one(job):
+        runs.append(job["id"])
+        return matrix.RunResult(job["id"], True, True, 1.0)
+
+    code, out = cli(repo, "run", "--matrix", str(matrix_file(tmp_path, SHARED)), run_one=run_one)
+    # nautiloid (15 + 2.5 <= 20 and 0 + 2.5 <= 10: runs, $1) -> grove (16 + 4 <= 20 and 1 + 4 <= 10: runs, $1)
+    assert code == 0 and len(runs) == 2
+    own = json.loads((repo / "runtime" / "budget-pi.json").read_text())
+    shared = json.loads((repo / "runtime" / "budget.json").read_text())
+    assert (own["spent"], shared["spent"]) == (2.0, 17.0)

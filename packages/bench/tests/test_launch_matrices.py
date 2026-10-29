@@ -46,7 +46,9 @@ def test_the_campaign_covers_every_family_with_saves_and_caps_per_scenario():
         r = raw(m)
         assert set(r["budget"]["max_cost"]) == scs and r["repeats"] == 3 and r["conditions"] == ["rules"]
         assert r["allow_gaps"] is False and r["allow_unverified"] is False
-    assert {raw(m)["budget"]["file"] for m in ("haiku", "sonnet", "opus")} == {"runtime/budget-anthropic.json"}
+    for m in ("haiku", "sonnet", "opus"):  # each its own share, all within the shared Anthropic budget
+        assert raw(m)["budget"]["file"] == f"runtime/budget-{m}.json"
+        assert raw(m)["budget"]["shared"] == ["runtime/budget-anthropic.json"]
 
 
 def test_the_deepseek_matrix_plans_24_jobs_repeat_major():
