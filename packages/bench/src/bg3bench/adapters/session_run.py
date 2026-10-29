@@ -3,9 +3,10 @@
 The bench builds the run: the series (`series_name`: one per scenario, model, client, effort and condition), the run
 number (one after the series' last runs.jsonl record), the run directory (runtime/sessions/<series.run_name>/), the
 SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=0); a maximise scenario's with no
-count on its stop resumes: the host resumes its agent until the time cap while it acts) and, at the end, the record,
-its runs.jsonl line (its pins carry the harness, bench and suite versions: pins.versions, the host's harness version
-first) and write_run_artifacts' manifest.json and result.json. The harness side comes in through RunHost:
+count on its stop resumes: the host resumes its agent until the time cap while it acts) and, at the end, the record
+(with a legacy series record's benchmark metrics: run_metrics), its runs.jsonl line (its pins carry the harness,
+bench and suite versions: pins.versions, the host's harness version first) and write_run_artifacts' manifest.json
+and result.json. The harness side comes in through RunHost:
 `start` puts the game at the scenario's start and returns the kickoff and the session hooks (the agent process, the
 game, the clock; the job it gets carries "tools_off", the tools its condition removes, and "prompt_condition", the
 harness prompt condition it plays: conditions.Condition.prompt_condition, and "verdict", a callable the host polls
@@ -40,6 +41,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from bg3harness import profiles, steam_paths
+from bg3harness import runs as harness_runs
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
 from bg3bench import conditions, graders, pins, run_artifacts, saves, scenario, series
@@ -87,6 +89,28 @@ def served_providers(rec: JSON) -> list[str]:
     served: JSON = rec.get("served") or {}
     providers: list[str] = served.get("providers") or []
     return providers
+
+
+def reached_at(run_dir: Path, rec: JSON) -> float | None:
+    """When a reached run reached its goal, as a legacy record's reached_at (the until hit's time): the run's
+    runner_events.jsonl event that decided it, its milestone or the live verdict's pass. None: not reached."""
+    if rec["outcome"] != "reached":
+        return None
+    read_jsonl = harness_runs.read_jsonl  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    events = cast(list[JSON], read_jsonl(run_dir / "runner_events.jsonl"))
+    for e in events:
+        if e.get("kind") == "milestone" and e.get("milestone") == rec.get("milestone"):
+            return e.get("t")
+        if e.get("kind") == "goal_verdict" and e.get("verdict") == "passed":
+            return e.get("t")
+    return None
+
+
+def run_metrics(run_dir: Path, rec: JSON) -> JSON:
+    """A legacy series record's benchmark metrics (bg3harness.runs.run_metrics) over the run directory: fairness_flags
+    (result.json's fairness, A01's audit), deaths, time_to_milestone_s (reached_at), latency, story, result_tokens."""
+    metrics = harness_runs.run_metrics  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return cast(JSON, metrics(run_dir, rec["started"], reached_at(run_dir, rec), rec.get("failures") or []))
 
 
 @dataclass(frozen=True)
@@ -192,6 +216,8 @@ class SessionRun:
         if job.get("profile") and (off := profiles.off_route(profiles.load(job["profile"]), served_providers(rec))):
             rec["off_route"] = off  # served outside the profile's provider pin: invalid (results.validity)
         rec.setdefault("started", out.started)
+        for k, v in run_metrics(run_dir, rec).items():
+            rec.setdefault(k, v)
         versions = {**pins.versions(), **({"harness": st.harness_version} if st.harness_version else {})}
         run_pins: JSON = {"versions": versions, **(rec.get("pins") or {})}
         rec["pins"] = run_pins
