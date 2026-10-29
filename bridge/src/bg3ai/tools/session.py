@@ -14,7 +14,7 @@ from typing import Callable
 
 from mcp.server.mcpserver import MCPServer
 
-from .. import capabilities, compact, memtools, render, rules
+from .. import capabilities, compact, memtools, render, rules, tool_classes
 from ..game import Game
 from . import batch, core, plumbing, queueing, reporting, world_tools
 
@@ -206,7 +206,7 @@ if os.environ.get("BG3AI_ALWAYS_LOAD", "1") != "0":  # 0: everything deferred (A
 # Every result the client gets passes compact.py (each thing said once, short: the model re-reads every result on
 # every later turn). Wrapped here, at the MCP layer, so do_actions and the wiki tools (no _guard) get it too and the
 # steps do_actions runs inside itself (direct calls) do not. The session briefing on the first result stays as is.
-BRIEFING_SEP = "\n\n=== the result of your call ===\n"
+BRIEFING_SEP = tool_classes.RESULT_MARK
 # str tools return plain text, not structured {"result": "..."}: Claude Code showed the model the JSON form
 # (escaped newlines and quotes on every line). PLAIN_RESULTS = False restores the SDK default.
 PLAIN_RESULTS = True

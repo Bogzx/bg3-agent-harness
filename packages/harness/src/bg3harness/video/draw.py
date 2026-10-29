@@ -33,7 +33,7 @@ ID_Y = 1016
 FONTS = Path(__file__).parent / "fonts"
 PAD = 20
 RADIUS = 12
-ENDING_S = 5  # a run that didn't pass shows its ending over its last seconds
+ENDING_S = 5  # a run that didn't pass shows its ending over its last seconds (a wipe: from the wipe on)
 
 PAPER = (10, 10, 26)
 CARD = (19, 19, 42)
@@ -205,7 +205,8 @@ def verdict(s: Strip, meta: Meta, duration_s: float) -> tuple[str, tuple[int, ..
     """The verdict chip at this second: (text, ink, chip fill)."""
     if s.passed_s is not None and s.clock_s >= s.passed_s:
         return f"PASSED {short_clock(s.passed_s)}", TEAL, TEAL_CHIP
-    if meta.ending and s.clock_s >= duration_s - ENDING_S:
+    wipe = s.wiped_s if meta.ending.upper() == "WIPED" and s.wiped_s is not None else None
+    if meta.ending and s.clock_s >= (duration_s - ENDING_S if wipe is None else wipe):
         return meta.ending.upper(), RUST, RUST_CHIP
     return "GOAL: NOT YET", INK_3, CARD_2
 

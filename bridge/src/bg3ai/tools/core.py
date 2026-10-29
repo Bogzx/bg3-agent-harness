@@ -67,7 +67,7 @@ class Server(MCPServer):
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
         res = await super().call_tool(name, arguments, context)
         texts = [c.text for c in getattr(res, "content", None) or [] if isinstance(c, TextContent)]
-        if isinstance(res, CallToolResult) and not res.is_error and texts and tool_classes.failed(texts[0]):
+        if isinstance(res, CallToolResult) and not res.is_error and tool_classes.failed("\n".join(texts), name):
             return res.model_copy(update={"is_error": True})
         return res
 
@@ -90,8 +90,7 @@ _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 
 def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = None) -> None:
     # Every tool result passes here (via _finish): one latency record per call (metrics.py).
-    METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not result.startswith(("FAILED", "NOT READY", "REFUSED")),
-                      extra=extra)
+    METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not tool_classes.failed(result, tool), extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with open(RUNTIME / "actions.jsonl", "a") as f:

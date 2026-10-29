@@ -15,6 +15,7 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
@@ -121,6 +122,12 @@ class PiRun(PiRunBase):
         self.assertEqual((kinds[0], kinds[-1]), ("session_start", "session_end"))
         self.assertIn("init", kinds)
         self.assertEqual(json.loads(self.budget.read_text())["spent"], 1.025)
+
+    def test_the_runner_log_names_pi_not_claude(self):  # S2 (2026-10-29): "S001: claude finished" for a pi run
+        lines: list[str] = []
+        with mock.patch.object(renv, "log", lines.append):
+            self.run_pi(FIXTURES / "sequential.jsonl")
+        self.assertTrue(any(ln.startswith("S001: pi finished (exited, exit 0") for ln in lines), lines)
 
     def test_an_extension_load_failure_is_mcp_failed(self):
         os.environ["FAKE_PI_EXT_FAIL"] = "1"

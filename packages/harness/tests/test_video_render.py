@@ -192,6 +192,11 @@ def test_the_verdict_chip_says_not_yet_then_passed_or_the_ending():
     meta = dataclasses.replace(META, ending="wiped")
     assert draw.verdict(T.Strip(3), meta, 100)[0] == "GOAL: NOT YET"
     assert draw.verdict(T.Strip(96), meta, 100)[:2] == ("WIPED", draw.RUST)
+    # S2 windmill: the party was down at 8:21, the chip said WIPED only at 8:33 (the run's last seconds)
+    assert draw.verdict(T.Strip(60, wiped_s=50.0), meta, 100)[:2] == ("WIPED", draw.RUST)
+    assert draw.verdict(T.Strip(49, wiped_s=50.0), meta, 100)[0] == "GOAL: NOT YET"
+    cap = dataclasses.replace(META, ending="cost cap")  # a cap shows over the last seconds, a wipe or not
+    assert draw.verdict(T.Strip(60, wiped_s=50.0), cap, 100)[0] == "GOAL: NOT YET"
     assert draw.verdict(T.Strip(70, passed_s=65.0), meta, 100)[:2] == ("PASSED 1:05", draw.TEAL)
 
 
