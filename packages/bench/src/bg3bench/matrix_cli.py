@@ -52,7 +52,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
-from bg3harness import profiles
+from bg3harness import diskguard, profiles
 
 from bg3bench import conditions, matrix, scenario
 from bg3bench.adapters import legacy_cli, play_flags, session_run
@@ -338,7 +338,12 @@ def main(
             return 2
         run_one = legacy_cli.LegacyCli(m["name"], flags, scenario_files=files, condition_env=env, repo=repo)
     stopped = (lambda: getattr(host, "stopped", False) is True) if host is not None else None  # the live host's stop
-    mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep, stopped=stopped)
+    runtime = repo / "runtime" if (repo / "runtime").is_dir() else repo  # where the run's files go
+
+    def disk(job: dict) -> str | None:  # the job's recording and video must fit (bg3harness.diskguard)
+        return diskguard.start_refusal(runtime, m["scenarios"][job["scenario"]]["caps"]["run_hours"] * 60)
+
+    mx = matrix.Matrix(root, run_one, m["budget"], now=now, sleep=sleep, stopped=stopped, disk=disk)
     try:
         mx.create(m["name"], m["jobs"])
     except ValueError as e:
