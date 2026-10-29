@@ -126,6 +126,24 @@ def test_stops_at_the_budget_with_the_reserve(tmp_path):
     assert m.run() == matrix.FINISHED and len(run.calls) == 6
 
 
+def test_too_little_disk_starts_no_run_and_resumes(tmp_path):
+    room = {"why": "3000 MB free on /r < 5056 MB (4096 + 60 min x 16 MB)"}
+    asked = []
+
+    def disk(job):
+        asked.append(job["id"])
+        return room["why"]
+
+    run = FakeRun()
+    m, _, _ = make(tmp_path, run, disk=disk)
+    assert m.run() == f"{matrix.DISK}: {room['why']}"
+    assert run.calls == [] and len(asked) == 1
+    assert [r["type"] for r in m._records()] == ["plan"]  # no attempt recorded
+    assert progress(tmp_path)["stop_reason"] == f"disk: {room['why']}" and progress(tmp_path)["pending"] == 8
+    room["why"] = None
+    assert m.run() == matrix.FINISHED and len(run.calls) == 8
+
+
 def test_a_subscription_job_holds_back_no_reserve(tmp_path):
     # pi's grove run spends 4 of 5: Claude Code's grove run (never charged) still starts, though its max_cost of 4
     # would be over the cap as a reserve; pi's next one doesn't

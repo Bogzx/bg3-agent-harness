@@ -2,7 +2,10 @@
 
 - clips(): the recorder's segments (bg3harness.recorder index.json, epoch start/end) cut to the run's window; a
   recording that misses more than MAX_GAP_S anywhere in the window (a gap between segments, a late start, an early
-  end) is refused, so the video's length is the run's wall time.
+  end) is refused, so the video's length is the run's wall time. cuts(): the same with the recorder's events: a gap
+  whose reason they give (the guard paused it: low RAM, heat, disk; ffmpeg crashed) is a Gap the video shows as a
+  card for its real length, so the run clock stays true; refused are a gap without a logged reason and more than
+  MAX_PAUSED_S or MAX_PAUSED_SHARE of the run paused in all.
 - panel_items(): the side panel's entries from every play process's events (Sxxx.events.jsonl): the agent's visible
   text, its tool calls and the first line of each result (no image file paths). Never its hidden reasoning:
   thinking events and every field but the visible ones are dropped, whatever a client's stream carries.
@@ -29,7 +32,10 @@ from typing import Any, cast
 
 from ..clients import RUNNING_COST
 
-MAX_GAP_S = 5.0  # the most recording a run may miss anywhere in its window
+MAX_GAP_S = 5.0  # the most recording a run may miss anywhere in its window without a logged reason
+MAX_PAUSED_S = 60.0  # logged pauses: at most this long in all
+MAX_PAUSED_SHARE = 0.05  # and at most this share of the run
+REASON_SLACK_S = 12.0  # a stop is logged up to ~10 s after its segment's end (the recorder waits for ffmpeg to exit)
 MIN_CHANGE_S = 0.5  # the side panel changes at most twice a second
 FPS = 15  # the recorder's
 RENDER_SCHEMA = 1  # render.json's version (the bench's render.v1 schema)
@@ -121,27 +127,89 @@ class Meta:
     # (WIPED: from the wipe's own second, Strip.wiped_s)
 
 
-def clips(segments: Sequence[Mapping[str, Any]], start: float, end: float, max_gap: float = MAX_GAP_S) -> list[Clip]:
-    """The parts of the recorder's segments that cover [start, end] (epoch s), in order. RenderError when the
-    recording misses more than max_gap seconds anywhere in the window; a segment still being written (no end yet)
-    covers nothing."""
+@dataclass(frozen=True)
+class Gap:
+    """A logged pause in the recording: from run second at_s, `length` s, why (the recorder's events). The game
+    clips after it start at video second cut_s of their concatenation; `offset` is how far they are moved to keep the
+    run clock (the run time minus the concatenation's time from there on)."""
+
+    at_s: float
+    length: float
+    reason: str
+    cut_s: float
+    offset: float
+
+    @property
+    def end_s(self) -> float:
+        return round(self.at_s + self.length, 3)
+
+
+def gap_reason(events: Sequence[Mapping[str, Any]], g0: float, g1: float) -> str | None:
+    """Why the recording misses [g0, g1] (epoch s), from the recorder's events: a stop or an ffmpeg exit at its start
+    (logged up to REASON_SLACK_S after the segment's end), else what the start that ends it waited for."""
+    for e in events:
+        t = float(e.get("t") or 0)
+        if e.get("ev") == "stop" and g0 - 1.0 <= t <= min(g1, g0 + REASON_SLACK_S) and e.get("reason"):
+            return str(e["reason"])
+        if e.get("ev") == "exit" and g0 - 1.0 <= t <= min(g1, g0 + REASON_SLACK_S):
+            return f"ffmpeg exited ({e.get('code')})"
+    for e in events:
+        t = float(e.get("t") or 0)
+        if e.get("ev") == "start" and g0 <= t <= g1 + 1.0 and e.get("after") and e["after"] != "starting":
+            return str(e["after"])
+    return None
+
+
+def cuts(
+    segments: Sequence[Mapping[str, Any]],
+    start: float,
+    end: float,
+    events: Sequence[Mapping[str, Any]] = (),
+    max_gap: float = MAX_GAP_S,
+) -> tuple[list[Clip], list[Gap]]:
+    """The parts of the recorder's segments that cover [start, end] (epoch s), in order, and the logged pauses
+    between them. A gap over max_gap is a pause when the recorder's events give its reason, else RenderError; so are
+    pauses over MAX_PAUSED_S or MAX_PAUSED_SHARE of the run in all. A segment still being written (no end yet) covers
+    nothing."""
     if end <= start:
         raise RenderError(f"empty run window: start {start} end {end}")
-    covered = start
+    covered, video = start, 0.0
     out: list[Clip] = []
+    gaps: list[Gap] = []
+
+    def gap(g0: float, g1: float) -> None:
+        if g1 - g0 <= max_gap:
+            return
+        why = gap_reason(events, g0, g1)
+        if why is None:
+            raise RenderError(
+                f"the recording misses {g1 - g0:.1f} s at run second {g0 - start:.1f} and its index logs no reason"
+            )
+        gaps.append(Gap(round(g0 - start, 3), round(g1 - g0, 3), why, round(video, 3), round(g1 - start - video, 3)))
+
     for s in sorted((s for s in segments if s.get("end") is not None), key=lambda s: float(s["start"])):
         s0, s1 = float(s["start"]), float(s["end"])
         if s1 <= covered or s0 >= end:
             continue
-        if s0 - covered > max_gap:
-            raise RenderError(f"the recording misses {s0 - covered:.1f} s at run second {covered - start:.1f}")
+        gap(covered, s0)
         a = max(s0, covered)
         b = min(s1, end)
         out.append(Clip(str(s["file"]), round(a - s0, 3), round(b - s0, 3)))
+        video += b - a
         covered = b
-    if end - covered > max_gap:
-        raise RenderError(f"the recording misses {end - covered:.1f} s at run second {covered - start:.1f}")
-    return out
+    gap(covered, end)
+    paused = sum(g.length for g in gaps)
+    if paused > MAX_PAUSED_S or paused > MAX_PAUSED_SHARE * (end - start):
+        raise RenderError(
+            f"the recording is paused {paused:.1f} s in all ({len(gaps)} gaps): over {MAX_PAUSED_S:.0f} s or "
+            f"{MAX_PAUSED_SHARE:.0%} of the run's {end - start:.0f} s"
+        )
+    return out, gaps
+
+
+def clips(segments: Sequence[Mapping[str, Any]], start: float, end: float, max_gap: float = MAX_GAP_S) -> list[Clip]:
+    """cuts() without the recorder's events: any gap over max_gap is refused."""
+    return cuts(segments, start, end, (), max_gap)[0]
 
 
 def _first_line(text: str) -> str:

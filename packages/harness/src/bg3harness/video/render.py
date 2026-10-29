@@ -7,7 +7,9 @@
 It reads only files that also go into the run's bundle (every Sxxx*.events.jsonl, facts.jsonl) and the recorder's
 segments, and writes into --out: render.json (the sync table), evidence.mp4 (1920x1080) and frames/*.jpg (the
 contact sheet). The run's window is facts.jsonl's run_start to run_end mark (the events' first and last time when a
-mark is missing). A recording with a gap over 5 s in that window, or an event past its end, is refused (exit 2).
+mark is missing). A recording gap over 5 s in that window is shown as a card for its real length when the index's
+events give its reason (the recorder paused: low RAM, heat, disk; ffmpeg crashed); refused (exit 2) are a gap with no
+logged reason, more than 60 s or 5 % of the run paused in all, and an event past the window's end.
 --sample-s N renders only the first N seconds (events after them left out), for a look at the layout.
 Deterministic: the same inputs give the same images and the same render.json.
 """
@@ -15,6 +17,7 @@ Deterministic: the same inputs give the same images and the same render.json.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import re
 import sys
@@ -25,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import compose, draw, timeline
-from .timeline import Clip, Item, Json, Lanes, Meta, RenderError, Strip
+from .timeline import Clip, Gap, Item, Json, Lanes, Meta, RenderError, Strip
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,7 @@ class Plan:
     strips: list[Strip]
     sync: Json
     lanes: Lanes
+    gaps: list[Gap] = dataclasses.field(default_factory=list[Gap])
 
     @property
     def duration(self) -> float:
@@ -95,17 +99,19 @@ def plan(
     run_hash: str,
     t_pass_s: float | None = None,
     clip_events: bool = False,
+    rec_events: Sequence[Mapping[str, Any]] = (),
 ) -> Plan:
-    """The video of [start, end] for the run with this run hash: its clips, panel items and changes, strip states and
-    render.json. clip_events: leave out the events after `end` (a sample) instead of refusing the run."""
-    cuts = timeline.clips(segments, start, end)
+    """The video of [start, end] for the run with this run hash: its clips and logged gaps (rec_events: the
+    recorder index's events), panel items and changes, strip states and render.json. clip_events: leave out the
+    events after `end` (a sample) instead of refusing the run."""
+    cuts, gaps = timeline.cuts(segments, start, end, rec_events)
     items = timeline.panel_items(logs, start)
     if clip_events:
         items = [i for i in items if i.at_s <= end - start]
     sync = timeline.sync_table(items, start, end, run_hash)
     strips = timeline.strip_states(end - start, facts, logs, start, t_pass_s)
     lanes = timeline.lanes(facts, items, start, end - start, t_pass_s)
-    return Plan(start, end, cuts, items, timeline.changes(items), strips, sync, lanes)
+    return Plan(start, end, cuts, items, timeline.changes(items), strips, sync, lanes, gaps)
 
 
 def write_images(p: Plan, meta: Meta, work: Path) -> tuple[Path, Path]:
@@ -124,7 +130,8 @@ def write_images(p: Plan, meta: Meta, work: Path) -> tuple[Path, Path]:
     lanes = draw.lanes_image(p.lanes, p.duration)
     for s in p.strips:
         path = work / f"frame-{s.clock_s:05d}.png"
-        draw.frame_image(s, meta, lanes, p.duration).save(path, compress_level=1)
+        pause = next((g for g in p.gaps if g.at_s < s.clock_s + 1 and s.clock_s < g.end_s), None)
+        draw.frame_image(s, meta, lanes, p.duration, pause).save(path, compress_level=1)
         frame.append((path, round(min(1.0, p.duration - s.clock_s), 3)))
     column_list, frame_list = work / "column.ffconcat", work / "frame.ffconcat"
     column_list.write_text(compose.images_list(column), encoding="utf-8")
@@ -153,7 +160,7 @@ def render(
     game_list = work / "game.ffconcat"
     game_list.write_text(compose.clips_list(p.clips, video_dir), encoding="utf-8")
     video = out / "evidence.mp4"
-    ffmpeg(compose.compose_args(game_list, frame_list, column_list, video, p.duration, encoder=encoder))
+    ffmpeg(compose.compose_args(game_list, frame_list, column_list, video, p.duration, encoder=encoder, gaps=p.gaps))
     frames = out / "frames"
     frames.mkdir(exist_ok=True)
     ffmpeg(compose.sheet_args(video, frames))
@@ -194,7 +201,18 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
         if a.sample_s:
             end = min(end, start + a.sample_s)
         segments: list[Any] = index.get("segments") or []
-        p = plan(segments, logs, facts, start, end, a.run_hash, a.t_pass_s, clip_events=bool(a.sample_s))
+        rec_events: list[Any] = index.get("events") or []
+        p = plan(
+            segments,
+            logs,
+            facts,
+            start,
+            end,
+            a.run_hash,
+            a.t_pass_s,
+            clip_events=bool(a.sample_s),
+            rec_events=rec_events,
+        )
         if a.work:
             video = render(p, meta, a.index.parent, a.out, a.work, ffmpeg, a.encoder)
         else:
@@ -203,5 +221,6 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     except RenderError as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
-    print(f"{video} ({p.duration:.0f} s, {len(p.items)} panel items, {len(p.changes)} panel changes)")
+    paused = f", {len(p.gaps)} logged gaps ({sum(g.length for g in p.gaps):.1f} s)" if p.gaps else ""
+    print(f"{video} ({p.duration:.0f} s, {len(p.items)} panel items, {len(p.changes)} panel changes{paused})")
     return 0

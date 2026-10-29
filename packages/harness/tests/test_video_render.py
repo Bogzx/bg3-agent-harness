@@ -7,6 +7,8 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -232,3 +234,110 @@ def test_a_deleted_segment_is_refused_before_anything_is_written(tmp_path: Path)
     with pytest.raises(T.RenderError, match=r"missing in .*: rec-1-0001\.mp4"):
         render.render(make_plan(tmp_path / "run", index), META, index.parent, tmp_path / "out", tmp_path / "w", ff)
     assert not ff.calls and not (tmp_path / "out").exists()
+
+
+RAM = "ram: 1425 MB available < 1500"
+
+
+def write_paused_run(
+    d: Path, run_s: float, segs: list[tuple[str, float, float]], rec_events: list[dict[str, Any]]
+) -> Path:
+    """A run of run_s seconds, one agent text, recording segments (file, start, end: run seconds) and the
+    recorder's events (t: run seconds)."""
+    d.mkdir(parents=True)
+    text = {"v": 1, "seq": 0, "t": T0 + 1.0, "src": "client", "kind": "text", "text": "Walking to the gate."}
+    (d / "S001.events.jsonl").write_text(json.dumps(text) + "\n", encoding="utf-8")
+    facts = [
+        {"v": 1, "kind": "mark", "t": T0, "mark": "run_start"},
+        {"v": 1, "kind": "mark", "t": T0 + run_s, "mark": "run_end"},
+    ]
+    (d / "facts.jsonl").write_text("".join(json.dumps(x) + "\n" for x in facts), encoding="utf-8")
+    video = d.parent / "video"
+    video.mkdir(exist_ok=True)
+    rows = [{"file": f, "start": T0 + a, "end": T0 + b} for f, a, b in segs]
+    evs = [{**e, "t": T0 + e["t"]} for e in rec_events]
+    (video / "index.json").write_text(json.dumps({"v": 1, "segments": rows, "events": evs}), encoding="utf-8")
+    for f, _, _ in segs:
+        if not (video / f).exists():
+            (video / f).write_bytes(b"mp4")
+    return video / "index.json"
+
+
+def test_a_logged_pause_is_a_card_for_its_real_length(tmp_path: Path):
+    """Launch pilot 2026-10-29: a RAM dip paused Opus's recording and the run's video was refused. With the pause's
+    reason in index.json the video shows a card over it and the game after it keeps the run clock."""
+    segs = [("a.mp4", -2.0, 50.0), ("b.mp4", 56.5, 220.0)]
+    index = write_paused_run(tmp_path / "run", 200.0, segs, [{"t": 50.4, "ev": "stop", "reason": RAM}])
+    ff = FakeFfmpeg()
+    args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out"), "--work", str(tmp_path / "w")]
+    assert render.main([*args, "--run-id", "s-r001", "--run-hash", "ab" * 32], ff) == 0
+    graph = ff.calls[0][ff.calls[0].index("-filter_complex") + 1]
+    assert graph.startswith("[0:v]setpts='PTS+(6.500*gte(T,49.967))/TB',scale=1408:792")
+    assert "[f][g]overlay=24:96:enable='not(between(t,50.000,56.467))'[fg]" in graph
+    assert ff.calls[0][ff.calls[0].index("-t") + 1] == "200.000"  # the video is the run's length
+    sync = json.loads((tmp_path / "out" / "render.json").read_text())
+    assert (sync["video_start"], sync["video_end"]) == (T0, T0 + 200.0)
+
+    def at(second: int, xy: tuple[int, int]) -> object:
+        from PIL import Image
+
+        return Image.open(tmp_path / "w" / f"frame-{second:05d}.png").getpixel(xy)
+
+    inside = (draw.GAME_X + 60, draw.GAME_Y + 60)
+    assert at(53, inside) == draw.CARD and at(50, inside) == draw.CARD and at(56, inside) == draw.CARD
+    assert at(49, inside) == draw.PAPER and at(57, inside) == draw.PAPER  # the game shows there
+
+
+def test_a_pause_without_a_logged_reason_is_still_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    index = write_paused_run(tmp_path / "run", 200.0, [("a.mp4", -2.0, 50.0), ("b.mp4", 56.5, 220.0)], [])
+    ff = FakeFfmpeg()
+    args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out")]
+    assert render.main([*args, "--run-id", "s-r001", "--run-hash", "ab" * 32], ff) == 2
+    assert "misses 6.5 s at run second 50.0 and its index logs no reason" in capsys.readouterr().err
+    assert not ff.calls
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+def test_real_ffmpeg_keeps_the_game_on_the_run_clock_across_a_pause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Real ffmpeg: red until run second 8, a 6 s pause, then green 3 s and blue 3 s. The card fills the game area
+    over the pause and green starts at run second 14, not at 8."""
+    monkeypatch.setattr(T, "MAX_PAUSED_SHARE", 0.5)  # a 20 s run: the 6 s pause would be over 5 %
+    video = tmp_path / "video"
+    video.mkdir()
+    size = f"s={draw.GAME_W}x{draw.GAME_H}:r=15"
+
+    def make(name: str, *colours: tuple[str, int]) -> None:
+        ins = [a for c, n in colours for a in ("-f", "lavfi", "-i", f"color={c}:{size}:d={n}")]
+        graph = "".join(f"[{k}:v]" for k in range(len(colours))) + f"concat=n={len(colours)}:v=1[v]"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", graph, "-map", "[v]",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video / name)],
+            check=True,
+        )  # fmt: skip
+
+    make("a.mp4", ("red", 8))
+    make("b.mp4", ("green", 3), ("blue", 3))
+    index = write_paused_run(
+        tmp_path / "run", 20.0, [("a.mp4", 0.0, 8.0), ("b.mp4", 14.0, 20.0)], [{"t": 8.2, "ev": "stop", "reason": RAM}]
+    )
+    out = tmp_path / "out"
+    assert render.main([str(tmp_path / "run"), "--index", str(index), "--out", str(out), "--run-id", "s-r001",
+                        "--run-hash", "ab" * 32]) == 0  # fmt: skip
+
+    def pixel(t: float) -> tuple[int, ...]:
+        x, y = draw.GAME_X + 60, draw.GAME_Y + 60
+        raw = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-ss", f"{t}", "-i", str(out / "evidence.mp4"), "-frames:v", "1",
+             "-vf", f"crop=2:2:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            capture_output=True, check=True,
+        ).stdout  # fmt: skip
+        return tuple(raw[:3])
+
+    def near(got: tuple[int, ...], want: tuple[int, ...]) -> bool:
+        return all(abs(a - b) <= 40 for a, b in zip(got, want, strict=True))
+
+    assert near(pixel(4.0), (255, 0, 0)), pixel(4.0)
+    assert near(pixel(11.0), draw.CARD), pixel(11.0)  # the pause: its card, not the next clip
+    assert near(pixel(15.5), (0, 128, 0)), pixel(15.5)  # green from run second 14 (without the shift: blue)
+    assert near(pixel(18.5), (0, 0, 255)), pixel(18.5)

@@ -6,11 +6,14 @@ too.
         -> <out>/rec-<t0>-0000.mp4, -0001.mp4 ...  (fragmented MP4: a crash keeps what was written)
         -> <out>/rec-<t0>.csv                       (ffmpeg's segment list: file, start s, end s)
         -> stdout: multipart JPEG at 3 fps          (MjpegParser -> LiveFrame -> /api/v1/screen.mjpg)
-    <out>/index.json: {"v": 1, "segments": [{file, run, start, end, bytes}]} with wall-clock (epoch s) start/end,
-    so replay maps an event time to (segment, offset). start = the run's spawn time + ffmpeg's segment start.
+    <out>/index.json: {"v": 1, "segments": [{file, run, start, end, bytes}], "events": [{t, ev, ...}]} with
+    wall-clock (epoch s) start/end, so replay maps an event time to (segment, offset). start = the run's spawn time +
+    ffmpeg's segment start. events: why the recording has a gap: {"ev": "start", "after"} (what it waited for),
+    {"ev": "stop", "reason"} (the guard's reason carries its numbers), {"ev": "exit", "code"} (ffmpeg crashed).
 
 `Recorder.poll()` (one thread calls it every second; tests call it with a fake clock) starts ffmpeg while the game
-runs, the recording is enabled and the guard is quiet; stops it when the game exits, the guard trips (RAM/heat), it
+runs, the recording is enabled and the guard is quiet (GUARD_COOLDOWN_S after it clears); stops it when the game
+exits, the guard trips (RAM/heat/disk), it
 is disabled or its format changed (`Recorder.configure`: a playthrough's [recording] enabled, fps and height);
 restarts a crashed ffmpeg with backoff; keeps the index; deletes the oldest finished segments above the disk cap.
 ffmpeg needs DISPLAY/XAUTHORITY like the game (memory: runner display env).
@@ -26,6 +29,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -39,7 +43,9 @@ GAME_COMM = "bg3"
 GAME_TITLE_RE = re.compile(r"Baldur's Gate 3")
 BACKOFF_S = (5.0, 10.0, 20.0, 40.0, 60.0)
 STABLE_RUN_S = 60.0  # a run that lasted this long resets the crash backoff
-GUARD_COOLDOWN_S = 120.0  # after the guard trips, stay stopped this long after it clears
+GUARD_COOLDOWN_S = 5.0  # after the guard trips, stay stopped this long after it clears (its hysteresis keeps a
+# level hovering at a limit from restarting ffmpeg every few seconds). Was 120 s: launch pilot 2026-10-29, Opus's run
+# lost its last 81 s (the win) to a RAM dip.
 
 
 def is_obj(v: object) -> TypeGuard[dict[str, Any]]:
@@ -378,12 +384,25 @@ def mem_available_mb(meminfo: str) -> int | None:
     return int(m.group(1)) // 1024 if m else None
 
 
+def disk_free_mb(path: Path) -> int | None:
+    try:
+        return shutil.disk_usage(path).free // 1024**2
+    except OSError:
+        return None
+
+
 @dataclass(frozen=True)
 class GuardLimits:
     min_avail_mb: int = 1500
     max_cpu_c: int = 90  # below ramwatch's heat pause (92 / 85): recording is the first thing to give up
     max_gpu_c: int = 82
     stale_s: float = 30.0  # thermal lines older than this are ignored
+    min_disk_mb: int = 1024  # free space on the recording's filesystem
+    # Hysteresis: once tripped, the guard clears only this far inside the limits (ffmpeg's own ~300 MB RSS would
+    # otherwise trip it again as soon as it restarts)
+    resume_ram_mb: int = 400
+    resume_heat_c: int = 3
+    resume_disk_mb: int = 512
 
 
 def resource_guard(
@@ -391,18 +410,29 @@ def resource_guard(
     limits: GuardLimits | None = None,
     clock: Callable[[], float] | None = None,
     meminfo: Path = Path("/proc/meminfo"),
+    disk: Path | None = None,
+    free_mb: Callable[[Path], int | None] | None = None,
 ) -> Callable[[], str | None]:
-    """The default guard: a reason to stop recording (low RAM, hot CPU/GPU from thermal.log), or None."""
+    """The default guard: a reason to stop recording (low RAM, hot CPU/GPU from thermal.log, little free space on
+    `disk`'s filesystem), or None. A reason says its numbers; while tripped, the limits are the resume levels."""
     now = clock or time.time
     limits = limits or GuardLimits()
+    held: list[str | None] = [None]
 
-    def guard() -> str | None:
+    def check() -> str | None:
+        on = held[0] is not None
+        floor = limits.min_avail_mb + (limits.resume_ram_mb if on else 0)
         try:
             avail = mem_available_mb(meminfo.read_text())
         except OSError:
             avail = None
-        if avail is not None and avail < limits.min_avail_mb:
-            return f"ram: {avail} MB available < {limits.min_avail_mb}"
+        if avail is not None and avail < floor:
+            return f"ram: {avail} MB available < {floor}"
+        if disk is not None:
+            free = (free_mb or disk_free_mb)(disk)
+            dfloor = limits.min_disk_mb + (limits.resume_disk_mb if on else 0)
+            if free is not None and free < dfloor:
+                return f"disk: {free} MB free < {dfloor}"
         try:
             st = thermal_log.stat()
             if now() - st.st_mtime > limits.stale_s:
@@ -413,11 +443,16 @@ def resource_guard(
         except OSError:
             return None
         cpu, gpu = thermal_reading(last[0]) if last else (None, None)
-        if cpu is not None and cpu >= limits.max_cpu_c:
-            return f"heat: cpu {cpu} C >= {limits.max_cpu_c}"
-        if gpu is not None and gpu >= limits.max_gpu_c:
-            return f"heat: gpu {gpu} C >= {limits.max_gpu_c}"
+        cool = limits.resume_heat_c if on else 0
+        if cpu is not None and cpu >= limits.max_cpu_c - cool:
+            return f"heat: cpu {cpu} C >= {limits.max_cpu_c - cool}"
+        if gpu is not None and gpu >= limits.max_gpu_c - cool:
+            return f"heat: gpu {gpu} C >= {limits.max_gpu_c - cool}"
         return None
+
+    def guard() -> str | None:
+        held[0] = check()
+        return held[0]
 
     return guard
 
@@ -454,14 +489,16 @@ class Recorder:
     next_start: float = 0.0
     guard_until: float = 0.0
     segments: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    events: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def __post_init__(self) -> None:
         self.out.mkdir(parents=True, exist_ok=True)
         try:
             idx = json.loads((self.out / "index.json").read_text())
             self.segments = [s for s in idx.get("segments", []) if (self.out / s["file"]).exists()]
-        except (OSError, ValueError, KeyError, TypeError):
-            self.segments = []
+            self.events = [e for e in idx.get("events", []) if is_obj(e)]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            self.segments, self.events = [], []
 
     @property
     def out(self) -> Path:
@@ -513,6 +550,7 @@ class Recorder:
         args = ffmpeg_args(self.spec, capture, prefix, self.ffmpeg)
         proc = self.spawn(args, self.out / "ffmpeg.log")
         self.run = Run(prefix, now, capture, proc, self.spec)
+        self._event(now, "start", after=self.reason)
         if self.spec.live and proc.stdout is not None:
             self.run.pump = threading.Thread(
                 target=pump_mjpeg, args=(proc.stdout, self.live), daemon=True, name="mjpeg"
@@ -537,8 +575,10 @@ class Recorder:
         except subprocess.TimeoutExpired:
             run.proc.kill()
             run.proc.wait()
-        self._ended(run, self.clock(), crashed=False)
+        now = self.clock()
+        self._ended(run, now, crashed=False)
         self.reason = reason
+        self._event(now, "stop", reason=reason)
 
     def _ended(self, run: Run, now: float, crashed: bool) -> None:
         if run.pump is not None:
@@ -552,6 +592,7 @@ class Recorder:
             self.next_start = now + delay
             self.last_exit = run.proc.poll()
             self.reason = f"ffmpeg exited ({self.last_exit})"
+            self._event(now, "exit", code=self.last_exit, restart_in=round(delay, 1))
 
     # -------------------------------------------------- index, cap
 
@@ -586,9 +627,14 @@ class Recorder:
         self.segments = [s for s in self.segments if s["file"] not in gone]
         self._write_index()
 
+    def _event(self, t: float, ev: str, **data: Any) -> None:
+        """Why the recording starts, stops or has a gap, into index.json's events."""
+        self.events.append({"t": round(t, 3), "ev": ev, **data})
+        self._write_index()
+
     def _write_index(self) -> None:
         tmp = self.out / "index.json.tmp"
-        tmp.write_text(json.dumps({"v": INDEX_VERSION, "segments": self.segments}, indent=1))
+        tmp.write_text(json.dumps({"v": INDEX_VERSION, "segments": self.segments, "events": self.events}, indent=1))
         tmp.replace(self.out / "index.json")
 
     def state(self) -> dict[str, Any]:
@@ -672,8 +718,10 @@ RUN_W, RUN_H = 1408, 792
 
 def run_recording(out_dir: Path, env: Mapping[str, str], runtime: Path, encoder: str = "h264_nvenc") -> RunRecording:
     """A bench run's recording into out_dir: the game's window on env's DISPLAY at RUN_W x RUN_H, no live view, the
-    resource guard on runtime/thermal.log (low RAM or heat stops it: the run's video then has a gap and is refused at
-    render)."""
+    resource guard on runtime/thermal.log and out_dir's free space (low RAM, heat or under 1 GB free stops it until it
+    clears: the run's video then has a gap with its reason in index.json's events, which the evidence video shows as
+    a pause card; bg3harness.video.timeline.cuts)."""
     spec = RecordSpec(out_dir, RUN_W, RUN_H, encoder=encoder, live=False)
     probe = game_probe(env.get("DISPLAY") or ":1")
-    return RunRecording(Recorder(spec, probe, time.time, resource_guard(runtime / "thermal.log")))
+    guard = resource_guard(runtime / "thermal.log", disk=out_dir)
+    return RunRecording(Recorder(spec, probe, time.time, guard))

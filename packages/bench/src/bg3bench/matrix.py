@@ -24,6 +24,9 @@ per job; then the job is `gave_up`. Order: repeat 1 of every (model, scenario, c
 so a stopped matrix has even coverage. `run_one(job) -> RunResult` does one run (adapters/legacy_cli.py today).
 `stopped()` (the host's operator stop: a signal or runtime/STOP) is asked before each run: once it says so, no new
 run starts and the matrix stops (`stopped`); the run it interrupted is recorded by its own result.
+`disk(job)` (bg3harness.diskguard.start_refusal on the runtime filesystem) is asked before each run too: too little
+free space for the job's recording and video stops the matrix like the budget does (`disk: <why>`, no attempt
+recorded: a later `bench run` resumes it).
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ SCHEMA = 1
 MAX_RERUNS = 2
 PAID_CLIENTS = spend.PAID_CLIENTS  # the clients billed per token (the others run on subscriptions)
 FINISHED, BUDGET, GUARD, COST_UNKNOWN, STOPPED = "finished", "budget", "guard", "cost unknown", "stopped"
+DISK = "disk"
 
 
 @dataclass(frozen=True)
@@ -133,12 +137,13 @@ class Matrix:
         sleep: Callable[[float], None],
         guard: Callable[[], str | None] | None = None,
         stopped: Callable[[], bool] | None = None,
+        disk: Callable[[dict[str, Any]], str | None] | None = None,
         max_reruns: int = MAX_RERUNS,
         guard_poll_s: float = 60.0,
         guard_max_wait_s: float = 3600.0,
     ):
         self.root, self.run_one, self.budget = Path(root), run_one, Path(budget)
-        self.now, self.sleep, self.guard, self.stopped = now, sleep, guard, stopped
+        self.now, self.sleep, self.guard, self.stopped, self.disk = now, sleep, guard, stopped, disk
         self.max_reruns, self.guard_poll_s, self.guard_max_wait_s = max_reruns, guard_poll_s, guard_max_wait_s
         self.queue = self.root / "queue.jsonl"
         self.progress_path = self.root / "progress.json"
@@ -254,8 +259,8 @@ class Matrix:
 
     # ------------------------------------------------------------------ the loop
     def run(self) -> str:
-        """Run until every job is done or gave up, or a stop: returns FINISHED, BUDGET, COST_UNKNOWN, STOPPED or
-        'guard: <why>'."""
+        """Run until every job is done or gave up, or a stop: returns FINISHED, BUDGET, COST_UNKNOWN, STOPPED,
+        'disk: <why>' or 'guard: <why>'."""
         jobs = self.state()
         for st in jobs.values():
             if st["status"] == "interrupted":
@@ -288,6 +293,9 @@ class Matrix:
             if budget["spent"] + reserve(job) > budget["cap"]:
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET
+            if self.disk is not None and (why := self.disk(job)) is not None:
+                self._progress(jobs, "stopped", stop=f"{DISK}: {why}")
+                return f"{DISK}: {why}"
             if (why := self._wait_for_guard(jobs, job)) is not None:
                 self._progress(jobs, "stopped", stop=f"{GUARD}: {why}")
                 return f"{GUARD}: {why}"

@@ -57,6 +57,42 @@ def test_a_gap_up_to_5_s_is_bridged():
     assert sum(c.duration for c in cut) == 995.0
 
 
+RAM = "ram: 1425 MB available < 1500"
+
+
+def test_a_gap_the_recorder_logged_is_shown_for_its_real_length():
+    """Launch pilot 2026-10-29: a RAM dip paused the recording. The index's events say why: a gap, not a refusal;
+    the clips after it move by the gap so the run clock stays true."""
+    segs = [seg("a.mp4", 990.0, 1050.0), seg("b.mp4", 1056.5, 1300.0)]
+    events = [{"t": 1050.4, "ev": "stop", "reason": RAM}, {"t": 1056.5, "ev": "start", "after": f"guard: {RAM}"}]
+    clips, gaps = T.cuts(segs, 1000.0, 1200.0, events)
+    assert clips == [T.Clip("a.mp4", 10.0, 60.0), T.Clip("b.mp4", 0.0, 143.5)]
+    assert gaps == [T.Gap(50.0, 6.5, RAM, 50.0, 6.5)]
+    assert gaps[0].end_s == 56.5
+    # a late start: what the start waited for; an ffmpeg crash: its exit
+    late = T.cuts(
+        [seg("b.mp4", 1007.0, 1300.0)], 1000.0, 1200.0, [{"t": 1007.0, "ev": "start", "after": "guard: heat"}]
+    )
+    assert late[1] == [T.Gap(0.0, 7.0, "guard: heat", 0.0, 7.0)]
+    crash = [{"t": 1050.0, "ev": "exit", "code": 1, "restart_in": 5.0}]
+    assert T.cuts(segs, 1000.0, 1200.0, crash)[1][0].reason == "ffmpeg exited (1)"
+
+
+def test_an_unexplained_gap_or_too_much_paused_is_refused():
+    segs = [seg("a.mp4", 990.0, 1050.0), seg("b.mp4", 1056.5, 1300.0)]
+    with pytest.raises(T.RenderError, match=r"misses 6.5 s at run second 50.0 and its index logs no reason"):
+        T.cuts(segs, 1000.0, 1200.0, [{"t": 1100.0, "ev": "stop", "reason": RAM}])  # a stop elsewhere
+    with pytest.raises(T.RenderError, match=r"misses 6.5 s"):
+        T.cuts(segs, 1000.0, 1200.0, [{"t": 1056.5, "ev": "start", "after": "starting"}])
+    with pytest.raises(T.RenderError, match=r"paused 6.5 s in all \(1 gaps\): over 60 s or 5% of the run's 100 s"):
+        T.cuts(segs, 1000.0, 1100.0, [{"t": 1050.4, "ev": "stop", "reason": RAM}])  # 6.5 % of the run
+    long = [seg("a.mp4", 990.0, 1500.0), seg("b.mp4", 1535.0, 2500.0), seg("c.mp4", 2530.0, 4000.0)]
+    stops = [{"t": 1500.0, "ev": "stop", "reason": RAM}, {"t": 2500.0, "ev": "stop", "reason": RAM}]
+    with pytest.raises(T.RenderError, match=r"paused 65.0 s in all \(2 gaps\)"):
+        T.cuts(long, 1000.0, 3900.0, stops)
+    assert T.clips(segs, 1000.0, 1050.0) == [T.Clip("a.mp4", 10.0, 60.0)]  # no events: as before
+
+
 def test_the_panel_shows_visible_text_tool_calls_and_result_first_lines_only():
     logs = {
         "S001": [

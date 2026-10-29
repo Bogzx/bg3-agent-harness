@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import pytest
+from bg3harness import diskguard
 
 from bg3bench import conditions, matrix, matrix_cli, scenario
 from bg3bench.matrix import RunResult
@@ -12,6 +13,12 @@ from bg3bench.matrix import RunResult
 REPO = Path(__file__).resolve().parents[3]
 PI = (REPO / "profiles" / "opus-5.5-pi.toml").read_text().replace('status = "offline"', 'status = "verified"')
 CLAUDE = 'client = "claude"\nmodel = "claude-opus-5-5"\neffort = "high"\nstatus = "verified"\n'
+
+
+@pytest.fixture(autouse=True)
+def plenty_of_disk(monkeypatch):
+    """Runs start whatever this machine's free space (the disk refusal has its own test)."""
+    monkeypatch.setattr(diskguard, "free_mb", lambda path: 10**9)
 
 
 NAUTILOID = json.loads((Path(__file__).resolve().parents[1] / "scenarios" / "nautiloid.json").read_text())
@@ -156,6 +163,36 @@ def test_status_of_an_invalid_and_an_interrupted_attempt(tmp_path):
         cli(repo, "run", "--matrix", str(path), run_one=run_one)
     code, out = cli(repo, "status", "--matrix", str(path))
     assert code == 0 and "invalid: runner_error" in out and "running or interrupted" in out and "gave_up" in out
+
+
+def test_too_little_disk_for_the_jobs_recording_starts_no_run(tmp_path, monkeypatch):
+    """Launch 2026-10-29: 7.3 GB free on the runtime disk, a recording ~16 MB a minute plus its evidence video. A job doesn't start
+    under 4 GB + its cap in minutes x 16 MB free on the runtime filesystem; the matrix stops like at the budget, and
+    resumes once there is room."""
+    repo = fake_repo(tmp_path)
+    path = matrix_file(tmp_path)
+    free, seen = {"mb": 5000}, []
+
+    def free_mb(p):
+        seen.append(p)
+        return free["mb"]
+
+    monkeypatch.setattr(diskguard, "free_mb", free_mb)
+    calls = []
+    run_one = lambda job: calls.append(job) or RunResult("r", True, True, 1.0, None, True)
+    hours = scenario.load(repo / "packages" / "bench" / "scenarios" / "nautiloid.json")["caps"]["run_hours"]
+    need = 4096 + round(hours * 60 * 16)
+    code, out = cli(repo, "run", "--matrix", str(path), run_one=run_one)
+    assert code == 1 and calls == [] and seen == [repo / "runtime"]
+    assert out.rstrip().endswith(
+        f"stopped: disk: 5000 MB free on {repo / 'runtime'} < {need} MB (4096 + {hours * 60:g} min x 16 MB)"
+    )
+    progress = json.loads((repo / "runtime" / "matrix" / "night1" / "progress.json").read_text())
+    assert progress["stop_reason"].startswith("disk: 5000 MB free")
+    monkeypatch.setenv(diskguard.FLOOR_MB_ENV, "100")  # configurable
+    monkeypatch.setenv(diskguard.PER_MIN_ENV, "1")
+    code, out = cli(repo, "resume", "--matrix", str(path), run_one=run_one)
+    assert code == 0 and len(calls) == 8
 
 
 def test_the_budget_stop_is_exit_1(tmp_path):
