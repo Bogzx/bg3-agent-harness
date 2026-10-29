@@ -24,6 +24,8 @@ GET (JSON, Cache-Control: no-store):
     /api/v1/doctor       bg3harness.doctor's report: can this machine run the harness, each failure with its fix
     /api/v1/submissions  per run dir: its prepared bundle and the site's last answer (submit.py)
     /api/v1/render       the last video render (video.Renderer state), or null
+    /api/v1/videos       the rendered runs without a YouTube link yet: evidence.mp4, size, the title and description
+                         to upload it with (submit.videos_todo)
 POST (JSON body, token):
     /api/v1/plan                 a New run form -> the jobs Start would queue (nothing is written or launched)
     /api/v1/run/start            the same form + "record", "submit_when_done": write its matrix file, start it
@@ -31,6 +33,7 @@ POST (JSON body, token):
     /api/v1/submit/prepare       {"run"}: pack and validate a finished run; the verdict and the exact files
     /api/v1/submit/video         {"run", "bundle_sha256", "youtube_url"}: after Render, the user's YouTube upload of
                                  evidence.mp4 into bundle.json's video (submit.add_video); validated again
+    /api/v1/submit/videos        {"items": [{"run", "bundle_sha256", "youtube_url"}]}: /submit/video for each, one result per item
     /api/v1/submit/upload        {"run", "bundle_sha256"}: send that bundle (with its video) with the site token
     /api/v1/submit/status        {"run"}: the submission's status from the site
     /api/v1/render               {"run"}: render the run's evidence video from its prepared bundle and recording
@@ -155,6 +158,8 @@ class App:
             return {"submissions": {r: submit.state(root, r) for r in runs}, "site": self.site}
         if path == "/api/v1/render":
             return {"render": self.renderer.state() if self.renderer else None}
+        if path == "/api/v1/videos":
+            return {"videos": submit.videos_todo(self.submissions())}
         return None
 
     def submissions(self) -> Path:
@@ -221,8 +226,11 @@ class App:
             )
 
     def housekeep(self) -> list[str]:
-        """The ticker's other jobs: Stop's SIGTERM fallback and putting a finished render into its bundle."""
+        """The ticker's other jobs: reaping finished children, Stop's SIGTERM fallback and putting a finished render into its bundle."""
         out: list[str] = []
+        for proc in (self.runner, self.renderer):
+            if proc:
+                proc.state()  # polls the child, which reaps it as soon as it exits instead of at the next GET
         if self.runner and self.runner.escalate():
             out.append("stop: runtime/STOP didn't end the matrix in time, sent it SIGTERM")
         try:
@@ -336,6 +344,16 @@ class App:
                     youtube_url=body.get("youtube_url"),
                     literals=self.literals(),
                 )
+        if path == "/api/v1/submit/videos":
+            with self.prepare_lock:
+                return {
+                    "results": submit.add_videos(
+                        self.submissions(),
+                        body.get("items"),
+                        self.need(self.bundler, "bundler"),
+                        literals=self.literals(),
+                    )
+                }
         if path == "/api/v1/submit/upload":
             return submit.upload(
                 self.submissions(),

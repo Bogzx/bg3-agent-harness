@@ -298,3 +298,28 @@ def test_matrix_process_ended_after_stop_is_not_signalled(repo):
     popen.procs[0].rc = 0  # STOP ended it in time
     clock[0] = launch.STOP_GRACE_S * 2
     assert mp.escalate() is False and popen.procs[0].signals == []
+
+
+def test_housekeeping_reaps_a_finished_matrix_without_a_get(tmp_path):
+    """A finished matrix stays <defunct> until something polls it; the ticker's housekeeping does, not a GET."""
+    import os
+    import sys
+
+    from bg3bench.serve import server
+
+    repo = tmp_path / "repo"
+    (repo / "runtime" / "panel").mkdir(parents=True)
+    run = launch.MatrixProcess(
+        repo,
+        popen=lambda argv, **kw: subprocess.Popen([sys.executable, "-c", "pass"], **kw),
+        which=lambda name: "/usr/bin/uv",
+    )
+    run.start("m1", tmp_path / "m1.toml", tmp_path / "m1.log", record=False)
+    pid = run.current.proc.pid
+    os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)  # it has exited; not reaped yet
+    assert Path(f"/proc/{pid}/stat").read_text().split(") ")[-1].startswith("Z")
+    app = server.App.__new__(server.App)
+    app.runner, app.renderer = run, None
+    app.finish_render = lambda: None
+    app.housekeep()
+    assert not Path(f"/proc/{pid}").exists()  # reaped
