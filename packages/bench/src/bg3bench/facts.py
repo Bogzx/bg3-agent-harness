@@ -3,7 +3,8 @@
 
 The harness writes the file; the benchmark only reads it. `State` is what the graders test: snapshots replace the
 current party, inventory, gold, region and combat flag; events update them between snapshots; places and quests seen
-accumulate. Each won combat keeps the names of the characters outside the party who died in it (`won_kills`, for a
+accumulate. The party is wiped when every real member is down or dead, or when the game showed its Game Over screen
+(a `game_over` event: the prologue ends there with "Us" still standing) until a game is loaded again (a load mark). Each won combat keeps the names of the characters outside the party who died in it (`won_kills`, for a
 goal's combats_won enemy): from a `kill` event (KilledBy, before the combat ends) or a `died` one (Died, after the
 dying animation: the last kill's comes after combat_ended), during the combat or at the instant it ended (one poll's
 diff writes combat_ended before its deaths). `from_progress` turns an old `Sxxx.progress.jsonl` (bg3ai.progress) into v1 events so archived runs can
@@ -75,6 +76,7 @@ class State:
     won_kills: list[set[str]] = field(default_factory=list)  # each won combat's kills
     ended_t: float | None = None  # when the last combat ended
     game_end: bool = False
+    game_over: bool = False  # the Game Over screen came up, and no game was loaded since
 
     def real_party(self) -> list[Member]:
         return [m for m in self.party.values() if not m.summon]
@@ -87,7 +89,7 @@ class State:
 
     def wiped(self) -> bool:
         real = self.real_party()
-        return bool(real) and all(m.dead or m.downed for m in real)
+        return self.game_over or (bool(real) and all(m.dead or m.downed for m in real))
 
     def party_level(self, agg: str = "min") -> int:
         levels = [m.level for m in self.real_party() if m.level is not None]
@@ -123,6 +125,8 @@ class State:
             self._snapshot(r)
         elif r["kind"] == "event":
             self._event(r)
+        elif r["kind"] == "mark" and r.get("mark") == "load":
+            self.game_over = False
         if self.combat and self.wiped():
             self.wiped_this_combat = True
 
@@ -179,13 +183,15 @@ class State:
             self.areas.add(r["name"])
         elif ev == "game_end":
             self.game_end = True
+        elif ev == "game_over":
+            self.game_over = True
 
 
 def party_losses(records: Iterable[dict]) -> dict[str, int]:
     """{fights, downs, deaths, wipes} over a run's facts: the combats started (State.combats_started); a real party
     member (no summon) going down or dying, seen by its event or by a snapshot (DeepSeek x Balthazar: Wyll dead in a
-    snapshot, no died event), `revived` standing it up again; and the party wiped (every real member down or dead)
-    from not, once a snapshot has listed the party. A summon is a name any snapshot or died event marks summon (its
+    snapshot, no died event), `revived` standing it up again; and the party wiped (every real member down or dead,
+    once a snapshot has listed the party, or the Game Over screen: State.wiped) from not. A summon is a name any snapshot or died event marks summon (its
     downed/revived events carry no flag)."""
     records = list(records)
     summons = {p["name"] for r in records if r["kind"] == "snapshot" for p in r["party"] if p.get("summon")}
@@ -220,7 +226,7 @@ def party_losses(records: Iterable[dict]) -> dict[str, int]:
                 m[1] = True
             else:
                 m[:] = [False, False]
-        wiped = listed and bool(party) and all(dead or downed for dead, downed in party.values())
+        wiped = st.game_over or (listed and bool(party) and all(dead or downed for dead, downed in party.values()))
         wipes += wiped and not was_wiped
         was_wiped = wiped
     return {"fights": st.combats_started, "downs": downs, "deaths": deaths, "wipes": wipes}

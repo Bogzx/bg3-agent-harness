@@ -122,6 +122,49 @@ def test_wipe_versus_a_single_death():
     assert not grade({"combats_won": {"gte": 1}}, wiped)["passed"]  # a wipe during the fight, even if revived
 
 
+def prologue(downed: bool = True) -> list[dict]:
+    """bench live S2 Sonnet nautiloid r1: Tav and Lae'zel downed in the helm fight, "Us" (the intellect devourer, a
+    real party member in the prologue) standing at 20/21, and the game at its Game Over screen."""
+    party = [
+        member("Lae'zel", 1, downed=downed, hp=0 if downed else 12, max_hp=12),
+        member("Us", 1, hp=20, max_hp=21),
+        member("Tav", 1, downed=downed, hp=0 if downed else 9, max_hp=12, avatar=True),
+    ]
+    return [snap(800, party=party, combat=True, region="Nautiloid")]
+
+
+def test_the_game_over_screen_is_a_wipe_with_a_member_standing():
+    """bench live S2: the prologue's Game Over with "Us" alive was no wipe for the bench, so the run was resumed on
+    the Game Over screen, its agent loaded a save and the run was voided (foreign_save) and rerun."""
+    before = run(*prologue())
+    st = facts.State()
+    for r in before:
+        st.apply(r)
+    assert not st.wiped()  # Us stands: the party isn't all down
+    over = [*before, ev(805, "game_over")]
+    st.apply(over[-1])
+    assert st.wiped()
+    assert graders.verdict(None, before) is None and graders.verdict(None, over) == "wiped"
+    assert graders.verdict({"quest_done": "Escape the Nautiloid"}, over) == "wiped"
+    assert graders.grade({"wipe": True}, over, allow_passive=True)["t_pass_s"] == 805
+    assert facts.party_losses(over)["wipes"] == 1
+    # the screen comes back on a later read: one wipe; a load starts a new game state, its Game Over is another
+    again = [*over, ev(806, "game_over"), mark(820, "load"), *prologue(downed=False)]
+    st = facts.State()
+    for r in again:
+        st.apply(r)
+    assert not st.wiped()
+    assert facts.party_losses([*again, ev(900, "game_over")])["wipes"] == 2
+    # a full party wipe and its Game Over screen are one wipe
+    two = [TAV, member("Gale")]
+    full = run(
+        snap(10, party=two, combat=True),
+        ev(20, "died", name="Gale", party=True),
+        ev(25, "downed", name="Tav", party=True),
+    )
+    assert facts.party_losses([*full, ev(27, "game_over")])["wipes"] == 1
+
+
 def test_a_fight_goal_names_its_enemies():
     # diverse-2026-10-25 x fight_act1_windmill: Haiku won a 9-s combat against a sleeping Scrawny Bugbear near the
     # windmill and passed {"combats_won": {"gte": 1}}; Opus killed the goblins (one Goblin Tracker out of combat first).
