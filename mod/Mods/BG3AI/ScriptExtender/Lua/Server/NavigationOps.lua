@@ -468,7 +468,8 @@ end)
 
 -- Cheap activity sample for latency metrics (the bridge polls it ~1/s on its
 -- own connection): party positions (the bridge diffs them to detect movement),
--- running jobs, dialogue and combat flags. Party-only data, nothing hidden.
+-- the selected member (`active`: ClientControl, else the first member), running
+-- jobs, dialogue and combat flags. Party-only data, nothing hidden.
 RPC.register("nav.activity", function(args)
     local party = V.party()
     local out = { pos = {}, jobs = 0, job_kinds = {}, in_dialogue = false, in_combat = false }
@@ -476,6 +477,7 @@ RPC.register("nav.activity", function(args)
         if truthy(osi(Osi.IsOnStage, u)) then
             local e = V.entity(u)
             local p = e and V.pos(e)
+            if not out.active and e and U.comp(e, "ClientControl") then out.active = u end
             if p then
                 out.pos[u] = U.vec(p, 2)
                 local s = N.surfaceAt(p)
@@ -493,6 +495,7 @@ RPC.register("nav.activity", function(args)
             if not out.in_dialogue and e then out.in_dialogue = V.inDialog(u, e) end
         end
     end
+    out.active = out.active or party[1]
     for _, j in pairs(RPC.jobs or {}) do
         if j.status == "running" then
             out.jobs = out.jobs + 1

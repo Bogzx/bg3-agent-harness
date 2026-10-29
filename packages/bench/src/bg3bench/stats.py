@@ -12,6 +12,10 @@ Every resampling function takes a seeded `random.Random`, so a report is reprodu
   at 3-5 runs per scenario that is the side to err on.
 - `paired_diff(a, b, rng)`: model A minus model B over the scenarios both ran, paired by scenario only (runs of two
   models are not pairs), with the same two-level bootstrap and a verdict string.
+- `rank_ranges(models, rng)`: each model's rank (1 = best) by its mean of per-scenario means over one common scenario
+  set, as the range [lo, hi] its rank takes in a two-level bootstrap: whole scenarios resampled once per draw for every
+  model alike (runs of one scenario are not independent), then each model's runs inside them; and the interval of
+  that mean over the same draws.
 - Luck covariate (research/arch/game.md T4, decision D9): `luck_z(rolls)` turns a run's hidden d20 rolls into a
   z-score; `adjust_for_luck(runs, luck)` removes the part of each score that the pooled within-scenario slope on
   luck explains, before the bootstrap. The slope is estimated once and held fixed in the bootstrap (approximation).
@@ -131,6 +135,34 @@ def paired_diff(
         draws.append(_mean([_resampled_mean(a[s], rng) - _resampled_mean(b[s], rng) for s in picked]))
     lo, hi = _ci(draws, alpha)
     return (est, lo, hi)
+
+
+def rank_ranges(
+    models: Mapping[str, Runs], rng: random.Random, b: int = 10000, alpha: float = 0.05
+) -> dict[str, dict[str, tuple]]:
+    """{model: {"rank": (lo, hi), "ci": (lo, hi)}}: the central 1 - alpha range of each model's rank and of its mean
+    over the same b draws. Every model must have runs of the same scenarios. A model's rank in a draw is 1 + the number
+    of models with a strictly higher mean (tied models share the better rank)."""
+    if not models:
+        return {}
+    sets = {tuple(_check_runs(r)) for r in models.values()}
+    if len(sets) > 1:
+        raise ValueError("the models have runs of different scenarios")
+    names, ids = list(sets.pop()), sorted(models)
+    ranks: dict[str, list[int]] = {m: [] for m in ids}
+    draws: dict[str, list[float]] = {m: [] for m in ids}
+    for _ in range(b):
+        picked = rng.choices(names, k=len(names))
+        means = {m: _mean([_resampled_mean(models[m][s], rng) for s in picked]) for m in ids}
+        for m in ids:
+            ranks[m].append(1 + sum(1 for o in ids if means[o] > means[m]))
+            draws[m].append(means[m])
+    out = {}
+    for m in ids:
+        r = sorted(ranks[m])
+        rank = (r[math.floor(alpha / 2 * (b - 1))], r[math.ceil((1 - alpha / 2) * (b - 1))])
+        out[m] = {"rank": rank, "ci": _ci(draws[m], alpha)}
+    return out
 
 
 # --- luck covariate ---------------------------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import time
 import unittest
 from unittest import mock
 
-from bg3ai import debrief
+from bg3ai import debrief, server
 from bg3ai.game import JobResult
 from bg3ai.tools import core, memory, reporting, saving, turn_plan
 from test_turn_macros import GOB, P1, P2, Base, combat
@@ -50,6 +50,38 @@ class FightServer(Base):
         self.assertEqual(len(recs), 1)
         self.assertEqual(recs[0]["session"], "S099")
         self.assertEqual(recs[0]["downed"][0]["name"], "Lae'zel")
+
+    def test_server_exit_writes_the_open_fight(self):
+        # A session that ends mid-fight: the record is written when the server stops, end session_end.
+        self.bad_fight(end=False)
+        memory.note("x")
+        self.g.push("damage", {"source": ref(P1, "Claude"), "target": ref(GOB, "Goblin"), "amount": 4,
+                               "type": "Slashing"})   # drained by no tool
+        reporting._fight_at_exit()
+        recs = [json.loads(x) for x in (self.tmp / "fights.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["end"], r["grade"]) for r in recs], [("session_end", "costly")])
+        self.assertEqual(recs[0]["party"][0]["dealt"], 11)
+        reporting._fight_at_exit()   # nothing open: nothing more
+        self.assertEqual(len((self.tmp / "fights.jsonl").read_text().splitlines()), 1)
+
+    def test_the_server_writes_it_when_its_client_exits(self):
+        self.bad_fight(end=False)
+        memory.note("x")
+        with mock.patch.object(core.mcp, "run", side_effect=KeyboardInterrupt), \
+                mock.patch.object(core.LIFE, "auto", False), \
+                mock.patch.dict(os.environ, {"BG3AI_MOVIE_SKIP": "0", "BG3AI_METRICS_SAMPLE_S": "0"}), \
+                self.assertRaises(KeyboardInterrupt):
+            server.main([])
+        recs = [json.loads(x) for x in (self.tmp / "fights.jsonl").read_text().splitlines()]
+        self.assertEqual([r["end"] for r in recs], ["session_end"])
+
+    def test_server_exit_writes_a_wipe_no_tool_saw(self):
+        self.bad_fight(end=False)
+        memory.note("x")
+        self.g.push("downed", ref(P1, "Claude"))   # the last member down: Game Over, the agent's session ends
+        reporting._fight_at_exit()
+        recs = [json.loads(x) for x in (self.tmp / "fights.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["end"], r["grade"]) for r in recs], [("wipe", "wipe")])
 
     def test_reload_mid_fight_then_retry_hint(self):
         self.bad_fight(end=False)

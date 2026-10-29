@@ -1,0 +1,41 @@
+{
+ "providers": {
+  "anthropic": {
+   "baseUrl": "https://api.anthropic.com",
+   "api": "anthropic-messages",
+   "apiKey": "${BG3AI_ANTHROPIC_API_KEY}",
+   "models": [
+    {
+     "id": "claude-opus-5-5",
+     "name": "claude-opus-5-5",
+     "api": "anthropic-messages",
+     "reasoning": true,
+     "input": [
+      "text",
+      "image"
+     ],
+     "contextWindow": 1000000,
+     "maxTokens": 32000,
+     "cost": {
+      "input": 4.0,
+      "output": 20.0,
+      "cacheRead": 0.2,
+      "cacheWrite": 5.0
+     },
+     "thinkingLevelMap": {
+      "off": null,
+      "minimal": null
+     },
+     "compat": {
+      "supportsMidConvoEffort": true,
+      "supportsMidConvoSystemMessages": true,
+      "supportsMidConvoToolChanges": true,
+      "forceAdaptiveThinking": true,
+      "supportsTemperature": false,
+      "supportsStrictTools": true
+     }
+    }
+   ]
+  }
+ }
+}

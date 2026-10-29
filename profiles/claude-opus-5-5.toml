@@ -1,0 +1,26 @@
+# Claude Opus 5.5 through pi and Anthropic's own Messages API (the launch campaign).
+# Rates: Anthropic's pricing page, read 2026-10-29 (USD per million tokens).
+client = "pi"
+model = "claude-opus-5-5"
+effort = "medium"
+status = "offline"  # offline checks only, never played live (bg3harness/profiles.py)
+
+[endpoint]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+api = "anthropic-messages"
+api_key_env = "BG3AI_ANTHROPIC_API_KEY"
+
+[model_info]
+input = ["text", "image"]
+reasoning = true
+context_window = 1000000
+max_tokens = 32000
+thinking_level_map = { off = false, minimal = false }
+compat = { supportsMidConvoEffort = true, supportsMidConvoSystemMessages = true, supportsMidConvoToolChanges = true, forceAdaptiveThinking = true, supportsTemperature = false, supportsStrictTools = true }
+
+[model_info.cost]
+input = 4.0
+output = 20.0
+cache_read = 0.2
+cache_write = 5.0

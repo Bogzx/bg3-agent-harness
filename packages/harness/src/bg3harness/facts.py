@@ -3,16 +3,20 @@
 benchmark's graders; the agent never sees it. Built from the progress poller's reads (bridge progress.read_game)
 plus the party inventory, so it costs one extra eval per poll.
 
-- a snapshot (the full state) on the first good read, after a load, every SNAPSHOT_S and, in combat, on every read
-  whose party HP (or downed / dead) differs from the last snapshot's, so the party's HP is at most one poll old in a
-  fight;
+- a snapshot (the full state) on the first good read, after a load, every SNAPSHOT_S, at the first read after a
+  fight ended (the party's HP at the fight's end) and, in combat, on every read whose party HP (or downed / dead)
+  differs from the last snapshot's, so the party's HP is at most one poll old in a fight; each member's position
+  (`pos`, [x, y, z] m, y up) and the `leader` (the character the player controls) are in it;
+- a `pos` event (the leader's position) on a read between snapshots when the leader moved POS_M or more since the
+  last recorded position, or another character leads, or the region changed: the path the party walked, one point
+  per poll (story.POLL_S; the bridge's 1 Hz metrics samples carry the leader's position too, as `lead`);
 - events from the difference of two reads: combat, died/downed/revived (party members; other characters' deaths
   from the mod's `died` events), level_up, joined, gold (with delta), item_added (gold: true for a gold stack),
   quest_added/quest_done, region, area;
 - game_over: the game's Game Over screen (ui.state screen game_over: the party wiped), when a read first shows it;
 - marks: run_start (time zero), load, run_end;
-- the referee ring's events (RingFeed: trade, pickpocket, stole, crime, kill, loot and, while it answers, gold,
-  item_added, died and combat exactly per change) and the roll log into rolls.jsonl.
+- the referee ring's events (RingFeed: trade, pickpocket, stole, crime, kill, loot, approval and, while it answers,
+  gold, item_added, died and combat exactly per change) and the roll log into rolls.jsonl.
 
 `game_t` is on every record: seconds since run_start. D7 (revised 2026-10-21): BG3 has no pause the harness can
 use, so game time is wall time since run_start (null before it).
@@ -38,6 +42,14 @@ INVENTORY_OP = "state.inventory"
 REFEREE_KINDS = frozenset({"gold", "item_added", "died", "combat_started", "combat_ended"})
 # The reads before run_end wait this long, one every END_EVERY_S, for a region change's area (end_reads).
 END_WAIT_S, END_EVERY_S = 45.0, 5.0
+POS_M = 1.0  # a leader position this far from the last recorded one is a `pos` event
+
+
+def _pos(v: Any) -> list[float] | None:
+    """[x, y, z] in metres (0.1 m), or None when v isn't a position."""
+    if isinstance(v, (list, tuple)) and len(v) == 3 and all(isinstance(x, (int, float)) for x in v):
+        return [round(float(x), 1) for x in v]
+    return None
 
 
 def _member(c: dict) -> dict:
@@ -46,6 +58,8 @@ def _member(c: dict) -> dict:
     for k in ("hp", "max_hp"):
         if isinstance(c.get(k), (int, float)):
             m[k] = c[k]
+    if (p := _pos(c.get("pos"))) is not None:
+        m["pos"] = p
     for k in ("avatar", "summon"):
         if c.get(k):
             m[k] = True
@@ -86,11 +100,20 @@ def snapshot(got: dict, inv: Any, areas: list[str]) -> dict | None:
     ex = got.get("explored") if isinstance(got.get("explored"), dict) else {}
     area = (ui.get("region") if ui.get("screen") in (None, "game") else None) or st.get("subregion") \
         or ex.get("subregion")
+    rows = [c for c in st.get("party") or [] if isinstance(c, dict) and c.get("name")]
+    lead = next((c for c in rows if c.get("active") or (st.get("active") and c.get("uuid") == st.get("active"))), None)
     return {"gold": max(0, int(st.get("gold") or 0)),
-            "party": [_member(c) for c in st.get("party") or [] if isinstance(c, dict) and c.get("name")],
+            "party": [_member(c) for c in rows],
+            "leader": str(lead["name"]) if lead else None,
             "region": st.get("region") or st.get("level"), "area": area, "areas": list(areas),
             "combat": bool(st.get("in_combat")), "inv": _items(inv),
             "quests": quests(got.get("journal")) if got.get("journal") is not None else None}
+
+
+def leader_pos(snap: dict) -> tuple[str, list[float]] | None:
+    """(leader name, position) of a snapshot, or None when the read had no leader or no position for it."""
+    m = next((m for m in snap["party"] if m["name"] == snap.get("leader")), None)
+    return (m["name"], m["pos"]) if m and m.get("pos") else None
 
 
 def events(old: dict, new: dict, game_events: list | None = None) -> list[dict]:
@@ -164,6 +187,7 @@ class FactsWriter:
         self.area_due = False                # a region event came after the last area event (the minimap lags)
         self.game_over: float | None = None  # when a read first showed the Game Over screen in this run
         self.on_game_over = False            # the last read with a screen showed it
+        self.pos_last: tuple | None = None   # (leader, region, pos) last recorded, in a snapshot or a pos event
         self.lock = threading.Lock()
         try:   # a later process of the same run: time zero is the file's run_start
             with open(self.path) as f:
@@ -216,12 +240,25 @@ class FactsWriter:
         if self.referee_live:
             evs = [e for e in evs if e["ev"] not in REFEREE_KINDS]
         out = over + [self._write({"kind": "event", **e}, now) for e in evs]
+        fight_end = self.last is not None and self.last["combat"] and not snap["combat"]
         self.last = snap
         fight_hp = snap["combat"] and _hp(snap) != self.snap_hp
-        if self.snap_t is None or now - self.snap_t >= self.snapshot_s or fight_hp:
+        lead = leader_pos(snap)
+        if self.snap_t is None or now - self.snap_t >= self.snapshot_s or fight_hp or fight_end:
             self.snap_t, self.snap_hp = now, _hp(snap)
             out.append(self._write({"kind": "snapshot", **snap, "quests": snap["quests"] or {}}, now))
+            if lead:
+                self.pos_last = (lead[0], snap["region"], lead[1])
+        elif lead and self._moved(lead[0], snap["region"], lead[1]):
+            self.pos_last = (lead[0], snap["region"], lead[1])
+            out.append(self._write({"kind": "event", "ev": "pos", "name": lead[0], "pos": lead[1],
+                                    "region": snap["region"]}, now))
         return out
+
+    def _moved(self, name: str, region: Any, pos: list[float]) -> bool:
+        if self.pos_last is None or self.pos_last[:2] != (name, region):
+            return True
+        return sum((a - b) ** 2 for a, b in zip(pos, self.pos_last[2], strict=True)) >= POS_M ** 2
 
 
     def _game_over(self, got: dict | None, now: float) -> list[dict]:

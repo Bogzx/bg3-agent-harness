@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/harness/schemas/facts.v1.schema.json",
   "title": "facts.jsonl v1: one record per line",
-  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule).",
+  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up).",
   "type": "object",
   "required": ["v", "kind", "t"],
   "properties": {
@@ -20,6 +20,7 @@
   "$defs": {
     "name": {"type": "string", "minLength": 1},
     "count": {"type": "integer", "minimum": 0},
+    "pos": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "description": "[x, y, z] in metres, y up (added 2026-10-29)"},
     "member": {
       "type": "object",
       "required": ["name", "level", "dead", "downed"],
@@ -31,7 +32,8 @@
         "dead": {"type": "boolean"},
         "downed": {"type": "boolean"},
         "avatar": {"type": "boolean", "description": "the player's own character"},
-        "summon": {"type": "boolean", "description": "a summon or other temporary member; not counted as party"}
+        "summon": {"type": "boolean", "description": "a summon or other temporary member; not counted as party"},
+        "pos": {"$ref": "#/$defs/pos"}
       }
     },
     "item": {
@@ -52,6 +54,7 @@
         "gold": {"$ref": "#/$defs/count"},
         "party": {"type": "array", "items": {"$ref": "#/$defs/member"}},
         "region": {"type": ["string", "null"]},
+        "leader": {"type": ["string", "null"], "description": "the party member the player controls (added 2026-10-29)"},
         "area": {"type": ["string", "null"], "description": "current minimap area"},
         "areas": {"type": "array", "items": {"type": "string"}, "description": "every area discovered so far"},
         "combat": {"type": "boolean"},
@@ -67,7 +70,7 @@
           "combat_started", "combat_ended", "died", "downed", "revived", "level_up", "joined",
           "gold", "item_added", "trade_open", "trade_end", "pickpocket", "stole", "crime", "kill", "loot",
           "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
-          "game_over"
+          "game_over", "pos", "approval"
         ]}
       },
       "allOf": [
@@ -84,11 +87,15 @@
         {"if": {"properties": {"ev": {"enum": ["trade_open", "trade_end"]}}},
          "then": {"properties": {"npc": {"type": "string"}}}},
         {"if": {"properties": {"ev": {"const": "pickpocket"}}},
-         "then": {"required": ["ok"], "properties": {"ok": {"type": "boolean"}, "npc": {"type": "string"}, "item": {"type": "string"}, "count": {"$ref": "#/$defs/count"}}}},
+         "then": {"required": ["ok"], "properties": {"ok": {"type": "boolean"}, "npc": {"type": "string"}, "item": {"type": "string"}, "count": {"$ref": "#/$defs/count"},
+                  "attempt": {"type": "integer", "minimum": 1, "description": "the pickpocket window (one RequestPickpocket) this record belongs to: one failure, or one record per item taken; absent when no window was open (added 2026-10-29)"}}}},
         {"if": {"properties": {"ev": {"const": "stole"}}},
          "then": {"properties": {"char": {"type": "string"}, "item": {"type": "string"}, "tpl": {"type": "string"}}}},
         {"if": {"properties": {"ev": {"const": "crime"}}},
-         "then": {"required": ["type"], "properties": {"type": {"type": "string"}, "victim": {"type": "string"}, "criminal": {"type": "string"}}}},
+         "then": {"required": ["type"], "properties": {"type": {"type": "string"}, "victim": {"type": "string"}, "criminal": {"type": "string"},
+                  "victim_uuid": {"type": "string"},
+                  "enemy": {"type": "boolean", "description": "the victim was the criminal's enemy when the crime was registered (added 2026-10-29): the game registers Murder for a fight's target too"},
+                  "in_combat": {"type": "boolean", "description": "the criminal was in combat when the crime was registered (added 2026-10-29)"}}}},
         {"if": {"properties": {"ev": {"const": "kill"}}},
          "then": {"required": ["victim"], "properties": {"victim": {"$ref": "#/$defs/name"}, "killer": {"type": "string"}, "trader": {"type": "boolean"},
                   "by_party": {"type": "boolean", "description": "the killer is a party member (absent in progress-era records)"},
@@ -109,6 +116,16 @@
                                  "picked": {"type": "integer"},
                                  "picked_text": {"type": "string"},
                                  "reason": {"type": "string", "description": "the agent's text and thinking since the tool result before the call"}}}},
+        {"if": {"properties": {"ev": {"const": "approval"}}},
+         "then": {"description": "a companion's approval rating changed (added 2026-10-29)",
+                  "required": ["companion", "total"],
+                  "properties": {"companion": {"$ref": "#/$defs/name"}, "companion_uuid": {"type": "string"},
+                                 "toward": {"type": "string", "description": "whose rating it is (the rated character)"},
+                                 "delta": {"type": ["integer", "null"], "description": "the change; absent when the rating before it was not known"},
+                                 "total": {"type": "integer"}}}},
+        {"if": {"properties": {"ev": {"const": "pos"}}},
+         "then": {"description": "the leader's position on a read between snapshots, when it moved 1 m or more, another character leads or the region changed (added 2026-10-29)",
+                  "required": ["name", "pos"], "properties": {"name": {"$ref": "#/$defs/name"}, "pos": {"$ref": "#/$defs/pos"}, "region": {"type": ["string", "null"]}}}},
         {"if": {"properties": {"ev": {"enum": ["region", "area", "level_changed"]}}},
          "then": {"required": ["name"], "properties": {"name": {"$ref": "#/$defs/name"}}}}
       ]
