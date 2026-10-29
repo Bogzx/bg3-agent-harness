@@ -47,8 +47,9 @@ def settings_mark(timeline: list[Json]) -> Json:
 
 
 def fingerprint(timeline: list[Json]) -> Json | None:
-    """The start state a run's first facts snapshot shows: party (name, level), gold, area, difficulty and the
-    avatar's name. None without a snapshot."""
+    """The start state a run's first facts snapshot shows: party (name, level), gold, region, area, difficulty and
+    the avatar's name. None without a snapshot. The region pins the place where the area doesn't (the party outside
+    any named area: the snapshot's area is null)."""
     snap = next((r for r in timeline if r.get("kind") == "snapshot"), None)
     if snap is None:
         return None
@@ -57,6 +58,7 @@ def fingerprint(timeline: list[Json]) -> Json | None:
     return {
         "party": party,
         "gold": snap.get("gold"),
+        "region": snap.get("region"),
         "area": snap.get("area"),
         "difficulty": s.get("difficulty"),
         "name": s.get("avatar_name"),
@@ -65,10 +67,12 @@ def fingerprint(timeline: list[Json]) -> Json | None:
 
 def new_game_fingerprint(sc: Json) -> Json:
     """The start state a new game's first snapshot shows (character creation, before any party or level loads): no
-    party, gold or area, the scenario's difficulty and no avatar name yet. A run that loaded a save has a party."""
+    party, gold, region or area, the scenario's difficulty and no avatar name yet. A run that loaded a save has a
+    party."""
     return {
         "party": [],
         "gold": 0,
+        "region": None,
         "area": None,
         "difficulty": (sc.get("game_settings") or {}).get("difficulty"),
         "name": None,

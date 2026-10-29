@@ -107,6 +107,7 @@ def test_a_probe_records_the_first_snapshot_of_a_run_without_an_agent_and_x01_ac
     assert got["fingerprint"] == {
         "party": [["Gale", 3], ["Shadowheart", 3], ["Tav", 3], ["Wyll", 3]],
         "gold": 156,
+        "region": "Wilderness",
         "area": "Blighted Village",
         "difficulty": "Balanced",
         "name": "Tav",
@@ -177,13 +178,32 @@ def capture_doc(name: str, fp: dict, sha1: str) -> dict:
 
 
 GROVE = "Tav-1522126493__SCN-fight_act1_grove_gate"
-GROVE_FP = {"party": [["Tav", 4]], "gold": 10, "area": "Emerald Grove", "difficulty": "Balanced", "name": "Tav"}
+GROVE_FP = {
+    "party": [["Tav", 4]],
+    "gold": 10,
+    "region": "Wilderness",
+    "area": "Emerald Grove",
+    "difficulty": "Balanced",
+    "name": "Tav",
+}
+
+
+def docs_without_grove() -> tuple[dict, dict]:
+    """saves.json's and the shipped release's documents with grove_gate's save not fingerprinted yet."""
+    saves_doc = json.loads(saves.SAVES_JSON.read_text())
+    release_doc = json.loads(release.default_path().read_text())
+    for s in saves_doc["suites"][TAG]["saves"]:
+        if s["name"] == GROVE:
+            s["fingerprint"] = None
+    for sc in release_doc["scenarios"].values():
+        if sc["save"] == GROVE:
+            sc["fingerprint"] = None
+    return saves_doc, release_doc
 
 
 def test_apply_writes_saves_json_and_the_release_as_the_release_tool_builds_them(tmp_path):
     sha1 = saves.load()[TAG][GROVE].save_sha1
-    saves_doc = json.loads(saves.SAVES_JSON.read_text())
-    release_doc = json.loads(release.default_path().read_text())
+    saves_doc, release_doc = docs_without_grove()
     assert "fight_act1_grove_gate" in release.unfingerprinted(release_doc)
     before = json.loads(json.dumps(release_doc))
     assert start_states.apply(capture_doc(GROVE, GROVE_FP, sha1), saves_doc, release_doc) == [GROVE]
@@ -205,8 +225,7 @@ def test_apply_writes_saves_json_and_the_release_as_the_release_tool_builds_them
 
 def test_apply_refuses_another_sha1_suite_or_fingerprint():
     sha1 = saves.load()[TAG][GROVE].save_sha1
-    saves_doc = json.loads(saves.SAVES_JSON.read_text())
-    release_doc = json.loads(release.default_path().read_text())
+    saves_doc, release_doc = docs_without_grove()
     keep = json.dumps([saves_doc, release_doc])
     with pytest.raises(ValueError, match="not listed"):
         start_states.apply(capture_doc(GROVE, GROVE_FP, "1" * 40), saves_doc, release_doc)
@@ -224,8 +243,9 @@ def test_apply_refuses_another_sha1_suite_or_fingerprint():
 def test_the_cli_apply_and_capture_through_the_matrix_cli(tmp_path, capsys, monkeypatch):
     sha1 = saves.load()[TAG][GROVE].save_sha1
     saves_path, rel = tmp_path / "saves.json", tmp_path / "release.json"
-    saves_path.write_text(saves.SAVES_JSON.read_text())
-    rel.write_text(release.default_path().read_text())
+    saves_doc, release_doc = docs_without_grove()
+    saves_path.write_text(json.dumps(saves_doc))
+    rel.write_text(json.dumps(release_doc))
     cap = tmp_path / "cap.json"
     cap.write_text(json.dumps(capture_doc(GROVE, GROVE_FP, sha1)))
     args = ["apply", str(cap), "--saves-json", str(saves_path), "--release", str(rel)]
@@ -256,3 +276,37 @@ def test_the_harness_live_host_is_what_capture_drives():
 
     host: start_states.LiveHost = LiveRunHost(cast(Any, lambda _opt: None), run_files=lambda *_a: {}, env={})
     assert host.runs == {}
+
+
+def test_the_region_tells_apart_two_starts_outside_any_named_area():
+    rows = windmill_rows()
+    snap = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
+    outside = [*rows[:snap], {**rows[snap], "area": None, "areas": []}, *rows[snap + 1 :]]
+    fp = consistency.fingerprint(outside)
+    assert fp is not None and (fp["region"], fp["area"]) == ("Wilderness", None)
+    elsewhere = [*rows[:snap], {**rows[snap], "area": None, "areas": [], "region": "Shadow-Cursed Lands"}]
+    assert x01(outside, fp) == (True, "")
+    assert x01(elsewhere + rows[snap + 1 :], fp)[0] is False
+
+
+def test_refresh_recomputes_fingerprints_from_the_probe_run_dirs(tmp_path, capsys):
+    run_dir = tmp_path / "sessions" / "start-state-windmill"
+    run_dir.mkdir(parents=True)
+    (run_dir / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in windmill_rows()))
+    old = {k: v for k, v in (saves.load()[TAG][WINDMILL].fingerprint or {}).items() if k != "region"}
+    cap = capture_doc(WINDMILL, old, WINDMILL_SHA1)
+    cap["saves"][WINDMILL]["run_dir"] = run_dir.name
+    path = tmp_path / "cap.json"
+    path.write_text(json.dumps(cap))
+    assert start_states.main(["refresh", str(path), "--sessions", str(tmp_path / "sessions")]) == 0
+    assert "recomputed for 1 saves, 1 changed" in capsys.readouterr().out
+    got = json.loads(path.read_text())["saves"][WINDMILL]["fingerprint"]
+    assert got == saves.load()[TAG][WINDMILL].fingerprint and got["region"] == "Wilderness"
+    cap["saves"][WINDMILL]["run_dir"] = "gone"
+    path.write_text(json.dumps(cap))
+    assert start_states.main(["refresh", str(path), "--sessions", str(tmp_path / "sessions")]) == 1
+    assert "no " in capsys.readouterr().err and json.loads(path.read_text()) == cap  # left as it was
+    wrong = capture_doc(GROVE, GROVE_FP, "0" * 40)
+    wrong["saves"][GROVE]["run_dir"] = run_dir.name  # the windmill probe's facts under grove_gate's name
+    with pytest.raises(ValueError, match="first load mark"):
+        start_states.refresh(wrong, tmp_path / "sessions")
