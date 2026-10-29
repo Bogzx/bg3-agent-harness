@@ -278,3 +278,71 @@ def test_the_total_cap_is_the_sites_8_mib():
     assert pack.size_problems({"bundle.json": b"{}", "facts.jsonl": b"x" * (cap - 1)}) == [
         f"{cap + 1} bytes in all, over {cap}"
     ]
+
+
+def box(kind: bytes, payload: bytes, large: bool = False) -> bytes:
+    if large:  # size 1: the 64-bit size follows the type
+        return (1).to_bytes(4, "big") + kind + (16 + len(payload)).to_bytes(8, "big") + payload
+    return (8 + len(payload)).to_bytes(4, "big") + kind + payload
+
+
+def mp4(seconds: float, version: int = 0, large: bool = False) -> bytes:
+    """A minimal MP4: ftyp, an mdat, then moov with its mvhd (timescale 1000), as ffmpeg writes it (moov last)."""
+    dur = round(seconds * 1000)
+    if version == 1:
+        mvhd = bytes([1, 0, 0, 0]) + bytes(16) + (1000).to_bytes(4, "big") + dur.to_bytes(8, "big") + bytes(80)
+    else:
+        mvhd = bytes(4) + bytes(8) + (1000).to_bytes(4, "big") + dur.to_bytes(4, "big") + bytes(80)
+    moov = box(b"moov", box(b"trak", b"") + box(b"mvhd", mvhd))
+    return box(b"ftyp", b"isom\0\0\2\0") + box(b"mdat", b"\0" * 64, large) + moov
+
+
+def test_mp4_duration_reads_the_movie_header(tmp_path):
+    f = tmp_path / "v.mp4"
+    for version, large in ((0, False), (1, False), (0, True)):
+        f.write_bytes(mp4(513.7, version, large))
+        assert pack.mp4_duration(f) == 513.7
+    for broken in (b"not a video", box(b"ftyp", b"isom"), box(b"moov", box(b"trak", b"")), b"\0\0\0\x40moov"):
+        f.write_bytes(broken)
+        with pytest.raises(pack.PackError):
+            pack.mp4_duration(f)
+
+
+def test_youtube_id_takes_the_id_or_a_video_url():
+    vid = "dQw4w9WgXcQ"
+    for ref in (vid, f" https://youtu.be/{vid} ", f"https://www.youtube.com/watch?v={vid}&t=3"):
+        assert pack.youtube_id(ref) == vid
+    assert pack.youtube_id(f"https://m.youtube.com/shorts/{vid}") == vid
+    for bad in ("short", f"https://example.com/watch?v={vid}", f"ftp://youtu.be/{vid}", "https://youtu.be/x"):
+        with pytest.raises(pack.PackError, match="not a YouTube video"):
+            pack.youtube_id(bad)
+
+
+def test_add_video_sets_the_envelopes_video_and_keeps_the_run_hash(tmp_path, capsys):
+    """bench live S2: bundle.json's video stayed null after the render, so the site's intake refused every upload
+    (E01 "bundle.json has no video"). add_video sets it from evidence.mp4 and the uploaded video's id."""
+    p = do_pack(run_dir(tmp_path), tmp_path / "out")
+    assert p.envelope["video"] is None
+    r = render_dir(tmp_path, p.envelope["run_hash"])
+    (r / pack.VIDEO).write_bytes(mp4(1.0))
+    q = pack.add_video(r, tmp_path / "out", "https://youtu.be/dQw4w9WgXcQ")
+    sha = bundle.sha256_bytes((r / pack.VIDEO).read_bytes())
+    assert q.envelope["video"] == {"youtube_id": "dQw4w9WgXcQ", "duration_s": 1.0, "mp4_sha256": sha}
+    assert q.envelope["run_hash"] == p.envelope["run_hash"] and q.envelope["files"] == p.envelope["files"]
+    raw = (q.bundle_dir / bundle.ENVELOPE).read_bytes()
+    assert raw == bundle.canonical_bytes(q.envelope) and q.bundle_sha256 == bundle.sha256_bytes(raw)
+    jsonschema.validate(q.envelope, bundle.schema())
+    with tarfile.open(q.archive) as tar:
+        assert (tar.extractfile(bundle.ENVELOPE) or io.BytesIO()).read() == raw
+    assert pack.add_video(r, tmp_path / "out", "aaaaaaaaaaa").envelope["video"]["youtube_id"] == "aaaaaaaaaaa"
+    edit_json(r / "render.json", run_hash="0" * 64)
+    with pytest.raises(pack.PackError, match="another run_hash"):
+        pack.add_video(r, tmp_path / "out", "dQw4w9WgXcQ")
+    edit_json(r / "render.json", run_hash=p.envelope["run_hash"])
+    out = str(tmp_path / "out")
+    assert pack.main([str(r), out, "--add-video", "--youtube", "https://youtu.be/bbbbbbbbbbb"]) == 0
+    assert json.loads((q.bundle_dir / bundle.ENVELOPE).read_text())["video"]["youtube_id"] == "bbbbbbbbbbb"
+    assert pack.main([str(r), out, "--add-video", "--youtube", "nope"]) == 1
+    assert "not a YouTube video" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        pack.main([str(r), out, "--add-video"])  # --youtube is required

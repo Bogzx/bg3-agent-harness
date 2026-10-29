@@ -12,17 +12,24 @@ released, a run without its manifest, result, facts or events, and a bundle over
 The evidence video is rendered from the packed bundle (its record files are scrubbed, and its run_hash is in
 bundle.json), then add_render puts the renderer's render.json and its frames/<n>.jpg (tarred into frames.tar) into
 the bundle: they are not record files, so the run_hash stays; bundle.json's files[] and the archive are rewritten.
+Once the video is on YouTube, add_video sets bundle.json's `video` (the YouTube id, the MP4's duration from its own
+header and its sha256) from the renderer's evidence.mp4; the run_hash stays and bundle.json and the archive are
+rewritten.
 
     python -m bg3bench.submission.pack RUN_DIR OUT_DIR --attempt N [--unsubmitted-valid K]
     python -m bg3bench.submission.pack --add-render RENDER_DIR OUT_DIR    # RENDER_DIR: render.json, frames/
+    python -m bg3bench.submission.pack --add-video RENDER_DIR OUT_DIR --youtube URL_OR_ID   # + evidence.mp4
 """
 
 from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import io
 import json
+import re
+import struct
 import sys
 import tarfile
 import time
@@ -31,6 +38,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from bg3bench import scenario, suite
 from bg3bench.submission import bundle, scrub
@@ -43,6 +51,8 @@ EVENTS = bundle.EVENTS
 BUNDLE_DIR = "bundle"
 ARCHIVE = "bundle.tar.gz"
 SCENARIO_DIR = suite.PACKAGE_ROOT / "scenarios"
+VIDEO = "evidence.mp4"  # the renderer's (bg3harness.video.render)
+YOUTUBE_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
 
 class PackError(ValueError):
@@ -289,18 +299,108 @@ def add_render(render_dir: str | Path, out_dir: str | Path, literals: Iterable[s
     return Packed(env, bundle.sha256_bytes(files[bundle.ENVELOPE]), bdir, arch)
 
 
+def youtube_id(ref: str) -> str:
+    """The 11-character id of a YouTube video: the id itself, or a youtube.com/watch?v=, youtu.be/ or
+    youtube.com/shorts/ URL of it."""
+    ref = ref.strip()
+    if YOUTUBE_ID.fullmatch(ref):
+        return ref
+    u = urlparse(ref)
+    host = (u.hostname or "").lower().removeprefix("www.").removeprefix("m.")
+    vid = ""
+    if u.scheme in ("http", "https") and host == "youtu.be":
+        vid = u.path.lstrip("/")
+    elif u.scheme in ("http", "https") and host == "youtube.com" and u.path == "/watch":
+        vid = (parse_qs(u.query).get("v") or [""])[0]
+    elif u.scheme in ("http", "https") and host == "youtube.com" and u.path.startswith("/shorts/"):
+        vid = u.path.removeprefix("/shorts/")
+    if not YOUTUBE_ID.fullmatch(vid):
+        raise PackError(f"{ref!r} is not a YouTube video id or a youtube.com/watch?v=, youtu.be/ or shorts URL")
+    return vid
+
+
+def _boxes(f: Any, start: int, end: int) -> Iterable[tuple[bytes, int, int]]:
+    """The ISO-BMFF boxes between start and end: (type, payload start, box end)."""
+    pos = start
+    while pos + 8 <= end:
+        f.seek(pos)
+        size, kind = struct.unpack(">I4s", f.read(8))
+        head = 8
+        if size == 1:
+            (size,) = struct.unpack(">Q", f.read(8))
+            head = 16
+        elif size == 0:
+            size = end - pos
+        if size < head or pos + size > end:
+            raise PackError(f"a broken MP4 box {kind!r} at {pos}")
+        yield kind, pos + head, pos + size
+        pos += size
+
+
+def mp4_duration(path: Path) -> float:
+    """An MP4's duration in seconds, from its movie header (moov/mvhd: duration / timescale)."""
+    with path.open("rb") as f:
+        end = f.seek(0, 2)
+        for kind, body, box_end in _boxes(f, 0, end):
+            if kind != b"moov":
+                continue
+            for sub, mvhd, _ in _boxes(f, body, box_end):
+                if sub == b"mvhd":
+                    f.seek(mvhd)
+                    version = f.read(1)[0]
+                    f.seek(mvhd + (20 if version == 1 else 12))
+                    scale, dur = struct.unpack(">IQ" if version == 1 else ">II", f.read(12 if version == 1 else 8))
+                    if not scale:
+                        raise PackError(f"{path}: an MP4 with timescale 0")
+                    return round(dur / scale, 3)
+    raise PackError(f"{path}: not an MP4 (no moov/mvhd)")
+
+
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def add_video(render_dir: str | Path, out_dir: str | Path, youtube: str) -> Packed:
+    """Set bundle.json's video in out_dir from the renderer's evidence.mp4 in render_dir and its YouTube id or URL
+    (youtube_id): {youtube_id, duration_s (mp4_duration), mp4_sha256}. Refuses a render_dir rendered for another
+    run_hash; a video already set is replaced (a re-upload). The record files and the run_hash stay."""
+    render_dir, bdir = Path(render_dir), Path(out_dir) / BUNDLE_DIR
+    vid = youtube_id(youtube)
+    env = json.loads((bdir / bundle.ENVELOPE).read_bytes())
+    if json.loads((render_dir / "render.json").read_bytes()).get("run_hash") != env["run_hash"]:
+        raise PackError(f"{render_dir}/render.json was rendered for another run_hash")
+    mp4 = render_dir / VIDEO
+    env["video"] = {"youtube_id": vid, "duration_s": mp4_duration(mp4), "mp4_sha256": file_sha256(mp4)}
+    files = {p.name: p.read_bytes() for p in sorted(bdir.iterdir()) if p.is_file()}
+    files[bundle.ENVELOPE] = bundle.canonical_bytes(env)
+    (bdir / bundle.ENVELOPE).write_bytes(files[bundle.ENVELOPE])
+    arch = Path(out_dir) / ARCHIVE
+    arch.write_bytes(archive_bytes(files))
+    return Packed(env, bundle.sha256_bytes(files[bundle.ENVELOPE]), bdir, arch)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m bg3bench.submission.pack", description=(__doc__ or "").splitlines()[0])
-    ap.add_argument("run_dir", type=Path, help="the run dir (--add-render: the renderer's output dir)")
+    ap.add_argument("run_dir", type=Path, help="the run dir (--add-render, --add-video: the renderer's output dir)")
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--attempt", type=int, help="this run's number in its cell on this install")
     ap.add_argument("--unsubmitted-valid", type=int, default=0, help="earlier valid runs of the cell not submitted")
     ap.add_argument("--add-render", action="store_true", help="add render.json and frames/ to the bundle in OUT_DIR")
+    ap.add_argument("--add-video", action="store_true", help="set bundle.json's video from evidence.mp4 (--youtube)")
+    ap.add_argument("--youtube", help="--add-video: the uploaded video's YouTube URL or id")
     a = ap.parse_args(argv)
-    if not a.add_render and a.attempt is None:
+    if not (a.add_render or a.add_video) and a.attempt is None:
         ap.error("--attempt is required")
+    if a.add_video and not a.youtube:
+        ap.error("--add-video needs --youtube")
     try:
-        if a.add_render:
+        if a.add_video:
+            p = add_video(a.run_dir, a.out_dir, a.youtube)
+        elif a.add_render:
             p = add_render(a.run_dir, a.out_dir)
         else:
             p = pack(a.run_dir, a.out_dir, attempt=Attempt(a.attempt, a.unsubmitted_valid))
