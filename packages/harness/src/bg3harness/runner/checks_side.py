@@ -142,12 +142,12 @@ class ChecksSide:
                                    story.combined_code) if got else None
         self.facts_writer().observe(got, inv)
 
-    def end_facts(self, outcome: str) -> None:
-        """facts.jsonl's run_end mark, once per run. When this runner has read a game, the last reads first (a
-        snapshot of the end state; facts.end_reads waits for a region change's lagging area)."""
-        if getattr(self, "_facts_ended", False):
-            return
-        self._facts_ended = True
+    def end_facts(self, outcome: str) -> float:
+        """facts.jsonl's run_end mark, once per run; returns its time. When this runner has read a game, the last
+        reads first (a snapshot of the end state; facts.end_reads waits for a region change's lagging area)."""
+        ended: float | None = getattr(self, "_facts_ended", None)
+        if ended is not None:
+            return ended
         w = self.facts_writer()
         def read() -> dict | None:
             got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
@@ -157,7 +157,8 @@ class ChecksSide:
 
         if w.last is not None and game.port_open():
             facts.end_reads(read, w, self.sleep, time.monotonic, renv.log)
-        w.mark("run_end", {"outcome": outcome})
+        self._facts_ended = ended = w.mark("run_end", {"outcome": outcome})["t"]
+        return ended
 
     def facts_writer(self) -> facts.FactsWriter:
         """This playthrough's facts.jsonl (one per run); the first use writes its run_start mark."""

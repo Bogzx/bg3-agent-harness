@@ -85,7 +85,7 @@ def test_a_load_the_harness_didnt_make_ends_the_run_invalid(rig: Rig):
     assert not sw.check() and r.until_hit is None  # a load_game may still explain it (grace)
     rig.now[0] = 1010.0 + H.LOAD_GRACE_S
     assert sw.check() and r.until_hit is not None and r.until_hit["id"] == H.FOREIGN_SAVE
-    assert r.marks == [("load", {"save": None, "foreign_save": sw.foreign})]  # the facts' load mark
+    assert r.marks == [("run_start", None), ("load", {"save": None, "foreign_save": sw.foreign})]  # facts' load mark
     assert ("foreign_save", {"why": sw.foreign, "session": "S001"}) in r.events
     rec = rig.h.record(JOB, SAVE_SC, run_dir("b"), outcome())
     assert rec["outcome"] == "gave_up" and rec["foreign_save"] == sw.foreign and rec["reloads"] == 1
@@ -119,7 +119,7 @@ def test_the_agents_load_game_of_its_own_save_is_the_runs(rig: Rig):
     agent_loaded("S001-before-gate")
     rig.now[0] = 1120.0
     assert not sw.check() and sw.known == "boot-own" and r.until_hit is None
-    assert r.marks == [("load", "S001-before-gate")]
+    assert r.marks == [("run_start", None), ("load", "S001-before-gate")]
     r.boot, rig.now[0] = "boot-own-2", 1200.0  # the start save again
     agent_loaded(START, 1201.0)
     assert not sw.check() and sw.known == "boot-own-2"
@@ -153,7 +153,7 @@ def test_record_waits_for_the_poll_in_flight_and_counts_its_load_once(rig: Rig):
     assert not final_looked.wait(0.2)  # record waits for the poll instead of deciding the load itself
     release.set()
     ender.join()
-    assert sw.reloads == 1 and r.marks == [("load", "S001-before-gate")]
+    assert sw.reloads == 1 and r.marks == [("run_start", None), ("load", "S001-before-gate")]
 
 
 def test_the_agents_load_game_of_a_save_from_before_the_run_is_foreign(rig: Rig):
@@ -163,7 +163,7 @@ def test_the_agents_load_game_of_a_save_from_before_the_run_is_foreign(rig: Rig)
     r.boot = "boot-old"
     agent_loaded("S001-old")
     assert sw.check() and "loaded S001-old, which is not the run's" in str(sw.foreign)
-    assert r.marks == [("load", {"save": "S001-old", "foreign_save": sw.foreign})]
+    assert r.marks == [("run_start", None), ("load", {"save": "S001-old", "foreign_save": sw.foreign})]
 
 
 def test_record_moves_the_runs_saves_out_of_the_story_folder(rig: Rig):

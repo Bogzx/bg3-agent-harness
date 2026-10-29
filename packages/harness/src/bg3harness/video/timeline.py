@@ -379,7 +379,11 @@ def lanes(
 
 def sync_table(items: Sequence[Item], start: float, end: float, run_hash: str, fps: int = FPS) -> Json:
     """render.json (render.v1): the run it was rendered for (its run hash), the video's window (epoch s), its fps and
-    every panel item's place in the video. RenderError when an item lies past the video's end."""
+    every panel item's place in the video. RenderError when an item lies before the video's start (the run's
+    run_start mark, its time zero) or past its end."""
+    early = [i for i in items if i.at_s < 0]
+    if early:
+        raise RenderError(f"{len(early)} event(s) before the run's start, the first {early[0].file}#{early[0].seq}")
     late = [i for i in items if i.at_s > end - start + 1e-6]
     if late:
         raise RenderError(f"{len(late)} event(s) after the video's end, the first {late[0].file}#{late[0].seq}")

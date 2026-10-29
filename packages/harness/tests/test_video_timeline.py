@@ -193,7 +193,7 @@ def test_a_call_summary_reads_as_a_line_not_json():
     assert T.summary("wait_for", {"target": "my_turn"}) == 'target="my_turn"'
 
 
-def test_render_json_lists_every_panel_item_in_the_video_and_refuses_a_late_one():
+def test_render_json_lists_every_panel_item_in_the_video_and_refuses_an_early_or_late_one():
     items = items_at(1.0, 2.5)
     assert T.sync_table(items, T0, T0 + 10.0, "ab" * 32) == {
         "schema": 1,
@@ -205,6 +205,9 @@ def test_render_json_lists_every_panel_item_in_the_video_and_refuses_a_late_one(
     }
     with pytest.raises(T.RenderError, match="after the video's end"):
         T.sync_table(items_at(1.0, 11.0), T0, T0 + 10.0, "ab" * 32)
+    # S2 nautiloid: events 12.3 s before a late run_start went out as at_s -12.287 (the bench's F03 rejects it)
+    with pytest.raises(T.RenderError, match="before the run's start"):
+        T.sync_table(items_at(-12.287, 1.0), T0, T0 + 10.0, "ab" * 32)
 
 
 def test_a_resumed_claude_conversation_costs_its_highest_running_total_not_the_sum():

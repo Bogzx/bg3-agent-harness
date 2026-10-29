@@ -89,6 +89,8 @@ class RunState(Protocol):
 class FactsMarks(Protocol):
     """The runner's facts.jsonl writer (bg3harness.facts.FactsWriter): its marks."""
 
+    t0: float | None  # its run_start mark's time: the run's time zero
+
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> Any: ...
 
 
@@ -118,7 +120,7 @@ class RunRunner(Protocol):
     def apply_play_settings(self) -> None: ...
     def check_settings(self) -> None: ...
     def session_hooks(self, sid: str, minutes: float) -> SessionHooks: ...
-    def end_facts(self, outcome: str) -> None: ...
+    def end_facts(self, outcome: str) -> float: ...
     def facts_writer(self) -> FactsMarks: ...
     def facts_now(self) -> None: ...
     def server_boot(self) -> str | None: ...
@@ -864,6 +866,10 @@ class LiveRunHost:
             raise RuntimeError("operator stop before the kickoff")
         if (rec := self.recordings.get(run_dir)) is not None:
             rec.check()  # ffmpeg still up after the settings: the run plays recorded
+        # the run's time zero, before the agent's first event: facts.jsonl's run_start (a save start's came with its
+        # load; a new game's is written now, not at its first level's load 15 s into the run). wall_s, the facts'
+        # game_t and the evidence video all count from it; the recording runs since ensure_game.
+        r.facts_writer()
         prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
         minutes = opt.session_minutes
         # the manifest's prompt is what the client is served (run_manifest.manifest_fields; none without run files),
@@ -929,7 +935,7 @@ class LiveRunHost:
         else:
             name = "reached" if hit else "over_budget" if r.cap_hit else "timeout"
         try:
-            r.end_facts(name)
+            ended = r.end_facts(name)
         finally:
             try:
                 if (rec := self.recordings.pop(run_dir, None)) is not None:
@@ -941,6 +947,7 @@ class LiveRunHost:
             finally:
                 back = restore_nav(nav_marker())  # with the game stopped: it writes no nav file any more
                 own_saves = isolate_saves(saves_marker())  # nor a save
+        t_zero = cast(float, r.facts_writer().t0)  # _begin's facts_writer() wrote run_start before the kickoff
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         why, cap = foreign or getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
         failures = run_failures(
@@ -955,9 +962,9 @@ class LiveRunHost:
                 "tokens": totals["tokens"],
                 "served": totals["served"],  # what the endpoint served (pi: thinking levels, providers)
                 "turns": totals["turns"],
-                "wall_min": round((res.ended - outcome.started) / 60, 2),
+                "wall_min": round((ended - t_zero) / 60, 2),  # run_start to run_end: the marks' and the video's span
                 # the agent's first end of turn (resumed or not), wall s from the run's start; None: never
-                "first_stop_s": None if outcome.first_stop is None else round(outcome.first_stop - outcome.started, 1),
+                "first_stop_s": None if outcome.first_stop is None else round(outcome.first_stop - t_zero, 1),
                 "sessions": 1,
                 "cap_hit": r.cap_hit,
                 # an until run that the live verdict passed reached its milestone (the bench's verdict is its goal)

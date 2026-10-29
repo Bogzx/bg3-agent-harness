@@ -157,6 +157,14 @@ class FactsWiring(unittest.TestCase):
                 self.record(r, port_open=lambda *a, port=port, **k: port)
             self.assertEqual([x.get("mark") for x in self.facts(r) if x["kind"] == "mark"], ["run_start", "run_end"])
 
+    def test_end_facts_returns_the_run_end_marks_time_once(self):  # the bench's wall_s: run_start to run_end
+        r = lpt.Runner(rstate.Options("naut-e", None, 20, "opus"))
+        with mock.patch.object(rchecks.game, "port_open", lambda *a, **k: False):
+            t = r.end_facts("reached")
+            self.assertEqual(r.end_facts("failed"), t)  # once per run: the same mark
+        ends = [x for x in self.facts(r) if x.get("mark") == "run_end"]
+        self.assertEqual([(x["t"], x["detail"]["outcome"]) for x in ends], [(t, "reached")])
+
     def test_a_failed_last_read_still_writes_run_end(self):
         r = lpt.Runner(rstate.Options("naut-f", None, 20, "opus", until="nautiloid_escaped"))
         r.facts_writer().observe(game("Wilderness", None))

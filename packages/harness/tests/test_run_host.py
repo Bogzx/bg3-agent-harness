@@ -100,6 +100,8 @@ class FakeRunner:
         self.clock = 1000.0  # the session hooks' now (run_claude moves it)
         self.boot: str | None = "boot-start"  # the server Lua state's id (server_boot): a load makes a new one
         self.marks: list[tuple[str, Any]] = []  # facts.jsonl marks (facts_writer)
+        self.t0: float | None = None  # the run_start mark's time (facts_writer's first use writes it)
+        self.end_at: float | None = None  # when end_facts writes run_end (default: the session clock's now)
         self.read_now: Callable[[], None] = lambda: None  # what a facts read now (facts_now) finds in the game
 
     def event(self, kind: str, **fields: Any) -> None:
@@ -109,6 +111,9 @@ class FakeRunner:
         return self.boot
 
     def facts_writer(self) -> FakeRunner:
+        if self.t0 is None:  # as ChecksSide.facts_writer: the first use marks run_start
+            self.t0 = self.clock
+            self.marks.append(("run_start", None))
         return self
 
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> None:
@@ -141,10 +146,11 @@ class FakeRunner:
         if "check_settings" in self.fail_at:
             raise self.fail_at["check_settings"]
 
-    def end_facts(self, outcome: str) -> None:
+    def end_facts(self, outcome: str) -> float:
         self.calls.append(f"end_facts({outcome})")
         if self.facts_fail:
             raise RuntimeError("the game stopped answering")
+        return self.clock if self.end_at is None else self.end_at
 
     def scenario_undo(self) -> None:
         self.calls.append("scenario_undo")
@@ -487,6 +493,7 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     h, calls = rig.h, rig.calls
     h.start(JOB, SAVE_SC, run_dir("m-grove"))
     calls.clear()
+    rig.runners[-1].end_at = 1000.0 + 25 * 60  # the run_end mark
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
     assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
     assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)
@@ -498,6 +505,21 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
         {"m": 1},
         SAVE_SC["start"]["save"],
     )
+
+
+def test_a_new_games_time_zero_is_before_its_agent_and_wall_s_is_the_marks_span(rig: Rig):
+    # S2 (2026-10-29): a new game's run_start came at its first level's load, 15 s after the session start that
+    # wall_s counted from: the bench's X02 failed every new-game run and render.json had negative at_s
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        assert r.marks[:1] == [("run_start", None)] and r.t0 is not None and r.t0 <= r.clock  # before the agent
+        return "exited", 600.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    r, out = play_session(rig, NEW_SC, "m-idol")
+    r.end_at = end = r.clock + 3.0  # the run_end mark comes after the end reads
+    rec = rig.h.record(JOB, NEW_SC, run_dir("m-idol"), out)
+    assert r.plays and r.t0 == 1000.0
+    assert rec["wall_min"] == round((end - 1000.0) / 60, 2)  # run_start to run_end, as the bench's X02 reads
 
 
 def test_a_goal_runs_live_verdict_ends_it_and_names_its_outcome(rig: Rig):
