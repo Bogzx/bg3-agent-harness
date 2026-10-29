@@ -95,7 +95,7 @@ def load_run(d: Path, scenarios: Mapping[str, Json] | None = None) -> Run:
         res,
         _jsonl(d / "facts.jsonl"),
         _jsonl(d / "rolls.jsonl"),
-        [e for p in sorted(d.glob("S*.events.jsonl")) for e in _jsonl(p)],
+        sorted((e for p in d.glob("S*.events.jsonl") for e in _jsonl(p)), key=lambda e: e.get("t") or 0),
         [f for p in fights for f in _jsonl(p)] if fights else None,
     )
 
@@ -197,7 +197,9 @@ def _calls(run: Run) -> dict[str, Any]:
     last_result: float | None = None
     for e in run.events:
         k = e.get("kind")
-        if k == "tool_call":
+        if k == "session_start":  # a resumed session: the gap across the restart is not thinking
+            last_result = None
+        elif k == "tool_call":
             t = names[str(e.get("call_id"))] = _tool(e)
             c["calls"] += 1
             c["move"] += t in MOVE_TOOLS
