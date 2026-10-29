@@ -147,7 +147,7 @@ class Recorder:
         return rec
 
     def sample(self, t: float, moving: bool, job: int, dlg: bool, combat: bool,
-               party_turn: bool | None = None) -> dict:
+               party_turn: bool | None = None, lead: list | None = None) -> dict:
         active = bool(moving or job)
         with self.lock:
             self.active_now = active
@@ -157,6 +157,8 @@ class Recorder:
                "combat": bool(combat)}
         if combat and party_turn is not None:
             rec["pturn"] = bool(party_turn)
+        if lead is not None:
+            rec["lead"] = lead   # the selected member's [x, y, z]: the path the party walked, per second
         self.write(rec)
         return rec
 
@@ -347,8 +349,11 @@ def sampler_loop(rec: Recorder, game, stop: threading.Event, interval: float = 1
             continue
         if not isinstance(a, dict):
             continue
-        pos = a.get("pos") if isinstance(a.get("pos"), dict) else {}
+        pos = a.get("pos")
+        pos = pos if isinstance(pos, dict) else {}
         pt = a.get("party_turn")  # absent with an older mod
+        lead = pos.get(a.get("active"))  # absent with an older mod (no `active`)
         rec.sample(time.time(), moved(prev, pos), int(a.get("jobs") or 0), bool(a.get("in_dialogue")),
-                   bool(a.get("in_combat")), None if pt is None else bool(pt))
+                   bool(a.get("in_combat")), None if pt is None else bool(pt),
+                   lead if isinstance(lead, list) and len(lead) == 3 else None)
         prev = pos

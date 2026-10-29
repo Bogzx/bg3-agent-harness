@@ -113,6 +113,11 @@ class Fight:
         self.surrounded: dict | None = None
         self.elev: tuple[float, int] | None = None        # worst (enemies above us) mean height difference
         self.warned: set = set()
+        self.end: str | None = None                   # "wipe": every party member went down at once (no combat_ended)
+        self.friendly: list[dict] = []                # party hits on party members or allied NPCs: {caster, target,
+        # dmg, types, round, ability, ally}; one per hit (its damage events back to back, one per type)
+        self.ff_pending: dict[str, list] = defaultdict(list)   # party source uuid -> its friendly hits before its cast
+        self.ff_last: tuple | None = None             # (source, target, entry) of the friendly hit being read
 
     def name(self, u: str | None) -> str:
         return self.names.get(u or "", u or "?")
@@ -144,6 +149,7 @@ class Tracker:
             k, d = e.get("kind"), e.get("data") or {}
             if k != "damage" and self.cur is not None:
                 warns += self._flush_hit(self.cur)
+                self.cur.ff_last = None
                 if k not in ("downed", "died"):
                     self.cur.burst.clear()
             if k in ("turn_started", "round_started", "combat_ended") and self.cur is not None:
@@ -190,6 +196,11 @@ class Tracker:
                             f.hit_open[src].append(f.downs[-1])
                         if first:
                             warns += self._first_down_warning(f, f.name(u))
+                    # A wipe has no combat_ended (the Game Over screen): the fight ends when every member is down.
+                    members = party - self.summons
+                    if members <= f.downed_now and f.end is None:
+                        f.end = "wipe"
+                        ended = True
                 elif k == "died" and u in self.allies:
                     # S043 Jaheira, S045 Aylin: an allied NPC's death was counted as a kill in a "clean" fight
                     f.ally_died.append({"uuid": u, "name": f.name(u), "round": f.round})
@@ -224,6 +235,8 @@ class Tracker:
                     # then the cast): the damage held since this caster's last cast is this cast's. A summon's hits
                     # come with its owner as the source (the mod sends attackerOwner first): the one other source
                     # holding damage. Not any member's: S074 booked Gale's 49 under Shadowheart's Mass Cure Wounds.
+                    for x in f.ff_pending.pop(u, []):
+                        x["ability"] = nm
                     own = f.pending.pop(u, [])
                     hits = f.pending_hits.pop(u, [])
                     held = [s for s, v in f.pending.items() if v]
@@ -290,11 +303,15 @@ class Tracker:
                 # no visible source (the mod's "Someone", or none): traps, surfaces, hidden attackers. S059-S064:
                 # 298 of 298, 434 of 666, 563 of 660 taken, while "most damage to us" named a minor enemy.
                 f.unseen[dtype or "?"].append((tu, amt))
+            elif su in party and amt > 0:
+                self._friendly(f, su, tu, amt, dtype, ally=False)
             return []
         if tu:
             f.hurt.add(tu)
         if not (su in party and tu):
             return []
+        if tu in self.allies and amt > 0:
+            self._friendly(f, su, tu, amt, dtype, ally=True)
         f.touched.add(tu)
         f.dealt[su] += amt   # a summon's hit too: the total stays with the owner
         f.pending[su].append((tu, amt))   # its ability: the cast event that follows (feed)
@@ -308,6 +325,19 @@ class Tracker:
         h["types"].add(dtype)
         h["parts"].append((dtype, amt))
         return warns
+
+    def _friendly(self, f: Fight, su: str, tu: str, amt: int, dtype: str, ally: bool) -> None:
+        """A party hit on a party member (itself too) or an allied NPC; its ability from the cast that follows."""
+        last = f.ff_last
+        if last and last[:2] == (su, tu) and dtype not in last[2]["types"]:
+            last[2]["dmg"] += amt
+            last[2]["types"].append(dtype)
+            return
+        e = {"caster": f.name(su), "target": f.name(tu), "dmg": amt, "types": [dtype], "round": f.round,
+             "ability": None, "ally": ally}
+        f.friendly.append(e)
+        f.ff_pending[su].append(e)
+        f.ff_last = (su, tu, e)
 
     def _credit(self, f: Fight, who: str, nm: str, items: list) -> None:
         """Hits (target, amount) of `who`'s cast `nm`: a hit, a made save or a miss."""
@@ -333,6 +363,10 @@ class Tracker:
         for su, hits in f.pending_hits.items():
             for h in hits if f.casting.get(su) else []:
                 h["ab"] = (f.name(su), f.casting[su])
+        for su, es in f.ff_pending.items():
+            for e in es if f.casting.get(su) else []:
+                e["ability"] = f.casting[su]
+        f.ff_pending.clear()
         f.pending.clear()
         f.pending_hits.clear()
         f.hit_open.clear()
@@ -482,7 +516,10 @@ class Tracker:
     # ---- output ----
 
     def close(self, party_rows: list[dict] | None = None, unused: list[str] | None = None,
-              meta: dict | None = None, reloaded: bool = False, now: float | None = None) -> dict | None:
+              meta: dict | None = None, reloaded: bool = False, now: float | None = None,
+              end: str | None = None) -> dict | None:
+        """`end` (why the fight closed): combat_ended, wipe, reloaded, or session_end (the server stopped with the
+        fight open)."""
         f, self.cur = self.cur, None
         if f is None:
             return None
@@ -492,6 +529,7 @@ class Tracker:
         rec = build(f, party_rows or [], unused or [], meta or {}, reloaded, now)
         if not rec["enemies"] and not rec["downed"] and not any(p["dealt"] or p["taken"] for p in rec["party"]):
             return None   # S059: 7 "[fight] clean … vs unseen enemies | dealt 0 / taken 0" from round events alone
+        rec["end"] = end or f.end or ("reloaded" if reloaded else "combat_ended")
         self.history = (self.history + [rec])[-HISTORY_MAX:]
         self.last, self.last_t = rec, now
         return rec
@@ -533,6 +571,11 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
         e["killed"] += u in f.killed
     party = [{"name": f.name(u), "dealt": f.dealt.get(u, 0), "taken": f.taken.get(u, 0),
               "downed": sum(1 for d in f.downs if d["uuid"] == u), "died": u in f.died} for u in party_u]
+    by_uuid = {r.get("uuid"): r for r in rows}
+    for u, p in zip(party_u, party, strict=True):   # HP when the fight closed (the status read at its end)
+        r = by_uuid.get(u) or {}
+        if isinstance(r.get("hp"), (int, float)) and isinstance(r.get("max_hp"), (int, float)):
+            p["hp"], p["max_hp"] = int(r["hp"]), int(r["max_hp"])
     # our summons go down too (S059/S061: "Spiritual Weapon went down first" → "protect Spiritual Weapon")
     downs = [d for d in f.downs if d["uuid"] in party_u] if rows else f.downs
     capped = {}
@@ -606,6 +649,7 @@ def build(f: Fight, party_rows: list[dict], unused: list[str], meta: dict, reloa
     rec["deaths"] = [{"name": d["name"], "round": d["round"], "by": foe(d["by"])}
                      | ({"ability": d["ability"]} if d.get("ability") else {}) for d in f.deaths if d["uuid"] in party_u]
     rec["kills"] = [{"name": foe(k["name"]), "round": k["round"]} for k in f.kills if k["uuid"] in foes]
+    rec["friendly"] = [dict(e) for e in f.friendly]
     out = [{"name": foe(f.name(u)), "round": r} for u, r in f.out.items() if u in foes and u not in f.killed]
     if out:
         rec["out"] = out

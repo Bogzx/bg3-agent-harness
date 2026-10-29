@@ -113,10 +113,36 @@ class FactsTest(unittest.TestCase):
             "from": "Goblin",
             "add_type": "Regular",
         },
-        {"ev": "pickpocket", "ok": False, "npc": "Arron", "char": "Tav"},
-        {"ev": "pickpocket", "ok": True, "npc": "Arron", "item": "Ring", "count": 1},
+        {"ev": "pickpocket", "ok": False, "npc": "Arron", "char": "Tav", "attempt": 1},
+        {"ev": "pickpocket", "ok": True, "npc": "Arron", "item": "Ring", "count": 1, "attempt": 2},
         {"ev": "stole", "char": "Tav", "item": "Ring", "tpl": "dddd", "owner": "Arron"},
         {"ev": "crime", "type": "PickPocketFailed", "id": 126, "victim": "Arron", "criminal": "Tav"},
+        {
+            "ev": "crime",
+            "type": "Murder",
+            "id": 130,
+            "victim": "Goblin",
+            "criminal": "Tav",
+            "victim_uuid": "b1e2",
+            "enemy": True,
+            "in_combat": True,
+        },
+        {
+            "ev": "approval",
+            "companion": "Shadowheart",
+            "companion_uuid": "aaaa",
+            "toward": "Tav",
+            "delta": 2,
+            "total": 14,
+        },
+        {
+            "ev": "approval",
+            "companion": "Karlach",
+            "companion_uuid": "dddd",
+            "toward": "Tav",
+            "delta": None,
+            "total": 3,
+        },
         {"ev": "kill", "victim": "Goblin", "killer": "Tav", "owner": "Tav", "by_party": True, "trader": False},
         {"ev": "died", "name": "Goblin", "party": False, "uuid": "b1e2"},
         {"ev": "loot", "from": "corpse", "item": "Gold", "src": "Goblin"},
@@ -137,6 +163,9 @@ class FactsTest(unittest.TestCase):
 
     def test_a_bad_record_fails_the_schema(self):
         bad = referee.to_fact({"seq": 1, "t": 1.0, "ev": "pickpocket", "npc": "Arron"})  # no ok
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(bad, FACTS_SCHEMA)
+        bad = referee.to_fact({"seq": 1, "t": 1.0, "ev": "approval", "companion": "Karlach", "delta": 1})  # no total
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(bad, FACTS_SCHEMA)
 
