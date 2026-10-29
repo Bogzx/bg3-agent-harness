@@ -6,8 +6,10 @@ model (tools/pi/conformance/stub_llm.py), the real bridge (bg3ai-mcp, started by
 the stub's usage into the budget, the cost cap stopping the run, a context overflow ending the session as a recorded
 failure, the tool-count check, the rules-only vs rules+coaching system text and result nudges, a text-only
 model without the screenshots group, profiles/deepseek-v4-pro.toml billed from DeepSeek's usage fields until its
-cost cap stops the run, and a response the endpoint doesn't bill priced from the profile's rates (a profile without
-them refused). No game, no key, no network; ~2 min.
+cost cap stops the run, a response the endpoint doesn't bill priced from the profile's rates (a profile without
+them refused), and a Claude profile on Anthropic's Messages API (pi's native provider) billed at Anthropic's prices,
+cache writes and the prompt-length tier included, until its cost cap stops the run. No game, no key, no network;
+~2 min.
 
     uv run pytest -m e2e runner/test_pi_e2e.py      (or BG3AI_E2E=1 uv run python -m unittest runner/test_pi_e2e.py)
 
@@ -468,6 +470,96 @@ class UnbilledCost(PiE2EBase):
         (result,) = [e for e in self.logged() if e.kind == "result"]
         self.assertAlmostEqual(result.cost_usd, 2 * COST + self.ESTIMATE)  # was 2 x COST: the middle one was free
         self.assertAlmostEqual(self.spent(), 1.0 + 2 * COST + self.ESTIMATE)
+
+
+class AnthropicCost(PiE2EBase):
+    """pi's native Anthropic provider on the stub's Messages API: each response costs what Anthropic bills for its
+    token counts (no cost field to read), at the profile's rates; over 100K prompt tokens the tier prices it all."""
+
+    # Claude Haiku 5.5 (platform.claude.com/docs/en/about-claude/pricing, read 2026-10-29), USD per M tokens
+    RAW: ClassVar[dict] = {
+        "client": "pi",
+        "model": "claude-haiku-5-5",
+        "effort": "low",
+        "endpoint": {"provider": "anthropic", "base_url": "", "api": "anthropic-messages", "api_key_env": KEY_ENV},
+        "model_info": {
+            "input": ["text", "image"],
+            "reasoning": True,
+            "context_window": 1000000,
+            "max_tokens": 32000,
+            "thinking_level_map": {"minimal": False},
+            "compat": {"forceAdaptiveThinking": True, "supportsTemperature": False},
+            "cost": {
+                "input": 0.1,
+                "output": 0.5,
+                "cache_read": 0.01,
+                "cache_write": 0.125,
+                "tiers": [
+                    {
+                        "input_tokens_above": 100000,
+                        "input": 0.5,
+                        "output": 2.5,
+                        "cache_read": 0.05,
+                        "cache_write": 0.625,
+                    }
+                ],
+            },
+        },
+    }
+    # stub_llm.ANTHROPIC_USAGE: 1000 uncached in, 2000 cache writes (5 minutes), 8000 cache reads, 50 out
+    BASE = (1000 * 0.1 + 2000 * 0.125 + 8000 * 0.01 + 50 * 0.5) / 1e6
+    LONG: ClassVar[dict] = {
+        "input_tokens": 5000,
+        "cache_creation_input_tokens": 10000,
+        "cache_read_input_tokens": 90000,
+        "output_tokens": 2000,
+    }  # a 105,000-token prompt: every token at the tier's rates
+    TIER = (5000 * 0.5 + 10000 * 0.625 + 90000 * 0.05 + 2000 * 2.5) / 1e6
+
+    def play_anthropic(self, script: list[dict], **opt) -> rstate.SessionResult:
+        # the Anthropic SDK adds /v1/messages to the base URL
+        with mock.patch.object(self, "start_stub", lambda s, f=self.start_stub: f(s).removesuffix("/v1")):
+            return self.play(script, raw=self.RAW, **opt)
+
+    def logged_requests(self) -> list[dict]:
+        return [json.loads(ln) for ln in self.llm_log.read_text().splitlines()]
+
+    def test_a_claude_run_is_billed_at_anthropics_prices(self):
+        script = [
+            {"tool_calls": [call("get_status")]},
+            {"tool_calls": [call("get_status")], "usage": self.LONG},
+            {"text": "Done."},
+        ]
+        res = self.play_anthropic(script)
+        self.assertEqual(res.reason, "exited")
+        (result,) = [e for e in self.logged() if e.kind == "result"]
+        self.assertAlmostEqual(result.cost_usd, 2 * self.BASE + self.TIER)
+        self.assertAlmostEqual(self.spent(), 1.0 + 2 * self.BASE + self.TIER)
+        reqs = self.logged_requests()
+        self.assertEqual({r["path"].split("?")[0] for r in reqs}, {"/v1/messages"})
+        headers = {k.lower(): v for k, v in reqs[0]["headers"].items()}
+        self.assertEqual(headers.get("x-api-key"), "stub-key")  # the profile's api_key_env, by name
+        body = reqs[0]["body"]
+        self.assertEqual(body["model"], "claude-haiku-5-5")
+        self.assertEqual(body["thinking"]["type"], "adaptive")  # the profile's compat: no thinking budget (a 400)
+        self.assertNotIn("temperature", body)
+        self.assertEqual(body["output_config"], {"effort": "low"})  # the profile's effort
+        self.assertIn("cache_control", json.dumps(body))  # pi asks for caching: the cache_write rate applies
+        self.assertNotIn('"ttl"', json.dumps(body))  # 5-minute writes, the rate the profile names
+
+    def test_a_claude_run_stops_at_its_cost_cap(self):
+        res = self.play_anthropic(
+            [{"tool_calls": [call("get_status")], "usage": self.LONG, "delay": 0.2}], max_cost=2.5 * self.TIER
+        )
+        self.assertEqual(res.reason, "cap")
+        cap = self.r.cap_hit
+        assert cap is not None
+        self.assertEqual(cap["cap"], "cost")
+        self.assertGreaterEqual(cap["cost"], 2.5 * self.TIER)
+        billed = round((self.spent() - 1.0) / self.TIER)
+        self.assertGreaterEqual(billed, 3)
+        self.assertAlmostEqual(self.spent(), 1.0 + billed * self.TIER)
+        self.assertIn(len(self.requests()) - billed, (0, 1))
 
 
 class QuickstartPlay(PiE2EBase):

@@ -36,6 +36,9 @@ jobs: plan and run list it as skipped with the reason.
   play.py run --scenario-file (adapters/legacy_cli.py); a condition play.py lacks is refused unless allow_gaps.
 - resume: run, for a matrix that already has a queue (refused otherwise).
 - status: the jobs' state from the queue: status, attempts, the last result.
+
+`start-states [...]` (no matrix) records the save scenarios' start-state fingerprints on the caller's host without a
+model (bg3bench.submission.start_states).
 """
 
 from __future__ import annotations
@@ -47,17 +50,19 @@ import time
 import tomllib
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import TextIO, cast
 
 from bg3harness import profiles
 
 from bg3bench import conditions, matrix, scenario
 from bg3bench.adapters import legacy_cli, play_flags, session_run
+from bg3bench.submission import start_states
 
 BUDGET = "runtime/budget.json"
 SESSIONS = Path("runtime/sessions")
 SCENARIOS = Path("packages/bench/scenarios")  # the v2 set
 GROUP_KEYS = ("models", "scenarios", "conditions", "repeats")
+START_STATES = "start-states"
 
 
 class MatrixFileError(ValueError):
@@ -282,6 +287,10 @@ def main(
     sleep: Callable[[float], None] = time.sleep,
     out: TextIO = sys.stdout,
 ) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == [START_STATES]:
+        live = cast(start_states.LiveHost, host) if host is not None else None
+        return start_states.main(argv[1:], repo=repo, host=live, sleep=sleep, out=out)
     ap = argparse.ArgumentParser(prog="python -m bg3bench.matrix", description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("plan", "run", "status", "resume"))
     ap.add_argument("--matrix", required=True, metavar="TOML")

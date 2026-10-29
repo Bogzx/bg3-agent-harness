@@ -447,6 +447,26 @@ class Client(unittest.TestCase):
         env = c.bg3_config(req)["server"]["env"]
         self.assertEqual(env["BG3AI_TOOLS_OFF"], "wiki,screenshots")
 
+    def test_the_api_key_never_reaches_the_server_config(self):
+        # the runner's BG3AI_*/BG3_* go to the bg3 server; a key named BG3AI_* must not land in bg3.json
+        req = cl.Request(
+            prompt="go",
+            model=PROFILE.model,
+            session_dir=self.tmp,
+            session="S007-ab",
+            env={"BG3AI_SESSION": "S007", "BG3AI_ANTHROPIC_API_KEY": "sk-secret", "BG3_UPLOAD_TOKEN": "t"},
+            tag="S007",
+        )
+        self.client.write_config(req)
+        text = (self.tmp / "S007.pi" / "bg3.json").read_text()
+        self.assertIn('"BG3AI_SESSION": "S007"', text)
+        self.assertNotIn("sk-secret", text)
+        self.assertNotIn("BG3_UPLOAD_TOKEN", text)
+        self.assertEqual(
+            cl.session_env_names({"BG3AI_X": 1, "BG3AI_OPENROUTER_KEY": 1, "BG3_KEYS_DIR": 1}),
+            ["BG3AI_X", "BG3_KEYS_DIR"],
+        )
+
     def test_config_http(self):
         c = pc.PiClient(PROFILE, self.tmp / "s.txt", server=cl.http_server("http://h:1/mcp", 60_000))
         self.assertEqual(c.bg3_config(self.req)["server"], {"url": "http://h:1/mcp", "timeout": 60.0})
