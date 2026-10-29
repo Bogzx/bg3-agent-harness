@@ -588,8 +588,8 @@ def _guard(fn):
             out = fn(*a, **kw)
             if plumbing._who_tl.note and isinstance(out, str):  # _who picked the member acting now (ACT-P2); last, so
                 out = out + "\n" + plumbing._who_tl.note           # a result's own first word (FAILED, done) stays first
-            if waited and isinstance(out, str):
-                out = waited + "\n" + out
+            if waited and isinstance(out, str):  # last too: the new game's line is no outcome of this call
+                out = out + "\n" + waited
             busy = busywait.note(getattr(core.game, "busy_waited", lambda: 0.0)())
             if busy and isinstance(out, str):  # the calls waited out bg3le's busy UI (busywait.py): say how long
                 out = out + "\n" + busy
@@ -597,7 +597,7 @@ def _guard(fn):
                 # the briefing rides on the first text result, and the server's rules do with no memory dir too (no
                 # session opens there; pi r12: a client that ignores `instructions` got no rules at all)
                 head = core.RULES.wrap(core.LIFE.take_pending(), memory._session_key()).strip()
-                out = head + "\n\n=== the result of your call ===\n" + out if head else out
+                out = head + tool_classes.RESULT_MARK + out if head else out
             return out
         except memtools.Refused as e:
             return _finish(fn.__name__, kw, str(e), t0, events=False)

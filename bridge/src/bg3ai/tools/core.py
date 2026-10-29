@@ -67,7 +67,7 @@ class Server(MCPServer):
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
         res = await super().call_tool(name, arguments, context)
         texts = [c.text for c in getattr(res, "content", None) or [] if isinstance(c, TextContent)]
-        if isinstance(res, CallToolResult) and not res.is_error and texts and tool_classes.failed(texts[0]):
+        if isinstance(res, CallToolResult) and not res.is_error and tool_classes.failed("\n".join(texts), name):
             return res.model_copy(update={"is_error": True})
         return res
 
