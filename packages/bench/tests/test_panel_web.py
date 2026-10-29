@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Browser, Page, sync_playwright
 
-from bg3bench.serve import panel, submit
+from bg3bench.serve import launch, panel, submit
 from bg3bench.serve.server import App, serve
 from bg3bench.serve.settings import Settings
 
@@ -199,11 +199,12 @@ def test_new_run_plans_and_warns_about_youtube(app, page):
     record.check()
     submit.check()
     pg.get_by_role("button", name="Start").click()
-    pg.get_by_text("Started panel-19700101-000000").wait_for(timeout=15000)
-    assert (app.runtime / "panel" / "panel-19700101-000000.toml").is_file() and app.runner.record is True
-    assert json.loads((app.runtime / "panel" / "panel-19700101-000000.json").read_text())["submit_when_done"] is True
+    name = launch.matrix_name(0.0)  # local time, as the panel names it
+    pg.get_by_text(f"Started {name}").wait_for(timeout=15000)
+    assert (app.runtime / "panel" / f"{name}.toml").is_file() and app.runner.record is True
+    assert json.loads((app.runtime / "panel" / f"{name}.json").read_text())["submit_when_done"] is True
     pg.goto(f"http://127.0.0.1:{app.port}/#/queue")
-    pg.get_by_text("Started here: panel-19700101-000000").wait_for(timeout=15000)
+    pg.get_by_text(f"Started here: {name}").wait_for(timeout=15000)
     pg.get_by_text("Record on · Submit when done on").wait_for(timeout=15000)
     pg.on("dialog", lambda d: d.accept())
     pg.get_by_role("button", name="Stop").click()

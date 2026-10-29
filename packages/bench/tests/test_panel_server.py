@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from bg3harness import doctor as hdoctor
 
-from bg3bench.serve import panel, security, video
+from bg3bench.serve import launch, panel, security, video
 from bg3bench.serve.server import TOKEN_SLOT, App, parser, serve
 from bg3bench.serve.settings import Settings
 
@@ -358,7 +358,7 @@ RUN_FORM = {"profiles": ["deepseek-flash"], "scenarios": ["act1_get_item"], "max
 def test_start_and_stop_a_run(server):
     assert get(server, "/api/v1/run")[1] == {"v": 1, "run": None, "found": None, "can_start": True}
     code, r = post(server, "/api/v1/run/start", {**RUN_FORM, "record": False})
-    assert code == 200 and r["started"]["name"] == "panel-19700101-000000" and server.runner.record is False
+    assert code == 200 and r["started"]["name"] == launch.matrix_name(0.0) and server.runner.record is False
     run = get(server, "/api/v1/run")[1]["run"]
     assert run["choices"] == {"name": run["name"], "record": False, "submit_when_done": False, "auto": {}}
     ((name, f),) = server.runner.started
