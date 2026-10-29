@@ -8,6 +8,7 @@ Each check takes the loaded bundle (validate.Loaded) and returns (ok, detail); v
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,11 @@ TRADE_WINDOW_S = 60.0
 TRADE_TOOLS = ("trade", "choose_dialogue")
 KILL_WINDOW_S = 120.0
 COST_TOLERANCE = 0.25
+# A client's answer to a call of a tool it doesn't serve (pi; Claude Code), naming the tool: the call reached no tool
+UNKNOWN_TOOL = (
+    re.compile(r"Tool (\S+) not found"),
+    re.compile(r"<tool_use_error>Error: No such tool available: (\S+)</tool_use_error>"),
+)
 
 
 def _marks(timeline: list[Json], name: str) -> list[Json]:
@@ -54,6 +60,18 @@ def fingerprint(timeline: list[Json]) -> Json | None:
         "area": snap.get("area"),
         "difficulty": s.get("difficulty"),
         "name": s.get("avatar_name"),
+    }
+
+
+def new_game_fingerprint(sc: Json) -> Json:
+    """The start state a new game's first snapshot shows (character creation, before any party or level loads): no
+    party, gold or area, the scenario's difficulty and no avatar name yet. A run that loaded a save has a party."""
+    return {
+        "party": [],
+        "gold": 0,
+        "area": None,
+        "difficulty": (sc.get("game_settings") or {}).get("difficulty"),
+        "name": None,
     }
 
 
@@ -229,15 +247,34 @@ def a01_fairness(b: Loaded, audit: Callable[[list[Path]], Json] = runs.fairness_
     return True, ""
 
 
+def refused_unknown(b: Loaded) -> set[str]:
+    """The call ids of tool calls the client refused as calls of a tool it doesn't serve (an error result in its
+    UNKNOWN_TOOL form naming the call's tool, as is or as the bg3 server's mcp__bg3__ tool): no tool ran."""
+    named: dict[str, str] = {}
+    for e in b.all_events():
+        if e.get("kind") != "tool_result" or e.get("is_error") is not True or not e.get("call_id"):
+            continue
+        if m := next((m for p in UNKNOWN_TOOL if (m := p.fullmatch(str(e.get("text") or "")))), None):
+            named[e["call_id"]] = m.group(1)
+    return {
+        e["call_id"]
+        for e in _tool_calls(b)
+        if named.get(e.get("call_id") or "") in (e.get("tool"), f"mcp__bg3__{e.get('tool')}")
+    }
+
+
 def a02_allowlist(b: Loaded) -> Outcome:
+    """Every tool the run used is in the condition's published list, and load_game only under a reloads condition.
+    A call the client refused as unknown (refused_unknown) used no tool; a served tool outside the list rejects."""
     allowed = set(b.release_condition.get("tools", {}).get("names") or [])
     if not allowed:
         return False, "the suite publishes no tool list for this condition"
-    used = {e.get("tool") for e in _tool_calls(b)}
-    extra = sorted(str(t) for t in used - allowed)
+    refused = refused_unknown(b)
+    calls = [e for e in _tool_calls(b) if e.get("call_id") not in refused]
+    extra = sorted({str(e.get("tool")) for e in calls} - allowed)
     if extra:
         return False, f"tools outside the allowlist: {', '.join(extra)}"
     cond = conditions.parse(b.manifest["condition"])
-    if not cond.reloads and _tool_calls(b, "load_game"):
+    if not cond.reloads and any(e.get("tool") == "load_game" for e in calls):
         return False, "load_game called without a reloads condition"
     return True, ""

@@ -391,7 +391,8 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             char = mine[0]
     args = {"char": char}
     if core._session_over():
-        return reporting._finish("end_turn", args, pre + "REFUSED: the session is over. Save and write your handoff notes.", t0)
+        return reporting._finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes."
+                                 + ("\n" + held if held else ""), t0)  # the refusal is the outcome: first
     if turn_tool._bg_end_running(char):
         # review L1: an end still running after the hold (END_BG_HOLD_S): a second order would race its HUD press
         reporting._batch["last"] = "done"

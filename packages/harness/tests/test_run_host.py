@@ -100,6 +100,9 @@ class FakeRunner:
         self.clock = 1000.0  # the session hooks' now (run_claude moves it)
         self.boot: str | None = "boot-start"  # the server Lua state's id (server_boot): a load makes a new one
         self.marks: list[tuple[str, Any]] = []  # facts.jsonl marks (facts_writer)
+        self.t0: float | None = None  # the run_start mark's time (facts_writer's first use writes it)
+        self.game_over: float | None = None  # when the facts' reads first showed the Game Over screen
+        self.end_at: float | None = None  # when end_facts writes run_end (default: the session clock's now)
         self.read_now: Callable[[], None] = lambda: None  # what a facts read now (facts_now) finds in the game
 
     def event(self, kind: str, **fields: Any) -> None:
@@ -109,6 +112,9 @@ class FakeRunner:
         return self.boot
 
     def facts_writer(self) -> FakeRunner:
+        if self.t0 is None:  # as ChecksSide.facts_writer: the first use marks run_start
+            self.t0 = self.clock
+            self.marks.append(("run_start", None))
         return self
 
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> None:
@@ -141,10 +147,11 @@ class FakeRunner:
         if "check_settings" in self.fail_at:
             raise self.fail_at["check_settings"]
 
-    def end_facts(self, outcome: str) -> None:
+    def end_facts(self, outcome: str) -> float:
         self.calls.append(f"end_facts({outcome})")
         if self.facts_fail:
             raise RuntimeError("the game stopped answering")
+        return self.clock if self.end_at is None else self.end_at
 
     def scenario_undo(self) -> None:
         self.calls.append("scenario_undo")
@@ -487,6 +494,7 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     h, calls = rig.h, rig.calls
     h.start(JOB, SAVE_SC, run_dir("m-grove"))
     calls.clear()
+    rig.runners[-1].end_at = 1000.0 + 25 * 60  # the run_end mark
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
     assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
     assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)

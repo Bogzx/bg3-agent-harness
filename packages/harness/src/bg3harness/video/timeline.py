@@ -89,6 +89,7 @@ class Strip:
     party: tuple[Member, ...] = ()
     passed_s: float | None = None  # the goal was met at this run second (shown once the clock reaches it)
     party_at_s: float | None = None  # the run second of the facts snapshot the party's HP comes from
+    wiped_s: float | None = None  # the party wiped at this run second (a WIPED ending shows from then)
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,7 @@ class Meta:
     site: str = ""  # the leaderboard's host, shown on the id line
     pilot: bool = False  # a pilot run: the header carries a pilot badge
     ending: str = ""  # how a run that didn't pass ended (WIPED, COST CAP, TIME CAP), shown over its last seconds
+    # (WIPED: from the wipe's own second, Strip.wiped_s)
 
 
 def clips(segments: Sequence[Mapping[str, Any]], start: float, end: float, max_gap: float = MAX_GAP_S) -> list[Clip]:
@@ -261,28 +263,78 @@ def _party(snapshot: Mapping[str, Any]) -> tuple[Member, ...]:
     return tuple(out)
 
 
-def result_costs(logs: Mapping[str, Sequence[Mapping[str, Any]]], start: float) -> list[tuple[float, float]]:
-    """(at_s, what it adds) for every play process's `result` cost, in time order. A RUNNING_COST client's (its
-    session_start names it) cost_usd is its conversation's running total over --resume, so it adds what it raises
-    the conversation's highest figure by (runs.own_cost); another client's adds itself."""
-    found: list[tuple[float, str, float, str | None]] = []
-    for events in logs.values():
+def _tokens(e: Mapping[str, Any]) -> int:
+    return sum(int(v or 0) for v in cast(Mapping[str, Any], e.get("tokens") or {}).values())
+
+
+def running_costs(logs: Mapping[str, Sequence[Mapping[str, Any]]], start: float) -> list[tuple[float, float]]:
+    """(at_s, the run's cost so far) after every usage and result event that tells it, in time order (runs.UsageMeter
+    on the events logs): a play process costs what its usage events say while it runs (pi's carry the process's
+    running cost; claude's carry tokens only, priced at the run's cost per token of the processes done so far, so
+    nothing shows before the first result), replaced by its result's cost when that comes. A RUNNING_COST client's
+    (its session_start names it) result cost_usd is its conversation's running total over --resume, so it adds
+    what it raises the conversation's highest figure by (runs.own_cost). A process that ended without a result (a
+    cap or the run's stop killed it) keeps its usage's figure, as runs.claude_totals counts it."""
+    found: list[tuple[float, str, int, Mapping[str, Any]]] = []
+    client: dict[str, str] = {}
+    for name, events in logs.items():
         starts = [cast(Mapping[str, Any], e.get("detail") or {}) for e in events if e.get("kind") == "session_start"]
-        client = str(starts[0].get("client")) if starts else ""
-        for e in events:
-            if e.get("kind") == "result" and e.get("cost_usd") is not None:
-                sid = e.get("session_id") if client in RUNNING_COST else None
-                found.append((float(e["t"]) - start, client, float(e["cost_usd"]), sid and str(sid)))
-    running: dict[str, float] = {}
+        client[name] = str(starts[0].get("client")) if starts else ""
+        found += [
+            (float(e["t"]) - start, name, int(e.get("seq") or 0), e)
+            for e in events
+            if e.get("kind") in ("usage", "result")
+        ]
+    done_cost, done_tokens = 0.0, 0
+    known = False
+    running: dict[str, float] = {}  # conversation id -> its highest reported total (RUNNING_COST clients)
+    live: dict[str, tuple[float | None, dict[str, int]]] = {}  # an unfinished process: its cost, tokens per message
     out: list[tuple[float, float]] = []
-    for at, _, cost, sid in sorted(found, key=lambda f: f[0]):
-        if sid is None:
-            out.append((at, cost))
-            continue
-        prev = running.get(sid, 0.0)
-        running[sid] = max(prev, cost)
-        out.append((at, running[sid] - prev))
+    for at, name, _, e in sorted(found, key=lambda f: f[:3]):
+        if e.get("kind") == "usage":
+            cost, msgs = live.get(name, (None, {}))
+            msgs = {**msgs, str(e.get("message_id") or f"#{len(msgs)}"): _tokens(e)}
+            live[name] = (float(e["cost_usd"]) if e.get("cost_usd") is not None else cost, msgs)
+        else:
+            cost, msgs = live.pop(name, (None, {}))
+            if e.get("cost_usd") is None:  # a result that prices nothing: its usage's figure stands
+                live[name] = (cost, msgs)
+                continue
+            got = float(e["cost_usd"])
+            sid = e.get("session_id") if client[name] in RUNNING_COST else None
+            if sid:
+                prev = running.get(str(sid), 0.0)
+                running[str(sid)] = max(prev, got)
+                got = running[str(sid)] - prev
+            done_cost += got
+            done_tokens += _tokens(e) or sum(msgs.values())
+        rate = done_cost / done_tokens if done_tokens else None
+        parts = [c if c is not None else sum(m.values()) * rate if rate is not None else None for c, m in live.values()]
+        known = known or done_tokens > 0 or any(p is not None for p in parts) or e.get("kind") == "result"
+        if known:
+            out.append((at, done_cost + sum(p or 0.0 for p in parts)))
     return out
+
+
+def wiped_at(facts: Iterable[Mapping[str, Any]], start: float) -> float | None:
+    """The run second the party wiped: the facts' first game_over event (the game's Game Over screen), else the first
+    time every party member (summons aside) was down or dead by the facts' snapshots and downed / died / revived
+    events. None: no wipe."""
+    down: dict[str, bool] = {}
+    for f in sorted(facts, key=lambda f: float(f["t"])):
+        at = float(f["t"]) - start
+        if f.get("kind") == "event" and f.get("ev") == "game_over":
+            return at
+        if f.get("kind") == "snapshot":
+            down = {m.name: m.down for m in _party(f)}
+        elif f.get("kind") == "event" and f.get("party") and str(f.get("name")) in down:
+            if f.get("ev") in ("downed", "died", "revived"):
+                down[str(f.get("name"))] = f.get("ev") != "revived"
+        else:
+            continue
+        if down and all(down.values()):
+            return at
+    return None
 
 
 def strip_states(
@@ -295,7 +347,7 @@ def strip_states(
     """One Strip per whole second of the run (0 .. ceil(duration) - 1): the gold and party of the last facts
     snapshot at or before that second (the first snapshot's gold is the start) and that snapshot's time, a member
     downed (at 0 HP) or revived after it by the facts event (downed / revived) at or before that second, the cost of
-    the play processes that had ended by then (result_costs; None until one has)."""
+    the run so far (running_costs; None until something prices it) and the run second of a wipe (wiped_at)."""
     facts = list(facts)
     snaps = sorted(((float(f["t"]) - start, f) for f in facts if f.get("kind") == "snapshot"), key=lambda p: p[0])
     downs = sorted(
@@ -303,7 +355,8 @@ def strip_states(
         for f in facts
         if f.get("kind") == "event" and f.get("ev") in ("downed", "revived")
     )
-    costs = result_costs(logs, start)
+    costs = running_costs(logs, start)
+    wiped_s = wiped_at(facts, start)
     gold_start = next((int(s["gold"]) for _, s in snaps if s.get("gold") is not None), None)
     out: list[Strip] = []
     si = ci = di = 0
@@ -319,7 +372,7 @@ def strip_states(
             downed[downs[di][1]] = (downs[di][0], downs[di][2])
             di += 1
         while ci < len(costs) and costs[ci][0] <= sec:
-            cost = (cost or 0.0) + costs[ci][1]
+            cost = costs[ci][1]
             ci += 1
         gold = snap.get("gold") if snap else None
         party = tuple(
@@ -337,6 +390,7 @@ def strip_states(
                 party,
                 t_pass_s,
                 None if snap_at is None else round(snap_at, 3),
+                None if wiped_s is None else round(wiped_s, 3),
             )
         )
     return out
@@ -379,7 +433,11 @@ def lanes(
 
 def sync_table(items: Sequence[Item], start: float, end: float, run_hash: str, fps: int = FPS) -> Json:
     """render.json (render.v1): the run it was rendered for (its run hash), the video's window (epoch s), its fps and
-    every panel item's place in the video. RenderError when an item lies past the video's end."""
+    every panel item's place in the video. RenderError when an item lies before the video's start (the run's
+    run_start mark, its time zero) or past its end."""
+    early = [i for i in items if i.at_s < 0]
+    if early:
+        raise RenderError(f"{len(early)} event(s) before the run's start, the first {early[0].file}#{early[0].seq}")
     late = [i for i in items if i.at_s > end - start + 1e-6]
     if late:
         raise RenderError(f"{len(late)} event(s) after the video's end, the first {late[0].file}#{late[0].seq}")

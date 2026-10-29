@@ -34,15 +34,15 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from bg3harness import profiles
+from bg3harness import profiles, steam_paths
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
-from bg3bench import conditions, graders, pins, run_artifacts, scenario, series
+from bg3bench import conditions, graders, pins, run_artifacts, saves, scenario, series
 from bg3bench.facts import FactsError
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
@@ -107,19 +107,39 @@ class RunHost(Protocol):
 
 
 class SessionRun:
-    """run_one for matrix.Matrix over run_session. scenarios maps each scenario name to its v2 dict."""
+    """run_one for matrix.Matrix over run_session. scenarios maps each scenario name to its v2 dict; save_sha1: a
+    Story save folder's .lsv sha1 (None: not there), default the harness's Story folder's."""
 
-    def __init__(self, matrix: str, host: RunHost, *, scenarios: Mapping[str, JSON], sessions: str | Path):
+    def __init__(
+        self,
+        matrix: str,
+        host: RunHost,
+        *,
+        scenarios: Mapping[str, JSON],
+        sessions: str | Path,
+        save_sha1: Callable[[str], str | None] | None = None,
+    ):
         self.matrix, self.host, self.scenarios, self.sessions = matrix, host, dict(scenarios), Path(sessions)
+        self.save_sha1 = save_sha1 or saves.DirStory(steam_paths.saves_dir()).lsv_sha1
 
     def _series(self, name: str, job: JSON, sc: JSON) -> JSON:
+        """series.json; its scenario's start_save_sha1 is the sha1 of the start save's .lsv in the Story folder as the
+        series' first run starts (a new game: None), what the manifest cites (the validator's P01). A series whose
+        start save changed since is refused; one frozen without a sha1 (before it was recorded) takes this one's."""
         path = self.sessions / name / "series.json"
-        want: JSON = {"name": sc["name"], "digest": scenario.digest(sc), "start_save_sha1": None, "spec": sc}
+        save = sc["start"].get("save") if sc["start"]["kind"] == "save" else None
+        sha1 = self.save_sha1(save) if save else None
+        want: JSON = {"name": sc["name"], "digest": scenario.digest(sc), "start_save_sha1": sha1, "spec": sc}
         if path.exists():
             meta: JSON = json.loads(path.read_text(encoding="utf-8"))
             frozen: JSON = meta.get("scenario") or {}
             if frozen.get("digest") != want["digest"]:
                 raise ValueError(f"series {name}: scenario {sc['name']} changed since its first run")
+            if frozen.get("start_save_sha1") and frozen["start_save_sha1"] != sha1:
+                raise ValueError(f"series {name}: start save {save} changed since its first run")
+            if sha1 and not frozen.get("start_save_sha1"):
+                meta["scenario"] = {**frozen, "start_save_sha1": sha1}
+                path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
             return meta
         meta = {"series": name, "client": job["client"], "scenario": want, "caps": dict(sc["caps"])}
         path.parent.mkdir(parents=True, exist_ok=True)
