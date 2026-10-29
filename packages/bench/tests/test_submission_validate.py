@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from test_submission_pack import mp4
 
 from bg3bench import facts
 from bg3bench.submission import bundle, codes, consistency, pack, validate
@@ -199,6 +200,19 @@ def test_render_from_the_packed_bundle_then_added(tmp_path):
     assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is False]
     with pytest.raises(pack.PackError, match="already holds a render"):
         pack.add_render(rdir, tmp_path / "out")
+
+
+def test_a_bundle_packed_without_its_video_is_accepted_once_add_video_sets_it(tmp_path):
+    """The panel packs before the upload to YouTube (video null: E01 rejects at the site), then sets the video."""
+    d = good_run(tmp_path, FIGHT)
+    render = json.loads((d / "render.json").read_text())
+    p = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1))
+    assert "E01" in run(p.bundle_dir, release_for(d)).failed
+    (d / pack.VIDEO).write_bytes(mp4(render["video_end"] - render["video_start"]))
+    q = pack.add_video(d, tmp_path / "out", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    assert q.envelope["run_hash"] == p.envelope["run_hash"]
+    v = run(q.bundle_dir, release_for(d))
+    assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is False]
 
 
 def test_add_render_refuses_another_runs_render(tmp_path):

@@ -9,9 +9,11 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from bg3harness import pins as harness_pins
+from bg3harness.runner import codewatch
 
-from bg3bench import saves, suite
-from bg3bench.submission import pack, release, validate
+from bg3bench import pins, saves, suite
+from bg3bench.submission import consistency, pack, release, validate
 
 FIXTURE = Path(__file__).parent / "fixtures" / "submission" / "fight_act2_balthazar.bundle.tar.gz"
 PINS = {"game_build": "20981537", "bg3le_sha256": "a" * 64, "mod_sha1": "b" * 40}
@@ -224,3 +226,52 @@ def test_cli_refuses_unpinned_suite_files_and_is_quiet_when_all_are_fingerprinte
     monkeypatch.setattr(release.suite, "check", lambda: ["suite files changed"])
     assert release.main(argv) == 1
     assert "suite files changed" in capsys.readouterr().err
+
+
+def test_a_new_game_scenario_is_released_with_its_start_state_and_a_real_run_passes_x01(served):
+    """bench live S2: the release had no fingerprint for nautiloid (a new game: no save, so none in saves.json), so X01
+    rejected every nautiloid run. Its start state is character creation: no party, gold or area yet."""
+    scs = pack.load_scenarios()
+    doc = release.build(
+        suite.suite_version(), VERSIONS, PINS, scs, saves.load()[suite.suite_version()], {"rules": served}
+    )
+    want = doc["scenarios"]["nautiloid"]["fingerprint"]
+    assert want == {"party": [], "gold": 0, "area": None, "difficulty": "Balanced", "name": None}
+    assert "nautiloid" not in release.unfingerprinted(doc)
+    timeline = Path(__file__).parent / "fixtures" / "timelines" / "nautiloid_sonnet_r2.facts.jsonl"
+    rows = [json.loads(ln) for ln in timeline.read_text().splitlines()]
+
+    def x01(rows: list[dict]) -> validate.Outcome:
+        b = validate.Loaded(Path("."), {}, {}, {}, {}, rows, None, {}, scs["nautiloid"], {"fingerprint": want}, {})
+        return consistency.x01_start_state(b)
+
+    assert x01(rows) == (True, "")  # a real run's first snapshot, at character creation
+    snap = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
+    loaded = [*rows[:snap], {**rows[snap], "party": [{"name": "Tav", "level": 1}], "area": "Nautiloid"}]
+    assert x01(loaded + rows[snap + 1 :])[0] is False  # a run that loaded a game in progress
+
+
+@pytest.mark.integration  # the real server dump (tools/pi/dump_server.py in the bridge's env), offline
+def test_the_shipped_release_is_the_one_this_code_builds():
+    """A stranger's panel validates against packages/bench/releases/<suite>.json (default_path): it ships with the
+    repo and must match what the release tool builds from this tree (the game pins aside, which come from reference
+    runs; the mod's is its tree here). A change to a scenario, saves.json, the versions, the mod, the bg3 tools or a
+    prompt fails here until the release is rebuilt (python -m bg3bench.submission.release, see its docstring)."""
+    path = release.default_path()
+    shipped = json.loads(path.read_text(encoding="utf-8"))
+    tag = suite.suite_version()
+    assert shipped["suite"] == tag and not release.errors(shipped)
+    repo = suite.PACKAGE_ROOT.parents[1]
+    mod = codewatch.mod_tree_hashes(repo / "mod")
+    assert shipped["pins"]["mod_sha1"] == harness_pins.tree_digest(mod), "the mod changed: rebuild the release"
+    cids = sorted(shipped["conditions"])
+    served = {cid: release.serve(cid, release.CLIENTS, repo) for cid in cids}
+    variants = {
+        cid: {release.variant_key(g): release.serve(cid, ["pi"], repo, groups_off=g) for g in release.VARIANTS}
+        for cid in cids
+    }
+    built = release.build(
+        tag, pins.versions(), shipped["pins"], pack.load_scenarios(), saves.load()[tag], served, variants
+    )
+    for k in built:
+        assert shipped[k] == built[k], f"{path.name} {k} differs from what this code builds: rebuild the release"

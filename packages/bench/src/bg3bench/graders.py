@@ -8,9 +8,9 @@ Clock (decision D7): `clock="game"` (default) measures time by the records' `gam
 think-pause excluded); every record in the run needs one, else FactsError (carrying the last snapshot's time forward
 would move gains between snapshots earlier). `clock="wall"` uses `t` minus time zero.
 
-A party wipe (every real party member dead or downed: the game's Game Over, facts.State.wiped) ends the run: a goal
-that didn't hold before it never passes, and a maximise run's score stops there (bench B3: a wiped Balthazar run was
-resumed 6 times and its agent loaded another run's save from the main menu).
+A party wipe (every real party member dead or downed, or the game's Game Over screen: facts.State.wiped) ends the
+run: a goal that didn't hold before it never passes, and a maximise run's score stops there (bench B3: a wiped
+Balthazar run was resumed 6 times and its agent loaded another run's save from the main menu).
 
 Result: `{passed, t_pass_s, violations, curve, progress}`. `verdict(goal, records)` is the live check on a run
 still playing: passed, failed (a fired `never` left the goal unreachable), wiped or undecided; it only ends a run
