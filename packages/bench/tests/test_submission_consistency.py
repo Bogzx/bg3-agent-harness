@@ -127,3 +127,30 @@ def test_a02_allowlist():
     )
     reloads = loaded(events=calls, release_condition=tools, manifest={"condition": "rules+reloads:2"})
     assert c.a02_allowlist(reloads) == (True, "")
+
+
+def test_a02_a_call_the_client_refused_as_unknown_used_no_tool():
+    """bench live S2 pi nautiloid: the model called two tools that don't exist and pi answered "Tool ... not found";
+    A02 rejected the run for tools outside the allowlist. Claude Code's answer (live9) and a tool the condition
+    turned off count the same; a served tool outside the list, or an unknown-tool text from a tool, still rejects."""
+    tools = {"tools": {"names": ["get_status", "load_game"]}}
+
+    def run(*evs: dict) -> c.Outcome:
+        return c.a02_allowlist(loaded(events={"S001.events.jsonl": list(evs)}, release_condition=tools))
+
+    def call(cid: str, tool: str) -> dict:
+        return ev(1, "tool_call", tool=tool, call_id=cid)
+
+    def result(cid: str, text: str, is_error: bool = True) -> dict:
+        return ev(1, "tool_result", call_id=cid, text=text, is_error=is_error)
+
+    assert run(call("a", "mcp__screenshot"), result("a", "Tool mcp__screenshot not found")) == (True, "")
+    pi_bg3 = (call("b", "spring_tool_placeholder"), result("b", "Tool mcp__bg3__spring_tool_placeholder not found"))
+    assert run(*pi_bg3) == (True, "")
+    no_such = "<tool_use_error>Error: No such tool available: mcp__bg3__load_game</tool_use_error>"
+    assert run(call("c", "load_game"), result("c", no_such)) == (True, "")  # turned off by the rules: not served
+    assert run(call("d", "teleport"), result("d", "teleported")) == (False, "tools outside the allowlist: teleport")
+    assert run(call("e", "teleport"), result("e", "Tool teleport not found", is_error=False))[0] is False
+    assert run(call("f", "teleport"), result("f", "Tool mcp__bg3__other not found"))[0] is False  # another name
+    assert run(call("g", "teleport"), result("h", "Tool teleport not found"))[0] is False  # another call's result
+    assert run(call("i", "load_game"), result("i", "loaded"))[1] == "load_game called without a reloads condition"
