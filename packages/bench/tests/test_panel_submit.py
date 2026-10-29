@@ -592,9 +592,6 @@ def test_add_render_with_the_real_pack(tmp_path):
     names = {f["name"] for f in got["files"]}
     assert {"render.json", bundle.FRAMES_TAR} <= names
     assert submit.state(root, "balthazar")["prepared"] == got and got["final"] is True
-    # a second render of the same bundle is refused by pack and kept in prepared.json, the bundle unchanged
-    again = submit.add_render(root, "balthazar", bs, bundle_dir=bdir, render_dir=render, literals=[], now=6.0)
-    assert "already holds a render" in again["render"]["error"] and again["bundle_sha256"] == got["bundle_sha256"]
     # the user uploaded evidence.mp4 (a 12 s movie header, as ffmpeg writes it) and pastes its link
     mvhd = bytes(12) + (1000).to_bytes(4, "big") + (12000).to_bytes(4, "big") + bytes(80)
     mp4 = b"\0\0\0\x10ftypisom\0\0\2\0" + (8 + 8 + 8 + len(mvhd)).to_bytes(4, "big") + b"moov"
@@ -609,6 +606,9 @@ def test_add_render_with_the_real_pack(tmp_path):
     assert env["run_hash"] == run_hash and done["video"] == {"youtube_id": VID}
     assert done["bundle_sha256"] == hashlib.sha256((bdir / bundle.ENVELOPE).read_bytes()).hexdigest()
     assert done["verdict"]["accepted"] is True and submit.state(root, "balthazar")["prepared"] == done
+    # a second render of the same bundle is refused by pack and kept in prepared.json, the bundle unchanged
+    again = submit.add_render(root, "balthazar", bs, bundle_dir=bdir, render_dir=render, literals=[], now=6.0)
+    assert "already holds a render" in again["render"]["error"] and again["bundle_sha256"] == done["bundle_sha256"]
 
 
 def test_add_render_keeps_a_failed_final_validation(run_dir, tmp_path):
