@@ -10,7 +10,12 @@ the profile's key in the env and stops after --max-requests responses.
 
 --price is input (cache miss), output, cache hit in USD per million tokens, for endpoints that report tokens but
 no cost (DeepSeek); OpenRouter's usage.cost is used when present. For DeepSeek the account balance before and
-after is printed too (GET /user/balance, free), as the billed check.
+after is printed too (GET /user/balance, free), as the billed check. An anthropic-messages profile is priced from
+Anthropic's usage fields at the profile's rates (and tiers), next to pi's own estimate (pi_cost_usd): the two agree
+when pi prices what Anthropic bills.
+
+The cheapest check: --tools 4 (the stub lists only get_status, look, stay, get_party), --prompt with a two-call
+task, a one-line --system file and a profile copy with effort = "low" and a small max_tokens.
 """
 
 from __future__ import annotations
@@ -59,11 +64,35 @@ def response_cost(usage: dict, price: tuple[float, float, float] | None) -> floa
     return (miss * price[0] + int(usage.get("completion_tokens") or 0) * price[1] + hit * price[2]) / 1e6
 
 
+def anthropic_cost(usage: dict, profile: pr.Profile) -> float | None:
+    """USD for one Messages API response from its usage (input = uncached; cache writes at the 5-minute rate; the
+    prompt-length tier over the whole request), at the profile's rates; None without Anthropic's fields."""
+    mi = profile.model_info
+    if mi is None or "cache_read_input_tokens" not in usage:
+        return None
+    n = {
+        k: int(usage.get(f) or 0)
+        for k, f in (
+            ("input", "input_tokens"),
+            ("output", "output_tokens"),
+            ("cache_read", "cache_read_input_tokens"),
+            ("cache_write", "cache_creation_input_tokens"),
+        )
+    }
+    rates: dict[str, float] = mi.cost
+    for tier in mi.cost_tiers:
+        if n["input"] + n["cache_read"] + n["cache_write"] > tier[pr.TIER_ABOVE]:
+            rates = tier
+    return sum(n[k] * rates.get(k, 0.0) for k in n) / 1e6
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("profile", type=Path)
     ap.add_argument("--price", help="miss,output,hit USD per M tokens")
     ap.add_argument("--max-requests", type=int, default=8)
+    ap.add_argument("--tools", type=int, help="list only the first N of the stub's tools (fewer input tokens)")
+    ap.add_argument("--prompt", default=PROMPT, help="the task (default: the five-step tool script)")
     ap.add_argument("--system", type=Path, help="system text (default: dump the real one with tools/pi/dump_server.py)")
     ap.add_argument("--out", type=Path, required=True, help="keeps the stream, requests' usage and the report")
     a = ap.parse_args(argv)
@@ -84,11 +113,11 @@ def main(argv: list[str] | None = None) -> int:
             "command": sys.executable,
             "args": [str(HERE / "stub_mcp.py")],
             "timeout": 110_000,
-            "env": {"STUB_MCP_LOG": str(a.out / "mcp.jsonl")},
+            "env": {"STUB_MCP_LOG": str(a.out / "mcp.jsonl"), **({"STUB_MCP_TOOLS": str(a.tools)} if a.tools else {})},
         }
         settings = {**pc.PI_SETTINGS, "retry": {"enabled": True, "maxRetries": 1}}
         client = pc.PiClient(profile, system, server=server, cwd=ws, settings=settings)
-        req = cl.Request(prompt=PROMPT, model=profile.model, session_dir=ws, session="live-check-0001", tag="live")
+        req = cl.Request(prompt=a.prompt, model=profile.model, session_dir=ws, session="live-check-0001", tag="live")
         client.write_config(req)
         env = {**os.environ, **client.env(req)}
         p = subprocess.Popen(
@@ -119,7 +148,11 @@ def main(argv: list[str] | None = None) -> int:
     (a.out / "stream.jsonl").write_text("".join(out))
     after = balance(profile.endpoint.base_url, key)
     calls = [e for e in events if e.kind == "tool_call"]
-    costs = [response_cost(b.get("usage") or {}, price) for b in billing]
+    anthropic = profile.endpoint is not None and profile.endpoint.api == "anthropic-messages"
+    costs = [
+        anthropic_cost(b.get("usage") or {}, profile) if anthropic else response_cost(b.get("usage") or {}, price)
+        for b in billing
+    ]
     report = {
         "profile": str(a.profile),
         "model": profile.model,
@@ -141,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             for b, c in zip(billing, costs, strict=True)
         ],
         "cost_usd": round(sum(c for c in costs if c is not None), 6),
+        "pi_cost_usd": client.parser._cost(),  # what the runner's cost cap counts
         "result": next(
             (
                 {"subtype": e.subtype, "is_error": e.is_error, "text": e.text[:300]}

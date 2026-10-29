@@ -1,6 +1,6 @@
-// Pure helpers for the New run, Queue and Results screens.
+// Pure helpers for the New run, Queue, Results and Videos screens.
 
-import type { MatrixProgress, Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, SaveStatus, ScenarioRow } from "./types";
+import type { MatrixProgress, Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, SaveStatus, ScenarioRow, VideoTodo } from "./types";
 
 export const YOUTUBE_LIMIT_S = 15 * 60;
 
@@ -178,4 +178,31 @@ export function saveChip(s: ScenarioRow): { label: string; cls: string; title: s
 export function matrixState(m: MatrixProgress): string {
   const state = m.state ?? "?";
   return m.stop_reason && m.stop_reason !== state ? `${state} (${m.stop_reason})` : state;
+}
+
+/** The pasted links of Videos, matched to the runs still without one: a line "<run id or dir> <link>" names its run, a
+ * line with only a link takes the next run (in the list's order) that no line named. `unmatched` lists lines that
+ * name no listed run or hold no YouTube link, so none is dropped silently. */
+export function pairLinks(
+  todo: VideoTodo[], text: string,
+): { items: { run: string; bundle_sha256: string; youtube_url: string }[]; unmatched: string[] } {
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  const named = new Map<string, string>();
+  const bare: string[] = [];
+  const unmatched: string[] = [];
+  for (const line of lines) {
+    const parts = line.split(/\s+/);
+    const link = parts[parts.length - 1]!;
+    const v = todo.find((t) => parts.length === 2 && (t.run_id === parts[0] || t.run === parts[0]));
+    if (!youtubeId(link) || (parts.length > 1 && !v)) unmatched.push(line);
+    else if (v) named.set(v.run, link);
+    else bare.push(link);
+  }
+  const free = todo.filter((t) => !named.has(t.run));
+  const items = todo.flatMap((t) => {
+    const link = named.get(t.run) ?? (free.includes(t) ? bare[free.indexOf(t)] : undefined);
+    return link ? [{ run: t.run, bundle_sha256: t.bundle_sha256, youtube_url: link }] : [];
+  });
+  unmatched.push(...bare.slice(free.length));
+  return { items, unmatched };
 }

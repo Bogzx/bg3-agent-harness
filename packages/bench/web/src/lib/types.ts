@@ -230,3 +230,21 @@ export interface RenderState {
   video?: string | null;
   video_bytes?: number | null;
 }
+
+/** A rendered run that still needs its YouTube link (GET /api/v1/videos): what to upload and how to title it. */
+export interface VideoTodo {
+  run: string;
+  run_id: string;
+  bundle_sha256: string;
+  path: string;
+  bytes: number;
+  title: string;
+  description: string;
+}
+
+export interface VideoResult {
+  run: string;
+  ok: boolean;
+  video?: { youtube_id: string };
+  error?: string;
+}
