@@ -1,6 +1,6 @@
 import type {
-  About, MatrixProgress, Plan, PlanForm, Prefs, Preflight, Prepared, ProfileRow, RenderState, RunRow, RunState,
-  ScenarioRow, SettingsView, Submission,
+  About, DoctorReport, MatrixProgress, Plan, PlanForm, Prefs, Preflight, Prepared, ProfileRow, RenderState, RunRow,
+  RunState, RunView, ScenarioRow, SettingsView, StartForm, Submission,
 } from "./types";
 import { HEADER } from "./token";
 
@@ -49,9 +49,10 @@ export const api = {
   setKey: (name: string, value: string) => post<{ name: string; masked: string | null }>("/api/v1/settings/key", { name, value }),
   setSiteToken: (value: string) => post<{ site_token: string | null }>("/api/v1/settings/site-token", { value }),
   setPrefs: (prefs: Partial<Prefs>) => post<{ prefs: Prefs }>("/api/v1/settings/prefs", prefs),
-  run: () => call<{ run: RunState | null; can_start: boolean }>("/api/v1/run"),
-  start: (form: PlanForm) => post<{ started: RunState | null; matrix_file: string }>("/api/v1/run/start", form),
-  stop: () => post<{ run: RunState | null }>("/api/v1/run/stop", {}),
+  run: () => call<RunView>("/api/v1/run"),
+  start: (form: StartForm) => post<{ started: RunState | null; matrix_file: string }>("/api/v1/run/start", form),
+  stop: () => post<RunView>("/api/v1/run/stop", {}),
+  doctor: () => call<{ report: DoctorReport | null; error: string | null }>("/api/v1/doctor"),
   submissions: () =>
     call<{ submissions: Record<string, { prepared: Prepared | null; submission: Submission | null }>; site: string | null }>(
       "/api/v1/submissions",

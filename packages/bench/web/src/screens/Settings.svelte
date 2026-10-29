@@ -46,8 +46,9 @@
 {:else}
   {#if msg}<div class="note">{msg}</div>{/if}
   <section class="panel">
-    <h2>API keys <span class="right faint">{data.dotenv}</span></h2>
+    <h2>API keys</h2>
     <div class="body">
+      <div class="faint path">Saved to <code>{data.dotenv}</code></div>
       {#if !data.dotenv_ignored}
         <div class="note bad">This .env is not ignored by git: add <code>.env</code> to .gitignore before saving a key.</div>
       {/if}
@@ -93,3 +94,7 @@
     </div>
   </section>
 {/if}
+
+<style>
+  .path { overflow-wrap: anywhere; }
+</style>

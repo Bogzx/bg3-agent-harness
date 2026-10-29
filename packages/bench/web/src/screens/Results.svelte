@@ -3,9 +3,10 @@
   // attempt number within the run's cell, and the size of its kept saves. Validate packs and checks a run locally and
   // shows the verdict and the exact files before Upload sends them; Render video makes the evidence video.
   import { onMount } from "svelte";
+  import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
-  import { attempts, bytes, minutes, uploadProblem, verdict } from "../lib/run";
+  import { attempts, bytes, minutes, renderNote, uploadProblem, verdict } from "../lib/run";
   import type { Prepared, RenderState, RunRow, Submission } from "../lib/types";
 
   let rows = $state<RunRow[] | null>(null);
@@ -36,6 +37,8 @@
   onMount(() => {
     api.results().then((r) => (rows = r.runs)).catch((e: Error) => (error = e.message));
     loadSubs();
+    const t = setInterval(loadSubs, 5000); // a finished render changes the bundle (its hash and files)
+    return () => clearInterval(t);
   });
 
   async function act(fn: () => Promise<unknown>) {
@@ -70,7 +73,7 @@
   {:else if !rows.length}
     <div class="empty">No finished run yet.</div>
   {:else}
-    <div class="tbl-wrap">
+    <TableWrap label="Finished runs">
       <table>
         <thead><tr><th>run</th><th>scenario</th><th>model</th><th>verdict</th><th class="num">wall</th>
           <th class="num">cost</th><th class="num">luck z</th><th class="num">attempt</th><th class="num">saves</th><th></th></tr></thead>
@@ -99,7 +102,7 @@
           {/each}
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   {/if}
   {#if actionError}<div class="note bad">{actionError}</div>{/if}
 </section>
@@ -121,25 +124,25 @@
           {#if prepared.attempt.unsubmitted_valid}· {prepared.attempt.unsubmitted_valid} earlier valid run(s) of the
             cell not submitted (submit every valid run of a cell, or none){/if}</p>
         <p><span class="st {prepared.verdict.accepted ? 'PASS' : 'FAIL'}">{prepared.verdict.accepted ? "accepted" :
-          "rejected"}</span> by the local validator</p>
+          "rejected"}</span> by the local validator{prepared.final ? "" : " (the record only: render the video for the final check)"}</p>
         {#each prepared.verdict.checks.filter((c) => c.ok === false) as c (c.code)}
           <div class="faint">{c.code} ({c.severity ?? "?"}): {c.detail ?? ""}</div>
         {/each}
-        <div class="tbl-wrap">
+        <TableWrap label="Bundle files">
           <table aria-label="Files to upload">
             <thead><tr><th>file</th><th class="num">size</th></tr></thead>
             <tbody>
               {#each prepared.files as f (f.name)}<tr><td><code>{f.name}</code></td><td class="num">{bytes(f.bytes)}</td></tr>{/each}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
         <div class="row">
           <button class="plain" disabled={busy || (render?.running ?? false)} onclick={() => doRender(open!)}>Render video</button>
           <span class="faint">expect 1-2 GB per hour of run; upload it to YouTube yourself (public or unlisted)</span>
         </div>
         {#if render && render.run === open}
           <div class="faint">{render.running ? "rendering…" : render.video ?
-            `video ${render.video} (${bytes(render.video_bytes ?? 0)}); Validate again so the bundle carries its sync table and contact sheet` :
+            `video ${render.video} (${bytes(render.video_bytes ?? 0)}); ${renderNote(prepared?.render, render.out)}` :
             `render ended (exit ${render.returncode ?? "?"}); see ${render.log}`}</div>
         {/if}
         <label class="row">YouTube URL <input type="url" bind:value={youtubeUrl} placeholder="https://youtu.be/…" size="40" /></label>

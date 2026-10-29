@@ -80,6 +80,11 @@ export interface PlanForm {
   allow_unverified: boolean;
 }
 
+export interface StartForm extends PlanForm {
+  record: boolean;
+  submit_when_done: boolean;
+}
+
 export interface MatrixProgress {
   matrix: string;
   state?: string;
@@ -105,7 +110,7 @@ export interface RunRow {
   model: string | null;
   client: string | null;
   condition: string | null;
-  created: string | null;
+  created: number | null; // epoch seconds (manifest.v1)
   passed: boolean | null;
   score: number | null;
   outcome: string | null;
@@ -139,6 +144,14 @@ export interface About {
   site: string | null;
 }
 
+/** runtime/panel/<name>.json: what Start was told, and what Submit when done did per run dir. */
+export interface RunChoices {
+  name: string;
+  record: boolean;
+  submit_when_done: boolean;
+  auto: Record<string, { t: number; bundle_sha256?: string | null; accepted?: boolean | null; error?: string }>;
+}
+
 export interface RunState {
   name: string;
   pid?: number;
@@ -147,6 +160,31 @@ export interface RunState {
   running: boolean;
   returncode?: number | null;
   stopping: boolean;
+  choices?: RunChoices | null;
+}
+
+/** A matrix play.py bench is playing that this panel didn't start (another panel, a terminal, a restart). */
+export interface FoundMatrix {
+  name: string;
+  pid: number;
+  matrix_file: string;
+  running: boolean;
+  stopping: boolean;
+  choices: RunChoices | null;
+}
+
+export interface RunView {
+  run: RunState | null;
+  found: FoundMatrix | null;
+  can_start: boolean;
+}
+
+/** bg3harness.doctor's report: report(doctor()). */
+export interface DoctorReport {
+  ready: boolean;
+  fails: number;
+  warns: number;
+  checks: { name: string; status: "PASS" | "WARN" | "FAIL"; detail: string; fix: string }[];
 }
 
 export interface CheckResult {
@@ -163,6 +201,10 @@ export interface Prepared {
   files: { name: string; bytes: number }[];
   verdict: { accepted: boolean; flags?: string[]; checks: CheckResult[] };
   attempt: { n: number; unsubmitted_valid: number };
+  /** false: validated without its render (the record only); true: the bundle with its render, what Upload sends. */
+  final?: boolean;
+  /** The rendered video's render.json and frames, once added to this bundle (or why they weren't). */
+  render?: { dir: string; added?: number; error?: string };
 }
 
 export interface Submission {
@@ -178,6 +220,8 @@ export interface Submission {
 
 export interface RenderState {
   run: string;
+  source?: string;
+  out?: string;
   running: boolean;
   returncode?: number | null;
   log?: string;

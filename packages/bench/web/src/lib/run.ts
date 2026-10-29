@@ -1,6 +1,6 @@
-// Pure helpers for the New run and Results screens.
+// Pure helpers for the New run, Queue and Results screens.
 
-import type { Plan, PlanForm, Prepared, ProfileRow, RunRow, SaveStatus } from "./types";
+import type { MatrixProgress, Plan, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, SaveStatus, ScenarioRow } from "./types";
 
 export const YOUTUBE_LIMIT_S = 15 * 60;
 
@@ -73,7 +73,7 @@ export function attempts(runs: RunRow[]): Map<string, [number, number]> {
   }
   const out = new Map<string, [number, number]>();
   for (const list of cells.values()) {
-    const sorted = [...list].sort((a, b) => (a.created ?? "").localeCompare(b.created ?? "") || a.dir.localeCompare(b.dir));
+    const sorted = [...list].sort((a, b) => (a.created ?? 0) - (b.created ?? 0) || a.dir.localeCompare(b.dir));
     sorted.forEach((r, i) => out.set(r.dir, [i + 1, sorted.length]));
   }
   return out;
@@ -81,7 +81,7 @@ export function attempts(runs: RunRow[]): Map<string, [number, number]> {
 
 /** Why Start can't be pressed for a plan (null: it can); the server checks the same again. */
 export function startProblem(plan: Plan | null, running: boolean): string | null {
-  if (running) return "a matrix of this panel is running: stop it first";
+  if (running) return "a matrix is running (see Queue): stop it first";
   if (!plan) return "plan first";
   if (!plan.jobs.length) return "no job to run";
   if (plan.needs_max_cost.length) return `give a max cost for ${plan.needs_max_cost.join(", ")}`;
@@ -94,6 +94,7 @@ export function startProblem(plan: Plan | null, running: boolean): string | null
 /** Why Upload can't be pressed for a prepared bundle (null: it can). */
 export function uploadProblem(p: Prepared | null, youtubeUrl: string, siteToken: boolean): string | null {
   if (!p) return "validate first";
+  if (!p.final) return "render the evidence video first: the site takes the bundle with its render";
   if (!p.verdict.accepted) return "the local validation rejects this bundle";
   if (!siteToken) return "save the site token in Settings";
   if (!youtubeId(youtubeUrl)) return "paste the YouTube URL of the evidence video";
@@ -115,4 +116,47 @@ export function youtubeId(url: string): string | null {
   else if (host === "youtube.com" && u.pathname === "/watch") id = u.searchParams.get("v");
   else if (host === "youtube.com" && u.pathname.startsWith("/shorts/")) id = u.pathname.slice("/shorts/".length);
   return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+}
+
+/** "Record on · Submit when done off" for a matrix's choices. */
+export function choicesLine(c: RunChoices | null | undefined): string | null {
+  if (!c) return null;
+  return `Record ${c.record ? "on" : "off"} · Submit when done ${c.submit_when_done ? "on" : "off"}`;
+}
+
+/** What Submit when done did: "2 validated (1 accepted), 1 failed: <first error>"; null when nothing yet. */
+export function autoSummary(c: RunChoices | null | undefined): string | null {
+  const outcomes = Object.values(c?.auto ?? {});
+  if (!outcomes.length) return null;
+  const failed = outcomes.filter((o) => o.error);
+  const validated = outcomes.length - failed.length;
+  const accepted = outcomes.filter((o) => !o.error && o.accepted).length;
+  const parts = [`${validated} validated (${accepted} accepted)`];
+  if (failed.length) parts.push(`${failed.length} failed: ${failed[0]?.error ?? ""}`);
+  return parts.join(", ");
+}
+
+/** Where a finished render stands with its bundle: added (the bundle hash changed), refused, or still to be added. */
+export function renderNote(r: Prepared["render"], out: string | undefined): string {
+  if (!r || r.dir !== out) return "adding its sync table and contact sheet to the bundle…";
+  if (r.error) return `its sync table and contact sheet weren't added to the bundle: ${r.error}`;
+  return "its sync table and contact sheet are in the bundle (the bundle hash changed; the run hash didn't)";
+}
+
+const SAVE_CLASS: Record<SaveStatus, string> = {
+  installed: "PASS", missing: "FAIL", wrong_hash: "FAIL", stray: "WARN", unknown: "WARN", none: "none",
+};
+
+/** The Saves screen's status chip: a scenario that isn't ready is "not ready", whatever its save folder shows. */
+export function saveChip(s: ScenarioRow): { label: string; cls: string; title: string } {
+  if (s.not_ready) return { label: "not ready", cls: "WARN", title: s.not_ready };
+  const st = s.save_status;
+  return { label: SAVE_LABELS[st.status], cls: SAVE_CLASS[st.status], title: st.detail };
+}
+
+/** A matrix's state, with the stop reason when it says more than the state ("stopped (budget)", not "finished
+ * (finished)"). */
+export function matrixState(m: MatrixProgress): string {
+  const state = m.state ?? "?";
+  return m.stop_reason && m.stop_reason !== state ? `${state} (${m.stop_reason})` : state;
 }
