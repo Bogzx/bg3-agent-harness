@@ -598,11 +598,15 @@ def cmd_scenarios(_a) -> int:
     return 0
 
 
+BENCH_LIVE = ("run", "resume", "start-states")  # the bench commands that drive the game
+
+
 def cmd_bench(argv: list[str]) -> int:
-    """play.py bench plan|run|status|resume --matrix <file.toml> [--runner session|legacy]: bg3bench's matrix CLI
-    (python -m bg3bench.matrix) with the harness's live RunHost, so `--runner session` plays each job as one
-    run_session on this machine's game (bg3harness.runner.run_host). run and resume take runtime/runner.lock like
-    `run`, and the cutscene skipper and the RAM watchdog run meanwhile. runtime/STOP or a first SIGINT/SIGTERM ends
+    """play.py bench plan|run|status|resume|start-states --matrix <file.toml> [--runner session|legacy]: bg3bench's
+    matrix CLI (python -m bg3bench.matrix) with the harness's live RunHost, so `--runner session` plays each job as
+    one run_session on this machine's game (bg3harness.runner.run_host). The commands that drive the game
+    (BENCH_LIVE: run, resume, start-states) take runtime/runner.lock like `run`, and the cutscene skipper and the
+    RAM watchdog run meanwhile. runtime/STOP or a first SIGINT/SIGTERM ends
     the run playing now, recorded (invalid: operator), and starts no new one; a second signal exits at once. Either
     way the game a run brought up is stopped. Every run's game is screen-recorded into its run dir's recording/
     (BG3AI_BENCH_RECORD=0: off); a run whose recorder can't start doesn't start."""
@@ -610,7 +614,7 @@ def cmd_bench(argv: list[str]) -> int:
     from bg3harness.runner.run_host import LiveRunHost, bench_recording, stop_file, stop_on_signals
 
     host = LiveRunHost(lpt.Runner, recording=bench_recording(os.environ))
-    if not argv or argv[0] not in ("run", "resume"):
+    if not argv or argv[0] not in BENCH_LIVE:
         return matrix_cli.main(argv, repo=renv.REPO, host=host, out=sys.stdout)
     lock = acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
     stop_file().unlink(missing_ok=True)  # a STOP left from before would stop the first run
