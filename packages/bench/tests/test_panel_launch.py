@@ -315,6 +315,7 @@ def test_housekeeping_reaps_a_finished_matrix_without_a_get(tmp_path):
         which=lambda name: "/usr/bin/uv",
     )
     run.start("m1", tmp_path / "m1.toml", tmp_path / "m1.log", record=False)
+    assert run.current is not None
     pid = run.current.proc.pid
     os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)  # it has exited; not reaped yet
     assert Path(f"/proc/{pid}/stat").read_text().split(") ")[-1].startswith("Z")
