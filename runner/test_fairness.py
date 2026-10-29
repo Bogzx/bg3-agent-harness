@@ -132,6 +132,31 @@ class Rules(unittest.TestCase):
         got = self.rules(call("get_nearby", "e44 Meazel <character> 12m invisible +Burning"))
         self.assertEqual(got.get("hidden_state"), 1)
 
+    def test_the_partys_own_state_is_not_hidden_state(self):
+        # live S3 windmill (pi): Tav's own Shout_Hide, the actor's after={..} portrait (bridge _trim_after), verbatim
+        got = self.rules(
+            call("use_ability", "use_ability: done — cast=Shout_Hide statuses=[e4 Hiding] after={hp=7/25 action=0 "
+                                "bonus=1 reaction=1 movement=0.5 my_turn slots=1:2 sneaking @(37.3,35.2,429.6)}\n"
+                                "  status_applied e4: Hiding"),
+            call("end_turn", "end_turn e4 Tav: done — ended after={hp=5/25 action=0 bonus=1 reaction=1 movement=9 "
+                             "slots=1:1 sneaking @(55.3,33.9,436.8)}\n  status_removed e4: Hiding"),
+            call("use_ability", "use_ability: done — cast=Projectile_SneakAttack no_damage target=e81 "
+                                "after={sneaking @(-431.7,5.5,-173.7)}"),
+            # get_status's PARTY rows (render.state_text) and the same members on any later line
+            call("get_status", "WHERE Windmill | exploring\nPARTY *e4 Tav Rogue2 HP 5/25 sneaking\n"
+                               "PARTY e2 Shadowheart Cleric2 HP 12/12 sneaking"),
+            call("get_nearby", "e2 Shadowheart <character> 3m sneaking"),
+        )
+        self.assertNotIn("hidden_state", got)
+        # an enemy's hidden state still counts: on its own line, next to the actor's after={..}, after a party handle
+        got = self.rules(
+            call("get_status", "PARTY *e4 Tav Rogue2 HP 5/25"),
+            call("get_nearby", "e44 Meazel <character> 12m sneaking"),
+            call("use_ability", "use_ability: done — target=e44 (hidden) after={sneaking @(1,2,3)}"),
+            call("look", "e4 Tav sees e45 Goblin ambushing 9m"),
+        )
+        self.assertEqual(got.get("hidden_state"), 3)
+
 
     def test_compacted_combat_forms(self):
         # compact.py COMBAT_NARRATIVE / KIND_GROUP / ACTION_DUPS lines: no hidden-state or id hits of their own
