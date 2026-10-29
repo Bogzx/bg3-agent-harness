@@ -719,7 +719,8 @@ RUN_W, RUN_H = 1408, 792
 def run_recording(out_dir: Path, env: Mapping[str, str], runtime: Path, encoder: str = "h264_nvenc") -> RunRecording:
     """A bench run's recording into out_dir: the game's window on env's DISPLAY at RUN_W x RUN_H, no live view, the
     resource guard on runtime/thermal.log and out_dir's free space (low RAM, heat or under 1 GB free stops it until it
-    clears: the run's video then has a gap, its reason in index.json's events, and is refused at render)."""
+    clears: the run's video then has a gap with its reason in index.json's events, which the evidence video shows as
+    a pause card; bg3harness.video.timeline.cuts)."""
     spec = RecordSpec(out_dir, RUN_W, RUN_H, encoder=encoder, live=False)
     probe = game_probe(env.get("DISPLAY") or ":1")
     guard = resource_guard(runtime / "thermal.log", disk=out_dir)

@@ -22,7 +22,7 @@ from pathlib import Path
 from bg3ai.tool_classes import READ_TOOLS
 from PIL import Image, ImageDraw, ImageFont
 
-from .timeline import Item, Lanes, Member, Meta, Strip
+from .timeline import Gap, Item, Lanes, Member, Meta, Strip
 
 WIDTH, HEIGHT = 1920, 1080
 GAME_X, GAME_Y, GAME_W, GAME_H = 24, 96, 1408, 792
@@ -291,11 +291,28 @@ def lanes_image(lanes: Lanes, duration_s: float) -> Image.Image:
     return img
 
 
-def frame_image(s: Strip, meta: Meta, lanes: Image.Image, duration_s: float) -> Image.Image:
+def pause_card(d: ImageDraw.ImageDraw, g: Gap) -> None:
+    """A logged gap in the recording, where the game shows: why and how long (it holds for the gap's real length)."""
+    card(d, (GAME_X, GAME_Y, GAME_X + GAME_W, GAME_Y + GAME_H))
+    cx, cy = GAME_X + GAME_W / 2, GAME_Y + GAME_H / 2
+
+    def centred(y: float, s: str, face: str, size: int, fill: tuple[int, ...]) -> None:
+        text(d, (cx - length(s, face, size) / 2, y), s, face, size, fill, "lm")
+
+    centred(cy - 60, "RECORDING PAUSED", "title", 44, AMBER)
+    for k, ln in enumerate(wrap(g.reason, "mono", 26, GAME_W - 160, 2)):
+        centred(cy + 4 + 36 * k, ln, "mono", 26, INK)
+    centred(cy + 100, f"{g.length:.1f} s, run {clock(g.at_s)} to {clock(g.end_s)}", "mono", 22, INK_3)
+
+
+def frame_image(s: Strip, meta: Meta, lanes: Image.Image, duration_s: float, pause: Gap | None = None) -> Image.Image:
     """The frame at one second of run clock, but the game and the column's two cards: the header, the party card,
-    the timeline (lanes_image) with the playhead at this second, the id line."""
+    the timeline (lanes_image) with the playhead at this second, the id line; in a logged gap, its pause card where
+    the game shows (the game is off over the gap)."""
     img = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
     d = ImageDraw.Draw(img)
+    if pause is not None:
+        pause_card(d, pause)
     _header(d, s, meta, duration_s)
     _party(d, s)
     img.paste(lanes, (TL_X, TL_Y))

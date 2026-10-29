@@ -3,7 +3,8 @@ their durations), the compose command into 1920x1080 and the contact sheet. The 
 Protocol, so the arguments are tested without it.
 
     frame pngs (1920x1080, one per second) ─┐
-    game clips (scaled to 1408x792, Lanczos) ┴ overlay at 24,96 ─┐
+    game clips (scaled to 1408x792, Lanczos) ┴ overlay at 24,96 ─┐   (off during a logged gap: the frame's
+                                                                  │    pause card shows; later clips moved by it)
     column pngs (440x960 RGBA, one per panel change) ─────────────┴ overlay at 1456,96
         -> libx264 -preset veryfast -crf 24 (or h264_nvenc -cq 24 on an NVIDIA GPU), 15 fps, yuv420p, +faststart
 """
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .draw import COL_X, COL_Y, GAME_H, GAME_W, GAME_X, GAME_Y
-from .timeline import FPS, Clip, RenderError
+from .timeline import FPS, Clip, Gap, RenderError
 
 CRF = 24
 ENCODERS: dict[str, tuple[str, ...]] = {
@@ -66,22 +67,47 @@ def images_list(images: Sequence[tuple[Path, float]]) -> str:
     return "\n".join(out) + "\n"
 
 
+def gap_filters(gaps: Sequence[Gap], fps: int = FPS) -> tuple[str, str]:
+    """(the game's setpts, the game overlay's enable) for logged gaps: each clip after a gap moves to its run time
+    (the concatenation's time + the gap's offset), and the overlay is off over the gap (the frame's pause card
+    shows). Empty strings without gaps."""
+    if not gaps:
+        return "", ""
+    half = 0.5 / fps  # the first frame after a cut has its exact time: compare half a frame early
+    prev, shift = 0.0, list[str]()
+    for g in gaps:
+        if g.offset != prev:
+            shift.append(f"{g.offset - prev:.3f}*gte(T,{g.cut_s - half:.3f})")
+        prev = g.offset
+    setpts = f"setpts='PTS+({'+'.join(shift) or '0'})/TB'," if shift else ""
+    off = "+".join(f"between(t,{g.at_s:.3f},{g.end_s - half:.3f})" for g in gaps)
+    return setpts, f":enable='not({off})'"
+
+
 def compose_args(
-    game: Path, frame: Path, column: Path, out: Path, duration: float, fps: int = FPS, encoder: str = "libx264"
+    game: Path,
+    frame: Path,
+    column: Path,
+    out: Path,
+    duration: float,
+    fps: int = FPS,
+    encoder: str = "libx264",
+    gaps: Sequence[Gap] = (),
 ) -> list[str]:
     """ffmpeg's arguments: the three concat lists composed into one 1920x1080 H.264 video of `duration` seconds,
     encoded with `encoder` (ENCODERS). The game is scaled to GAME_W x GAME_H (Lanczos; a recording made at that
-    size passes through)."""
+    size passes through). Logged gaps (gap_filters) keep the game on the run clock."""
     if encoder not in ENCODERS:
         raise ValueError(f"unknown encoder {encoder!r} (one of {sorted(ENCODERS)})")
     norm = f"fps={fps},setsar=1"
+    setpts, enable = gap_filters(gaps, fps)
     graph = ";".join(
         [
-            f"[0:v]scale={GAME_W}:{GAME_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"[0:v]{setpts}scale={GAME_W}:{GAME_H}:force_original_aspect_ratio=decrease:flags=lanczos,"
             f"pad={GAME_W}:{GAME_H}:(ow-iw)/2:(oh-ih)/2,{norm}[g]",
             f"[1:v]{norm}[f]",
             f"[2:v]{norm},format=rgba[c]",
-            f"[f][g]overlay={GAME_X}:{GAME_Y}[fg]",
+            f"[f][g]overlay={GAME_X}:{GAME_Y}{enable}[fg]",
             f"[fg][c]overlay={COL_X}:{COL_Y},format=yuv420p[v]",
         ]
     )
