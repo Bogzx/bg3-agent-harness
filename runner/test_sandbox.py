@@ -200,15 +200,33 @@ class DockerSide(unittest.TestCase):
     def test_prepare_pi(self):
         with mock.patch.object(S, "cli_version", side_effect=AssertionError("pi has no host CLI")):
             box = S.prepare("pi", None, False, lambda m: None, gate=lambda u, log: {"table": "loaded"},
-                            auth_env=(PI_PROFILE.endpoint.api_key_env,))
+                            profile=PI_PROFILE)
         argvs = calls(self.d)
         agent_build = [a for a in argvs if a[0] == "build"][1]
         self.assertEqual(agent_build[agent_build.index("--build-context") + 1], f"pi={S.PI_DIR}")
         self.assertFalse(any(a.startswith("--build-arg") for a in agent_build))
         proxy = next(a for a in argvs if a[:2] == ["run", "-d"])
-        self.assertEqual(proxy[proxy.index("--allow") + 1], "openrouter.ai,api.deepseek.com")
+        self.assertEqual(proxy[proxy.index("--allow") + 1], "api.deepseek.com")   # the profile's endpoint only
         self.assertEqual(box.info["client_version"], "1.3.0")   # tools/pi/package.json's pin
-        self.assertEqual(box.auth_env, ("DEEPSEEK_API_KEY",))
+        self.assertEqual(box.auth_env, ("DEEPSEEK_API_KEY",))   # the profile's api_key_env
+
+    def test_pi_on_anthropics_api_reaches_that_host_only(self):
+        prof = PR.parse({"client": "pi", "model": "claude-haiku-5-5",
+                         "endpoint": {"provider": "anthropic", "base_url": "https://api.anthropic.com",
+                                      "api": "anthropic-messages", "api_key_env": "BG3AI_ANTHROPIC_API_KEY"},
+                         "model_info": {"input": ["text", "image"], "reasoning": True, "context_window": 1000000,
+                                        "max_tokens": 32000, "cost": {"input": 0.1, "output": 0.5,
+                                                                      "cache_read": 0.01, "cache_write": 0.125}}})
+        box = S.prepare("pi", None, False, lambda m: None, gate=lambda u, log: {}, profile=prof)
+        proxy = next(a for a in calls(self.d) if a[:2] == ["run", "-d"])
+        self.assertEqual(proxy[proxy.index("--allow") + 1], "api.anthropic.com")
+        self.assertEqual(box.info["egress"], ["api.anthropic.com"])
+        self.assertEqual(box.auth_env, ("BG3AI_ANTHROPIC_API_KEY",))   # not ANTHROPIC_API_KEY (claude's)
+
+    def test_pi_without_a_profile_has_no_egress(self):
+        with self.assertRaisesRegex(S.SandboxError, "pi needs its profile"):
+            S.prepare("pi", None, False, lambda m: None, gate=lambda u, log: {})
+        self.assertFalse(any(a[:2] == ["run", "-d"] for a in calls(self.d)))
 
     def test_every_agent_build_has_the_pi_context(self):
         with mock.patch.object(S, "cli_version", lambda name: None):
@@ -237,6 +255,7 @@ class DockerSide(unittest.TestCase):
     def test_egress_override(self):
         with mock.patch.dict(os.environ, {"BG3AI_SANDBOX_EGRESS": "a.example, b.example"}):
             self.assertEqual(S.egress_hosts("claude"), ["a.example", "b.example"])
+            self.assertEqual(S.egress_hosts("pi", PI_PROFILE), ["a.example", "b.example"])
         self.assertEqual(S.egress_hosts("codex")[0], "api.openai.com")
 
     def test_run_argv(self):
@@ -475,7 +494,8 @@ class PlayWiring(unittest.TestCase):
             seen["opt"] = opt
             return SimpleNamespace(run=lambda: 0, stop_requested=False)
         with mock.patch.object(lcli, "acquire_lock", lambda: None), \
-                mock.patch.object(S, "prepare", lambda client, home, unf, log, pid: seen.update(unf=unf) or box), \
+                mock.patch.object(S, "prepare", lambda client, home, unf, log, pid, profile=None:
+                                  seen.update(unf=unf, profile=profile) or box), \
                 mock.patch.object(S, "shutdown", lambda: seen.update(shutdown=True)), \
                 mock.patch.object(renv, "log", lambda m: None), mock.patch.object(lpt, "Runner", runner), \
                 mock.patch("bg3ai.skipper.start_background", lambda *a: None), \
@@ -488,6 +508,29 @@ class PlayWiring(unittest.TestCase):
         self.assertEqual(seen["opt"].sandbox, "container")
         self.assertTrue(seen["shutdown"])
 
+    def test_a_pi_runner_prepares_with_its_profile(self):
+        # the profile decides pi's egress (its endpoint host) and the credential passed in (its api_key_env)
+        seen = {}
+        prof = renv.REPO / "profiles" / "deepseek-flash.toml"
+        rt = self.d / "runtime"
+        rt.mkdir(exist_ok=True)
+        (rt / "budget.json").write_text(json.dumps({"cap": 1, "spent": 0}))
+        with mock.patch.object(renv, "RUNTIME", rt), mock.patch.object(lcli, "acquire_lock", lambda: None), \
+                mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "k"}), \
+                mock.patch.object(lcli.client_setup, "run_files", lambda *a: {}), \
+                mock.patch.object(S, "prepare", lambda client, home, unf, log, pid, profile=None:
+                                  seen.update(client=client, profile=profile) or S.Sandbox(client, None, unf)), \
+                mock.patch.object(S, "shutdown", lambda: None), mock.patch.object(renv, "log", lambda m: None), \
+                mock.patch.object(lpt, "Runner", lambda opt: SimpleNamespace(run=lambda: 0, stop_requested=False)), \
+                mock.patch("bg3ai.skipper.start_background", lambda *a: None), \
+                mock.patch.object(rpolicy.ramwatch, "start_background", lambda *a: None), \
+                mock.patch.object(ragent.signal, "signal", lambda *a: None):
+            rc = P.main(["run", "--playthrough", "sbx", "--profile", str(prof), "--no-keeper", "--max-cost", "1",
+                         "--sandbox", "container", "--sandbox-unfirewalled"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["client"], "pi")
+        self.assertEqual(seen["profile"], PR.load(prof))
+
     def _series(self, meta: dict | None, argv: list[str]) -> tuple[int, str, list, dict]:
         """cmd_run of a --runs series (sbx) whose series.json is meta: (rc, stderr, log lines, what reached
         run_series / prepare)."""
@@ -498,8 +541,8 @@ class PlayWiring(unittest.TestCase):
             (rt / "sessions" / "sbx" / "series.json").write_text(json.dumps(meta))
         err, logs, seen = [], [], {}
         with mock.patch.object(renv, "RUNTIME", rt), mock.patch.object(lcli, "acquire_lock", lambda: None), \
-                mock.patch.object(S, "prepare", lambda client, home, unf, log, pid: seen.update(prepared=unf)
-                                  or S.Sandbox("claude", None, unf)), \
+                mock.patch.object(S, "prepare", lambda client, home, unf, log, pid, profile=None:
+                                  seen.update(prepared=unf) or S.Sandbox("claude", None, unf)), \
                 mock.patch.object(S, "shutdown", lambda: None), mock.patch.object(renv, "log", logs.append), \
                 mock.patch.object(lser, "run_series", lambda opt, *a, **k: seen.update(opt=opt) or 0), \
                 mock.patch("bg3ai.skipper.start_background", lambda *a: None), \

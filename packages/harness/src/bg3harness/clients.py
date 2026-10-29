@@ -148,10 +148,14 @@ def is_http(server: dict[str, Any]) -> bool:
     return bool(server.get("url"))
 
 
+CREDENTIAL_RE = re.compile(r"_(KEY|TOKEN|SECRET|PASSWORD)$")  # a model API key such as BG3AI_ANTHROPIC_API_KEY
+
+
 def session_env_names(env: dict[str, Any]) -> list[str]:
     """The session env the MCP server reads (BG3AI_*, BG3_*): clients that don't pass their whole env to an MCP
-    server forward these by name."""
-    return sorted(k for k in env if k.startswith(("BG3AI_", "BG3_")))
+    server forward these by name. A credential is never among them: the server needs none, and pi and gemini
+    write the forwarded values into their config files."""
+    return sorted(k for k in env if k.startswith(("BG3AI_", "BG3_")) and not CREDENTIAL_RE.search(k))
 
 
 def json_text(value: Any) -> str:
