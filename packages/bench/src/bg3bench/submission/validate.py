@@ -177,10 +177,10 @@ def _schema_errors(doc: Any, schema_file: str) -> list[str]:
     return [f"{'/'.join(map(str, e.absolute_path))}: {e.message}"[:200] for e in v.iter_errors(doc)]
 
 
-def _record_errors(name: str, rows: list[Any], schema_name: str, limit: int = 3) -> list[str]:
-    """The first `limit` records of a JSONL file that break the harness's schema (facts.v1, events.v1): the later
-    checks read their fields as the schema types them."""
-    v = jsonschema.Draft202012Validator(bg3harness.schema(schema_name))
+def _record_errors(name: str, rows: list[Any], schema: Json, limit: int = 3) -> list[str]:
+    """The first `limit` records of a JSONL file that break its schema (the harness's facts.v1 and events.v1, the
+    bench's fights.v1): the later checks and the behaviour card read their fields as the schema types them."""
+    v = jsonschema.Draft202012Validator(schema)
     out = []
     for i, r in enumerate(rows):
         if (e := next(iter(v.iter_errors(r)), None)) is not None:
@@ -247,7 +247,7 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
         if any(_depth(x) > MAX_JSON_DEPTH for x in docs):
             errs.append(f"{name}: JSON nested deeper than {MAX_JSON_DEPTH}")
     try:
-        errs += _record_errors("facts.jsonl", facts.check(_jsonl(raw["facts.jsonl"])), "facts.v1")
+        errs += _record_errors("facts.jsonl", facts.check(_jsonl(raw["facts.jsonl"])), bg3harness.schema("facts.v1"))
     except (KeyError, facts.FactsError) as e:
         errs.append(f"facts.jsonl: {e}")
     if "rolls.jsonl" in raw:
@@ -256,7 +256,7 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
     if not names:
         errs.append("no events log")
     for n in names:
-        errs += _record_errors(n, _jsonl(raw[n]), "events.v1")
+        errs += _record_errors(n, _jsonl(raw[n]), bg3harness.schema("events.v1"))
         last = -1
         for i, e in enumerate(_jsonl(raw[n])):
             ok = isinstance(e, dict) and e.get("v") == 1 and isinstance(e.get("kind"), str)
@@ -265,6 +265,11 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
                 errs.append(f"{n}: line {i + 1} is not an events v1 record in seq order")
                 break
             last = seq
+    fights_schema = json.loads((SCHEMA_DIR / "fights.v1.schema.json").read_text())
+    for n in (n for n in raw if bundle.FIGHTS.fullmatch(n)):
+        if n.replace(".fights.", ".events.") not in raw:
+            errs.append(f"{n}: no events log of its play process")
+        errs += _record_errors(n, _jsonl(raw[n]), fights_schema)
     man = json.loads(raw.get("manifest.json", b"{}"))
     same = {
         "run_id": man.get("run_id"),

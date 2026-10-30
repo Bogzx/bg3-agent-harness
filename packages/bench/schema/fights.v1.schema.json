@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/fights.v1.schema.json",
+  "title": "A fight log line (Sxxx.fights.jsonl) as the bench reads it, v1",
+  "description": "One fight debrief the bg3 MCP server wrote (bridge bg3ai.debrief; its own `v`). Open: the bridge owns the record and adds fields; this types only the fields bg3bench.behaviour and bg3harness.runs.death_counts read, each optional (older records lack end, hp, max_hp and friendly).",
+  "type": "object",
+  "required": ["v"],
+  "$defs": {
+    "num_or_null": {"type": ["number", "null"]}
+  },
+  "properties": {
+    "v": {"type": "integer", "minimum": 1},
+    "end": {"type": ["string", "null"]},
+    "party": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hp": {"$ref": "#/$defs/num_or_null"},
+          "max_hp": {"$ref": "#/$defs/num_or_null"},
+          "downed": {"type": ["integer", "null"], "minimum": 0},
+          "died": {"type": ["boolean", "null"]}
+        }
+      }
+    },
+    "friendly": {
+      "type": "array",
+      "items": {"type": "object", "properties": {"dmg": {"$ref": "#/$defs/num_or_null"}}}
+    },
+    "consumables": {
+      "type": "object",
+      "properties": {"used": {"type": "array"}}
+    },
+    "position": {"type": "array", "items": {"type": "string"}}
+  }
+}

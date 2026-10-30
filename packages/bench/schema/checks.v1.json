@@ -32,7 +32,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "bundle, manifest, result and every facts/rolls/events line match their schemas"
+      "summary": "bundle, manifest, result and every facts/rolls/events/fights line match their schemas"
     },
     {
       "code": "F04",

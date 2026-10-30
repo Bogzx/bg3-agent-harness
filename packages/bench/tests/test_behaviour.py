@@ -174,11 +174,11 @@ def test_load_run_reads_session_chunks_in_time_order(tmp_path):
     )
     r = behaviour.load_run(d, SCS)
     assert (r.run_id, r.model, r.condition, r.sc["name"], r.valid) == ("r9", "opus", "c", "act1_gold_max", True)
-    assert len(r.facts) == 1 and r.fights is None
+    assert len(r.facts) == 1 and r.fights == []  # no fight: nothing missing
     assert [e["t"] for e in r.events] == [0, 1, 2, 50, 52, 53]
     m = behaviour.metrics(r, {})
     assert m["think_s"] == [] and m["first_stop_min"] == 25.0 and m["cap_min"] == 45
-    assert m["fights"] is None and m["consumables_used"] is None
+    assert m["fights"] == 0 and m["consumables_used"] == 0
 
 
 def test_card_folds_valid_runs_per_model():
@@ -372,3 +372,11 @@ def test_cli_run_prints_one_card(tmp_path, capsys):
     (tmp_path / "unknown").mkdir()
     write_run(tmp_path / "unknown" / "r", scenario="no_such_scenario")
     assert behaviour.main(["run", str(tmp_path / "unknown" / "r"), "--json"]) == 2
+
+
+def test_fight_fields_are_zero_without_a_fight_and_none_for_a_fight_without_its_log(tmp_path):
+    calm = behaviour.load_run(write_run(tmp_path / "calm"))
+    assert calm.fights == [] and behaviour.metrics(calm)["fights"] == 0
+    fought = write_run(tmp_path / "fought")
+    (fought / "facts.jsonl").write_text(json.dumps(ev(5, "combat_started")) + "\n")
+    assert behaviour.metrics(behaviour.load_run(fought))["fights"] is None

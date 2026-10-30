@@ -3,8 +3,8 @@
 recorded files.
 
 Descriptive, never part of a score. Each run's `metrics(run)` reads its facts.jsonl, rolls.jsonl, S*.events.jsonl
-and S*.fights.jsonl (the last only in a local run dir, not in a submission bundle: fight fields are then None); the
-card (`card(runs)`) folds the valid runs of each model. Every axis has its n and the run ids it is built from.
+and S*.fights.jsonl (the fight fields are None when the run fought but has no fight log: a bundle packed before
+bundles held it); the card (`card(runs)`) folds the valid runs of each model. Every axis has its n and the run ids it is built from.
 
 | axis | built from |
 |---|---|
@@ -83,7 +83,7 @@ class Run:
     facts: list[Json]
     rolls: list[Json] = field(default_factory=list)
     events: list[Json] = field(default_factory=list)
-    fights: list[Json] | None = None  # None: the run dir holds no fight log (a bundle)
+    fights: list[Json] | None = None  # None: the run fought but its dir holds no fight log
 
 
 def _jsonl(path: Path) -> list[Json]:
@@ -103,6 +103,7 @@ def load_run(d: Path, scenarios: Mapping[str, Json] | None = None) -> Run:
     res = json.loads((d / "result.json").read_text(encoding="utf-8"))
     scs = scenarios if scenarios is not None else pack.load_scenarios()
     fights = sorted(d.glob("S*.fights.jsonl"))
+    timeline = _jsonl(d / "facts.jsonl")
     return Run(
         res["run_id"],
         man["model"]["slug"],
@@ -110,10 +111,10 @@ def load_run(d: Path, scenarios: Mapping[str, Json] | None = None) -> Run:
         scs[man["scenario"]["name"]],
         bool(res["valid"]),
         res,
-        _jsonl(d / "facts.jsonl"),
+        timeline,
         _jsonl(d / "rolls.jsonl"),
         sorted((e for p in d.glob("S*.events.jsonl") for e in _jsonl(p)), key=lambda e: e.get("t") or 0),
-        [f for p in fights for f in _jsonl(p)] if fights else None,
+        [f for p in fights for f in _jsonl(p)] if fights or not _events(timeline, "combat_started") else None,
     )
 
 
