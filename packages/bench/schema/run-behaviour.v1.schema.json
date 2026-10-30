@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/run-behaviour.v1.schema.json",
+  "title": "One run's behaviour card v1",
+  "description": "How one run played, from its run dir or unpacked submission bundle: `python -m bg3bench.behaviour run DIR --json` (bg3bench.behaviour.run_card). Descriptive, never part of a score. `beh` is bg3bench.behaviour.metrics output, the per-model card's raw material. The fight-log fields (fights .. hp_end) are null on a bundle: it holds no fight log.",
+  "type": "object",
+  "required": ["schema", "run_id", "tool_calls", "calls_per_min", "harness_errors", "wiped", "beh"],
+  "additionalProperties": false,
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "count_or_null": {"type": ["integer", "null"], "minimum": 0},
+    "num": {"type": "number", "minimum": 0},
+    "num_or_null": {"type": ["number", "null"], "minimum": 0},
+    "names": {"type": "array", "items": {"type": "string"}}
+  },
+  "properties": {
+    "schema": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "tool_calls": {"$ref": "#/$defs/count", "description": "tool_call events over every play process's events log (beh.calls)"},
+    "calls_per_min": {"$ref": "#/$defs/num_or_null", "description": "tool_calls per minute of result.json wall_s, 2 decimals; null without a positive wall_s"},
+    "harness_errors": {"$ref": "#/$defs/count", "description": "failures bg3harness.runs classes as the harness's that the events logs show: runner events, the bg3 MCP server not connected, API errors, tool exceptions and timeouts, fairness leaks (not quick exits: runner-local files)"},
+    "wiped": {"type": "boolean", "description": "result.json deaths.wipes > 0, whatever the outcome"},
+    "beh": {
+      "type": "object",
+      "required": [
+        "run_id", "model", "scenario", "family", "valid", "outcome", "fought", "passed", "murders", "traders_killed",
+        "stole", "tried_to_steal", "pickpocket_attempts", "pickpocket_calls", "approval", "social", "moves", "path",
+        "downs", "revives", "fights", "consumables_used", "high_ground", "ends", "friendly_hits", "friendly_dmg",
+        "hp_end", "first_stop_min", "cap_min", "calls", "read", "screenshots", "hand", "think_s"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1, "description": "the manifest's model slug"},
+        "scenario": {"type": "string", "minLength": 1},
+        "family": {"type": ["string", "null"]},
+        "valid": {"type": "boolean"},
+        "outcome": {
+          "description": "a choice run's outcome (outcomes.json); label \"no decision\" when no entry holds; null: the scenario has no outcome map",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["label", "frame"],
+              "additionalProperties": false,
+              "properties": {"label": {"type": "string"}, "frame": {"type": ["string", "null"]}}
+            }
+          ]
+        },
+        "fought": {"type": "boolean"},
+        "passed": {"type": ["boolean", "null"]},
+        "murders": {
+          "type": ["array", "null"],
+          "items": {"type": "string"},
+          "description": "victims of the party's murders outside the task, once each; null: not counted (a fight scenario, or the goal wins any fight)"
+        },
+        "traders_killed": {"$ref": "#/$defs/names"},
+        "stole": {"type": "boolean"},
+        "tried_to_steal": {"type": "boolean"},
+        "pickpocket_attempts": {"$ref": "#/$defs/count"},
+        "pickpocket_calls": {"$ref": "#/$defs/count"},
+        "approval": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "companion -> the sum of its approval changes"},
+        "social": {
+          "type": "object",
+          "required": ["tried", "passed"],
+          "additionalProperties": false,
+          "properties": {"tried": {"$ref": "#/$defs/count"}, "passed": {"$ref": "#/$defs/count"}}
+        },
+        "moves": {
+          "type": "object",
+          "required": ["calls", "refused"],
+          "additionalProperties": false,
+          "properties": {"calls": {"$ref": "#/$defs/count"}, "refused": {"$ref": "#/$defs/count"}}
+        },
+        "path": {
+          "description": "the leader's path; null: the run recorded no positions",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["walked_m", "fast_travels", "longest_still_min"],
+              "additionalProperties": false,
+              "properties": {
+                "walked_m": {"$ref": "#/$defs/num"},
+                "fast_travels": {"$ref": "#/$defs/count"},
+                "longest_still_min": {"$ref": "#/$defs/num"}
+              }
+            }
+          ]
+        },
+        "downs": {"$ref": "#/$defs/count"},
+        "revives": {"$ref": "#/$defs/count"},
+        "fights": {"$ref": "#/$defs/count_or_null"},
+        "consumables_used": {"$ref": "#/$defs/count_or_null"},
+        "high_ground": {"$ref": "#/$defs/count_or_null"},
+        "ends": {"type": ["object", "null"], "additionalProperties": {"$ref": "#/$defs/count"}, "description": "fights by how they ended (wipe, ...)"},
+        "friendly_hits": {"$ref": "#/$defs/count_or_null"},
+        "friendly_dmg": {"$ref": "#/$defs/count_or_null"},
+        "hp_end": {"type": ["array", "null"], "items": {"type": "number", "minimum": 0, "maximum": 1}, "description": "the party's HP share at each fight's close"},
+        "first_stop_min": {"$ref": "#/$defs/num_or_null"},
+        "cap_min": {"$ref": "#/$defs/num"},
+        "calls": {"$ref": "#/$defs/count"},
+        "read": {"$ref": "#/$defs/count"},
+        "screenshots": {"$ref": "#/$defs/count"},
+        "hand": {"$ref": "#/$defs/count"},
+        "think_s": {"type": "array", "items": {"type": "number"}, "description": "every gap (seconds) from a tool result to the agent's next call"}
+      }
+    }
+  }
+}

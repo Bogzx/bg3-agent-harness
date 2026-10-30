@@ -23,7 +23,14 @@ or in a fight scenario is not counted, nor in a scenario whose goal wins any fig
 trader is someone the party traded with in this run (`trade_open.npc_uuid`), not the kill event's trader flag (it
 marks the windmill goblins too).
 
+One run's card (`run_card`, schema/run-behaviour.v1.schema.json), from a run dir or an unpacked submission bundle:
+its tool calls (and per minute of wall time), its harness errors, whether the party wiped, and its metrics as `beh`.
+The harness errors are the failures bg3harness.runs classes as the harness's that the events logs show (runner
+events, the bg3 MCP server not connected, API errors, tool exceptions and timeouts, fairness leaks); a quick exit is
+in runner-local files only and not counted.
+
     python -m bg3bench.behaviour RUN_DIR [RUN_DIR ...] [--out FILE]
+    python -m bg3bench.behaviour run RUN_OR_BUNDLE_DIR --json
 """
 
 from __future__ import annotations
@@ -40,12 +47,16 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from bg3harness import events, fairness, runs, triage
+
 from bg3bench import graders, methods, scenario, suite
 from bg3bench.submission import pack
 
 Json = dict[str, Any]
 
 OUTCOMES = suite.PACKAGE_ROOT / "outcomes.json"
+RUN_SCHEMA = 1
+RUN_SCHEMA_PATH = suite.PACKAGE_ROOT / "schema" / "run-behaviour.v1.schema.json"
 NO_DECISION = "no decision"
 MOVE_TOOLS = frozenset({"travel_to", "walk_toward", "move_to", "jump_to", "walk_to", "go_to", "regroup", "route"})
 READ_TOOLS = frozenset(
@@ -468,7 +479,83 @@ def card(rows: Iterable[Json], scenarios: Mapping[str, Json] | None = None) -> d
     return out
 
 
+def _stream_harness_errors(stream: Path) -> int:
+    """runs.stream_failures' harness failures over one play process's events log (stream: its Sxxx.jsonl path,
+    which need not exist): the bg3 MCP server not connected, API errors, tool exceptions and timeouts, leaks."""
+    n = 0
+    for ev in events.load_events(stream.with_suffix("")):
+        if ev.kind == "init":
+            n += sum(1 for m in ev.mcp or [] if m.partition(":")[0] == "bg3" and m.partition(":")[2] != "connected")
+        elif ev.api_error and ((ev.kind == "result" and ev.is_error) or ev.kind in ("text", "error")):
+            n += 1
+    calls, _ = triage.load_calls(stream)
+    for c in calls:
+        if c["name"] in fairness.NOT_GAME:
+            continue
+        for _step, msg in c["fails"]:
+            if runs.ARG_VALIDATION_RE.search(msg):
+                continue
+            n += bool(
+                runs.TOOL_EXCEPTION_RE.search(msg)
+                or runs.TIMEOUT_RE.search(msg.split(":", 1)[0])
+                or msg.startswith("TIMEOUT")
+            )
+    return n + sum(
+        len(hits) for rule, hits in fairness.audit_calls(calls).items() if fairness.RULES[rule][0] == fairness.LEAK
+    )
+
+
+def harness_errors(d: Path) -> int:
+    """The harness's failures the run's events logs show: its runner events (runs.event_failures' harness ones) and
+    each play process's stream failures."""
+    n = 0
+    for log in sorted(d.glob("S*.events.jsonl")):
+        stream = log.with_name(log.name[: -len(".events.jsonl")] + ".jsonl")
+        for ev in events.load_events(stream.with_suffix("")):
+            if ev.src != "harness":
+                continue
+            fault = runs.FAULT_KINDS.get(str((ev.detail or {}).get("fault")), ("", runs.UNKNOWN))
+            n += ev.kind in runs.HARNESS_EVENTS or (ev.kind == "fault" and fault[1] == runs.HARNESS)
+        n += _stream_harness_errors(stream)
+    return n
+
+
+def run_card(
+    d: Path, scenarios: Mapping[str, Json] | None = None, maps: Mapping[str, list[Json]] | None = None
+) -> Json:
+    """One run's card (schema/run-behaviour.v1.schema.json) from its dir or unpacked bundle."""
+    run = load_run(d, scenarios)
+    beh = metrics(run, maps)
+    wall = run.result.get("wall_s")
+    return {
+        "schema": RUN_SCHEMA,
+        "run_id": run.run_id,
+        "tool_calls": beh["calls"],
+        "calls_per_min": round(beh["calls"] / (wall / 60), 2) if wall and wall > 0 else None,
+        "harness_errors": harness_errors(d),
+        "wiped": ((run.result.get("deaths") or {}).get("wipes") or 0) > 0,
+        "beh": beh,
+    }
+
+
+def _run_main(argv: Sequence[str]) -> int:
+    ap = argparse.ArgumentParser(prog="python -m bg3bench.behaviour run", description=run_card.__doc__)
+    ap.add_argument("dir", type=Path, help="a run dir or an unpacked submission bundle")
+    ap.add_argument("--json", action="store_true", required=True, help="print the card as JSON (the only format)")
+    a = ap.parse_args(argv)
+    try:
+        doc = run_card(a.dir)
+    except (OSError, ValueError, KeyError) as e:
+        print(f"{a.dir}: not a readable run: {type(e).__name__}: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(json.dumps(doc, ensure_ascii=False) + "\n")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["run"]:
+        return _run_main(argv[1:])
     ap = argparse.ArgumentParser(prog="python -m bg3bench.behaviour", description=(__doc__ or "").splitlines()[0])
     ap.add_argument("run_dirs", nargs="+", type=Path)
     ap.add_argument("--out", type=Path)
