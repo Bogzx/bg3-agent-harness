@@ -661,11 +661,12 @@ def _recent(state_dir: Path, since: float, pattern: re.Pattern, until: float | N
     return out
 
 
-FIGHTS_RE = re.compile(r"^S\d{3,}\.fights\.jsonl$")
+FIGHTS_RE = re.compile(r"^S\d{3,}(?:-[rc]\d+)?\.fights\.jsonl$")  # play sessions and their resumes, as LATENCY_RE
 
 
 def death_counts(state_dir: Path, since: float, failures: list[dict], until: float | None = None) -> dict:
-    """Party downs and deaths in the run's fights (Sxxx.fights.jsonl, the MCP server's fight debriefs: party[].downed
+    """Party downs and deaths in the run's fights (Sxxx.fights.jsonl and a resume's Sxxx-cN / -rN.fights.jsonl, the MCP
+    server's fight debriefs: party[].downed
     and .died per fight) and Game Overs (the run's party_wipe failures). Downs or deaths outside a fight the
     debrief saw (a fall, a trap out of combat) are not observable in the logs and not counted."""
     fights = downs = deaths = 0
