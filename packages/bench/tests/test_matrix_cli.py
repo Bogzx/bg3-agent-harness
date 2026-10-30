@@ -380,6 +380,19 @@ def test_groups_merge_repeat_major(tmp_path):
     assert code == 0 and "5 jobs (4 paid), reserve $1.00" in out
 
 
+def test_order_cell_runs_every_repeat_of_a_cell_before_the_next(tmp_path):
+    m = matrix_cli.load(matrix_file(tmp_path, 'order = "cell"\n' + GROUPS), fake_repo(tmp_path))
+    assert [(j["model"], j["condition"], j["repeat"]) for j in m["jobs"]] == [
+        ("anthropic/claude-opus-5.5", "rules", 1),
+        ("anthropic/claude-opus-5.5", "rules", 2),
+        ("anthropic/claude-opus-5.5", "rules+coaching@1a2b3c4d", 1),
+        ("anthropic/claude-opus-5.5", "rules+coaching@1a2b3c4d", 2),
+        ("claude-opus-5-5", "rules+coaching@1a2b3c4d", 1),
+    ]
+    with pytest.raises(matrix_cli.MatrixFileError, match="order must be one of repeat, cell"):
+        matrix_cli.load(matrix_file(tmp_path, 'order = "scenario"\n' + GROUPS), fake_repo(tmp_path / "b"))
+
+
 def test_the_pilot_matrix_loads_in_this_repo():
     repo = Path(__file__).resolve().parents[3]
     m = matrix_cli.load(repo / "packages" / "bench" / "matrices" / "pilot-2026-10-22.toml", repo)

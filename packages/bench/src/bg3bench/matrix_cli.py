@@ -9,6 +9,7 @@ The matrix file (paths relative to the repo):
     repeats = 3
     allow_gaps = false                                # true: a pilot with conditions a run can't play exactly yet
     allow_unverified = false                          # true: profiles whose status is "offline" (never played live)
+    order = "repeat"                                  # or "cell": every repeat of a cell before the next cell
 
     [budget]
     file = "runtime/budget.json"                      # the machine's shared budget (the default)
@@ -21,6 +22,10 @@ every file (bench.matrix).
 Cells that differ by model (e.g. 3 paid runs × 2 conditions plus 1 subscription run) go in `[[group]]` tables, each
 with its own models, scenarios, conditions and repeats, instead of the top-level four. The groups' jobs merge
 repeat-major (every group's repeat 1 first).
+
+`order = "cell"` runs every repeat of a (model, scenario, condition) cell before the next cell, the cells in the file's
+order (groups, then models, scenarios, conditions as listed): a budget that runs out leaves whole cells, the last
+one short at most, instead of every cell short of its repeats.
 
 Each profile is checked as the run will load it (bg3harness.profiles.load). One whose status is "unsupported" is
 refused; one that has never played live ("offline", the default) only with allow_unverified.
@@ -66,6 +71,7 @@ BUDGET = "runtime/budget.json"
 SESSIONS = Path("runtime/sessions")
 SCENARIOS = Path("packages/bench/scenarios")  # the v2 set
 GROUP_KEYS = ("models", "scenarios", "conditions", "repeats")
+ORDERS = ("repeat", "cell")
 START_STATES = "start-states"
 
 
@@ -182,7 +188,14 @@ def load(path: str | Path, repo: Path) -> dict:
     if len({j["id"] for j in jobs}) != len(jobs):
         raise MatrixFileError(f"{path}: duplicate jobs: two groups share a model, scenario and condition")
     jobs = [j for j in jobs if j["scenario"] not in skipped]
-    jobs.sort(key=lambda j: j["repeat"])  # stable: repeat-major across groups
+    order = raw.get("order", "repeat")
+    if order not in ORDERS:
+        raise MatrixFileError(f"{path}: order must be one of {', '.join(ORDERS)}")
+    if order == "cell":
+        cells = {(j["model"], j["scenario"], j["condition"]): i for i, j in reversed(list(enumerate(jobs)))}
+        jobs.sort(key=lambda j: (cells[j["model"], j["scenario"], j["condition"]], j["repeat"]))
+    else:
+        jobs.sort(key=lambda j: j["repeat"])  # stable: repeat-major across groups
     for j in jobs:
         if j["client"] in matrix.PAID_CLIENTS and j["max_cost"] is None:
             raise MatrixFileError(f"{path}: {j['client']} spends money: give budget.max_cost for {j['scenario']}")

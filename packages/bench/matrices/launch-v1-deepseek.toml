@@ -1,22 +1,30 @@
-# Launch campaign v1, DeepSeek V4.1 Flash through pi and DeepSeek's API: the 8 scored scenarios x 3 runs = 24 runs
-# (crash_site_grove, act1_goblin_camp_no_fight, act1_gold_1000, act1_level_3, fight_act1_grove_gate,
-# fight_act1_windmill, fight_act2_balthazar, fight_act2_moonrise_assault).
+# Launch campaign v1, DeepSeek V4.1 Flash through pi and DeepSeek's API: 6 of the 8 scored scenarios x 3 runs = 18
+# runs within runtime/budget-deepseek.json's $2.80 (no new money). 6 = the fewest for a ranked model (results:
+# valid runs in ceil(2/3 x 8) scored scenarios): the cheapest six. Left out: crash_site_grove ($0.35 per run when
+# its cost cap stopped it at 41 min) and act1_gold_1000 (never played; 40 min guessed, ~$0.28).
+# Cell by cell (order = "cell"): a budget that runs out leaves whole cells. The big reserves first: a job starts only
+# if spent + its max_cost fits the cap, so the cheapest reserve (fight_act1_grove_gate) goes last.
+# Estimate at DeepSeek's off-peak prices (half; Beijing weekdays outside 09-12 and 14-18, all weekend), per run:
+# balthazar $0.031 (1 run), level_3 $0.192 (1 run), windmill $0.077 (3 runs), moonrise $0.068 and grove_gate
+# $0.045 (never played: 15 and 10 min x $0.0045/min, the short fight runs' rate), goblin camp $0.24 (never played:
+# 35 min x $0.0069/min, the long runs' rate) = $1.96 for the 18 runs, $0.84 under the cap. At peak prices ($3.92) it
+# doesn't fit: with a weekday's mix (7 of 24 h peak, ~$2.36) the matrix stops before grove_gate's first run (5 whole
+# cells); all at peak, inside moonrise's cell (3 whole cells).
 # max_cost: each scenario's time cap x $0.0123 per minute (pilot diverse-2026-10-25, doubled for peak-hour prices)
-# x 1.25. Estimate $3.60 off-peak, $7.30 at peak prices, $17 if every run played its whole cap at peak.
+# x 1.25, as before.
 name = "launch-v1-deepseek"
 allow_gaps = false
 allow_unverified = false
+order = "cell"
 
 models = ["profiles/deepseek-flash.toml"]
 scenarios = [
-  "crash_site_grove",
-  "act1_goblin_camp_no_fight",
-  "act1_gold_1000",
-  "act1_level_3",
-  "fight_act1_grove_gate",
-  "fight_act1_windmill",
   "fight_act2_balthazar",
+  "act1_level_3",
+  "fight_act1_windmill",
   "fight_act2_moonrise_assault",
+  "act1_goblin_camp_no_fight",
+  "fight_act1_grove_gate",
 ]
 conditions = ["rules"]
 repeats = 3
@@ -25,9 +33,7 @@ repeats = 3
 file = "runtime/budget-deepseek.json"
 
 [budget.max_cost]
-crash_site_grove = 0.92
 act1_goblin_camp_no_fight = 0.69
-act1_gold_1000 = 0.69
 act1_level_3 = 0.92
 fight_act1_grove_gate = 0.46
 fight_act1_windmill = 0.92

@@ -22,8 +22,8 @@ the matrix: the budget can't be enforced past it until a person fixes `spent`. A
 not even one that crashed or was interrupted.
 
 Invalid runs (results.validity: runner error, harness failure, operator) are rerun, at most `max_reruns` (2) times
-per job; then the job is `gave_up`. Order: repeat 1 of every (model, scenario, condition) first, then repeat 2, ...
-so a stopped matrix has even coverage. `run_one(job) -> RunResult` does one run (adapters/legacy_cli.py today).
+per job; then the job is `gave_up`. Order: the plan's (repeat 1 of every (model, scenario, condition) first, then
+repeat 2, ... so a stopped matrix has even coverage; or cell by cell, matrix_cli's `order = "cell"`), a rerun at once. `run_one(job) -> RunResult` does one run (adapters/legacy_cli.py today).
 `stopped()` (the host's operator stop: a signal or runtime/STOP) is asked before each run: once it says so, no new
 run starts and the matrix stops (`stopped`); the run it interrupted is recorded by its own result.
 `disk(job)` (bg3harness.diskguard.start_refusal on the runtime filesystem) is asked before each run too: too little
