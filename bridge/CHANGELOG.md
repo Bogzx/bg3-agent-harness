@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-30: a give the game refuses fails; get_character shows status names only
+
+- manage_inventory op=give: when the game leaves the item with the giver (no error, no move: a story item), the
+  give fails after its 8 s wait with "the game kept it with <giver>: it can't be handed over" instead of
+  "TIMEOUT — timed out" (mod act.transfer on_timeout).
+- get_character shows each status by the name the UI shows, without the engine's status id, on a party member's
+  sheet and on an examined character, as look_at already did. It served ids like DIFFICULT_TERRAIN_DEEPWATER.
+
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 
 - feed_gale donates through the window's DonateItemsCommand, clicks the window's X (Gale absorbs the item when it
