@@ -1,7 +1,9 @@
 # pyright: basic
 import json
+import tarfile
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from bg3bench import behaviour
@@ -289,3 +291,84 @@ def test_fight_ends_friendly_fire_and_hp_at_the_close():
     assert behaviour.fight_fields(None) == {"ends": None, "friendly_hits": None, "friendly_dmg": None, "hp_end": None}
     c = behaviour.card([behaviour.metrics(run("fight_act1_windmill", fights=fights), {})], SCS)["m"]["fight_care"]
     assert (c["wipes"], c["friendly_hits"], c["friendly_dmg"], c["hp_end_median"]) == (1, 2, 10, 0.38)
+
+
+RUN_SCHEMA = jsonschema.Draft202012Validator(json.loads(behaviour.RUN_SCHEMA_PATH.read_text()))
+BUNDLES = Path(__file__).parent / "fixtures" / "submission"
+
+
+def write_run(d, events=(), result=None, scenario="act1_gold_max"):
+    d.mkdir()
+    (d / "manifest.json").write_text(json.dumps({"model": {"slug": "opus"}, "scenario": {"name": scenario}}))
+    (d / "result.json").write_text(json.dumps({"run_id": "r1", "valid": True, **(result or {})}))
+    (d / "S001.events.jsonl").write_text(
+        "".join(json.dumps({"v": 1, "seq": i, **e}) + "\n" for i, e in enumerate(events))
+    )
+    return d
+
+
+def test_run_card_of_an_unpacked_bundle(tmp_path):
+    with tarfile.open(BUNDLES / "fight_act2_balthazar.bundle.tar.gz") as tar:
+        tar.extractall(tmp_path, filter="data")
+    card = behaviour.run_card(tmp_path)
+    RUN_SCHEMA.validate(card)
+    assert (card["tool_calls"], card["calls_per_min"], card["harness_errors"], card["wiped"]) == (45, 6.24, 0, False)
+    assert card["beh"]["run_id"] == card["run_id"] and card["beh"]["calls"] == 45
+    assert card["beh"]["fights"] is None and card["beh"]["hp_end"] is None  # a bundle holds no fight log
+
+
+def test_harness_errors_follow_the_runs_classes(tmp_path):
+    def call(t, cid, tool):
+        return {"t": t, "src": "client", "kind": "tool_call", "call_id": cid, "tool": tool}
+
+    def result(t, cid, text, **kw):
+        return {"t": t, "src": "client", "kind": "tool_result", "call_id": cid, "text": text, **kw}
+
+    evs = [
+        {"t": 0, "src": "harness", "kind": "session_start"},
+        {"t": 1, "src": "client", "kind": "init", "mcp": ["bg3:failed", "other:failed"]},  # 1: bg3 only
+        call(2, "a", "look"),
+        result(3, "a", "Error executing tool look: boom", is_error=True),  # 1: a tool exception
+        call(4, "b", "end_combat_report"),
+        result(
+            5,
+            "b",
+            "Error executing tool end_combat_report: 1 validation error for end_combat_reportArguments",
+            is_error=True,
+        ),  # 0: the agent's arguments
+        call(6, "c", "read_all"),
+        result(7, "c", "1. manage_inventory: TIMEOUT — timed out"),  # 1: a step's timeout
+        call(8, "d", "use_item"),
+        result(9, "d", "FAILED: no such item"),  # 0: the game said no (unknown class)
+        {"t": 10, "src": "client", "kind": "result", "is_error": True, "api_error": True, "text": "API Error: 529"},
+        {"t": 11, "src": "harness", "kind": "fault", "detail": {"fault": "crash"}},  # 1
+        {"t": 12, "src": "harness", "kind": "fault", "detail": {"fault": "agent_hang"}},  # 0: unknown class
+        {"t": 13, "src": "harness", "kind": "game_oom", "detail": {}},  # 1
+        {"t": 14, "src": "harness", "kind": "milestone", "detail": {}},  # 0
+    ]
+    assert behaviour.harness_errors(write_run(tmp_path / "run", evs)) == 6
+
+
+def test_run_card_wiped_and_calls_per_min(tmp_path):
+    evs = [{"t": 1, "src": "client", "kind": "tool_call", "call_id": "a", "tool": "look"}]
+    wiped = behaviour.run_card(write_run(tmp_path / "w", evs, {"wall_s": 30, "deaths": {"wipes": 1}}))
+    RUN_SCHEMA.validate(wiped)
+    assert (wiped["tool_calls"], wiped["calls_per_min"], wiped["wiped"]) == (1, 2.0, True)
+    bare = behaviour.run_card(write_run(tmp_path / "b", evs, {"wall_s": None}))
+    assert (bare["calls_per_min"], bare["wiped"]) == (None, False)
+    with pytest.raises(jsonschema.ValidationError):
+        RUN_SCHEMA.validate({**bare, "extra": 1})  # closed
+    with pytest.raises(jsonschema.ValidationError):
+        RUN_SCHEMA.validate({**bare, "beh": {**bare["beh"], "extra": 1}})
+
+
+def test_cli_run_prints_one_card(tmp_path, capsys):
+    d = write_run(tmp_path / "run", [{"t": 1, "src": "client", "kind": "tool_call", "call_id": "a", "tool": "look"}])
+    assert behaviour.main(["run", str(d), "--json"]) == 0
+    card = json.loads(capsys.readouterr().out)
+    RUN_SCHEMA.validate(card)
+    assert card["run_id"] == "r1" and card["tool_calls"] == 1
+    assert behaviour.main(["run", str(tmp_path / "missing"), "--json"]) == 2
+    (tmp_path / "unknown").mkdir()
+    write_run(tmp_path / "unknown" / "r", scenario="no_such_scenario")
+    assert behaviour.main(["run", str(tmp_path / "unknown" / "r"), "--json"]) == 2
