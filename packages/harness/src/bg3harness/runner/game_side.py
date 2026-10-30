@@ -205,7 +205,7 @@ class GameSide:
                 if owner is None or (host and host.casefold() == owner.casefold()):
                     renv.log(f"no save yet, but a new game is running (host '{host}'): playing on from here")
                     return None
-                raise SystemExit(f"a game is running with host '{host}', not this playthrough's '{owner}'")
+                raise game.NotOurGame(f"a game is running with host '{host}', not this playthrough's '{owner}'")
             renv.log("no save for this playthrough yet: leaving the game at the main menu (new game)")
             if not game.port_open():
                 self.launch_game(None)
@@ -270,8 +270,8 @@ class GameSide:
         if not use_menu:
             if game.port_open():
                 if not (self.owns_game() or self.opt.take_over or game.game_state() in MENU_STATES):
-                    raise SystemExit("would have to restart a game the runner didn't launch; "
-                                     "close it or pass --take-over")
+                    raise game.NotOurGame("would have to restart a game the runner didn't launch; "
+                                          "close it or pass --take-over")
                 self.kill_game()
             save = self.launch_and_load(save)
             self.state["loaded_save"] = save.folder
@@ -387,9 +387,9 @@ class GameSide:
         owned = self.owns_game() and self.state["loaded_save"] is not None
         if state == "Running" and game.server_ready():
             if first and not owned and not self.opt.take_over:
-                raise SystemExit("the game is running with a save loaded that the runner didn't load "
-                                 "(maybe your own playthrough). Quit to the main menu, close the game, or "
-                                 "pass --take-over.")
+                raise game.NotOurGame("the game is running with a save loaded that the runner didn't load "
+                                      "(maybe your own playthrough). Quit to the main menu, close the game, or "
+                                      "pass --take-over.")
             drift = self.restart_drift() if first else None
             if drift:
                 save = self.choose_save()

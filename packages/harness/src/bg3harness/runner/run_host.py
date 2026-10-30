@@ -57,7 +57,7 @@ import bg3harness
 from bg3harness import bg3le_buildinfo, client_setup, game_fingerprint, runs, spend
 from bg3harness import pins as hpins
 from bg3harness import recorder as hrec
-from bg3harness.game.io import Save
+from bg3harness.game.io import ForeignGameRunning, NotOurGame, Save
 from bg3harness.runner import agent_group
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
@@ -785,10 +785,12 @@ class LiveRunHost:
 
     def start(self, job: Json, sc: Json, run_dir: Path) -> HostStart:
         """The run's runner, reset, game at the scenario's start and kickoff. A start that fails forgets the run,
-        stops the game it brought up and raises RuntimeError (the runner's SystemExits too: an operator refusal
-        such as ensure_game's foreign game would otherwise end the process), so SessionRun records one invalid
-        attempt and the matrix reruns. A save start whose save didn't load (missing, or --take-over playing on
-        from another) fails before the kickoff. The nav files a failed start moved are put back."""
+        stops the game it brought up and raises RuntimeError (the runner's SystemExits too: they would otherwise end
+        the process), so SessionRun records one invalid attempt and the matrix reruns. A refusal before any play is
+        typed instead: the runner's launch refusals (game.io's LaunchBlocked, Bg3leStale) pass as they are, and its
+        NotOurGame stop (a game up that it didn't launch or load) becomes ForeignGameRunning. A save start whose save
+        didn't load (missing, or --take-over playing on from another) fails before the kickoff. The nav files a
+        failed start moved are put back."""
         want = renv.RUNTIME / "sessions" / run_dir.name
         if Path(run_dir).resolve() != want.resolve():  # facts.jsonl and the streams must land in the run dir
             raise ValueError(f"run dir {run_dir}: the runner writes runtime/sessions/<run> under {renv.RUNTIME}")
@@ -826,6 +828,8 @@ class LiveRunHost:
             finally:
                 restore_nav(nav_marker())
                 isolate_saves(saves_marker())
+            if isinstance(e, NotOurGame):
+                raise ForeignGameRunning(str(e.code)) from e
             if isinstance(e, SystemExit):
                 raise RuntimeError(f"start failed: {e.code}") from e
             raise
