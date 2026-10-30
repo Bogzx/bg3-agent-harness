@@ -178,6 +178,31 @@ def test_invalid_runs(change, reason):
     assert_valid("result.v1.schema.json", res)
 
 
+def test_an_invalid_result_names_its_cause():
+    # launch-v1-haiku act3_gold_max r2: invalid "harness_failure" with nothing saying it was a do_actions MCP timeout
+    _, records = load_series()
+    timeout = {"t": 1793383465.9, "kind": "tool_timeout", "class": "harness", "detail": "S001: do_actions: timed out"}
+    wipe = {"t": 1793383500.0, "kind": "party_wipe", "class": "agent", "detail": "S001: Game Over"}
+    rec = {**records[0], "harness_failures": 1, "failures": [timeout, wipe]}
+    res = results.from_record(rec, "r")
+    assert (res["invalid_reason"], res["invalid_cause"]) == (
+        "harness_failure",
+        [{"kind": "tool_timeout", "detail": "S001: do_actions: timed out", "t": 1793383465.9}],
+    )
+    assert_valid("result.v1.schema.json", res)
+    crash = results.from_record({**records[0], "harness_failures": 1, "session_invalid": "crash"}, "r")
+    assert crash["invalid_cause"] == [{"kind": "session_invalid", "detail": "crash", "t": None}]
+    noted = results.from_record({**records[0], "operator": [{"t": 1, "what": "reloaded by hand"}]}, "r")
+    assert noted["invalid_cause"] == [{"kind": "operator", "detail": "reloaded by hand", "t": 1}]
+    stopped = results.from_record({**records[0], "operator": "stop"}, "r")
+    assert stopped["invalid_cause"] == [{"kind": "operator", "detail": "stop", "t": None}]
+    off = results.from_record({**records[0], "off_route": ["DeepInfra"]}, "r")
+    assert off["invalid_cause"] == [{"kind": "off_route", "detail": "['DeepInfra']", "t": None}]
+    unseeded = results.from_record(records[0], "r", seed=7)
+    assert unseeded["invalid_cause"] == [{"kind": "unseeded", "detail": "scenario seed 7, applied None", "t": None}]
+    assert "invalid_cause" not in results.from_record(records[0], "r")  # a valid result has none
+
+
 def test_timeout_is_a_valid_failure_and_unknown_outcomes_raise():
     _, records = load_series()
     res = results.from_record({**records[0], "outcome": "timeout", "time_to_milestone_s": None}, "r")

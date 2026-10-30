@@ -63,6 +63,7 @@ class RunResult:
     charged: bool = False  # the runner already settled cost_usd with the budget file (or it isn't billed)
     score: float | None = None  # a maximise scenario's gain (results.py score.gain)
     refused: bool = False  # the host refused the start before any play: not a run attempt (invalid_reason: why)
+    invalid_cause: list[dict[str, Any]] | None = None  # an invalid run's result.json invalid_cause
 
 
 class RunOne(Protocol):

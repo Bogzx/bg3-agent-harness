@@ -11,7 +11,9 @@ bg3harness.runner.run_host.SaveWatch), a harness failure was classified (runs.py
 endpoint served it outside its profile's provider pin (`off_route`: the record's off_route, set by the session
 runner from bg3harness.profiles.off_route), or its scenario fixes a dice seed the game didn't apply
 (`unseeded`: the record's settings readout, game_settings.seed, has no applied seed or another one; live7 played its
-nautiloid unseeded).
+nautiloid unseeded). An invalid result names its cause (`invalid_cause`): the harness-class failures of the record
+(runs.py failures: kind, detail, t) and the session runner's `session_invalid`, the operator's notes, or the record
+field its reason was read from.
 
 Thinking time (`think_s`) is the model's own time from the record's `model_time.model_s` (bg3harness/model_time.py);
 realtime scenarios (D7) report it next to wall time, since the world runs while the model thinks. `luck` is
@@ -81,6 +83,34 @@ def validity(record: dict, seed: int | None = None) -> tuple[bool, str | None]:
     return True, None
 
 
+def _cause(kind: str, detail: object, t: object = None) -> dict:
+    return {"kind": kind, "detail": str(detail)[:300], "t": t if isinstance(t, (int, float)) else None}
+
+
+def invalid_cause(record: dict, reason: str | None, seed: int | None = None) -> list[dict]:
+    """The entries that made a record invalid for `reason` (validity's), [] for a valid one."""
+    if reason == "harness_failure":
+        out = [
+            _cause(f["kind"], f.get("detail"), f.get("t"))
+            for f in record.get("failures") or []
+            if f.get("class") == "harness"
+        ]
+        if record.get("session_invalid"):
+            out.append(_cause("session_invalid", record["session_invalid"]))
+        return out
+    if reason == "operator":
+        notes = record["operator"] if isinstance(record["operator"], list) else [record["operator"]]  # "stop" or notes
+        return [
+            _cause("operator", n.get("what", n), n.get("t")) if isinstance(n, dict) else _cause("operator", n)
+            for n in notes
+        ]
+    if reason == "unseeded":
+        return [_cause("unseeded", f"scenario seed {seed}, applied {applied_seed(record)}")]
+    if reason == "runner_error":
+        return [_cause("runner_error", record["reason"])] if record.get("reason") else []
+    return [_cause(reason, record[reason])] if reason else []  # foreign_save, off_route: the record's own field
+
+
 def _minutes_to_s(m: float | None) -> float | None:
     return None if m is None else round(m * 60, 1)
 
@@ -138,6 +168,8 @@ def from_record(
         out["score"] = score
     if pilot:
         out["pilot"] = list(pilot)
+    if not valid:
+        out["invalid_cause"] = invalid_cause(record, reason, seed)
     return out
 
 
