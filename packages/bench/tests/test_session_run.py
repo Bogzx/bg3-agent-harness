@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from bg3harness.game.io import SteamNotOffline
 from bg3harness.runs import METRIC_FIELDS
 from test_run_artifacts import assert_valid, readout
 
@@ -215,6 +216,44 @@ def test_a_failed_start_is_invalid_and_free(tmp_path):
     host.fail_start = False
     again = one(job())
     assert again.valid and again.run_id == f"{series}-r002" and host.started[0][2].name == f"{series}-r2"
+
+
+class RefusingHost(Host):
+    """The runner refuses its first `refusals` launches the way LiveRunHost passes them on (game.io.SteamNotOffline)."""
+
+    def __init__(self, scripts, refusals: int):
+        super().__init__(scripts)
+        self.refusals = refusals
+
+    def start(self, job: dict, sc: dict, run_dir: Path) -> Start:
+        if self.refusals:
+            self.refusals -= 1
+            raise SteamNotOffline("Steam isn't running")
+        return super().start(job, sc, run_dir)
+
+
+def test_a_start_the_runner_refused_is_not_an_attempt_and_stops_the_matrix_resumably(tmp_path):
+    # live 2026-10-30: Steam down after a reboot, two refused starts used up the job's reruns and it gave up
+    budget = tmp_path / "budget.json"
+    budget.write_text(json.dumps({"cap": 10.0, "spent": 0.0}))
+    host = RefusingHost([[("hang", 2)], [("hang", 2)], [("exited", 5)]], refusals=2)
+    mx = Matrix(tmp_path / "mx", run_one(tmp_path, host), budget, now=lambda: T0, sleep=lambda s: None)
+    mx.create("m", [job()])
+    why = "start refused: SteamNotOffline: Steam isn't running"
+    for _ in range(2):  # each refusal stops the matrix: the next start would be refused the same way
+        assert mx.run() == f"refused: {why}"
+        (st,) = mx.state().values()
+        assert st["status"] == "pending" and st["attempts"][-1]["result"]["refused"]
+        p = json.loads((tmp_path / "mx" / "progress.json").read_text())
+        assert (p["stop_reason"], p["runs"], p["gave_up"]) == (f"refused: {why}", 0, 0)
+    series = series_name("m", job())
+    recs = [json.loads(ln) for ln in (tmp_path / "sessions" / series / "runs.jsonl").read_text().splitlines()]
+    assert [(r["outcome"], r["reason"], r["cost_usd"]) for r in recs] == [("runner_error", why, 0.0)] * 2
+    # Steam is back: the job still has its 1 + max_reruns runs (two invalid ones, then a valid one)
+    assert mx.run() == matrix.FINISHED
+    (st,) = mx.state().values()
+    assert st["status"] == "done" and [a["result"]["valid"] for a in st["attempts"]] == [False] * 4 + [True]
+    assert json.loads(budget.read_text())["spent"] == 1.2  # three runs billed, the refusals cost nothing
 
 
 def test_an_edited_scenario_is_refused_by_its_series(tmp_path):

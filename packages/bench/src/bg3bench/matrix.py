@@ -29,6 +29,9 @@ run starts and the matrix stops (`stopped`); the run it interrupted is recorded 
 `disk(job)` (bg3harness.diskguard.start_refusal on the runtime filesystem) is asked before each run too: too little
 free space for the job's recording and video stops the matrix like the budget does (`disk: <why>`, no attempt
 recorded: a later `bench run` resumes it).
+A start the host refused before any play (`RunResult.refused`: the runner's own launch refusal, e.g. Steam not
+offline; no game, no agent, $0) is recorded but is not a run attempt: it never counts toward `max_reruns` and the
+matrix stops (`refused: <why>`), so a later `bench run` resumes the job once a person has fixed the host.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ SCHEMA = 1
 MAX_RERUNS = 2
 PAID_CLIENTS = spend.PAID_CLIENTS  # the clients billed per token (the others run on subscriptions)
 FINISHED, BUDGET, GUARD, COST_UNKNOWN, STOPPED = "finished", "budget", "guard", "cost unknown", "stopped"
-DISK = "disk"
+DISK, REFUSED = "disk", "refused"
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ class RunResult:
     invalid_reason: str | None = None
     charged: bool = False  # the runner already settled cost_usd with the budget file (or it isn't billed)
     score: float | None = None  # a maximise scenario's gain (results.py score.gain)
+    refused: bool = False  # the host refused the start before any play: not a run attempt (invalid_reason: why)
 
 
 class RunOne(Protocol):
@@ -206,11 +210,12 @@ class Matrix:
             return "interrupted"
         if any(a["result"]["valid"] for a in attempts):
             return "done"
-        return "gave_up" if len(attempts) > self.max_reruns else "pending"
+        runs = [a for a in attempts if not a["result"].get("refused")]
+        return "gave_up" if len(runs) > self.max_reruns else "pending"
 
     # ------------------------------------------------------------------ progress and budget
     def _progress(self, jobs: dict[str, dict], state: str, current: dict | None = None, stop: str | None = None):
-        results = [a["result"] for st in jobs.values() for a in st["attempts"] if a["result"] is not None]
+        results = [r for st in jobs.values() for a in st["attempts"] if (r := a["result"]) and not r.get("refused")]
         try:
             budget = read_budget(self.budget)
         except (OSError, ValueError):
@@ -265,7 +270,7 @@ class Matrix:
     # ------------------------------------------------------------------ the loop
     def run(self) -> str:
         """Run until every job is done or gave up, or a stop: returns FINISHED, BUDGET, COST_UNKNOWN, STOPPED,
-        'disk: <why>' or 'guard: <why>'."""
+        'disk: <why>', 'refused: <why>' or 'guard: <why>'."""
         jobs = self.state()
         for st in jobs.values():
             if st["status"] == "interrupted":
@@ -318,6 +323,9 @@ class Matrix:
             if result.cost_usd is None and not result.charged:
                 self._progress(self.state(), "stopped", stop=COST_UNKNOWN)
                 return COST_UNKNOWN
+            if result.refused:  # the next job would be refused the same way: stop until a person fixes the host
+                self._progress(self.state(), "stopped", stop=f"{REFUSED}: {result.invalid_reason}")
+                return f"{REFUSED}: {result.invalid_reason}"
 
 
 if __name__ == "__main__":  # pragma: no cover - python -m bg3bench.matrix
