@@ -378,6 +378,8 @@ class GameModel:
             for b in out["party"]:
                 b["in_combat"] = True
             out["combat"] = {"round": self.combat["round"], "current": self.combat["current"]}
+        if out["party"]:  # the first member is the avatar (the mod's DB_Avatars; scn.rename_avatar renames it)
+            out["party"][0]["avatar"] = True
         return out
 
     def op_inventory(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
