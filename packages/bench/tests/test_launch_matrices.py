@@ -4,13 +4,14 @@ and that every one plans as written: the Claude profiles are verified by the pil
 
 from __future__ import annotations
 
+import math
 import tomllib
 from pathlib import Path
 
 import pytest
 from bg3harness import profiles
 
-from bg3bench import matrix_cli, scenario
+from bg3bench import matrix_cli, results, scenario
 
 REPO = Path(__file__).resolve().parents[3]
 MATRICES = REPO / "packages" / "bench" / "matrices"
@@ -34,7 +35,9 @@ def raw(name: str) -> dict:
 def test_the_campaign_covers_every_family_with_saves_and_caps_per_scenario():
     sets = {m: set(raw(m)["scenarios"]) for m in ("haiku", "sonnet", "opus", "deepseek")}
     assert sets["haiku"] == sets["sonnet"] == SCORED | UNSCORED
-    assert sets["deepseek"] == sets["opus"] == SCORED
+    assert sets["opus"] == SCORED
+    # DeepSeek's $2.80: the fewest scored scenarios a ranked model needs
+    assert sets["deepseek"] < SCORED and len(sets["deepseek"]) == math.ceil(results.RANKED_SHARE * len(SCORED))
     families = set()
     for name in SCORED | UNSCORED:
         sc = scenario.load(MATRICES.parent / "scenarios" / f"{name}.json")
@@ -51,11 +54,16 @@ def test_the_campaign_covers_every_family_with_saves_and_caps_per_scenario():
         assert raw(m)["budget"]["shared"] == ["runtime/budget-anthropic.json"]
 
 
-def test_the_deepseek_matrix_plans_24_jobs_repeat_major():
+def test_the_deepseek_matrix_plans_18_jobs_cell_by_cell_cheapest_reserve_last():
     m = matrix_cli.load(MATRICES / "launch-v1-deepseek.toml", REPO)
-    assert not m["skipped"] and len(m["jobs"]) == 24
-    assert [j["repeat"] for j in m["jobs"]] == sorted(j["repeat"] for j in m["jobs"])
+    assert not m["skipped"] and len(m["jobs"]) == 18
+    assert [(j["scenario"], j["repeat"]) for j in m["jobs"]] == [
+        (s, r) for s in raw("deepseek")["scenarios"] for r in (1, 2, 3)
+    ]
     assert {j["client"] for j in m["jobs"]} == {"pi"} and all(j["max_cost"] for j in m["jobs"])
+    assert m["budget"] == REPO / "runtime" / "budget-deepseek.json" and m["shared"] == []
+    reserves = [j["max_cost"] for j in m["jobs"]]
+    assert reserves == sorted(reserves, reverse=True)  # a job starts only if spent + its reserve fits the cap
 
 
 def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():
