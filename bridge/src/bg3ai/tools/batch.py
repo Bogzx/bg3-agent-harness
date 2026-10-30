@@ -37,7 +37,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
     [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12","unless":"hp_below:30"},{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"},{"tool":"end_turn"}]
     Allowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
-    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step. ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).
+    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step; and before a step once the call has run 90 s (time budget, a wait cut to fit). ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
     note: memory log line(s) appended to your session log at once, as note() does (no extra turn)."""
     t0 = time.monotonic()
@@ -53,6 +53,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
         return f"FAILED: {e}"
     _hold_for_early_walks(None)  # a batch issued in a walk's last seconds starts after the arrival
     ex = queueing._make_executor(None, ignore)
+    ex.budget_s = actq.BATCH_BUDGET_S  # the client waits for this call; a queue runs while the agent plays on
     ex.watcher.baseline()
     it = iter(steps)
     pending: list = []
