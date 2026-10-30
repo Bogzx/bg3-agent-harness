@@ -346,3 +346,15 @@ def test_add_video_sets_the_envelopes_video_and_keeps_the_run_hash(tmp_path, cap
     assert "not a YouTube video" in capsys.readouterr().err
     with pytest.raises(SystemExit):
         pack.main([str(r), out, "--add-video"])  # --youtube is required
+
+
+def test_fight_logs_are_packed_scrubbed_and_not_record_files(tmp_path):
+    d = run_dir(tmp_path)
+    plain = do_pack(d, tmp_path / "plain").envelope
+    (d / "S001.fights.jsonl").write_text(json.dumps({"v": 3, "note": "/home/someone/x.lsv"}) + "\n")
+    (d / "S001-fix.fights.jsonl").write_text('{"v": 3}\n')  # not a play process's
+    p = do_pack(d, tmp_path / "out")
+    names = {f["name"] for f in p.envelope["files"]}
+    assert names - {f["name"] for f in plain["files"]} == {"S001.fights.jsonl"}
+    assert "<path>/x.lsv" in (p.bundle_dir / "S001.fights.jsonl").read_text()
+    assert p.envelope["run_hash"] == plain["run_hash"]

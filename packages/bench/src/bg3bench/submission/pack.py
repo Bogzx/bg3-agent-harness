@@ -2,7 +2,8 @@
 """Pack a finished run into a submission bundle: <out>/bundle/ (the files + bundle.json) and <out>/bundle.tar.gz.
 
 The bundle holds what the graders, the luck number and the checks read (BUNDLE_FILES, every play process's
-normalized events log, and the renderer's render.json and frames.tar once they exist), each through the scrub. It
+normalized events log and its fight log when it has one, and the renderer's render.json and frames.tar once they
+exist), each through the scrub. It
 leaves out the raw client streams (the only files with hidden reasoning), the client's session files, logs, triage,
 metrics, screenshots, memory and saves. The archive is deterministic (sorted, fixed times and owners).
 
@@ -77,6 +78,7 @@ def bundle_files(run_dir: Path) -> list[str]:
     """The run dir's files that go into a bundle, sorted."""
     names = [n for n in (*REQUIRED, *OPTIONAL) if (run_dir / n).is_file()]
     names += [p.name for p in run_dir.iterdir() if p.is_file() and EVENTS.fullmatch(p.name)]
+    names += [p.name for p in run_dir.iterdir() if p.is_file() and bundle.FIGHTS.fullmatch(p.name)]
     return sorted(names)
 
 

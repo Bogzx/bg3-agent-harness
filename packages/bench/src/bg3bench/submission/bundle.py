@@ -7,7 +7,8 @@ evidence video's id line.
 
 The run hash fingerprints the run's record (RECORD_FILES and every play process's events log, as packed: scrubbed),
 the files that exist before the evidence video is rendered: the renderer is given it and draws it in the video's
-strip, and the validator recomputes it. It is the sha256 of the canonical JSON (as bundle.json's) of the list
+strip, and the validator recomputes it. A play process's fight log (FIGHTS, optional: the MCP server's fight debriefs)
+is not a record file: behaviour reads it, no grade or check does, and bundle.json's files[] covers it. It is the sha256 of the canonical JSON (as bundle.json's) of the list
 [{"name", "sha256", "bytes"}] of the record files sorted by name: bundle.json's files[] without the render files.
 """
 
@@ -27,6 +28,7 @@ ENVELOPE = "bundle.json"
 # The run's record: what the graders, the luck number and the consistency checks read.
 RECORD_FILES = ("manifest.json", "result.json", "facts.jsonl", "rolls.jsonl")
 EVENTS = re.compile(r"S\d{3,}(?:-[rc]\d+)?\.events\.jsonl")  # one events log per play process
+FIGHTS = re.compile(r"S\d{3,}(?:-[rc]\d+)?\.fights\.jsonl")  # a play process's fight log, next to its events log
 
 MAX_TOTAL_BYTES = 8 * 1024 * 1024  # every file, bundle.json included: the site refuses a bigger upload
 MAX_FILE_BYTES = 10 * 1024 * 1024

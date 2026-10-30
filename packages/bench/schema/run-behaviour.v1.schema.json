@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/run-behaviour.v1.schema.json",
   "title": "One run's behaviour card v1",
-  "description": "How one run played, from its run dir or unpacked submission bundle: `python -m bg3bench.behaviour run DIR --json` (bg3bench.behaviour.run_card). Descriptive, never part of a score. `beh` is bg3bench.behaviour.metrics output, the per-model card's raw material. The fight-log fields (fights .. hp_end) are null on a bundle: it holds no fight log.",
+  "description": "How one run played, from its run dir or unpacked submission bundle: `python -m bg3bench.behaviour run DIR --json` (bg3bench.behaviour.run_card). Descriptive, never part of a score. `beh` is bg3bench.behaviour.metrics output, the per-model card's raw material. The fight-log fields (fights .. hp_end) are null when the run fought but has no fight log (a bundle packed before bundles held S*.fights.jsonl); a run that never fought has them at 0 / empty.",
   "type": "object",
   "required": ["schema", "run_id", "tool_calls", "calls_per_min", "harness_errors", "wiped", "beh"],
   "additionalProperties": false,

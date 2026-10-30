@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from test_submission_pack import mp4
 
-from bg3bench import facts
+from bg3bench import behaviour, facts
 from bg3bench.submission import bundle, codes, consistency, pack, validate
 
 FIXTURES = Path(__file__).parent / "fixtures" / "submission"
@@ -799,3 +799,50 @@ def test_f01_holds_the_total_to_8_mib(tmp_path):
         (tmp_path / "facts.jsonl").write_bytes(b"x" * n)
         got = validate.f01_files(tmp_path, {"files": [{"name": "facts.jsonl", "bytes": n}]})
         assert got[0] is ok, got
+
+
+FIGHT_REC = {
+    "v": 3,
+    "session": "S001",
+    "end": "combat_ended",
+    "party": [{"name": "Tav", "hp": 10, "max_hp": 20, "downed": 0, "died": False}],
+    "friendly": [{"caster": "Gale", "target": "Tav", "dmg": 4, "ally": False}],
+    "consumables": {"used": ["Potion of Healing"], "unused": []},
+    "position": ["our_high_ground"],
+}
+
+
+def packed_with_fights(tmp_path: Path, rows: list, name: str = "S001.fights.jsonl") -> tuple[Path, Path]:
+    d = good_run(tmp_path, FIGHT)
+    (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    return d, pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+
+
+def test_a_fight_log_is_packed_accepted_and_read_by_the_run_card(tmp_path):
+    d, bdir = packed_with_fights(tmp_path, [FIGHT_REC])
+    env = env_of(bdir)
+    assert "S001.fights.jsonl" in [f["name"] for f in env["files"]]
+    files = {p.name: p.read_bytes() for p in bdir.iterdir() if p.name != bundle.ENVELOPE}
+    assert env["run_hash"] == bundle.run_hash({n: b for n, b in files.items() if n != "S001.fights.jsonl"})
+    v = run(bdir, release_for(d))  # render.json was made before the fight log was there: not a record file
+    assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is False]
+    beh = behaviour.run_card(bdir)["beh"]
+    assert (beh["fights"], beh["ends"], beh["hp_end"]) == (1, {"combat_ended": 1}, [0.5])
+    assert (beh["friendly_hits"], beh["friendly_dmg"], beh["consumables_used"], beh["high_ground"]) == (1, 4, 1, 1)
+
+
+@pytest.mark.parametrize(
+    "rows, name",
+    [
+        ([FIGHT_REC], "S001-c1.fights.jsonl"),  # no S001-c1.events.jsonl in the bundle
+        ([FIGHT_REC | {"party": "x"}], "S001.fights.jsonl"),
+        ([{k: v for k, v in FIGHT_REC.items() if k != "v"}], "S001.fights.jsonl"),
+        ([FIGHT_REC | {"friendly": [{"dmg": "4"}]}], "S001.fights.jsonl"),
+        ([[1, 2]], "S001.fights.jsonl"),
+    ],
+)
+def test_a_bad_fight_log_fails_f03(tmp_path, rows, name):
+    d, bdir = packed_with_fights(tmp_path, rows, name)
+    v = run(bdir, release_for(d))
+    assert not v.accepted and v.failed == ["F03"], [(r.code, r.detail) for r in v.checks if r.ok is False]
