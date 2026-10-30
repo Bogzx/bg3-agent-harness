@@ -139,6 +139,11 @@ class NotOurGame(SystemExit):
     retry loop swallows it; a bench start reports it as ForeignGameRunning (run_host)."""
 
 
+class OperatorStop(LaunchBlocked):
+    """An operator stop (a signal, runtime/STOP) refused a run's start before its agent: no run played, and the
+    stop's owner decides when runs start again."""
+
+
 class GameDied(RuntimeError):  # noqa: N818  (play.py's names)
     """The game died while the runner waited on it (crash, crash reporter, bg3 gone, dead debug port, launcher exit)."""
 
