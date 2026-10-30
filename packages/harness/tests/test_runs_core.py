@@ -253,6 +253,20 @@ class Metrics(TmpDir):
             runs.death_counts(self.tmp, time.time() + 60, []), {"fights": 0, "downs": 0, "deaths": 0, "wipes": 0}
         )
 
+    def test_deaths_in_resumed_sessions(self):
+        """A resumed session's MCP server writes its own fight log (S001-c1, S001-r1: BG3AI_METRICS_PATH's base); the
+        -fix and -keeper sessions play no fights."""
+        t0 = time.time() - 10
+        _stream(self.tmp / "S001.fights.jsonl", {"party": [{"name": "Tav", "downed": 1, "died": False}]})
+        _stream(self.tmp / "S001-c1.fights.jsonl", {"party": [{"name": "Tav", "downed": 2, "died": True}]})
+        _stream(self.tmp / "S001-r1.fights.jsonl", {"party": [{"name": "Gale", "downed": 1, "died": False}]})
+        _stream(self.tmp / "S001-keeper.fights.jsonl", {"party": [{"name": "Gale", "downed": 9, "died": True}]})
+        self.assertEqual(runs.death_counts(self.tmp, t0, []), {"fights": 3, "downs": 4, "deaths": 1, "wipes": 0})
+        for name in ("S001.fights.jsonl", "S012-c3.fights.jsonl", "S001-r2.fights.jsonl"):
+            self.assertRegex(name, runs.FIGHTS_RE)
+        for name in ("S001-keeper.fights.jsonl", "S001-fix.fights.jsonl", "S001-c1.fights.jsonl.tmp"):
+            self.assertNotRegex(name, runs.FIGHTS_RE)
+
     def test_fairness_flags(self):
         s = _stream(
             self.tmp / "S001.jsonl",
