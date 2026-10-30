@@ -96,6 +96,24 @@ def test_companions_do_not_count_the_avatar_or_summons():
     assert grade({"companions": {"gte": 3}}, legacy)["t_pass_s"] == 12
 
 
+def test_the_settings_marks_avatar_is_no_companion():
+    # live snapshots carry no avatar flag (the mod's state.status): the settings mark names the avatar
+    party = [member("Wyll"), member("Shadowheart"), member("Tav")]
+    named = {"v": 1, "kind": "mark", "t": 1000.2, "game_t": 0.2, "mark": "settings", "detail": {"avatar_name": "Tav"}}
+    assert grade({"companions": {"gte": 3}}, run(snap(10, party=party)))["passed"]  # the old count
+    assert not grade({"companions": {"gte": 3}}, run(named, snap(10, party=party)))["passed"]
+    assert grade({"companions": {"gte": 3}}, run(named, snap(10, party=[*party, member("Karlach")])))["t_pass_s"] == 10
+
+
+def test_a_merchant_dialogue_does_not_end_the_karlach_choice():
+    # launch-v1-haiku choice_act1_karlach (2026-10-30): reached at game_t 22.6 after talking to Cyrel only, since
+    # companions >= 3 counted Tav (no avatar flag) beside Wyll and Shadowheart
+    goal = json.loads((ROOT / "packages" / "bench" / "scenarios" / "choice_act1_karlach.json").read_text())["goal"]
+    tl = facts.load(TL / "karlach_haiku_merchant.facts.jsonl")
+    assert [r["scene"][:5] for r in tl if r.get("ev") == "choice"] == ["Cyrel"] * 3
+    assert not grade(goal, tl)["passed"] and graders.verdict(goal, tl) is None
+
+
 def test_combat_outcome_fixture_one_won_one_wipe():
     tl = facts.load(TL / "fights.facts.jsonl")
     assert grade({"combats_won": {"gte": 1}}, tl)["t_pass_s"] == 30
