@@ -113,6 +113,22 @@ def test_invalid_runs_are_rerun_at_most_twice(tmp_path):
     assert json.loads(budget.read_text())["spent"] == 7 * 1.0 + 4 * 0.5  # invalid runs still cost money
 
 
+def test_a_refused_start_is_no_attempt_and_stops_until_resumed(tmp_path):
+    jobs = matrix.plan(MODELS[1:], ["grove"], ["rules"], 1)
+    (jid,) = [j["id"] for j in jobs]
+    refused = RunResult(None, False, False, 0.0, "start refused: SteamNotOffline: no Steam", True, refused=True)
+    bad = RunResult("x", False, False, 0.5, "runner_error")
+    run = FakeRun({(jid, 1): refused, (jid, 2): refused, (jid, 3): bad, (jid, 4): bad})
+    m, budget, _ = make(tmp_path, run, jobs=jobs)
+    assert m.run() == "refused: start refused: SteamNotOffline: no Steam"
+    assert m.run() == "refused: start refused: SteamNotOffline: no Steam" and run.calls == [jid] * 2
+    assert m.state()[jid]["status"] == "pending" and progress(tmp_path)["runs"] == 0
+    assert m.run() == matrix.FINISHED and run.calls == [jid] * 5  # the refusals took none of its 1 + 2 runs
+    assert m.state()[jid]["status"] == "done" and json.loads(budget.read_text())["spent"] == 2.0
+    p = progress(tmp_path)
+    assert (p["done"], p["gave_up"], p["runs"], p["invalid_runs"]) == (1, 0, 3, 2)
+
+
 def test_stops_at_the_budget_with_the_reserve(tmp_path):
     jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 3, max_cost={"grove": 4.0})
     run = FakeRun()

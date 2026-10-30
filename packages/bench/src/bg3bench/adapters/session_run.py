@@ -18,8 +18,10 @@ reaches the host as the v2 dict (scenario.load: with defaults).
 A fault (game crash or hang, agent hang) ends the session at once (run_session's `invalid`): the run counts one more
 harness failure, so results.validity makes it invalid and the matrix reruns the job. A host whose `start` fails ran
 no agent: an invalid attempt that cost nothing, recorded in runs.jsonl as a runner_error (no artifacts), so the
-rerun plays in a fresh run directory (the failed start may have left a facts.jsonl run_start there). A run whose
-artifacts can't be written (a facts or roll log the bench refuses) is invalid with the record's cost, so the matrix
+rerun plays in a fresh run directory (the failed start may have left a facts.jsonl run_start there). A start the
+runner itself refused to launch (REFUSALS: Steam not offline, a foreign BG3, no display, a stale bg3le build) is
+recorded the same way but `refused`: the matrix doesn't count it as an attempt and stops until the host is fixed.
+A run whose artifacts can't be written (a facts or roll log the bench refuses) is invalid with the record's cost, so the matrix
 settles what it spent and reruns it instead of stopping on an unknown cost. A run whose condition the session can't
 play exactly (conditions.session_gaps) is labelled a pilot in result.json (the matrix refuses it unless allow_gaps). series.json freezes the scenario from
 the series' first run; a later run of an edited scenario is refused. It freezes the first recorded run's pins too
@@ -42,6 +44,7 @@ from typing import Any, Protocol, cast
 
 from bg3harness import profiles, steam_paths
 from bg3harness import runs as harness_runs
+from bg3harness.game.io import Bg3leStale, LaunchBlocked
 from bg3harness.session import Recovery, SessionHooks, SessionOutcome, SessionSpec, run_session
 
 from bg3bench import conditions, graders, pins, run_artifacts, saves, scenario, series
@@ -52,6 +55,7 @@ NO_RESUME = Recovery(max_resumes=0)
 # a maximise run plays its whole cap: resumed while it acts (the host's stop check), not at most max_stop_resumes times
 MAXIMISE = Recovery(max_resumes=0, max_stop_resumes=None)
 JSON = dict[str, Any]
+REFUSALS = (LaunchBlocked, Bg3leStale)  # the runner's launch refusals: an operator fixes the host, a rerun can't
 
 
 def series_name(matrix: str, job: Mapping[str, Any]) -> str:
@@ -201,12 +205,13 @@ class SessionRun:
             host_job["verdict"] = lambda: live_verdict(goal, facts_path)
             st = self.host.start(host_job, sc, run_dir)
         except Exception as e:  # noqa: BLE001 - no agent ran: invalid, nothing spent
-            why = f"start failed: {type(e).__name__}: {e}"
+            refused = isinstance(e, REFUSALS)
+            why = f"start {'refused' if refused else 'failed'}: {type(e).__name__}: {e}"
             failed: JSON = {"series": name, "playthrough": run_dir.name, "run": k, "client": job["client"]}
             failed.update(model=job["model"], effort=job["effort"], outcome="runner_error", reason=why, cost_usd=0.0)
             with runs.open("a", encoding="utf-8") as f:  # the run number is used: a rerun gets a fresh run_dir
                 f.write(json.dumps(failed) + "\n")
-            return RunResult(None, False, False, 0.0, why, True)
+            return RunResult(None, False, False, 0.0, why, True, refused=refused)
         recovery = MAXIMISE if "maximise" in sc else NO_RESUME  # scenario.maximised
         spec = SessionSpec(run_dir.name, st.prompt, sc["caps"]["run_hours"] * 60, st.client_session, recovery)
         out = run_session(spec, st.hooks)
