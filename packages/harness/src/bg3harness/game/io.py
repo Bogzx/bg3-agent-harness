@@ -133,6 +133,17 @@ class NoDisplay(LaunchBlocked):
     launch; the desktop session coming back fixes it."""
 
 
+class NotOurGame(SystemExit):
+    """The game up now isn't the runner's to play (a save it didn't load, another playthrough's host, a restart of a
+    game it didn't launch): the runner stops until an operator closes it or passes --take-over. A SystemExit, so no
+    retry loop swallows it; a bench start reports it as ForeignGameRunning (run_host)."""
+
+
+class OperatorStop(LaunchBlocked):
+    """An operator stop (a signal, runtime/STOP) refused a run's start before its agent: no run played, and the
+    stop's owner decides when runs start again."""
+
+
 class GameDied(RuntimeError):  # noqa: N818  (play.py's names)
     """The game died while the runner waited on it (crash, crash reporter, bg3 gone, dead debug port, launcher exit)."""
 

@@ -20,6 +20,7 @@ from typing import Any, cast
 
 import pytest
 from bg3harness import client_setup
+from bg3harness.game.io import Bg3leStale, ForeignGameRunning, NotOurGame, OperatorStop, SteamNotOffline
 from bg3harness.runner import env as renv
 from bg3harness.runner import run_host as H  # noqa: N812
 from bg3harness.runner import state as rstate
@@ -452,18 +453,24 @@ def test_a_run_dir_the_runner_doesnt_write_to_is_refused(rig: Rig, tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    ("at", "exc"),
+    ("at", "exc", "raised"),
     [
-        ("ensure_game", SystemExit("the game is running with a save loaded that the runner didn't load")),
-        ("ensure_game", SystemExit("would have to restart a game the runner didn't launch")),
-        ("check_settings", RuntimeError("difficulty Tactician, scenario says Balanced")),
+        ("ensure_game", SystemExit("another runner is already active"), RuntimeError),
+        ("check_settings", RuntimeError("difficulty Tactician, scenario says Balanced"), RuntimeError),
+        # a refusal before any play stays typed
+        ("ensure_game", NotOurGame("a save loaded that the runner didn't load"), ForeignGameRunning),
+        ("ensure_game", NotOurGame("would have to restart a game the runner didn't launch"), ForeignGameRunning),
+        ("ensure_game", SteamNotOffline("last Steam login was online"), SteamNotOffline),
+        ("ensure_game", Bg3leStale("bg3le lacks 0009"), Bg3leStale),
     ],
 )
-def test_a_failed_start_forgets_the_run_stops_the_game_and_raises_runtime_error(rig: Rig, at: str, exc: BaseException):
+def test_a_failed_start_forgets_the_run_stops_the_game_and_raises(
+    rig: Rig, at: str, exc: BaseException, raised: type[BaseException]
+):
     rig.prepare = lambda r: r.fail_at.update({at: exc})
-    with pytest.raises(RuntimeError, match=str(exc)) as e:
+    with pytest.raises(raised, match=str(exc)) as e:
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
-    assert not isinstance(e.value, SystemExit) and rig.h.runs == {}
+    assert type(e.value) is raised and rig.h.runs == {}
     assert rig.calls[-2:] == ["scenario_undo", "end_run_game(start failed)"]
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]  # put back
     assert not H.nav_marker().exists()
@@ -714,7 +721,7 @@ def test_a_run_that_ended_on_its_own_has_no_operator_mark(rig: Rig):
 
 def test_no_run_starts_after_a_stop(rig: Rig):
     rig.h.stop()
-    with pytest.raises(RuntimeError, match="operator stop: no new run starts"):
+    with pytest.raises(OperatorStop, match="operator stop: no new run starts"):
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     assert rig.runners == [] and rig.calls == []  # no runner, no game
 
@@ -723,7 +730,7 @@ def test_the_stop_file_stops_new_runs_too(rig: Rig):
     H.stop_file().parent.mkdir(parents=True, exist_ok=True)
     H.stop_file().write_text("1")
     assert rig.h.stopped
-    with pytest.raises(RuntimeError, match="no new run starts"):
+    with pytest.raises(OperatorStop, match="no new run starts"):
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
 
 
@@ -733,7 +740,7 @@ def test_a_stop_while_the_game_comes_up_starts_no_agent_and_stops_the_game(rig: 
         H.stop_file().write_text("1")
 
     rig.prepare = prepare
-    with pytest.raises(RuntimeError, match="operator stop before the kickoff"):
+    with pytest.raises(OperatorStop, match="operator stop before the kickoff"):
         rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
     assert rig.calls[-2:] == ["scenario_undo", "end_run_game(start failed)"] and rig.h.runs == {}
     assert se_names() == ["nav_aa.json", "nav_guard_aa.json", "other.json"]

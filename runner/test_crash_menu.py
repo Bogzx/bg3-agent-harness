@@ -367,6 +367,11 @@ class RestartDrift(unittest.TestCase):
         g, label, _log = self.run_restart(dict(self.END, pos=[115.3, 46.4, 224.3]), owned=False)
         self.assertEqual((label, len(g.loads)), ("S062-end", 1))
 
+    def test_a_foreign_game_without_take_over_stops_the_runner_typed(self):
+        with self.assertRaisesRegex(G.NotOurGame, "a save loaded that the runner didn't load"):
+            self.run_restart(dict(self.END), take_over=False, owned=False)
+        self.assertTrue(issubclass(G.NotOurGame, SystemExit))  # no retry loop swallows it
+
     def test_same_place_is_kept(self):
         g, label, log = self.run_restart(dict(self.END, pos=[16.0, 46.4, 226.0], party_levels=["1", "9"]))
         self.assertEqual((label, len(g.loads)), (None, 0))

@@ -30,6 +30,7 @@ import play as P  # noqa: N812
 
 from bg3harness import client_setup, ramwatch, spend
 from bg3harness import events as E  # noqa: N812
+from bg3harness.game import io as G  # noqa: N812
 from bg3harness.runner import core as rcore
 from bg3harness.runner import env as renv
 from bg3harness.runner import state as rstate
@@ -56,7 +57,7 @@ class StubRunner(lpt.Runner):
     """The real Runner (SessionRunner + the legacy parts) with the game and the agent process stubbed."""
 
     played: ClassVar[list[dict]] = []
-    refusals: ClassVar[list[str]] = []  # ensure_game's SystemExits, one per start until empty
+    refusals: ClassVar[list[str]] = []  # ensure_game's NotOurGame stops, one per start until empty
     stopped: ClassVar[list[str]] = []
 
     def refresh_mod_snapshot(self) -> list[str]:
@@ -64,7 +65,7 @@ class StubRunner(lpt.Runner):
 
     def ensure_game(self, first: bool) -> str | None:
         if StubRunner.refusals:
-            raise SystemExit(StubRunner.refusals.pop(0))
+            raise G.NotOurGame(StubRunner.refusals.pop(0))
         return None  # a new game: nothing loaded
 
     def hot_reload_mod(self) -> int:
@@ -204,16 +205,20 @@ class Bench(unittest.TestCase):
         self.assertAlmostEqual(budget["spent"], PAID_USD)
         self.assertEqual(budget["last"]["session"], "S001")
 
-    def test_a_start_the_runner_refuses_is_one_invalid_attempt_and_the_job_reruns(self):
+    def test_a_start_the_runner_refuses_stops_the_matrix_without_an_attempt_and_resumes(self):
         StubRunner.refusals = ["the game is running with a save loaded that the runner didn't load"]
         rc, out = self.bench("run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("stopped: refused: start refused: ForeignGameRunning: the game is running with a save", out)
+        self.assertEqual((StubRunner.played, StubRunner.stopped), ([], ["start failed"]))
+        rc, out = self.bench("run")  # the host fixed: the job plays its first real run
         self.assertEqual(rc, 0, out)
         [play] = StubRunner.played
         first = self.repo / "runtime" / "sessions" / "m-host_idol-opus-claude-rules"
         recs = [json.loads(line) for line in (first / "runs.jsonl").read_text().splitlines()]
         self.assertEqual([r["outcome"] for r in recs], ["runner_error", "timeout"])
-        self.assertIn("start failed: the game is running with a save loaded", recs[0]["reason"])
-        self.assertEqual(play["dir"], first.with_name(first.name + "-r2"))  # the rerun's fresh dir
+        self.assertIn("start refused: ForeignGameRunning: the game is running with a save loaded", recs[0]["reason"])
+        self.assertEqual(play["dir"], first.with_name(first.name + "-r2"))  # a fresh dir after the refused one
         self.assertEqual(StubRunner.stopped, ["start failed", "run end"])
 
     def test_the_composed_runner_is_a_session_runner(self):

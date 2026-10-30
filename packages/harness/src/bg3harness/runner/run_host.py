@@ -57,7 +57,7 @@ import bg3harness
 from bg3harness import bg3le_buildinfo, client_setup, game_fingerprint, runs, spend
 from bg3harness import pins as hpins
 from bg3harness import recorder as hrec
-from bg3harness.game.io import Save
+from bg3harness.game.io import ForeignGameRunning, NotOurGame, OperatorStop, Save
 from bg3harness.runner import agent_group
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
@@ -785,15 +785,17 @@ class LiveRunHost:
 
     def start(self, job: Json, sc: Json, run_dir: Path) -> HostStart:
         """The run's runner, reset, game at the scenario's start and kickoff. A start that fails forgets the run,
-        stops the game it brought up and raises RuntimeError (the runner's SystemExits too: an operator refusal
-        such as ensure_game's foreign game would otherwise end the process), so SessionRun records one invalid
-        attempt and the matrix reruns. A save start whose save didn't load (missing, or --take-over playing on
+        stops the game it brought up and raises RuntimeError (the runner's SystemExits too: they would otherwise end
+        the process), so SessionRun records one invalid attempt and the matrix reruns. A refusal before any play is
+        typed instead: the runner's launch refusals (game.io's LaunchBlocked, Bg3leStale) pass as they are, and its
+        NotOurGame stop (a game up that it didn't launch or load) becomes ForeignGameRunning; an operator stop
+        before the kickoff is OperatorStop. A save start whose save didn't load (missing, or --take-over playing on
         from another) fails before the kickoff. The nav files a failed start moved are put back."""
         want = renv.RUNTIME / "sessions" / run_dir.name
         if Path(run_dir).resolve() != want.resolve():  # facts.jsonl and the streams must land in the run dir
             raise ValueError(f"run dir {run_dir}: the runner writes runtime/sessions/<run> under {renv.RUNTIME}")
         if self.stopped:
-            raise RuntimeError("operator stop: no new run starts")
+            raise OperatorStop("operator stop: no new run starts")
         r: RunRunner | None = None
         try:
             agent_group.reap_leftover(renv.RUNTIME / agent_group.FILE, renv.log)  # live7: it drove the next game
@@ -826,6 +828,8 @@ class LiveRunHost:
             finally:
                 restore_nav(nav_marker())
                 isolate_saves(saves_marker())
+            if isinstance(e, NotOurGame):
+                raise ForeignGameRunning(str(e.code)) from e
             if isinstance(e, SystemExit):
                 raise RuntimeError(f"start failed: {e.code}") from e
             raise
@@ -865,7 +869,7 @@ class LiveRunHost:
         r.check_settings()  # the scenario's difficulty / karmic dice against the readout; the seed; the avatar's name
         r.apply_play_settings()  # after the rename: the save/load gates compare the avatar's name with the owner (B2)
         if self.stopped:  # stopped while the game came up: no agent starts (start's handler stops the game)
-            raise RuntimeError("operator stop before the kickoff")
+            raise OperatorStop("operator stop before the kickoff")
         if (rec := self.recordings.get(run_dir)) is not None:
             rec.check()  # ffmpeg still up after the settings: the run plays recorded
         # the run's time zero, before the agent's first event: facts.jsonl's run_start (a save start's came with its
