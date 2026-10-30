@@ -30,6 +30,15 @@ local function timed(name, fn)
     end)
 end
 
+-- {uuid = true} for the player's avatar(s) (DB_Avatars): a companion is in the party but not one of them.
+local function avatarSet()
+    local avatars = {}
+    pcall(function()
+        for _, r in ipairs(Osi.DB_Avatars:Get(nil)) do avatars[V.uuid(r[1])] = true end
+    end)
+    return avatars
+end
+
 timed("state.status", function()
     local ctx = V.context()
     local host = ctx.party[1]
@@ -42,8 +51,10 @@ timed("state.status", function()
     -- dead ends from before it no longer apply
     out.geo_gen = BG3AI.Nav and BG3AI.Nav.geoGen or nil
     local anyCombat, ftb = false, false
+    local avatars = avatarSet()
     for _, u in ipairs(ctx.party) do
         local b = partyBrief(ctx, u, active)
+        b.avatar = avatars[u]
         out.party[#out.party + 1] = b
         if b.in_combat then anyCombat = true end
         if truthy(osi(Osi.IsInForceTurnBasedMode, u)) then ftb = true end
@@ -118,10 +129,7 @@ end
 -- bridge can tell what a swap would add (party hint: locks, face, perception).
 timed("state.camp", function()
     local ctx = V.context()
-    local party, avatars = {}, {}
-    pcall(function()
-        for _, r in ipairs(Osi.DB_Avatars:Get(nil)) do avatars[V.uuid(r[1])] = true end
-    end)
+    local party, avatars = {}, avatarSet()
     for _, u in ipairs(ctx.party) do
         local e = V.entity(u)
         if e and not comp(e, "IsSummon") then

@@ -293,11 +293,8 @@ def _party_hint_line(st: Any, markers: Any, force: bool = False) -> str:
             got = core.game.try_rpc("state.camp") if camp else None
             if isinstance(got, dict):
                 PARTY_HINT.skills = {r.get("uuid"): r.get("skills") or {} for r in (got.get("party") or []) + (got.get("camp") or [])}
-                PARTY_HINT.avatars = {r.get("uuid") for r in got.get("party") or [] if r.get("avatar")}
             else:
-                PARTY_HINT.skills, PARTY_HINT.avatars = None, set()
-        av = getattr(PARTY_HINT, "avatars", set())
-        party_rows = [dict(r, avatar=True) if r.get("uuid") in av else r for r in party_rows]
+                PARTY_HINT.skills = None
         quests = sorted({str(m.get("quest")) for m in markers or [] if isinstance(m, dict) and m.get("quest")})
         bits = companions.hint(party_rows, camp, str(st.get("region") or ""), quests,
                                companions.ties(COMPANIONS_MD), queueing._label, PARTY_HINT.skills)
