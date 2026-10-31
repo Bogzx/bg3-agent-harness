@@ -450,6 +450,8 @@ def get_character(who: str | None = None, sections: str = "") -> str:
         args["sections"] = [s.strip() for s in sections.split(",") if s.strip()]
     res = reporting._read1("state.character", args)
     plumbing._remember_names(res)
+    # a party member's sheet and an examined character alike: the status names the UI shows, no engine ids
+    res = observe._shown_statuses(res)
     return reporting._finish("get_character", {"who": who, "sections": sections}, render.compact(res, core.H), t0)
 
 
@@ -580,6 +582,6 @@ _NEARBY_KINDS = {"characters", "items", "door", "container", "item", "ladder", "
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
-from . import (  # noqa: E402, F401
+from . import (  # noqa: E402
     observe, travel, queueing,
 )

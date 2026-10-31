@@ -5,6 +5,19 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-30: a give the game refuses fails; get_character shows status names only; a busy UI reads as busy
+
+- manage_inventory op=give: when the game leaves the item with the giver (no error, no move: a story item), the
+  give fails after its 8 s wait with "the game kept it with <giver>: it can't be handed over" instead of
+  "TIMEOUT — timed out" (mod act.transfer on_timeout).
+- get_character shows each status by the name the UI shows, without the engine's status id, on a party member's
+  sheet and on an examined character, as look_at already did. It served ids like DIFFICULT_TERRAIN_DEEPWATER.
+- camp leave / fast_travel at camp: when the game's UI is busy (bg3le refuses the read of whether a long rest's night
+  still blocks travel) they fail at once with "FAILED: can't read whether a long rest's night at camp still blocks
+  travel: bg3le: UI busy …" instead of reading it as no night and failing later "cannot travel right now".
+- pick_up on an item the game can't pick up (fixed in place, listed `<usable>` like a wall torch) fails at once with
+  "that can't be picked up: it is fixed in place (interact uses it)" instead of "TIMEOUT — timed out" after 40 s.
+
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 
 - feed_gale donates through the window's DonateItemsCommand, clicks the window's X (Gale absorbs the item when it

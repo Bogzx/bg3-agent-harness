@@ -509,6 +509,14 @@ reg("pickup", function(args)
     if G.q("GetInventoryOwner", item) ~= nil then
         G.refuse("that item is inside a container (open it and loot instead)")
     end
+    -- launch-v1 act3_gold_max r1: Pickup on a wall Iron Torch (CanBePickedUp false, listed <usable>) never ran, and
+    -- the game raised no PickupFailed: the job re-sent the order twice and timed out after 40 s, twice.
+    local si = U.comp(G.entity(item), "ServerItem")
+    local fixed, usable = false, false
+    pcall(function() fixed, usable = si.CanBePickedUp == false, si.CanUse == true end)
+    if fixed then
+        G.refuse("that can't be picked up: it is fixed in place" .. (usable and " (interact uses it)" or ""))
+    end
     G.target_visible(item)
     G.within(char, item, G.MAX_INTERACT_DIST, "item")
 

@@ -633,6 +633,18 @@ test("transfer: the whole stack merged away (original gone from the giver) is do
     eq(j.status, "done", "status " .. tostring(j.error))
 end)
 
+test("transfer: a give the game ignores fails as kept by the giver, not a timeout (Mysterious Artefact x2)", function()
+    party_rows = { P1, NPC }
+    osiv[key("GetInventoryOwner", GEM)] = P1 -- ToInventory does nothing: it stays with the giver
+    local j = job(op("transfer", { item = GEM, to = NPC }))
+    tick()
+    eq(j.status, "running", "still with the giver")
+    clock = clock + 8000
+    tick()
+    eq(j.status, "failed", "status " .. tostring(j.error))
+    assert(tostring(j.error):find("the game kept it with .+: it can't be handed over$"), tostring(j.error))
+end)
+
 test("equip: a failed equip says why (S025: two-handed Sword of Justice; the Moonlantern does not block a shield)", function()
     local LANTERN, SHIELD = "12121212-0000-0000-0000-000000000008", "13131313-0000-0000-0000-000000000009"
     local SWORD = "14141414-0000-0000-0000-00000000000a"

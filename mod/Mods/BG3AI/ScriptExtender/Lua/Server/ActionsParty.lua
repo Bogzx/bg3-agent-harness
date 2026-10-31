@@ -260,6 +260,14 @@ reg("transfer", function(args)
                 RPC.finish_job(job, "done", { to = to, amount = amount })
             end
         end,
+        -- The game can refuse a give without a word (the Mysterious Artefact stayed with Shadowheart, twice): the
+        -- item still with the giver is the game's no, not a hang.
+        on_timeout = function(job)
+            if G.same(holder(item), from) then
+                RPC.finish_job(job, "failed", nil,
+                    "the game kept it with " .. (name_of(from) or "the giver") .. ": it can't be handed over")
+            end
+        end,
     })
 end)
 
