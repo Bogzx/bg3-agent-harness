@@ -176,6 +176,15 @@ class AgentSide:
                 self.events_log = evlog.end("mcp_failed", None, start)
                 return rstate.SessionResult(sid, claude_session, None, "mcp_failed", start, self.clock(), model=model,
                                      effort=effort, detail=detail)
+        if needs_game and self.facts_writer().last is None:
+            # the run's first facts read before its agent starts: the first snapshot (a maximise score's start) is
+            # the game the agent got, and the referee ring syncs here, so what the agent does in the progress loop's
+            # first story.POLL_S reaches facts.jsonl (launch-v1 sonnet act3_gold_max: a +18 sale at 13 s was in
+            # neither; start read 428, the save's gold is 410)
+            try:
+                self.facts_now()
+            except Exception as e:  # the game not answering: the progress loop's first poll takes the baseline
+                renv.log(f"{sid}{tag}: facts read before the agent failed: {type(e).__name__}: {e}")
         try:
             proc = subprocess.Popen(cmd, cwd=renv.PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)
