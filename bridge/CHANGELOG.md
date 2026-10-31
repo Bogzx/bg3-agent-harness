@@ -15,6 +15,8 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - camp leave / fast_travel at camp: when the game's UI is busy (bg3le refuses the read of whether a long rest's night
   still blocks travel) they fail at once with "FAILED: can't read whether a long rest's night at camp still blocks
   travel: bg3le: UI busy …" instead of reading it as no night and failing later "cannot travel right now".
+- pick_up on an item the game can't pick up (fixed in place, listed `<usable>` like a wall torch) fails at once with
+  "that can't be picked up: it is fixed in place (interact uses it)" instead of "TIMEOUT — timed out" after 40 s.
 
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 
