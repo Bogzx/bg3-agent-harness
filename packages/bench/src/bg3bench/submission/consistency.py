@@ -24,6 +24,9 @@ Json = dict[str, Any]
 Outcome = tuple[bool | None, str]
 
 WALL_SLACK_S = 5.0
+# X01 compares a first snapshot taken at the run's start: one taken later (a poll after the agent started, ~15.8 s
+# in runs recorded before the harness took one at the start) shows what the agent already did there.
+START_SNAPSHOT_S = 5.0
 LOAD_WINDOW_S = 60.0
 TRADE_WINDOW_S = 60.0
 TRADE_TOOLS = ("trade", "choose_dialogue")
@@ -79,10 +82,24 @@ def new_game_fingerprint(sc: Json) -> Json:
     }
 
 
+def _first_snapshot_s(timeline: list[Json]) -> float | None:
+    """Seconds from the run_start mark to the first snapshot; None without either."""
+    start = next(iter(_marks(timeline, "run_start")), None)
+    snap = next((r for r in timeline if r.get("kind") == "snapshot"), None)
+    return None if start is None or snap is None else snap["t"] - start["t"]
+
+
 def x01_start_state(b: Loaded) -> Outcome:
+    """The first snapshot is the published start state. Not checkable (null, never a pass) when it came over
+    START_SNAPSHOT_S after run_start and the run's start save is the release's (P01's sha1): the agent may have
+    played by then. Any other run is held to the fingerprint."""
     want = b.release_scenario.get("fingerprint")
     if not want:
         return False, "the suite publishes no start-state fingerprint for this scenario"
+    late = _first_snapshot_s(b.facts)
+    sha1 = b.release_scenario.get("save_sha1")
+    if late is not None and late > START_SNAPSHOT_S and sha1 and b.manifest["scenario"].get("start_save_sha1") == sha1:
+        return None, f"not checkable: first snapshot at {late:.1f} s"
     got = fingerprint(b.facts)
     if got != want:
         diff = sorted(k for k in want if (got or {}).get(k) != want.get(k))
@@ -215,8 +232,9 @@ def g01_regrade(b: Loaded) -> Outcome:
     sc = b.scenario
     res = b.result
     if (fact := scenario.maximised(sc)) is not None:
-        m = graders.measure(fact, b.facts)
-        want = {k: m[k] for k in ("fact", "start", "end", "gain", "peak")}
+        start = graders.start_value(fact, b.release_scenario.get("fingerprint"))
+        m = graders.measure(fact, b.facts, start_state=start)
+        want = {k: m[k] for k in graders.SCORE_KEYS}
         got = res.get("score")
         if got != want or res.get("passed") is not None:
             return False, f"re-grade score {want} != result {got}"

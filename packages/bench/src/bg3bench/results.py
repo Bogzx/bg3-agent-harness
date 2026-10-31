@@ -21,7 +21,7 @@ luck.summary over the run's roll log (D9), null when the run has none. A choice 
 (choices.grade: the picks, the persona fit), and its release run the picks and the fit score (choices.table).
 
 A maximise scenario's result (scenario.py `maximise`) has no pass: `passed` and `t_pass_s` are null and `score`
-is graders.measure's {fact, start, end, gain, peak}, the gain being the score. Its runs are left out of every pass
+is graders.measure's {fact, start, end, gain, peak, start_from}, the gain being the score. Its runs are left out of every pass
 rate; a release run carries the score.
 
 `build_results` aggregates (manifest, result) pairs per (client, model, condition) with stats.summarize over valid

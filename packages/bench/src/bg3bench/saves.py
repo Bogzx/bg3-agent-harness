@@ -90,6 +90,13 @@ def load(path: Path = SAVES_JSON) -> dict[str, dict[str, Save]]:
     return {tag: {s["name"]: Save.from_json(s, tag) for s in body["saves"]} for tag, body in doc["suites"].items()}
 
 
+def start_fingerprint(sc: Json, tag: str, path: Path = SAVES_JSON) -> Json | None:
+    """The start-state fingerprint suite `tag` lists for scenario `sc`'s start save; None for a new game, a save
+    the suite doesn't list (a holdout's) or one without a fingerprint yet."""
+    s = load(path).get(tag, {}).get((sc.get("start") or {}).get("save") or "")
+    return None if s is None else s.fingerprint
+
+
 def disagreements(saves: Mapping[str, Save], scenarios: Mapping[str, Json]) -> list[str]:
     """Where a suite's saves and its scenario files disagree: every non-holdout scenario with a save is listed
     under that save with the same sha1, no holdout save is listed, no save names a scenario that doesn't start

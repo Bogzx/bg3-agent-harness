@@ -51,6 +51,45 @@ def test_fingerprint_needs_a_snapshot_and_x01_a_published_one():
     assert ok is False and "differs" in detail
 
 
+def test_x01_cannot_check_a_first_snapshot_taken_after_the_agent_started():
+    """launch-v1 Sonnet x act3_gold_max: the first snapshot came 15.8 s after run_start, a poll after the agent
+    started, and showed 428 gold (it had sold junk) against the published 410. Such a run from the release's start
+    save is not checkable (null, never a pass); a snapshot at the start, or a run from another save, is held to it."""
+    sha1 = "5630b7441579e2a07cb5d5023a827b3fd0ddb344"
+    fp = {"party": [], "gold": 410, "region": None, "area": None, "difficulty": None, "name": None}
+    rel = {"fingerprint": fp, "save_sha1": sha1}
+    man = {"scenario": {"start_save_sha1": sha1}}
+
+    def x01(snap_t: float, gold: int, manifest: dict = man) -> c.Outcome:
+        rows = [mark(1000, "run_start"), ev(1000 + snap_t, "snapshot", gold=gold, party=[])]
+        return c.x01_start_state(loaded(rows, release_scenario=rel, manifest=manifest))
+
+    assert x01(15.8, 428) == (None, "not checkable: first snapshot at 15.8 s")
+    assert x01(15.8, 410) == (None, "not checkable: first snapshot at 15.8 s")  # never a pass
+    assert x01(0.5, 410) == (True, "")  # a snapshot at the start (new runs)
+    assert x01(0.5, 428)[0] is False
+    other = {"scenario": {"start_save_sha1": "0" * 40}}
+    assert x01(15.8, 428, other)[0] is False  # not the release's start save: P01 fails it, X01 still compares
+    assert x01(15.8, 410, other) == (True, "")
+
+
+def test_g01_regrades_a_maximise_score_from_the_published_start_state():
+    sc = scenario.with_defaults(pack.load_scenarios()["act3_gold_max"])
+    state = {"party": [], "inv": [], "combat": False, "region": "Lower City", "areas": [], "quests": {}}
+    run = [
+        mark(0, "run_start") | {"game_t": 0},
+        ev(15.8, "snapshot", game_t=15.8, gold=428, **state),
+        ev(2700, "snapshot", game_t=2700, gold=7988, **state),
+        mark(2700, "run_end") | {"game_t": 2700},
+    ]
+    rel = {"fingerprint": {"gold": 410}}
+    old = {"fact": "gold", "start": 428, "end": 7988, "gain": 7560, "peak": 7988}  # the first-snapshot grader's
+    ok, detail = c.g01_regrade(loaded(run, sc=sc, release_scenario=rel, result={"passed": None, "score": old}))
+    assert ok is False and "re-grade score" in detail
+    new = {**old, "start": 410, "gain": 7578, "start_from": "start_state"}
+    assert c.g01_regrade(loaded(run, sc=sc, release_scenario=rel, result={"passed": None, "score": new})) == (True, "")
+
+
 def test_x02_time_marks():
     assert c.x02_time_marks(loaded([mark(0, "run_start")]))[1] == "1 run_start and 0 run_end marks (want 1 each)"
     marks = [mark(0, "run_start"), mark(100, "run_end")]

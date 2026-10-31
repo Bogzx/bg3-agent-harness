@@ -10,6 +10,10 @@ metrics, screenshots, memory and saves. The archive is deterministic (sorted, fi
 Refused (PackError): a pilot run, an invalid run, a holdout or unknown scenario, a suite version that is not
 released, a run without its manifest, result, facts or events, and a bundle over the size caps.
 
+A maximise run's score is graded again from its packed facts by this grader (`rescored`), so a run recorded with an
+older one (before the score started at the published start state) is submitted with the score G01 computes; the
+run dir's result.json is left as it is.
+
 The evidence video is rendered from the packed bundle (its record files are scrubbed, and its run_hash is in
 bundle.json), then add_render puts the renderer's render.json and its frames/<n>.jpg (tarred into frames.tar) into
 the bundle: they are not record files, so the run_hash stays; bundle.json's files[] and the archive are rewritten.
@@ -41,7 +45,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from bg3bench import scenario, suite
+from bg3bench import graders, saves, scenario, suite
 from bg3bench.submission import bundle, scrub
 
 Json = dict[str, Any]
@@ -113,6 +117,15 @@ def refusal(man: Json, res: Json, scenarios: Mapping[str, Json], released: Colle
     if not (man.get("scenario") or {}).get("digest"):
         return "the manifest has no scenario digest"
     return None
+
+
+def rescored(sc: Json, timeline: list[Json], fingerprint: Json | None) -> Json | None:
+    """A maximise run's score graded again from its facts by this grader (graders.measure from the published start
+    state, `fingerprint`); None for a goal scenario."""
+    if (fact := scenario.maximised(sc)) is None:
+        return None
+    m = graders.measure(fact, timeline, start_state=graders.start_value(fact, fingerprint))
+    return {k: m[k] for k in graders.SCORE_KEYS}
 
 
 def _jsonl(data: bytes) -> list[Json]:
@@ -247,6 +260,13 @@ def pack(
     scrubber = scrub.Scrubber(literals)
     files = {n: scrubber.file(n, (run_dir / n).read_bytes()) for n in names}
     man = json.loads(files["manifest.json"])  # scrubbed
+    sc = scenarios[man["scenario"]["name"]]
+    fp = saves.start_fingerprint(sc, man["versions"]["suite"])
+    score = rescored(sc, _jsonl(files["facts.jsonl"]), fp)
+    if score is not None and score != res.get("score"):
+        res = {**res, "score": score}
+        packed_res = json.loads(files["result.json"]) | {"score": score}
+        files["result.json"] = (json.dumps(packed_res, indent=1, sort_keys=True) + "\n").encode()
     env = envelope(
         man,
         res,
