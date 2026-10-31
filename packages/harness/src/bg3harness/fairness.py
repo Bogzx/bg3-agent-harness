@@ -47,6 +47,11 @@ _HANDLE = re.compile(r"\be\d+\b")
 # windmill: 3 CHECK hits, all Tav's own `after={.. sneaking ..}` after Shout_Hide.
 _OWN_AFTER = re.compile(r"\bafter=\{[^{}]*\}")
 _PARTY_ROW = re.compile(r"^\s*PARTY \*?(e\d+) ")
+# A get_character sheet's own handle: its bare `e4` field (render.compact prints the uuid as the handle alone; the
+# equipment's handles come after `Slot=`). A party member's statuses with their ids are the party's own state, shown
+# on its portraits (launch-v1 deepseek act3_gold_max r3: Shadowheart's id=SPEAK_WITH_DEAD_RECAST, haiku crash_site
+# r3: Astarion's id=DIFFICULT_TERRAIN_DEEPWATER, both runs invalidated); an examined character's ids still leak.
+_SHEET_SUBJECT = re.compile(r"(?:^|\s)(e\d+)(?=\s|$)")
 # the Invisibility status/potion by name is what the party sees on its own portraits: old event form
 # "status_applied name=Invisibility target=..", compacted (bridge compact.py) "status_applied e2 Name: Invisibility"
 # and CHANGES "e2 Name +Invisibility"
@@ -112,6 +117,8 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
         text = c.get("text") or ""
         if name in NOT_GAME or not text:
             continue
+        subject = _SHEET_SUBJECT.search(text) if name == "get_character" else None
+        own_sheet = subject is not None and subject.group(1) in party
         for line in _lines(text):
             clean = _FILE_PATH.sub("", line)
             for m in _GUID.finditer(clean):
@@ -125,7 +132,7 @@ def audit_calls(calls: list[dict]) -> dict[str, list[tuple[dict, str]]]:
             for m in _FLAG_WORDS.finditer(clean):
                 hit("flag", c, clean, m)
             noact = _ACTION_ID.sub("", clean)
-            for m in _STATUS_ID.finditer(noact):
+            for m in _STATUS_ID.finditer(noact) if not own_sheet else ():
                 hit("status_id", c, noact, m)
             nojudged = _JUDGED_ID.sub("", _STATUS_ID.sub("", noact))
             for m in _TEMPLATE.finditer(nojudged):
