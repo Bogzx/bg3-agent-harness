@@ -22,14 +22,16 @@ early, the post-run grade is the score.
 - `progress`: with `progress={"fact": f, "target": n}`, min(1, peak / n) over the whole run, so failed runs still
   order against each other; else null.
 
-`measure(fact, timeline)` scores a maximise scenario (scenario.py `maximise`), which has no goal and no pass: the
-fact's gain from run_start to run_end, or to a wipe (`{fact, start, end, gain, peak, curve}`), on the same window and
-clock.
+`measure(fact, timeline, start_state=...)` scores a maximise scenario (scenario.py `maximise`), which has no goal and no
+pass: the fact's gain from run_start to run_end, or to a wipe (`{fact, start, end, gain, peak, start_from, curve}`), on
+the same window and clock. Its start is the published start state's value (`start_value` of the scenario's start-state
+fingerprint) when there is one: the run's first snapshot comes a poll after the agent starts, and launch-v1 Sonnet
+sold junk before it (start 428, the save's 410). `start_from` says which one the score used.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from bg3bench.facts import FactsError, State, check
@@ -37,6 +39,7 @@ from bg3bench.predicates import All, Any_, Leaf, Mode, Node, Not, parse
 
 CURVE_AT_S = (600, 1200, 1800)
 NUMERIC_FACTS = ("gold", "party_level", "companions")
+SCORE_KEYS = ("fact", "start", "end", "gain", "peak", "start_from")  # a result's score: measure's without the curve
 
 
 def fact(state: State, name: str) -> float:
@@ -223,12 +226,27 @@ def _elapsed(r: dict, first: bool, t0: float, clock: str) -> float:
     raise FactsError(f"clock='game' but a record at t={r['t']} has no game_t; grade with clock='wall'")
 
 
-def measure(name: str, timeline: Iterable[dict], *, clock: str = "game", curve: dict | None = None) -> dict:
+def start_value(name: str, fingerprint: Mapping[str, Any] | None) -> float | None:
+    """Numeric fact `name` in a published start state (submission.consistency.fingerprint), None when the
+    fingerprint doesn't hold it (none published; only gold is in one)."""
+    return (fingerprint or {}).get(name) if name == "gold" else None
+
+
+def measure(
+    name: str,
+    timeline: Iterable[dict],
+    *,
+    clock: str = "game",
+    curve: dict | None = None,
+    start_state: float | None = None,
+) -> dict:
     """A maximise scenario's score over one run: numeric fact `name` (gold) from run_start to run_end.
 
-    `start` is its value at the run's first snapshot (the one carried into run_start, else the first one after it:
-    before any snapshot the state holds no gold, not the save's), `end` its value at run_end, `gain` = end - start
-    (the score), `peak` the highest value in the run; all null when the run has no snapshot. `curve` as grade's."""
+    `start` is `start_state` when given (`start_from` "start_state"), else the fact's value at the run's first
+    snapshot (the one carried into run_start, else the first one after it: before any snapshot the state holds no
+    gold, not the save's; `start_from` "first_snapshot"). `end` is its value at run_end, `gain` = end - start (the
+    score), `peak` the highest value in the run; end, gain and peak are null when the run has no snapshot, and so is
+    a first-snapshot start. `curve` as grade's."""
     if clock not in ("game", "wall"):
         raise ValueError(f"clock is 'game' or 'wall', got {clock!r}")
     fact(State(), name)
@@ -258,12 +276,14 @@ def measure(name: str, timeline: Iterable[dict], *, clock: str = "game", curve: 
         if state.wiped():
             break
     last = fact(state, name) if seen else None
+    first = first if start_state is None else start_state
     return {
         "fact": name,
         "start": first,
         "end": last,
         "gain": None if first is None or last is None else last - first,
         "peak": peak,
+        "start_from": "first_snapshot" if start_state is None else "start_state",
         "curve": _curve(samples, curve),
     }
 
