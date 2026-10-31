@@ -30,7 +30,8 @@ POST (JSON body, token):
     /api/v1/plan                 a New run form -> the jobs Start would queue (nothing is written or launched)
     /api/v1/run/start            the same form + "record", "submit_when_done": write its matrix file, start it
     /api/v1/run/stop             end the run playing now, start no new one (this panel's matrix or the found one)
-    /api/v1/submit/prepare       {"run"}: pack and validate a finished run; the verdict and the exact files
+    /api/v1/submit/prepare       {"run"}: pack and validate a finished run (not a matrix attempt its queue didn't
+                                 accept: accepted.refusal); the verdict and the exact files
     /api/v1/submit/video         {"run", "bundle_sha256", "youtube_url"}: after Render, the user's YouTube upload of
                                  evidence.mp4 into bundle.json's video (submit.add_video); validated again
     /api/v1/submit/videos        {"items": [{"run", "bundle_sha256", "youtube_url"}]}: /submit/video for each, one result per item
@@ -61,7 +62,7 @@ from urllib.parse import unquote, urlparse
 from bg3harness import bg3le_buildinfo, steam_paths
 from bg3harness.client_setup import read_dotenv
 
-from bg3bench import __version__, preflight, suite
+from bg3bench import __version__, accepted, preflight, suite
 from bg3bench.adapters.legacy_cli import REPO
 from bg3bench.serve import auto, launch, panel, security, submit, video
 from bg3bench.serve.settings import Settings, SettingsError
@@ -265,6 +266,8 @@ class App:
 
     def prepare(self, body: dict[str, Any]) -> dict[str, Any]:
         run_dir, rows = self.finished_run(body)
+        if why := accepted.refusal(run_dir, self.runtime / "matrix"):
+            raise panel.PanelError(why)
         root = self.submissions()
         with self.prepare_lock:
             n, unsubmitted = submit.attempt(rows, run_dir.name, lambda d: submit.submitted(root, d))
