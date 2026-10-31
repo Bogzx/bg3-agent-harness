@@ -539,7 +539,9 @@ def test_tick_prepares_a_submit_when_done_run(server):
     name = server.runner.started[0][0]
     m = server.runtime / "matrix" / name
     m.mkdir()
-    (m / "queue.jsonl").write_text(json.dumps({"type": "end", "result": {"run_id": "s1-r001", "valid": True}}) + "\n")
+    ran = [{"type": "start", "job": "j", "attempt": 1}, {"type": "end", "job": "j", "attempt": 1,
+           "result": {"run_id": "s1-r001", "valid": True}}]  # fmt: skip
+    (m / "queue.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ran))
     assert server.tick() == [{"matrix": name, "run": "s1", "t": 0.0, "bundle_sha256": SHA, "accepted": True}]
     assert server.tick() == []
     subs = get(server, "/api/v1/submissions")[1]["submissions"]
@@ -585,6 +587,26 @@ def test_a_panel_without_runner_starts_nothing(server):
     server.runner = None
     code, r = post(server, "/api/v1/run/start", RUN_FORM)
     assert code == 400 and "starts no run" in r["error"]
+
+
+def test_prepare_refuses_a_matrix_attempt_its_queue_did_not_accept(server):
+    """s1-r001 ended invalid in matrix m and the job ran again (s1-r002): its run dir can't be prepared, whatever its
+    result.json says; once the queue accepted it, it can."""
+    d = server.runtime / "matrix" / "m"
+    d.mkdir(parents=True)
+
+    def ended(*runs: tuple[str, bool]) -> None:
+        recs = [{"type": "plan", "schema": 1, "name": "m", "jobs": [{"id": "j"}]}]
+        for n, (run_id, valid) in enumerate(runs, 1):
+            recs += [{"type": "start", "job": "j", "attempt": n}, {"type": "end", "job": "j", "attempt": n,
+                     "result": {"run_id": run_id, "valid": valid}}]  # fmt: skip
+        (d / "queue.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+    ended(("s1-r001", False), ("s1-r002", True))
+    code, r = post(server, "/api/v1/submit/prepare", {"run": "s1"})
+    assert code == 400 and "not the run its queue accepted (s1-r002)" in r["error"]
+    ended(("s1-r001", True))
+    assert post(server, "/api/v1/submit/prepare", {"run": "s1"})[0] == 200
 
 
 def test_submit_flow_over_the_endpoints(server):
