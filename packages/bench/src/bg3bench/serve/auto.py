@@ -1,44 +1,23 @@
 """Submit when done: pack and validate each valid run of a matrix the panel started with that box ticked.
 
 `tick` is one pass, called every few seconds by the panel's ticker thread (server.py) and directly by the tests. For
-every runtime/panel/<name>.json whose submit_when_done is true it reads runtime/matrix/<name>/queue.jsonl's end
-records: a valid run (its run_id) that is finished (a run dir with manifest.json and result.json) and has neither a
-prepared bundle nor an outcome in the file's "auto" yet is prepared, the same `prepare` the Validate button calls. The
+every runtime/panel/<name>.json whose submit_when_done is true it reads runtime/matrix/<name>/queue.jsonl's
+accepted runs (accepted.accepted_run_ids: each job's last attempt, when it ended valid; a superseded attempt never):
+one (its run_id) that is finished (a run dir with manifest.json and result.json) and has neither a prepared bundle
+nor an outcome in the file's "auto" yet is prepared, the same `prepare` the Validate button calls. The
 outcome (the bundle hash and the verdict, or the error) goes into "auto", so a run is tried once: a failed one waits
 for the user's Validate. Nothing is uploaded: upload stays the user's click on the Results screen.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
+from bg3bench import accepted
 from bg3bench.serve import launch
 from bg3bench.serve.panel import PanelError
-
-
-def _obj(v: Any) -> dict[str, Any]:
-    return cast(dict[str, Any], v) if isinstance(v, dict) else {}
-
-
-def valid_run_ids(matrix_dir: Path) -> list[str]:
-    """The run_ids of queue.jsonl's end records whose result is valid, in file order."""
-    try:
-        lines = (matrix_dir / "queue.jsonl").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    out: list[str] = []
-    for line in lines:
-        try:
-            rec = _obj(json.loads(line))
-        except ValueError:
-            continue  # a line being written
-        res = _obj(rec.get("result")) if rec.get("type") == "end" else {}
-        if res.get("valid") is True and isinstance(run_id := res.get("run_id"), str):
-            out.append(run_id)
-    return list(dict.fromkeys(out))
 
 
 def tick(
@@ -58,7 +37,7 @@ def tick(
         if not choices or choices.get("submit_when_done") is not True:
             continue
         auto: dict[str, Any] = choices.setdefault("auto", {})
-        for run_id in valid_run_ids(runtime / "matrix" / f.stem):
+        for run_id in accepted.accepted_run_ids(runtime / "matrix" / f.stem):
             run = by_id.get(run_id)
             if run is None or run in auto or prepared(run):
                 continue
