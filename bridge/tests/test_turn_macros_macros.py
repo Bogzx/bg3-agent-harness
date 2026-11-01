@@ -100,10 +100,21 @@ class OpenerCombat(Base):
 
     def test_a_conversation_opened_by_the_hit_is_not_called_no_fight(self):
         # live-v09 t12: the game played "You picked a fight" first; combat began after it, past the wait
-        self.g.activity = {"in_dialogue": True, "in_combat": False}
+        self.g.activity = {"in_dialogue": False, "in_combat": False}
+
+        def talk(op, a):
+            if op == "act.cast":
+                self.g.activity = {"in_dialogue": True, "in_combat": False}
+        self.g.on_start = talk
         out = combat_tools.use_ability("Projectile_MainHandAttack", target=self.gob)
         self.assertNotIn("no fight began", out)
-        self.assertIn("combat: not started yet — a conversation opened with the hit", out)
+        self.assertIn("combat: not started — a conversation is open, opened by the hit", out)
+
+    def test_a_conversation_open_before_the_hit_is_not_said_to_be_its_doing(self):
+        self.g.activity = {"in_dialogue": True, "in_combat": False}
+        out = combat_tools.use_ability("Projectile_MainHandAttack", target=self.gob)
+        self.assertIn("combat: not started — a conversation is open\n", out + "\n")
+        self.assertNotIn("opened by the hit", out)
 
     def test_fight_started_says_so(self):
         def start(op, a):

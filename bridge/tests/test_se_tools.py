@@ -298,15 +298,15 @@ class NightCamp(unittest.TestCase):
         self.assertEqual([o for o, _ in fake.jobs][:2], ["ui.long_rest", "act.leave_camp"])
         self.assertIn("ended the night", out)
 
-    def test_camp_leave_in_a_camp_talk_at_night_names_the_leave(self):
+    def test_camp_leave_in_a_camp_talk_at_night_says_nothing_was_pressed(self):
         # live-v09 t6: refused with ui.long_rest's "... then long_rest"; after the talk the leave itself slept and left
         fake = self.use(NightFake())
         fake.dialogue = True
         out = getattr(travel.camp, "fn", travel.camp)("leave")
         self.assertEqual(fake.jobs, [])
         self.assertNotIn("then long_rest", out)
-        self.assertIn("camp: FAILED: a conversation is open: finish it first (choose_dialogue / dialogue_advance), "
-                      "then call this again: it is night at camp, so travelling first ends the night", out)
+        self.assertIn("camp: FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends "
+                      "the night (the party sleeps: a long rest)", out)
 
     def test_a_busy_ui_is_not_read_as_no_night(self):
         # A UI stuck busy 26 min: the refused travel_block read counted as "not night", so camp leave went on to

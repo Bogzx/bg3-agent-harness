@@ -296,6 +296,24 @@ class StatusAndMap(Base):
         self.assertNotIn("Lever", out)  # nearby not fetched by get_status...
         self.assertIn("Lever", overview.look())  # ...so the next look still reports it
 
+    def test_where_after_a_fast_travel_is_not_the_old_subregion_line(self):
+        # live-v09 t8: 0.6 s after Blighted Village -> Roadside Cliffs, "WHERE Blighted Village" (the minimap's line)
+        self.addCleanup(overview._trip_sub.clear)
+        st, ui = self.fake.w["status"], self.fake.w["ui"]
+        st.pop("subregion")  # state.status has none: WHERE's subregion is the minimap's (ui.state region)
+        ui["region"] = "Blighted Village"
+        self.assertIn("WHERE Blighted Village · Nautiloid", overview.get_status())
+        overview.trip_arrived("Blighted Village", "Roadside Cliffs")
+        out = overview.get_status()
+        self.assertNotIn("Blighted Village ·", out)
+        self.assertIn("WHERE Nautiloid", out)
+        self.assertIn("SUBREGION not updated since the trip to Roadside Cliffs: the minimap still shows "
+                      "'Blighted Village', its line from before the trip", out)
+        ui.pop("region")  # the line caught up (Roadside Cliffs has no subregion)
+        out = overview.get_status(full=True)
+        self.assertNotIn("SUBREGION", out)
+        self.assertEqual(overview._trip_sub, {})
+
     def test_status_full(self):
         overview.get_status()
         out = overview.get_status(full=True)

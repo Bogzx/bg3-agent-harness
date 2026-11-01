@@ -190,17 +190,20 @@ class FastTravelSplitParty(Case):
         self.assertEqual([a["char"] for o, a in fake.jobs if o == "act.chain"], [KARLACH])
         self.assertIn("ui.fast_travel", fake.ops())
 
-    def test_the_read_after_the_trip_no_longer_shows_the_old_subregion(self):
+    def test_the_trip_remembers_the_subregion_line_it_left_without_waiting(self):
         # live-v09 t8: get_status 0.6 s after the trip still read "WHERE Blighted Village" (now at Roadside Cliffs)
         st = s064_status()
         for r in st["party"][1:]:
             r.update(pos=[-57.0, -46.3, 1007.0], chained=True)
         fake = self.use(st)
+        self.addCleanup(overview._trip_sub.clear)
         fake.wps = [TEMPLE_WP, RUINS_WP]
-        fake.regions = ["Blighted Village"] * 4 + [None]  # the line lags the arrival by a few reads
+        fake.regions = ["Blighted Village"]  # the line keeps the old name past the arrival
+        t0 = time.monotonic()
         out = travel.fast_travel("Undercity Ruins")
+        self.assertLess(time.monotonic() - t0, 1.0)
         self.assertIn("fast_travel: done", out)
-        self.assertIsNone(fake.rpc("ui.state", context="client")["region"])
+        self.assertEqual(overview._trip_sub, {"sub": "Blighted Village", "waypoint": "Undercity Ruins"})
 
     def test_together_trip_is_untouched(self):
         st = s064_status()

@@ -7,16 +7,17 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 
 ## 2026-11-01: use_ability's opener, camp leave in a night camp talk and WHERE after a fast travel say what is true
 
-- use_ability out of combat at a creature: when the hit opened a conversation (the game's "You picked a fight"
-  scene, which it plays before the fight starts), the result says "combat: not started yet — a conversation opened
-  with the hit (the game plays it before any fight it starts): finish it, then get_combat_state" instead of
-  "combat: NOT started — … no fight began (dormant or unaware …)" (live-v09: combat was on 0.3 s after that line).
-- camp leave / fast_travel at night camp during a camp conversation fail at once with "a conversation is open:
-  finish it first (choose_dialogue / dialogue_advance), then call this again: it is night at camp, so travelling
-  first ends the night (the party sleeps: a long rest)" instead of long_rest's "… then long_rest".
-- fast_travel returns once the minimap's subregion line no longer shows the place it left (at most 3 s), so the
-  next get_status WHERE names where the party is (live-v09: "WHERE Blighted Village" 0.6 s after arriving at
-  Roadside Cliffs).
+- use_ability out of combat at a creature: when a conversation is open after the hit (live-v09: the game's "You
+  picked a fight" scene, with combat on 0.3 s after the result), the result says "combat: not started — a
+  conversation is open, opened by the hit" (without ", opened by the hit" when one was open before the cast)
+  instead of "combat: NOT started — … no fight began (dormant or unaware …)".
+- camp leave / fast_travel at night camp during a camp conversation fail at once with "FAILED: a conversation is
+  open, nothing was pressed; at night in camp, leaving first ends the night (the party sleeps: a long rest)" instead
+  of long_rest's "… then long_rest".
+- get_status after a fast travel: while the minimap's subregion line (WHERE's subregion) still shows the name it had
+  when the trip left, WHERE leaves it out and a line says "SUBREGION not updated since the trip to <waypoint>: the
+  minimap still shows '<name>', its line from before the trip" (live-v09: "WHERE Blighted Village" 0.6 s after
+  arriving at Roadside Cliffs). Nothing waits for the line.
 
 ## 2026-10-30: a give the game refuses fails; get_character shows status names only; a busy UI reads as busy
 
