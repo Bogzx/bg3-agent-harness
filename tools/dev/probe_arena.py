@@ -1,5 +1,5 @@
 """Live probe: can two teams of 4 player characters fight each other in one turn-based combat, each side acting
-through the mod's own action ops? One script for questions S1-S6; no model.
+through the mod's own action ops? One script for the 8 spike questions, in their order; no model.
 
 It drives the game through the Lua debugger port: raw server Lua for the setup calls and the reads (a probe library
 installed as Mods.BG3AI.BG3AI.ArenaProbe, with Osiris listeners that log every combat/turn/reaction/faction event),
@@ -7,28 +7,34 @@ and the mod's act.* jobs (act.move_to, act.cast, act.end_turn) for the actions, 
 Each question writes one evidence file <out>/<q>.json: {"question", "verdict" (PASS / FAIL / OPEN), "why", the
 reads, the calls with what each returned, the event log}; teams.json carries the teams between steps.
 
-Run it on a THROWAWAY load (it changes factions, the party, positions and HP; save nothing), from the repo root:
+Run it on a THROWAWAY load of a copy of the save (it changes factions, the party, positions and HP; save nothing),
+from the repo root, the game loaded with the pinned mod set only:
     P="uv run --project bridge python tools/dev/probe_arena.py"
+    $P conns [--conns 6]                         # q1: that many debugger connections at once, each evaluating
     $P roster                                    # the candidates: who is a player / in the party / their factions
     $P factions                                  # the faction table (static data) + who in the level uses which
     $P setup --team-a Tav,Shadowheart,Gale,Astarion --team-b Karlach,Wyll,Laezel,Halsin \\
-       --spot-a X,Y,Z --spot-b X,Y,Z [--seed 7]  # S5: party of 8, two chains, teleports, restore, seed
-    $P hostile [--faction-b auto|<Name_guid>]    # S1a: team B's faction, the relation, combat
-    $P turns [--turns 10 --idle-s 8 --down-at 4] # S1b + S3a: who starts each turn, does the game act for anyone
-    $P act                                       # S2: move + attack + end turn for one member of each side
-    $P react                                     # S4: an opportunity attack, who gets the prompt, ui.react
-    $P end [--loser B]                           # S3b: down then kill the loser team, what ends the combat
-    $P gameover                                  # S5 avatar: the avatar killed alone (a fresh load + setup + hostile)
-    $P npc                                       # S6: one team-B member made an NPC (a fresh load + setup + hostile)
-    $P all ...setup args...                      # roster, factions, setup, hostile, turns, act, react, end
-`--dry-run` prints the plan of a step only (no game). Evidence: runtime/probes/arena-s0/ (--out).
-Spots: open ground with no NPCs near, the two ~8-20 m apart (S2's attack needs the mover to reach melee in one turn:
-under ~8 m for most classes; 20 m is fine for S1/S3).
+       --spot-a X,Y,Z --spot-b X,Y,Z [--seed 7] [--pinned-mods a,b]
+                                                 # q2: 8 in DB_PartyMembers (+ the loaded mods), chains, places, HP
+    $P hostile [--faction-b auto|<Name_guid>]    # q3: team B's faction, IsEnemy across teams, one combat
+    $P turns [--turns 10 --idle-s 8 --down-at 4] # q3: who starts each turn, does the game act for anyone
+    $P act                                       # q4: move + attack + end turn for one member of each side
+    $P tie [--no-force]                          # q5: an initiative tie across teams (seen, else forced): one turn?
+    $P end [--loser B]                           # q6: the loser team downed (death-save turns, HUD), then dead
+    $P gameover                                  # q6: the avatar downed, then dead (a fresh load + setup + hostile)
+    $P react                                     # q7: an opportunity attack, who gets the prompt, ui.react
+    $P npc                                       # q8: one team-B member made an NPC (a fresh load + setup + hostile)
+    $P all ...setup args...                      # conns, roster, factions, setup, hostile, act, tie, turns, react, end
+`--dry-run` prints the plan of a step only (no game). Evidence: runtime/probes/arena-s0/ (--out), one
+q<n>-<what>.json per question.
+Spots: open ground with no NPCs near, the two ~8-20 m apart (q4's attack needs the mover to reach melee in one turn:
+under ~8 m for most classes; 20 m is fine for the rest).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import itertools
 import json
 import math
@@ -48,7 +54,8 @@ AT_SPOT_M = 3.0  # a member counts as placed within this of its slot
 MOVED_M = 0.5  # an idle turn's character moved: the game acted for it
 SETTLE_S = 2.0
 TURN_WAIT_S = 25.0  # after an end_turn: the next TurnStarted within this
-REACH_M = 2.5  # S4: the mover counts as in melee of the enemy within this
+REACH_M = 2.5  # q7: the mover counts as in melee of the enemy within this
+CONNS = 6  # q1: debugger connections opened at once (two bridges with their side connections + the harness)
 
 INSTALL = r"""
 local B = Mods.BG3AI.BG3AI
@@ -190,6 +197,38 @@ function P.factions(fa)
     end
     return out
 end
+-- The loaded mods, in load order.
+function P.mods()
+    local out = {}
+    for _, id in ipairs(Ext.Mod.GetLoadOrder() or {}) do
+        local okn, name = pcall(function() return Ext.Mod.GetMod(id).Info.Name end)
+        out[#out + 1] = { uuid = tostring(id), name = okn and name or nil }
+    end
+    return out
+end
+-- Force an initiative tie: u's entries in its combat's turn order (group and member) take initiative `ini`.
+function P.set_initiative(u, ini)
+    local out = { writes = {} }
+    local ok, err = pcall(function()
+        local ce = Ext.Entity.Get(u).CombatParticipant.CombatHandle
+        local to = ce.TurnOrder
+        for _, list in ipairs({ "Groups", "CurrentGroups" }) do
+            local okl, groups = pcall(function() return to[list] end)
+            for gi, g in ipairs(okl and groups or {}) do
+                for _, m in ipairs(g.Members) do
+                    if P.uuid(m.Entity.Uuid.EntityUuid) == u then
+                        local okm = pcall(function() m.Initiative = ini end)
+                        local okg = pcall(function() g.Initiative = ini end)
+                        out.writes[#out.writes + 1] = { list = list, group = gi, member = okm, group_field = okg }
+                    end
+                end
+            end
+        end
+        out.replicated = pcall(function() ce:Replicate("TurnOrder") end)
+    end)
+    if not ok then out.error = tostring(err) end
+    return out
+end
 local function rec(ev, ...)
     local a, names = {}, {}
     for i = 1, select("#", ...) do
@@ -317,6 +356,79 @@ def judge_setup(
     return "PASS", "8 party members, each at its slot with full HP"
 
 
+def judge_conns(rows: list[dict[str, Any]], want: int) -> Verdict:
+    """q1: every connection opened and answered while all were open."""
+    ok = [r for r in rows if r.get("connected") and r.get("answer") is not None]
+    if len(ok) == want:
+        return "PASS", f"{want} connections open at once, each answered"
+    bad = "; ".join(f"#{r['i']}: {r.get('error') or 'no answer'}" for r in rows if r not in ok)
+    return "FAIL", f"{len(ok)}/{want} answered: {bad}"
+
+
+def judge_party(
+    teams: dict[str, Any], facts: dict[str, dict[str, Any]], mods: list[dict[str, Any]], pinned: list[str] | None
+) -> Verdict:
+    """q2: all 8 in DB_PartyMembers at once, with no mod loaded beyond the pinned set (when one is given)."""
+    out = [
+        f.get("name") or u[:8]
+        for u in teams["A"] + teams["B"]
+        if not truthy((f := facts.get(u) or {}).get("in_party_db"))
+    ]
+    extra = [
+        m.get("name") or m.get("uuid") for m in mods if pinned and not {m.get("name"), m.get("uuid")} & set(pinned)
+    ]
+    why = []
+    if out:
+        why.append(f"not in DB_PartyMembers: {', '.join(out)}")
+    if extra:
+        why.append(f"mods beyond the pinned set: {', '.join(map(str, extra))}")
+    if why:
+        return "FAIL", "; ".join(why)
+    names = ", ".join(str(m.get("name") or m.get("uuid")) for m in mods)
+    return "PASS", "8 in DB_PartyMembers at once; " + (
+        "only the pinned mods loaded" if pinned else f"{len(mods)} mods loaded (no pinned list given): {names}"
+    )
+
+
+def tie_info(order: dict[str, Any], teams: dict[str, Any]) -> dict[str, Any]:
+    """From a raw turn order: groups holding both sides, cross-side members with equal initiative, and cross-side
+    neighbours in the order (where a tie can be forced)."""
+    groups = order.get("groups") or []
+    mixed = [
+        [m.get("name") or m.get("uuid") for m in g]
+        for g in groups
+        if len({side_of(teams, m.get("uuid")) for m in g} - {None}) > 1
+    ]
+    flat = [m for g in groups for m in g]
+    equal = [
+        [a.get("uuid"), b.get("uuid")]
+        for a, b in itertools.combinations(flat, 2)
+        if a.get("initiative") is not None
+        and a.get("initiative") == b.get("initiative")
+        and {side_of(teams, a.get("uuid")), side_of(teams, b.get("uuid"))} == {"A", "B"}
+    ]
+    adjacent = [
+        [a.get("uuid"), b.get("uuid"), a.get("initiative")]
+        for a, b in itertools.pairwise(flat)
+        if {side_of(teams, a.get("uuid")), side_of(teams, b.get("uuid"))} == {"A", "B"}
+    ]
+    return {"mixed_groups": mixed, "equal": equal, "adjacent": adjacent}
+
+
+def judge_tie(r: dict[str, Any]) -> Verdict:
+    """q5: with a cross-team tie in the order, do both sides hold one turn (a mixed group, or both sides' members
+    open at once)?"""
+    shared = r.get("shared_turns") or []
+    mixed = (r.get("after") or {}).get("mixed_groups") or (r.get("before") or {}).get("mixed_groups")
+    if shared or mixed:
+        return "FAIL", "the teams shared a turn (" + "; ".join(
+            [f"group {g}" for g in mixed or []] + [f"open together: {t}" for t in shared]
+        ) + "): needs serialising"
+    if not ((r.get("after") or {}).get("equal") or (r.get("before") or {}).get("equal")):
+        return "OPEN", "no cross-team initiative tie seen or forced: " + str(r.get("force") or "not forced")
+    return "PASS", "a cross-team initiative tie, and each side took its own turn"
+
+
 def judge_hostile(teams: dict[str, Any], facts: dict[str, dict[str, Any]], enemy: dict[str, Any]) -> Verdict:
     combats = {f.get("combat") for f in facts.values()}
     cross = [v for k, v in enemy.items() if k.startswith("AB:")]
@@ -334,7 +446,7 @@ def judge_hostile(teams: dict[str, Any], facts: dict[str, dict[str, Any]], enemy
 
 
 def judge_turns(teams: dict[str, Any], turns: list[dict[str, Any]], downed: dict[str, Any] | None) -> Verdict:
-    """S1b: both sides got turns, no turn group held both sides, each round started in initiative order, and the
+    """q3: both sides got turns, no turn group held both sides, each round started in initiative order, and the
     fight went on after a member was downed."""
     why = []
     seen = {side_of(teams, t.get("uuid")) for t in turns}
@@ -366,7 +478,7 @@ def judge_turns(teams: dict[str, Any], turns: list[dict[str, Any]], downed: dict
 
 
 def judge_ai(turns: list[dict[str, Any]]) -> Verdict:
-    """S3a: on no idle turn of a standing member did the game act (move, cast, end the turn) by itself."""
+    """q3: on no idle turn of a standing member did the game act (move, cast, end the turn) by itself."""
     acted = [
         t
         for t in turns
@@ -399,7 +511,7 @@ def res_amount(res: Any, name: str) -> float | None:
 
 
 def judge_act(runs: dict[str, dict[str, Any]]) -> Verdict:
-    """S2: for each side, the mod's own move and attack jobs ran on its member and the game charged them (Movement
+    """q4: for each side, the mod's own move and attack jobs ran on its member and the game charged them (Movement
     down after the move, ActionPoint down after the attack), and its end_turn ended the turn."""
     why = []
     for s in SIDES:
@@ -422,7 +534,7 @@ def judge_act(runs: dict[str, dict[str, Any]]) -> Verdict:
 
 
 def judge_react(r: dict[str, Any]) -> Verdict:
-    """S4: did a reaction come up for the enemy the mover left, and could the mod answer it (ui.react)?"""
+    """q7: did a reaction come up for the enemy the mover left, and could the mod answer it (ui.react)?"""
     if r.get("error"):
         return "OPEN", r["error"]
     ev = {e.get("ev") for e in r.get("events") or []}
@@ -437,24 +549,33 @@ def judge_react(r: dict[str, Any]) -> Verdict:
 
 
 def judge_end(r: dict[str, Any]) -> Verdict:
-    """S3b: the combat ends once the loser team is all down/dead; which event; no Game Over."""
+    """q6: with the loser team all downed, can a turn boundary read it (every member downed or dead)? What the game
+    does then (death-save turns, combat end, Game Over) is recorded; a Game Over in a team wipe is that team's loss."""
+    if not r.get("all_down_read"):
+        return "FAIL", "the loser team's downed state didn't read as downed/dead for every member"
+    seen = [f"death-save turns: {len(r.get('death_save_turns') or [])}"]
+    seen.append(
+        f"combat ended at the {r['ended_at']} stage ({r.get('end_event')})"
+        if r.get("ended_at")
+        else "the combat never ended by itself"
+    )
     if r.get("game_over"):
-        return "FAIL", f"Game Over after the {r.get('ended_at') or 'last'} stage"
-    if r.get("ended_at"):
-        return "PASS", f"combat ended when the loser team was all {r['ended_at']} (event {r.get('end_event')})"
-    return "FAIL", "the combat went on with the loser team all dead"
+        seen.append("Game Over screen")
+    return "PASS", "the wipe reads at a turn boundary; " + "; ".join(seen)
 
 
 def judge_gameover(r: dict[str, Any]) -> Verdict:
-    if r.get("game_over"):
-        return "FAIL", "the avatar's death alone (others standing) is a Game Over: the avatar can't play"
+    if r.get("game_over_downed") or r.get("game_over"):
+        return "FAIL", "the avatar " + (
+            "downed" if r.get("game_over_downed") else "dead"
+        ) + " alone (others standing) is a Game Over: the avatar can't play"
     if not r.get("dead"):
         return "OPEN", "the avatar didn't die"
-    return "PASS", "the avatar died with others standing: no Game Over"
+    return "PASS", "the avatar downed, then dead, with others standing: no Game Over"
 
 
 def judge_npc(r: dict[str, Any]) -> Verdict:
-    """S6 (option N, documented): an NPC team member under the mod's ops and the game AI."""
+    """q8 (option N, documented): an NPC team member under the mod's ops and the game AI."""
     why = []
     if not (r.get("act") or {}).get("refused"):
         why.append("act.* accepted the NPC (unexpected)")
@@ -475,8 +596,9 @@ class Arena:
         out: Path,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        connect: Callable[[], Any] | None = None,
     ) -> None:
-        self.game, self.out, self.sleep, self.clock = game, out, sleep, clock
+        self.game, self.out, self.sleep, self.clock, self.connect = game, out, sleep, clock, connect
 
     def ev(self, code: str, timeout: float = 30.0) -> Any:
         txt = self.game.eval(
@@ -568,6 +690,40 @@ class Arena:
 
     # ---- steps ----
 
+    def conns(self, n: int) -> dict[str, Any]:
+        """Open n debugger connections, then evaluate on all of them at once (one thread each)."""
+        import threading
+
+        rows: list[dict[str, Any]] = []
+        clients: list[tuple[dict[str, Any], Any]] = []
+        for i in range(n):
+            row: dict[str, Any] = {"i": i}
+            try:
+                clients.append((row, self.connect()))  # type: ignore[misc]
+                row["connected"] = True
+            except Exception as e:
+                row.update(connected=False, error=f"{type(e).__name__}: {e}")
+            rows.append(row)
+
+        def one(row: dict[str, Any], c: Any) -> None:
+            try:
+                row["answer"] = c.evaluate("return tostring(Ext.Utils.MonotonicTime())", context="server", timeout=15.0)
+            except Exception as e:
+                row["error"] = f"{type(e).__name__}: {e}"
+
+        threads = [threading.Thread(target=one, args=rc, daemon=True) for rc in clients]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        for _, c in clients:
+            with contextlib.suppress(Exception):
+                c.close()
+        verdict, why = judge_conns(rows, n)
+        rec = {"question": "q1-conns", "verdict": verdict, "why": why, "connections": rows}
+        self.write("q1-conns", rec)
+        return rec
+
     def roster(self) -> dict[str, Any]:
         r = self.ev("""
 local us = P.chars()
@@ -598,7 +754,15 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         )
         return fs
 
-    def setup(self, a: list[str], b: list[str], spot_a: list[float], spot_b: list[float], seed: int | None) -> dict:
+    def setup(
+        self,
+        a: list[str],
+        b: list[str],
+        spot_a: list[float],
+        spot_b: list[float],
+        seed: int | None,
+        pinned: list[str] | None = None,
+    ) -> dict:
         calls: list[dict[str, Any]] = []
         names = {"A": a, "B": b}
         teams: dict[str, Any] = {s: [self.ev(f"return P.who({lua(n)})") for n in names[s]] for s in SIDES}
@@ -638,14 +802,20 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
                 calls.append({"scn.seed": f"{type(e).__name__}: {e}"})
         self.sleep(SETTLE_S)
         after = self.facts(allu)
-        verdict, why = judge_setup(teams, after, slots)
+        mods = self.ev("return P.js(P.mods())")
+        mods = mods if isinstance(mods, list) else []
+        verdict, why = judge_party(teams, after, mods, pinned)
+        setup_verdict = judge_setup(teams, after, slots)
         teams.update(names=names, host=host, slots=slots, faction_a=after[teams["A"][0]].get("faction"))
         (self.out / "teams.json").parent.mkdir(parents=True, exist_ok=True)
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
-            "question": "S5-setup",
+            "question": "q2-party",
             "verdict": verdict,
             "why": why,
+            "placed": {"verdict": setup_verdict[0], "why": setup_verdict[1]},
+            "mods": mods,
+            "pinned_mods": pinned,
             "teams": teams,
             "calls": calls,
             "before": before,
@@ -653,7 +823,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "after": after,
             "events": self.since(m),
         }
-        self.write("S5-setup", rec)
+        self.write("q2-party", rec)
         return rec
 
     def enemy_matrix(self, teams: dict[str, Any]) -> dict[str, Any]:
@@ -675,12 +845,12 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             pick = pick_faction_b(self.factions(fa), fa)
             if not pick:
                 rec = {
-                    "question": "S1-hostile",
+                    "question": "q3-hostile",
                     "verdict": "OPEN",
                     "why": "no spare Hero faction: pass --faction-b (see factions.json)",
                     "faction_a": fa,
                 }
-                self.write("S1-hostile", rec)
+                self.write("q3-hostile", rec)
                 return rec
             faction_b = pick
         for u in teams["B"]:
@@ -709,7 +879,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         teams["faction_b"] = faction_b
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
-            "question": "S1-hostile",
+            "question": "q3-hostile",
             "verdict": verdict,
             "why": why,
             "faction_a": fa,
@@ -722,7 +892,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "order": self.ev(f"return P.js(P.order({lua(a1)}))"),
             "events": self.since(m),
         }
-        self.write("S1-hostile", rec)
+        self.write("q3-hostile", rec)
         return rec
 
     def watch_idle(self, u: str, idle_s: float) -> dict[str, Any]:
@@ -795,13 +965,13 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         v3, w3 = judge_ai(rows)
         evs = self.since(m0)
         self.write(
-            "S1-turns",
-            {"question": "S1-turns", "verdict": v1, "why": w1, "turns": rows, "downed": downed, "events": evs},
+            "q3-turns",
+            {"question": "q3-turns", "verdict": v1, "why": w1, "turns": rows, "downed": downed, "events": evs},
         )
         self.write(
-            "S3-ai",
+            "q3-ai",
             {
-                "question": "S3-ai",
+                "question": "q3-ai",
                 "verdict": v3,
                 "why": w3,
                 "idle_s": idle_s,
@@ -856,7 +1026,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             runs[s] = r
         verdict, why = judge_act(runs)
         rec = {
-            "question": "S2-act",
+            "question": "q4-act",
             "verdict": verdict,
             "why": why,
             "spell": spell,
@@ -864,7 +1034,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "turns_ended_on_the_way": drove,
             "events": self.since(m),
         }
-        self.write("S2-act", rec)
+        self.write("q4-act", rec)
         return rec
 
     def react(self, use: bool) -> dict[str, Any]:
@@ -911,43 +1081,74 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             r["events"] = self.since(m2)
         verdict, why = judge_react(r)
         self.write(
-            "S4-react", {"question": "S4-react", "verdict": verdict, "why": why, **r, "all_events": self.since(m)}
+            "q7-react", {"question": "q7-react", "verdict": verdict, "why": why, **r, "all_events": self.since(m)}
         )
         return r
 
-    def end(self, loser: str) -> dict[str, Any]:
+    def end(self, loser: str, max_turns: int = 8) -> dict[str, Any]:
         teams = self.teams()
         m = self.mark()
-        r: dict[str, Any] = {"loser": loser, "stages": []}
+        winner = "B" if loser == "A" else "A"
+        r: dict[str, Any] = {"loser": loser, "stages": [], "death_save_turns": []}
         for stage in ("downed", "dead"):
             for u in teams[loser]:
                 f = self.facts([u])[u]
                 if truthy(f.get("dead")):
                     continue
                 if stage == "downed":
-                    c = self.call(
-                        "ApplyDamage",
-                        [u, int((f.get("hp") or 50) + 5), "Bludgeoning", teams["B" if loser == "A" else "A"][0]],
-                    )
+                    c = self.call("ApplyDamage", [u, int((f.get("hp") or 50) + 5), "Bludgeoning", teams[winner][0]])
                 else:
                     c = self.call("Die", [u, 0, NULL, 0, 0], [u, 0, NULL, 0], [u])
                 r["stages"].append({"stage": stage, "who": f.get("name"), "call": c})
                 self.sleep(1.0)
             self.sleep(5.0)
             fs = self.facts(teams["A"] + teams["B"])
+            if stage == "downed":
+                r["all_down_read"] = all(truthy(fs[u].get("downed")) or truthy(fs[u].get("dead")) for u in teams[loser])
+                r["death_save_turns"] = self.downed_turns(teams, loser, max_turns)
             evs = self.since(m)
             ended = next((e for e in evs if e.get("ev") in ("CombatEnded", "LeftCombat")), None)
-            r["stages"].append({"stage": stage, "after": fs, "screen": self.screen()})
-            if self.screen() == "game_over":
-                r["game_over"] = True
+            screen = self.screen()
+            r["stages"].append({"stage": stage, "after": fs, "screen": screen, "hud": self.client("ui.selected")})
+            if screen == "game_over":
+                r["game_over"] = stage
                 break
             if ended and not r.get("ended_at"):
                 r.update(ended_at=stage, end_event=ended.get("ev"))
                 break
         r["events"] = self.since(m)
         verdict, why = judge_end(r)
-        self.write("S3-end", {"question": "S3-end", "verdict": verdict, "why": why, **r})
+        self.write("q6-down", {"question": "q6-down", "verdict": verdict, "why": why, **r})
         return r
+
+    def downed_turns(self, teams: dict[str, Any], loser: str, max_turns: int) -> list[dict[str, Any]]:
+        """Drive the fight on (ending the winners' turns) and record every turn a downed loser gets: who, whether the
+        game ended it by itself, and what the client HUD selected then."""
+        out: list[dict[str, Any]] = []
+        cur = self.active(teams)
+        for _ in range(max_turns):
+            if not cur:
+                break
+            mine = [f for f in cur if side_of(teams, f["uuid"]) == loser]
+            mark = self.mark()
+            if mine:
+                self.sleep(3.0)
+                still = {
+                    u for u, f in self.facts([f["uuid"] for f in mine]).items() if (f.get("tb") or {}).get("active")
+                }
+                out.append(
+                    {
+                        "who": [f.get("name") for f in mine],
+                        "ended_by_itself": not still,
+                        "hud": self.client("ui.selected"),
+                        "events": self.since(mark),
+                    }
+                )
+                self.end_turns(sorted(still))
+            else:
+                self.end_turns([f["uuid"] for f in cur])
+            cur = self.next_turn(teams, mark)
+        return out
 
     def gameover(self) -> dict[str, Any]:
         teams = self.teams()
@@ -957,14 +1158,51 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         if not av:
             r["error"] = "no avatar"
         else:
-            r["call"] = self.call("Die", [av, 0, NULL, 0, 0], [av, 0, NULL, 0], [av])
-            self.sleep(10.0)
             f = self.facts([av])[av]
-            r.update(dead=truthy(f.get("dead")), facts=f, screen=self.screen())
-            r["game_over"] = r["screen"] == "game_over"
+            r["down_call"] = self.call("ApplyDamage", [av, int((f.get("hp") or 50) + 5), "Bludgeoning", NULL])
+            self.sleep(10.0)
+            r["downed"] = self.facts([av])[av]
+            r["game_over_downed"] = self.screen() == "game_over"
+            if not r["game_over_downed"]:
+                r["call"] = self.call("Die", [av, 0, NULL, 0, 0], [av, 0, NULL, 0], [av])
+                self.sleep(10.0)
+                f = self.facts([av])[av]
+                r.update(dead=truthy(f.get("dead")), facts=f, screen=self.screen())
+                r["game_over"] = r["screen"] == "game_over"
         r["events"] = self.since(m)
         verdict, why = judge_gameover(r)
-        self.write("S5-gameover", {"question": "S5-gameover", "verdict": verdict, "why": why, **r})
+        self.write("q6-gameover", {"question": "q6-gameover", "verdict": verdict, "why": why, **r})
+        return r
+
+    def tie(self, force: bool, max_turns: int = 10) -> dict[str, Any]:
+        """q5: find a cross-team initiative tie in the turn order (else force one by writing a team-B member's
+        initiative to its team-A neighbour's), then play a round and record any turn both sides held open at once."""
+        teams = self.teams()
+        m = self.mark()
+        order = self.ev(f"return P.js(P.order({lua(teams['A'][0])}))") or {}
+        r: dict[str, Any] = {"order_before": order, "before": tie_info(order, teams)}
+        if not r["before"]["equal"] and force and r["before"]["adjacent"]:
+            a, b, ini = r["before"]["adjacent"][0]
+            bu = b if side_of(teams, b) == "B" else a
+            r["force"] = {
+                "who": bu,
+                "initiative": ini,
+                "write": self.ev(f"return P.js(P.set_initiative({lua(bu)}, {lua(ini)}))"),
+            }
+        shared: list[list[str]] = []
+        cur = self.active(teams)
+        for _ in range(max_turns):
+            if not cur:
+                break
+            if len({side_of(teams, f["uuid"]) for f in cur}) > 1:
+                shared.append([f.get("name") or f["uuid"] for f in cur])
+            mark = self.mark()
+            self.end_turns([f["uuid"] for f in cur])
+            cur = self.next_turn(teams, mark)
+        order2 = self.ev(f"return P.js(P.order({lua(teams['A'][0])}))") or {}
+        r.update(order_after=order2, after=tie_info(order2, teams), shared_turns=shared, events=self.since(m))
+        verdict, why = judge_tie(r)
+        self.write("q5-tie", {"question": "q5-tie", "verdict": verdict, "why": why, **r})
         return r
 
     def npc(self, idle_s: float) -> dict[str, Any]:
@@ -984,7 +1222,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         r["make_player"] = self.call("MakePlayer", [u, teams["host"], 0], [u, teams["host"]])
         r["events"] = self.since(m)
         verdict, why = judge_npc(r)
-        self.write("S6-npc", {"question": "S6-npc", "verdict": verdict, "why": why, **r})
+        self.write("q8-npc", {"question": "q8-npc", "verdict": verdict, "why": why, **r})
         return r
 
 
@@ -1002,20 +1240,29 @@ return Ext.Json.Stringify(out, { Beautify = false })
 """
 
 PLAN = {
+    "conns": "open --conns debugger connections, evaluate on all at once",
     "roster": "read DB_PartyMembers/Players/Avatars/Origins + facts of each (IsPlayer, faction, user, hp, combat)",
     "factions": "static-data factions + level usage + relation to team A's",
-    "setup": "SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add for the missing; Detach all, chain each side; "
-    "TeleportToPosition to two lines; RestoreParty (+SetHitpointsPercentage 100 if short); scn.seed",
+    "setup": "loaded mods; SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add for the missing; Detach all, "
+    "chain each side; TeleportToPosition to two lines; RestoreParty (+SetHitpointsPercentage 100 if short); scn.seed",
     "hostile": "SetFaction(team B, F_B); SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, "
     "F_B, a1, b1), else EnterCombat pairs; turn order",
     "turns": "per open turn: idle --idle-s (did the game act?), act.end_turn; one member downed at --down-at",
     "act": "per side: drive to its turn, act.move_to {target: nearest enemy}, act.cast attack, act.end_turn; "
     "resources before/after",
     "react": "side-A turn: close in, walk 6 m away; watch ui.react_probe; ui.react; Reaction* events",
-    "end": "loser team: ApplyDamage to 0 (downed), then Die; CombatEnded/LeftCombat; game_over screen",
-    "gameover": "Die the avatar alone; game_over screen after 10 s",
+    "tie": "turn order: a cross-team tie (else write a B member's initiative to its A neighbour's); a round: any "
+    "turn open for both sides at once",
+    "end": "loser team: ApplyDamage to 0 (downed), its death-save turns + HUD, then Die; CombatEnded/LeftCombat; "
+    "game_over screen",
+    "gameover": "the avatar alone: ApplyDamage to 0 (downed), then Die; game_over screen after each",
     "npc": "MakeNPC one team-B member; its turn idle (AI?); act.cast on it (refused?); MakePlayer back",
 }
+
+
+# The spike order: connections, the party of 8, hostility + one combat, costs, the tie, then turns (AI), the reaction,
+# and last the wipe (it ends the fight).
+ALL = ["conns", "roster", "factions", "setup", "hostile", "act", "tie", "turns", "react", "end"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1034,9 +1281,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--spell", default="Target_MainHandAttack")
     ap.add_argument("--react-use", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--loser", choices=SIDES, default="B")
+    ap.add_argument("--conns", type=int, default=CONNS)
+    ap.add_argument("--pinned-mods", default="", help="comma list of mod names/uuids the load may hold")
+    ap.add_argument("--force", action=argparse.BooleanOptionalAction, default=True, help="tie: force one if none")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    steps = ["roster", "factions", "setup", "hostile", "turns", "act", "react", "end"] if a.step == "all" else [a.step]
+    steps = ALL if a.step == "all" else [a.step]
     if a.dry_run:
         for s in steps:
             print(f"{s}: {PLAN[s]}")
@@ -1045,16 +1295,25 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("setup needs --team-a, --team-b (4 names each), --spot-a and --spot-b")
     sys.path.insert(0, str(REPO / "bridge" / "src"))
     from bg3ai.game import Game  # the bridge's RPC layer; imported here so tests need no bridge
+    from bg3ai.luadebug import LuaDebugClient
 
-    ar = Arena(Game(), a.out)
+    def connect() -> LuaDebugClient:
+        c = LuaDebugClient(connect_timeout=5.0)
+        c.connect()
+        return c
+
+    ar = Arena(Game(), a.out, connect=connect)
     for s in steps:
-        if s == "roster":
+        if s == "conns":
+            ar.conns(a.conns)
+        elif s == "roster":
             ar.roster()
         elif s == "factions":
             p = a.out / "teams.json"
             ar.factions(json.loads(p.read_text()).get("faction_a") if p.exists() else None)
         elif s == "setup":
-            ar.setup(a.team_a.split(","), a.team_b.split(","), a.spot_a, a.spot_b, a.seed)
+            pinned = [x for x in a.pinned_mods.split(",") if x] or None
+            ar.setup(a.team_a.split(","), a.team_b.split(","), a.spot_a, a.spot_b, a.seed, pinned)
         elif s == "hostile":
             ar.hostile(a.faction_b)
         elif s == "turns":
@@ -1063,6 +1322,8 @@ def main(argv: list[str] | None = None) -> int:
             ar.act(a.spell)
         elif s == "react":
             ar.react(a.react_use)
+        elif s == "tie":
+            ar.tie(a.force)
         elif s == "end":
             ar.end(a.loser)
         elif s == "gameover":

@@ -167,13 +167,59 @@ class JudgeTest(unittest.TestCase):
         self.assertEqual(pa.judge_react({"events": [{"ev": "ReactionInterruptUsed"}]})[0], "OPEN")
         self.assertEqual(pa.judge_react({"events": []})[0], "FAIL")
 
-    def test_end_and_gameover(self):
-        self.assertEqual(pa.judge_end({"ended_at": "downed", "end_event": "CombatEnded"})[0], "PASS")
-        self.assertEqual(pa.judge_end({"ended_at": "dead", "game_over": True})[0], "FAIL")
-        self.assertEqual(pa.judge_end({})[0], "FAIL")
+    def test_end_records_what_the_game_does_after_a_wipe(self):
+        base = {"all_down_read": True, "death_save_turns": [{"who": ["Gale"]}, {"who": ["Wyll"]}]}
+        v, why = pa.judge_end({**base, "ended_at": "dead", "end_event": "CombatEnded"})
+        self.assertEqual(v, "PASS")
+        self.assertIn("death-save turns: 2; combat ended at the dead stage (CombatEnded)", why)
+        self.assertIn("never ended by itself", pa.judge_end(base)[1])
+        self.assertIn("Game Over screen", pa.judge_end({**base, "game_over": "dead"})[1])  # the team's loss, no fault
+        self.assertEqual(pa.judge_end({"all_down_read": False})[0], "FAIL")
+
+    def test_gameover(self):
         self.assertEqual(pa.judge_gameover({"dead": True, "game_over": False})[0], "PASS")
         self.assertEqual(pa.judge_gameover({"dead": True, "game_over": True})[0], "FAIL")
+        self.assertIn("downed alone", pa.judge_gameover({"game_over_downed": True})[1])
         self.assertEqual(pa.judge_gameover({"dead": False})[0], "OPEN")
+
+    def test_conns(self):
+        rows = [{"i": i, "connected": True, "answer": "1"} for i in range(6)]
+        self.assertEqual(pa.judge_conns(rows, 6)[0], "PASS")
+        rows[5] = {"i": 5, "connected": False, "error": "ConnectionRefusedError"}
+        self.assertEqual(pa.judge_conns(rows, 6), ("FAIL", "5/6 answered: #5: ConnectionRefusedError"))
+
+    def test_party_and_pinned_mods(self):
+        facts = {u: {"in_party_db": True} for u in A + B}
+        mods = [{"name": "GustavDev", "uuid": "g1"}, {"name": "BG3AI", "uuid": "m1"}]
+        v, why = pa.judge_party(TEAMS, facts, mods, None)
+        self.assertEqual(v, "PASS")
+        self.assertIn("2 mods loaded (no pinned list given): GustavDev, BG3AI", why)
+        self.assertEqual(pa.judge_party(TEAMS, facts, mods, ["GustavDev", "m1"])[0], "PASS")
+        v, why = pa.judge_party(TEAMS, {**facts, B[1]: {"name": "Wyll"}}, [*mods, {"name": "PartyLimit"}], ["g1", "m1"])
+        self.assertEqual(v, "FAIL")
+        self.assertIn("not in DB_PartyMembers: Wyll", why)
+        self.assertTrue(why.endswith("mods beyond the pinned set: PartyLimit"))  # GustavDev pinned by uuid
+
+    def test_tie_info(self):
+        order = {
+            "groups": [
+                [{"uuid": A[0], "initiative": 18}],
+                [{"uuid": B[0], "initiative": 15}],
+                [{"uuid": A[1], "initiative": 15}, {"uuid": B[1], "name": "Wyll", "initiative": 15}],
+            ]
+        }
+        t = pa.tie_info(order, TEAMS)
+        self.assertEqual(t["mixed_groups"], [[A[1], "Wyll"]])
+        self.assertEqual(t["equal"], [[B[0], A[1]], [A[1], B[1]]])  # never two of one side
+        self.assertEqual(t["adjacent"][0], [A[0], B[0], 18])
+
+    def test_tie(self):
+        self.assertEqual(pa.judge_tie({"before": {"equal": []}, "force": None})[0], "OPEN")
+        self.assertEqual(pa.judge_tie({"after": {"equal": [[A[0], B[0]]]}})[0], "PASS")
+        v, why = pa.judge_tie({"after": {"equal": [[A[0], B[0]]]}, "shared_turns": [["Tav", "Wyll"]]})
+        self.assertEqual(v, "FAIL")
+        self.assertIn("open together: ['Tav', 'Wyll']", why)
+        self.assertEqual(pa.judge_tie({"before": {"mixed_groups": [["Tav", "Wyll"]]}})[0], "FAIL")
 
     def test_npc(self):
         self.assertEqual(pa.judge_npc({"act": {"refused": True}, "idle": {"acted": False}})[0], "OPEN")
@@ -296,6 +342,69 @@ class StepsTest(unittest.TestCase):
         self.assertIn({"scn.seed": {"seed": 7}}, rec["calls"])
         saved = json.loads((self.tmp / "teams.json").read_text())
         self.assertEqual((saved["A"], saved["B"], saved["host"]), (A, B, A[0]))
+
+    def test_conns_opens_all_then_evaluates_on_each(self):
+        opened: list[Any] = []
+
+        class Client:
+            def __init__(self, i: int) -> None:
+                self.i, self.closed = i, False
+
+            def evaluate(self, code: str, context: str, timeout: float) -> str:
+                assert len(opened) == 6, "every connection is open before the first eval"
+                return str(self.i)
+
+            def close(self) -> None:
+                self.closed = True
+
+        def connect() -> Client:
+            if len(opened) == 6:
+                raise ConnectionRefusedError("cap")
+            opened.append(Client(len(opened)))
+            return opened[-1]
+
+        ar = FakeArena(self.tmp, self.facts, [])
+        ar.connect = connect
+        self.assertEqual(ar.conns(6)["verdict"], "PASS")
+        self.assertTrue(all(c.closed for c in opened))
+        self.assertEqual(ar.conns(1)["verdict"], "FAIL")  # the 7th is refused
+
+    def test_tie_forces_a_b_member_to_its_a_neighbour_and_records_a_shared_turn(self):
+        ar = FakeArena(self.tmp, self.facts, [[A[0]], [B[0], A[1]], [B[1]]])
+        evs: list[str] = []
+        base_ev = ar.ev
+
+        def ev(code: str, timeout: float = 30.0) -> Any:
+            evs.append(code)
+            if "P.order" in code:
+                return {
+                    "round": 1,
+                    "groups": [
+                        [{"uuid": A[0], "initiative": 18}],
+                        [{"uuid": B[0], "initiative": 12}],
+                        [{"uuid": A[1], "initiative": 9}],
+                    ],
+                }
+            if "set_initiative" in code:
+                return {"writes": [{"list": "CurrentGroups", "member": True}], "replicated": True}
+            return base_ev(code, timeout)
+
+        ar.ev = ev  # type: ignore[method-assign]
+        r = ar.tie(force=True)
+        self.assertEqual(r["force"]["who"], B[0])
+        self.assertEqual(r["force"]["initiative"], 18)
+        self.assertIn(f'P.set_initiative("{B[0]}", 18)', "".join(evs))
+        self.assertEqual([sorted(t) for t in r["shared_turns"]], [sorted([B[0][:4], A[1][:4]])])
+        self.assertEqual(ar.written["q5-tie"]["verdict"], "FAIL")
+
+    def test_end_records_death_save_turns_of_the_downed_team(self):
+        ar = FakeArena(self.tmp, self.facts, [[A[0]], [B[0]], [A[1]]])
+        ar.client = lambda op, args=None: {"uuid": B[0]} if op == "ui.selected" else {"screen": "game"}  # type: ignore
+        turns = ar.downed_turns(TEAMS, "B", max_turns=3)
+        self.assertEqual([t["who"] for t in turns], [[B[0][:4]]])
+        self.assertFalse(turns[0]["ended_by_itself"])  # the fake game never ends a turn by itself
+        self.assertEqual(turns[0]["hud"], {"uuid": B[0]})
+        self.assertEqual([a["char"] for op, a in ar.jobs], [A[0], B[0], A[1]])
 
     def test_main_dry_run_needs_no_game(self):
         self.assertEqual(pa.main(["all", "--dry-run"]), 0)
