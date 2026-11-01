@@ -209,3 +209,58 @@ test("a held member is still to act, not its turn", function()
     G.end_requested[A1] = clock
     eq(G.still_to_act(A1), false, "A1 ended")
 end)
+
+test("a team phase over END_REQUEST_TTL_MS: the earlier phase's ends stay pending while the group still has B to act",
+    function()
+    begin()
+    order = { { A1, A2, B1, B2 } }
+    openAll({ A1, A2, B1, B2 })
+    G.end_requested[A1], G.end_requested[A2] = clock, clock -- A's phase ended; the game keeps the group open
+    clock = clock + G.END_REQUEST_TTL_MS + 1000            -- B's phase runs past the TTL
+    eq(G.end_pending(A1), true, "A1's end kept")
+    eq(Ar.acting_side(), "B", "B still acts")
+    eq(G.is_my_turn(A1), false, "A1's turn")
+    G.end_requested[B1], G.end_requested[B2] = clock, clock -- B ended too: nobody else is still to act
+    eq(G.end_pending(A1), false, "the TTL applies again: A1's old end forgotten")
+end)
+
+local A = BG3AI.Actions
+
+-- The group's last end (A1's pending, B1 the last still to act); the job of B1's end_turn.
+local function lastEnd()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { { A1, B1 } }
+    openAll({ A1, B1 })
+    G.end_requested[A1] = clock
+    tick()
+    eq(Ar.acting_side(), "B", "B's phase")
+    return endTurn(B1, "B")
+end
+
+test("the group's last end waits for the game past END_IGNORED_MS and the 10 s job limit; the next round ends it",
+    function()
+    local j = lastEnd()
+    ticks(math.floor(18000 / Ar.PHASE_EVERY_MS)) -- S087: 18 s to the group's TurnEnded
+    eq(j.status, "running", "still waiting at 18 s: " .. tostring(j.error))
+    fire("CombatRoundStarted", "combat1", 2)
+    tick()
+    eq(j.status, "done", "B1's end: " .. tostring(j.error))
+    eq(j.result.ended_again, nil, "nobody's EndTurn sent again in the new round")
+end)
+
+test("the group's last end: its own TurnEnded at 5 s ends it", function()
+    local j = lastEnd()
+    ticks(20)
+    fire("TurnEnded", "S_Player_" .. B1)
+    eq(j.status, "done", "TurnEnded at 5 s")
+end)
+
+test("the group's last end: no close in END_LAST_WAIT_MS fails 'ignored'", function()
+    local j = lastEnd()
+    ticks(math.floor(A.END_LAST_WAIT_MS / Ar.PHASE_EVERY_MS) - 1)
+    eq(j.status, "running", "just short of END_LAST_WAIT_MS")
+    ticks(2)
+    eq(j.status, "failed", "status")
+    eq(j.error, A.END_IGNORED, "error")
+end)

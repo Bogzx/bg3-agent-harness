@@ -79,8 +79,11 @@ reg("end_turn", function(args)
         if #resent > 0 then res.ended_again = resent end
         RPC.finish_job(job, "done", res)
     end
+    local Ar = BG3AI.Arena
+    local arena = Ar and Ar.active()
+    local round = arena and Ar.state.round
     return start("end_turn", char, {
-        timeout_ms = 10000,
+        timeout_ms = arena and A.END_LAST_WAIT_MS + 1000 or 10000,
         osi = {
             TurnEnded = function(job, a)
                 if G.same(a[1], char) then finish(job) end
@@ -96,9 +99,13 @@ reg("end_turn", function(args)
                 finish(job, true)
                 return
             end
+            -- In an arena this is the group's last end (nobody else still to act): the game closes the group, which
+            -- took up to 18 s to its TurnEnded (S087), and may show nothing until then. Done when the round moves
+            -- on (a new round's open turns are not stale ends: nobody's EndTurn is sent again).
+            if arena and Ar.state.round ~= round then RPC.finish_job(job, "done", { ended = true }) return end
             -- S044/S045: our Spiritual Weapon's EndTurn (×4) and turns during Ketheric's mid-fight lines (×5) were
             -- ignored: 10 s TIMEOUT each. Hand back early so the bridge presses the HUD's End Turn instead.
-            if RPC.now_ms() - job.started >= A.END_IGNORED_MS then
+            if RPC.now_ms() - job.started >= (arena and A.END_LAST_WAIT_MS or A.END_IGNORED_MS) then
                 RPC.finish_job(job, "failed", { still_my_turn = true }, A.END_IGNORED)
             end
         end,
