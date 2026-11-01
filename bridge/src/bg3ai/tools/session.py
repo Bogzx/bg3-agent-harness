@@ -14,7 +14,7 @@ from typing import Callable
 
 from mcp.server.mcpserver import MCPServer
 
-from .. import capabilities, compact, memtools, render, rules, tool_classes
+from .. import actq, capabilities, compact, memtools, render, rules, tool_classes
 from ..game import Game
 from . import batch, core, plumbing, queueing, reporting, world_tools
 
@@ -24,7 +24,7 @@ from . import batch, core, plumbing, queueing, reporting, world_tools
 def wait(seconds: float = 3.0) -> str:
     """Let game time pass (cutscenes, NPC turns) and report what happened. Returns early on the first notable event (combat/turn/dialogue start or end, a job or queue finishing). To follow an action, prefer wait_for."""
     t0 = time.monotonic()
-    end = t0 + max(0.2, min(seconds, 30.0))
+    end = t0 + max(0.2, min(seconds, actq.WAIT_MAX_S))
     hit = None
     while time.monotonic() < end and hit is None:
         time.sleep(min(0.25, max(0.0, end - time.monotonic())))

@@ -14,17 +14,18 @@ import pytest
 from bg3bench.submission import bundle, pack, scrub
 
 FIXTURE = Path(__file__).parent / "fixtures" / "submission" / "fight_act2_balthazar.bundle.tar.gz"
+GOLD = FIXTURE.with_name("act3_gold_max.bundle.tar.gz")
 PILOT = Path("/data/Repos/ovh-e2e/runtime/sessions")  # the 2026-10-25 pilot's run dirs, where present
 ID = "00000000-0000-4000-8000-000000000001"
 # Personal-data shapes, built at run time so this file holds none (tools/ci/scrub.py scans the tree).
 WIN, MAIL, STEAM, KEY = "C:" + "\\Users\\bob", "bob" + "@corp.io", "7656119" + "8000000042", "sk-" + "a" * 24
 
 
-def run_dir(tmp_path: Path) -> Path:
+def run_dir(tmp_path: Path, fixture: Path = FIXTURE) -> Path:
     """The fixture bundle's files as a run dir (bundle.json dropped), plus files a run dir has that a bundle doesn't."""
     d = tmp_path / "run"
     d.mkdir()
-    with tarfile.open(FIXTURE) as tar:
+    with tarfile.open(fixture) as tar:
         for m in tar.getmembers():
             f = tar.extractfile(m)
             if f is not None and m.name != bundle.ENVELOPE:
@@ -67,6 +68,28 @@ def test_pack_fixture_run(tmp_path):
     assert (env["bundle_id"], env["packed"], env["video"], env["versions"]["panel"]) == (ID, 1793000000.0, None, None)
     with tarfile.open(p.archive) as tar:
         assert sorted(tar.getnames()) == sorted([*names, bundle.ENVELOPE])
+
+
+def test_a_maximise_run_is_packed_with_its_score_graded_again_from_the_start_state(tmp_path):
+    """launch-v1 Sonnet x act3_gold_max was graded from its first snapshot (428 gold, after it sold junk) instead of
+    the save's published 410: pack scores it again from the packed facts; the run dir's result.json stays."""
+    d = run_dir(tmp_path, GOLD)
+    rows = [json.loads(ln) for ln in (d / "facts.jsonl").read_text().splitlines()]
+    first = next(r for r in rows if r["kind"] == "snapshot")
+    first["gold"] = 428
+    (d / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    res = json.loads((d / "result.json").read_text())
+    end = res["score"]["end"]
+    old = {"fact": "gold", "start": 428, "end": end, "gain": end - 428, "peak": res["score"]["peak"]}
+    edit_json(d / "result.json", score=old)
+    kept = (d / "result.json").read_bytes()
+    p = do_pack(d, tmp_path / "out")
+    packed = json.loads((p.bundle_dir / "result.json").read_text())
+    assert packed["score"] == {**old, "start": 410, "gain": end - 410, "start_from": "start_state"}
+    assert {k: v for k, v in packed.items() if k != "score"} == {k: v for k, v in res.items() if k != "score"}
+    assert (d / "result.json").read_bytes() == kept
+    again = do_pack(p.bundle_dir, tmp_path / "again")  # already scored: packed as it is
+    assert (again.bundle_dir / "result.json").read_bytes() == (p.bundle_dir / "result.json").read_bytes()
 
 
 def test_pack_is_deterministic_and_refuses_a_used_out_dir(tmp_path):

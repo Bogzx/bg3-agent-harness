@@ -207,6 +207,12 @@ def progress_failures(paths: list[Path], since: float) -> list[dict]:
 HAND_INPUT = ("click", "press_key", "ui_action")  # raw UI input tools
 UNKNOWN_KINDS = ("tool_failed", "hand_input", "bg_timeout")  # stream failures listed, never voiding a run
 MOVE_TOOLS = ("move", "move_to", "walk_toward", "travel_to")  # "FAILED: beyond remaining movement" is routine
+# The game's UI stuck behind bg3le's frame lock: after one lock timeout bg3le refuses every UI call ("bg3le: UI busy")
+# until the UI thread takes the lock again. A load or a rest clears it within seconds; a run of UI_HANG_MIN_N refusals
+# over UI_HANG_MIN_S or more, none further apart than UI_HANG_GAP_S, is a UI that never came back (a 31-min streak of
+# 44 refusals after a camp sleep press, the HUD frozen on screen): a harness failure. Each refusal stays a tool_failed.
+UI_BUSY = "bg3le: UI busy"
+UI_HANG_MIN_N, UI_HANG_MIN_S, UI_HANG_GAP_S = 5, 300.0, 180.0
 
 
 def stream_failures(stream: Path) -> list[dict]:
@@ -265,6 +271,7 @@ def stream_failures(stream: Path) -> list[dict]:
     for (kind, tool, key), cs in groups.items():
         cls = AGENT if kind == "fairness_block" else UNKNOWN if kind in UNKNOWN_KINDS else HARNESS
         out.append(failure(cs[0].get("t") or t_end, kind, cls, f"{sid}: {tool}: {key}", len(cs)))
+    out += ui_hangs(sid, [c["t"] for c in calls if c.get("t") is not None and UI_BUSY in (c.get("text") or "")])
     if wipe is not None:
         out.append(failure(wipe.get("t") or t_end, "party_wipe", AGENT, f"{sid}: Game Over ({wipe['name']})"))
     for rule, hits in fairness.audit_calls(calls).items():
@@ -274,6 +281,24 @@ def stream_failures(stream: Path) -> list[dict]:
                     hits[0][0].get("t") or t_end, "fairness_leak", HARNESS, f"{sid}: {rule}: {hits[0][1]}", len(hits)
                 )
             )
+    return out
+
+
+def ui_hangs(sid: str, busy_ts: list[float]) -> list[dict]:
+    """One ui_hang per streak of "bg3le: UI busy" refusals (their result times) long enough to be a UI that never
+    came back (UI_HANG_MIN_N / UI_HANG_MIN_S / UI_HANG_GAP_S)."""
+    out, ts = [], sorted(busy_ts)
+    i = 0
+    while i < len(ts):
+        j = i
+        while j + 1 < len(ts) and ts[j + 1] - ts[j] <= UI_HANG_GAP_S:
+            j += 1
+        n, span = j - i + 1, ts[j] - ts[i]
+        if n >= UI_HANG_MIN_N and span >= UI_HANG_MIN_S:
+            # one hang, so no n (a failure's n adds up into harness_failures)
+            why = f"the game's UI stayed busy {span / 60:.0f} min ({n} refused calls): the frame lock never came back"
+            out.append(failure(ts[i], "ui_hang", HARNESS, f"{sid}: {why}"))
+        i = j + 1
     return out
 
 
@@ -289,6 +314,7 @@ STREAM_KINDS = (
     "tool_failed",
     "hand_input",
     "bg_timeout",
+    "ui_hang",
 )
 OUTCOME_KINDS = ("timeout", "cost_cap", "tokens_cap", "time_cap")
 

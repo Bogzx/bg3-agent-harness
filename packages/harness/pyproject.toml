@@ -1,6 +1,6 @@
 [project]
 name = "bg3-agent-harness"
-version = "0.1.0"
+version = "0.2.0"
 description = "The BG3 agent harness: sessions on the live game, play clients, prompts and the facts/events contracts"
 requires-python = ">=3.14"
 dependencies = ["bg3ai-bridge"]  # the game I/O, metrics and milestones (bg3ai); it brings mcp

@@ -1,0 +1,952 @@
+{
+ "schema": 1,
+ "kind": "bg3bench.release",
+ "about": "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, count, allowlist_sha256) and per client the sha256 of the prompt it is served; its variants: the same under a client profile's tool groups off (keyed by those groups), which a run naming those tools is checked against.",
+ "suite": "bench-v0.9",
+ "versions": {
+  "harness": "0.2.0",
+  "bench": "0.9.0"
+ },
+ "pins": {
+  "game_build": "25605617",
+  "bg3le_sha256": "43efad6edc549f878e3ab8b5a24fe56aee3fc36f0e1116bd259f5ae17e5260fc",
+  "mod_sha1": "8590868b1a4ec5914c3bcdfd0d9f52a496880ef4"
+ },
+ "scenarios": {
+  "act1_goblin_camp_no_fight": {
+   "digest": "d87a7d09f1f7b7db",
+   "save": "Tav-41221265956__SCN-act1_goblin_camp_no_fight",
+   "save_sha1": "76ed7b41595cdd910bdd2f6f70f5cbf9b4b07d70",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Goblin Camp",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "act1_gold_1000": {
+   "digest": "49a6754ea7166c0d",
+   "save": "Tav-52221263950__SCN-act1_gold_1000",
+   "save_sha1": "bfd19a70b8498b487f8d549cf78c57cafa809c15",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 133,
+    "region": "Wilderness",
+    "area": "The Hollow",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "act1_gold_max": {
+   "digest": "0b264d08717b21da",
+   "save": "Tav-52221263950__SCN-act1_gold_1000",
+   "save_sha1": "bfd19a70b8498b487f8d549cf78c57cafa809c15",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 133,
+    "region": "Wilderness",
+    "area": "The Hollow",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "act1_level_3": {
+   "digest": "e780a38cb1f9fcf8",
+   "save": "Tav-45221263947__SCN-act1_level_3",
+   "save_sha1": "5a1d6674395f203e78d4245ffd6bc538cd430975",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 88,
+    "region": "Wilderness",
+    "area": "Chapel Entrance",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "act1_recruit_3": {
+   "digest": "28bf7ce2a900463e",
+   "save": "Tav-40221263931__SCN-act1_recruit_3",
+   "save_sha1": "13287171ea6b91f71e221b857b27a17b7efcf394",
+   "fingerprint": {
+    "party": [
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 88,
+    "region": "Wilderness",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "act3_gold_max": {
+   "digest": "dfb2ba4e59bfe54d",
+   "save": "Tav-30251267957__SCN-act3_gold_max",
+   "save_sha1": "5630b7441579e2a07cb5d5023a827b3fd0ddb344",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      7
+     ],
+     [
+      "Shadowheart",
+      7
+     ],
+     [
+      "Tav",
+      7
+     ],
+     [
+      "Wyll",
+      7
+     ]
+    ],
+    "gold": 410,
+    "region": "Lower City",
+    "area": "Lower City",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "choice_act1_arabella": {
+   "digest": "df02ebf8929bc48a",
+   "save": "Tav-21221264940__SCN-choice_act1_arabella",
+   "save_sha1": "ca983b576ea987fb18483d94e76b38daa8ea351a",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ],
+     [
+      "Wyll",
+      1
+     ]
+    ],
+    "gold": 133,
+    "region": "Wilderness",
+    "area": "Emerald Grove",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "choice_act1_karlach": {
+   "digest": "30cc86c8e9358647",
+   "save": "Tav-56221264931__SCN-choice_act1_karlach",
+   "save_sha1": "5b416c5db765b664712dd87466dcfc87c82dce3e",
+   "fingerprint": {
+    "party": [
+     [
+      "Shadowheart",
+      4
+     ],
+     [
+      "Tav",
+      4
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "The Risen Road",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "choice_act1_minthara": {
+   "digest": "c96744cc4d10547f",
+   "save": "Tav-47221264946__SCN-choice_act1_minthara",
+   "save_sha1": "2e6408acbebdf9f529adf419f757ad128b819c7c",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Shattered Sanctum",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "choice_act2_nightsong": {
+   "digest": "2d928764622d1423",
+   "save": "Tav-18221265949__SCN-choice_act2_nightsong",
+   "save_sha1": "be5f850108d7bf3df1509a8303e173b4185bd889",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      6
+     ],
+     [
+      "Shadowheart",
+      6
+     ],
+     [
+      "Tav",
+      6
+     ],
+     [
+      "Wyll",
+      6
+     ]
+    ],
+    "gold": 60,
+    "region": "Shadow-Cursed Lands",
+    "area": "Nightsong's Prison",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "crash_site_grove": {
+   "digest": "3728ead931bfc630",
+   "save": "Tav-34221263934__SCN-crash_site_grove",
+   "save_sha1": "d7b0749e1dc6febb477f302d2a30b25770329213",
+   "fingerprint": {
+    "party": [
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 33,
+    "region": "Wilderness",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act1_dror_ragzlin": {
+   "digest": "a8a40fac9192cb42",
+   "save": "Tav-5122126499__SCN-fight_act1_dror_ragzlin",
+   "save_sha1": "d8ab62ff9b7979bbc5788f1f633e888a4d00c742",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Shattered Sanctum",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act1_dror_ragzlin_tactician": {
+   "digest": "c4ec97e7e6ed0438",
+   "save": null,
+   "save_sha1": null,
+   "fingerprint": null
+  },
+  "fight_act1_grove_gate": {
+   "digest": "1a75a66de27e4a4f",
+   "save": "Tav-1522126493__SCN-fight_act1_grove_gate",
+   "save_sha1": "65fdc7d172d7f21253eb36454255a58dd368efa9",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      1
+     ],
+     [
+      "Shadowheart",
+      2
+     ],
+     [
+      "Tav",
+      2
+     ]
+    ],
+    "gold": 88,
+    "region": "Wilderness",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act1_windmill": {
+   "digest": "f9d67d62725f50d0",
+   "save": "Tav-26221264947__SCN-fight_act1_windmill",
+   "save_sha1": "ca8dae135db0df99b21c9e59197e0953144b63be",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Blighted Village",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act1_windmill_tactician": {
+   "digest": "0de93d9f260b0daf",
+   "save": null,
+   "save_sha1": null,
+   "fingerprint": null
+  },
+  "fight_act2_balthazar": {
+   "digest": "5e9f5cd065caaf2d",
+   "save": "Tav-14221265938__SCN-fight_act2_balthazar",
+   "save_sha1": "da79bf42f2f672b815ae64c2008e80483f2c33f3",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      6
+     ],
+     [
+      "Shadowheart",
+      6
+     ],
+     [
+      "Tav",
+      6
+     ],
+     [
+      "Wyll",
+      6
+     ]
+    ],
+    "gold": 60,
+    "region": "Shadow-Cursed Lands",
+    "area": "Nightsong's Prison",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act2_balthazar_tactician": {
+   "digest": "fcffadd35c0b200c",
+   "save": null,
+   "save_sha1": null,
+   "fingerprint": null
+  },
+  "fight_act2_house_of_healing": {
+   "digest": "a4106e8c1b871c50",
+   "save": null,
+   "save_sha1": null,
+   "fingerprint": null
+  },
+  "fight_act2_ketheric": {
+   "digest": "737de265c0b77ebc",
+   "save": "Tav-2622126592__SCN-fight_act2_ketheric",
+   "save_sha1": "a852ea1fc1406f30bc5c51b9073232a71f57501e",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      7
+     ],
+     [
+      "Shadowheart",
+      7
+     ],
+     [
+      "Tav",
+      7
+     ],
+     [
+      "Wyll",
+      7
+     ]
+    ],
+    "gold": 379,
+    "region": "Shadow-Cursed Lands",
+    "area": "Mind Flayer Colony",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act2_moonrise_assault": {
+   "digest": "901628156e36cf5a",
+   "save": "Tav-22221265932__SCN-fight_act2_moonrise_assault",
+   "save_sha1": "7a223384a912d8cca0706bfea39d0386c410c101",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      6
+     ],
+     [
+      "Shadowheart",
+      6
+     ],
+     [
+      "Tav",
+      6
+     ],
+     [
+      "Wyll",
+      6
+     ]
+    ],
+    "gold": 152,
+    "region": "Shadow-Cursed Lands",
+    "area": null,
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act3_sarevok": {
+   "digest": "23cea139b0511d07",
+   "save": "Tav-29221265940__SCN-fight_act3_sarevok",
+   "save_sha1": "77283ecc232d865ae8ea38c514796cc0b4d3c07d",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      8
+     ],
+     [
+      "Shadowheart",
+      8
+     ],
+     [
+      "Tav",
+      8
+     ],
+     [
+      "Wyll",
+      8
+     ]
+    ],
+    "gold": 410,
+    "region": "Lower City",
+    "area": "Bhaalist Crypt",
+    "difficulty": "Balanced",
+    "name": "Tav"
+   }
+  },
+  "fight_act3_sarevok_tactician": {
+   "digest": "7cd7c14fa325a163",
+   "save": null,
+   "save_sha1": null,
+   "fingerprint": null
+  },
+  "nautiloid": {
+   "digest": "49dde1c5869633c7",
+   "save": null,
+   "save_sha1": null,
+   "fingerprint": {
+    "party": [],
+    "gold": 0,
+    "region": null,
+    "area": null,
+    "difficulty": "Balanced",
+    "name": null
+   }
+  }
+ },
+ "saves": [
+  {
+   "name": "Tav-14221265938__SCN-fight_act2_balthazar",
+   "scenarios": [
+    "fight_act2_balthazar"
+   ],
+   "save_sha1": "da79bf42f2f672b815ae64c2008e80483f2c33f3",
+   "zip": "Tav-14221265938__SCN-fight_act2_balthazar.zip",
+   "key": "saves/bench-v0.9/Tav-14221265938__SCN-fight_act2_balthazar.zip",
+   "bytes": 14858984,
+   "sha256": "cce4f4d0f75bd8f030182e82ad7072a6f08c782be4bb75bce2e1776e86d3fe1d"
+  },
+  {
+   "name": "Tav-1522126493__SCN-fight_act1_grove_gate",
+   "scenarios": [
+    "fight_act1_grove_gate"
+   ],
+   "save_sha1": "65fdc7d172d7f21253eb36454255a58dd368efa9",
+   "zip": "Tav-1522126493__SCN-fight_act1_grove_gate.zip",
+   "key": "saves/bench-v0.9/Tav-1522126493__SCN-fight_act1_grove_gate.zip",
+   "bytes": 15048507,
+   "sha256": "de472844364760a18b57256f963e3fd152a4b336518600b43eceb66d43e7c6af"
+  },
+  {
+   "name": "Tav-18221265949__SCN-choice_act2_nightsong",
+   "scenarios": [
+    "choice_act2_nightsong"
+   ],
+   "save_sha1": "be5f850108d7bf3df1509a8303e173b4185bd889",
+   "zip": "Tav-18221265949__SCN-choice_act2_nightsong.zip",
+   "key": "saves/bench-v0.9/Tav-18221265949__SCN-choice_act2_nightsong.zip",
+   "bytes": 14965661,
+   "sha256": "422b0b1d96b62655deb9f1b17d9a7e7e7c87f50dbd22595b2a7c1f0cede86de4"
+  },
+  {
+   "name": "Tav-21221264940__SCN-choice_act1_arabella",
+   "scenarios": [
+    "choice_act1_arabella"
+   ],
+   "save_sha1": "ca983b576ea987fb18483d94e76b38daa8ea351a",
+   "zip": "Tav-21221264940__SCN-choice_act1_arabella.zip",
+   "key": "saves/bench-v0.9/Tav-21221264940__SCN-choice_act1_arabella.zip",
+   "bytes": 15009137,
+   "sha256": "5ea21af896ddd2f84708477308af50921a9df4009e678a8f148eaed12fc13ae3"
+  },
+  {
+   "name": "Tav-22221265932__SCN-fight_act2_moonrise_assault",
+   "scenarios": [
+    "fight_act2_moonrise_assault"
+   ],
+   "save_sha1": "7a223384a912d8cca0706bfea39d0386c410c101",
+   "zip": "Tav-22221265932__SCN-fight_act2_moonrise_assault.zip",
+   "key": "saves/bench-v0.9/Tav-22221265932__SCN-fight_act2_moonrise_assault.zip",
+   "bytes": 14935767,
+   "sha256": "066298891087c57b6bc8751b4d835099bc33fa8eae648eb7a9dfa519f43ac5e5"
+  },
+  {
+   "name": "Tav-26221264947__SCN-fight_act1_windmill",
+   "scenarios": [
+    "fight_act1_windmill"
+   ],
+   "save_sha1": "ca8dae135db0df99b21c9e59197e0953144b63be",
+   "zip": "Tav-26221264947__SCN-fight_act1_windmill.zip",
+   "key": "saves/bench-v0.9/Tav-26221264947__SCN-fight_act1_windmill.zip",
+   "bytes": 15100297,
+   "sha256": "179f3d4693876806c019ccab81e76adb0347dc0670484c3b4a96bc4943164061"
+  },
+  {
+   "name": "Tav-2622126592__SCN-fight_act2_ketheric",
+   "scenarios": [
+    "fight_act2_ketheric"
+   ],
+   "save_sha1": "a852ea1fc1406f30bc5c51b9073232a71f57501e",
+   "zip": "Tav-2622126592__SCN-fight_act2_ketheric.zip",
+   "key": "saves/bench-v0.9/Tav-2622126592__SCN-fight_act2_ketheric.zip",
+   "bytes": 15086188,
+   "sha256": "84bdc079ab4b926c5993ddf3e37b110a36359b582a2546832072dd0ece3ff0b7"
+  },
+  {
+   "name": "Tav-29221265940__SCN-fight_act3_sarevok",
+   "scenarios": [
+    "fight_act3_sarevok"
+   ],
+   "save_sha1": "77283ecc232d865ae8ea38c514796cc0b4d3c07d",
+   "zip": "Tav-29221265940__SCN-fight_act3_sarevok.zip",
+   "key": "saves/bench-v0.9/Tav-29221265940__SCN-fight_act3_sarevok.zip",
+   "bytes": 24297310,
+   "sha256": "8166b95f052c572720a8e888e18f64930b7e4188238fcd7d35721baaae33a16f"
+  },
+  {
+   "name": "Tav-30251267957__SCN-act3_gold_max",
+   "scenarios": [
+    "act3_gold_max"
+   ],
+   "save_sha1": "5630b7441579e2a07cb5d5023a827b3fd0ddb344",
+   "zip": "Tav-30251267957__SCN-act3_gold_max.zip",
+   "key": "saves/bench-v0.9/Tav-30251267957__SCN-act3_gold_max.zip",
+   "bytes": 24469648,
+   "sha256": "69fd2511b7c3e1973dacc5f0e2c8255fa4effb65bfebc671f4507552a9897365"
+  },
+  {
+   "name": "Tav-34221263934__SCN-crash_site_grove",
+   "scenarios": [
+    "crash_site_grove"
+   ],
+   "save_sha1": "d7b0749e1dc6febb477f302d2a30b25770329213",
+   "zip": "Tav-34221263934__SCN-crash_site_grove.zip",
+   "key": "saves/bench-v0.9/Tav-34221263934__SCN-crash_site_grove.zip",
+   "bytes": 14812148,
+   "sha256": "18c73bd6fa974a6ee3214ea90542232f479b946c681a37e52538056d490638b5"
+  },
+  {
+   "name": "Tav-40221263931__SCN-act1_recruit_3",
+   "scenarios": [
+    "act1_recruit_3"
+   ],
+   "save_sha1": "13287171ea6b91f71e221b857b27a17b7efcf394",
+   "zip": "Tav-40221263931__SCN-act1_recruit_3.zip",
+   "key": "saves/bench-v0.9/Tav-40221263931__SCN-act1_recruit_3.zip",
+   "bytes": 14937160,
+   "sha256": "675ead7981dd32424e923f441149d562531175de63d1027bc119f696505aafc9"
+  },
+  {
+   "name": "Tav-41221265956__SCN-act1_goblin_camp_no_fight",
+   "scenarios": [
+    "act1_goblin_camp_no_fight"
+   ],
+   "save_sha1": "76ed7b41595cdd910bdd2f6f70f5cbf9b4b07d70",
+   "zip": "Tav-41221265956__SCN-act1_goblin_camp_no_fight.zip",
+   "key": "saves/bench-v0.9/Tav-41221265956__SCN-act1_goblin_camp_no_fight.zip",
+   "bytes": 15208249,
+   "sha256": "00d9c473f98acb3fbac98542d018e423f5a584e5ce998947e5d829bc3530476e"
+  },
+  {
+   "name": "Tav-45221263947__SCN-act1_level_3",
+   "scenarios": [
+    "act1_level_3"
+   ],
+   "save_sha1": "5a1d6674395f203e78d4245ffd6bc538cd430975",
+   "zip": "Tav-45221263947__SCN-act1_level_3.zip",
+   "key": "saves/bench-v0.9/Tav-45221263947__SCN-act1_level_3.zip",
+   "bytes": 14868665,
+   "sha256": "04c9357ac664d19ed4437e17b5837f1cfa471b9a35c430def845d15f5c18a75d"
+  },
+  {
+   "name": "Tav-47221264946__SCN-choice_act1_minthara",
+   "scenarios": [
+    "choice_act1_minthara"
+   ],
+   "save_sha1": "2e6408acbebdf9f529adf419f757ad128b819c7c",
+   "zip": "Tav-47221264946__SCN-choice_act1_minthara.zip",
+   "key": "saves/bench-v0.9/Tav-47221264946__SCN-choice_act1_minthara.zip",
+   "bytes": 15055583,
+   "sha256": "7f82d34423f9f0a5b6aa5239e7d6b091f5408f94f8f5cf9f8eb9cdc414226285"
+  },
+  {
+   "name": "Tav-5122126499__SCN-fight_act1_dror_ragzlin",
+   "scenarios": [
+    "fight_act1_dror_ragzlin"
+   ],
+   "save_sha1": "d8ab62ff9b7979bbc5788f1f633e888a4d00c742",
+   "zip": "Tav-5122126499__SCN-fight_act1_dror_ragzlin.zip",
+   "key": "saves/bench-v0.9/Tav-5122126499__SCN-fight_act1_dror_ragzlin.zip",
+   "bytes": 15179800,
+   "sha256": "3d415c334bfb81c9ce1b4d4090a5f36486c51e796d05d8318b4c536d31dbf9a4"
+  },
+  {
+   "name": "Tav-52221263950__SCN-act1_gold_1000",
+   "scenarios": [
+    "act1_gold_1000",
+    "act1_gold_max"
+   ],
+   "save_sha1": "bfd19a70b8498b487f8d549cf78c57cafa809c15",
+   "zip": "Tav-52221263950__SCN-act1_gold_1000.zip",
+   "key": "saves/bench-v0.9/Tav-52221263950__SCN-act1_gold_1000.zip",
+   "bytes": 14985882,
+   "sha256": "ed7355fc3c58e61b5dc020ff59417c088eba1e0d2ed5c270c3605d58b598598e"
+  },
+  {
+   "name": "Tav-56221264931__SCN-choice_act1_karlach",
+   "scenarios": [
+    "choice_act1_karlach"
+   ],
+   "save_sha1": "5b416c5db765b664712dd87466dcfc87c82dce3e",
+   "zip": "Tav-56221264931__SCN-choice_act1_karlach.zip",
+   "key": "saves/bench-v0.9/Tav-56221264931__SCN-choice_act1_karlach.zip",
+   "bytes": 15405947,
+   "sha256": "74190bdedae4961f3837e10c850e0fd5c79469a889511e8b1c8ffcabe9a58e28"
+  }
+ ],
+ "conditions": {
+  "rules": {
+   "tools": {
+    "allowlist_sha256": "7377d80cbfc8f07d380144ba924bf0fa23d9c6b89561109ecab831618c44a5ba",
+    "count": 82,
+    "names": [
+     "ability_preview",
+     "camp",
+     "cancel_queue",
+     "character_creation_options",
+     "choose_dialogue",
+     "click",
+     "click_on",
+     "combat_turn",
+     "confirm",
+     "create_character",
+     "delete_marker",
+     "dialogue_advance",
+     "disarm",
+     "dismiss_popups",
+     "do_actions",
+     "end_combat_report",
+     "end_turn",
+     "equip_best",
+     "fast_travel",
+     "feed_gale",
+     "flee",
+     "get_actions",
+     "get_character",
+     "get_combat_state",
+     "get_dialogue",
+     "get_events",
+     "get_explored",
+     "get_frontier",
+     "get_inventory",
+     "get_journal",
+     "get_layout",
+     "get_level_up_options",
+     "get_map",
+     "get_nearby",
+     "get_party",
+     "get_status",
+     "insert_item",
+     "interact",
+     "jump_to",
+     "level_up",
+     "list_saves",
+     "lockpick",
+     "long_rest",
+     "look",
+     "look_at",
+     "loot",
+     "loot_area",
+     "loot_corpse",
+     "manage_inventory",
+     "move_to",
+     "new_game",
+     "path_preview",
+     "pick_up",
+     "pickpocket",
+     "place_marker",
+     "prepare_spells",
+     "press_key",
+     "queue_actions",
+     "react",
+     "read_all",
+     "regroup",
+     "rest_if_needed",
+     "roll_check",
+     "route",
+     "save_game",
+     "screenshot",
+     "session_clock",
+     "set_party",
+     "set_reactions",
+     "short_rest",
+     "stay",
+     "swap_party",
+     "talk_to",
+     "trade",
+     "travel_to",
+     "ui_action",
+     "ui_dump",
+     "use_ability",
+     "wait",
+     "wait_for",
+     "walk_toward",
+     "zoom"
+    ]
+   },
+   "prompts": {
+    "claude": {
+     "sha256": "30825570172a94a2688f965a95249da30d76893cad9d58aac0316ef2f75d7dfe",
+     "condition": "rules+coaching"
+    },
+    "pi": {
+     "sha256": "d57bd58297d027fa5004b4a6aebc3a783f527d655d01a3317c6001d26bd5632d",
+     "condition": "rules"
+    }
+   },
+   "variants": {
+    "screenshots": {
+     "tools": {
+      "allowlist_sha256": "24024c5cb6e15cbd542039bf8172c44e91087969ab7e84cf7444175a796d0bf9",
+      "count": 80,
+      "names": [
+       "ability_preview",
+       "camp",
+       "cancel_queue",
+       "character_creation_options",
+       "choose_dialogue",
+       "click",
+       "click_on",
+       "combat_turn",
+       "confirm",
+       "create_character",
+       "delete_marker",
+       "dialogue_advance",
+       "disarm",
+       "dismiss_popups",
+       "do_actions",
+       "end_combat_report",
+       "end_turn",
+       "equip_best",
+       "fast_travel",
+       "feed_gale",
+       "flee",
+       "get_actions",
+       "get_character",
+       "get_combat_state",
+       "get_dialogue",
+       "get_events",
+       "get_explored",
+       "get_frontier",
+       "get_inventory",
+       "get_journal",
+       "get_layout",
+       "get_level_up_options",
+       "get_map",
+       "get_nearby",
+       "get_party",
+       "get_status",
+       "insert_item",
+       "interact",
+       "jump_to",
+       "level_up",
+       "list_saves",
+       "lockpick",
+       "long_rest",
+       "look",
+       "look_at",
+       "loot",
+       "loot_area",
+       "loot_corpse",
+       "manage_inventory",
+       "move_to",
+       "new_game",
+       "path_preview",
+       "pick_up",
+       "pickpocket",
+       "place_marker",
+       "prepare_spells",
+       "press_key",
+       "queue_actions",
+       "react",
+       "read_all",
+       "regroup",
+       "rest_if_needed",
+       "roll_check",
+       "route",
+       "save_game",
+       "session_clock",
+       "set_party",
+       "set_reactions",
+       "short_rest",
+       "stay",
+       "swap_party",
+       "talk_to",
+       "trade",
+       "travel_to",
+       "ui_action",
+       "ui_dump",
+       "use_ability",
+       "wait",
+       "wait_for",
+       "walk_toward"
+      ]
+     },
+     "prompts": {
+      "pi": {
+       "sha256": "aaff2d20c2fe6e157965ac1975b75dab5408ab0a7ef307a5d987269562e8f0fa",
+       "condition": "rules"
+      }
+     }
+    }
+   }
+  }
+ }
+}

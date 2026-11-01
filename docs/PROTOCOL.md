@@ -101,7 +101,7 @@ in [ARCHITECTURE.md](ARCHITECTURE.md), "The mod"). Ops are registered wherever t
 ### State (`Server/Visibility.lua` + `VisibilityObjects.lua`, `Server/State.lua` + `StateWorld.lua`, `StateOps.lua`; owner: worker **vis**)
 | op | ctx | args | result (sketch) |
 |---|---|---|---|
-| `state.status` | S | – | `{level, region, subregion, active:uuid, party:[{uuid,name,hp,max_hp,level,classes,pos,statuses,downed,in_combat}], in_combat, turn_based, in_dialogue, gold, combat:{round,current}?}` |
+| `state.status` | S | – | `{level, region, subregion, active:uuid, party:[{uuid,name,hp,max_hp,level,classes,pos,statuses,downed,in_combat,avatar?}], in_combat, turn_based, in_dialogue, gold, combat:{round,current}?}` |
 | `state.character` | S | `{uuid, sections?}` | Party: full sheet (abilities, saves, skills, AC, resources incl. spell slots/action/bonus/movement/reaction, passives, conditions, equipment, concentration, XP). Others: the Examine-panel projection only |
 | `state.actions` | S | `{uuid}` | Party member's usable actions as the hotbar shows them: `[{spell, name, level?, cost:{action,bonus,movement,slot}, range?, target:"entity"/"point"/"self"/"aoe", available:true/false, reason?}]` |
 | `state.nearby` | S | `{radius=25, kinds?}` | Visibility-filtered `{characters:[{uuid,name,relation,pos,dist,hp?,max_hp?,statuses,in_combat,can_talk,can_trade? (not hostile, and the Trader tag, traded with, or its dialogue offered Trade this session)}], items:[{uuid,name,kind(door/container/item/lever/ladder/trap/waypoint/book),pos,dist,locked?,opened?,owned?,trap?}], remembered:[...]}` |

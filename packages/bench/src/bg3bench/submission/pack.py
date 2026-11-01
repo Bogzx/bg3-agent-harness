@@ -8,7 +8,13 @@ leaves out the raw client streams (the only files with hidden reasoning), the cl
 metrics, screenshots, memory and saves. The archive is deterministic (sorted, fixed times and owners).
 
 Refused (PackError): a pilot run, an invalid run, a holdout or unknown scenario, a suite version that is not
-released, a run without its manifest, result, facts or events, and a bundle over the size caps.
+released, a run without its manifest, result, facts or events, and a bundle over the size caps. The CLI (and the
+panel's prepare) also refuses a matrix attempt its queue didn't accept (accepted.refusal: one run per job, the
+queue's; a superseded attempt never counts, even one whose result.json says valid).
+
+A maximise run's score is graded again from its packed facts by this grader (`rescored`), so a run recorded with an
+older one (before the score started at the published start state) is submitted with the score G01 computes; the
+run dir's result.json is left as it is.
 
 The evidence video is rendered from the packed bundle (its record files are scrubbed, and its run_hash is in
 bundle.json), then add_render puts the renderer's render.json and its frames/<n>.jpg (tarred into frames.tar) into
@@ -17,7 +23,7 @@ Once the video is on YouTube, add_video sets bundle.json's `video` (the YouTube 
 header and its sha256) from the renderer's evidence.mp4; the run_hash stays and bundle.json and the archive are
 rewritten.
 
-    python -m bg3bench.submission.pack RUN_DIR OUT_DIR --attempt N [--unsubmitted-valid K]
+    python -m bg3bench.submission.pack RUN_DIR OUT_DIR --attempt N [--unsubmitted-valid K] [--matrices DIR]
     python -m bg3bench.submission.pack --add-render RENDER_DIR OUT_DIR    # RENDER_DIR: render.json, frames/
     python -m bg3bench.submission.pack --add-video RENDER_DIR OUT_DIR --youtube URL_OR_ID   # + evidence.mp4
 """
@@ -41,7 +47,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from bg3bench import scenario, suite
+from bg3bench import accepted, graders, saves, scenario, suite
 from bg3bench.submission import bundle, scrub
 
 Json = dict[str, Any]
@@ -53,6 +59,7 @@ BUNDLE_DIR = "bundle"
 ARCHIVE = "bundle.tar.gz"
 SCENARIO_DIR = suite.PACKAGE_ROOT / "scenarios"
 VIDEO = "evidence.mp4"  # the renderer's (bg3harness.video.render)
+MATRICES = Path("runtime/matrix")  # the CLI's: a matrix attempt its queue didn't accept is refused (accepted.py)
 YOUTUBE_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
 
@@ -113,6 +120,15 @@ def refusal(man: Json, res: Json, scenarios: Mapping[str, Json], released: Colle
     if not (man.get("scenario") or {}).get("digest"):
         return "the manifest has no scenario digest"
     return None
+
+
+def rescored(sc: Json, timeline: list[Json], fingerprint: Json | None) -> Json | None:
+    """A maximise run's score graded again from its facts by this grader (graders.measure from the published start
+    state, `fingerprint`); None for a goal scenario."""
+    if (fact := scenario.maximised(sc)) is None:
+        return None
+    m = graders.measure(fact, timeline, start_state=graders.start_value(fact, fingerprint))
+    return {k: m[k] for k in graders.SCORE_KEYS}
 
 
 def _jsonl(data: bytes) -> list[Json]:
@@ -247,6 +263,13 @@ def pack(
     scrubber = scrub.Scrubber(literals)
     files = {n: scrubber.file(n, (run_dir / n).read_bytes()) for n in names}
     man = json.loads(files["manifest.json"])  # scrubbed
+    sc = scenarios[man["scenario"]["name"]]
+    fp = saves.start_fingerprint(sc, man["versions"]["suite"])
+    score = rescored(sc, _jsonl(files["facts.jsonl"]), fp)
+    if score is not None and score != res.get("score"):
+        res = {**res, "score": score}
+        packed_res = json.loads(files["result.json"]) | {"score": score}
+        files["result.json"] = (json.dumps(packed_res, indent=1, sort_keys=True) + "\n").encode()
     env = envelope(
         man,
         res,
@@ -394,6 +417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--add-render", action="store_true", help="add render.json and frames/ to the bundle in OUT_DIR")
     ap.add_argument("--add-video", action="store_true", help="set bundle.json's video from evidence.mp4 (--youtube)")
     ap.add_argument("--youtube", help="--add-video: the uploaded video's YouTube URL or id")
+    ap.add_argument("--matrices", type=Path, default=MATRICES, help="the matrix queues (default: %(default)s)")
     a = ap.parse_args(argv)
     if not (a.add_render or a.add_video) and a.attempt is None:
         ap.error("--attempt is required")
@@ -405,6 +429,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif a.add_render:
             p = add_render(a.run_dir, a.out_dir)
         else:
+            if why := accepted.refusal(a.run_dir, a.matrices):
+                raise PackError(f"{a.run_dir.name}: refused, {why}")
             p = pack(a.run_dir, a.out_dir, attempt=Attempt(a.attempt, a.unsubmitted_valid))
     except PackError as e:
         print(e, file=sys.stderr)

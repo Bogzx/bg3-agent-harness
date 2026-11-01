@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from typing import Any
+from unittest import mock
 
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit (/tmp filled up 2026-10-10)
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
@@ -297,7 +298,46 @@ class AsyncActions(Base):
         self.assertIn("interact: done", out)
 
 
+class FakeClock:
+    """actq's `time`: sleep() moves monotonic() on at once (a 180 s batch of waits runs in no real time)."""
+
+    def __init__(self) -> None:
+        self.t = 1000.0
+        self.lock = threading.Lock()
+
+    def monotonic(self) -> float:
+        with self.lock:
+            return self.t
+
+    def sleep(self, s: float) -> None:
+        with self.lock:
+            self.t = round(self.t + s, 6)  # whole ticks: 600 sleeps of 0.05 s end on 30.0 s, not just past it
+
+
+WAITS_6X30 = '[' + ','.join(['{"tool":"wait","seconds":30}'] * 6) + ']'
+
+
 class DoActions(Base):
+    def test_a_batch_stops_at_its_time_budget(self):
+        # 6 waits of 30 s ran 180 s, past the client's 110 s MCP timeout: the call failed "timed out" and the batch
+        # ran on for 70 s after it
+        clock = FakeClock()
+        with mock.patch.object(actq, "time", clock):
+            out = batch.do_actions(WAITS_6X30)
+        self.assertEqual(clock.t - 1000.0, actq.BATCH_BUDGET_S)
+        self.assertIn("3. wait: waited 30.0s", out)
+        self.assertNotIn("4. wait", out)
+        self.assertIn("STOPPED: time budget (90 s per call), 3 steps left; not run: wait, wait, wait", out)
+
+    def test_a_wait_step_is_cut_to_the_time_left(self):
+        clock = FakeClock()
+        with mock.patch.object(actq, "time", clock):
+            out = batch.do_actions('[{"tool":"wait","seconds":28},{"tool":"wait","seconds":28},'
+                                   '{"tool":"wait","seconds":28},{"tool":"wait","seconds":25}]')
+        self.assertIn("3. wait: waited 28.0s", out)
+        self.assertIn("4. wait: waited 6.0s of 25s (time budget)", out)
+        self.assertNotIn("STOPPED", out)
+
     def test_conditions_skip_and_run(self):
         self.g.watch["party"] = [{"uuid": P1, "hp": 8, "max_hp": 20}]
         out = batch.do_actions('[{"tool":"interact","target":"%s","unless":"in_combat"},'

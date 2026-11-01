@@ -21,7 +21,8 @@ local function reset()
         [KARLACH] = { EocLevel = { Level = 2 }, CampPresence = {}, ServerCharacter = {}, Origin = {} },
     }
     osi = { party = { { "S_Player_Tav_" .. TAV }, { "S_Player_Gale_" .. GALE } }, region = "WLD_Main_A",
-        gold = 120, combat = {}, ftb = {}, dead = {}, downed = {}, offstage = {}, host = TAV, chained = true }
+        gold = 120, combat = {}, ftb = {}, dead = {}, downed = {}, offstage = {}, host = TAV, chained = true,
+        avatars = { { "S_Player_Tav_" .. TAV } } }
     names = { [TAV] = "Tav", [GALE] = "Gale", [KARLACH] = "Karlach" }
     clock = 1000
 end
@@ -41,6 +42,7 @@ Osi = {
     DB_PartyMembers = { Get = function() return osi.party end },
     DB_Origins = { Get = function() return { { "S_Player_Karlach_" .. KARLACH } } end },
     DB_PlayerInCamp = { Get = function() return {} end },
+    DB_Avatars = { Get = function() return osi.avatars end },
     GetDisplayName = function(u) return u end, -- names[] maps the uuid as its loca handle
     GetRegion = function() return osi.region end,
     GetHostCharacter = function() return osi.host end,
@@ -171,6 +173,15 @@ test("a member without an entity (mid-load) is a uuid + name row, not an error",
     local g = row(status(), GALE)
     eq(g.name, "Gale", "name")
     eq(g.hp, nil, "hp")
+end)
+
+test("the avatar's row is flagged, a companion's isn't (facts snapshots count companions by it)", function()
+    local st = status()
+    eq(row(st, TAV).avatar, true, "Tav is the avatar")
+    eq(row(st, GALE).avatar, nil, "Gale is a companion")
+    osi.avatars = nil -- DB_Avatars unreadable (e.g. before character creation): no flag, no error
+    st = status()
+    eq(row(st, TAV).avatar, nil, "no avatar flag")
 end)
 
 test("the camp roster lists the recruited companion waiting at camp", function()
