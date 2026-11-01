@@ -197,7 +197,6 @@ class HintTracker:
         self.text = ""
         self.skills: dict | None = None
         self.skill_sig: Any = None
-        self.avatars: set = set()
         self.at = 0.0
 
     def need_skills(self, party: list[dict], camp: list[dict]) -> bool:

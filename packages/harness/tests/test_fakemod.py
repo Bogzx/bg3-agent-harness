@@ -138,6 +138,7 @@ def test_events_ring_and_scenario_steps(game: Game, model: GameModel) -> None:
     assert kinds == ["gold_changed", "combat_started", "round_started", "turn_started"]
     st = game.rpc("state.status")
     assert (st["gold"], st["in_combat"], st["combat"]["round"]) == (125, True, 1)
+    assert [m.get("avatar") for m in st["party"]] == [True, None]  # Tav, not Shadowheart (the mod's DB_Avatars)
     model.kill("Goblin")
     model.end_fight()
     assert [e["kind"] for e in game.drain_events("server")] == ["died", "combat_ended"]
