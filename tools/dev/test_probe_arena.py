@@ -59,19 +59,42 @@ class GeometryTest(unittest.TestCase):
             pa.spot_arg("1,2")
 
 
-class FactionPickTest(unittest.TestCase):
-    def test_prefers_an_unused_hero_faction_other_than_team_a(self):
-        fs = [
-            {"name": "Hero Player1", "osi": "Hero Player1_1", "used": 4, "to_a": 100},
-            {"name": "Goblin", "osi": "Goblin_2", "used": 9, "to_a": 0},
-            {"name": "Hero Player2", "osi": "Hero Player2_3", "used": 0, "to_a": 100},
-            {"name": "Hero Companion", "osi": "Hero Companion_4", "used": 2, "to_a": 100},
-        ]
-        self.assertEqual(pj.pick_faction_b(fs, "Hero Player1_1"), "Hero Player2_3")
+# The spike's level (crash site): the companions' Companion<N> factions, their parent "Hero" (used by nobody), and
+# multiplayer's Hero Player<N>, two of them held by the party.
+SPIKE_FACTIONS = [
+    {"name": "Companion4", "osi": "Companion4_1b5b", "used": 1, "to_a": 100},
+    {"name": "Companion11", "osi": "Companion11_a364", "used": 0, "to_a": 100},
+    {"name": "Hero", "osi": "Hero_a154", "used": 0, "to_a": 100},
+    {"name": "Hero Player1", "osi": "Hero Player1_6545", "used": 5, "to_a": 100},
+    {"name": "Hero Player2", "osi": "Hero Player2_9fac", "used": 1, "to_a": 100},
+    {"name": "Hero Player4", "osi": "Hero Player4_e69d", "used": 0, "to_a": 100},
+    {"name": "Hero Player3", "osi": "Hero Player3_2869", "used": 0, "to_a": 100},
+    {"name": "Hero Player10", "osi": "Hero Player10_x", "used": 0, "to_a": 100},
+    {"name": "Goblin", "osi": "Goblin_2", "used": 9, "to_a": 0},
+]
 
-    def test_none_without_another_hero_faction(self):
-        fs = [{"name": "Hero Player1", "osi": "F_A", "used": 4}, {"name": "Goblin", "osi": "G", "used": 1}]
-        self.assertIsNone(pj.pick_faction_b(fs, "F_A"))
+
+class FactionPickTest(unittest.TestCase):
+    def test_two_lowest_spare_player_factions_never_the_bare_hero(self):
+        self.assertEqual(
+            pj.pick_factions(SPIKE_FACTIONS, {"Companion4_1b5b"}), ("Hero Player3_2869", "Hero Player4_e69d")
+        )
+
+    def test_a_faction_a_member_holds_is_not_spare(self):
+        self.assertEqual(
+            pj.pick_factions(SPIKE_FACTIONS, {"Hero Player3_2869"}), ("Hero Player4_e69d", "Hero Player10_x")
+        )
+
+    def test_none_with_fewer_than_two_spare(self):
+        self.assertIsNone(
+            pj.pick_factions(SPIKE_FACTIONS, {"Hero Player3_2869", "Hero Player4_e69d", "Hero Player10_x"})
+        )
+
+
+def matrix(enemy_across: int = 1, enemy_within: int = 0) -> dict[str, int]:
+    """A full IsEnemy matrix of TEAMS: every ordered pair across and within the teams."""
+    m = {f"AB:{x}>{y}": enemy_across for x in A for y in B} | {f"BA:{y}>{x}": enemy_across for x in A for y in B}
+    return m | {f"{s}{s}:{x}>{y}": enemy_within for s in pa.SIDES for x in TEAMS[s] for y in TEAMS[s] if x != y}
 
 
 def facts_ok(u: str, slot: list[float], **kw: Any) -> dict[str, Any]:
@@ -92,14 +115,36 @@ class JudgeTest(unittest.TestCase):
 
     def test_hostile(self):
         facts = {u: {"combat": "C1"} for u in A + B}
-        enemy = {f"AB:{x}>{y}": 1 for x in A for y in B} | {"AA:x>y": 0, "BB:x>y": 0}
-        self.assertEqual(pj.judge_hostile(TEAMS, facts, enemy)[0], "PASS")
-        v, why = pj.judge_hostile(TEAMS, {**facts, B[3]: {"combat": None}}, {**enemy, "BB:x>y": 1})
+        self.assertEqual(pj.judge_hostile(TEAMS, facts, matrix(), matrix())[0], "PASS")
+        v, why = pj.judge_hostile(TEAMS, {**facts, B[3]: {"combat": None}}, matrix(), matrix())
         self.assertEqual(v, "FAIL")
-        self.assertIn("enemies within a team: BB:x>y", why)
         self.assertIn("combat guids", why)
-        v, why = pj.judge_hostile(TEAMS, facts, {**enemy, "AB:x>y": 0})
-        self.assertIn("IsEnemy across the teams: 16/17", why)
+
+    def test_hostile_fails_enemies_within_a_team_before_combat(self):
+        # the spike: a relation on the companions' parent made Shadowheart her own team's enemy before the fight
+        before = matrix() | {f"AA:{A[0]}>{A[1]}": 1, f"AA:{A[1]}>{A[0]}": 1}
+        v, why = pj.judge_hostile(TEAMS, {u: {"combat": "C1"} for u in A + B}, before, matrix())
+        self.assertEqual(v, "FAIL")
+        self.assertIn(f"before combat: IsEnemy within a team: 2/24 read of 24 (AA:{A[0]}>{A[1]}", why)
+        self.assertNotIn("in combat:", why)
+
+    def test_hostile_fails_part_of_the_cross_pairs_or_a_missing_read(self):
+        facts = {u: {"combat": "C1"} for u in A + B}
+        some = matrix(enemy_across=0) | {f"AB:{A[0]}>{y}": 1 for y in B}  # only team A's leader an enemy of B
+        v, why = pj.judge_hostile(TEAMS, facts, matrix(), some)
+        self.assertEqual(v, "FAIL")
+        self.assertIn("in combat: IsEnemy across the teams: 4/32", why)
+        one_way = {k: v for k, v in matrix().items() if not k.startswith("BA:")}
+        self.assertIn("IsEnemy across the teams: 16/32", pj.judge_hostile(TEAMS, facts, one_way, matrix())[1])
+        short = {k: v for k, v in matrix().items() if not k.startswith("BB:")}
+        self.assertIn("within a team: 0/12 read of 24", pj.judge_hostile(TEAMS, facts, matrix(), short)[1])
+
+    def test_stat_changes(self):
+        before = {A[0]: {"name": "Minthara", "level": 4, "max_hp": 52}, A[1]: {"name": "Gale", "level": 2, "max_hp": 8}}
+        after = {A[0]: {"level": 4, "max_hp": 11}, A[1]: {"level": 2, "max_hp": 8}}
+        st = pj.stat_changes(before, after)
+        self.assertEqual(st[A[0]], {"name": "Minthara", "level": [4, 4], "max_hp": [52, 11], "changed": True})
+        self.assertFalse(st[A[1]]["changed"])
 
     def test_turns(self):
         turns = [
@@ -343,6 +388,43 @@ class StepsTest(unittest.TestCase):
         self.assertIn({"scn.seed": {"seed": 7}}, rec["calls"])
         saved = json.loads((self.tmp / "teams.json").read_text())
         self.assertEqual((saved["A"], saved["B"], saved["host"]), (A, B, A[0]))
+        self.assertEqual(set(saved["before"]), set(A + B))
+        self.assertEqual(saved["before"][B[1]]["max_hp"], 20)
+        self.assertEqual(set(saved["before"][B[1]]), {"name", "faction", "base_faction", "level", "max_hp"})
+        self.assertEqual(rec["stats"][B[1]]["max_hp"], [20, 20])
+
+    def test_hostile_gives_each_team_its_own_spare_faction_both_ways(self):
+        facts = {u: {**standing(u, 0.0), "faction": f"Companion{i}_c", "combat": "C1"} for i, u in enumerate(A + B)}
+        ar = FakeArena(self.tmp, facts, [])
+        evs: list[str] = []
+        base_ev = ar.ev
+
+        def ev(code: str, timeout: float = 30.0) -> Any:
+            evs.append(code)
+            if "P.factions(" in code:
+                return SPIKE_FACTIONS
+            if "IsEnemy" in code:
+                return matrix()
+            return base_ev(code, timeout)
+
+        ar.ev = ev  # type: ignore[method-assign]
+        rec = ar.hostile("auto")
+        fa, fb = "Hero Player3_2869", "Hero Player4_e69d"
+        self.assertEqual([c[1] for c in ar.calls if c[0] == "SetFaction"], [[u, fa] for u in A] + [[u, fb] for u in B])
+        self.assertEqual([c[1] for c in ar.calls if c[0] == "SetRelation"], [[fa, fb, 0], [fb, fa, 0]])
+        self.assertIn(["SetHostileAndEnterCombat", [fa, fb, A[0], B[0]]], [list(c) for c in ar.calls])
+        self.assertEqual(sum("IsEnemy" in c for c in evs), 2)  # read before the combat call and after
+        self.assertEqual(rec["verdict"], "PASS", rec["why"])
+        self.assertEqual(rec["factions_before"][B[0]], "Companion4_c")
+        saved = json.loads((self.tmp / "teams.json").read_text())
+        self.assertEqual((saved["faction_a"], saved["faction_b"]), (fa, fb))
+
+    def test_hostile_open_without_two_spare_factions(self):
+        ar = FakeArena(self.tmp, {u: standing(u, 0.0) for u in A + B}, [])
+        ar.ev = lambda code, timeout=30.0: SPIKE_FACTIONS[:5] if "P.factions(" in code else {}  # type: ignore
+        rec = ar.hostile("auto")
+        self.assertEqual(rec["verdict"], "OPEN")
+        self.assertFalse([c for c in ar.calls if c[0] == "SetFaction"])
 
     def test_conns_opens_all_then_evaluates_on_each(self):
         opened: list[Any] = []
@@ -493,8 +575,10 @@ class SidesTest(unittest.TestCase):
         )
         self.assertEqual(rec["verdict"], "PASS", rec["why"])
         self.assertEqual([c for c, _ in sent], ["server", "client", "server", "client"])
-        self.assertIn(f"BG3AI.Arena.begin({{A = {pa.lua(A)}, B = {pa.lua(B)}}})", sent[0][1])
-        self.assertIn("BG3AI.Arena.reset()", sent[2][1])
+        self.assertIn(f"Mods.BG3AI.BG3AI.Arena.begin({{A = {pa.lua(A)}, B = {pa.lua(B)}}})", sent[0][1])
+        self.assertIn("Mods.BG3AI.BG3AI.Arena.reset()", sent[2][1])
+        for _, code in sent:  # the debugger's eval env has no global BG3AI: every use goes through Mods
+            self.assertNotRegex(code, r"(?<!Mods\.)(?<!Mods\.BG3AI\.)\bBG3AI\.Arena")
 
     def test_fail_when_the_client_is_side_blind(self):
         rec, _ = self.run_sides(
@@ -508,6 +592,11 @@ class SidesTest(unittest.TestCase):
         rec, _ = self.run_sides({"server": [{"ok": False, "error": err}, {"ok": True}], "client": [{}, {}]})
         self.assertEqual(rec["verdict"], "OPEN")
         self.assertIn("BG3AI_ARENA=1", rec["why"])
+
+    def test_open_states_the_refusal_only(self):
+        err = "attempt to index a nil value (global 'BG3AI')"
+        rec, _ = self.run_sides({"server": [{"ok": False, "error": err}, {"ok": True}], "client": [{}, {}]})
+        self.assertEqual(rec["why"], f"BG3AI.Arena.begin refused: {err}")
 
     def test_judge_fails_teams_kept_after_reset_or_switch_unseen(self):
         ok = {"ok": True}
@@ -534,6 +623,29 @@ class LuaLibraryTest(unittest.TestCase):
             timeout=120,
         )
         self.assertIn("LUA OK", r.stdout, r.stderr)
+
+    def test_sides_snippets_run_without_a_global_bg3ai(self):
+        import shutil
+        import subprocess
+
+        if not shutil.which("docker"):
+            self.skipTest("no docker")
+        stubs = (
+            "Ext = { Json = { Stringify = function(t) return tostring(t.ok) .. ',' .. tostring(t.state) end } }\n"
+            "Mods = { BG3AI = { BG3AI = { Arena = { state = { names = {} }, active = function() return true end,\n"
+            "    begin = function(t) return t end } } } }\n"
+            "assert(BG3AI == nil)\n"
+        )
+        server = pa.SERVER_TRY.format(call=f"{pa.MOD}.Arena.begin({{A = {{}}, B = {{}}}})")
+        src = stubs + f"print((function() {server} end)())\nprint((function() {pa.CLIENT_ARENA} end)())\n"
+        r = subprocess.run(
+            ["docker", "run", "--rm", "-i", "nickblah/lua:5.4", "lua", "-"],
+            input=src,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(r.stdout.split(), ["true,nil", "nil,true"], r.stderr)
 
     def test_popup_parses(self):
         import shutil

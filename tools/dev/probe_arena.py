@@ -8,7 +8,8 @@ Each question writes one evidence file <out>/<q>.json: {"question", "verdict" (P
 reads, the calls with what each returned, the event log}; teams.json carries the teams between steps.
 
 Run it on a THROWAWAY load of a copy of the save (it changes factions, the party, positions and HP; save nothing),
-from the repo root, the game loaded with the pinned mod set only:
+from the repo root, the game loaded with the pinned mod set only and started with BG3AI_ARENA=1 (sides) and
+BG3AI_SCENARIO_SETUP=1 (setup's scn.seed; nothing else in the environment):
     P="uv run --project bridge python tools/dev/probe_arena.py"
     $P conns [--conns 6]                         # q1: that many debugger connections at once, each evaluating
     $P roster                                    # the candidates: who is a player / in the party / their factions
@@ -18,7 +19,8 @@ from the repo root, the game loaded with the pinned mod set only:
                                                  # q2: 8 in DB_PartyMembers (+ the loaded mods), chains, places, HP
     $P sides                                     # q9: the mod's arena begun: the client gets the teams (needs
                                                  #     BG3AI_ARENA=1 in the game's environment), loses them on reset
-    $P hostile [--faction-b auto|<Name_guid>]    # q3: team B's faction, IsEnemy across teams, one combat
+    $P hostile [--factions auto|<A>,<B>]         # q3: a spare faction per team (Name_guid each), hostile both
+                                                 #     ways; IsEnemy before and in combat; one combat
     $P turns [--turns 10 --idle-s 8 --down-at 4] # q3: who starts each turn, does the game act for anyone
     $P act                                       # q4: move + attack + end turn for one member of each side
     $P tie [--no-force]                          # q5: an initiative tie across teams (seen, else forced): one turn?
@@ -57,13 +59,15 @@ CONNS = 6  # q1: debugger connections opened at once (two bridges with their sid
 
 from probe_arena_lua import INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
 
-# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams.
+# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams. The debugger evaluates in
+# its own env: the mod's table is Mods.BG3AI.BG3AI there (a bare BG3AI is nil).
+MOD = "Mods.BG3AI.BG3AI"
 SERVER_TRY = (
     "local ok, r = pcall(function() return {call} end)\n"
     "return Ext.Json.Stringify({{ok = ok, error = (not ok) and tostring(r) or nil}})"
 )
 CLIENT_ARENA = (
-    "local Ar = BG3AI.Arena\n"
+    f"local Ar = {MOD}.Arena\n"
     "return Ext.Json.Stringify({state = Ar.state ~= nil, active = Ar.active(), names = Ar.state and Ar.state.names})"
 )
 
@@ -132,8 +136,9 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     judge_sides,
     judge_tie,
     judge_turns,
-    pick_faction_b,
+    pick_factions,
     side_of,
+    stat_changes,
     tie_info,
     truthy,
 )
@@ -369,7 +374,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         mods = mods if isinstance(mods, list) else []
         verdict, why = judge_party(teams, after, mods, pinned)
         setup_verdict = judge_setup(teams, after, slots)
-        teams.update(names=names, host=host, slots=slots, faction_a=after[teams["A"][0]].get("faction"))
+        stats = stat_changes(before, after)
+        teams.update(
+            names=names,
+            host=host,
+            slots=slots,
+            faction_a=after[teams["A"][0]].get("faction"),
+            # what each member held before the probe changed anything (to undo it, and for the stat blocks)
+            before={
+                u: {k: before[u].get(k) for k in ("name", "faction", "base_faction", "level", "max_hp")} for u in allu
+            },
+        )
         (self.out / "teams.json").parent.mkdir(parents=True, exist_ok=True)
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
@@ -379,6 +394,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "placed": {"verdict": setup_verdict[0], "why": setup_verdict[1]},
             "mods": mods,
             "pinned_mods": pinned,
+            "stats": stats,
             "teams": teams,
             "calls": calls,
             "before": before,
@@ -397,40 +413,43 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         )
         return self.ev(code + "return P.js(o)") or {}
 
-    def hostile(self, faction_b: str) -> dict[str, Any]:
+    def hostile(self, factions: str) -> dict[str, Any]:
         teams = self.teams()
         allu = teams["A"] + teams["B"]
         m = self.mark()
         calls: list[dict[str, Any]] = []
         before = self.facts(allu)
-        fa = before[teams["A"][0]].get("faction")
-        if faction_b == "auto":
-            pick = pick_faction_b(self.factions(fa), fa)
+        held = {f.get("faction") for f in before.values()}
+        if factions == "auto":
+            pick = pick_factions(self.factions(before[teams["A"][0]].get("faction")), held)
             if not pick:
                 rec = {
                     "question": "q3-hostile",
                     "verdict": "OPEN",
-                    "why": "no spare Hero faction: pass --faction-b (see factions.json)",
-                    "faction_a": fa,
+                    "why": "fewer than 2 spare 'Hero Player<N>' factions: pass --factions A,B (see factions.json)",
+                    "factions_before": {u: before[u].get("faction") for u in allu},
                 }
                 self.write("q3-hostile", rec)
                 return rec
-            faction_b = pick
-        for u in teams["B"]:
-            calls.append(self.call("SetFaction", [u, faction_b]))
-        calls.append(self.call("SetRelation", [fa, faction_b, HOSTILE]))
-        calls.append(self.call("SetRelation", [faction_b, fa, HOSTILE]))
+            fa, fb = pick
+        else:
+            fa, fb = factions.split(",")
+        for s, f in (("A", fa), ("B", fb)):
+            for u in teams[s]:
+                calls.append(self.call("SetFaction", [u, f]))
+        calls.append(self.call("SetRelation", [fa, fb, HOSTILE]))
+        calls.append(self.call("SetRelation", [fb, fa, HOSTILE]))
         calls.append(
             {
                 "relations": self.ev(
-                    f'return P.js({{ ab = P.q("GetRelation", {lua(fa)}, {lua(faction_b)}), '
-                    f'ba = P.q("GetRelation", {lua(faction_b)}, {lua(fa)}) }})'
+                    f'return P.js({{ ab = P.q("GetRelation", {lua(fa)}, {lua(fb)}), '
+                    f'ba = P.q("GetRelation", {lua(fb)}, {lua(fa)}) }})'
                 )
             }
         )
         enemy = self.enemy_matrix(teams)
         a1, b1 = teams["A"][0], teams["B"][0]
-        calls.append(self.call("SetHostileAndEnterCombat", [fa, faction_b, a1, b1]))
+        calls.append(self.call("SetHostileAndEnterCombat", [fa, fb, a1, b1]))
         self.sleep(3.0)
         mid = self.facts(allu)
         if len({f.get("combat") for f in mid.values()}) != 1 or not truthy(mid[a1].get("combat")):
@@ -438,17 +457,20 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
                 calls.append(self.call("EnterCombat", [x, y]))
             self.sleep(3.0)
         after = self.facts(allu)
-        verdict, why = judge_hostile(teams, after, self.enemy_matrix(teams))
-        teams["faction_b"] = faction_b
+        enemy_after = self.enemy_matrix(teams)
+        verdict, why = judge_hostile(teams, after, enemy, enemy_after)
+        teams.update(faction_a=fa, faction_b=fb)
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
             "question": "q3-hostile",
             "verdict": verdict,
             "why": why,
             "faction_a": fa,
-            "faction_b": faction_b,
+            "faction_b": fb,
+            "factions_before": {u: before[u].get("faction") for u in allu},
             "calls": calls,
             "enemy_before_combat": enemy,
+            "enemy_in_combat": enemy_after,
             "before": before,
             "after_first_call": mid,
             "after": after,
@@ -464,10 +486,10 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         side answers any reaction prompt and reads the HUD's selection."""
         teams = self.teams()
         t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
-        r: dict[str, Any] = {"begin": self.raw(SERVER_TRY.format(call=f"BG3AI.Arena.begin({t})"), "server")}
+        r: dict[str, Any] = {"begin": self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.begin({t})"), "server")}
         self.sleep(SETTLE_S)
         r["client_after_begin"] = self.raw(CLIENT_ARENA, "client")
-        r["reset"] = self.raw(SERVER_TRY.format(call="BG3AI.Arena.reset()"), "server")
+        r["reset"] = self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.reset()"), "server")
         self.sleep(SETTLE_S)
         r["client_after_reset"] = self.raw(CLIENT_ARENA, "client")
         verdict, why = judge_sides(r)
@@ -814,8 +836,9 @@ PLAN = {
     "chain each side; TeleportToPosition to two lines; RestoreParty (+SetHitpointsPercentage 100 if short); scn.seed",
     "sides": "server BG3AI.Arena.begin(teams); client BG3AI.Arena.state (Ext.Net); server BG3AI.Arena.reset(); "
     "client again",
-    "hostile": "SetFaction(team B, F_B); SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, "
-    "F_B, a1, b1), else EnterCombat pairs; turn order",
+    "hostile": "two spare Hero Player<N> factions F_A, F_B; SetFaction(team A, F_A), SetFaction(team B, F_B); "
+    "SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, F_B, a1, b1), else EnterCombat pairs; "
+    "IsEnemy matrix again; turn order",
     "turns": "per open turn: idle --idle-s (did the game act?), act.end_turn; one member downed at --down-at",
     "act": "per side: drive to its turn, act.move_to {target: nearest enemy}, act.cast attack, act.end_turn; "
     "resources before/after",
@@ -843,7 +866,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--spot-a", type=spot_arg)
     ap.add_argument("--spot-b", type=spot_arg)
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--faction-b", default="auto")
+    ap.add_argument("--factions", default="auto", help="auto, or team A's and team B's faction: Name_guid,Name_guid")
     ap.add_argument("--turns", type=int, default=10)
     ap.add_argument("--idle-s", type=float, default=8.0)
     ap.add_argument("--down-at", type=int, default=4)
@@ -886,7 +909,7 @@ def main(argv: list[str] | None = None) -> int:
         elif s == "sides":
             ar.sides()
         elif s == "hostile":
-            ar.hostile(a.faction_b)
+            ar.hostile(a.factions)
         elif s == "turns":
             ar.turns(a.turns, a.idle_s, a.down_at if a.down_at >= 0 else None)
         elif s == "act":
