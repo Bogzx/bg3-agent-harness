@@ -7,11 +7,13 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
 1. `arena.setup {arena, round_cap}` (a job, polled), then `arena.status` until the match is active.
 2. The referee writes `arena_start {arena, seed, teams (names), sides (players), uuids (arena.status teams)}` into the
    match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side: the
-   harness's reads see both teams) carries the mod's arena records: its `arena_turn` (a team member's TurnStarted)
-   is written with the character's name; its `arena_end` (the mod's own end: a wipe at a turn boundary, the round
-   cap at the start of round round_cap + 1) as it is; its `arena_start`, an end the runner asked for and any arena
-   record after the match's end are left out, as the referee writes those itself. A turn of a character outside the
-   teams (a summon) is not a team turn: not written, never forced.
+   harness's reads see both teams) carries the mod's arena records: its `arena_turn` (one per phase: a same-side
+   run of the rolled order inside one turn group, {side, character (the phase's first open member), members (its
+   open members, in turn order), round, phase, group, shared}) is written with the characters' names; its
+   `arena_end` (the mod's own end: a wipe at a turn boundary, the round cap at the start of round round_cap + 1) as
+   it is; its `arena_start`, an end the runner asked for and any arena
+   record after the match's end are left out, as the referee writes those itself. A phase naming a character outside
+   its side's team (a summon) is not a team turn: not written, never forced. A turn below is a phase.
 3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
    - the mod's end (`arena.status.ended` or the ring's `arena_end`, any reason: a wipe, or the round cap as a draw
      with `rounds` = round_cap);
@@ -26,8 +28,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    from the last `arena.status.hp`. arena.end answers with the match's first end: when that is the mod's own (it
    ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
-   began reaching the arena's turn_cap_s ends that turn: `act.end_turn` for the acting character, sent as that
-   side, then `arena_turn_forced {side, character}`. The cap of a side's FORFEIT_TURNS-th turn in a row is its
+   began reaching the arena's turn_cap_s times the turn's member count ends that turn: `act.end_turn` for each of
+   its members in turn order, sent as that side, one at a time (each job polled until it settles, at most
+   END_SETTLE_S; a member that already ended is refused), then `arena_turn_forced {side, character}` once any end
+   went through. The cap of a side's FORFEIT_TURNS-th turn in a row is its
    forfeit, decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod
    keeps a match's first end, so no wipe at the next turn boundary can come before the forfeit).
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
@@ -57,6 +61,8 @@ HANG_S = 60.0  # arena.status unanswered this long: the game hung
 FORFEIT_TURNS = 3  # a side's own turns forced to an end in a row
 EXIT_RESUMES = 3  # a side's agent exiting (exit 0) mid-fight: resumed this many times, then it forfeits
 FAULT_RESUMES = 1  # a side's client failing (crash, API/MCP failure, hang): resumed once, then it forfeits
+END_SETTLE_S = 10.0  # a cap's act.end_turn job: polled this long for its end before the next member's
+END_POLL_S = 0.25
 UNOWNED_CHECK_S = 15.0  # a turn this old: ui.state is read for a prompt no team owns, then at most this often
 END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
 KICKOFF = "The fight is on. You play side {side}: {names}."
@@ -118,6 +124,7 @@ class Turn:
     uuid: str
     name: str
     round: int
+    members: list[str]  # uuids, in turn order (uuid is the first)
     forced: bool = False
 
 
@@ -167,11 +174,13 @@ class Referee:
         if self.done:
             return None
         if ev == "arena_turn":
-            side_name = self.names.get(str(fact.get("character") or "").lower())
-            if side_name is None or side_name[0] != fact.get("side"):
+            members = [str(u) for u in fact.get("members") or []]
+            named = [self.names.get(u.lower()) for u in [str(fact.get("character") or ""), *members]]
+            if not members or any(n is None or n[0] != fact.get("side") for n in named):
                 return None
-            self.turns.append(Turn(side_name[0], str(fact["character"]), side_name[1], int(fact["round"])))
-            return {**fact, "character": side_name[1]}
+            names = [n[1] for n in named if n is not None]
+            self.turns.append(Turn(str(fact["side"]), str(fact["character"]), names[0], int(fact["round"]), members))
+            return {**fact, "character": names[0], "members": names[1:]}
         if ev == "arena_end":
             self.mod_end = {"winner": None, **fact}  # the ring leaves a nil winner (a draw) out
             self.done = True
@@ -260,6 +269,17 @@ def _decline_unowned(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callab
     detail = str(rx.get("prompt") or "")
     ref.event("arena_reaction_unowned", round=ref.round, detail=detail)
     log(f"arena {spec.name}: declined a reaction prompt no team owns ({detail})")
+
+
+def _end_turn(game: ArenaGame, clock: Clock, uuid: str, side: str) -> str | None:
+    """act.end_turn for `uuid` as `side`, its job polled until it settles (at most END_SETTLE_S); the refusal or
+    failure, else None."""
+    job = game.rpc("act.end_turn", {"char": uuid}, side) or {}
+    deadline = clock.now() + END_SETTLE_S
+    while job.get("status") not in ("done", "failed") and clock.now() < deadline:
+        clock.sleep(END_POLL_S)
+        job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}, side) or {}
+    return str(job.get("error")) if job.get("status") == "failed" else None
 
 
 def run_arena(
@@ -371,18 +391,19 @@ def run_arena(
             idx = len(ref.turns) - 1
             if turn_mark is None or turn_mark[0] != idx:
                 turn_mark = (idx, model(turn.side))
-            if model(turn.side) - turn_mark[1] < spec.turn_cap_s:
+            cap = spec.turn_cap_s * len(turn.members)
+            if model(turn.side) - turn_mark[1] < cap:
                 continue
             if ref.forfeits():
                 ref.forced()
-                log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {spec.turn_cap_s:g} s cap")
+                log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {cap:g} s cap")
                 raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
-            job = game.rpc("act.end_turn", {"char": turn.uuid}, turn.side) or {}
-            if job.get("status") == "failed":
-                log(f"arena {spec.name}: ending {turn.name}'s turn at the cap failed: {job.get('error')}")
+            errors = [_end_turn(game, clock, u, turn.side) for u in turn.members]
+            if all(errors):
+                log(f"arena {spec.name}: ending {turn.name}'s turn at the cap failed: {'; '.join(map(str, errors))}")
                 continue
             ref.forced()
-            log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) ended at the {spec.turn_cap_s:g} s cap")
+            log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) ended at the {cap:g} s cap")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
             e = status["ended"]
             outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})
