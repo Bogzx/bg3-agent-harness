@@ -40,6 +40,22 @@ function Ar.side_of(uuid)
     return ow and Ar.member_side(ow) or nil
 end
 
+local function broadcast(msg)
+    local ok, err = pcall(function() Ext.Net.CreateChannel(Ar.NET[1], Ar.NET[2]):Broadcast(msg) end)
+    if not ok then Ext.Utils.PrintWarning("[BG3AI] arena teams to the client: " .. tostring(err)) end
+end
+
+-- A summon seen for the first time: its name joins its side's names and the client gets them again (a reaction
+-- prompt for it is its side's).
+local function noteSummon(side, u)
+    local st = Ar.state
+    st.summons = st.summons or {}
+    if st.summons[u] then return end
+    st.summons[u] = side
+    st.names[side][#st.names[side] + 1] = V.name(u)
+    broadcast({ teams = st.teams, names = st.names })
+end
+
 -- A side's team: its members, then their summons (from DB_PartyMembers, where the game keeps summons). Returns the
 -- list and the uuid -> true set, as V.party() does.
 function Ar.team(side)
@@ -53,6 +69,7 @@ function Ar.team(side)
         if u and not seen[u] and Ar.member_side(Ar.owner(u)) == side then
             seen[u] = true
             out[#out + 1] = u
+            noteSummon(side, u)
         end
     end
     return out, seen
@@ -227,6 +244,7 @@ function Ar.turn_started(char)
     local s = u and Ar.side_of(u)
     if not s then return end
     local st = Ar.state
+    if not Ar.member_side(u) then Ar.team(s) end -- a summon's turn: its name reaches the client
     arenaCombat(osi(Osi.CombatGetGuidFor, u))
     if (st.round or 0) < 1 then st.round = 1 end -- a turn before the first CombatRoundStarted is round 1's
     st.turn = { side = s, uuid = u, round = st.round }
@@ -277,11 +295,6 @@ if not Ar.listening then
         end)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] arena cannot listen to " .. name .. ": " .. tostring(err)) end
     end
-end
-
-local function broadcast(msg)
-    local ok, err = pcall(function() Ext.Net.CreateChannel(Ar.NET[1], Ar.NET[2]):Broadcast(msg) end)
-    if not ok then Ext.Utils.PrintWarning("[BG3AI] arena teams to the client: " .. tostring(err)) end
 end
 
 -- Begin a match with these teams ({A = {uuid x4}, B = {uuid x4}}): the setup op calls it once the teams stand. The

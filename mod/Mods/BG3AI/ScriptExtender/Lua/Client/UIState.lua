@@ -876,10 +876,17 @@ function S.state(args)
         res.roll = S.roll(wmap)
     elseif scr == "reaction" then
         res.reaction = S.reaction(wmap)
-        -- a side sees another side's prompt only as there: who it is for and what it offers are that side's
+        -- a side sees another side's prompt only as there: who it is for and what it offers are that side's. A prompt
+        -- no team owns (no rows read, a name on neither team or on both) is unowned: the harness (no side) answers it.
         local side = RPC.side and RPC.side()
-        if side and res.reaction and S.reactionSide(res.reaction.options or {}) ~= side then
-            res.reaction = { other_side = true }
+        local arena = BG3AI.Arena and BG3AI.Arena.active and BG3AI.Arena.active()
+        if arena and res.reaction then
+            local owner = S.reactionSide(res.reaction.options or {})
+            if side and owner ~= side then
+                res.reaction = { other_side = true, unowned = owner == nil or nil }
+            elseif not side and owner == nil then
+                res.reaction.unowned = true
+            end
         end
     elseif scr == "popup" then
         res.popup = S.popup(wmap[res.page].el)

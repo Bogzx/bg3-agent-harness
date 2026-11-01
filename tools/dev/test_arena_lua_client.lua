@@ -188,11 +188,36 @@ test("a prompt naming both sides, or someone of neither, is nobody's", function(
     eq(rpc("ui.react", "{use=false}", "B").error, "not your reaction", "B")
 end)
 
+test("a prompt for a summon whose name the server sent: its side's", function()
+    channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana", "Aspect" }, B = { "Bo" } } })
+    prompt("Aspect")
+    eq(rpc("ui.react", "{use=false}", "A").ok, true, "A answers it")
+    eq(rpc("ui.react", "{use=false}", "B").error, "not your reaction", "B")
+    eq(rpc("ui.state", "{}", "B").result.reaction.unowned, nil, "B: owned (by A)")
+end)
+
+test("an unowned prompt (no rows read, or a name on both teams): flagged for both sides and for the harness", function()
+    prompt()
+    local b = rpc("ui.state", "{}", "B").result.reaction
+    eq(b.other_side, true, "B: other_side")
+    eq(b.unowned, true, "B: unowned")
+    eq(rpc("ui.state", "{}").result.reaction.unowned, true, "the harness: unowned")
+    eq(rpc("ui.react", "{use=false}").ok, true, "the harness answers it")
+    channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana", "Cat" }, B = { "Bo", "Cat" } } })
+    prompt("Cat")
+    eq(rpc("ui.state", "{}", "A").result.reaction.unowned, true, "a summon name on both teams")
+    eq(rpc("ui.react", "{use=false}", "A").error, "not your reaction", "A")
+end)
+
 test("switch off: a side's request answers the prompt as today", function()
     env = {}
     prompt("Ana")
     eq(rpc("ui.react", "{use=false}", "B").ok, true, "B")
-    eq(rpc("ui.state", "{}", "B").result.reaction.options[1].who, "Ana", "B reads it")
+    local r = rpc("ui.state", "{}", "B").result.reaction
+    eq(r.options[1].who, "Ana", "B reads it")
+    eq(r.unowned, nil, "no unowned flag")
+    prompt()
+    eq(rpc("ui.state", "{}").result.reaction.unowned, nil, "no unowned flag without an arena")
 end)
 
 test("the HUD's selection: read only by the side whose character it is", function()

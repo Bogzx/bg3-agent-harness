@@ -21,8 +21,9 @@ end
 
 function Ar.enabled() return Ar.getenv(Ar.SWITCH) == "1" end
 
--- Ar.state: nil, or {teams = {A = {uuid}, B = {uuid}}, names = {A = {name}, B = {name}}, ...} (the server adds the
--- turn and the end). The state is checked first, so with no arena nothing reads the environment.
+-- Ar.state: nil, or {teams = {A = {uuid}, B = {uuid}}, names = {A = {name}, B = {name}}, ...}: names[s][i] is
+-- teams[s][i]'s, then the names of the side's summons as the server finds them (it adds the turn and the end).
+-- The state is checked first, so with no arena nothing reads the environment.
 function Ar.active() return Ar.state ~= nil and Ar.enabled() end
 
 -- The side a team member is on ("A" / "B"), nil for anyone else. The server's Ar.side_of also maps summons.
@@ -37,16 +38,21 @@ function Ar.member_side(uuid)
     return nil
 end
 
--- The side whose team has a member of this display name, nil for none.
+-- The side whose team has a member or summon of this display name; nil for none, and for a name on both teams (two
+-- mirror teams' summons: nobody can tell whose).
 function Ar.name_side(name)
     local st = Ar.state
     if not (st and st.names and name) then return nil end
+    local found
     for _, s in ipairs({ "A", "B" }) do
         for _, n in ipairs(st.names[s] or {}) do
-            if n == name then return s end
+            if n == name then
+                if found and found ~= s then return nil end
+                found = s
+            end
         end
     end
-    return nil
+    return found
 end
 
 -- A team member's display name (the names come with the teams), nil for anyone else.
