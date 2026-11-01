@@ -12,8 +12,11 @@ Time comes from a FakeClock the test advances; nothing here sleeps or reads the 
 
 A two-team match (start_arena): calls whose envelope names a side (FakeMod -> reply_side) are answered from that
 team's view, as the mod's arena module does with Ctx.side: its own team is the party, the other team are hostile
-combatants it sees only while they aren't hidden (hide), the acting combatant is named only when seen, and acting out
-of turn or with the other team's character is refused with the mod's texts. Calls without a side get today's answers.
+combatants it sees only while they aren't hidden (hide), the acting combatant is named only when seen, events come in
+the side's own view (an unseen source is "Someone", a spell id only for the side's own caster), a job is its side's
+("not your job" for the other), and acting out of turn, with the other team's character or on the other side's
+reaction prompt is refused with the mod's texts. The reaction prompt itself is on the one game client's screen for
+both sides (the bridge's side view hides the other side's). Calls without a side get today's answers.
 """
 
 from __future__ import annotations
@@ -110,9 +113,7 @@ class Arena:
         now = self.acting
         owner = self.side_of(now.uuid)
         if owner != side:
-            if self.sees(side, now.uuid):
-                return f"not your turn: {now.name} (side {owner}) is acting"
-            return "not your turn: the other side is acting"
+            return f"not your turn (side {owner} is acting)"
         if now.uuid != who.uuid:
             return "it is not this character's turn"
         return None
@@ -196,6 +197,7 @@ class GameModel:
         self.rolls = Ring()
         self.ref_fired: dict[str, int] = {}
         self.jobs: dict[int, dict[str, Any]] = {}
+        self.job_sides: dict[int, str] = {}  # in a match, the side that started a job (RPC.start_job job.side)
         self.next_job = 1
         self.scn_seed: int | None = None
         self.scn_renames: list[dict[str, Any]] = []
@@ -208,6 +210,8 @@ class GameModel:
         self.names: dict[str, str] = {}
         self.chosen: list[int] = []
         self.arena: Arena | None = None
+        self.reaction: dict[str, Any] | None = None  # the reaction prompt on the client's screen
+        self.reacted: list[tuple[str, bool]] = []  # (who, use) of each answered prompt
         self.moves: list[tuple[str, str, list[float]]] = []  # arena moves done: (side, uuid, pos)
 
     # ---- helpers ----
@@ -226,13 +230,17 @@ class GameModel:
         return self.names.get(uuid, default)
 
     def push(
-        self, kind: str, data: dict[str, Any] | None = None, ctx: str = "server", seen_by: tuple[str, ...] = ()
+        self,
+        kind: str,
+        data: dict[str, Any] | None = None,
+        ctx: str = "server",
+        views: dict[str, dict[str, Any]] | None = None,
     ) -> int:
-        """An event in the mod's events ring (what the bridge's EVENTS sections and get_events read). seen_by: in a
-        match, the sides whose view has it (empty: every view)."""
+        """An event in the mod's events ring (what the bridge's EVENTS sections and get_events read). views: in a
+        match, each side's own data for it (a side without one doesn't see it); `data` is the view without a side."""
         rec: dict[str, Any] = {"t": self.clock.ms, "kind": kind, "data": data or {}}
-        if seen_by:
-            rec["seen_by"] = list(seen_by)
+        if views is not None:
+            rec["views"] = views
         ev = self.events[ctx].add(rec)
         return int(ev["seq"])
 
@@ -392,8 +400,45 @@ class GameModel:
         a = self.arena
         assert a is not None
         now = a.acting
-        seen = tuple(s for s in a.teams if a.sees(s, now.uuid))
-        self.push(kind, self._ref_of(now.uuid, now.name), seen_by=seen)
+        ref = self._ref_of(now.uuid, now.name)
+        self.push(kind, ref, views={s: ref for s in a.teams if a.sees(s, now.uuid)})
+
+    def arena_cast(self, caster: str, spell: str, name: str) -> None:
+        """A cast (Events.lua CastedSpell): seen by the sides that see the caster; the spell id only for its own."""
+        a = self.arena
+        assert a is not None, "no match"
+        m = a.member(caster)
+        ref = self._ref_of(m.uuid, m.name)
+        views = {
+            s: {"caster": ref, "name": name, **({"spell": spell} if a.side_of(m.uuid) == s else {})}
+            for s in a.teams
+            if a.sees(s, m.uuid)
+        }
+        self.push("cast", {"caster": ref, "spell": spell, "name": name}, views=views)
+
+    def arena_damage(self, target: str, source: str, amount: int, dtype: str = "Fire") -> None:
+        """Damage (Events.lua AttackedBy): seen by the sides that see the target; an unseen source is "Someone"."""
+        a = self.arena
+        assert a is not None, "no match"
+        t, src = a.member(target), a.member(source)
+        t.hp = max(0, t.hp - amount)
+        tref, sref = self._ref_of(t.uuid, t.name), self._ref_of(src.uuid, src.name)
+        views = {
+            s: {
+                "target": tref,
+                "amount": amount,
+                "type": dtype,
+                "source": sref if a.sees(s, src.uuid) else {"name": "Someone"},
+            }
+            for s in a.teams
+            if a.sees(s, t.uuid)
+        }
+        self.push("damage", {"target": tref, "amount": amount, "type": dtype, "source": sref}, views=views)
+
+    def open_reaction(self, who: str, reactions: tuple[str, ...] = ("Shield",)) -> None:
+        """A reaction prompt for `who` on the game client's screen (UIState.lua S.reaction: rows name the reactor)."""
+        rows = [{"i": i + 1, "who": who, "name": r, "level": 1} for i, r in enumerate(reactions)]
+        self.reaction = {"prompt": " | ".join([who, *reactions, "Choose how to react."]), "options": rows}
 
     def arena_end_turn(self) -> None:
         """The acting character's turn ends; the next in the order acts (a new round after the last)."""
@@ -540,6 +585,15 @@ class GameModel:
         }
 
     def op_ui_state(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        if self.reaction is not None:
+            return {
+                "screen": "reaction",
+                "page": "ReactionDecisionPopup",
+                "reaction": copy.deepcopy(self.reaction),
+                "region": self.region,
+                "blocking": True,
+                "ms": 1,
+            }
         if self.dialogue is not None:
             return {
                 "screen": "dialogue",
@@ -564,11 +618,13 @@ class GameModel:
         self.close_dialogue()
         return self._job("ui.dialogue_choose", {"screen": "game", "ended": True, "lines": []})
 
-    def _failed_job(self, kind: str, error: str) -> dict[str, Any]:
+    def _failed_job(self, kind: str, error: str, side: str | None = None) -> dict[str, Any]:
         """A guard refusal (Actions.lua guarded): a job that settled failed in the call."""
         jid = self.next_job
         self.next_job += 1
         self.jobs[jid] = {"id": jid, "kind": kind, "status": "failed", "error": error, "elapsed_ms": 0}
+        if side:
+            self.job_sides[jid] = side
         return {"job": jid, "status": "failed", "error": error}
 
     # ---- a match, from one side's view ----
@@ -637,38 +693,62 @@ class GameModel:
 
     def arena_events(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
         ring = self.events[ctx]
-        evs = [
-            {k: v for k, v in e.items() if k != "seen_by"}
-            for e in ring.since(args.get("seq"), None, len(ring.records) or 1)
-            if side in e.get("seen_by", (side,))
-        ]
+        evs: list[dict[str, Any]] = []
+        for e in ring.since(args.get("seq"), None, len(ring.records) or 1):
+            views: dict[str, dict[str, Any]] | None = e.get("views")
+            if views is not None and side not in views:
+                continue
+            ev = {k: v for k, v in e.items() if k != "views"}
+            if views is not None:
+                ev["data"] = views[side]
+            evs.append(ev)
         return {"latest": ring.seq, "events": evs[: int(args.get("limit") or 200)]}
+
+    def arena_job_poll(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
+        jid = int(args.get("id") or 0)
+        if jid in self.job_sides and self.job_sides[jid] != side:
+            raise RuntimeError("not your job")
+        return self.op_job_poll(ctx, args)
+
+    def arena_react(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
+        a = self._match()
+        if self.reaction is None:
+            raise RuntimeError("no reaction prompt on screen")
+        who = self.reaction["options"][0]["who"]
+        if a.side_of(a.member(who).uuid) != side:
+            return self._failed_job("ui.react", "not your reaction", side)
+        use = bool(args.get("use"))
+        self.reacted.append((who, use))
+        self.reaction = None
+        return self._job("ui.react", {"answered": "use" if use else "skip"}, side)
 
     def arena_end_turn_op(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
         a = self._match()
         why = a.refusal(side, str(args.get("char") or a.selected[side]))
         if why:
-            return self._failed_job("act.end_turn", why)
+            return self._failed_job("act.end_turn", why, side)
         self.arena_end_turn()
-        return self._job("act.end_turn", {"ended": True})
+        return self._job("act.end_turn", {"ended": True}, side)
 
     def arena_move_to(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
         a = self._match()
         char = str(args.get("char") or a.selected[side])
         why = a.refusal(side, char)
         if why:
-            return self._failed_job("act.move_to", why)
+            return self._failed_job("act.move_to", why, side)
         m = a.member(char)
         pos = [float(v) for v in args.get("pos") or m.pos]
         m.pos = (pos[0], pos[1], pos[2])
         self.moves.append((side, m.uuid, pos))
-        return self._job("act.move_to", {"arrived": True, "pos": pos})
+        return self._job("act.move_to", {"arrived": True, "pos": pos}, side)
 
-    def _job(self, kind: str, result: dict[str, Any]) -> dict[str, Any]:
-        """A job that settles in the call (RPC.start_job + finish_job in one tick)."""
+    def _job(self, kind: str, result: dict[str, Any], side: str | None = None) -> dict[str, Any]:
+        """A job that settles in the call (RPC.start_job + finish_job in one tick); `side`: the side that started it."""
         jid = self.next_job
         self.next_job += 1
         self.jobs[jid] = {"id": jid, "kind": kind, "status": "done", "result": result, "elapsed_ms": 0}
+        if side:
+            self.job_sides[jid] = side
         return {"job": jid, "status": "done", "result": result}
 
     def op_job_poll(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -679,7 +759,8 @@ class GameModel:
 
     def op_events(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         ring = self.events[ctx]
-        return {"latest": ring.seq, "events": ring.since(args.get("seq"), args.get("limit"), 200)}
+        evs = ring.since(args.get("seq"), args.get("limit"), 200)
+        return {"latest": ring.seq, "events": [{k: v for k, v in e.items() if k != "views"} for e in evs]}
 
     def ring_reply(self, ring: Ring, args: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -830,6 +911,8 @@ _ARENA_OPS: dict[str, SideOpFn] = {
     "events.since": GameModel.arena_events,
     "act.end_turn": GameModel.arena_end_turn_op,
     "act.move_to": GameModel.arena_move_to,
+    "job.poll": GameModel.arena_job_poll,
+    "ui.react": GameModel.arena_react,
 }
 
 OpFn = Callable[[GameModel, str, dict[str, Any]], Any]
