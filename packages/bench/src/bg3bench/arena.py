@@ -12,9 +12,10 @@ A **match** is one fight: model X plays side A, model Y side B. A **pairing** is
 teams with the sides swapped, so the side advantage cancels.
 
 `grade(records, arena, record=None, rolls=None)` grades a match from its facts.jsonl: the referee's events (schema/
-arena-facts.v1.schema.json) `arena_start {arena, seed, teams, sides, uuids?}`, `arena_turn {side, character, round}`,
-`arena_turn_forced {side, character}` and `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?,
-cause?}`. A side wins when every character of the other side is down or dead (`wipe`) or when the other side forfeits
+arena-facts.v1.schema.json) `arena_start {arena, seed, teams, sides, uuids?}`, `arena_turn {side, character,
+members, round, phase, group, shared}`, `arena_turn_forced {side, character}` and `arena_end {winner, reason, rounds,
+hp_left_A, hp_left_B, forfeit?, cause?}`. A turn is a phase: one same-side run of the rolled order inside a turn group
+(the game puts both teams' adjacent characters into one shared group, which the mod plays side by side). A side wins when every character of the other side is down or dead (`wipe`) or when the other side forfeits
 (`forfeit`: three of its turns in a row forced to an end at the per-turn cap, cause `forced_turns`, which the grader
 checks against the arena_turn_forced events; or its client's fault after one resume, cause `client_fault`). The round
 cap and the wall cap are draws (`round_cap`, `wall_cap`; the HP fractions are recorded, never a tiebreak). A match is
@@ -223,14 +224,16 @@ def _other(side: Any) -> str | None:
 
 
 def _turns(records: list[dict], end_t: float) -> list[dict] | None:
-    """The turns up to the end, in order, each {side, character, forced}; None when an arena_turn_forced doesn't name
-    the turn in progress (its side and character)."""
+    """The turns up to the end, in order, each {side, character, members, forced}; None when an arena_turn_forced
+    doesn't name the turn in progress (its side and character)."""
     turns: list[dict] = []
     for r in records:
         if r["t"] > end_t or r.get("kind") != "event":
             continue
         if r.get("ev") == "arena_turn":
-            turns.append({"side": r.get("side"), "character": r.get("character"), "forced": False})
+            turns.append(
+                {"side": r.get("side"), "character": r.get("character"), "members": r.get("members"), "forced": False}
+            )
         elif r.get("ev") == "arena_turn_forced":
             now = turns[-1] if turns else None
             if now is None or now["forced"] or (now["side"], now["character"]) != (r.get("side"), r.get("character")):
@@ -297,7 +300,11 @@ def _facts_problem(records: list[dict], arena: Mapping[str, Any]) -> str | None:
     turns = _turns(records, ends[0]["t"] if ends else math.inf)
     if turns is None:
         return "inconsistent_turns"
-    if any(turn["character"] not in teams.get(turn["side"] or "", ()) for turn in turns):
+    if any(
+        not isinstance(turn["members"], list)
+        or any(n not in teams.get(turn["side"] or "", ()) for n in [turn["character"], *turn["members"]])
+        for turn in turns
+    ):
         return "off_side_turn"
     if not ends:
         return "no_end"

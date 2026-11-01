@@ -806,3 +806,12 @@ def test_the_spec_refuses_a_draft_or_incomplete_arena():
         ArenaSpec.from_dict(dict(ARENA, karmic=True))
     spec = ArenaSpec.from_dict(ARENA)
     assert spec.teams == {"A": ("Karlach", "Gale"), "B": ("Wyll", "Halsin")} and spec.arena == ARENA
+
+
+def test_the_facts_schema_takes_a_phase_and_refuses_a_turn_without_its_fields():
+    rec = {"v": 1, "kind": "event", "t": 1.0, "ev": "arena_turn", "side": "A", "character": "Karlach", "round": 1}
+    phase = {"members": ["Karlach", "Gale"], "phase": 2, "group": "g", "shared": True}
+    jsonschema.validate({**rec, **phase}, FACTS_SCHEMA)
+    for bad in (rec, {**rec, **phase, "members": []}, {**rec, **phase, "phase": 0}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, FACTS_SCHEMA)

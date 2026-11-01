@@ -31,12 +31,13 @@ def ev(t, name, **kw):
 
 
 def match(winner="A", reason="wipe", hp=(0.75, 0.0), rounds=2, start=None, turns=None, ends=None, forced=(), **kw):
-    """A match's facts: run_start, arena_start, the turns (those at the indices in `forced` forced to an end),
-    arena_end (+ kw), run_end."""
+    """A match's facts: run_start, arena_start, the turns ((side, character, round[, members]); one member by
+    default; those at the indices in `forced` forced to an end), arena_end (+ kw), run_end."""
     recs = [{"v": 1, "kind": "mark", "t": 0.0, "mark": "run_start", "detail": None}]
     recs.append(start or ev(1, "arena_start", arena=ARENA["name"], seed=ARENA["seed"], teams=TEAMS, sides=SIDES))
-    for i, (side, who, rnd) in enumerate(turns or [("A", "Karlach", 1), ("B", "Wyll", 1), ("A", "Gale", 2)]):
-        recs.append(ev(10 + i, "arena_turn", side=side, character=who, round=rnd))
+    for i, (side, who, rnd, *members) in enumerate(turns or [("A", "Karlach", 1), ("B", "Wyll", 1), ("A", "Gale", 2)]):
+        phase = {"members": members[0] if members else [who], "phase": 1, "group": "g1", "shared": True}
+        recs.append(ev(10 + i, "arena_turn", side=side, character=who, round=rnd, **phase))
         if i in forced:
             recs.append(ev(10.5 + i, "arena_turn_forced", side=side, character=who))
     end = {"winner": winner, "rounds": rounds, "hp_left_A": hp[0], "hp_left_B": hp[1], "reason": reason, **kw}
@@ -174,6 +175,49 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
     [
         ev(1, "arena_turn", side="C", character="Karlach", round=1),
         ev(1, "arena_turn", side="A", character="Karlach", round=0),
+        ev(1, "arena_turn", side="A", character="Karlach", round=1),  # no phase fields
+        {
+            **ev(
+                1,
+                "arena_turn",
+                side="A",
+                character="Karlach",
+                members=["Karlach"],
+                round=1,
+                phase=1,
+                group="g",
+                shared=True,
+            ),
+            "members": [],
+        },
+        {
+            **ev(
+                1,
+                "arena_turn",
+                side="A",
+                character="Karlach",
+                members=["Karlach"],
+                round=1,
+                phase=1,
+                group="g",
+                shared=True,
+            ),
+            "phase": 0,
+        },
+        {
+            **ev(
+                1,
+                "arena_turn",
+                side="A",
+                character="Karlach",
+                members=["Karlach"],
+                round=1,
+                phase=1,
+                group="g",
+                shared=True,
+            ),
+            "shared": "yes",
+        },
         ev(1, "arena_end", winner="A", rounds=2, hp_left_A=1.5, hp_left_B=0, reason="wipe"),
         ev(1, "arena_end", winner="A", rounds=2, hp_left_A=1, hp_left_B=0, reason="timeout"),
         ev(1, "arena_start", arena="x", seed=1, teams={"A": []}, sides={"A": "m", "B": "n"}),
@@ -260,6 +304,19 @@ INCONSISTENT = {
 def test_grade_invalid_matches(why):
     g = arena.grade(match(**INVALID[why]), ARENA)
     assert (g["valid"], g["invalid_reason"], g["result"]) == (False, why, None)
+
+
+@pytest.mark.parametrize("members", [["Karlach", "Wyll"], ["Karlach", "Not On Any Team"], None])
+def test_grade_a_phase_with_a_member_off_its_side_is_an_off_side_turn(members):
+    g = arena.grade(match(turns=[("A", "Karlach", 1, members), ("B", "Wyll", 1)]), ARENA)
+    assert (g["valid"], g["invalid_reason"]) == (False, "off_side_turn")
+
+
+def test_grade_counts_a_phase_of_several_members_as_one_turn():
+    g = arena.grade(
+        match(turns=[("A", "Karlach", 1, ["Karlach", "Gale"]), ("B", "Wyll", 1, ["Wyll", "Halsin"])]), ARENA
+    )
+    assert (g["valid"], g["turns"]) == (True, {"A": 1, "B": 1})
 
 
 @pytest.mark.parametrize("why", sorted(INCONSISTENT))
