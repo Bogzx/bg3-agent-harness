@@ -113,3 +113,14 @@ test("a phase change is a turn boundary: a side all down ends the match, no aren
     eq(Ar.state.ended.winner, "A", "winner")
     eq(#refs("arena_turn"), 0, "no record after the end")
 end)
+
+test("a phase's names: each member's display name in members' order, a summon's included", function()
+    begin()
+    order = { { A1, SA, B1 } }
+    openAll({ A1, SA, B1 })
+    tick()
+    local r = refs("arena_turn")
+    eq(#r, 1, "one record")
+    eq(members(r[1]), A1 .. "," .. SA, "A1 and its summon")
+    eq(table.concat(r[1].names, ","), "Ana,Aspect", "names")
+end)

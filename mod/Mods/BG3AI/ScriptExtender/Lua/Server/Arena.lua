@@ -290,8 +290,9 @@ function Ar.turn_started(char)
 end
 
 -- The acting phase changed since the last check (another round, group or side): a turn boundary (a wipe ends the
--- match), then one arena_turn {side, character (its first open member), members, round, phase (1-based within the
--- group), group (the group's Team guid, else its first member), shared (the group holds both sides)}. On the server
+-- match), then one arena_turn {side, character (its first open member), members, names (their display names, same
+-- order), round, phase (1-based within the group), group (the group's Team guid, else its first member), shared (the
+-- group holds both sides)}. On the server
 -- tick, at most every PHASE_EVERY_MS: the per-member TurnStarted burst of a group (all within a few ms) is over by
 -- then, and so is any change no listener sees (an end, a downing, a status). A phase shorter than that between two
 -- checks is not seen.
@@ -312,8 +313,10 @@ function Ar.phase_check()
     st.phase = { round = round, group = p.group, side = p.side, phase = n }
     Ar.check_end()
     if st.ended then return end
-    record("arena_turn", { side = p.side, character = p.character, members = p.members, round = round, phase = n,
-        group = p.group, shared = p.shared })
+    local names = {}
+    for i, u in ipairs(p.members) do names[i] = V.name(u) end
+    record("arena_turn", { side = p.side, character = p.character, members = p.members, names = names, round = round,
+        phase = n, group = p.group, shared = p.shared })
 end
 
 -- A round of the arena's combat starts: a turn boundary (a wipe ends the match); the start of round cap+1 ends it
