@@ -319,7 +319,10 @@ def frame_image(s: Strip, meta: Meta, lanes: Image.Image, duration_s: float, pau
     x0, x1 = TL_X + 16 + 130, TL_X + TL_W - 16
     px = x0 + round((x1 - x0) * min(1.0, s.clock_s / duration_s)) if duration_s > 0 else x0
     d.rectangle((px - 1, TL_Y + 6, px, TL_Y + TL_H - 7), fill=TEAL)
-    text(d, (TL_X, ID_Y + 20), clip(id_line(meta), "mono", 24, TL_W), "mono", 24, INK_3, "lm")
+    left, site = id_parts(meta, TL_W)
+    text(d, (TL_X, ID_Y + 20), left, "mono", 24, INK_3, "lm")
+    if site:
+        text(d, (TL_X + TL_W, ID_Y + 20), site, "mono", 24, INK_3, "rm")
     return img
 
 
@@ -389,3 +392,30 @@ def _result(d: ImageDraw.ImageDraw, it: Item, x: float, y: float, width: float) 
 def id_line(meta: Meta) -> str:
     """The id line: the run id, the run hash's first 12 hex digits and the site."""
     return " · ".join(x for x in (f"run {meta.run_id}", f"hash {meta.run_sha256[:12]}", meta.site) if x)
+
+
+ID_GAP = 32  # room kept between the run id and hash on the left and the site on the right
+
+
+def middle_clip(s: str, face: str, size: int, width: float) -> str:
+    """s cut in the middle with an ellipsis until it is no wider than width."""
+    if length(s, face, size) <= width:
+        return s
+    keep = len(s)
+    while keep > 1:
+        keep -= 1
+        head = (keep + 1) // 2
+        cut = s[:head] + "…" + s[len(s) - (keep - head) :]
+        if length(cut, face, size) <= width:
+            return cut
+    return "…"
+
+
+def id_parts(meta: Meta, width: float) -> tuple[str, str]:
+    """The id line as (left, site): the run id and hash on the left, the site right-aligned. The site always
+    shows whole; the run id is shortened in the middle when the two would not fit in width."""
+    site = meta.site
+    room = width - (length(site, "mono", 24) + ID_GAP if site else 0)
+    tail = f" · hash {meta.run_sha256[:12]}"
+    run_id = middle_clip(meta.run_id, "mono", 24, room - length("run " + tail, "mono", 24))
+    return f"run {run_id}{tail}", site
