@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from bg3harness import runs
+from bg3ai import progress as story
+from bg3harness import facts, runs
 from bg3harness.game import io as game
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
@@ -91,12 +92,14 @@ class FakeClock:
 
 
 class Loop(SessionRunner):
-    """SessionRunner with the game stubbed (no progress poll, alive or not as the test says)."""
+    """SessionRunner with the game stubbed (no progress poll unless a test sets one, alive or not as it says)."""
 
     alive = True
+    first_poll: Any = None  # the progress loop's first poll, as the test plays it
 
     def progress_loop(self, *a: Any) -> None:  # the 15 s poll reads the game: nothing here
-        return None
+        if self.first_poll is not None:
+            self.first_poll()
 
     def game_alive(self) -> bool:
         return self.alive
@@ -109,6 +112,7 @@ def loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(renv, "PLAY_DIR", tmp_path / "play")
     monkeypatch.setattr(renv, "log", lambda msg: None)
     monkeypatch.setattr(renv, "AGENT_SILENT_MINUTES", 60)  # the deaf agent is silent: no hang unless a test wants one
+    monkeypatch.setattr(story, "read_game", lambda lua_eval: None)  # no game: a facts read finds nothing
     (tmp_path / "play").mkdir()
     script = tmp_path / "agent.py"
     script.write_text(AGENT)
@@ -206,3 +210,50 @@ def test_an_agent_that_ends_on_its_own_exits(loop: Any):
     r, _, sent = loop("exits")
     res = r.run_claude("S001", "KICKOFF", 1, None, needs_game=False)
     assert (res.reason, res.exit_code, sent) == ("exited", 0, [])
+
+
+def junk_sale_run(loop: Any, monkeypatch: Any) -> tuple[list[bool], list[dict[str, Any]]]:
+    """launch-v1 sonnet act3_gold_max: the agent sold junk (+18 gold) 13 s in, before the progress loop's first poll
+    at ~15.8 s. A session on a fake game whose referee ring already holds a record from before the run (seq 1); the
+    agent's sale (seq 2) comes in its first seconds, then the progress loop's first poll. (whether each game read came
+    before the play process started, facts.jsonl's rows)"""
+    r, _, _ = loop("exits")
+    r.game_settings = {}  # the settings readout is done (game_setup)
+    gold, ring, reads = [410], [{"seq": 1, "t": 0, "ev": "gold", "gold": 410, "delta": 410}], []
+
+    def read_game(lua_eval: Any) -> dict:
+        reads.append(r.agent_proc is None)
+        return {"status": {"gold": gold[0], "party": [{"name": "Tav"}]}}
+
+    def rpc(op: str, args: dict, timeout: Any = None) -> dict:
+        recs = ring if op == "ref.since" else []
+        return {
+            "boot": "b1",
+            "latest": max((x["seq"] for x in recs), default=0),
+            "first": 1,
+            "now": 0,
+            "events": [x for x in recs if x["seq"] > args["seq"]][: args["limit"]],
+        }
+
+    def sale_then_poll() -> None:
+        gold[0] = 428
+        ring.append({"seq": 2, "t": 0, "ev": "gold", "gold": 428, "delta": 18})
+        r.facts_poll(read_game(None))
+
+    monkeypatch.setattr(story, "read_game", read_game)
+    monkeypatch.setattr(game, "rpc", rpc)
+    monkeypatch.setattr(facts, "read_inventory", lambda *a: None)
+    r.first_poll = sale_then_poll
+    r.run_claude("S001", "KICKOFF", 1, None)
+    return reads, [json.loads(ln) for ln in (r.state.dir / "facts.jsonl").read_text().splitlines()]
+
+
+def test_the_first_facts_snapshot_is_read_before_the_agent_starts(loop: Any, monkeypatch: Any):
+    reads, rows = junk_sale_run(loop, monkeypatch)
+    assert reads[0] is True  # before: the progress loop's first poll, after the play process started
+    assert next(x["gold"] for x in rows if x["kind"] == "snapshot") == 410  # the save's gold: the score's start
+
+
+def test_a_referee_event_in_the_agents_first_seconds_reaches_facts(loop: Any, monkeypatch: Any):
+    _, rows = junk_sale_run(loop, monkeypatch)
+    assert [(x["gold"], x["delta"]) for x in rows if x.get("ev") == "gold"] == [(428, 18)]  # not the run's seq 1

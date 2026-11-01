@@ -130,10 +130,33 @@ def test_a_maximise_scenario_is_scored_by_its_gain_with_no_pass(tmp_path):
     rec = {**records[0], "outcome": "timeout"}  # a maximise run ends at its time cap
     _, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=spec)
     assert (res["passed"], res["t_pass_s"]) == (None, None)
-    assert res["score"] == {"fact": "gold", "start": 50, "end": 1100, "gain": 1050, "peak": 1100}
+    want = {"fact": "gold", "start": 50, "end": 1100, "gain": 1050, "peak": 1100, "start_from": "first_snapshot"}
+    assert res["score"] == want  # the series' scenario starts from no published save
     assert res["grade"]["curve"]["fact"] == "gold" and res["methods"] is not None
     assert_valid("result.v1.schema.json", res)
     assert report.verdict(res) == "+1050 gold (50 -> 1100)"
+
+
+def test_a_maximise_run_from_a_published_save_is_scored_from_its_start_state(tmp_path):
+    """launch-v1 Sonnet x act3_gold_max: the first snapshot (game_t 15.8) had 428 gold, the agent having sold junk
+    before it; the score starts from the save's published start state, 410 (saves.json)."""
+    series, records = load_series()
+    sc = scenario.load(HERE.parent / "scenarios" / "act3_gold_max.json")
+    snap = {"v": 1, "kind": "snapshot", "party": [], "inv": [], "region": "Lower City", "areas": [], "quests": {},
+            "combat": False}  # fmt: skip
+    rows = [
+        {"v": 1, "kind": "mark", "t": 1000.0, "game_t": 0.0, "mark": "run_start"},
+        snap | {"t": 1015.8, "game_t": 15.8, "gold": 428},
+        snap | {"t": 3700.0, "game_t": 2700.0, "gold": 7988},
+        {"v": 1, "kind": "mark", "t": 3700.0, "game_t": 2700.0, "mark": "run_end"},
+    ]
+    (tmp_path / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    rec = {**records[0], "outcome": "timeout"}
+    _, res = run_artifacts.write_run_artifacts(tmp_path, series, rec, None, None, scenario_spec=sc)
+    assert res["score"] == {
+        "fact": "gold", "start": 410, "end": 7988, "gain": 7578, "peak": 7988, "start_from": "start_state",
+    }  # fmt: skip
+    assert_valid("result.v1.schema.json", res)
 
 
 def test_result_deaths_are_the_party_losses_in_the_facts(tmp_path):

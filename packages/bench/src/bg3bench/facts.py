@@ -7,7 +7,10 @@ accumulate. The party is wiped when every real member is down or dead, or when t
 (a `game_over` event: the prologue ends there with "Us" still standing) until a game is loaded again (a load mark). Each won combat keeps the names of the characters outside the party who died in it (`won_kills`, for a
 goal's combats_won enemy): from a `kill` event (KilledBy, before the combat ends) or a `died` one (Died, after the
 dying animation: the last kill's comes after combat_ended), during the combat or at the instant it ended (one poll's
-diff writes combat_ended before its deaths). `from_progress` turns an old `Sxxx.progress.jsonl` (bg3ai.progress) into v1 events so archived runs can
+diff writes combat_ended before its deaths). The avatar is a party member the snapshot flags `avatar` or the one
+named by the settings mark's `avatar_name` (a save start's avatar, renamed to the scenario's character): the live
+snapshots' party rows (the mod's state.status) carry no avatar flag, so without the name every companions count
+included the avatar. `from_progress` turns an old `Sxxx.progress.jsonl` (bg3ai.progress) into v1 events so archived runs can
 be graded with the same leaves.
 """
 
@@ -77,12 +80,13 @@ class State:
     ended_t: float | None = None  # when the last combat ended
     game_end: bool = False
     game_over: bool = False  # the Game Over screen came up, and no game was loaded since
+    avatar_name: str | None = None  # the settings mark's avatar_name
 
     def real_party(self) -> list[Member]:
         return [m for m in self.party.values() if not m.summon]
 
     def companions(self) -> int:
-        return sum(1 for m in self.real_party() if not m.avatar)
+        return sum(1 for n, m in self.party.items() if not (m.summon or m.avatar or n == self.avatar_name))
 
     def party_dead(self) -> int:
         return sum(1 for m in self.real_party() if m.dead)
@@ -127,6 +131,8 @@ class State:
             self._event(r)
         elif r["kind"] == "mark" and r.get("mark") == "load":
             self.game_over = False
+        elif r["kind"] == "mark" and r.get("mark") == "settings" and isinstance(r.get("detail"), dict):
+            self.avatar_name = r["detail"].get("avatar_name") or self.avatar_name
         if self.combat and self.wiped():
             self.wiped_this_combat = True
 

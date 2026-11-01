@@ -94,6 +94,9 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
   half-elf), a save-start run plays under the scenario's character name (the runner renames the avatar at the
   run's start and the mod again after every load; the saves themselves still say "Claude"), and `act3_gold_max`
   has its start save.
+- bench-v0.9 (bg3bench 0.9.0): the same scenarios and graders as bench-v0.8; a new release file
+  (`packages/bench/releases/bench-v0.9.json`) for the mod and bg3 tools after the bench-v0.8 runs.
+  `releases/bench-v0.8.json` stays what the bench-v0.8 results were checked against.
 
 ### Game Over and the run's own saves (2026-10-25, bench B3)
 

@@ -27,6 +27,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 MAX_STEPS = 20
+WAIT_MAX_S = 30.0  # one wait (the wait tool, a wait step)
+# A blocking run of steps (do_actions) stops before its next step once this is spent, and a wait step is cut to what
+# is left: the clients give up on an MCP request after 110 s (clients.py), and a batch of 6 waits of 30 s ran on for
+# 70 s after the client had already reported the call as timed out.
+BATCH_BUDGET_S = 90.0
 HP_BELOW_PCT = 35  # default "HP below" interrupt, percent of max HP
 # S042 22:51:18: loot_area stopped on 2 HP of 104 (a Holy Fire tick) right after opening a corpse: the container was
 # left unlooted and 8 corpses skipped. Outside combat, a chip below DAMAGE_MIN_PCT of max HP is not an interrupt;
@@ -455,6 +460,8 @@ class Executor:
         self.current_step: Step | None = None
         self.stop = threading.Event()  # cancel_queue
         self.interrupt: tuple[str, str] | None = None
+        self.budget_s: float | None = None  # BATCH_BUDGET_S for a blocking run; None: no limit (a queue)
+        self._deadline: float | None = None
         self._lock = threading.Lock()
 
     def track(self, context: str, job_id: int) -> None:
@@ -552,10 +559,14 @@ class Executor:
         mon = threading.Thread(target=self._monitor, args=(done, peek_next), name="actq-monitor", daemon=True)
         mon.start()
         i = 0
+        self._deadline = None if self.budget_s is None else time.monotonic() + self.budget_s
         try:
             while True:
                 if self.stop.is_set() and not self.interrupt:
                     self.interrupt = ("cancel", "cancelled")
+                if (not self.interrupt and self._deadline is not None and time.monotonic() >= self._deadline
+                        and peek_next() is not None):
+                    self.interrupt = ("budget", "time budget")
                 if self.interrupt:
                     break
                 step = next_step()
@@ -609,14 +620,21 @@ class Executor:
                 if s is None:
                     break
                 rep.left.append(s.short())
+            if rep.stop_kind == "budget":
+                n = len(rep.left)
+                rep.stopped = f"time budget ({self.budget_s:g} s per call), {n} step{'s' if n != 1 else ''} left"
         return rep
 
     def _wait_step(self, step: Step) -> str:
-        secs = max(0.2, min(float(step.args.get("seconds", 3.0) or 3.0), 30.0))
-        end = time.monotonic() + secs
+        secs = max(0.2, min(float(step.args.get("seconds", 3.0) or 3.0), WAIT_MAX_S))
+        t0 = time.monotonic()
+        end, cut = t0 + secs, False
+        if self._deadline is not None and self._deadline < end:
+            end, cut = self._deadline, True
         while time.monotonic() < end and not self.interrupt and not self.stop.is_set():
             time.sleep(0.05)
-        return f"wait: waited {round(secs - max(0.0, end - time.monotonic()), 1)}s"
+        waited = round(min(time.monotonic(), end) - t0, 1)
+        return f"wait: waited {waited}s" + (f" of {secs:g}s (time budget)" if cut else "")
 
 
 # ---------------------------------------------------------------------------

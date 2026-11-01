@@ -40,6 +40,13 @@ benchmark suite's.
 
    - minor bump: add the new `bench-vX.Y` with that digest;
    - patch bump (no score moves): append the digest to the current version's list.
+   - minor bump for a change outside these files (the mod or the bg3 tools a release pins): add the new
+     `bench-vX.Y` with the same digest and name the pair in `shared` (`{"bench-vX.Y": "<previous>"}`); a digest
+     pinned for two versions fails unless `shared` pairs them.
+
+   A released suite's `packages/bench/releases/<suite>.json` is never rebuilt: the new suite gets its own file
+   (`python -m bg3bench.submission.release --suite bench-vX.Y`) and its saves a `bench-vX.Y` entry in `saves.json`.
+   Add the old file's sha256 to `FROZEN` in `packages/bench/tests/test_submission_release.py`.
 
    Never edit an existing entry: it is what published results were graded with.
    `packages/bench/tests/test_suite.py` fails until the pin matches.

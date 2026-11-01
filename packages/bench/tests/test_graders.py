@@ -96,6 +96,24 @@ def test_companions_do_not_count_the_avatar_or_summons():
     assert grade({"companions": {"gte": 3}}, legacy)["t_pass_s"] == 12
 
 
+def test_the_settings_marks_avatar_is_no_companion():
+    # live snapshots carry no avatar flag (the mod's state.status): the settings mark names the avatar
+    party = [member("Wyll"), member("Shadowheart"), member("Tav")]
+    named = {"v": 1, "kind": "mark", "t": 1000.2, "game_t": 0.2, "mark": "settings", "detail": {"avatar_name": "Tav"}}
+    assert grade({"companions": {"gte": 3}}, run(snap(10, party=party)))["passed"]  # the old count
+    assert not grade({"companions": {"gte": 3}}, run(named, snap(10, party=party)))["passed"]
+    assert grade({"companions": {"gte": 3}}, run(named, snap(10, party=[*party, member("Karlach")])))["t_pass_s"] == 10
+
+
+def test_a_merchant_dialogue_does_not_end_the_karlach_choice():
+    # launch-v1-haiku choice_act1_karlach (2026-10-30): reached at game_t 22.6 after talking to Cyrel only, since
+    # companions >= 3 counted Tav (no avatar flag) beside Wyll and Shadowheart
+    goal = json.loads((ROOT / "packages" / "bench" / "scenarios" / "choice_act1_karlach.json").read_text())["goal"]
+    tl = facts.load(TL / "karlach_haiku_merchant.facts.jsonl")
+    assert [r["scene"][:5] for r in tl if r.get("ev") == "choice"] == ["Cyrel"] * 3
+    assert not grade(goal, tl)["passed"] and graders.verdict(goal, tl) is None
+
+
 def test_combat_outcome_fixture_one_won_one_wipe():
     tl = facts.load(TL / "fights.facts.jsonl")
     assert grade({"combats_won": {"gte": 1}}, tl)["t_pass_s"] == 30
@@ -503,6 +521,21 @@ def test_measure_starts_from_the_state_carried_into_run_start_not_from_zero():
     assert graders.measure("gold", run(ev(1, "trade_open"), snap(10, gold=133), snap(20, gold=150)))["gain"] == 17
     none = graders.measure("gold", run(ev(1, "trade_open")))
     assert (none["start"], none["end"], none["gain"], none["peak"]) == (None, None, None, None)
+
+
+def test_measure_starts_from_the_published_start_state_when_given():
+    """launch-v1 Sonnet x act3_gold_max r1: it sold junk (+18) before the run's first snapshot (game_t 15.8), so a gain
+    from that snapshot (428) left out gold the agent made; its start save's published start state has 410."""
+    tl = run(snap(15.8, gold=428), snap(2700, gold=7988))
+    m = graders.measure("gold", tl)
+    assert (m["start"], m["gain"], m["start_from"]) == (428, 7560, "first_snapshot")  # no start state given
+    start = graders.start_value("gold", {"party": [["Tav", 7]], "gold": 410, "region": "Lower City"})
+    m = graders.measure("gold", tl, start_state=start)
+    assert (m["start"], m["end"], m["gain"], m["peak"], m["start_from"]) == (410, 7988, 7578, 7988, "start_state")
+    assert graders.start_value("gold", None) is None  # no published start state
+    assert graders.start_value("party_level", {"gold": 410}) is None  # a fingerprint holds only gold of them
+    none = graders.measure("gold", run(ev(1, "trade_open")), start_state=410)
+    assert (none["start"], none["end"], none["gain"]) == (410, None, None)  # no snapshot: no end, no gain
 
 
 def test_measure_refuses_an_unknown_fact():

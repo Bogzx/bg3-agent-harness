@@ -1,0 +1,44 @@
+# Launch campaign v1, DeepSeek V4.1 Flash: the 6 launch scenarios launch-v1-deepseek leaves out, x 3 runs = 18 runs.
+# With launch-v1-deepseek's 18 runs DeepSeek plays the same 12 x 3 as launch-v1-haiku and launch-v1-sonnet. Same
+# profile, effort and condition, so both matrices' runs form one (client, model, condition) group in the results
+# (results.build_results groups by those, never by matrix); the run ids differ by the matrix name.
+# Cell by cell, the big reserves first (a job starts only if spent + its max_cost fits the cap); same budget file.
+# Off-peak (DeepSeek bills half): Saturday and Sunday all day; weekdays outside UTC 01-04 and 06-10 (Beijing 09-12,
+# 14-18). The matrix has no off-peak wait: start it off-peak.
+# max_cost: each scenario's time cap x $0.0123 per minute x 1.25, as launch-v1-deepseek.
+# Estimate off-peak, per run: crash_site_grove $0.38 (its time cap, 60 min: its one run was stopped at 41 min by a
+# cost cap), act3_gold_max $0.28 (its 45-min cap: a maximise run; Haiku played all five to it), act1_gold_1000 $0.19,
+# minthara $0.055, karlach $0.010, nightsong $0.008 (never played: launch-v1-haiku's mean minutes x 1.54, DeepSeek's
+# time over Haiku's on level_3, windmill and balthazar) = $2.77 for the 18 runs; $5.53 at peak; $4.51 if every run
+# plays its time cap off-peak. Rates pooled over DeepSeek's 13 finished runs (2026-10-25 to 10-31, all off-peak):
+# $0.0041 per minute for runs under 20 min, $0.0063 for longer ones.
+# The cap both matrices need (played after launch-v1-deepseek: $0.29 spent at 2026-10-31 08:45 UTC, its 15 jobs left
+# $1.48 expected) so that every job starts: $4.99 at the expected off-peak spend, $9.23 at peak, $9.87 if every run
+# plays its time cap off-peak, $18.99 the same at peak.
+name = "launch-v1-deepseek-rest"
+allow_gaps = false
+allow_unverified = false
+order = "cell"
+
+models = ["profiles/deepseek-flash.toml"]
+scenarios = [
+  "crash_site_grove",
+  "act1_gold_1000",
+  "act3_gold_max",
+  "choice_act1_minthara",
+  "choice_act1_karlach",
+  "choice_act2_nightsong",
+]
+conditions = ["rules"]
+repeats = 3
+
+[budget]
+file = "runtime/budget-deepseek.json"
+
+[budget.max_cost]
+act1_gold_1000 = 0.69
+act3_gold_max = 0.69
+choice_act1_karlach = 0.46
+choice_act1_minthara = 0.46
+choice_act2_nightsong = 0.46
+crash_site_grove = 0.92

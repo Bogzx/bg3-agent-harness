@@ -157,6 +157,36 @@ class Rules(unittest.TestCase):
         )
         self.assertEqual(got.get("hidden_state"), 3)
 
+    # launch-v1 get_character results, verbatim (cut after the statuses' field): deepseek act3_gold_max r3 S001 20:22:41
+    # (its handle mid-sheet) and haiku crash_site r3 S001-c5 21:53:38 (its handle after the equipment's)
+    SHADOWHEART = ("Cleric7(Trickery Domain) statuses=[id=SPEAK_WITH_DEAD_RECAST name=Recast Speak with Dead] "
+                   "name=Shadowheart race=High Half-Elf e4 features=[Absolute's Mercy,Absolute's Aegis] "
+                   "equipment={Amulet=e76 Absolute's Talisman VanityBoots=e72 Acolyte's Sandals}")
+    ASTARION = ("level=2 statuses=[name=Difficult Terrain: Deep Water id=DIFFICULT_TERRAIN_DEEPWATER turns=1; "
+                "name=Wet id=WET turns=1] initiative=3 name=Astarion ac=14 equipment={Underwear=e7 Astarion's "
+                "Underwear VanityBoots=e8 Tasteful Boots} darkvision_m=2 e62 max_hp=17 hp=17")
+
+    def test_a_party_members_sheet_shows_its_own_status_ids(self):
+        got = self.rules(
+            call("get_status", "PARTY e2 Wyll Warlock7(The Fiend) HP 52/52+9\n"
+                               "PARTY e4 Shadowheart Cleric7(Trickery Domain) HP 52/52 [Recast Speak with Dead]\n"
+                               "PARTY *e5 Tav Paladin7(Oath of Devotion) HP 67/67"),
+            call("get_character", self.SHADOWHEART),
+            call("get_status", "PARTY *e62 Astarion Rogue2 HP 17/17 [Difficult Terrain: Deep Water,Wet]"),
+            call("get_character", self.ASTARION),
+        )
+        self.assertNotIn("status_id", got)
+        self.assertNotIn("template", got)
+
+    def test_an_examined_characters_status_ids_still_leak(self):
+        # the same sheets with their handles outside the party (no PARTY row names them): an examined character
+        got = self.rules(
+            call("get_status", "PARTY *e5 Tav Paladin7(Oath of Devotion) HP 67/67"),
+            call("get_character", self.SHADOWHEART),
+            call("get_character", self.ASTARION),
+        )
+        self.assertEqual(got.get("status_id"), 2)  # SPEAK_WITH_DEAD_RECAST, DIFFICULT_TERRAIN_DEEPWATER
+
 
     def test_compacted_combat_forms(self):
         # compact.py COMBAT_NARRATIVE / KIND_GROUP / ACTION_DUPS lines: no hidden-state or id hits of their own
