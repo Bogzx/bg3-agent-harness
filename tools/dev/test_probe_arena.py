@@ -463,6 +463,61 @@ print("LUA OK")
 """
 
 
+class SidesTest(unittest.TestCase):
+    """q9: the mod's arena begun on the server, the client's BG3AI.Arena.state read before and after reset."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        (self.tmp / "teams.json").write_text(json.dumps({**TEAMS, "host": A[0]}))
+
+    def run_sides(self, answers: dict[str, list[Any]]) -> tuple[dict[str, Any], list[tuple[str, str]]]:
+        sent: list[tuple[str, str]] = []
+        ar = FakeArena(self.tmp, {}, [])
+
+        def raw(code: str, context: str) -> Any:
+            sent.append((context, code))
+            return answers[context].pop(0)
+
+        ar.raw = raw  # type: ignore[method-assign]
+        rec = ar.sides()
+        self.assertIs(ar.written["q9-sides"], rec)
+        return rec, sent
+
+    def test_pass_when_the_client_gets_the_teams_and_drops_them(self):
+        names = {"A": ["Tav"], "B": ["Karlach"]}
+        rec, sent = self.run_sides(
+            {
+                "server": [{"ok": True}, {"ok": True}],
+                "client": [{"state": True, "active": True, "names": names}, {"state": False, "active": False}],
+            }
+        )
+        self.assertEqual(rec["verdict"], "PASS", rec["why"])
+        self.assertEqual([c for c, _ in sent], ["server", "client", "server", "client"])
+        self.assertIn(f"BG3AI.Arena.begin({{A = {pa.lua(A)}, B = {pa.lua(B)}}})", sent[0][1])
+        self.assertIn("BG3AI.Arena.reset()", sent[2][1])
+
+    def test_fail_when_the_client_is_side_blind(self):
+        rec, _ = self.run_sides(
+            {"server": [{"ok": True}, {"ok": True}], "client": [{"state": False}, {"state": False}]}
+        )
+        self.assertEqual(rec["verdict"], "FAIL")
+        self.assertIn("side-blind", rec["why"])
+
+    def test_open_without_the_switch(self):
+        err = "arena ops need BG3AI_ARENA=1 in the game's environment"
+        rec, _ = self.run_sides({"server": [{"ok": False, "error": err}, {"ok": True}], "client": [{}, {}]})
+        self.assertEqual(rec["verdict"], "OPEN")
+        self.assertIn("BG3AI_ARENA=1", rec["why"])
+
+    def test_judge_fails_teams_kept_after_reset_or_switch_unseen(self):
+        ok = {"ok": True}
+        after = {"state": True, "active": True}
+        kept = {"begin": ok, "client_after_begin": after, "client_after_reset": {"state": True}}
+        self.assertEqual(pj.judge_sides(kept)[0], "FAIL")
+        unseen = {"begin": ok, "client_after_begin": {"state": True, "active": False}, "client_after_reset": {}}
+        self.assertEqual(pj.judge_sides(unseen)[0], "FAIL")
+
+
 class LuaLibraryTest(unittest.TestCase):
     def test_install_in_lua(self):
         import shutil
