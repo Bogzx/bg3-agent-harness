@@ -97,8 +97,10 @@ def test_x01_cannot_check_a_field_the_first_snapshot_read_as_null():
     assert x01(area="Nightsong's Prison") == (True, "")  # r1, r3: read at 1.1 s
     assert x01(area="Moonrise Towers") == (False, "first snapshot differs from the published start state in: area")
     assert x01(area=None, gold=61)[1] == "first snapshot differs from the published start state in: gold"
-    nothing = {"party": None, "gold": None, "region": None, "area": None}
-    assert x01(**nothing) == (None, "not checkable: the first snapshot has no party, gold, region, area")
+    assert x01(party=None, gold=None, region=None, area=None) == (
+        None,
+        "not checkable: the first snapshot has no party, gold, region, area",
+    )
     other = {"scenario": {"start_save_sha1": "0" * 40}}
     assert x01(other, area=None)[0] is False  # not the release's start save: held to every field
 
