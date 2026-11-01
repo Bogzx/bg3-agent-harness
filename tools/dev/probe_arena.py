@@ -55,41 +55,14 @@ REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO / "runtime" / "probes" / "arena-s0"
 HOSTILE = 0  # Osiris relation values: 0 hostile, 50 neutral, 100 allied (DOS2's convention; the probe reads them back)
 LINE_GAP_M = 1.5  # members of a side stand this far apart on a line through their spot
-SETTLE_S = 2.0
 TURN_WAIT_S = 25.0  # after an end_turn: the next TurnStarted within this
 REACH_M = 2.5  # q7: the mover counts as in melee of the enemy within this
 CONNS = 6  # q1: debugger connections opened at once (two bridges with their side connections + the harness)
 
-from probe_arena_lua import GROUPS, INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
-
-# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams. The debugger evaluates in
-# its own env: the mod's table is Mods.BG3AI.BG3AI there (a bare BG3AI is nil).
-MOD = "Mods.BG3AI.BG3AI"
-SERVER_TRY = (
-    "local ok, r = pcall(function() return {call} end)\n"
-    "return Ext.Json.Stringify({{ok = ok, error = (not ok) and tostring(r) or nil}})"
-)
-CLIENT_ARENA = (
-    f"local Ar = {MOD}.Arena\n"
-    "return Ext.Json.Stringify({state = Ar.state ~= nil, active = Ar.active(), names = Ar.state and Ar.state.names})"
-)
+from probe_arena_groups import GroupSteps  # noqa: E402  (q10; tools/dev on the path)
+from probe_arena_lua import CLIENT_ARENA, GROUPS, INSTALL, MOD, POPUP, SERVER_TRY, lua  # noqa: E402, F401
 
 # ---- Lua building (pure) ----
-
-
-def lua(v: Any) -> str:
-    """A Lua literal for a str / number / bool / None / list / dict (JSON's string escapes are valid Lua for these)."""
-    if v is None:
-        return "nil"
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, (list, tuple)):
-        return "{" + ", ".join(lua(x) for x in v) + "}"
-    if isinstance(v, dict):
-        return "{" + ", ".join(f"[{lua(k)}] = {lua(x)}" for k, x in v.items()) + "}"
-    return json.dumps(str(v))
 
 
 def call_code(fn: str, *forms: list[Any]) -> str:
@@ -126,6 +99,7 @@ def spot_arg(s: str) -> list[float]:
 from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     MOVED_M,
     NULL,
+    SETTLE_S,
     SIDES,
     dist,
     judge_act,
@@ -133,7 +107,6 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     judge_conns,
     judge_end,
     judge_gameover,
-    judge_groups,
     judge_hostile,
     judge_npc,
     judge_party,
@@ -152,7 +125,7 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
 # ---- the game side ----
 
 
-class Arena:
+class Arena(GroupSteps):
     def __init__(
         self,
         game: Any,
@@ -248,16 +221,47 @@ class Arena:
             self.sleep(0.5)
         return self.active(teams)
 
+    def end_one_by_one(self, us: list[str]) -> list[dict[str, Any]]:
+        """act.end_turn for each in turn, SETTLE_S apart: the game hands a shared group's control on one member at a
+        time (~2.1 s each, live q4/q5 GainedControl), so ends sent back to back outrun it (q4: the 8th 'ignored')."""
+        out = []
+        for u in us:
+            out.append(self.job("act.end_turn", {"char": u}, wait_s=15))
+            self.sleep(SETTLE_S)
+        return out
+
+    def arena_begin(self, teams: dict[str, Any]) -> tuple[bool, Any]:
+        """The mod's arena begun with the teams unless it is already: (whether this began it, begin's answer)."""
+        st = self.raw(f"return Ext.Json.Stringify({{active = {MOD}.Arena.active()}})", "server")
+        if isinstance(st, dict) and st.get("active") is True:
+            return False, st
+        t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
+        return True, self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.begin({t})"), "server")
+
     def drive_to(
-        self, teams: dict[str, Any], want: Callable[[list[dict[str, Any]]], bool], max_turns: int = 12
+        self,
+        teams: dict[str, Any],
+        want: Callable[[list[dict[str, Any]]], bool],
+        max_turns: int = 12,
+        mod_view: bool = False,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """End turns (act.end_turn) until an open turn passes `want`. Returns (that turn's members, what was ended)."""
+        """End turns (act.end_turn) until an open turn passes `want`. Returns (that turn's members, what was ended).
+        mod_view: a turn is the mod's acting phase (whom Guard.is_my_turn lets act), ended one member at a time; the
+        next phase of a shared group opens without a TurnStarted."""
+        look = self.mod_open if mod_view else self.active
         ended: list[dict[str, Any]] = []
-        cur = self.active(teams)
+        cur = look(teams)
         for _ in range(max_turns):
             if cur and want(cur):
                 return cur, ended
             m = self.mark()
+            if mod_view:
+                ended += self.end_one_by_one([f["uuid"] for f in cur])
+                cur = self.mod_open(teams)
+                if not cur:
+                    self.next_turn(teams, m)
+                    cur = self.mod_open(teams)
+                continue
             ended += self.end_turns([f["uuid"] for f in cur])
             cur = self.next_turn(teams, m)
         return [], ended
@@ -598,12 +602,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         return min(live, key=lambda f: dist(me.get("pos"), f.get("pos")), default=None)
 
     def act(self, spell: str) -> dict[str, Any]:
+        """q4: per side, its acting phase (the mod's view; the arena begun unless it is), one member moves to the
+        nearest enemy and attacks, then the phase's members still open end one at a time."""
         teams = self.teams()
         m = self.mark()
         runs: dict[str, dict[str, Any]] = {}
         drove: list[dict[str, Any]] = []
+        began, arena = self.arena_begin(teams)
         for s in SIDES:
-            cur, ended = self.drive_to(teams, lambda c, s=s: any(side_of(teams, f["uuid"]) == s for f in c))
+            cur, ended = self.drive_to(
+                teams, lambda c, s=s: any(side_of(teams, f["uuid"]) == s for f in c), mod_view=True
+            )
             drove += ended
             me = next((f for f in cur if side_of(teams, f["uuid"]) == s), None)
             if me is None:
@@ -631,13 +640,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
                     "res_after": a2[u].get("res"),
                     "foe_hp": [hp0, a2[foe["uuid"]].get("hp")],
                 }
-            r["end"] = self.end_turns([f["uuid"] for f in cur])[-1]
+            r["ends"] = self.end_one_by_one([f["uuid"] for f in self.mod_open(teams) if side_of(teams, f["uuid"]) == s])
+            r["end"] = r["ends"][-1] if r["ends"] else {"status": "nothing open to end"}
             runs[s] = r
+        if began:
+            arena = {"begin": arena, "reset": self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.reset()"), "server")}
         verdict, why = judge_act(runs)
         rec = {
             "question": "q4-act",
             "verdict": verdict,
             "why": why,
+            "arena": arena,
             "spell": spell,
             "runs": runs,
             "turns_ended_on_the_way": drove,
@@ -814,73 +827,6 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         self.write("q5-tie", {"question": "q5-tie", "verdict": verdict, "why": why, **r})
         return r
 
-    def mod_open(self, teams: dict[str, Any]) -> list[dict[str, Any]]:
-        """The 8's facts the mod's guard lets act now (Guard.is_my_turn: open, not ended, not held for the other
-        side)."""
-        allu = teams["A"] + teams["B"]
-        us = self.ev(
-            f"local G = {MOD}.Guard\nlocal o = {{}}\n"
-            f"for _, u in ipairs({lua(allu)}) do if G.is_my_turn(u) then o[#o + 1] = u end end\nreturn P.js(o)"
-        )
-        fs = self.facts(allu)
-        return [fs[u] for u in us if u in fs] if isinstance(us, list) else []
-
-    def turn_groups(self, u: str) -> dict[str, Any]:
-        r = self.ev(GROUPS + f"return P.js(P.turn_groups({lua(u)}))")
-        return r if isinstance(r, dict) else {"error": str(r)}
-
-    def groups(self, split: str, which: str, user_b: int | None, max_turns: int = 20) -> dict[str, Any]:
-        """q10: the turn groups read (each group's Team, initiative, members with their CombatTeam, CombatGroupId,
-        roll and user), a split tried, then the round in progress ended (Osi EndTurn on every open turn, past the
-        mod's guard) and the next round watched whole: which turns open, for whom. --split write: rewrite the
-        `which` list's cross-team groups into per-side runs (P.split_groups); user: AssignToUser(user_b, each team-B
-        member); none: the baseline; phases: no engine change, the mod's arena begun and its view judged (a turn =
-        the members the mod's guard lets act, ended through act.end_turn), the arena reset after."""
-        teams = self.teams()
-        a1 = teams["A"][0]
-        sides = {u: s for s in SIDES for u in teams[s]}
-        m = self.mark()
-        r: dict[str, Any] = {"split": split, "list": which, "before": self.turn_groups(a1)}
-        phases = split == "phases"
-        if phases:
-            t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
-            r["write"] = self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.begin({t})"), "server")
-        elif split == "write":
-            r["write"] = self.ev(GROUPS + f"return P.js(P.split_groups({lua(a1)}, {lua(sides)}, {lua(which)}))")
-        elif split == "user":
-            r["write"] = [self.call("AssignToUser", [user_b, u]) for u in teams["B"]]
-        r["after_write"] = self.turn_groups(a1)
-        r0 = r["before"].get("round")
-        r["judged_round"] = None if r0 is None else r0 + 1  # the first round that starts after the split
-        turns: list[dict[str, Any]] = []
-        cur = self.mod_open(teams) if phases else self.active(teams)
-        for _ in range(max_turns):
-            rnd = self.turn_groups(a1).get("round")
-            if rnd is None or r["judged_round"] is None or rnd > r["judged_round"]:
-                break
-            if not cur:
-                cur = self.next_turn(teams, self.mark())
-                cur = self.mod_open(teams) if phases else cur
-                if not cur:
-                    break
-                continue
-            turns.append({"round": rnd, "open": [f["uuid"] for f in cur], "names": [f.get("name") for f in cur]})
-            mark = self.mark()
-            if phases:  # inside a shared group the next side opens without a TurnStarted
-                r.setdefault("ends", []).extend(self.end_turns([f["uuid"] for f in cur]))
-                self.sleep(SETTLE_S)
-                cur = self.mod_open(teams)
-                continue
-            for f in cur:
-                self.call("EndTurn", [f["uuid"]])
-            cur = self.next_turn(teams, mark)
-        if phases:
-            r["reset"] = self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.reset()"), "server")
-        r.update(turns=turns, after_round=self.turn_groups(a1), events=self.since(m))
-        verdict, why = judge_groups(teams, r)
-        self.write("q10-groups", {"question": "q10-groups", "verdict": verdict, "why": why, **r})
-        return r
-
     def npc(self, idle_s: float) -> dict[str, Any]:
         teams = self.teams()
         m = self.mark()
@@ -914,8 +860,8 @@ PLAN = {
     "SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, F_B, a1, b1), else EnterCombat pairs; "
     "IsEnemy matrix again; turn order",
     "turns": "per open turn: idle --idle-s (did the game act?), act.end_turn; one member downed at --down-at",
-    "act": "per side: drive to its turn, act.move_to {target: nearest enemy}, act.cast attack, act.end_turn; "
-    "resources before/after",
+    "act": "Arena.begin unless active; per side: drive to its phase (the mod's view), act.move_to {target: nearest "
+    "enemy}, act.cast attack, act.end_turn for each of the phase's open members one at a time; resources before/after",
     "react": "side-A turn: close in, walk 6 m away; watch ui.react_probe; ui.react; Reaction* events",
     "tie": "turn order: a cross-team tie (else write a B member's initiative to its A neighbour's); a round: any "
     "turn open for both sides at once",

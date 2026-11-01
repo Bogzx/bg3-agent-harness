@@ -160,23 +160,57 @@
         }
       },
       "then": {
-        "description": "A character's turn began (the game's TurnStarted).",
+        "description": "A side's phase began: one same-side run of the rolled order inside a turn group (the game puts adjacent player characters of both teams into one shared group; the mod serialises it). A phase is the match's turn, a summon's too.",
         "required": [
           "side",
           "character",
-          "round"
+          "members",
+          "names",
+          "round",
+          "phase",
+          "shared"
         ],
         "properties": {
           "side": {
             "$ref": "#/$defs/side"
           },
           "character": {
-            "$ref": "#/$defs/name"
+            "$ref": "#/$defs/name",
+            "description": "the phase's first open member (members[0])"
+          },
+          "members": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/name"
+            },
+            "description": "the side's open members of the group at the phase's start, in turn order, summons included: a team member's name as in arena_start, a summon's display name"
+          },
+          "names": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "the members' display names as the game gave them"
           },
           "round": {
             "type": "integer",
             "minimum": 1,
             "description": "the combat round (CombatRoundStarted)"
+          },
+          "phase": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "the phase's 1-based index within its turn group"
+          },
+          "group": {
+            "type": "string",
+            "description": "the turn group's id (its team guid, else its first member's uuid); absent when the mod can't read the turn order"
+          },
+          "shared": {
+            "type": "boolean",
+            "description": "the group holds members of both sides"
           }
         }
       }
@@ -190,7 +224,7 @@
         }
       },
       "then": {
-        "description": "The harness ended the turn in progress at the per-turn model-time cap (act.end_turn); it names that turn's side and character.",
+        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count; act.end_turn for each member); it names that phase's side and character.",
         "required": [
           "side",
           "character"

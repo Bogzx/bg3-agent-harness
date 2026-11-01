@@ -12,6 +12,7 @@ from typing import Any
 SIDES = ("A", "B")
 NULL = "NULL_00000000-0000-0000-0000-000000000000"
 AT_SPOT_M = 3.0  # a member counts as placed within this of its slot
+SETTLE_S = 2.0
 MOVED_M = 0.5  # an idle turn's character moved: the game acted for it
 
 

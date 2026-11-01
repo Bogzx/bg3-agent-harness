@@ -27,6 +27,7 @@ end
 reg("end_turn", function(args)
     local char = G.actor(args.char)
     if not G.in_combat(char) then G.refuse("not in combat") end
+    G.side_gate() -- a held member's end: the other side's phase, not this character's
     if G.turn_requested_end(char) then
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end

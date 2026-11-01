@@ -1,5 +1,36 @@
 """The Lua the two-team probe (tools/dev/probe_arena.py) sends: the server library it installs (Osiris listeners, reads,
-argument-form fallback) and the client read of an open reaction prompt."""
+argument-form fallback) and the client read of an open reaction prompt, and the Lua literals it builds them with."""
+
+import json
+from typing import Any
+
+
+def lua(v: Any) -> str:
+    """A Lua literal for a str / number / bool / None / list / dict (JSON's string escapes are valid Lua for these)."""
+    if v is None:
+        return "nil"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, (list, tuple)):
+        return "{" + ", ".join(lua(x) for x in v) + "}"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"[{lua(k)}] = {lua(x)}" for k, x in v.items()) + "}"
+    return json.dumps(str(v))
+
+
+# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams. The debugger evaluates in
+# its own env: the mod's table is Mods.BG3AI.BG3AI there (a bare BG3AI is nil).
+MOD = "Mods.BG3AI.BG3AI"
+SERVER_TRY = (
+    "local ok, r = pcall(function() return {call} end)\n"
+    "return Ext.Json.Stringify({{ok = ok, error = (not ok) and tostring(r) or nil}})"
+)
+CLIENT_ARENA = (
+    f"local Ar = {MOD}.Arena\n"
+    "return Ext.Json.Stringify({state = Ar.state ~= nil, active = Ar.active(), names = Ar.state and Ar.state.names})"
+)
 
 INSTALL = r"""
 local B = Mods.BG3AI.BG3AI
