@@ -367,6 +367,13 @@ class FakeArena(pa.Arena):
     def since(self, i: int) -> list[dict[str, Any]]:
         return [{"ev": "TurnStarted"}] if self.n > i else []
 
+    def mod_open(self, teams: dict[str, Any]) -> list[dict[str, Any]]:  # one side per turn: the mod's view = open
+        return self.active(teams)
+
+    def raw(self, code: str, context: str) -> Any:
+        self.raws = [*getattr(self, "raws", []), code]
+        return {"ok": True}
+
     def job(self, op: str, args: dict[str, Any], wait_s: float = 20.0) -> dict[str, Any]:
         self.jobs.append((op, args))
         u = args["char"]
@@ -402,7 +409,9 @@ class GroupsArena(FakeArena):
 
     def facts(self, us: list[str]) -> dict[str, dict[str, Any]]:
         open_ = set(self.rounds[self.rnd][0]) if self.rnd < len(self.rounds) and self.rounds[self.rnd] else set()
-        return {u: {**self.f[u], "tb": {"active": u in open_, "requested_end": False}} for u in us}
+        return {
+            u: {**json.loads(json.dumps(self.f[u])), "tb": {"active": u in open_, "requested_end": False}} for u in us
+        }
 
     def ev(self, code: str, timeout: float = 30.0) -> Any:
         if "P.split_groups(" in code:
@@ -427,6 +436,8 @@ class GroupsArena(FakeArena):
         return r
 
     def job(self, op: str, args: dict[str, Any], wait_s: float = 20.0) -> dict[str, Any]:
+        if op != "act.end_turn":
+            return super().job(op, args, wait_s)
         self.jobs.append((op, args))
         self.end(args["char"])
         return {"op": op, "args": args, "status": "done"}
@@ -577,9 +588,27 @@ class StepsTest(unittest.TestCase):
         sent: list[str] = []
         ar = FakeArena(self.tmp, self.facts, [])
         ar.ev = lambda code, timeout=30.0: sent.append(code) or [B[1]]  # type: ignore
-        self.assertEqual([f["uuid"] for f in ar.mod_open(TEAMS)], [B[1]])
+        self.assertEqual([f["uuid"] for f in pa.Arena.mod_open(ar, TEAMS)], [B[1]])
         self.assertIn("local G = Mods.BG3AI.BG3AI.Guard", sent[0])
         self.assertIn("G.is_my_turn(u)", sent[0])
+
+    def test_act_in_a_shared_group_ends_through_the_mods_view_one_at_a_time(self):
+        # the rerun: all 8 in one group (B | AAAA | BBB); no end goes to a held member, and ends are SETTLE_S apart
+        ar = GroupsArena(self.tmp, self.facts, rounds=[[ROLLED]])
+        sleeps: list[float] = []
+        ar.sleep = sleeps.append  # type: ignore[method-assign]
+        rec = ar.act("Target_MainHandAttack")
+        ends = [a["char"] for op, a in ar.jobs if op == "act.end_turn"]
+        self.assertEqual(ends, [B[0], *A, *B[1:]])
+        self.assertEqual(
+            [(op, a["char"]) for op, a in ar.jobs if op != "act.end_turn"],
+            [("act.move_to", A[0]), ("act.cast", A[0]), ("act.move_to", B[1]), ("act.cast", B[1])],
+        )
+        self.assertEqual(sleeps.count(pa.SETTLE_S) >= len(ends), True)
+        self.assertEqual([j["args"]["char"] for j in rec["runs"]["A"]["ends"]], A)
+        self.assertIn("Mods.BG3AI.BG3AI.Arena.begin(", ar.raws[1])  # not active yet: the probe begins it
+        self.assertIn("Mods.BG3AI.BG3AI.Arena.reset()", ar.raws[-1])
+        self.assertEqual(rec["verdict"], "PASS", rec["why"])
 
     def test_main_groups_user_needs_user_b(self):
         with self.assertRaises(SystemExit):
