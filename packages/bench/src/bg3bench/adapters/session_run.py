@@ -257,4 +257,7 @@ class SessionRun:
             why += f": {out.invalid} (no resume)"
         score: JSON = res.get("score") or {}
         gain: float | None = score.get("gain")
-        return RunResult(res["run_id"], res["valid"], res["passed"], res["cost_usd"], why, charged, gain)
+        cause: list[JSON] | None = res.get("invalid_cause")
+        return RunResult(
+            res["run_id"], res["valid"], res["passed"], res["cost_usd"], why, charged, gain, invalid_cause=cause
+        )

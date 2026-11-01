@@ -1,10 +1,12 @@
 # Launch campaign v1, DeepSeek V4.1 Flash through pi and DeepSeek's API: 6 of the 8 scored scenarios x 3 runs = 18
-# runs within runtime/budget-deepseek.json's $2.80 (no new money). 6 = the fewest for a ranked model (results:
+# runs, fitted to runtime/budget-deepseek.json's $2.80 before the 2026-10-31 top-up; launch-v1-deepseek-rest plays
+# the other 6 launch scenarios after it. 6 = the fewest for a ranked model (results:
 # valid runs in ceil(2/3 x 8) scored scenarios): the cheapest six. Left out: crash_site_grove ($0.35 per run when
 # its cost cap stopped it at 41 min) and act1_gold_1000 (never played; 40 min guessed, ~$0.28).
 # Cell by cell (order = "cell"): a budget that runs out leaves whole cells. The big reserves first: a job starts only
 # if spent + its max_cost fits the cap, so the cheapest reserve (fight_act1_grove_gate) goes last.
-# Estimate at DeepSeek's off-peak prices (half; Beijing weekdays outside 09-12 and 14-18, all weekend), per run:
+# Estimate at DeepSeek's off-peak prices (half; Saturday and Sunday all day, weekdays outside UTC 01-04 and 06-10 =
+# Beijing 09-12 and 14-18), per run:
 # balthazar $0.031 (1 run), level_3 $0.192 (1 run), windmill $0.077 (3 runs), moonrise $0.068 and grove_gate
 # $0.045 (never played: 15 and 10 min x $0.0045/min, the short fight runs' rate), goblin camp $0.24 (never played:
 # 35 min x $0.0069/min, the long runs' rate) = $1.96 for the 18 runs, $0.84 under the cap. At peak prices ($3.92) it

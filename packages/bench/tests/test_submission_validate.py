@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from test_submission_pack import mp4
 
-from bg3bench import behaviour, facts
+from bg3bench import behaviour, facts, saves
 from bg3bench.submission import bundle, codes, consistency, pack, validate
 
 FIXTURES = Path(__file__).parent / "fixtures" / "submission"
@@ -55,8 +55,10 @@ def frames_tar(n: int) -> bytes:
     return out.getvalue()
 
 
-def good_run(tmp: Path, name: str) -> Path:
-    """A run dir as the fixed harness and the renderer would leave it, from a committed fixture bundle."""
+def good_run(tmp: Path, name: str, start_snapshot: bool = True) -> Path:
+    """A run dir as the fixed harness and the renderer would leave it, from a committed fixture bundle: a snapshot at
+    the run's start (the fixtures' first one came 15.8 s in; `start_snapshot` False keeps that) and a maximise run's
+    score from the published start state."""
     d = tmp / f"run-{name}"
     d.mkdir()
     with tarfile.open(FIXTURES / f"{name}.bundle.tar.gz") as tar:
@@ -71,7 +73,15 @@ def good_run(tmp: Path, name: str) -> Path:
         "repo": {"commit": "c" * 40, "dirty": False, "diff": None},
     }
     man["scenario"]["start_save_sha1"] = sc["start"]["save_sha1"]
+    if start_snapshot:
+        rows = jsonl((d / "facts.jsonl").read_text())
+        i = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
+        settings = next(r for r in rows if r.get("mark") == "settings")
+        write_jsonl(d / "facts.jsonl", [*rows[:i], {**rows[i], "t": settings["t"] + 0.3, "game_t": 0.5}, *rows[i:]])
     timeline = facts.load(d / "facts.jsonl")
+    fp = saves.start_fingerprint(sc, man["versions"]["suite"])
+    if (score := pack.rescored(sc, timeline, fp)) is not None:
+        res["score"] = score
     losses = facts.party_losses(timeline)
     res["deaths"] = {k: int(losses.get(k) or 0) for k in ("fights", "downs", "deaths", "wipes")}
     (d / "manifest.json").write_text(json.dumps(man, indent=1, sort_keys=True))
@@ -149,6 +159,18 @@ def test_good_bundles_are_accepted(good):
     assert v.bundle_sha256 == bundle.sha256_bytes((bdir / bundle.ENVELOPE).read_bytes())
     doc = v.as_json()
     assert doc["accepted"] and doc["flags"] == [] and len(doc["checks"]) == len(codes.CHECKS)
+
+
+def test_a_run_whose_first_snapshot_came_late_is_accepted_with_x01_not_checkable(tmp_path):
+    """Runs recorded before the harness took a snapshot at the start (their first one a poll in, 15.8 s): X01 can't
+    say what the start state was, so it is null, not a pass; G01 still scores from the published start state."""
+    d = good_run(tmp_path, GOLD, start_snapshot=False)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    v = run(bdir, release_for(d))
+    assert v.accepted, [(r.code, r.detail) for r in v.checks if r.ok is not True]
+    x01 = next(r for r in v.checks if r.code == "X01")
+    assert (x01.ok, x01.detail) == (None, "not checkable: first snapshot at 15.8 s")
 
 
 def test_panel_runs_its_checks_offline(good):

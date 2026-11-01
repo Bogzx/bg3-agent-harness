@@ -17,6 +17,20 @@
     "outcome": {"enum": ["reached", "failed", "timeout", "over_budget", "gave_up", "runner_error"], "description": "failed (added 2026-10-22, still v1): a run its live verdict ended on a fired never or (2026-10-25) a party wipe"},
     "valid": {"type": "boolean"},
     "invalid_reason": {"enum": [null, "runner_error", "foreign_save", "harness_failure", "operator", "off_route", "unseeded"], "description": "foreign_save (added 2026-10-25, still v1): the run's game loaded a save that is not its start save or its own"},
+    "invalid_cause": {
+      "description": "an invalid run's cause (bg3bench.results.invalid_cause): for harness_failure the record's harness-class failures and the session runner's session_invalid text, for operator its notes, else the record field its invalid_reason was read from. Present only on an invalid run; optional, added 2026-10-30 (still v1).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "detail", "t"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string", "minLength": 1},
+          "detail": {"type": "string"},
+          "t": {"type": ["number", "null"]}
+        }
+      }
+    },
     "passed": {"type": ["boolean", "null"], "description": "null: a maximise scenario's run, which has no pass (its score is score.gain); added 2026-10-25 (still v1)"},
     "t_pass_s": {"$ref": "#/$defs/num_or_null"},
     "grade": {
@@ -115,7 +129,7 @@
       }
     },
     "score": {
-      "description": "a maximise scenario's score (bg3bench.graders.measure): the fact's value at the run's first snapshot (start) and at run_end (end), gain = end - start (the score), its peak; null without a snapshot. Its passed and t_pass_s are null. Optional, added 2026-10-25 (still v1).",
+      "description": "a maximise scenario's score (bg3bench.graders.measure): the fact's value at the start (start: the published start state's, else the run's first snapshot's; start_from says which) and at run_end (end), gain = end - start (the score), its peak; null without a snapshot. Its passed and t_pass_s are null. Optional, added 2026-10-25 (still v1); start_from optional, added 2026-10-31.",
       "type": "object",
       "required": ["fact", "start", "end", "gain", "peak"],
       "additionalProperties": false,
@@ -124,7 +138,8 @@
         "start": {"type": ["number", "null"]},
         "end": {"type": ["number", "null"]},
         "gain": {"type": ["number", "null"]},
-        "peak": {"type": ["number", "null"]}
+        "peak": {"type": ["number", "null"]},
+        "start_from": {"enum": ["start_state", "first_snapshot"]}
       }
     },
     "pilot": {

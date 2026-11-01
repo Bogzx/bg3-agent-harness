@@ -181,6 +181,7 @@ def test_a_crash_ends_the_run_invalid_without_a_resume(tmp_path):
     series = series_name("m", job())
     rec = json.loads((tmp_path / "sessions" / series / "runs.jsonl").read_text())
     assert (rec["harness_failures"], rec["session_invalid"]) == (1, "crash")
+    assert res.invalid_cause == [{"kind": "session_invalid", "detail": "crash", "t": None}]  # the matrix end's too
     # the rerun is the series' next run
     again = one(job())
     assert again.valid and again.run_id == f"{series}-r002" and host.started[1][2].name == f"{series}-r2"

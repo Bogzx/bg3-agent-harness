@@ -33,11 +33,14 @@ def raw(name: str) -> dict:
 
 
 def test_the_campaign_covers_every_family_with_saves_and_caps_per_scenario():
-    sets = {m: set(raw(m)["scenarios"]) for m in ("haiku", "sonnet", "opus", "deepseek")}
+    sets = {m: set(raw(m)["scenarios"]) for m in ("haiku", "sonnet", "opus", "deepseek", "deepseek-rest")}
     assert sets["haiku"] == sets["sonnet"] == SCORED | UNSCORED
     assert sets["opus"] == SCORED
     # DeepSeek's $2.80: the fewest scored scenarios a ranked model needs
     assert sets["deepseek"] < SCORED and len(sets["deepseek"]) == math.ceil(results.RANKED_SHARE * len(SCORED))
+    # and the rest of the launch list after the top-up, each scenario once
+    assert sets["deepseek"] | sets["deepseek-rest"] == SCORED | UNSCORED
+    assert not sets["deepseek"] & sets["deepseek-rest"]
     families = set()
     for name in SCORED | UNSCORED:
         sc = scenario.load(MATRICES.parent / "scenarios" / f"{name}.json")
@@ -54,16 +57,30 @@ def test_the_campaign_covers_every_family_with_saves_and_caps_per_scenario():
         assert raw(m)["budget"]["shared"] == ["runtime/budget-anthropic.json"]
 
 
-def test_the_deepseek_matrix_plans_18_jobs_cell_by_cell_cheapest_reserve_last():
-    m = matrix_cli.load(MATRICES / "launch-v1-deepseek.toml", REPO)
+@pytest.mark.parametrize("name", ["deepseek", "deepseek-rest"])
+def test_the_deepseek_matrix_plans_18_jobs_cell_by_cell_cheapest_reserve_last(name):
+    m = matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)
     assert not m["skipped"] and len(m["jobs"]) == 18
     assert [(j["scenario"], j["repeat"]) for j in m["jobs"]] == [
-        (s, r) for s in raw("deepseek")["scenarios"] for r in (1, 2, 3)
+        (s, r) for s in raw(name)["scenarios"] for r in (1, 2, 3)
     ]
     assert {j["client"] for j in m["jobs"]} == {"pi"} and all(j["max_cost"] for j in m["jobs"])
     assert m["budget"] == REPO / "runtime" / "budget-deepseek.json" and m["shared"] == []
     reserves = [j["max_cost"] for j in m["jobs"]]
     assert reserves == sorted(reserves, reverse=True)  # a job starts only if spent + its reserve fits the cap
+    for j in m["jobs"]:  # the time cap x $0.0123 per minute x 1.25
+        sc = scenario.load(MATRICES.parent / "scenarios" / f"{j['scenario']}.json")
+        assert j["max_cost"] == round(sc["caps"]["run_hours"] * 60 * 0.0123 * 1.25, 2), j["id"]
+
+
+def test_both_deepseek_matrices_play_one_results_row():
+    # results.build_results groups by (client, model, condition), so the two matrices' runs make one row
+    played = {
+        (j["client"], j["model"], j["effort"], j["condition"], j["profile"])
+        for name in ("deepseek", "deepseek-rest")
+        for j in matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)["jobs"]
+    }
+    assert played == {("pi", "deepseek-flash", "medium", "rules", str(REPO / "profiles" / "deepseek-flash.toml"))}
 
 
 def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from bg3bench import choices, facts, graders, luck, manifest, methods, results, scenario
+from bg3bench import choices, facts, graders, luck, manifest, methods, results, saves, scenario
 
 FACTS = "facts.jsonl"
 ROLLS = "rolls.jsonl"
@@ -88,8 +88,9 @@ def write_run_artifacts(
         timeline = facts.load(run_dir / FACTS)
         losses = facts.party_losses(timeline)
         if (fact := scenario.maximised(sc)) is not None:
-            m = graders.measure(fact, timeline)
-            score = {k: m[k] for k in ("fact", "start", "end", "gain", "peak")}
+            start = graders.start_value(fact, saves.start_fingerprint(sc, man["versions"]["suite"]))
+            m = graders.measure(fact, timeline, start_state=start)
+            score = {k: m[k] for k in graders.SCORE_KEYS}
             grade = {"passed": None, "t_pass_s": None, "violations": [], "curve": m["curve"], "progress": None}
         else:
             grade = graders.grade(scenario.goal_of(sc), timeline)

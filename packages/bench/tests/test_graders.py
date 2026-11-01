@@ -523,6 +523,21 @@ def test_measure_starts_from_the_state_carried_into_run_start_not_from_zero():
     assert (none["start"], none["end"], none["gain"], none["peak"]) == (None, None, None, None)
 
 
+def test_measure_starts_from_the_published_start_state_when_given():
+    """launch-v1 Sonnet x act3_gold_max r1: it sold junk (+18) before the run's first snapshot (game_t 15.8), so a gain
+    from that snapshot (428) left out gold the agent made; its start save's published start state has 410."""
+    tl = run(snap(15.8, gold=428), snap(2700, gold=7988))
+    m = graders.measure("gold", tl)
+    assert (m["start"], m["gain"], m["start_from"]) == (428, 7560, "first_snapshot")  # no start state given
+    start = graders.start_value("gold", {"party": [["Tav", 7]], "gold": 410, "region": "Lower City"})
+    m = graders.measure("gold", tl, start_state=start)
+    assert (m["start"], m["end"], m["gain"], m["peak"], m["start_from"]) == (410, 7988, 7578, 7988, "start_state")
+    assert graders.start_value("gold", None) is None  # no published start state
+    assert graders.start_value("party_level", {"gold": 410}) is None  # a fingerprint holds only gold of them
+    none = graders.measure("gold", run(ev(1, "trade_open")), start_state=410)
+    assert (none["start"], none["end"], none["gain"]) == (410, None, None)  # no snapshot: no end, no gain
+
+
 def test_measure_refuses_an_unknown_fact():
     with pytest.raises(ValueError, match="unknown numeric fact"):
         graders.measure("xp", run(snap(1, gold=1)))
