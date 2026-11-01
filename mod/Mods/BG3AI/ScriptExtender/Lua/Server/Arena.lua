@@ -180,7 +180,7 @@ function Ar.check_end()
     local st = Ar.state
     if st.ended then return end
     local a, b = Ar.wiped("A"), Ar.wiped("B")
-    if a or b then Ar.finish((a and b) and nil or (a and "B" or "A"), (a and b) and "both_out" or "wipe") end
+    if a or b then Ar.finish((a and b) and nil or (a and "B" or "A"), "wipe") end -- both at once: no winner
 end
 
 function Ar.turn_started(char)
@@ -239,8 +239,10 @@ end
 
 function Ar.status()
     local st = Ar.state
-    if not st then return { active = false, teams = nil, turn = nil, ended = nil } end
-    return { active = Ar.active(), teams = st.teams, turn = st.turn, ended = st.ended }
+    if not st then return { active = false, teams = nil, turn = nil, hp = nil, ended = nil } end
+    -- hp: each team's summed current HP over its summed max (the true values: harness only)
+    return { active = Ar.active(), teams = st.teams, turn = st.turn, hp = { A = hpLeft("A"), B = hpLeft("B") },
+        ended = st.ended }
 end
 
 function Ar.reset()
@@ -260,9 +262,12 @@ end
 
 op("arena.status", function() return Ar.status() end)
 
+-- The runner's end (caps, forfeits, faults): {reason, winner?}; a match the mod already ended keeps that end.
 op("arena.end", function(args)
     if not Ar.state then error("no arena") end
-    Ar.finish(nil, tostring(args.reason or "aborted"))
+    local w = args.winner
+    if w ~= nil and w ~= "A" and w ~= "B" then error("winner must be A or B") end
+    Ar.finish(w, tostring(args.reason or "aborted"))
     return Ar.status()
 end)
 
