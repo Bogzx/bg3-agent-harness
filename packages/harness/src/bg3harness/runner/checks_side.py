@@ -172,11 +172,13 @@ class ChecksSide:
 
     def setup_env(self) -> dict:
         """The game's env: the mod's scn.* ops are refused unless a run seeds the dice or its scenario fixes a setting
-        the scn.* ops read or set (difficulty, karmic dice, the avatar's name; game_settings.SETUP_ENV)."""
+        the scn.* ops read or set (difficulty, karmic dice, the avatar's name; game_settings.SETUP_ENV); a match's
+        game gets the arena switch too (game_settings.ARENA_ENV)."""
         opt = getattr(self, "opt", None)   # a bare Runner (tests) has no opt
         want = getattr(opt, "scenario_settings", None) or {}
         fixed = any(want.get(k) is not None for k in (*scenario_file.CHECKED, "avatar_name"))
-        return ghost.setup_env(getattr(opt, "seed", None) is not None or fixed)
+        env = ghost.setup_env(getattr(opt, "seed", None) is not None or fixed)
+        return {**env, game_settings.ARENA_ENV: "1"} if getattr(opt, "arena", False) else env
 
     def game_setup(self) -> bool:
         """Once per runner, with a level loaded: the settings readout (the run record's game_settings, a facts

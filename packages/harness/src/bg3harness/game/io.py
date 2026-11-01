@@ -173,8 +173,10 @@ def lua_eval(code: str, context: str = "client", timeout: float = EVAL_TIMEOUT) 
         return lua.evaluate(code, context=context, timeout=timeout)
 
 
-def rpc(op: str, args: dict | None = None, context: str = "server", timeout: float = EVAL_TIMEOUT):
-    payload = json.dumps({"op": op, "args": args or {}})
+def rpc(op: str, args: dict | None = None, context: str = "server", timeout: float = EVAL_TIMEOUT,
+        side: str | None = None):
+    """One mod op; `side` (a two-team match) goes in the envelope as a side's bridge sends it."""
+    payload = json.dumps({"op": op, "args": args or {}, **({"side": side} if side else {})})
     if "]==]" in payload:
         raise ValueError("payload contains the Lua long-string terminator")
     raw = lua_eval(f"return Mods.BG3AI.BG3AI.rpc([==[{payload}]==])", context, timeout)

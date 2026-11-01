@@ -1,0 +1,365 @@
+# pyright: basic
+"""run_arena: one match, from the arena's setup to its end, with both sides' agents playing at once.
+
+The game, the agents and the clock come in through ArenaGame, Agents and Clock, so a fake game (the scripted
+two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.live has the real ones.
+
+1. `arena.setup {arena}` (a job, polled), then `arena.status` until the match is active.
+2. The referee writes `arena_start {arena, seed, teams (names), sides (players), uuids (arena.status teams)}` into the
+   match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side: the
+   harness's reads see both teams) carries the mod's arena records: its `arena_turn` (a team member's TurnStarted)
+   is written with the character's name; its `arena_end` only for a wipe (the mod decides it at a turn boundary);
+   its `arena_start` and any end the runner asked for are left out, as the referee writes those itself. A turn of a
+   character outside the teams (a summon) is not a team turn: not written, never forced.
+3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
+   - the mod's wipe (`arena.status.ended`);
+   - the round cap (a turn of round round_cap + 1 began: a draw, `rounds` = round_cap) or the wall cap (a draw);
+   - a forfeit: a side whose own turns were forced to an end FORFEIT_TURNS times in a row (`forced_turns`), or
+     whose agent failed again after FAULT_RESUMES resume or exited mid-fight more than EXIT_RESUMES times
+     (`client_fault`);
+   - the game gone or not answering for HANG_S: `fault` (invalid, rerun); an operator's abort: `abort` (invalid).
+   The runner's own ends go to the mod as `arena.end {reason, winner}` (no answer from a dead game is needed) and
+   into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, cause?}`, with the HP fractions
+   from the last `arena.status.hp`.
+4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
+   began reaching the arena's turn_cap_s ends that turn: `act.end_turn` for the acting character, sent as that
+   side, then `arena_turn_forced {side, character}`.
+5. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
+   EXIT_RESUMES, anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES.
+
+Both agents are stopped at the end; their exits and costs are in the outcome.
+"""
+
+from __future__ import annotations
+
+import contextlib
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol
+
+from bg3harness import facts
+from bg3harness.arena.spec import SIDES, ArenaSpec, Side, other
+
+POLL_S = 1.0
+SETUP_TIMEOUT_S = 180.0  # arena.setup's job and the match becoming active
+HANG_S = 60.0  # arena.status unanswered this long: the game hung
+FORFEIT_TURNS = 3  # a side's own turns forced to an end in a row
+EXIT_RESUMES = 3  # a side's agent exiting (exit 0) mid-fight: resumed this many times, then it forfeits
+FAULT_RESUMES = 1  # a side's client failing (crash, API/MCP failure, hang): resumed once, then it forfeits
+END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
+KICKOFF = "The fight is on. You play side {side}: {names}."
+RESUME = "The fight is on."
+
+
+class Rpc(Protocol):
+    def __call__(self, op: str, args: dict[str, Any], side: str | None = None) -> Any: ...
+
+
+class ArenaGame(Protocol):
+    rpc: Rpc  # one mod op; raises when the game refuses or doesn't answer
+
+    def alive(self) -> bool: ...  # the game process is up
+
+
+@dataclass(frozen=True)
+class AgentExit:
+    reason: str  # "exited" or the runner's fault reasons (crash, agent_hang, mcp_failed, api_auth, ...)
+    exit_code: int | None
+    conversation: str | None = None  # the client's conversation id, to resume
+    cost_usd: float | None = None
+
+    @property
+    def fault(self) -> bool:
+        return self.reason != "exited" or self.exit_code != 0
+
+
+class AgentRun(Protocol):
+    def done(self) -> AgentExit | None: ...  # None while the process runs
+    def model_s(self) -> float: ...  # the process's model time so far
+    def stop(self) -> AgentExit: ...  # end the process (if it runs) and return its exit
+
+
+class Agents(Protocol):
+    def start(self, side: str, prompt: str, conversation: str | None, tag: str) -> AgentRun: ...
+
+
+class Clock(Protocol):
+    def now(self) -> float: ...
+    def sleep(self, s: float) -> None: ...
+
+
+@dataclass
+class ArenaOutcome:
+    end: dict[str, Any] | None  # the arena_end fields written; None when the match never started
+    invalid: str | None = None  # why the match can't be graded (a setup failure, fault, abort), else None
+    exits: dict[str, list[AgentExit]] = field(default_factory=lambda: {s: [] for s in SIDES})
+
+    def cost(self, side: str) -> float | None:
+        """The side's cost over its processes (None when one didn't report it)."""
+        costs = [e.cost_usd for e in self.exits[side]]
+        return None if any(c is None for c in costs) else round(sum(c for c in costs if c is not None), 6)
+
+
+@dataclass
+class Turn:
+    side: str
+    uuid: str
+    name: str
+    round: int
+    forced: bool = False
+
+
+class Referee:
+    """The match's facts: arena_start, the ring's arena records translated (RingFeed's translate), the forced turns
+    and the end."""
+
+    def __init__(self, spec: ArenaSpec, sides: Mapping[str, Side], writer: facts.FactsWriter):
+        self.spec, self.sides, self.writer = spec, sides, writer
+        self.names: dict[str, tuple[str, str]] = {}  # uuid -> (side, name)
+        self.turns: list[Turn] = []
+        self.wipe: dict[str, Any] | None = None
+
+    @property
+    def turn(self) -> Turn | None:
+        return self.turns[-1] if self.turns else None
+
+    @property
+    def round(self) -> int:
+        return self.turn.round if self.turn else 0
+
+    def start(self, teams: Mapping[str, list[str]]) -> None:
+        """arena_start; `teams`: arena.status's uuids, in the arena file's team order."""
+        for s in SIDES:
+            if len(teams.get(s) or []) != len(self.spec.teams[s]):
+                raise ArenaSetupError(
+                    f"arena.status team {s} has {len(teams.get(s) or [])} characters, the arena "
+                    f"{len(self.spec.teams[s])}"
+                )
+            for uuid, name in zip(teams[s], self.spec.teams[s], strict=True):
+                self.names[uuid.lower()] = (s, name)
+        self.event(
+            "arena_start",
+            arena=self.spec.name,
+            seed=self.spec.seed,
+            teams=self.spec.names(),
+            sides={s: self.sides[s].player for s in SIDES},
+            uuids={s: list(teams[s]) for s in SIDES},
+        )
+
+    def translate(self, fact: dict) -> dict | None:
+        ev = str(fact.get("ev") or "")
+        if not ev.startswith("arena_"):
+            return fact
+        if ev == "arena_turn":
+            side_name = self.names.get(str(fact.get("character") or "").lower())
+            if side_name is None or side_name[0] != fact.get("side"):
+                return None
+            self.turns.append(Turn(side_name[0], str(fact["character"]), side_name[1], int(fact["round"])))
+            return {**fact, "character": side_name[1]}
+        if ev == "arena_end" and fact.get("reason") == "wipe" and self.wipe is None:
+            self.wipe = {"winner": None, **fact}  # the ring leaves a nil winner (both wiped at once) out
+            return self.wipe
+        return None
+
+    def forced(self) -> None:
+        t = self.turn
+        assert t is not None and not t.forced
+        t.forced = True
+        self.event("arena_turn_forced", side=t.side, character=t.name)
+
+    def forced_out(self, side: str) -> bool:
+        """The side's last FORFEIT_TURNS own turns were all forced."""
+        own = [t for t in self.turns if t.side == side][-FORFEIT_TURNS:]
+        return len(own) == FORFEIT_TURNS and all(t.forced for t in own)
+
+    def end(self, **fields: Any) -> dict[str, Any]:
+        self.event("arena_end", **fields)
+        return fields
+
+    def event(self, ev: str, **fields: Any) -> None:
+        self.writer.timed_events([{"ev": ev, **fields}])
+
+
+class ArenaSetupError(RuntimeError):
+    pass
+
+
+class _Ended(Exception):  # noqa: N818 - control flow inside run_arena
+    def __init__(
+        self,
+        reason: str,
+        winner: str | None = None,
+        forfeit: str | None = None,
+        cause: str | None = None,
+        detail: str = "",
+    ):
+        super().__init__(reason)
+        self.reason, self.winner, self.forfeit, self.cause, self.detail = reason, winner, forfeit, cause, detail
+
+
+def _setup(spec: ArenaSpec, game: ArenaGame, clock: Clock) -> dict[str, Any]:
+    """arena.setup's job to its end, then arena.status until active; the active status."""
+    deadline = clock.now() + SETUP_TIMEOUT_S
+    job = game.rpc("arena.setup", {"arena": spec.arena}) or {}
+    while job.get("status") not in ("done", "failed"):
+        if clock.now() > deadline:
+            raise ArenaSetupError(f"arena.setup still {job.get('status')} after {SETUP_TIMEOUT_S:.0f} s")
+        clock.sleep(POLL_S)
+        job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}) or {}
+    if job["status"] == "failed":
+        raise ArenaSetupError(f"arena.setup failed: {job.get('error')}")
+    while True:
+        st = game.rpc("arena.status", {}) or {}
+        if st.get("active"):
+            return st
+        if clock.now() > deadline:
+            raise ArenaSetupError(f"the match was not active {SETUP_TIMEOUT_S:.0f} s after arena.setup")
+        clock.sleep(POLL_S)
+
+
+def run_arena(
+    spec: ArenaSpec,
+    sides: Mapping[str, Side],
+    game: ArenaGame,
+    agents: Agents,
+    out: Path,
+    clock: Clock,
+    log: Callable[[str], None] = lambda _m: None,
+    aborted: Callable[[], bool] = lambda: False,
+    writer: facts.FactsWriter | None = None,
+) -> ArenaOutcome:
+    """One match into `out` (facts.jsonl, rolls.jsonl; the agents write their own files); see the module doc.
+    writer: the run's facts writer when the caller has one (its run_start stays time zero)."""
+    out.mkdir(parents=True, exist_ok=True)
+    writer = writer or facts.FactsWriter(out / "facts.jsonl", clock=clock.now)
+    ref = Referee(spec, sides, writer)
+    feed = facts.RingFeed(
+        lambda op, args: game.rpc(op, args), writer, out / "rolls.jsonl", wall=clock.now, translate=ref.translate
+    )
+    if writer.t0 is None:
+        writer.mark("run_start", {"arena": spec.name})
+    outcome = ArenaOutcome(None)
+    try:
+        feed.poll()  # the rings' readers start here: the setup's records are the match's
+        status = _setup(spec, game, clock)
+        ref.start(status["teams"])
+    except Exception as e:  # no match: nothing to grade, the rerun sets up again
+        outcome.invalid = f"setup: {type(e).__name__}: {e}"
+        log(f"arena {spec.name}: {outcome.invalid}")
+        writer.mark("run_end", {"invalid": outcome.invalid})
+        return outcome
+    started = clock.now()
+    log(f"arena {spec.name}: the match is on ({sides['A'].player} v {sides['B'].player})")
+    runs: dict[str, AgentRun] = {}
+    for s in SIDES:
+        runs[s] = agents.start(s, KICKOFF.format(side=s, names=", ".join(spec.teams[s])), None, "")
+    closed_model = dict.fromkeys(SIDES, 0.0)  # model time of a side's ended processes
+    exits = dict.fromkeys(SIDES, 0)
+    faults = dict.fromkeys(SIDES, 0)
+    turn_mark: tuple[int, float] | None = None  # (index of the turn, the side's model time at its start)
+    hp = dict.fromkeys(SIDES, 1.0)
+    answered = clock.now()
+
+    def model(side: str) -> float:
+        return closed_model[side] + runs[side].model_s()
+
+    try:
+        while True:
+            clock.sleep(POLL_S)
+            now = clock.now()
+            if aborted():
+                raise _Ended("abort", detail="operator stop")
+            if not game.alive():
+                raise _Ended("fault", detail="the game process is gone")
+            try:
+                feed.poll()
+                status = game.rpc("arena.status", {}) or {}
+                answered = now
+            except Exception as e:  # a slow frame; a hang only after HANG_S
+                if now - answered >= HANG_S:
+                    raise _Ended("fault", detail=f"arena.status unanswered for {now - answered:.0f} s: {e}") from e
+                continue
+            hp = {s: float((status.get("hp") or {}).get(s, hp[s])) for s in SIDES}
+            if status.get("ended") and ref.wipe is None:
+                feed.poll()  # the ring's arena_end may have come after this tick's read
+            if ref.wipe is not None or (status.get("ended") or {}).get("reason") == "wipe":
+                break
+            if ref.round > spec.round_cap:
+                raise _Ended("round_cap")
+            if now - started >= spec.wall_cap_min * 60:
+                raise _Ended("wall_cap")
+            for s in SIDES:
+                ex = runs[s].done()
+                if ex is None:
+                    continue
+                outcome.exits[s].append(ex)
+                closed_model[s] += runs.pop(s).model_s()
+                if ex.fault:
+                    faults[s] += 1
+                else:
+                    exits[s] += 1
+                log(f"arena {spec.name}: side {s}'s agent ended mid-fight ({ex.reason}, exit {ex.exit_code})")
+                if faults[s] > FAULT_RESUMES or exits[s] > EXIT_RESUMES:
+                    raise _Ended(
+                        "forfeit",
+                        winner=other(s),
+                        forfeit=s,
+                        cause="client_fault",
+                        detail=f"side {s}'s agent: {ex.reason}",
+                    )
+                n = faults[s] + exits[s]
+                runs[s] = agents.start(s, RESUME, ex.conversation, f"-r{n}")
+            turn = ref.turn
+            if turn is None or turn.forced:
+                continue
+            idx = len(ref.turns) - 1
+            if turn_mark is None or turn_mark[0] != idx:
+                turn_mark = (idx, model(turn.side))
+            if model(turn.side) - turn_mark[1] < spec.turn_cap_s:
+                continue
+            job = game.rpc("act.end_turn", {"char": turn.uuid}, turn.side) or {}
+            if job.get("status") == "failed":
+                log(f"arena {spec.name}: ending {turn.name}'s turn at the cap failed: {job.get('error')}")
+                continue
+            ref.forced()
+            log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) ended at the {spec.turn_cap_s:g} s cap")
+            if ref.forced_out(turn.side):
+                raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
+        if ref.wipe is None:  # the mod ended it but its record didn't reach the ring: the status's end
+            e = status["ended"]
+            outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})
+        else:
+            outcome.end = {k: ref.wipe.get(k) for k in END_FIELDS}
+        log(f"arena {spec.name}: wipe, winner {outcome.end.get('winner')}")
+    except _Ended as e:
+        if e.reason != "fault":
+            try:
+                game.rpc("arena.end", {"reason": e.reason, **({"winner": e.winner} if e.winner else {})})
+            except Exception as err:  # the match ends here either way
+                log(f"arena {spec.name}: arena.end failed: {err}")
+        rounds = spec.round_cap if e.reason == "round_cap" else ref.round
+        fields: dict[str, Any] = {
+            "winner": e.winner,
+            "reason": e.reason,
+            "rounds": rounds,
+            "hp_left_A": hp["A"],
+            "hp_left_B": hp["B"],
+        }
+        if e.forfeit:
+            fields.update(forfeit=e.forfeit, cause=e.cause)
+        outcome.end = ref.end(**fields)
+        if e.reason in ("fault", "abort"):
+            outcome.invalid = f"{e.reason}: {e.detail}"
+        log(
+            f"arena {spec.name}: {e.reason}"
+            + (f", winner {e.winner}" if e.winner else "")
+            + (f" ({e.detail})" if e.detail else "")
+        )
+    finally:
+        for s, run in runs.items():
+            outcome.exits[s].append(run.stop())
+    with contextlib.suppress(Exception):  # a dead game: what was read is what there is
+        feed.poll()  # the last rolls
+    writer.mark("run_end", {"arena_end": outcome.end.get("reason") if outcome.end else None})
+    return outcome

@@ -111,6 +111,7 @@ class Options:
     pace: str | None = None            # the kickoff's pace pre-flight: client_setup.kickoff_pace ("": none); None: claude's
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
     scenario_settings: dict[str, Any] | None = None  # {difficulty, karmic_dice, timing, avatar_name?} (check_settings)
+    arena: bool = False                # a two-team match (bg3harness.arena): the game gets BG3AI_ARENA=1
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
