@@ -120,6 +120,7 @@ def test_two_sides_take_turns(tmp_path: Path) -> None:
     # the reaction prompt: A's to answer; B is told the game waits on the other side, and is refused if it answers
     assert "REACTION" in a_out["status_prompt"] and "Shield" in a_out["status_prompt"], a_out["status_prompt"]
     assert "REACTION" not in b_out["status_prompt"], b_out["status_prompt"]
+    assert "trade" not in b_out["status_prompt"], b_out["status_prompt"]  # ALERTS name no tool arena-v1 removes
     assert "WAITING a reaction prompt of the other side is open" in b_out["status_prompt"], b_out["status_prompt"]
     assert "not your reaction" in b_out["react"], b_out["react"]
     assert "FAILED" not in a_out["react"] and model.reacted == [("Tav", False)], a_out["react"]

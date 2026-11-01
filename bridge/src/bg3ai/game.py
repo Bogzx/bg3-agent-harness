@@ -97,6 +97,7 @@ class Game:
         self.host = host
         # The team this server plays in a two-team match (settings.side, $BG3AI_SIDE): sent with every op (envelope).
         self.side = side
+        self._team: set[str] | None = None  # its characters' names, read once per match (_team_names)
         self.port = port
         self.pool_max = self.pool_cap = pool_max or POOL_MAX
         self._shrunk_at: float | None = None  # when a refused connect lowered pool_max below pool_cap
@@ -293,9 +294,16 @@ class Game:
             return sideview.ui_view(result, self._team_names)
         return result
 
-    def _team_names(self) -> set[str]:
-        st = self.try_rpc("state.status") or {}
-        return {r["name"] for r in st.get("party") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)}
+    def _team_names(self, fresh: bool = False) -> set[str]:
+        """This side's character names: read once (a team doesn't change in a match), again only when `fresh` (a
+        name the cached set misses)."""
+        if self._team is None or fresh:
+            st = self.try_rpc("state.status") or {}
+            names = {r["name"] for r in st.get("party") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)}
+            if names:
+                self._team = names
+            return names
+        return self._team
 
     def rpc(self, op: str, args: dict[str, Any] | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         if context != "client":
@@ -639,11 +647,14 @@ class Game:
     SELECT_FOLLOW_S = 1.0  # a real selection change reaches the client a frame or two later
 
     def hud_selected(self) -> str | None:
-        """The character the HUD has selected (the client's ClientControl), or None when it can't be read."""
+        """The character the HUD has selected (the client's ClientControl), or None when it can't be read. With a
+        side, a reply without a uuid is the other side's character holding the HUD: sideview.HUD_OTHER_SIDE."""
         try:
             got = self.rpc("ui.selected", context="client")
         except GameError:
             return None
+        if self.side and isinstance(got, dict) and not got.get("uuid"):
+            return sideview.HUD_OTHER_SIDE
         return got.get("uuid") if isinstance(got, dict) else None
 
     def _hud_follows(self, char: str) -> bool:
@@ -679,7 +690,8 @@ class Game:
         if r.status != "done":
             return r
         holder = self.hud_selected()
-        return JobResult("failed", {"holder": holder, "via": via}, "the HUD kept another member selected (act.select "
+        kept = "the other side's character" if holder == sideview.HUD_OTHER_SIDE else "another member"
+        return JobResult("failed", {"holder": holder, "via": via}, f"the HUD kept {kept} selected (act.select "
                          "was done on the server" + ("; selecting another member and back didn't move it either)"
                                                      if via_ok else ")"), r.events, r.elapsed_ms)
 

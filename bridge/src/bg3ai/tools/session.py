@@ -249,6 +249,7 @@ TOOLS_OFF = capabilities.disabled([t.name for t in core.mcp._tool_manager.list_t
 for _name in sorted(TOOLS_OFF):
     core.mcp.remove_tool(_name)
 batch._BATCHABLE -= TOOLS_OFF
+core.TOOLS_OFF = frozenset(TOOLS_OFF)  # e.g. ALERTS leave out an alert that names one (overview._alerts_line)
 INSTRUCTIONS = core.instructions(TOOLS_OFF)
 if TOOLS_OFF or core.SETTINGS.side:  # the rules of the served groups only; a side's server adds the match's
     core.RULES.rules = rules.load(off=TOOLS_OFF, required=rules.serve_enabled(), arena=core.SETTINGS.side is not None)

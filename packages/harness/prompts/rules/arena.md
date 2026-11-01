@@ -16,6 +16,10 @@ perceive. The other player's calls and text never reach you, only their effects 
 - The match ends at a turn boundary when every character of one side is downed or dead: the other side wins. At the
   match's round cap it is a draw. A turn that runs past the per-turn time cap is ended for that side; three such
   turns in a row lose the match.
+- A reaction prompt with one row per spell level (one reacting character whose reaction spell it can cast at more
+  than one slot level, e.g. Shield) is answered only by a click on a row, and a match makes no clicks: `react` with
+  use=true fails on it; declining it works. Prompts with one row (an opportunity attack, a reaction with one usable
+  level) or with several reacting characters are answered as usual.
 - Spells cast through a second pick (Dimension Door's landing, the Revivify spell) are refused, and a cast takes at
   most two targets.
 - This match removes these tools, though the rules above may name them: the memory and note tools, the wiki, saves

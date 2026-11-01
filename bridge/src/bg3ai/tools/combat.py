@@ -62,11 +62,12 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["force"] = True
     if which:
         args["which"] = which
-    if twostep.TWOSTEP_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
+    clicks = not world_tools._shared_screen()  # a two-team match: no hotbar or two-step clicks, as with the routes off
+    if clicks and twostep.TWOSTEP_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
         # ACT-9: Revivify (the body, then the ground beside it) and Dimension Door (who goes, then the landing) by
         # the player's clicks; with the route off the mod refuses them (its TargetPos2 write is off)
         return _twostep_use(char, spell, args, note)
-    hb_on = hotbar.HOTBAR_CAST_ENABLED and "pos" not in args and not upcast
+    hb_on = clicks and hotbar.HOTBAR_CAST_ENABLED and "pos" not in args and not upcast
     if len(picks) > 2 and hb_on:
         # ACT-8: Bless on 3, Magic Missile darts, Scorching Ray / Eldritch Blast beams: the player's route (hotbar
         # cell, one click per target, the tick); the mod checks the cast first and watches it like an Osiris cast
@@ -412,7 +413,9 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         if wait and not reporting._batch["active"]:
             body += "\n" + _wait_for_party_turn(80.0)
         return reporting._finish("end_turn", args, pre + body, t0)
-    peer = _peer_requested(cs, char) if END_HUD_FIRST and cs.get("active") else None
+    # a two-team match: the end goes through the mod only (no HUD press on the shared screen)
+    hud_ok = not world_tools._shared_screen()
+    peer = _peer_requested(cs, char) if hud_ok and END_HUD_FIRST and cs.get("active") else None
     r = None
     if peer:
         hud = _end_turn_by_hud(char, JobResult("failed", None, f"after {queueing._label(peer)}'s end", [], 0))
@@ -421,7 +424,7 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
                           None, hud.events, hud.elapsed_ms)
     if r is None:
         r = core.game.run_job("act.end_turn", args, wait_s=15)
-        if r.status == "failed" and END_IGNORED in str(r.error or ""):
+        if hud_ok and r.status == "failed" and END_IGNORED in str(r.error or ""):
             r = _end_turn_by_hud(char, r)
     plumbing._remember_names(r.result)
     reporting._batch["last"] = r.status
@@ -536,6 +539,8 @@ def flee(who: str | None = None) -> str:
         who_near = near[2] or overview._name_of(near[1])
         return (f"REFUSED: enemy too close: {core.H.get(near[1])} {who_near} at {near[0]:.1f} m; "
                 f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip). Get farther first.")
+    if world_tools._shared_screen():  # the HUD's Flee button
+        return f"FAILED: flee is {world_tools.SHARED_SCREEN}"
     rpc = lambda op, a: core.game.rpc(op, a, context="client")  # noqa: E731
     inp = world_tools._inp()
     if inp is None:

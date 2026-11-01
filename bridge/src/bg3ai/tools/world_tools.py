@@ -171,8 +171,21 @@ def pick_up(item: str, who: str | None = None, wait: bool = True) -> str:
 _inp_client = {"c": None}
 
 
+# A server playing one side of a two-team match (BG3AI_SIDE) shares the one game screen with the other side: it makes
+# no clicks or key presses (both sides act only through the mod's ops). _inp() never opens the input shim then, and
+# every route that would click refuses at once, before it does anything, with SHARED_SCREEN.
+SHARED_SCREEN = ("not available in a two-team match: both sides share one game screen, so this server makes no "
+                 "clicks or key presses")
+
+
+def _shared_screen() -> bool:
+    return bool(getattr(core.game, "side", None))
+
+
 def _inp():
     from ..input import InputClient
+    if _shared_screen():
+        return None
     if _inp_client["c"] is None:
         try:
             c = InputClient()
@@ -274,6 +287,8 @@ def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_
         ans = res.get("needs_click") if isinstance(res, dict) else None
         inp = _inp() if ans else None
         if inp is None:
+            if ans and _shared_screen():
+                notes.append(f"clicking the box's button is {SHARED_SCREEN}")
             break
         c = boxclick.click_box(lambda o, a: core.game.rpc(o, a, context="client"), inp, str(ans),
                                after=_transition_after(tool) if tool in TRANSITION_TOOLS else None)
@@ -303,6 +318,9 @@ def _click_act(tool: str, op: str, args: dict, wait_s: float = 40.0) -> str:
     t0 = time.monotonic()
     if core._session_over():
         return reporting._finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    if _shared_screen():
+        reporting._batch["last"] = "failed"
+        return reporting._finish(tool, args, f"{tool}: FAILED — {SHARED_SCREEN}", t0)
     r = run_click_action(core.game, _inp(), op, args, wait_s)
     plumbing._remember_names(r.result)
     reporting._batch["last"] = r.status
@@ -588,6 +606,8 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     no target the ground there (a point/cone scroll). In combat (A7) it is read on the reader's turn for an action,
     like casting; the mod refuses it off-turn or with no action left.
     A scroll on another member's bags is named, not taken."""
+    if _shared_screen():  # its target is clicked
+        raise GameError(f"reading a scroll is {SHARED_SCREEN}")
     name = str(it.get("name"))
     if it.get("owner") and it.get("owner") != char:
         raise GameError(f"{queueing._label(char)} has no action called that; {queueing._label(it['owner'])} carries {name} "
@@ -881,6 +901,8 @@ def click_on(target: str, button: str = "left") -> str:
     from ..clicker import click_entity
 
     t0 = time.monotonic()
+    if _shared_screen():
+        raise GameError(f"click_on is {SHARED_SCREEN}")
     inp = _inp()
     if inp is None:
         raise GameError("input shim not available")

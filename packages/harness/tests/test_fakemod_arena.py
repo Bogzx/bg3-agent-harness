@@ -111,8 +111,11 @@ def test_jobs_belong_to_their_side() -> None:
 def test_reaction_prompt_is_its_sides() -> None:
     m, fake = match()
     m.open_reaction("Tav")
-    ui = rpc(fake, "ui.state", side="B")["result"]  # the one client's screen: the bridge's view hides it (sideview)
-    assert ui["screen"] == "reaction" and ui["reaction"]["options"][0]["who"] == "Tav"
+    ui = rpc(fake, "ui.state", side="B")["result"]  # marked as the other side's, no rows (the bridge: WAITING)
+    assert ui["screen"] == "reaction" and ui["reaction"] == {"other_side": True}
+    own = rpc(fake, "ui.state", side="A")["result"]
+    assert own["reaction"]["options"][0]["who"] == "Tav"
+    assert rpc(fake, "ui.state")["result"]["reaction"]["options"][0]["who"] == "Tav"  # no side: as the screen shows
     refused = rpc(fake, "ui.react", {"use": True}, side="B")["result"]
     assert (refused["status"], refused["error"]) == ("failed", "not your reaction")
     assert rpc(fake, "ui.react", {"use": False}, side="A")["result"]["status"] == "done"

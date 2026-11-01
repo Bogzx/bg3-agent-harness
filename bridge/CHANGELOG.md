@@ -20,6 +20,14 @@ A server started without `BG3AI_SIDE` serves the same tools and rules as before 
   saves, screenshots and raw_input groups, and the travel, rest, conversation, roll, trade, loot, levelling, journal
   and map tools. `confirm` and `dismiss_popups` stay, since a popup can come up mid-fight.
 - A side's server adds the match's rules (`rules/arena.md`) after the other rules.
+- A side's server makes no clicks or key presses, because both sides share one game screen. `click_on`, `click`,
+  `press_key`, `flee`, reading a scroll, the walk-up-and-click actions and a reaction answered by a row click fail at
+  once with "not available in a two-team match: both sides share one game screen, so this server makes no clicks or
+  key presses". `end_turn` ends a turn through the mod only, with no HUD End Turn press. A multi-target or two-step
+  cast goes as with those routes off. With a side, `ui.selected` without a uuid means the other side's character
+  holds the HUD.
+- In every condition, ALERTS leaves out an alert that names a tool the server has off, e.g. `trade sell=junk` when
+  `trade` is off.
 
 ## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
 
