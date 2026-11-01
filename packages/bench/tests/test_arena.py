@@ -36,7 +36,8 @@ def match(winner="A", reason="wipe", hp=(0.75, 0.0), rounds=2, start=None, turns
     recs = [{"v": 1, "kind": "mark", "t": 0.0, "mark": "run_start", "detail": None}]
     recs.append(start or ev(1, "arena_start", arena=ARENA["name"], seed=ARENA["seed"], teams=TEAMS, sides=SIDES))
     for i, (side, who, rnd, *members) in enumerate(turns or [("A", "Karlach", 1), ("B", "Wyll", 1), ("A", "Gale", 2)]):
-        phase = {"members": members[0] if members else [who], "phase": 1, "group": "g1", "shared": True}
+        names = members[0] if members else [who]
+        phase = {"members": names, "names": names, "phase": 1, "group": "g1", "shared": True}
         recs.append(ev(10 + i, "arena_turn", side=side, character=who, round=rnd, **phase))
         if i in forced:
             recs.append(ev(10.5 + i, "arena_turn_forced", side=side, character=who))
@@ -170,52 +171,37 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
     }
 
 
+TURN = ev(
+    1,
+    "arena_turn",
+    side="A",
+    character="Karlach",
+    members=["Karlach"],
+    names=["Karlach"],
+    round=1,
+    phase=1,
+    group="g",
+    shared=True,
+)
+
+
 @pytest.mark.parametrize(
     "rec",
     [
         ev(1, "arena_turn", side="C", character="Karlach", round=1),
         ev(1, "arena_turn", side="A", character="Karlach", round=0),
         ev(1, "arena_turn", side="A", character="Karlach", round=1),  # no phase fields
+        {k: v for k, v in TURN.items() if k != "names"},
         {
-            **ev(
-                1,
-                "arena_turn",
-                side="A",
-                character="Karlach",
-                members=["Karlach"],
-                round=1,
-                phase=1,
-                group="g",
-                shared=True,
-            ),
+            **TURN,
             "members": [],
         },
         {
-            **ev(
-                1,
-                "arena_turn",
-                side="A",
-                character="Karlach",
-                members=["Karlach"],
-                round=1,
-                phase=1,
-                group="g",
-                shared=True,
-            ),
+            **TURN,
             "phase": 0,
         },
         {
-            **ev(
-                1,
-                "arena_turn",
-                side="A",
-                character="Karlach",
-                members=["Karlach"],
-                round=1,
-                phase=1,
-                group="g",
-                shared=True,
-            ),
+            **TURN,
             "shared": "yes",
         },
         ev(1, "arena_end", winner="A", rounds=2, hp_left_A=1.5, hp_left_B=0, reason="wipe"),
@@ -236,7 +222,7 @@ def test_the_event_schema_refuses_malformed_referee_events(rec):
 
 
 def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():
-    phase = {"members": ["Karlach", "Gale"], "round": 1, "phase": 2, "shared": True}  # no group: no turn order read
+    phase = {"members": ["Karlach", "Gale"], "names": ["Karlach", "Gale"], "round": 1, "phase": 2, "shared": True}
     jsonschema.validate(ev(1, "arena_turn", side="A", character="Karlach", **phase), EVENT_SCHEMA)
     jsonschema.validate(
         ev(1, "arena_reaction_unowned", round=2, detail="Wolf | Shield | Choose how to react."), EVENT_SCHEMA
@@ -308,10 +294,16 @@ def test_grade_invalid_matches(why):
     assert (g["valid"], g["invalid_reason"], g["result"]) == (False, why, None)
 
 
-@pytest.mark.parametrize("members", [["Karlach", "Wyll"], ["Karlach", "Not On Any Team"], None])
-def test_grade_a_phase_with_a_member_off_its_side_is_an_off_side_turn(members):
+@pytest.mark.parametrize("members", [["Karlach", "Wyll"], None])
+def test_grade_a_phase_with_a_member_of_the_other_team_is_an_off_side_turn(members):
     g = arena.grade(match(turns=[("A", "Karlach", 1, members), ("B", "Wyll", 1)]), ARENA)
     assert (g["valid"], g["invalid_reason"]) == (False, "off_side_turn")
+
+
+def test_grade_a_summon_on_neither_team_counts_on_its_phases_side():
+    turns = [("A", "Karlach", 1, ["Karlach", "Wolf"]), ("B", "Owl", 1, ["Owl"]), ("B", "Wyll", 1)]
+    g = arena.grade(match(turns=turns), ARENA)
+    assert (g["valid"], g["turns"]) == (True, {"A": 1, "B": 2})
 
 
 def test_grade_counts_a_phase_of_several_members_as_one_turn():

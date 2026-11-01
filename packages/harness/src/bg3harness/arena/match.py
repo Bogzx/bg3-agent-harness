@@ -8,14 +8,14 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
 2. The referee writes `arena_start {arena, seed, teams (names), sides (players), uuids (arena.status teams)}` into the
    match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side: the
    harness's reads see both teams) carries the mod's arena records: its `arena_turn` (one per phase: a same-side
-   run of the rolled order inside one turn group, {side, character (the phase's first open member), members (its
-   open members, in turn order), round, phase, group (absent when the mod can't read the turn order), shared}) is
-   written with the team members' names (a summon has none: it is left out of the names, and the character is then
-   the phase's first team member); its `arena_end` (the mod's own end: a wipe at a turn boundary, the round cap at
-   the start of round round_cap + 1) as it is; its `arena_start`, an end the runner asked for and any arena record
-   after the match's end are left out, as the referee writes those itself. A phase with no member of its side's team
-   (only summons) is not a team turn, and one naming the other team's characters is not the side's: not written,
-   never forced. A turn below is a phase.
+   run of the rolled order inside one turn group, summons included, {side, character, members (its open members,
+   in turn order), names (their display names), round, phase, group (absent when the mod can't read the turn
+   order), shared}) is written with names: `members` = a team member's name from the arena file, a summon's from
+   the record; `character` = the first; `names` as the mod gave them. Its `arena_end` (the mod's own end: a wipe at
+   a turn boundary, the round cap at the start of round round_cap + 1) is written as it is; its `arena_start`, an
+   end the runner asked for and any arena record after the match's end are left out, as the referee writes those
+   itself. A phase naming the other team's character is not the side's: not written, never forced. A turn below is
+   a phase; a summon's phase is a turn of its side like any other.
 3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
    - the mod's end (`arena.status.ended` or the ring's `arena_end`, any reason: a wipe, or the round cap as a draw
      with `rounds` = round_cap);
@@ -126,7 +126,7 @@ class Turn:
     uuid: str
     name: str
     round: int
-    members: list[str]  # uuids, in turn order, summons included
+    members: list[str]  # uuids, in turn order, summons included (uuid is the first)
     forced: bool = False
 
 
@@ -177,14 +177,15 @@ class Referee:
             return None
         if ev == "arena_turn":
             members = [str(u) for u in fact.get("members") or []]
-            known = [self.names[u.lower()] for u in members if u.lower() in self.names]
-            names = [name for side, name in known if side == fact.get("side")]
-            if not names or len(names) != len(known):  # only summons, or the other team's characters
+            shown = [str(n) for n in fact.get("names") or []]
+            if not members or len(shown) != len(members):
                 return None
-            first = self.names.get(str(fact.get("character") or "").lower())
-            name = first[1] if first and first[1] in names else names[0]
-            self.turns.append(Turn(str(fact["side"]), str(fact["character"]), name, int(fact["round"]), members))
-            return {**fact, "character": name, "members": names}
+            team = [self.names.get(u.lower()) for u in members]
+            if any(t is not None and t[0] != fact.get("side") for t in team):  # the other team's character
+                return None
+            names = [t[1] if t is not None else n for t, n in zip(team, shown, strict=True)]
+            self.turns.append(Turn(str(fact["side"]), members[0], names[0], int(fact["round"]), members))
+            return {**fact, "character": names[0], "members": names}
         if ev == "arena_end":
             self.mod_end = {"winner": None, **fact}  # the ring leaves a nil winner (a draw) out
             self.done = True

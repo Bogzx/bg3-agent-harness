@@ -15,7 +15,9 @@ teams with the sides swapped, so the side advantage cancels.
 arena-facts.v1.schema.json) `arena_start {arena, seed, teams, sides, uuids?}`, `arena_turn {side, character,
 members, round, phase, group, shared}`, `arena_turn_forced {side, character}` and `arena_end {winner, reason, rounds,
 hp_left_A, hp_left_B, forfeit?, cause?}`. A turn is a phase: one same-side run of the rolled order inside a turn group
-(the game puts both teams' adjacent characters into one shared group, which the mod plays side by side). A side wins when every character of the other side is down or dead (`wipe`) or when the other side forfeits
+(the game puts both teams' adjacent characters into one shared group, which the mod plays side by side). A phase is
+off its side only when it names a character of the other team; a name on neither team (a summon) counts on the
+phase's side. A side wins when every character of the other side is down or dead (`wipe`) or when the other side forfeits
 (`forfeit`: three of its turns in a row forced to an end at the per-turn cap, cause `forced_turns`, which the grader
 checks against the arena_turn_forced events; or its client's fault after one resume, cause `client_fault`). The round
 cap and the wall cap are draws (`round_cap`, `wall_cap`; the HP fractions are recorded, never a tiebreak). A match is
@@ -301,8 +303,9 @@ def _facts_problem(records: list[dict], arena: Mapping[str, Any]) -> str | None:
     if turns is None:
         return "inconsistent_turns"
     if any(
-        not isinstance(turn["members"], list)
-        or any(n not in teams.get(turn["side"] or "", ()) for n in [turn["character"], *turn["members"]])
+        turn["side"] not in SIDES
+        or not isinstance(turn["members"], list)
+        or any(n in teams[_other(turn["side"]) or ""] for n in [turn["character"], *turn["members"]])
         for turn in turns
     ):
         return "off_side_turn"

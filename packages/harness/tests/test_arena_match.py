@@ -60,6 +60,8 @@ class ArenaModel(GameModel):
         self.setup_args: dict[str, Any] = {}
         self.round_cap: int | None = None
         self.mod_round = 0  # the mod's st.round
+        self.summon_names: dict[str, str] = {}  # summon name -> side: in the match from its start, in `order`
+        self.summons: set[str] = set()  # their uuids (not in arena.status's teams)
 
     def hp(self, side: str) -> float:
         a = self._match()
@@ -111,6 +113,7 @@ class ArenaModel(GameModel):
                 side=side,
                 character=now.uuid,
                 members=members,
+                names=[a.member(u).name for u in members],
                 round=self.mod_round,
                 phase=n,
                 group="team-1",
@@ -143,7 +146,10 @@ class ArenaModel(GameModel):
             self.round_cap = args.get("round_cap") if self.caps else None
             teams = args["arena"]["teams"]
             self.ref_record("arena_start", teams={})
-            self.start_arena([m["name"] for m in teams["A"]], [m["name"] for m in teams["B"]], self.order)
+            extra = {s: [n for n, side in self.summon_names.items() if side == s] for s in ("A", "B")}
+            names = {s: [m["name"] for m in teams[s]] + extra[s] for s in ("A", "B")}
+            self.start_arena(names["A"], names["B"], self.order)
+            self.summons = {self._match().member(n).uuid for n in self.summon_names}
             return {"ok": True, "result": self._job("arena.setup", {"ok": True})}
         if op == "arena.status":
             a = self.arena
@@ -153,7 +159,7 @@ class ArenaModel(GameModel):
                 "ok": True,
                 "result": {
                     "active": self.ended is None,
-                    "teams": {s: [m.uuid for m in team] for s, team in a.teams.items()},
+                    "teams": {s: [m.uuid for m in team if m.uuid not in self.summons] for s, team in a.teams.items()},
                     "turn": {"side": a.side_of(a.acting.uuid), "uuid": a.acting.uuid, "round": self.mod_round},
                     "hp": {"A": self.hp("A"), "B": self.hp("B")},
                     "ended": self.ended,
@@ -664,6 +670,37 @@ def test_forfeit_counts_phases(tmp_path):
     assert (g["valid"], g["result"], g["forced"]) == (True, "A", {"A": 0, "B": 3})
 
 
+def test_a_summons_phase_is_a_turn_of_its_side_capped_and_counted_toward_forfeit(tmp_path):
+    """Side B's wolf (a summon) acts alone between Karlach and Gale: its phase is written with the wolf's name,
+    capped at turn_cap_s, ended at the cap and counted toward B's forfeit like any phase (Wolf, Wyll-Halsin,
+    Wolf)."""
+    model, game, clock, agents, spec = setup(
+        {"A": passer, "B": staller}, order=["Karlach", "Wolf", "Gale", "Wyll", "Halsin"]
+    )
+    model.summon_names = {"Wolf": "B"}
+    rpc = game.rpc
+    ended: list[str] = []
+
+    def watch(op: str, args: dict[str, Any], side: str | None = None) -> Any:
+        if op == "act.end_turn" and side == "B":
+            ended.append(model._match().member(args["char"]).name)
+        return rpc(op, args, side)
+
+    game.rpc = watch  # type: ignore[method-assign]
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert [p[:5] for p in phases(tmp_path)[:3]] == [
+        (1, 1, "A", "Karlach", ["Karlach"]),
+        (1, 2, "B", "Wolf", ["Wolf"]),
+        (1, 3, "A", "Gale", ["Gale"]),
+    ]
+    forced = [(e["side"], e["character"]) for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert forced == [("B", "Wolf"), ("B", "Wyll"), ("B", "Wolf")]
+    assert ended == ["Wolf", "Wyll", "Halsin"]  # the third cap forfeits with no end_turn
+    assert out.end is not None and (out.end["reason"], out.end["forfeit"]) == ("forfeit", "B")
+    g = grade(tmp_path)
+    assert (g["valid"], g["result"], g["forced"]) == (True, "A", {"A": 0, "B": 3})
+
+
 def test_a_client_fault_is_resumed_once_then_forfeits(tmp_path):
     faults = []
 
@@ -760,8 +797,8 @@ def test_an_operator_abort_is_invalid(tmp_path):
 
 def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     """The mod's own arena_start and a runner end's arena_end never reach facts; a phase names its characters; a
-    phase's summons have no names (a phase of only summons, one naming the other team or one without members is not
-    written) but are ended at the cap; the mod's own end of any reason is the match's, and nothing of the arena's
+    phase's members are named (a summon by the record's names) and a phase naming the other team's character or
+    without members and names is not written; the mod's own end of any reason is the match's, and nothing of the arena's
     after an end is written."""
     _model, _game, clock, _agents, spec = setup({"A": passer, "B": passer})
     from bg3harness import facts as hfacts
@@ -770,19 +807,19 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     ref.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]})
     assert ref.translate({"ev": "arena_start", "teams": {}}) is None
     phase = {"ev": "arena_turn", "side": "A", "round": 1, "phase": 2, "group": "g", "shared": True}
-    assert ref.translate({**phase, "character": "ua2", "members": ["ua2", "UA1"]}) == {
-        **phase,
-        "character": "Gale",
-        "members": ["Gale", "Karlach"],
-    }
+    two = {**phase, "character": "ua2", "members": ["ua2", "UA1"], "names": ["Gale", "Karlach"]}
+    assert ref.translate(two) == {**two, "character": "Gale", "members": ["Gale", "Karlach"]}
     assert ref.turn is not None and ref.turn.members == ["ua2", "UA1"]
-    with_summon = {**phase, "character": "summon-1", "members": ["summon-1", "ua1"]}
-    assert ref.translate(with_summon) == {**with_summon, "character": "Karlach", "members": ["Karlach"]}
-    assert ref.turn.members == ["summon-1", "ua1"] and ref.turn.name == "Karlach"
-    assert ref.translate({**phase, "character": "summon-1", "members": ["summon-1"]}) is None
-    assert ref.translate({**phase, "character": "ua1", "members": ["ua1", "ub1"]}) is None
+    # a team member's name is the arena file's (the game may name it otherwise); a summon's is the record's
+    with_summon = {**phase, "character": "summon-1", "members": ["summon-1", "ua1"], "names": ["Wolf", "Karla"]}
+    assert ref.translate(with_summon) == {**with_summon, "character": "Wolf", "members": ["Wolf", "Karlach"]}
+    assert ref.turn.members == ["summon-1", "ua1"] and (ref.turn.uuid, ref.turn.name) == ("summon-1", "Wolf")
+    alone = {**phase, "character": "summon-1", "members": ["summon-1"], "names": ["Wolf"]}
+    assert ref.translate(alone) == {**alone, "members": ["Wolf"], "character": "Wolf"}
+    assert ref.translate({**phase, "character": "ua1", "members": ["ua1", "ub1"], "names": ["Karlach", "Wyll"]}) is None
+    assert ref.translate({**phase, "character": "ua1", "members": ["ua1"]}) is None  # no names
     assert ref.translate({"ev": "arena_turn", "side": "A", "character": "ua1", "round": 1}) is None
-    assert len(ref.turns) == 2
+    assert len(ref.turns) == 3
     assert ref.translate({"ev": "arena_combat_ended", "rounds": 1}) is None and ref.combat_ended == {
         "ev": "arena_combat_ended",
         "rounds": 1,
@@ -790,7 +827,7 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     assert ref.translate({"ev": "kill", "name": "x"}) == {"ev": "kill", "name": "x"}
     cap = ref.translate({"ev": "arena_end", "reason": "round_cap", "rounds": 4, "hp_left_A": 1, "hp_left_B": 1})
     assert cap is not None and cap["winner"] is None and ref.mod_end == cap
-    assert ref.translate({**phase, "character": "ua1", "members": ["ua1"], "round": 4}) is None
+    assert ref.translate({**phase, "character": "ua1", "members": ["ua1"], "names": ["Karlach"], "round": 4}) is None
     assert ref.translate({"ev": "arena_end", "reason": "wipe", "rounds": 4}) is None
 
     ref2 = am.Referee(spec, SIDES, hfacts.FactsWriter(tmp_path / "f2.jsonl", clock=clock.now))
@@ -813,9 +850,10 @@ def test_the_spec_refuses_a_draft_or_incomplete_arena():
 
 def test_the_facts_schema_takes_a_phase_and_refuses_a_turn_without_its_fields():
     rec = {"v": 1, "kind": "event", "t": 1.0, "ev": "arena_turn", "side": "A", "character": "Karlach", "round": 1}
-    phase = {"members": ["Karlach", "Gale"], "phase": 2, "group": "g", "shared": True}
+    phase = {"members": ["Karlach", "Gale"], "names": ["Karlach", "Gale"], "phase": 2, "group": "g", "shared": True}
     jsonschema.validate({**rec, **phase}, FACTS_SCHEMA)
     jsonschema.validate({**rec, **{k: v for k, v in phase.items() if k != "group"}}, FACTS_SCHEMA)  # no turn order
-    for bad in (rec, {**rec, **phase, "members": []}, {**rec, **phase, "phase": 0}):
+    no_names = {k: v for k, v in phase.items() if k != "names"}
+    for bad in (rec, {**rec, **phase, "members": []}, {**rec, **phase, "phase": 0}, {**rec, **no_names}):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(bad, FACTS_SCHEMA)
