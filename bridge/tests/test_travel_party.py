@@ -71,6 +71,7 @@ class Fake:
     def __init__(self, status):
         self.status, self.block, self.wps, self.can = status, {"hud": True}, [], {}
         self.ft_error = None   # ui.fast_travel's Lua refusal (raised by game.rpc, as live)
+        self.regions: list = []  # successive ui.state minimap subregion lines (the last one repeats)
         self.jobs, self.calls = [], []
         self.event_seq = {"server": 0, "client": 0}
 
@@ -90,6 +91,9 @@ class Fake:
             return {"can": True}
         if op == "events.since":
             return {"events": []}
+        if op == "ui.state":
+            return {"screen": "game", "region": (self.regions.pop(0) if len(self.regions) > 1 else
+                                                 self.regions[0] if self.regions else None)}
         return {}
 
     try_rpc = rpc
@@ -185,6 +189,18 @@ class FastTravelSplitParty(Case):
         travel.fast_travel("Undercity Ruins")
         self.assertEqual([a["char"] for o, a in fake.jobs if o == "act.chain"], [KARLACH])
         self.assertIn("ui.fast_travel", fake.ops())
+
+    def test_the_read_after_the_trip_no_longer_shows_the_old_subregion(self):
+        # live-v09 t8: get_status 0.6 s after the trip still read "WHERE Blighted Village" (now at Roadside Cliffs)
+        st = s064_status()
+        for r in st["party"][1:]:
+            r.update(pos=[-57.0, -46.3, 1007.0], chained=True)
+        fake = self.use(st)
+        fake.wps = [TEMPLE_WP, RUINS_WP]
+        fake.regions = ["Blighted Village"] * 4 + [None]  # the line lags the arrival by a few reads
+        out = travel.fast_travel("Undercity Ruins")
+        self.assertIn("fast_travel: done", out)
+        self.assertIsNone(fake.rpc("ui.state", context="client")["region"])
 
     def test_together_trip_is_untouched(self):
         st = s064_status()

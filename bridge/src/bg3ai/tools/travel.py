@@ -218,6 +218,11 @@ def _end_night_first() -> str:
         return "FAILED: can't read whether a long rest's night at camp still blocks travel: " + str(e)[:300]
     if not (isinstance(b, dict) and b.get("night_camp")):
         return ""
+    # live-v09 t6: camp leave during Shadowheart's camp talk got ui.long_rest's refusal ("... then long_rest"); once
+    # the talk was done, the same leave slept (a full long rest) and left. Say that, for whichever tool travels.
+    if b.get("dialogue"):
+        return ("FAILED: a conversation is open: finish it first (choose_dialogue / dialogue_advance), then call this "
+                "again: it is night at camp, so travelling first ends the night (the party sleeps: a long rest)")
     out = world_tools._box_act("long_rest", "ui.long_rest", {"sleep_only": True}, wait_s=60)
     res = reporting._batch.get("result")
     if isinstance(res, dict) and res.get("night_ended"):
@@ -297,6 +302,7 @@ def fast_travel(waypoint: str) -> str:
         if split.startswith("fast_travel: FAILED"):
             reporting._batch["last"] = "failed"
         return reporting._finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + split, time.monotonic())
+    sub = (core.game.try_rpc("ui.state", context="client") or {}).get("region")
     watch = _ReadyCheckWatch()
     world_tools._TRANSITION_LAST.clear()
     with watch:
@@ -321,8 +327,25 @@ def fast_travel(waypoint: str) -> str:
             out += "; arrived" if arrived else "; still not back in the game 2 min later (wait_for idle)"
     if "fast_travel: done" in out or out.rstrip().endswith("arrived"):
         _trip_arrived()
+        _subregion_moved(sub)
         out += _left_behind_after_trip(waypoint)
     return (left + "\n" + out) if left else out
+
+
+SUBREGION_SETTLE_S = 3.0  # after an arrival: how long the minimap's subregion line gets to leave the old place's name
+
+
+def _subregion_moved(before: Any) -> None:
+    """live-v09 t8: get_status 0.6 s after a fast travel from the Blighted Village to Roadside Cliffs still read
+    'WHERE Blighted Village' (the minimap's subregion line, ui.state region, updates after the arrival); a read 21 s
+    later was right. Wait until the line no longer shows the old name (bounded: a trip inside one subregion keeps it)."""
+    if not before:
+        return
+    deadline = time.monotonic() + SUBREGION_SETTLE_S
+    while (core.game.try_rpc("ui.state", context="client") or {}).get("region") == before:
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(0.25)
 
 
 def _trip_arrived() -> None:

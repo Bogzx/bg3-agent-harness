@@ -305,6 +305,11 @@ def _opener_combat(tu: str, res: Any) -> str:
         time.sleep(0.15)
     if ts.get("dead") or (core.game.try_rpc("act.target_state", {"uuid": tu}) or {}).get("dead"):
         return f"combat: none started ({queueing._label(tu)} died)"
+    # live-v09 t12: Fire Bolt on a neutral goblin opened the game's "You picked a fight" scene; combat began only
+    # when it ended (after this wait), so "no fight began" was wrong. What is true at return: a conversation is on.
+    if (core.game.try_rpc("nav.activity") or {}).get("in_dialogue"):
+        return ("combat: not started yet — a conversation opened with the hit (the game plays it before any fight "
+                "it starts): finish it, then get_combat_state")
     dmg = res.get("total_damage") if isinstance(res, dict) else None
     if isinstance(dmg, (int, float)) and dmg > 0:
         return (f"combat: NOT started — {queueing._label(tu)} took {render.num(dmg)} damage but no fight began "

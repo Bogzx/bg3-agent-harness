@@ -5,6 +5,19 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-01: use_ability's opener, camp leave in a night camp talk and WHERE after a fast travel say what is true
+
+- use_ability out of combat at a creature: when the hit opened a conversation (the game's "You picked a fight"
+  scene, which it plays before the fight starts), the result says "combat: not started yet — a conversation opened
+  with the hit (the game plays it before any fight it starts): finish it, then get_combat_state" instead of
+  "combat: NOT started — … no fight began (dormant or unaware …)" (live-v09: combat was on 0.3 s after that line).
+- camp leave / fast_travel at night camp during a camp conversation fail at once with "a conversation is open:
+  finish it first (choose_dialogue / dialogue_advance), then call this again: it is night at camp, so travelling
+  first ends the night (the party sleeps: a long rest)" instead of long_rest's "… then long_rest".
+- fast_travel returns once the minimap's subregion line no longer shows the place it left (at most 3 s), so the
+  next get_status WHERE names where the party is (live-v09: "WHERE Blighted Village" 0.6 s after arriving at
+  Roadside Cliffs).
+
 ## 2026-10-30: a give the game refuses fails; get_character shows status names only; a busy UI reads as busy
 
 - manage_inventory op=give: when the game leaves the item with the giver (no error, no move: a story item), the

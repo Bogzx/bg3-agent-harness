@@ -68,7 +68,9 @@ game unless it says so.
 - The harness version is `packages/harness/pyproject.toml`'s, exposed as `bg3harness.__version__`.
 - 0.2.0 (2026-11-01): the bg3 tools' results changed after the launch runs (bridge/CHANGELOG.md, 2026-10-30:
   get_character shows status names only; a give the game refuses, an item fixed in place, a busy camp UI and a
-  short rest the game ignores fail at once with the reason instead of timing out). bench-v0.9's release cites it.
+  short rest the game ignores fail at once with the reason instead of timing out; 2026-11-01: use_ability's
+  opener says when the hit opened a conversation, camp leave in a night camp talk names the leave, get_status
+  WHERE right after a fast travel names the new place). bench-v0.9's release cites it.
 
 ### Benchmark (`packages/bench`)
 

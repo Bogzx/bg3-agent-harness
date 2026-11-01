@@ -240,11 +240,12 @@ class NightFake:
     """Night camp: travel_block says night_camp until ui.long_rest(sleep_only) ends it (or fails)."""
 
     def __init__(self, ends=True):
-        self.night, self.ends, self.jobs = True, ends, []
+        self.night, self.ends, self.jobs, self.dialogue = True, ends, [], False
 
     def rpc(self, op, args=None, context="server"):
         if op == "ui.travel_block":
-            return {"night_camp": True, "error": "Unavailable"} if self.night else {"hud": True}
+            return ({"night_camp": True, "error": "Unavailable", "dialogue": self.dialogue} if self.night
+                    else {"hud": True})
         if op == "ui.fast_travel":
             return {"can": True}
         if op == "state.status":
@@ -296,6 +297,16 @@ class NightCamp(unittest.TestCase):
         out = getattr(travel.camp, "fn", travel.camp)("leave")
         self.assertEqual([o for o, _ in fake.jobs][:2], ["ui.long_rest", "act.leave_camp"])
         self.assertIn("ended the night", out)
+
+    def test_camp_leave_in_a_camp_talk_at_night_names_the_leave(self):
+        # live-v09 t6: refused with ui.long_rest's "... then long_rest"; after the talk the leave itself slept and left
+        fake = self.use(NightFake())
+        fake.dialogue = True
+        out = getattr(travel.camp, "fn", travel.camp)("leave")
+        self.assertEqual(fake.jobs, [])
+        self.assertNotIn("then long_rest", out)
+        self.assertIn("camp: FAILED: a conversation is open: finish it first (choose_dialogue / dialogue_advance), "
+                      "then call this again: it is night at camp, so travelling first ends the night", out)
 
     def test_a_busy_ui_is_not_read_as_no_night(self):
         # A UI stuck busy 26 min: the refused travel_block read counted as "not night", so camp leave went on to
