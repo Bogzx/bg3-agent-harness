@@ -56,12 +56,14 @@ function R.record(ev, data)
 end
 
 -- Party membership, cached for 250 ms (a trade fires ~8 events in one frame).
-local partyCache, partyTime = nil, -1e9
+-- Keyed on the side too: the referee records for no side (both teams), but a call made as a side gets that side's.
+local partyCache, partyTime, partySide = nil, -1e9, nil
 local function isParty(u)
     local t = now_ms()
-    if not partyCache or t - partyTime > 250 then
+    local side = U.side()
+    if not partyCache or t - partyTime > 250 or side ~= partySide then
         local _, seen = V.party()
-        partyCache, partyTime = seen or {}, t
+        partyCache, partyTime, partySide = seen or {}, t, side
     end
     return u ~= nil and partyCache[u] == true
 end

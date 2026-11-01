@@ -113,6 +113,8 @@ local function party_item(item)
     local g = G.guid(item)
     if not g or not G.b(G.q("IsItem", g)) then G.refuse("that is not an item") end
     local h = holder(g)
+    local Ar = BG3AI.Arena
+    if h and Ar and Ar.active() and Ar.side_of(h) then G.on_my_side(h) end -- the other team's bag
     if not h or not G.is_party(h) then G.refuse("that item is not in the party's inventory") end
     return g, h
 end

@@ -276,7 +276,7 @@ function A.note_cast(caster)
 end
 
 function A.watch_idle(char, kind)
-    A.idle_watch[char] = { t = RPC.now_ms(), kind = kind }
+    A.idle_watch[char] = { t = RPC.now_ms(), kind = kind, side = U.side() } -- its event goes to the order's side
     A.idle_last[char] = G.pos(char) -- from where the job left it (a jump that ended the job was the job's)
 end
 
@@ -311,9 +311,9 @@ function A.idle_tick()
     A.idle_watch[jp.u] = nil
     local cast = A.cast_ms[jp.u]
     if (A.scroll_pending or {})[jp.u] or (cast and now - cast <= A.IDLE_CAST_MS) then return end
-    RPC.push("teleported_by_game", { uuid = jp.u, from = pos_view(jp.from), to = pos_view(jp.to),
-        m = U.round(jp.m, 1), why = string.format("%.1f s after its %s ended, with no order of ours running",
-            (now - w.t) / 1000, w.kind) })
+    U.with_side(w.side, RPC.push, "teleported_by_game", { uuid = jp.u, from = pos_view(jp.from),
+        to = pos_view(jp.to), m = U.round(jp.m, 1), why = string.format("%.1f s after its %s ended, with no order of "
+            .. "ours running", (now - w.t) / 1000, w.kind) })
 end
 
 if not A.idle_subscribed then
@@ -600,8 +600,9 @@ end
 function A.known_plates(from, to)
     local V, out = BG3AI.Visibility, {}
     if not (V and V.fixtureSeen and V.levelNow) then return out end
+    local seen = U.sided(V, "fixtureSeen")
     local level, now = V.levelNow(), Ext.Utils.MonotonicTime()
-    for u, m in pairs(V.fixtureSeen) do
+    for u, m in pairs(seen) do
         if m.level == level and now - m.t <= V.FIXTURE_REMEMBER_MS and A.is_plate(u) then
             local p = G.pos(u)
             if p and (U.dist(p, from) <= A.PLATE_NEAR_M or U.dist(p, to) <= A.PLATE_NEAR_M) then

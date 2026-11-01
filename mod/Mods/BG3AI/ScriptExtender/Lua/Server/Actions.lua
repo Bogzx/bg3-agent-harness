@@ -156,7 +156,8 @@ local registered = {}
 local function each_running(fn)
     for _, job in pairs(RPC.jobs) do
         if job.status == "running" and job.act and not job.call then -- parked for a stand-up: nothing of its own
-            local ok, err = pcall(fn, job)
+            local ok, err
+            if job.side then ok, err = pcall(U.with_side, job.side, fn, job) else ok, err = pcall(fn, job) end
             if not ok then RPC.finish_job(job, "failed", nil, tostring(err)) end
         end
     end
@@ -303,11 +304,16 @@ end
 function A.stirred(u, why)
     local g = G.guid(u)
     if not g then return end
-    if not A.hit_ms[g] then
-        A.hit_n = (A.hit_n or 0) + 1
-        if A.hit_n > 500 then A.hit_ms, A.hit_n = {}, 1 end
+    local hits = U.sided(A, "hit_ms") -- each side's own (an arena: A.dispatch runs it per side)
+    if not hits[g] then
+        local n = (U.sget(A, "hit_n") or 0) + 1
+        if n > 500 then
+            hits, n = {}, 1
+            U.sset(A, "hit_ms", hits)
+        end
+        U.sset(A, "hit_n", n)
     end
-    A.hit_ms[g] = { t = G.now_ms(), why = why }
+    hits[g] = { t = G.now_ms(), why = why }
 end
 
 -- CastSpell / CastedSpell by a character outside the party (A30): its start, and its end on the same caster's
@@ -315,11 +321,12 @@ end
 function A.foe_cast(event, caster, spell)
     local g = G.guid(caster)
     if not g or G.is_party(g) then return end
-    local now, r = G.now_ms(), A.react_seen
+    local now, r = G.now_ms(), U.sget(A, "react_seen")
     if event == "CastedSpell" and r and r.caster == g and not r.done then
         r.done = now
     else
-        A.react_seen = { t = now, done = event == "CastedSpell" and now or nil, caster = g, spell = tostring(spell) }
+        U.sset(A, "react_seen", { t = now, done = event == "CastedSpell" and now or nil, caster = g,
+            spell = tostring(spell) })
     end
 end
 
@@ -332,9 +339,9 @@ function A.dispatch(event, args)
         if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
         G.note_turn_started(args[1])
     elseif event == "AttackedBy" and args[1] then
-        A.stirred(args[1], "a hit on the caster")
+        U.each_side(A.stirred, args[1], "a hit on the caster")
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
-        A.foe_cast(event, args[1], args[2])
+        U.each_side(A.foe_cast, event, args[1], args[2]) -- "outside the party" is per side in an arena
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
     elseif (event == "Unlocked" or event == "Opened") and args[1] then
@@ -343,7 +350,7 @@ function A.dispatch(event, args)
         -- shown statuses only, by their shown name (Prone: standing up; Hold Person); technical ones flap all the time
         local V = BG3AI.Visibility
         local info = V and V.statusInfo and V.statusInfo(tostring(args[2]))
-        if info then A.stirred(args[1], "the caster's " .. tostring(info.name) .. " ending") end
+        if info then U.each_side(A.stirred, args[1], "the caster's " .. tostring(info.name) .. " ending") end
     end
     each_running(function(job)
         if job.tele then -- a jump settling (teleport_check): only the story signals count now

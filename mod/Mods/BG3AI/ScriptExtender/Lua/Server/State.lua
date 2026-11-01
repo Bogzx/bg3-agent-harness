@@ -112,6 +112,8 @@ end
 
 local function relation(ctx, uuid)
     if ctx.is_party[uuid] then return "party" end
+    -- a side reads the other team as hostile from the team tables, whatever the engine's relation says
+    if U.side() and BG3AI.Arena.side_of(uuid) then return "hostile" end
     local o = ctx.observers[1] or { uuid = ctx.party[1] }
     if not o.uuid then return "neutral" end
     if truthy(osi(Osi.IsEnemy, o.uuid, uuid)) then return "hostile" end
@@ -130,6 +132,8 @@ local function concentration(e)
 end
 
 local function selectedCharacter(party)
+    local side = U.side()
+    if side then return BG3AI.Arena.lead(side) end -- the side's own (Arena.lead), never the HUD's or the host
     return V.selected(party) or osi(Osi.GetHostCharacter) and V.uuid(osi(Osi.GetHostCharacter)) or party[1]
 end
 

@@ -242,11 +242,17 @@ function N.known(ctx, p)
     local l = store().levels[lvl]
     if l and l.cells[cellKey(cellOf(p))] then return true end
     local k = string.format("%s|%d:%d:%d", lvl, math.floor(p[1]), math.floor(p[2] / 2), math.floor(p[3]))
-    if N.seenPts[k] then return true end
+    local pts = U.sided(N, "seenPts") -- a side remembers its own sightings (an arena); else N.seenPts
+    if pts[k] then return true end
     local ok, s = pcall(V.pointSeen, ctx or V.context(), p)
     if not (ok and s == true) then return false end
-    if N.seenPtsN >= N.SEEN_MAX then N.seenPts, N.seenPtsN = {}, 0 end
-    N.seenPts[k], N.seenPtsN = true, N.seenPtsN + 1
+    local n = U.sget(N, "seenPtsN") or 0
+    if n >= N.SEEN_MAX then
+        pts, n = {}, 0
+        U.sset(N, "seenPts", pts)
+    end
+    pts[k] = true
+    U.sset(N, "seenPtsN", n + 1)
     return true
 end
 

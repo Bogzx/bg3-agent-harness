@@ -611,6 +611,18 @@ end
 
 -- Reaction prompt: Data.InterruptEvents[1] with its interruptors and the
 -- reactions each can use.
+-- In an arena: the side whose characters the prompt's rows are for (by the team names the server sent), nil when a
+-- row names nobody of either team or the rows name both.
+function S.reactionSide(rows)
+    local side
+    for _, r in ipairs(rows) do
+        local s = BG3AI.Arena.name_side(r.who)
+        if not s or (side and s ~= side) then return nil end
+        side = s
+    end
+    return side
+end
+
 function S.reaction(wmap)
     local w = wmap.ReactionDecisionPopup
     if not w then return nil end
@@ -864,6 +876,11 @@ function S.state(args)
         res.roll = S.roll(wmap)
     elseif scr == "reaction" then
         res.reaction = S.reaction(wmap)
+        -- a side sees another side's prompt only as there: who it is for and what it offers are that side's
+        local side = RPC.side and RPC.side()
+        if side and res.reaction and S.reactionSide(res.reaction.options or {}) ~= side then
+            res.reaction = { other_side = true }
+        end
     elseif scr == "popup" then
         res.popup = S.popup(wmap[res.page].el)
         if S.isGameOver(res.popup) then res.screen = "game_over" end
