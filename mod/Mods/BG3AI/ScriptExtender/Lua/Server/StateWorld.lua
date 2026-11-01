@@ -458,6 +458,8 @@ function S.combat(ctx)
                                 -- whatever its flags show (Guard.turn_moved_on)
                                 local over = ctx.is_party[u] and BG3AI.Guard and BG3AI.Guard.turn_moved_on
                                     and BG3AI.Guard.turn_moved_on(u)
+                                -- an arena: the other team's member waiting in a turn group across the teams
+                                if not over and U.side() then over = BG3AI.Arena.held(u) end
                                 -- S087: a stunned (INCAPACITATED) member's open turn passes by itself (Guard.turn_passes)
                                 local passes = tb.IsActiveCombatTurn and ctx.is_party[u] and not tb.RequestedEndTurn
                                     and not pending and not over and BG3AI.Guard and BG3AI.Guard.turn_passes

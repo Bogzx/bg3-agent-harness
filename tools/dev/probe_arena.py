@@ -16,6 +16,8 @@ from the repo root, the game loaded with the pinned mod set only:
     $P setup --team-a Tav,Shadowheart,Gale,Astarion --team-b Karlach,Wyll,Laezel,Halsin \\
        --spot-a X,Y,Z --spot-b X,Y,Z [--seed 7] [--pinned-mods a,b]
                                                  # q2: 8 in DB_PartyMembers (+ the loaded mods), chains, places, HP
+    $P sides                                     # q9: the mod's arena begun: the client gets the teams (needs
+                                                 #     BG3AI_ARENA=1 in the game's environment), loses them on reset
     $P hostile [--faction-b auto|<Name_guid>]    # q3: team B's faction, IsEnemy across teams, one combat
     $P turns [--turns 10 --idle-s 8 --down-at 4] # q3: who starts each turn, does the game act for anyone
     $P act                                       # q4: move + attack + end turn for one member of each side
@@ -24,7 +26,8 @@ from the repo root, the game loaded with the pinned mod set only:
     $P gameover                                  # q6: the avatar downed, then dead (a fresh load + setup + hostile)
     $P react                                     # q7: an opportunity attack, who gets the prompt, ui.react
     $P npc                                       # q8: one team-B member made an NPC (a fresh load + setup + hostile)
-    $P all ...setup args...                      # conns, roster, factions, setup, hostile, act, tie, turns, react, end
+    $P all ...setup args...                      # conns, roster, factions, setup, sides, hostile, act, tie, turns,
+                                                 # react, end
 `--dry-run` prints the plan of a step only (no game). Evidence: runtime/probes/arena-s0/ (--out), one
 q<n>-<what>.json per question.
 Spots: open ground with no NPCs near, the two ~8-20 m apart (q4's attack needs the mover to reach melee in one turn:
@@ -53,6 +56,16 @@ REACH_M = 2.5  # q7: the mover counts as in melee of the enemy within this
 CONNS = 6  # q1: debugger connections opened at once (two bridges with their side connections + the harness)
 
 from probe_arena_lua import INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
+
+# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams.
+SERVER_TRY = (
+    "local ok, r = pcall(function() return {call} end)\n"
+    "return Ext.Json.Stringify({{ok = ok, error = (not ok) and tostring(r) or nil}})"
+)
+CLIENT_ARENA = (
+    "local Ar = BG3AI.Arena\n"
+    "return Ext.Json.Stringify({state = Ar.state ~= nil, active = Ar.active(), names = Ar.state and Ar.state.names})"
+)
 
 # ---- Lua building (pure) ----
 
@@ -116,6 +129,7 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     judge_party,
     judge_react,
     judge_setup,
+    judge_sides,
     judge_tie,
     judge_turns,
     pick_faction_b,
@@ -173,6 +187,17 @@ class Arena:
             return self.game.rpc(op, args or {}, context="client")
         except Exception as e:
             return {"error": f"{type(e).__name__}: {e}"}
+
+    def raw(self, code: str, context: str) -> Any:
+        """The mod's own Lua (no probe library), decoded when it returns JSON."""
+        try:
+            txt = self.game.eval(code, context=context, timeout=10.0)
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+        try:
+            return json.loads(txt)
+        except (TypeError, ValueError):
+            return txt
 
     def screen(self) -> Any:
         return (self.client("ui.state") or {}).get("screen")
@@ -431,6 +456,23 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "events": self.since(m),
         }
         self.write("q3-hostile", rec)
+        return rec
+
+    def sides(self) -> dict[str, Any]:
+        """q9: the mod's arena begun on the server (BG3AI.Arena.begin with the teams): does the client's Lua state get
+        the teams over Ext.Net (BG3AI.Arena.state), and lose them on reset? A client without them is side-blind: any
+        side answers any reaction prompt and reads the HUD's selection."""
+        teams = self.teams()
+        t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
+        r: dict[str, Any] = {"begin": self.raw(SERVER_TRY.format(call=f"BG3AI.Arena.begin({t})"), "server")}
+        self.sleep(SETTLE_S)
+        r["client_after_begin"] = self.raw(CLIENT_ARENA, "client")
+        r["reset"] = self.raw(SERVER_TRY.format(call="BG3AI.Arena.reset()"), "server")
+        self.sleep(SETTLE_S)
+        r["client_after_reset"] = self.raw(CLIENT_ARENA, "client")
+        verdict, why = judge_sides(r)
+        rec = {"question": "q9-sides", "verdict": verdict, "why": why, **r}
+        self.write("q9-sides", rec)
         return rec
 
     def watch_idle(self, u: str, idle_s: float) -> dict[str, Any]:
@@ -770,6 +812,8 @@ PLAN = {
     "factions": "static-data factions + level usage + relation to team A's",
     "setup": "loaded mods; SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add for the missing; Detach all, "
     "chain each side; TeleportToPosition to two lines; RestoreParty (+SetHitpointsPercentage 100 if short); scn.seed",
+    "sides": "server BG3AI.Arena.begin(teams); client BG3AI.Arena.state (Ext.Net); server BG3AI.Arena.reset(); "
+    "client again",
     "hostile": "SetFaction(team B, F_B); SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, "
     "F_B, a1, b1), else EnterCombat pairs; turn order",
     "turns": "per open turn: idle --idle-s (did the game act?), act.end_turn; one member downed at --down-at",
@@ -787,7 +831,7 @@ PLAN = {
 
 # The spike order: connections, the party of 8, hostility + one combat, costs, the tie, then turns (AI), the reaction,
 # and last the wipe (it ends the fight).
-ALL = ["conns", "roster", "factions", "setup", "hostile", "act", "tie", "turns", "react", "end"]
+ALL = ["conns", "roster", "factions", "setup", "sides", "hostile", "act", "tie", "turns", "react", "end"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -839,6 +883,8 @@ def main(argv: list[str] | None = None) -> int:
         elif s == "setup":
             pinned = [x for x in a.pinned_mods.split(",") if x] or None
             ar.setup(a.team_a.split(","), a.team_b.split(","), a.spot_a, a.spot_b, a.seed, pinned)
+        elif s == "sides":
+            ar.sides()
         elif s == "hostile":
             ar.hostile(a.faction_b)
         elif s == "turns":

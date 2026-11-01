@@ -288,3 +288,18 @@ def judge_npc(r: dict[str, Any]) -> Verdict:
     return ("FAIL" if why else "OPEN"), ("; ".join(why) or "the NPC kept still and act.* refused it") + (
         " (N needs a second action path either way)"
     )
+
+
+def judge_sides(r: dict[str, Any]) -> Verdict:
+    """q9: the client's Lua state holds the teams after the server's BG3AI.Arena.begin and drops them on reset."""
+    begin, after, reset_ = r.get("begin") or {}, r.get("client_after_begin") or {}, r.get("client_after_reset") or {}
+    if not (isinstance(begin, dict) and begin.get("ok")):
+        err = begin.get("error") if isinstance(begin, dict) else begin
+        return "OPEN", f"BG3AI.Arena.begin refused ({err}): run the game with BG3AI_ARENA=1"
+    if not (isinstance(after, dict) and after.get("state") is True):
+        return "FAIL", f"client BG3AI.Arena.state not set after begin ({after}): the client is side-blind"
+    if not after.get("active"):
+        return "FAIL", "client has the teams but Arena.active() is false (the switch not seen by the client)"
+    if not (isinstance(reset_, dict) and reset_.get("state") is False):
+        return "FAIL", f"client still holds the teams after reset ({reset_})"
+    return "PASS", f"client got the teams (names {after.get('names')}) after begin and dropped them on reset"

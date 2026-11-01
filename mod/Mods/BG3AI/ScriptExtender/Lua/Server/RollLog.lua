@@ -201,7 +201,7 @@ local CRIT = { [1] = "nat20", [2] = "nat1" }
 
 local function listen(name, arity, fn)
     local ok, err = pcall(Ext.Osiris.RegisterListener, name, arity, "after", function(...)
-        local ok2, err2 = pcall(fn, ...)
+        local ok2, err2 = pcall(U.with_side, nil, fn, ...) -- no side: the records are the harness's, whenever fired
         if not ok2 then Ext.Utils.PrintWarning("[BG3AI] roll log " .. name .. ": " .. tostring(err2)) end
     end)
     if not ok then Ext.Utils.PrintWarning("[BG3AI] roll log cannot listen to " .. name .. ": " .. tostring(err)) end
@@ -289,7 +289,7 @@ end
 
 local function guarded(what, fn)
     return function(...)
-        local ok, err = pcall(fn, ...)
+        local ok, err = pcall(U.with_side, nil, fn, ...)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] roll log " .. what .. ": " .. tostring(err)) end
     end
 end
