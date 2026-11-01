@@ -4,6 +4,7 @@ real run recorded (the committed pilot fixture), its schema, and its refusals.""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tarfile
 from pathlib import Path
@@ -18,6 +19,8 @@ from bg3bench.submission import consistency, pack, release, validate
 FIXTURE = Path(__file__).parent / "fixtures" / "submission" / "fight_act2_balthazar.bundle.tar.gz"
 PINS = {"game_build": "20981537", "bg3le_sha256": "a" * 64, "mod_sha1": "b" * 40}
 VERSIONS = {"harness": "1.2.3", "bench": "0.8.0"}
+# Released suites' files, frozen: what their published results were checked against. A new suite gets a new file.
+FROZEN = {"bench-v0.8.json": "292177f0a813b2f1c59a4e301f96d8fcb1ecf688e32ad875828d0bd602203e83"}
 
 
 def fixture_files() -> dict[str, bytes]:
@@ -249,6 +252,13 @@ def test_a_new_game_scenario_is_released_with_its_start_state_and_a_real_run_pas
     snap = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
     loaded = [*rows[:snap], {**rows[snap], "party": [{"name": "Tav", "level": 1}], "area": "Nautiloid"}]
     assert x01(loaded + rows[snap + 1 :])[0] is False  # a run that loaded a game in progress
+
+
+def test_released_suites_files_never_change():
+    current = release.default_path().name
+    assert {p.name for p in release.RELEASES.glob("*.json")} - {current} == set(FROZEN)
+    for name, sha in FROZEN.items():
+        assert hashlib.sha256((release.RELEASES / name).read_bytes()).hexdigest() == sha, f"{name} changed"
 
 
 @pytest.mark.integration  # the real server dump (tools/pi/dump_server.py in the bridge's env), offline

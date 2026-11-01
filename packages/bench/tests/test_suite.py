@@ -59,7 +59,8 @@ def test_a_digest_pinned_for_two_versions_or_an_old_digest_fails(copy):
     pins = suite.load_pins(copy / suite.PINS.name)
     now = suite.digest(copy)
     errs = suite.check(copy, {**pins, "bench-v0.0": [now]})
-    assert errs == [f"digest {now} is pinned for both {suite.suite_version()} and bench-v0.0"]
+    first = next(v for v, ds in pins.items() if now in ds)  # the version that pinned these files first
+    assert errs == [f"digest {now} is pinned for both {first} and bench-v0.0"]
     # the files of an older version, run as a newer one: names the version they belong to
     errs = suite.check(copy, {"bench-v0.0": [now]}, "bench-v0.1")
     assert errs and "it is bench-v0.0's" in errs[0]
@@ -68,3 +69,20 @@ def test_a_digest_pinned_for_two_versions_or_an_old_digest_fails(copy):
 def test_pins_file_shape():
     data = json.loads(suite.PINS.read_text(encoding="utf-8"))
     assert all(v.startswith("bench-v") and ds and len(set(ds)) == len(ds) for v, ds in data["versions"].items())
+
+
+def test_a_version_shares_its_predecessors_digest_only_when_suite_json_pairs_them(copy):
+    """A version whose score moves outside the suite files (the mod its release pins) re-pins the files of the
+    version before it; suite.json's `shared` names that pair, and an unnamed pair still fails."""
+    now = suite.digest(copy)
+    both = {"bench-v9.8": [now], "bench-v9.9": [now]}
+    assert suite.check(copy, both, "bench-v9.9", {"bench-v9.9": "bench-v9.8"}) == []
+    (err,) = suite.check(copy, both, "bench-v9.9", {"bench-v9.9": "bench-v0.1"})
+    assert err == f"digest {now} is pinned for both bench-v9.8 and bench-v9.9"
+    assert suite.check(copy, both, "bench-v9.9", {}) == [err]
+
+
+def test_shared_names_pinned_versions_that_share_a_digest():
+    pins, shared = suite.load_pins(), suite.load_shared()
+    for new, old in shared.items():
+        assert new != old and set(pins[new]) & set(pins[old]), (new, old)
