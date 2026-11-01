@@ -136,3 +136,76 @@ test("a member without a display name: 'Unknown' in names, which stays as long a
     eq(#r.names, #r.members, "as many names as members")
     eq(table.concat(r.names, ","), "Ana,Unknown", "names")
 end)
+
+-- act.end_turn as a side's bridge (or the harness, side nil) sends it; the job it started.
+local function endTurn(u, side)
+    rpc("act.end_turn", "{char=" .. string.format("%q", u) .. "}", side)
+    return RPC.jobs[RPC.nextJob - 1]
+end
+
+local function ticks(n) for _ = 1, n do tick() end end
+
+local function has(list, u)
+    for _, x in ipairs(list or {}) do if x == u then return true end end
+    return false
+end
+
+test("live load2: a phase's last end is pending while the other phase is still to act; B's phase opens", function()
+    begin()
+    order = { { A1, A2, B1, B2 } }
+    openAll({ A1, A2, B1, B2 })
+    tick()
+    local j = endTurn(A2, "A")
+    ticks(2)
+    eq(j.status, "done", "A2's end")
+    eq(j.result.requested, true, "A2's end pending (A1 still to act)")
+    j = endTurn(A1, "A") -- the phase's last member: the game keeps the group open for B
+    ticks(2)
+    eq(j.status, "done", "A1's end: " .. tostring(j.error))
+    eq(j.result.requested, true, "A1's end pending")
+    eq(has(j.result.still_to_act, B1) and has(j.result.still_to_act, B2), true, "B still to act")
+    tick()
+    local r = refs("arena_turn")
+    eq(#r, 2, "phase 2 recorded")
+    eq(r[2].side, "B", "phase 2 side")
+    eq(members(r[2]), B1 .. "," .. B2, "phase 2 members")
+    eq(Ar.acting_side(), "B", "acting")
+    j = endTurn(B1, "B")
+    ticks(2)
+    eq(j.result and j.result.requested, true, "B1's end pending (B2 still to act)")
+    j = endTurn(B2, "B") -- the group's last end: nobody is still to act, the game closes the group
+    tick()
+    eq(j.status, "running", "B2's end waits for the game")
+    for _, u in ipairs({ A1, A2, B1, B2 }) do setTurn(u, false, false) end
+    for _, u in ipairs({ A1, A2, B1, B2 }) do fire("TurnEnded", "S_Player_" .. u) end
+    tick()
+    eq(j.status, "done", "B2's end: " .. tostring(j.error))
+    eq(j.result.ended_again, nil, "nobody's EndTurn sent again")
+end)
+
+test("live load1: the harness ends a phase of one (A1 | B1 A2 B2): pending, the next phase opens", function()
+    begin()
+    order = { { A1, B1, A2, B2 } }
+    openAll({ A1, B1, A2, B2 })
+    tick()
+    local j = endTurn(A1, nil)
+    ticks(2)
+    eq(j.status, "done", "A1's end: " .. tostring(j.error))
+    eq(j.result.requested, true, "pending")
+    eq(table.concat(j.result.still_to_act, ","), A2 .. "," .. B1 .. "," .. B2, "still to act: the held members too")
+    tick()
+    local r = refs("arena_turn")
+    eq(r[#r].side, "B", "phase 2 side")
+    eq(members(r[#r]), B1, "phase 2: B1")
+end)
+
+test("a held member is still to act, not its turn", function()
+    begin()
+    order = { { A1, B1 } }
+    openAll({ A1, B1 })
+    eq(G.still_to_act(B1), true, "B1 still to act")
+    eq(G.is_my_turn(B1), false, "B1's turn")
+    eq(G.is_my_turn(A1), true, "A1's turn")
+    G.end_requested[A1] = clock
+    eq(G.still_to_act(A1), false, "A1 ended")
+end)

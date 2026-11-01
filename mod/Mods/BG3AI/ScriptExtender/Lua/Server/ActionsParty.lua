@@ -16,10 +16,12 @@ local reg, start, holder, name_of, NULL_GUID = I.reg, I.start, I.holder, I.name_
 -- turn_ended events at once). result.still_to_act lists those members.
 ------------------------------------------------------------------------
 
+-- The rest of char's turn group still to act, held arena members included (live 2026-11-02: counting only whose
+-- turn it is, a phase's last end found nobody waiting and fell to END_IGNORED; the other phase never came).
 local function group_waiting(char)
     local out = {}
-    for _, m in ipairs(G.party()) do
-        if not G.same(m, char) and G.is_my_turn(m) then out[#out + 1] = m end
+    for _, m in ipairs(G.turn_group_members()) do
+        if not G.same(m, char) and G.still_to_act(m) then out[#out + 1] = m end
     end
     return out
 end
@@ -51,7 +53,7 @@ reg("end_turn", function(args)
             -- shared turn": still active, no RequestedEndTurn, only our pending flag) get their EndTurn again once
             -- nobody else in the group is really acting.
             local stale, others = {}, false
-            for _, m in ipairs(G.party()) do
+            for _, m in ipairs(G.turn_group_members()) do
                 if not G.same(m, char) then
                     local a, r = G.tb_flags(m)
                     if a and not r then
