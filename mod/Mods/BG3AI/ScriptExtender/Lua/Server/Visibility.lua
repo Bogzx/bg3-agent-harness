@@ -101,6 +101,8 @@ end
 ------------------------------------------------------------------------
 
 function V.party()
+    local side = U.side()
+    if side then return BG3AI.Arena.team(side) end -- a side's party is its team
     local out, seen = {}, {}
     local ok, rows = pcall(function() return Osi.DB_PartyMembers:Get(nil) end)
     if ok and rows then
@@ -169,6 +171,16 @@ end
 function V.frame() return BG3AI.Nav and BG3AI.Nav.frame or nil end
 function V.context()
     local f = V.frame()
+    local side = U.side()
+    if side then -- a side's context, cached per (frame, side)
+        V.sideCtx = V.sideCtx or {}
+        local c = V.sideCtx[side]
+        if f and c and c.frame == f then return c.ctx end
+        local party, isParty = V.party()
+        local ctx = { party = party, is_party = isParty, observers = V.observers(party), rules = V.rules() }
+        V.sideCtx[side] = { frame = f, ctx = ctx }
+        return ctx
+    end
     if f and V.ctxFrame == f and V.ctxCache then return V.ctxCache end
     local party, isParty = V.party()
     local ctx = {
@@ -311,7 +323,7 @@ function V.characterVisible(ctx, uuid, e, pos)
         -- Strict: an enemy sneaker is only reported once the engine sight says
         -- a party member actually sees it (spot checks feed the viewshed) or a
         -- visible event revealed it.
-        if V.spotted[uuid] then return V.perceived(ctx, uuid, pos) end
+        if U.sided(V, "spotted")[uuid] then return V.perceived(ctx, uuid, pos) end
         for _, o in ipairs(ctx.observers) do
             if truthy(V.osi(Osi.CanSee, o.uuid, uuid)) then return true end
         end
@@ -482,10 +494,11 @@ function V.itemVisible(ctx, uuid, e, pos)
         or V.fixturePerceived(ctx, uuid, e, pos, kind) or V.unboundedPerceived(ctx, uuid, e, pos, kind)
         or V.objectivePerceived(ctx, uuid, pos) then
         if (V.FIXTURE_KINDS[kind] and V.isNamedFixture(uuid)) or kind == "ladder" then
-            V.fixtureSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() }
+            U.sided(V, "fixtureSeen")[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow() }
         end
         if V.STATIC_KINDS[kind] then
-            V.staticSeen[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow(), pos = pos and { pos[1], pos[2], pos[3] } }
+            U.sided(V, "staticSeen")[uuid] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow(),
+                pos = pos and { pos[1], pos[2], pos[3] } }
         end
         return true, kind
     end
@@ -506,7 +519,7 @@ function V.itemKnown(ctx, uuid, e, pos)
     pos = pos or (e and V.pos(e))
     local vis, kind = V.itemVisible(ctx, uuid, e, pos)
     if vis then return true, kind end
-    local m = V.staticSeen[uuid]
+    local m = U.sided(V, "staticSeen")[uuid]
     if not (m and pos and e) or Ext.Utils.MonotonicTime() - m.t > V.SEEN_STATIC_MS or m.level ~= V.levelNow() then
         return false
     end
@@ -533,12 +546,12 @@ function V.noteUsed(char, item, success)
     if not (u and truthy(success) and V.context().is_party[V.uuid(char) or ""]) then return end
     local e = V.entity(u)
     local pos = e and V.pos(e)
-    if pos then V.staticSeen[u] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow(), pos = pos } end
+    if pos then U.sided(V, "staticSeen")[u] = { t = Ext.Utils.MonotonicTime(), level = V.levelNow(), pos = pos } end
 end
 if Ext.Osiris and not V.useListening then
     V.useListening = true
     pcall(Ext.Osiris.RegisterListener, "UseFinished", 3, "after", function(char, item, success)
-        pcall(V.noteUsed, char, item, success)
+        pcall(U.each_side, V.noteUsed, char, item, success) -- each side's own memory (an arena)
     end)
 end
 
@@ -560,7 +573,7 @@ V.PLATE_NAMES = { ["Pressure Plate"] = true, ["Marble Plate"] = true }
 V.FIXTURE_REMEMBER_M = 30.0
 V.fixtureSeen = V.fixtureSeen or {}
 function V.fixtureRemembered(ctx, uuid, pos)
-    local m = V.fixtureSeen[uuid]
+    local m = U.sided(V, "fixtureSeen")[uuid]
     if not (m and pos) or Ext.Utils.MonotonicTime() - m.t > V.FIXTURE_REMEMBER_MS then return false end
     local host = V.osi(Osi.GetHostCharacter)
     if m.level ~= (host and V.osi(Osi.GetRegion, host) or nil) then return false end

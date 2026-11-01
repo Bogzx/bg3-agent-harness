@@ -79,6 +79,8 @@ function G.entity(uuid)
 end
 
 function G.party()
+    local side = U.side()
+    if side then return (BG3AI.Arena.team(side)) end -- a side's party is its team
     local out = {}
     local ok, rows = pcall(function() return Osi.DB_PartyMembers:Get(nil) end)
     if ok and rows then
@@ -100,6 +102,8 @@ function G.is_party(uuid)
 end
 
 function G.host()
+    local side = U.side()
+    if side then return BG3AI.Arena.lead(side) end -- a side's default actor is its own (Arena.lead)
     return G.guid(G.q("GetHostCharacter"))
 end
 
@@ -264,18 +268,32 @@ G.TURN_BURST_MS = 1000            -- starts this close together are one turn (ne
 -- turn shut for good: this long after the other side's start, the flags decide again.
 G.TURN_MOVED_TTL_MS = 60000
 
+-- In an arena (listener time, the team tables): a team member's start is its own; for each side, a start by
+-- anyone not on that side is "the other side's", kept under "<combat>|<side>".
 function G.note_turn_started(char)
     local g = G.guid(char)
     if not g then return end
     local c = G.q("CombatGetGuidFor", g)
     if not c then return end
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active() then
+        local mine = Ar.side_of(g)
+        if mine then G.turn_start[g] = { t = now_ms(), combat = c } end
+        for _, s in ipairs(Ar.SIDES) do
+            if s ~= mine then G.foe_start[c .. "|" .. s] = now_ms() end
+        end
+        return
+    end
     if G.is_party(g) then G.turn_start[g] = { t = now_ms(), combat = c } else G.foe_start[c] = now_ms() end
 end
 
 function G.turn_moved_on(uuid)
     local g = G.guid(uuid) or uuid
+    local Ar = BG3AI.Arena
+    local side = Ar and Ar.active() and g and Ar.side_of(g)
+    if side and Ar.held(g) then return true end -- a turn group across the teams: the other side acts first
     local s = g and G.turn_start[g]
-    local f = s and G.foe_start[s.combat]
+    local f = s and G.foe_start[side and (s.combat .. "|" .. side) or s.combat]
     return f ~= nil and f - s.t > G.TURN_BURST_MS and now_ms() - f < G.TURN_MOVED_TTL_MS
 end
 
@@ -369,10 +387,21 @@ function G.turn_requested_end(uuid)
     return (okr and r == true) or G.end_pending(uuid)
 end
 
+-- An argument that must be one of the caller's team (actor, leader, `to`, an item's holder): in an arena, a
+-- character of the other side (or no side) is refused by name.
+function G.on_my_side(g)
+    local side = U.side()
+    if side and BG3AI.Arena.side_of(g) ~= side then
+        local V = BG3AI.Visibility
+        G.refuse(tostring(V and V.name(g) or g) .. " is not on your side")
+    end
+end
+
 -- The actor must be a living, standing, on-stage party member.
 function G.actor(char)
     local g = G.guid(char)
     if not g then G.refuse("no character given") end
+    G.on_my_side(g)
     if not G.is_party(g) then G.refuse("not a party member") end
     if not b(G.q("IsOnStage", g)) then G.refuse("character is not present") end
     if G.is_dead(g) then G.refuse("character is dead") end
@@ -390,6 +419,11 @@ function G.combat_gate(char, mode)
     if not G.in_combat(char) then return end
     if mode == "no_combat" then
         G.refuse("not available during combat through this action (use the UI)")
+    end
+    local side = U.side()
+    if side then
+        local acting = BG3AI.Arena.acting_side()
+        if acting and acting ~= side then G.refuse("not your turn (side " .. acting .. " is acting)") end
     end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
 end

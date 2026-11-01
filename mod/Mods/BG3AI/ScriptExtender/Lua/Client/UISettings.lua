@@ -180,6 +180,9 @@ local function controlledUuid() return (G.selected()) end
 -- another member; the bridge confirms act.select against this (Game._select). holders: only when several.
 RPC.register("ui.selected", function()
     local u, holders = G.selected()
+    -- the HUD's selection belongs to no side: a side reads it only when it is one of its own characters
+    local side = RPC.side and RPC.side()
+    if side and BG3AI.Arena.member_side(u) ~= side then return { uuid = nil } end
     return { uuid = u, holders = #holders > 1 and holders or nil }
 end)
 
@@ -220,6 +223,10 @@ end
 RPC.register("ui.reactions", function(args)
     local sel = controlledUuid()
     local uuid = args.char or sel
+    local side = RPC.side and RPC.side()
+    if side and BG3AI.Arena.member_side(uuid) ~= side then
+        error(tostring(BG3AI.Arena.name_of(uuid) or uuid) .. " is not on your side")
+    end
     if uuid ~= sel then error("char is not the selected character; select it first (act.select)") end
     local list, dc, aligned = reactionList(uuid)
     local function view(l)
