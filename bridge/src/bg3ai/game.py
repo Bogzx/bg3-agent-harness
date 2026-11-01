@@ -93,8 +93,10 @@ class Game:
     """
 
     def __init__(self, host: str = "127.0.0.1", port: int = 9998, pool_max: int | None = None,
-                 job_push: bool = True):
+                 job_push: bool = True, side: str | None = None):
         self.host = host
+        # The team this server plays in a two-team match (settings.side, $BG3AI_SIDE): sent with every op (envelope).
+        self.side = side
         self.port = port
         self.pool_max = self.pool_cap = pool_max or POOL_MAX
         self._shrunk_at: float | None = None  # when a refused connect lowered pool_max below pool_cap
@@ -276,6 +278,14 @@ class Game:
     _busy_clock = staticmethod(time.monotonic)
     _busy_sleep = staticmethod(time.sleep)
 
+    def envelope(self, op: str, args: dict | None) -> str:
+        """The JSON request for one mod op: {"op", "args"}, plus "side" when this server plays a side (the mod then
+        answers from that team's view and refuses acting out of its turn or with the other team's characters)."""
+        req: dict[str, Any] = {"op": op, "args": args or {}}
+        if self.side:
+            req["side"] = self.side
+        return json.dumps(req, separators=(",", ":"))
+
     def rpc(self, op: str, args: dict[str, Any] | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         if context != "client":
             return self._rpc_once(op, args, context, timeout)
@@ -290,7 +300,7 @@ class Game:
         return getattr(self._tl, "busy_s", 0.0)
 
     def _rpc_once(self, op: str, args: dict | None, context: str, timeout: float) -> Any:
-        payload = json.dumps({"op": op, "args": args or {}}, separators=(",", ":"))
+        payload = self.envelope(op, args)
         t0 = time.time()
         try:
             raw = self.eval(_long_bracket(payload), context=context, timeout=timeout)
@@ -452,8 +462,7 @@ class Game:
         try:
             if not calls:
                 return [], [], False
-            parts = [_long_bracket(json.dumps({"op": op, "args": args or {}}, separators=(",", ":")), "R")
-                     for op, args in calls]
+            parts = [_long_bracket(self.envelope(op, args), "R") for op, args in calls]
             code = "local R=Mods.BG3AI.BG3AI.rpc return '['.." + "..','..".join(parts) + "..']'"
             t0 = time.time()
             try:

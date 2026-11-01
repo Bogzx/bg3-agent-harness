@@ -75,7 +75,7 @@ class Server(MCPServer):
 mcp = Server("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
-game = Game(port=SETTINGS.port, pool_max=SETTINGS.rpc_conns, job_push=SETTINGS.job_push)
+game = Game(port=SETTINGS.port, pool_max=SETTINGS.rpc_conns, job_push=SETTINGS.job_push, side=SETTINGS.side)
 H = Handles()
 DELTA = delta.TRACKER.bind(H)  # the agent's last look; get_status/look/get_map diff against it
 METRICS = metrics.Recorder.from_env(RUNTIME)  # $BG3AI_METRICS_PATH (set by the runner) or runtime/metrics.jsonl
