@@ -692,14 +692,15 @@ V.memory = V.memory or {}
 V.MEMORY_CAP = 200
 
 function V.remember(uuid, name, pos, relation)
-    V.memory[uuid] = { name = name, pos = pos, relation = relation, t = Ext.Utils.MonotonicTime(), level = currentLevel() }
+    U.sided(V, "memory")[uuid] = { name = name, pos = pos, relation = relation, t = Ext.Utils.MonotonicTime(),
+        level = currentLevel() }
 end
 
 -- The party's last sight of one character on this level: {pos, ago_s} or nil
 -- (what get_nearby lists as REMEMBERED; the refusal of an out-of-sight target
 -- names it, Guard.target_visible).
 function V.lastSeen(uuid)
-    local m = uuid and V.memory[uuid]
+    local m = uuid and U.sided(V, "memory")[uuid]
     if not m or not m.pos or m.level ~= currentLevel() then return nil end
     return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
 end
@@ -719,7 +720,7 @@ function V.recall(exclude, around, radius)
     local out = {}
     local now = Ext.Utils.MonotonicTime()
     local lvl = currentLevel()
-    for u, m in pairs(V.memory) do
+    for u, m in pairs(U.sided(V, "memory")) do
         if not exclude[u] and m.level == lvl and m.pos and (not around or U.dist(around, m.pos) <= radius) then
             out[#out + 1] = { uuid = u, name = m.name, relation = m.relation, last_pos = U.vec(m.pos, 1),
                 ago_s = math.floor((now - m.t) / 1000) }

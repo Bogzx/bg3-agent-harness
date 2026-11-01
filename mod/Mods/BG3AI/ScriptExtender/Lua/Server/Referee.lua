@@ -56,12 +56,14 @@ function R.record(ev, data)
 end
 
 -- Party membership, cached for 250 ms (a trade fires ~8 events in one frame).
-local partyCache, partyTime = nil, -1e9
+-- Keyed on the side too: the referee records for no side (both teams), but a call made as a side gets that side's.
+local partyCache, partyTime, partySide = nil, -1e9, nil
 local function isParty(u)
     local t = now_ms()
-    if not partyCache or t - partyTime > 250 then
+    local side = U.side()
+    if not partyCache or t - partyTime > 250 or side ~= partySide then
         local _, seen = V.party()
-        partyCache, partyTime = seen or {}, t
+        partyCache, partyTime, partySide = seen or {}, t, side
     end
     return u ~= nil and partyCache[u] == true
 end
@@ -91,7 +93,7 @@ local function listen(ev, arity, fn)
     R.fired[key] = R.fired[key] or 0
     local ok, err = pcall(Ext.Osiris.RegisterListener, ev, arity, "after", function(...)
         R.fired[key] = R.fired[key] + 1
-        local ok2, err2 = pcall(fn, ...)
+        local ok2, err2 = pcall(U.with_side, nil, fn, ...) -- no side: the records are the harness's, whenever fired
         if not ok2 then Ext.Utils.PrintWarning("[BG3AI] referee " .. key .. ": " .. tostring(err2)) end
     end)
     R.registered[key] = ok and true or tostring(err)

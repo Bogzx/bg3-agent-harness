@@ -133,11 +133,10 @@
    "W631": 12
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Visibility.lua": {
-   "W212": 1,
-   "W631": 1
+   "W212": 1
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/VisibilityObjects.lua": {
-   "W631": 6
+   "W631": 5
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Shared/HotbarMap.lua": {
    "W512": 1,

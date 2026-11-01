@@ -52,4 +52,40 @@ function U.require(path)
     return ok
 end
 
+-- Sides (an arena: two teams, two bridges), as the mod's modules call them. Shared/RPC.lua implements them; these
+-- shims keep a module working without it (a stubbed RPC: no side, today's path).
+local function rpcFn(name)
+    local R = BG3AI.RPC
+    return R and R[name]
+end
+function U.side()
+    local f = rpcFn("side")
+    return f and f() or nil
+end
+function U.with_side(side, fn, ...)
+    local f = rpcFn("with_side")
+    if f then return f(side, fn, ...) end
+    return fn(...)
+end
+function U.each_side(fn, ...)
+    local f = rpcFn("each_side")
+    if f then return f(fn, ...) end
+    return fn(...)
+end
+function U.sided(owner, key)
+    local f = rpcFn("sided")
+    if f then return f(owner, key) end
+    return owner[key]
+end
+function U.sget(owner, key)
+    local f = rpcFn("sget")
+    if f then return f(owner, key) end
+    return owner[key]
+end
+function U.sset(owner, key, v)
+    local f = rpcFn("sset")
+    if f then return f(owner, key, v) end
+    owner[key] = v
+end
+
 return U

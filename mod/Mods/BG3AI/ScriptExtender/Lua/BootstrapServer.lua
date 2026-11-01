@@ -3,6 +3,7 @@ BG3AI.VERSION = "0.1.0"
 Ext.Require("Shared/RPC.lua")
 Ext.Require("Shared/Util.lua")
 Ext.Require("Shared/Mem.lua")
+Ext.Require("Shared/Arena.lua")
 local U = BG3AI.Util
 
 -- Server modules: fair state (visibility-filtered), events, guarded actions.
@@ -17,6 +18,7 @@ for _, path in ipairs({
     "Server/Referee.lua", -- harness only, never an agent tool (B-mod)
     "Server/RollLog.lua", -- harness only, never an agent tool (B-mod)
     "Server/Scenario.lua", -- harness only, refused without BG3AI_SCENARIO_SETUP=1 (B-mod)
+    "Server/Arena.lua", -- harness only, refused without BG3AI_ARENA=1; inert until an arena begins
 }) do
     U.require(path)
 end

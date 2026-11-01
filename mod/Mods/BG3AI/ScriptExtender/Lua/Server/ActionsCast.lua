@@ -606,13 +606,13 @@ reg("cast", function(args)
                     job.began = true -- the engine walks into range / the jump took off
                 elseif RPC.now_ms() - job.ordered_ms > no_start_ms then
                     local now = RPC.now_ms()
-                    local rx = combat and not job.ui and A.react_seen
+                    local rx = combat and not job.ui and U.sget(A, "react_seen")
                     if rx and rx.t < job.ordered_ms - A.CAST_HIT_WINDOW_MS then rx = nil end
                     if rx and now - job.ordered_ms < A.CAST_REACT_HOLD_MS
                         and (not rx.done or now - rx.done < A.CAST_REACT_SETTLE_MS) then
                         return -- an enemy's reaction to it still plays: the game may start ours after it
                     end
-                    local hit = combat and not job.ui and A.hit_ms[G.guid(char)]
+                    local hit = combat and not job.ui and U.sided(A, "hit_ms")[G.guid(char)]
                     if hit and hit.t < job.ordered_ms - A.CAST_HIT_WINDOW_MS then hit = nil end
                     local spent = rx and A.cost_spent(char, check)
                     if not hit and rx and not spent then hit = { t = rx.t, why = A.react_name(rx) } end

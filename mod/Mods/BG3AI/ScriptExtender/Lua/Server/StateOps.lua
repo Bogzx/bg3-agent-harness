@@ -229,7 +229,8 @@ timed("state.entity", function(args)
     if comp(e, "ServerCharacter") then
         if ctx.is_party[u] then return partyBrief(ctx, u, selectedCharacter(ctx.party)) end
         if not V.characterVisible(ctx, u, e) then
-            local m, seen = V.memory[u], V.lastSeen(u) -- this level only (a position elsewhere leads nowhere)
+            -- this level only (a position elsewhere leads nowhere)
+            local m, seen = U.sided(V, "memory")[u], V.lastSeen(u)
             if m and seen then return { uuid = u, name = m.name, visible = false, last_pos = seen.pos, ago_s = seen.ago_s } end
             error("not visible", 0)
         end
