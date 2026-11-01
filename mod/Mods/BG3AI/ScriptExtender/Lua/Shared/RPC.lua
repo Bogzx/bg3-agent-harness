@@ -315,7 +315,7 @@ local function own_job(id)
     local job = RPC.jobs[tonumber(id)]
     if not job then error("no such job " .. tostring(id)) end
     local side = RPC.side()
-    if side and job.side ~= side then error("not your job") end
+    if side and job.side ~= side then error("not your job", 0) end
     return job
 end
 

@@ -180,7 +180,10 @@ function Ar.check_end()
     local st = Ar.state
     if st.ended then return end
     local a, b = Ar.wiped("A"), Ar.wiped("B")
-    if a or b then Ar.finish((a and b) and nil or (a and "B" or "A"), "wipe") end -- both at once: no winner
+    if not (a or b) then return end
+    local winner -- both at once: no winner
+    if not (a and b) then winner = a and "B" or "A" end
+    Ar.finish(winner, "wipe")
 end
 
 function Ar.turn_started(char)
@@ -219,7 +222,7 @@ end
 -- Begin a match with these teams ({A = {uuid x4}, B = {uuid x4}}): the setup op calls it once the teams stand. The
 -- client gets the team uuids and display names.
 function Ar.begin(teams)
-    if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment") end
+    if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
     local t, names = {}, {}
     for _, s in ipairs(Ar.SIDES) do
         t[s], names[s] = {}, {}
@@ -228,7 +231,7 @@ function Ar.begin(teams)
             t[s][#t[s] + 1] = g
             names[s][#names[s] + 1] = V.name(g)
         end
-        if #t[s] == 0 then error("team " .. s .. " is empty") end
+        if #t[s] == 0 then error("team " .. s .. " is empty", 0) end
     end
     RPC.clear_sides()
     Ar.state = { teams = t, names = names, round = 0, started = now_ms() }
@@ -254,8 +257,8 @@ end
 
 local function op(name, fn)
     RPC.register(name, function(args)
-        if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment") end
-        if RPC.Ctx.side then error("arena ops are the harness's (no side)") end
+        if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
+        if RPC.Ctx.side then error("arena ops are the harness's (no side)", 0) end
         return fn(args or {})
     end)
 end
@@ -264,9 +267,9 @@ op("arena.status", function() return Ar.status() end)
 
 -- The runner's end (caps, forfeits, faults): {reason, winner?}; a match the mod already ended keeps that end.
 op("arena.end", function(args)
-    if not Ar.state then error("no arena") end
+    if not Ar.state then error("no arena", 0) end
     local w = args.winner
-    if w ~= nil and w ~= "A" and w ~= "B" then error("winner must be A or B") end
+    if w ~= nil and w ~= "A" and w ~= "B" then error("winner must be A or B", 0) end
     Ar.finish(w, tostring(args.reason or "aborted"))
     return Ar.status()
 end)

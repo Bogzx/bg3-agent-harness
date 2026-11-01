@@ -225,7 +225,7 @@ RPC.register("ui.reactions", function(args)
     local uuid = args.char or sel
     local side = RPC.side and RPC.side()
     if side and BG3AI.Arena.member_side(uuid) ~= side then
-        error(tostring(BG3AI.Arena.name_of(uuid) or uuid) .. " is not on your side")
+        error(tostring(BG3AI.Arena.name_of(uuid) or uuid) .. " is not on your side", 0)
     end
     if uuid ~= sel then error("char is not the selected character; select it first (act.select)") end
     local list, dc, aligned = reactionList(uuid)
