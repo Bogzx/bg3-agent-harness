@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/arena-facts.v1.schema.json",
+  "title": "The arena referee's facts.jsonl events, a facts v1 extension",
+  "description": "The three events the harness writes from the referee (harness-only, never seen by either agent) into a match's one facts.jsonl, next to the facts v1 records (packages/harness/schemas/facts.v1.schema.json: v, kind, t, game_t, at). bg3bench.arena.grade reads them. Sides are A and B; a player is the model a side's client plays (\"<client>/<model slug>\", as the pairing planner names it).",
+  "type": "object",
+  "required": ["v", "kind", "t", "ev"],
+  "$defs": {
+    "side": {"enum": ["A", "B"]},
+    "name": {"type": "string", "minLength": 1},
+    "fraction": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "properties": {
+    "v": {"const": 1},
+    "kind": {"const": "event"},
+    "t": {"type": "number"},
+    "game_t": {"type": ["number", "null"], "minimum": 0},
+    "at": {"type": "number"},
+    "ev": {"enum": ["arena_start", "arena_turn", "arena_end"]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"ev": {"const": "arena_start"}}},
+      "then": {
+        "description": "The match began: once, after the arena setup and before the first turn.",
+        "required": ["arena", "seed", "teams", "sides"],
+        "properties": {
+          "arena": {"type": "string", "minLength": 1, "description": "the arena file's name"},
+          "seed": {"type": "integer", "minimum": 0, "description": "the dice seed the mod applied"},
+          "teams": {
+            "type": "object",
+            "required": ["A", "B"],
+            "additionalProperties": false,
+            "properties": {
+              "A": {"type": "array", "items": {"$ref": "#/$defs/name"}},
+              "B": {"type": "array", "items": {"$ref": "#/$defs/name"}}
+            },
+            "description": "each side's characters, in the arena file's order"
+          },
+          "sides": {
+            "type": "object",
+            "required": ["A", "B"],
+            "additionalProperties": false,
+            "properties": {"A": {"$ref": "#/$defs/name"}, "B": {"$ref": "#/$defs/name"}},
+            "description": "the player of each side"
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"ev": {"const": "arena_turn"}}},
+      "then": {
+        "description": "A character's turn began (the game's TurnStarted).",
+        "required": ["side", "character", "round"],
+        "properties": {
+          "side": {"$ref": "#/$defs/side"},
+          "character": {"$ref": "#/$defs/name"},
+          "round": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"ev": {"const": "arena_end"}}},
+      "then": {
+        "description": "The match ended: once. wipe: every character of the loser is down or dead at a turn boundary; round_cap, wall_cap: the higher HP fraction wins, an exact tie is a draw (winner null); abort, fault: the harness ended it (an invalid match).",
+        "required": ["winner", "rounds", "hp_left_A", "hp_left_B", "reason"],
+        "properties": {
+          "winner": {"oneOf": [{"$ref": "#/$defs/side"}, {"type": "null"}]},
+          "rounds": {"type": "integer", "minimum": 0, "description": "rounds begun"},
+          "hp_left_A": {"$ref": "#/$defs/fraction", "description": "side A's summed current HP over its summed max HP"},
+          "hp_left_B": {"$ref": "#/$defs/fraction", "description": "side B's summed current HP over its summed max HP"},
+          "reason": {"enum": ["wipe", "round_cap", "wall_cap", "abort", "fault"]}
+        }
+      }
+    }
+  ]
+}

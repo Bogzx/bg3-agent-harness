@@ -1,0 +1,18 @@
+{
+  "schema": "arena.v1",
+  "name": "draft_open_field",
+  "title": "Open field, four against four (draft)",
+  "about": "Two teams of four start about 20 m apart on open ground with no NPCs or story triggers near. A placeholder: the save, the level and the spawn points come from the arena spike.",
+  "draft": "placeholder: no save, level or spawn points measured yet",
+  "save": {"name": null, "sha1": null},
+  "location": {"level": "WLD_Main_A", "spawns": {"A": [0.0, 0.0, 0.0], "B": [20.0, 0.0, 0.0]}},
+  "teams": {
+    "A": [{"name": "Karlach"}, {"name": "Shadowheart"}, {"name": "Astarion"}, {"name": "Gale"}],
+    "B": [{"name": "Lae'zel"}, {"name": "Wyll"}, {"name": "Halsin"}, {"name": "Minthara"}]
+  },
+  "seed": 1001,
+  "round_cap": 20,
+  "wall_cap_min": 30,
+  "condition": "rules",
+  "tools_off": "arena-v1"
+}
