@@ -28,6 +28,9 @@ BG3AI_SCENARIO_SETUP=1 (setup's scn.seed; nothing else in the environment):
     $P gameover                                  # q6: the avatar downed, then dead (a fresh load + setup + hostile)
     $P react                                     # q7: an opportunity attack, who gets the prompt, ui.react
     $P npc                                       # q8: one team-B member made an NPC (a fresh load + setup + hostile)
+    $P groups [--split write|user|none|phases] [--list next|current] [--user-b N]
+                                                 # q10: the turn groups; a split by side tried, the next round
+                                                 #     watched: one side per open turn, in the rolled order?
     $P all ...setup args...                      # conns, roster, factions, setup, sides, hostile, act, tie, turns,
                                                  # react, end
 `--dry-run` prints the plan of a step only (no game). Evidence: runtime/probes/arena-s0/ (--out), one
@@ -57,7 +60,7 @@ TURN_WAIT_S = 25.0  # after an end_turn: the next TurnStarted within this
 REACH_M = 2.5  # q7: the mover counts as in melee of the enemy within this
 CONNS = 6  # q1: debugger connections opened at once (two bridges with their side connections + the harness)
 
-from probe_arena_lua import INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
+from probe_arena_lua import GROUPS, INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
 
 # q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams. The debugger evaluates in
 # its own env: the mod's table is Mods.BG3AI.BG3AI there (a bare BG3AI is nil).
@@ -75,7 +78,7 @@ CLIENT_ARENA = (
 
 
 def lua(v: Any) -> str:
-    """A Lua literal for a str / number / bool / None / list (JSON's string escapes are valid Lua for these)."""
+    """A Lua literal for a str / number / bool / None / list / dict (JSON's string escapes are valid Lua for these)."""
     if v is None:
         return "nil"
     if isinstance(v, bool):
@@ -84,6 +87,8 @@ def lua(v: Any) -> str:
         return repr(v)
     if isinstance(v, (list, tuple)):
         return "{" + ", ".join(lua(x) for x in v) + "}"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"[{lua(k)}] = {lua(x)}" for k, x in v.items()) + "}"
     return json.dumps(str(v))
 
 
@@ -128,6 +133,7 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     judge_conns,
     judge_end,
     judge_gameover,
+    judge_groups,
     judge_hostile,
     judge_npc,
     judge_party,
@@ -407,6 +413,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
 
     def enemy_matrix(self, teams: dict[str, Any]) -> dict[str, Any]:
         pairs = [("AB", x, y) for x in teams["A"] for y in teams["B"]]
+        pairs += [("BA", y, x) for x in teams["A"] for y in teams["B"]]
         pairs += [(s + s, x, y) for s in SIDES for x in teams[s] for y in teams[s] if x != y]
         code = "local o = {}\n" + "".join(
             f'o[{lua(f"{k}:{x}>{y}")}] = P.q("IsEnemy", {lua(x)}, {lua(y)})\n' for k, x, y in pairs
@@ -807,6 +814,73 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         self.write("q5-tie", {"question": "q5-tie", "verdict": verdict, "why": why, **r})
         return r
 
+    def mod_open(self, teams: dict[str, Any]) -> list[dict[str, Any]]:
+        """The 8's facts the mod's guard lets act now (Guard.is_my_turn: open, not ended, not held for the other
+        side)."""
+        allu = teams["A"] + teams["B"]
+        us = self.ev(
+            f"local G = {MOD}.Guard\nlocal o = {{}}\n"
+            f"for _, u in ipairs({lua(allu)}) do if G.is_my_turn(u) then o[#o + 1] = u end end\nreturn P.js(o)"
+        )
+        fs = self.facts(allu)
+        return [fs[u] for u in us if u in fs] if isinstance(us, list) else []
+
+    def turn_groups(self, u: str) -> dict[str, Any]:
+        r = self.ev(GROUPS + f"return P.js(P.turn_groups({lua(u)}))")
+        return r if isinstance(r, dict) else {"error": str(r)}
+
+    def groups(self, split: str, which: str, user_b: int | None, max_turns: int = 20) -> dict[str, Any]:
+        """q10: the turn groups read (each group's Team, initiative, members with their CombatTeam, CombatGroupId,
+        roll and user), a split tried, then the round in progress ended (Osi EndTurn on every open turn, past the
+        mod's guard) and the next round watched whole: which turns open, for whom. --split write: rewrite the
+        `which` list's cross-team groups into per-side runs (P.split_groups); user: AssignToUser(user_b, each team-B
+        member); none: the baseline; phases: no engine change, the mod's arena begun and its view judged (a turn =
+        the members the mod's guard lets act, ended through act.end_turn), the arena reset after."""
+        teams = self.teams()
+        a1 = teams["A"][0]
+        sides = {u: s for s in SIDES for u in teams[s]}
+        m = self.mark()
+        r: dict[str, Any] = {"split": split, "list": which, "before": self.turn_groups(a1)}
+        phases = split == "phases"
+        if phases:
+            t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
+            r["write"] = self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.begin({t})"), "server")
+        elif split == "write":
+            r["write"] = self.ev(GROUPS + f"return P.js(P.split_groups({lua(a1)}, {lua(sides)}, {lua(which)}))")
+        elif split == "user":
+            r["write"] = [self.call("AssignToUser", [user_b, u]) for u in teams["B"]]
+        r["after_write"] = self.turn_groups(a1)
+        r0 = r["before"].get("round")
+        r["judged_round"] = None if r0 is None else r0 + 1  # the first round that starts after the split
+        turns: list[dict[str, Any]] = []
+        cur = self.mod_open(teams) if phases else self.active(teams)
+        for _ in range(max_turns):
+            rnd = self.turn_groups(a1).get("round")
+            if rnd is None or r["judged_round"] is None or rnd > r["judged_round"]:
+                break
+            if not cur:
+                cur = self.next_turn(teams, self.mark())
+                cur = self.mod_open(teams) if phases else cur
+                if not cur:
+                    break
+                continue
+            turns.append({"round": rnd, "open": [f["uuid"] for f in cur], "names": [f.get("name") for f in cur]})
+            mark = self.mark()
+            if phases:  # inside a shared group the next side opens without a TurnStarted
+                r.setdefault("ends", []).extend(self.end_turns([f["uuid"] for f in cur]))
+                self.sleep(SETTLE_S)
+                cur = self.mod_open(teams)
+                continue
+            for f in cur:
+                self.call("EndTurn", [f["uuid"]])
+            cur = self.next_turn(teams, mark)
+        if phases:
+            r["reset"] = self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.reset()"), "server")
+        r.update(turns=turns, after_round=self.turn_groups(a1), events=self.since(m))
+        verdict, why = judge_groups(teams, r)
+        self.write("q10-groups", {"question": "q10-groups", "verdict": verdict, "why": why, **r})
+        return r
+
     def npc(self, idle_s: float) -> dict[str, Any]:
         teams = self.teams()
         m = self.mark()
@@ -849,6 +923,10 @@ PLAN = {
     "game_over screen",
     "gameover": "the avatar alone: ApplyDamage to 0 (downed), then Die; game_over screen after each",
     "npc": "MakeNPC one team-B member; its turn idle (AI?); act.cast on it (refused?); MakePlayer back",
+    "groups": "turn groups read (Team, initiative, members' CombatTeam/CombatGroupId/roll/user); --split write: "
+    "the --list groups rewritten into per-side runs (+ CombatTeam of later runs); user: AssignToUser(--user-b, team "
+    "B); none: baseline; Osi EndTurn on open turns to the judged round's end; its turns: one side each, as rolled? "
+    "phases: no engine change, Arena.begin, a turn = who Guard.is_my_turn lets act, ended by act.end_turn; reset",
 }
 
 
@@ -876,6 +954,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--conns", type=int, default=CONNS)
     ap.add_argument("--pinned-mods", default="", help="comma list of mod names/uuids the load may hold")
     ap.add_argument("--force", action=argparse.BooleanOptionalAction, default=True, help="tie: force one if none")
+    ap.add_argument("--split", choices=["write", "user", "none", "phases"], default="write", help="groups: what to try")
+    ap.add_argument("--list", dest="which", choices=["next", "current"], default="next", help="groups: which list")
+    ap.add_argument("--user-b", type=int, help="groups --split user: the user id team B is assigned to")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     steps = ALL if a.step == "all" else [a.step]
@@ -883,6 +964,8 @@ def main(argv: list[str] | None = None) -> int:
         for s in steps:
             print(f"{s}: {PLAN[s]}")
         return 0
+    if a.step == "groups" and a.split == "user" and a.user_b is None:
+        ap.error("groups --split user needs --user-b")
     if "setup" in steps and not (a.team_a and a.team_b and a.spot_a and a.spot_b):
         ap.error("setup needs --team-a, --team-b (4 names each), --spot-a and --spot-b")
     sys.path.insert(0, str(REPO / "bridge" / "src"))
@@ -924,6 +1007,8 @@ def main(argv: list[str] | None = None) -> int:
             ar.gameover()
         elif s == "npc":
             ar.npc(a.idle_s)
+        elif s == "groups":
+            ar.groups(a.split, a.which, a.user_b)
     return 0
 
 
