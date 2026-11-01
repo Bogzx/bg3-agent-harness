@@ -5,6 +5,15 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-30: do_actions stops at a 90 s time budget
+
+- do_actions (the blocking call) stops before its next step once it has run 90 s (`actq.BATCH_BUDGET_S`), and a
+  wait step is cut to the time left ("wait: waited 6.0s of 25s (time budget)"). The result ends
+  "STOPPED: time budget (90 s per call), N steps left; not run: …". The clients give up on an MCP request after
+  110 s: six 30 s waits failed the call as "MCP request timed out" while the bridge ran the batch on for 70 s more.
+  queue_actions (do_actions wait=false) has no budget: it returns at once and runs while the agent plays on. Its
+  description names the budget.
+
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 
 - feed_gale donates through the window's DonateItemsCommand, clicks the window's X (Gale absorbs the item when it
