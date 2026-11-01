@@ -181,6 +181,9 @@ test("switch off: a request's side changes nothing (same bytes), no event tags, 
     eq(raw("events.since", "{seq=0}", "A"), raw("events.since", "{seq=0}"), "events.since")
     eq(raw("job.poll", "{id=" .. j.id .. "}", "B"), raw("job.poll", "{id=" .. j.id .. "}"), "job.poll")
     eq(raw("state.status", "{}", "A"), raw("state.status", "{}"), "state.status")
+    setTurn(A1, true, false)
+    order = { { A1, B1 } }
+    eq(raw("state.combat", "{}", "B"), raw("state.combat", "{}"), "state.combat")
     eq(as("A", G.is_party, B1), true, "B1 in the party")
 end)
 
