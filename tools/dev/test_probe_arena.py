@@ -16,6 +16,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import probe_arena as pa
+import probe_arena_judges as pj
 
 A = [f"aaaaaaaa-0000-0000-0000-00000000000{i}" for i in range(4)]
 B = [f"bbbbbbbb-0000-0000-0000-00000000000{i}" for i in range(4)]
@@ -66,11 +67,11 @@ class FactionPickTest(unittest.TestCase):
             {"name": "Hero Player2", "osi": "Hero Player2_3", "used": 0, "to_a": 100},
             {"name": "Hero Companion", "osi": "Hero Companion_4", "used": 2, "to_a": 100},
         ]
-        self.assertEqual(pa.pick_faction_b(fs, "Hero Player1_1"), "Hero Player2_3")
+        self.assertEqual(pj.pick_faction_b(fs, "Hero Player1_1"), "Hero Player2_3")
 
     def test_none_without_another_hero_faction(self):
         fs = [{"name": "Hero Player1", "osi": "F_A", "used": 4}, {"name": "Goblin", "osi": "G", "used": 1}]
-        self.assertIsNone(pa.pick_faction_b(fs, "F_A"))
+        self.assertIsNone(pj.pick_faction_b(fs, "F_A"))
 
 
 def facts_ok(u: str, slot: list[float], **kw: Any) -> dict[str, Any]:
@@ -81,9 +82,9 @@ class JudgeTest(unittest.TestCase):
     def test_setup_pass_and_each_failure(self):
         slots = {s: pa.line_slots([0.0, 0.0, 20.0 * i], 4) for i, s in enumerate(pa.SIDES)}
         facts = {u: facts_ok(u, sl) for s in pa.SIDES for u, sl in zip(TEAMS[s], slots[s], strict=True)}
-        self.assertEqual(pa.judge_setup(TEAMS, facts, slots)[0], "PASS")
+        self.assertEqual(pj.judge_setup(TEAMS, facts, slots)[0], "PASS")
         facts[B[2]] = facts_ok(B[2], [50.0, 0.0, 0.0], in_party_db=False, hp=3)
-        v, why = pa.judge_setup(TEAMS, facts, slots)
+        v, why = pj.judge_setup(TEAMS, facts, slots)
         self.assertEqual(v, "FAIL")
         self.assertIn("not in DB_PartyMembers", why)
         self.assertIn("from its slot", why)
@@ -92,12 +93,12 @@ class JudgeTest(unittest.TestCase):
     def test_hostile(self):
         facts = {u: {"combat": "C1"} for u in A + B}
         enemy = {f"AB:{x}>{y}": 1 for x in A for y in B} | {"AA:x>y": 0, "BB:x>y": 0}
-        self.assertEqual(pa.judge_hostile(TEAMS, facts, enemy)[0], "PASS")
-        v, why = pa.judge_hostile(TEAMS, {**facts, B[3]: {"combat": None}}, {**enemy, "BB:x>y": 1})
+        self.assertEqual(pj.judge_hostile(TEAMS, facts, enemy)[0], "PASS")
+        v, why = pj.judge_hostile(TEAMS, {**facts, B[3]: {"combat": None}}, {**enemy, "BB:x>y": 1})
         self.assertEqual(v, "FAIL")
         self.assertIn("enemies within a team: BB:x>y", why)
         self.assertIn("combat guids", why)
-        v, why = pa.judge_hostile(TEAMS, facts, {**enemy, "AB:x>y": 0})
+        v, why = pj.judge_hostile(TEAMS, facts, {**enemy, "AB:x>y": 0})
         self.assertIn("IsEnemy across the teams: 16/17", why)
 
     def test_turns(self):
@@ -106,34 +107,34 @@ class JudgeTest(unittest.TestCase):
             {"uuid": B[0], "group": [B[0]], "round": 1, "initiative": 12},
             {"uuid": A[1], "group": [A[1], A[2]], "round": 1, "initiative": 9},
         ]
-        self.assertEqual(pa.judge_turns(TEAMS, turns, None)[0], "PASS")
+        self.assertEqual(pj.judge_turns(TEAMS, turns, None)[0], "PASS")
         mixed = [*turns, {"uuid": B[1], "name": "Wyll", "group": [B[1], A[3]], "round": 1, "initiative": 5}]
-        self.assertIn("held both sides: Wyll", pa.judge_turns(TEAMS, mixed, None)[1])
+        self.assertIn("held both sides: Wyll", pj.judge_turns(TEAMS, mixed, None)[1])
         disorder = [*turns, {"uuid": B[2], "group": [B[2]], "round": 1, "initiative": 15}]
-        self.assertIn("rounds [1] not in initiative order", pa.judge_turns(TEAMS, disorder, None)[1])
-        self.assertIn("sides ['A'] only", pa.judge_turns(TEAMS, turns[:1], None)[1])
+        self.assertIn("rounds [1] not in initiative order", pj.judge_turns(TEAMS, disorder, None)[1])
+        self.assertIn("sides ['A'] only", pj.judge_turns(TEAMS, turns[:1], None)[1])
         down = {"who": "Gale", "downed": True, "combat_after": False, "turns_after": 2}
-        self.assertIn("after Gale was downed: combat False", pa.judge_turns(TEAMS, turns, down)[1])
+        self.assertIn("after Gale was downed: combat False", pj.judge_turns(TEAMS, turns, down)[1])
         down = {"who": "Gale", "downed": True, "combat_after": True, "turns_after": 2}
-        self.assertEqual(pa.judge_turns(TEAMS, turns, down)[0], "PASS")
+        self.assertEqual(pj.judge_turns(TEAMS, turns, down)[0], "PASS")
 
     def test_ai(self):
         still = {"moved_m": 0.0, "casts": [], "ended_by_itself": False}
-        self.assertEqual(pa.judge_ai([])[0], "OPEN")
-        self.assertEqual(pa.judge_ai([{"name": "Tav", "idle": still}])[0], "PASS")
+        self.assertEqual(pj.judge_ai([])[0], "OPEN")
+        self.assertEqual(pj.judge_ai([{"name": "Tav", "idle": still}])[0], "PASS")
         moved = {"name": "Wyll", "idle": {**still, "moved_m": 3.2}}
-        self.assertIn("Wyll", pa.judge_ai([moved])[1])
-        self.assertEqual(pa.judge_ai([{"name": "Lae", "idle": {**still, "casts": ["Target_X"]}}])[0], "FAIL")
+        self.assertIn("Wyll", pj.judge_ai([moved])[1])
+        self.assertEqual(pj.judge_ai([{"name": "Lae", "idle": {**still, "casts": ["Target_X"]}}])[0], "FAIL")
         # a downed member's turn passes by itself (death saving throw): not the AI
         self.assertEqual(
-            pa.judge_ai([{"name": "Gale", "downed_at_start": True, "idle": {**still, "ended_by_itself": True}}])[0],
+            pj.judge_ai([{"name": "Gale", "downed_at_start": True, "idle": {**still, "ended_by_itself": True}}])[0],
             "PASS",
         )
 
     def test_res_amount_reads_both_shapes(self):
-        self.assertEqual(pa.res_amount({"ActionPoint": {"0": 1}}, "ActionPoint"), 1.0)
-        self.assertEqual(pa.res_amount({"SpellSlot": [2, 1]}, "SpellSlot"), 3.0)
-        self.assertIsNone(pa.res_amount({}, "Movement"))
+        self.assertEqual(pj.res_amount({"ActionPoint": {"0": 1}}, "ActionPoint"), 1.0)
+        self.assertEqual(pj.res_amount({"SpellSlot": [2, 1]}, "SpellSlot"), 3.0)
+        self.assertIsNone(pj.res_amount({}, "Movement"))
 
     def test_act(self):
         def run(mv_after: float, ap_after: float, end: str = "done") -> dict[str, Any]:
@@ -151,51 +152,51 @@ class JudgeTest(unittest.TestCase):
                 "end": {"status": end},
             }
 
-        self.assertEqual(pa.judge_act({"A": run(4.5, 0), "B": run(3, 0)})[0], "PASS")
-        v, why = pa.judge_act({"A": run(9, 0), "B": run(3, 1, end="failed")})
+        self.assertEqual(pj.judge_act({"A": run(4.5, 0), "B": run(3, 0)})[0], "PASS")
+        v, why = pj.judge_act({"A": run(9, 0), "B": run(3, 1, end="failed")})
         self.assertEqual(v, "FAIL")
         self.assertIn("side A move: Movement 9.0 -> 9.0 (not charged)", why)
         self.assertIn("side B cast: ActionPoint 1.0 -> 1.0", why)
         self.assertIn("side B end_turn: failed", why)
-        self.assertIn("side B: no turn reached", pa.judge_act({"A": run(4, 0)})[1])
+        self.assertIn("side B: no turn reached", pj.judge_act({"A": run(4, 0)})[1])
 
     def test_react(self):
-        self.assertEqual(pa.judge_react({"error": "x"})[0], "OPEN")
+        self.assertEqual(pj.judge_react({"error": "x"})[0], "OPEN")
         ok = {"popup_seen": {"open": True}, "answer": {"ok": True}, "reactor_name": "Wyll", "reactor_side": "B"}
-        self.assertEqual(pa.judge_react(ok), ("PASS", "prompt for Wyll (side B), answered by ui.react"))
-        self.assertEqual(pa.judge_react({**ok, "answer": {"ok": False}})[0], "FAIL")
-        self.assertEqual(pa.judge_react({"events": [{"ev": "ReactionInterruptUsed"}]})[0], "OPEN")
-        self.assertEqual(pa.judge_react({"events": []})[0], "FAIL")
+        self.assertEqual(pj.judge_react(ok), ("PASS", "prompt for Wyll (side B), answered by ui.react"))
+        self.assertEqual(pj.judge_react({**ok, "answer": {"ok": False}})[0], "FAIL")
+        self.assertEqual(pj.judge_react({"events": [{"ev": "ReactionInterruptUsed"}]})[0], "OPEN")
+        self.assertEqual(pj.judge_react({"events": []})[0], "FAIL")
 
     def test_end_records_what_the_game_does_after_a_wipe(self):
         base = {"all_down_read": True, "death_save_turns": [{"who": ["Gale"]}, {"who": ["Wyll"]}]}
-        v, why = pa.judge_end({**base, "ended_at": "dead", "end_event": "CombatEnded"})
+        v, why = pj.judge_end({**base, "ended_at": "dead", "end_event": "CombatEnded"})
         self.assertEqual(v, "PASS")
         self.assertIn("death-save turns: 2; combat ended at the dead stage (CombatEnded)", why)
-        self.assertIn("never ended by itself", pa.judge_end(base)[1])
-        self.assertIn("Game Over screen", pa.judge_end({**base, "game_over": "dead"})[1])  # the team's loss, no fault
-        self.assertEqual(pa.judge_end({"all_down_read": False})[0], "FAIL")
+        self.assertIn("never ended by itself", pj.judge_end(base)[1])
+        self.assertIn("Game Over screen", pj.judge_end({**base, "game_over": "dead"})[1])  # the team's loss, no fault
+        self.assertEqual(pj.judge_end({"all_down_read": False})[0], "FAIL")
 
     def test_gameover(self):
-        self.assertEqual(pa.judge_gameover({"dead": True, "game_over": False})[0], "PASS")
-        self.assertEqual(pa.judge_gameover({"dead": True, "game_over": True})[0], "FAIL")
-        self.assertIn("downed alone", pa.judge_gameover({"game_over_downed": True})[1])
-        self.assertEqual(pa.judge_gameover({"dead": False})[0], "OPEN")
+        self.assertEqual(pj.judge_gameover({"dead": True, "game_over": False})[0], "PASS")
+        self.assertEqual(pj.judge_gameover({"dead": True, "game_over": True})[0], "FAIL")
+        self.assertIn("downed alone", pj.judge_gameover({"game_over_downed": True})[1])
+        self.assertEqual(pj.judge_gameover({"dead": False})[0], "OPEN")
 
     def test_conns(self):
         rows = [{"i": i, "connected": True, "answer": "1"} for i in range(6)]
-        self.assertEqual(pa.judge_conns(rows, 6)[0], "PASS")
+        self.assertEqual(pj.judge_conns(rows, 6)[0], "PASS")
         rows[5] = {"i": 5, "connected": False, "error": "ConnectionRefusedError"}
-        self.assertEqual(pa.judge_conns(rows, 6), ("FAIL", "5/6 answered: #5: ConnectionRefusedError"))
+        self.assertEqual(pj.judge_conns(rows, 6), ("FAIL", "5/6 answered: #5: ConnectionRefusedError"))
 
     def test_party_and_pinned_mods(self):
         facts = {u: {"in_party_db": True} for u in A + B}
         mods = [{"name": "GustavDev", "uuid": "g1"}, {"name": "BG3AI", "uuid": "m1"}]
-        v, why = pa.judge_party(TEAMS, facts, mods, None)
+        v, why = pj.judge_party(TEAMS, facts, mods, None)
         self.assertEqual(v, "PASS")
         self.assertIn("2 mods loaded (no pinned list given): GustavDev, BG3AI", why)
-        self.assertEqual(pa.judge_party(TEAMS, facts, mods, ["GustavDev", "m1"])[0], "PASS")
-        v, why = pa.judge_party(TEAMS, {**facts, B[1]: {"name": "Wyll"}}, [*mods, {"name": "PartyLimit"}], ["g1", "m1"])
+        self.assertEqual(pj.judge_party(TEAMS, facts, mods, ["GustavDev", "m1"])[0], "PASS")
+        v, why = pj.judge_party(TEAMS, {**facts, B[1]: {"name": "Wyll"}}, [*mods, {"name": "PartyLimit"}], ["g1", "m1"])
         self.assertEqual(v, "FAIL")
         self.assertIn("not in DB_PartyMembers: Wyll", why)
         self.assertTrue(why.endswith("mods beyond the pinned set: PartyLimit"))  # GustavDev pinned by uuid
@@ -208,22 +209,22 @@ class JudgeTest(unittest.TestCase):
                 [{"uuid": A[1], "initiative": 15}, {"uuid": B[1], "name": "Wyll", "initiative": 15}],
             ]
         }
-        t = pa.tie_info(order, TEAMS)
+        t = pj.tie_info(order, TEAMS)
         self.assertEqual(t["mixed_groups"], [[A[1], "Wyll"]])
         self.assertEqual(t["equal"], [[B[0], A[1]], [A[1], B[1]]])  # never two of one side
         self.assertEqual(t["adjacent"][0], [A[0], B[0], 18])
 
     def test_tie(self):
-        self.assertEqual(pa.judge_tie({"before": {"equal": []}, "force": None})[0], "OPEN")
-        self.assertEqual(pa.judge_tie({"after": {"equal": [[A[0], B[0]]]}})[0], "PASS")
-        v, why = pa.judge_tie({"after": {"equal": [[A[0], B[0]]]}, "shared_turns": [["Tav", "Wyll"]]})
+        self.assertEqual(pj.judge_tie({"before": {"equal": []}, "force": None})[0], "OPEN")
+        self.assertEqual(pj.judge_tie({"after": {"equal": [[A[0], B[0]]]}})[0], "PASS")
+        v, why = pj.judge_tie({"after": {"equal": [[A[0], B[0]]]}, "shared_turns": [["Tav", "Wyll"]]})
         self.assertEqual(v, "FAIL")
         self.assertIn("open together: ['Tav', 'Wyll']", why)
-        self.assertEqual(pa.judge_tie({"before": {"mixed_groups": [["Tav", "Wyll"]]}})[0], "FAIL")
+        self.assertEqual(pj.judge_tie({"before": {"mixed_groups": [["Tav", "Wyll"]]}})[0], "FAIL")
 
     def test_npc(self):
-        self.assertEqual(pa.judge_npc({"act": {"refused": True}, "idle": {"acted": False}})[0], "OPEN")
-        v, why = pa.judge_npc({"act": {"refused": False}, "idle": {"acted": True}})
+        self.assertEqual(pj.judge_npc({"act": {"refused": True}, "idle": {"acted": False}})[0], "OPEN")
+        v, why = pj.judge_npc({"act": {"refused": False}, "idle": {"acted": True}})
         self.assertEqual(v, "FAIL")
         self.assertIn("the game AI acted", why)
 

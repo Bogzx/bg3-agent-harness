@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import itertools
 import json
 import math
 import sys
@@ -46,222 +45,14 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO / "runtime" / "probes" / "arena-s0"
-SIDES = ("A", "B")
-NULL = "NULL_00000000-0000-0000-0000-000000000000"
 HOSTILE = 0  # Osiris relation values: 0 hostile, 50 neutral, 100 allied (DOS2's convention; the probe reads them back)
 LINE_GAP_M = 1.5  # members of a side stand this far apart on a line through their spot
-AT_SPOT_M = 3.0  # a member counts as placed within this of its slot
-MOVED_M = 0.5  # an idle turn's character moved: the game acted for it
 SETTLE_S = 2.0
 TURN_WAIT_S = 25.0  # after an end_turn: the next TurnStarted within this
 REACH_M = 2.5  # q7: the mover counts as in melee of the enemy within this
 CONNS = 6  # q1: debugger connections opened at once (two bridges with their side connections + the harness)
 
-INSTALL = r"""
-local B = Mods.BG3AI.BG3AI
-local P = B.ArenaProbe
-if not P then
-P = { log = {}, n = 0, hooks = {}, t0 = Ext.Utils.MonotonicTime() }
-B.ArenaProbe = P
-local LOG_CAP = 4000
-function P.now() return Ext.Utils.MonotonicTime() - P.t0 end
-function P.uuid(g)
-    if g == nil then return nil end
-    return tostring(g):match("(%x+%-%x+%-%x+%-%x+%-%x+)$")
-end
-function P.name(u)
-    local ok, n = pcall(function() return Ext.Loca.GetTranslatedString(Osi.GetDisplayName(u)) end)
-    if ok and n and n ~= "" then return n end
-    return nil
-end
-function P.js(x)
-    local ok, s = pcall(Ext.Json.Stringify, x, { Beautify = false })
-    if ok then return s end
-    return Ext.Json.Stringify({ error = "unserializable: " .. tostring(s) })
-end
-local function q(fn, ...)
-    local args, n = { ... }, select("#", ...)
-    local ok, v = pcall(function() return Osi[fn](table.unpack(args, 1, n)) end)
-    if ok then return v end
-    return nil
-end
-P.q = q
--- Osi.<fn> with the first argument form the build accepts.
-function P.call(fn, forms)
-    local last
-    for i, form in ipairs(forms) do
-        local ok, r = pcall(function() return Osi[fn](table.unpack(form, 1, form.n or #form)) end)
-        if ok then return { fn = fn, ok = true, form = i, ret = r ~= nil and tostring(r) or nil } end
-        last = tostring(r)
-    end
-    return { fn = fn, ok = false, err = last }
-end
--- First column of a story database (1-3 columns tried).
-function P.col1(db)
-    for n = 1, 3 do
-        local ok, rows = pcall(function() return Osi[db]:Get(table.unpack({}, 1, n)) end)
-        if ok and type(rows) == "table" then
-            local out = {}
-            for _, row in ipairs(rows) do out[#out + 1] = P.uuid(row[1]) end
-            return out
-        end
-    end
-    return nil
-end
-function P.chars()
-    local seen, out = {}, {}
-    for _, db in ipairs({ "DB_PartyMembers", "DB_Players", "DB_Avatars", "DB_Origins" }) do
-        for _, u in ipairs(P.col1(db) or {}) do
-            if u and not seen[u] then seen[u] = true; out[#out + 1] = u end
-        end
-    end
-    return out
-end
-function P.who(s)
-    if P.uuid(s) then return P.uuid(s) end
-    local want = s:lower():gsub("[^%w]", "")
-    for _, u in ipairs(P.chars()) do
-        local n = (P.name(u) or ""):lower():gsub("[^%w]", "")
-        if n ~= "" and n:sub(1, #want) == want then return u end
-    end
-    error("no player, party member or origin named " .. s)
-end
-local function inDb(db, u)
-    for _, v in ipairs(P.col1(db) or {}) do if v == u then return true end end
-    return false
-end
-function P.facts(u)
-    local f = { uuid = u, name = P.name(u) }
-    f.in_party_db, f.in_players_db, f.avatar = inDb("DB_PartyMembers", u), inDb("DB_Players", u), inDb("DB_Avatars", u)
-    f.player, f.party_member, f.controlled = q("IsPlayer", u), q("IsPartyMember", u, 0), q("IsControlled", u)
-    f.user, f.faction, f.base_faction = q("GetReservedUserID", u), q("GetFaction", u), q("GetBaseFaction", u)
-    f.hp, f.max_hp, f.dead = q("GetHitpoints", u), q("GetMaxHitpoints", u), q("IsDead", u)
-    f.downed, f.on_stage, f.immortal = q("HasActiveStatus", u, "DOWNED"), q("IsOnStage", u), q("IsImmortal", u)
-    f.in_combat, f.combat, f.can_join = q("IsInCombat", u), q("CombatGetGuidFor", u), q("CanJoinCombat", u)
-    pcall(function() f.pos = { Osi.GetPosition(u) } end)
-    pcall(function() -- name -> {"<level>": amount}: string keys, so a level-0 row always serialises as an object
-        f.res = {}
-        for name, lv in pairs(B.Guard.resources(u)) do
-            f.res[name] = {}
-            for l, amt in pairs(lv) do f.res[name][tostring(l)] = amt end
-        end
-    end)
-    pcall(function()
-        local tb = Ext.Entity.Get(u).TurnBased
-        f.tb = { active = tb.IsActiveCombatTurn, requested_end = tb.RequestedEndTurn, can_act = tb.CanActInCombat,
-            acted = tb.ActedThisRoundInCombat }
-    end)
-    return f
-end
-function P.many(us)
-    local out = {}
-    for i, u in ipairs(us) do out[i] = P.facts(u) end
-    return out
-end
--- The raw turn order of u's combat (every group, unfiltered: harness evidence, never shown to an agent).
-function P.order(u)
-    local out = {}
-    local ok, err = pcall(function()
-        local to = Ext.Entity.Get(u).CombatParticipant.CombatHandle.TurnOrder
-        out.round, out.groups = to.Round, {}
-        for gi, g in ipairs(to.CurrentGroups) do
-            local mem = {}
-            for _, m in ipairs(g.Members) do
-                local mu = P.uuid(m.Entity.Uuid.EntityUuid)
-                local okI, ini = pcall(function() return m.Initiative end)
-                mem[#mem + 1] = { uuid = mu, name = mu and P.name(mu), initiative = okI and ini or nil }
-            end
-            out.groups[gi] = mem
-        end
-    end)
-    if not ok then out.error = tostring(err) end
-    return out
-end
--- Every faction in static data (name, guid, the Osiris form) and how many level characters use it.
-function P.factions(fa)
-    local used = {}
-    pcall(function()
-        for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerCharacter") or {}) do
-            local u = P.uuid(e.Uuid.EntityUuid)
-            local f = u and q("GetFaction", u)
-            if f then used[f] = (used[f] or 0) + 1 end
-        end
-    end)
-    local out = {}
-    for _, g in ipairs(Ext.StaticData.GetAll("Faction") or {}) do
-        local okF, r = pcall(Ext.StaticData.Get, g, "Faction")
-        local name = okF and r and r.Faction or nil
-        local osi = name and (name .. "_" .. tostring(g)) or tostring(g)
-        out[#out + 1] = { name = name, guid = tostring(g), osi = osi, used = used[osi] or 0,
-            to_a = fa and q("GetRelation", fa, osi), from_a = fa and q("GetRelation", osi, fa) }
-    end
-    return out
-end
--- The loaded mods, in load order.
-function P.mods()
-    local out = {}
-    for _, id in ipairs(Ext.Mod.GetLoadOrder() or {}) do
-        local okn, name = pcall(function() return Ext.Mod.GetMod(id).Info.Name end)
-        out[#out + 1] = { uuid = tostring(id), name = okn and name or nil }
-    end
-    return out
-end
--- Force an initiative tie: u's entries in its combat's turn order (group and member) take initiative `ini`.
-function P.set_initiative(u, ini)
-    local out = { writes = {} }
-    local ok, err = pcall(function()
-        local ce = Ext.Entity.Get(u).CombatParticipant.CombatHandle
-        local to = ce.TurnOrder
-        for _, list in ipairs({ "Groups", "CurrentGroups" }) do
-            local okl, groups = pcall(function() return to[list] end)
-            for gi, g in ipairs(okl and groups or {}) do
-                for _, m in ipairs(g.Members) do
-                    if P.uuid(m.Entity.Uuid.EntityUuid) == u then
-                        local okm = pcall(function() m.Initiative = ini end)
-                        local okg = pcall(function() g.Initiative = ini end)
-                        out.writes[#out.writes + 1] = { list = list, group = gi, member = okm, group_field = okg }
-                    end
-                end
-            end
-        end
-        out.replicated = pcall(function() ce:Replicate("TurnOrder") end)
-    end)
-    if not ok then out.error = tostring(err) end
-    return out
-end
-local function rec(ev, ...)
-    local a, names = {}, {}
-    for i = 1, select("#", ...) do
-        local v = select(i, ...)
-        a[i] = v ~= nil and tostring(v) or "nil"
-        local u = P.uuid(v)
-        if u then names[i] = P.name(u) end
-    end
-    P.n = P.n + 1
-    P.log[P.n] = { i = P.n, t = P.now(), ev = ev, args = a, names = names }
-    P.log[P.n - LOG_CAP] = nil
-end
-P.EVENTS = { { "TurnStarted", 1 }, { "TurnEnded", 1 }, { "CombatStarted", 1 }, { "CombatRoundStarted", 2 },
-    { "CombatEnded", 1 }, { "EnteredCombat", 2 }, { "LeftCombat", 2 }, { "EnterCombatFailed", 2 },
-    { "SwitchedCombat", 3 }, { "FleeFromCombat", 2 }, { "CombatTurnTimedOut", 1 }, { "ShareInitiative", 1 },
-    { "DownedChanged", 2 }, { "Dying", 1 }, { "Died", 1 }, { "Resurrected", 1 }, { "AttackedBy", 7 },
-    { "CastSpell", 5 }, { "UsingSpell", 5 }, { "CastedSpell", 5 }, { "ReactionInterruptAdded", 2 },
-    { "ReactionInterruptActionNeeded", 1 }, { "ReactionInterruptUsed", 3 }, { "RelationChanged", 4 },
-    { "BaseFactionChanged", 3 }, { "TemporaryHostileRelationRemoved", 3 }, { "CharacterJoinedParty", 1 },
-    { "CharacterLeftParty", 1 }, { "CharacterMadePlayer", 1 }, { "GainedControl", 1 }, { "Teleported", 9 },
-    { "RestorePartyFinished", 0 }, { "EnteredForceTurnBased", 1 }, { "LeftForceTurnBased", 1 } }
-for _, e in ipairs(P.EVENTS) do
-    local ok, err = pcall(Ext.Osiris.RegisterListener, e[1], e[2], "after", function(...) rec(e[1], ...) end)
-    P.hooks[e[1]] = ok and true or tostring(err)
-end
-function P.since(i)
-    local out = {}
-    for k = math.max(i + 1, P.n - LOG_CAP + 1), P.n do out[#out + 1] = P.log[k] end
-    return out
-end
-end
-"""
-
+from probe_arena_lua import INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
 
 # ---- Lua building (pure) ----
 
@@ -290,12 +81,6 @@ def line_slots(spot: list[float], n: int, gap: float = LINE_GAP_M) -> list[list[
     return [[round(x + (i - (n - 1) / 2) * gap, 2), y, z] for i in range(n)]
 
 
-def dist(a: Any, b: Any) -> float:
-    if not (isinstance(a, list) and isinstance(b, list) and len(a) >= 3 and len(b) >= 3):
-        return math.inf
-    return math.dist(a[:3], b[:3])
-
-
 def toward(src: list[float], dst: list[float], m: float) -> list[float]:
     """The point m metres from src toward dst (y kept)."""
     d = math.dist([src[0], src[2]], [dst[0], dst[2]]) or 1.0
@@ -314,277 +99,30 @@ def spot_arg(s: str) -> list[float]:
     return parts
 
 
-def truthy(v: Any) -> bool:
-    return v not in (None, 0, False, "0", "")
+# ---- judges: probe_arena_judges.py (pure, tested offline) ----
 
-
-# ---- judges (pure: tested offline) ----
-
-Verdict = tuple[str, str]
-
-
-def side_of(teams: dict[str, Any], u: str | None) -> str | None:
-    return next((s for s in SIDES if u in teams[s]), None)
-
-
-def pick_faction_b(factions: list[dict[str, Any]], fa: str | None) -> str | None:
-    """auto: a Hero faction other than team A's, preferring one nobody in the level uses (multiplayer's spare player
-    factions), then the lowest relation to A."""
-    hero = [f for f in factions if "hero" in str(f.get("name") or "").lower() and f.get("osi") != fa]
-    if not hero:
-        return None
-    hero.sort(key=lambda f: (f.get("used") or 0, f.get("to_a") if isinstance(f.get("to_a"), int) else 100))
-    return hero[0]["osi"]
-
-
-def judge_setup(
-    teams: dict[str, Any], facts: dict[str, dict[str, Any]], slots: dict[str, list[list[float]]]
-) -> Verdict:
-    bad = []
-    for s in SIDES:
-        for u, slot in zip(teams[s], slots[s], strict=True):
-            f = facts.get(u) or {}
-            who = f.get("name") or u[:8]
-            if not truthy(f.get("in_party_db")):
-                bad.append(f"{who} not in DB_PartyMembers")
-            if dist(f.get("pos"), slot) > AT_SPOT_M:
-                bad.append(f"{who} {dist(f.get('pos'), slot):.1f} m from its slot")
-            if f.get("hp") is None or f.get("hp") != f.get("max_hp"):
-                bad.append(f"{who} hp {f.get('hp')}/{f.get('max_hp')}")
-    if bad:
-        return "FAIL", "; ".join(bad)
-    return "PASS", "8 party members, each at its slot with full HP"
-
-
-def judge_conns(rows: list[dict[str, Any]], want: int) -> Verdict:
-    """q1: every connection opened and answered while all were open."""
-    ok = [r for r in rows if r.get("connected") and r.get("answer") is not None]
-    if len(ok) == want:
-        return "PASS", f"{want} connections open at once, each answered"
-    bad = "; ".join(f"#{r['i']}: {r.get('error') or 'no answer'}" for r in rows if r not in ok)
-    return "FAIL", f"{len(ok)}/{want} answered: {bad}"
-
-
-def judge_party(
-    teams: dict[str, Any], facts: dict[str, dict[str, Any]], mods: list[dict[str, Any]], pinned: list[str] | None
-) -> Verdict:
-    """q2: all 8 in DB_PartyMembers at once, with no mod loaded beyond the pinned set (when one is given)."""
-    out = [
-        f.get("name") or u[:8]
-        for u in teams["A"] + teams["B"]
-        if not truthy((f := facts.get(u) or {}).get("in_party_db"))
-    ]
-    extra = [
-        m.get("name") or m.get("uuid") for m in mods if pinned and not {m.get("name"), m.get("uuid")} & set(pinned)
-    ]
-    why = []
-    if out:
-        why.append(f"not in DB_PartyMembers: {', '.join(out)}")
-    if extra:
-        why.append(f"mods beyond the pinned set: {', '.join(map(str, extra))}")
-    if why:
-        return "FAIL", "; ".join(why)
-    names = ", ".join(str(m.get("name") or m.get("uuid")) for m in mods)
-    return "PASS", "8 in DB_PartyMembers at once; " + (
-        "only the pinned mods loaded" if pinned else f"{len(mods)} mods loaded (no pinned list given): {names}"
-    )
-
-
-def tie_info(order: dict[str, Any], teams: dict[str, Any]) -> dict[str, Any]:
-    """From a raw turn order: groups holding both sides, cross-side members with equal initiative, and cross-side
-    neighbours in the order (where a tie can be forced)."""
-    groups = order.get("groups") or []
-    mixed = [
-        [m.get("name") or m.get("uuid") for m in g]
-        for g in groups
-        if len({side_of(teams, m.get("uuid")) for m in g} - {None}) > 1
-    ]
-    flat = [m for g in groups for m in g]
-    equal = [
-        [a.get("uuid"), b.get("uuid")]
-        for a, b in itertools.combinations(flat, 2)
-        if a.get("initiative") is not None
-        and a.get("initiative") == b.get("initiative")
-        and {side_of(teams, a.get("uuid")), side_of(teams, b.get("uuid"))} == {"A", "B"}
-    ]
-    adjacent = [
-        [a.get("uuid"), b.get("uuid"), a.get("initiative")]
-        for a, b in itertools.pairwise(flat)
-        if {side_of(teams, a.get("uuid")), side_of(teams, b.get("uuid"))} == {"A", "B"}
-    ]
-    return {"mixed_groups": mixed, "equal": equal, "adjacent": adjacent}
-
-
-def judge_tie(r: dict[str, Any]) -> Verdict:
-    """q5: with a cross-team tie in the order, do both sides hold one turn (a mixed group, or both sides' members
-    open at once)?"""
-    shared = r.get("shared_turns") or []
-    mixed = (r.get("after") or {}).get("mixed_groups") or (r.get("before") or {}).get("mixed_groups")
-    if shared or mixed:
-        return "FAIL", "the teams shared a turn (" + "; ".join(
-            [f"group {g}" for g in mixed or []] + [f"open together: {t}" for t in shared]
-        ) + "): needs serialising"
-    if not ((r.get("after") or {}).get("equal") or (r.get("before") or {}).get("equal")):
-        return "OPEN", "no cross-team initiative tie seen or forced: " + str(r.get("force") or "not forced")
-    return "PASS", "a cross-team initiative tie, and each side took its own turn"
-
-
-def judge_hostile(teams: dict[str, Any], facts: dict[str, dict[str, Any]], enemy: dict[str, Any]) -> Verdict:
-    combats = {f.get("combat") for f in facts.values()}
-    cross = [v for k, v in enemy.items() if k.startswith("AB:")]
-    within = [k for k, v in enemy.items() if not k.startswith("AB:") and truthy(v)]
-    why = []
-    if not cross or not all(truthy(v) for v in cross):
-        why.append(f"IsEnemy across the teams: {sum(truthy(v) for v in cross)}/{len(cross)}")
-    if within:
-        why.append(f"enemies within a team: {', '.join(within)}")
-    if len(combats) != 1 or None in combats or NULL in combats:
-        why.append(f"combat guids: {sorted(str(c) for c in combats)}")
-    if why:
-        return "FAIL", "; ".join(why)
-    return "PASS", "teams hostile to each other (not within), all 8 in one combat"
-
-
-def judge_turns(teams: dict[str, Any], turns: list[dict[str, Any]], downed: dict[str, Any] | None) -> Verdict:
-    """q3: both sides got turns, no turn group held both sides, each round started in initiative order, and the
-    fight went on after a member was downed."""
-    why = []
-    seen = {side_of(teams, t.get("uuid")) for t in turns}
-    if not {"A", "B"} <= seen:
-        why.append(f"turns seen for sides {sorted(s for s in seen if s)} only")
-    mixed = [t for t in turns if len({side_of(teams, u) for u in t.get("group") or []}) > 1]
-    if mixed:
-        why.append(f"{len(mixed)} turn group(s) held both sides: " + ", ".join(t.get("name") or "?" for t in mixed))
-    rounds: dict[Any, list[float]] = {}
-    for t in turns:
-        if isinstance(t.get("initiative"), (int, float)):
-            rounds.setdefault(t.get("round"), []).append(t["initiative"])
-    out_of_order = [r for r, ini in rounds.items() if any(b > a for a, b in itertools.pairwise(ini))]
-    if out_of_order:
-        why.append(f"rounds {out_of_order} not in initiative order")
-    if downed is not None:
-        if not downed.get("downed"):
-            why.append(f"the downing didn't take ({downed.get('who')})")
-        elif not downed.get("combat_after") or not downed.get("turns_after"):
-            why.append(
-                f"after {downed.get('who')} was downed: combat {downed.get('combat_after')}, "
-                f"{downed.get('turns_after')} turns"
-            )
-    if why:
-        return "FAIL", "; ".join(why)
-    return "PASS", f"{len(turns)} turns, both sides, separate groups, initiative order" + (
-        ", the fight went on after a downing" if downed else ""
-    )
-
-
-def judge_ai(turns: list[dict[str, Any]]) -> Verdict:
-    """q3: on no idle turn of a standing member did the game act (move, cast, end the turn) by itself."""
-    acted = [
-        t
-        for t in turns
-        if not t.get("downed_at_start")
-        and (
-            (t.get("idle") or {}).get("moved_m", 0) > MOVED_M
-            or (t.get("idle") or {}).get("casts")
-            or (t.get("idle") or {}).get("ended_by_itself")
-        )
-    ]
-    if not turns:
-        return "OPEN", "no turns watched"
-    if acted:
-        return "FAIL", "the game acted on idle turns of: " + ", ".join(
-            f"{t.get('name')} ({json.dumps(t.get('idle'))})" for t in acted
-        )
-    return "PASS", f"{len(turns)} idle turns, the game acted for nobody"
-
-
-def res_amount(res: Any, name: str) -> float | None:
-    """A resource's level-0 amount (or the sum over levels) from G.resources' {name: {level: amount}}."""
-    lv = (res or {}).get(name) if isinstance(res, dict) else None
-    if isinstance(lv, dict) and lv:
-        vals = [v for v in lv.values() if isinstance(v, (int, float))]
-        return float(sum(vals)) if vals else None
-    if isinstance(lv, list):
-        vals = [v for v in lv if isinstance(v, (int, float))]
-        return float(sum(vals)) if vals else None
-    return None
-
-
-def judge_act(runs: dict[str, dict[str, Any]]) -> Verdict:
-    """q4: for each side, the mod's own move and attack jobs ran on its member and the game charged them (Movement
-    down after the move, ActionPoint down after the attack), and its end_turn ended the turn."""
-    why = []
-    for s in SIDES:
-        r = runs.get(s)
-        if not r:
-            why.append(f"side {s}: no turn reached")
-            continue
-        for step, res_name in (("move", "Movement"), ("cast", "ActionPoint")):
-            st = r.get(step) or {}
-            b, a = res_amount(st.get("res_before"), res_name), res_amount(st.get("res_after"), res_name)
-            if st.get("status") != "done":
-                why.append(f"side {s} {step}: {st.get('status')} {st.get('error') or ''}".strip())
-            elif b is None or a is None or not a < b:
-                why.append(f"side {s} {step}: {res_name} {b} -> {a} (not charged)")
-        if (r.get("end") or {}).get("status") != "done":
-            why.append(f"side {s} end_turn: {(r.get('end') or {}).get('status')}")
-    if why:
-        return "FAIL", "; ".join(why)
-    return "PASS", "both sides: move and attack through act.* charged as in play, end_turn ended the turn"
-
-
-def judge_react(r: dict[str, Any]) -> Verdict:
-    """q7: did a reaction come up for the enemy the mover left, and could the mod answer it (ui.react)?"""
-    if r.get("error"):
-        return "OPEN", r["error"]
-    ev = {e.get("ev") for e in r.get("events") or []}
-    popup = bool(r.get("popup_seen"))
-    if popup and (r.get("answer") or {}).get("ok"):
-        return "PASS", f"prompt for {r.get('reactor_name')} (side {r.get('reactor_side')}), answered by ui.react"
-    if popup:
-        return "FAIL", f"prompt came up, ui.react failed: {r.get('answer')}"
-    if "ReactionInterruptUsed" in ev or "AttackedBy" in ev:
-        return "OPEN", "the reaction fired without a prompt (the reaction setting answers it): set it to ask and rerun"
-    return "FAIL", "no prompt and no reaction when the mover left melee"
-
-
-def judge_end(r: dict[str, Any]) -> Verdict:
-    """q6: with the loser team all downed, can a turn boundary read it (every member downed or dead)? What the game
-    does then (death-save turns, combat end, Game Over) is recorded; a Game Over in a team wipe is that team's loss."""
-    if not r.get("all_down_read"):
-        return "FAIL", "the loser team's downed state didn't read as downed/dead for every member"
-    seen = [f"death-save turns: {len(r.get('death_save_turns') or [])}"]
-    seen.append(
-        f"combat ended at the {r['ended_at']} stage ({r.get('end_event')})"
-        if r.get("ended_at")
-        else "the combat never ended by itself"
-    )
-    if r.get("game_over"):
-        seen.append("Game Over screen")
-    return "PASS", "the wipe reads at a turn boundary; " + "; ".join(seen)
-
-
-def judge_gameover(r: dict[str, Any]) -> Verdict:
-    if r.get("game_over_downed") or r.get("game_over"):
-        return "FAIL", "the avatar " + (
-            "downed" if r.get("game_over_downed") else "dead"
-        ) + " alone (others standing) is a Game Over: the avatar can't play"
-    if not r.get("dead"):
-        return "OPEN", "the avatar didn't die"
-    return "PASS", "the avatar downed, then dead, with others standing: no Game Over"
-
-
-def judge_npc(r: dict[str, Any]) -> Verdict:
-    """q8 (option N, documented): an NPC team member under the mod's ops and the game AI."""
-    why = []
-    if not (r.get("act") or {}).get("refused"):
-        why.append("act.* accepted the NPC (unexpected)")
-    if (r.get("idle") or {}).get("acted"):
-        why.append("the game AI acted on its turn")
-    return ("FAIL" if why else "OPEN"), ("; ".join(why) or "the NPC kept still and act.* refused it") + (
-        " (N needs a second action path either way)"
-    )
-
+from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
+    MOVED_M,
+    NULL,
+    SIDES,
+    dist,
+    judge_act,
+    judge_ai,
+    judge_conns,
+    judge_end,
+    judge_gameover,
+    judge_hostile,
+    judge_npc,
+    judge_party,
+    judge_react,
+    judge_setup,
+    judge_tie,
+    judge_turns,
+    pick_faction_b,
+    side_of,
+    tie_info,
+    truthy,
+)
 
 # ---- the game side ----
 
@@ -1225,19 +763,6 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         self.write("q8-npc", {"question": "q8-npc", "verdict": verdict, "why": why, **r})
         return r
 
-
-# The open reaction prompt's first event, as far as the view model shows it (client; best effort).
-POPUP = r"""
-local UI = Mods.BG3AI.BG3AI.UI
-local out = {}
-local ok, err = pcall(function()
-    local w = UI.widgetMap().ReactionDecisionPopup
-    local ev = UI.path(w.DataContext, "Data.InterruptEvents.1")
-    for k, v in pairs(UI.props(ev) or {}) do out[tostring(k)] = tostring(v) end
-end)
-if not ok then out.error = tostring(err) end
-return Ext.Json.Stringify(out, { Beautify = false })
-"""
 
 PLAN = {
     "conns": "open --conns debugger connections, evaluate on all at once",
