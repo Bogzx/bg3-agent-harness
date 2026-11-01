@@ -547,6 +547,24 @@ test("set_party: unchain/chain already in that state is done, not FAILED (S062 1
     eq(#called("AttachToPartyGroup"), 0, "no order sent")
 end)
 
+test("chain: an attach the game doesn't take fails once the member stays apart, not at 3 s (live-v09c c2)", function()
+    party_rows = { P1, GOB }
+    world[GOB].pos = { 99, 0, 0 }
+    local c = job(op("chain", { char = GOB, leader = P1 }))
+    eq(#called("AttachToPartyGroup"), 1, "order sent")
+    tick(5) -- 300 ms: every attach that took in the logs showed by 182 ms
+    eq(c.status, "running", "still within the settle window")
+    tick(6)
+    eq(c.status, "failed", "status")
+    assert(c.error:find("didn't attach", 1, true) and c.error:find("(99 m away)", 1, true), c.error)
+    assert(RPC.now_ms() - c.started < 3000, "before the job's 3 s timeout")
+    local d = job(op("chain", { char = GOB, leader = P1 }))
+    tick(2)
+    osiv[key("InSamePartyGroup", GOB, P1)] = 1
+    tick(1)
+    eq(d.status, "done", "an attach that shows is done " .. tostring(d.error))
+end)
+
 test("jump: a landing far below the aim is a FALL; a death says DIED, not done (S038 20:44:25)", function()
     stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
     world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }

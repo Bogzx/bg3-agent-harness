@@ -114,6 +114,24 @@ class Cohesion(Base):
         self.assertIn("34m", out)
         self.assertIn("re-chained to ", out)
 
+    def test_a_rechain_the_game_refused_is_not_resent_until_someone_moves(self):
+        # live-v09c c2: 3 get_status reads at 3.1 s each, every one re-sending act.chain for Shadowheart 99 m away,
+        # which the game never attached (each waited out the job's 3 s)
+        self.g.refuse_if = lambda op, a: "timed out" if op == "act.chain" else None
+        self.st = status({"chained": False, "pos": [99, 0, 0]})
+        first = overview._party_check(self.st)
+        self.assertEqual(overview._party_check(self.st), first)
+        self.assertIn("99m, unchained", first)
+        self.assertEqual(self.chains(), [P2])
+        self.st = status({"chained": False, "pos": [70, 0, 0]})  # she walked closer: worth asking again
+        overview._party_check(self.st)
+        self.assertEqual(self.chains(), [P2, P2])
+        self.g.refuse_if = lambda op, a: None
+        self.st["party"][0]["pos"] = [0, 0, 8]  # the leader moved
+        self.assertIn("re-chained to ", overview._party_check(self.st))
+        self.assertEqual(self.chains(), [P2, P2, P2])
+        self.assertEqual(overview._chain_refused, {})
+
     def test_no_party_apart_at_camp(self):
         # S014: companions idle at their tents 16-23 m away while long resting: not a split
         self.st = status({"pos": [20, 0, 0]})
