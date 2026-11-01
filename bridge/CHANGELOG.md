@@ -5,6 +5,22 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-01: a server can play one side of a two-team match
+
+A server started without `BG3AI_SIDE` serves the same tools and rules as before and sends the mod the same bytes.
+
+- `BG3AI_SIDE=A|B`: every mod op carries the side, and the mod answers from that team's view. Any other value stops
+  the server at startup.
+- `ui.state` with a side: a reaction prompt for the other side's character reads as `screen: game`, with a
+  `WAITING a reaction prompt of the other side is open: the game waits for that side's answer` line and without its
+  rows. No wait, interrupt or turn plan stops on it or answers it.
+- Refusals from the mod are shown word for word: `not your turn (side <X> is acting)`, `<name> is not on your side`,
+  `not your job`, `not your reaction`.
+- `BG3AI_TOOLS_OFF` takes the named list `arena-v1` (capabilities.LISTS). It removes the memory, wiki, reload,
+  saves, screenshots and raw_input groups, and the travel, rest, conversation, roll, trade, loot, levelling, journal
+  and map tools. `confirm` and `dismiss_popups` stay, since a popup can come up mid-fight.
+- A side's server adds the match's rules (`rules/arena.md`) after the other rules.
+
 ## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
 
 - fast_travel from camp with a conversation screen up fails "FAILED: a conversation is open, nothing was pressed;

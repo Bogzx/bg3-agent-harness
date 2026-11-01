@@ -29,6 +29,7 @@ session deadline, the port and the RPC pool). The ones a standalone client may w
 | `BG3AI_PROMPT_CONDITION` | `rules` | which rules text the server serves (below) |
 | `BG3AI_AUTOSKIP` | on | `0` = the run lets cutscenes play: the server starts no movie skipper (no shim ESCAPE) |
 | `BG3AI_TOOLS`, `BG3AI_TOOLS_OFF` | every tool | which tools it serves (below) |
+| `BG3AI_SIDE` | unset | `A` or `B`: the team this server plays in a two-team match (below) |
 
 ## A memory
 
@@ -91,6 +92,28 @@ Every tool belongs to one group. The `game` group is every tool in no other grou
 
 A model without image input should play with `BG3AI_TOOLS_OFF=screenshots`.
 
+`BG3AI_TOOLS_OFF` also takes a named list, which stands for its groups and tools: `arena-v1` is the set a two-team
+match removes (`bridge/src/bg3ai/capabilities.py` `LISTS`). It can be combined with other names, as in
+`BG3AI_TOOLS_OFF=memory,arena-v1`.
+
+## Two-team matches
+
+In a match, two models fight each other in one turn-based fight in one game. Each plays one team through its own
+server, started with `BG3AI_SIDE=A` or `BG3AI_SIDE=B`. Any other value stops the server at startup. The server sends
+its side with every mod op, and the mod answers from that team's view:
+
+- the side's own characters are the party, and the other team are hostile combatants, shown only while one of the
+  side's characters can see them;
+- events come in the side's own view: an attacker the side can't see is "Someone", and spell ids are shown only for
+  the side's own casters;
+- an action while the other side is acting is refused with `not your turn (side B is acting)`, an action with the
+  other team's character with `<name> is not on your side`, and the other side's job with `not your job`.
+
+Both sides share one game client. A reaction prompt for the other side's character reads as `WAITING` in this
+side's results, and the server never stops on it or answers it. If the agent answers it anyway, the mod refuses
+with `not your reaction`. The server also adds the match's rules (`packages/harness/prompts/rules/arena.md`) after
+the other rules. Without `BG3AI_SIDE`, the server sends exactly what it sent before.
+
 ## What the agent never sees
 
 Everything a tool returns is what a player could see on screen or remember having seen. The layers that make
@@ -104,6 +127,8 @@ Some data the mod keeps is for the benchmark's graders only, and no tool can rea
 - the scenario setup (`scn.*`): dice and names set up for a seeded run. The mod refuses every `scn.*` op unless
   the game process was started with `BG3AI_SCENARIO_SETUP=1`. The runner sets it only for a seeded run, and
   `tools/saves/make_start_save.py` needs it to make a start save; a playthrough never has it.
+- the match setup (`arena.*`): teams, whose turn it is, the result of a two-team match. The mod refuses every
+  `arena.*` op unless the game process was started with `BG3AI_ARENA=1`.
 
 Only the harness calls these ops (`bridge/src/bg3ai/referee.py`, `bg3harness/game_settings.py`), and it writes
 what it reads to `facts.jsonl` and `rolls.jsonl` in the run's directory, outside the memory and knowledge folders.
