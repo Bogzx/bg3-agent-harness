@@ -4,7 +4,7 @@
 -- side's turn and characters; arena.status/end/reset harness-only behind BG3AI_ARENA; with the switch off a "side"
 -- changes nothing. test_arena_lua_client.lua has the client half (reaction prompt, HUD selection).
 -- Ext, Osi and the game world are stubbed; Shared/RPC.lua, Util.lua, Arena.lua and Server/Visibility.lua, State.lua,
--- Events.lua, Guard.lua, Navigation.lua, Actions.lua, Arena.lua are the real ones.
+-- Events.lua, Guard.lua, Navigation.lua, Actions.lua, Referee.lua, Arena.lua are the real ones.
 -- Run: tools/dev/test_arena_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
 LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -139,6 +139,7 @@ dofile(LUA .. "/Server/Events.lua")
 dofile(LUA .. "/Server/Guard.lua")
 dofile(LUA .. "/Server/Navigation.lua")
 dofile(LUA .. "/Server/Actions.lua")
+dofile(LUA .. "/Server/Referee.lua")
 dofile(LUA .. "/Server/Arena.lua")
 U, RPC, Ar, V, G, N = BG3AI.Util, BG3AI.RPC, BG3AI.Arena, BG3AI.Visibility, BG3AI.Guard, BG3AI.Nav
 
@@ -191,12 +192,20 @@ function reset()
     V.sideCtx, V.ctxCache, V.ctxFrame, V.memory = nil, nil, nil, {}
     N.frame = (N.frame or 0) + 1
     Ar.state = nil
+    BG3AI.Referee.ring = {}
     RPC.clear_sides()
     RPC.Ctx.side = nil
 end
 
-function begin()
-    return Ar.begin({ A = { A1, A2 }, B = { B1, B2 } })
+function begin(opts)
+    return Ar.begin({ A = { A1, A2 }, B = { B1, B2 } }, opts)
+end
+
+-- The referee's records of this kind (Server/Referee.lua R.ring).
+function refs(ev)
+    local out = {}
+    for _, r in ipairs(BG3AI.Referee.ring) do if r.ev == ev then out[#out + 1] = r end end
+    return out
 end
 
 -- ---- tiny test runner ------------------------------------------------------

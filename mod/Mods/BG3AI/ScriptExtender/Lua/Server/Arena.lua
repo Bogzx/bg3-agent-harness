@@ -101,6 +101,33 @@ function Ar.first_open_side(open)
     return found
 end
 
+local function record(ev, data)
+    local R = BG3AI.Referee
+    if R and R.record then pcall(R.record, ev, data) end
+end
+
+-- Without the turn order: the side whose open member's turn started first (the game's own order), else the side of
+-- the last turn started, else A. Recorded once per round and side, so an audit sees every such call.
+local function tie_fallback(open)
+    local st, G = Ar.state, BG3AI.Guard
+    local best, side
+    for u in pairs(open) do
+        local t = G.turn_start[u] and G.turn_start[u].t
+        local s = Ar.side_of(u)
+        if t and (best == nil or t < best or (t == best and s < side)) then best, side = t, s end
+    end
+    side = side or (st.turn and st.turn.side) or "A"
+    local k = tostring(st.round) .. "|" .. side
+    if st.tieFallback ~= k then
+        st.tieFallback = k
+        local list = {}
+        for u in pairs(open) do list[#list + 1] = u end
+        table.sort(list)
+        record("arena_tie_fallback", { side = side, round = st.round, open = list })
+    end
+    return side
+end
+
 -- The side acting now: the side with an open member; with open members on both (one turn group across the teams),
 -- the side listed first; with none, the side of the last team member whose turn started.
 function Ar.acting_side()
@@ -111,7 +138,7 @@ function Ar.acting_side()
             if Ar.open(u) then open[u] = true; by[s] = true end
         end
     end
-    if by.A and by.B then return Ar.first_open_side(open) or (st.turn and st.turn.side) or "A" end
+    if by.A and by.B then return Ar.first_open_side(open) or tie_fallback(open) end
     if by.A then return "A" end
     if by.B then return "B" end
     return st.turn and st.turn.side or nil
@@ -160,11 +187,6 @@ function Ar.wiped(side)
     return true
 end
 
-local function record(ev, data)
-    local R = BG3AI.Referee
-    if R and R.record then pcall(R.record, ev, data) end
-end
-
 function Ar.finish(winner, reason)
     local st = Ar.state
     if st.ended then return st.ended end
@@ -186,26 +208,69 @@ function Ar.check_end()
     Ar.finish(winner, "wipe")
 end
 
+-- The arena's combat: the one a team member is in (a fight elsewhere on the level is not the match).
+local function arenaCombat(combat)
+    local st = Ar.state
+    if st.combat == nil and combat ~= nil then
+        for _, s in ipairs(Ar.SIDES) do
+            for _, u in ipairs(st.teams[s]) do
+                if osi(Osi.CombatGetGuidFor, u) == combat then st.combat = combat end
+            end
+        end
+    end
+    return combat ~= nil and combat == st.combat
+end
+
 function Ar.turn_started(char)
     if not Ar.active() then return end
     local u = V.uuid(char)
     local s = u and Ar.side_of(u)
     if not s then return end
     local st = Ar.state
+    arenaCombat(osi(Osi.CombatGetGuidFor, u))
+    if (st.round or 0) < 1 then st.round = 1 end -- a turn before the first CombatRoundStarted is round 1's
     st.turn = { side = s, uuid = u, round = st.round }
     record("arena_turn", { side = s, character = u, round = st.round })
     Ar.check_end()
 end
 
+-- A round of the arena's combat starts: a turn boundary (a wipe ends the match); the start of round cap+1 ends it
+-- as a draw (reason round_cap) with rounds = the cap, before anyone acts in it.
+function Ar.round_started(combat, round)
+    if not Ar.active() then return end
+    local st = Ar.state
+    if st.ended or not arenaCombat(combat) then return end
+    round = tonumber(round)
+    if not round then return end
+    Ar.check_end()
+    if st.ended then return end
+    if st.round_cap and round > st.round_cap then
+        Ar.finish(nil, "round_cap")
+        return
+    end
+    st.round = round
+end
+
+-- The arena's combat ends: a wipe ends the match; any other end is recorded for the runner (it ends the match).
+function Ar.combat_ended(combat)
+    if not Ar.active() then return end
+    local st = Ar.state
+    if st.ended or combat == nil or combat ~= st.combat then return end
+    Ar.check_end()
+    if not st.ended then record("arena_combat_ended", { rounds = st.round }) end
+end
+
 if not Ar.listening then
     Ar.listening = true
-    for name, arity in pairs({ TurnStarted = 1, CombatRoundStarted = 2 }) do
+    for name, arity in pairs({ TurnStarted = 1, CombatRoundStarted = 2, CombatEnded = 1 }) do
         local ok, err = pcall(Ext.Osiris.RegisterListener, name, arity, "after", function(a, b)
             local ok2, err2 = pcall(function()
                 if name == "TurnStarted" then
                     Ar.turn_started(a)
-                elseif Ar.active() then
-                    Ar.state.round = tonumber(b) or Ar.state.round
+                elseif name == "CombatRoundStarted" then
+                    Ar.round_started(a, b)
+                else
+                    Ar.combat_ended(a)
                 end
             end)
             if not ok2 then Ext.Utils.PrintWarning("[BG3AI] arena " .. name .. ": " .. tostring(err2)) end
@@ -220,8 +285,8 @@ local function broadcast(msg)
 end
 
 -- Begin a match with these teams ({A = {uuid x4}, B = {uuid x4}}): the setup op calls it once the teams stand. The
--- client gets the team uuids and display names.
-function Ar.begin(teams)
+-- client gets the team uuids and display names. opts.round_cap: the rounds a match lasts at most (a draw after).
+function Ar.begin(teams, opts)
     if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
     local t, names = {}, {}
     for _, s in ipairs(Ar.SIDES) do
@@ -234,7 +299,8 @@ function Ar.begin(teams)
         if #t[s] == 0 then error("team " .. s .. " is empty", 0) end
     end
     RPC.clear_sides()
-    Ar.state = { teams = t, names = names, round = 0, started = now_ms() }
+    Ar.state = { teams = t, names = names, round = 0, started = now_ms(),
+        round_cap = opts and tonumber(opts.round_cap) or nil }
     broadcast({ teams = t, names = names })
     record("arena_start", { teams = t })
     return Ar.status()
