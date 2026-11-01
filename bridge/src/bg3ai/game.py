@@ -639,11 +639,14 @@ class Game:
     SELECT_FOLLOW_S = 1.0  # a real selection change reaches the client a frame or two later
 
     def hud_selected(self) -> str | None:
-        """The character the HUD has selected (the client's ClientControl), or None when it can't be read."""
+        """The character the HUD has selected (the client's ClientControl), or None when it can't be read. With a
+        side, a reply without a uuid is the other side's character holding the HUD: sideview.HUD_OTHER_SIDE."""
         try:
             got = self.rpc("ui.selected", context="client")
         except GameError:
             return None
+        if self.side and isinstance(got, dict) and not got.get("uuid"):
+            return sideview.HUD_OTHER_SIDE
         return got.get("uuid") if isinstance(got, dict) else None
 
     def _hud_follows(self, char: str) -> bool:
@@ -679,7 +682,8 @@ class Game:
         if r.status != "done":
             return r
         holder = self.hud_selected()
-        return JobResult("failed", {"holder": holder, "via": via}, "the HUD kept another member selected (act.select "
+        kept = "the other side's character" if holder == sideview.HUD_OTHER_SIDE else "another member"
+        return JobResult("failed", {"holder": holder, "via": via}, f"the HUD kept {kept} selected (act.select "
                          "was done on the server" + ("; selecting another member and back didn't move it either)"
                                                      if via_ok else ")"), r.events, r.elapsed_ms)
 

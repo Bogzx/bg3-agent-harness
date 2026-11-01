@@ -58,6 +58,7 @@ INSTRUCTIONS = instructions()  # every tool on; session.INSTRUCTIONS is the serv
 
 # The assembled rules for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
 RULES = rules.Once(rules.load(required=rules.serve_enabled()))
+TOOLS_OFF: frozenset[str] = frozenset()  # the tools this server's condition removed (set by tools/session.py)
 
 
 class Server(MCPServer):

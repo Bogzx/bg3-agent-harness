@@ -173,6 +173,8 @@ def ui_dump(text_only: bool = True) -> str:
 @reporting._guard
 def press_key(key: str) -> str:
     """Press a keyboard key in the game (SDL scancode name, e.g. ESCAPE, SPACE, RETURN, F5, 1). Prefer dedicated tools. ESCAPE with nothing open is refused (it would open the game menu)."""
+    if world_tools._shared_screen():
+        return f"press_key: FAILED — {world_tools.SHARED_SCREEN}"
     key = key.upper()
     if key in ("ESCAPE", "ESC"):
         return _press_escape()
@@ -250,6 +252,8 @@ def click(x: float, y: float, button: str = "left") -> str:
     button: "left", "right", or "none" (= hover: only moves the cursor there, nothing is clicked; for a tooltip or
     the cursor text of a targeting mode, then take a screenshot)."""
     t0 = time.monotonic()
+    if world_tools._shared_screen():
+        raise GameError(f"click is {world_tools.SHARED_SCREEN}")
     b = (button or "left").strip().lower()
     kind = {"left": "L", "l": "L", "right": "R", "r": "R", "none": "", "hover": "", "move": ""}.get(b)
     if kind is None:

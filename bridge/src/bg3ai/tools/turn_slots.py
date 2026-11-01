@@ -548,6 +548,8 @@ def _answer_reaction(use: bool) -> str:
         from .. import reactclick
         c = reactclick.click_row(lambda o, a: conn.rpc(o, a, context="client"), inp, int(res["needs_click"]))
         return f"reaction prompt: used ({reactclick.describe(c)})"
+    if use and res.get("needs_click") and world_tools._shared_screen():
+        return f"reaction prompt: NOT answered (it takes a click on its row, which is {world_tools.SHARED_SCREEN})"
     if use and res.get("needs_click"):
         return "reaction prompt: NOT answered (it takes a click on its row and the input shim is not available)"
     return f"reaction prompt: {'used' if use else 'declined'} ({r.status})"

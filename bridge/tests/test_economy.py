@@ -189,6 +189,28 @@ class Upgrades(unittest.TestCase):
 
 
 class Alerts(unittest.TestCase):
+    def test_an_alert_naming_an_off_tool_is_left_out(self):
+        al = economy.alerts(STATUS, s026_inventory())
+        self.assertEqual(economy.without_off_tools(al, frozenset()), al)
+        trade = [a for a in al if "trade sell=junk" in a]
+        self.assertTrue(trade)
+        kept = economy.without_off_tools(al, {"trade", "wiki_page"})
+        self.assertEqual(kept, [a for a in al if a not in trade])
+        # a name inside another word or tool name is not the tool: "short_rest" stays with "rest" off
+        self.assertEqual(economy.without_off_tools(["short rests left 2: short_rest"], {"rest"}),
+                         ["short rests left 2: short_rest"])
+        self.assertEqual(economy.without_off_tools(["short rests left 2: short_rest"], {"short_rest"}), [])
+
+    def test_the_status_line_follows_the_servers_off_tools(self):
+        saved = core.TOOLS_OFF
+        self.addCleanup(setattr, core, "TOOLS_OFF", saved)
+        line = lambda: overview._alerts_line(STATUS, s026_inventory(), force=True)  # noqa: E731
+        core.TOOLS_OFF = frozenset()
+        self.assertIn("trade sell=junk", line())
+        core.TOOLS_OFF = frozenset({"trade"})
+        self.assertNotIn("trade", line())
+        self.assertIn("low HP Claude 34/88", line())
+
     def test_camp_chest_counts_toward_supplies(self):
         inv = s026_inventory()
         inv["camp_supplies"] = 30

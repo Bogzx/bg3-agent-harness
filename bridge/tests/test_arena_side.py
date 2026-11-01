@@ -20,7 +20,9 @@ from test_capabilities import BRIDGE, build, tools  # (sets BG3AI_RUNTIME before
 
 # isort: split
 from bg3ai import capabilities, rpc_record, settings, sideview
-from bg3ai.game import RPC_EXPR, Game
+from bg3ai.game import RPC_EXPR, Game, JobResult
+
+P1, P2 = (f"00000000-0000-0000-0000-{n:012d}" for n in (1, 2))
 
 FIXTURES = Path(__file__).resolve().parents[2] / "packages/harness/tests/fixtures/rpc"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "tools_list.json"
@@ -228,6 +230,32 @@ class Builders(unittest.TestCase):
         self.assertEqual(found, {"game.py": 1, **OTHER_BUILDERS})
 
 
+class HudSelected(unittest.TestCase):
+    """ui.selected with a side: no uuid = the other side's character holds the HUD (not an unreadable client)."""
+
+    def game(self, side, replies):
+        g = Game(port=1, side=side)
+        g.SELECT_FOLLOW_S = 0.0
+        jobs: list[dict] = []
+        g.rpc = lambda op, args=None, context="server", **k: replies.pop(0) if op == "ui.selected" else {}
+        g.try_rpc = lambda op, args=None, context="server", default=None: {"party": [{"uuid": P1}, {"uuid": P2}]}
+        g._run_job = lambda op, args, *a, **k: jobs.append(args) or JobResult("done", {})
+        return g
+
+    def test_no_uuid(self):
+        self.assertEqual(self.game("A", [{}]).hud_selected(), sideview.HUD_OTHER_SIDE)
+        self.assertIsNone(self.game(None, [{}]).hud_selected())
+        self.assertEqual(self.game("A", [{"uuid": P1}]).hud_selected(), P1)
+
+    def test_a_select_the_hud_doesnt_follow_says_so(self):
+        r = self.game("A", [{}] * 6)._select({"char": P1}, 1.0, 0.0)
+        self.assertEqual(r.status, "failed")
+        self.assertIn("the HUD kept the other side's character selected", r.error)
+        self.assertEqual(r.result["holder"], sideview.HUD_OTHER_SIDE)
+        # without a side an unreadable client counts as followed, as before
+        self.assertEqual(self.game(None, [{}] * 6)._select({"char": P1}, 1.0, 0.0).status, "done")
+
+
 class ReactionView(unittest.TestCase):
     """A reaction prompt of the other side's character is waiting for this side, never a prompt to answer."""
 
@@ -250,6 +278,10 @@ class ReactionView(unittest.TestCase):
     def test_the_other_sides_prompt_is_waiting(self):
         out = self.view(self.prompt("Lae'zel"))
         self.assertEqual(out, {"screen": "game", "region": "Act 1", "ms": 2, "waiting": sideview.WAITING})
+
+    def test_the_mods_other_side_mark_is_waiting(self):
+        ui = {"screen": "reaction", "page": "ReactionDecisionPopup", "reaction": {"other_side": True}, "ms": 2}
+        self.assertEqual(self.view(ui), {"screen": "game", "ms": 2, "waiting": sideview.WAITING})
 
     def test_own_prompt_unchanged(self):
         ui = self.prompt("Tav")

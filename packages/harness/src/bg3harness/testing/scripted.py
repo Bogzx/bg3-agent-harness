@@ -15,8 +15,9 @@ team's view, as the mod's arena module does with Ctx.side: its own team is the p
 combatants it sees only while they aren't hidden (hide), the acting combatant is named only when seen, events come in
 the side's own view (an unseen source is "Someone", a spell id only for the side's own caster), a job is its side's
 ("not your job" for the other), and acting out of turn, with the other team's character or on the other side's
-reaction prompt is refused with the mod's texts. The reaction prompt itself is on the one game client's screen for
-both sides (the bridge's side view hides the other side's). Calls without a side get today's answers.
+reaction prompt is refused with the mod's texts. The reaction prompt is on the one game client's screen: a side's
+ui.state shows its own prompt's rows and marks the other side's ({other_side: true}, no rows). Calls without a side
+get today's answers.
 """
 
 from __future__ import annotations
@@ -704,6 +705,13 @@ class GameModel:
             evs.append(ev)
         return {"latest": ring.seq, "events": evs[: int(args.get("limit") or 200)]}
 
+    def arena_ui_state(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
+        ui = self.op_ui_state(ctx, args)
+        a = self._match()
+        if self.reaction is not None and a.side_of(a.member(self.reaction["options"][0]["who"]).uuid) != side:
+            ui["reaction"] = {"other_side": True}
+        return ui
+
     def arena_job_poll(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
         jid = int(args.get("id") or 0)
         if jid in self.job_sides and self.job_sides[jid] != side:
@@ -913,6 +921,7 @@ _ARENA_OPS: dict[str, SideOpFn] = {
     "act.move_to": GameModel.arena_move_to,
     "job.poll": GameModel.arena_job_poll,
     "ui.react": GameModel.arena_react,
+    "ui.state": GameModel.arena_ui_state,
 }
 
 OpFn = Callable[[GameModel, str, dict[str, Any]], Any]

@@ -109,9 +109,11 @@ its side with every mod op, and the mod answers from that team's view:
 - an action while the other side is acting is refused with `not your turn (side B is acting)`, an action with the
   other team's character with `<name> is not on your side`, and the other side's job with `not your job`.
 
-Both sides share one game client. A reaction prompt for the other side's character reads as `WAITING` in this
-side's results, and the server never stops on it or answers it. If the agent answers it anyway, the mod refuses
-with `not your reaction`. The server also adds the match's rules (`packages/harness/prompts/rules/arena.md`) after
+Both sides share one game client, so a side's server makes no clicks or key presses: the tools and routes that
+would click (`click_on`, `flee`, reading a scroll, a reaction answered by a row click) refuse at once, and `end_turn`
+goes through the mod only. A reaction prompt for the other side's character reads as `WAITING` in this side's
+results, and the server never stops on it or answers it. If the agent answers it anyway, the mod refuses with
+`not your reaction`. The server also adds the match's rules (`packages/harness/prompts/rules/arena.md`) after
 the other rules. Without `BG3AI_SIDE`, the server sends exactly what it sent before.
 
 ## What the agent never sees
