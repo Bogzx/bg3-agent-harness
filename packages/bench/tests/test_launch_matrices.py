@@ -98,3 +98,29 @@ def test_the_claude_campaign_plans_on_its_verified_profiles(name, jobs):
     m = matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)  # allow_unverified = false
     assert not m["skipped"] and len(m["jobs"]) == jobs and all(j["max_cost"] for j in m["jobs"])
     assert {j["client"] for j in m["jobs"]} == {"pi"} and {j["model"] for j in m["jobs"]} == {f"claude-{name}-5-5"}
+
+
+def test_opus_rest_plays_the_rest_of_the_launch_list_in_launch_v1_opus_results_row():
+    sets = {name: set(raw(name)["scenarios"]) for name in ("opus", "opus-rest")}
+    assert sets["opus-rest"] == UNSCORED and set(raw("opus-rest")["budget"]["max_cost"]) == UNSCORED
+    m = matrix_cli.load(MATRICES / "launch-v1-opus-rest.toml", REPO)
+    assert not m["skipped"] and [(j["scenario"], j["repeat"]) for j in m["jobs"]] == [
+        (s, r) for s in raw("opus-rest")["scenarios"] for r in (1, 2, 3)
+    ]
+    reserves = [j["max_cost"] for j in m["jobs"]]
+    assert reserves == sorted(reserves, reverse=True)  # a job starts only if spent + its reserve fits the cap
+
+    def hours(name: str) -> float:
+        return scenario.load(MATRICES.parent / "scenarios" / f"{name}.json")["caps"]["run_hours"]
+
+    per_hour = {hours(s): c for s, c in raw("opus")["budget"]["max_cost"].items()}
+    for j in m["jobs"]:  # the max_cost launch-v1-opus gives the same time cap
+        assert j["max_cost"] == per_hour[hours(j["scenario"])], j["id"]
+    assert m["budget"] == REPO / "runtime" / "budget-opus.json"
+    assert m["shared"] == [REPO / "runtime" / "budget-anthropic.json"]
+    played = {
+        (j["client"], j["model"], j["effort"], j["condition"], j["profile"])
+        for name in ("opus", "opus-rest")
+        for j in matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)["jobs"]
+    }
+    assert played == {("pi", "claude-opus-5-5", "medium", "rules", str(REPO / "profiles" / "claude-opus-5-5.toml"))}
