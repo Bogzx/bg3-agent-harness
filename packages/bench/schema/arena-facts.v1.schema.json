@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/arena-facts.v1.schema.json",
   "title": "The arena referee's facts.jsonl events, a facts v1 extension",
-  "description": "The three events the harness writes from the referee (harness-only, never seen by either agent) into a match's one facts.jsonl, next to the facts v1 records (packages/harness/schemas/facts.v1.schema.json: v, kind, t, game_t, at). bg3bench.arena.grade reads them. Sides are A and B; a player is the model a side's client plays (\"<client>/<model slug>\", as the pairing planner names it).",
+  "description": "The events the harness writes from the referee (harness-only, never seen by either agent) into a match's one facts.jsonl, next to the facts v1 records (packages/harness/schemas/facts.v1.schema.json: v, kind, t, game_t, at). bg3bench.arena.grade reads them. Sides are A and B; a player is the model a side's client plays (\"<client>/<model slug>\", as the pairing planner names it).",
   "type": "object",
   "required": [
     "v",
@@ -52,7 +52,8 @@
         "arena_start",
         "arena_turn",
         "arena_turn_forced",
-        "arena_end"
+        "arena_end",
+        "arena_reaction_unowned"
       ]
     }
   },
@@ -265,6 +266,10 @@
               "client_fault"
             ],
             "description": "why it forfeited (reason forfeit)"
+          },
+          "detail": {
+            "type": "string",
+            "description": "the runner's own end, when the mod's end came before it"
           }
         },
         "allOf": [
@@ -303,6 +308,33 @@
             }
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_reaction_unowned"
+          }
+        }
+      },
+      "then": {
+        "description": "The harness declined a reaction prompt no team owns (neither side's to answer).",
+        "required": [
+          "round",
+          "detail"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the round it came up in"
+          },
+          "detail": {
+            "type": "string",
+            "description": "the prompt's text"
+          }
+        }
       }
     }
   ]

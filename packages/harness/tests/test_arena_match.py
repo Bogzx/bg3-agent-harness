@@ -39,15 +39,22 @@ SIDES = {"A": Side("A", "pi/model-x"), "B": Side("B", "pi/model-y")}
 
 class ArenaModel(GameModel):
     """GameModel plus the mod's arena module: setup starts the match, every TurnStarted is a ring arena_turn (and
-    a turn boundary where a wiped team ends the match), arena.status/end as Arena.lua answers them."""
+    a turn boundary where a wiped team ends the match), the start of round round_cap + 1 ends it as a draw with the
+    round left at the cap (caps=False: a mod without the cap), arena.status/end as Arena.lua answers them. The one
+    game client's reaction prompt holds the game (a side's act.end_turn waits); read with no side, a prompt naming
+    nobody of exactly one team is unowned (UIState.lua) and the harness answers it."""
 
-    def __init__(self, clock: FakeClock) -> None:
+    def __init__(self, clock: FakeClock, caps: bool = True) -> None:
         super().__init__(clock=clock)
         self.ended: dict[str, Any] | None = None
         self.ends: list[dict[str, Any]] = []  # arena.end calls
         self.alive = True
         self.answers = True
         self.setup_error: str | None = None
+        self.caps = caps
+        self.setup_args: dict[str, Any] = {}
+        self.round_cap: int | None = None
+        self.mod_round = 0  # the mod's st.round
 
     def hp(self, side: str) -> float:
         a = self._match()
@@ -57,26 +64,49 @@ class ArenaModel(GameModel):
     def finish(self, winner: str | None, reason: str) -> None:
         if self.ended is not None:
             return
-        a = self._match()
         self.ended = {
             "winner": winner,
             "reason": reason,
-            "rounds": a.round,
+            "rounds": self.mod_round,
             "hp_left_A": self.hp("A"),
             "hp_left_B": self.hp("B"),
         }
         self.ref_record("arena_end", **{k: v for k, v in self.ended.items() if v is not None})
 
+    def push(self, kind: str, data: dict[str, Any] | None = None, ctx: str = "server", views=None) -> int:
+        seq = super().push(kind, data, ctx, views)
+        if kind == "round_started" and self.ended is None:  # Ar.round_started
+            r = int((data or {})["round"])
+            if self.round_cap is not None and r > self.round_cap:
+                self.finish(None, "round_cap")
+            else:
+                self.mod_round = r
+        return seq
+
     def _push_turn(self, kind: str) -> None:
         super()._push_turn(kind)
         a = self._match()
-        if kind != "turn_started" or self.ended is not None:
+        if kind != "turn_started":
             return
         now = a.acting
-        self.ref_record("arena_turn", side=a.side_of(now.uuid), character=now.uuid, round=a.round)
+        self.mod_round = max(self.mod_round, 1)
+        self.ref_record("arena_turn", side=a.side_of(now.uuid), character=now.uuid, round=self.mod_round)
         wiped = [s for s in ("A", "B") if all(m.hp == 0 for m in a.teams[s])]
         if wiped:
             self.finish(None if len(wiped) == 2 else ("B" if wiped == ["A"] else "A"), "wipe")
+
+    def combat_end(self) -> None:
+        """The arena's combat ended without a wipe (Ar.combat_ended)."""
+        if self.ended is None:
+            self.ref_record("arena_combat_ended", rounds=self.mod_round)
+
+    def owners(self, who: str) -> list[str]:
+        return [s for s, team in self._match().teams.items() if any(m.name == who for m in team)]
+
+    def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
+        if op == "act.end_turn" and self.reaction is not None:
+            return {"ok": True, "result": self._failed_job(op, "a reaction prompt is open", side)}
+        return super().reply_side(ctx, op, args, side)
 
     def reply(self, ctx: str, op: str, args: dict[str, Any]) -> Any:
         if not self.answers:
@@ -84,6 +114,8 @@ class ArenaModel(GameModel):
         if op == "arena.setup":
             if self.setup_error:
                 return {"ok": True, "result": self._failed_job("arena.setup", self.setup_error)}
+            self.setup_args = dict(args)
+            self.round_cap = args.get("round_cap") if self.caps else None
             teams = args["arena"]["teams"]
             self.ref_record("arena_start", teams={})
             self.start_arena([m["name"] for m in teams["A"]], [m["name"] for m in teams["B"]])
@@ -97,7 +129,7 @@ class ArenaModel(GameModel):
                 "result": {
                     "active": self.ended is None,
                     "teams": {s: [m.uuid for m in team] for s, team in a.teams.items()},
-                    "turn": {"side": a.side_of(a.acting.uuid), "uuid": a.acting.uuid, "round": a.round},
+                    "turn": {"side": a.side_of(a.acting.uuid), "uuid": a.acting.uuid, "round": self.mod_round},
                     "hp": {"A": self.hp("A"), "B": self.hp("B")},
                     "ended": self.ended,
                 },
@@ -106,6 +138,16 @@ class ArenaModel(GameModel):
             self.ends.append(dict(args))
             self.finish(args.get("winner"), args["reason"])
             return {"ok": True, "result": {"ended": self.ended}}
+        if op == "ui.state" and self.reaction is not None and self.arena is not None:
+            ui = super().reply(ctx, op, args)
+            assert ui is not None
+            if len(self.owners(self.reaction["options"][0]["who"])) != 1:
+                ui["result"]["reaction"]["unowned"] = True
+            return ui
+        if op == "ui.react" and self.reaction is not None:
+            self.reacted.append((self.reaction["options"][0]["who"], bool(args.get("use"))))
+            self.reaction = None
+            return {"ok": True, "result": self._job("ui.react", {"answered": "skip"})}
         return super().reply(ctx, op, args)
 
 
@@ -227,9 +269,9 @@ def staller(game: Game, side: str, run: Run) -> None:
         run.model += 20
 
 
-def setup(plays: dict[str, Play], arena: dict | None = None):
+def setup(plays: dict[str, Play], arena: dict | None = None, caps: bool = True):
     mc = FakeClock()
-    model = ArenaModel(mc)
+    model = ArenaModel(mc, caps)
     game = Game(model)
     clock = Clock(mc)
     agents = Agents(game, clock, plays)
@@ -276,24 +318,141 @@ def test_a_full_match_to_a_wipe(tmp_path):
     assert out.cost("A") == 0.01 and out.cost("B") == 0.01  # each side's one process, stopped at the end
 
 
-def test_the_round_cap_is_a_draw_with_the_hp_left(tmp_path):
-    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
-    model_hit = []
+def chip_once(model: ArenaModel) -> Callable[[], None]:
+    hit = []
 
     def chip() -> None:  # one hit on Wyll before the cap
-        if model.arena is not None and not model_hit:
+        if model.arena is not None and not hit:
             model.arena_damage("Wyll", "Karlach", 6)
-            model_hit.append(1)
+            hit.append(1)
 
-    clock.tick_hooks.insert(0, chip)
+    return chip
+
+
+def test_the_mods_round_cap_ends_the_match_as_a_draw(tmp_path):
+    """The mod ends the match at the start of round cap + 1 and leaves its round at the cap: the runner stops on
+    that end (it never sees a turn past the cap) and writes it once."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+    clock.tick_hooks.insert(0, chip_once(model))
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert model.setup_args["round_cap"] == 4
+    assert out.invalid is None
+    assert out.end == {"winner": None, "reason": "round_cap", "rounds": 4, "hp_left_A": 1.0, "hp_left_B": 0.75}
+    assert model.ends == []  # the mod ended it
+    evs = arena_events(tmp_path)
+    assert [e["ev"] for e in evs].count("arena_end") == 1 and evs[-1]["ev"] == "arena_end"
+    assert max(e["round"] for e in evs if e["ev"] == "arena_turn") == 4
+    assert clock.t - 1_800_000_000 < 60  # stopped at the cap, not played on to the wall cap
+    g = grade(tmp_path)
+    assert (g["valid"], g["result"], g["reason"], g["rounds"]) == (True, "draw", "round_cap", 4)
+
+
+def test_a_mod_without_the_round_cap_is_capped_by_the_runner(tmp_path):
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer}, caps=False)
+    clock.tick_hooks.insert(0, chip_once(model))
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.invalid is None
     assert out.end == {"winner": None, "reason": "round_cap", "rounds": 4, "hp_left_A": 1.0, "hp_left_B": 0.75}
     assert model.ends == [{"reason": "round_cap"}]
-    turns = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn"]
+    evs = arena_events(tmp_path)
+    turns = [e for e in evs if e["ev"] == "arena_turn"]
     assert max(e["round"] for e in turns) == 5  # the turn of round 5 that ended it, before any action of it
+    assert [e["ev"] for e in evs].count("arena_end") == 1  # the mod's record of the runner's end is left out
     g = grade(tmp_path)
     assert (g["valid"], g["result"], g["reason"], g["rounds"]) == (True, "draw", "round_cap", 4)
+
+
+def test_the_arenas_combat_ending_without_a_wipe_is_an_invalid_match(tmp_path):
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+
+    def end_combat() -> None:
+        if model.arena is not None and model.mod_round == 2 and not model.ends:
+            model.combat_end()
+
+    clock.tick_hooks.insert(0, end_combat)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid == "fault: the arena's combat ended without a wipe (rounds 2)"
+    assert out.end is not None and (out.end["reason"], out.end["winner"], out.end["rounds"]) == ("fault", None, 2)
+    assert model.ends == [{"reason": "fault"}]  # the game is up: the mod hears the end
+    assert [e["ev"] for e in arena_events(tmp_path)].count("arena_end") == 1
+    g = grade(tmp_path)
+    assert (g["valid"], g["invalid_reason"]) == (False, "fault")
+
+
+def patient(game: Game, side: str, run: Run) -> None:
+    """Ends its turn; while a reaction prompt holds the game, its end_turn waits (no model time)."""
+    if (char := my_turn(game, side)) and game.rpc("act.end_turn", {"char": char}, side)["status"] == "done":
+        run.model += 5
+
+
+def open_at_round_2(model: ArenaModel, who: str) -> Callable[[], None]:
+    def hook() -> None:
+        if model.arena is not None and model.mod_round == 2 and not model.reacted and model.reaction is None:
+            model.open_reaction(who)
+
+    return hook
+
+
+def test_an_unowned_reaction_prompt_is_declined_once_and_recorded(tmp_path):
+    """A prompt for someone on neither team holds the game: neither side may answer it, so the runner declines it
+    (with no side) and records it. Turns that move on cost no ui.state read."""
+    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
+    clock.tick_hooks.insert(0, open_at_round_2(model, "Wolf"))
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert model.reacted == [("Wolf", False)]
+    assert game.calls.count(("ui.react", None)) == 1
+    assert game.calls.count(("ui.state", None)) == 1  # read only once the held turn was UNOWNED_CHECK_S old
+    unowned = [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
+    assert [(e["round"], e["detail"]) for e in unowned] == [(2, "Wolf | Shield | Choose how to react.")]
+    assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None
+    assert grade(tmp_path)["valid"]
+
+
+def test_a_reaction_prompt_a_team_owns_is_left_to_that_side(tmp_path):
+    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
+    clock.tick_hooks.insert(0, open_at_round_2(model, "Wyll"))
+
+    def answer() -> None:  # side B answers its prompt once the runner has looked at it
+        if model.reaction is not None and ("ui.state", None) in game.calls:
+            game.rpc("ui.react", {"use": True}, "B")
+
+    clock.tick_hooks.append(answer)
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert model.reacted == [("Wyll", True)]
+    assert ("ui.react", None) not in game.calls
+    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
+
+
+def test_an_end_of_the_mods_own_before_the_runners_is_the_one_written(tmp_path):
+    """The mod wipes team B after the tick's status read, before the runner's wall-cap arena.end: arena.end answers
+    with the mod's first end, and that is the match's (one arena_end), naming the runner's end in detail."""
+    arena = dict(ARENA, wall_cap_min=1, round_cap=100)
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer}, arena)
+    rpc = game.rpc
+
+    def wipe_first(op: str, args: dict[str, Any], side: str | None = None) -> Any:
+        if op == "arena.end":
+            for m in model._match().teams["B"]:
+                m.hp = 0
+            model.finish("A", "wipe")
+        return rpc(op, args, side)
+
+    game.rpc = wipe_first  # type: ignore[method-assign]
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None and model.ends == [{"reason": "wall_cap"}]
+    assert out.end is not None
+    assert {k: out.end[k] for k in ("winner", "reason", "hp_left_A", "hp_left_B")} == {
+        "winner": "A",
+        "reason": "wipe",
+        "hp_left_A": 1.0,
+        "hp_left_B": 0.0,
+    }
+    assert model.ended is not None and out.end["rounds"] == model.ended["rounds"]
+    assert out.end["detail"] == "the runner's end came after it: wall_cap"
+    ends = [e for e in arena_events(tmp_path) if e["ev"] == "arena_end"]
+    assert len(ends) == 1 and ends[0]["reason"] == "wipe"
+    g = grade(tmp_path, arena)
+    assert (g["valid"], g["result"], g["reason"]) == (True, "A", "wipe")
 
 
 def test_three_forced_turns_in_a_row_forfeit(tmp_path):
@@ -318,6 +477,35 @@ def test_three_forced_turns_in_a_row_forfeit(tmp_path):
         {"side": "B", "cause": "forced_turns"},
         {"A": 0, "B": 3},
     )
+
+
+def test_the_third_forced_turn_forfeits_before_any_end_turn_so_no_wipe_comes_first(tmp_path):
+    """The game wipes team A at the turn boundary after a forced end_turn of B's once B has two forced turns: the
+    forfeit is decided at the third cap, so the runner sends no end_turn there and the mod's first end is the
+    forfeit (one arena_end, a valid match)."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": staller})
+    rpc = game.rpc
+
+    def wipe_after_end_turn(op: str, args: dict[str, Any], side: str | None = None) -> Any:
+        r = rpc(op, args, side)
+        if op == "act.end_turn" and side == "B" and game.calls.count(("act.end_turn", "B")) >= 3:
+            for m in model._match().teams["A"]:
+                m.hp = 0
+            model.finish("B", "wipe")
+        return r
+
+    game.rpc = wipe_after_end_turn  # type: ignore[method-assign]
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert game.calls.count(("act.end_turn", "B")) == 2  # the two forced turns before the forfeit
+    assert model.ends == [{"reason": "forfeit", "winner": "A"}] and model.ended is not None
+    assert model.ended["reason"] == "forfeit"
+    assert out.end is not None and (out.end["reason"], out.end["winner"], out.end["forfeit"]) == ("forfeit", "A", "B")
+    evs = arena_events(tmp_path)
+    assert [e["ev"] for e in evs].count("arena_end") == 1
+    forced = [(e["side"], e["character"]) for e in evs if e["ev"] == "arena_turn_forced"]
+    assert forced == [("B", "Wyll"), ("B", "Halsin"), ("B", "Wyll")]
+    g = grade(tmp_path)
+    assert (g["valid"], g["result"], g["forfeit"]) == (True, "A", {"side": "B", "cause": "forced_turns"})
 
 
 def test_a_turn_under_the_cap_is_never_forced(tmp_path):
@@ -422,7 +610,8 @@ def test_an_operator_abort_is_invalid(tmp_path):
 
 def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     """The mod's own arena_start and a runner end's arena_end never reach facts; a turn names the character; a
-    turn of someone outside the teams (a summon) is not written."""
+    turn of someone outside the teams (a summon) is not written; the mod's own end of any reason is the match's,
+    and nothing of the arena's after an end is written."""
     _model, _game, clock, _agents, spec = setup({"A": passer, "B": passer})
     from bg3harness import facts as hfacts
 
@@ -436,10 +625,21 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
         "round": 1,
     }
     assert ref.translate({"ev": "arena_turn", "side": "A", "character": "summon-1", "round": 1}) is None
-    assert ref.translate({"ev": "arena_end", "reason": "forfeit", "rounds": 1}) is None
+    assert ref.translate({"ev": "arena_combat_ended", "rounds": 1}) is None and ref.combat_ended == {
+        "ev": "arena_combat_ended",
+        "rounds": 1,
+    }
     assert ref.translate({"ev": "kill", "name": "x"}) == {"ev": "kill", "name": "x"}
-    wipe = ref.translate({"ev": "arena_end", "reason": "wipe", "rounds": 1, "hp_left_A": 0, "hp_left_B": 0})
-    assert wipe is not None and wipe["winner"] is None
+    cap = ref.translate({"ev": "arena_end", "reason": "round_cap", "rounds": 4, "hp_left_A": 1, "hp_left_B": 1})
+    assert cap is not None and cap["winner"] is None and ref.mod_end == cap
+    assert ref.translate({"ev": "arena_turn", "side": "A", "character": "ua1", "round": 4}) is None
+    assert ref.translate({"ev": "arena_end", "reason": "wipe", "rounds": 4}) is None
+
+    ref2 = am.Referee(spec, SIDES, hfacts.FactsWriter(tmp_path / "f2.jsonl", clock=clock.now))
+    ref2.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]})
+    ref2.end(winner="A", reason="forfeit", rounds=1, hp_left_A=1, hp_left_B=1, forfeit="B", cause="forced_turns")
+    assert ref2.translate({"ev": "arena_end", "reason": "forfeit", "rounds": 1}) is None  # the runner's own end
+    assert ref2.mod_end is None
 
 
 def test_the_spec_refuses_a_draft_or_incomplete_arena():
