@@ -19,7 +19,7 @@ from bg3ai import referee
 BRIDGE = Path(__file__).resolve().parents[1]
 REPO = BRIDGE.parent
 FACTS_SCHEMA = json.loads((REPO / "packages/harness/schemas/facts.v1.schema.json").read_text())
-HIDDEN_OPS = ("ref.since", "ref.snapshot", "roll.since", "roll.snapshot", "scn.")
+HIDDEN_OPS = ("ref.since", "ref.snapshot", "roll.since", "roll.snapshot", "scn.", "arena.")
 
 
 class FakeRing:
@@ -239,9 +239,15 @@ class FairnessTest(unittest.TestCase):
             (src / "referee.py").write_text('OP = "ref.since"\n')
             (src / "tools" / "referee.py").write_text('OP = "roll.since"\n')
             (src / "tools" / "sneaky.py").write_text('from bg3ai import referee\nx = game.rpc("ref.since", {})\n')
+            (src / "tools" / "setup.py").write_text("x = game.rpc('arena.status', {})\n")
             self.assertEqual(
                 hidden_op_offenders(src),
-                ["tools/referee.py: roll.since", "tools/sneaky.py: ref.since", "tools/sneaky.py: imports referee"],
+                [
+                    "tools/referee.py: roll.since",
+                    "tools/setup.py: arena.",
+                    "tools/sneaky.py: ref.since",
+                    "tools/sneaky.py: imports referee",
+                ],
             )
 
     def test_no_tool_is_named_for_them(self):

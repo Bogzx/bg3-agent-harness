@@ -250,8 +250,8 @@ for _name in sorted(TOOLS_OFF):
     core.mcp.remove_tool(_name)
 batch._BATCHABLE -= TOOLS_OFF
 INSTRUCTIONS = core.instructions(TOOLS_OFF)
-if TOOLS_OFF:  # the rules of the served groups only
-    core.RULES.rules = rules.load(off=TOOLS_OFF, required=rules.serve_enabled())
+if TOOLS_OFF or core.SETTINGS.side:  # the rules of the served groups only; a side's server adds the match's
+    core.RULES.rules = rules.load(off=TOOLS_OFF, required=rules.serve_enabled(), arena=core.SETTINGS.side is not None)
 core.mcp._lowlevel_server.instructions = rules.instructions(INSTRUCTIONS, core.RULES.rules)
 
 

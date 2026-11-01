@@ -3,7 +3,8 @@ in the session env and the server removes every other tool at startup, so no cli
 switches off (a client's own allowlist only covers its built-ins).
 
 BG3AI_TOOLS: comma list of groups and single tool names to keep. Unset or empty = every tool (today's server).
-The "game" group (every tool in no other group) is always on. BG3AI_TOOLS_OFF: groups or names removed on top.
+The "game" group (every tool in no other group) is always on. BG3AI_TOOLS_OFF: groups or names removed on top, or
+a named list (LISTS, e.g. "arena-v1") standing for its groups and names.
 An unknown group or tool name raises ValueError: the server fails at startup instead of serving the wrong set.
 """
 
@@ -32,36 +33,44 @@ GROUPS: dict[str, tuple[str, ...]] = {
 }
 GAME = "game"
 
-# The BG3AI_TOOLS_OFF value for a two-team match (one fight from its first turn to its last): the groups and tools
-# for what a fight-only match has none of (memory across sessions, saves and reloads, raw input, travel, camp and
-# rest, trade and other out-of-fight world actions, starting a conversation, character creation and levelling, the
-# journal and map). Every tool used in a fight stays: the reads, moves, abilities, items, reactions, turns, queues and
-# waits, and the answers to a prompt that comes up (dialogue, roll, popup).
-ARENA_TOOLS_OFF = ",".join(
-    (
+# Named lists for BG3AI_TOOLS_OFF (only there): a name stands for its groups and tools. "arena-v1": a two-team match,
+# one fight from its first turn to its last, played by two models on one game client. Off: memory across sessions,
+# the wiki, saves and reloads, screenshots and raw input (the one client's screen and input show both teams),
+# travel, camp and rest, conversations and rolls, trade and the out-of-fight world actions, looting, character
+# creation and levelling, the journal and map. confirm and dismiss_popups stay: a popup can come up mid-fight.
+LISTS: dict[str, tuple[str, ...]] = {
+    "arena-v1": (
         "memory",
+        "wiki",
         "reload",
         "saves",
+        "screenshots",
         "raw_input",
         "fast_travel",
-        "travel_to",
-        "regroup",
-        "stay",
         "camp",
         "swap_party",
-        "short_rest",
         "long_rest",
+        "short_rest",
         "rest_if_needed",
+        "travel_to",
+        "talk_to",
+        "choose_dialogue",
+        "dialogue_advance",
+        "get_dialogue",
+        "roll_check",
         "trade",
         "pickpocket",
         "lockpick",
         "disarm",
+        "loot",
+        "loot_corpse",
+        "loot_area",
+        "pick_up",
+        "feed_gale",
         "insert_item",
         "read_all",
-        "loot_area",
-        "feed_gale",
-        "equip_best",
-        "talk_to",
+        "place_marker",
+        "delete_marker",
         "new_game",
         "character_creation_options",
         "create_character",
@@ -70,23 +79,20 @@ ARENA_TOOLS_OFF = ",".join(
         "prepare_spells",
         "get_journal",
         "get_map",
-        "get_frontier",
-        "get_explored",
-        "place_marker",
-        "delete_marker",
-        "end_combat_report",
-    )
-)
+    ),
+}
 
 
 def _names(value: str | None) -> list[str]:
     return [x.strip() for x in (value or "").split(",") if x.strip()]
 
 
-def _expand(names: list[str], tools: set[str], var: str) -> set[str]:
+def _expand(names: list[str], tools: set[str], var: str, lists: bool = False) -> set[str]:
     out: set[str] = set()
     for name in names:
-        if name == GAME:
+        if lists and name in LISTS:
+            out |= _expand(list(LISTS[name]), tools, f"{var} list {name}")
+        elif name == GAME:
             out |= tools - {t for g in GROUPS.values() for t in g}
         elif name in GROUPS:
             out |= set(GROUPS[name])
@@ -105,7 +111,7 @@ def disabled(tools: Iterable[str], env: Mapping[str, str]) -> set[str]:
         raise ValueError(f"capabilities: grouped tools not registered: {', '.join(missing)}")
     on = _names(env.get("BG3AI_TOOLS"))
     keep = _expand([GAME, *on], tools, "BG3AI_TOOLS") if on else set(tools)
-    keep -= _expand(_names(env.get("BG3AI_TOOLS_OFF")), tools, "BG3AI_TOOLS_OFF")
+    keep -= _expand(_names(env.get("BG3AI_TOOLS_OFF")), tools, "BG3AI_TOOLS_OFF", lists=True)
     return tools - keep
 
 

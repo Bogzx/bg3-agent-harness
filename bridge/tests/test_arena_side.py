@@ -1,5 +1,6 @@
 """Offline tests: a server playing one team of a two-team match (BG3AI_SIDE) sends its side with every op, and a server
-without it sends exactly what it sent before; the arena tool set (capabilities.ARENA_TOOLS_OFF) serves the fight tools.
+without it sends exactly what it sent before; the arena tool list (capabilities.LISTS arena-v1) serves the fight tools;
+a reaction prompt of the other side's character reads as waiting (sideview.py).
 
 Run: cd bridge && uv run python -m unittest tests/test_arena_side.py
 """
@@ -9,6 +10,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -17,11 +19,12 @@ from pathlib import Path
 from test_capabilities import BRIDGE, build, tools  # (sets BG3AI_RUNTIME before importing the server)
 
 # isort: split
-from bg3ai import capabilities, rpc_record, settings
+from bg3ai import capabilities, rpc_record, settings, sideview
 from bg3ai.game import RPC_EXPR, Game
 
 FIXTURES = Path(__file__).resolve().parents[2] / "packages/harness/tests/fixtures/rpc"
 GOLDEN = Path(__file__).resolve().parent / "golden" / "tools_list.json"
+ARENA_MD = Path(__file__).resolve().parents[2] / "packages/harness/prompts/rules/arena.md"
 
 
 class Capture(Game):
@@ -103,7 +106,7 @@ class Side(unittest.TestCase):
             for op, args in calls:
                 g.rpc(op, args)
             g.multi(calls[:10])
-            got = [c for code in g.sent for c in rpc_record.decode(code)[0]]
+            got = [c for code in g.sent for c in (rpc_record.decode(code) or ([], False))[0]]
             want = [{"op": op, "args": args or {}, "side": side} for op, args in calls + calls[:10]]
             self.assertEqual(got, want)
 
@@ -144,61 +147,136 @@ class Server(unittest.TestCase):
 
     def test_arena_tool_set(self):
         names = {t["name"] for t in json.loads(GOLDEN.read_text(encoding="utf-8"))}
-        off = capabilities.disabled(names, {"BG3AI_TOOLS_OFF": capabilities.ARENA_TOOLS_OFF})
-        fight = {
-            "get_status",
-            "look",
-            "get_party",
-            "get_character",
-            "get_actions",
-            "get_nearby",
-            "look_at",
-            "get_combat_state",
-            "path_preview",
-            "ability_preview",
-            "move_to",
-            "jump_to",
-            "use_ability",
-            "react",
-            "set_reactions",
-            "end_turn",
-            "combat_turn",
-            "do_actions",
-            "queue_actions",
-            "cancel_queue",
-            "wait_for",
-            "wait",
-            "manage_inventory",
+        off = capabilities.disabled(names, {"BG3AI_TOOLS_OFF": "arena-v1"})
+        groups = ("memory", "wiki", "reload", "saves", "screenshots", "raw_input")
+        by_name = set(SPEC_ARENA_V1.split())
+        self.assertEqual(off, {t for g in groups for t in capabilities.GROUPS[g]} | by_name)
+        self.assertEqual(set(capabilities.LISTS["arena-v1"]), set(groups) | by_name)
+        kept = {
+            "interact",
             "set_party",
-            "get_dialogue",
-            "choose_dialogue",
-            "dialogue_advance",
-            "roll_check",
+            "get_frontier",
+            "get_layout",
+            "end_combat_report",
+            "wait",
+            "session_clock",
             "confirm",
             "dismiss_popups",
-            "flee",
-            "session_clock",
+            "react",
+            "set_reactions",
+            "use_ability",
+            "end_turn",
+            "combat_turn",
+            "move_to",
+            "wait_for",
+            "get_combat_state",
         }
-        self.assertFalse(off & fight, off & fight)
-        for group in ("memory", "reload", "saves", "raw_input"):
-            self.assertTrue(set(capabilities.GROUPS[group]) <= off, group)
-        self.assertTrue(
-            {
-                "travel_to",
-                "fast_travel",
-                "camp",
-                "long_rest",
-                "short_rest",
-                "trade",
-                "talk_to",
-                "level_up",
-                "get_journal",
-            }
-            <= off
-        )
-        served = tools({"BG3AI_TOOLS_OFF": capabilities.ARENA_TOOLS_OFF})
+        self.assertFalse(off & kept, off & kept)
+        # a list name mixes with groups and names, and only BG3AI_TOOLS_OFF takes one
+        self.assertEqual(capabilities.disabled(names, {"BG3AI_TOOLS_OFF": "memory, arena-v1,flee"}), off | {"flee"})
+        with self.assertRaises(ValueError):
+            capabilities.disabled(names, {"BG3AI_TOOLS": "arena-v1"})
+        served = tools({"BG3AI_TOOLS_OFF": "arena-v1"})
         self.assertEqual(set(served["tools"]), names - off)
         self.assertFalse(off & set(served["batchable"]))
+
+    def test_a_sides_server_serves_the_match_rules(self):
+        side = tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1"})["instructions"]
+        self.assertIn("## Two-team match", side)
+        self.assertTrue(side.rstrip().endswith(ARENA_MD.read_text(encoding="utf-8").strip()))
+        self.assertNotIn("## Two-team match", tools({"BG3AI_TOOLS_OFF": "arena-v1"})["instructions"])
+        self.assertNotIn("## Two-team match", tools({})["instructions"])
+
+    def test_the_match_rules_name_every_tool_the_list_removes(self):
+        text = ARENA_MD.read_text(encoding="utf-8")
+        named = {n for n in capabilities.LISTS["arena-v1"] if n not in capabilities.GROUPS}
+        self.assertEqual({n for n in named if f"`{n}`" not in text}, set())
+        flat = " ".join(text.split())
+        for words in ("memory", "wiki", "saves and reloads", "screenshots", "raw input"):
+            self.assertIn(words, flat)
+
+    def test_a_list_naming_an_unregistered_tool_fails(self):
+        names = {t["name"] for t in json.loads(GOLDEN.read_text(encoding="utf-8"))}
+        saved = capabilities.LISTS["arena-v1"]
+        capabilities.LISTS["arena-v1"] = (*saved, "renamed_tool")
+        try:
+            with self.assertRaisesRegex(ValueError, "renamed_tool"):
+                capabilities.disabled(names, {"BG3AI_TOOLS_OFF": "arena-v1"})
+        finally:
+            capabilities.LISTS["arena-v1"] = saved
+
+
+# The by-name part of the arena tools-off list in the spec (§3.5), verbatim.
+SPEC_ARENA_V1 = """fast_travel camp swap_party long_rest short_rest rest_if_needed travel_to talk_to choose_dialogue
+dialogue_advance get_dialogue roll_check trade pickpocket lockpick disarm loot loot_corpse loot_area pick_up feed_gale
+insert_item read_all place_marker delete_marker new_game character_creation_options create_character
+get_level_up_options level_up prepare_spells get_journal get_map"""
+
+SRC = Path(__file__).resolve().parents[1] / "src" / "bg3ai"
+# Request builders besides Game.envelope: progress.combined_code serves the harness's own readers, which must send no
+# side (they see both teams); delta.multi_rpc's fallback runs only for objects without Game.multi (test doubles).
+OTHER_BUILDERS = {"progress.py": 1, "delta.py": 1}
+
+
+class Builders(unittest.TestCase):
+    def test_the_envelope_is_built_in_one_place(self):
+        found: dict[str, int] = {}
+        for path in sorted(SRC.rglob("*.py")):
+            n = len(re.findall(r"""json\.dumps\(\s*\{\s*["']op["']|\{\s*["']op["']\s*:\s*op\b""", path.read_text()))
+            if n:
+                found[path.relative_to(SRC).as_posix()] = n
+        self.assertEqual(found, {"game.py": 1, **OTHER_BUILDERS})
+
+
+class ReactionView(unittest.TestCase):
+    """A reaction prompt of the other side's character is waiting for this side, never a prompt to answer."""
+
+    TEAM = ("Tav", "Shadowheart")
+
+    def prompt(self, *who: str) -> dict:
+        rows = [{"i": i + 1, "who": w, "name": "Shield", "level": 1} for i, w in enumerate(who)]
+        return {
+            "screen": "reaction",
+            "page": "ReactionDecisionPopup",
+            "blocking": True,
+            "region": "Act 1",
+            "reaction": {"prompt": " | ".join(who) + " | Shield", "options": rows},
+            "ms": 2,
+        }
+
+    def view(self, ui):
+        return sideview.ui_view(ui, lambda: self.TEAM)
+
+    def test_the_other_sides_prompt_is_waiting(self):
+        out = self.view(self.prompt("Lae'zel"))
+        self.assertEqual(out, {"screen": "game", "region": "Act 1", "ms": 2, "waiting": sideview.WAITING})
+
+    def test_own_prompt_unchanged(self):
+        ui = self.prompt("Tav")
+        self.assertIs(self.view(ui), ui)
+
+    def test_mixed_prompt_keeps_own_rows(self):
+        out = self.view(self.prompt("Lae'zel", "Shadowheart"))
+        self.assertEqual(out["screen"], "reaction")
+        self.assertEqual(out["reaction"], {"options": [{"i": 2, "who": "Shadowheart", "name": "Shield", "level": 1}]})
+
+    def test_rows_without_a_name_and_other_screens_unchanged(self):
+        for ui in (
+            {"screen": "reaction", "reaction": {"prompt": "x", "options": [{"i": 1}]}},
+            {"screen": "game"},
+            {"screen": "dialogue"},
+            None,
+            "busy",
+        ):
+            self.assertIs(self.view(ui), ui)
+
+    def test_game_applies_it_to_ui_state_only_with_a_side(self):
+        ui = self.prompt("Lae'zel")
+        for side, screen in ((None, "reaction"), ("A", "game")):
+            g = Game(port=1, side=side)
+            g._team_names = lambda: set(self.TEAM)
+            self.assertEqual(g._view("ui.state", ui)["screen"], screen)
+            self.assertIs(g._view("state.status", ui), ui)
 
 
 if __name__ == "__main__":

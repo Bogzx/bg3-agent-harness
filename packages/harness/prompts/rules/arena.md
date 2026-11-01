@@ -1,0 +1,26 @@
+## Two-team match
+This session is one turn-based fight in one game between two teams, side A and side B, each played by a different
+player through its own bg3 server. Your server plays one side: its characters are the party in every result
+(`get_status`, `get_party`). The other team's characters are hostile combatants, listed in `get_combat_state` only
+while one of your characters can see them; what you learn of them (events, positions, HP) is what your characters
+perceive. The other player's calls and text never reach you, only their effects in the game.
+
+- A side acts only when one of its characters is acting. An action at another time is refused at once, naming the
+  side that is acting ("side B is acting"), and nothing is done. `end_turn`, `wait_for` with `my_turn` and
+  `combat_turn` wait until one of your characters is acting.
+- An action with a character of the other team is refused: "<name> is not on your side". A job of the other side
+  can't be polled or cancelled: "not your job".
+- Both sides share one game screen. A reaction prompt of the other side's character is that side's to answer: while
+  it is open your results show WAITING and the game waits for that side; answering it is refused: "not your
+  reaction".
+- The match ends at a turn boundary when every character of one side is downed or dead: the other side wins. At the
+  match's round cap it is a draw. A turn that runs past the per-turn time cap is ended for that side; three such
+  turns in a row lose the match.
+- Spells cast through a second pick (Dimension Door's landing, the Revivify spell) are refused, and a cast takes at
+  most two targets.
+- This match removes these tools, though the rules above may name them: the memory and note tools, the wiki, saves
+  and reloads, screenshots, raw input, `fast_travel`, `camp`, `swap_party`, `long_rest`, `short_rest`,
+  `rest_if_needed`, `travel_to`, `talk_to`, `choose_dialogue`, `dialogue_advance`, `get_dialogue`, `roll_check`,
+  `trade`, `pickpocket`, `lockpick`, `disarm`, `loot`, `loot_corpse`, `loot_area`, `pick_up`, `feed_gale`,
+  `insert_item`, `read_all`, `place_marker`, `delete_marker`, `new_game`, `character_creation_options`,
+  `create_character`, `get_level_up_options`, `level_up`, `prepare_spells`, `get_journal`, `get_map`.

@@ -2,6 +2,7 @@
 
     rules/*.md                 how the game, the tools, fairness and the clock line work: what every model is told
     rules/capabilities/*.md    the same for one tool group (bridge capabilities.py GROUPS), only when it is on
+    rules/arena.md             a two-team match (a server playing one side, BG3AI_SIDE): arena=True
     coaching/*.md              how to play well and the playthrough's own protocol (memory files, sessions)
     clients/<client>.md        what one client truly needs on top (claude: Claude Code's mcp__bg3__ names and
                                ToolSearch); other clients get none
@@ -31,6 +32,7 @@ REPO = HERE.parents[2]
 CLAUDE_MD = REPO / "play" / "CLAUDE.md"
 
 RULES = ("rules/core.md", "rules/game-and-tools.md", "rules/fairness.md", "rules/clock.md")
+ARENA = "rules/arena.md"  # after the capability files, in a session that plays one side of a two-team match
 # The tool groups of bridge/src/bg3ai/capabilities.py (BG3AI_TOOLS): a group's rules file, and the tools a rules
 # text may name only when that group is on. "reload" has no rules file: nothing in the rules mentions reloading.
 CAPABILITIES: dict[str, tuple[str, ...]] = {
@@ -87,8 +89,11 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def part_files(condition: str = "rules", client: str = "mcp", caps: frozenset[str] | set[str] = ALL_CAPS) -> list[str]:
-    """The files of a condition, in order: rules, the on groups' rules, the client's appendix, then coaching."""
+def part_files(
+    condition: str = "rules", client: str = "mcp", caps: frozenset[str] | set[str] = ALL_CAPS, arena: bool = False
+) -> list[str]:
+    """The files of a condition, in order: rules, the on groups' rules, the match's rules (arena), the client's
+    appendix, then coaching."""
     if condition not in CONDITIONS:
         raise ValueError(f"unknown condition {condition!r} (one of {', '.join(CONDITIONS)})")
     if client not in CLIENTS:
@@ -98,19 +103,28 @@ def part_files(condition: str = "rules", client: str = "mcp", caps: frozenset[st
     if CONDITIONS[condition] and frozenset(caps) != ALL_CAPS:
         # the coaching is the playthrough's: it names the memory files, the wiki, saves and reloads throughout
         raise ValueError(f"{condition} needs every capability on (off: {', '.join(sorted(ALL_CAPS - set(caps)))})")
+    if arena and CONDITIONS[condition]:
+        raise ValueError(f"{condition} is the playthrough's text: a two-team match is rules only")
     files = list(RULES) + [f"rules/capabilities/{c}.md" for c in CAPABILITIES if c in caps and c != "reload"]
+    if arena:
+        files.append(ARENA)
     if (HERE / "clients" / f"{client}.md").exists():
         files.append(f"clients/{client}.md")
     return files + list(CONDITIONS[condition])
 
 
 def assemble(
-    condition: str = "rules", client: str = "mcp", caps: frozenset[str] | set[str] = ALL_CAPS, root: Path = HERE
+    condition: str = "rules",
+    client: str = "mcp",
+    caps: frozenset[str] | set[str] = ALL_CAPS,
+    root: Path = HERE,
+    arena: bool = False,
 ) -> Assembly:
-    """The system text of a condition for a client: its parts joined by a blank line, trailing newline."""
+    """The system text of a condition for a client: its parts joined by a blank line, trailing newline. arena: a
+    session playing one side of a two-team match (rules/arena.md)."""
     parts: list[dict[str, str]] = []
     texts: list[str] = []
-    for f in part_files(condition, client, caps):
+    for f in part_files(condition, client, caps, arena):
         data = (root / f).read_bytes()
         parts.append({"file": f, "sha256": _sha(data)})
         texts.append(data.decode("utf-8").strip())

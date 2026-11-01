@@ -47,12 +47,13 @@ class RulesMissingError(RuntimeError):
 
 
 def load(path: Path | None = None, condition: str | None = None, off: frozenset[str] | set[str] = frozenset(),
-         required: bool = True) -> str:
+         required: bool = True, arena: bool = False) -> str:
     """The rules a client is served: `path` (or $BG3AI_RULES_PATH) verbatim, else the assembled text of `condition`
     (or default_condition()). Unreadable: RulesMissingError, so the server doesn't start; "" only when not `required`
     (the server doesn't serve them: $BG3AI_SERVE_RULES=0, Claude Code reads play/CLAUDE.md).
     `off`: the tools the session's condition removed (capabilities.py); a rules-only text leaves out the rules of
-    a group with a tool off. The coaching conditions are the playthrough's text with every group (assemble.py)."""
+    a group with a tool off. The coaching conditions are the playthrough's text with every group (assemble.py).
+    arena: the session plays one side of a two-team match (BG3AI_SIDE): the match's rules come last."""
     path = path or (Path(p) if (p := os.environ.get("BG3AI_RULES_PATH")) else None)
     try:
         if path is not None:
@@ -62,7 +63,7 @@ def load(path: Path | None = None, condition: str | None = None, off: frozenset[
         caps = mod.ALL_CAPS
         if not mod.CONDITIONS.get(cond):
             caps = frozenset(c for c, names in mod.CAPABILITIES.items() if not set(names) & set(off))
-        return mod.assemble(cond, caps=caps).text.strip()
+        return mod.assemble(cond, caps=caps, arena=arena).text.strip()
     except OSError as e:
         if required:
             raise RulesMissingError(f"no rules for this session ({e}); set $BG3AI_RULES_PATH or install the "

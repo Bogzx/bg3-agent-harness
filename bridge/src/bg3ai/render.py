@@ -293,6 +293,8 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     rx = ui.get("reaction")
     if rx:
         lines.append("REACTION " + compact(rx, H))
+    if ui.get("waiting"):  # a two-team match: the other side's prompt (sideview.py)
+        lines.append(f"WAITING {ui['waiting']}")
     p = ui.get("popup")
     if p and ui.get("screen") == "book" and len(str(p.get("text") or "")) > BOOK_SHOWN:
         # a whole book in every status line while it is open: the start, the rest is kept for recall()
@@ -309,7 +311,7 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     if c:
         lines.append("CONTAINER " + compact(c, H))
     if not brief:
-        rest = {k: v for k, v in ui.items() if k not in ("dialogue", "roll", "reaction", "popup", "container", "ms", "region")}
+        rest = {k: v for k, v in ui.items() if k not in ("dialogue", "roll", "reaction", "popup", "container", "ms", "region", "waiting")}
         if rest:
             lines.append("UI " + compact(rest, H))
     elif ui.get("notifications"):

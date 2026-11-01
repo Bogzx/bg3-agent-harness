@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import busywait, jobpush, rpc_record
+from . import busywait, jobpush, rpc_record, sideview
 from .luadebug import LuaDebugClient, LuaDebugError
 
 RPC_EXPR = "return Mods.BG3AI.BG3AI.rpc([{eq}[{payload}]{eq}])"
@@ -286,6 +286,17 @@ class Game:
             req["side"] = self.side
         return json.dumps(req, separators=(",", ":"))
 
+    def _view(self, op: str, result: Any) -> Any:
+        """A reply as this server's side sees it: with a side, ui.state leaves out the other side's reaction prompt
+        (sideview.py); without one, the reply as it came."""
+        if self.side and op == "ui.state":
+            return sideview.ui_view(result, self._team_names)
+        return result
+
+    def _team_names(self) -> set[str]:
+        st = self.try_rpc("state.status") or {}
+        return {r["name"] for r in st.get("party") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)}
+
     def rpc(self, op: str, args: dict[str, Any] | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         if context != "client":
             return self._rpc_once(op, args, context, timeout)
@@ -315,7 +326,7 @@ class Game:
             raise GameError(f"bad reply from mod: {raw[:200]}") from e
         if not reply.get("ok"):
             raise GameError(reply.get("error") or "unknown error")
-        return reply.get("result")
+        return self._view(op, reply.get("result"))
 
     def try_rpc(self, op: str, args: dict | None = None, context: str = "server", default: Any = None) -> Any:
         try:
@@ -476,7 +487,9 @@ class Game:
                 replies = json.loads(raw)
             except json.JSONDecodeError as e:
                 raise GameError(f"bad reply from mod: {raw[:200]}") from e
-            out = [r.get("result") if isinstance(r, dict) and r.get("ok") else None for r in replies]
+            ops = [op for op, _ in calls]
+            out = [self._view(ops[i] if i < len(ops) else "", r.get("result")) if isinstance(r, dict) and r.get("ok")
+                   else None for i, r in enumerate(replies)]
             errs = [None if isinstance(r, dict) and r.get("ok") else
                     ((r.get("error") if isinstance(r, dict) else None) or "unknown error") for r in replies]
             complete = False
