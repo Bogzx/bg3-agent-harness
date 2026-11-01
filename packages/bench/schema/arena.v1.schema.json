@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/arena.v1.schema.json",
   "title": "An arena file (packages/bench/arenas/<name>.json), v1",
-  "description": "One fight two models play against each other: the start save, where the two sides start, each side's team, the dice seed, the caps, the condition and the bridge's tools-off list. bg3bench.arena.validate is the full check (names unique across both teams, the file name, a draft's missing save).",
+  "description": "One fight two models play against each other: the start save, where the two sides start, each side's team, the dice seed, Karmic Dice off, the caps (rounds, wall clock, model time per turn), the condition and the bridge's tools-off list. bg3bench.arena.validate is the full check (names unique across both teams, the file name, a draft's missing save).",
   "type": "object",
   "required": [
     "schema",
@@ -13,6 +13,8 @@
     "location",
     "teams",
     "seed",
+    "karmic",
+    "turn_cap_s",
     "tools_off"
   ],
   "additionalProperties": false,
@@ -152,17 +154,26 @@
       "maximum": 2147483647,
       "description": "the dice seed the mod sets before the fight"
     },
+    "karmic": {
+      "const": false,
+      "description": "Karmic Dice: off in every arena"
+    },
     "round_cap": {
       "type": "integer",
       "minimum": 1,
       "default": 20,
-      "description": "rounds; at the cap the higher remaining HP fraction wins"
+      "description": "rounds; the cap is a draw (HP fractions recorded, never a tiebreak)"
     },
     "wall_cap_min": {
       "type": "number",
       "exclusiveMinimum": 0,
       "default": 30,
-      "description": "wall-clock minutes; at the cap the higher remaining HP fraction wins"
+      "description": "wall-clock minutes; the cap is a draw (HP fractions recorded, never a tiebreak)"
+    },
+    "turn_cap_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "model seconds a turn may take; at the cap the harness ends the turn (arena_turn_forced)"
     },
     "condition": {
       "type": "string",

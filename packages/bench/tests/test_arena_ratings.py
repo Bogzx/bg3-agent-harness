@@ -1,12 +1,12 @@
 # pyright: basic
-"""Arena results: pairings, win/draw/loss, the Bradley-Terry fit, its bootstrap interval and the Elo display."""
+"""Arena results: pairings, the pairwise table, side A's rate, the gated Bradley-Terry fit and the Elo display."""
 
 import math
 import random
 
 import pytest
 
-from bg3bench import arena
+from bg3bench import arena, stats
 
 
 def m(pairing, a, b, result, valid=True, arena_name="open_field"):
@@ -18,15 +18,15 @@ def pairing(pid, x, y, r1, r2):
     return [m(pid, x, y, r1), m(pid, y, x, r2)]
 
 
-def league(seed, n=12):
-    """Synthetic pairings of three players of increasing strength, drawn from a fixed seed."""
+def league(seed, n=12, side_a=0.0):
+    """Synthetic pairings of three players of increasing strength, drawn from a fixed seed; side_a: side A's edge."""
     rng, strength, out = random.Random(seed), {"p1": 1.0, "p2": 2.0, "p3": 4.0}, []
     names = sorted(strength)
     for k in range(n):
         x, y = rng.sample(names, 2)
-        for side_a, side_b in ((x, y), (y, x)):
-            p = strength[side_a] / (strength[side_a] + strength[side_b])
-            out.append(m(f"q{k}", side_a, side_b, "A" if rng.random() < p else "B"))
+        for on_a, on_b in ((x, y), (y, x)):
+            p = strength[on_a] / (strength[on_a] + strength[on_b]) + side_a
+            out.append(m(f"q{k:03d}", on_a, on_b, "A" if rng.random() < p else "B"))
     return out
 
 
@@ -56,12 +56,71 @@ def test_a_pairing_whose_valid_matches_are_not_one_swap_raises(bad):
         arena.pairings(bad)
 
 
-def test_side_swapped_results_cancel():
-    # x wins both of p1 (once on each side); in p2 the A side wins both: one win each, so x and y are level there
-    r = arena.results([*pairing("p1", "x", "y", "A", "B"), *pairing("p2", "x", "y", "A", "A")], seed=1, b=50)
+MIXED = [
+    *pairing("a", "x", "y", "A", "B"),  # x wins both: 2-0
+    *pairing("b", "x", "y", "draw", "A"),  # a draw, then y wins on side A: x 0.5-1.5, lost
+    *pairing("c", "x", "y", "A", "A"),  # each wins on side A: split
+    *pairing("d", "x", "z", "A", "B"),  # x wins both
+    *pairing("e", "y", "z", "A", "draw"),  # y 1.5-0.5: won
+    m("f", "y", "z", "B"),  # incomplete: out of the pairwise table and the ratings
+    *pairing("g", "y", "y", "A", "B"),  # a self-pairing: only side A's rate counts it
+]
+
+
+def test_the_pairwise_table():
+    r = arena.results(MIXED, seed=3, b=100)
+    assert r["counts"] == {"matches": 13, "invalid": 0, "self": 2, "incomplete": 1, "pairings": 5}
+    xy, xz, yz = r["pairs"]
+    assert (xy["a"], xy["b"]) == ("x", "y")
+    assert (xy["won"], xy["split"], xy["lost"]) == (1, 1, 1)
+    assert (xy["w"], xy["d"], xy["l"], xy["n_matches"], xy["n_pairings"]) == (3, 1, 2, 6, 3)
+    assert xy["win_rate"] == pytest.approx(3.5 / 6)
+    assert xy["wilson"] == pytest.approx(list(stats.wilson(3.5, 6)))  # pyright: ignore[reportArgumentType]
+    assert (xz["won"], xz["n_pairings"], xz["win_rate"]) == (1, 1, 1.0)
+    assert (yz["a"], yz["b"], yz["won"], yz["d"]) == ("y", "z", 1, 1)
+    assert not any(row["rated"] for row in r["pairs"])  # under 15 pairings: pilot rows
+
+
+def test_below_the_pairing_floor_every_model_is_a_pilot_row():
+    r = arena.results(MIXED, seed=3, b=100)
     by = {row["player"]: row for row in r["models"]}
-    assert (by["x"]["w"], by["x"]["l"], by["y"]["w"], by["y"]["l"]) == (3, 1, 1, 3)
-    level = arena.results(pairing("p2", "x", "y", "A", "A"), seed=1, b=50)
+    assert {p: (row["rated"], row["bt"], row["elo"], row["elo_ci"]) for p, row in by.items()} == {
+        p: (False, None, None, None) for p in ("x", "y", "z")
+    }
+    assert (by["x"]["n_matches"], by["x"]["n_pairings"], by["x"]["points"]) == (8, 4, 5.5)
+    assert [row["player"] for row in r["models"]] == ["x", "y", "z"]  # by points per match
+
+
+def test_side_a_rate_counts_every_valid_match_and_resamples_pairings():
+    r = arena.results(MIXED, seed=3, b=200)
+    a_points = sum(arena._points(x, "A") for x in MIXED)
+    assert (r["side_a"]["n_matches"], r["side_a"]["n_pairings"]) == (13, 7)
+    assert r["side_a"]["rate"] == pytest.approx(a_points / 13)
+    lo, hi = r["side_a"]["ci"]
+    assert lo <= r["side_a"]["rate"] <= hi
+    skewed = arena.results(league(seed=4, n=60, side_a=0.3), seed=1, b=200)["side_a"]
+    assert skewed["ci"][0] > 0.5  # an arena that favours side A shows it
+
+
+def test_rated_pairs_get_a_bradley_terry_fit_and_elo():
+    r = arena.results(MIXED, seed=3, b=200, min_pairings=3)  # only x-y has 3 pairings
+    assert [row["rated"] for row in r["pairs"]] == [True, False, False]
+    by = {row["player"]: row for row in r["models"]}
+    assert (by["x"]["rated"], by["y"]["rated"], by["z"]["rated"]) == (True, True, False)
+    assert [row["player"] for row in r["models"]] == ["x", "y", "z"]  # rated rows first, by elo
+    x, y = by["x"], by["y"]
+    assert (x["elo"] + y["elo"]) / 2 == pytest.approx(1500.0)
+    assert x["elo"] - y["elo"] == pytest.approx(400 * (x["bt"] - y["bt"]) / math.log(10))
+    complete, _ = arena.pairings(MIXED)
+    only_xy = arena.bradley_terry(arena._games(complete[p] for p in ("a", "b", "c")))
+    assert x["bt"] == pytest.approx(only_xy["x"])  # the fit is over the rated pair's pairings only
+    for row in (x, y):
+        lo, hi = row["elo_ci"]
+        assert lo <= row["elo"] <= hi
+
+
+def test_side_swapped_results_cancel():
+    level = arena.results(pairing("p", "x", "y", "A", "A"), seed=1, b=50, min_pairings=1)
     assert [row["elo"] for row in level["models"]] == pytest.approx([1500.0, 1500.0])
 
 
@@ -81,47 +140,21 @@ def test_an_undefeated_player_has_a_finite_rating():
     assert theta["x"] > 0 > theta["y"]
 
 
-def test_results_pairs_models_and_elo():
-    ms = [
-        *pairing("a", "x", "y", "A", "B"),  # x wins both
-        *pairing("b", "x", "y", "draw", "A"),  # a draw, then y wins on side A
-        *pairing("c", "x", "z", "A", "B"),  # x wins both
-        *pairing("d", "y", "z", "A", "draw"),  # y wins, a draw
-        m("e", "y", "z", "B"),  # incomplete: left out
-    ]
-    r = arena.results(ms, seed=3, b=200)
-    assert r["counts"] == {"matches": 9, "invalid": 0, "self": 0, "incomplete": 1, "pairings": 4}
-    assert r["pairs"] == [
-        {"a": "x", "b": "y", "w": 2, "d": 1, "l": 1, "n_matches": 4, "n_pairings": 2},
-        {"a": "x", "b": "z", "w": 2, "d": 0, "l": 0, "n_matches": 2, "n_pairings": 1},
-        {"a": "y", "b": "z", "w": 1, "d": 1, "l": 0, "n_matches": 2, "n_pairings": 1},
-    ]
-    assert [row["player"] for row in r["models"]] == ["x", "y", "z"]
-    x, y, z = r["models"]
-    assert (x["n_matches"], x["n_pairings"], x["points"], x["w"], x["d"], x["l"]) == (6, 3, 4.5, 4, 1, 1)
-    assert (z["n_matches"], z["n_pairings"], z["points"]) == (4, 2, 0.5)
-    assert sum(row["elo"] for row in r["models"]) / 3 == pytest.approx(1500.0)
-    for a, b in ((x, y), (y, z)):  # the Elo display is 400 log10 of the strength ratio
-        assert a["elo"] - b["elo"] == pytest.approx(400 * (a["bt"] - b["bt"]) / math.log(10))
-    for row in r["models"]:
-        lo, hi = row["elo_ci"]
-        assert lo <= row["elo"] <= hi
-
-
 def test_results_are_reproducible_from_the_seed():
-    ms = league(seed=11)
-    one = arena.results(ms, seed=5, b=300)
-    assert arena.results(ms, seed=5, b=300) == one
-    assert arena.results(ms, seed=6, b=300)["models"] != one["models"]  # another seed, another bootstrap
+    ms = league(seed=11, n=40)
+    one = arena.results(ms, seed=5, b=300, min_pairings=5)
+    assert arena.results(ms, seed=5, b=300, min_pairings=5) == one
+    assert arena.results(ms, seed=6, b=300, min_pairings=5)["models"] != one["models"]  # another bootstrap
 
 
 def test_a_stronger_player_rates_higher_over_many_pairings():
-    r = arena.results(league(seed=2, n=60), seed=1, b=200)
+    r = arena.results(league(seed=2, n=90), seed=1, b=200)
+    assert all(row["rated"] for row in r["pairs"])  # 90 pairings over 3 pairs: each pair past 15
     assert [row["player"] for row in r["models"]] == ["p3", "p2", "p1"]
     assert r["models"][0]["elo_ci"][0] > r["models"][-1]["elo_ci"][1]  # p3 and p1 separate
 
 
-def test_no_complete_pairing_rates_nobody():
-    r = arena.results([m("p", "x", "y", "A"), *pairing("s", "x", "x", "A", "B")], seed=1, b=10)
+def test_no_valid_match_rates_nobody():
+    r = arena.results([m("p", "x", "y", None, valid=False)], seed=1, b=10)
     assert (r["models"], r["pairs"]) == ([], [])
-    assert r["counts"] == {"matches": 3, "invalid": 0, "self": 2, "incomplete": 1, "pairings": 0}
+    assert r["side_a"] == {"n_matches": 0, "n_pairings": 0, "rate": None, "ci": None}
