@@ -23,7 +23,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    - the game gone or not answering for HANG_S: `fault` (invalid, rerun); an operator's abort: `abort` (invalid).
    The runner's own ends go to the mod as `arena.end {reason, winner}` (no answer from a dead game is needed) and
    into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, cause?}`, with the HP fractions
-   from the last `arena.status.hp`.
+   from the last `arena.status.hp`. arena.end answers with the match's first end: when that is the mod's own (it
+   ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
    began reaching the arena's turn_cap_s ends that turn: `act.end_turn` for the acting character, sent as that
    side, then `arena_turn_forced {side, character}`.
@@ -383,29 +384,35 @@ def run_arena(
             outcome.end = {k: ref.mod_end.get(k) for k in END_FIELDS}
         log(f"arena {spec.name}: the mod's end: {outcome.end.get('reason')}, winner {outcome.end.get('winner')}")
     except _Ended as e:
+        first: dict[str, Any] = {}  # the mod's own end, when it came before the runner's
         if e.game_up:
             try:
-                game.rpc("arena.end", {"reason": e.reason, **({"winner": e.winner} if e.winner else {})})
+                ans = game.rpc("arena.end", {"reason": e.reason, **({"winner": e.winner} if e.winner else {})}) or {}
+                if (ans.get("ended") or {}).get("reason") not in (None, e.reason):
+                    first = ans["ended"]
             except Exception as err:  # the match ends here either way
                 log(f"arena {spec.name}: arena.end failed: {err}")
-        rounds = e.rounds if e.rounds is not None else spec.round_cap if e.reason == "round_cap" else ref.round
-        fields: dict[str, Any] = {
-            "winner": e.winner,
-            "reason": e.reason,
-            "rounds": rounds,
-            "hp_left_A": hp["A"],
-            "hp_left_B": hp["B"],
-        }
-        if e.forfeit:
-            fields.update(forfeit=e.forfeit, cause=e.cause)
-        outcome.end = ref.end(**fields)
-        if e.reason in ("fault", "abort"):
-            outcome.invalid = f"{e.reason}: {e.detail}"
-        log(
-            f"arena {spec.name}: {e.reason}"
-            + (f", winner {e.winner}" if e.winner else "")
-            + (f" ({e.detail})" if e.detail else "")
-        )
+        runners = e.reason + (f", winner {e.winner}" if e.winner else "") + (f" ({e.detail})" if e.detail else "")
+        if first:
+            outcome.end = ref.end(
+                **{k: first.get(k) for k in END_FIELDS}, detail=f"the runner's end came after it: {runners}"
+            )
+            log(f"arena {spec.name}: the mod's end came first: {first.get('reason')}, winner {first.get('winner')}")
+        else:
+            rounds = e.rounds if e.rounds is not None else spec.round_cap if e.reason == "round_cap" else ref.round
+            fields: dict[str, Any] = {
+                "winner": e.winner,
+                "reason": e.reason,
+                "rounds": rounds,
+                "hp_left_A": hp["A"],
+                "hp_left_B": hp["B"],
+            }
+            if e.forfeit:
+                fields.update(forfeit=e.forfeit, cause=e.cause)
+            outcome.end = ref.end(**fields)
+            if e.reason in ("fault", "abort"):
+                outcome.invalid = f"{e.reason}: {e.detail}"
+            log(f"arena {spec.name}: {runners}")
     finally:
         for s, run in runs.items():
             outcome.exits[s].append(run.stop())

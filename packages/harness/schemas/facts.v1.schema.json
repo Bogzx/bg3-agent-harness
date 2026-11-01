@@ -155,7 +155,8 @@
                                  "rounds": {"type": "integer", "minimum": 0},
                                  "hp_left_A": {"type": "number", "minimum": 0, "maximum": 1},
                                  "hp_left_B": {"type": "number", "minimum": 0, "maximum": 1},
-                                 "forfeit": {"enum": ["A", "B"]}, "cause": {"enum": ["forced_turns", "client_fault"]}},
+                                 "forfeit": {"enum": ["A", "B"]}, "cause": {"enum": ["forced_turns", "client_fault"]},
+                                 "detail": {"type": "string", "description": "the runner's own end, when the mod's end came before it"}},
                   "allOf": [{"if": {"properties": {"reason": {"const": "forfeit"}}}, "then": {"required": ["forfeit", "cause"]}},
                             {"if": {"properties": {"reason": {"enum": ["round_cap", "wall_cap"]}}}, "then": {"properties": {"winner": {"type": "null"}}}}]}}
       ]

@@ -423,6 +423,38 @@ def test_a_reaction_prompt_a_team_owns_is_left_to_that_side(tmp_path):
     assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
 
 
+def test_an_end_of_the_mods_own_before_the_runners_is_the_one_written(tmp_path):
+    """The mod wipes team B after the tick's status read, before the runner's wall-cap arena.end: arena.end answers
+    with the mod's first end, and that is the match's (one arena_end), naming the runner's end in detail."""
+    arena = dict(ARENA, wall_cap_min=1, round_cap=100)
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer}, arena)
+    rpc = game.rpc
+
+    def wipe_first(op: str, args: dict[str, Any], side: str | None = None) -> Any:
+        if op == "arena.end":
+            for m in model._match().teams["B"]:
+                m.hp = 0
+            model.finish("A", "wipe")
+        return rpc(op, args, side)
+
+    game.rpc = wipe_first  # type: ignore[method-assign]
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None and model.ends == [{"reason": "wall_cap"}]
+    assert out.end is not None
+    assert {k: out.end[k] for k in ("winner", "reason", "hp_left_A", "hp_left_B")} == {
+        "winner": "A",
+        "reason": "wipe",
+        "hp_left_A": 1.0,
+        "hp_left_B": 0.0,
+    }
+    assert model.ended is not None and out.end["rounds"] == model.ended["rounds"]
+    assert out.end["detail"] == "the runner's end came after it: wall_cap"
+    ends = [e for e in arena_events(tmp_path) if e["ev"] == "arena_end"]
+    assert len(ends) == 1 and ends[0]["reason"] == "wipe"
+    g = grade(tmp_path, arena)
+    assert (g["valid"], g["result"], g["reason"]) == (True, "A", "wipe")
+
+
 def test_three_forced_turns_in_a_row_forfeit(tmp_path):
     model, game, clock, agents, spec = setup({"A": passer, "B": staller})
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
