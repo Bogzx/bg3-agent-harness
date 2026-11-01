@@ -346,3 +346,54 @@ def judge_sides(r: dict[str, Any]) -> Verdict:
     if not (isinstance(reset_, dict) and reset_.get("state") is False):
         return "FAIL", f"client still holds the teams after reset ({reset_})"
     return "PASS", f"client got the teams (names {after.get('names')}) after begin and dropped them on reset"
+
+
+def rolled_order(groups: dict[str, Any] | None, teams: dict[str, Any]) -> list[str]:
+    """The 8 in the order the game held them for the next round before any split (NextRoundGroups, else
+    CurrentGroups, group by group): the order as rolled."""
+    groups = groups or {}
+    return [
+        m["uuid"]
+        for g in groups.get("next") or groups.get("current") or []
+        for m in g.get("members") or []
+        if side_of(teams, m.get("uuid"))
+    ]
+
+
+def judge_groups(teams: dict[str, Any], r: dict[str, Any]) -> Verdict:
+    """q10: in the round after the split, every open turn holds one side only, and the turns come in the order as
+    rolled: each turn is the next block of the rolled order, and all 8 got one."""
+    write = r.get("write")
+    if isinstance(write, dict) and write.get("error"):
+        return "FAIL", f"the split write failed: {write['error']}"
+    rolled = rolled_order(r.get("before"), teams)
+    if len(rolled) != len(teams["A"]) + len(teams["B"]):
+        return (
+            "OPEN",
+            f"the turn order read holds {len(rolled)} of the teams' members: {(r.get('before') or {}).get('error')}",
+        )
+    want = r.get("judged_round")
+    turns = [t for t in r.get("turns") or [] if want is not None and t.get("round") == want]
+    if not turns:
+        return "OPEN", f"no turn of round {want} watched"
+    why = []
+    mixed = [t for t in turns if len({side_of(teams, u) for u in t["open"]}) > 1]
+    if mixed:
+        why.append(
+            f"round {want}: {len(mixed)} turn(s) open for both sides: "
+            + "; ".join(", ".join(t.get("names") or t["open"]) for t in mixed)
+        )
+    i = 0
+    for t in turns:
+        block = rolled[i : i + len(t["open"])]
+        if set(block) != set(t["open"]):
+            why.append(f"round {want}: turn {', '.join(t.get('names') or t['open'])} out of the rolled order")
+            break
+        i += len(t["open"])
+    else:
+        if i != len(rolled):
+            why.append(f"round {want}: {len(rolled) - i} of the 8 had no turn")
+    if why:
+        return "FAIL", "; ".join(why)
+    seq = " ".join("".join(sorted({side_of(teams, u) or "?" for u in t["open"]})) for t in turns)
+    return "PASS", f"round {want}: {len(turns)} turns, one side each, in the rolled order ({seq})"

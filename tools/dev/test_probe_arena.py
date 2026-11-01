@@ -6,6 +6,7 @@ Run: uv run pytest -q tools/dev/test_probe_arena.py
 
 from __future__ import annotations
 
+import itertools
 import json
 import sys
 import tempfile
@@ -24,6 +25,9 @@ TEAMS = {"A": A, "B": B}
 
 
 class LuaBuildTest(unittest.TestCase):
+    def test_lua_dict_literal(self):
+        self.assertEqual(pa.lua({"a-1": "A", "b": 2}), '{["a-1"] = "A", ["b"] = 2}')
+
     def test_lua_literals(self):
         self.assertEqual(pa.lua(None), "nil")
         self.assertEqual(pa.lua(True), "true")
@@ -274,6 +278,56 @@ class JudgeTest(unittest.TestCase):
         self.assertIn("the game AI acted", why)
 
 
+def grp(*runs: list[str]) -> list[dict[str, Any]]:
+    """Turn groups as P.turn_groups reads them: one group per run of uuids."""
+    return [{"team": f"T{i}", "members": [{"uuid": u} for u in run]} for i, run in enumerate(runs)]
+
+
+# The rerun's rolled order (round 2): Karlach Lae'zel Astarion Shadowheart Gale Wyll Minthara Halsin as B A A A A B B B
+ROLLED = [B[0], A[0], A[1], A[2], A[3], B[1], B[2], B[3]]
+
+
+class GroupsJudgeTest(unittest.TestCase):
+    def rec(self, turns: list[list[str]], rnd: int = 3, **kw: Any) -> dict[str, Any]:
+        return {
+            "before": {"round": 2, "next": grp(ROLLED)},
+            "judged_round": 3,
+            "turns": [{"round": rnd, "open": t} for t in turns],
+            **kw,
+        }
+
+    def test_pass_one_side_per_turn_in_the_rolled_order(self):
+        v, why = pj.judge_groups(TEAMS, self.rec([[B[0]], [A[0], A[1], A[2], A[3]], [B[1], B[2], B[3]]]))
+        self.assertEqual(v, "PASS", why)
+        self.assertIn("(B A B)", why)
+
+    def test_fail_the_spike_one_turn_for_all_eight(self):
+        v, why = pj.judge_groups(TEAMS, self.rec([ROLLED]))
+        self.assertEqual(v, "FAIL")
+        self.assertIn("1 turn(s) open for both sides", why)
+
+    def test_fail_out_of_the_rolled_order_or_someone_skipped(self):
+        v, why = pj.judge_groups(TEAMS, self.rec([[A[0], A[1], A[2], A[3]], [B[0]], [B[1], B[2], B[3]]]))
+        self.assertIn("out of the rolled order", why)
+        v, why = pj.judge_groups(TEAMS, self.rec([[B[0]], [A[0], A[1], A[2], A[3]]]))
+        self.assertEqual(v, "FAIL")
+        self.assertIn("3 of the 8 had no turn", why)
+
+    def test_only_the_judged_round_counts(self):
+        r = self.rec([[B[0]], [A[0], A[1], A[2], A[3]], [B[1], B[2], B[3]]])
+        r["turns"].insert(0, {"round": 2, "open": ROLLED})  # the round in progress, before the split took
+        self.assertEqual(pj.judge_groups(TEAMS, r)[0], "PASS")
+        self.assertEqual(pj.judge_groups(TEAMS, self.rec([[B[0]]], rnd=4))[0], "OPEN")
+
+    def test_write_error_or_unread_order(self):
+        self.assertEqual(
+            pj.judge_groups(TEAMS, self.rec([], write={"error": "x"})), ("FAIL", "the split write failed: x")
+        )
+        r = self.rec([[B[0]]])
+        r["before"] = {"error": "no TurnOrder"}
+        self.assertEqual(pj.judge_groups(TEAMS, r)[0], "OPEN")
+
+
 class FakeArena(pa.Arena):
     """Arena over scripted reads: facts per uuid, a turn queue the end_turn jobs advance, every call recorded."""
 
@@ -331,6 +385,65 @@ class FakeArena(pa.Arena):
         self.written = getattr(self, "written", {})
         self.written[name] = rec
         return self.out / name
+
+
+class GroupsArena(FakeArena):
+    """A combat from round 2: each round a list of turns (the uuids open together); Osi EndTurn closes a member, the
+    turn passes when all of it ended, the round when all its turns did."""
+
+    def __init__(self, out: Path, facts: dict[str, dict[str, Any]], rounds: list[list[list[str]]]) -> None:
+        super().__init__(out, facts, [])
+        self.rounds, self.rnd, self.split_code = [[list(t) for t in r] for r in rounds], 0, ""
+
+    def turn_groups(self, u: str) -> dict[str, Any]:
+        if self.rnd >= len(self.rounds):
+            return {"round": 2 + self.rnd}
+        return {"round": 2 + self.rnd, "next": grp(ROLLED), "current": grp(*self.rounds[self.rnd])}
+
+    def facts(self, us: list[str]) -> dict[str, dict[str, Any]]:
+        open_ = set(self.rounds[self.rnd][0]) if self.rnd < len(self.rounds) and self.rounds[self.rnd] else set()
+        return {u: {**self.f[u], "tb": {"active": u in open_, "requested_end": False}} for u in us}
+
+    def ev(self, code: str, timeout: float = 30.0) -> Any:
+        if "P.split_groups(" in code:
+            self.split_code = code[code.index("P.split_groups(") : code.rindex(")")]
+            return {"groups_written": 3}
+        return super().ev(code, timeout)
+
+    def end(self, u: str) -> None:
+        if self.rnd < len(self.rounds):
+            turn = self.rounds[self.rnd][0]
+            turn.remove(u)
+            if not turn:
+                self.rounds[self.rnd].pop(0)
+                self.n += 1
+                if not self.rounds[self.rnd]:
+                    self.rnd += 1
+
+    def call(self, fn: str, *forms: list[Any]) -> dict[str, Any]:
+        r = super().call(fn, *forms)
+        if fn == "EndTurn":
+            self.end(forms[0][0])
+        return r
+
+    def job(self, op: str, args: dict[str, Any], wait_s: float = 20.0) -> dict[str, Any]:
+        self.jobs.append((op, args))
+        self.end(args["char"])
+        return {"op": op, "args": args, "status": "done"}
+
+    def mod_open(self, teams: dict[str, Any]) -> list[dict[str, Any]]:
+        """The mod's acting side in a shared group: the leading same-side run of the turn's members left, in the
+        rolled order."""
+        if self.rnd >= len(self.rounds) or not self.rounds[self.rnd]:
+            return []
+        left = [u for u in ROLLED if u in self.rounds[self.rnd][0]]
+        side = pj.side_of(teams, left[0])
+        run = list(itertools.takewhile(lambda u: pj.side_of(teams, u) == side, left))
+        return [{**self.f[u], "uuid": u} for u in run]
+
+    def raw(self, code: str, context: str) -> Any:
+        self.raws = [*getattr(self, "raws", []), code]
+        return {"ok": True}
 
 
 def standing(u: str, x: float) -> dict[str, Any]:
@@ -418,6 +531,59 @@ class StepsTest(unittest.TestCase):
         self.assertEqual(rec["factions_before"][B[0]], "Companion4_c")
         saved = json.loads((self.tmp / "teams.json").read_text())
         self.assertEqual((saved["faction_a"], saved["faction_b"]), (fa, fb))
+
+    def test_enemy_matrix_reads_both_directions_across_and_within(self):
+        sent: list[str] = []
+        ar = FakeArena(self.tmp, self.facts, [])
+        ar.ev = lambda code, timeout=30.0: sent.append(code) or {}  # type: ignore
+        ar.enemy_matrix(TEAMS)
+        code = sent[0]
+        for k, n in (("AB:", 16), ("BA:", 16), ("AA:", 12), ("BB:", 12)):
+            self.assertEqual(code.count(f'o["{k}'), n, k)
+        self.assertIn(f'o["BA:{B[0]}>{A[0]}"] = P.q("IsEnemy", "{B[0]}", "{A[0]}")', code)
+
+    def test_groups_splits_then_watches_the_next_round_whole(self):
+        ar = GroupsArena(self.tmp, self.facts, rounds=[[ROLLED], [[B[0]], A, B[1:]], [[B[0]]]])
+        rec = ar.groups("write", "next", None)
+        self.assertIn(f'P.split_groups("{A[0]}", {{["{A[0]}"] = "A"', ar.split_code)
+        self.assertTrue(ar.split_code.endswith(', "next")'))
+        self.assertEqual(rec["judged_round"], 3)
+        self.assertEqual([t["round"] for t in rec["turns"]], [2, 3, 3, 3])
+        self.assertEqual(sorted(c[1][0] for c in ar.calls if c[0] == "EndTurn"), sorted([*ROLLED, B[0], *A, *B[1:]]))
+        self.assertEqual(ar.written["q10-groups"]["verdict"], "PASS", ar.written["q10-groups"]["why"])
+
+    def test_groups_baseline_fails_on_the_shared_group(self):
+        ar = GroupsArena(self.tmp, self.facts, rounds=[[ROLLED], [ROLLED], [ROLLED]])
+        rec = ar.groups("none", "next", None)
+        self.assertNotIn("write", rec)
+        self.assertEqual(ar.written["q10-groups"]["verdict"], "FAIL")
+
+    def test_groups_user_split_assigns_team_b(self):
+        ar = GroupsArena(self.tmp, self.facts, rounds=[[ROLLED], [ROLLED]])
+        ar.groups("user", "next", 131073)
+        self.assertEqual([c[1] for c in ar.calls if c[0] == "AssignToUser"], [[131073, u] for u in B])
+
+    def test_groups_phases_judges_the_mods_view_of_a_shared_group(self):
+        # the engine keeps all 8 in one group each round; the mod lets one side's run act at a time
+        ar = GroupsArena(self.tmp, self.facts, rounds=[[ROLLED], [ROLLED], [ROLLED]])
+        rec = ar.groups("phases", "next", None)
+        self.assertIn("Mods.BG3AI.BG3AI.Arena.begin(", ar.raws[0])
+        self.assertIn("Mods.BG3AI.BG3AI.Arena.reset()", ar.raws[-1])
+        self.assertFalse([c for c in ar.calls if c[0] == "EndTurn"])  # ended through the mod's act.end_turn
+        self.assertEqual([t["open"] for t in rec["turns"] if t["round"] == 3], [[B[0]], A, B[1:]])
+        self.assertEqual(ar.written["q10-groups"]["verdict"], "PASS", ar.written["q10-groups"]["why"])
+
+    def test_mod_open_asks_the_guard(self):
+        sent: list[str] = []
+        ar = FakeArena(self.tmp, self.facts, [])
+        ar.ev = lambda code, timeout=30.0: sent.append(code) or [B[1]]  # type: ignore
+        self.assertEqual([f["uuid"] for f in ar.mod_open(TEAMS)], [B[1]])
+        self.assertIn("local G = Mods.BG3AI.BG3AI.Guard", sent[0])
+        self.assertIn("G.is_my_turn(u)", sent[0])
+
+    def test_main_groups_user_needs_user_b(self):
+        with self.assertRaises(SystemExit):
+            pa.main(["groups", "--split", "user"])
 
     def test_hostile_open_without_two_spare_factions(self):
         ar = FakeArena(self.tmp, {u: standing(u, 0.0) for u in A + B}, [])
@@ -646,6 +812,57 @@ class LuaLibraryTest(unittest.TestCase):
             timeout=120,
         )
         self.assertEqual(r.stdout.split(), ["true,nil", "nil,true"], r.stderr)
+
+    def test_split_groups_in_lua(self):
+        import shutil
+        import subprocess
+
+        if not shutil.which("docker"):
+            self.skipTest("no docker")
+        stubs = r"""
+local ents = {}
+local function ent(u, team) ents[u] = { Uuid = { EntityUuid = u }, TurnBased = { CombatTeam = team },
+    Replicate = function(self, c) self.replicated = c end } return ents[u] end
+local m = function(u, ini, team) return { Entity = ent(u, team), Initiative = ini } end
+local next_ = { { Team = "G1", Round = 2, Initiative = 5, IsPlayer = true,
+    Members = { m("b0", 5, "G1"), m("a0", 5, "tA0"), m("a1", 4, "G1"), m("b1", 2, "tB1"), m("b2", 2, "G1") } },
+    { Team = "N1", Round = 2, Initiative = -20, IsPlayer = false, Members = { m("npc", -20, "N1") } } }
+local written
+local combat = { TurnOrder = { Round = 2, NextRoundGroups = next_, CurrentGroups = {} },
+    Replicate = function(self, c) self.replicated = c end }
+Ext = { Entity = { Get = function(u) if u == "a0" then return { CombatParticipant = { CombatHandle = combat } } end
+        return ents[u] end },
+    Types = { Unserialize = function(arr, t) written = t; for k in pairs(arr) do arr[k] = nil end
+        for i, v in ipairs(t) do arr[i] = v end end } }
+Mods = { BG3AI = { BG3AI = { ArenaProbe = { uuid = function(g) return g end, name = function() return nil end,
+    q = function() return nil end } } } }
+"""
+        checks = r"""
+local P = Mods.BG3AI.BG3AI.ArenaProbe
+local r = P.split_groups("a0", { a0 = "A", a1 = "A", b0 = "B", b1 = "B", b2 = "B" }, "next")
+assert(r.error == nil, tostring(r.error))
+assert(r.groups_before == 2 and r.groups_written == 4 and r.groups_after == 4, "B | A A | B B | npc")
+local w = written
+assert(w[1].Team == "G1" and #w[1].Members == 1, "first run keeps G1")
+assert(w[1].Members[1].Entity.Uuid.EntityUuid == "b0", "first run is b0")
+assert(w[2].Team == "tA0" and #w[2].Members == 2 and w[2].Initiative == 5, "a0's own team")
+assert(w[3].Team == "tB1" and #w[3].Members == 2 and w[3].Initiative == 2, "b1's own team")
+assert(w[4].Team == "N1" and #w[4].Members == 1, "the npc group untouched")
+assert(#r.team_writes == 2 and r.team_writes[1].uuid == "a1" and r.team_writes[2].uuid == "b2", "a1, b2 rejoin")
+assert(ents.a1.TurnBased.CombatTeam == "tA0" and ents.b2.TurnBased.CombatTeam == "tB1", "CombatTeam written")
+assert(ents.a1.replicated == "TurnBased" and r.replicated, "replicated")
+local g = P.turn_groups("a0")
+assert(g.error == nil and g.round == 2 and #g.next == 4, tostring(g.error))
+print("GROUPS OK")
+"""
+        r = subprocess.run(
+            ["docker", "run", "--rm", "-i", "nickblah/lua:5.4", "lua", "-"],
+            input=stubs + pa.GROUPS + checks,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertIn("GROUPS OK", r.stdout, r.stderr)
 
     def test_popup_parses(self):
         import shutil
