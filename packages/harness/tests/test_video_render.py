@@ -147,6 +147,16 @@ def test_the_id_line_names_the_run_and_its_run_hash():
     assert draw.id_line(META) == "run s-r001 · hash abababababab · x.test"
 
 
+def test_a_long_run_id_is_shortened_so_the_site_always_fits_the_id_line():
+    long = "launch-v1-haiku-fight_act1_grove_gate-claude-haiku-5-5-pi-medium-rules-r001"
+    meta = dataclasses.replace(META, run_id=long, run_sha256="f78223472abc" + "0" * 52, site="bench.example.org")
+    left, site = draw.id_parts(meta, draw.TL_W)
+    assert site == "bench.example.org"
+    assert draw.length(left, "mono", 24) + draw.ID_GAP + draw.length(site, "mono", 24) <= draw.TL_W
+    assert "…" in left and left.startswith("run launch-") and left.endswith("-r001 · hash f78223472abc")
+    assert draw.id_parts(META, draw.TL_W) == ("run s-r001 · hash abababababab", "x.test")
+
+
 def test_the_run_hash_must_be_a_sha256_hex_digest(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     index = write_run(tmp_path / "run")
     args = [str(tmp_path / "run"), "--index", str(index), "--out", str(tmp_path / "out"), "--run-id", "s-r001"]
