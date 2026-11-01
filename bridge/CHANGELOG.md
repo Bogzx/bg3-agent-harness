@@ -22,6 +22,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   and "already stands at the waypoint" answer, and nav reads measured from the corpse before. A fast_travel to the
   waypoint the selected member stood on then timed out after 66 s instead of answering at once. fast_travel also
   watches the living holder for the arrival, so a trip that moved it no longer waits on the corpse.
+- short_rest in combat, or while any party member is in a conversation (also one that isn't selected), fails at once
+  with "not pressed: in combat" / "a party member is in a conversation" instead of "TIMEOUT — timed out" after 15 s:
+  the game ignored the press there while the selected member's rest button still showed as available.
 
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 
