@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import itertools
 import json
 import shutil
 import subprocess
@@ -147,14 +148,27 @@ def test_the_id_line_names_the_run_and_its_run_hash():
     assert draw.id_line(META) == "run s-r001 · hash abababababab · x.test"
 
 
-def test_a_long_run_id_is_shortened_so_the_site_always_fits_the_id_line():
+def test_a_long_run_id_never_pushes_the_site_off_the_frames_id_line(monkeypatch: pytest.MonkeyPatch):
     long = "launch-v1-haiku-fight_act1_grove_gate-claude-haiku-5-5-pi-medium-rules-r001"
     meta = dataclasses.replace(META, run_id=long, run_sha256="f78223472abc" + "0" * 52, site="bench.example.org")
-    left, site = draw.id_parts(meta, draw.TL_W)
-    assert site == "bench.example.org"
-    assert draw.length(left, "mono", 24) + draw.ID_GAP + draw.length(site, "mono", 24) <= draw.TL_W
-    assert "…" in left and left.startswith("run launch-") and left.endswith("-r001 · hash f78223472abc")
-    assert draw.id_parts(META, draw.TL_W) == ("run s-r001 · hash abababababab", "x.test")
+    drawn: list[tuple[str, float, float]] = []  # (string, left x, right x) the id line draws
+    real = draw.text
+
+    def spy(d: Any, xy: tuple[float, float], s: str, face: str, size: int, *rest: Any, **kw: Any) -> Any:
+        end = real(d, xy, s, face, size, *rest, **kw)
+        if xy[1] == draw.ID_Y + 20:
+            w = draw.length(s, face, size)
+            drawn.append((s, end - w, end))
+        return end
+
+    monkeypatch.setattr(draw, "text", spy)
+    s = T.Strip(5, 0.42, 410, 133, (T.Member("Tav", 9, 18),), 6.0, 2.0)
+    draw.frame_image(s, meta, draw.lanes_image(T.Lanes(), 10.0), 10.0)
+    assert any(site == "bench.example.org" for site, _, _ in drawn)
+    assert all(x0 >= draw.TL_X and x1 <= draw.TL_X + draw.TL_W for _, x0, x1 in drawn)
+    assert "f78223472abc" in "".join(x for x, _, _ in drawn)
+    spans = sorted((x0, x1) for _, x0, x1 in drawn)
+    assert all(a[1] <= b[0] for a, b in itertools.pairwise(spans))  # nothing overlaps
 
 
 def test_the_run_hash_must_be_a_sha256_hex_digest(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
