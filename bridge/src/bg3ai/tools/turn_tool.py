@@ -11,7 +11,20 @@ from typing import Any
 
 from .. import actq, delta, render, turn
 from ..game import GameError
-from . import batch, core, observe, overview, plumbing, queueing, reporting, turn_plan, turn_slots, uitools, world_tools
+from . import (
+    batch,
+    combat,
+    core,
+    observe,
+    overview,
+    plumbing,
+    queueing,
+    reporting,
+    turn_plan,
+    turn_slots,
+    uitools,
+    world_tools,
+)
 
 
 @core.mcp.tool()
@@ -174,9 +187,9 @@ def _hold_for_bg_end(char: str | None = None) -> str:
     keys = [c for c in list(_bg_ends) if char is None or c == char]
     if not keys:
         return ""
-    t0 = time.monotonic()
+    t0, hold = time.monotonic(), combat._end_wait_s(END_BG_HOLD_S)  # with a side: as long as the mod's end may take
     held = False
-    while any(queueing._queues().busy(c) for c in keys) and time.monotonic() - t0 < END_BG_HOLD_S:
+    while any(queueing._queues().busy(c) for c in keys) and time.monotonic() - t0 < hold:
         held = True
         time.sleep(0.05)
     for c in keys:
@@ -366,7 +379,7 @@ def _combat_turn_body(plan: str, who: str | None, end: bool, wait_next: bool, ig
     if want and want in turn.passing(cs):
         # S087 06:02:48: "NOW e1's turn: plan it; also e2 Gale" for two Stunned members: nothing to play
         why = next((o.get("passes") for o in cs.get("order") or [] if o.get("uuid") == want), None) or "can't act"
-        r = core.game.run_job("act.end_turn", {"char": want}, wait_s=5)
+        r = core.game.run_job("act.end_turn", {"char": want}, wait_s=combat._end_wait_s(5))
         return reporting._finish("combat_turn", {"who": who}, f"{queueing._label(want)} is {why}: nothing to play, its turn passes ("
                        + ("ended it" if r.status == "done" else f"the game passes it: {r.error or r.status}") + ")", t0)
     ready = (lambda c: want in turn.acting(c)) if want else (lambda c: bool(turn.party_acting(c, party)))

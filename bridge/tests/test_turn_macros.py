@@ -422,6 +422,22 @@ class CombatTurn(CombatTurnBase):
         self.assertEqual([a.get("char") for _, a in self.g.ops("act.end_turn")], [P1])
         self.assertEqual(self.g.ops("act.cast"), [])
 
+    def test_a_plan_for_a_stunned_member_in_a_match_waits_out_the_mods_group_end(self):
+        # with a side the mod's end of a turn group's last member settles up to 20 s later (S087: 18 s)
+        for o in self.g.combat["order"]:
+            if o["uuid"] == P1:
+                o.update(is_current=True, ended=True, passes="Stunned")
+        waits, run_job = [], self.g.run_job
+
+        def timed(op, args, *a, wait_s=25.0, **k):
+            if op == "act.end_turn":
+                waits.append(wait_s)
+            return run_job(op, args, *a, wait_s=wait_s, **k)
+
+        with mock.patch.object(self.g, "side", "A", create=True), mock.patch.object(self.g, "run_job", timed):
+            turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1))
+        self.assertEqual(waits, [combat_tools.END_ARENA_WAIT_S])
+
     def s088_group_ended(self) -> tuple[str, str]:
         """S088 06:19:31 High Hall Courtyard: Claude's group (Claude + Lae'zel here) has ended, every member shown
         is_current + ended while the game applies the ends, and State.lua names the first of them `current`; the next

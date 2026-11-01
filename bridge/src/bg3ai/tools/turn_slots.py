@@ -468,7 +468,7 @@ def _end_passing(cs: dict, since: float, done: set, notes: list | None) -> None:
         if u in done:
             continue
         done.add(u)
-        r = core.game.run_job("act.end_turn", {"char": u}, wait_s=5)
+        r = core.game.run_job("act.end_turn", {"char": u}, wait_s=combat._end_wait_s(5))
         if notes is not None:
             why = rows.get(u, {}).get("passes") or "can't act"
             notes.append(f"ended {queueing._label(u)}'s turn ({why}: it can't act)" if r.status == "done"
