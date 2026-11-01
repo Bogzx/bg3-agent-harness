@@ -5,14 +5,17 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
-## 2026-11-01: an unanswered camp leave says what the game showed; no "[ForceUpdate]" notice
+## 2026-11-01: camp leave with a conversation screen up refuses at once; no "[ForceUpdate]" notice
 
-- camp leave / fast_travel's leave-first: when act.leave_camp's wait runs out ("cannot travel right now": no check
-  refused, the game didn't answer the camp button), the FAILED line goes on " The game didn't answer the camp button:
-  the party stayed at camp. When it was pressed: <facts>. After the wait: <facts>." (facts from ui.travel_block: a
-  conversation screen up, night at camp, the travel buttons greyed out (<TravelError>), the HUD hidden) instead of
-  the block read only after the wait (live-v09b: right after the 1st long rest's dream it read clear, and the result
-  gave no reason).
+- camp leave / fast_travel from camp: with a conversation screen up on the client (ui.travel_block dialogue), they
+  fail at once with "FAILED: a conversation is open, nothing was pressed; the game doesn't answer the camp button
+  while a conversation screen is up" and press nothing (live-v09b: right after the 1st long rest's dream, the
+  rest's narrator screen still up, the server's conversation check let the press through; it went unanswered for
+  13.5 s and failed "cannot travel right now" with no reason).
+- A press the game still doesn't answer ("cannot travel right now": act.leave_camp's wait ran out) gets on its
+  FAILED line " The game didn't answer the camp button: the party stayed at camp. When it was pressed: <facts>.
+  After the wait: <facts>." (facts from ui.travel_block: night at camp, the travel buttons greyed out
+  (<TravelError>), the HUD hidden) instead of the block read only after the wait.
 - get_status NOTICE (ui.state notifications, mod UIState.lua): a TextBlock whose Text is the formatter's
   "[ForceUpdate]" placeholder reads its inlines; with none it is left out (live-v09b: "NOTICE [ForceUpdate]" after
   a camp leave).

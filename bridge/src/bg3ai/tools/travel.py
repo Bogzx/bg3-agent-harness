@@ -266,6 +266,8 @@ def _leave_camp_first() -> str | None:
         if "at camp" not in str(e):
             return night  # any other refusal: the real call reports it
     pressed = _travel_block(TRAVEL_BLOCK_WAIT_S)
+    if pressed.get("dialogue"):
+        return "\n".join(x for x in (CONVO_SCREEN_REFUSED, night) if x)
     r = core.game.run_job("act.leave_camp", {}, wait_s=60)
     if r.status != "done":
         text = plumbing._job_text("camp", r)
@@ -533,11 +535,18 @@ def _block_facts(b: dict) -> str:
     return ", ".join(facts) or "no travel button was greyed out and no conversation screen was up"
 
 
+# live-v09b t2-camp2: camp leave right after the 1st long rest's dream, with the rest's narrator screen still up
+# (get_status: screen=dialogue, the party Sleeping). act.leave_camp's conversation check reads the server, which had
+# none: it pressed, the game didn't answer, and the job failed after its 12 s wait with no reason. The client's
+# screen is checked before the press too (ui.travel_block dialogue).
+CONVO_SCREEN_REFUSED = ("FAILED: a conversation is open, nothing was pressed; the game doesn't answer the camp "
+                        "button while a conversation screen is up")
+
+
 def _leave_unanswered_text(pressed: dict, now: dict) -> str:
     """act.leave_camp's 'cannot travel right now' is its own wait running out: no check refused, the game didn't
-    answer the camp button. live-v09b t2-camp2: pressed right after the 1st long rest's dream, while get_status still
-    showed the rest's narrator screen and the party Sleeping; the wake-up came during the 12 s wait, and the
-    reading taken after it showed nothing, so the result gave no reason. Say what the game showed at the press."""
+    answer the camp button. A reading taken after the wait can be clear (the block was over by then), so say what
+    the game showed at the press too."""
     return (f" The game didn't answer the camp button: the party stayed at camp. When it was pressed: "
             f"{_block_facts(pressed)}. After the wait: {_block_facts(now)}.")
 
@@ -552,6 +561,10 @@ def camp(action: str = "go") -> str:
             return reporting._finish("camp", {"action": action}, "camp: " + night, time.monotonic())
         night = "\n".join(x for x in (night, _wake_first()) if x)
         pressed = _travel_block(TRAVEL_BLOCK_WAIT_S)
+        if pressed.get("dialogue"):
+            reporting._batch["last"] = "failed"
+            return reporting._finish("camp", {"action": action}, "\n".join(
+                x for x in ("camp: " + CONVO_SCREEN_REFUSED, night) if x), time.monotonic())
         sub = overview.minimap_sub()
         out = plumbing._act("camp", "act.leave_camp", {}, wait_s=60)
         if reporting._batch.get("last") == "done":
