@@ -40,11 +40,7 @@ end
 ------------------------------------------------------------------------
 
 local function activeChar(ctx)
-    for _, u in ipairs(ctx.party) do
-        local e = V.entity(u)
-        if e and U.comp(e, "ClientControl") then return u end
-    end
-    return ctx.party[1]
+    return V.selected(ctx.party) or ctx.party[1]
 end
 
 RPC.register("nav.path", function(args)

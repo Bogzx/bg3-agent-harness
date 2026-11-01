@@ -5,6 +5,27 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-10-30: a give the game refuses fails; get_character shows status names only; a busy UI reads as busy
+
+- manage_inventory op=give: when the game leaves the item with the giver (no error, no move: a story item), the
+  give fails after its 8 s wait with "the game kept it with <giver>: it can't be handed over" instead of
+  "TIMEOUT — timed out" (mod act.transfer on_timeout).
+- get_character shows each status by the name the UI shows, without the engine's status id, on a party member's
+  sheet and on an examined character, as look_at already did. It served ids like DIFFICULT_TERRAIN_DEEPWATER.
+- camp leave / fast_travel at camp: when the game's UI is busy (bg3le refuses the read of whether a long rest's night
+  still blocks travel) they fail at once with "FAILED: can't read whether a long rest's night at camp still blocks
+  travel: bg3le: UI busy …" instead of reading it as no night and failing later "cannot travel right now".
+- pick_up on an item the game can't pick up (fixed in place, listed `<usable>` like a wall torch) fails at once with
+  "that can't be picked up: it is fixed in place (interact uses it)" instead of "TIMEOUT — timed out" after 40 s.
+- With a dead member that still holds the game's ClientControl (its corpse once selected), the selected member is
+  the living one set_party selected: get_status/look's active member and PARTY APART, fast_travel's LEFT BEHIND
+  and "already stands at the waypoint" answer, and nav reads measured from the corpse before. A fast_travel to the
+  waypoint the selected member stood on then timed out after 66 s instead of answering at once. fast_travel also
+  watches the living holder for the arrival, so a trip that moved it no longer waits on the corpse.
+- short_rest in combat, or while any party member is in a conversation (also one that isn't selected), fails at once
+  with "not pressed: in combat" / "a party member is in a conversation" instead of "TIMEOUT — timed out" after 15 s:
+  the game ignored the press there while the selected member's rest button still showed as available.
+
 ## 2026-10-30: do_actions stops at a 90 s time budget
 
 - do_actions (the blocking call) stops before its next step once it has run 90 s (`actq.BATCH_BUDGET_S`), and a

@@ -297,6 +297,25 @@ class NightCamp(unittest.TestCase):
         self.assertEqual([o for o, _ in fake.jobs][:2], ["ui.long_rest", "act.leave_camp"])
         self.assertIn("ended the night", out)
 
+    def test_a_busy_ui_is_not_read_as_no_night(self):
+        # A UI stuck busy 26 min: the refused travel_block read counted as "not night", so camp leave went on to
+        # act.leave_camp and failed "cannot travel right now" 13 times without the reason
+        fake = NightFake()
+        base = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.travel_block":
+                raise GameError("bg3le: UI busy: the game's UI is busy (a rest/travel/load transition); refused "
+                                "before its first UI call, nothing was done; retry in a moment")
+            return base(op, args, context)
+
+        fake.rpc = rpc
+        self.use(fake)
+        out = getattr(travel.camp, "fn", travel.camp)("leave")
+        self.assertEqual(fake.jobs, [])
+        self.assertIn("camp: FAILED: can't read whether a long rest's night at camp still blocks travel: bg3le: UI busy",
+                      out)
+
     def test_no_night_no_rest(self):
         fake = NightFake()
         fake.night = False

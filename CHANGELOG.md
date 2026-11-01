@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.1.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.2.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.9.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.9 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -66,6 +66,9 @@ game unless it says so.
   `BG3AI_SCENARIO_SETUP=1`; the seed and renames are applied again after every load.
 - A save inspector (`tools/saves/inspect.py`) that lists what a save embeds and flags anything personal.
 - The harness version is `packages/harness/pyproject.toml`'s, exposed as `bg3harness.__version__`.
+- 0.2.0 (2026-11-01): the bg3 tools' results changed after the launch runs (bridge/CHANGELOG.md, 2026-10-30:
+  get_character shows status names only; a give the game refuses, an item fixed in place, a busy camp UI and a
+  short rest the game ignores fail at once with the reason instead of timing out). bench-v0.9's release cites it.
 
 ### Benchmark (`packages/bench`)
 

@@ -4,13 +4,13 @@
  "about": "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, count, allowlist_sha256) and per client the sha256 of the prompt it is served; its variants: the same under a client profile's tool groups off (keyed by those groups), which a run naming those tools is checked against.",
  "suite": "bench-v0.9",
  "versions": {
-  "harness": "0.1.0",
+  "harness": "0.2.0",
   "bench": "0.9.0"
  },
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "43efad6edc549f878e3ab8b5a24fe56aee3fc36f0e1116bd259f5ae17e5260fc",
-  "mod_sha1": "3ead2fbdd8c4eb827c6e15cf63b1ce41e0c1e3c4"
+  "mod_sha1": "8590868b1a4ec5914c3bcdfd0d9f52a496880ef4"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {

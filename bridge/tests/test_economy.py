@@ -10,7 +10,7 @@ import os
 import tempfile
 import time
 import unittest
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit
@@ -656,6 +656,35 @@ class Tools(unittest.TestCase):
             G.screen = "dialogue"
             self.assertEqual(inventory.short_rest(), "short_rest: FAILED — not pressed: a conversation is on screen")
         self.assertEqual(jobs, [])
+
+    def test_short_rest_is_not_pressed_in_combat_or_a_party_conversation(self):
+        # launch-v1 act1_level_3 r5: pressed 2 s into a fight; r7: Tav selected while Shadowheart was in a
+        # conversation. The game ignored both presses and the job timed out after 15 s.
+        jobs: list = []
+
+        class G(FakeGame):
+            activity: ClassVar[dict] = {"in_combat": True, "in_dialogue": False}
+
+            def rpc(self, op, args=None, context="server", timeout=None):
+                if op == "ui.state":
+                    return {"screen": "game"}
+                if op == "nav.activity":
+                    return G.activity
+                return super().rpc(op, args, context)
+
+            def run_job(self, op, args, context="server", wait_s=25.0, **kw):
+                jobs.append(op)
+                return JobResult(status="done", result={"short_rests_left": 1, "of": 2})
+        self.use(G(s026_inventory()))
+        with mock.patch.object(plumbing, "_close_left_trade", lambda wait_s=2.0: False):
+            self.assertEqual(inventory.short_rest(), "short_rest: FAILED — not pressed: in combat")
+            G.activity = {"in_combat": False, "in_dialogue": True}
+            self.assertEqual(inventory.short_rest(), "short_rest: FAILED — not pressed: a party member is in a "
+                             "conversation (finish it first; it may be one you haven't selected)")
+            self.assertEqual(jobs, [])
+            G.activity = {"in_combat": False, "in_dialogue": False}
+            self.assertTrue(inventory.short_rest().startswith("short_rest: done"))
+        self.assertEqual(jobs, ["ui.short_rest"])
 
     def test_short_rest_is_not_pressed_while_a_member_stands_up_from_a_revive(self):
         # live N11 step 1 (C1 replay +66.4 s): short_rest ran during Claude's act.end_standup; his layer-1 action stayed

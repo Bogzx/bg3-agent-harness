@@ -77,6 +77,11 @@ BG3AI.Visibility = {
     entity = function(u) return world[u] and { uuid = u } or nil end,
     pos = function(e) local p = world[e.uuid]; return p and { p[1], p[2], p[3] } or nil end,
     party = function() return { P1 } end,
+    -- the ClientControl holder (the real one, Server/Visibility.lua, puts a living holder first: test_state_ops.lua)
+    selected = function(party)
+        local V = BG3AI.Visibility
+        for _, u in ipairs(party) do local e = V.entity(u); if e and e.ClientControl then return u end end
+    end,
     uuid = function(u) return u end,
     context = function() return { party = { P1 }, is_party = { [P1] = true } } end,
     inDialog = function() return false end,

@@ -630,6 +630,16 @@ test("pickup: an item that left the world mid-walk stops the walk at once (no ti
     eq(r.status, "failed", "refused"); assert(r.error:find("no longer in the world", 1, true), r.error)
 end)
 
+test("pickup: an item the game can't pick up (a wall torch) is refused at once, not a 40 s timeout", function()
+    world[GEM].comps = { ServerItem = { CanBePickedUp = false, CanUse = true } }
+    local r = job(op("pickup", { char = P1, item = GEM }))
+    eq(r.status, "failed", "refused")
+    assert(r.error:find("can't be picked up: it is fixed in place (interact uses it)", 1, true), r.error)
+    eq(#called("Pickup"), 0, "no Pickup order")
+    world[GEM].comps = { ServerItem = { CanBePickedUp = true } }
+    eq(job(op("pickup", { char = P1, item = GEM })).phase, "approach", "a pickable item walks")
+end)
+
 test("move_to: a timed-out walk purges its CharacterMoveToPosition task", function()
     local restore = with_tasks(1)
     local j = job(op("move_to", { char = P1, pos = { 5, 0, 0 } }))

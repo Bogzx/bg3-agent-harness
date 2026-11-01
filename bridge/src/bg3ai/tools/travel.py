@@ -10,7 +10,7 @@ import threading
 import time
 from typing import Any
 
-from .. import actq, areablock, companions, longnav, macros, navhints, party, render
+from .. import actq, areablock, busywait, companions, longnav, macros, navhints, party, render
 from ..game import GameError, JobResult, NotReady
 from . import core, overview, plumbing, reporting, world_tools
 
@@ -207,8 +207,15 @@ def _end_night_first() -> str:
     ended (29/31 fast_travel and 7 camp-leave failures 10:00-10:52). Travelling first needs the night to end, as a
     player would by finishing the rest: ui.long_rest(sleep_only) presses the camp's rest button at night, which
     (live 11:2x) opens the rest screen again; it rests from there, partially if supplies are short. '' when it
-    isn't night at camp, else the line to show ('FAILED …')."""
-    b = core.game.try_rpc("ui.travel_block", context="client")
+    isn't night at camp, else the line to show ('FAILED …').
+    A busy UI (bg3le refusing the read) can't say whether it is night: it read as "not night", and a camp leave
+    went on to act.leave_camp ("cannot travel right now", 13 times while the UI stayed busy 26 min). Say busy."""
+    try:
+        b = core.game.rpc("ui.travel_block", context="client")
+    except GameError as e:
+        if not busywait.is_busy(str(e)):
+            return ""
+        return "FAILED: can't read whether a long rest's night at camp still blocks travel: " + str(e)[:300]
     if not (isinstance(b, dict) and b.get("night_camp")):
         return ""
     out = world_tools._box_act("long_rest", "ui.long_rest", {"sleep_only": True}, wait_s=60)

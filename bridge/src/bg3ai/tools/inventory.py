@@ -346,6 +346,14 @@ def short_rest() -> str:
     if screen in ("trade", "dialogue"):
         why = "the trade screen is open and didn't close" if screen == "trade" else "a conversation is on screen"
         return note + "short_rest: FAILED — not pressed: " + why
+    # launch-v1 act1_level_3 r5: short_rest 2 s after a fight started; r7 x2: Tav selected (screen=game) while
+    # Shadowheart was in a conversation. The selected member's hotbar still offered the rest, the game ignored the
+    # press and the job waited out its 15 s: "TIMEOUT — timed out". nav.activity covers the whole party.
+    act = core.game.try_rpc("nav.activity")
+    if isinstance(act, dict) and (act.get("in_combat") or act.get("in_dialogue")):
+        why = "in combat" if act.get("in_combat") else \
+            "a party member is in a conversation (finish it first; it may be one you haven't selected)"
+        return note + "short_rest: FAILED — not pressed: " + why
     # live N4, N7, N11 (C1 replays): a short rest during a revived member's stand-up (act.end_standup) left them in an
     # unfinished action for good, every later walk of theirs travelled=0; N10's stand-up with nothing else running ended
     up = (core.game.try_rpc("act.standups") or {}).get("running") or []
