@@ -30,7 +30,7 @@ BG3AI = {
         allText = function(e) return e.text end,
         prop = function(obj, k) return obj and obj[k] end,
         props = function(o) return type(o) == "table" and o.props or {} end, -- a VM's props (the trade test)
-        clean = function(v) return v end,
+        clean = function(v) if v ~= "" then return v end end, -- UI.clean: "" is no text
         get = function() return nil end,
         findAll = function() return {} end,
     },
@@ -175,6 +175,32 @@ test("the subtitle line from OverheadInfo's DataContext", function()
     eq(st.subtitle.text, "Help me!", "text")
     eq(st.subtitle.speaker, "Mol", "speaker")
     eq(st.screen, "game", "the HUD's OverheadInfo is no panel")
+end)
+
+test("notifications: a formatter TextBlock's '[ForceUpdate]' Text reads its inlines, or is left out", function()
+    -- live-v09b t3-cl1: get_status after a camp leave showed "NOTICE [ForceUpdate]"
+    local U, saved = BG3AI.UI, {}
+    for _, k in ipairs({ "findAll", "typeName", "text", "inlineText" }) do saved[k] = U[k] end
+    U.findAll = function(el, pred)
+        local o = {}
+        for _, c in ipairs(el.kids) do if pred(c) then o[#o + 1] = c end end
+        return o
+    end
+    U.typeName = function(e) return e.type end
+    U.text = function(e) return e.str end
+    U.inlineText = function(inl) return inl and table.concat(inl) or "" end
+    pages.NotificationWidget = page(nil, { kids = {
+        { type = "TextBlock", str = "Leaving camp" },
+        { type = "TextBlock", str = "[ForceUpdate]", Inlines = { "Gale ", "wants to talk" } },
+        { type = "TextBlock", str = "[ForceUpdate]" },
+        { type = "Border" },
+    } })
+    local ok, st = pcall(state)
+    for k, f in pairs(saved) do U[k] = f end
+    assert(ok, st)
+    eq(#st.notifications, 2, "#notifications")
+    eq(st.notifications[1], "Leaving camp", "plain text")
+    eq(st.notifications[2], "Gale wants to talk", "the inlines")
 end)
 
 test("autoskip off (a run setting) is reported", function()

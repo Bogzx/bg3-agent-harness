@@ -5,6 +5,21 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-01: camp leave with a conversation screen up refuses at once; no "[ForceUpdate]" notice
+
+- camp leave / fast_travel from camp: with a conversation screen up on the client (ui.travel_block dialogue), they
+  fail at once with "FAILED: a conversation is open, nothing was pressed; the game doesn't answer the camp button
+  while a conversation screen is up" and press nothing (live-v09b: right after the 1st long rest's dream, the
+  rest's narrator screen still up, the server's conversation check let the press through; it went unanswered for
+  13.5 s and failed "cannot travel right now" with no reason).
+- A press the game still doesn't answer ("cannot travel right now": act.leave_camp's wait ran out) gets on its
+  FAILED line " The game didn't answer the camp button: the party stayed at camp. When it was pressed: <facts>.
+  After the wait: <facts>." (facts from ui.travel_block: night at camp, the travel buttons greyed out
+  (<TravelError>), the HUD hidden) instead of the block read only after the wait.
+- get_status NOTICE (ui.state notifications, mod UIState.lua): a TextBlock whose Text is the formatter's
+  "[ForceUpdate]" placeholder reads its inlines; with none it is left out (live-v09b: "NOTICE [ForceUpdate]" after
+  a camp leave).
+
 ## 2026-11-01: use_ability's opener, camp leave in a night camp talk and WHERE after a fast travel say what is true
 
 - use_ability out of combat at a creature: when a conversation is open after the hit (live-v09: the game's "You
