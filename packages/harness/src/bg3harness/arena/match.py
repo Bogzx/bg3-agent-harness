@@ -9,11 +9,13 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side: the
    harness's reads see both teams) carries the mod's arena records: its `arena_turn` (one per phase: a same-side
    run of the rolled order inside one turn group, {side, character (the phase's first open member), members (its
-   open members, in turn order), round, phase, group, shared}) is written with the characters' names; its
-   `arena_end` (the mod's own end: a wipe at a turn boundary, the round cap at the start of round round_cap + 1) as
-   it is; its `arena_start`, an end the runner asked for and any arena
-   record after the match's end are left out, as the referee writes those itself. A phase naming a character outside
-   its side's team (a summon) is not a team turn: not written, never forced. A turn below is a phase.
+   open members, in turn order), round, phase, group (absent when the mod can't read the turn order), shared}) is
+   written with the team members' names (a summon has none: it is left out of the names, and the character is then
+   the phase's first team member); its `arena_end` (the mod's own end: a wipe at a turn boundary, the round cap at
+   the start of round round_cap + 1) as it is; its `arena_start`, an end the runner asked for and any arena record
+   after the match's end are left out, as the referee writes those itself. A phase with no member of its side's team
+   (only summons) is not a team turn, and one naming the other team's characters is not the side's: not written,
+   never forced. A turn below is a phase.
 3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
    - the mod's end (`arena.status.ended` or the ring's `arena_end`, any reason: a wipe, or the round cap as a draw
      with `rounds` = round_cap);
@@ -28,12 +30,12 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    from the last `arena.status.hp`. arena.end answers with the match's first end: when that is the mod's own (it
    ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
-   began reaching the arena's turn_cap_s times the turn's member count ends that turn: `act.end_turn` for each of
-   its members in turn order, sent as that side, one at a time (each job polled until it settles, at most
-   END_SETTLE_S; a member that already ended is refused), then `arena_turn_forced {side, character}` once any end
-   went through. The cap of a side's FORFEIT_TURNS-th turn in a row is its
-   forfeit, decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod
-   keeps a match's first end, so no wipe at the next turn boundary can come before the forfeit).
+   began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
+   `act.end_turn` for each of its members in turn order, sent as that side, one at a time (each job polled until it
+   settles, at most END_SETTLE_S; a member that already ended is refused), then `arena_turn_forced {side,
+   character}` once any end went through. The cap of a side's FORFEIT_TURNS-th turn in a row is its forfeit,
+   decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod keeps a
+   match's first end, so no wipe at the next turn boundary can come before the forfeit).
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. It reads `ui.state` for one only once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then
@@ -124,7 +126,7 @@ class Turn:
     uuid: str
     name: str
     round: int
-    members: list[str]  # uuids, in turn order (uuid is the first)
+    members: list[str]  # uuids, in turn order, summons included
     forced: bool = False
 
 
@@ -175,12 +177,14 @@ class Referee:
             return None
         if ev == "arena_turn":
             members = [str(u) for u in fact.get("members") or []]
-            named = [self.names.get(u.lower()) for u in [str(fact.get("character") or ""), *members]]
-            if not members or any(n is None or n[0] != fact.get("side") for n in named):
+            known = [self.names[u.lower()] for u in members if u.lower() in self.names]
+            names = [name for side, name in known if side == fact.get("side")]
+            if not names or len(names) != len(known):  # only summons, or the other team's characters
                 return None
-            names = [n[1] for n in named if n is not None]
-            self.turns.append(Turn(str(fact["side"]), str(fact["character"]), names[0], int(fact["round"]), members))
-            return {**fact, "character": names[0], "members": names[1:]}
+            first = self.names.get(str(fact.get("character") or "").lower())
+            name = first[1] if first and first[1] in names else names[0]
+            self.turns.append(Turn(str(fact["side"]), str(fact["character"]), name, int(fact["round"]), members))
+            return {**fact, "character": name, "members": names}
         if ev == "arena_end":
             self.mod_end = {"winner": None, **fact}  # the ring leaves a nil winner (a draw) out
             self.done = True

@@ -760,8 +760,9 @@ def test_an_operator_abort_is_invalid(tmp_path):
 
 def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     """The mod's own arena_start and a runner end's arena_end never reach facts; a phase names its characters; a
-    phase naming someone outside its side's team (a summon, the other team) or no members is not written; the mod's
-    own end of any reason is the match's, and nothing of the arena's after an end is written."""
+    phase's summons have no names (a phase of only summons, one naming the other team or one without members is not
+    written) but are ended at the cap; the mod's own end of any reason is the match's, and nothing of the arena's
+    after an end is written."""
     _model, _game, clock, _agents, spec = setup({"A": passer, "B": passer})
     from bg3harness import facts as hfacts
 
@@ -775,11 +776,13 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
         "members": ["Gale", "Karlach"],
     }
     assert ref.turn is not None and ref.turn.members == ["ua2", "UA1"]
+    with_summon = {**phase, "character": "summon-1", "members": ["summon-1", "ua1"]}
+    assert ref.translate(with_summon) == {**with_summon, "character": "Karlach", "members": ["Karlach"]}
+    assert ref.turn.members == ["summon-1", "ua1"] and ref.turn.name == "Karlach"
     assert ref.translate({**phase, "character": "summon-1", "members": ["summon-1"]}) is None
-    assert ref.translate({**phase, "character": "ua1", "members": ["ua1", "summon-1"]}) is None
     assert ref.translate({**phase, "character": "ua1", "members": ["ua1", "ub1"]}) is None
     assert ref.translate({"ev": "arena_turn", "side": "A", "character": "ua1", "round": 1}) is None
-    assert len(ref.turns) == 1
+    assert len(ref.turns) == 2
     assert ref.translate({"ev": "arena_combat_ended", "rounds": 1}) is None and ref.combat_ended == {
         "ev": "arena_combat_ended",
         "rounds": 1,
@@ -812,6 +815,7 @@ def test_the_facts_schema_takes_a_phase_and_refuses_a_turn_without_its_fields():
     rec = {"v": 1, "kind": "event", "t": 1.0, "ev": "arena_turn", "side": "A", "character": "Karlach", "round": 1}
     phase = {"members": ["Karlach", "Gale"], "phase": 2, "group": "g", "shared": True}
     jsonschema.validate({**rec, **phase}, FACTS_SCHEMA)
+    jsonschema.validate({**rec, **{k: v for k, v in phase.items() if k != "group"}}, FACTS_SCHEMA)  # no turn order
     for bad in (rec, {**rec, **phase, "members": []}, {**rec, **phase, "phase": 0}):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(bad, FACTS_SCHEMA)

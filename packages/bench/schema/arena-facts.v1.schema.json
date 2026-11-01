@@ -167,7 +167,6 @@
           "members",
           "round",
           "phase",
-          "group",
           "shared"
         ],
         "properties": {
@@ -176,7 +175,7 @@
           },
           "character": {
             "$ref": "#/$defs/name",
-            "description": "the phase's first open member"
+            "description": "the phase's first open team member"
           },
           "members": {
             "type": "array",
@@ -184,7 +183,7 @@
             "items": {
               "$ref": "#/$defs/name"
             },
-            "description": "the side's open members of the group at the phase's start, in turn order"
+            "description": "the side's open team members of the group at the phase's start, in turn order (summons left out)"
           },
           "round": {
             "type": "integer",
@@ -198,7 +197,7 @@
           },
           "group": {
             "type": "string",
-            "description": "the turn group's id (its team guid)"
+            "description": "the turn group's id (its team guid, else its first member's uuid); absent when the mod can't read the turn order"
           },
           "shared": {
             "type": "boolean",

@@ -236,6 +236,8 @@ def test_the_event_schema_refuses_malformed_referee_events(rec):
 
 
 def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():
+    phase = {"members": ["Karlach", "Gale"], "round": 1, "phase": 2, "shared": True}  # no group: no turn order read
+    jsonschema.validate(ev(1, "arena_turn", side="A", character="Karlach", **phase), EVENT_SCHEMA)
     jsonschema.validate(
         ev(1, "arena_reaction_unowned", round=2, detail="Wolf | Shield | Choose how to react."), EVENT_SCHEMA
     )
