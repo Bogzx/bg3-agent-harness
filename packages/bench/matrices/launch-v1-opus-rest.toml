@@ -1,0 +1,38 @@
+# Launch campaign v1, Claude Opus 5.5 through pi and the Anthropic API: the 4 launch scenarios launch-v1-opus leaves
+# out (the not-scored ones), x 3 runs = 12 runs. With launch-v1-opus's 24 runs Opus plays the same 12 x 3 as
+# launch-v1-haiku and launch-v1-sonnet. Same profile, effort and condition, so both matrices' runs form one
+# (client, model, condition) group in the results (results.build_results groups by those, never by matrix); the run
+# ids differ by the matrix name.
+# Cell by cell, the big reserve first (a job starts only if spent + its max_cost fits the cap).
+# max_cost: each scenario's time cap x $0.28 per minute x 1.25, as launch-v1-opus.
+# Estimate, per run: launch-v1-sonnet's mean minutes x 1.32 (Opus's time over Sonnet's on the 8 scored scenarios) at
+# $0.147/min (Opus's pooled rate for runs under 20 min): act3_gold_max $2.27 (15.4 min), choice_act1_minthara $2.22
+# (15.0), choice_act1_karlach $0.39 (2.6), choice_act2_nightsong $0.17 (1.1) = $15.11 for the 12 runs (103 play
+# minutes). If every run plays its time cap ($0.261/min, the rate for runs of 20 min or more): $105.82 (405 min); Opus's
+# two finished act3_gold_max runs through the claude client (diverse-2026-10-25) both played to the cap. Every run at
+# its max_cost: $141.60. Rates pooled over Opus's 28 finished launch-v1 runs (2026-10-29 to 31).
+name = "launch-v1-opus-rest"
+allow_gaps = false
+allow_unverified = false
+order = "cell"
+
+models = ["profiles/claude-opus-5-5.toml"]
+scenarios = [
+  "act3_gold_max",
+  "choice_act1_minthara",
+  "choice_act1_karlach",
+  "choice_act2_nightsong",
+]
+conditions = ["rules"]
+repeats = 3
+
+[budget]
+# The same budget files as launch-v1-opus: a job starts only if its max_cost fits both, and its cost goes into both.
+file = "runtime/budget-opus.json"
+shared = ["runtime/budget-anthropic.json"]
+
+[budget.max_cost]
+act3_gold_max = 15.73
+choice_act1_karlach = 10.49
+choice_act1_minthara = 10.49
+choice_act2_nightsong = 10.49
