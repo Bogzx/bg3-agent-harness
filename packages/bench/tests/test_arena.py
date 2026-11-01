@@ -181,11 +181,23 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         ev(1, "arena_end", winner="B", rounds=2, hp_left_A=1, hp_left_B=1, reason="forfeit"),  # no forfeit, cause
         ev(1, "arena_end", winner="B", rounds=2, hp_left_A=1, hp_left_B=1, reason="forfeit", forfeit="A", cause="x"),
         ev(1, "arena_end", winner="A", rounds=20, hp_left_A=1, hp_left_B=0.5, reason="round_cap"),  # a cap's winner
+        ev(1, "arena_end", winner="A", rounds=2, hp_left_A=1, hp_left_B=0, reason="wipe", detail=3),
+        ev(1, "arena_reaction_unowned", round=2),
+        ev(1, "arena_reaction_unowned", round=-1, detail="Wolf | Shield"),
     ],
 )
 def test_the_event_schema_refuses_malformed_referee_events(rec):
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(rec, EVENT_SCHEMA)
+
+
+def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():
+    jsonschema.validate(
+        ev(1, "arena_reaction_unowned", round=2, detail="Wolf | Shield | Choose how to react."), EVENT_SCHEMA
+    )
+    late = "the runner's end came after it: wall_cap"
+    end = ev(1, "arena_end", winner="A", rounds=2, hp_left_A=1, hp_left_B=0, reason="wipe", detail=late)
+    jsonschema.validate(end, EVENT_SCHEMA)
 
 
 # ---------------------------------------------------------------------------------------------------- the grader
