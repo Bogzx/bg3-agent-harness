@@ -27,7 +27,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
    began reaching the arena's turn_cap_s ends that turn: `act.end_turn` for the acting character, sent as that
-   side, then `arena_turn_forced {side, character}`.
+   side, then `arena_turn_forced {side, character}`. The cap of a side's FORFEIT_TURNS-th turn in a row is its
+   forfeit, decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod
+   keeps a match's first end, so no wipe at the next turn boundary can come before the forfeit).
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. It reads `ui.state` for one only once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then
@@ -184,10 +186,12 @@ class Referee:
         t.forced = True
         self.event("arena_turn_forced", side=t.side, character=t.name)
 
-    def forced_out(self, side: str) -> bool:
-        """The side's last FORFEIT_TURNS own turns were all forced."""
-        own = [t for t in self.turns if t.side == side][-FORFEIT_TURNS:]
-        return len(own) == FORFEIT_TURNS and all(t.forced for t in own)
+    def forfeits(self) -> bool:
+        """Forcing the turn in progress makes FORFEIT_TURNS forced turns in a row of its side."""
+        t = self.turn
+        assert t is not None
+        own = [x for x in self.turns if x.side == t.side][-FORFEIT_TURNS:]
+        return len(own) == FORFEIT_TURNS and all(x.forced for x in own[:-1])
 
     def end(self, **fields: Any) -> dict[str, Any]:
         self.event("arena_end", **fields)
@@ -369,14 +373,16 @@ def run_arena(
                 turn_mark = (idx, model(turn.side))
             if model(turn.side) - turn_mark[1] < spec.turn_cap_s:
                 continue
+            if ref.forfeits():
+                ref.forced()
+                log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {spec.turn_cap_s:g} s cap")
+                raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
             job = game.rpc("act.end_turn", {"char": turn.uuid}, turn.side) or {}
             if job.get("status") == "failed":
                 log(f"arena {spec.name}: ending {turn.name}'s turn at the cap failed: {job.get('error')}")
                 continue
             ref.forced()
             log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) ended at the {spec.turn_cap_s:g} s cap")
-            if ref.forced_out(turn.side):
-                raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
             e = status["ended"]
             outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})

@@ -479,6 +479,35 @@ def test_three_forced_turns_in_a_row_forfeit(tmp_path):
     )
 
 
+def test_the_third_forced_turn_forfeits_before_any_end_turn_so_no_wipe_comes_first(tmp_path):
+    """The game wipes team A at the turn boundary after a forced end_turn of B's once B has two forced turns: the
+    forfeit is decided at the third cap, so the runner sends no end_turn there and the mod's first end is the
+    forfeit (one arena_end, a valid match)."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": staller})
+    rpc = game.rpc
+
+    def wipe_after_end_turn(op: str, args: dict[str, Any], side: str | None = None) -> Any:
+        r = rpc(op, args, side)
+        if op == "act.end_turn" and side == "B" and game.calls.count(("act.end_turn", "B")) >= 3:
+            for m in model._match().teams["A"]:
+                m.hp = 0
+            model.finish("B", "wipe")
+        return r
+
+    game.rpc = wipe_after_end_turn  # type: ignore[method-assign]
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert game.calls.count(("act.end_turn", "B")) == 2  # the two forced turns before the forfeit
+    assert model.ends == [{"reason": "forfeit", "winner": "A"}] and model.ended is not None
+    assert model.ended["reason"] == "forfeit"
+    assert out.end is not None and (out.end["reason"], out.end["winner"], out.end["forfeit"]) == ("forfeit", "A", "B")
+    evs = arena_events(tmp_path)
+    assert [e["ev"] for e in evs].count("arena_end") == 1
+    forced = [(e["side"], e["character"]) for e in evs if e["ev"] == "arena_turn_forced"]
+    assert forced == [("B", "Wyll"), ("B", "Halsin"), ("B", "Wyll")]
+    g = grade(tmp_path)
+    assert (g["valid"], g["result"], g["forfeit"]) == (True, "A", {"side": "B", "cause": "forced_turns"})
+
+
 def test_a_turn_under_the_cap_is_never_forced(tmp_path):
     _model, game, clock, agents, spec = setup({"A": attacker, "B": passer})
     am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
