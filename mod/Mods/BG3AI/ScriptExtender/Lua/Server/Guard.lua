@@ -287,14 +287,33 @@ function G.note_turn_started(char)
     if G.is_party(g) then G.turn_start[g] = { t = now_ms(), combat = c } else G.foe_start[c] = now_ms() end
 end
 
-function G.turn_moved_on(uuid)
+-- Its turn has passed: a foe's turn started after its own (not in one burst), recently.
+function G.turn_passed(uuid)
     local g = G.guid(uuid) or uuid
     local Ar = BG3AI.Arena
     local side = Ar and Ar.active() and g and Ar.side_of(g)
-    if side and Ar.held(g) then return true end -- a turn group across the teams: the other side acts first
     local s = g and G.turn_start[g]
     local f = s and G.foe_start[side and (s.combat .. "|" .. side) or s.combat]
     return f ~= nil and f - s.t > G.TURN_BURST_MS and now_ms() - f < G.TURN_MOVED_TTL_MS
+end
+
+function G.turn_moved_on(uuid)
+    local g = G.guid(uuid) or uuid
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active() and g and Ar.side_of(g) and Ar.held(g) then return true end -- another phase acts first
+    return G.turn_passed(g)
+end
+
+-- The members a character's turn group can hold, as the mod lists them: in an arena both teams (the game groups
+-- adjacent player characters whatever their side), else the party.
+function G.turn_group_members()
+    local Ar = BG3AI.Arena
+    if not (Ar and Ar.active()) then return G.party() end
+    local out = {}
+    for _, s in ipairs(Ar.SIDES) do
+        for _, m in ipairs((Ar.team(s))) do out[#out + 1] = m end
+    end
+    return out
 end
 
 -- The game's own turn flags, without our pending bookkeeping.
@@ -344,15 +363,7 @@ function G.end_pending(uuid)
         local others = false
         -- in an arena the group holds both teams, whoever asks (each side must agree on the acting side): a held
         -- member of the other side is still to act, so a side whose members all ended never takes the group back
-        local Ar = BG3AI.Arena
-        local group = G.party()
-        if Ar and Ar.active() and Ar.side_of(g) then
-            group = {}
-            for _, s in ipairs(Ar.SIDES) do
-                for _, m in ipairs((Ar.team(s))) do group[#group + 1] = m end
-            end
-        end
-        for _, m in ipairs(group) do
+        for _, m in ipairs(G.turn_group_members()) do
             if not G.same(m, g) and not G.end_requested[G.guid(m) or m] then
                 local a2, r2 = tb_flags(m)
                 if a2 and not r2 then others = true break end
@@ -378,12 +389,18 @@ function G.end_pending(uuid)
     return true
 end
 
+-- Still to act in its turn group: the game shows its turn open, no end of ours is pending and its turn has not
+-- passed. A held arena member (another phase of its group acts first) is still to act, though not its turn yet.
+function G.still_to_act(uuid)
+    local active, req = tb_flags(uuid)
+    return active == true and not req and not G.end_pending(uuid) and not G.turn_passed(uuid)
+end
+
 function G.is_my_turn(uuid)
-    local e = G.entity(uuid)
-    local tb = e and U.comp(e, "TurnBased")
-    if not tb then return false end
-    local ok, v = pcall(function() return tb.IsActiveCombatTurn == true and tb.RequestedEndTurn ~= true end)
-    return ok and v == true and not G.end_pending(uuid) and not G.turn_moved_on(uuid)
+    if not G.still_to_act(uuid) then return false end
+    local Ar = BG3AI.Arena
+    local g = G.guid(uuid) or uuid
+    return not (Ar and Ar.active() and g and Ar.side_of(g) and Ar.held(g))
 end
 
 -- Has this character ended its turn while its turn group is still active?
