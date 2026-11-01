@@ -292,7 +292,10 @@ function A.loop_watch(char, item)
     if job and job.status == "running" and job.walk and not job.walk.done and job.climbs and job.climbs[item]
         and s.n < 2 * A.LOOP_USES then return end
     A.use_streak[char] = nil
-    RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
+    -- an arena: the stuck character's side hears it (nil for anyone else: the harness)
+    local Ar = BG3AI.Arena
+    U.with_side(Ar and Ar.active() and Ar.side_of(char) or nil, RPC.push, "loop_stopped",
+        { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
     if job and job.status == "running" then
         interrupt(job, "stuck: the character kept using the same item (" .. s.n
             .. " times, e.g. re-climbing a ladder); try another route or a jump")
@@ -377,7 +380,8 @@ local function listen(event, arity)
     registered[event] = true
     local ok, err = pcall(Ext.Osiris.RegisterListener, event, arity, "after", function(...)
         local args = { ... }
-        local ok2, err2 = pcall(A.dispatch, event, args)
+        -- listener code never runs as the op an event fired inside of (each_running / each_side pick their own)
+        local ok2, err2 = pcall(U.with_side, nil, A.dispatch, event, args)
         if not ok2 then Ext.Utils.PrintWarning("[BG3AI] act dispatch " .. event .. ": " .. tostring(err2)) end
     end)
     if not ok then
