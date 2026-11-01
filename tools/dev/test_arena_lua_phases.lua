@@ -124,3 +124,15 @@ test("a phase's names: each member's display name in members' order, a summon's 
     eq(members(r[1]), A1 .. "," .. SA, "A1 and its summon")
     eq(table.concat(r[1].names, ","), "Ana,Aspect", "names")
 end)
+
+test("a member without a display name: 'Unknown' in names, which stays as long as members", function()
+    begin()
+    NAMES[A2] = nil
+    order = { { A1, A2, B1 } }
+    openAll({ A1, A2, B1 })
+    tick()
+    NAMES[A2] = "Abe"
+    local r = refs("arena_turn")[1]
+    eq(#r.names, #r.members, "as many names as members")
+    eq(table.concat(r.names, ","), "Ana,Unknown", "names")
+end)
