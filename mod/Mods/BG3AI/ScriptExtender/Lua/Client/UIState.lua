@@ -710,13 +710,17 @@ function S.container(wmap)
     return out
 end
 
--- Toasts and side notifications currently rendered.
+-- Toasts and side notifications currently rendered. A TextBlock set through ls:TextBlockFormatter keeps Text =
+-- "[ForceUpdate]" with the string in its Inlines (Progression.lua P.textOf): live-v09b t3-cl1, get_status after a
+-- camp leave showed "NOTICE [ForceUpdate]". Read the inlines; a placeholder without any is no text on screen.
 function S.notifications(wmap)
     local w = wmap.NotificationWidget
     if not w or not UI.isVisible(w.el) then return nil end
     local out = {}
-    for _, it in ipairs(UI.content(w.el, { text_only = true, max = 1500 })) do
-        if it.t then out[#out + 1] = it.t end
+    for _, tb in ipairs(UI.findAll(w.el, function(e) return UI.typeName(e) == "TextBlock" end, { max = 1500 })) do
+        local s = UI.text(tb)
+        if s == "[ForceUpdate]" then s = clean(UI.inlineText(prop(tb, "Inlines"))) end
+        if s then out[#out + 1] = s end
     end
     if #out == 0 then return nil end
     return out

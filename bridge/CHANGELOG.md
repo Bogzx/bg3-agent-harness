@@ -5,6 +5,18 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-01: an unanswered camp leave says what the game showed; no "[ForceUpdate]" notice
+
+- camp leave / fast_travel's leave-first: when act.leave_camp's wait runs out ("cannot travel right now": no check
+  refused, the game didn't answer the camp button), the FAILED line goes on " The game didn't answer the camp button:
+  the party stayed at camp. When it was pressed: <facts>. After the wait: <facts>." (facts from ui.travel_block: a
+  conversation screen up, night at camp, the travel buttons greyed out (<TravelError>), the HUD hidden) instead of
+  the block read only after the wait (live-v09b: right after the 1st long rest's dream it read clear, and the result
+  gave no reason).
+- get_status NOTICE (ui.state notifications, mod UIState.lua): a TextBlock whose Text is the formatter's
+  "[ForceUpdate]" placeholder reads its inlines; with none it is left out (live-v09b: "NOTICE [ForceUpdate]" after
+  a camp leave).
+
 ## 2026-11-01: use_ability's opener, camp leave in a night camp talk and WHERE after a fast travel say what is true
 
 - use_ability out of combat at a creature: when a conversation is open after the hit (live-v09: the game's "You

@@ -327,6 +327,44 @@ class NightCamp(unittest.TestCase):
         self.assertIn("camp: FAILED: can't read whether a long rest's night at camp still blocks travel: bg3le: UI busy",
                       out)
 
+    def _unanswered_leave(self):
+        # live-v09b t2-camp2: camp leave right after the 1st rest's dream: the rest's narrator screen still up and the
+        # party Sleeping at the press; act.leave_camp's wait ran out (13.5 s) and the reading after it was clear, so
+        # the result was "camp: FAILED — cannot travel right now —" with no reason
+        fake = NightFake()
+        fake.night = False
+        reads = {"n": 0}
+        base = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.travel_block":
+                reads["n"] += 1
+                return {"dialogue": True, "error": "Condition", "hud": True} if reads["n"] <= 3 else {"hud": True}
+            if op == "ui.fast_travel" and args.get("dry"):
+                raise GameError("at camp: leave camp first (camp leave), then fast travel")
+            return base(op, args, context)
+
+        fake.rpc = fake.try_rpc = rpc
+        fake.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
+            status="failed", result=None, error="cannot travel right now")
+        return self.use(fake)
+
+    def test_unanswered_camp_leave_says_what_the_game_showed_at_the_press(self):
+        self._unanswered_leave()
+        out = getattr(travel.camp, "fn", travel.camp)("leave")
+        head = out.split("\n")[0]
+        self.assertIn("camp: FAILED — cannot travel right now", head)
+        self.assertIn("The game didn't answer the camp button: the party stayed at camp. When it was pressed: a "
+                      "conversation screen was up, the camp and map travel buttons were greyed out (Condition). After "
+                      "the wait: no travel button was greyed out and no conversation screen was up.", head)
+
+    def test_unanswered_leave_before_a_fast_travel_says_the_same(self):
+        self._unanswered_leave()
+        out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
+        self.assertIn("fast_travel: FAILED to leave camp first — camp: FAILED — cannot travel right now", out)
+        self.assertIn("When it was pressed: a conversation screen was up, the camp and map travel buttons were greyed "
+                      "out (Condition).", out)
+
     def test_no_night_no_rest(self):
         fake = NightFake()
         fake.night = False
