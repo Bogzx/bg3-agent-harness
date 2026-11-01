@@ -14,7 +14,7 @@ from unittest import mock
 from test_turn_macros import P1, Base
 
 from bg3ai import longnav, render, route
-from bg3ai.tools import core, plumbing, observe, travel, batch, travel_macro, saving
+from bg3ai.tools import core, plumbing, observe, overview, travel, batch, travel_macro, saving
 from bg3ai.game import GameError, JobResult
 
 KARLACH = [104.2, 21.1, 516.7]
@@ -300,6 +300,23 @@ class TravelTrips(Base):
         self.assertEqual(travelled, ["Emerald Grove Environs"])
         self.assertIn("fast travel to Emerald Grove Environs first (25.1m from it; you were 463m away): done", out)
         self.assertIn("travel_to (463,0,0): started (25.1m)", out)
+
+    def test_the_fast_travel_leg_remembers_the_subregion_line_it_left(self):
+        # live-v09 t8's lag: get_status right after the leg must not show the old subregion as where the party is
+        self.addCleanup(overview._trip_sub.clear)
+        self.wps = [{"name": "Emerald Grove Environs", "id": "WAYP_DEN_Camp", "pos": [440.0, 0.0, 10.0]}]
+        orig_job = self.g.run_job
+
+        def run_job(op, args, context="server", wait_s=25.0, poll_s=0.01, on_start=None):
+            if op == "ui.fast_travel":
+                self.g.watch["party"][0]["pos"] = [440.0, 0.0, 10.0]
+                return JobResult("done", {"arrived": args["waypoint"]})
+            return orig_job(op, args, context, wait_s, poll_s, on_start)
+        self.g.run_job = run_job
+        self.g.reach = {"reachable": False}
+        self.g.ui_seq = [{"screen": "game", "region": "Blighted Village"}]
+        travel_macro.travel_to(x=463.0, y=0.0, z=0.0)
+        self.assertEqual(overview._trip_sub, {"sub": "Blighted Village", "trip": "the trip to Emerald Grove Environs"})
 
     def test_fast_never_walks_and_short_trips_never_ask(self):
         self.wps = [{"name": "Grove", "pos": [440.0, 0.0, 10.0]}]

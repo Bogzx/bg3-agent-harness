@@ -303,12 +303,12 @@ class StatusAndMap(Base):
         st.pop("subregion")  # state.status has none: WHERE's subregion is the minimap's (ui.state region)
         ui["region"] = "Blighted Village"
         self.assertIn("WHERE Blighted Village · Nautiloid", overview.get_status())
-        overview.trip_arrived("Blighted Village", "Roadside Cliffs")
+        overview.trip_arrived("Blighted Village", "the trip to Roadside Cliffs")
         out = overview.get_status()
         self.assertNotIn("Blighted Village ·", out)
         self.assertIn("WHERE Nautiloid", out)
         self.assertIn("SUBREGION not updated since the trip to Roadside Cliffs: the minimap still shows "
-                      "'Blighted Village', its line from before the trip", out)
+                      "'Blighted Village', as it did before", out)
         ui.pop("region")  # the line caught up (Roadside Cliffs has no subregion)
         out = overview.get_status(full=True)
         self.assertNotIn("SUBREGION", out)

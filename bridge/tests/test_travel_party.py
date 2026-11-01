@@ -203,7 +203,22 @@ class FastTravelSplitParty(Case):
         out = travel.fast_travel("Undercity Ruins")
         self.assertLess(time.monotonic() - t0, 1.0)
         self.assertIn("fast_travel: done", out)
-        self.assertEqual(overview._trip_sub, {"sub": "Blighted Village", "waypoint": "Undercity Ruins"})
+        self.assertEqual(overview._trip_sub, {"sub": "Blighted Village", "trip": "the trip to Undercity Ruins"})
+
+    def test_camp_go_remembers_the_subregion_line_it_left(self):
+        # the same lag as live-v09 t8: camp go teleports the party like a fast travel
+        fake = self.use(s065_camp_status(wyll_at_camp=True))
+        self.addCleanup(overview._trip_sub.clear)
+        fake.regions = ["Blighted Village"]
+        self.assertIn("camp: done", travel.camp("go"))
+        self.assertEqual(overview._trip_sub, {"sub": "Blighted Village", "trip": "the trip to camp"})
+
+    def test_camp_leave_remembers_the_subregion_line_it_left(self):
+        fake = self.use(s065_camp_status(wyll_at_camp=True))
+        self.addCleanup(overview._trip_sub.clear)
+        fake.regions = ["Campsite"]
+        travel.camp("leave")
+        self.assertEqual(overview._trip_sub, {"sub": "Campsite", "trip": "leaving camp"})
 
     def test_together_trip_is_untouched(self):
         st = s064_status()

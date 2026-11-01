@@ -14,10 +14,11 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - camp leave / fast_travel at night camp during a camp conversation fail at once with "FAILED: a conversation is
   open, nothing was pressed; at night in camp, leaving first ends the night (the party sleeps: a long rest)" instead
   of long_rest's "… then long_rest".
-- get_status after a fast travel: while the minimap's subregion line (WHERE's subregion) still shows the name it had
-  when the trip left, WHERE leaves it out and a line says "SUBREGION not updated since the trip to <waypoint>: the
-  minimap still shows '<name>', its line from before the trip" (live-v09: "WHERE Blighted Village" 0.6 s after
-  arriving at Roadside Cliffs). Nothing waits for the line.
+- get_status after a teleport (fast_travel, travel_to's fast-travel leg, camp go/leave): while the minimap's
+  subregion line (WHERE's subregion) still shows the name it had when the trip left, WHERE leaves it out and a line
+  says "SUBREGION not updated since <the trip to <waypoint> | the trip to camp | leaving camp>: the minimap still
+  shows '<name>', as it did before" (live-v09: "WHERE Blighted Village" 0.6 s after arriving at Roadside Cliffs).
+  Nothing waits for the line.
 
 ## 2026-10-30: a give the game refuses fails; get_character shows status names only; a busy UI reads as busy
 

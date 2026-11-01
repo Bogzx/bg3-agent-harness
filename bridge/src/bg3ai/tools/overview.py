@@ -17,7 +17,7 @@ from . import core, plumbing, reporting
 # ---------------------------------------------------------------------------
 
 _last_subregion = {"name": None}
-_trip_sub: dict = {}  # the minimap's subregion line when the last fast travel left, and where it went
+_trip_sub: dict = {}  # the minimap's subregion line when the last teleport (fast travel, camp) left, and the trip
 _objectives: dict[str, Any] = {"last": [], "at": 0.0}  # markers as last shown (o1, o2, ... index into this)
 MARKERS_TTL_S = 5.0  # route/travel_to reuse markers fetched this recently (a marker's position doesn't move)
 
@@ -58,11 +58,16 @@ def _objective_markers(max_age: float = 0.0) -> list:
     return ms
 
 
-def trip_arrived(sub: Any, waypoint: str) -> None:
-    """fast_travel arrived: the minimap's subregion line it read before leaving (None: there was none)."""
+def minimap_sub() -> Any:
+    """The minimap's subregion line now (ui.state region; None: none shown or no read), read before a teleport."""
+    return (core.game.try_rpc("ui.state", context="client") or {}).get("region")
+
+
+def trip_arrived(sub: Any, trip: str) -> None:
+    """A teleport arrived (trip: "the trip to Roadside Cliffs", "leaving camp"); sub: minimap_sub() before it."""
     _trip_sub.clear()
     if sub:
-        _trip_sub.update(sub=sub, waypoint=waypoint)
+        _trip_sub.update(sub=sub, trip=trip)
 
 
 def _sub_since_trip(ui: Any) -> tuple[Any, str]:
@@ -76,8 +81,8 @@ def _sub_since_trip(ui: Any) -> tuple[Any, str]:
         _trip_sub.clear()
         return ui, ""
     return ({k: v for k, v in ui.items() if k != "region"},
-            f"SUBREGION not updated since the trip to {_trip_sub['waypoint']}: the minimap still shows "
-            f"'{_trip_sub['sub']}', its line from before the trip")
+            f"SUBREGION not updated since {_trip_sub['trip']}: the minimap still shows '{_trip_sub['sub']}', as it did "
+            "before")
 
 
 def _delta_body(lines: list[str], ui: dict | None = None) -> str:
