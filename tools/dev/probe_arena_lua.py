@@ -1,5 +1,36 @@
 """The Lua the two-team probe (tools/dev/probe_arena.py) sends: the server library it installs (Osiris listeners, reads,
-argument-form fallback) and the client read of an open reaction prompt."""
+argument-form fallback) and the client read of an open reaction prompt, and the Lua literals it builds them with."""
+
+import json
+from typing import Any
+
+
+def lua(v: Any) -> str:
+    """A Lua literal for a str / number / bool / None / list / dict (JSON's string escapes are valid Lua for these)."""
+    if v is None:
+        return "nil"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, (list, tuple)):
+        return "{" + ", ".join(lua(x) for x in v) + "}"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"[{lua(k)}] = {lua(x)}" for k, x in v.items()) + "}"
+    return json.dumps(str(v))
+
+
+# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams. The debugger evaluates in
+# its own env: the mod's table is Mods.BG3AI.BG3AI there (a bare BG3AI is nil).
+MOD = "Mods.BG3AI.BG3AI"
+SERVER_TRY = (
+    "local ok, r = pcall(function() return {call} end)\n"
+    "return Ext.Json.Stringify({{ok = ok, error = (not ok) and tostring(r) or nil}})"
+)
+CLIENT_ARENA = (
+    f"local Ar = {MOD}.Arena\n"
+    "return Ext.Json.Stringify({state = Ar.state ~= nil, active = Ar.active(), names = Ar.state and Ar.state.names})"
+)
 
 INSTALL = r"""
 local B = Mods.BG3AI.BG3AI
@@ -80,6 +111,7 @@ function P.facts(u)
     f.player, f.party_member, f.controlled = q("IsPlayer", u), q("IsPartyMember", u, 0), q("IsControlled", u)
     f.user, f.faction, f.base_faction = q("GetReservedUserID", u), q("GetFaction", u), q("GetBaseFaction", u)
     f.hp, f.max_hp, f.dead = q("GetHitpoints", u), q("GetMaxHitpoints", u), q("IsDead", u)
+    f.level = q("GetLevel", u)
     f.downed, f.on_stage, f.immortal = q("HasActiveStatus", u, "DOWNED"), q("IsOnStage", u), q("IsImmortal", u)
     f.in_combat, f.combat, f.can_join = q("IsInCombat", u), q("CombatGetGuidFor", u), q("CanJoinCombat", u)
     pcall(function() f.pos = { Osi.GetPosition(u) } end)
@@ -218,4 +250,122 @@ local ok, err = pcall(function()
 end)
 if not ok then out.error = tostring(err) end
 return Ext.Json.Stringify(out, { Beautify = false })
+"""
+
+
+# q10: u's combat's turn groups, read and split. Sent before the step's code on every eval (outside INSTALL's
+# install-once guard), so a game that already holds an older probe library still gets these.
+# TurnOrder (bg3se GameDefinitions/Components/Combat.h): CurrentGroups / NextRoundGroups are arrays of
+# TurnBasedGroup {Members = {Entity, Initiative}, Team (guid), Round, Initiative, IsPlayer}; each member's
+# TurnBased.CombatTeam and CombatParticipant.CombatGroupId / InitiativeRoll are read with it. An Array is written
+# whole from a Lua table (bg3se Lua/Helpers/LuaUnserialize.h: clear, then push_back each).
+GROUPS = r"""
+local P = Mods.BG3AI.BG3AI.ArenaProbe
+local function s(x) if x == nil then return nil end return tostring(x) end
+local function turn_order(u)
+    local ce = Ext.Entity.Get(u).CombatParticipant.CombatHandle
+    return ce, ce.TurnOrder
+end
+P.GROUP_LISTS = { current = "CurrentGroups", next = "NextRoundGroups" }
+function P.turn_groups(u)
+    local out = {}
+    local ok, err = pcall(function()
+        local _, to = turn_order(u)
+        out.round = to.Round
+        for key, list in pairs(P.GROUP_LISTS) do
+            local rows = {}
+            for gi, g in ipairs(to[list]) do
+                local mem = {}
+                for _, m in ipairs(g.Members) do
+                    local e = m.Entity
+                    local mu = P.uuid(e.Uuid.EntityUuid)
+                    local row = { uuid = mu, name = mu and P.name(mu), initiative = m.Initiative }
+                    pcall(function() row.combat_team = s(e.TurnBased.CombatTeam) end)
+                    pcall(function()
+                        local cp = e.CombatParticipant
+                        row.combat_group, row.roll = s(cp.CombatGroupId), cp.InitiativeRoll
+                    end)
+                    row.user = P.q("GetReservedUserID", mu)
+                    mem[#mem + 1] = row
+                end
+                rows[gi] = { team = s(g.Team), initiative = g.Initiative, is_player = g.IsPlayer, round = g.Round,
+                    members = mem }
+            end
+            out[key] = rows
+        end
+    end)
+    if not ok then out.error = tostring(err) end
+    return out
+end
+function P.fresh_guid()
+    local h = function(n)
+        local t = {}
+        for i = 1, n do t[i] = string.format("%x", math.random(0, 15)) end
+        return table.concat(t)
+    end
+    return h(8) .. "-" .. h(4) .. "-4" .. h(3) .. "-a" .. h(3) .. "-" .. h(12)
+end
+-- Split one list of u's turn groups ("current" / "next") by side: a group whose members span both sides becomes one
+-- group per run of same-side members, in the order the game holds them. The first run keeps the group's Team; each
+-- later run takes its first member's own TurnBased.CombatTeam when no other group has it, else a fresh guid, and its
+-- members' TurnBased.CombatTeam is set to that team. sides: {uuid = "A" | "B"}; others count as their own side.
+function P.split_groups(u, sides, key)
+    local list = P.GROUP_LISTS[key]
+    local out = { list = list, groups_before = 0, team_writes = {} }
+    local ok, err = pcall(function()
+        local ce, to = turn_order(u)
+        local new, used = {}, {}
+        for _, g in ipairs(to[list]) do used[s(g.Team)] = true end
+        for _, g in ipairs(to[list]) do
+            out.groups_before = out.groups_before + 1
+            local runs, cur = {}, nil
+            for _, m in ipairs(g.Members) do
+                local mu = P.uuid(m.Entity.Uuid.EntityUuid)
+                local sd = sides[mu] or ("other:" .. tostring(mu))
+                if not cur or cur.side ~= sd then
+                    cur = { side = sd, members = {} }
+                    runs[#runs + 1] = cur
+                end
+                local okt, ct = pcall(function() return s(m.Entity.TurnBased.CombatTeam) end)
+                cur.members[#cur.members + 1] = { Entity = m.Entity, Initiative = m.Initiative, uuid = mu,
+                    team = okt and ct or nil }
+            end
+            if #runs == 0 then
+                new[#new + 1] = { Members = {}, Team = s(g.Team), Round = g.Round, Initiative = g.Initiative,
+                    IsPlayer = g.IsPlayer }
+            end
+            for ri, r in ipairs(runs) do
+                local team = s(g.Team)
+                if ri > 1 then
+                    local own = r.members[1].team
+                    team = (own and not used[own]) and own or P.fresh_guid()
+                    used[team] = true
+                end
+                local members = {}
+                for _, x in ipairs(r.members) do
+                    members[#members + 1] = { Entity = x.Entity, Initiative = x.Initiative }
+                    if ri > 1 and x.team ~= team then
+                        out.team_writes[#out.team_writes + 1] = { uuid = x.uuid, from = x.team, to = team }
+                    end
+                end
+                new[#new + 1] = { Members = members, Team = team, Round = g.Round, Initiative = r.members[1].Initiative,
+                    IsPlayer = g.IsPlayer }
+            end
+        end
+        out.groups_written = #new
+        Ext.Types.Unserialize(to[list], new)
+        out.groups_after = #to[list]
+        for _, w in ipairs(out.team_writes) do
+            w.ok, w.err = pcall(function()
+                local e = Ext.Entity.Get(w.uuid)
+                e.TurnBased.CombatTeam = w.to
+                e:Replicate("TurnBased")
+            end)
+            w.err = (not w.ok) and tostring(w.err) or nil
+        end
+        out.replicated = pcall(function() ce:Replicate("TurnOrder") end)
+    end)
+    if not ok then out.error = tostring(err) end
+    return out
+end
 """

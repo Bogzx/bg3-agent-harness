@@ -8,7 +8,8 @@ Each question writes one evidence file <out>/<q>.json: {"question", "verdict" (P
 reads, the calls with what each returned, the event log}; teams.json carries the teams between steps.
 
 Run it on a THROWAWAY load of a copy of the save (it changes factions, the party, positions and HP; save nothing),
-from the repo root, the game loaded with the pinned mod set only:
+from the repo root, the game loaded with the pinned mod set only and started with BG3AI_ARENA=1 (sides) and
+BG3AI_SCENARIO_SETUP=1 (setup's scn.seed; nothing else in the environment):
     P="uv run --project bridge python tools/dev/probe_arena.py"
     $P conns [--conns 6]                         # q1: that many debugger connections at once, each evaluating
     $P roster                                    # the candidates: who is a player / in the party / their factions
@@ -18,7 +19,8 @@ from the repo root, the game loaded with the pinned mod set only:
                                                  # q2: 8 in DB_PartyMembers (+ the loaded mods), chains, places, HP
     $P sides                                     # q9: the mod's arena begun: the client gets the teams (needs
                                                  #     BG3AI_ARENA=1 in the game's environment), loses them on reset
-    $P hostile [--faction-b auto|<Name_guid>]    # q3: team B's faction, IsEnemy across teams, one combat
+    $P hostile [--factions auto|<A>,<B>]         # q3: a spare faction per team (Name_guid each), hostile both
+                                                 #     ways; IsEnemy before and in combat; one combat
     $P turns [--turns 10 --idle-s 8 --down-at 4] # q3: who starts each turn, does the game act for anyone
     $P act                                       # q4: move + attack + end turn for one member of each side
     $P tie [--no-force]                          # q5: an initiative tie across teams (seen, else forced): one turn?
@@ -26,6 +28,9 @@ from the repo root, the game loaded with the pinned mod set only:
     $P gameover                                  # q6: the avatar downed, then dead (a fresh load + setup + hostile)
     $P react                                     # q7: an opportunity attack, who gets the prompt, ui.react
     $P npc                                       # q8: one team-B member made an NPC (a fresh load + setup + hostile)
+    $P groups [--split write|user|none|phases] [--list next|current] [--user-b N]
+                                                 # q10: the turn groups; a split by side tried, the next round
+                                                 #     watched: one side per open turn, in the rolled order?
     $P all ...setup args...                      # conns, roster, factions, setup, sides, hostile, act, tie, turns,
                                                  # react, end
 `--dry-run` prints the plan of a step only (no game). Evidence: runtime/probes/arena-s0/ (--out), one
@@ -50,37 +55,14 @@ REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO / "runtime" / "probes" / "arena-s0"
 HOSTILE = 0  # Osiris relation values: 0 hostile, 50 neutral, 100 allied (DOS2's convention; the probe reads them back)
 LINE_GAP_M = 1.5  # members of a side stand this far apart on a line through their spot
-SETTLE_S = 2.0
 TURN_WAIT_S = 25.0  # after an end_turn: the next TurnStarted within this
 REACH_M = 2.5  # q7: the mover counts as in melee of the enemy within this
 CONNS = 6  # q1: debugger connections opened at once (two bridges with their side connections + the harness)
 
-from probe_arena_lua import INSTALL, POPUP  # noqa: E402  (the Lua it sends; tools/dev on the path)
-
-# q9: the mod's own arena calls (server) and what the client's Lua state holds of the teams.
-SERVER_TRY = (
-    "local ok, r = pcall(function() return {call} end)\n"
-    "return Ext.Json.Stringify({{ok = ok, error = (not ok) and tostring(r) or nil}})"
-)
-CLIENT_ARENA = (
-    "local Ar = BG3AI.Arena\n"
-    "return Ext.Json.Stringify({state = Ar.state ~= nil, active = Ar.active(), names = Ar.state and Ar.state.names})"
-)
+from probe_arena_groups import GroupSteps  # noqa: E402  (q10; tools/dev on the path)
+from probe_arena_lua import CLIENT_ARENA, GROUPS, INSTALL, MOD, POPUP, SERVER_TRY, lua  # noqa: E402, F401
 
 # ---- Lua building (pure) ----
-
-
-def lua(v: Any) -> str:
-    """A Lua literal for a str / number / bool / None / list (JSON's string escapes are valid Lua for these)."""
-    if v is None:
-        return "nil"
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, (list, tuple)):
-        return "{" + ", ".join(lua(x) for x in v) + "}"
-    return json.dumps(str(v))
 
 
 def call_code(fn: str, *forms: list[Any]) -> str:
@@ -117,6 +99,7 @@ def spot_arg(s: str) -> list[float]:
 from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     MOVED_M,
     NULL,
+    SETTLE_S,
     SIDES,
     dist,
     judge_act,
@@ -132,8 +115,9 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     judge_sides,
     judge_tie,
     judge_turns,
-    pick_faction_b,
+    pick_factions,
     side_of,
+    stat_changes,
     tie_info,
     truthy,
 )
@@ -141,7 +125,7 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
 # ---- the game side ----
 
 
-class Arena:
+class Arena(GroupSteps):
     def __init__(
         self,
         game: Any,
@@ -237,16 +221,47 @@ class Arena:
             self.sleep(0.5)
         return self.active(teams)
 
+    def end_one_by_one(self, us: list[str]) -> list[dict[str, Any]]:
+        """act.end_turn for each in turn, SETTLE_S apart: the game hands a shared group's control on one member at a
+        time (~2.1 s each, live q4/q5 GainedControl), so ends sent back to back outrun it (q4: the 8th 'ignored')."""
+        out = []
+        for u in us:
+            out.append(self.job("act.end_turn", {"char": u}, wait_s=15))
+            self.sleep(SETTLE_S)
+        return out
+
+    def arena_begin(self, teams: dict[str, Any]) -> tuple[bool, Any]:
+        """The mod's arena begun with the teams unless it is already: (whether this began it, begin's answer)."""
+        st = self.raw(f"return Ext.Json.Stringify({{active = {MOD}.Arena.active()}})", "server")
+        if isinstance(st, dict) and st.get("active") is True:
+            return False, st
+        t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
+        return True, self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.begin({t})"), "server")
+
     def drive_to(
-        self, teams: dict[str, Any], want: Callable[[list[dict[str, Any]]], bool], max_turns: int = 12
+        self,
+        teams: dict[str, Any],
+        want: Callable[[list[dict[str, Any]]], bool],
+        max_turns: int = 12,
+        mod_view: bool = False,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """End turns (act.end_turn) until an open turn passes `want`. Returns (that turn's members, what was ended)."""
+        """End turns (act.end_turn) until an open turn passes `want`. Returns (that turn's members, what was ended).
+        mod_view: a turn is the mod's acting phase (whom Guard.is_my_turn lets act), ended one member at a time; the
+        next phase of a shared group opens without a TurnStarted."""
+        look = self.mod_open if mod_view else self.active
         ended: list[dict[str, Any]] = []
-        cur = self.active(teams)
+        cur = look(teams)
         for _ in range(max_turns):
             if cur and want(cur):
                 return cur, ended
             m = self.mark()
+            if mod_view:
+                ended += self.end_one_by_one([f["uuid"] for f in cur])
+                cur = self.mod_open(teams)
+                if not cur:
+                    self.next_turn(teams, m)
+                    cur = self.mod_open(teams)
+                continue
             ended += self.end_turns([f["uuid"] for f in cur])
             cur = self.next_turn(teams, m)
         return [], ended
@@ -369,7 +384,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         mods = mods if isinstance(mods, list) else []
         verdict, why = judge_party(teams, after, mods, pinned)
         setup_verdict = judge_setup(teams, after, slots)
-        teams.update(names=names, host=host, slots=slots, faction_a=after[teams["A"][0]].get("faction"))
+        stats = stat_changes(before, after)
+        teams.update(
+            names=names,
+            host=host,
+            slots=slots,
+            faction_a=after[teams["A"][0]].get("faction"),
+            # what each member held before the probe changed anything (to undo it, and for the stat blocks)
+            before={
+                u: {k: before[u].get(k) for k in ("name", "faction", "base_faction", "level", "max_hp")} for u in allu
+            },
+        )
         (self.out / "teams.json").parent.mkdir(parents=True, exist_ok=True)
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
@@ -379,6 +404,7 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "placed": {"verdict": setup_verdict[0], "why": setup_verdict[1]},
             "mods": mods,
             "pinned_mods": pinned,
+            "stats": stats,
             "teams": teams,
             "calls": calls,
             "before": before,
@@ -391,46 +417,50 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
 
     def enemy_matrix(self, teams: dict[str, Any]) -> dict[str, Any]:
         pairs = [("AB", x, y) for x in teams["A"] for y in teams["B"]]
+        pairs += [("BA", y, x) for x in teams["A"] for y in teams["B"]]
         pairs += [(s + s, x, y) for s in SIDES for x in teams[s] for y in teams[s] if x != y]
         code = "local o = {}\n" + "".join(
             f'o[{lua(f"{k}:{x}>{y}")}] = P.q("IsEnemy", {lua(x)}, {lua(y)})\n' for k, x, y in pairs
         )
         return self.ev(code + "return P.js(o)") or {}
 
-    def hostile(self, faction_b: str) -> dict[str, Any]:
+    def hostile(self, factions: str) -> dict[str, Any]:
         teams = self.teams()
         allu = teams["A"] + teams["B"]
         m = self.mark()
         calls: list[dict[str, Any]] = []
         before = self.facts(allu)
-        fa = before[teams["A"][0]].get("faction")
-        if faction_b == "auto":
-            pick = pick_faction_b(self.factions(fa), fa)
+        held = {f.get("faction") for f in before.values()}
+        if factions == "auto":
+            pick = pick_factions(self.factions(before[teams["A"][0]].get("faction")), held)
             if not pick:
                 rec = {
                     "question": "q3-hostile",
                     "verdict": "OPEN",
-                    "why": "no spare Hero faction: pass --faction-b (see factions.json)",
-                    "faction_a": fa,
+                    "why": "fewer than 2 spare 'Hero Player<N>' factions: pass --factions A,B (see factions.json)",
+                    "factions_before": {u: before[u].get("faction") for u in allu},
                 }
                 self.write("q3-hostile", rec)
                 return rec
-            faction_b = pick
-        for u in teams["B"]:
-            calls.append(self.call("SetFaction", [u, faction_b]))
-        calls.append(self.call("SetRelation", [fa, faction_b, HOSTILE]))
-        calls.append(self.call("SetRelation", [faction_b, fa, HOSTILE]))
+            fa, fb = pick
+        else:
+            fa, fb = factions.split(",")
+        for s, f in (("A", fa), ("B", fb)):
+            for u in teams[s]:
+                calls.append(self.call("SetFaction", [u, f]))
+        calls.append(self.call("SetRelation", [fa, fb, HOSTILE]))
+        calls.append(self.call("SetRelation", [fb, fa, HOSTILE]))
         calls.append(
             {
                 "relations": self.ev(
-                    f'return P.js({{ ab = P.q("GetRelation", {lua(fa)}, {lua(faction_b)}), '
-                    f'ba = P.q("GetRelation", {lua(faction_b)}, {lua(fa)}) }})'
+                    f'return P.js({{ ab = P.q("GetRelation", {lua(fa)}, {lua(fb)}), '
+                    f'ba = P.q("GetRelation", {lua(fb)}, {lua(fa)}) }})'
                 )
             }
         )
         enemy = self.enemy_matrix(teams)
         a1, b1 = teams["A"][0], teams["B"][0]
-        calls.append(self.call("SetHostileAndEnterCombat", [fa, faction_b, a1, b1]))
+        calls.append(self.call("SetHostileAndEnterCombat", [fa, fb, a1, b1]))
         self.sleep(3.0)
         mid = self.facts(allu)
         if len({f.get("combat") for f in mid.values()}) != 1 or not truthy(mid[a1].get("combat")):
@@ -438,17 +468,20 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
                 calls.append(self.call("EnterCombat", [x, y]))
             self.sleep(3.0)
         after = self.facts(allu)
-        verdict, why = judge_hostile(teams, after, self.enemy_matrix(teams))
-        teams["faction_b"] = faction_b
+        enemy_after = self.enemy_matrix(teams)
+        verdict, why = judge_hostile(teams, after, enemy, enemy_after)
+        teams.update(faction_a=fa, faction_b=fb)
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
             "question": "q3-hostile",
             "verdict": verdict,
             "why": why,
             "faction_a": fa,
-            "faction_b": faction_b,
+            "faction_b": fb,
+            "factions_before": {u: before[u].get("faction") for u in allu},
             "calls": calls,
             "enemy_before_combat": enemy,
+            "enemy_in_combat": enemy_after,
             "before": before,
             "after_first_call": mid,
             "after": after,
@@ -464,10 +497,10 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         side answers any reaction prompt and reads the HUD's selection."""
         teams = self.teams()
         t = "{A = " + lua(teams["A"]) + ", B = " + lua(teams["B"]) + "}"
-        r: dict[str, Any] = {"begin": self.raw(SERVER_TRY.format(call=f"BG3AI.Arena.begin({t})"), "server")}
+        r: dict[str, Any] = {"begin": self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.begin({t})"), "server")}
         self.sleep(SETTLE_S)
         r["client_after_begin"] = self.raw(CLIENT_ARENA, "client")
-        r["reset"] = self.raw(SERVER_TRY.format(call="BG3AI.Arena.reset()"), "server")
+        r["reset"] = self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.reset()"), "server")
         self.sleep(SETTLE_S)
         r["client_after_reset"] = self.raw(CLIENT_ARENA, "client")
         verdict, why = judge_sides(r)
@@ -569,12 +602,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         return min(live, key=lambda f: dist(me.get("pos"), f.get("pos")), default=None)
 
     def act(self, spell: str) -> dict[str, Any]:
+        """q4: per side, its acting phase (the mod's view; the arena begun unless it is), one member moves to the
+        nearest enemy and attacks, then the phase's members still open end one at a time."""
         teams = self.teams()
         m = self.mark()
         runs: dict[str, dict[str, Any]] = {}
         drove: list[dict[str, Any]] = []
+        began, arena = self.arena_begin(teams)
         for s in SIDES:
-            cur, ended = self.drive_to(teams, lambda c, s=s: any(side_of(teams, f["uuid"]) == s for f in c))
+            cur, ended = self.drive_to(
+                teams, lambda c, s=s: any(side_of(teams, f["uuid"]) == s for f in c), mod_view=True
+            )
             drove += ended
             me = next((f for f in cur if side_of(teams, f["uuid"]) == s), None)
             if me is None:
@@ -602,13 +640,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
                     "res_after": a2[u].get("res"),
                     "foe_hp": [hp0, a2[foe["uuid"]].get("hp")],
                 }
-            r["end"] = self.end_turns([f["uuid"] for f in cur])[-1]
+            r["ends"] = self.end_one_by_one([f["uuid"] for f in self.mod_open(teams) if side_of(teams, f["uuid"]) == s])
+            r["end"] = r["ends"][-1] if r["ends"] else {"status": "nothing open to end"}
             runs[s] = r
+        if began:
+            arena = {"begin": arena, "reset": self.raw(SERVER_TRY.format(call=f"{MOD}.Arena.reset()"), "server")}
         verdict, why = judge_act(runs)
         rec = {
             "question": "q4-act",
             "verdict": verdict,
             "why": why,
+            "arena": arena,
             "spell": spell,
             "runs": runs,
             "turns_ended_on_the_way": drove,
@@ -814,11 +856,12 @@ PLAN = {
     "chain each side; TeleportToPosition to two lines; RestoreParty (+SetHitpointsPercentage 100 if short); scn.seed",
     "sides": "server BG3AI.Arena.begin(teams); client BG3AI.Arena.state (Ext.Net); server BG3AI.Arena.reset(); "
     "client again",
-    "hostile": "SetFaction(team B, F_B); SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, "
-    "F_B, a1, b1), else EnterCombat pairs; turn order",
+    "hostile": "two spare Hero Player<N> factions F_A, F_B; SetFaction(team A, F_A), SetFaction(team B, F_B); "
+    "SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, F_B, a1, b1), else EnterCombat pairs; "
+    "IsEnemy matrix again; turn order",
     "turns": "per open turn: idle --idle-s (did the game act?), act.end_turn; one member downed at --down-at",
-    "act": "per side: drive to its turn, act.move_to {target: nearest enemy}, act.cast attack, act.end_turn; "
-    "resources before/after",
+    "act": "Arena.begin unless active; per side: drive to its phase (the mod's view), act.move_to {target: nearest "
+    "enemy}, act.cast attack, act.end_turn for each of the phase's open members one at a time; resources before/after",
     "react": "side-A turn: close in, walk 6 m away; watch ui.react_probe; ui.react; Reaction* events",
     "tie": "turn order: a cross-team tie (else write a B member's initiative to its A neighbour's); a round: any "
     "turn open for both sides at once",
@@ -826,6 +869,10 @@ PLAN = {
     "game_over screen",
     "gameover": "the avatar alone: ApplyDamage to 0 (downed), then Die; game_over screen after each",
     "npc": "MakeNPC one team-B member; its turn idle (AI?); act.cast on it (refused?); MakePlayer back",
+    "groups": "turn groups read (Team, initiative, members' CombatTeam/CombatGroupId/roll/user); --split write: "
+    "the --list groups rewritten into per-side runs (+ CombatTeam of later runs); user: AssignToUser(--user-b, team "
+    "B); none: baseline; Osi EndTurn on open turns to the judged round's end; its turns: one side each, as rolled? "
+    "phases: no engine change, Arena.begin, a turn = who Guard.is_my_turn lets act, ended by act.end_turn; reset",
 }
 
 
@@ -843,7 +890,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--spot-a", type=spot_arg)
     ap.add_argument("--spot-b", type=spot_arg)
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--faction-b", default="auto")
+    ap.add_argument("--factions", default="auto", help="auto, or team A's and team B's faction: Name_guid,Name_guid")
     ap.add_argument("--turns", type=int, default=10)
     ap.add_argument("--idle-s", type=float, default=8.0)
     ap.add_argument("--down-at", type=int, default=4)
@@ -853,6 +900,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--conns", type=int, default=CONNS)
     ap.add_argument("--pinned-mods", default="", help="comma list of mod names/uuids the load may hold")
     ap.add_argument("--force", action=argparse.BooleanOptionalAction, default=True, help="tie: force one if none")
+    ap.add_argument("--split", choices=["write", "user", "none", "phases"], default="write", help="groups: what to try")
+    ap.add_argument("--list", dest="which", choices=["next", "current"], default="next", help="groups: which list")
+    ap.add_argument("--user-b", type=int, help="groups --split user: the user id team B is assigned to")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     steps = ALL if a.step == "all" else [a.step]
@@ -860,6 +910,8 @@ def main(argv: list[str] | None = None) -> int:
         for s in steps:
             print(f"{s}: {PLAN[s]}")
         return 0
+    if a.step == "groups" and a.split == "user" and a.user_b is None:
+        ap.error("groups --split user needs --user-b")
     if "setup" in steps and not (a.team_a and a.team_b and a.spot_a and a.spot_b):
         ap.error("setup needs --team-a, --team-b (4 names each), --spot-a and --spot-b")
     sys.path.insert(0, str(REPO / "bridge" / "src"))
@@ -886,7 +938,7 @@ def main(argv: list[str] | None = None) -> int:
         elif s == "sides":
             ar.sides()
         elif s == "hostile":
-            ar.hostile(a.faction_b)
+            ar.hostile(a.factions)
         elif s == "turns":
             ar.turns(a.turns, a.idle_s, a.down_at if a.down_at >= 0 else None)
         elif s == "act":
@@ -901,6 +953,8 @@ def main(argv: list[str] | None = None) -> int:
             ar.gameover()
         elif s == "npc":
             ar.npc(a.idle_s)
+        elif s == "groups":
+            ar.groups(a.split, a.which, a.user_b)
     return 0
 
 

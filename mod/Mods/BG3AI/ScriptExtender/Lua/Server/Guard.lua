@@ -342,10 +342,17 @@ function G.end_pending(uuid)
     local active, req = tb_flags(g)
     if active and not req then
         local others = false
-        -- in an arena the group is the character's own team, whoever asks (each side must agree on the acting side)
+        -- in an arena the group holds both teams, whoever asks (each side must agree on the acting side): a held
+        -- member of the other side is still to act, so a side whose members all ended never takes the group back
         local Ar = BG3AI.Arena
-        local mine = Ar and Ar.active() and Ar.side_of(g)
-        for _, m in ipairs(mine and Ar.team(mine) or G.party()) do
+        local group = G.party()
+        if Ar and Ar.active() and Ar.side_of(g) then
+            group = {}
+            for _, s in ipairs(Ar.SIDES) do
+                for _, m in ipairs((Ar.team(s))) do group[#group + 1] = m end
+            end
+        end
+        for _, m in ipairs(group) do
             if not G.same(m, g) and not G.end_requested[G.guid(m) or m] then
                 local a2, r2 = tb_flags(m)
                 if a2 and not r2 then others = true break end
@@ -423,12 +430,16 @@ function G.combat_gate(char, mode)
     if mode == "no_combat" then
         G.refuse("not available during combat through this action (use the UI)")
     end
-    local side = U.side()
-    if side then
-        local acting = BG3AI.Arena.acting_side()
-        if acting and acting ~= side then G.refuse("not your turn (side " .. acting .. " is acting)") end
-    end
+    G.side_gate()
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+end
+
+-- In an arena, a side's op while the other side acts: refused with the side that acts (never the actor's name: S10).
+function G.side_gate()
+    local side = U.side()
+    if not side then return end
+    local acting = BG3AI.Arena.acting_side()
+    if acting and acting ~= side then G.refuse("not your turn (side " .. acting .. " is acting)") end
 end
 
 function G.not_in_dialogue(char)

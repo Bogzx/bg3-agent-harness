@@ -146,6 +146,8 @@ test("a turn before the first CombatRoundStarted is round 1's, never round 0", f
     begin()
     fire("TurnStarted", "S_Player_" .. B1)
     eq(Ar.state.turn.round, 1, "turn.round")
+    setTurn(B1, true, false)
+    tick()
     eq(refs("arena_turn")[1].round, 1, "the arena_turn record")
     fire("CombatRoundStarted", "combat1", 1)
     eq(Ar.state.round, 1, "round")

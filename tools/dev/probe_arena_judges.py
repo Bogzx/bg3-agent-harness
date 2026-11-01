@@ -6,11 +6,13 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import re
 from typing import Any
 
 SIDES = ("A", "B")
 NULL = "NULL_00000000-0000-0000-0000-000000000000"
 AT_SPOT_M = 3.0  # a member counts as placed within this of its slot
+SETTLE_S = 2.0
 MOVED_M = 0.5  # an idle turn's character moved: the game acted for it
 
 
@@ -31,14 +33,38 @@ def side_of(teams: dict[str, Any], u: str | None) -> str | None:
     return next((s for s in SIDES if u in teams[s]), None)
 
 
-def pick_faction_b(factions: list[dict[str, Any]], fa: str | None) -> str | None:
-    """auto: a Hero faction other than team A's, preferring one nobody in the level uses (multiplayer's spare player
-    factions), then the lowest relation to A."""
-    hero = [f for f in factions if "hero" in str(f.get("name") or "").lower() and f.get("osi") != fa]
-    if not hero:
+SPARE_FACTION = re.compile(r"Hero Player(\d+)")  # multiplayer's per-player factions; the bare "Hero" is their parent
+
+
+def pick_factions(factions: list[dict[str, Any]], held: set[str | None]) -> tuple[str, str] | None:
+    """auto: one faction per team (A, B), the two lowest-numbered "Hero Player<N>" factions that nobody in the level
+    uses and no team member holds. Never the bare "Hero": the companions' factions descend from it, so a relation set
+    on it reaches a team's own members."""
+    spare = sorted(
+        (int(m.group(1)), f["osi"])
+        for f in factions
+        if (m := SPARE_FACTION.fullmatch(str(f.get("name") or "")))
+        and not (f.get("used") or 0)
+        and f.get("osi") not in held
+    )
+    if len(spare) < 2:
         return None
-    hero.sort(key=lambda f: (f.get("used") or 0, f.get("to_a") if isinstance(f.get("to_a"), int) else 100))
-    return hero[0]["osi"]
+    return spare[0][1], spare[1][1]
+
+
+def stat_changes(before: dict[str, dict[str, Any]], after: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per member: level and max HP before and after the setup ([before, after]), and whether either changed."""
+    out = {}
+    for u, b in before.items():
+        a = after.get(u) or {}
+        lv, hp = [b.get("level"), a.get("level")], [b.get("max_hp"), a.get("max_hp")]
+        out[u] = {
+            "name": b.get("name") or a.get("name"),
+            "level": lv,
+            "max_hp": hp,
+            "changed": lv[0] != lv[1] or hp[0] != hp[1],
+        }
+    return out
 
 
 def judge_setup(
@@ -133,20 +159,38 @@ def judge_tie(r: dict[str, Any]) -> Verdict:
     return "PASS", "a cross-team initiative tie, and each side took its own turn"
 
 
-def judge_hostile(teams: dict[str, Any], facts: dict[str, dict[str, Any]], enemy: dict[str, Any]) -> Verdict:
-    combats = {f.get("combat") for f in facts.values()}
-    cross = [v for k, v in enemy.items() if k.startswith("AB:")]
-    within = [k for k, v in enemy.items() if not k.startswith("AB:") and truthy(v)]
+def enemy_counts(teams: dict[str, Any], enemy: dict[str, Any]) -> list[str]:
+    """What is wrong in one IsEnemy matrix: every ordered pair across the teams (AB:, BA:) an enemy, none within a
+    team (AA:, BB:), and every pair read."""
+    n = {s: len(teams[s]) for s in SIDES}
+    want_cross, want_within = 2 * n["A"] * n["B"], sum(k * (k - 1) for k in n.values())
+    cross = [v for k, v in enemy.items() if k[:3] in ("AB:", "BA:")]
+    within = [k for k, v in enemy.items() if k[:3] in ("AA:", "BB:")]
+    hits = [k for k in within if truthy(enemy[k])]
     why = []
-    if not cross or not all(truthy(v) for v in cross):
-        why.append(f"IsEnemy across the teams: {sum(truthy(v) for v in cross)}/{len(cross)}")
-    if within:
-        why.append(f"enemies within a team: {', '.join(within)}")
+    if len(cross) != want_cross or not all(truthy(v) for v in cross):
+        why.append(f"IsEnemy across the teams: {sum(truthy(v) for v in cross)}/{want_cross}")
+    if len(within) != want_within or hits:
+        why.append(
+            f"IsEnemy within a team: {len(hits)}/{len(within)} read of {want_within}"
+            + (f" ({', '.join(hits)})" if hits else "")
+        )
+    return why
+
+
+def judge_hostile(
+    teams: dict[str, Any], facts: dict[str, dict[str, Any]], before: dict[str, Any], after: dict[str, Any]
+) -> Verdict:
+    """q3: the teams enemies of each other and not within, before the combat starts and after, all 8 in one
+    combat."""
+    combats = {f.get("combat") for f in facts.values()}
+    why = [f"before combat: {w}" for w in enemy_counts(teams, before)]
+    why += [f"in combat: {w}" for w in enemy_counts(teams, after)]
     if len(combats) != 1 or None in combats or NULL in combats:
         why.append(f"combat guids: {sorted(str(c) for c in combats)}")
     if why:
         return "FAIL", "; ".join(why)
-    return "PASS", "teams hostile to each other (not within), all 8 in one combat"
+    return "PASS", "teams enemies of each other (not within) before and in combat, all 8 in one combat"
 
 
 def judge_turns(teams: dict[str, Any], turns: list[dict[str, Any]], downed: dict[str, Any] | None) -> Verdict:
@@ -295,7 +339,7 @@ def judge_sides(r: dict[str, Any]) -> Verdict:
     begin, after, reset_ = r.get("begin") or {}, r.get("client_after_begin") or {}, r.get("client_after_reset") or {}
     if not (isinstance(begin, dict) and begin.get("ok")):
         err = begin.get("error") if isinstance(begin, dict) else begin
-        return "OPEN", f"BG3AI.Arena.begin refused ({err}): run the game with BG3AI_ARENA=1"
+        return "OPEN", f"BG3AI.Arena.begin refused: {err}"
     if not (isinstance(after, dict) and after.get("state") is True):
         return "FAIL", f"client BG3AI.Arena.state not set after begin ({after}): the client is side-blind"
     if not after.get("active"):
@@ -303,3 +347,54 @@ def judge_sides(r: dict[str, Any]) -> Verdict:
     if not (isinstance(reset_, dict) and reset_.get("state") is False):
         return "FAIL", f"client still holds the teams after reset ({reset_})"
     return "PASS", f"client got the teams (names {after.get('names')}) after begin and dropped them on reset"
+
+
+def rolled_order(groups: dict[str, Any] | None, teams: dict[str, Any]) -> list[str]:
+    """The 8 in the order the game held them for the next round before any split (NextRoundGroups, else
+    CurrentGroups, group by group): the order as rolled."""
+    groups = groups or {}
+    return [
+        m["uuid"]
+        for g in groups.get("next") or groups.get("current") or []
+        for m in g.get("members") or []
+        if side_of(teams, m.get("uuid"))
+    ]
+
+
+def judge_groups(teams: dict[str, Any], r: dict[str, Any]) -> Verdict:
+    """q10: in the round after the split, every open turn holds one side only, and the turns come in the order as
+    rolled: each turn is the next block of the rolled order, and all 8 got one."""
+    write = r.get("write")
+    if isinstance(write, dict) and write.get("error"):
+        return "FAIL", f"the split write failed: {write['error']}"
+    rolled = rolled_order(r.get("before"), teams)
+    if len(rolled) != len(teams["A"]) + len(teams["B"]):
+        return (
+            "OPEN",
+            f"the turn order read holds {len(rolled)} of the teams' members: {(r.get('before') or {}).get('error')}",
+        )
+    want = r.get("judged_round")
+    turns = [t for t in r.get("turns") or [] if want is not None and t.get("round") == want]
+    if not turns:
+        return "OPEN", f"no turn of round {want} watched"
+    why = []
+    mixed = [t for t in turns if len({side_of(teams, u) for u in t["open"]}) > 1]
+    if mixed:
+        why.append(
+            f"round {want}: {len(mixed)} turn(s) open for both sides: "
+            + "; ".join(", ".join(t.get("names") or t["open"]) for t in mixed)
+        )
+    i = 0
+    for t in turns:
+        block = rolled[i : i + len(t["open"])]
+        if set(block) != set(t["open"]):
+            why.append(f"round {want}: turn {', '.join(t.get('names') or t['open'])} out of the rolled order")
+            break
+        i += len(t["open"])
+    else:
+        if i != len(rolled):
+            why.append(f"round {want}: {len(rolled) - i} of the 8 had no turn")
+    if why:
+        return "FAIL", "; ".join(why)
+    seq = " ".join("".join(sorted({side_of(teams, u) or "?" for u in t["open"]})) for t in turns)
+    return "PASS", f"round {want}: {len(turns)} turns, one side each, in the rolled order ({seq})"
