@@ -19,9 +19,10 @@ from typing import Any
 WAITING = "a reaction prompt of the other side is open: the game waits for that side's answer"
 
 
-def ui_view(ui: Any, team: Callable[[], Iterable[str]]) -> Any:
-    """`ui` (a ui.state reply) as this side sees it; `team` gives this side's character names (read only when a
-    reaction prompt names its characters)."""
+def ui_view(ui: Any, team: Callable[[bool], Iterable[str]]) -> Any:
+    """`ui` (a ui.state reply) as this side sees it. team(fresh) gives this side's character names, from a cache
+    (fresh=True reads them again); it is asked only for a prompt the mod didn't mark, and read again only when a row
+    names someone the cached names miss."""
     if not isinstance(ui, dict) or ui.get("screen") != "reaction":
         return ui
     rx = ui.get("reaction")
@@ -33,7 +34,9 @@ def ui_view(ui: Any, team: Callable[[], Iterable[str]]) -> Any:
     owned = [r for r in rows if isinstance(r, dict) and r.get("who")]
     if not owned:
         return ui
-    names = set(team())
+    names = set(team(False))
+    if any(r.get("who") not in names for r in owned):
+        names = set(team(True))
     mine = [r for r in owned if r.get("who") in names]
     if len(mine) == len(rows):
         return ui

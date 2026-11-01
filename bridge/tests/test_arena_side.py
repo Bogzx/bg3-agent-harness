@@ -256,6 +256,46 @@ class HudSelected(unittest.TestCase):
         self.assertEqual(self.game(None, [{}] * 6)._select({"char": P1}, 1.0, 0.0).status, "done")
 
 
+class ReadCost(unittest.TestCase):
+    """A ui.state read with a side is one RPC: the mod marks the other side's prompt, and the team's names are read
+    once per match (again only when a prompt names someone they miss)."""
+
+    def game(self, ui: dict) -> tuple[Game, list[str]]:
+        sent: list[str] = []
+
+        class G(Game):
+            def eval(self, code, context="client", timeout=12.0):
+                calls, _ = rpc_record.decode(code) or ([], False)
+                sent.extend(c["op"] for c in calls)
+                party = [{"uuid": P1, "name": "Tav"}, {"uuid": P2, "name": "Shadowheart"}]
+                res = ui if calls[0]["op"] == "ui.state" else {"party": party}
+                return json.dumps({"ok": True, "result": res})
+
+        g = G(port=1, side="A")
+        g._ev_synced = True
+        return g, sent
+
+    def prompt(self, *who: str) -> dict:
+        return {"screen": "reaction", "reaction": {"options": [{"i": 1, "who": w} for w in who]}}
+
+    def test_one_rpc_per_read(self):
+        for ui in ({"screen": "game"}, {"screen": "reaction", "reaction": {"other_side": True}}):
+            g, sent = self.game(ui)
+            for _ in range(3):
+                g.rpc("ui.state", context="server")
+            self.assertEqual(sent, ["ui.state"] * 3, ui)
+
+    def test_names_read_once_per_match(self):
+        g, sent = self.game(self.prompt("Tav"))
+        for _ in range(3):
+            self.assertEqual(g.rpc("ui.state", context="server")["screen"], "reaction")
+        self.assertEqual(sent, ["ui.state", "state.status", "ui.state", "ui.state"])
+        g, sent = self.game(self.prompt("Lae'zel"))  # a name the cache misses (an unmarked prompt): read again
+        g._team = {"Tav", "Shadowheart"}
+        self.assertEqual(g.rpc("ui.state", context="server")["screen"], "game")
+        self.assertEqual(sent, ["ui.state", "state.status"])
+
+
 class ReactionView(unittest.TestCase):
     """A reaction prompt of the other side's character is waiting for this side, never a prompt to answer."""
 
@@ -273,7 +313,7 @@ class ReactionView(unittest.TestCase):
         }
 
     def view(self, ui):
-        return sideview.ui_view(ui, lambda: self.TEAM)
+        return sideview.ui_view(ui, lambda fresh: self.TEAM)
 
     def test_the_other_sides_prompt_is_waiting(self):
         out = self.view(self.prompt("Lae'zel"))
@@ -306,7 +346,7 @@ class ReactionView(unittest.TestCase):
         ui = self.prompt("Lae'zel")
         for side, screen in ((None, "reaction"), ("A", "game")):
             g = Game(port=1, side=side)
-            g._team_names = lambda: set(self.TEAM)
+            g._team_names = lambda fresh=False: set(self.TEAM)
             self.assertEqual(g._view("ui.state", ui)["screen"], screen)
             self.assertIs(g._view("state.status", ui), ui)
 

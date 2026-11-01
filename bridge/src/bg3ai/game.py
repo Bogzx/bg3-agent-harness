@@ -97,6 +97,7 @@ class Game:
         self.host = host
         # The team this server plays in a two-team match (settings.side, $BG3AI_SIDE): sent with every op (envelope).
         self.side = side
+        self._team: set[str] | None = None  # its characters' names, read once per match (_team_names)
         self.port = port
         self.pool_max = self.pool_cap = pool_max or POOL_MAX
         self._shrunk_at: float | None = None  # when a refused connect lowered pool_max below pool_cap
@@ -293,9 +294,16 @@ class Game:
             return sideview.ui_view(result, self._team_names)
         return result
 
-    def _team_names(self) -> set[str]:
-        st = self.try_rpc("state.status") or {}
-        return {r["name"] for r in st.get("party") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)}
+    def _team_names(self, fresh: bool = False) -> set[str]:
+        """This side's character names: read once (a team doesn't change in a match), again only when `fresh` (a
+        name the cached set misses)."""
+        if self._team is None or fresh:
+            st = self.try_rpc("state.status") or {}
+            names = {r["name"] for r in st.get("party") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)}
+            if names:
+                self._team = names
+            return names
+        return self._team
 
     def rpc(self, op: str, args: dict[str, Any] | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         if context != "client":
