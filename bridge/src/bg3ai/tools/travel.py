@@ -218,6 +218,11 @@ def _end_night_first() -> str:
         return "FAILED: can't read whether a long rest's night at camp still blocks travel: " + str(e)[:300]
     if not (isinstance(b, dict) and b.get("night_camp")):
         return ""
+    # live-v09 t6: camp leave during Shadowheart's camp talk got ui.long_rest's refusal ("... then long_rest"); once
+    # the talk was done, the same leave slept (a full long rest) and left. Say that, for whichever tool travels.
+    if b.get("dialogue"):
+        return ("FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends the night "
+                "(the party sleeps: a long rest)")
     out = world_tools._box_act("long_rest", "ui.long_rest", {"sleep_only": True}, wait_s=60)
     res = reporting._batch.get("result")
     if isinstance(res, dict) and res.get("night_ended"):
@@ -297,6 +302,7 @@ def fast_travel(waypoint: str) -> str:
         if split.startswith("fast_travel: FAILED"):
             reporting._batch["last"] = "failed"
         return reporting._finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + split, time.monotonic())
+    sub = overview.minimap_sub()
     watch = _ReadyCheckWatch()
     world_tools._TRANSITION_LAST.clear()
     with watch:
@@ -321,6 +327,8 @@ def fast_travel(waypoint: str) -> str:
             out += "; arrived" if arrived else "; still not back in the game 2 min later (wait_for idle)"
     if "fast_travel: done" in out or out.rstrip().endswith("arrived"):
         _trip_arrived()
+        res = reporting._batch.get("result")
+        overview.trip_arrived(sub, f"the trip to {(res.get('arrived') if isinstance(res, dict) else None) or waypoint}")
         out += _left_behind_after_trip(waypoint)
     return (left + "\n" + out) if left else out
 
@@ -516,8 +524,10 @@ def camp(action: str = "go") -> str:
             return reporting._finish("camp", {"action": action}, "camp: " + night, time.monotonic())
         night = "\n".join(x for x in (night, _wake_first()) if x)
         _travel_block(TRAVEL_BLOCK_WAIT_S)
+        sub = overview.minimap_sub()
         out = plumbing._act("camp", "act.leave_camp", {}, wait_s=60)
         if reporting._batch.get("last") == "done":
+            overview.trip_arrived(sub, "leaving camp")
             _settle_hud(15)  # the leave's transition: the next tool (fast_travel's M) works only after it
         out = (night + "\n" + out) if night else out
         if "cannot travel right now" in out:
@@ -532,10 +542,12 @@ def camp(action: str = "go") -> str:
         reporting._batch["last"] = "failed"
         return reporting._finish("camp", {"action": action}, "camp: FAILED — cannot travel right now —" + _camp_block_text(b)
                        + _area_refusal("camp", st), time.monotonic())
+    sub = overview.minimap_sub()
     out = plumbing._act("camp", "act.go_to_camp", {}, wait_s=60)
     if isinstance(out, str) and "cannot travel right now" in out:
         out += _camp_block_text(_travel_block())
     elif reporting._batch.get("last") == "done":
+        overview.trip_arrived(sub, "the trip to camp")
         AREA.cleared(st.get("level"), _lead_pos(st))
         out += _camp_left_behind()
     return out

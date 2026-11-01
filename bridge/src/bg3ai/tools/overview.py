@@ -17,6 +17,7 @@ from . import core, plumbing, reporting
 # ---------------------------------------------------------------------------
 
 _last_subregion = {"name": None}
+_trip_sub: dict = {}  # the minimap's subregion line when the last teleport (fast travel, camp) left, and the trip
 _objectives: dict[str, Any] = {"last": [], "at": 0.0}  # markers as last shown (o1, o2, ... index into this)
 MARKERS_TTL_S = 5.0  # route/travel_to reuse markers fetched this recently (a marker's position doesn't move)
 
@@ -55,6 +56,33 @@ def _objective_markers(max_age: float = 0.0) -> list:
         return []
     _set_objectives(ms)
     return ms
+
+
+def minimap_sub() -> Any:
+    """The minimap's subregion line now (ui.state region; None: none shown or no read), read before a teleport."""
+    return (core.game.try_rpc("ui.state", context="client") or {}).get("region")
+
+
+def trip_arrived(sub: Any, trip: str) -> None:
+    """A teleport arrived (trip: "the trip to Roadside Cliffs", "leaving camp"); sub: minimap_sub() before it."""
+    _trip_sub.clear()
+    if sub:
+        _trip_sub.update(sub=sub, trip=trip)
+
+
+def _sub_since_trip(ui: Any) -> tuple[Any, str]:
+    """live-v09 t8: get_status 0.6 s after a fast travel from the Blighted Village to Roadside Cliffs read
+    'WHERE Blighted Village': WHERE's subregion is the minimap's line (ui.state region), which the game updates some
+    time after the arrival (a read 21 s later was right). While the line still shows the name it had when the trip
+    left, it isn't shown as where the party is: (ui without it, the line saying so); a changed line ends this."""
+    if not _trip_sub or not isinstance(ui, dict):
+        return ui, ""
+    if ui.get("region") != _trip_sub["sub"]:
+        _trip_sub.clear()
+        return ui, ""
+    return ({k: v for k, v in ui.items() if k != "region"},
+            f"SUBREGION not updated since {_trip_sub['trip']}: the minimap still shows '{_trip_sub['sub']}', as it did "
+            "before")
 
 
 def _delta_body(lines: list[str], ui: dict | None = None) -> str:
@@ -99,6 +127,7 @@ def get_status(full: bool = False) -> str:
             body += "\n" + "\n".join(reporting._render_ui(ui))
         return reporting._finish("get_status", {}, body, t0, events=False)
     plumbing._remember_names(st)
+    ui, stale = _sub_since_trip(ui)
     sub = (ui or {}).get("region")
     if sub and sub != _last_subregion["name"]:
         # The minimap's subregion name only exists client-side; hand it to the server's breadcrumbs, off the
@@ -121,6 +150,10 @@ def get_status(full: bool = False) -> str:
             body += "\n" + "\n".join(obj)
     else:
         body = _delta_body(lines, ui)
+    if stale:
+        first_line, _, rest = body.partition("\n")
+        body = (first_line + "\n" + stale + ("\n" + rest if rest else "")) if first_line.startswith("WHERE") \
+            else body + "\n" + stale
     apart = _party_check(st, ui=ui)
     if apart:
         body += "\n" + apart

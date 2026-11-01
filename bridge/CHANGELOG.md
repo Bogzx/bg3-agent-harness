@@ -5,6 +5,21 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-01: use_ability's opener, camp leave in a night camp talk and WHERE after a fast travel say what is true
+
+- use_ability out of combat at a creature: when a conversation is open after the hit (live-v09: the game's "You
+  picked a fight" scene, with combat on 0.3 s after the result), the result says "combat: not started — a
+  conversation is open, opened by the hit" (without ", opened by the hit" when one was open before the cast)
+  instead of "combat: NOT started — … no fight began (dormant or unaware …)".
+- camp leave / fast_travel at night camp during a camp conversation fail at once with "FAILED: a conversation is
+  open, nothing was pressed; at night in camp, leaving first ends the night (the party sleeps: a long rest)" instead
+  of long_rest's "… then long_rest".
+- get_status after a teleport (fast_travel, travel_to's fast-travel leg, camp go/leave): while the minimap's
+  subregion line (WHERE's subregion) still shows the name it had when the trip left, WHERE leaves it out and a line
+  says "SUBREGION not updated since <the trip to <waypoint> | the trip to camp | leaving camp>: the minimap still
+  shows '<name>', as it did before" (live-v09: "WHERE Blighted Village" 0.6 s after arriving at Roadside Cliffs).
+  Nothing waits for the line.
+
 ## 2026-10-30: a give the game refuses fails; get_character shows status names only; a busy UI reads as busy
 
 - manage_inventory op=give: when the game leaves the item with the giver (no error, no move: a story item), the

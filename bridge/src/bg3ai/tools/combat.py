@@ -83,7 +83,9 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
                          else "an upcast or a position goes by the 2-target cast")
     opener = (wait and not reporting._batch["active"] and "target" in args and args["target"] not in (turn_plan._party_cached() or ())
               and not (core.game.try_rpc("state.combat") or {}).get("active"))
-    post = (lambda r: _opener_combat(args["target"], r.result) if r.status == "done" else "") if opener else None
+    talk_before = opener and bool((core.game.try_rpc("nav.activity") or {}).get("in_dialogue"))
+    post = ((lambda r: _opener_combat(args["target"], r.result, talk_before) if r.status == "done" else "")
+            if opener else None)
     out = plumbing._act("use_ability", "act.cast", args, wait_s=30, wait=wait, post=post)
     return _with_tail(out, tail, note)
 
@@ -288,7 +290,7 @@ def _log_hotbar(spell: str, res: Any) -> None:
 OPENER_WAIT_S = 1.0  # combat starts a few frames after the hit: how long an opener's result waits for it
 
 
-def _opener_combat(tu: str, res: Any) -> str:
+def _opener_combat(tu: str, res: Any, talk_before: bool = False) -> str:
     """use_ability out of combat at a character: did it start a fight? Acceptance 13:3x: the first Ranged
     Attack on a dormant Shadow did damage but no combat began, and nothing said so. '' for items."""
     ts = core.game.try_rpc("act.target_state", {"uuid": tu}) or {}
@@ -305,6 +307,10 @@ def _opener_combat(tu: str, res: Any) -> str:
         time.sleep(0.15)
     if ts.get("dead") or (core.game.try_rpc("act.target_state", {"uuid": tu}) or {}).get("dead"):
         return f"combat: none started ({queueing._label(tu)} died)"
+    # live-v09 t12: Fire Bolt on a neutral goblin opened the game's "You picked a fight" scene; combat began only
+    # when it ended (after this wait), so "no fight began" was wrong. What is true at return: a conversation is on.
+    if (core.game.try_rpc("nav.activity") or {}).get("in_dialogue"):
+        return "combat: not started — a conversation is open" + ("" if talk_before else ", opened by the hit")
     dmg = res.get("total_damage") if isinstance(res, dict) else None
     if isinstance(dmg, (int, float)) and dmg > 0:
         return (f"combat: NOT started — {queueing._label(tu)} took {render.num(dmg)} damage but no fight began "

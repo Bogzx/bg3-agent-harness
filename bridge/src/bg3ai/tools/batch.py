@@ -194,6 +194,7 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
     left = travel._leave_camp_first()
     if left.startswith("FAILED"):
         return (f"fast travel to {wp['name']}: {left}: walking instead", None)
+    sub = overview.minimap_sub()
     try:
         r = core.game.run_job("ui.fast_travel", {"waypoint": wp["name"]}, context="client", wait_s=70)
     except NotReady:
@@ -207,6 +208,7 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
     if r.status != "done":
         return (f"fast travel to {wp['name']} failed ({r.error or r.status}): walking instead", None)
     travel._trip_arrived()
+    overview.trip_arrived(sub, f"the trip to {wp['name']}")
     now = None
     for _ in range(20):  # the party reappears at the waypoint after the load
         p = (queueing._watch_conn().try_rpc("act.watch") or {}).get("party") or []
