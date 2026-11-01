@@ -20,7 +20,8 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - With a dead member that still holds the game's ClientControl (its corpse once selected), the selected member is
   the living one set_party selected: get_status/look's active member and PARTY APART, fast_travel's LEFT BEHIND
   and "already stands at the waypoint" answer, and nav reads measured from the corpse before. A fast_travel to the
-  waypoint the selected member stood on then timed out after 66 s instead of answering at once.
+  waypoint the selected member stood on then timed out after 66 s instead of answering at once. fast_travel also
+  watches the living holder for the arrival, so a trip that moved it no longer waits on the corpse.
 
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 

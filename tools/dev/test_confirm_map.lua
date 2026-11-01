@@ -171,6 +171,23 @@ for _ = 1, 60 do clock = clock + 50 ftj2.on_tick(ftj2) if executed then break en
 ok(executed and ftj2.status == "running", "fast_travel pressed the waypoint after a swallowed M: "
     .. tostring(ftj2.status) .. " " .. tostring(ftj2.error))
 
+-- launch-v1 act1_level_3 r2: a dead member kept ClientControl next to the member selected (listed first): the trip
+-- is measured on the living holder, so its move ends the job (on the corpse it waited out 66 s)
+local corpse = { Death = {}, Transform = { Transform = { Translate = { -176, 18, -291 } } } }
+local tav = { Transform = { Transform = { Translate = { 284, 15, 369 } } } }
+local _entity, _comp, _dist = Ext.Entity, BG3AI.Util.comp, BG3AI.Util.dist
+Ext.Entity = { GetAllEntitiesWithComponent = function(c) return c == "ClientControl" and { corpse, tav } or {} end }
+BG3AI.Util.comp = function(e, c) return type(e) == "table" and e[c] or nil end
+BG3AI.Util.dist = function(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2) end
+widgets, executed = {}, false
+local ftjd = jobs[ops["ui.fast_travel"]({ waypoint = "Risen Road" }).job]
+for _ = 1, 60 do clock = clock + 50 ftjd.on_tick(ftjd) if executed then break end end
+tav.Transform.Transform.Translate = { 224, 13, 327 }
+for _ = 1, 5 do clock = clock + 50 ftjd.on_tick(ftjd) if ftjd.status ~= "running" then break end end
+ok(executed and ftjd.status == "done", "a dead ClientControl holder: the living one's move ends the trip: "
+    .. tostring(ftjd.status) .. " " .. tostring(ftjd.error))
+Ext.Entity, BG3AI.Util.comp, BG3AI.Util.dist = _entity, _comp, _dist
+
 -- right after a load TravelError reads "Unavailable" for a few s (live 2026-10-10): wait, no M meanwhile,
 -- then travel; other errors and a lasting Unavailable still fail
 local travelErr = "Unavailable"

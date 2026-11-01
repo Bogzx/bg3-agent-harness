@@ -57,8 +57,14 @@ local function travelError(dc)
     return tostring(e)
 end
 
+-- The selected member's position: a living ClientControl holder first. A dead member can keep ClientControl next to
+-- the one just selected (launch-v1 act1_level_3 r2, 2026-11-01): a trip measured on the corpse never "moved".
 local function playerPos()
-    local c = (try(Ext.Entity.GetAllEntitiesWithComponent, "ClientControl") or {})[1]
+    local c
+    for _, e in ipairs(try(Ext.Entity.GetAllEntitiesWithComponent, "ClientControl") or {}) do
+        if U.comp(e, "Death") == nil then c = e break end
+        c = c or e
+    end
     local t = c and U.comp(c, "Transform")
     local v = t and try(function() return t.Transform.Translate end)
     return v and { v[1], v[2], v[3] } or nil
