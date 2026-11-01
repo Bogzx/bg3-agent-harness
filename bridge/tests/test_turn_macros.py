@@ -250,7 +250,8 @@ def clear_server_state() -> None:
     each test, so a test that leaves an _async job behind (a walk the queue never polled to its end) can't make a
     later module's tools poll it ('unittest test_turn_based test_objectives': 12 FAILs "unexpected op job.poll")."""
     for d in (plumbing._async, batch._early, batch._early_seen, macro_tools._looted, turn_tool._bg_ends, turn_plan._turn_sides,
-              overview._ability_ids, batch._trips, queueing._queue_ignore, turn_plan._turn_cs, turn_slots._step_note):
+              overview._ability_ids, batch._trips, queueing._queue_ignore, turn_plan._turn_cs, turn_slots._step_note,
+              overview._chain_refused):
         d.clear()
 
 

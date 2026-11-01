@@ -5,6 +5,17 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
+
+- fast_travel from camp with a conversation screen up fails "FAILED: a conversation is open, nothing was pressed;
+  the game doesn't answer the camp button while a conversation screen is up" instead of "can't fast travel now
+  (Condition)" (live-v09c 1c: ui.fast_travel's dry run reads TravelError before IsInCamp, so under the dream's
+  narrator screen it refused "(Condition)" and the leave-camp-first check never ran).
+- get_status/look re-chain an unchained member once per spot: when the game didn't attach it (act.chain failed or
+  ran out its 3 s), it is sent again only after the member or the leader moved 5 m (live-v09c c2: 3 reads at 3.1 s
+  each with "Shadowheart 99m, unchained"; 76 of 245 logged re-chains timed out, all 78 m or more apart). The
+  PARTY APART line is unchanged.
+
 ## 2026-11-01: camp leave with a conversation screen up refuses at once; no "[ForceUpdate]" notice
 
 - camp leave / fast_travel from camp: with a conversation screen up on the client (ui.travel_block dialogue), they

@@ -340,7 +340,13 @@ class NightCamp(unittest.TestCase):
                 reads["n"] += 1
                 return at_press if reads["n"] <= 3 else {"hud": True}
             if op == "ui.fast_travel" and args.get("dry"):
-                raise GameError("at camp: leave camp first (camp leave), then fast travel")
+                # the mod's order (ServicesWaypoints.lua ui.fast_travel): TravelError first, then IsInCamp
+                b = at_press if reads["n"] <= 3 else {"hud": True}
+                if b.get("error") and b["error"] != "Unavailable":
+                    raise GameError(f"can't fast travel now ({b['error']})")
+                if b.get("in_camp"):
+                    raise GameError("at camp: leave camp first (camp leave), then fast travel")
+                return {"can": True}
             return base(op, args, context)
 
         def run_job(op, args, context="server", wait_s=25.0, **kw):
@@ -364,6 +370,8 @@ class NightCamp(unittest.TestCase):
         self.assertEqual(reporting._batch.get("last"), "failed")
 
     def test_fast_travel_from_camp_with_a_conversation_screen_up_refuses_without_pressing(self):
+        # live-v09c 1c: the dry run refused "(Condition)" (TravelError reads before IsInCamp), so the trip went on
+        # and failed "can't fast travel now (Condition)" without naming the screen
         fake = self._leave_with(self.NARRATOR_SCREEN)
         out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
         self.assertEqual(fake.jobs, [])

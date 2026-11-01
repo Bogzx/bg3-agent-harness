@@ -351,7 +351,30 @@ def _rechain(members: list[str], leader: str) -> list[str]:
         r = core.game.run_job("act.chain", {"char": u, "leader": leader}, wait_s=3)
         if r.status == "done" or "already chained" in str(r.error or ""):
             ok.append(u)
+            _chain_refused.pop(u, None)
     return ok
+
+
+# live-v09c c2: get_status took 3.1 s on each of 3 reads with "PARTY APART: Shadowheart 99m, unchained": every read
+# sent act.chain again and the game never attached her, so each one waited out the job's 3 s (6 s with two members:
+# 76 of 245 logged re-chains, all 78 m or more apart). A refused re-chain is sent again once one of them moved.
+CHAIN_RETRY_M = 5.0
+_chain_refused: dict[str, tuple] = {}  # member -> (leader, member pos, leader pos) when the game last didn't attach it
+
+
+def _chain_spot(u: str, st: dict) -> tuple:
+    pos = {r.get("uuid"): r.get("pos") for r in st.get("party") or []}
+    return st.get("active"), pos.get(u), pos.get(st.get("active"))
+
+
+def _chain_refused_here(u: str, st: dict) -> bool:
+    """The game didn't attach u to this leader last time, and neither has moved CHAIN_RETRY_M since."""
+    was = _chain_refused.get(u)
+    if not was:
+        return False
+    now = _chain_spot(u, st)
+    moved = [party._d(now[i], was[i]) for i in (1, 2)]
+    return now[0] == was[0] and all(d is not None and d < CHAIN_RETRY_M for d in moved)
 
 
 def _at_camp(ui: dict | None) -> bool:
@@ -368,7 +391,9 @@ def _party_check(st: dict | None, rechain: bool = True, ui: dict | None = None) 
     try:
         rows = party.apart(st, stay=_stay)
         if rechain and rows and not st.get("in_combat") and not st.get("in_dialogue") and st.get("active"):
-            done = set(_rechain(party.rechain_candidates(rows, _member_busy), st["active"]))
+            todo = [u for u in party.rechain_candidates(rows, _member_busy) if not _chain_refused_here(u, st)]
+            done = set(_rechain(todo, st["active"]))
+            _chain_refused.update({u: _chain_spot(u, st) for u in todo if u not in done})
             for r in rows:
                 if r["uuid"] in done:
                     r["unchained"] = False

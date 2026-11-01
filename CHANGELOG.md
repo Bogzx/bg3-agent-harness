@@ -73,7 +73,8 @@ game unless it says so.
   get_status doesn't show the minimap's pre-trip subregion after a fast travel or camp trip as where the party is,
   camp leave and fast_travel from camp with a conversation screen up refuse at once, a camp leave the game
   doesn't answer says what the game showed at the press, get_status no longer shows a
-  notification's "[ForceUpdate]" placeholder). bench-v0.9's release cites it.
+  notification's "[ForceUpdate]" placeholder, fast_travel from camp under a conversation screen says so instead of
+  "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused). bench-v0.9's release cites it.
 
 ### Benchmark (`packages/bench`)
 

@@ -264,6 +264,11 @@ def _leave_camp_first() -> str | None:
         return night
     except GameError as e:
         if "at camp" not in str(e):
+            # live-v09c 1c: the mod reads TravelError before IsInCamp, so under the dream's narrator screen at camp
+            # the dry run said only "(Condition)" and the trip failed "can't fast travel now (Condition)".
+            b = _travel_block()
+            if b.get("in_camp") and b.get("dialogue"):
+                return "\n".join(x for x in (CONVO_SCREEN_REFUSED, night) if x)
             return night  # any other refusal: the real call reports it
     pressed = _travel_block(TRAVEL_BLOCK_WAIT_S)
     if pressed.get("dialogue"):
