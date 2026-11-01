@@ -10,6 +10,10 @@ a digest pinned for the current version. The fix is one of:
 - it can't (a comment, a refactor, a typo in a scene line the agent never sees): append the digest to the current
   version's list, and bump only the patch version.
 
+A new version whose score moves outside these files (the mod or the bg3 tools its release pins changed) pins the
+same digest as the version before it; suite.json's `shared` names that pair ({new: old}), and only a named pair may
+share a digest.
+
 Never edit an existing entry: an entry is what a published result was graded with.
 """
 
@@ -63,10 +67,22 @@ def load_pins(path: Path = PINS) -> dict[str, list[str]]:
     return pins
 
 
-def check(root: Path = PACKAGE_ROOT, pins: dict[str, list[str]] | None = None, version: str | None = None) -> list[str]:
+def load_shared(path: Path = PINS) -> dict[str, str]:
+    """{version: the older version whose files it shares on purpose} from suite.json."""
+    shared: dict[str, str] = json.loads(path.read_text(encoding="utf-8")).get("shared", {})
+    return shared
+
+
+def check(
+    root: Path = PACKAGE_ROOT,
+    pins: dict[str, list[str]] | None = None,
+    version: str | None = None,
+    shared: dict[str, str] | None = None,
+) -> list[str]:
     """What is wrong with the pins: the current files' digest not pinned for the current suite version, or one
-    digest pinned for two versions. [] = the suite version names exactly these files."""
+    digest pinned for two versions that `shared` doesn't pair. [] = the suite version names exactly these files."""
     pins = load_pins(root / PINS.name) if pins is None else pins
+    shared = load_shared(root / PINS.name) if shared is None else shared
     version = suite_version() if version is None else version
     errors: list[str] = []
     now = digest(root)
@@ -80,7 +96,7 @@ def check(root: Path = PACKAGE_ROOT, pins: dict[str, list[str]] | None = None, v
     seen: dict[str, str] = {}
     for v, ds in pins.items():
         for d in ds:
-            if d in seen and seen[d] != v:
+            if d in seen and seen[d] != v and seen[d] != shared.get(v) and v != shared.get(seen[d]):
                 errors.append(f"digest {d} is pinned for both {seen[d]} and {v}")
             seen.setdefault(d, v)
     return errors
