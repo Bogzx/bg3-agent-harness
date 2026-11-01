@@ -73,6 +73,38 @@ def test_x01_cannot_check_a_first_snapshot_taken_after_the_agent_started():
     assert x01(15.8, 410, other) == (True, "")
 
 
+def test_x01_cannot_check_a_field_the_first_snapshot_read_as_null():
+    """launch-v1 Opus x fight_act2_balthazar r2: the first snapshot, 1.26 s after run_start, had area null (read
+    before the game had it on load; 61.9 s later it was "Nightsong's Prison") and the rest matched. From the release's
+    start save that field is not checkable; a value that differs still rejects, and with no field read X01 is null."""
+    sha1 = "da79bf42f2f672b815ae64c2008e80483f2c33f3"
+    party = [["Karlach", 6], ["Shadowheart", 6], ["Tav", 6], ["Wyll", 6]]
+    fp = {"party": party, "gold": 60, "region": "Shadow-Cursed Lands", "area": "Nightsong's Prison"}
+    fp |= {"difficulty": "Balanced", "name": "Tav"}
+    rel = {"fingerprint": fp, "save_sha1": sha1}
+    man = {"scenario": {"start_save_sha1": sha1}}
+    snap = {"party": [{"name": n, "level": lv} for n, lv in party], "gold": 60, "region": "Shadow-Cursed Lands"}
+
+    def x01(manifest: dict = man, **fields) -> c.Outcome:
+        rows = [
+            mark(1793507314.33, "run_start"),
+            mark(1793507314.52, "settings", difficulty="Balanced", avatar_name="Tav"),
+            ev(1793507315.59, "snapshot", **(snap | fields)),
+        ]
+        return c.x01_start_state(loaded(rows, release_scenario=rel, manifest=manifest))
+
+    assert x01(area=None) == (True, "not checkable (null in the first snapshot): area")
+    assert x01(area="Nightsong's Prison") == (True, "")  # r1, r3: read at 1.1 s
+    assert x01(area="Moonrise Towers") == (False, "first snapshot differs from the published start state in: area")
+    assert x01(area=None, gold=61)[1] == "first snapshot differs from the published start state in: gold"
+    assert x01(party=None, gold=None, region=None, area=None) == (
+        None,
+        "not checkable: the first snapshot has no party, gold, region, area",
+    )
+    other = {"scenario": {"start_save_sha1": "0" * 40}}
+    assert x01(other, area=None)[0] is False  # not the release's start save: held to every field
+
+
 def test_g01_regrades_a_maximise_score_from_the_published_start_state():
     sc = scenario.with_defaults(pack.load_scenarios()["act3_gold_max"])
     state = {"party": [], "inv": [], "combat": False, "region": "Lower City", "areas": [], "quests": {}}
@@ -212,3 +244,14 @@ def test_a02_a_call_the_client_refused_as_unknown_used_no_tool():
     assert run(call("f", "teleport"), result("f", "Tool mcp__bg3__other not found"))[0] is False  # another name
     assert run(call("g", "teleport"), result("h", "Tool teleport not found"))[0] is False  # another call's result
     assert run(call("i", "load_game"), result("i", "loaded"))[1] == "load_game called without a reloads condition"
+    # launch-v1 Haiku x choice_act1_minthara r2: a garbled name with a space, refused by pi
+    garbled = "mcp__bg3] choose_dialogue"
+    real = (
+        call("toolu_01PTDjNpaiHVwyUNYrWoPC1z", garbled),
+        result("toolu_01PTDjNpaiHVwyUNYrWoPC1z", f"Tool {garbled} not found"),
+    )
+    assert run(*real) == (True, "")
+    assert run(
+        call("j", garbled), result("j", f"<tool_use_error>Error: No such tool available: {garbled}</tool_use_error>")
+    ) == (True, "")
+    assert run(call("k", garbled), result("k", "Tool mcp__bg3] other not found"))[0] is False  # another name
