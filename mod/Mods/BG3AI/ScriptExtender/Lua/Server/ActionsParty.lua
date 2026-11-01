@@ -489,6 +489,13 @@ end)
 -- act.chain {char, leader} / act.unchain {char}
 ------------------------------------------------------------------------
 
+-- live-v09c c2: an attach the game doesn't take shows nothing (the Osiris call returns, no log line, no
+-- AttachedToPartyGroup): Shadowheart 99 m away stayed apart for the job's whole 3 s, on each of 3 get_status reads.
+-- The member's own state is the signal: in the logged re-chains that took (60 of them), InSamePartyGroup read true
+-- within 182 ms of the order, round trips included; the others stayed false the whole 3 s. Still apart this long
+-- after the order: the game didn't attach it.
+A.CHAIN_SETTLE_MS = 600
+
 reg("chain", function(args)
     local char = G.actor(args.char)
     local leader = G.actor(args.leader)
@@ -502,6 +509,12 @@ reg("chain", function(args)
         on_tick = function(job)
             if G.b(G.q("InSamePartyGroup", char, leader)) then
                 RPC.finish_job(job, "done", { chained = true, already = already or nil })
+            elseif RPC.now_ms() - job.started >= A.CHAIN_SETTLE_MS then
+                local a, b = G.pos(char), G.pos(leader)
+                RPC.finish_job(job, "failed", { chained = false }, string.format("the game didn't attach %s to %s's "
+                    .. "group: still apart %.1f s after the order%s", name_of(char) or "them", name_of(leader) or
+                    "the leader", A.CHAIN_SETTLE_MS / 1000, (a and b) and string.format(" (%.0f m away)",
+                    BG3AI.Util.dist(a, b)) or ""))
             end
         end,
     })

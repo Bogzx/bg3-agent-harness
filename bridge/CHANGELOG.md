@@ -15,6 +15,11 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   ran out its 3 s), it is sent again only after the member or the leader moved 5 m (live-v09c c2: 3 reads at 3.1 s
   each with "Shadowheart 99m, unchained"; 76 of 245 logged re-chains timed out, all 78 m or more apart). The
   PARTY APART line is unchanged.
+- act.chain (mod ActionsParty.lua): an attach the game doesn't take fails once the member is still not in the
+  leader's group 0.6 s after the order ("the game didn't attach <who> to <leader>'s group: still apart 0.6 s after
+  the order (<n> m away)"), not after the job's 3 s timeout. The game gives no refusal of its own (the Osiris call
+  returns, nothing is logged); the 60 logged re-chains that took showed InSamePartyGroup within 182 ms of the order.
+  The first get_status after such a split, regroup's and set_party's chains wait 0.6 s instead of 3 s.
 
 ## 2026-11-01: camp leave with a conversation screen up refuses at once; no "[ForceUpdate]" notice
 

@@ -74,7 +74,8 @@ game unless it says so.
   camp leave and fast_travel from camp with a conversation screen up refuse at once, a camp leave the game
   doesn't answer says what the game showed at the press, get_status no longer shows a
   notification's "[ForceUpdate]" placeholder, fast_travel from camp under a conversation screen says so instead of
-  "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused). bench-v0.9's release cites it.
+  "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused, and act.chain fails 0.6 s after
+  an attach the game didn't take instead of at 3 s). bench-v0.9's release cites it.
 
 ### Benchmark (`packages/bench`)
 
