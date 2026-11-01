@@ -285,6 +285,8 @@ V.spotted = V.spotted or {}
 
 function V.isAlly(ctx, uuid)
     if ctx.is_party[uuid] then return true end
+    -- a side never counts the other team (or its summons) as allies, whatever the engine's relation says
+    if U.side() and BG3AI.Arena.side_of(uuid) then return false end
     local o = ctx.observers[1] or { uuid = ctx.party[1] }
     return o.uuid and truthy(V.osi(Osi.IsAlly, o.uuid, uuid)) or false
 end

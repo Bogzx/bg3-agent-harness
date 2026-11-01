@@ -300,7 +300,10 @@ function G.in_blast(char, pt, r, skip)
         local u = G.guid(V.entityUuid(row[1]) or "")
         if u and u ~= skip and not G.is_dead(u)
             and (G.is_party(u) or V.characterVisible(ctx, u, row[1], row[2])) then
-            local side = (G.is_party(u) and "party") or (b(G.q("IsEnemy", char, u)) and "hostile")
+            -- an arena: the other team is hostile from the team tables, whatever the engine says
+            local Ar = BG3AI.Arena
+            local side = (G.is_party(u) and "party")
+                or ((b(G.q("IsEnemy", char, u)) or (U.side() and Ar.side_of(u))) and "hostile")
                 or (V.isAlly(ctx, u) and "ally") or "neutral"
             out[#out + 1] = { uuid = u, name = V.name(u), side = side, d = row[3] }
         end

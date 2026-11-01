@@ -342,7 +342,10 @@ function G.end_pending(uuid)
     local active, req = tb_flags(g)
     if active and not req then
         local others = false
-        for _, m in ipairs(G.party()) do
+        -- in an arena the group is the character's own team, whoever asks (each side must agree on the acting side)
+        local Ar = BG3AI.Arena
+        local mine = Ar and Ar.active() and Ar.side_of(g)
+        for _, m in ipairs(mine and Ar.team(mine) or G.party()) do
             if not G.same(m, g) and not G.end_requested[G.guid(m) or m] then
                 local a2, r2 = tb_flags(m)
                 if a2 and not r2 then others = true break end

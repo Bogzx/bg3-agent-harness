@@ -26,7 +26,7 @@ osiv = {}         -- "Fn:a:b" -> value (queries)
 listeners = {}    -- Osiris event -> {fn}
 tickers = {}
 net = {}          -- Ext.Net broadcasts
-order = {}        -- TurnOrder.CurrentGroups: { {uuid...}, ... }
+order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid...} (a turn group) each
 partyRows = {}
 decoded = {}      -- an encoded answer -> the value it encodes (rpc() reads answers back as tables)
 
@@ -61,19 +61,30 @@ function enc(v)
     return tostring(v)
 end
 
-local function group(u)
-    return { Members = { { Entity = { Uuid = { EntityUuid = u } } } } }
-end
-
-local function entity(u)
+-- bare: a turn-order member's entity (no CombatParticipant of its own)
+local function entity(u, bare)
     local w = world[u]
     if not w then error("no entity " .. tostring(u)) end
     local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = w.pos } } }
     for k, v in pairs(w.comps) do e[k] = v end
+    if bare or not w.comps.ServerCharacter then return e end
     local groups = {}
-    for _, g in ipairs(order) do groups[#groups + 1] = group(g) end
-    e.CombatParticipant = { CombatHandle = { TurnOrder = { CurrentGroups = groups } } }
+    for _, g in ipairs(order) do
+        local members = {}
+        for _, m in ipairs(type(g) == "table" and g or { g }) do
+            members[#members + 1] = { Entity = entity(m, true) }
+        end
+        groups[#groups + 1] = { Members = members }
+    end
+    e.CombatParticipant = { CombatHandle = { TurnOrder = { CurrentGroups = groups, Round = 1 } } }
     return e
+end
+
+local function characters()
+    local out = {}
+    for u, w in pairs(world) do if w.comps.ServerCharacter then out[#out + 1] = entity(u, true) end end
+    table.sort(out, function(a, b) return a.Uuid.EntityUuid < b.Uuid.EntityUuid end)
+    return out
 end
 
 Ext = {
@@ -82,7 +93,8 @@ Ext = {
     Utils = { MonotonicTime = function() return clock end, PrintWarning = function() end, Print = function() end,
         Version = function() return 0 end, GetGameState = function() return "Running" end },
     Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end } },
-    Entity = { Get = entity, GetAllEntitiesWithComponent = function() return {} end },
+    Entity = { Get = function(u) return entity(u) end,
+        GetAllEntitiesWithComponent = function(c) return c == "ServerCharacter" and characters() or {} end },
     Stats = { Get = function(n) return n == "Projectile_FireBolt" and { DisplayName = "Fire Bolt" } or nil end },
     StaticData = { Get = function(uuid) return { Name = uuid } end },
     Loca = { GetTranslatedString = function(h) return h end },
@@ -213,7 +225,7 @@ function kinds(res, kind)
 end
 
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
-for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua" }) do
+for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

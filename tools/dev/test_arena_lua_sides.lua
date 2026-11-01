@@ -202,3 +202,23 @@ test("an end of the arena drops every side's memory and side-tagged event", func
     eq(as("A", V.lastSeen, GOB), nil, "A's memory")
     eq(#kinds(rpc("events.since", "{seq=" .. s0 .. "}", "B"), "note"), 0, "B's events")
 end)
+
+test("a job hears its own side's events only, as that side", function()
+    begin()
+    local heard = {}
+    as("A", RPC.start_job, "wait", { timeout_ms = 1e9, on_event = function(_, ev)
+        heard[#heard + 1] = ev.kind .. "/" .. tostring(RPC.side())
+    end })
+    as("B", RPC.push, "b_note", {})
+    RPC.push("harness_note", {})
+    as("A", RPC.push, "a_note", {})
+    eq(table.concat(heard, ","), "a_note/A", "heard")
+end)
+
+test("a side's op that fails leaves no side behind", function()
+    begin()
+    eq(rpc("job.poll", "{id=999}", "A").ok, false, "the op failed")
+    eq(RPC.Ctx.side, nil, "Ctx.side after it")
+    eq(rpc("state.status", "{}", "B").ok, true, "a good one")
+    eq(RPC.Ctx.side, nil, "Ctx.side after that")
+end)
