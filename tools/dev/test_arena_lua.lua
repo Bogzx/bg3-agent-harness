@@ -229,6 +229,11 @@ function refused(fn, pat)
     if not msg:find(pat, 1, true) then error("refusal '" .. msg .. "' does not match '" .. pat .. "'", 2) end
 end
 function as(side, fn, ...) return RPC.with_side(side, fn, ...) end
+-- One server tick past the arena's phase throttle.
+function tick()
+    clock = clock + Ar.PHASE_EVERY_MS
+    for _, f in ipairs(tickers) do f() end
+end
 function kinds(res, kind)
     local out = {}
     for _, ev in ipairs(res.result.events) do if ev.kind == kind then out[#out + 1] = ev end end
@@ -237,7 +242,7 @@ end
 
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua",
-    "test_arena_lua_listeners.lua" }) do
+    "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 
