@@ -118,6 +118,7 @@ BG3AI.Visibility = {
     end,
     pos = function(e) local p = world[e.uuid]; return p and { p[1], p[2], p[3] } or nil end,
     party = function() return { P1 } end,
+    selected = function() return nil end, -- nobody holds ClientControl here: the first member
     uuid = function(u) return u end,
     context = function() return CTX end,
     pointSeen = function(ctx, pt) return seen(pt) end,

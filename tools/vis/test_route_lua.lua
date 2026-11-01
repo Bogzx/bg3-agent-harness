@@ -71,6 +71,7 @@ BG3AI.Visibility = {
     entity = function(u) return (world[u] or items[u]) and { uuid = u } or nil end,
     pos = function(e) local p = world[e.uuid]; return p and { p[1], p[2], p[3] } or nil end,
     party = function() return { P1 } end,
+    selected = function() return nil end, -- nobody holds ClientControl here: the first member
     uuid = function(u) return u end,
     name = function(u) return "N:" .. u end,
     context = function() return { party = { P1 }, is_party = { [P1] = true } } end,

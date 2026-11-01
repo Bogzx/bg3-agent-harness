@@ -477,7 +477,6 @@ RPC.register("nav.activity", function(args)
         if truthy(osi(Osi.IsOnStage, u)) then
             local e = V.entity(u)
             local p = e and V.pos(e)
-            if not out.active and e and U.comp(e, "ClientControl") then out.active = u end
             if p then
                 out.pos[u] = U.vec(p, 2)
                 local s = N.surfaceAt(p)
@@ -495,7 +494,7 @@ RPC.register("nav.activity", function(args)
             if not out.in_dialogue and e then out.in_dialogue = V.inDialog(u, e) end
         end
     end
-    out.active = out.active or party[1]
+    out.active = V.selected(party) or party[1]
     for _, j in pairs(RPC.jobs or {}) do
         if j.status == "running" then
             out.jobs = out.jobs + 1

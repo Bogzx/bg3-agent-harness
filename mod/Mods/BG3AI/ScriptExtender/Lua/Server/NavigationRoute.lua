@@ -532,12 +532,7 @@ function N.objectiveMarkers(ctx)
     if not data then return {}, "no marker index" end
     local who = ctx.party[1]
     if not who then return {} end
-    local active = nil
-    for _, u in ipairs(ctx.party) do
-        local e = V.entity(u)
-        if e and U.comp(e, "ClientControl") then active = u end
-    end
-    active = active or who
+    local active = V.selected(ctx.party) or who
     local ae = V.entity(active)
     local from = ae and V.pos(ae)
     local lvl = currentLevel()

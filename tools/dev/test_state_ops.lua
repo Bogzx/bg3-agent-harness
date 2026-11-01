@@ -110,6 +110,16 @@ test("exploring: party rows, the selected member, region, gold, no combat", func
     eq(type(t.pos), "table", "pos")
 end)
 
+test("a dead member that kept ClientControl doesn't outrank the living member selected", function()
+    -- launch-v1 act1_level_3 r2: set_party selected Tav while Gale's corpse (earlier in the party) still held it
+    osi.party = { { "S_Player_Gale_" .. GALE }, { "S_Player_Tav_" .. TAV } }
+    ents[GALE].ClientControl, ents[TAV].ClientControl, osi.dead[GALE] = {}, {}, true
+    eq(status().active, TAV, "the living holder")
+    ents[TAV].ClientControl = nil
+    V.ctxCache = nil
+    eq(status().active, GALE, "the dead member when it is the only holder")
+end)
+
 test("no member selected: the host is active", function()
     eq(status().active, TAV, "active")
     osi.host = nil

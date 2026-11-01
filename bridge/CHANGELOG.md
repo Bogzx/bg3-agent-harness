@@ -17,6 +17,10 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   travel: bg3le: UI busy …" instead of reading it as no night and failing later "cannot travel right now".
 - pick_up on an item the game can't pick up (fixed in place, listed `<usable>` like a wall torch) fails at once with
   "that can't be picked up: it is fixed in place (interact uses it)" instead of "TIMEOUT — timed out" after 40 s.
+- With a dead member that still holds the game's ClientControl (its corpse once selected), the selected member is
+  the living one set_party selected: get_status/look's active member and PARTY APART, fast_travel's LEFT BEHIND
+  and "already stands at the waypoint" answer, and nav reads measured from the corpse before. A fast_travel to the
+  waypoint the selected member stood on then timed out after 66 s instead of answering at once.
 
 ## 2026-10-24: feed_gale closes the donation window and checks Gale took the item
 

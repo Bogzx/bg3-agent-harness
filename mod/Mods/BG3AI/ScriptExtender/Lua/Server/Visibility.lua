@@ -131,6 +131,22 @@ function V.observers(party)
     return out
 end
 
+-- The selected member: the party member holding ClientControl, nil when none does. A dead member can keep it next to
+-- the living one just selected (launch-v1 act1_level_3 r2, 2026-11-01: set_party selected Tav, Gale's corpse still
+-- held it, and state.status, nav.waypoints and fast_travel's "already at the waypoint" check measured from the
+-- corpse): a living holder comes first.
+function V.selected(party)
+    local dead
+    for _, u in ipairs(party) do
+        local e = V.entity(u)
+        if e and U.comp(e, "ClientControl") then
+            if not truthy(V.osi(Osi.IsDead, u)) then return u end
+            dead = dead or u
+        end
+    end
+    return dead
+end
+
 function V.rules()
     local r = {}
     local ok, list = pcall(Ext.Entity.GetAllEntitiesWithComponent, "RulesetModifiers")

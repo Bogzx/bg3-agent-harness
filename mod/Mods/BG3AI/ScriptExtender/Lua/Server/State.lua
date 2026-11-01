@@ -130,11 +130,7 @@ local function concentration(e)
 end
 
 local function selectedCharacter(party)
-    for _, u in ipairs(party) do
-        local e = V.entity(u)
-        if e and comp(e, "ClientControl") then return u end
-    end
-    return osi(Osi.GetHostCharacter) and V.uuid(osi(Osi.GetHostCharacter)) or party[1]
+    return V.selected(party) or osi(Osi.GetHostCharacter) and V.uuid(osi(Osi.GetHostCharacter)) or party[1]
 end
 
 local function inCombat(uuid) return truthy(osi(Osi.IsInCombat, uuid)) end
