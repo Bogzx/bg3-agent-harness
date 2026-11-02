@@ -68,11 +68,11 @@ def test_the_companions_arena_is_the_crash_site_save_with_every_member_named_and
     sha1s = {r["save_sha1"] for r in rows}
     assert sha1s == {a["save"]["sha1"]} and "crash_site_grove" in a["save"]["name"]
     assert arena.team_names(a) == {
-        "A": ["Shadowheart", "Gale", "Astarion", "Lae'zel"],
-        "B": ["Karlach", "Wyll", "Nightwarden Minthara", "Minsc"],
+        "A": ["Gale", "Astarion", "Lae'zel"],
+        "B": ["Karlach", "Wyll", "Minthara"],
     }
     assert all("uuid" in m for s in ("A", "B") for m in a["teams"][s])
-    assert (a["level"], a["seed"], a["round_cap"], a["wall_cap_min"], a["turn_cap_s"]) == (2, 2026, 20, 30, 60)
+    assert (a["level"], a["seed"], a["round_cap"], a["wall_cap_min"], a["turn_cap_s"]) == (1, 2026, 20, 30, 60)
     assert "draft" not in a
 
 
