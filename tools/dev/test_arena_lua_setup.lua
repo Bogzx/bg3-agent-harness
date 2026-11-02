@@ -114,6 +114,9 @@ local function game(opts)
 end
 
 local function restore()
+    for _, j in pairs(RPC.jobs) do -- a setup a test started and left running must not run on in the next one
+        if j.kind == "arena.setup" and j.status == "running" then j.status = "interrupted" end
+    end
     for name, v in pairs(saved) do
         if name ~= "static" then rawset(Osi, name, v or nil) end
     end
@@ -124,7 +127,8 @@ end
 local function arena(over)
     local a = { teams = { A = { { name = "Ana" }, { name = "abe" }, { name = "Ari" }, { name = "Axe" } },
         B = { { name = "Bo", uuid = B1 }, { name = "Bea" }, { name = "Bix" }, { name = "Bree" } } },
-        location = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10.5 } } }, seed = 7, karmic = false, round_cap = 20 }
+        location = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10.5 } } }, seed = 7, karmic = false, round_cap = 20,
+        level = 4 }
     for k, v in pairs(over or {}) do a[k] = v end
     return a
 end
@@ -276,10 +280,39 @@ test_setup("arena.setup refusals: no scenario switch, a name twice or unknown, a
     a.teams.B[2] = { name = "Ana" }
     assert(enc(setup(a)):find("Ana is listed twice", 1, true), "twice")
     a = arena()
+    a.teams.B[2] = { name = "Bea", uuid = B3 } -- the name and the uuid disagree
+    assert(enc(setup(a)):find("team entry Bea: its uuid " .. B3 .. " is Bix", 1, true), "name/uuid")
+    a = arena()
+    a.teams.B[2] = { name = "bea", uuid = B2 } -- case and punctuation aside, the same name
+    eq(setup(a).result.status, "running", "name and uuid agree")
+    game()
+    a = arena()
     a.teams.B[4] = nil
     assert(enc(setup(a)):find("team B must list 4 characters", 1, true), "size")
     assert(enc(setup(arena(), "A")):find("arena ops are the harness's", 1, true), "a side")
     env.BG3AI_ARENA = nil
     assert(enc(setup(arena())):find("BG3AI_ARENA=1", 1, true), "switch off")
     eq(#calls, 0, "no game call")
+end)
+
+test_setup("arena.setup: a member not at the arena's level after joining fails setup with every level; none begun",
+    function()
+    game()
+    local add = Osi.PROC_GLO_PartyMembers_Add
+    stub("PROC_GLO_PartyMembers_Add", function(u, host)
+        add(u, host)
+        if u == B3 or u == B4 then osiv[key("GetLevel", u)] = 1 end -- joining reset their level (live: Karlach 3 -> 1)
+    end)
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "level off")
+    eq(j.error, "levels after setup differ from the arena's level 4: Bix 1, Bree 1", "error")
+    eq(enc(j.result.members[B3].level), enc({ 4, 1 }), "Bix before/after kept in the result")
+    eq(Ar.state, nil, "no match begun")
+    game()
+    for _, bad in ipairs({ "nil", "0", "2.5", '"4"', "13" }) do
+        local a = arena()
+        a.level = load("return " .. bad)()
+        assert(enc(setup(a)):find("arena.level must be the members' character level", 1, true), "level " .. bad)
+    end
 end)

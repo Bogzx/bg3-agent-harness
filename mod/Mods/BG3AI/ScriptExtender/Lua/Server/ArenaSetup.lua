@@ -1,8 +1,10 @@
 -- arena.setup {arena, round_cap} (server context, harness only, refused without BG3AI_ARENA=1): stand the two teams
 -- of an arena file up for a match, then Ar.begin. A job; the runner polls it (bg3harness/arena/match.py _setup).
 -- `arena` is the arena file (arena.v1) as the runner sends it: teams.A/B (entries {name, uuid?}), location.spawns.A/B
--- ({x, y, z}), seed, karmic. The steps are the arena spike's, which the probe ran by hand (tools/dev/probe_arena.py
--- setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
+-- ({x, y, z}), seed, karmic, level (the members' character level: setup fails unless every member has it after
+-- joining). A member's uuid and name must name the same character. The steps are the arena spike's, which the probe
+-- ran by hand (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" ..
+-- "phases live 3"):
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
 --   2. place: every member detached, each team chained to its first member, teleported to a line through its spawn
 --   3. RestoreParty(host), then SetHitpointsPercentage 100 for anyone it left short; the seed and Karmic Dice
@@ -79,6 +81,9 @@ function Setup.resolve(entry, avatars)
         end
         u = u:lower()
         if avatars[u] then error(tostring(name) .. " is the avatar: the avatar sits out of arena fights", 0) end
+        if name ~= nil and norm(V.name(u)) ~= norm(name) then
+            error(("team entry %s: its uuid %s is %s"):format(tostring(name), u, V.name(u)), 0)
+        end
         return u
     end
     if type(name) ~= "string" or name == "" then error("a team entry has no name", 0) end
@@ -274,11 +279,19 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
             error("the avatar " .. tostring(V.name(a)) .. " joined the fight (it sits out)", 0)
         end
     end
-    local after = {}
+    local after, off = {}, {}
     for _, u in ipairs(all_of(t)) do
         local b, a = job.before[u], facts(u)
         after[u] = { name = b.name, level = { b.level, a.level }, max_hp = { b.max_hp, a.max_hp },
             faction = { b.faction, a.faction } }
+        if a.level ~= job.level then off[#off + 1] = ("%s %s"):format(b.name, tostring(a.level)) end
+    end
+    -- every member at the arena's level, or no match (live 2026-11-02: joining reset Karlach 3 -> 1, Wyll 2 -> 1,
+    -- Minthara 6 -> 1 while Shadowheart, a member already, stayed 2)
+    if #off > 0 then
+        RPC.finish_job(job, "failed", { teams = t, members = after, calls = job.calls },
+            ("levels after setup differ from the arena's level %d: %s"):format(job.level, table.concat(off, ", ")))
+        return
     end
     local status = Ar.begin(t, { round_cap = job.round_cap })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after,
@@ -320,11 +333,16 @@ function Setup.start(args)
         spawns[s] = vec3(type(spawnsIn) == "table" and spawnsIn[s] or nil, "location.spawns." .. s)
     end
     if args.round_cap ~= nil and not tonumber(args.round_cap) then error("round_cap must be a number", 0) end
+    local level = arena.level
+    if type(level) ~= "number" or level % 1 ~= 0 or level < 1 or level > 12 then
+        error("arena.level must be the members' character level (an integer 1..12)", 0)
+    end
     local host = V.uuid(osi(Osi.GetHostCharacter))
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
         teams = teams, spawns = spawns, host = host:lower(), avatars = avatarList,
-        round_cap = tonumber(args.round_cap or arena.round_cap), step = 1, next_at = 0, before = {}, calls = {} })
+        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = 1, next_at = 0, before = {},
+        calls = {} })
     job.partial = { teams = teams, calls = job.calls }
     return { job = job.id, status = job.status }
 end
