@@ -168,7 +168,12 @@ reg("interact", function(args)
     local read = not potion and not scroll and A.carried_scroll(char, target) -- a scroll read out of combat
     if not potion and not scroll and target and G.in_combat(char) then
         -- naut3 ×3: the transponder inside combat_turn was refused "(use the UI)", and each run spent a model turn
-        -- finding click_on. Name the tool: in a fight a player uses an object by clicking it.
+        -- finding click_on. Name the tool: in a fight a player uses an object by clicking it. A match side has no
+        -- click tool (the bridge refuses clicks with a side: both sides share one game screen).
+        if U.side() then
+            G.refuse("not available during combat through this action: in a fight an object is used by clicking it,"
+                .. " and in a two-team match no clicks are made (both sides share one game screen)")
+        end
         G.refuse("not available during combat through this action: in a fight an object is used by clicking it,"
             .. " click_on " .. target .. " (the selected character walks there on its own movement)")
     end
