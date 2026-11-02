@@ -152,3 +152,24 @@ def test_the_one_action_fight_matrices_charge_each_model_to_its_own_budgets_unde
 
 def raw_file(name: str) -> dict:
     return tomllib.loads((MATRICES / f"{name}.toml").read_text())
+
+
+PILOT_V010 = ["act1_goblin_camp_no_fight", "act1_gold_1000", "choice_act2_nightsong", "act3_gold_max"]
+
+
+def test_the_v010_pilot_plays_each_model_once_with_opus_act3_last_so_the_cap_picks_the_option():
+    m = matrix_cli.load(MATRICES / "v010-pilot.toml", REPO)
+    jobs = m["jobs"]
+    assert not m["skipped"] and m["budget"] == REPO / "runtime" / "budget-v010-pilot.json"
+    assert [(j["model"], j["scenario"], j["repeat"]) for j in jobs] == [(o, s, 1) for o in ORDER for s in PILOT_V010]
+    assert set(PILOT_V010) <= SCORED | UNSCORED  # launch scenarios: start saves, launch-v1 costs to price them
+    for j in jobs:
+        names = [Path(f).name for f in j["shared"]]
+        api = ["budget-deepseek.json"] if j["model"] == "deepseek-flash" else ["budget-anthropic.json"]
+        share = [] if j["model"] == "deepseek-flash" else [f"budget-{j['model'].split('-')[1]}.json"]
+        assert sorted(names) == sorted(share + api), j["id"]
+        assert j["max_cost"] >= 0.5 and j["client"] == "pi" and j["condition"] == "rules"
+    # option 1 (cap $14.21) never starts the last job, Opus act3_gold_max; option 2 (cap $32.45) can
+    *rest, last = jobs
+    assert (last["model"], last["scenario"]) == ("claude-opus-5-5", "act3_gold_max")
+    assert max(j["max_cost"] for j in rest) <= 14.21 < last["max_cost"] <= 32.45

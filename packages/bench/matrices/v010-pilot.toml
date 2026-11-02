@@ -1,0 +1,94 @@
+# bench-v0.10 end-to-end pilot (before the bench-v0.10 PR): DeepSeek V4.1 Flash, Claude Haiku 5.5, Sonnet 5.5 and
+# Opus 5.5 through pi x 1 run of the cheapest launch scenarios that reach the v0.10 changes out of combat:
+#   act1_goblin_camp_no_fight: walks return at their end with CHANGES and the minimap block (5e567eb7, 175a5082), a
+#     walk ends a batch (53c9fdef), travel_to/regroup's PASSED line (737da80a), known ground within 40 m (a091631d);
+#     roll_check (c7f033b7) in 12 of its 13 launch-v1 runs
+#   act1_gold_1000: trade sell="junk" with the SOLD/KEPT list (32725955; 9 of its 15 launch-v1 runs sold junk), walks
+#   choice_act2_nightsong: a dialogue roll, roll_check returning a failed roll with the screen open and
+#     roll_check(reroll=true) (c7f033b7; 10 of 14 launch-v1 runs), 1-3 minutes
+#   act3_gold_max: the first Act 3 camp night wants Shadowheart's talk: the TALK line in get_status/look and the
+#     long_rest/camp leave/fast_travel refusals that name it (cd4e9bf8, 9e7d12cf); launch-v1 runs went to camp in
+#     Haiku 5/5, DeepSeek 4/7, Opus 2/3, Sonnet 1/5. Also sell junk.
+# Not reached by a cheap scenario (the $0 live window checks them): use_ability's spell-container variant read
+# (05981389, combat), the game-menu refusal of long_rest (14a5b5bf, needs the menu open), recovered_launches
+# (d76d1f5e/558e2146, needs a launch to die), known ground's camera range numbers.
+# Cell by cell (order = "cell"): models in the groups' order, act3_gold_max last in each group, so Opus's
+# act3_gold_max is the last job: runtime/budget-v010-pilot.json's cap picks the option. Cap $14.21 (option 1) stops
+# the matrix before it (its $22.33 reserve doesn't fit); cap $32.45 (option 2) plays it too.
+# max_cost per model and scenario: the most one launch-v1 attempt of it cost (runtime/matrix/launch-v1-*/queue.jsonl)
+# x 1.5, at least $0.50. It is the run's cap (over_budget past it) and what the budgets hold back while it plays.
+# Budgets: runtime/budget-v010-pilot.json for every job; each model's group adds its own files: DeepSeek
+# runtime/budget-deepseek.json, a Claude model its share (runtime/budget-<haiku|sonnet|opus>.json) and
+# runtime/budget-anthropic.json, as fights-v09. A job starts only if its max_cost fits every one of its files, and
+# its cost goes into each.
+# Estimate (mean launch-v1 attempt cost and queue minutes per model and scenario): DeepSeek $0.41 / 77 min, Haiku
+# $2.22 / 87 min, Sonnet $3.24 / 41 min, Opus $3.61 / 27 min without act3_gold_max ($12.15 / 48 min with it).
+# Option 1 (15 runs): $9.47, 231 min, cap $14.21. Option 2 (16 runs): $21.63, 279 min, cap $32.45. v0.10's
+# blocking walks and minimap block change the per-call tokens, so these are launch-v1 (bench-v0.8) costs.
+name = "v010-pilot"
+order = "cell"
+allow_gaps = false
+allow_unverified = false
+
+[budget]
+file = "runtime/budget-v010-pilot.json"
+
+[[group]]
+models = ["profiles/deepseek-flash.toml"]
+scenarios = [
+  "act1_goblin_camp_no_fight",
+  "act1_gold_1000",
+  "choice_act2_nightsong",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-deepseek.json"]
+max_cost = { act1_goblin_camp_no_fight = 0.5, act1_gold_1000 = 0.5, choice_act2_nightsong = 0.5, act3_gold_max = 0.7 }
+
+[[group]]
+models = ["profiles/claude-haiku-5-5.toml"]
+scenarios = [
+  "act1_goblin_camp_no_fight",
+  "act1_gold_1000",
+  "choice_act2_nightsong",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-haiku.json", "runtime/budget-anthropic.json"]
+max_cost = { act1_goblin_camp_no_fight = 1.47, act1_gold_1000 = 1.68, choice_act2_nightsong = 0.5, act3_gold_max = 3.68 }
+
+[[group]]
+models = ["profiles/claude-sonnet-5-5.toml"]
+scenarios = [
+  "act1_goblin_camp_no_fight",
+  "act1_gold_1000",
+  "choice_act2_nightsong",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-sonnet.json", "runtime/budget-anthropic.json"]
+max_cost = { act1_goblin_camp_no_fight = 0.85, act1_gold_1000 = 5.93, choice_act2_nightsong = 0.5, act3_gold_max = 2.0 }
+
+[[group]]
+models = ["profiles/claude-opus-5-5.toml"]
+scenarios = [
+  "act1_goblin_camp_no_fight",
+  "act1_gold_1000",
+  "choice_act2_nightsong",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-opus.json", "runtime/budget-anthropic.json"]
+max_cost = { act1_goblin_camp_no_fight = 2.12, act1_gold_1000 = 4.9, choice_act2_nightsong = 0.5, act3_gold_max = 22.33 }
