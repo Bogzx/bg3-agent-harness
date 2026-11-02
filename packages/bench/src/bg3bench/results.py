@@ -129,7 +129,7 @@ def from_record(
 ) -> dict:
     """One runs.jsonl record (+ grader output, + method attribution, + luck.summary, + the choices grader's
     picks and fit for a choice scenario, + what a pilot run didn't play of its condition, + a maximise scenario's
-    score) -> result v1. `seed`: the scenario's dice seed (validity). `losses`: the run's facts.party_losses, its
+    score, + the launches relaunched before run_start) -> result v1. `seed`: the scenario's dice seed (validity). `losses`: the run's facts.party_losses, its
     `deaths` (else the record's: a bench record has none, diverse-2026-10-25 wrote 0 for 11 wiped runs)."""
     if record["outcome"] not in OUTCOMES:
         raise ValueError(f"unknown outcome {record['outcome']!r}")
@@ -168,6 +168,8 @@ def from_record(
         out["score"] = score
     if pilot:
         out["pilot"] = list(pilot)
+    if launches := record.get("recovered_launches"):  # disclosed, not failures: they don't touch validity
+        out["recovered_launches"] = [{k: e.get(k) for k in ("t", "attempt", "save", "error")} for e in launches]
     if not valid:
         out["invalid_cause"] = invalid_cause(record, reason, seed)
     return out

@@ -280,8 +280,10 @@ def test_a_launch_the_controller_recovered_before_run_start_with_the_start_save_
     if valid:
         assert (harness, rec["harness_failures"]) == ([], 0)
         assert rec["recovered_launches"] == [{"t": at, "attempt": 1, "save": save, "error": LAUNCH_CRASH}]
+        assert rec["_result"]["recovered_launches"] == rec["recovered_launches"]  # result.json discloses it
     else:
         assert (harness, rec["recovered_launches"]) == (["launch_failed"], [])
+        assert "recovered_launches" not in rec["_result"]
         assert rec["_result"]["invalid_cause"][0]["kind"] == "launch_failed"
 
 

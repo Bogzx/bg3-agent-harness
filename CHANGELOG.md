@@ -132,9 +132,10 @@ game unless it says so.
   two versions, so they may pin one digest) and its own release file and start save keys (`saves/bench-v0.9/`);
   the mod and bg3 tool changes after the launch are pinned in bench-v0.9's release, never in bench-v0.8's.
   bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
-  fights-v09 re-run (a test pins its sha256). The scenario and grading files are bench-v0.9's (and bench-v0.8's), so
-  suite.json pins the same digest and `shared` pairs bench-v0.10 with bench-v0.9; `bg3bench.suite.check` now follows
-  a chain of `shared` pairs (v0.10 -> v0.9 -> v0.8), since the digest was first pinned for bench-v0.8. Its own
+  fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
+  optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
+  `bg3bench.suite.check` also follows a chain of `shared` pairs now (vC -> vB -> vA: a version re-pinning its
+  predecessor's digest that an older version pinned first). Its own
   release file (`releases/bench-v0.10.json`: mod tree 18c0fa02, the same 81 bg3 tools, new prompt hashes for pi,
   claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). What changed
   for the agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
@@ -165,7 +166,9 @@ game unless it says so.
   Invalid-run rule: a `launch_failed` before the run's run_start that relaunched the scenario's own start save is
   the run's note (run record `recovered_launches`: t, attempt, save, error), not a harness failure; a launch failure
   after run_start, or for a new-game start, still voids the run (bg3harness runs.recovered_launch). Records written
-  before it keep their failures, so re-grading a bench-v0.9 record doesn't change its validity.
+  before it keep their failures, so re-grading a bench-v0.9 record doesn't change its validity. result.json
+  discloses such launches in the optional `recovered_launches` (result v1, [{t, attempt, save, error}]; absent when
+  none).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
