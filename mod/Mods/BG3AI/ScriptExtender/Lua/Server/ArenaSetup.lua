@@ -8,7 +8,8 @@
 -- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
 --   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
---      entries' grants nor the kit's boosts: live check 12 step 13): each pair arena.mirror_spawn + arena.mirror_kit
+--      entries' grants nor the kit's boosts: live check 12 step 13): every spot cleared of Ground and Cloud surfaces
+--      (RemoveSurfaceLayerAtPosition, SURFACE_CLEAR_M), then each pair arena.mirror_spawn + arena.mirror_kit
 --      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name and StatsId within
 --      NAME_WAIT_MS of the spawn (both land after the spawn tick) and arena.symmetry over the pairs must find
 --      nothing; pair i is teams.A[i] and teams.B[i] (arena.teams, if given, must name them in that order)
@@ -22,7 +23,8 @@
 --   5. the IsEnemy matrix read every 0.5 s up to 3 s (live: SetRelation alone doesn't change it; it is right with
 --      the combat call): every pair across the teams an enemy, none within, all members in one combat, else the job
 --      fails with the matrix; no character on no team in that combat (the job fails naming each)
---   6. Ar.begin(teams, {round_cap})
+--   6. a mirror arena: arena.symmetry over the pairs again, statuses included (a twin on a surface reads INSURFACE)
+--   7. Ar.begin(teams, {round_cap})
 -- The result records each member's name, level, max HP and faction before and after (joining the party reset two
 -- companions' stat blocks in the spike: Minthara 52 -> 11 max HP, Karlach 32 -> 14).
 
@@ -41,6 +43,10 @@ Setup.ENEMY_WAIT_MS = 3000    -- the IsEnemy matrix read again until right (live
 Setup.ENEMY_EVERY_MS = 500
 Setup.LINE_GAP_M = 1.5        -- a team's members this far apart on a line along x through its spawn (spike)
 Setup.TIMEOUT_MS = 60000
+-- A mirror arena's spots are cleared of surfaces this far around before a twin stands on one (live check 13d: Cedar
+-- spawned on a surface at spot A and read INSURFACE, Dune not: the pair's statuses differed)
+Setup.SURFACE_CLEAR_M = 2.0
+Setup.SURFACE_LAYERS = { "Ground", "Cloud" } -- bg3se SurfaceLayer8
 Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike stood up
 
 local function osi(fn, ...) return V.osi(fn, ...) end
@@ -342,6 +348,16 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
             ("levels after setup differ from the arena's level %d: %s"):format(job.level, table.concat(off, ", ")))
         return
     end
+    if job.mirror then -- the pairs once more as the fight starts, statuses included (a surface under one twin)
+        local pairs = {}
+        for i = 1, #job.mirror.pairs do pairs[i] = { t.A[i], t.B[i] } end
+        local sym = Ar.Symmetry.check(pairs)
+        if not sym.ok then
+            RPC.finish_job(job, "failed", { teams = t, members = after, calls = job.calls },
+                "the twins are not mirrors as the fight starts: " .. table.concat(sym.problems, "; "))
+            return
+        end
+    end
     local sitters = {}
     for _, u in ipairs(job.sitters) do sitters[#sitters + 1] = { uuid = u, name = V.name(u) } end
     local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join })
@@ -354,6 +370,18 @@ end
 STEPS[-1] = function(job)
     local mi, M = job.mirror, Ar.Mirror
     job.kits = {}
+    for i = 1, #mi.pairs do -- every spot free of surfaces first: a pair stands on the same ground
+        for _, s in ipairs(Ar.SIDES) do
+            local p = Setup.line(job.spawns[s], #mi.pairs)[i]
+            for _, layer in ipairs(Setup.SURFACE_LAYERS) do
+                local args = { p[1], p[2], p[3], layer, Setup.SURFACE_CLEAR_M }
+                if not call(job, "RemoveSurfaceLayerAtPosition", args) then
+                    error(("RemoveSurfaceLayerAtPosition %s at pair %d's spot %s: %s"):format(layer, i, s,
+                        tostring(job.calls[#job.calls].error)), 0)
+                end
+            end
+        end
+    end
     for i, p in ipairs(mi.pairs) do
         local spots = {}
         for k, s in ipairs(Ar.SIDES) do spots[k] = Setup.line(job.spawns[s], #mi.pairs)[i] end

@@ -182,6 +182,27 @@ local function test_setup(title, fn)
     end)
 end
 
+-- A mirror arena's pairs are checked again as the fight starts, statuses included (live check 13d: a twin on a
+-- surface read INSURFACE after setup, its pair not). The teams stand in for the twins: only the last step reads mirror.
+test_setup("a mirror arena whose pairs differ as the fight starts fails setup; the match doesn't begin", function()
+    game()
+    local r, j = setup(arena())
+    eq(r.result and r.result.status, "running", "a job: " .. enc(r))
+    j.mirror = { pairs = { {}, {}, {}, {} } }
+    local check, asked = Ar.Symmetry.check, {}
+    Ar.Symmetry.check = function(p)
+        asked[#asked + 1] = p
+        return { ok = false, problems = { "pair 2 (Abe, Bea): statuses differs" } }
+    end
+    local ok, err = pcall(run, j)
+    Ar.Symmetry.check = check
+    if not ok then error(err, 0) end
+    eq(j.status, "failed", "failed")
+    eq(j.error, "the twins are not mirrors as the fight starts: pair 2 (Abe, Bea): statuses differs", "error")
+    eq(enc(asked), enc({ { { A1, B1 }, { A2, B2 }, { A3, B3 }, { A4, B4 } } }), "the pairs, once")
+    eq(Ar.active(), false, "no match")
+end)
+
 test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right: the match begins", function()
     game()
     local r, j = setup(arena())
