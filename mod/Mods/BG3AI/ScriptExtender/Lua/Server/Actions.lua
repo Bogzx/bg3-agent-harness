@@ -44,6 +44,7 @@ A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centre
 A.END_REQUEST_AFTER_MS = 400
 A.END_IGNORED_MS = 3000 -- end_turn: the game ignored EndTurn (no group pending) this long: failed (bridge: HUD button)
 A.END_IGNORED = "the game ignored the end-turn order"
+A.END_LAST_WAIT_MS = 20000 -- arena: a turn group's last end waits this long for the game to close it (S087: 18 s)
 -- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine
 -- dropped UseSpellAtPosition without CastSpellFailed. No CastSpell and no step this long after the order: fail.
 A.CAST_NO_START_MS = 8000

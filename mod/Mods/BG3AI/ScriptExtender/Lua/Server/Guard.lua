@@ -345,12 +345,30 @@ function G.turn_is_over(uuid)
     return true
 end
 
+-- Someone else in g's turn group is still to act: G.still_to_act read from our records (an end of ours on record,
+-- whatever its age, counts as ended), since end_pending is part of still_to_act.
+local function others_still_to_act(g)
+    for _, m in ipairs(G.turn_group_members()) do
+        local mg = G.guid(m) or m
+        if not G.same(mg, g) and not G.end_requested[mg] and not G.turn_is_over(mg) and not G.turn_passed(mg) then
+            local active, req = tb_flags(mg)
+            if active and not req then return true end
+        end
+    end
+    return false
+end
+
 function G.end_pending(uuid)
     local g = G.guid(uuid) or uuid
     if g and G.turn_is_over(g) then return true end
     local t = g and G.end_requested[g]
     if not t then return false end
-    if now_ms() - t > G.END_REQUEST_TTL_MS or not G.in_combat(g) then
+    -- In an arena a team phase can outlast the TTL (the runner's cap is turn_cap_s per member): the earlier phase's
+    -- ends stay pending while anyone else in the group is still to act, or that phase reopens and takes the group back.
+    local Ar = BG3AI.Arena
+    local expired = now_ms() - t > G.END_REQUEST_TTL_MS
+        and not (Ar and Ar.active() and others_still_to_act(g))
+    if expired or not G.in_combat(g) then
         G.end_requested[g] = nil
         return false
     end

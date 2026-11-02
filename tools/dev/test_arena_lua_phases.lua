@@ -209,3 +209,97 @@ test("a held member is still to act, not its turn", function()
     G.end_requested[A1] = clock
     eq(G.still_to_act(A1), false, "A1 ended")
 end)
+
+test("a team phase over END_REQUEST_TTL_MS: the earlier phase's ends stay pending while the group still has B to act",
+    function()
+    begin()
+    order = { { A1, A2, B1, B2 } }
+    openAll({ A1, A2, B1, B2 })
+    G.end_requested[A1], G.end_requested[A2] = clock, clock -- A's phase ended; the game keeps the group open
+    clock = clock + G.END_REQUEST_TTL_MS + 1000            -- B's phase runs past the TTL
+    eq(G.end_pending(A1), true, "A1's end kept")
+    eq(Ar.acting_side(), "B", "B still acts")
+    eq(G.is_my_turn(A1), false, "A1's turn")
+    G.end_requested[B1], G.end_requested[B2] = clock, clock -- B ended too: nobody else is still to act
+    eq(G.end_pending(A1), false, "the TTL applies again: A1's old end forgotten")
+end)
+
+local A = BG3AI.Actions
+
+-- The group's last end (A1's pending, B1 the last still to act); the job of B1's end_turn.
+local function lastEnd()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { { A1, B1 } }
+    openAll({ A1, B1 })
+    G.end_requested[A1] = clock
+    tick()
+    eq(Ar.acting_side(), "B", "B's phase")
+    return endTurn(B1, "B")
+end
+
+test("the group's last end waits for the game past END_IGNORED_MS and the 10 s job limit; the next round ends it",
+    function()
+    local j = lastEnd()
+    ticks(math.floor(18000 / Ar.PHASE_EVERY_MS)) -- S087: 18 s to the group's TurnEnded
+    eq(j.status, "running", "still waiting at 18 s: " .. tostring(j.error))
+    fire("CombatRoundStarted", "combat1", 2)
+    tick()
+    eq(j.status, "done", "B1's end: " .. tostring(j.error))
+    eq(j.result.ended_again, nil, "nobody's EndTurn sent again in the new round")
+end)
+
+test("the group's last end: its own TurnEnded at 5 s ends it", function()
+    local j = lastEnd()
+    ticks(20)
+    fire("TurnEnded", "S_Player_" .. B1)
+    eq(j.status, "done", "TurnEnded at 5 s")
+end)
+
+test("the group's last end: no close in END_LAST_WAIT_MS fails 'ignored'", function()
+    local j = lastEnd()
+    ticks(math.floor(A.END_LAST_WAIT_MS / Ar.PHASE_EVERY_MS) - 1)
+    eq(j.status, "running", "just short of END_LAST_WAIT_MS")
+    ticks(2)
+    eq(j.status, "failed", "status")
+    eq(j.error, A.END_IGNORED, "error")
+end)
+
+-- Live load2 (2026-11-02, phases3): one act.end_turn at a time, the next ~30.5 s later (the driver waited 30 s per end
+-- for an engine flag a shared group never changes), B's first phase held 35 s. The game changes no flag on these
+-- ends; the group closes only once every member has ended. A1's end was 120 s old during B's phase and A1 reopened:
+-- the driver ended the reopened members again (48 ends) and the group never closed (25 min in round 1).
+test("live load2 replay: ends 30.5 s apart, B held 35 s: no ended member reopens and the group's last end closes it",
+    function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { { A1, A2, B1, B2 } }
+    openAll({ A1, A2, B1, B2 })
+    burst({ A1, A2, B1, B2 })
+    tick()
+    local function drive(u, side)
+        local p = Ar.phase()
+        eq(p and p.side, side, "the acting side at " .. u .. "'s end")
+        eq(p.members[1], u, "the phase's first member")
+        local j = endTurn(u, side)
+        ticks(2)
+        eq(j.status, "done", u .. "'s end: " .. tostring(j.error))
+        eq(j.result.requested, true, u .. "'s end pending")
+        ticks(math.floor(30500 / Ar.PHASE_EVERY_MS))
+    end
+    drive(A1, "A")
+    drive(A2, "A")
+    ticks(math.floor(35000 / Ar.PHASE_EVERY_MS)) -- B's first phase held
+    drive(B1, "B")                              -- A1's end is now over 120 s old
+    eq(G.is_my_turn(A1), false, "A1 stays ended")
+    local j = endTurn(B2, "B")                  -- the group's last end
+    tick()
+    eq(j.status, "running", "B2's end waits for the game")
+    for _, r in ipairs(refs("arena_turn")) do
+        if r.phase > 2 then eq(r.side, "B", "no phase back to A (phase " .. r.phase .. ")") end
+    end
+    for _, u in ipairs({ A1, A2, B1, B2 }) do setTurn(u, false, false) end
+    for _, u in ipairs({ A1, A2, B1, B2 }) do fire("TurnEnded", "S_Player_" .. u) end
+    tick()
+    eq(j.status, "done", "B2's end: " .. tostring(j.error))
+end)
