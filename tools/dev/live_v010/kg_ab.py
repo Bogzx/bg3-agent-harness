@@ -17,7 +17,8 @@ as BG3AI._kg_snap and in runtime/probes/v010/kg-snap-<scenario>.json). Then per 
 order (goal 0 new then old, goal 1 old then new, ...). Each trip runs in its own process (no bridge state carried
 from one trip to the next) and starts with a restore: every party member teleported back to its snapshot spot, the
 breadcrumb store put back, N.seenPts emptied; then the rule's constants (new: CAMERA_M 40, EDGE_DROP_M 15, PEEK_H 1,
-PEEK_MAX_DOWN tan 60; old: 0, 4, 0.5, 1 = origin/main's rule), then travel_to(x, y, z, fast="never") as the agent
+PEEK_MAX_DOWN tan 60, or $V010_NEW_RULE's measured values; old: 0, 4, 0.5, 1 = origin/main's rule), then
+travel_to(x, y, z, fast="never") as the agent
 calls it (blocking), and one wait_for on its id if it returned "still waiting" (cap 150 s a trip). The new
 constants are set back after every trip, whatever happened. Per trip a row in runtime/probes/v010/kg-trips.jsonl
 (goal, rule, wall s, outcome, m left, legs, legs "along the route", end position and its distance to the goal, both
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -40,7 +42,15 @@ from common import OUT, call, lua_json, rec, save_image, server
 HERE = Path(__file__).resolve().parent
 TRIPS = OUT / "kg-trips.jsonl"
 CAP_S = 150.0
-RULES = {"new": "40, 15, 1.0, math.tan(math.rad(60))", "old": "0, 4, 0.5, 1"}
+# new = the shipped constants, or the window's measured ones: V010_NEW_RULE="CAMERA_M,EDGE_DROP_M,PEEK_H,PITCH_DEG"
+# (orchestrator 2026-11-02: when K0's camera read differs, the window uses what the screen shows)
+_M = os.environ.get("V010_NEW_RULE", "").split(",")
+NEW = (
+    f"{float(_M[0])}, {float(_M[1])}, {float(_M[2])}, math.tan(math.rad({float(_M[3])}))"
+    if len(_M) == 4
+    else "40, 15, 1.0, math.tan(math.rad(60))"
+)
+RULES = {"new": NEW, "old": "0, 4, 0.5, 1"}
 
 SET_RULE = r"""
 local V = Mods.BG3AI.BG3AI.Visibility
