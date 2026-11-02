@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: a combat row that ended its turn no longer says current
+
+- get_combat_state rows print `current` only when the row has not `ended`: `ended current` is now `ended`. An ended
+  row is always in the current turn group (the mod sets `ended` only there), so nothing is lost. In a two-team match
+  the game puts every player character in one shared group, so every row used to read `current` next to the
+  `COMBAT current=<the acting one>` line.
+
 ## 2026-11-02: EVENTS leaves out the old round's turn ends
 
 - When a turn group closes, the game starts the new round's turns before it ends the old round's, so EVENTS could

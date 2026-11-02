@@ -250,6 +250,22 @@ class Rules(unittest.TestCase):
         self.assertEqual(compact.combat_row(folded),
                          "  e29 Lae'zel party init 4 hp 100% current can_act @(-45,3,-404) from e1 1.6m")
 
+    def test_an_ended_row_is_not_current(self):
+        # arena live 8: one shared group, every member "ended current" next to COMBAT current=e2 (the acting one)
+        from bg3ai.render import Handles, render_combat
+        u1, u2 = (f"00000000-0000-0000-0000-{n:012d}" for n in (41, 2))
+        order = [{"uuid": u1, "name": "Gale", "relation": "hostile", "initiative": 5, "hp_pct": 0, "is_current": True,
+                  "ended": True},
+                 {"uuid": u2, "name": "Wyll", "relation": "party", "initiative": 2, "hp_pct": 10, "is_current": True,
+                  "can_act": True}]
+        raw = render_combat({"active": True, "round": 1, "current": u2, "order": order}, Handles()).split("\n")
+        self.assertEqual(raw[1:], ["  e2 name=Gale relation=hostile initiative=5 hp_pct=0 ended",
+                                   "  e1 name=Wyll relation=party initiative=2 hp_pct=10 is_current can_act"])
+        self.assertEqual(compact.combat_row("  is_current ended relation=party e3 Gale initiative=5 hp_pct=0"),
+                         "  e3 Gale party init 5 hp 0% ended")
+        self.assertEqual(compact.combat_row("  is_current can_act relation=party e2 Wyll initiative=2 hp_pct=10"),
+                         "  e2 Wyll party init 2 hp 10% current can_act")
+
     def test_reported_positions_round_offered_targets_do_not(self):
         line = "REMEMBERED e5 Imp last seen @(-36.6,15.2,-432.3) 38s ago; closest walkable spot (-46.2,5.1,-361.8)"
         self.assertEqual(compact.coords(line),

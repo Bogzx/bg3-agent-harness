@@ -398,7 +398,10 @@ def render_combat(res: dict, H: Handles) -> str:
             n = str(o.get("name") or "?")
             objs[n] = objs.get(n, 0) + 1
         else:
-            lines.append("  " + compact({k: v for k, v in o.items() if k != "disabled"}, H))  # DISABLED lines
+            # an ended row was in the current group (the mod sets ended only there): "current" on it read as acting
+            # (arena live 8: every member of the one shared group showed "ended current" next to COMBAT current=e2)
+            drop = ("disabled", "is_current") if o.get("ended") else ("disabled",)  # disabled: the DISABLED lines
+            lines.append("  " + compact({k: v for k, v in o.items() if k not in drop}, H))
     if objs:
         lines.append("OBJECTS on the turn order (props): "
                      + ", ".join(n + (f" x{c}" if c > 1 else "") for n, c in sorted(objs.items(), key=lambda x: -x[1])))
