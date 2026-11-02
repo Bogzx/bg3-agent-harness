@@ -15,7 +15,7 @@ import jsonschema
 import pytest
 from bg3harness.arena import match as am
 from bg3harness.arena.spec import ArenaSpec, ArenaSpecError, Side
-from bg3harness.testing.scripted import FakeClock, GameModel
+from bg3harness.testing.scripted import FakeClock, GameModel, Member
 
 REPO = Path(__file__).resolve().parents[3]
 FACTS_SCHEMA = json.loads((REPO / "packages" / "harness" / "schemas" / "facts.v1.schema.json").read_text())
@@ -90,10 +90,10 @@ class ArenaModel(GameModel):
                 self.mod_round = r
         return seq
 
-    def _push_turn(self, kind: str) -> None:
-        super()._push_turn(kind)
+    def _push_turn(self, kind: str, who: Member | None = None, rnd: int | None = None) -> None:
+        super()._push_turn(kind, who, rnd)
         a = self._match()
-        if kind != "turn_started":
+        if kind != "turn_started":  # a round change: round_started, this turn_started, then the old round's turn_ended
             return
         now = a.acting
         self.mod_round = max(self.mod_round, 1)
