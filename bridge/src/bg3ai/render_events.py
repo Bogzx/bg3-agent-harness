@@ -189,6 +189,36 @@ class EventEcho:
 ECHO = EventEcho()
 
 
+class StaleTurnEnds:
+    """Across calls: when a turn group closes, the game starts the new round's turns before it ends the old round's
+    (phases4 load1, rounds 2-4: round_started N, turn_started x8, then the 8 turn_ended of round N-1 1-3 ms later), so
+    "X's turn ended" can come after X's next turn started, in the same read or in the next one. The mod tags both with
+    the round the turn belongs to: a turn_ended of a round older than that member's last turn_started shown is that
+    older turn's and is dropped (the new start already says it was over). Events without a round are kept as before."""
+
+    def __init__(self) -> None:
+        self.started: dict[str, int] = {}  # member uuid -> the round of its last turn_started
+
+    def filter(self, evs: list[dict]) -> list[dict]:
+        out = []
+        for e in evs:
+            kind, d = e.get("kind"), e.get("data")
+            r = d.get("round") if isinstance(d, dict) else None
+            u = d.get("uuid") if isinstance(d, dict) else None
+            if kind in ("turn_started", "turn_ended") and isinstance(r, int) and isinstance(u, str):
+                if kind == "turn_started":
+                    self.started[u] = r  # the latest start (a new combat starts again at round 1)
+                elif r < self.started.get(u, r):
+                    continue
+            out.append(e)
+        if len(self.started) > 300:
+            self.started.clear()
+        return out
+
+
+STALE_ENDS = StaleTurnEnds()
+
+
 def one_line(text: str, cap: int = 240) -> str:
     """A multi-line step result as one line for an event field (queue_interrupted last=): the step's own line
     plus its FAILED/INTERRUPTED/STOPPED lines, up to its CHANGES/EVENTS/RUNNING/NOW block. An event value
@@ -243,12 +273,15 @@ def _group_statuses(evs: list[dict], H: Handles) -> list[dict]:
 
 
 def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None,
-                  flap: StatusFlap | None = None, party: set | None = None, echo: EventEcho | None = None) -> str:
+                  flap: StatusFlap | None = None, party: set | None = None, echo: EventEcho | None = None,
+                  turn_ends: StaleTurnEnds | None = None) -> str:
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
     (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP).
-    echo: the cross-call duplicate filter (server passes ECHO)."""
+    echo: the cross-call duplicate filter (server passes ECHO). turn_ends: the cross-call stale turn-end filter
+    (server passes STALE_ENDS)."""
     m = re.match(r"TURN (e\d+)", body or "")
     own = m.group(1) if m else None
+    evs = turn_ends.filter(evs) if turn_ends is not None else evs
     evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
     evs = echo.filter(evs) if echo is not None else evs
     evs = _drop_flicker(flap.filter(evs, party) if flap is not None else evs)
@@ -264,6 +297,8 @@ def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", 
         data = e.get("data")
         if e.get("kind") == "dialogue_started" and isinstance(data, dict):  # where/level: the bridge's (vis V26)
             data = {k: v for k, v in data.items() if k not in ("at", "level")}
+        if e.get("kind") in ("turn_started", "turn_ended") and isinstance(data, dict) and "round" in data:
+            data = {k: v for k, v in data.items() if k != "round"}  # the round line says it; the filter's key only
         txt = compact(data, H) if isinstance(data, (dict, list)) else (H.scrub(str(data)) if data is not None else "")
         txt = re.sub(r"\s*\n\s*", " | ", txt.strip())  # one event, one line: a raw newline would end the block
         kind = e.get("kind")
