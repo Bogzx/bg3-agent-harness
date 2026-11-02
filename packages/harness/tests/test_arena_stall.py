@@ -146,7 +146,12 @@ def test_a_phase_whose_game_still_rolls_is_not_stalled(tmp_path):
     """A new roll ring row every 200 s is progress: a phase that holds no model time but whose game moves runs on
     to the wall cap with no stall."""
     model, game, clock, agents, spec = setup({"A": looper, "B": passer})
-    clock.tick_hooks.append(lambda: model.roll(True) if int(clock.t) % 200 == 0 else None)
+
+    def roll_every_200_s() -> None:
+        if int(clock.t) % 200 == 0:
+            model.roll(True)
+
+    clock.tick_hooks.append(roll_every_200_s)
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.end is not None and out.end["reason"] == "wall_cap"
     assert stalls(tmp_path) == []

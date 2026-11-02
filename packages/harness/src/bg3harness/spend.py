@@ -30,7 +30,8 @@ class BudgetError(ValueError):
     pass
 
 
-def is_paid(client: str) -> bool:
+def is_paid(client: str | None) -> bool:
+    """None: a runner with no client of its own (an arena match's; its sides' clients are checked one by one)."""
     return client in PAID_CLIENTS
 
 
