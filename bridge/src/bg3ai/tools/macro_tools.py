@@ -103,13 +103,20 @@ def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
     return lines, None, []
 
 
-def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, left: list[str], t0: float) -> str:
+def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, left: list[str], t0: float,
+                  walked: bool = False) -> str:
+    """walked (regroup): the walks' end, so CHANGES comes with the minimap block (batch.walk_end_tail)."""
     if stop:
         lines.append(f"STOPPED: {stop}" + (f"; not reached: {', '.join(left)}" if left else ""))
         reporting._batch["last"] = "interrupted"
-    changes = delta.changes_text(core.game, core.H)
-    if changes:
-        lines.append(changes)
+    if walked and not reporting._batch["active"]:
+        tail = batch.walk_end_tail()
+        if tail:
+            lines.append(tail.lstrip("\n"))
+    else:
+        changes = delta.changes_text(core.game, core.H)
+        if changes:
+            lines.append(changes)
     return reporting._finish(tool, args, "\n".join(lines), t0)
 
 
@@ -314,5 +321,5 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402, F401
-    travel_macro, session,
+    travel_macro, session, batch,
 )

@@ -577,7 +577,10 @@ TRACKER = Tracker()
 
 _OPS = {"status": ("state.status", {}), "nearby": ("state.nearby", {"radius": 25}),
         "markers": ("nav.markers", {}), "inventory": ("state.inventory", {}), "journal": ("state.journal", {}),
-        "map": ("state.map", {}), "hazards": ("nav.hazards", {})}
+        "map": ("state.map", {}), "hazards": ("nav.hazards", {}),
+        # the minimap block's leads + WAYS (minimap.py): at a walk's end only the warm-up's answers, never a cold
+        # path search (NAV-6: the S038 freeze moment was a cold frontier right where a walk ended)
+        "frontier": ("nav.frontier", {"ways_cached": True})}
 
 
 def _bracket(payload: str) -> str:
@@ -680,12 +683,17 @@ def snapshot_of(H: Handles, got: dict) -> dict:
                     map_=got.get("map"))
 
 
-def changes_text(game: Any, H: Handles, parts: tuple = ACTION_PARTS, tracker: Tracker | None = None) -> str:
+def changes_text(game: Any, H: Handles, parts: tuple = ACTION_PARTS, tracker: Tracker | None = None,
+                 got: dict | None = None) -> str:
     """For action tools: "CHANGES\\n  <lines>" since the agent's last look, or "" if nothing changed.
+    got: filled with what was fetched (the minimap block reads its parts from the same read).
     Never raises (an action result must not fail because the observation did)."""
     tr = tracker or TRACKER.bind(H)
     try:
-        lines = tr.observe(snapshot_of(H, fetch(game, parts)))
+        fetched = fetch(game, parts)
+        if got is not None:
+            got.update(fetched)
+        lines = tr.observe(snapshot_of(H, fetched))
     except Exception:  # noqa: BLE001 - the game may be mid-load; the action result still stands
         return ""
     if not lines:

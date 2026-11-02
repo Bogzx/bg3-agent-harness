@@ -367,6 +367,8 @@ def fast_travel(waypoint: str) -> str:
         res = reporting._batch.get("result")
         overview.trip_arrived(sub, f"the trip to {(res.get('arrived') if isinstance(res, dict) else None) or waypoint}")
         out += _left_behind_after_trip(waypoint)
+        if not reporting._batch["active"]:
+            out += batch.walk_end_tail()  # the arrival: CHANGES + the minimap block, as at a walk's end
     return (left + "\n" + out) if left else out
 
 

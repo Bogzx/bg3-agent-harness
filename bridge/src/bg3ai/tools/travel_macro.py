@@ -30,11 +30,11 @@ from . import (
 @reporting._guard
 def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target: str = "",
               x: float | None = None, y: float | None = None, z: float | None = None, who: str | None = None,
-              wait: bool = False, avoid_hazards: str = "auto", fast: str = "auto", note: str = "",
+              wait: bool = True, avoid_hazards: str = "auto", fast: str = "auto", note: str = "",
               trespass: bool = False) -> str:
     """Get somewhere far in one call: your map marker (m1 or words of its label), a quest objective on this level (o1), a visible target, x,y,z, or an unlocked waypoint (fast travel). Walks the game's own route in one go when the whole way is plain walking (long trips in ≤55 m legs), else chains walks of up to 30 m along walkable ground toward it, around harmful surfaces you can see (fire, acid, ...); a leg that fails on the ground (no path, blocked) is retried another way (along the route, or shorter; twice per trip); stops on arrival (within 3 m), when no walkable ground leads further, after 2 legs without progress, or at the first interrupt (combat, conversation, prompt, new hostile, any damage). Stepping into a surface: it steps out (forward if it can) and goes on.
     avoid_hazards: auto (default) = when no clear way leads on, it takes the shortest crossing (says e.g. 'crossing 1.5m of Fire (~1-4 dmg + Burning)') unless HP is too low for the worst case; strict = never crosses; cross = crosses even at low HP (never lava/chasms, never >6 m).
-    Returns within ~1 s with live progress (m left, ETA), or the outcome if the trip already ended: the trip runs as the first entry of the character's action queue, so queue_actions appends what to do on arrival while you observe and plan. Every later result shows it RUNNING, then queue_done or queue_interrupted (why). wait is ignored (the trip never blocks).
+    Returns at the trip's end with its outcome, what changed and the minimap block (objectives, WAYS, nearest unvisited leads); a trip still going ~90 s after the call returns its progress (m left, ETA) and wait_for('queue') keeps waiting. The trip runs as the first entry of the character's action queue: wait=false returns within ~1 s with live progress instead, queue_actions then appends what to do on arrival, and later results show it RUNNING, then queue_done or queue_interrupted (why).
     fast: auto (default) = a trip of 120 m+ fast travels first to an unlocked waypoint of this level that is much nearer the goal (says so); never = always walk.
     A trip that stops twice at the same blocked spot says "tried 2x: blocked" and names another way (a waypoint, another side); route() shows the dead ends, unlocked waypoints and the closest spot you have been.
     note: memory log line(s) appended to your session log at once, as note() does: write notes with the walk, no extra turn.
@@ -60,7 +60,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             (x, y, z), target = seen[0], ""
         elif here and tp and macros.dist(here, tp) > macros.TRAVEL_LEG_M:
             x, y, z, target = tp[0], tp[1], tp[2], ""
-    if not reporting._batch["active"]:  # wait=true too: the agent plans while the character walks
+    if not reporting._batch["active"]:  # a queue entry, waited on here unless wait=false
         return seen_txt + batch._travel_async(char, w, marker, objective, target, x, y, z, t0, policy, waited=wait,
                                         fast=(fast or "auto").strip().lower() != "never", trespass=trespass)
     outer = reporting._batch["exec"] if reporting._batch["active"] else None  # the queue running this trip: its cancel stops it
@@ -689,7 +689,8 @@ def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, ch
                 r = core.game.run_job("act.chain", {"char": u, "leader": lead}, wait_s=10)
                 ok = r.status == "done" or "already chained" in str(r.error or "")
                 lines.append(f"chain {queueing._label(u)} → {queueing._label(lead)}: " + ("done" if ok else f"{r.status} — {r.error}"))
-    return macro_tools._macro_finish("regroup", {}, [f"regroup at {queueing._label(lead)}: {len(far)} walking"] + lines, stop, [], t0)
+    return macro_tools._macro_finish("regroup", {}, [f"regroup at {queueing._label(lead)}: {len(far)} walking"] + lines, stop, [], t0,
+                                     walked=True)
 
 
 _READ_FILE = "read_items.json"

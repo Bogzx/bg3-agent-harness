@@ -5,6 +5,54 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: walks out of combat return at their end (wait=true is the default)
+
+- `move_to`, `walk_toward` and `travel_to` default to `wait=true` and, out of combat, return at the walk's end with
+  the walk's own result: what `wait_for(<job>)` / `wait_for('queue:<who>')` returned until now (the same early
+  stops: a prompt, a dialogue or a fight starting ends the wait and says so), with CHANGES and the minimap block.
+  The `started j12` line is not shown when the walk ended. `route(go=true)` and a far `move_to` (via travel_to)
+  block the same way.
+- A walk or trip still going 90 s after the call started (plumbing.WALK_BUDGET_S, under the clients' 110 s MCP
+  timeout) returns its progress (`still waiting for j12 after 90s`, the RUNNING line with metres/ETA left) and
+  `wait_for('j12') keeps waiting for it` (`queue:<who>` for a trip), never a tool timeout.
+- `wait=false` keeps the old behaviour (returns within ~1 s, `started j12, ETA 3s`, NEXT hints for pipelining).
+  The pace-guard note ("wait=true ignored outside combat") and travel_to's "(wait=true ignored ...)" are gone.
+- Metrics: a call's `async` flag now needs its own background job still running when it returned (a blocking walk's
+  job starts and ends inside the call); a walk that ended in the 0.3 s settle window no longer counts as async.
+- Human-gap research: 74-89% of launch-v1's out-of-combat walks were followed at once by wait_for (2,866 calls,
+  ~93 min of model think, ~$22).
+
+## 2026-11-02: every walk end and every look carry the minimap block
+
+- Out of combat, every walk end (wait_for on a walk or trip, a walk that ends in the settle window, a blocking
+  walk, jump_to, travel_to's settle, regroup, a fast travel's arrival) and every `look` end with three lines, always
+  (not only when something changed), arrived or stopped short:
+  `OBJECTIVES o1 Escape the ship 16m W (3.4m down) [Escape the Nautiloid] | o2 ... | +1 more (get_map lists all)`
+  (up to 3, here first, nearest first; another area's marker says `(another area)`; `none on the map`), the
+  `WAYS walkable:` line, and `LEADS (unvisited; get_frontier lists all):` with the 3 nearest unvisited leads (was
+  the first 5 unvisited, and only after a walk that ended `done`).
+- One renderer (bridge/src/bg3ai/minimap.py). Its frontier read (`nav.frontier ways_cached`) moved into the CHANGES
+  read's eval, so a walk end no longer makes a separate nav.frontier round trip (launch-v1: median 56 ms, p90 96 ms
+  each); look and the other walk ends read it in their existing eval. A busy spot's block is under 300 tokens.
+- `look(full=true)` no longer prints its separate OBJECTIVE lines: the block carries them.
+
+## 2026-11-02: trade sell="junk" names what it sold
+
+- The result lists every item sold, grouped by name with the count and the gold at the shown prices, most gold
+  first (`SOLD Goblin Scimitar x4 12 g | Skull x2 4 g`), and counts what the junk rule kept back of the items on
+  the trade screen by kind (`KEPT (not junk) on this trade screen: 12 consumables, 4 equipped, 1 story`). The
+  sale's own item events stay out of EVENTS (the list replaces them). launch-v1's 36 sell=junk calls sold 430
+  items for ~4,000 g, and their results named none of them.
+
+## 2026-11-02: roll_check stops on a failed roll; a reroll is its own call
+
+- A failed roll with Inspiration left returns with the roll screen still open (the roll line shows DC, die, bonus
+  and Inspiration left) and says how to go on: `roll_check(reroll=true)` rolls again for 1 Inspiration,
+  `roll_check()` continues with the failure. A success still continues in the same call; a failure with no
+  Inspiration left, or a reroll the game ignored, continues too (nothing to choose).
+- `reroll_on_fail` is removed (not refused): it rerolled before the failure was seen (human-gap research: 15 of
+  launch-v1's Inspiration points were spent that way). `reroll` replaces it and acts on the result on screen.
+
 ## 2026-11-02: the action list prints costs and ranges as the game states them
 
 - A cost's named resources read in words, after the action economy and the spell slot, in one fixed order:

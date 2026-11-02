@@ -254,7 +254,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     fire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
     help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.
     A goal on ground the party hasn't seen or walked gets only its distance and direction.
-    go=true: check and go in one call: starts travel_to the goal when a path exists, else to the closest walkable spot."""
+    go=true: check and go in one call: travel_to the goal when a path exists, else to the closest walkable spot (it returns at the trip's end, as travel_to does)."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": plumbing._who_uuid(who)} if who else {}  # no char: nav.route uses the active one
     t = (target or objective).strip()
@@ -379,8 +379,8 @@ WALK_CLIP_MOVEMENT = True
 @core.mcp.tool()
 @reporting._guard
 def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
-                who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (out of combat it returns within ~1 s with a job id + ETA, or the result if it already ended; in combat it returns at the walk's end). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
+                who: str | None = None, run: bool = True, wait: bool = True) -> str:
+    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (it returns at the walk's end with what changed and the minimap block; out of combat wait=false returns within ~1 s with a job id + ETA instead). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": plumbing._who(who), "max_m": max_m}
     if objective:
@@ -436,9 +436,9 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         head += f", stopping short of {macros.hazard_text(res['hazard_beyond'])}"
     if res.get("standing_in"):
         head += f" (you are standing in {res['standing_in']})"
-    wait, note = plumbing._walk_wait(wait)
+    wait, block = plumbing._walk_wait(wait)
     body = plumbing._act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait,
-                note=note)
+                block=block)
     left = turn.movement_left(body) if WALK_CLIP_MOVEMENT and turn.move_too_long(body) else None
     over = turn_plan._path_over(body)
     if left is not None and left >= 1.0 and over is not None and res.get("straight_m") is not None:
@@ -457,7 +457,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
             r2 = core.game.try_rpc("nav.reach_toward", {**args, "max_m": budget, "loose": True}) if budget >= 1.0 else None
         if isinstance(r2, dict) and r2.get("reachable") and r2.get("pos"):
             body = plumbing._act("walk_toward", "act.move_to", {"char": args["char"], "pos": r2["pos"], "run": run},
-                        wait=wait, note=note)
+                        wait=wait, block=block)
             head += (f"; cut to the movement left ({render.num(left)}m): "
                      f"{render.num(r2.get('straight_m', budget))}m")
     return head + "\n" + body

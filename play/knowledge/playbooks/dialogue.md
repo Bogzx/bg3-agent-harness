@@ -57,8 +57,9 @@ get_dialogue()                        # speaker, current line, numbered options 
                                       # ([Persuasion], [Insight], class/race tags, [Illithid]…), or the
                                       # roll / reaction / popup on screen with its displayed DC
 choose_dialogue(option=2)             # returns the next line and options
-roll_check(boosts="Guidance", reroll_on_fail=false)   # resolves the roll on screen; boosts only
-                                      # from what the roll screen offers
+roll_check(boosts="Guidance")         # resolves the roll on screen; boosts only from what the
+                                      # roll screen offers; a failure with Inspiration left stays
+                                      # on screen: roll_check(reroll=true) or roll_check()
 do_actions(actions='[{"tool":"choose_dialogue","option":1},{"tool":"choose_dialogue","option":1}]')
                                       # chain obvious picks; stops at a roll or new choices
 ```
@@ -77,7 +78,7 @@ Cutscenes are skipped and spoken lines fast-forwarded; read the `dialogue_line` 
 - **Class/race/background options** ([CLERIC], [HALF-ORC], [SOLDIER]…) need no roll and often give unique,
   in-character results. Prefer them when they fit your goals.
 - Natural 20 always succeeds and natural 1 always fails on dialogue checks `[wiki]`. Inspiration points
-  allow one reroll (`reroll_on_fail=true`). Use it on checks that matter.
+  allow one reroll of a failed roll (`roll_check(reroll=true)` while it is on screen). Use it on checks that matter.
 - **Think harder on story choices.** For companions, factions, sparing or killing, [Illithid] and promises,
   read every option and check memory (decisions.md, npcs.md) and CHARACTER.md (How they decide). Write the
   decisions.md entry first, with the in-character reason. Routine

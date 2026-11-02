@@ -249,8 +249,8 @@ def clear_server_state() -> None:
     each test, so a test that leaves an _async job behind (a walk the queue never polled to its end) can't make a
     later module's tools poll it ('unittest test_turn_based test_objectives': 12 FAILs "unexpected op job.poll")."""
     for d in (plumbing._async, batch._early, batch._early_seen, macro_tools._looted, overview._ability_ids, batch._trips,
-              queueing._queue_ignore, overview._chain_refused):
-        d.clear()
+              queueing._queue_ignore, overview._chain_refused, overview._objective_ids):
+        d.clear()  # _objective_ids: walk results read the markers now (minimap block), so o1 is per test too
 
 
 def reset_handles() -> None:
@@ -260,6 +260,14 @@ def reset_handles() -> None:
     h.by_handle.clear()
     h.names.clear()
     h._n = 0
+
+
+def no_changes(game, H, parts=delta.ACTION_PARTS, tracker=None, got=None) -> str:
+    """Base's delta.changes_text: no CHANGES lines (the fake world would fill them), but the read itself still
+    happens for a caller that takes what it fetched (got=: the minimap block after a walk)."""
+    if got is not None:
+        got.update(delta.fetch(game, parts))
+    return ""
 
 
 class Base(unittest.TestCase):
@@ -275,7 +283,7 @@ class Base(unittest.TestCase):
         queueing._queue_mgr = None
         clear_server_state()
         core.MEMORY = self.tmp
-        delta.changes_text = lambda game, H: ""
+        delta.changes_text = no_changes
         actq.WATCH_EVERY_S, actq.UI_EVERY_S = 0.01, 0.01
         self.addCleanup(self._restore, saved)
         # Old tests check the instant-return shape; settle-window tests set it themselves.
