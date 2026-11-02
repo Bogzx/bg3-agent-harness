@@ -113,7 +113,9 @@ in [ARCHITECTURE.md](ARCHITECTURE.md), "The mod"). Ops are registered wherever t
 
 ### Events (`Server/Events.lua`; owner: **vis**)
 `RPC.push(kind, data)` for visible facts, with kinds such as `combat_started`, `combat_ended`,
-`turn_started{uuid}`, `turn_ended`, `round_started`, `damage{source?,target,amount,type}`,
+`turn_started{uuid, round?}`, `turn_ended{uuid, round?}` (round: the round the turn belongs to, absent when the mod
+never saw that combat's round start; at a round change the game sends the new round's turn_started before the old
+round's turn_ended), `round_started`, `damage{source?,target,amount,type}`,
 `status_applied/removed` (visible statuses only), `died`, `downed`, `dialogue_started{speakers}`,
 `dialogue_ended`, `roll_result{roller,skill,dc?,total,success}`, `quest_update{title}`, `xp`,
 `level_up_available{uuid}`, `item_added{owner,name,count}`, `gold_changed`, `level_changed{level}`,

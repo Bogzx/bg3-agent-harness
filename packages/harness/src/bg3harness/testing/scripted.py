@@ -321,7 +321,7 @@ class GameModel:
         }
         self.push("combat_started", {})
         self.push("round_started", {"round": 1})
-        self.push("turn_started", self._ref_of(order[0]["uuid"], order[0]["name"]))
+        self.push("turn_started", {**self._ref_of(order[0]["uuid"], order[0]["name"]), "round": 1})
         self.ref_record("combat_started", combat=f"combat-{self.boots}-{len(self.ref.records)}")
 
     def kill(self, name: str) -> None:
@@ -397,12 +397,13 @@ class GameModel:
         else:
             self.arena.hidden.discard(uuid)
 
-    def _push_turn(self, kind: str) -> None:
+    def _push_turn(self, kind: str, who: Member | None = None, rnd: int | None = None) -> None:
+        """turn_started/turn_ended of `who` (the acting one), tagged with the round its turn belongs to (Events.lua)."""
         a = self.arena
         assert a is not None
-        now = a.acting
-        ref = self._ref_of(now.uuid, now.name)
-        self.push(kind, ref, views={s: ref for s in a.teams if a.sees(s, now.uuid)})
+        m = who or a.acting
+        ref = {**self._ref_of(m.uuid, m.name), "round": a.round if rnd is None else rnd}
+        self.push(kind, ref, views={s: ref for s in a.teams if a.sees(s, m.uuid)})
 
     def arena_cast(self, caster: str, spell: str, name: str) -> None:
         """A cast (Events.lua CastedSpell): seen by the sides that see the caster; the spell id only for its own."""
@@ -442,15 +443,21 @@ class GameModel:
         self.reaction = {"prompt": " | ".join([who, *reactions, "Choose how to react."]), "options": rows}
 
     def arena_end_turn(self) -> None:
-        """The acting character's turn ends; the next in the order acts (a new round after the last)."""
+        """The acting character's turn ends; the next in the order acts (a new round after the last). At a round
+        change the events come in the game's order (phases4 load1): round_started, the new round's turn_started, then
+        the old round's turn_ended."""
         a = self.arena
         assert a is not None, "no match"
-        self._push_turn("turn_ended")
-        a.turn += 1
-        if a.turn == len(a.order):
-            a.turn, a.round = 0, a.round + 1
-            self.push("round_started", {"round": a.round})
+        ended, old = a.acting, a.round
+        if a.turn + 1 < len(a.order):
+            self._push_turn("turn_ended")
+            a.turn += 1
+            self._push_turn("turn_started")
+            return
+        a.turn, a.round = 0, a.round + 1
+        self.push("round_started", {"round": a.round})
         self._push_turn("turn_started")
+        self._push_turn("turn_ended", ended, old)
 
     def add_quest(self, title: str, text: str) -> None:
         self.journal.append({"title": title, "steps": [text], "id": title.replace(" ", "_")})

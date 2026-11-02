@@ -142,3 +142,25 @@ def test_two_sides_take_turns(tmp_path: Path) -> None:
     assert model.arena is not None
     tav, lae = model.arena.teams["A"][0].uuid, model.arena.teams["B"][0].uuid
     assert [(s, u) for s, u, _ in model.moves] == [("A", tav), ("B", lae)], model.moves
+
+
+def test_a_round_change_reads_in_order(tmp_path: Path) -> None:
+    """The fake mod's round change in the game's order (round_started, the new round's turn_started, then the old
+    round's turn_ended), each turn event tagged with its round: side A reads round 2 and Tav's turn, never the tag."""
+    model = GameModel(clock=FakeClock())
+    model.start_arena(TEAM_A, TEAM_B)
+    out: dict[str, str] = {}
+
+    async def match() -> None:
+        with FakeMod(model) as fake:
+            async with bridge_session(fake.port, tmp_path / "a", env("A")) as a:
+                out["before"] = await call(a, "get_events")
+                for _ in range(4):  # Tav, Lae'zel, Shadowheart, Karlach: the round's last turn ends
+                    model.arena_end_turn()
+                out["events"] = await call(a, "get_events")
+
+    run(match())
+    text = out["events"]
+    assert "round 2" in text or "round_started round=2" in text, text
+    assert "Tav" in text.split("round", 1)[1], text
+    assert not [ln for ln in text.split("\n") if "turn" in ln and "round=" in ln], text

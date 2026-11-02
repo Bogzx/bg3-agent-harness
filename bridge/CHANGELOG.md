@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: EVENTS leaves out the old round's turn ends
+
+- When a turn group closes, the game starts the new round's turns before it ends the old round's, so EVENTS could
+  show `turn_ended X` after X's new turn started, in the same result or in the next one. When the mod tags a turn
+  event with its `round`, a `turn_ended` of a round older than that member's last `turn_started` is left out. The
+  tag itself is not printed. Turn events without a round are shown as before.
+
 ## 2026-11-01: a server can play one side of a two-team match
 
 A server started without `BG3AI_SIDE` serves the same tools and rules as before and sends the mod the same bytes.
