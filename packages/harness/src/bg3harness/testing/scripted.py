@@ -482,6 +482,23 @@ class GameModel:
             out.update(self.res.get(m.uuid, FULL_TURN), in_combat=True, my_turn=self.combat["current"] == m.uuid)
         return out
 
+    def op_actions(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """state.actions (State.lua): the member's hotbar and this turn's resources ([amount, max])."""
+        m = self.member(args.get("uuid") or self.active)
+        r = self.res.get(m.uuid, FULL_TURN)
+        acts = [{"name": "Attack", "spell": "Target_MainHandAttack", "cost": "A", "range": 1.5}]
+        if m.cls == "Cleric":
+            acts.append({"name": "Healing Word", "spell": "Target_HealingWord", "cost": "B", "range": 18, "level": 1})
+        return {
+            "actions": acts,
+            "resources": {
+                "ActionPoint": [r["action"], 1],
+                "BonusActionPoint": [r["bonus"], 1],
+                "Movement": [r["movement"], FULL_TURN["movement"]],
+                "ReactionActionPoint": [r["reaction"], 1],
+            },
+        }
+
     def op_watch(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         party = [{"uuid": m.uuid, "hp": m.hp, "max_hp": m.max_hp, "pos": list(m.pos)} for m in self.party]
         return {"party": party, "seen": [], "combat": self.combat is not None, "dialogue": self.dialogue is not None}
@@ -721,6 +738,7 @@ _OPS: dict[str, OpFn] = {
     "state.nearby": lambda m, c, a: {"characters": _nearby(m, False), "items": _nearby(m, True)},
     "act.prepared": lambda m, c, a: {"casters": []},
     "act.watch": GameModel.op_watch,
+    "state.actions": GameModel.op_actions,
     "act.move_to": GameModel.op_move_to,
     "act.cast": GameModel.op_cast,
     "act.end_turn": GameModel.op_end_turn,

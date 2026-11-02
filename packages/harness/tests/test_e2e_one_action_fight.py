@@ -1,7 +1,7 @@
 """E2E (fight-flow research 2026-11-02, D291): a scripted fight played one action per call through the real bridge
 (bg3ai.server over stdio) against the scripted fake mod. Each result shows what its action changed before the next
-call: the walk's arrival (no job id), the attack's kill in CHANGES, end_turn's hand-over after the enemy's hit; a
-batch in combat runs nothing.
+call: the walk's arrival (no job id), the attack's kill in CHANGES, end_turn's hand-over (with the next member's
+actions) after the enemy's hit; a batch in combat runs nothing.
 """
 
 from __future__ import annotations
@@ -61,6 +61,7 @@ def test_a_fight_one_action_per_call(tmp_path: Path) -> None:
     assert attack.startswith("use_ability: done") and "action=0" in attack, out["attack"]
     assert re.search(r"e\d+ Goblin DEAD", changes), out["attack"]
     assert out["end"].startswith("end_turn e1 Tav: done") and "\nnow e2's turn" in out["end"], out["end"]
+    assert "\nYOUR ACTIONS (e2)" in out["end"] and "Healing Word" in out["end"], out["end"]  # her hotbar at once
     end2, _, events = out["end2"].partition("\nEVENTS\n")
     assert end2.startswith("end_turn e2 Shadowheart: done") and "\nnow e1's turn" in end2, out["end2"]
     assert "Goblin Archer" in events and "3 Piercing" in events, out["end2"]  # the enemy's turn, before ours
