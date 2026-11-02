@@ -389,6 +389,46 @@ function Ar.phase_check()
         phase = n, group = p.group, shared = p.shared })
 end
 
+-- A shared turn group's last end that the game ignored (act.end_turn, arena only): live 14 (2026-11-02, 2v2 twins in
+-- one engine group) every member had its EndTurn and the game changed no flag (all four active, none
+-- RequestedEndTurn) and never closed the group; writing TurnBased.RequestedEndTurn = true + Replicate("TurnBased") on
+-- the four closed it at once (round 2 opened in the same burst). Written only when every other member of char's
+-- engine turn group is a team member with an end the mod sent or a pass of the mod's (G.end_requested), on each
+-- member that still reads active and not requested, char included; recorded as arena_end_written. -> the members
+-- written, or nil (nothing written: no arena, the group doesn't read, char alone in it, or a member the mod didn't
+-- end).
+function Ar.write_group_end(char)
+    if not Ar.active() then return nil end
+    local G, st = BG3AI.Guard, Ar.state
+    local c = G.guid(char) or char
+    local group
+    for _, g in ipairs(turnGroups() or {}) do
+        for _, u in ipairs(g.members) do
+            if u == c then group = g end
+        end
+    end
+    if not group or #group.members < 2 then return nil end
+    for _, u in ipairs(group.members) do
+        if u ~= c and not (Ar.side_of(u) and G.end_requested[u]) then return nil end
+    end
+    local out, names, errors = {}, {}, {}
+    for _, u in ipairs(group.members) do
+        local active, req = G.tb_flags(u)
+        if active and not req then
+            local ok, err = pcall(function()
+                local e = V.entity(u)
+                e.TurnBased.RequestedEndTurn = true
+                e:Replicate("TurnBased")
+            end)
+            out[#out + 1], names[#names + 1] = u, V.name(u)
+            if not ok then errors[u] = tostring(err) end
+        end
+    end
+    record("arena_end_written", { round = st.round, group = group.team or group.members[1], character = c,
+        members = out, names = names, errors = next(errors) and errors or nil, how = "requested_end_write" })
+    return out
+end
+
 -- A round of the arena's combat starts: a turn boundary (a wipe ends the match); the start of round cap+1 ends it
 -- as a draw (reason round_cap) with rounds = the cap, before anyone acts in it.
 function Ar.round_started(combat, round)

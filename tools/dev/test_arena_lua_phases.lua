@@ -329,6 +329,7 @@ test("live round change: new TurnStarted before the old TurnEnded: round 2's fir
     eq(j.status, "done", "B2's end: " .. tostring(j.error))
     eq(j.result.still_to_act, nil, "round 2's open members are not this group's still to act")
     eq(enc(j.result.round_moved_on), enc({ from = 1, to = 2 }), "round_moved_on")
+    eq(#replicated + #refs("arena_end_written"), 0, "the game's own 16.9 s close: no write")
     for _, u in ipairs({ A1, B1, A2, B2 }) do eq(G.turn_is_over(u), false, u .. "'s new turn not over") end
     eq(G.is_my_turn(A1), true, "A1 acts")
     local r = refs("arena_turn")
@@ -503,31 +504,100 @@ end)
 -- Live check 12 (2026-11-02, 2v2 twins, setup2v2/drive12.jsonl): the group B1 | A1 | B2 | A2, phases of one, one end
 -- every ~15.8 s. Ends 1-3 were pending (the rest still to act); the game changed no flag for them (03-turnflags: all
 -- four IsActiveCombatTurn, none RequestedEndTurn) and the last end failed 'ignored' at 20 s: round 1 never closed.
--- The mod's side as it stands: one EndTurn per member, nobody's sent again, the last end fails at END_LAST_WAIT_MS.
-test("live check 12 replay (B1 | A1 | B2 | A2): one EndTurn each, none again, the last end 'ignored' at 20 s",
-    function()
-    local ended = {}
-    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
-    local ok, err = pcall(function()
-        begin()
-        fire("CombatRoundStarted", "combat1", 1)
-        order = { { B1, A1, B2, A2 } }
-        openAll({ B1, A1, B2, A2 })
-        burst({ B1, A1, B2, A2 })
-        tick()
-        for _, d in ipairs({ { B1, "B" }, { A1, "A" }, { B2, "B" } }) do
-            eq(Ar.phase().side, d[2], "the acting side at " .. d[1] .. "'s end")
+-- Live 14: RequestedEndTurn = true + Replicate on the four closed it at once (round 2 in the same burst, then the old
+-- round's TurnEnded).
+local LIVE12 = { B1, A1, B2, A2 }
+local function live12(gameEnds) -- the first three ends as the mod sends them; gameEnds: B2 ended by the game instead
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { LIVE12 }
+    openAll(LIVE12)
+    burst(LIVE12)
+    tick()
+    for _, d in ipairs({ { B1, "B" }, { A1, "A" }, { B2, "B" } }) do
+        eq(Ar.phase().side, d[2], "the acting side at " .. d[1] .. "'s end")
+        if gameEnds and d[1] == B2 then
+            setTurn(B2, true, true) -- its end shows in its flags: not one the mod sent
+        else
             local j = endTurn(d[1], d[2])
             ticks(2)
             eq(j.status, "done", d[1] .. "'s end: " .. tostring(j.error))
             eq(j.result.requested, true, d[1] .. "'s end pending")
-            ticks(math.floor(15800 / Ar.PHASE_EVERY_MS))
         end
-        local j = endTurn(A2, "A") -- the game shows nothing: every member stays active, no RequestedEndTurn
-        ticks(math.floor(A.END_LAST_WAIT_MS / Ar.PHASE_EVERY_MS) + 1)
-        eq(enc({ j.status, j.error }), enc({ "failed", A.END_IGNORED }), "A2's end")
-        eq(table.concat(ended, ","), table.concat({ B1, A1, B2, A2 }, ","), "one EndTurn each, in order")
-    end)
+        ticks(math.floor(15800 / Ar.PHASE_EVERY_MS))
+    end
+    eq(#replicated + #refs("arena_end_written"), 0, "no write mid-phase (the rest of the group still to act)")
+    return endTurn(A2, "A") -- the game shows nothing: every member stays active, no RequestedEndTurn
+end
+
+local function flags()
+    local out = {}
+    for _, u in ipairs(LIVE12) do out[#out + 1] = tostring(world[u].comps.TurnBased.RequestedEndTurn) end
+    return table.concat(out, ",")
+end
+
+local function withEnds(fn)
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(fn, ended)
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end
-end)
+end
+
+test("live check 12 replay: the ignored last end gets the group's ends written once, recorded; round 2 opens",
+    function() withEnds(function(ended)
+        local j = live12()
+        ticks(math.floor(A.END_WRITE_AFTER_MS / Ar.PHASE_EVERY_MS) + 1)
+        eq(flags(), "true,true,true,true", "RequestedEndTurn written on all four")
+        local rep = {}
+        for _, u in ipairs(LIVE12) do rep[#rep + 1] = u .. ":TurnBased" end
+        eq(table.concat(replicated, ","), table.concat(rep, ","), "each replicated")
+        local w = refs("arena_end_written")
+        eq(enc({ #w, w[1].round, w[1].character, w[1].how, w[1].errors }), enc({ 1, 1, A2, "requested_end_write" }),
+            "recorded")
+        eq(enc(w[1].members), enc(LIVE12), "the members written")
+        eq(j.status, "running", "waits for the game to close the group")
+        fire("CombatRoundStarted", "combat1", 2) -- the game closes it (live 14's burst order)
+        openAll(LIVE12)
+        burst(LIVE12)
+        for _, u in ipairs(LIVE12) do fire("TurnEnded", "S_Player_" .. u) end
+        ticks(2)
+        eq(j.status, "done", "A2's end: " .. tostring(j.error))
+        eq(enc(j.result.round_moved_on), enc({ from = 1, to = 2 }), "round 2")
+        eq(enc(j.result.end_written), enc(LIVE12), "the result says the ends were written")
+        eq(table.concat(ended, ","), table.concat(LIVE12, ","), "one EndTurn each, in order")
+        eq(#refs("arena_end_written"), 1, "one write")
+    end) end)
+
+test("the write doesn't close the group: the last end fails 'ignored' at 20 s as before; no second write",
+    function() withEnds(function()
+        local j = live12()
+        ticks(math.floor(A.END_LAST_WAIT_MS / Ar.PHASE_EVERY_MS) + 1)
+        eq(enc({ j.status, j.error }), enc({ "failed", A.END_IGNORED }), "A2's end")
+        eq(enc(j.result.end_written), enc(LIVE12), "the failure says the ends were written")
+        eq(#replicated, 4, "one write per member")
+        eq(#refs("arena_end_written"), 1, "one record")
+    end) end)
+
+test("a group member whose end the mod didn't send: nothing written, the last end 'ignored' at 20 s",
+    function() withEnds(function()
+        local j = live12(true)
+        ticks(math.floor(A.END_LAST_WAIT_MS / Ar.PHASE_EVERY_MS) + 1)
+        eq(enc({ j.status, j.error }), enc({ "failed", A.END_IGNORED }), "A2's end")
+        eq(flags(), "false,false,true,false", "no flag written")
+        eq(#replicated + #refs("arena_end_written"), 0, "no write, no record")
+    end) end)
+
+test("normal play: a shared group's ignored last end writes nothing and fails at 3 s as before",
+    function() withEnds(function()
+        setTurn(A1, true, false)
+        setTurn(A2, true, false)
+        G.end_requested[A2] = clock -- A2 ended earlier in the group
+        rpc("act.end_turn", "{char=" .. string.format("%q", A1) .. "}")
+        local j = RPC.jobs[RPC.nextJob - 1]
+        ticks(math.floor(A.END_IGNORED_MS / Ar.PHASE_EVERY_MS) + 1)
+        eq(enc({ j.status, j.error }), enc({ "failed", A.END_IGNORED }), "A1's end")
+        eq(tostring(world[A1].comps.TurnBased.RequestedEndTurn) .. "," .. tostring(world[A2].comps.TurnBased
+            .RequestedEndTurn), "false,false", "no flag written")
+        eq(#replicated + #refs("arena_end_written"), 0, "no write, no record")
+    end) end)
