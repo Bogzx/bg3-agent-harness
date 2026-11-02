@@ -1,0 +1,285 @@
+-- Part of test_arena_lua.lua (split for the 1000-line cap): arena.setup {arena, round_cap}, the job that stands the
+-- two teams up (party, lines, factions, one combat, the IsEnemy check) and begins the match. The game here is a
+-- scripted fake: Osiris calls are recorded and change what the queries answer, as the arena spike saw live.
+-- test_arena_lua.lua runs it after its stubs and helpers, shared as globals.
+
+local A3 = "aaaaaaaa-0000-0000-0000-0000000000a3"
+local A4 = "aaaaaaaa-0000-0000-0000-0000000000a4"
+local B3 = "bbbbbbbb-0000-0000-0000-0000000000b3"
+local B4 = "bbbbbbbb-0000-0000-0000-0000000000b4"
+local AV = "eeeeeeee-0000-0000-0000-0000000000e1" -- the avatar (the host)
+local TA, TB = { A1, A2, A3, A4 }, { B1, B2, B3, B4 }
+local ALL = { A1, A2, A3, A4, B1, B2, B3, B4 }
+NAMES[A3], NAMES[A4], NAMES[B3], NAMES[B4], NAMES[AV] = "Ari", "Axe", "Bix", "Bree", "Tav"
+
+local saved = {}
+local calls, factionOf, enemyFrom, combatOf, scn
+
+local FACTIONS = { -- static data: guid -> name
+    g0 = "Hero", g1 = "Hero Player1", g2 = "Hero Player2", g3 = "Hero Player3", g4 = "Hero Player4",
+    g5 = "Hero Player5", g9 = "Companion4",
+}
+local function form(g) return FACTIONS[g] .. "_" .. g end
+
+local function stub(name, fn)
+    if saved[name] == nil then saved[name] = rawget(Osi, name) or false end
+    rawset(Osi, name, fn)
+end
+
+local function db(rows)
+    return { Get = function()
+        local out = {}
+        for _, u in ipairs(rows) do out[#out + 1] = { "S_Player_" .. u } end
+        return out
+    end }
+end
+
+-- The fake game: 8 team members + the avatar on the level; the combat call puts the given members into combat1
+-- (opts.combat, default all 8) and makes the teams enemies after opts.enemy_after reads of the matrix (default 0).
+local function game(opts)
+    opts = opts or {}
+    reset()
+    for i, u in ipairs({ A3, A4, B3, B4, AV }) do
+        world[u] = { pos = { 50 + i, 0, 0 }, comps = { ServerCharacter = {}, Health = { Hp = 20, MaxHp = 20 } } }
+        osiv[key("IsOnStage", u)], osiv[key("IsCharacter", u)] = 1, 1
+    end
+    world[GOB].comps.ServerCharacter = {} -- an NPC in the level, holding Hero Player1
+    partyRows = { A1, A2, B1, AV } -- the rest are origins not in the party yet
+    calls, factionOf, enemyFrom, combatOf = {}, {}, nil, {}
+    for _, u in ipairs(ALL) do
+        factionOf[u] = form("g9")
+        osiv[key("IsInCombat", u)], osiv[key("CombatGetGuidFor", u)] = 0, nil
+        osiv[key("GetLevel", u)], osiv[key("GetMaxHitpoints", u)], osiv[key("GetHitpoints", u)] = 4, 20, 20
+    end
+    osiv[key("GetMaxHitpoints", B2)] = 52 -- joining resets her stat block (Minthara, spike)
+    osiv[key("GetHitpoints", A2)] = 7     -- short after RestoreParty
+    factionOf[AV], factionOf[GOB] = form("g1"), form("g1")
+    osiv[key("IsInCombat", AV)], osiv[key("CombatGetGuidFor", AV)] = 0, nil
+    osiv[key("GetHostCharacter")] = AV
+    stub("DB_Avatars", db({ AV }))
+    stub("DB_Origins", db({ A1, A2, A3, A4, B1, B2, B3, B4 }))
+    stub("DB_Players", db({ AV }))
+    local reads = 0
+    local function record(name) return function(...) calls[#calls + 1] = { name, ... } end end
+    for _, n in ipairs({ "SetMaxPartySizeOverride", "DetachFromPartyGroup", "AttachToPartyGroup",
+        "TeleportToPosition", "RestoreParty", "SetHitpointsPercentage", "SetRelation" }) do
+        stub(n, record(n))
+    end
+    stub("PROC_GLO_PartyMembers_Add", function(u, host)
+        calls[#calls + 1] = { "PROC_GLO_PartyMembers_Add", u, host }
+        partyRows[#partyRows + 1] = u
+        osiv[key("GetMaxHitpoints", B2)], osiv[key("GetHitpoints", B2)] = 11, 11
+    end)
+    stub("SetFaction", function(u, f) calls[#calls + 1] = { "SetFaction", u, f }; factionOf[u] = f end)
+    stub("GetFaction", function(u) return factionOf[u] end)
+    stub("SetHostileAndEnterCombat", function(...)
+        calls[#calls + 1] = { "SetHostileAndEnterCombat", ... }
+        for _, u in ipairs(opts.combat or ALL) do combatOf[u] = "combat1" end
+        enemyFrom = reads + (opts.enemy_after or 0)
+    end)
+    stub("EnterCombat", function(x, y)
+        calls[#calls + 1] = { "EnterCombat", x, y }
+        if opts.fallback_joins then combatOf[x], combatOf[y] = "combat1", "combat1" end
+    end)
+    stub("CombatGetGuidFor", function(u) return combatOf[u] end)
+    stub("IsInCombat", function(u) return combatOf[u] and 1 or 0 end)
+    stub("IsEnemy", function(x, y)
+        if x == A1 and y == B1 then reads = reads + 1 end -- one read of the matrix
+        if not enemyFrom or reads <= enemyFrom then return 0 end
+        local sx = (x:sub(1, 1) == "a") and "A" or "B"
+        local sy = (y:sub(1, 1) == "a") and "A" or "B"
+        return sx ~= sy and 1 or 0
+    end)
+    if opts.avatar_joins then
+        local hostile = Osi.SetHostileAndEnterCombat
+        stub("SetHostileAndEnterCombat", function(...) hostile(...); combatOf[AV] = "combat1" end)
+    end
+    saved.static = saved.static or { Ext.StaticData.Get, Ext.StaticData.GetAll }
+    Ext.StaticData.GetAll = function(t)
+        if t ~= "Faction" then return {} end
+        local out = {}
+        for g in pairs(FACTIONS) do out[#out + 1] = g end
+        table.sort(out)
+        return out
+    end
+    Ext.StaticData.Get = function(g, t)
+        if t == "Faction" then return { Faction = FACTIONS[g] } end
+        return { Name = g }
+    end
+    scn = { seeds = {}, karmic = {} }
+    BG3AI.Scenario = { enabled = function() return env.BG3AI_SCENARIO_SETUP == "1" end,
+        set_seed = function(s) scn.seeds[#scn.seeds + 1] = s return { seed = s } end,
+        setKarmic = function(on) scn.karmic[#scn.karmic + 1] = on return { karmic = on } end }
+    env.BG3AI_SCENARIO_SETUP = "1"
+end
+
+local function restore()
+    for name, v in pairs(saved) do
+        if name ~= "static" then rawset(Osi, name, v or nil) end
+    end
+    if saved.static then Ext.StaticData.Get, Ext.StaticData.GetAll = saved.static[1], saved.static[2] end
+    saved = {}
+end
+
+local function arena(over)
+    local a = { teams = { A = { { name = "Ana" }, { name = "abe" }, { name = "Ari" }, { name = "Axe" } },
+        B = { { name = "Bo", uuid = B1 }, { name = "Bea" }, { name = "Bix" }, { name = "Bree" } } },
+        location = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10.5 } } }, seed = 7, karmic = false, round_cap = 20 }
+    for k, v in pairs(over or {}) do a[k] = v end
+    return a
+end
+
+local function lua(v) -- a Lua literal of v (rpc() takes the request's args as one)
+    if type(v) == "table" then
+        local out = {}
+        for i, x in ipairs(v) do out[i] = lua(x) end
+        for k, x in pairs(v) do
+            if type(k) ~= "number" then out[#out + 1] = k .. "=" .. lua(x) end
+        end
+        return "{" .. table.concat(out, ",") .. "}"
+    end
+    return type(v) == "string" and string.format("%q", v) or tostring(v)
+end
+
+-- The answer, and the job it started (if any).
+local function setup(a, side)
+    local r = rpc("arena.setup", lua({ arena = a, round_cap = 12 }), side)
+    local id = type(r.result) == "table" and r.result.job
+    return r, id and RPC.jobs[id]
+end
+
+local function run(j, limit)
+    for _ = 1, limit or 200 do
+        if j.status ~= "running" then return end
+        tick()
+    end
+end
+
+local function named(name)
+    local out = {}
+    for _, c in ipairs(calls) do if c[1] == name then out[#out + 1] = c end end
+    return out
+end
+
+local function test_setup(title, fn)
+    test(title, function()
+        local ok, err = pcall(fn)
+        restore()
+        if not ok then error(err, 0) end
+    end)
+end
+
+test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right: the match begins", function()
+    game()
+    local r, j = setup(arena())
+    eq(r.result and r.result.status, "running", "a job: " .. enc(r))
+    run(j)
+    eq(j.status, "done", "setup: " .. tostring(j.error))
+    eq(#named("SetMaxPartySizeOverride"), 1, "party size")
+    eq(named("SetMaxPartySizeOverride")[1][2], 8, "8")
+    local added = {}
+    for _, c in ipairs(named("PROC_GLO_PartyMembers_Add")) do added[#added + 1] = c[2]; eq(c[3], AV, "by the host") end
+    eq(table.concat(added, ","), table.concat({ A3, A4, B2, B3, B4 }, ","), "the 5 not in the party added")
+    eq(#named("DetachFromPartyGroup"), 8, "all detached")
+    local att = {}
+    for _, c in ipairs(named("AttachToPartyGroup")) do att[#att + 1] = c[2] .. ">" .. c[3] end
+    eq(table.concat(att, ","), table.concat({ A2 .. ">" .. A1, A3 .. ">" .. A1, A4 .. ">" .. A1, B2 .. ">" .. B1,
+        B3 .. ">" .. B1, B4 .. ">" .. B1 }, ","), "each team chained to its first")
+    local tp = named("TeleportToPosition")
+    eq(#tp, 8, "8 placed")
+    eq(enc({ tp[1][2], tp[1][3], tp[1][5] }), enc({ A1, -2.25, 0 }), "A1 at the line's left end")
+    eq(enc({ tp[8][2], tp[8][3], tp[8][5] }), enc({ B4, 2.25, 10.5 }), "B4 at B's right end")
+    eq(#named("RestoreParty"), 1, "RestoreParty")
+    local hp = named("SetHitpointsPercentage")
+    eq(#hp, 1, "only the short one healed")
+    eq(hp[1][2], A2, "A2")
+    eq(enc(scn.seeds), enc({ 7 }), "the arena's seed")
+    eq(enc(scn.karmic), enc({ false }), "Karmic Dice off")
+    local fa, fb = form("g2"), form("g3") -- Hero Player1 is used (an NPC, the avatar); never the bare Hero
+    for _, c in ipairs(named("SetFaction")) do
+        eq(c[3], c[2]:sub(1, 1) == "a" and fa or fb, "faction of " .. c[2])
+    end
+    eq(#named("SetFaction"), 8, "8 factions set")
+    local rel = named("SetRelation")
+    eq(enc({ rel[1][2], rel[1][3], rel[1][4], rel[2][2], rel[2][3], rel[2][4] }), enc({ fa, fb, 0, fb, fa, 0 }),
+        "hostile both ways")
+    local h = named("SetHostileAndEnterCombat")[1]
+    eq(enc({ h[2], h[3], h[4], h[5] }), enc({ fa, fb, A1, B1 }), "the combat call")
+    eq(#named("EnterCombat"), 0, "no fallback")
+    eq(j.result.enemy.across, "32/32", "across")
+    eq(j.result.enemy.within, "0/24", "within")
+    eq(j.result.combat, "combat1", "one combat")
+    eq(enc(j.result.members[B2].max_hp), enc({ 52, 11 }), "B2's max HP before/after")
+    eq(enc(j.result.members[A1].faction), enc({ form("g9"), fa }), "A1's faction before/after")
+    eq(enc(j.result.factions), enc({ A = fa, B = fb }), "factions")
+    eq(table.concat(Ar.state.teams.A, ","), table.concat(TA, ","), "team A begun")
+    eq(table.concat(Ar.state.teams.B, ","), table.concat(TB, ","), "team B begun")
+    eq(Ar.state.round_cap, 12, "the runner's round cap")
+    eq(#refs("arena_start"), 1, "arena_start recorded")
+end)
+
+test_setup("arena.setup: IsEnemy wrong at first, right within 3 s: done; wrong for 3 s: failed, the matrix", function()
+    game({ enemy_after = 2 })
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "done", "right on the 3rd read: " .. tostring(j.error))
+    eq(j.result.enemy.reads, 3, "3 reads")
+    game({ enemy_after = 100 })
+    _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "still wrong")
+    assert(j.error:find("across the teams 0/32, within a team 0/24", 1, true), j.error)
+    assert(j.error:find("Ana not an enemy of Bo", 1, true), j.error)
+    eq(Ar.state, nil, "no match begun")
+end)
+
+test_setup("arena.setup: not all 8 in one combat: EnterCombat pairs, then done; still not: failed", function()
+    game({ combat = { A1, A2, B1, B2 }, fallback_joins = true })
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "done", "after the fallback: " .. tostring(j.error))
+    eq(#named("EnterCombat"), 4, "one pair per slot")
+    game({ combat = { A1, B1 } })
+    _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "no combat for all")
+    assert(j.error:find("not in one combat", 1, true), j.error)
+end)
+
+test_setup("arena.setup: the avatar sits out: one in the fight fails setup; one named in a team is refused", function()
+    game({ avatar_joins = true })
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "the avatar joined")
+    assert(j.error:find("the avatar Tav joined the fight", 1, true), j.error)
+    game()
+    local a = arena()
+    a.teams.A[4] = { name = "Tav", uuid = AV }
+    local r = setup(a)
+    assert(enc(r):find("Tav is the avatar", 1, true), enc(r))
+end)
+
+test_setup("arena.setup refusals: no scenario switch, a name twice or unknown, a side, the arena switch off", function()
+    game()
+    env.BG3AI_SCENARIO_SETUP = nil
+    assert(enc(setup(arena())):find("BG3AI_SCENARIO_SETUP=1", 1, true), "scenario switch")
+    game()
+    NAMES[A3] = "Ana" -- two origins named Ana
+    local ok, r = pcall(setup, arena())
+    NAMES[A3] = "Ari"
+    assert(ok and enc(r):find("Ana names 2 characters", 1, true), enc(r))
+    game()
+    local a = arena()
+    a.teams.A[4] = { name = "Nobody" }
+    assert(enc(setup(a)):find("no party member, player or origin named Nobody", 1, true), "unknown")
+    a = arena()
+    a.teams.B[2] = { name = "Ana" }
+    assert(enc(setup(a)):find("Ana is listed twice", 1, true), "twice")
+    a = arena()
+    a.teams.B[4] = nil
+    assert(enc(setup(a)):find("team B must list 4 characters", 1, true), "size")
+    assert(enc(setup(arena(), "A")):find("arena ops are the harness's", 1, true), "a side")
+    env.BG3AI_ARENA = nil
+    assert(enc(setup(arena())):find("BG3AI_ARENA=1", 1, true), "switch off")
+    eq(#calls, 0, "no game call")
+end)

@@ -19,6 +19,7 @@ for _, path in ipairs({
     "Server/RollLog.lua", -- harness only, never an agent tool (B-mod)
     "Server/Scenario.lua", -- harness only, refused without BG3AI_SCENARIO_SETUP=1 (B-mod)
     "Server/Arena.lua", -- harness only, refused without BG3AI_ARENA=1; inert until an arena begins
+    "Server/ArenaSetup.lua", -- harness only: arena.setup (same switch)
 }) do
     U.require(path)
 end
