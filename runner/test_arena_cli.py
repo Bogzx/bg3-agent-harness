@@ -16,8 +16,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
 import arena_cli
-
 import play
 
 REPO = Path(__file__).resolve().parents[1]
