@@ -110,6 +110,7 @@ def bare_game(clock: FakeClock) -> Game:
     g = Game.__new__(Game)
     g._tl = threading.local()
     g.metrics = None
+    g.side = None  # no two-team match: the envelope carries no side
     g._busy_clock = clock
     g._busy_sleep = clock.sleep
     return g

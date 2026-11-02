@@ -120,3 +120,25 @@ def test_reaction_prompt_is_its_sides() -> None:
     assert (refused["status"], refused["error"]) == ("failed", "not your reaction")
     assert rpc(fake, "ui.react", {"use": False}, side="A")["result"]["status"] == "done"
     assert m.reacted == [("Tav", False)] and m.reaction is None
+
+
+def test_a_round_change_in_the_games_order() -> None:
+    """Events.lua tags turn events with their turn's round; at a round change the game starts the new round's turn
+    before it ends the old round's (phases4 load1: CombatRoundStarted, TurnStarted, then the old TurnEnded)."""
+    m, fake = match()  # order: Tav, Lae'zel, Shadowheart, Karlach
+    for _ in range(4):
+        m.arena_end_turn()
+    evs = rpc(fake, "events.since", {"seq": 0}, side="A")["result"]["events"]
+    turns = [
+        (e["kind"], e["data"].get("name"), e["data"]["round"])
+        for e in evs
+        if e["kind"] in ("round_started", "turn_started", "turn_ended")
+    ]
+    assert turns[-5:] == [
+        ("turn_ended", "Shadowheart", 1),
+        ("turn_started", "Karlach", 1),
+        ("round_started", None, 2),
+        ("turn_started", "Tav", 2),
+        ("turn_ended", "Karlach", 1),
+    ]
+    assert turns[:2] == [("round_started", None, 1), ("turn_started", "Tav", 1)]
