@@ -20,6 +20,7 @@ from typing import Any
 
 from bg3harness import client_setup, clients, profiles, spend
 from bg3harness.arena import agents as aagents
+from bg3harness.arena import scripted_client
 from bg3harness.arena.match import ArenaOutcome, ArenaSetupError, run_arena
 from bg3harness.arena.spec import SIDES, ArenaSpec, Side
 from bg3harness.game import io as gio
@@ -70,9 +71,10 @@ def options(spec: ArenaSpec, run_name: str) -> rstate.Options:
     )
 
 
-def side_env(spec: ArenaSpec, side: str, prof: profiles.Profile, run_dir: Path) -> dict[str, str]:
+def side_env(spec: ArenaSpec, side: str, prof: profiles.Profile | None, run_dir: Path) -> dict[str, str]:
     """The env a side's bg3 server gets on top of the runner's: its side, the arena's tools-off list (plus what the
-    profile's model can't use), the arena's prompt condition and its own memory dir (nothing fills it)."""
+    profile's model can't use; no profile: the scripted client), the arena's prompt condition and its own memory dir
+    (nothing fills it)."""
     env = {
         "BG3AI_SIDE": side,
         "BG3AI_TOOLS_OFF": spec.tools_off,
@@ -82,7 +84,7 @@ def side_env(spec: ArenaSpec, side: str, prof: profiles.Profile, run_dir: Path) 
         "BG3AI_KEEPER": "0",
         "BG3_SESSION_MINUTES": f"{spec.wall_cap_min:g}",
     }
-    return profiles.tool_env(prof, env)
+    return profiles.tool_env(prof, env) if prof is not None else env
 
 
 def side_client(
@@ -94,7 +96,12 @@ def side_client(
     log: Callable[[str], None],
 ) -> tuple[aagents.SideClient, Json]:
     """A side's client: its pi profile, its system text and tool list dumped in its env (the arena rules come with
-    BG3AI_SIDE), the API key env. Returns it and the side's manifest fields."""
+    BG3AI_SIDE), the API key env. Returns it and the side's manifest fields. The profile SCRIPTED is the scripted
+    client (bg3harness.arena.scripted_client): the side's bg3 server and no model, no system text, no key."""
+    if profile_path == scripted_client.SCRIPTED:
+        env = side_env(spec, side, None, run_dir)
+        sc = aagents.SideClient(scripted_client.ScriptedClient(), "none", None, env)
+        return sc, {"profile": profile_path, "client": scripted_client.SCRIPTED, "model": "none"}
     prof = profiles.load(profile_path)
     if prof.client != "pi":
         raise ArenaSetupError(f"{profile_path}: a match plays pi profiles ({prof.client} given)")

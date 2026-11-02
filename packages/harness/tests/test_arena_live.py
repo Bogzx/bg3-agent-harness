@@ -150,6 +150,16 @@ def test_each_side_s_server_env(tmp_path):
     assert env["BG3AI_MEMORY_DIR"] == str(tmp_path / "run1" / "memory-B")
 
 
+def test_a_scripted_side_gets_the_scripted_client_its_sides_env_and_no_profile(tmp_path):
+    from bg3harness.arena import scripted_client
+
+    spec = ArenaSpec.from_dict(ARENA)
+    sc, fields = live.side_client(spec, "A", "scripted", tmp_path / "run1", {}, lambda _m: None)
+    assert isinstance(sc.client, scripted_client.ScriptedClient) and (sc.model, sc.tools_expected) == ("none", None)
+    assert sc.env["BG3AI_SIDE"] == "A" and sc.env["BG3AI_TOOLS_OFF"] == "arena-v1"
+    assert fields == {"profile": "scripted", "client": "scripted", "model": "none"}
+
+
 def test_the_game_gets_the_arena_switch_only_in_a_match():
     spec = ArenaSpec.from_dict(ARENA)
     opt = live.options(spec, "arena-run")

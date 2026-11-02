@@ -20,7 +20,7 @@ import _harness  # noqa: F401  (packages/harness/src, packages/bench/src and bri
 from bg3bench import arena as barena
 from bg3bench import arena_matrix
 from bg3bench.matrix_cli import MatrixFileError, load_profile
-from bg3harness.arena import ArenaSpec, ArenaSpecError, Side
+from bg3harness.arena import ArenaSpec, ArenaSpecError, Side, scripted_client
 from bg3harness.arena.match import ArenaSetupError
 from bg3harness.runner import env as renv
 
@@ -32,8 +32,13 @@ def arena_path(ref: str) -> Path:
 
 
 def sides(a: str, b: str, allow_unverified: bool) -> dict[str, Side]:
+    """Each side's player; the profile `scripted` is the scripted client (no model, player scripted/none, never
+    rated)."""
     out = {}
     for side, path in (("A", a), ("B", b)):
+        if path == scripted_client.SCRIPTED:
+            out[side] = Side(side, scripted_client.PLAYER, path, scripted_client.SCRIPTED, "none")
+            continue
         m = load_profile(Path(path), allow_unverified)
         out[side] = Side(side, arena_matrix.player(m), str(path), m["client"], m["slug"])
     return out
@@ -42,8 +47,18 @@ def sides(a: str, b: str, allow_unverified: bool) -> dict[str, Side]:
 def parse(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="play.py arena", description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("--arena", required=True, help="an arena name (packages/bench/arenas/<name>.json) or a file")
-    ap.add_argument("--a", required=True, metavar="PROFILE", help="side A's client profile (profiles/*.toml, pi)")
-    ap.add_argument("--b", required=True, metavar="PROFILE", help="side B's client profile (profiles/*.toml, pi)")
+    ap.add_argument(
+        "--a",
+        required=True,
+        metavar="PROFILE",
+        help="side A's client profile (profiles/*.toml, pi), or 'scripted' (no model)",
+    )
+    ap.add_argument(
+        "--b",
+        required=True,
+        metavar="PROFILE",
+        help="side B's client profile (profiles/*.toml, pi), or 'scripted' (no model)",
+    )
     ap.add_argument("--out", help="the run's name: runtime/sessions/<out>/ (default arena-<arena>-<time>)")
     ap.add_argument("--allow-unverified", action="store_true", help="play profiles whose status is offline")
     return ap.parse_args(argv)

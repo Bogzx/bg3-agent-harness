@@ -282,6 +282,7 @@ INVALID = {
     "no_start": {"start": {"v": 1, "kind": "mark", "t": 1.0, "mark": "settings", "detail": {}}},
     "wrong_arena": {"start": _start(arena="other")},
     "unseeded": {"start": _start(seed=7)},
+    "scripted": {"start": _start(sides={"A": "scripted/none", "B": "pi/model-y"})},
     "off_side_turn": {"turns": [("A", "Wyll", 1)]},
     "no_end": {"ends": []},
     "past_round_cap": {"rounds": 21},
