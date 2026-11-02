@@ -82,6 +82,10 @@ class ArenaModel(GameModel):
         self.combat_error: str | None = None
         self.held_ends: set[str] = set()  # the uuids whose end the game took while holding
 
+    def team_uuids(self) -> dict[str, list[str]]:
+        """Each team's uuids as arena.setup's result and arena.status give them (Ar.state.teams: no summons)."""
+        return {s: [m.uuid for m in team if m.uuid not in self.summons] for s, team in self._match().teams.items()}
+
     def hp(self, side: str) -> float:
         a = self._match()
         team = a.teams[side]
@@ -187,7 +191,7 @@ class ArenaModel(GameModel):
             names = {s: [m["name"] for m in teams[s]] + extra[s] for s in ("A", "B")}
             self.start_arena(names["A"], names["B"], self.order)
             self.summons = {self._match().member(n).uuid for n in self.summon_names}
-            return {"ok": True, "result": self._job("arena.setup", {"ok": True})}
+            return {"ok": True, "result": self._job("arena.setup", {"ok": True, "teams": self.team_uuids()})}
         if op == "arena.status":
             a = self.arena
             if a is None:
@@ -196,7 +200,7 @@ class ArenaModel(GameModel):
                 "ok": True,
                 "result": {
                     "active": self.ended is None,
-                    "teams": {s: [m.uuid for m in team if m.uuid not in self.summons] for s, team in a.teams.items()},
+                    "teams": self.team_uuids(),
                     "turn": {"side": a.side_of(a.acting.uuid), "uuid": a.acting.uuid, "round": self.mod_round},
                     "hp": {"A": self.hp("A"), "B": self.hp("B")},
                     "ended": self.ended,
