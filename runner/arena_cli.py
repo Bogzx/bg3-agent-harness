@@ -6,7 +6,8 @@ it (bg3harness.arena.live.play -> run_arena), never importing the bench. --out n
 (runtime/sessions/<out>/; default arena-<arena>-<time>). The seed is the arena file's: a match on another seed is a
 match of another arena file. --max-cost USD caps the match's play cost, both sides together (required when a side is
 paid; runtime/budget.json must have it left): the match ends over_budget there, invalid. Takes runtime/runner.lock
-like `run`. Exit 0 when the match ended valid, 1 invalid, 2 refused before the game started.
+like `run`. The match ends with the game stopped (--keep-game leaves it up). Exit 0 when the match ended valid, 1
+invalid, 2 refused before it played (a game up that the runner didn't launch or load included).
 """
 
 from __future__ import annotations
@@ -63,6 +64,9 @@ def parse(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--out", help="the run's name: runtime/sessions/<out>/ (default arena-<arena>-<time>)")
     ap.add_argument("--allow-unverified", action="store_true", help="play profiles whose status is offline")
     ap.add_argument(
+        "--keep-game", action="store_true", help="leave the game up after the match (default: stop it, as bench runs)"
+    )
+    ap.add_argument(
         "--max-cost",
         type=float,
         metavar="USD",
@@ -90,7 +94,9 @@ def main(argv: list[str]) -> int:
 
     lock = lcli.acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
     try:
-        outcome, run_dir = live.play(spec, players, lpt.Runner, run_name, dict(os.environ), max_cost=a.max_cost)
+        outcome, run_dir = live.play(
+            spec, players, lpt.Runner, run_name, dict(os.environ), max_cost=a.max_cost, keep_game=a.keep_game
+        )
     except ArenaSetupError as e:
         print(f"play.py arena refused: {e}", file=sys.stderr)
         return 2

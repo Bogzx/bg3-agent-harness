@@ -25,6 +25,7 @@ import arena_cli
 import legacy_playthrough as lpt
 
 from bg3harness.arena import live
+from bg3harness.game import io as gio
 from bg3harness.runner import env as renv
 
 REPO = Path(__file__).resolve().parents[1]
@@ -124,9 +125,9 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         self.assertIn("the global budget is used up ($5.00 of $5)", err)
         self.assertEqual(self.runners, [])
 
-    def test_a_whole_match_on_the_runner_records_from_the_games_start_to_after_run_end(self):
-        """The game's launch, hot reload and settings check stand in; every mod op is refused (no game in a test),
-        so the match is a setup failure: invalid, no agent started, recorded all the same."""
+    def whole_match(self, *more: str) -> tuple[int, list[str], str]:
+        """play.py arena with scripted sides: the game's launch, hot reload, settings check, scenario_undo and
+        end_run_game stand in; every mod op is refused (no game in a test), so the match is a setup failure."""
         calls: list[str] = []
 
         class Rec:
@@ -158,26 +159,23 @@ class ArenaOnTheRealRunner(unittest.TestCase):
             mock.patch.object(lpt.Runner, "refresh_mod_snapshot", lambda r: None),  # it copies into the game's mod dir
             mock.patch.object(lpt.Runner, "hot_reload_mod", lambda r: 0),
             mock.patch.object(lpt.Runner, "check_settings", lambda r: None),
+            mock.patch.object(lpt.Runner, "scenario_undo", lambda r: calls.append("scenario undo")),
+            mock.patch.object(lpt.Runner, "end_run_game", lambda r, when, after: calls.append(f"game stopped: {when}")),
             mock.patch.object(live.LiveGame, "rpc", no_game),
             mock.patch.object(live.run_host, "bench_recording", lambda env: Rec),
             contextlib.redirect_stderr(err),
         ):
-            code = arena_cli.main(
-                [
-                    "--arena",
-                    "crash-companions-v1",
-                    "--a",
-                    "scripted",
-                    "--b",
-                    "scripted",
-                    "--out",
-                    "t1",
-                    "--max-cost",
-                    "1",
-                ]
-            )
-        self.assertEqual(code, 1, err.getvalue())  # invalid: the setup failed
-        self.assertEqual(calls, ["game up", "made recording", "start", "check", "stop after run_end: True"])
+            argv = ["--arena", "crash-companions-v1", "--a", "scripted", "--b", "scripted", "--out", "t1"]
+            code = arena_cli.main([*argv, "--max-cost", "1", *more])
+        return code, calls, err.getvalue()
+
+    def test_a_whole_match_on_the_runner_records_from_the_games_start_to_after_run_end(self):
+        """Invalid (the setup failed), no agent started, recorded all the same; then the game is stopped, after the
+        recording and scenario_undo (live 9: a matrix's next attempt found the last match's game up)."""
+        code, calls, err = self.whole_match()
+        self.assertEqual(code, 1, err)  # invalid: the setup failed
+        self.assertEqual(calls, ["game up", "made recording", "start", "check", "stop after run_end: True",
+                                 "scenario undo", "game stopped: match end"])  # fmt: skip
         run_dir = renv.RUNTIME / "sessions" / "t1"
         man = json.loads((run_dir / "arena.json").read_text())
         self.assertTrue(man["invalid"].startswith("setup: ConnectionRefusedError: arena.setup: no game"), man)
@@ -187,6 +185,36 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         self.assertEqual(man["max_cost"], 1.0)  # the cap reaches the manifest (scripted sides spend nothing)
         marks = [json.loads(x).get("mark") for x in (run_dir / "facts.jsonl").read_text().splitlines()]
         self.assertEqual((marks[0], marks[-1]), ("run_start", "run_end"))
+
+    def test_keep_game_leaves_the_game_up_after_the_match(self):
+        code, calls, err = self.whole_match("--keep-game")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(calls[-2:], ["stop after run_end: True", "scenario undo"])
+
+    def test_a_game_up_the_runner_didnt_launch_refuses_the_match_and_is_left_alone(self):
+        """live 9: a matrix's next attempt found the last match's game still up; ensure_game's NotOurGame (a
+        SystemExit) is a refusal (exit 2, nothing played), and end_run_game (which leaves a game it doesn't own
+        alone) still runs."""
+        calls: list[str] = []
+
+        def foreign(r, first: bool = False):
+            raise gio.NotOurGame("the game is running with a save loaded that the runner didn't load; --take-over")
+
+        err = io.StringIO()
+        with (
+            mock.patch.object(lpt.Runner, "ensure_game", foreign),
+            mock.patch.object(lpt.Runner, "refresh_mod_snapshot", lambda r: None),
+            mock.patch.object(lpt.Runner, "scenario_undo", lambda r: calls.append("scenario undo")),
+            mock.patch.object(lpt.Runner, "end_run_game", lambda r, when, after: calls.append(f"game stopped: {when}")),
+            mock.patch.object(live.run_host, "bench_recording", lambda env: None),
+            contextlib.redirect_stderr(err),
+        ):
+            argv = ["--arena", "crash-companions-v1", "--a", "scripted", "--b", "scripted", "--out", "t1"]
+            code = arena_cli.main(argv)
+        self.assertEqual(code, 2, err.getvalue())
+        self.assertIn("refused: the game is running with a save loaded that the runner didn't load", err.getvalue())
+        self.assertEqual(calls, ["scenario undo", "game stopped: match end"])
+        self.assertFalse((renv.RUNTIME / "sessions" / "t1" / "arena.json").exists())
 
     def test_the_runs_facts_start_names_no_runner_client(self):
         self.play("scripted", "scripted")

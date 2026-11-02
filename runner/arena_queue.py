@@ -10,16 +10,19 @@
   sides swapped, the same arena and seed) back to back, an invalid match rerun at once (at most matrix.MAX_RERUNS
   times, then the job gave up). Before each match: runtime/STOP stops the matrix (`stopped`); every budget file the
   match charges (the matrix's own, each side's model files) must hold its reserves (arena_matrix.reserves:
-  spent + reserve <= cap; a missing or broken file stops it too: `budget`); the disk guard (bg3harness.diskguard,
-  the arena's wall cap) must pass (`disk: <why>`). The match plays through bg3harness.arena.live.play with each paid
-  side capped at its reserve (side_caps) and the match at their sum (max_cost, which live.play also checks against
-  runtime/budget.json and charges there). As it ends it is graded from its facts (bg3bench.arena.grade) and both
-  sides' costs go to the matrix's files (arena_matrix.charges). A match refused before the game (live.play's
-  ArenaSetupError: an API key unset, runtime/budget.json short, ...) is recorded, isn't an attempt, and stops the
+  spent + reserve <= cap; a missing or broken file stops it too: `budget`), and runtime/budget.json the match's cap
+  (live.play refuses a match it can't hold and charges it; the matrix only checks it); the disk guard
+  (bg3harness.diskguard, the arena's wall cap) must pass (`disk: <why>`). The match plays through
+  bg3harness.arena.live.play with each paid side capped at its reserve (side_caps) and the match at their sum
+  (max_cost), and ends with its game stopped, so the next one, a rerun too, launches its own. As it ends it is
+  graded from its facts (bg3bench.arena.grade) and both sides' costs go to the matrix's files
+  (arena_matrix.charges). A match refused before it played (live.play's ArenaSetupError: an API key unset,
+  runtime/budget.json short, a game up the runner didn't launch, ...) is recorded, isn't an attempt, and stops the
   matrix (`refused: <why>`). A match the matrix runner died in (started, never ended) is closed as `interrupted` on
-  the next start, each paid side charged its whole reserve (what it spent is unknown), and played again. A match
-  that ended over_budget is not rerun (`over_budget`: a rerun would spend as much again). A paid side's cost unknown
-  (the harness failed mid-match) stops the matrix (`cost unknown`).
+  the next start, each paid side charged its whole reserve (what it spent is unknown), and played again; the
+  process that died leaves progress.json `stopped` ("aborted: ..."), never `running`. A match that ended
+  over_budget is not rerun (`over_budget`: a rerun would spend as much again). A paid side's cost unknown (the
+  harness failed mid-match) stops the matrix (`cost unknown`).
 - `--table` grades every played match (the last attempt of each, its facts and rolls) and prints bg3bench.arena's
   results table (pairings, pairs, side A, models) as JSON.
 
@@ -29,6 +32,7 @@ Exit 0 when the matrix finished, 1 when it stopped, 2 refused before it began.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -110,8 +114,10 @@ class ArenaQueue:
         stopped: Callable[[], bool] = lambda: False,
         disk: Callable[[dict[str, Any]], str | None] = lambda job: None,
         log: Callable[[str], None] = lambda msg: None,
+        global_budget: Path | None = None,
     ):
         self.m, self.root, self.base, self.play = m, root, base, play  # base: the budget files' paths start there
+        self.global_budget = global_budget  # runtime/budget.json: live.play checks and charges it; checked here too
         self.now, self.stopped, self.disk, self.log = now, stopped, disk, log
         self.q = arena_matrix.open_queue(root, base / m["budget"]["file"], now)
 
@@ -182,8 +188,29 @@ class ArenaQueue:
         return None if ok else matrix.BUDGET
 
     def run(self) -> str:
-        """Play until every match is done, gave up or ended over budget, or a stop (module doc); the stop reason."""
+        """Play until every match is done, gave up or ended over budget, or a stop (module doc); the stop reason. A
+        process that dies here (a signal, an exception) leaves progress.json stopped, never running."""
         self.q.create(self.m["name"], self.m["jobs"])
+        try:
+            return self._run()
+        except BaseException as e:
+            with contextlib.suppress(Exception):
+                self._stop(f"aborted: {type(e).__name__}: {e}")
+            raise
+
+    def _global_short(self, job: Mapping[str, Any]) -> str | None:
+        """Why runtime/budget.json can't hold the match's cap (live.play would refuse it), else None."""
+        need = sum(side_caps(job).values())
+        if self.global_budget is None or need <= 0:
+            return None
+        try:
+            b = matrix.read_budget(self.global_budget)
+        except (OSError, ValueError) as e:
+            return str(e)
+        left = round(b["cap"] - b["spent"], 6)
+        return None if left >= need else f"{self.global_budget}: ${left:.2f} left, the match's cap is ${need:g}"
+
+    def _run(self) -> str:
         for st in self.state().values():
             if st["status"] == "interrupted":
                 job, attempt = st["job"], st["attempts"][-1]["attempt"]
@@ -209,6 +236,9 @@ class ArenaQueue:
                 return self._stop(matrix.BUDGET)
             if short := arena_matrix.over_budget(job, budgets):
                 self.log(f"arena matrix {self.m['name']}: {job['id']}'s reserves don't fit in {', '.join(short)}")
+                return self._stop(matrix.BUDGET)
+            if why := self._global_short(job):
+                self.log(f"arena matrix {self.m['name']}: {job['id']}: {why}")
                 return self._stop(matrix.BUDGET)
             if (why := self.disk(job)) is not None:
                 return self._stop(f"{matrix.DISK}: {why}")
@@ -346,6 +376,7 @@ def main(argv: list[str], repo: Path | None = None, play: Play | None = None, ou
         stopped=lambda: run_host.stop_file().exists(),
         disk=disk,
         log=renv.log,
+        global_budget=renv.RUNTIME / "budget.json",
     )
     try:
         stop = q.run()
