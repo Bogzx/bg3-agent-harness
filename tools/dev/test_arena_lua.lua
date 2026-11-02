@@ -144,6 +144,7 @@ dofile(LUA .. "/Server/Referee.lua")
 dofile(LUA .. "/Server/RollLog.lua")
 dofile(LUA .. "/Server/Arena.lua")
 dofile(LUA .. "/Server/ArenaSetup.lua")
+dofile(LUA .. "/Server/ArenaSymmetry.lua")
 U, RPC, Ar, V, G, N = BG3AI.Util, BG3AI.RPC, BG3AI.Arena, BG3AI.Visibility, BG3AI.Guard, BG3AI.Nav
 
 -- One Osiris event, as the game fires it: every listener registered for it.
@@ -244,7 +245,8 @@ end
 
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua",
-    "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua", "test_arena_lua_setup.lua" }) do
+    "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua", "test_arena_lua_setup.lua",
+    "test_arena_lua_symmetry.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 
