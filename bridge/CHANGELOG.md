@@ -28,6 +28,9 @@ A server started without `BG3AI_SIDE` serves the same tools and rules as before 
   holds the HUD.
 - In every condition, ALERTS leaves out an alert that names a tool the server has off, e.g. `trade sell=junk` when
   `trade` is off.
+- With a side, every turn end waits up to 22 s for the mod's answer (`end_turn`, a stunned member's end, and the
+  hold before the next action while a background end runs), since the mod's last end of a turn group can take up to
+  20 s to settle. Before, `end_turn` answered "not finished" after 15 s. Normal play keeps 15 / 5 / 16 s.
 
 ## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
 
