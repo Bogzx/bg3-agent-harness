@@ -177,6 +177,12 @@ function V.context()
         observers = V.observers(party),
         rules = V.rules(),
     }
+    -- leader: where the camera is, for ground in view (V.pointSeen): the selected member's spot, else the first
+    -- observer's (pointSeen falls back to it when nil)
+    local sel = V.selected(party)
+    for _, o in ipairs(ctx.observers) do
+        if o.uuid == sel then ctx.leader = o.pos end
+    end
     V.ctxCache, V.ctxFrame = ctx, f
     return ctx
 end

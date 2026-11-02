@@ -64,13 +64,17 @@ Screenshots (`screenshot`/`zoom`) are fair by construction: they are the rendere
   as the chasm beside it. A move_to or jump the agent aims there itself is not refused or proven: a misstep has
   its in-game consequence (user, 2026-10-18; audit C2/C3).
 * Navigation knows only ground the party has seen or walked (`Navigation.lua` `N.known`): the 4 m breadcrumb
-  cell a member stood in, or a point a member sees now (in sight range with a clear eye ray), remembered for the
-  session once seen. Ground below a member's own floor also counts when the eye ray stops on that floor short of
-  its drop edge and a ray over the edge reaches it, as the camera above shows a ledge past an edge: the ray must
-  hit floor (not a wall or parapet face) within 5 m of the member, the edge must lie within 3 m past that hit, the
-  spot at most 4 m below the member's feet, and the look over the edge no steeper than 45 degrees down, so the
-  dead ground at the foot of a face stays unseen; a floor that goes on (a storey over a room) is no edge
-  (`VisibilityObjects.lua` `overEdge`; live N14b; user, 2026-10-28). Rays that can't answer count as not seen.
+  cell a member stood in, or a point a member sees now, remembered for the session once seen. "Sees now" is what
+  the screen shows: the point is within 40 m of the leader (the member the camera follows; `V.CAMERA_M`) or within
+  a member's own Sight stat, and a clear eye ray from a member reaches it, so no ground behind a wall or under a
+  floor (user, 2026-11-02, "Camera range": it replaces the Sight-stat range of 2026-10-18/10-28; the Sight stat stays
+  the range for characters and items). Ground below a member's own floor also counts when the eye ray stops on that
+  floor short of its drop edge and a ray over the edge reaches it, as the camera above shows a ledge past an edge:
+  the ray must hit floor (not a wall or parapet face) within 5 m of the member, the edge must lie within 3 m past
+  that hit, the spot at most 15 m below the member's feet, and the look over the edge (from 1 m above it) no steeper
+  than 60 degrees down, so the dead ground at the foot of a face stays unseen; a floor that goes on (a storey over a
+  room) is no edge (`VisibilityObjects.lua` `overEdge`; live N14b; user, 2026-10-28; 4 m and 45 degrees widened to
+  15 m and 60 degrees, user, 2026-11-02). Rays that can't answer count as not seen.
   A goal off that ground gets its straight distance
   and direction only; walks and move_to/jump_to targets end on it; WAYS, jump solvers, LOWER GROUND, get_layout
   cells (`?`), hazards on a route and teleport-landing floors are limited to it. route prints no floor heights

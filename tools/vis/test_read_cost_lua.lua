@@ -384,5 +384,61 @@ test("V13: a door opening far from the party (Lower City crowds) keeps the cache
     eq(N.geoGen, gen, "only items")
 end)
 
+-- ---- known ground = the camera range (user 2026-11-02): what N.known's rays cost per op, Sight 18.5 vs camera 40 ----
+-- N.known asks V.pointSeen for every point not walked or remembered; a point out of range costs a distance check, one
+-- in range casts rays (in view: 1; blocked: each member's eye, then the look over an edge). Charged per point in
+-- range at the live bound: launch-v1 get_layout (1.5 m cells) took p50 137 ms at radius 10 (~220 cells, all in
+-- range) and 153 ms at radius 20 (~476 in range of 729): +256 points in range and 500 more cell reads for +16 ms,
+-- so <= 0.06 ms a point, the seen-point memory included. Rays are counted too (blocked: 5 rays, the dear case).
+COST.KnownPoint = 0.06
+local function knownRun(range, scene, op)
+    reset()
+    N.seenPts, N.seenPtsN = {}, 0
+    local V = BG3AI.Visibility
+    local real = V.pointSeen
+    local n = { asked = 0, cast = 0 }
+    V.pointSeen = function(_, pt)
+        n.asked = n.asked + 1
+        local o = world[P1]
+        if math.sqrt((pt[1] - o[1]) ^ 2 + (pt[2] + 0.5 - o[2]) ^ 2 + (pt[3] - o[3]) ^ 2) > range then return false end
+        n.cast = n.cast + 1
+        charge("KnownPoint")
+        if not blocked(pt[1], pt[2], pt[3]) then calls.Raycast = (calls.Raycast or 0) + 1; return true end
+        calls.Raycast = (calls.Raycast or 0) + 5
+        return false
+    end
+    scene()
+    local ok, err = pcall(op)
+    V.pointSeen = real
+    if not ok then error(err, 0) end
+    n.ms, n.rays = simMs(), calls.Raycast or 0
+    return n
+end
+local KNOWN_SCENES = {
+    { "route 35 m W, open", nil, function() RPC.ops["nav.route"]({ pos = { -35, 0, 0 } }) end },
+    { "route 35 m W, wall at 4 m (ways)", function() blocked = function(x) return x < -4.5 end end,
+      function() RPC.ops["nav.route"]({ pos = { -35, 0, 0 } }) end, 90 },
+    { "reach_toward 30 m W, open", nil, function() RPC.ops["nav.reach_toward"]({ dir = "W", max_m = 30 }) end },
+    { "reach_toward 30 m W, wall at 4 m", function() blocked = function(x) return x < -4.5 end end,
+      function() RPC.ops["nav.reach_toward"]({ dir = "W", max_m = 30 }) end, 90 },
+    { "travel leg toward 25 m", nil,
+      function() RPC.ops["nav.reach_toward"]({ pos = { -25, 0, 0 }, max_m = 30, avoid = "least" }) end },
+    { "frontier cold (25 items, 1 fire)", frontierWorld, function() RPC.ops["nav.frontier"]({}) end, 60 },
+    -- the square's corners (to 27.6 m) now cast too: +248 points, ~+15 ms (old 50 ms here, live p50 153 ms)
+    { "layout radius 20", nil, function() RPC.ops["nav.layout"]({ radius = 20 }) end, 75 },
+    { "layout radius 12 (the default)", nil, function() RPC.ops["nav.layout"]({}) end },
+}
+test("known ground: the camera range's rays per op stay under each op's target (old vs new printed)", function()
+    for _, sc in ipairs(KNOWN_SCENES) do
+        local old = knownRun(18.5, sc[2] or function() end, sc[3])
+        local new = knownRun(40, sc[2] or function() end, sc[3])
+        print(string.format("     %-34s asked %3d | in range %3d -> %3d | rays %3d -> %3d | %5.1f -> %5.1f ms",
+            sc[1], new.asked, old.cast, new.cast, old.rays, new.rays, old.ms, new.ms))
+        if new.ms > (sc[4] or COST_TARGET_MS) then
+            error(string.format("%s: %.1f ms > %d ms", sc[1], new.ms, sc[4] or COST_TARGET_MS))
+        end
+    end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

@@ -229,8 +229,9 @@ function N.visited(level, p, slack)
 end
 
 -- Known ground (FAIRNESS.md: what a player saw or remembers seeing). A point is known when a party member stood in
--- its breadcrumb cell (the 4 m cell itself, same height band), or a party member sees it now (V.pointSeen: within
--- sight range, a clear ray from the eye to 0.5 m above it). A point once seen stays known this session (1 m cells,
+-- its breadcrumb cell (the 4 m cell itself, same height band), or a party member sees it now (V.pointSeen: on screen,
+-- within V.CAMERA_M of the leader or the member's own sight range, a clear ray from the eye to 0.5 m above it; ledges
+-- up to V.EDGE_DROP_M below an edge). A point once seen stays known this session (1 m cells,
 -- 2 m height bands). Fail closed: no ray answer (uncalibrated, broken) is not seen. Nav answers about a goal that is
 -- not known only with its straight distance and direction; walks end only on known ground.
 N.SEEN_MAX = 20000
