@@ -1,4 +1,4 @@
-"""Offline tests (D15): do_actions, queue_actions and combat_turn take a real JSON array/object as well as the same
+"""Offline tests (D15): do_actions and queue_actions take a real JSON array/object as well as the same
 JSON as a string, through the MCP argument validation, and both forms reach the tool as the same text; so do
 level_up's and create_character's plan and set_reactions' settings.
 
@@ -15,10 +15,9 @@ from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before impo
 
 # isort: split
 from bg3ai.game import JobResult
-from bg3ai.tools import batch, core, newgame, progression, saving, turn_tool, uitools
+from bg3ai.tools import batch, core, newgame, progression, saving, uitools
 
 STEPS = [{"tool": "wait", "seconds": 1}, {"tool": "end_turn"}]
-PLAN = {"move": "e12", "action": ["Target_MainHandAttack"]}
 
 
 def validated(tool: str, args: dict) -> dict:
@@ -35,13 +34,6 @@ class Validation(unittest.TestCase):
             self.assertEqual(validated(tool, {"actions": {"actions": STEPS}})["actions"], {"actions": STEPS})
             self.assertEqual(validated(tool, {"actions": "not json"})["actions"], "not json")
 
-    def test_combat_turn_takes_an_object_a_list_or_a_string(self):
-        chain = [{"who": "Karlach", "plan": PLAN}]
-        self.assertEqual(validated("combat_turn", {"plan": PLAN})["plan"], PLAN)
-        self.assertEqual(validated("combat_turn", {"plan": chain})["plan"], chain)
-        self.assertEqual(validated("combat_turn", {"plan": json.dumps(PLAN)})["plan"], PLAN)
-        self.assertEqual(validated("combat_turn", {"plan": {}})["plan"], {})
-
     def test_plan_and_settings_args_take_an_object_or_a_string(self):
         build = {"class": "Wizard", "name": "Ilse"}
         for tool, arg, value in (
@@ -55,7 +47,7 @@ class Validation(unittest.TestCase):
             self.assertLessEqual({"object", "string"}, types, tool)
 
     def test_schemas_offer_the_array(self):
-        for tool, arg in (("do_actions", "actions"), ("queue_actions", "actions"), ("combat_turn", "plan")):
+        for tool, arg in (("do_actions", "actions"), ("queue_actions", "actions")):
             types = {o["type"] for o in core.mcp._tool_manager.get_tool(tool).parameters["properties"][arg]["anyOf"]}
             self.assertLessEqual({"array", "string"}, types, tool)
 
@@ -75,12 +67,6 @@ class SameText(unittest.TestCase):
         out = batch.queue_actions([{"tool": "look"}, {"tool": "loot_area", "radius": 10}])
         self.assertIn("step 1: 'look' can't be batched or queued (a step is one of: camp, choose_dialogue,", out)
         self.assertIn("walk_toward; call other tools on their own)", out)
-
-    def test_combat_turn_chain_from_a_list(self):
-        chain = [{"who": "Karlach", "plan": PLAN}, {"who": "Gale", "plan": {}}]
-        self.assertEqual(turn_tool._turn_chain(batch._as_json(chain)), [("Karlach", json.dumps(PLAN)), ("Gale", "{}")])
-        self.assertIsNone(turn_tool._turn_chain(batch._as_json(PLAN)))
-
 
 class ObjectArgs(unittest.TestCase):
     """The object and its JSON text reach the game alike (each failed with TypeError on json.loads(dict) before)."""

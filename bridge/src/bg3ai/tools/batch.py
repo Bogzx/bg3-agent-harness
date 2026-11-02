@@ -32,12 +32,12 @@ def _as_json(arg: Any) -> str:
 @core.mcp.tool()
 def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool = True, ignore: str = "",
                note: str = "") -> str:
-    """Run several actions in order in ONE call: a whole combat turn, a looting sweep, a dialogue chain. Plan from one observation, then execute.
+    """Run several actions in order in ONE call, out of combat: a looting sweep, a dialogue chain. In combat it runs no steps (each call there is one action).
     actions: a list of steps (or the same list as a JSON string), e.g.
-    [{"tool":"move_to","target":"e12"},{"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12","unless":"hp_below:30"},{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"},{"tool":"end_turn"}]
+    [{"tool":"move_to","target":"e12"},{"tool":"interact","target":"e12"},{"tool":"loot","take":"all"}]
     Allowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
-    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step; and before a step once the call has run 90 s (time budget, a wait cut to fit). ignore="hostile,hp" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).
+    Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step; and before a step once the call has run 90 s (time budget, a wait cut to fit). ignore="hostile,hp" disables some (dialogue, prompt, hostile, hp, damage, surface, teleport, trap); a fight starting always stops it.
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
     note: memory log line(s) appended to your session log at once, as note() does (no extra turn)."""
     t0 = time.monotonic()
@@ -46,6 +46,8 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
         return reporting._finish("do_actions", {}, refused, t0)
     if not wait:
         return queue_actions(actions, ignore=ignore, note=note)
+    if queueing._in_combat():
+        return reporting._finish("do_actions", {}, "REFUSED: " + queueing.BATCH_IN_COMBAT.format(tool="do_actions"), t0)
     memory._note_quiet(note)
     try:
         steps = actq.parse_steps(actions, _BATCHABLE)
@@ -82,7 +84,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
 @reporting._guard
 def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str | None = None,
                   replace: bool = False, ignore: str = "", note: str = "") -> str:
-    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
+    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Out of combat only: in combat it queues nothing, and a fight starting stops the queue. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
     t0 = time.monotonic()
     actions = _as_json(actions)
     if refused := session._note_refused(note):
@@ -90,6 +92,9 @@ def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str
     memory._note_quiet(note)
     if core._session_over():
         return reporting._finish("queue_actions", {}, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    if queueing._in_combat():
+        return reporting._finish("queue_actions", {}, "REFUSED: " + queueing.BATCH_IN_COMBAT.format(tool="queue_actions"),
+                                 t0)
     try:
         steps = actq.parse_steps(actions, _BATCHABLE)
     except actq.StepError as e:
@@ -100,9 +105,6 @@ def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str
 
 def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None = "") -> str:
     """Add steps to char's queue (ignore=None keeps the queue's current interrupt settings)."""
-    # review M4/M5: a background end still running for char: wait for it, so these steps get their own executor (the
-    # end's ignores every interrupt) and a replace doesn't cancel the end
-    held = turn_tool._hold_for_bg_end(char) if char in turn_tool._bg_ends else ""
     if ignore is not None or char not in queueing._queue_ignore:
         queueing._queue_ignore[char] = queueing._parse_ignore(ignore or "")
     n, mine = len(steps), []
@@ -116,7 +118,7 @@ def _enqueue(char: str, steps: list, replace: bool = False, ignore: str | None =
     with queueing._queues().lock:
         waiting = len(q.steps)
     after = f", after {'/'.join(mine)} arrives" if mine else ""
-    return (held + "\n" if held else "") + f"queued {n} step(s) for {queueing._label(char)} ({waiting} waiting{after})"
+    return f"queued {n} step(s) for {queueing._label(char)} ({waiting} waiting{after})"
 
 
 def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, x, y, z, t0: float,
@@ -312,11 +314,10 @@ def cancel_queue(who: str | None = None) -> str:
     """Stop a character's queue (who) or every queue (who empty): the running step is cancelled and the rest dropped."""
     t0 = time.monotonic()
     wu = plumbing._who_uuid(who) if who else None
-    held = turn_tool._hold_for_bg_end(wu)  # review M5: a background turn end is never cancelled half-way
     out = queueing._queues().cancel(wu)
     if not out:
-        return reporting._finish("cancel_queue", {}, (held + "\n" if held else "") + "no queue was running", t0)
-    lines = ([held] if held else []) + [f"cancelled {queueing._label(w)}: " + (f"stopped {run}, " if run else "")
+        return reporting._finish("cancel_queue", {}, "no queue was running", t0)
+    lines = [f"cancelled {queueing._label(w)}: " + (f"stopped {run}, " if run else "")
                                         + f"dropped {n}" for w, n, run in out]
     return reporting._finish("cancel_queue", {}, "\n".join(lines), t0)
 
@@ -639,5 +640,5 @@ def _arrival_leads() -> str:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402
-    queueing, turn_plan, turn_tool, macro_tools, travel_macro, session,
+    queueing, turn_plan, macro_tools, travel_macro, session,
 )

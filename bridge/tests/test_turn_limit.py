@@ -10,14 +10,13 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
-import json
 import unittest
 
 from test_disabled import s076_combat
-from test_turn_macros import P1, Base
+from test_turn_macros import Base
 
 from bg3ai import render
-from bg3ai.tools import core, observe, turn_tool
+from bg3ai.tools import observe
 
 PSYCHE = {"text": "The brain is resisting the Chains of Karsus! Defeat it before it breaks free! 4 Turns Remaining.",
           "turns_left": 4}
@@ -47,19 +46,6 @@ class CombatReads(Base):
     def test_get_combat_state_carries_it(self):
         self.g.story_timer = dict(PSYCHE)
         self.assertIn(LINE, observe.get_combat_state())
-
-    def test_turn_block_carries_it(self):
-        self.g.story_timer = dict(PSYCHE)
-        out = turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}), who=core.H.get(P1), end=False)
-        self.assertIn(LINE, out)
-
-    def test_no_counter_no_line(self):
-        self.g.story_timer = {"none": True}
-        self.assertNotIn("TURN LIMIT", observe.get_combat_state())
-        self.g.story_timer = None  # an old mod without ui.story_timer
-        self.assertNotIn("TURN LIMIT", turn_tool.combat_turn(json.dumps({"action": "Shout_Disengage"}),
-                                                          who=core.H.get(P1), end=False))
-
 
 if __name__ == "__main__":
     unittest.main()

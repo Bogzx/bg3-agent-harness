@@ -5,6 +5,25 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: in combat each call is one action; combat_turn is removed
+
+- combat_turn is gone from tools/list (94 tools), with its plan parsing, fallbacks, retargeting, automatic bonus
+  heal, own-summon-first turns, list-of-plans chains and background end (fight-flow research, D291: in launch-v1
+  the agents played fights as whole turns planned from one read; the owner's rule is one action, observe, then the
+  next). Summons are played like any party member.
+- do_actions and queue_actions run no steps in combat: "REFUSED: in combat <tool> runs no steps: each call is one
+  action (use_ability, move_to, walk_toward, jump_to, react, end_turn)". `combat` is no longer an `ignore=` kind, so
+  a batch or queue started out of combat stops when a fight starts.
+- In combat use_ability, move_to, walk_toward, jump_to and react end with a CHANGES block (other combatants' HP,
+  deaths, moves, statuses since the agent's last look). That costs one act.watch read per call of these tools, also
+  out of combat.
+- In combat a walk (move_to, walk_toward) returns at its end whatever `wait` says.
+- Texts: the server instructions say "In combat each call is one action (...)"; an attack that starts a fight says
+  `COMBAT: the attack started a fight (round N): get_combat_state shows the turn order`; SHARED TURN says
+  `(who=<member> on each action, end_turn for each)`; end_turn on an ended member says "its turn already ended (the
+  rest of its turn group is still acting)"; camp in a fight "a fight is on: finish it first, then camp()".
+- Compaction keeps its combat_turn rules for recorded runs (golden replay, obs_size).
+
 ## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
 
 - fast_travel from camp with a conversation screen up fails "FAILED: a conversation is open, nothing was pressed;

@@ -170,6 +170,14 @@ class Rules(unittest.TestCase):
         self.assertIn(pace, c.apply("wait_for", pace))
         self.assertEqual(c.apply("wait_for", pace), "PACE: you waited right after issuing (do independent work first).")
 
+    def test_shared_turn_hint_short_after_once(self):
+        # observe's SHARED TURN text since combat_turn was removed (and combat_turn's, in recorded runs)
+        for tail in ("(who=<member> on each action, end_turn for each)", "(combat_turn who=..., end each one's turn)"):
+            c = fresh()
+            text = f"SHARED TURN: e1 Claude, e2 Lae'zel can all act now, in any order {tail}"
+            self.assertEqual(c.apply("get_combat_state", text), text)
+            self.assertEqual(c.apply("get_combat_state", text), "SHARED TURN: e1 Claude, e2 Lae'zel can all act now, any order")
+
     def test_hint_short_forms_keep_their_groups(self):
         for key, pat, short in compact.HINT_RULES:
             for g in re.compile(pat).groupindex:

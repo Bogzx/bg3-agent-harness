@@ -13,7 +13,7 @@ import unittest
 from test_turn_macros import GOB, IMP, P1, P2, Base, combat  # noqa: F401 (sets BG3AI_RUNTIME first)
 
 from bg3ai import hotbar
-from bg3ai.tools import core, reporting, world_tools, combat as combat_tools, batch, turn_tool
+from bg3ai.tools import core, reporting, world_tools, combat as combat_tools, batch
 from bg3ai.game import GameError
 
 
@@ -188,16 +188,6 @@ class HotbarRoute(Base):
         self.assertEqual(self.fake.calls, [])
         self.assertIn("FAILED — it is not this character's turn", out)
 
-    def test_combat_turn_step_takes_the_route(self):
-        hotbar.HOTBAR_CAST_ENABLED = True
-        out = turn_tool.combat_turn(json.dumps({"action": {"ability": "Target_Bless",
-                                                        "targets": [self.p1, self.gob, self.imp]}}))
-        a = self.cast_args()[0]
-        self.assertTrue(a["ui"])
-        self.assertEqual(len(self.fake.calls), 1)
-        self.assertIn("action: Target_Bless", out)
-        self.assertNotIn("FAILED", out)
-
     # --- review fixes (2026-10-16): H1 select first, M1 stop hook, M2 any exception, M3 no second cast
 
     def test_supersede_rule_of_the_fake(self):
@@ -229,6 +219,7 @@ class HotbarRoute(Base):
     def test_m1_stop_hook_follows_the_executor(self):
         hotbar.HOTBAR_CAST_ENABLED = True
         self.assertFalse(combat_tools._click_stop()())               # a plain call: nothing to follow
+        self.g.combat, self.g.watch["combat"] = {"active": False}, False  # a batch runs no steps in combat
         out = batch.do_actions(json.dumps([{"tool": "use_ability", "ability": "Target_Bless",
                                              "targets": [self.p1, self.gob, self.imp], "who": self.p1}]))
         stop = self.fake.kw[0]["should_stop"]

@@ -50,7 +50,7 @@ def apart(status: dict, leader: str | None = None, far_m: float = APART_M, stay:
     status: state.status (party rows with pos, region, chained). Dead and off-stage members are left out;
     an unchained member counts even when near (it won't follow the next walk), so does one on another floor
     (more than floor_m above/below: a ledge or a drop it may have no path from). Summons are left out,
-    and nothing is apart from a summon leader (the last combat_turn may have selected one)."""
+    and nothing is apart from a summon leader (a summon's own action may have selected one)."""
     lead = leader_row(status, leader)
     if not lead or lead.get("summon"):
         return []
@@ -197,7 +197,7 @@ def game_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str],
             line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?): plan the "
                      "scene without them, or reload before the approach and walk in together")
         elif in_combat:
-            line += f" → in combat: move them toward {label(who)} on their turns (combat_turn move)"
+            line += f" → in combat: move them toward {label(who)} on their turns (move_to who=)"
         else:
             line += (f" → regroup(leader={label(who).split(' ')[0]}) walks them to {label(who)} (their walks keep "
                      "going through a conversation they are not in)")

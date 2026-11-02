@@ -380,7 +380,7 @@ WALK_CLIP_MOVEMENT = True
 @reporting._guard
 def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
                 who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns within ~1 s with a job id + ETA, or the result if it already ended; wait=true blocks only in combat). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
+    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (out of combat it returns within ~1 s with a job id + ETA, or the result if it already ended; in combat it returns at the walk's end). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": plumbing._who(who), "max_m": max_m}
     if objective:
@@ -481,10 +481,7 @@ def _combat_state_text() -> str:
     res, timer = par(lambda: core.game.rpc("state.combat"), _story_timer) if par else (core.game.rpc("state.combat"),
                                                                                    _story_timer())
     plumbing._remember_names(res)
-    if isinstance(res, dict):
-        turn_plan._seen_sides(res)  # the side of a target planned from this read that is out of sight by its turn
     if isinstance(res, dict) and not res.get("active", True) and len(res) <= 1:
-        _acts_shown.clear()
         _light_noted.clear()
         return "Not in combat."
     body = render.render_combat(res, core.H) if isinstance(res, dict) else render.compact(res, core.H)
@@ -504,7 +501,7 @@ def _combat_state_text() -> str:
     cur = st.get("active") if st.get("active") in mine else (mine[0] if mine else None)
     if len(mine) > 1:
         body += ("\nSHARED TURN: " + ", ".join(queueing._label(u) for u in mine)
-                 + " can all act now, in any order (combat_turn who=..., end each one's turn)")
+                 + " can all act now, in any order (who=<member> on each action, end_turn for each)")
     if cur in party:
         acts = core.game.try_rpc("state.actions", {"uuid": cur})
         overview._learn_actions(cur, acts)
@@ -514,7 +511,6 @@ def _combat_state_text() -> str:
             if rl:
                 body += "\n" + rl
             body += "\nYOUR ACTIONS (" + core.H.get(cur) + ")\n" + render.render_actions(acts, core.H)
-            _acts_shown[cur] = set(render.render_actions(acts, core.H).splitlines()[1:])
     body += _light_note(res)
     return body
 
@@ -538,45 +534,6 @@ def _light_note(cs: Any) -> str:
                        "in the Shadow Curse (its aura is the party's Moonshield); after the fight equip_best gives "
                        "it to a caster and puts a real weapon back in this hand.")
     return "".join("\n" + x for x in out)
-
-
-# A names-only action line (render.ACTION_IDS False): the name ends where the first detail starts.
-_ACT_NAME = re.compile(r"(.*?)(?= \[| [\d.]+m\b| self\b| point\b| L\d\b| uses | aoe | —|$)")
-
-# Action lines last listed per character this combat: combat_turn's next-up listing repeated the same ~40 lines
-# (~2 KB) every turn in S011 (Jump, Dip, Shove, all spells). get_combat_state always lists everything.
-_acts_shown: dict[str, set[str]] = {}
-
-
-def _actions_delta(uuid: str, acts: Any) -> str:
-    """'\n<full list>' the first time this combat, then only the NOW line and what changed since."""
-    text = render.render_actions(acts, core.H)
-    lines = text.splitlines()
-    head = lines[:1] if lines and lines[0].startswith("NOW ") else []
-    body = lines[len(head):]
-    prev = _acts_shown.get(uuid)
-    _acts_shown[uuid] = set(body)
-    if prev is None:
-        return "\n" + text
-    new = [x for x in body if x not in prev]
-
-    def key(x: str) -> str:  # "Name (spell_id)" or "Name [cost]": a changed cost/uses line is a '+', not a '-'
-        m = re.match(r"(.*?\(\S+\))", x) or re.match(_ACT_NAME, x)
-        return m.group(1) if m else x
-    renewed = {key(x) for x in new}
-    unav = next((x for x in body if x.startswith("UNAVAILABLE")), "")
-
-    def now_unavailable(x: str) -> bool:  # S026: 13 L3 spells were in the '+ UNAVAILABLE' line and listed again as '-'
-        m = None if " (" in x else re.match(_ACT_NAME, x)
-        name = m.group(1) if m else x.split(" (", 1)[0]
-        return bool(unav) and re.search(r"(?<![\w'])" + re.escape(name) + r"(?=[,;( ]|$)", unav) is not None
-    gone = sorted(x for x in prev if x not in body and key(x) not in renewed and not x.startswith("UNAVAILABLE")
-                  and not now_unavailable(x))
-    if len(gone) + len(new) > len(body) // 2:
-        return "\n" + text
-    out = head + [f"(other actions as listed before for {core.H.get(uuid)}; get_combat_state lists them all)"]
-    out += ["+ " + x for x in new] + ["- " + key(x) for x in gone]
-    return "\n" + "\n".join(out)
 
 
 @core.mcp.tool()

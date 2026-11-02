@@ -27,12 +27,24 @@ def _watch_conn() -> Game:
     return _watch_game
 
 
+# The interrupts do_actions / queue_actions may ignore: never combat, so a batch stops when a fight starts (in combat
+# each call is one action, BATCH_IN_COMBAT).
+IGNORABLE = tuple(k for k in actq.INTERRUPT_KINDS if k != "combat")
+BATCH_IN_COMBAT = "in combat {tool} runs no steps: each call is one action (use_ability, move_to, walk_toward, " \
+                  "jump_to, react, end_turn)"
+
+
 def _parse_ignore(ignore: str) -> set:
     out = {x.strip().lower() for x in (ignore or "").split(",") if x.strip()}
-    bad = out - set(actq.INTERRUPT_KINDS)
+    bad = out - set(IGNORABLE)
     if bad:
-        raise ValueError(f"unknown interrupt kind(s) {', '.join(sorted(bad))}; use {', '.join(actq.INTERRUPT_KINDS)}")
+        raise ValueError(f"unknown interrupt kind(s) {', '.join(sorted(bad))}; use {', '.join(IGNORABLE)}")
     return out
+
+
+def _in_combat() -> bool:
+    w = core.game.try_rpc("act.watch")
+    return isinstance(w, dict) and bool(w.get("combat"))
 
 
 def _accepts(fn, name: str) -> bool:
@@ -131,9 +143,6 @@ def _report_text(rep: actq.Report, n: int) -> str:
 
 def _on_queue_report(who: str, rep: actq.Report) -> None:
     core.METRICS.bg_end(f"queue:{who}")
-    # review L2: the run that reports is the background end (_enqueue holds new steps for it): forget it now, or a later
-    # unrelated queue for this character (an out-of-combat travel_to) made every hold wait for that walk
-    turn_tool._bg_ends.pop(who, None)
     data: dict[str, Any] = {"who": who, "done": rep.done}
     if rep.skipped:
         data["skipped"] = rep.skipped
@@ -270,5 +279,5 @@ def _peek_events(kinds: set) -> dict | None:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402, F401
-    turn_plan, turn_tool,
+    turn_plan,
 )
