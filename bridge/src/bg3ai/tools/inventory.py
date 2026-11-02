@@ -537,6 +537,9 @@ def _rest_blocked() -> str:
     if woke:
         core.METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can, "refused": True, "woke": True})
         return woke
+    talks = travel.night_talks_left()
+    if talks:
+        return f"long_rest: FAILED — not pressed: {talks}"
     if not _rest_reasons(can, _REST_HARD_FLAGS):
         return ""
     time.sleep(0.5)  # a flag set for a moment (a teleport into camp, a closing conversation) must not refuse a rest

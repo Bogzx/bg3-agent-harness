@@ -202,6 +202,30 @@ def _settle_hud(max_s: float) -> bool:
     return False
 
 
+def night_talks_left() -> str:
+    """launch-v1 haiku act3_gold_max (r1, r2, r4, r5): 46 long_rest "the night at camp didn't end" and camp leaves
+    refused for up to 25 min, until the agent happened to talk to Shadowheart or Withers. At night the camp story
+    (GLO_Camp.txt PROC_Camp_TryLeaveNightMode_CampNightCheck) answers the sleep press with only its "talks left"
+    message box while DB_Camp_RequiredTalks has a row (the "!" over each); a talk with that character clears it.
+    '' when it is not night at camp or no talk is left, else the reason (Events.lua camp.rest_flow required_talks:
+    named when in the party or in sight)."""
+    flow = core.game.try_rpc("camp.rest_flow", {"since_ms": 1})
+    if not isinstance(flow, dict):
+        return ""
+    night = (flow.get("story") or {}).get("DB_Camp_NightMode")
+    talks = [t for t in flow.get("required_talks") or [] if isinstance(t, dict)]
+    if not (isinstance(night, int) and night > 0 and talks):
+        return ""
+    named = [f"{core.H.get(t['uuid'])} {t.get('name') or ''}".strip() for t in talks if t.get("uuid")]
+    unseen = len(talks) - len(named)
+    who = ", ".join(named)
+    if unseen:
+        who += (" and " if who else "") + ("someone out of sight" if unseen == 1 else f"{unseen} people out of sight")
+    core.METRICS.write({"type": "night_talks", "t": round(time.time(), 3), "named": len(named), "unseen": unseen})
+    return (f"the night at camp can't end yet: the game still wants a talk with {who} first (the '!' over them); "
+            "going to sleep only brings up its 'talks left' notice until then, and a talk with them clears it")
+
+
 def _end_night_first() -> str:
     """Live 2026-10-10: IsAtNightCamp=true + TravelError=Unavailable for hours: a long rest whose night never
     ended (29/31 fast_travel and 7 camp-leave failures 10:00-10:52). Travelling first needs the night to end, as a
@@ -223,6 +247,9 @@ def _end_night_first() -> str:
     if b.get("dialogue"):
         return ("FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends the night "
                 "(the party sleeps: a long rest)")
+    talks = night_talks_left()
+    if talks:
+        return f"FAILED: nothing was pressed: {talks}. Until the night ends, travel from camp is blocked"
     out = world_tools._box_act("long_rest", "ui.long_rest", {"sleep_only": True}, wait_s=60)
     res = reporting._batch.get("result")
     if isinstance(res, dict) and res.get("night_ended"):
