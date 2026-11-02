@@ -9,9 +9,9 @@
 --   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
 --      entries' grants nor the kit's boosts: live check 12 step 13): each pair arena.mirror_spawn + arena.mirror_kit
---      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name within NAME_WAIT_MS of
---      the renames (a name lands after its call) and arena.symmetry over the pairs must find nothing; pair i is
---      teams.A[i] and teams.B[i] (arena.teams, if given, must name them in that order)
+--      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name and StatsId within
+--      NAME_WAIT_MS of the spawn (both land after the spawn tick) and arena.symmetry over the pairs must find
+--      nothing; pair i is teams.A[i] and teams.B[i] (arena.teams, if given, must name them in that order)
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
 --   2. place: the names checked; every member and sitter detached, each team chained to its first member and
 --      teleported to a line through its spawn (the sitters stay where they are, SetCanJoinCombat 0: read back 0)
@@ -365,7 +365,7 @@ STEPS[-1] = function(job)
         end
         job.kits[i] = M.kit({ twins = { r.twins[1], r.twins[2] }, race = p.race, kit = p.kit }).job
     end
-    job.names_by = now_ms() + M.NAME_WAIT_MS -- the names land after the renames (live check 13)
+    job.names_by = now_ms() + M.NAME_WAIT_MS -- names and StatsId land after the spawn tick (live checks 13, 13b)
     return M.KIT_EVERY_MS
 end
 
@@ -379,12 +379,16 @@ STEPS[0] = function(job) -- the kits done and the names landed, then the twins a
         if k.status ~= "done" then error(("pair %d's kit %s: %s"):format(i, k.status, tostring(k.error)), 0) end
     end
     local off, pairs = {}, {}
-    for i = 1, #job.mirror.pairs do
+    for i, p in ipairs(job.mirror.pairs) do
         pairs[i] = { job.teams.A[i], job.teams.B[i] }
         for _, u in ipairs(pairs[i]) do
             if V.name(u) ~= job.names[u] then
                 off[#off + 1] = ("%s (%s) reads %s"):format(job.names[u], u, tostring(V.name(u)))
             end
+            local e = V.entity(u)
+            local ok, st = pcall(function() return e.Data.StatsId end)
+            st = ok and st or nil
+            if st ~= p.stats then off[#off + 1] = ("%s (%s) has stats %s"):format(job.names[u], u, tostring(st)) end
         end
     end
     if #off > 0 then
@@ -392,7 +396,7 @@ STEPS[0] = function(job) -- the kits done and the names landed, then the twins a
             job.step = job.step - 1 -- wait again
             return Ar.Mirror.KIT_EVERY_MS
         end
-        error(("twins that don't read their own name %d ms after the renames: %s"):format(Ar.Mirror.NAME_WAIT_MS,
+        error(("twins that don't read as asked %d ms after the spawn: %s"):format(Ar.Mirror.NAME_WAIT_MS,
             table.concat(off, "; ")), 0)
     end
     local sym = Ar.Symmetry.check(pairs)

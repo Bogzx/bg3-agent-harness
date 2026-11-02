@@ -23,13 +23,21 @@ local function stub(name, fn)
     rawset(Osi, name, fn)
 end
 
+local NULL = "00000000-0000-0000-0000-000000000000"
+
+-- A copy as it reads once it has landed; over.fresh: as it reads in its spawn tick (live check 13b: Race empty; the
+-- rest assumed missing too, the worst case).
 local function twin(u, over)
     over = over or {}
     world[u] = { pos = { 0, 0, 0 }, comps = { ServerCharacter = {}, Race = { Race = over.race or HALFELF },
         Data = { StatsId = over.stats }, EocLevel = { Level = over.level or 1 },
+        BoostsContainer = {}, PassiveContainer = {}, SpellBook = {},
         InventoryOwner = { Inventories = {
             { InventoryData = { Type = "Equipment" }, InventoryContainer = { Items = {} } },
             { InventoryData = { Type = "Inventory" }, InventoryContainer = { Items = over.bag or {} } } } } } }
+    if over.fresh then
+        world[u].comps = { ServerCharacter = {}, Race = { Race = NULL }, Data = {}, EocLevel = { Level = 1 } }
+    end
     osiv[key("IsOnStage", u)], osiv[key("IsCharacter", u)] = 1, 1
 end
 
@@ -51,19 +59,20 @@ local function game(opts)
         return nil
     end
     osiv[key("GetHostCharacter")] = HOST
-    local pending = { T1, T2, T3, T4 }
+    local pending, landing = { T1, T2, T3, T4 }, {}
     stub("CreateAt", function(t, x, y, z)
         calls[#calls + 1] = { "CreateAt", t, x, y, z, tpl.Stats }
         if opts.create_fails then error("CreateAt refused") end
         local u = table.remove(pending, 1)
-        twin(u, { stats = opts.stats_id or tpl.Stats })
+        local st = opts.stats_id or tpl.Stats
+        twin(u, { stats = st, fresh = opts.ready_lag_ms ~= nil })
+        if opts.ready_lag_ms then landing[#landing + 1] = { twin = u, stats = st, at = clock + opts.ready_lag_ms } end
         created[#created + 1] = u
         return u
     end)
     for _, n in ipairs({ "MakePlayer", "AddBoosts", "AddPassive", "AddSpell", "Equip" }) do
         stub(n, function(...) calls[#calls + 1] = { n, ... } end)
     end
-    local landing = {}
     stub("SetStoryDisplayName", function(u, name)
         calls[#calls + 1] = { "SetStoryDisplayName", u, name }
         if opts.shared_name then -- as scn.rename did live: one handle for every copy of the template
@@ -75,7 +84,12 @@ local function game(opts)
         end
     end)
     saved.ticker = function()
-        for _, l in ipairs(landing) do if clock >= l.at then NAMES[l.u] = l.name end end
+        for _, l in ipairs(landing) do
+            if clock >= l.at and not l.done then
+                l.done = true
+                if l.twin then twin(l.twin, { stats = l.stats }) else NAMES[l.u] = l.name end
+            end
+        end
     end
     tickers[#tickers + 1] = saved.ticker
     stub("TemplateAddTo", function(root, u, n, show)
@@ -188,10 +202,6 @@ test("mirror_spawn refusals: no entry, another race, one name twice; a failing C
         stats.BG3AI_Arena_Fighter_L1 = {}
         refused(function() Ar.Mirror.spawn(spawnArgs()) end, "CreateAt refused")
         eq(tpl.Stats, "HeroHalfElfFemale", "set back after the error")
-        restore()
-        game({ stats_id = "HeroHalfElfFemale" })
-        stats.BG3AI_Arena_Fighter_L1 = {}
-        refused(function() Ar.Mirror.spawn(spawnArgs()) end, T1 .. " has stats HeroHalfElfFemale")
     end))
 
 test("mirror_spawn: a name that hasn't landed yet is no refusal; reads.name is what the copy reads at the call",
@@ -210,6 +220,8 @@ test("mirror_kit: the same calls on both twins in the kit's order, then each ite
         twin(T2)
         local r = Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() })
         local j = RPC.jobs[r.job]
+        eq(#calls, 0, "nothing at the call")
+        tick()
         local per = {}
         for _, c in ipairs(calls) do
             local u = c[2]
@@ -255,12 +267,73 @@ test("mirror_kit refusals, nothing applied: a pick not in the game's list, a wro
         for _, c in ipairs(cases) do
             refused(function() Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = c[1] }) end, c[2])
         end
-        refused(function() Ar.Mirror.kit({ twins = { T1, T2 }, race = "race-gith", kit = kit() }) end, "is of race")
-        twin(T2, { bag = { { Item = { Uuid = { EntityUuid = "bag-1" } } } } })
-        osiv[key("GetTemplate", "bag-1")] = "OBJ_X"
-        refused(function() Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() }) end,
-            "already holds items")
         eq(#calls, 0, "no call made")
+    end))
+
+test("mirror_kit fails, nothing applied, on a ready twin of another race or one holding items", guarded(function()
+    twin(T1)
+    twin(T2)
+    local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = "race-gith", kit = kit() }).job]
+    runJob(j)
+    eq(enc({ j.status, tostring(j.error):find("is of race " .. HALFELF .. ", not race-gith", 1, true) ~= nil }),
+        enc({ "failed", true }), "another race: " .. tostring(j.error))
+    twin(T2, { bag = { { Item = { Uuid = { EntityUuid = "bag-1" } } } } })
+    osiv[key("GetTemplate", "bag-1")] = "OBJ_X"
+    j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() }).job]
+    runJob(j)
+    eq(enc({ j.status, tostring(j.error):find("already holds items", 1, true) ~= nil }), enc({ "failed", true }),
+        "items: " .. tostring(j.error))
+    eq(#calls, 0, "no call made")
+end))
+
+-- Live check 13b: setup started the kits in the spawn tick, where a copy's Race read 00000000-...; a moment later it
+-- read the template's race. The kit waits for both twins to read ready, then applies its calls.
+test("mirror_kit waits for copies whose components land 3 s after the spawn, applying nothing before",
+    guarded(function()
+    restore()
+    game({ ready_lag_ms = 3000 })
+    stats.BG3AI_Arena_Fighter_L1 = {}
+    Ar.Mirror.spawn(spawnArgs())
+    local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() }).job]
+    local from = clock
+    for _ = 1, 100 do
+        if j.status ~= "running" or #named("AddBoosts") > 0 then break end
+        tick()
+    end
+    eq(clock - from >= 3000, true, "the first call after the components landed (" .. (clock - from) .. " ms)")
+    runJob(j)
+    eq(j.status, "done", "job: " .. tostring(j.error))
+    eq(#named("AddPassive") > 0 and #named("Equip"), 2, "both kitted, the sword equipped")
+end))
+
+test("mirror_kit: a twin not ready in READY_WAIT_MS fails the job naming it and what it reads", guarded(function()
+    restore()
+    game({ ready_lag_ms = 60000 })
+    stats.BG3AI_Arena_Fighter_L1 = {}
+    Ar.Mirror.spawn(spawnArgs())
+    local from = clock
+    local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() }).job]
+    runJob(j)
+    eq(j.status, "failed", "failed")
+    local waited = clock - from
+    eq(waited >= Ar.Mirror.READY_WAIT_MS and waited <= Ar.Mirror.READY_WAIT_MS + 1000, true, "failed at " .. waited)
+    eq(tostring(j.error):find(T1 .. ": race " .. NULL, 1, true) ~= nil, true, tostring(j.error))
+    eq(#calls - #named("CreateAt") - #named("MakePlayer") - #named("SetStoryDisplayName"), 0, "no kit call")
+end))
+
+test("mirror_kit: a twin with its race but without a container the kit writes, or unreadable items, isn't ready",
+    guarded(function()
+        for _, c in ipairs({ "BoostsContainer", "PassiveContainer", "SpellBook", "InventoryOwner" }) do
+            twin(T1)
+            twin(T2)
+            world[T2].comps[c] = nil
+            local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() }).job]
+            runJob(j)
+            local want = T2 .. ": " .. (c == "InventoryOwner" and "items don't read" or "no " .. c)
+            eq(enc({ j.status, tostring(j.error):find(want, 1, true) ~= nil }), enc({ "failed", true }),
+                c .. ": " .. tostring(j.error))
+            eq(#calls, 0, "no call made")
+        end
     end))
 
 test("mirror_kit: an item that never arrives fails the job naming it", guarded(function()
@@ -359,6 +432,23 @@ test("a name that never lands fails setup at NAME_WAIT_MS, naming the copy and w
     local waited = clock - from
     eq(waited >= Ar.Mirror.NAME_WAIT_MS and waited <= Ar.Mirror.NAME_WAIT_MS + 1000, true, "failed at " .. waited)
     eq(tostring(j.error):find("Ash (" .. T1 .. ") reads Bramble", 1, true) ~= nil, true, tostring(j.error))
+end))
+
+test("a mirror setup whose copies' components land 3 s after the spawn goes on to the party step", guarded(function()
+    restore()
+    game({ ready_lag_ms = 3000 })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.step, 1, "at the party step: " .. tostring(j.error))
+    eq(#named("Equip"), 4, "every twin kitted")
+end))
+
+test("a twin with another StatsId fails setup at the limit, naming it", guarded(function()
+    restore()
+    game({ stats_id = "HeroHalfElfFemale" })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.status, "failed", "failed")
+    eq(tostring(j.error):find("Ash (" .. T1 .. ") has stats HeroHalfElfFemale", 1, true) ~= nil, true,
+        tostring(j.error))
 end))
 
 test("mirror arena refusals: a pair short of a field, one name twice, teams that name other twins", guarded(function()
