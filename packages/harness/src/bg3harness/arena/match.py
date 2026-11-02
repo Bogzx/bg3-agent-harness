@@ -38,12 +38,15 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    match's first end, so no wipe at the next turn boundary can come before the forfeit).
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
-   detail}`. It reads `ui.state` for one only once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then
-   at most every UNOWNED_CHECK_S: a turn that moves on costs no read.
+   detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
+   once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then at most every UNOWNED_CHECK_S: a turn that
+   moves on costs no read.
 6. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
    EXIT_RESUMES, anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES.
 
-Both agents are stopped at the end; their exits and costs are in the outcome.
+Both agents are stopped at the end; their exits and costs are in the outcome. A match a side of which the harness's
+scripted client plays (a player "scripted/...") is a live check: invalid ("scripted: ...") whatever its end, and its
+arena_end carries `invalid: "scripted"`.
 """
 
 from __future__ import annotations
@@ -55,6 +58,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from bg3harness import facts
+from bg3harness.arena.scripted_client import SCRIPTED
 from bg3harness.arena.spec import SIDES, ArenaSpec, Side, other
 
 POLL_S = 1.0
@@ -72,7 +76,7 @@ RESUME = "The fight is on."
 
 
 class Rpc(Protocol):
-    def __call__(self, op: str, args: dict[str, Any], side: str | None = None) -> Any: ...
+    def __call__(self, op: str, args: dict[str, Any], side: str | None = None, context: str = "server") -> Any: ...
 
 
 class ArenaGame(Protocol):
@@ -141,6 +145,8 @@ class Referee:
         self.mod_end: dict[str, Any] | None = None  # the mod's own arena_end from the ring
         self.combat_ended: dict[str, Any] | None = None  # the mod's arena_combat_ended
         self.done = False  # arena_end written: later arena records are not the match's
+        # the sides the harness's scripted client plays (a player "scripted/..."): the match is a live check, invalid
+        self.scripted = [s for s in SIDES if sides[s].player.split("/")[0] == SCRIPTED]
 
     @property
     def turn(self) -> Turn | None:
@@ -189,7 +195,7 @@ class Referee:
             self.turns.append(Turn(str(fact["side"]), members[0], names[0], int(fact["round"]), members))
             return {**fact, "character": names[0], "members": names}
         if ev == "arena_end":
-            self.mod_end = {"winner": None, **fact}  # the ring leaves a nil winner (a draw) out
+            self.mod_end = {"winner": None, **fact, **self.invalid()}  # the ring leaves a nil winner (a draw) out
             self.done = True
             return self.mod_end
         if ev == "arena_combat_ended" and self.combat_ended is None:
@@ -210,9 +216,13 @@ class Referee:
         return len(own) == FORFEIT_TURNS and all(x.forced for x in own[:-1])
 
     def end(self, **fields: Any) -> dict[str, Any]:
-        self.event("arena_end", **fields)
+        self.event("arena_end", **fields, **self.invalid())
         self.done = True
         return fields
+
+    def invalid(self) -> dict[str, str]:
+        """arena_end's `invalid` field: "scripted" when a side is the scripted client, else none."""
+        return {"invalid": SCRIPTED} if self.scripted else {}
 
     def event(self, ev: str, **fields: Any) -> None:
         self.writer.timed_events([{"ev": ev, **fields}])
@@ -262,11 +272,11 @@ def _decline_unowned(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callab
     """A reaction prompt no team owns on the game client's screen (ui.state with no side: reaction.unowned): declined,
     and arena_reaction_unowned written."""
     try:
-        ui = game.rpc("ui.state", {}) or {}
+        ui = game.rpc("ui.state", {}, context="client") or {}
         rx = ui.get("reaction") if ui.get("screen") == "reaction" else None
         if not (isinstance(rx, dict) and rx.get("unowned")):
             return
-        job = game.rpc("ui.react", {"use": False}) or {}
+        job = game.rpc("ui.react", {"use": False}, context="client") or {}
     except Exception as e:  # read again at the next check
         log(f"arena {spec.name}: the unowned reaction check failed: {e}")
         return
@@ -450,6 +460,10 @@ def run_arena(
     finally:
         for s, run in runs.items():
             outcome.exits[s].append(run.stop())
+    if outcome.invalid is None and ref.scripted:
+        sides_ = " and ".join(ref.scripted)
+        outcome.invalid = f"{SCRIPTED}: side {sides_} played the scripted client (a live check, never graded)"
+        log(f"arena {spec.name}: invalid, {outcome.invalid}")
     with contextlib.suppress(Exception):  # a dead game: what was read is what there is
         feed.poll()  # the last rolls
     writer.mark("run_end", {"arena_end": outcome.end.get("reason") if outcome.end else None})
