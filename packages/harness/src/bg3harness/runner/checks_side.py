@@ -166,8 +166,9 @@ class ChecksSide:
         if w is None:
             w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl")
             if w.t0 is None:
+                own = self.opt.client is not None  # a match's runner plays no client: its sides' are in arena_start
                 w.mark("run_start", {"playthrough": self.opt.playthrough, "client": self.opt.client,
-                                     "model": self.opt.model})
+                                     "model": self.opt.model if own else None})
         return w
 
     def setup_env(self) -> dict:
