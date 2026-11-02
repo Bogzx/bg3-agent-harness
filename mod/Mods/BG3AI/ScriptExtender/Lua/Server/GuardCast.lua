@@ -508,13 +508,37 @@ function G.disabling_fix(char, name)
     return ""
 end
 
+-- The variant ids in `spell`'s stats ContainerSpells: nil when it lists none, false when an entry is not a spell's
+-- stats entry (ModifierList SpellData). fights-v09 Balthazar S001 15:59:38: Target_LayOnHands' list once read
+-- "BLD_GEN_Crane_Elevator_B.BLD_GEN_Crane_Elevator_B_Mesh.0", a world mesh name, between two good casts of its Cure
+-- variant; every other logged read gave its three variants. The value is a slot of the stats string pool, a global
+-- string-table entry (bg3se StatsObject.inl GetFixedStringRef), so the wrong text came from that entry. No check on
+-- the variants' SpellContainerID: Lay On Hands' variants name no container (they are rows of their own in the action
+-- list).
+local function container_spells(spell)
+    local st = Ext.Stats.Get(spell)
+    local raw = tostring(st and st.ContainerSpells or "")
+    if raw == "" then return nil end
+    local ids = {}
+    for id in raw:gmatch("[^;]+") do
+        local v = Ext.Stats.Get(id)
+        local ok, kind = pcall(function() return v and v.ModifierList end)
+        if not (ok and kind == "SpellData") then return false end
+        ids[#ids + 1] = id
+    end
+    return #ids > 0 and ids or nil
+end
+
 function G.check_cast(char, spell, target, pos, upcast, force)
     if type(spell) ~= "string" or spell == "" then G.refuse("no action given") end
     local st = Ext.Stats.Get(spell)
     if not st then G.refuse("unknown action") end
-    local variants = tostring(st.ContainerSpells or "")
-    if variants ~= "" then
-        G.refuse("choose a variant: " .. variants:gsub(";", ", "))
+    local variants = container_spells(spell)
+    if variants == false then variants = container_spells(spell) end -- one more read before giving up
+    if variants == false then
+        G.refuse("choose a variant (this action's variant list did not read as spell names)")
+    elseif variants then
+        G.refuse("choose a variant: " .. table.concat(variants, ", "))
     end
     if G.linked_box(st) then
         local ids, from = G.box_variants(char, spell)
