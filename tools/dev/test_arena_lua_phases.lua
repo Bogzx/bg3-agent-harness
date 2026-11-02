@@ -360,7 +360,7 @@ test("a downed member's phase: the mod ends its turn, recorded, and the next pha
         eq(enc({ p[2].side, p[2].character, p[2].why }), enc({ "B", B1, "dead" }), "B1's record")
         local r = refs("arena_turn")
         eq(#r, 1, "one phase recorded")
-        eq(enc({ r[1].side, members(r[1]), r[1].phase }), enc({ "A", A2, 1 }), "A2's phase is round 2's first")
+        eq(enc({ r[1].side, members(r[1]), r[1].phase }), enc({ "A", A2, 3 }), "A2's phase is round 2's third")
         eq(G.still_to_act(A1), false, "A1 counts as ended")
         eq(Ar.held(A2), false, "A2 acts")
         eq(Ar.held(B2), true, "B2 waits")
@@ -387,6 +387,68 @@ test("a side all downed or dead in the acting phase: a wipe ends the match, no t
         eq(Ar.state.ended and Ar.state.ended.winner, "B", "B wins")
         eq(#ended, 0, "no EndTurn")
         eq(#refs("arena_turn_passed"), 0, "no pass")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
+
+-- Live 2026-11-02 (live 7 rerun 2, round 2; group order Astarion, Gale, Karlach, Lae'zel, Minthara, Wyll): Astarion
+-- downed in round 1 passed, p1 A [Gale], p2 B [Karlach] (who downs Lae'zel), Lae'zel's p3 passed, then p4 B [Minthara,
+-- Wyll] got no arena_turn: the passed A phase left the last record B's, so B's next phase read as the same one.
+test("a phase passed whole between two of the other side's: both recorded, the passed one numbered", function()
+    local A3 = "aaaaaaaa-0000-0000-0000-0000000000a3"
+    local B3 = "bbbbbbbb-0000-0000-0000-0000000000b3"
+    for _, u in ipairs({ A3, B3 }) do
+        world[u] = { pos = { 2, 0, 0 }, comps = { ServerCharacter = {}, Health = { Hp = 12, MaxHp = 12 } } }
+        osiv[key("IsOnStage", u)], osiv[key("IsCharacter", u)] = 1, 1
+        osiv[key("CombatGetGuidFor", u)], osiv[key("IsInCombat", u)] = "combat1", 1
+        partyRows[#partyRows + 1] = u
+    end
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        Ar.begin({ A = { A1, A2, A3 }, B = { B1, B2, B3 } })
+        fire("CombatRoundStarted", "combat1", 2)
+        order = { { A1, A2, B1, A3, B2, B3 } }
+        openAll({ A1, A2, B1, A3, B2, B3 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1 -- Astarion, downed in round 1
+        world[A1].comps.Health.Hp = 0
+        burst({ A1, A2, B1, A3, B2, B3 })
+        tick()
+        setTurn(A2, true, true) -- Gale ends
+        tick()
+        osiv[key("HasActiveStatus", A3, "DOWNED")] = 1 -- Karlach downs Lae'zel, then ends
+        world[A3].comps.Health.Hp = 0
+        setTurn(B1, true, true)
+        tick()
+        local got = {}
+        for _, r in ipairs(refs("arena_turn")) do got[#got + 1] = r.side .. r.phase .. "[" .. members(r) .. "]" end
+        eq(table.concat(got, " "), "A1[" .. A2 .. "] B2[" .. B1 .. "] B4[" .. B2 .. "," .. B3 .. "]", "the phases")
+        local passed = {}
+        for _, r in ipairs(refs("arena_turn_passed")) do passed[#passed + 1] = r.character end
+        eq(table.concat(passed, ","), A1 .. "," .. A3, "Astarion's and Lae'zel's turns passed")
+        eq(Ar.held(B2), false, "Minthara acts")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
+
+test("the rest of a recorded phase passed: still that phase, the next one takes the next number", function()
+    rawset(Osi, "EndTurn", function() end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 2)
+        order = { { A1, A2, B1, B2 } }
+        openAll({ A1, A2, B1, B2 })
+        burst({ A1, A2, B1, B2 })
+        tick() -- A [A1, A2], phase 1
+        setTurn(A1, true, true)
+        osiv[key("HasActiveStatus", A2, "DOWNED")] = 1 -- downed in its own phase, before acting
+        world[A2].comps.Health.Hp = 0
+        tick()
+        local r = refs("arena_turn")
+        eq(#refs("arena_turn_passed"), 1, "A2 passed")
+        eq(enc({ r[2].side, members(r[2]), r[2].phase }), enc({ "B", B1 .. "," .. B2, 2 }), "B's phase is the 2nd")
     end)
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end
