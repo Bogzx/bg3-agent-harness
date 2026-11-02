@@ -8,9 +8,10 @@ local A4 = "aaaaaaaa-0000-0000-0000-0000000000a4"
 local B3 = "bbbbbbbb-0000-0000-0000-0000000000b3"
 local B4 = "bbbbbbbb-0000-0000-0000-0000000000b4"
 local AV = "eeeeeeee-0000-0000-0000-0000000000e1" -- the avatar (the host)
+local SH = "cccccccc-0000-0000-0000-0000000000c1" -- a party member on no team (Shadowheart, live 6)
 local TA, TB = { A1, A2, A3, A4 }, { B1, B2, B3, B4 }
 local ALL = { A1, A2, A3, A4, B1, B2, B3, B4 }
-NAMES[A3], NAMES[A4], NAMES[B3], NAMES[B4], NAMES[AV] = "Ari", "Axe", "Bix", "Bree", "Tav"
+NAMES[A3], NAMES[A4], NAMES[B3], NAMES[B4], NAMES[AV], NAMES[SH] = "Ari", "Axe", "Bix", "Bree", "Tav", "Sha"
 
 local saved = {}
 local calls, factionOf, enemyFrom, combatOf, scn
@@ -34,17 +35,18 @@ local function db(rows)
     end }
 end
 
--- The fake game: 8 team members + the avatar on the level; the combat call puts the given members into combat1
--- (opts.combat, default all 8) and makes the teams enemies after opts.enemy_after reads of the matrix (default 0).
+-- The fake game: 8 team members, the avatar and a party member on no team (SH) on the level; the combat call puts
+-- the given characters into combat1 (opts.combat, default all 8) and makes the teams enemies after opts.enemy_after
+-- reads of the matrix (default 0).
 local function game(opts)
     opts = opts or {}
     reset()
-    for i, u in ipairs({ A3, A4, B3, B4, AV }) do
+    for i, u in ipairs({ A3, A4, B3, B4, AV, SH }) do
         world[u] = { pos = { 50 + i, 0, 0 }, comps = { ServerCharacter = {}, Health = { Hp = 20, MaxHp = 20 } } }
         osiv[key("IsOnStage", u)], osiv[key("IsCharacter", u)] = 1, 1
     end
     world[GOB].comps.ServerCharacter = {} -- an NPC in the level, holding Hero Player1
-    partyRows = { A1, A2, B1, AV } -- the rest are origins not in the party yet
+    partyRows = { A1, A2, B1, AV, SH } -- the rest are origins not in the party yet
     calls, factionOf, enemyFrom, combatOf = {}, {}, nil, {}
     for _, u in ipairs(ALL) do
         factionOf[u] = form("g9")
@@ -184,13 +186,16 @@ test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right
     local added = {}
     for _, c in ipairs(named("PROC_GLO_PartyMembers_Add")) do added[#added + 1] = c[2]; eq(c[3], AV, "by the host") end
     eq(table.concat(added, ","), table.concat({ A3, A4, B2, B3, B4 }, ","), "the 5 not in the party added")
-    eq(#named("DetachFromPartyGroup"), 8, "all detached")
+    local det = {}
+    for _, c in ipairs(named("DetachFromPartyGroup")) do det[#det + 1] = c[2] end
+    eq(table.concat(det, ","), table.concat({ A1, A2, A3, A4, B1, B2, B3, B4, AV, SH }, ","),
+        "all detached, the avatar and the party member on no team too")
     local att = {}
     for _, c in ipairs(named("AttachToPartyGroup")) do att[#att + 1] = c[2] .. ">" .. c[3] end
     eq(table.concat(att, ","), table.concat({ A2 .. ">" .. A1, A3 .. ">" .. A1, A4 .. ">" .. A1, B2 .. ">" .. B1,
         B3 .. ">" .. B1, B4 .. ">" .. B1 }, ","), "each team chained to its first")
     local tp = named("TeleportToPosition")
-    eq(#tp, 8, "8 placed")
+    eq(#tp, 8, "8 placed, the sitters not")
     eq(enc({ tp[1][2], tp[1][3], tp[1][5] }), enc({ A1, -2.25, 0 }), "A1 at the line's left end")
     eq(enc({ tp[8][2], tp[8][3], tp[8][5] }), enc({ B4, 2.25, 10.5 }), "B4 at B's right end")
     eq(#named("RestoreParty"), 1, "RestoreParty")
@@ -220,6 +225,66 @@ test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right
     eq(table.concat(Ar.state.teams.B, ","), table.concat(TB, ","), "team B begun")
     eq(Ar.state.round_cap, 12, "the runner's round cap")
     eq(#refs("arena_start"), 1, "arena_start recorded")
+    eq(enc(j.result.sitters), enc({ { uuid = AV, name = "Tav" }, { uuid = SH, name = "Sha" } }), "the sitters")
+end)
+
+test_setup("arena.setup: 3 v 3: the 2 others in the party sit out; IsEnemy 18/18 across, 0/12 within", function()
+    local six = { A1, A2, A3, B1, B2, B3 }
+    game({ combat = six })
+    local a = arena()
+    a.teams.A[4], a.teams.B[4] = nil, nil
+    local _, j = setup(a)
+    run(j)
+    eq(j.status, "done", "setup: " .. tostring(j.error))
+    eq(j.result.enemy.across, "18/18", "across")
+    eq(j.result.enemy.within, "0/12", "within")
+    eq(#named("TeleportToPosition"), 6, "6 placed")
+    eq(enc(j.result.sitters), enc({ { uuid = AV, name = "Tav" }, { uuid = SH, name = "Sha" } }), "the sitters")
+    eq(table.concat(Ar.state.teams.B, ","), table.concat({ B1, B2, B3 }, ","), "team B begun")
+end)
+
+test_setup("arena.setup: anyone on no team in the fight fails setup, named: a party member, an NPC", function()
+    game({ combat = { A1, A2, A3, A4, B1, B2, B3, B4, SH, GOB } })
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "others joined")
+    eq(j.error, "not on a team and in the fight: Sha, Goblin", "error")
+    eq(Ar.state, nil, "no match begun")
+    game({ combat = { A1, A2, A3, B1, B2, B3, A4 } }) -- 3 v 3: A4, an origin on no team, joined
+    local a = arena()
+    a.teams.A[4], a.teams.B[4] = nil, nil
+    _, j = setup(a)
+    run(j)
+    eq(j.error, "not on a team and in the fight: Axe", "an origin on no team")
+end)
+
+test_setup("arena.setup: the names are the display names after joining the party; one that differs fails setup",
+    function()
+    local got = {}
+    for i, entry in ipairs({ { name = "bea!", uuid = B2 }, { name = "Nightwarden Bea", uuid = B2 },
+        { name = "Bea", uuid = B3 } }) do
+        game()
+        NAMES[B2] = "Nightwarden Bea" -- joining renames her (live: Nightwarden Minthara -> Minthara)
+        local add = Osi.PROC_GLO_PartyMembers_Add
+        stub("PROC_GLO_PartyMembers_Add", function(u, host)
+            add(u, host)
+            if u == B2 then NAMES[B2] = "Bea" end
+        end)
+        local a = arena()
+        a.teams.B[2] = entry
+        if i == 3 then a.teams.B[3] = { name = "Bea2", uuid = B2 } end
+        local r, j = setup(a)
+        if j then run(j) end
+        got[i] = { r = r, status = j and j.status, error = j and j.error, tp = #named("TeleportToPosition") }
+    end
+    NAMES[B2] = "Bea"
+    eq(got[1].status, "done", "the post-join name: " .. enc(got[1]))
+    eq(got[2].status, "failed", "the pre-join name")
+    eq(got[2].error, "team entries whose display name after joining the party differs: Nightwarden Bea (" .. B2
+        .. ") is Bea", "both names")
+    eq(got[2].tp, 0, "nobody placed")
+    eq(got[3].error, "team entries whose display name after joining the party differs: Bea (" .. B3 .. ") is Bix; "
+        .. "Bea2 (" .. B2 .. ") is Bea", "another character's uuid")
 end)
 
 test_setup("arena.setup: IsEnemy wrong at first, right within 3 s: done; wrong for 3 s: failed, the matrix", function()
@@ -255,7 +320,7 @@ test_setup("arena.setup: the avatar sits out: one in the fight fails setup; one 
     local _, j = setup(arena())
     run(j)
     eq(j.status, "failed", "the avatar joined")
-    assert(j.error:find("the avatar Tav joined the fight", 1, true), j.error)
+    eq(j.error, "not on a team and in the fight: Tav", "the avatar named")
     game()
     local a = arena()
     a.teams.A[4] = { name = "Tav", uuid = AV }
@@ -279,16 +344,17 @@ test_setup("arena.setup refusals: no scenario switch, a name twice or unknown, a
     a = arena()
     a.teams.B[2] = { name = "Ana" }
     assert(enc(setup(a)):find("Ana is listed twice", 1, true), "twice")
-    a = arena()
-    a.teams.B[2] = { name = "Bea", uuid = B3 } -- the name and the uuid disagree
-    assert(enc(setup(a)):find("team entry Bea: its uuid " .. B3 .. " is Bix", 1, true), "name/uuid")
-    a = arena()
-    a.teams.B[2] = { name = "bea", uuid = B2 } -- case and punctuation aside, the same name
-    eq(setup(a).result.status, "running", "name and uuid agree")
     game()
     a = arena()
     a.teams.B[4] = nil
-    assert(enc(setup(a)):find("team B must list 4 characters", 1, true), "size")
+    assert(enc(setup(a)):find("team A lists 4 characters, team B 3: the teams must be the same size", 1, true),
+        "sizes differ")
+    a = arena()
+    a.teams.A = {}
+    assert(enc(setup(a)):find("team A must list 1 to 4 characters", 1, true), "empty")
+    a = arena()
+    a.teams.B[5] = { name = "Tav" }
+    assert(enc(setup(a)):find("team B must list 1 to 4 characters", 1, true), "5")
     assert(enc(setup(arena(), "A")):find("arena ops are the harness's", 1, true), "a side")
     env.BG3AI_ARENA = nil
     assert(enc(setup(arena())):find("BG3AI_ARENA=1", 1, true), "switch off")

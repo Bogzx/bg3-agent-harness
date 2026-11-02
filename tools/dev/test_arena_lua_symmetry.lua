@@ -107,6 +107,20 @@ test("arena.symmetry: a field that doesn't read is a problem; two members with o
     eq(#r.result.pairs[1].diffs, 0, "an unread field is not a diff")
 end)
 
+test("arena.symmetry: no StatusContainer reads as no statuses; a container that doesn't read is a problem",
+    function()
+    mirror({ comps = { StatusContainer = false } }, { comps = { StatusContainer = false } })
+    world[A1].comps.StatusContainer, world[A2].comps.StatusContainer = nil, { Statuses = {} }
+    local r = check(P)
+    eq(r.result.ok, true, "no statuses on either side of both pairs: " .. enc(r))
+    eq(enc(r.result.members[B1].statuses), enc({}), "B1: []")
+    mirror({ comps = { StatusContainer = false } }, { comps = { StatusContainer = {} } })
+    r = check(P)
+    eq(r.result.ok, false, "not ok")
+    eq(r.result.pairs[1].diffs[1].field, "statuses", "pair 1: A1's status vs B1's none")
+    assert(problems(r):find("Bea: statuses doesn't read", 1, true), problems(r))
+end)
+
 test("arena.symmetry refusals: no pairs, a bad pair, an unknown character, one member twice, a side, switch off",
     function()
     mirror()
