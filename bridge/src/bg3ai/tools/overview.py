@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any
 
-from .. import companions, delta, economy, leveling, party, render, spellprep
+from .. import companions, delta, economy, leveling, minimap, party, render, spellprep
 from ..game import GameError, NotReady
 from . import core, plumbing, reporting
 
@@ -239,9 +239,11 @@ def _area_alert(st: Any) -> str:
 @reporting._guard
 def look(full: bool = False) -> str:
     """The cheap way to keep your bearings: what CHANGED since your last look, in a few lines. Party moves (12m NW), HP, conditions gained/lost, characters and objects that appeared, left view or changed (hostile, dead, opened, unlocked), items gained/lost, gold, mode, new objectives and quest entries, and any new prompt (dialogue, roll, popup).
+    Every look ends with the minimap block, changed or not: OBJECTIVES (distance, direction, height), WAYS, and the 3 nearest unvisited LEADS.
     full=true (or the first call, or a new area): the full status plus everything visible nearby."""
     t0 = time.monotonic()
-    got = delta.fetch(core.game, delta.LOOK_PARTS, events=True)  # one game tick, events included
+    # one game tick, events included; the frontier is the minimap block's (leads, WAYS)
+    got = delta.fetch(core.game, delta.LOOK_PARTS + ("frontier",), events=True)
     st = got.get("status")
     if st is None:
         return get_status(full=True)
@@ -252,10 +254,7 @@ def look(full: bool = False) -> str:
     first = not core.DELTA.has("party", "ents")
     lines = core.DELTA.observe(delta.snapshot_of(core.H, got))
     if full or first or _too_big(lines):
-        body = render.render_status(st, got.get("ui"), core.H)
-        obj = render.render_objectives(got.get("markers") or [], here_only=True, limit=3)
-        if obj:
-            body += "\n" + "\n".join(obj)
+        body = render.render_status(st, got.get("ui"), core.H)  # the objectives are in the minimap block below
         if got.get("nearby") is not None:
             body += "\n" + render.render_nearby(got["nearby"], core.H)
         hz = _hazard_lines(got.get("hazards"), always=True)
@@ -279,6 +278,9 @@ def look(full: bool = False) -> str:
     ph = _party_hint_line(st, got.get("markers"), force=full or first or _too_big(lines))
     if ph:
         body += "\n" + ph
+    mm = minimap.block(got, core.H)  # always, as the HUD shows it (not only on change)
+    if mm:
+        body += "\n" + mm
     return reporting._finish("look", {"full": full}, body, t0)
 
 

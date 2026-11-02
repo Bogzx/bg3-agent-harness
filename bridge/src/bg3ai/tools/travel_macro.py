@@ -689,7 +689,8 @@ def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, ch
                 r = core.game.run_job("act.chain", {"char": u, "leader": lead}, wait_s=10)
                 ok = r.status == "done" or "already chained" in str(r.error or "")
                 lines.append(f"chain {queueing._label(u)} → {queueing._label(lead)}: " + ("done" if ok else f"{r.status} — {r.error}"))
-    return macro_tools._macro_finish("regroup", {}, [f"regroup at {queueing._label(lead)}: {len(far)} walking"] + lines, stop, [], t0)
+    return macro_tools._macro_finish("regroup", {}, [f"regroup at {queueing._label(lead)}: {len(far)} walking"] + lines, stop, [], t0,
+                                     walked=True)
 
 
 _READ_FILE = "read_items.json"

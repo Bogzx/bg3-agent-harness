@@ -551,7 +551,7 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
     if post is not None:  # a line from after the job (use_ability: did the opener start a fight?)
         note = "\n".join(x for x in (post(r), note) if x)
-    changes = _combat_changes(tool)
+    changes = _combat_changes(tool, ended=r.status != "still_running")
     body = "\n".join(x for x in (_job_text(tool, r, args.get("char")), note, changes) if x)
     return reporting._finish(tool, args, body, t0)
 
@@ -622,7 +622,8 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
         r = JobResult(view["status"], view.get("result"), view.get("error"), elapsed_ms=view.get("elapsed_ms", 0))
         _remember_names(r.result)
         reporting._batch["last"] = r.status
-        return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
+        tail = batch.walk_end_tail() if tool in batch.ARRIVAL_LEAD_TOOLS else ""
+        return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else "") + tail, t0)
     body = f"{tool}: started {h}"
     if started.get("eta_s") is not None:
         body += f", ETA {render.num(float(started['eta_s']))}s"
@@ -683,13 +684,14 @@ def _walk_wait(wait: bool) -> tuple[bool, str]:
 COMBAT_CHANGES_TOOLS = ("use_ability", "move_to", "walk_toward", "jump_to", "react")
 
 
-def _combat_changes(tool: str) -> str:
-    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed)."""
+def _combat_changes(tool: str, ended: bool = True) -> str:
+    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed). Out of
+    combat, a walk that ended (jump_to, a blocking move_to/walk_toward) gets CHANGES + the minimap block instead."""
     if tool not in COMBAT_CHANGES_TOOLS or reporting._batch["active"]:
         return ""
     w = core.game.try_rpc("act.watch")
     if not (isinstance(w, dict) and w.get("combat")):
-        return ""
+        return batch.walk_end_tail().lstrip("\n") if ended and tool in batch.ARRIVAL_LEAD_TOOLS else ""
     return delta.changes_text(core.game, core.H)
 
 

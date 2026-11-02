@@ -86,7 +86,8 @@ class FakeGame:
         w = self.w
         table = {"state.status": w["status"], "state.nearby": w["nearby"], "state.inventory": w["inventory"],
                  "state.journal": w["journal"], "nav.markers": {"markers": w["markers"]}, "state.map": w["map"],
-                 "ui.state": w["ui"], "nav.set_subregion": {}, "nav.hazards": {"hazards": w.get("hazards", [])}}
+                 "ui.state": w["ui"], "nav.set_subregion": {}, "nav.hazards": {"hazards": w.get("hazards", [])},
+                 "nav.frontier": w.get("frontier", {"leads": []})}
         if op not in table:
             raise AssertionError(f"unexpected op {op}")
         return copy.deepcopy(table[op])
@@ -167,7 +168,11 @@ class LookTool(Base):
         out = overview.look()
         self.assertIn("WHERE Ship Hold · Nautiloid", out)
         self.assertIn("ITEM", out)  # nearby listing
-        self.assertEqual(overview.look(), "No change since your last look (full=true shows everything).")
+        again = overview.look().splitlines()
+        self.assertEqual(again[0], "No change since your last look (full=true shows everything).")
+        # the minimap block comes every time, not only on change (human-gap research 2026-11-02)
+        self.assertEqual(again[1:], ["OBJECTIVES o1 Escape the ship 16m W [Escape the Nautiloid] | o2 Find the helm "
+                                     "40.2m N [Escape the Nautiloid]", "LEADS (unvisited; get_frontier lists all): none"])
 
     def test_walk(self):
         overview.look()
@@ -177,7 +182,9 @@ class LookTool(Base):
         self.assertTrue(any(x.startswith("+ ") and "Lever <lever> 2m" in x for x in out), out)
         self.assertTrue(any(x.startswith("GONE ") and "Tadpole Pod 1" in x for x in out), out)
         self.assertFalse(any("Tadpole Pod 2" in x for x in out), "distance-only changes are not reported")
-        self.assertFalse(any("OBJECTIVE" in x for x in out), "objective distance changes are not reported")
+        self.assertFalse(any(x.startswith("OBJECTIVE ") for x in out), "objective distance changes are not reported")
+        self.assertIn("OBJECTIVES o1 Escape the ship 4m W [Escape the Nautiloid] | o2 Find the helm 40.2m N "
+                      "[Escape the Nautiloid]", out)  # the minimap block: the distance as it is now
 
     def test_long_walk_spread_is_one_party_line(self):
         """S026: 152/146/152/151 m S took four lines; give or take a few metres it is one PARTY line."""
@@ -257,7 +264,9 @@ class LookTool(Base):
         self.assertIn("DIALOGUE Lae'zel: You. Tadpole. Help me or die.", out)
         self.assertIn("  2. [Intimidation] Back off.", out)
         again = overview.look()
-        self.assertEqual(again, "No change since your last look (full=true shows everything).\n(DIALOGUE still open, unchanged; full=true repeats it)")
+        self.assertEqual(again.splitlines()[:2], ["No change since your last look (full=true shows everything).",
+                                                  "(DIALOGUE still open, unchanged; full=true repeats it)"])
+        self.assertTrue(again.splitlines()[2].startswith("OBJECTIVES o1 Escape the ship 16m W"), again)
         self.assertIn("2. [Intimidation] Back off.", overview.look(full=True))
 
     def test_quest(self):

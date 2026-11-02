@@ -5,6 +5,20 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: every walk end and every look carry the minimap block
+
+- Out of combat, every walk end (wait_for on a walk or trip, a walk that ends in the settle window, a blocking
+  walk, jump_to, travel_to's settle, regroup, a fast travel's arrival) and every `look` end with three lines, always
+  (not only when something changed), arrived or stopped short:
+  `OBJECTIVES o1 Escape the ship 16m W (3.4m down) [Escape the Nautiloid] | o2 ... | +1 more (get_map lists all)`
+  (up to 3, here first, nearest first; another area's marker says `(another area)`; `none on the map`), the
+  `WAYS walkable:` line, and `LEADS (unvisited; get_frontier lists all):` with the 3 nearest unvisited leads (was
+  the first 5 unvisited, and only after a walk that ended `done`).
+- One renderer (bridge/src/bg3ai/minimap.py). Its frontier read (`nav.frontier ways_cached`) moved into the CHANGES
+  read's eval, so a walk end no longer makes a separate nav.frontier round trip (launch-v1: median 56 ms, p90 96 ms
+  each); look and the other walk ends read it in their existing eval. A busy spot's block is under 300 tokens.
+- `look(full=true)` no longer prints its separate OBJECTIVE lines: the block carries them.
+
 ## 2026-11-02: trade sell="junk" names what it sold
 
 - The result lists every item sold, grouped by name with the count and the gold at the shown prices, most gold

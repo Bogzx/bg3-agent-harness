@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any
 
-from .. import actq, delta, longnav, macros, render, rules, turn
+from .. import actq, delta, longnav, macros, minimap, render, rules, turn
 from ..game import GameError, JobResult, NotReady
 from . import combat, core, memory, observe, overview, plumbing, reporting, travel
 
@@ -163,7 +163,8 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
     # Settle window: a trip that stops at once (hazard, no ground, an interrupt) or a short one comes back now.
     if plumbing._settle(lambda: None if queueing._queues().busy(char) else {"status": "ended"}) is not None:
         _trips.pop(char, None)
-        return reporting._finish("travel_to", {"to": what}, body + "\n" + (queueing._last_queue_text(char) or "queue: ended"), t0)
+        return reporting._finish("travel_to", {"to": what}, body + "\n" + (queueing._last_queue_text(char) or "queue: ended")
+                                 + walk_end_tail(), t0)
     prog = _trip_progress(char)
     body += (f"; {prog}" if prog else "") + f"; {queued}."
     if waited:
@@ -521,6 +522,7 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0, lead_s: float = LEAD
     noop = None  # why the wait never blocked (metrics 'wait_for_noop'), or None
     first = True
     busy_seen = 0.0  # last time a job/queue was seen running during this wait
+    walked = False  # the wait ended a walk (its result carries the minimap block)
     while body is None:
         now = time.monotonic()
         if now - ui_at >= 0.5:
@@ -553,9 +555,8 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0, lead_s: float = LEAD
                               elapsed_ms=jv.get("elapsed_ms", 0))
                 plumbing._remember_names(r.result)
                 body = plumbing._job_text(info.get("tool") or low, r, info.get("char"))
-                if info.get("tool") in ARRIVAL_LEAD_TOOLS and r.status == "done" and not reporting._batch["active"] and \
-                        not ((r.result or {}).get("after") or {}).get("in_combat"):
-                    body += _arrival_leads()
+                after = r.result.get("after") if isinstance(r.result, dict) else None
+                walked = info.get("tool") in ARRIVAL_LEAD_TOOLS and not (isinstance(after, dict) and after.get("in_combat"))
                 noop = "job_done" if first else None
                 break
         else:
@@ -603,41 +604,31 @@ def wait_for(target: str = "idle", timeout_s: float = 15.0, lead_s: float = LEAD
                 "\n" + queueing._running_text() if queueing._running_text() else "")
             break
         time.sleep(0.1)
-    if (low in ("queue", "idle") or low.startswith("queue:")) and not reporting._batch["active"] and "LEADS" not in body:
+    if low in ("queue", "idle") or low.startswith("queue:"):
         steps = re.findall(r"(?m)^\d+\. (\w+)", body)
-        if steps and steps[-1] in ARRIVAL_LEAD_TOOLS and re.search(r": done \(\d+ steps?\)", body) \
-                and not (view.get("combat") or {}).get("active"):
-            body += _arrival_leads()
-    changes = delta.changes_text(core.game, core.H)
-    if changes:
-        body += "\n" + changes
+        walked = bool(steps) and steps[-1] in ARRIVAL_LEAD_TOOLS and not (view.get("combat") or {}).get("active")
+    body += walk_end_tail(walked and not reporting._batch["active"])
     return reporting._finish("wait_for", {"target": tgt}, body, t0, extra={"noop": noop} if noop else None)
 
 
 # S023-S027: after a walk's wait_for the next call was get_frontier (22x), get_nearby (18x) or route (18x), each a
-# ~2 s model turn to learn where to go on from here. The arrival result now carries the best unvisited leads + WAYS.
+# ~2 s model turn to learn where to go on from here. The human-gap research (2026-11-02) found the same after 44-82%
+# of launch-v1's walk ends: every walk end now carries the minimap block (minimap.py), arrived or stopped short.
 ARRIVAL_LEAD_TOOLS = {"move_to", "walk_toward", "travel_to", "jump_to"}
-ARRIVAL_LEADS = 5
 
 
-def _arrival_leads() -> str:
-    """'\nLEADS (unvisited; get_frontier lists all): e529 Damaged Vase <usable> 8.3m E | …' + the WAYS line."""
-    # NAV-6: at arrival the warm-up hasn't run yet (300 ms of stillness); ways only from its answers, no cold searches
-    res = core.game.try_rpc("nav.frontier", {"ways_cached": True})
-    if not isinstance(res, dict) or not isinstance(res.get("leads"), list):
-        return ""
-    plumbing._remember_names(res)
-    new = [l for l in res["leads"] if isinstance(l, dict) and l.get("unvisited")]
-    out = []
-    if new:
-        shown = render.render_frontier({"leads": new[:ARRIVAL_LEADS]}, core.H).splitlines()
-        more = len(new) - ARRIVAL_LEADS + (res.get("more") or 0)
-        out.append("LEADS (unvisited; get_frontier lists all): " + " | ".join(x.replace(" unvisited", "") for x in shown)
-                   + (f" | +{more} more" if more > 0 else ""))
-    ways = render.render_ways(res.get("ways"))
-    if ways:
-        out.append(ways)
-    return ("\n" + "\n".join(out)) if out else ""
+def walk_end_tail(walked: bool = True) -> str:
+    """The tail of a result that may end a walk: CHANGES since the agent's last look and, when it ended a walk
+    out of combat and dialogue, the minimap block, both from one read (the frontier in the same eval). ''/lines
+    each starting with a newline."""
+    got: dict = {}
+    changes = delta.changes_text(core.game, core.H, delta.ACTION_PARTS + (("frontier",) if walked else ()), got=got)
+    block = ""
+    st = got.get("status")
+    if walked and not (isinstance(st, dict) and (st.get("in_combat") or st.get("in_dialogue"))):
+        plumbing._remember_names(got.get("frontier"))
+        block = minimap.block(got, core.H)
+    return "".join("\n" + x for x in (changes, block) if x)
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

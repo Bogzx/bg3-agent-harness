@@ -24,8 +24,8 @@ class ArrivalLeads(Base):
             return {"leads": [{"uuid": CHEST, "name": "Crate", "kind": "container", "dist": 3.0, "dir": "N",
                                "unvisited": True}], "ways": [{"dir": "N", "open_m": 20}]}
         self.g.try_rpc = frontier
-        out = batch._arrival_leads()
-        self.assertEqual(seen, [("nav.frontier", {"ways_cached": True})])
+        out = batch.walk_end_tail()
+        self.assertEqual([a for op, a in seen if op == "nav.frontier"], [{"ways_cached": True}])
         self.assertIn("LEADS (unvisited", out)
         self.assertIn("WAYS walkable: N 20m+", out)
 
