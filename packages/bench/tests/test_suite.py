@@ -82,6 +82,21 @@ def test_a_version_shares_its_predecessors_digest_only_when_suite_json_pairs_the
     assert suite.check(copy, both, "bench-v9.9", {}) == [err]
 
 
+def test_a_chain_of_shared_pairs_may_share_one_digest(copy):
+    """bench-v0.10 re-pins bench-v0.9's files, which are bench-v0.8's: v0.10 -> v0.9 -> v0.8 links all three."""
+    now = suite.digest(copy)
+    three = {"bench-v9.7": [now], "bench-v9.8": [now], "bench-v9.9": [now]}
+    chain = {"bench-v9.8": "bench-v9.7", "bench-v9.9": "bench-v9.8"}
+    assert suite.check(copy, three, "bench-v9.9", chain) == []
+    (err,) = suite.check(copy, three, "bench-v9.9", {"bench-v9.8": "bench-v9.7"})
+    assert err == f"digest {now} is pinned for both bench-v9.7 and bench-v9.9"
+    loop = {"bench-v9.8": "bench-v9.9", "bench-v9.9": "bench-v9.8"}  # a loop links only its own pair
+    assert suite.check(copy, three, "bench-v9.9", loop) == [
+        f"digest {now} is pinned for both bench-v9.7 and bench-v9.8",
+        f"digest {now} is pinned for both bench-v9.7 and bench-v9.9",
+    ]
+
+
 def test_shared_names_pinned_versions_that_share_a_digest():
     pins, shared = suite.load_pins(), suite.load_shared()
     for new, old in shared.items():

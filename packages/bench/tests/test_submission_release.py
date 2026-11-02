@@ -25,7 +25,10 @@ PILOT_RULES = FIXTURE.parent / "pilot-rules"
 PINS = {"game_build": "20981537", "bg3le_sha256": "a" * 64, "mod_sha1": "b" * 40}
 VERSIONS = {"harness": "1.2.3", "bench": "0.8.0"}
 # Released suites' files, frozen: what their published results were checked against. A new suite gets a new file.
-FROZEN = {"bench-v0.8.json": "292177f0a813b2f1c59a4e301f96d8fcb1ecf688e32ad875828d0bd602203e83"}
+FROZEN = {
+    "bench-v0.8.json": "292177f0a813b2f1c59a4e301f96d8fcb1ecf688e32ad875828d0bd602203e83",
+    "bench-v0.9.json": "04762bdbb27d7cb991386cf63c8644f20fe9d6653cffd2423c7fa44ac91b5d06",
+}
 
 
 def fixture_files() -> dict[str, bytes]:

@@ -5,9 +5,9 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.2.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.9.0 |
-| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.9 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.3.0 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.10.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.10 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
 
 The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
@@ -76,6 +76,10 @@ game unless it says so.
   notification's "[ForceUpdate]" placeholder, fast_travel from camp under a conversation screen says so instead of
   "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused, and act.chain fails 0.6 s after
   an attach the game didn't take instead of at 3 s). bench-v0.9's release cites it.
+- 0.3.0 (2026-11-02): what the agent sees and can do changed again after bench-v0.9's graded fight re-run (walks
+  out of combat block by default, the minimap block, roll_check's reroll, trade's SOLD list, known ground to 40 m,
+  required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
+  bench-v0.10 below.
 
 ### Benchmark (`packages/bench`)
 
@@ -127,6 +131,35 @@ game unless it says so.
   now (a test pins its sha256). bench-v0.9 has the same scenario and grading files (suite.json `shared` pairs the
   two versions, so they may pin one digest) and its own release file and start save keys (`saves/bench-v0.9/`);
   the mod and bg3 tool changes after the launch are pinned in bench-v0.9's release, never in bench-v0.8's.
+  bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
+  fights-v09 re-run (a test pins its sha256). The scenario and grading files are bench-v0.9's (and bench-v0.8's), so
+  suite.json pins the same digest and `shared` pairs bench-v0.10 with bench-v0.9; `bg3bench.suite.check` now follows
+  a chain of `shared` pairs (v0.10 -> v0.9 -> v0.8), since the digest was first pinned for bench-v0.8. Its own
+  release file (`releases/bench-v0.10.json`: mod tree b01ba2ca, the same 81 bg3 tools, new prompt hashes for pi,
+  claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). What changed
+  for the agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
+  - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and `route(go=true)`, a far
+    `move_to`) default to `wait=true` and return what `wait_for` on the walk returned, with its early stops, CHANGES
+    and the minimap block; a walk still going after 90 s returns its progress and the id `wait_for` keeps waiting
+    on. `wait=false` keeps the old pipelining.
+  - Every walk end out of combat and every `look` carry the minimap block (OBJECTIVES with distance, direction and
+    height, WAYS, the 3 nearest unvisited LEADS), also after a walk that stopped short.
+  - `roll_check` returns a failed roll with the roll screen open; a reroll is its own call, `roll_check(reroll=true)`.
+    `reroll_on_fail` is removed (it spent Inspiration before the failure was seen).
+  - `trade(sell="junk")` names every item it sold (SOLD, by name with count and gold) and counts what the junk rule
+    kept back (KEPT).
+  - Known ground (FAIRNESS.md): ground within 40 m of the leader with a clear eye ray (was the observer's Sight,
+    ~18.5 m), and ground up to 15 m below an edge at up to 60 degrees (was 4 m, 45 degrees). route, travel_to,
+    walk_toward, path_preview, WAYS, jump solvers, move_to/jump_to's "not in view" and hazard names follow it.
+    Characters and items keep the Sight stat.
+  - At night in camp, `long_rest`, camp leave and `fast_travel` from camp refuse before pressing anything while the
+    camp story still wants a talk, and name who (the "!" over them), instead of failing 30 s later.
+  - `use_ability` on a spell container lists its variants only when each reads as a spell's stats entry; a list
+    that doesn't is read once more, then refused without the raw text.
+  Metric definition change: a tool call counts as async only when its own background job is still running when the
+  call returns (bridge metrics_record.py). A blocking walk's job starts and ends inside the call, and a walk that
+  ended in the 0.3 s settle window no longer counts. Async % and the latency figures built on it are not 1:1 with
+  bench-v0.9 or bench-v0.8 runs.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

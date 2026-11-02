@@ -5,6 +5,19 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: required camp talks are named at night; a misread variant list is refused
+
+- `long_rest`, camp leave and `fast_travel` from camp, at night in camp while the camp story still wants a talk
+  (the "!" over a character), refuse before pressing anything and say who: "long_rest: FAILED — not pressed: the
+  night at camp can't end yet: the game still wants a talk with e4 Shadowheart first (the '!' over them); going to
+  sleep only brings up its 'talks left' notice until then, and a talk with them clears it" (camp leave /
+  fast_travel: "FAILED: nothing was pressed: ... Until the night ends, travel from camp is blocked"). Someone out
+  of sight is counted, not named. Until now the sleep press got the game's "talks left" notice and the call failed
+  30 s later naming only widgets (launch-v1 Haiku act3_gold_max: 46 failed long rests).
+- `use_ability` on a spell container: its variant list is shown only when every id reads as a spell's stats entry;
+  a list that doesn't is read once more, then refused with "choose a variant (this action's variant list did not
+  read as spell names)" and no raw text (fights-v09 Balthazar r3 showed a level mesh name as Lay On Hands' variant).
+
 ## 2026-11-02: walks out of combat return at their end (wait=true is the default)
 
 - `move_to`, `walk_toward` and `travel_to` default to `wait=true` and, out of combat, return at the walk's end with
