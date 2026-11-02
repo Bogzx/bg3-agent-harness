@@ -2,17 +2,20 @@
 -- of an arena file up for a match, then Ar.begin. A job; the runner polls it (bg3harness/arena/match.py _setup).
 -- `arena` is the arena file (arena.v1) as the runner sends it: teams.A/B (entries {name, uuid?}), location.spawns.A/B
 -- ({x, y, z}), seed, karmic, level (the members' character level: setup fails unless every member has it after
--- joining). A member's uuid and name must name the same character. The steps are the arena spike's, which the probe
--- ran by hand (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" ..
--- "phases live 3"):
+-- joining). The teams are the same size, 1 to 4. A member's name is its display name after joining the party (live:
+-- Nightwarden Minthara is Minthara once she joins): setup fails when it differs, listing both. Every party member on
+-- no team (the avatar too) sits out. The steps are the arena spike's, which the probe ran by hand
+-- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
---   2. place: every member detached, each team chained to its first member, teleported to a line through its spawn
+--   2. place: the names checked; every member and sitter detached, each team chained to its first member and
+--      teleported to a line through its spawn (the sitters stay where they are)
 --   3. RestoreParty(host), then SetHitpointsPercentage 100 for anyone it left short; the seed and Karmic Dice
 --   4. each team its own spare "Hero Player<N>" faction (never the bare "Hero": the companions' factions descend from
---      it), SetRelation hostile both ways, SetHostileAndEnterCombat (EnterCombat pairs if not all 8 in one combat)
+--      it), SetRelation hostile both ways, SetHostileAndEnterCombat (EnterCombat pairs if not all members in one
+--      combat)
 --   5. the IsEnemy matrix read every 0.5 s up to 3 s (live: SetRelation alone doesn't change it; it is right with
---      the combat call): every pair across the teams an enemy, none within, all 8 in one combat, else the job fails
---      with the matrix; the avatar out of the fight (it sits out: not a team member, never in combat)
+--      the combat call): every pair across the teams an enemy, none within, all members in one combat, else the job
+--      fails with the matrix; no character on no team in that combat (the job fails naming each)
 --   6. Ar.begin(teams, {round_cap})
 -- The result records each member's name, level, max HP and faction before and after (joining the party reset two
 -- companions' stat blocks in the spike: Minthara 52 -> 11 max HP, Karlach 32 -> 14).
@@ -27,12 +30,12 @@ local truthy = U.truthy
 local Setup = {}
 Ar.Setup = Setup
 Setup.SETTLE_MS = 2000        -- after the party, placing, RestoreParty, the seed (the probe's SETTLE_S, live)
-Setup.COMBAT_MS = 3000        -- the combat call to all 8 in one combat (the probe's wait, live)
+Setup.COMBAT_MS = 3000        -- the combat call to all members in one combat (the probe's wait, live)
 Setup.ENEMY_WAIT_MS = 3000    -- the IsEnemy matrix read again until right (live: right at once with the combat)
 Setup.ENEMY_EVERY_MS = 500
 Setup.LINE_GAP_M = 1.5        -- a team's members this far apart on a line along x through its spawn (spike)
 Setup.TIMEOUT_MS = 60000
-Setup.TEAM_SIZE = 4
+Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike stood up
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -69,8 +72,9 @@ end
 
 local function norm(s) return (tostring(s or ""):lower():gsub("[^%w]", "")) end
 
--- A team entry ({name, uuid?} or a name) -> the character's uuid. By uuid when given, else the one party member,
--- player or origin whose display name is that name (exact, ignoring case and punctuation). The avatar sits out.
+-- A team entry ({name, uuid?} or a name) -> the character's uuid. By uuid when given (its name is checked after the
+-- join), else the one party member, player or origin whose display name is that name now (exact, ignoring case and
+-- punctuation). The avatar sits out.
 function Setup.resolve(entry, avatars)
     local name = type(entry) == "table" and entry.name or entry
     local want = type(entry) == "table" and entry.uuid
@@ -81,9 +85,6 @@ function Setup.resolve(entry, avatars)
         end
         u = u:lower()
         if avatars[u] then error(tostring(name) .. " is the avatar: the avatar sits out of arena fights", 0) end
-        if name ~= nil and norm(V.name(u)) ~= norm(name) then
-            error(("team entry %s: its uuid %s is %s"):format(tostring(name), u, V.name(u)), 0)
-        end
         return u
     end
     if type(name) ~= "string" or name == "" then error("a team entry has no name", 0) end
@@ -206,9 +207,30 @@ STEPS[1] = function(job) -- the party
     return Setup.SETTLE_MS
 end
 
-STEPS[2] = function(job) -- chained per team, on its line
+STEPS[2] = function(job) -- the names after joining; chained per team, on its line; the sitters detached
     local t = job.teams
+    local off = {}
+    for _, u in ipairs(all_of(t)) do
+        local want = job.names[u]
+        if want ~= nil and norm(V.name(u)) ~= norm(want) then
+            off[#off + 1] = ("%s (%s) is %s"):format(tostring(want), u, tostring(V.name(u)))
+        end
+    end
+    if #off > 0 then
+        error("team entries whose display name after joining the party differs: " .. table.concat(off, "; "), 0)
+    end
+    local member = set_of(all_of(t))
+    job.sitters = {}
+    for _, db in ipairs({ column("DB_PartyMembers"), job.avatars }) do
+        for _, u in ipairs(db) do
+            if not member[u] then
+                member[u] = true
+                job.sitters[#job.sitters + 1] = u
+            end
+        end
+    end
     for _, u in ipairs(all_of(t)) do call(job, "DetachFromPartyGroup", { u }) end
+    for _, u in ipairs(job.sitters) do call(job, "DetachFromPartyGroup", { u }) end
     for _, s in ipairs(Ar.SIDES) do
         for i = 2, #t[s] do call(job, "AttachToPartyGroup", { t[s][i], t[s][1] }) end
         for i, p in ipairs(Setup.line(job.spawns[s], #t[s])) do
@@ -251,7 +273,7 @@ STEPS[5] = function(job) -- hostile teams, one combat
     return Setup.COMBAT_MS
 end
 
-STEPS[6] = function(job) -- all 8 in one combat, else EnterCombat pairs once
+STEPS[6] = function(job) -- all members in one combat, else EnterCombat pairs once
     if one_combat(job.teams) then return 0 end
     local t = job.teams
     for i = 1, math.min(#t.A, #t.B) do call(job, "EnterCombat", { t.A[i], t.B[i] }) end
@@ -262,6 +284,20 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
     local t = job.teams
     local c, seen = one_combat(t)
     if not c then error("the teams are not in one combat: " .. table.concat(seen, ", "), 0) end
+    -- nobody else in it: the sitters, and any other character in the level
+    local member, out, others = set_of(all_of(t)), {}, {}
+    for _, u in ipairs(job.sitters) do others[#others + 1] = u end
+    for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerCharacter") or {}) do
+        local u = V.entityUuid(e)
+        if u then others[#others + 1] = u:lower() end
+    end
+    for _, u in ipairs(others) do
+        if not member[u] and osi(Osi.CombatGetGuidFor, u) == c then
+            member[u] = true
+            out[#out + 1] = tostring(V.name(u))
+        end
+    end
+    if #out > 0 then error("not on a team and in the fight: " .. table.concat(out, ", "), 0) end
     local m = Setup.matrix(t)
     job.enemy_reads = (job.enemy_reads or 0) + 1
     job.enemy_from = job.enemy_from or now_ms()
@@ -273,11 +309,6 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
         end
         error(("IsEnemy after %d reads: across the teams %d/%d, within a team %d/%d: %s"):format(job.enemy_reads,
             m.across, m.across_of, m.within, m.within_of, table.concat(m.wrong, "; ")), 0)
-    end
-    for _, a in ipairs(job.avatars) do
-        if truthy(osi(Osi.IsInCombat, a)) then
-            error("the avatar " .. tostring(V.name(a)) .. " joined the fight (it sits out)", 0)
-        end
     end
     local after, off = {}, {}
     for _, u in ipairs(all_of(t)) do
@@ -293,8 +324,10 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
             ("levels after setup differ from the arena's level %d: %s"):format(job.level, table.concat(off, ", ")))
         return
     end
+    local sitters = {}
+    for _, u in ipairs(job.sitters) do sitters[#sitters + 1] = { uuid = u, name = V.name(u) } end
     local status = Ar.begin(t, { round_cap = job.round_cap })
-    RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after,
+    RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, calls = job.calls, status = status })
 end
@@ -314,14 +347,14 @@ function Setup.start(args)
     if not (S and S.enabled and S.enabled()) then
         error("arena.setup sets the arena's seed and Karmic Dice: start the game with BG3AI_SCENARIO_SETUP=1 too", 0)
     end
-    local teams, spawns, seen = {}, {}, {}
+    local teams, spawns, seen, names = {}, {}, {}, {}
     local avatarList = column("DB_Avatars")
     local avatars = set_of(avatarList)
     local spawnsIn = type(arena.location) == "table" and arena.location.spawns or nil
     for _, s in ipairs(Ar.SIDES) do
         local entries = type(arena.teams) == "table" and arena.teams[s] or nil
-        if type(entries) ~= "table" or #entries ~= Setup.TEAM_SIZE then
-            error("team " .. s .. " must list " .. Setup.TEAM_SIZE .. " characters", 0)
+        if type(entries) ~= "table" or #entries < 1 or #entries > Setup.TEAM_MAX then
+            error("team " .. s .. " must list 1 to " .. Setup.TEAM_MAX .. " characters", 0)
         end
         teams[s] = {}
         for i, e in ipairs(entries) do
@@ -329,8 +362,12 @@ function Setup.start(args)
             if seen[u] then error(V.name(u) .. " is listed twice", 0) end
             seen[u] = true
             teams[s][i] = u
+            names[u] = type(e) == "table" and e.name or e
         end
         spawns[s] = vec3(type(spawnsIn) == "table" and spawnsIn[s] or nil, "location.spawns." .. s)
+    end
+    if #teams.A ~= #teams.B then
+        error(("team A lists %d characters, team B %d: the teams must be the same size"):format(#teams.A, #teams.B), 0)
     end
     if args.round_cap ~= nil and not tonumber(args.round_cap) then error("round_cap must be a number", 0) end
     local level = arena.level
@@ -340,7 +377,7 @@ function Setup.start(args)
     local host = V.uuid(osi(Osi.GetHostCharacter))
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
-        teams = teams, spawns = spawns, host = host:lower(), avatars = avatarList,
+        teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
         round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = 1, next_at = 0, before = {},
         calls = {} })
     job.partial = { teams = teams, calls = job.calls }

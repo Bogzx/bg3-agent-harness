@@ -98,6 +98,7 @@ function Sym.profile(u)
     end)
     p.statuses = read(function()
         local out = {}
+        if e.StatusContainer == nil then return out end -- live: no StatusContainer on a character with no statuses
         for _, id in pairs(e.StatusContainer.Statuses) do out[#out + 1] = tostring(id) end
         return sorted(out)
     end)
