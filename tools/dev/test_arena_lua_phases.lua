@@ -499,3 +499,35 @@ test("arena.status's turn is the recorded phase, not the burst's last TurnStarte
     t = rpc("arena.status").result.turn
     eq(enc({ t.side, t.uuid, t.phase }), enc({ "B", B1, 2 }), "B1's phase")
 end)
+
+-- Live check 12 (2026-11-02, 2v2 twins, setup2v2/drive12.jsonl): the group B1 | A1 | B2 | A2, phases of one, one end
+-- every ~15.8 s. Ends 1-3 were pending (the rest still to act); the game changed no flag for them (03-turnflags: all
+-- four IsActiveCombatTurn, none RequestedEndTurn) and the last end failed 'ignored' at 20 s: round 1 never closed.
+-- The mod's side as it stands: one EndTurn per member, nobody's sent again, the last end fails at END_LAST_WAIT_MS.
+test("live check 12 replay (B1 | A1 | B2 | A2): one EndTurn each, none again, the last end 'ignored' at 20 s",
+    function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 1)
+        order = { { B1, A1, B2, A2 } }
+        openAll({ B1, A1, B2, A2 })
+        burst({ B1, A1, B2, A2 })
+        tick()
+        for _, d in ipairs({ { B1, "B" }, { A1, "A" }, { B2, "B" } }) do
+            eq(Ar.phase().side, d[2], "the acting side at " .. d[1] .. "'s end")
+            local j = endTurn(d[1], d[2])
+            ticks(2)
+            eq(j.status, "done", d[1] .. "'s end: " .. tostring(j.error))
+            eq(j.result.requested, true, d[1] .. "'s end pending")
+            ticks(math.floor(15800 / Ar.PHASE_EVERY_MS))
+        end
+        local j = endTurn(A2, "A") -- the game shows nothing: every member stays active, no RequestedEndTurn
+        ticks(math.floor(A.END_LAST_WAIT_MS / Ar.PHASE_EVERY_MS) + 1)
+        eq(enc({ j.status, j.error }), enc({ "failed", A.END_IGNORED }), "A2's end")
+        eq(table.concat(ended, ","), table.concat({ B1, A1, B2, A2 }, ","), "one EndTurn each, in order")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)

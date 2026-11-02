@@ -23,7 +23,7 @@ KITS: dict[str, dict[str, Any]] = {
         "race": "HalfElf",
         "skills": ["Athletics", "Intimidation"],
         "ability_bonus": ["Strength", "Constitution"],
-        "passives": ["FightingStyle_Defense"],
+        "passives": [["FightingStyle_Defense"]],
         "items": ["WPN_Longsword", "WPN_Shortbow", "ARM_ScaleMail_Body", "ARM_Boots_Leather", *POTIONS],
     },
     "Barbarian": {
@@ -55,27 +55,32 @@ KITS: dict[str, dict[str, Any]] = {
             *POTIONS,
         ],
     },
-    "Wizard": {
+    "Ranger": {
         "race": "HalfElf",
-        "skills": ["Arcana", "History"],
-        "ability_bonus": ["Intelligence", "Constitution"],
-        "spells": [
-            ["Target_FireBolt", "Target_RayOfFrost", "Target_MageHand"],
-            ["Target_MagicMissile", "Shout_Shield_Wizard", "Target_Sleep", "Projectile_IceKnife"],
+        "skills": ["Survival", "Perception", "Stealth"],
+        "ability_bonus": ["Dexterity", "Wisdom"],
+        "passives": [["FavouredEnemy_BountyHunter"], ["NaturalExplorer_Beastmaster"], ["FightingStyle_Archery"]],
+        "spells": [["Target_HuntersMark", "Target_CureWounds"]],
+        "items": [
+            "WPN_Shortbow",
+            "WPN_Shortsword",
+            "ARM_Leather_Body",
+            "ARM_Boots_Leather",
+            {"item": "OBJ_ArrowOfIce", "equip": False},
+            *POTIONS,
         ],
-        "items": ["WPN_Quarterstaff", "ARM_Robe_Body", "ARM_Shoes", *POTIONS],
     },
 }
 SPEC: dict[str, Any] = {
     "schema": "arena-mirror.v1",
     "name": "mirror_crash_site",
-    "level": 1,
+    "level": 2,
     "location": {"level": "WLD_Main_A", "spawns": {"A": [229.8, 5.1, 268.2], "B": [229.8, 5.6, 278.7]}},
     "pairs": [
         {"class": "Fighter", "template": None, "names": {"A": "Ash", "B": "Birch"}, "kit": KITS["Fighter"]},
         {"class": "Barbarian", "template": None, "names": {"A": "Alder", "B": "Bramble"}, "kit": KITS["Barbarian"]},
         {"class": "Rogue", "template": "Hireling_Rogue_x", "names": {"A": "Aspen", "B": "Beech"}, "kit": KITS["Rogue"]},
-        {"class": "Wizard", "template": None, "names": {"A": "Acer", "B": "Briar"}, "kit": KITS["Wizard"]},
+        {"class": "Ranger", "template": None, "names": {"A": "Acer", "B": "Briar"}, "kit": KITS["Ranger"]},
     ],
 }
 STATIC = mas.load_static()
@@ -131,18 +136,27 @@ class SpecTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "s.json"
             p.write_text(json.dumps(SPEC))
-            self.assertEqual(mas.load_spec(p)["level"], 1)
+            self.assertEqual(mas.load_spec(p)["level"], 2)
             p.write_text("{")
             with self.assertRaisesRegex(mas.SpecError, "cannot read"):
                 mas.load_spec(p)
 
-    def test_arena_teams_pair_i_at_index_i(self):
-        uu = {"A": ["a1", "a2", "a3", "a4"], "B": ["b1", "b2", "b3", "b4"]}
-        t = mas.arena_teams(spec(), uu)
-        self.assertEqual(t["A"][0], {"name": "Ash", "uuid": "a1"})
-        self.assertEqual(t["B"][3], {"name": "Briar", "uuid": "b4"})
-        with self.assertRaisesRegex(mas.SpecError, "team B needs 4"):
-            mas.arena_teams(spec(), {"A": uu["A"], "B": uu["B"][:3]})
+    def test_mirror_section_for_arena_setup(self):
+        with self.assertRaisesRegex(mas.SpecError, "pair 1: no template yet"):
+            mas.mirror_section(spec())
+        full = spec()
+        for p in full["pairs"]:
+            p["template"] = "d9401d40-453b-4512-84ee-d1c6ab29afea"
+        m = mas.mirror_section(full)
+        self.assertEqual(m["level"], 2)
+        self.assertEqual(m["teams"]["A"][0], {"name": "Ash"})
+        self.assertEqual(m["teams"]["B"][3], {"name": "Briar"})
+        p1 = m["mirror"]["pairs"][0]
+        self.assertEqual(
+            (p1["stats"], p1["race"], p1["names"]),
+            ("BG3AI_Arena_Fighter_L1", "76057327-da03-4398-aaf0-c59345ef3a8b", {"A": "Ash", "B": "Birch"}),
+        )
+        self.assertEqual(p1["kit"]["player"], {"passives": ["DeathSavingThrows"]})
 
 
 class KitTest(unittest.TestCase):
@@ -158,7 +172,7 @@ class KitTest(unittest.TestCase):
         )
 
     def test_fighter_plan_from_the_game_rows(self):
-        p = mas.kit_plan(KITS["Fighter"], "Fighter", 1, STATIC)
+        p = mas.kit_plan(KITS["Fighter"], "Fighter", 2, STATIC)
         self.assertEqual(p["race"], "76057327-da03-4398-aaf0-c59345ef3a8b")
         k = p["kit"]
         self.assertEqual(
@@ -190,12 +204,20 @@ class KitTest(unittest.TestCase):
         self.assertEqual(items["WPN_Longsword"], (1, True, True))
         self.assertEqual(len(k["items"]), 5)
 
-    def test_every_class_kit_and_the_wizards_prepared_spells(self):
+    def test_every_class_kit_at_level_2_and_the_rangers_three_passive_choices(self):
         for cls in mas.CLASSES:
             with self.subTest(cls=cls):
-                mas.kit_plan(KITS[cls], cls, 1, STATIC)
-        sp = [c for c in mas.kit_plan(KITS["Wizard"], "Wizard", 1, STATIC)["kit"]["choices"] if c["kind"] == "spells"]
-        self.assertEqual([(c["n"], c["exact"], len(c["ids"])) for c in sp], [(3, True, 3), (6, False, 4)])
+                mas.kit_plan(KITS[cls], cls, 2, STATIC)
+        ch = mas.kit_plan(KITS["Ranger"], "Ranger", 2, STATIC)["kit"]["choices"]
+        self.assertEqual(
+            [(c["kind"], c["n"], c["ids"]) for c in ch if c["kind"] != "skills"],
+            [
+                ("passives", 1, ["FavouredEnemy_BountyHunter"]),
+                ("passives", 1, ["NaturalExplorer_Beastmaster"]),
+                ("spells", 2, ["Target_HuntersMark", "Target_CureWounds"]),
+                ("passives", 1, ["FightingStyle_Archery"]),
+            ],
+        )
         axes = [
             i
             for i in mas.kit_plan(KITS["Barbarian"], "Barbarian", 1, STATIC)["kit"]["items"]
@@ -203,10 +225,11 @@ class KitTest(unittest.TestCase):
         ]
         self.assertEqual((axes[0]["count"], axes[0]["equip"]), (2, False))
 
-    def test_level_2_rows_add_no_choice_but_a_wizard_subclass_refuses(self):
-        mas.kit_plan(KITS["Fighter"], "Fighter", 2, STATIC)
-        with self.assertRaisesRegex(mas.SpecError, "Wizard picks a subclass at level 2"):
-            mas.kit_plan(KITS["Wizard"], "Wizard", 2, STATIC)
+    def test_a_subclass_choice_refuses(self):
+        st = copy.deepcopy(STATIC)
+        st["classes"]["Fighter"]["levels"]["2"]["subclasses"] = 8  # as the Wizard's level-2 row
+        with self.assertRaisesRegex(mas.SpecError, "Fighter picks a subclass at level 2"):
+            mas.kit_plan(KITS["Fighter"], "Fighter", 2, st)
 
     def test_each_kit_problem_is_named(self):
         bad: list[tuple[str, dict[str, Any], str]] = [
@@ -214,17 +237,14 @@ class KitTest(unittest.TestCase):
             ("Fighter", kit("Fighter", skills=["Athletics", "Swimming"]), "Swimming is not one of"),
             ("Fighter", kit("Fighter", skills=["Athletics", "Athletics"]), "lists a name twice"),
             ("Fighter", kit("Fighter", expertise=["Athletics"]), "Fighter has no expertise choice"),
-            ("Barbarian", kit("Barbarian", passives=["FightingStyle_Defense"]), "Barbarian has no passives choice"),
+            ("Barbarian", kit("Barbarian", passives=[["FightingStyle_Defense"]]), "passives must have 0 lists"),
+            ("Fighter", kit("Fighter", passives=[[]]), "passives has 0, the game's selector takes 1"),
             ("Rogue", kit("Rogue", expertise=["Stealth", "Athletics"]), "expertise in Athletics, which the kit's"),
             ("Fighter", kit("Fighter", ability_bonus=None), "ability_bonus must name the +2 and the +1"),
             ("Fighter", kit("Fighter", ability_bonus=["Strength"]), "must name the +2 and the +1"),
             ("Fighter", kit("Fighter", ability_bonus=["Strength", "Luck"]), "Luck is not one of"),
-            ("Wizard", kit("Wizard", spells=[["Target_FireBolt"]]), "spells must have 2 lists"),
-            (
-                "Wizard",
-                kit("Wizard", spells=[["Target_FireBolt"], ["Target_Sleep"]]),
-                "spells has 1, the game's selector takes 3",
-            ),
+            ("Ranger", kit("Ranger", spells=[]), "spells must have 1 lists"),
+            ("Ranger", kit("Ranger", spells=[["Target_HuntersMark"]]), "spells has 1, the game's selector takes 2"),
             ("Fighter", kit("Fighter", race="Githyanki"), "race must be one of HalfElf"),
             (
                 "Fighter",
@@ -235,7 +255,7 @@ class KitTest(unittest.TestCase):
         ]
         for cls, k, want in bad:
             with self.subTest(want=want), self.assertRaisesRegex(mas.SpecError, re.escape(want)):
-                mas.kit_plan(k, cls, 1, STATIC)
+                mas.kit_plan(k, cls, 2, STATIC)
 
 
 class SymmetryTest(unittest.TestCase):

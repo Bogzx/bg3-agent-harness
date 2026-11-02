@@ -5,6 +5,8 @@
 
 local T1 = "dddddddd-0000-0000-0000-0000000000d1"
 local T2 = "dddddddd-0000-0000-0000-0000000000d2"
+local T3 = "dddddddd-0000-0000-0000-0000000000d3"
+local T4 = "dddddddd-0000-0000-0000-0000000000d4"
 local HOST = "eeeeeeee-0000-0000-0000-0000000000e1"
 local TPL = "d9401d40-453b-4512-84ee-d1c6ab29afea"
 local HALFELF = "76057327-da03-4398-aaf0-c59345ef3a8b"
@@ -49,7 +51,7 @@ local function game(opts)
         return nil
     end
     osiv[key("GetHostCharacter")] = HOST
-    local pending = { T1, T2 }
+    local pending = { T1, T2, T3, T4 }
     stub("CreateAt", function(t, x, y, z)
         calls[#calls + 1] = { "CreateAt", t, x, y, z, tpl.Stats }
         if opts.create_fails then error("CreateAt refused") end
@@ -63,7 +65,11 @@ local function game(opts)
     end
     stub("SetStoryDisplayName", function(u, name)
         calls[#calls + 1] = { "SetStoryDisplayName", u, name }
-        NAMES[u] = name
+        if opts.shared_name then -- as scn.rename did live: one handle for every copy of the template
+            for _, c in ipairs(created) do NAMES[c] = name end
+        else
+            NAMES[u] = name
+        end
     end)
     stub("TemplateAddTo", function(root, u, n, show)
         calls[#calls + 1] = { "TemplateAddTo", root, u, n, show }
@@ -80,7 +86,7 @@ local function restore()
         if name ~= "ext" then rawset(Osi, name, v or nil) end
     end
     Ext.Stats, Ext.StaticData.Get, Ext.Template = saved.ext[1], saved.ext[2], saved.ext[3]
-    NAMES[T1], NAMES[T2] = nil, nil
+    NAMES[T1], NAMES[T2], NAMES[T3], NAMES[T4] = nil, nil, nil, nil
 end
 
 local function guarded(fn)
@@ -107,6 +113,7 @@ end
 
 local function kit(over)
     local k = { race = { boosts = "ActionResource(Movement,9,0)", passives = { "Darkvision", "FeyAncestry" } },
+        player = { passives = { "DeathSavingThrows" } },
         ability_bonus = { "Strength", "Constitution" },
         choices = { { kind = "skills", list = "skills-fighter", n = 2, exact = true,
             ids = { "Athletics", "Intimidation" } },
@@ -132,12 +139,13 @@ test("stat entries: one per class and level at StatsLoaded with the switch, from
         env.BG3AI_ARENA = "1"
         for _, f in ipairs(statsLoaded) do f() end
         local made = named("Create")
-        eq(#made, 8, "4 classes x levels 1, 2")
+        eq(#made, 4, "4 classes at level 1")
         eq(enc({ made[1][2], made[1][3], made[1][4] }), enc({ "BG3AI_Arena_Fighter_L1", "Character", "_Hero" }),
             "the first entry")
-        local f2 = stats.BG3AI_Arena_Fighter_L2
-        eq(enc({ f2.Class, f2.Level, f2.Progressions, f2.Strength, f2.Charisma }),
-            enc({ "Fighter", 2, "ba4e707e-4bbd-4630-963b-ce2f2947f971", 15, 8 }), "Fighter L2")
+        local f1 = stats.BG3AI_Arena_Fighter_L1
+        eq(enc({ f1.Class, f1.Level, f1.Progressions, f1.Strength, f1.Charisma }),
+            enc({ "Fighter", 1, "ba4e707e-4bbd-4630-963b-ce2f2947f971", 15, 8 }), "Fighter L1")
+        eq(stats.BG3AI_Arena_Ranger_L1.SpellCastingAbility, "Wisdom", "the Ranger casts with Wisdom")
         local cost = { [8] = 0, [9] = 1, [10] = 2, [11] = 3, [12] = 4, [13] = 5, [14] = 7, [15] = 9 }
         for class, c in pairs(Ar.Stats.CLASSES) do
             local n = 0
@@ -176,6 +184,10 @@ test("mirror_spawn refusals: no entry, another race, one name twice; a failing C
         game({ stats_id = "HeroHalfElfFemale" })
         stats.BG3AI_Arena_Fighter_L1 = {}
         refused(function() Ar.Mirror.spawn(spawnArgs()) end, T1 .. " has stats HeroHalfElfFemale")
+        restore()
+        game({ shared_name = true }) -- each name read after both are set: the first copy now reads "Birch"
+        stats.BG3AI_Arena_Fighter_L1 = {}
+        refused(function() Ar.Mirror.spawn(spawnArgs()) end, T1 .. " is named Birch")
     end))
 
 test("mirror_kit: the same calls on both twins in the kit's order, then each item added, waited for and equipped",
@@ -193,7 +205,8 @@ test("mirror_kit: the same calls on both twins in the kit's order, then each ite
             per[u][#per[u] + 1] = c[1] .. "(" .. table.concat(args, ",", 1, #args) .. ")"
         end
         local want = { "AddBoosts(ActionResource(Movement,9,0),BG3AI_ArenaKit,self)", "AddPassive(Darkvision)",
-            "AddPassive(FeyAncestry)", "AddBoosts(Ability(Strength,2);Ability(Constitution,1),BG3AI_ArenaKit,self)",
+            "AddPassive(FeyAncestry)", "AddPassive(DeathSavingThrows)",
+            "AddBoosts(Ability(Strength,2);Ability(Constitution,1),BG3AI_ArenaKit,self)",
             "AddBoosts(ProficiencyBonus(Skill,Athletics);ProficiencyBonus(Skill,Intimidation),BG3AI_ArenaKit,self)",
             "AddPassive(FightingStyle_Defense)" }
         eq(enc(per[T1]), enc(want), "twin 1's calls")
@@ -203,8 +216,8 @@ test("mirror_kit: the same calls on both twins in the kit's order, then each ite
         local adds, eqs = named("TemplateAddTo"), named("Equip")
         eq(enc(adds), enc({ { "TemplateAddTo", "root-sword", T1, 1, 0 }, { "TemplateAddTo", "root-sword", T2, 1, 0 },
             { "TemplateAddTo", "root-potion", T1, 2, 0 }, { "TemplateAddTo", "root-potion", T2, 2, 0 } }), "added")
-        eq(enc(eqs), enc({ { "Equip", T1, T1 .. "-item-root-sword" }, { "Equip", T2, T2 .. "-item-root-sword" } }),
-            "the sword equipped, the potions not")
+        eq(enc(eqs), enc({ { "Equip", T1, T1 .. "-item-root-sword", 1, 0, 1 },
+            { "Equip", T2, T2 .. "-item-root-sword", 1, 0, 1 } }), "the sword equipped (5 arguments), the potions not")
     end))
 
 test("mirror_kit refusals, nothing applied: a pick not in the game's list, a wrong count, a list that doesn't read",
@@ -247,4 +260,85 @@ test("mirror_kit: an item that never arrives fails the job naming it", guarded(f
     eq(tostring(j.error):find("WPN_Longsword (root-sword) didn't reach both twins", 1, true) ~= nil, true,
         "names the item: " .. tostring(j.error))
     eq(#named("Equip"), 0, "nothing equipped")
+end))
+
+-- arena.setup with arena.mirror: the twins are made for the match (live check 12 step 13: a save keeps neither the
+-- entries' grants nor the kit's boosts), pair i = teams.A[i], teams.B[i]; the job then goes on to the party step.
+local function mirrorArena(over)
+    local a = { location = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10 } } }, seed = 7, karmic = false, level = 2,
+        mirror = { pairs = {
+            { template = TPL, race = HALFELF, stats = "BG3AI_Arena_Fighter_L1", names = { A = "Ash", B = "Birch" },
+                kit = kit() },
+            { template = TPL, race = HALFELF, stats = "BG3AI_Arena_Fighter_L1", names = { A = "Alder", B = "Bramble" },
+                kit = kit() } } } }
+    for k, v in pairs(over or {}) do a[k] = v end
+    return a
+end
+
+-- Runs a mirror setup until it reaches the party step (or ends); the symmetry check answers `sym`.
+local function mirrorSetup(a, sym)
+    stats.BG3AI_Arena_Fighter_L1 = {}
+    local scenario, check = BG3AI.Scenario, Ar.Symmetry.check
+    local asked = {}
+    BG3AI.Scenario = { enabled = function() return true end }
+    Ar.Symmetry.check = function(p) asked[#asked + 1] = p return sym or { ok = true, problems = {} } end
+    local ok, r = pcall(function()
+        local j = RPC.jobs[Ar.Setup.start({ arena = a }).job]
+        for _ = 1, 100 do
+            if j.status ~= "running" or j.step >= 1 then break end
+            tick()
+        end
+        return j
+    end)
+    BG3AI.Scenario, Ar.Symmetry.check = scenario, check
+    if not ok then error(r, 0) end
+    if r.status == "running" then r.status = "interrupted" end -- the party step on is test_arena_lua_setup.lua's
+    return r, asked
+end
+
+test("a mirror setup: each pair spawned and kitted, names and symmetry checked, pair i at index i of both teams",
+    guarded(function()
+        local j, asked = mirrorSetup(mirrorArena())
+        eq(j.step, 1, "at the party step: " .. tostring(j.error))
+        eq(enc(j.teams), enc({ A = { T1, T3 }, B = { T2, T4 } }), "teams")
+        eq(enc({ j.names[T1], j.names[T4] }), enc({ "Ash", "Bramble" }), "names")
+        eq(enc(asked[1]), enc({ { T1, T2 }, { T3, T4 } }), "symmetry over the pairs")
+        eq(#named("AddPassive") > 0 and #named("Equip"), 4, "every twin kitted and its sword equipped")
+        local made = named("CreateAt")
+        eq(enc({ made[1][3], made[1][5], made[2][5], made[3][3] }), enc({ -0.75, 0, 10, 0.75 }),
+            "pair 1 on each team's line first, pair 2 next")
+    end))
+
+test("a mirror setup fails on a twin that doesn't read its own name, or on any symmetry problem", guarded(function()
+    local j = mirrorSetup(mirrorArena(), { ok = false, problems = { "pair 1 (Ash, Birch): passives differs" } })
+    eq(j.status, "failed", "failed")
+    eq(tostring(j.error):find("the twins are not mirrors: pair 1 (Ash, Birch): passives differs", 1, true) ~= nil,
+        true, tostring(j.error))
+    restore()
+    game()
+    stats.BG3AI_Arena_Fighter_L1 = {}
+    local a = mirrorArena()
+    local kitRun = Ar.Mirror.kit
+    Ar.Mirror.kit = function(args) NAMES[T1] = "Alder" return kitRun(args) end -- a later rename took pair 1's
+    local ok, got = pcall(mirrorSetup, a)
+    Ar.Mirror.kit = kitRun
+    if not ok then error(got, 0) end
+    j = got
+    eq(tostring(j.error):find("Ash (" .. T1 .. ") reads Alder", 1, true) ~= nil, true, tostring(j.error))
+end))
+
+test("mirror arena refusals: a pair short of a field, one name twice, teams that name other twins", guarded(function()
+    local function start(a) return Ar.Setup.check_mirror(a.mirror, a.teams) end
+    local a = mirrorArena()
+    a.mirror.pairs[2].kit = nil
+    refused(function() start(a) end, "pairs[2] needs template, race, stats, names and kit")
+    a = mirrorArena()
+    a.mirror.pairs[2].names.B = "ash"
+    refused(function() start(a) end, "the name ash is used twice")
+    a = mirrorArena({ teams = { A = { { name = "Ash" }, { name = "Alder" } }, B = { { name = "Birch" } } } })
+    refused(function() start(a) end, "arena.teams.B[2] is nil, the mirror's pair 2 names Bramble")
+    a = mirrorArena({ teams = { A = { { name = "Ash" }, { name = "Alder" } }, B = { { name = "Birch" },
+        { name = "Bramble" } } } })
+    start(a)
+    eq(#named("CreateAt"), 0, "nothing made")
 end))

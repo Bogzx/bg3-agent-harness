@@ -5,16 +5,21 @@
 --   calls and set back at once (other spawns of the template stay what they were), refused when the template's race is
 --   not `race`. Each copy is made a player (MakePlayer, the host's party XP: live, a copy then reads the host's level)
 --   and named with SetStoryDisplayName: the copies of one template share their display-name handle, so scn.rename
---   (Ext.Loca on that handle) would rename both. Fails when a copy's StatsId or name doesn't read back as asked (its
---   uuid in the error: the copies stay in the world). -> {twins = [u1, u2], reads}
+--   (Ext.Loca on that handle) would rename both (live check 12 step 8: every copy of the template showed the last
+--   name). Fails when a copy's StatsId or name doesn't read back as asked once both are named (its uuid in the error:
+--   the copies stay in the world). -> {twins = [u1, u2], reads}
 -- arena.mirror_kit {twins = [u1, u2], race, kit} (a job): the same level-1 choices on both twins, in the same order,
 --   by the game's own calls. kit (make_arena_save.py builds it from the spec's kit and the game data):
---     race = {boosts, passives}: the race table's level-1 fixed parts (the game applies none to a spawned copy)
+--     race = {boosts, passives}: the race table's level-1 fixed parts (the game applies none to a spawned copy; its
+--       Movement boost is the copy's only Movement resource: live check 12 step 7)
+--     player = {passives}: what every player character has and a copy lacks (DeathSavingThrows, whose own boost is
+--       DownedStatus(DOWNED): Lae'zel's, live check 12 step 10)
 --     ability_bonus = {+2 ability, +1 ability} or nil (SelectAbilityBonus)
 --     choices = [{kind = skills|expertise|passives|spells, list, n, exact, ids}]: one per Select* selector;
 --       every id must be in the game's list (Ext.StaticData SkillList / PassiveList / SpellList), #ids == n when
 --       exact, else 1..n (a wizard's prepared spells out of its spellbook selector)
---     items = [{item, root, count, equip}]: TemplateAddTo(root, twin, count), then Equip when equip
+--     items = [{item, root, count, equip}]: TemplateAddTo(root, twin, count); the item shows in an inventory a tick
+--       later (live check 12 step 7), then Equip(twin, item, 1, 0, 1) when equip (Equip takes 5 arguments)
 --   Refused, nothing applied, when a twin is missing, is not of `race`, already holds items, or a choice fails its
 --   list. -> job result {twins, calls}
 
@@ -28,6 +33,7 @@ Ar.Mirror = M
 M.SOURCE = "BG3AI_ArenaKit" -- AddBoosts' source id
 M.ITEM_WAIT_MS = 5000       -- an added item shows in the inventory within this (else the job fails)
 M.TIMEOUT_MS = 60000
+M.KIT_EVERY_MS = 250        -- arena.setup reads a mirror's kit jobs this often
 M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skills" },
     passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells" } }
 
@@ -104,6 +110,8 @@ function M.spawn(args)
     for i, u in ipairs(made) do
         call(calls, "MakePlayer", { u, host })
         call(calls, "SetStoryDisplayName", { u, names[i] })
+    end
+    for i, u in ipairs(made) do
         local e = V.entity(u)
         reads[i] = { uuid = u, stats = read(function() return e.Data.StatsId end), name = V.name(u),
             level = read(function() return e.EocLevel.Level end) }
@@ -147,6 +155,7 @@ local function applyChoices(calls, u, kit)
     local race = kit.race or {}
     if race.boosts and race.boosts ~= "" then call(calls, "AddBoosts", { u, race.boosts, M.SOURCE, u }) end
     for _, p in ipairs(race.passives or {}) do call(calls, "AddPassive", { u, p }) end
+    for _, p in ipairs((kit.player or {}).passives or {}) do call(calls, "AddPassive", { u, p }) end
     local ab = kit.ability_bonus
     if ab then call(calls, "AddBoosts", { u, ("Ability(%s,2);Ability(%s,1)"):format(ab[1], ab[2]), M.SOURCE, u }) end
     for _, c in ipairs(kit.choices or {}) do
@@ -185,7 +194,7 @@ local function tick(job)
         return
     end
     if it.equip then
-        for i, u in ipairs(job.twins) do call(job.calls, "Equip", { u, got[i] }) end
+        for i, u in ipairs(job.twins) do call(job.calls, "Equip", { u, got[i], 1, 0, 1 }) end
     end
     job.item, job.added = job.item + 1, false
 end

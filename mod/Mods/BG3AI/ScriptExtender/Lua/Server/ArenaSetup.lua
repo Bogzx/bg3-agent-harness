@@ -6,6 +6,12 @@
 -- Nightwarden Minthara is Minthara once she joins): setup fails when it differs, listing both. Every party member on
 -- no team (the avatar too) sits out. The steps are the arena spike's, which the probe ran by hand
 -- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
+--   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
+--      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
+--      entries' grants nor the kit's boosts: live check 12 step 13): each pair arena.mirror_spawn + arena.mirror_kit
+--      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name (all copies of a template
+--      share one display-name handle) and arena.symmetry over the pairs must find nothing; pair i is teams.A[i] and
+--      teams.B[i] (arena.teams, if given, must name them in that order)
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
 --   2. place: the names checked; every member and sitter detached, each team chained to its first member and
 --      teleported to a line through its spawn (the sitters stay where they are, SetCanJoinCombat 0: read back 0)
@@ -344,11 +350,81 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, calls = job.calls, status = status })
 end
 
+-- A mirror arena: the twins, spawned and given their kits (their kit jobs run on their own).
+STEPS[-1] = function(job)
+    local mi, M = job.mirror, Ar.Mirror
+    job.kits = {}
+    for i, p in ipairs(mi.pairs) do
+        local spots = {}
+        for k, s in ipairs(Ar.SIDES) do spots[k] = Setup.line(job.spawns[s], #mi.pairs)[i] end
+        local r = M.spawn({ stats = p.stats, template = p.template, race = p.race, spots = spots,
+            names = { p.names.A, p.names.B } })
+        for k, s in ipairs(Ar.SIDES) do
+            job.teams[s][i] = r.twins[k]
+            job.names[r.twins[k]] = p.names[s]
+        end
+        job.kits[i] = M.kit({ twins = { r.twins[1], r.twins[2] }, race = p.race, kit = p.kit }).job
+    end
+    return Ar.Mirror.KIT_EVERY_MS
+end
+
+STEPS[0] = function(job) -- the kits done, then the twins as they must be
+    for i, id in ipairs(job.kits) do
+        local k = RPC.jobs[id]
+        if k.status == "running" then
+            job.step = job.step - 1 -- wait again
+            return Ar.Mirror.KIT_EVERY_MS
+        end
+        if k.status ~= "done" then error(("pair %d's kit %s: %s"):format(i, k.status, tostring(k.error)), 0) end
+    end
+    local off, pairs = {}, {}
+    for i = 1, #job.mirror.pairs do
+        pairs[i] = { job.teams.A[i], job.teams.B[i] }
+        for _, u in ipairs(pairs[i]) do
+            if V.name(u) ~= job.names[u] then
+                off[#off + 1] = ("%s (%s) reads %s"):format(job.names[u], u, tostring(V.name(u)))
+            end
+        end
+    end
+    if #off > 0 then error("twins that don't read their own name: " .. table.concat(off, "; "), 0) end
+    local sym = Ar.Symmetry.check(pairs)
+    if not sym.ok then error("the twins are not mirrors: " .. table.concat(sym.problems, "; "), 0) end
+    return 0
+end
+
 local function tick(job)
     if now_ms() < job.next_at then return end
     local wait = STEPS[job.step](job)
     job.step = job.step + 1
     if job.status == "running" and wait then job.next_at = now_ms() + wait end
+end
+
+-- A mirror arena's section, checked at once (the kits' own lists are checked by arena.mirror_kit): 1..TEAM_MAX
+-- pairs, each a root template, its race, a stats entry, two names (unique across the arena) and a kit; arena.teams,
+-- if given, names pair i's twins at index i.
+function Setup.check_mirror(mi, teams)
+    local ps = type(mi) == "table" and mi.pairs or nil
+    if type(ps) ~= "table" or #ps < 1 or #ps > Setup.TEAM_MAX then
+        error("arena.mirror.pairs must list 1 to " .. Setup.TEAM_MAX .. " pairs", 0)
+    end
+    local seen = {}
+    for i, p in ipairs(ps) do
+        if type(p) ~= "table" or type(p.template) ~= "string" or type(p.race) ~= "string" or type(p.stats) ~= "string"
+            or type(p.kit) ~= "table" or type(p.names) ~= "table" then
+            error("arena.mirror.pairs[" .. i .. "] needs template, race, stats, names and kit", 0)
+        end
+        for _, s in ipairs(Ar.SIDES) do
+            local n = p.names[s]
+            if type(n) ~= "string" or n == "" then error(("pair %d: names.%s must be a name"):format(i, s), 0) end
+            if seen[n:lower()] then error(("pair %d: the name %s is used twice"):format(i, n), 0) end
+            seen[n:lower()] = true
+            local e = type(teams) == "table" and type(teams[s]) == "table" and teams[s][i] or nil
+            local tn = type(e) == "table" and e.name or e
+            if teams ~= nil and tn ~= n then
+                error(("arena.teams.%s[%d] is %s, the mirror's pair %d names %s"):format(s, i, tostring(tn), i, n), 0)
+            end
+        end
+    end
 end
 
 -- Check the request and resolve the teams at once (a refusal, no job); the rest runs as the job.
@@ -363,22 +439,24 @@ function Setup.start(args)
     local avatarList = column("DB_Avatars")
     local avatars = set_of(avatarList)
     local spawnsIn = type(arena.location) == "table" and arena.location.spawns or nil
+    local mirror = arena.mirror
+    if mirror ~= nil then Setup.check_mirror(mirror, arena.teams) end
     for _, s in ipairs(Ar.SIDES) do
+        teams[s] = {}
+        spawns[s] = vec3(type(spawnsIn) == "table" and spawnsIn[s] or nil, "location.spawns." .. s)
         local entries = type(arena.teams) == "table" and arena.teams[s] or nil
-        if type(entries) ~= "table" or #entries < 1 or #entries > Setup.TEAM_MAX then
+        if mirror == nil and (type(entries) ~= "table" or #entries < 1 or #entries > Setup.TEAM_MAX) then
             error("team " .. s .. " must list 1 to " .. Setup.TEAM_MAX .. " characters", 0)
         end
-        teams[s] = {}
-        for i, e in ipairs(entries) do
+        for i, e in ipairs(mirror == nil and entries or {}) do
             local u = Setup.resolve(e, avatars)
             if seen[u] then error(V.name(u) .. " is listed twice", 0) end
             seen[u] = true
             teams[s][i] = u
             names[u] = type(e) == "table" and e.name or e
         end
-        spawns[s] = vec3(type(spawnsIn) == "table" and spawnsIn[s] or nil, "location.spawns." .. s)
     end
-    if #teams.A ~= #teams.B then
+    if mirror == nil and #teams.A ~= #teams.B then
         error(("team A lists %d characters, team B %d: the teams must be the same size"):format(#teams.A, #teams.B), 0)
     end
     if args.round_cap ~= nil and not tonumber(args.round_cap) then error("round_cap must be a number", 0) end
@@ -390,8 +468,8 @@ function Setup.start(args)
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
         teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
-        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = 1, next_at = 0, before = {},
-        calls = {} })
+        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -1 or 1, next_at = 0,
+        before = {}, calls = {}, mirror = mirror })
     job.partial = { teams = teams, calls = job.calls }
     return { job = job.id, status = job.status }
 end

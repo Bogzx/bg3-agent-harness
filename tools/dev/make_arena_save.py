@@ -1,31 +1,32 @@
-"""Mirror-team arena save (SPEC v2.2 §5): the pairs spec, each pair's kit checked against the game's data, the kit
-plan for the mod's arena.mirror_kit, and the symmetry check. The build (spawn, kit, save, reload) comes after the
-live probe (ops/briefs/arena/live-mirror-2.md).
+"""Mirror-team arenas (SPEC v2.2 §5): the pairs spec, each pair's kit checked against the game's data, the arena
+file's `mirror` section (arena.setup makes the twins for each match from it: a save keeps neither our stat entries'
+grants nor the kit's boosts, live check 12 step 13; orchestrator D308), and the symmetry check.
 
     uv run --project bridge python tools/dev/make_arena_save.py validate <spec.json>
+    uv run --project bridge python tools/dev/make_arena_save.py mirror <spec.json>    # {level, teams, mirror}
     uv run --project bridge python tools/dev/make_arena_save.py symmetry <uuidA>:<uuidB> [...]
 
 The spec (schema arena-mirror.v1) names 4 pairs; each pair is two copies of one hireling root template, one per team,
-spawned with our stat entry for its class and level (Shared/ArenaStats.lua: BG3AI_Arena_<class>_L<level>), then
+spawned with our level-1 stat entry for its class (Shared/ArenaStats.lua: BG3AI_Arena_<class>_L1; MakePlayer then gives
+the copy the party's XP, level 2 in the crash-site save, and the class table's level-2 row), then
 given one kit, the choices character creation would make, every one checked against the class's progression rows up
 to the level (tools/dev/arena_static.json, from the game's data):
 
-    {"schema": "arena-mirror.v1", "name": "mirror_crash_site", "level": 1,
+    {"schema": "arena-mirror.v1", "name": "mirror_crash_site", "level": 2,
      "location": {"level": "WLD_Main_A", "spawns": {"A": [x, y, z], "B": [x, y, z]}},
      "pairs": [{"class": "Fighter", "template": "<root template>" | null, "names": {"A": "Ash", "B": "Birch"},
                 "kit": {"race": "HalfElf", "skills": ["Athletics", "Intimidation"], "expertise": [],
-                        "ability_bonus": ["Strength", "Constitution"], "passives": ["FightingStyle_Defense"],
+                        "ability_bonus": ["Strength", "Constitution"], "passives": [["FightingStyle_Defense"]],
                         "spells": [], "items": ["WPN_Longsword", {"item": "WPN_Handaxe", "equip": false}, ...]}},
                ... x4]}
 
-kit.spells has one list per SelectSpells selector, in the rows' order (a wizard: cantrips, then the prepared spells
-out of its spellbook selector). kit.items is the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED,
-as a multiset; weapons and armour are equipped unless the entry says "equip": false. The game's lists themselves
-(which skills, styles, spells a selector offers) are checked live by arena.mirror_kit.
-`template` may be null until the probe has listed the hireling templates (validate accepts it; building will not).
-Pair i is teams.A[i] and teams.B[i] in the arena file. `symmetry` asks the game's arena.symmetry (the game runs with
-BG3AI_ARENA=1) and exits 1 on any problem: a field that differs within a pair, a field that doesn't read, or one
-display name for two members.
+kit.passives and kit.spells have one list per SelectPassives / SelectSpells selector, in the rows' order (a Ranger:
+favoured enemy, natural explorer, then its level-2 fighting style). Every kit also gets PLAYER_PASSIVES. kit.items is
+the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED, as a multiset; weapons and armour are equipped
+unless the entry says "equip": false. The game's lists themselves (which skills, styles, spells a selector offers) are
+checked live by arena.mirror_kit. `template` may be null (validate accepts it; `mirror` will not). Pair i is teams.A[i]
+and teams.B[i] in the arena file. `symmetry` asks the game's arena.symmetry (the game runs with BG3AI_ARENA=1) and exits
+1 on any problem: a field that differs within a pair, a field that doesn't read, or one display name for two members.
 """
 
 from __future__ import annotations
@@ -48,8 +49,12 @@ REPO = Path(__file__).resolve().parents[2]
 SCHEMA = "arena-mirror.v1"
 SIDES = ("A", "B")
 PAIRS = 4
-CLASSES = ("Fighter", "Rogue", "Wizard", "Barbarian")  # no subclass at level 1, no summons (orchestrator D300)
-LEVELS = (1, 2)  # the levels Shared/ArenaStats.lua makes entries for
+# no subclass by level 2, every choice a selector list (orchestrator D300, D308: the Wizard picks a subclass at 2)
+CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger")
+LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
+# What every player character has and a copy lacks: Lae'zel's DeathSavingThrows (its boost is DownedStatus(DOWNED));
+# no progression in the game data grants it (live check 12 step 10).
+PLAYER_PASSIVES = ("DeathSavingThrows",)
 STATIC = Path(__file__).resolve().parent / "arena_static.json"
 # Character creation's items a kit leaves out: the Revivify scroll (orchestrator D300) and what plays no part in a
 # fight.
@@ -201,36 +206,28 @@ def kit_plan(kit: Any, cls: str, level: int, static: dict[str, Any], what: str =
                 continue  # the game's own grant (the stat entry's Progressions table)
             if name == "SelectAbilityBonus":
                 bonus = True
-            elif name in CHOICE:
-                choices.append(
-                    {
-                        "kind": CHOICE[name],
-                        "list": args[0],
-                        "n": int(args[1]),
-                        "exact": name != "SelectSpells" or "AlwaysPrepared" in args,
-                    }
-                )
+            elif name in CHOICE:  # every pick exact: the classes left choose known spells, not prepared ones
+                choices.append({"kind": CHOICE[name], "list": args[0], "n": int(args[1]), "exact": True})
             else:
                 raise SpecError(f"{what}: {cls} level {lv} has {name}, a choice a kit can't make")
-    spell_choices = [x for x in choices if x["kind"] == "spells"]
-    spells = kit.get("spells", [])
-    if not isinstance(spells, list) or len(spells) != len(spell_choices):
-        raise SpecError(f"{what}: spells must have {len(spell_choices)} lists (one per SelectSpells)")
-    for x, ids in zip(spell_choices, spells, strict=True):
-        x["ids"] = _names(ids, None, f"{what}: spells")
+    for kind, sel in (("spells", "SelectSpells"), ("passives", "SelectPassives")):
+        mine = [x for x in choices if x["kind"] == kind]
+        lists = kit.get(kind, [])
+        if not isinstance(lists, list) or len(lists) != len(mine):
+            raise SpecError(f"{what}: {kind} must have {len(mine)} lists (one per {sel})")
+        for x, ids in zip(mine, lists, strict=True):
+            x["ids"] = _names(ids, None, f"{what}: {kind}")
     for x in choices:
-        if x["kind"] != "spells":
+        if x["kind"] in ("skills", "expertise"):
             if sum(1 for y in choices if y["kind"] == x["kind"]) > 1:
                 raise SpecError(f"{what}: {cls} has two {x['kind']} choices up to level {level}: not supported")
-            x["ids"] = _names(
-                kit.get(x["kind"], []), SKILLS if x["kind"] != "passives" else None, f"{what}: {x['kind']}"
-            )
+            x["ids"] = _names(kit.get(x["kind"], []), SKILLS, f"{what}: {x['kind']}")
         n = len(x["ids"])
         if (x["exact"] and n != x["n"]) or (not x["exact"] and not 1 <= n <= x["n"]):
             raise SpecError(
                 f"{what}: {x['kind']} has {n}, the game's selector takes {'' if x['exact'] else '1..'}{x['n']}"
             )
-    for k in ("skills", "expertise", "passives"):
+    for k in ("skills", "expertise"):
         if kit.get(k) and not any(x["kind"] == k for x in choices):
             raise SpecError(f"{what}: {cls} has no {k} choice up to level {level}")
     kinds = {x["kind"]: x["ids"] for x in choices}
@@ -255,6 +252,7 @@ def kit_plan(kit: Any, cls: str, level: int, static: dict[str, Any], what: str =
         "race": race["race"],
         "kit": {
             "race": {"boosts": rrow["Boosts"], "passives": [x for x in rrow["PassivesAdded"].split(";") if x]},
+            "player": {"passives": list(PLAYER_PASSIVES)},
             "ability_bonus": ab,
             "choices": choices,
             "items": _items(kit.get("items"), c["equipment"], cls, what),
@@ -305,14 +303,25 @@ def load_spec(path: Path, need_templates: bool = False) -> dict[str, Any]:
     return check_spec(spec, need_templates)
 
 
-def arena_teams(spec: dict[str, Any], uuids: dict[str, list[str]]) -> dict[str, list[dict[str, str]]]:
-    """The arena file's teams ({name, uuid} per member, pair i at index i on both sides) once the copies exist."""
-    out: dict[str, list[dict[str, str]]] = {}
-    for s in SIDES:
-        if len(uuids.get(s) or []) != PAIRS:
-            raise SpecError(f"team {s} needs {PAIRS} uuids")
-        out[s] = [{"name": p["names"][s], "uuid": uuids[s][i]} for i, p in enumerate(spec["pairs"])]
-    return out
+def mirror_section(spec: dict[str, Any], static: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The arena file's level, teams (names, pair i at index i on both sides) and mirror section (arena.setup's)."""
+    static = static if static is not None else load_static()
+    check_spec(spec, need_templates=True, static=static)
+    pairs = []
+    for p in spec["pairs"]:
+        plan = kit_plan(p["kit"], p["class"], spec["level"], static)
+        pairs.append(
+            {
+                "class": p["class"],
+                "template": p["template"],
+                "race": plan["race"],
+                "stats": f"BG3AI_Arena_{p['class']}_L1",
+                "names": dict(p["names"]),
+                "kit": plan["kit"],
+            }
+        )
+    teams = {s: [{"name": p["names"][s]} for p in spec["pairs"]] for s in SIDES}
+    return {"level": spec["level"], "teams": teams, "mirror": {"pairs": pairs}}
 
 
 def check_symmetry(rpc: Rpc, pairs: Sequence[tuple[str, str]]) -> dict[str, Any]:
@@ -333,10 +342,12 @@ def _pair_arg(s: str) -> tuple[str, str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Mirror-team arena save: spec check and the symmetry check.")
+    ap = argparse.ArgumentParser(description="Mirror-team arenas: spec check, the arena's mirror section, symmetry.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", help="check a pairs spec (templates may still be null)")
     v.add_argument("spec", type=Path)
+    m = sub.add_parser("mirror", help="print the arena file's level, teams and mirror section for a pairs spec")
+    m.add_argument("spec", type=Path)
     y = sub.add_parser("symmetry", help="ask the running game whether each pair is a mirror")
     y.add_argument("pairs", nargs="+", type=_pair_arg)
     args = ap.parse_args(argv)
@@ -345,6 +356,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             spec = load_spec(args.spec)
             todo = sum(1 for p in spec["pairs"] if p.get("template") is None)
             print(f"{spec['name']}: ok" + (f" ({todo} templates still null)" if todo else ""))
+            return 0
+        if args.cmd == "mirror":
+            print(json.dumps(mirror_section(load_spec(args.spec)), indent=1))
             return 0
         os.environ.setdefault("BG3AI_RUNTIME", str(REPO / "runtime" / "make_arena_save"))
         sys.path.insert(0, str(REPO / "bridge" / "src"))
