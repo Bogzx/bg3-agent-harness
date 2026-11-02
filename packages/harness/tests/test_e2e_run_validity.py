@@ -247,6 +247,44 @@ def test_a_play_process_that_cant_start_is_recorded_invalid_and_the_matrix_goes_
     assert (rec["run"], rec["outcome"], rec["_result"]["valid"]) == (2, "timeout", True)
 
 
+LAUNCH_CRASH = "bg3le logged LinuxCrashReporter started (bg3le-x.log) while waiting for game state Running"
+
+
+@pytest.mark.parametrize(
+    ("start", "at", "valid"),
+    [
+        ("save", T0 + 14, True),  # D364: relaunched with the start save before run_start (T0 + 148)
+        ("save", T0 + 400, False),  # a relaunch mid-run: the agent's play was cut
+        ("new game", T0 + 14, False),  # no start save to compare with
+    ],
+)
+def test_a_launch_the_controller_recovered_before_run_start_with_the_start_save_leaves_the_run_valid(
+    rig: Rig, tmp_path: Path, start: str, at: float, valid: bool
+):
+    sc = save_scenario(tmp_path) if start == "save" else SC
+    save = sc["start"].get("save") or "Tav-3__SCN-e2e_save"
+
+    def crashed_launch(r: ScriptedRunner) -> None:
+        ensure = r.ensure_game
+        r.clock = T0 + 148  # the start save is up 148 s after the run began: run_start (facts_writer) is then
+
+        def ensure_game(first: bool) -> str | None:
+            r.event("launch_failed", t=at, attempt=1, save=save, error=LAUNCH_CRASH)
+            return ensure(first)
+
+        r.ensure_game = ensure_game  # pyright: ignore[reportAttributeAccessIssue]
+
+    rec = bench_run(rig, Play("exited"), crashed_launch, sc=sc)
+    assert (rec["outcome"], rec["_result"]["valid"]) == ("timeout", valid), rec["failures"]
+    harness = [f["kind"] for f in rec["failures"] if f["class"] == "harness"]
+    if valid:
+        assert (harness, rec["harness_failures"]) == ([], 0)
+        assert rec["recovered_launches"] == [{"t": at, "attempt": 1, "save": save, "error": LAUNCH_CRASH}]
+    else:
+        assert (harness, rec["recovered_launches"]) == (["launch_failed"], [])
+        assert rec["_result"]["invalid_cause"][0]["kind"] == "launch_failed"
+
+
 def test_a_claude_run_stopped_before_its_result_has_an_unknown_cost_not_zero(rig: Rig):
     # H4: the hard stop ended the run's one claude process before its result; the record said cost_usd 0
     from bg3harness import clients, events

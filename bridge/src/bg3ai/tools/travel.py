@@ -202,13 +202,13 @@ def _settle_hud(max_s: float) -> bool:
     return False
 
 
-def night_talks_left() -> str:
+def night_talks_left(log: bool = True) -> str:
     """launch-v1 haiku act3_gold_max (r1, r2, r4, r5): 46 long_rest "the night at camp didn't end" and camp leaves
     refused for up to 25 min, until the agent happened to talk to Shadowheart or Withers. At night the camp story
     (GLO_Camp.txt PROC_Camp_TryLeaveNightMode_CampNightCheck) answers the sleep press with only its "talks left"
     message box while DB_Camp_RequiredTalks has a row (the "!" over each); a talk with that character clears it.
     '' when it is not night at camp or no talk is left, else the reason (Events.lua camp.rest_flow required_talks:
-    named when in the party or in sight)."""
+    named when in the party or in sight). log=False: get_status's read (no night_talks metrics row per look)."""
     flow = core.game.try_rpc("camp.rest_flow", {"since_ms": 1})
     if not isinstance(flow, dict):
         return ""
@@ -221,7 +221,8 @@ def night_talks_left() -> str:
     who = ", ".join(named)
     if unseen:
         who += (" and " if who else "") + ("someone out of sight" if unseen == 1 else f"{unseen} people out of sight")
-    core.METRICS.write({"type": "night_talks", "t": round(time.time(), 3), "named": len(named), "unseen": unseen})
+    if log:
+        core.METRICS.write({"type": "night_talks", "t": round(time.time(), 3), "named": len(named), "unseen": unseen})
     return (f"the night at camp can't end yet: the game still wants a talk with {who} first (the '!' over them); "
             "going to sleep only brings up its 'talks left' notice until then, and a talk with them clears it")
 

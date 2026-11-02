@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 from bg3harness import runs
 
@@ -415,3 +416,38 @@ class HistoryFailures(TmpDir):
             runs.history_failures(sessions[:1])[0]["detail"]
             == "S001: the agent ended by a signal from outside the runner"
         )
+
+
+class RecoveredLaunch(unittest.TestCase):
+    # bench-v0.9 fights-v09-fight_act2_balthazar-deepseek-flash-pi-medium-rules-r2 (D364): its runner_events.jsonl and
+    # its facts.jsonl run_start (its load mark: the same save). One crashed launch, relaunched with the same save 134 s
+    # before run_start, voided a run the agent played from a clean start.
+    SAVE = "Tav-14221265938__SCN-fight_act2_balthazar"
+    RUN_START = 1793626445.76
+    EVENTS: ClassVar[list[dict]] = [
+        {"t": 1793626297.5, "kind": "run_reset", "nav_files": ["nav_14e68d14.json"]},
+        {
+            "t": 1793626311.4,
+            "kind": "launch_failed",
+            "attempt": 1,
+            "save": SAVE,
+            "error": "bg3le logged LinuxCrashReporter started (bg3le-20261102-153137.log.3363697) while waiting for "
+            "game state Running",
+        },
+        {"t": 1793627026.2, "kind": "goal_verdict", "verdict": "wiped", "session": "S001"},
+    ]
+
+    def test_a_same_save_launch_failure_before_run_start_is_recovered_not_a_failure(self):
+        ok = [e for e in self.EVENTS if runs.recovered_launch(e, self.RUN_START, self.SAVE)]
+        assert [e["kind"] for e in ok] == ["launch_failed"]
+        left = [e for e in self.EVENTS if not runs.recovered_launch(e, self.RUN_START, self.SAVE)]
+        assert runs.event_failures(left) == ([], [])
+        assert [f["kind"] for f in runs.event_failures(self.EVENTS)[0]] == ["launch_failed"]  # unfiltered: harness
+
+    def test_after_run_start_another_save_or_a_new_game_it_stays_a_harness_failure(self):
+        e = self.EVENTS[1]
+        assert not runs.recovered_launch(e | {"t": self.RUN_START + 300}, self.RUN_START, self.SAVE)  # mid-run
+        assert not runs.recovered_launch(e, self.RUN_START, "Tav-14221265938__SCN-other")  # not the start save
+        assert not runs.recovered_launch(e, self.RUN_START, None)  # a new-game start
+        assert not runs.recovered_launch(e | {"t": None}, self.RUN_START, self.SAVE)  # no time: can't tell
+        assert not runs.recovered_launch(e | {"kind": "launch_gave_up"}, self.RUN_START, self.SAVE)

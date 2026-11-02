@@ -160,7 +160,7 @@ def get_status(full: bool = False) -> str:
     lv = _level_up_line(st)
     if lv:
         body += "\n" + lv
-    tk = _talk_line(st, force=full or first or _too_big(lines))
+    tk = _talk_line(st, force=full or first or _too_big(lines), ui=ui)
     if tk:
         body += "\n" + tk
     al = _alerts_line(st, inv, force=full or first or _too_big(lines))
@@ -269,7 +269,7 @@ def look(full: bool = False) -> str:
     lv = _level_up_line(st)
     if lv:
         body += "\n" + lv
-    tk = _talk_line(st, force=full or first or _too_big(lines))
+    tk = _talk_line(st, force=full or first or _too_big(lines), ui=got.get("ui"))
     if tk:
         body += "\n" + tk
     al = _alerts_line(st, got.get("inventory"), force=full or first or _too_big(lines))
@@ -301,10 +301,16 @@ def _level_up_line(st: dict | None) -> str:
 _TALK = companions.TalkTracker()
 
 
-def _talk_line(st: Any, force: bool = False) -> str:
-    """get_status/look: 'TALK: e5 Wyll wants to talk …' (the "!" over a companion) when it changes. Never raises."""
+def _talk_line(st: Any, force: bool = False, ui: Any = None) -> str:
+    """get_status/look: 'TALK: e5 Wyll wants to talk …' (the "!" over a companion) when it changes. At camp (ui's
+    minimap) also the talk the camp story still wants before the night can end (travel.night_talks_left, the text
+    long_rest and camp leave refuse with): launch-v1 haiku r2 had no TALK line for Shadowheart (HasExclamationDialog
+    unset) and learned it only from 17 long_rest refusals. Never raises."""
     try:
-        return _TALK.line(st, queueing._label, force=force)
+        night = ""
+        if _at_camp(ui) and isinstance(st, dict) and not st.get("in_combat") and not st.get("in_dialogue"):
+            night = travel.night_talks_left(log=False)
+        return _TALK.line(st, queueing._label, force=force, extra=(night,) if night else ())
     except Exception:
         return ""
 
