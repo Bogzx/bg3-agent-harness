@@ -5,6 +5,22 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: out of combat a batch ends with its first walk step
+
+- `do_actions` and `queue_actions` (and `do_actions(wait=false)`): a walk step (`move_to`, `walk_toward`,
+  `travel_to`, `jump_to`) is the last step a batch takes. The steps after the first walk step are dropped before
+  anything runs; the steps up to and with the walk run (or are queued) as before. The result lists the dropped ones:
+  `not run: interact e12, loot (out of combat a batch ends with its first walk step, here step 2 move_to e12)`
+  (`not queued: ...` for queue_actions). Batches without a walk step, or with the walk last, are unchanged
+  (inventory chores, looting sweeps of interact/loot/pick_up, dialogue chains). A `queue_actions` call made while a
+  walk or trip runs still appends after it (a separate call, after travel_to/move_to/walk_toward wait=false).
+- Chosen over refusing the whole batch: the steps after the walk never run blind either way, and this way the call
+  still does the part up to the walk instead of costing a round trip and a resend.
+- Docstrings: do_actions' example no longer starts with a move_to (interact walks to its target itself). Rules text
+  (game-and-tools.md) and coaching/pace.md's sweep example say the same.
+- Human-gap research §4: 76 deepseek do_actions batches were walk_toward chains (three headings committed before the
+  first one's end was seen).
+
 ## 2026-11-02: travel_to and regroup name what they passed
 
 - A trip's result (travel_to; regroup for its walkers' trips) has a PASSED line before CHANGES: what came into view

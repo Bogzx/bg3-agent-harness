@@ -359,19 +359,19 @@ class DoActions(Base):
                       % (self.door, self.door, self.door), out)
 
     def test_new_hostile_interrupts_the_running_step(self):
-        self.g.dur["act.move_to"] = 3
+        self.g.dur["act.interact"] = 3  # (not a walk step first: a walk ends a batch out of combat)
 
         def hostile_appears(op, args):
-            if op == "act.move_to":
+            if op == "act.interact":
                 threading.Timer(0.1, lambda: self.g.watch.update(
                     seen=[{"uuid": GOB, "name": "Goblin", "hostile": True}])).start()
         self.g.on_start = hostile_appears
         t0 = time.monotonic()
-        out = batch.do_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                                 % (self.door, self.door))
         self.assertLess(time.monotonic() - t0, 2.0)
-        self.assertIn("move_to: INTERRUPTED — cancelled", out)
-        self.assertIn(f"STOPPED: hostile in view: {self.gob} Goblin; not run: interact {self.door}", out)
+        self.assertIn("interact: INTERRUPTED — cancelled", out)
+        self.assertIn(f"STOPPED: hostile in view: {self.gob} Goblin; not run: pick_up {self.door}", out)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
 
     def test_ignore_turns_an_interrupt_off(self):
@@ -444,19 +444,19 @@ class Queue(Base):
         self.assertEqual(self.g.ops("act.interact")[0][1]["char"], P2)
 
     def test_dialogue_start_flushes_queue_with_reason_and_left(self):
-        self.g.dur["act.move_to"] = 2
+        self.g.dur["act.interact"] = 2
 
         def talk(op, args):
-            if op == "act.move_to":
+            if op == "act.interact":
                 threading.Timer(0.1, lambda: self.g.push("dialogue_started", {})).start()
         self.g.on_start = talk
-        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"},'
-                             '{"tool":"pick_up","item":"%s"}]' % (self.door, self.door, self.door))
+        batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"},'
+                             '{"tool":"loot","take":"all"}]' % (self.door, self.door))
         self.wait_queue_idle()
         note = [a for op, a in self.g.ops("act.note")][-1]
         self.assertEqual(note["kind"], "queue_interrupted")
         self.assertEqual(note["data"]["why"], "a conversation started")
-        self.assertEqual(note["data"]["left"], [f"interact {self.door}", f"pick_up {self.door}"])
+        self.assertEqual(note["data"]["left"], [f"pick_up {self.door}", "loot"])
 
     def test_party_banter_does_not_interrupt(self):
         # An automated dialogue (companion banter while walking) is not a conversation the player must answer.
@@ -481,12 +481,12 @@ class Queue(Base):
         self.assertEqual(self.g.ops("act.note")[-1][1]["kind"], "queue_done")
 
     def test_cancel_queue(self):
-        self.g.dur["act.move_to"] = 5
-        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        self.g.dur["act.interact"] = 5
+        batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                              % (self.door, self.door))
         time.sleep(0.1)
         out = batch.cancel_queue()
-        self.assertIn("stopped move_to", out)
+        self.assertIn("stopped interact", out)
         self.assertIn("dropped 1", out)
         self.wait_queue_idle()
         self.assertEqual(self.g.ops("act.note")[-1][1]["data"]["why"], "cancelled")
@@ -513,12 +513,12 @@ class Queue(Base):
         self.wait_queue_idle()
 
     def test_running_text_shows_queue(self):
-        self.g.dur["act.move_to"] = 2
-        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        self.g.dur["act.interact"] = 2
+        batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                              % (self.door, self.door))
         time.sleep(0.1)
         out = observe.get_events()
-        self.assertIn(f"queue {core.H.get(P1)} Claude: move_to {self.door} then interact {self.door}", out)
+        self.assertIn(f"queue {core.H.get(P1)} Claude: interact {self.door} then pick_up {self.door}", out)
 
 
 class Parsing(unittest.TestCase):
