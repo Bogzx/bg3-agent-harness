@@ -337,20 +337,29 @@ end
 function A.dispatch(event, args)
     if event == "TurnEnded" and args[1] then
         local g = G.guid(args[1]) or args[1]
+        local round
         if g then
             -- the older turn's end (G.end_owed): the turn open now is the new one
-            local late = G.end_owed[g] ~= nil and G.now_ms() - G.end_owed[g] <= G.TURN_BURST_MS
-            G.end_owed[g], G.turn_open[g] = nil, late or nil
+            local owed, open = G.end_owed[g], G.turn_open[g]
+            local late = owed ~= nil and G.now_ms() - owed.t <= G.TURN_BURST_MS
+            round = late and owed.round or (open and open.round) or (not open and G.round_of(g)) or nil
+            G.end_owed[g], G.turn_open[g] = nil, late and open or nil
             if not late then G.end_requested[g] = nil; G.turn_over[g] = G.now_ms() end
         end
+        BG3AI.Events.turn("turn_ended", args[1], round)
     elseif event == "TurnStarted" and args[1] then
         local g = G.guid(args[1]) or args[1]
+        local round = g and G.round_of(g)
         if g then
-            G.end_owed[g] = G.turn_open[g] and G.now_ms() or nil
-            G.turn_open[g] = true
+            local open = G.turn_open[g]
+            G.end_owed[g] = open and { t = G.now_ms(), round = open.round } or nil
+            G.turn_open[g] = { round = round }
             G.turn_over[g] = nil; G.end_requested[g] = nil
         end
         G.note_turn_started(args[1])
+        BG3AI.Events.turn("turn_started", args[1], round)
+    elseif event == "CombatRoundStarted" and args[1] then
+        G.combat_round[args[1]] = tonumber(args[2])
     elseif event == "AttackedBy" and args[1] then
         U.each_side(A.stirred, args[1], "a hit on the caster")
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
@@ -406,7 +415,7 @@ for event, arity in pairs({
     UseFinished = 3, Opened = 1, Closed = 1, Unlocked = 3,
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
     CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
-    AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
+    AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1, CombatRoundStarted = 2,
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
     CharacterSelectedForUser = 2, AttachedToPartyGroup = 1, DetachedFromPartyGroup = 1,

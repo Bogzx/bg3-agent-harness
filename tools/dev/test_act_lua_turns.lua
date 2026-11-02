@@ -35,7 +35,7 @@ local P2 = "ffffffff-0000-0000-0000-000000000006"
 local function group_setup()
     -- no pending ends from an earlier test (a leftover request now stays pending END_DROP_MS)
     G.end_requested, G.end_alone, G.turn_over = {}, {}, {}
-    G.turn_start, G.foe_start, G.turn_open, G.end_owed = {}, {}, {}, {}
+    G.turn_start, G.foe_start, G.turn_open, G.end_owed, G.combat_round = {}, {}, {}, {}, {}
     world[P2] = { pos = { -1, 0, 0 }, comps = {} }
     osiv[key("IsCharacter", P2)] = 1
     osiv[key("IsOnStage", P2)] = 1
@@ -285,6 +285,42 @@ test("live 2026-11-02: the next TurnStarted before the last turn's TurnEnded lea
     eq(G.is_my_turn(P2), true, "P2's turn")
     A.dispatch("TurnEnded", { P1 }) -- this turn's own end, later
     eq(G.turn_is_over(P1), true, "P1's own end marks it over")
+    restore()
+end)
+
+test("turn pushes carry the round the turn started in; the old round's late TurnEnded says the old round", function()
+    local restore = group_setup()
+    for _, u in ipairs({ P1, P2 }) do osiv[key("CombatGetGuidFor", u)] = "C1" end
+    A.dispatch("CombatRoundStarted", { "C1", "1" })
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("TurnStarted", { P2 })
+    clock = clock + 18000
+    A.dispatch("CombatRoundStarted", { "C1", "2" }) -- the live order at a group's close: round 2's starts first ...
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("TurnStarted", { P2 })
+    clock = clock + 6
+    A.dispatch("TurnEnded", { P1 })                 -- ... then round 1's ends
+    A.dispatch("TurnEnded", { P2 })
+    clock = clock + 5000
+    A.dispatch("TurnEnded", { P1 })                 -- P1's round 2 turn ends
+    local got = {}
+    for _, p in ipairs(turn_pushes) do got[#got + 1] = p[1] .. " " .. p[2] .. " " .. tostring(p[3]) end
+    eq(table.concat(got, "; "), table.concat({ "turn_started " .. P1 .. " 1", "turn_started " .. P2 .. " 1",
+        "turn_started " .. P1 .. " 2", "turn_started " .. P2 .. " 2", "turn_ended " .. P1 .. " 1",
+        "turn_ended " .. P2 .. " 1", "turn_ended " .. P1 .. " 2" }, "; "), "pushes")
+    restore()
+end)
+
+test("turn pushes: no round seen for the combat (a save loaded mid-combat): round nil, until the next round", function()
+    local restore = group_setup()
+    osiv[key("CombatGetGuidFor", P1)] = "C1"
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("TurnEnded", { P1 })
+    A.dispatch("CombatRoundStarted", { "C1", "5" })
+    A.dispatch("TurnStarted", { P1 })
+    eq(turn_pushes[1][3], nil, "start, round unknown")
+    eq(turn_pushes[2][3], nil, "end of that turn, round unknown")
+    eq(turn_pushes[3][3], 5, "next start: round 5")
     restore()
 end)
 
