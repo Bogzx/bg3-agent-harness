@@ -64,9 +64,13 @@ local function game(opts)
     local reads = 0
     local function record(name) return function(...) calls[#calls + 1] = { name, ... } end end
     for _, n in ipairs({ "SetMaxPartySizeOverride", "DetachFromPartyGroup", "AttachToPartyGroup",
-        "TeleportToPosition", "RestoreParty", "SetHitpointsPercentage", "SetRelation" }) do
+        "RestoreParty", "SetHitpointsPercentage", "SetRelation" }) do
         stub(n, record(n))
     end
+    stub("TeleportToPosition", function(u, x, y, z, ...)
+        calls[#calls + 1] = { "TeleportToPosition", u, x, y, z, ... }
+        world[u].pos = { x, y, z }
+    end)
     canJoin = {}
     stub("CanJoinCombat", function(u) return canJoin[u] or 1 end)
     stub("SetCanJoinCombat", function(u, v)
@@ -207,8 +211,16 @@ test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right
     game()
     local r, j = setup(arena())
     eq(r.result and r.result.status, "running", "a job: " .. enc(r))
+    j.spawn_order = { "B", "A", "B", "A" } -- a mirror arena's (test_arena_lua_mirror.lua): the result carries it
     run(j)
     eq(j.status, "done", "setup: " .. tostring(j.error))
+    eq(enc(j.result.spawn_order), enc({ "B", "A", "B", "A" }), "the spawn order in the result")
+    eq(enc({ j.result.positions[A1], j.result.positions[B4] }), enc({ { -2.25, 0, 0 }, { 2.25, 0, 10.5 } }),
+        "where the members stand as the fight starts")
+    local pc = 0
+    for _ in pairs(j.result.positions) do pc = pc + 1 end
+    eq(pc, 8, "every member's position")
+    eq(enc(refs("arena_start")[1].positions), enc(j.result.positions), "arena_start records them too")
     eq(#named("SetMaxPartySizeOverride"), 1, "party size")
     eq(named("SetMaxPartySizeOverride")[1][2], 8, "8")
     local added = {}
@@ -409,6 +421,24 @@ test_setup("arena.setup refusals: no scenario switch, a name twice or unknown, a
     assert(enc(setup(arena())):find("BG3AI_ARENA=1", 1, true), "switch off")
     eq(#calls, 0, "no game call")
 end)
+
+-- Both sides on the same terms (design review F2): one team higher, or the lines offset along x (pair i's A member
+-- then stands nearer B's later pairs than B's member does to A's), is refused before any game call.
+test_setup("arena.setup refuses spawns 0.3 m or more apart in height, or offset along the lines; 0.29 m is fine",
+    function()
+        game()
+        local a = arena({ location = { spawns = { A = { 229.8, 5.1, 268.2 }, B = { 229.8, 5.6, 278.7 } } } })
+        assert(enc(setup(a)):find("location.spawns A and B are 0.50 m apart in height (y); they must be under 0.3 m",
+            1, true), enc(setup(a)))
+        a = arena({ location = { spawns = { A = { 0, 0, 0 }, B = { 0.5, 0, 10.5 } } } })
+        local r = enc(setup(a))
+        assert(r:find("A's member 1 is 10.69 m from B's member 2, B's member 1 10.55 m from A's member 2", 1, true), r)
+        eq(#calls, 0, "no game call")
+        a = arena({ location = { spawns = { A = { 0, 5.1, 0 }, B = { 0, 5.39, 10.5 } } } })
+        local _, j = setup(a)
+        eq(j and j.status, "running", "a job")
+        j.status = "interrupted"
+    end)
 
 test_setup("arena.setup: a member not at the arena's level after joining fails setup with every level; none begun",
     function()

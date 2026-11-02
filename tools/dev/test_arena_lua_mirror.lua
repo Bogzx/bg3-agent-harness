@@ -241,6 +241,20 @@ test("mirror_spawn refusals: no entry, another race, one name twice; a failing C
         eq(tpl.Stats, "HeroHalfElfFemale", "set back after the error")
     end))
 
+test("mirror_spawn first = 2: spot 2's copy is made, made a player and named first; twins stay in spot order",
+    guarded(function()
+        stats.BG3AI_Arena_Fighter_L1 = {}
+        local r = Ar.Mirror.spawn(spawnArgs({ first = 2 }))
+        local made = named("CreateAt")
+        eq(enc({ made[1][3], made[2][3] }), enc({ 4, 1 }), "spot 2 created first")
+        eq(enc(r.twins), enc({ T2, T1 }), "twins in spot order: spot 1's copy is the second made")
+        eq(enc(r.order), enc({ 2, 1 }), "the creation order")
+        eq(enc(named("MakePlayer")), enc({ { "MakePlayer", T1, HOST }, { "MakePlayer", T2, HOST } }),
+            "players in creation order")
+        eq(enc({ NAMES[T1], NAMES[T2] }), enc({ "Birch", "Ash" }), "each copy its spot's name")
+        refused(function() Ar.Mirror.spawn(spawnArgs({ first = 3 })) end, "first must be 1 or 2")
+    end))
+
 test("mirror_spawn: a name that hasn't landed yet is no refusal; reads.name is what the copy reads at the call",
     guarded(function()
         restore()
@@ -475,14 +489,40 @@ test("a mirror setup: each pair spawned and kitted, names and symmetry checked, 
     guarded(function()
         local j, asked = mirrorSetup(mirrorArena())
         eq(j.step, 1, "at the party step: " .. tostring(j.error))
-        eq(enc(j.teams), enc({ A = { T1, T3 }, B = { T2, T4 } }), "teams")
-        eq(enc({ j.names[T1], j.names[T4] }), enc({ "Ash", "Bramble" }), "names")
-        eq(enc(asked[1]), enc({ { T1, T2 }, { T3, T4 } }), "symmetry over the pairs")
+        -- seed 7: pair 1's A twin made first (7 + 1 even), pair 2's B twin first
+        eq(enc(j.teams), enc({ A = { T1, T4 }, B = { T2, T3 } }), "teams")
+        eq(enc({ j.names[T1], j.names[T3] }), enc({ "Ash", "Bramble" }), "names")
+        eq(enc(asked[1]), enc({ { T1, T2 }, { T4, T3 } }), "symmetry over the pairs")
         eq(#named("AddPassive") > 0 and #named("Equip"), 4, "every twin kitted and its sword equipped")
         local made = named("CreateAt")
-        eq(enc({ made[1][3], made[1][5], made[2][5], made[3][3] }), enc({ -0.75, 0, 10, 0.75 }),
-            "pair 1 on each team's line first, pair 2 next")
+        eq(enc({ made[1][3], made[1][5], made[2][5], made[3][3], made[3][5], made[4][5] }),
+            enc({ -0.75, 0, 10, 0.75, 10, 0 }), "pair 1 on each team's line first, pair 2 next")
     end))
+
+test("a mirror setup alternates which side's twin is made first, pair to pair, flipped by the seed; recorded",
+    guarded(function()
+        eq(enc(Ar.Setup.spawn_order(7, 4)), enc({ "A", "B", "A", "B" }), "seed 7")
+        eq(enc(Ar.Setup.spawn_order(8, 4)), enc({ "B", "A", "B", "A" }), "seed 8")
+        local j = mirrorSetup(mirrorArena({ seed = 8 }))
+        eq(j.step, 1, "at the party step: " .. tostring(j.error))
+        local z = {}
+        for _, c in ipairs(named("CreateAt")) do z[#z + 1] = c[5] end
+        eq(enc(z), enc({ 10, 0, 0, 10 }), "B then A for pair 1, A then B for pair 2 (B's line is at z 10)")
+        eq(enc(j.teams), enc({ A = { T2, T3 }, B = { T1, T4 } }), "teams by spot, not by creation")
+        eq(enc(j.spawn_order), enc({ "B", "A" }), "recorded on the job")
+        eq(enc(j.partial.spawn_order), enc({ "B", "A" }), "and in its partial result")
+    end))
+
+test("a mirror arena without an integer seed is refused before anything spawns", guarded(function()
+    for _, seed in ipairs({ "none", -1, 1.5, "x" }) do
+        local a = mirrorArena()
+        a.seed = seed ~= "none" and seed or nil
+        local ok, err = pcall(mirrorSetup, a)
+        eq(ok, false, "refused: " .. tostring(seed))
+        eq(tostring(err):find("a mirror arena needs arena.seed", 1, true) ~= nil, true, tostring(err))
+    end
+    eq(#named("CreateAt"), 0, "nothing made")
+end))
 
 test("a mirror setup fails on a twin that doesn't read its own name, or on any symmetry problem", guarded(function()
     local j = mirrorSetup(mirrorArena(), { ok = false, problems = { "pair 1 (Ash, Birch): passives differs" } })
@@ -508,18 +548,19 @@ test("a mirror setup waits for the names to land: 3 s after the renames it goes 
     game({ name_lag_ms = 3000 })
     local j = mirrorSetup(mirrorArena())
     eq(j.step, 1, "at the party step: " .. tostring(j.error))
-    eq(enc({ NAMES[T1], NAMES[T2], NAMES[T3], NAMES[T4] }), enc({ "Ash", "Birch", "Alder", "Bramble" }), "names")
+    eq(enc({ NAMES[T1], NAMES[T2], NAMES[T3], NAMES[T4] }), enc({ "Ash", "Birch", "Bramble", "Alder" }),
+        "names (seed 7: pair 2's B twin made first)")
 end))
 
 test("a name that never lands fails setup at NAME_WAIT_MS, naming the copy and what it reads", guarded(function()
     restore()
-    game({ shared_name = true }) -- one handle for every copy: each reads the last name, Bramble
+    game({ shared_name = true }) -- one handle for every copy: each reads the last name, Alder (seed 7: made last)
     local from = clock
     local j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
     local waited = clock - from
     eq(waited >= Ar.Mirror.NAME_WAIT_MS and waited <= Ar.Mirror.NAME_WAIT_MS + 1000, true, "failed at " .. waited)
-    eq(tostring(j.error):find("Ash (" .. T1 .. ") reads Bramble", 1, true) ~= nil, true, tostring(j.error))
+    eq(tostring(j.error):find("Ash (" .. T1 .. ") reads Alder", 1, true) ~= nil, true, tostring(j.error))
 end))
 
 test("a mirror setup whose copies' components land 3 s after the spawn goes on to the party step", guarded(function()

@@ -30,6 +30,7 @@ net = {}          -- Ext.Net broadcasts
 order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid...} (a turn group) each
 partyRows = {}
 engineRound = 1  -- the combat's TurnOrder.Round
+replicated = {}   -- entity:Replicate calls, "uuid:Component" each
 decoded = {}      -- an encoded answer -> the value it encodes (rpc() reads answers back as tables)
 statsLoaded = {}  -- Ext.Events.StatsLoaded subscribers
 
@@ -68,7 +69,8 @@ end
 local function entity(u, bare)
     local w = world[u]
     if not w then error("no entity " .. tostring(u)) end
-    local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = w.pos } } }
+    local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = w.pos } },
+        Replicate = function(_, comp) replicated[#replicated + 1] = u .. ":" .. comp end }
     for k, v in pairs(w.comps) do e[k] = v end
     if bare or not w.comps.ServerCharacter then return e end
     local groups = {}
@@ -177,7 +179,7 @@ end
 function reset()
     clock = clock + 100000
     env = { BG3AI_ARENA = "1" }
-    osiv, net, order = {}, {}, {}
+    osiv, net, order, replicated = {}, {}, {}, {}
     engineRound = 1
     partyRows = { A1, A2, B1, B2, SA }
     world = {

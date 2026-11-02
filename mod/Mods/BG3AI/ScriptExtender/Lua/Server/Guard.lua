@@ -469,6 +469,13 @@ function G.actor(char)
     return g
 end
 
+-- A refusal whose way out is the game's UI: "(use the UI)". A match side has none (both sides share one game screen,
+-- so the bridge makes no clicks or key presses with a side): with a side the text says that instead.
+G.SIDE_NO_UI = "(in a two-team match no clicks or key presses are made: both sides share one game screen)"
+function G.refuse_ui(text)
+    G.refuse(text .. " " .. (U.side() and G.SIDE_NO_UI or "(use the UI)"))
+end
+
 -- Combat gating.
 --   mode "turn":      in combat, the actor must be the active combatant
 --   mode "no_combat": refused while the actor is in combat (e.g. Osiris item
@@ -478,7 +485,7 @@ function G.combat_gate(char, mode)
     if mode == "any" then return end
     if not G.in_combat(char) then return end
     if mode == "no_combat" then
-        G.refuse("not available during combat through this action (use the UI)")
+        G.refuse_ui("not available during combat through this action")
     end
     G.side_gate()
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end

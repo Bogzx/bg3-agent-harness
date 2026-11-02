@@ -68,6 +68,74 @@ test("the other team's bag: '<name> is not on your side' for its item", function
     eq(enc(r):find("Bo is not on your side", 1, true) ~= nil, true, "A equips B1's item: " .. enc(r))
 end)
 
+-- BUILDS F6 (arena-bridge 2026-11-02): a party member on no team (a sitter) keeps its bag out of a side's reach.
+test("a sitter's item: equip, unequip and give from a side are refused, in and out of combat", function()
+    begin()
+    local SIT = "cccccccc-0000-0000-0000-0000000000c9"
+    local GEM = "dddddddd-0000-0000-0000-000000000005"
+    partyRows[#partyRows + 1] = SIT
+    world[SIT] = { pos = { 30, 0, 0 }, comps = { ServerCharacter = {} } }
+    world[GEM] = { pos = { 30, 0, 0 }, comps = {} }
+    osiv[key("IsOnStage", SIT)], osiv[key("IsCharacter", SIT)] = 1, 1
+    osiv[key("IsInCombat", SIT)] = 0
+    osiv[key("IsItem", GEM)], osiv[key("IsEquipable", GEM)] = 1, 1
+    osiv[key("GetInventoryOwner", GEM)] = SIT
+    local args = "{char=" .. string.format("%q", A1) .. ",item=" .. string.format("%q", GEM) .. ",to="
+        .. string.format("%q", A2) .. "}"
+    for _, combat in ipairs({ 0, 1 }) do
+        osiv[key("IsInCombat", A1)] = combat
+        for _, op in ipairs({ "act.equip", "act.unequip", "act.transfer" }) do
+            local r = rpc(op, args, "A")
+            local why = r.error or (r.result and r.result.status == "failed" and r.result.error)
+            eq(type(why), "string", op .. " in combat " .. combat .. " refused: " .. enc(r))
+            if combat == 0 then -- in combat the combat gate refuses first
+                eq(why:find("that item is not in the party's inventory", 1, true) ~= nil, true, op .. ": " .. why)
+            end
+        end
+    end
+end)
+
+-- A side has no click tool (both sides share one game screen): the in-combat refusal must not name click_on.
+test("interact on an object in combat with a side: the refusal names no click tool", function()
+    begin()
+    local DOOR = "dddddddd-0000-0000-0000-000000000006"
+    world[DOOR] = { pos = { 1, 0, 0 }, comps = {} }
+    osiv[key("IsItem", DOOR)] = 1
+    local args = "{char=" .. string.format("%q", A1) .. ",target=" .. string.format("%q", DOOR) .. "}"
+    local r = enc(rpc("act.interact", args, "A"))
+    eq(r:find("click_on", 1, true), nil, "no click_on: " .. r)
+    eq(r:find("in a two-team match no clicks are made", 1, true) ~= nil, true, r)
+    r = enc(rpc("act.interact", args))
+    eq(r:find("click_on " .. DOOR, 1, true) ~= nil, true, "without a side, click_on as before: " .. r)
+end)
+
+-- The same for the refusals that said "(use the UI)": a side has no UI either.
+test("'(use the UI)' refusals with a side say no clicks or key presses are made; without a side unchanged", function()
+    begin()
+    local GEM = "dddddddd-0000-0000-0000-000000000007"
+    world[GEM] = { pos = { 0, 0, 0 }, comps = {} }
+    osiv[key("IsItem", GEM)], osiv[key("IsEquipable", GEM)] = 1, 1
+    osiv[key("GetInventoryOwner", GEM)] = A1
+    local NO_UI = "(in a two-team match no clicks or key presses are made: both sides share one game screen)"
+    local function why(op, args, side)
+        local r = rpc(op, args, side)
+        return tostring(r.error or (r.result and r.result.error)) .. " " .. enc(r)
+    end
+    local item = "{char=" .. string.format("%q", A1) .. ",item=" .. string.format("%q", GEM) .. ",to="
+        .. string.format("%q", A2) .. "}"
+    for _, op in ipairs({ "act.equip", "act.transfer" }) do -- the combat gate; give in combat
+        local w = why(op, item, "A")
+        eq(w:find("not available during combat through this action " .. NO_UI, 1, true) ~= nil, true, op .. ": " .. w)
+        eq(w:find("use the UI", 1, true), nil, op .. ": no UI named")
+    end
+    local w = why("act.equip", item)
+    eq(w:find("not available during combat through this action (use the UI)", 1, true) ~= nil, true, "no side: " .. w)
+    osiv[key("IsInCombat", A1)] = 0 -- looting, out of combat
+    osiv[key("IsDead", A2)], osiv[key("IsInCombat", A2)] = 1, 0 -- a teammate's corpse (party: visible)
+    w = why("act.interact", "{char=" .. string.format("%q", A1) .. ",target=" .. string.format("%q", A2) .. "}", "A")
+    eq(w:find("looting corpses is not supported by this action yet " .. NO_UI, 1, true) ~= nil, true, "loot: " .. w)
+end)
+
 test("arena.status: each team's true HP fraction; the summon's HP is not a member's", function()
     begin()
     local r = rpc("arena.status")

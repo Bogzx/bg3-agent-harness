@@ -43,7 +43,7 @@ reg("end_turn", function(args)
         if round and now and now ~= round then return { from = round, to = now } end
     end
     local function finish(job, requested, by_flags)
-        local res = { ended = true }
+        local res = { ended = true, end_written = job.wrote }
         local mv = moved_on()
         if mv then
             res.round_moved_on = mv
@@ -104,10 +104,18 @@ reg("end_turn", function(args)
         },
         start = function() G.osi("EndTurn", char) end,
         on_tick = function(job)
+            local waited = RPC.now_ms() - job.started
+            if job.wrote then -- the group's ends written: done only once the game closes the group (no second write)
+                if moved_on() then finish(job) return end
+                if waited >= A.END_LAST_WAIT_MS then
+                    RPC.finish_job(job, "failed", { still_my_turn = true, end_written = job.wrote }, A.END_IGNORED)
+                end
+                return
+            end
             if not G.is_my_turn(char) then finish(job, false, true) return end
             -- Shared turn group, others still up: EndTurn stays pending until they end (live S002:
             -- every such end_turn timed out at 10 s). Record it and return.
-            if RPC.now_ms() - job.started >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
+            if waited >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
                 G.end_requested[char] = G.now_ms()
                 finish(job, true)
                 return
@@ -116,9 +124,15 @@ reg("end_turn", function(args)
             -- took up to 18 s to its TurnEnded (S087), and may show nothing until then. Done when the round moves
             -- on (a new round's open turns are not stale ends: nobody's EndTurn is sent again).
             if arena and moved_on() then finish(job) return end
+            -- Not closed END_WRITE_AFTER_MS after the end: the group's ends written (once: then the branch above), if
+            -- every other member's end is the mod's (live 14: that closed the group at once).
+            if arena and waited >= A.END_WRITE_AFTER_MS then
+                job.wrote = Ar.write_group_end(char)
+                if job.wrote then return end
+            end
             -- S044/S045: our Spiritual Weapon's EndTurn (×4) and turns during Ketheric's mid-fight lines (×5) were
             -- ignored: 10 s TIMEOUT each. Hand back early so the bridge presses the HUD's End Turn instead.
-            if RPC.now_ms() - job.started >= (arena and A.END_LAST_WAIT_MS or A.END_IGNORED_MS) then
+            if waited >= (arena and A.END_LAST_WAIT_MS or A.END_IGNORED_MS) then
                 RPC.finish_job(job, "failed", { still_my_turn = true }, A.END_IGNORED)
             end
         end,
@@ -242,7 +256,7 @@ end)
 
 reg("transfer", function(args)
     local item, from = party_item(args.item)
-    if G.in_combat(from) then G.refuse("not available during combat through this action (use the UI)") end
+    if G.in_combat(from) then G.refuse_ui("not available during combat through this action") end
     if G.b(G.q("IsEquipped", item)) then G.refuse("unequip it first") end
     -- One value only: G.q returns three and tonumber(n, base) raised "bad argument #1 to 'tonumber'"
     -- on every give/camp (S018-S024, 7 calls).

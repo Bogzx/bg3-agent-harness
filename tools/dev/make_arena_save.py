@@ -39,6 +39,7 @@ if sys.path and sys.path[0] and __file__.startswith(sys.path[0]) and __name__ ==
 
 import argparse
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Sequence
@@ -49,6 +50,12 @@ REPO = Path(__file__).resolve().parents[2]
 SCHEMA = "arena-mirror.v1"
 SIDES = ("A", "B")
 PAIRS = 4
+# Spawn geometry, as arena.setup checks it (Server/ArenaSetup.lua Setup.check_geometry): each team on a line along x
+# through its spawn, LINE_GAP_M apart; the spawns under SPAWN_DY_MAX_M apart in height; every distance across the lines
+# the same both ways (A's member i to B's member j = B's i to A's j) within PAIR_DIST_TOL_M.
+LINE_GAP_M = 1.5
+SPAWN_DY_MAX_M = 0.3
+PAIR_DIST_TOL_M = 0.1
 # no subclass by level 2, every choice a selector list (orchestrator D300, D308: the Wizard picks a subclass at 2)
 CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger")
 LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
@@ -113,6 +120,28 @@ def _vec3(v: Any, what: str) -> list[float]:
     return [float(x) for x in v]
 
 
+def _line(spot: list[float], n: int) -> list[list[float]]:
+    return [[spot[0] + (i - (n - 1) / 2) * LINE_GAP_M, spot[1], spot[2]] for i in range(n)]
+
+
+def check_geometry(a: list[float], b: list[float], n: int) -> None:
+    """SpecError unless both teams stand on the same terms (arena.setup refuses the same spawns)."""
+    dy = abs(a[1] - b[1])
+    if dy >= SPAWN_DY_MAX_M:
+        raise SpecError(
+            f"location.spawns A and B are {dy:.2f} m apart in height (y); they must be under {SPAWN_DY_MAX_M} m"
+        )
+    la, lb = _line(a, n), _line(b, n)
+    for i in range(n):
+        for j in range(n):
+            ab, ba = math.dist(la[i], lb[j]), math.dist(lb[i], la[j])
+            if abs(ab - ba) > PAIR_DIST_TOL_M:
+                raise SpecError(
+                    f"location.spawns: A's member {i + 1} is {ab:.2f} m from B's member {j + 1}, B's member {i + 1} "
+                    f"{ba:.2f} m from A's member {j + 1}; they must be the same within {PAIR_DIST_TOL_M} m"
+                )
+
+
 def check_spec(spec: Any, need_templates: bool = False, static: dict[str, Any] | None = None) -> dict[str, Any]:
     """The spec, checked; SpecError names the first problem."""
     static = static if static is not None else load_static()
@@ -131,8 +160,8 @@ def check_spec(spec: Any, need_templates: bool = False, static: dict[str, Any] |
     spawns = loc.get("spawns")
     if not isinstance(spawns, dict):
         raise SpecError("location.spawns must have A and B")
-    for s in SIDES:
-        _vec3(spawns.get(s), f"location.spawns.{s}")
+    at = {s: _vec3(spawns.get(s), f"location.spawns.{s}") for s in SIDES}
+    check_geometry(at["A"], at["B"], PAIRS)
     pairs = spec.get("pairs")
     if not isinstance(pairs, list) or len(pairs) != PAIRS:
         raise SpecError(f"pairs must list {PAIRS} pairs")
