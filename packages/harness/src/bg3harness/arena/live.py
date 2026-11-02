@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from bg3harness import client_setup, clients, profiles, spend
+from bg3harness import recorder as hrec
 from bg3harness.arena import agents as aagents
 from bg3harness.arena import scripted_client
 from bg3harness.arena.match import ArenaOutcome, ArenaSetupError, run_arena
@@ -55,7 +56,7 @@ class WallClock:
 
 def options(spec: ArenaSpec, run_name: str) -> rstate.Options:
     """The match's runner options: the arena's save, its seed, Karmic Dice off (checked), the arena switch; no
-    keeper, no judge. The players' clients are the match's own (LiveAgents), never the runner's."""
+    keeper, no judge, and no client: the players' clients are the match's own (LiveAgents), the runner plays none."""
     return rstate.Options(
         run_name,
         None,
@@ -64,7 +65,7 @@ def options(spec: ArenaSpec, run_name: str) -> rstate.Options:
         allow_short=True,
         keeper=False,
         start_save=spec.save,
-        client="pi",
+        client=None,
         seed=spec.seed,
         scenario_settings={"difficulty": None, "karmic_dice": False, "timing": "turn_based", "avatar_name": None},
         arena=True,
@@ -134,6 +135,26 @@ def start_game(r: Any, spec: ArenaSpec) -> None:
     r.check_settings()
 
 
+def budget_refusal(sides: Mapping[str, Side]) -> str | None:
+    """A side on a paid client (spend.PAID_CLIENTS): why the match can't start, else None. Both sides' costs go to
+    runtime/budget.json at the end, so it must be there with money left."""
+    paid = [s for s in SIDES if spend.is_paid(sides[s].client)]
+    if not paid:
+        return None
+    try:
+        budget = spend.read_budget(renv.RUNTIME / "budget.json")
+    except spend.BudgetError as e:
+        return str(e)
+    if budget is None:
+        return (
+            f"side {' and '.join(paid)} spends money: a match needs a global budget, runtime/budget.json "
+            '({"cap": USD, "spent": 0})'
+        )
+    if round(budget["cap"] - budget["spent"], 6) <= 0:
+        return f"the global budget is used up (${budget['spent']:.2f} of ${budget['cap']:g})"
+    return None
+
+
 def play(
     spec: ArenaSpec,
     sides: Mapping[str, Side],
@@ -142,7 +163,16 @@ def play(
     base_env: Mapping[str, str],
     log: Callable[[str], None] = renv.log,
 ) -> tuple[ArenaOutcome, Path]:
-    """One match on the live game (see the module doc); returns the outcome and the run dir."""
+    """One match on the live game (see the module doc); returns the outcome and the run dir. Refused
+    (ArenaSetupError) before anything starts when a paid side has no budget left, and before the agents start when
+    the recording (run_host.bench_recording: on unless BG3AI_BENCH_RECORD=0) can't record: it starts with the game
+    up, into <run_dir>/recording/, and stops after the match's run_end with the game still up."""
+    if why := budget_refusal(sides):
+        raise ArenaSetupError(why)
+    try:
+        recording = run_host.bench_recording(base_env)
+    except ValueError as e:  # an unknown encoder
+        raise ArenaSetupError(str(e)) from e
     r = make_runner(options(spec, run_name))
     run_dir = Path(r.state.dir)
     side_clients: dict[str, aagents.SideClient] = {}
@@ -153,14 +183,30 @@ def play(
         "sides": {},
     }
     for s in SIDES:
-        side_clients[s], fields = side_client(spec, s, sides[s].profile, run_dir, base_env, log)
+        try:
+            side_clients[s], fields = side_client(spec, s, sides[s].profile, run_dir, base_env, log)
+        except client_setup.SetupRefused as e:  # its API key isn't set, its tool list can't be dumped, ...
+            raise ArenaSetupError(f"side {s}: {e}") from e
         manifest["sides"][s] = {"player": sides[s].player, **fields}
+    rec: hrec.RunRecording | None = None
     try:
         start_game(r, spec)
+        if recording is not None:  # with the game up (the recorder records its window)
+            rec = recording(run_dir / "recording")
+            try:
+                rec.start()
+            except hrec.RecordingError as e:
+                rec = None
+                raise ArenaSetupError(str(e)) from e
         try:
             manifest["pins"] = run_host.machine_pins(base_env)
         except Exception as e:  # the match plays; its manifest says the pins are unknown
             manifest["pins"] = {"error": f"{type(e).__name__}: {e}"}
+        if rec is not None:
+            try:
+                rec.check()  # ffmpeg still up: the match plays recorded
+            except hrec.RecordingError as e:
+                raise ArenaSetupError(str(e)) from e
         agents = aagents.LiveAgents(side_clients, run_dir, base_env, spec.wall_cap_min)
         outcome = run_arena(
             spec,
@@ -174,7 +220,11 @@ def play(
             writer=r.facts_writer(),
         )
     finally:
-        r.scenario_undo()
+        try:
+            if rec is not None:
+                rec.stop()  # after the match's run_end, with the game still up: the recording covers the match
+        finally:
+            r.scenario_undo()
     for s in SIDES:
         usd = outcome.cost(s)
         if usd:
