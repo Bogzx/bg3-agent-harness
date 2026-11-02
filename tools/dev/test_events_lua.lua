@@ -184,5 +184,34 @@ do
     check("seen item: no longer lit", d and d.state == "no longer lit", d and d.state)    Ext.Utils.MonotonicTime = realTime
 end
 
+-- launch-v1 haiku act3_gold_max r2/r5: the night's sleep press was refused while the camp story still wanted a talk
+-- (GLO_Camp DB_Camp_RequiredTalks) with Shadowheart (in the party) or Withers (at camp, out of sight). Who: the party
+-- member and a perceived character by name, the unseen one counted only; one row per character.
+do
+    local WITHERS = "eeeeeeee-0000-0000-0000-000000000004"
+    local rows = {
+        { "S_Player_ShadowHeart_" .. SH, "CAMP_Shadowheart_CRD_Parents_" .. "11111111-0000-0000-0000-000000000001" },
+        { "S_GLO_Withers_" .. WITHERS, "CAMP_Withers_Night_" .. "11111111-0000-0000-0000-000000000002" },
+        { "Dadger_" .. GOB, "NULL_00000000-0000-0000-0000-000000000000" },
+        { "S_Player_ShadowHeart_" .. SH, "NULL_00000000-0000-0000-0000-000000000000" },
+    }
+    Osi.DB_Camp_RequiredTalks = { Get = function(_, a, b)
+        if a ~= nil or b ~= nil then error("filtered read") end
+        return rows
+    end }
+    local t = E.requiredTalks()
+    check("required talks: one row per character", t and #t == 3, t and #t)
+    check("required talks: the party member named", t and t[1].uuid == SH and t[1].name == "Shadowheart",
+        t and t[1].name)
+    check("required talks: the unseen one counted, not named", t and t[2].uuid == nil and t[2].name == nil,
+        t and t[2].name)
+    check("required talks: a perceived one named", t and t[3].uuid == GOB and t[3].name == "Goblin", t and t[3].name)
+    rows = {}
+    t = E.requiredTalks()
+    check("no required talks: empty", t and #t == 0, t and #t)
+    Osi.DB_Camp_RequiredTalks = nil
+    check("unreadable DB: nil", E.requiredTalks() == nil)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

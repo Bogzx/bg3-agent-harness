@@ -217,6 +217,40 @@ class Confirm(Base):
         self.assertIn("done", inventory.long_rest())
         self.assertEqual(seen, ["ui.long_rest"])
 
+    def test_long_rest_at_night_names_the_talk_the_camp_story_still_wants(self):
+        # launch-v1 haiku act3_gold_max r2 S001 calls 24-60: at night camp every long_rest pressed the sleep button
+        # twice and failed 30 s later "the night at camp didn't end" (17x in r2, 46x in 4 runs); camp leave the same.
+        # The camp story answers the press with its "talks left" box while DB_Camp_RequiredTalks has a row: the
+        # loop ended the moment the agent talked to Shadowheart (19:42), the next long_rest slept at once.
+        seen = []
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (
+            seen.append(op) or JobResult("done", {"rest": "full", "night_ended": True}))
+        orig = self.g.try_rpc
+        sh = "3ed74f06-3c60-42dc-83f6-f034cb47c679"
+        flow = {"steps": [], "story": {"DB_Camp_NightMode": 1, "DB_CAMP_JustWokeUp": 0},
+                "required_talks": [{"uuid": sh, "name": "Shadowheart"}]}
+
+        def try_rpc(op, args=None, **kw):
+            if op == "camp.can_rest":
+                return {"blocked": [], "global_disabled": 0}
+            if op == "camp.rest_flow":
+                return flow
+            return orig(op, args, **kw)
+        self.g.try_rpc = try_rpc
+        out = inventory.long_rest()
+        h = core.H.get(sh)
+        self.assertIn(f"long_rest: FAILED — not pressed: the night at camp can't end yet: the game still wants a talk "
+                      f"with {h} Shadowheart first (the '!' over them)", out)
+        self.assertNotIn("DB_Camp", out)
+        self.assertEqual(seen, [])
+        flow["required_talks"] = []  # the talk was had (DialogActorJoined cleared the row): pressed, the night ends
+        self.assertIn("done", inventory.long_rest())
+        self.assertEqual(seen, ["ui.long_rest"])
+        # a required talk outside the night (the story checks them only when the night is to end): pressed
+        flow.update(required_talks=[{"uuid": sh, "name": "Shadowheart"}], story={"DB_Camp_NightMode": 0})
+        inventory.long_rest()
+        self.assertEqual(seen, ["ui.long_rest", "ui.long_rest"])
+
     def test_long_rest_waits_for_the_end_day_answer(self):
         # S030 16:30: requested -> gathered, the job gave up at 8 s, end_day_failed came ~10 s after the press;
         # the hint said "requested: loading a save clears it" and the agent reloaded (25 s) for nothing.
