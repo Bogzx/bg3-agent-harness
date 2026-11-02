@@ -4,8 +4,12 @@
 The game, the agents and the clock come in through ArenaGame, Agents and Clock, so a fake game (the scripted
 two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.live has the real ones.
 
-1. `arena.setup {arena, round_cap}` (a job, polled), then `arena.status` until the match is active.
-2. The referee writes `arena_start {arena, seed, teams (names), sides (players), uuids (arena.status teams)}` into the
+1. `arena.setup {arena, round_cap}` (a job, polled), then `arena.status` until the match is active. The teams'
+   uuids are arena.status's `teams`, in the arena file's order; a mirror arena's (its twins don't exist before the
+   setup makes them: the file names them only) are the setup job result's `teams` (pair i at index i), and
+   arena.status must report the same. A result without them, short of a member, or disagreeing with arena.status
+   starts no match (a setup error).
+2. The referee writes `arena_start {arena, seed, teams (names), sides (players), uuids (those teams)}` into the
    match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side: the
    harness's reads see both teams) carries the mod's arena records: its `arena_turn` (one per phase: a same-side
    run of the rolled order inside one turn group, summons included, {side, character, members (its open members,
@@ -186,7 +190,7 @@ class Referee:
         return self.turn.round if self.turn else 0
 
     def start(self, teams: Mapping[str, list[str]]) -> None:
-        """arena_start; `teams`: arena.status's uuids, in the arena file's team order."""
+        """arena_start; `teams`: the teams' uuids (_teams), in the arena file's team order."""
         for s in SIDES:
             if len(teams.get(s) or []) != len(self.spec.teams[s]):
                 raise ArenaSetupError(
@@ -285,8 +289,8 @@ class _Ended(Exception):  # noqa: N818 - control flow inside run_arena
         self.rounds, self.game_up = rounds, game_up  # game_up: the game answers, the mod hears the end
 
 
-def _setup(spec: ArenaSpec, game: ArenaGame, clock: Clock) -> dict[str, Any]:
-    """arena.setup's job to its end, then arena.status until active; the active status."""
+def _setup(spec: ArenaSpec, game: ArenaGame, clock: Clock) -> tuple[dict[str, Any], dict[str, Any]]:
+    """arena.setup's job to its end, then arena.status until active; (the job's result, the active status)."""
     deadline = clock.now() + SETUP_TIMEOUT_S
     job = game.rpc("arena.setup", {"arena": spec.arena, "round_cap": spec.round_cap}) or {}
     while job.get("status") not in ("done", "failed"):
@@ -296,13 +300,37 @@ def _setup(spec: ArenaSpec, game: ArenaGame, clock: Clock) -> dict[str, Any]:
         job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}) or {}
     if job["status"] == "failed":
         raise ArenaSetupError(f"arena.setup failed: {job.get('error')}")
+    result = job.get("result")
     while True:
         st = game.rpc("arena.status", {}) or {}
         if st.get("active"):
-            return st
+            return (result if isinstance(result, dict) else {}), st
         if clock.now() > deadline:
             raise ArenaSetupError(f"the match was not active {SETUP_TIMEOUT_S:.0f} s after arena.setup")
         clock.sleep(POLL_S)
+
+
+def _teams(spec: ArenaSpec, result: Mapping[str, Any], status: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Each side's uuids, in the arena file's order: arena.status's teams; a mirror arena's from the setup result,
+    which arena.status must repeat (fail closed: never a uuid from the file, which names the twins only)."""
+    teams = status.get("teams")
+    if not spec.mirror:
+        return teams if isinstance(teams, dict) else {}
+    made = result.get("teams")
+    got: dict[str, list[str]] = {}
+    for s in SIDES:
+        row = made.get(s) if isinstance(made, dict) else None
+        if not (
+            isinstance(row, list) and len(row) == len(spec.teams[s]) and all(isinstance(u, str) and u for u in row)
+        ):
+            raise ArenaSetupError(
+                f"arena.setup's result gives team {s} of the mirror arena {row!r}, not {len(spec.teams[s])} uuids"
+            )
+        shown = teams.get(s) if isinstance(teams, dict) else None
+        if not isinstance(shown, list) or [str(u).lower() for u in shown] != [u.lower() for u in row]:
+            raise ArenaSetupError(f"arena.status team {s} is {shown!r}, arena.setup made {row}")
+        got[s] = list(row)
+    return got
 
 
 def _decline_unowned(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callable[[str], None]) -> None:
@@ -399,8 +427,8 @@ def run_arena(
     outcome = ArenaOutcome(None)
     try:
         feed.poll()  # the rings' readers start here: the setup's records are the match's
-        status = _setup(spec, game, clock)
-        ref.start(status["teams"])
+        result, status = _setup(spec, game, clock)
+        ref.start(_teams(spec, result, status))
     except Exception as e:  # no match: nothing to grade, the rerun sets up again
         outcome.invalid = f"setup: {type(e).__name__}: {e}"
         log(f"arena {spec.name}: {outcome.invalid}")

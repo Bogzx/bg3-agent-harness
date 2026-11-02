@@ -36,6 +36,7 @@ class ArenaSpec:
     wall_cap_min: float
     turn_cap_s: float  # model time per turn
     tools_off: str  # the bridge's named tools-off list (BG3AI_TOOLS_OFF)
+    mirror: bool = False  # a mirror arena: arena.setup makes the twins, their uuids come from its result
     arena: dict[str, Any] = field(default_factory=dict[str, Any], compare=False)  # what arena.setup gets
 
     @classmethod
@@ -81,6 +82,7 @@ class ArenaSpec:
             wall_cap_min=float(a["wall_cap_min"]),
             turn_cap_s=float(a["turn_cap_s"]),
             tools_off=a["tools_off"],
+            mirror="mirror" in a,
             arena=dict(a),
         )
 
