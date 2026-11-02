@@ -181,10 +181,10 @@ class Base(unittest.TestCase):
 
 
 class AsyncActions(Base):
-    def test_move_to_returns_at_once_with_eta(self):
+    def test_move_to_wait_false_returns_at_once_with_eta(self):
         self.g.dur["act.move_to"] = 5
         t0 = time.monotonic()
-        out = world_tools.move_to(target=self.door)
+        out = world_tools.move_to(target=self.door, wait=False)
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertTrue(out.startswith("move_to: started j1, ETA 2.4s (8m)"), out)
         self.assertTrue(self.g.ops("act.move_to")[0][1]["notify"])
@@ -220,14 +220,14 @@ class AsyncActions(Base):
         self.assertEqual(plumbing._async, {})
 
     def test_wait_for_job(self):
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         out = batch.wait_for("j1", timeout_s=2)
         self.assertIn("move_to: done", out)
         self.assertNotIn("job_finished", out)  # the result already says it: no duplicate EVENTS line
 
     def test_wait_for_times_out_and_lists_running(self):
         self.g.dur["act.move_to"] = 5
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         out = batch.wait_for("j1", timeout_s=0.2)
         self.assertIn("still waiting for j1", out)
         self.assertIn("RUNNING j1 move_to", out)
@@ -275,7 +275,7 @@ class AsyncActions(Base):
             self.assertLess(time.monotonic() - t0, 1.5)
             self.assertIn("nothing is running that would cause dialogue_started", out)
             self.g.dur["act.move_to"] = 0.6  # a walk is running: it could start one, so keep waiting
-            world_tools.move_to(target=self.door)
+            world_tools.move_to(target=self.door, wait=False)
             out = batch.wait_for("dialogue_started", timeout_s=0.5)
             self.assertIn("still waiting for dialogue_started", out)
         finally:
@@ -287,7 +287,7 @@ class AsyncActions(Base):
 
     def test_get_events_never_blocks_and_shows_running(self):
         self.g.dur["act.move_to"] = 5
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         t0 = time.monotonic()
         out = observe.get_events()
         self.assertLess(time.monotonic() - t0, 0.3)
@@ -580,7 +580,7 @@ class WaitForNoop(Base):
         self.assertIn("already in combat", out)
 
     def test_finished_job_returns_at_once(self):
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         time.sleep(0.05)
         out, dt = self.timed("j1")
         self.assertLess(dt, 0.4)
@@ -602,7 +602,7 @@ class WaitForNoop(Base):
 
     def test_waits_while_a_job_runs_then_a_short_grace(self):
         self.g.dur["act.move_to"] = 0.4
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         out, dt = self.timed("dialogue_started", timeout_s=5)
         self.assertGreater(dt, 0.4 + batch.EVENT_GRACE_S - 0.15)
         self.assertLess(dt, 0.4 + batch.EVENT_GRACE_S + 0.6)

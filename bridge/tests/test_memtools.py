@@ -303,26 +303,27 @@ class HttpTransport(unittest.TestCase):
             self.assertTrue(core.LIFE.auto)   # serving a client: the first call may open the session
 
 
-class PaceGuard(Base):
-    """The pace guard is the server's (it was also a client PreToolUse hook): walks don't block outside combat."""
+class WalkWait(Base):
+    """How a walk waits (_walk_wait -> (wait, block)): out of combat wait=true blocks through the async job (the
+    walk's own result, as wait_for returns it; human-gap research 2026-11-02), wait=false returns at once. It replaced
+    the pace guard, which dropped wait=true out of combat."""
 
-    def test_wait_true_dropped_out_of_combat(self):
+    def test_wait_true_blocks_out_of_combat(self):
         self.g.watch["combat"] = False
-        wait, note = plumbing._walk_wait(True)
-        self.assertFalse(wait)
-        self.assertIn("pace guard", note)
+        self.assertEqual(plumbing._walk_wait(True), (False, True))
+        self.assertEqual(plumbing._walk_wait(False), (False, False))  # wait=false: pipelining
 
     def test_wait_true_kept_in_combat_and_when_unknown(self):
         self.g.watch["combat"] = True
-        self.assertEqual(plumbing._walk_wait(True), (True, ""))
+        self.assertEqual(plumbing._walk_wait(True), (True, False))
         with mock.patch.object(core.game, "try_rpc", return_value=None):
-            self.assertEqual(plumbing._walk_wait(True), (True, ""))
-            self.assertEqual(plumbing._walk_wait(False), (False, ""))  # unknown: as asked
+            self.assertEqual(plumbing._walk_wait(True), (True, False))
+            self.assertEqual(plumbing._walk_wait(False), (False, False))  # unknown: as asked
 
     def test_a_walk_in_combat_always_blocks(self):
         # D291: in combat each call is one action, returned when it is over
         self.g.watch["combat"] = True
-        self.assertEqual(plumbing._walk_wait(False), (True, ""))
+        self.assertEqual(plumbing._walk_wait(False), (True, False))
 
 
 if __name__ == "__main__":

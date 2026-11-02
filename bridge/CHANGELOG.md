@@ -5,6 +5,23 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: walks out of combat return at their end (wait=true is the default)
+
+- `move_to`, `walk_toward` and `travel_to` default to `wait=true` and, out of combat, return at the walk's end with
+  the walk's own result: what `wait_for(<job>)` / `wait_for('queue:<who>')` returned until now (the same early
+  stops: a prompt, a dialogue or a fight starting ends the wait and says so), with CHANGES and the minimap block.
+  The `started j12` line is not shown when the walk ended. `route(go=true)` and a far `move_to` (via travel_to)
+  block the same way.
+- A walk or trip still going 90 s after the call started (plumbing.WALK_BUDGET_S, under the clients' 110 s MCP
+  timeout) returns its progress (`still waiting for j12 after 90s`, the RUNNING line with metres/ETA left) and
+  `wait_for('j12') keeps waiting for it` (`queue:<who>` for a trip), never a tool timeout.
+- `wait=false` keeps the old behaviour (returns within ~1 s, `started j12, ETA 3s`, NEXT hints for pipelining).
+  The pace-guard note ("wait=true ignored outside combat") and travel_to's "(wait=true ignored ...)" are gone.
+- Metrics: a call's `async` flag now needs its own background job still running when it returned (a blocking walk's
+  job starts and ends inside the call); a walk that ended in the 0.3 s settle window no longer counts as async.
+- Human-gap research: 74-89% of launch-v1's out-of-combat walks were followed at once by wait_for (2,866 calls,
+  ~93 min of model think, ~$22).
+
 ## 2026-11-02: every walk end and every look carry the minimap block
 
 - Out of combat, every walk end (wait_for on a walk or trip, a walk that ends in the settle window, a blocking

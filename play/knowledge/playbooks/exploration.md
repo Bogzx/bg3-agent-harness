@@ -35,7 +35,7 @@ the region done in locations.md.
   - `started jN` / `still running`: keep going (plan, note, look); `wait_for("jN")` only when out of work.
   - The same `used <item>` event repeating, or a character ignoring orders: a harness loop → the
     `stuck` playbook, section 0.
-- Long distances: `travel_to(marker="m1" | objective="o1")` chains walks there and returns at once;
+- Long distances: `travel_to(marker="m1" | objective="o1", wait=false)` chains walks there and returns at once;
   append the arrival steps with `queue_actions` and plan meanwhile (it stops on an interrupt or when
   nothing leads further); `fast_travel(waypoint="<name>")` between unlocked
   waypoints (never in combat). `regroup()` brings stragglers back.
