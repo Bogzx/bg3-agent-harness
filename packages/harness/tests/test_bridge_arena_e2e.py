@@ -164,3 +164,25 @@ def test_a_round_change_reads_in_order(tmp_path: Path) -> None:
     assert "round 2" in text or "round_started round=2" in text, text
     assert "Tav" in text.split("round", 1)[1], text
     assert not [ln for ln in text.split("\n") if "turn" in ln and "round=" in ln], text
+
+
+def test_the_other_sides_downed_member_reads_downed(tmp_path: Path) -> None:
+    """Side B reads side A's downed Tav as downed in its combat rows, as side A reads its own."""
+    model = GameModel(clock=FakeClock())
+    model.start_arena(TEAM_A, TEAM_B)
+    model.arena_damage("Tav", "Lae'zel", 99)
+    out: dict[str, str] = {}
+
+    async def match() -> None:
+        with FakeMod(model) as fake:
+            async with (
+                bridge_session(fake.port, tmp_path / "a", env("A")) as a,
+                bridge_session(fake.port, tmp_path / "b", env("B")) as b,
+            ):
+                out["a"] = await call(a, "get_combat_state")
+                out["b"] = await call(b, "get_combat_state")
+
+    run(match())
+    for side, relation in (("a", "party"), ("b", "hostile")):
+        row = next(ln for ln in out[side].split("\n") if " Tav" in ln and "init" in ln)
+        assert relation in row and "downed" in row, out[side]

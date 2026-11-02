@@ -678,6 +678,8 @@ class GameModel:
             }
             if uuid == now:
                 row["is_current"] = True
+            if m.hp <= 0 and not m.dead:  # a player character at 0 HP is down, visibly, to both sides (S.combat)
+                row["downed"] = True
             order.append(row)
         seen = a.sees(side, now)
         return {

@@ -142,3 +142,18 @@ def test_a_round_change_in_the_games_order() -> None:
         ("turn_ended", "Karlach", 1),
     ]
     assert turns[:2] == [("round_started", None, 1), ("turn_started", "Tav", 1)]
+
+
+def test_a_downed_member_reads_downed_to_both_sides() -> None:
+    """A player character at 0 HP is down where both sides see it (S.combat: the game's DOWNED status, any relation)."""
+    m, fake = match()
+    m.arena_damage("Tav", "Lae'zel", 99)
+
+    def tav_row(side: str) -> dict[str, Any]:
+        rows = rpc(fake, "state.combat", side=side)["result"]["order"]
+        return next(r for r in rows if r["name"] == "Tav")
+
+    assert tav_row("A")["relation"] == "party" and tav_row("A")["downed"] is True
+    assert tav_row("B")["relation"] == "hostile" and tav_row("B")["downed"] is True
+    rows = rpc(fake, "state.combat", side="B")["result"]["order"]
+    assert [r["name"] for r in rows if r.get("downed")] == ["Tav"]
