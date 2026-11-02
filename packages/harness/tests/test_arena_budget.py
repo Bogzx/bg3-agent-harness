@@ -87,3 +87,12 @@ def test_without_a_cap_nothing_ends_on_cost_and_arena_end_says_so(tmp_path):
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.end is not None and out.end["reason"] != "over_budget"
     assert end_of(tmp_path)["max_cost"] is None
+
+
+def test_a_side_reaching_its_own_cap_ends_the_match_over_budget(tmp_path):
+    """A matrix caps each paid side at its reserve: A's spending reaches its $0.30 while the total is far from $2."""
+    model, game, clock, agents, spec = setup({"A": spender, "B": passer})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock, max_cost=2.0, side_caps={"A": 0.3, "B": 1.0})
+    assert out.end is not None and out.end["reason"] == "over_budget" and model.ends == [{"reason": "over_budget"}]
+    assert out.invalid == "over_budget: A $0.3100 + B $0.0100 reached side A's cap $0.3"
+    assert end_of(tmp_path)["cost"] == {"A": 0.31, "B": 0.01}

@@ -169,12 +169,14 @@ def play(
     base_env: Mapping[str, str],
     log: Callable[[str], None] = renv.log,
     max_cost: float | None = None,
+    side_caps: Mapping[str, float] | None = None,
 ) -> tuple[ArenaOutcome, Path]:
     """One match on the live game (see the module doc); returns the outcome and the run dir. Refused
     (ArenaSetupError) before anything starts when a paid side has no max_cost or the budget hasn't max_cost left
     (budget_refusal), and before the agents start when
     the recording (run_host.bench_recording: on unless BG3AI_BENCH_RECORD=0) can't record: it starts with the game
-    up, into <run_dir>/recording/, and stops after the match's run_end with the game still up."""
+    up, into <run_dir>/recording/, and stops after the match's run_end with the game still up. side_caps: each side's
+    own money cap where it has one (a matrix's per-side reserve; run_arena)."""
     if why := budget_refusal(sides, max_cost):
         raise ArenaSetupError(why)
     try:
@@ -189,6 +191,7 @@ def play(
         "save": {"name": spec.save, "sha1": spec.save_sha1},
         "seed": spec.seed,
         "max_cost": max_cost,
+        "side_caps": dict(side_caps) if side_caps else None,
         "sides": {},
     }
     for s in SIDES:
@@ -228,6 +231,7 @@ def play(
             aborted=lambda: bool(getattr(r, "abort", False)),
             writer=r.facts_writer(),
             max_cost=max_cost,
+            side_caps=side_caps,
         )
     finally:
         try:
