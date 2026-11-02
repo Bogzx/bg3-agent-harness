@@ -297,6 +297,40 @@ end
 -- then, and so is any change no listener sees (an end, a downing, a status). A phase shorter than that between two
 -- checks is not seen.
 Ar.PHASE_EVERY_MS = 250
+
+-- Why a member can't act: dead or downed (a downed member's turn is the game's death saving throw, nothing to
+-- decide), else nil.
+local function cantAct(u)
+    if truthy(osi(Osi.IsDead, u)) then return "dead" end
+    if truthy(osi(Osi.HasActiveStatus, u, "DOWNED")) then return "downed" end
+    return nil
+end
+
+-- The acting phase's members who can't act get their turn ended by the mod, one arena_turn_passed record each, so
+-- the phase closes and the next one starts. Live 2026-11-02 (live 7 rerun 3): round 2's phase 1 was A [Gale], downed
+-- in round 1; the game kept her turn open (no EndTurn of its own) and her phase held the rest of the group: 29.5
+-- min to the wall cap. The end is paired as act.end_turn's: Osiris EndTurn and a pending end (G.end_requested,
+-- cleared by its TurnEnded), which counts as ended for the phases and the group's last end.
+local function passCantAct(p, round)
+    local G = BG3AI.Guard
+    local passed = false
+    for _, u in ipairs(p.members) do
+        local why = cantAct(u)
+        if why then
+            if not passed then
+                Ar.check_end() -- a side all downed or dead: the match is over, nobody's turn to pass
+                if Ar.state.ended then return false end
+            end
+            local ok, err = pcall(Osi.EndTurn, u)
+            G.end_requested[G.guid(u) or u] = now_ms()
+            record("arena_turn_passed", { side = p.side, character = u, name = V.name(u), why = why, round = round,
+                error = (not ok) and tostring(err) or nil })
+            passed = true
+        end
+    end
+    return passed
+end
+
 function Ar.phase_check()
     if not Ar.active() then return end
     local st = Ar.state
@@ -307,6 +341,8 @@ function Ar.phase_check()
     local p = Ar.phase()
     if not p then return end
     local round = st.round or 1
+    while p and passCantAct(p, round) do p = Ar.phase() end -- each pass leaves those members' turns not open
+    if not p or st.ended then return end
     local last = st.phase
     if last and last.round == round and last.group == p.group and last.side == p.side then return end
     local n = (last and last.round == round and last.group == p.group) and last.phase + 1 or 1

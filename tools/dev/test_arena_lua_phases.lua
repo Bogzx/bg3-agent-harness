@@ -336,3 +336,58 @@ test("live round change: new TurnStarted before the old TurnEnded: round 2's fir
     eq(r[#r].phase, 1, "phase 1")
     eq(members(r[#r]), A1, "A1's phase")
 end)
+
+-- Live 2026-11-02 (live 7 rerun 3): round 2's phase 1 = A [Gale], downed in round 1; the game left her turn open (no
+-- EndTurn of its own), her phase held everyone else for 29.5 min.
+test("a downed member's phase: the mod ends its turn, recorded, and the next phase starts; a dead one's too", function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 2)
+        order = { { A1, B1, A2, B2 } }
+        openAll({ A1, B1, A2, B2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+        world[A1].comps.Health.Hp = 0
+        osiv[key("IsDead", B1)] = 1
+        burst({ A1, B1, A2, B2 })
+        tick()
+        eq(table.concat(ended, ","), A1 .. "," .. B1, "EndTurn for the downed A1, then the dead B1")
+        local p = refs("arena_turn_passed")
+        eq(#p, 2, "one record each")
+        eq(enc({ p[1].side, p[1].character, p[1].name, p[1].why, p[1].round }), enc({ "A", A1, "Ana", "downed", 2 }),
+            "A1's record")
+        eq(enc({ p[2].side, p[2].character, p[2].why }), enc({ "B", B1, "dead" }), "B1's record")
+        local r = refs("arena_turn")
+        eq(#r, 1, "one phase recorded")
+        eq(enc({ r[1].side, members(r[1]), r[1].phase }), enc({ "A", A2, 1 }), "A2's phase is round 2's first")
+        eq(G.still_to_act(A1), false, "A1 counts as ended")
+        eq(Ar.held(A2), false, "A2 acts")
+        eq(Ar.held(B2), true, "B2 waits")
+        tick()
+        eq(#ended, 2, "no second EndTurn")
+        eq(#refs("arena_turn_passed"), 2, "no second record")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
+
+test("a side all downed or dead in the acting phase: a wipe ends the match, no turn passed", function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        order = { { A1, A2, B1, B2 } }
+        openAll({ A1, A2, B1, B2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+        world[A1].comps.Health.Hp = 0
+        osiv[key("IsDead", A2)] = 1
+        burst({ A1, A2, B1, B2 })
+        tick()
+        eq(Ar.state.ended and Ar.state.ended.winner, "B", "B wins")
+        eq(#ended, 0, "no EndTurn")
+        eq(#refs("arena_turn_passed"), 0, "no pass")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
