@@ -45,9 +45,11 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    not ended, not downed or dead means the side holds the turn, and the phase is capped as at the model-time cap
    (`arena_stall {stall: "held", ...}` first; it counts toward the forfeit); none (every end went in, or nobody can
    act), the read failing or a second stall of the same phase means the game holds it: `arena_stall {stall: "game",
-   ...}` and the match ends as `fault` (invalid, rerun), no act.end_turn sent. arena_stall {stall, side, character,
-   members, round, idle_s, status {turn, round, hp} (the last arena.status), last {A, B: the side's last
-   STALL_CALLS tool calls from its events file, {tool, result}}, detail?}.
+   ...}` and the match ends as `fault` (invalid, rerun), no act.end_turn sent. So does a match whose first phase
+   never comes, idle for max(STALL_CAPS x turn_cap_s, STALL_MIN_S) (its record names no side, character or members,
+   round 0). arena_stall {stall, side, character, members, round, idle_s, status {turn, round, hp} (the last
+   arena.status), last {A, B: the side's last STALL_CALLS tool calls from its events file, {tool, result}},
+   detail?}.
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
@@ -484,26 +486,31 @@ def run_arena(
             sig = (len(ref.turns), json.dumps(status.get("turn"), sort_keys=True), status.get("round"), hp)
             if rows or sig != moved_sig:
                 idle, moved_sig = 0.0, sig
-            if turn is not None and idle >= max(STALL_CAPS * spec.turn_cap_s * len(turn.members), STALL_MIN_S):
+            members = len(turn.members) if turn is not None else 1
+            if idle >= max(STALL_CAPS * spec.turn_cap_s * members, STALL_MIN_S):
                 held, why = [], ""
-                if not (turn.stalled or turn.forced):
+                if turn is not None and not (turn.stalled or turn.forced):
                     try:
                         held = _held(game, turn)
                     except Exception as e:  # the game can't say: it holds the turn
                         why = f"state.combat failed: {e}"
+                phase = {"side": turn.side, "character": turn.name, "members": turn.names} if turn else {}
                 record = {
-                    "side": turn.side,
-                    "character": turn.name,
-                    "members": turn.names,
-                    "round": turn.round,
+                    **phase,
+                    "round": turn.round if turn is not None else ref.round,
                     "idle_s": round(idle, 1),
                     "status": {k: status.get(k) for k in ("turn", "round", "hp")},
                     "last": {s: _last_calls(out / f"{s}.events.jsonl") for s in SIDES},
                     **({"detail": why} if why else {}),
                 }
-                stall = f"stall: {turn.name}'s phase (side {turn.side}, round {turn.round}) idle {idle:.0f} s"
+                where = (
+                    f"{turn.name}'s phase (side {turn.side}, round {turn.round})"
+                    if turn is not None
+                    else "the match before its first phase"
+                )
+                stall = f"stall: {where} idle {idle:.0f} s"
                 idle = 0.0
-                if not held:
+                if turn is None or not held:
                     ref.event("arena_stall", stall="game", **record)
                     raise _Ended("fault", detail=f"{stall}, the game holds the turn" + (f" ({why})" if why else ""))
                 ref.event("arena_stall", stall="held", **record)

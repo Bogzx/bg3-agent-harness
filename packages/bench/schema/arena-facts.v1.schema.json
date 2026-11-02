@@ -428,12 +428,9 @@
         }
       },
       "then": {
-        "description": "A phase made no progress for its stall time (idle_s: wall time less model time). stall held: its side still held a member, and the phase is capped (an arena_turn_forced follows, counted toward the forfeit). stall game: the game held the turn, and the match ends as a fault. status is the last arena.status, last each side's last tool calls. Results ignore it.",
+        "description": "A phase (or the match before its first one: no side, character or members, round 0) made no progress for its stall time (idle_s: wall time less model time). stall held: its side still held a member, and the phase is capped (an arena_turn_forced follows, counted toward the forfeit). stall game: the game held the turn, and the match ends as a fault. status is the last arena.status, last each side's last tool calls. Results ignore it.",
         "required": [
           "stall",
-          "side",
-          "character",
-          "members",
           "round",
           "idle_s",
           "status",
@@ -476,7 +473,25 @@
           "detail": {
             "type": "string"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "stall": {
+                  "const": "held"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "side",
+                "character",
+                "members"
+              ]
+            }
+          }
+        ]
       }
     }
   ]

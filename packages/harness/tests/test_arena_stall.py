@@ -7,8 +7,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import jsonschema
 from bg3harness.arena import match as am
-from test_arena_match import SIDES, Game, Run, arena_events, grade, my_turn, passer, setup, staller
+from test_arena_match import (
+    BENCH_FACTS_SCHEMA,
+    SIDES,
+    Game,
+    Run,
+    arena_events,
+    grade,
+    my_turn,
+    passer,
+    setup,
+    staller,
+)
 
 
 def ender_once(game: Game, side: str, run: Run) -> None:
@@ -138,3 +150,20 @@ def test_a_phase_whose_game_still_rolls_is_not_stalled(tmp_path):
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.end is not None and out.end["reason"] == "wall_cap"
     assert stalls(tmp_path) == []
+
+
+def test_a_match_whose_first_phase_never_comes_is_the_games_fault(tmp_path):
+    """No arena_turn ever comes and nothing moves: the same idle clock, max(3 x 60, 300) s, ends the match as the
+    game's fault (invalid, rerun), not a wall-cap draw; its arena_stall names no phase."""
+    model, game, clock, agents, spec = setup({"A": looper, "B": looper})
+    model.phases = False
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault" and model.ends == [{"reason": "fault"}]
+    assert out.invalid is not None
+    assert out.invalid.startswith("fault: stall: the match before its first phase idle 30"), out.invalid
+    [st] = stalls(tmp_path)
+    assert (st["stall"], st["round"], "side" in st, "members" in st) == ("game", 0, False, False)
+    assert 300 <= st["idle_s"] < 302
+    jsonschema.validate(st, BENCH_FACTS_SCHEMA)
+    assert grade(tmp_path)["invalid_reason"] == "fault"
+    assert not [c for c in game.calls if c[0] == "act.end_turn"]

@@ -58,7 +58,8 @@ class ArenaModel(GameModel):
     the harness answers it. An op sent to a context the mod doesn't register it in is refused (wrong_context).
     hold: the game takes a side's act.end_turn ("done") but never moves the turn on (live 7: a downed member's turn),
     the member's row in state.combat then ended; refuse_end: every act.end_turn fails with it; combat_error:
-    state.combat fails. A side's state.combat rows show ended, downed (hp 0) as StateWorld.lua does."""
+    state.combat fails; phases=False: no arena_turn record ever comes. A side's state.combat rows show ended, downed
+    (hp 0) as StateWorld.lua does."""
 
     def __init__(self, clock: FakeClock, caps: bool = True, order: list[str] | None = None) -> None:
         super().__init__(clock=clock)
@@ -76,6 +77,7 @@ class ArenaModel(GameModel):
         self.summon_names: dict[str, str] = {}  # summon name -> side: in the match from its start, in `order`
         self.summons: set[str] = set()  # their uuids (not in arena.status's teams)
         self.hold = False
+        self.phases = True
         self.refuse_end: str | None = None
         self.combat_error: str | None = None
         self.held_ends: set[str] = set()  # the uuids whose end the game took while holding
@@ -116,7 +118,7 @@ class ArenaModel(GameModel):
         self.mod_round = max(self.mod_round, 1)
         side = a.side_of(now.uuid)
         rnd, last, n = self.phase
-        if (rnd, last) != (self.mod_round, side):
+        if (rnd, last) != (self.mod_round, side) and self.phases:
             n = n + 1 if rnd == self.mod_round else 1
             self.phase = (self.mod_round, side, n)
             members = []
@@ -941,7 +943,11 @@ def test_both_schemas_take_a_passed_turn_and_a_stall():
     for good in ({**passed, "round": 2}, {**passed, "round": 2, "error": "x"}, stall):
         jsonschema.validate(good, FACTS_SCHEMA)
         jsonschema.validate(good, BENCH_FACTS_SCHEMA)
-    for bad in (passed, {**passed, "round": 2, "why": "stunned"}, {**stall, "stall": "slow"}, {**stall, "members": []}):
+    no_phase = {k: v for k, v in stall.items() if k not in ("side", "character", "members")}
+    jsonschema.validate({**no_phase, "stall": "game", "round": 0}, FACTS_SCHEMA)  # before the first phase
+    jsonschema.validate({**no_phase, "stall": "game", "round": 0}, BENCH_FACTS_SCHEMA)
+    bad_stalls = ({**stall, "stall": "slow"}, {**stall, "members": []}, no_phase)  # a held stall names its phase
+    for bad in (passed, {**passed, "round": 2, "why": "stunned"}, *bad_stalls):
         for schema in (FACTS_SCHEMA, BENCH_FACTS_SCHEMA):
             with pytest.raises(jsonschema.ValidationError):
                 jsonschema.validate(bad, schema)
