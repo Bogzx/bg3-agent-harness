@@ -5,7 +5,7 @@
 -- changes nothing. test_arena_lua_client.lua has the client half (reaction prompt, HUD selection).
 -- Ext, Osi and the game world are stubbed; Shared/RPC.lua, Util.lua, Arena.lua and Server/Visibility.lua, State.lua,
 -- Events.lua, Guard.lua, Navigation.lua, Actions.lua, Referee.lua, RollLog.lua,
--- Arena.lua are the real ones.
+-- Arena.lua, ArenaSetup.lua, ArenaSymmetry.lua, ArenaMirror.lua and Shared/ArenaStats.lua are the real ones.
 -- Run: tools/dev/test_arena_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
 LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -31,6 +31,7 @@ order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid..
 partyRows = {}
 engineRound = 1  -- the combat's TurnOrder.Round
 decoded = {}      -- an encoded answer -> the value it encodes (rpc() reads answers back as tables)
+statsLoaded = {}  -- Ext.Events.StatsLoaded subscribers
 
 os.getenv = function(n) return env[n] end -- luacheck: ignore 122
 
@@ -94,7 +95,8 @@ Ext = {
     IsClient = function() return false end,
     Utils = { MonotonicTime = function() return clock end, PrintWarning = function() end, Print = function() end,
         Version = function() return 0 end, GetGameState = function() return "Running" end },
-    Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end } },
+    Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end },
+        StatsLoaded = { Subscribe = function(_, fn) statsLoaded[#statsLoaded + 1] = fn end } },
     Entity = { Get = function(u) return entity(u) end,
         GetAllEntitiesWithComponent = function(c) return c == "ServerCharacter" and characters() or {} end },
     Stats = { Get = function(n) return n == "Projectile_FireBolt" and { DisplayName = "Fire Bolt" } or nil end },
@@ -135,6 +137,7 @@ BG3AI = {}
 dofile(LUA .. "/Shared/Util.lua")
 dofile(LUA .. "/Shared/RPC.lua")
 dofile(LUA .. "/Shared/Arena.lua")
+dofile(LUA .. "/Shared/ArenaStats.lua")
 dofile(LUA .. "/Server/Visibility.lua")
 dofile(LUA .. "/Server/State.lua")
 dofile(LUA .. "/Server/Events.lua")
@@ -146,6 +149,7 @@ dofile(LUA .. "/Server/RollLog.lua")
 dofile(LUA .. "/Server/Arena.lua")
 dofile(LUA .. "/Server/ArenaSetup.lua")
 dofile(LUA .. "/Server/ArenaSymmetry.lua")
+dofile(LUA .. "/Server/ArenaMirror.lua")
 U, RPC, Ar, V, G, N = BG3AI.Util, BG3AI.RPC, BG3AI.Arena, BG3AI.Visibility, BG3AI.Guard, BG3AI.Nav
 
 -- One Osiris event, as the game fires it: every listener registered for it.
@@ -248,7 +252,7 @@ end
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua",
     "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua", "test_arena_lua_setup.lua",
-    "test_arena_lua_symmetry.lua" }) do
+    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

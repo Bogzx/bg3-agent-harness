@@ -1,0 +1,359 @@
+{
+ "source": "game data files of the installed BG3 (Shared, SharedDev, Gustav, GustavDev, Honour; a later module's same UUID wins), extracted read-only with tools/pak.py on 2026-11-02 (D289); levels 1-2 only",
+ "classes": {
+  "Fighter": {
+   "table": "ba4e707e-4bbd-4630-963b-ce2f2947f971",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Strength);ProficiencyBonus(SavingThrow,Constitution);Proficiency(LightArmor);Proficiency(MediumArmor);Proficiency(HeavyArmor);Proficiency(Shields);Proficiency(SimpleWeapons);Proficiency(MartialWeapons)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSkills(6a4f8598-3a17-42d1-beac-d7ced582bafa,2);AddSpells(9e32fc2b-ce4f-47aa-b113-25cbdc025123);SelectPassives(da3203d8-750a-4de1-b8eb-1eccfccddf46,1,FightingStyle);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "dfb2fd83-9849-4c2d-be84-adedb81a867a",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(964e765d-5881-463e-b1b0-4fc6b8035aa8)",
+     "uuid": "aafbbc41-16e8-4296-a283-a2c5fdd0625b",
+     "subclasses": 0
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Longsword",
+     "type": "Weapon",
+     "root": "1865323f-b428-4791-a0a9-578841e57463"
+    },
+    {
+     "item": "WPN_Shortbow",
+     "type": "Weapon",
+     "root": "c5403c1d-f372-43e1-927a-9189e9e3545d"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_ScaleMail_Body",
+     "type": "Armor",
+     "root": "ca0aafad-0f1e-4d76-8e3b-925397bb436b"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
+  },
+  "Rogue": {
+   "table": "9a44e828-92db-4d6c-acbc-a4f8ef340415",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Dexterity);ProficiencyBonus(SavingThrow,Intelligence);Proficiency(LightArmor);Proficiency(SimpleWeapons);Proficiency(HandCrossbows);Proficiency(Longswords);Proficiency(Rapiers);Proficiency(Shortswords);ActionResource(SneakAttack_Charge,1,0)",
+     "PassivesAdded": "SneakAttack_Unlock",
+     "Selectors": "SelectSkills(a1c2b712-2ed6-4e5b-820f-c5db654fe006,4);AddSpells(d84379aa-8bd1-41e5-a21c-242669151fae);SelectSkillsExpertise(f974ebd6-3725-4b90-bb5c-2b647d41615d,2);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "16f00e7f-12f6-4cff-b610-4ee738b02d62",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(2dc120ff-903b-494b-8dc8-38721098ce38)",
+     "uuid": "35863719-e935-4757-a9f3-eb38a8cd8cb7",
+     "subclasses": 0
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Shortbow",
+     "type": "Weapon",
+     "root": "c5403c1d-f372-43e1-927a-9189e9e3545d"
+    },
+    {
+     "item": "WPN_Shortsword",
+     "type": "Weapon",
+     "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe"
+    },
+    {
+     "item": "OBJ_Kit_ThievesTools",
+     "type": "Object",
+     "root": "e32a200c-5b63-414d-ae57-00e7b38f125b"
+    },
+    {
+     "item": "OBJ_GreaseBottle",
+     "type": "Object",
+     "root": "e2968a2e-bc83-4d50-99ef-39ce78d2d630"
+    },
+    {
+     "item": "OBJ_GreaseBottle",
+     "type": "Object",
+     "root": "e2968a2e-bc83-4d50-99ef-39ce78d2d630"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "ARM_Leather_Body_Rogue",
+     "type": "Armor",
+     "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
+  },
+  "Wizard": {
+   "table": "d18eda7e-4b7d-490d-9952-cd33a3c60479",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(SpellSlot,2,1);ProficiencyBonus(SavingThrow,Intelligence);ProficiencyBonus(SavingThrow,Wisdom);Proficiency(Daggers);Proficiency(Quarterstaffs);Proficiency(LightCrossbows);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSkills(9f3a9f8d-f645-40b5-b36f-fb079b7b805e,2);SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,3,0,,,,AlwaysPrepared);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,6,0);AddSpells(34c3321d-75ab-4b50-a44d-cbac8705a360,,,,AlwaysPrepared);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "c201c736-3717-4c3c-9e36-2ae7387597a3",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "ActionResource(SpellSlot,1,1)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "d6184c47-5b99-4e63-95ac-02f8ce4ccda1",
+     "subclasses": 8
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Quarterstaff",
+     "type": "Weapon",
+     "root": "96e2abaf-78ff-4dcb-a6a3-a5f0c348bd9f"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Shoes",
+     "type": "Armor",
+     "root": "97f37571-35e8-4cc8-8b0d-ff92d20ae0bb"
+    },
+    {
+     "item": "ARM_Robe_Body",
+     "type": "Armor",
+     "root": "168b9099-19f5-44e4-b55c-e64ceb60b71f"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
+  },
+  "Barbarian": {
+   "table": "60bbcc97-5381-4898-bc15-908c072895de",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Strength);ProficiencyBonus(SavingThrow,Constitution);Proficiency(LightArmor);Proficiency(MediumArmor);Proficiency(Shields);Proficiency(SimpleWeapons);Proficiency(MartialWeapons);ActionResource(Rage,2,0)",
+     "PassivesAdded": "RageUnlock;UnarmouredDefence_Barbarian;Rage_Armour_Message;Rage_NoHeavyArmour_VFX",
+     "Selectors": "SelectSkills(233793b3-838a-4d4e-9d68-1e0a1089aba5,2);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "a2198ee9-ea4c-468e-b6b4-22b32d37806e",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "DangerSense;RecklessAttack",
+     "Selectors": "",
+     "uuid": "89986e8a-09b1-4163-b1d0-ddb2332bf3c5",
+     "subclasses": 0
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Greataxe",
+     "type": "Weapon",
+     "root": "d5712e24-ce9e-42ce-8fad-6e049b62c28c"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "ARM_Shoes_Barbarian",
+     "type": "Armor",
+     "root": "2577a332-8ad2-4e54-b52b-f4f7cc5823a1"
+    },
+    {
+     "item": "ARM_Barbarian",
+     "type": "Armor",
+     "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154"
+    },
+    {
+     "item": "WPN_Handaxe",
+     "type": "Weapon",
+     "root": "46b64a36-8446-45bd-98e8-ee81e3136baa"
+    },
+    {
+     "item": "WPN_Handaxe",
+     "type": "Weapon",
+     "root": "46b64a36-8446-45bd-98e8-ee81e3136baa"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
+  }
+ },
+ "races": {
+  "HalfElf": {
+   "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+   "table": "5f06db9e-31b0-41d9-bfbe-3446323c4bf6",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(Movement,9,0)",
+     "PassivesAdded": "HumanMilitia;Darkvision;FeyAncestry",
+     "Selectors": "",
+     "uuid": "a1729574-2f7b-4561-91d8-3766cf940420",
+     "subclasses": 0
+    }
+   }
+  }
+ }
+}

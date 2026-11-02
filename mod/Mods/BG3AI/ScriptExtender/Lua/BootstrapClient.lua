@@ -4,6 +4,7 @@ Ext.Require("Shared/RPC.lua")
 Ext.Require("Shared/Util.lua")
 Ext.Require("Shared/Mem.lua")
 Ext.Require("Shared/Arena.lua")
+Ext.Require("Shared/ArenaStats.lua") -- harness only: the mirror twins' stat entries (BG3AI_ARENA=1)
 local U = BG3AI.Util
 
 -- Client modules: Noesis UI reading (what is on screen) and UI commands.
