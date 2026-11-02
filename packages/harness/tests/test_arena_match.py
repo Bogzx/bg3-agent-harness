@@ -55,7 +55,10 @@ class ArenaModel(GameModel):
     round_cap + 1 ends it as a draw with the round left at the cap (caps=False: a mod without the cap),
     arena.status/end as Arena.lua answers them. The one game client's reaction prompt holds the game (a side's
     act.end_turn waits); read with no side, a prompt naming nobody of exactly one team is unowned (UIState.lua) and
-    the harness answers it. An op sent to a context the mod doesn't register it in is refused (wrong_context)."""
+    the harness answers it. An op sent to a context the mod doesn't register it in is refused (wrong_context).
+    hold: the game takes a side's act.end_turn ("done") but never moves the turn on (live 7: a downed member's turn),
+    the member's row in state.combat then ended; refuse_end: every act.end_turn fails with it; combat_error:
+    state.combat fails. A side's state.combat rows show ended, downed (hp 0) as StateWorld.lua does."""
 
     def __init__(self, clock: FakeClock, caps: bool = True, order: list[str] | None = None) -> None:
         super().__init__(clock=clock)
@@ -72,6 +75,10 @@ class ArenaModel(GameModel):
         self.mod_round = 0  # the mod's st.round
         self.summon_names: dict[str, str] = {}  # summon name -> side: in the match from its start, in `order`
         self.summons: set[str] = set()  # their uuids (not in arena.status's teams)
+        self.hold = False
+        self.refuse_end: str | None = None
+        self.combat_error: str | None = None
+        self.held_ends: set[str] = set()  # the uuids whose end the game took while holding
 
     def hp(self, side: str) -> float:
         a = self._match()
@@ -146,7 +153,21 @@ class ArenaModel(GameModel):
             return refused
         if op == "act.end_turn" and self.reaction is not None:
             return {"ok": True, "result": self._failed_job(op, "a reaction prompt is open", side)}
-        return super().reply_side(ctx, op, args, side)
+        if op == "act.end_turn" and self.refuse_end:
+            return {"ok": True, "result": self._failed_job(op, self.refuse_end, side)}
+        if op == "act.end_turn" and self.hold:
+            self.held_ends.add(self._match().member(str(args["char"])).uuid)
+            return {"ok": True, "result": self._job(op, {"ended": True}, side)}
+        if op == "state.combat" and self.combat_error:
+            return {"ok": False, "error": self.combat_error}
+        r = super().reply_side(ctx, op, args, side)
+        if op == "state.combat" and r and r.get("ok"):
+            for row in r["result"]["order"]:
+                if row["uuid"] in self.held_ends:
+                    row["ended"] = True
+                if row["relation"] == "party" and self._match().member(row["uuid"]).hp == 0:
+                    row["downed"] = True
+        return r
 
     def reply(self, ctx: str, op: str, args: dict[str, Any]) -> Any:
         if not self.answers:
@@ -242,6 +263,7 @@ class Run:
         self.agents, self.side, self.prompt = agents, side, prompt
         self.conversation = conversation or f"conv-{side}"
         self.model = 0.0
+        self.ended: set[str] = set()  # ender_once's ended members
         self.exit: am.AgentExit | None = None
         self.stopped = False
 
@@ -814,6 +836,135 @@ def test_a_team_member_whose_uuid_disagrees_with_the_arena_file_starts_no_match(
     assert agents.started == []
 
 
+def ender_once(game: Game, side: str, run: Run) -> None:
+    """Ends each of its members' turns once (a little model time), then only reads while the turn stays."""
+    if (char := my_turn(game, side)) and char not in run.ended:
+        run.ended.add(char)
+        run.model += 0.5
+        game.rpc("act.end_turn", {"char": char}, side)
+
+
+def looper(game: Game, side: str, run: Run) -> None:
+    """Reads its own turn every tick and never ends it, thinking for no time (live 7: wait_for/get_combat_state)."""
+    my_turn(game, side)
+
+
+def thinker(game: Game, side: str, run: Run) -> None:
+    """Thinks slowly on its turn, 0.18 s of model time a second (the rest is tool time), and never ends it: its
+    60 s cap comes at 334 s, the stall's 300 s idle (wall less model time) at 366 s."""
+    if my_turn(game, side):
+        run.model += 0.18
+
+
+def stalls(out: Path) -> list[dict]:
+    return [e for e in arena_events(out) if e["ev"] == "arena_stall"]
+
+
+def test_a_phase_the_game_holds_after_its_sides_end_is_a_fault_with_the_stuck_member(tmp_path):
+    """The side ended its member, the game never moved the turn on: after max(3 x 60 x 1, 300) s idle, a fault
+    (invalid, rerun) with an arena_stall {stall: game} naming the phase, the last read and each side's last calls; the
+    runner sends no act.end_turn of its own."""
+    model, game, clock, agents, spec = setup({"A": ender_once, "B": ender_once})
+    model.hold = True
+    tmp_path.mkdir(exist_ok=True)
+    calls = [
+        {"kind": "tool_call", "tool": "end_turn", "call_id": "c1"},
+        {"kind": "tool_result", "text": "Karlach's turn ended", "call_id": "c1"},
+        {"kind": "tool_call", "tool": "wait_for", "call_id": "c2"},
+    ]
+    (tmp_path / "A.events.jsonl").write_text("".join(json.dumps(c) + "\n" for c in calls) + "not json\n")
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault" and model.ends == [{"reason": "fault"}]
+    assert out.invalid is not None
+    assert out.invalid.startswith("fault: stall: Karlach's phase (side A, round 1) idle 30"), out.invalid
+    assert out.invalid.endswith("s, the game holds the turn")
+    [st] = stalls(tmp_path)
+    assert (st["stall"], st["side"], st["character"], st["members"], st["round"]) == (
+        "game",
+        "A",
+        "Karlach",
+        ["Karlach"],
+        1,
+    )
+    assert 300 <= st["idle_s"] < 302 and st["status"]["turn"]["side"] == "A" and st["status"]["hp"] == {"A": 1, "B": 1}
+    assert st["last"] == {
+        "A": [{"tool": "end_turn", "result": "Karlach's turn ended"}, {"tool": "wait_for", "result": None}],
+        "B": [],
+    }
+    assert game.calls.count(("act.end_turn", "A")) == 1  # the side's own: the runner sent none
+    assert grade(tmp_path)["invalid_reason"] == "fault"
+
+
+def test_a_side_holding_its_own_phase_without_thinking_is_capped_at_the_stall_and_forfeits(tmp_path):
+    """A client looping reads in its own phase (no model time, never an end) can't turn its stall into a rerun: at
+    the stall, arena_stall stall held, the runner ends the phase as at the cap, and three in a row forfeit."""
+    _model, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None and out.end is not None
+    assert (out.end["winner"], out.end["reason"], out.end["forfeit"], out.end["cause"]) == (
+        "B",
+        "forfeit",
+        "A",
+        "forced_turns",
+    )
+    assert [(e["stall"], e["character"]) for e in stalls(tmp_path)] == [
+        ("held", "Karlach"),
+        ("held", "Gale"),
+        ("held", "Karlach"),
+    ]
+    forced = [e["character"] for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert forced == ["Karlach", "Gale", "Karlach"]
+    assert game.calls.count(("act.end_turn", "A")) == 2  # the runner's ends; the third is the forfeit
+    g = grade(tmp_path)
+    assert (g["valid"], g["result"], g["forfeit"]) == (True, "B", {"side": "A", "cause": "forced_turns"})
+
+
+def test_a_slow_thinker_is_capped_by_its_model_time_never_stalled(tmp_path):
+    _model, game, clock, agents, spec = setup({"A": thinker, "B": passer})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and (out.end["reason"], out.end["forfeit"]) == ("forfeit", "A")
+    assert stalls(tmp_path) == []
+
+
+def test_once_capped_its_sides_model_time_no_longer_excuses_a_phase_the_game_holds(tmp_path):
+    """The model-time cap ended Karlach's phase, the game took the end and held the turn, and A's client thinks on:
+    the stall clock runs on the other side's idle, and the match ends as the game's fault."""
+    model, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    model.hold = True
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault"
+    assert [e["character"] for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"] == ["Karlach"]
+    assert [(e["stall"], e["character"]) for e in stalls(tmp_path)] == [("game", "Karlach")]
+
+
+def test_a_second_stall_of_a_phase_whose_ends_the_game_refuses_is_the_games(tmp_path):
+    model, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    model.refuse_end = "the game ignored the end-turn order"
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault"
+    assert [(e["stall"], e["character"]) for e in stalls(tmp_path)] == [("held", "Karlach"), ("game", "Karlach")]
+    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+
+
+def test_a_stall_whose_combat_read_fails_is_the_games(tmp_path):
+    model, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    model.combat_error = "busy"
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault"
+    [st] = stalls(tmp_path)
+    assert st["stall"] == "game" and st["detail"] == "state.combat failed: busy"
+
+
+def test_a_phase_whose_game_still_rolls_is_not_stalled(tmp_path):
+    """A new roll ring row every 200 s is progress: a phase that holds no model time but whose game moves runs on
+    to the wall cap with no stall."""
+    model, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    clock.tick_hooks.append(lambda: model.roll(True) if int(clock.t) % 200 == 0 else None)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "wall_cap"
+    assert stalls(tmp_path) == []
+
+
 def test_the_wall_cap_is_a_draw(tmp_path):
     arena = dict(ARENA, wall_cap_min=1, round_cap=100)
     _model, game, clock, agents, spec = setup({"A": passer, "B": passer}, arena)
@@ -883,10 +1034,15 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
         "rounds": 1,
     }
     assert ref.translate({"ev": "kill", "name": "x"}) == {"ev": "kill", "name": "x"}
+    passed = {"ev": "arena_turn_passed", "side": "A", "character": "ua2", "name": "Gale (downed)", "why": "downed"}
+    assert ref.translate({**passed, "round": 1}) == {**passed, "round": 1, "character": "Gale"}  # the arena's name
+    summon = {**passed, "character": "summon-1", "name": "Wolf", "why": "dead", "round": 1}
+    assert ref.translate(summon) == {**summon, "character": "Wolf"}  # not a team member: the record's name
     cap = ref.translate({"ev": "arena_end", "reason": "round_cap", "rounds": 4, "hp_left_A": 1, "hp_left_B": 1})
     assert cap is not None and cap["winner"] is None and ref.mod_end == cap
     assert ref.translate({**phase, "character": "ua1", "members": ["ua1"], "names": ["Karlach"], "round": 4}) is None
     assert ref.translate({"ev": "arena_end", "reason": "wipe", "rounds": 4}) is None
+    assert ref.translate({**passed, "round": 4}) is None  # after the end
 
     ref2 = am.Referee(spec, SIDES, hfacts.FactsWriter(tmp_path / "f2.jsonl", clock=clock.now))
     ref2.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]})
@@ -904,6 +1060,20 @@ def test_the_spec_refuses_a_draft_or_incomplete_arena():
         ArenaSpec.from_dict(dict(ARENA, karmic=True))
     spec = ArenaSpec.from_dict(ARENA)
     assert spec.teams == {"A": ("Karlach", "Gale"), "B": ("Wyll", "Halsin")} and spec.arena == ARENA
+
+
+def test_both_schemas_take_a_passed_turn_and_a_stall():
+    base = {"v": 1, "kind": "event", "t": 1.0}
+    passed = {**base, "ev": "arena_turn_passed", "side": "A", "character": "Gale", "name": "Gale", "why": "downed"}
+    stall = {**base, "ev": "arena_stall", "stall": "held", "side": "A", "character": "Gale", "members": ["Gale"]}
+    stall.update(round=2, idle_s=300.0, status={"turn": None, "round": 2, "hp": {}}, last={"A": [], "B": []})
+    for good in ({**passed, "round": 2}, {**passed, "round": 2, "error": "x"}, stall):
+        jsonschema.validate(good, FACTS_SCHEMA)
+        jsonschema.validate(good, BENCH_FACTS_SCHEMA)
+    for bad in (passed, {**passed, "round": 2, "why": "stunned"}, {**stall, "stall": "slow"}, {**stall, "members": []}):
+        for schema in (FACTS_SCHEMA, BENCH_FACTS_SCHEMA):
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(bad, schema)
 
 
 def test_the_facts_schema_takes_a_phase_and_refuses_a_turn_without_its_fields():

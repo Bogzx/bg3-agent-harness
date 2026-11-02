@@ -53,7 +53,9 @@
         "arena_turn",
         "arena_turn_forced",
         "arena_end",
-        "arena_reaction_unowned"
+        "arena_reaction_unowned",
+        "arena_turn_passed",
+        "arena_stall"
       ]
     }
   },
@@ -224,7 +226,7 @@
         }
       },
       "then": {
-        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count; act.end_turn for each member); it names that phase's side and character.",
+        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count) or at a held stall (arena_stall stall held), with act.end_turn for each member; it names that phase's side and character.",
         "required": [
           "side",
           "character"
@@ -371,6 +373,108 @@
           "detail": {
             "type": "string",
             "description": "the prompt's text"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn_passed"
+          }
+        }
+      },
+      "then": {
+        "description": "The mod ended the turn of a phase's member who can't act (why: downed or dead) so the next phase starts; character is named as in arena_turn, name is the display name, error is set when the game's EndTurn failed. Not a turn: results ignore it.",
+        "required": [
+          "side",
+          "character",
+          "why",
+          "round"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "why": {
+            "enum": [
+              "downed",
+              "dead"
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_stall"
+          }
+        }
+      },
+      "then": {
+        "description": "A phase made no progress for its stall time (idle_s: wall time less model time). stall held: its side still held a member, and the phase is capped (an arena_turn_forced follows, counted toward the forfeit). stall game: the game held the turn, and the match ends as a fault. status is the last arena.status, last each side's last tool calls. Results ignore it.",
+        "required": [
+          "stall",
+          "side",
+          "character",
+          "members",
+          "round",
+          "idle_s",
+          "status",
+          "last"
+        ],
+        "properties": {
+          "stall": {
+            "enum": [
+              "held",
+              "game"
+            ]
+          },
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            },
+            "minItems": 1
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idle_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "status": {
+            "type": "object"
+          },
+          "last": {
+            "type": "object"
+          },
+          "detail": {
+            "type": "string"
           }
         }
       }
