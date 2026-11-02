@@ -10,7 +10,7 @@ from typing import Any
 
 from .. import actq, delta, longnav, macros, render, rules, turn
 from ..game import GameError, JobResult, NotReady
-from . import combat, core, memory, overview, plumbing, reporting, travel
+from . import combat, core, memory, observe, overview, plumbing, reporting, travel
 
 # ---------------------------------------------------------------------------
 # batch: several actions per decision
@@ -373,8 +373,11 @@ def _wait_state(low: str, tgt: str, kinds: set, ui: dict, view: dict) -> str | N
     if low == "my_turn" or "my_turn" in kinds:
         if not _wait_combat(view).get("active"):
             return "not in combat"
-        if _wait_acting(view):
-            return "\n".join([combat._now_turn_text(_wait_acting(view))] + turn.disabled_lines(_wait_combat(view), queueing._label))
+        mine = _wait_acting(view)
+        if mine:
+            cs = _wait_combat(view)
+            return "\n".join([combat._now_turn_text(mine)] + turn.disabled_lines(cs, queueing._label)
+                             + [x for x in (observe._turn_block(cs, mine[0]),) if x])
     if not kinds:
         return None
     for k in kinds & set(_PROMPT_SCREENS_WAIT):

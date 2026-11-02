@@ -18,6 +18,7 @@ from test_turn_macros import (  # sets BG3AI_RUNTIME before importing bg3ai
     IMP,
     NOT_JOBS,
     P1,
+    P2,
     Base,
     CombatTurnBase,
     batch,
@@ -132,6 +133,38 @@ class ChangesInCombat(CombatTurnBase):
         self.g.combat = {"active": False}
         out = combat_tools.use_ability("Target_MainHandAttack", target=core.H.get(GOB), who=core.H.get(P1))
         self.assertNotIn("CHANGES", out)
+
+
+class HandOver(CombatTurnBase):
+    """A party turn starts with the member's actions on the result (a player sees the hotbar at once)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.g.actions_by = {P2: {"resources": {"ActionPoint": [1, 1], "Movement": [9, 9]},
+                                  "actions": [{"name": "Attack", "spell": "Target_MainHandAttack"},
+                                              {"name": "Action Surge", "spell": "Shout_ActionSurge"}]}}
+
+    def test_end_turn_shows_the_next_members_actions(self):
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
+        out = combat_tools.end_turn()
+        head, _, block = out.partition("\nYOUR ACTIONS (e5)\n")
+        self.assertIn("now e5's turn", head)
+        self.assertIn("NOW Action 1/1", block)
+        self.assertIn("Action Surge", block)
+        self.assertEqual([a for op, a in self.g.calls if op == "state.actions"], [{"uuid": P2}])
+
+    def test_wait_for_my_turn_shows_them_too(self):
+        self.g.combat["current"] = P2
+        out = batch.wait_for("my_turn")
+        self.assertIn("now e5's turn", out)
+        self.assertIn("\nYOUR ACTIONS (e5)\n", out)
+        self.assertIn("Action Surge", out)
+
+    def test_combat_over_has_no_block(self):
+        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(active=False)
+        out = combat_tools.end_turn()
+        self.assertIn("combat is over", out)
+        self.assertNotIn("YOUR ACTIONS", out)
 
 
 class ToolsList(unittest.TestCase):

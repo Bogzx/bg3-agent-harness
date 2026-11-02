@@ -173,8 +173,9 @@ class FakeGame:
                 if "order" in cs:
                     cs["order"] = order
                 return cs
-            if op == "state.actions":
-                return json.loads(json.dumps(self.actions_by.get(args.get("uuid"), self.actions)))
+            if op == "state.actions":  # StateOps.lua: {uuid, resources, actions}
+                acts = json.loads(json.dumps(self.actions_by.get(args.get("uuid"), self.actions)))
+                return acts if isinstance(acts, dict) else {"uuid": args.get("uuid"), "actions": acts}
             if op == "nav.approach" and self.approach is not None:
                 return self.approach(args) if callable(self.approach) else dict(self.approach)
             if op == "nav.los_spot" and self.los_spot is not None:

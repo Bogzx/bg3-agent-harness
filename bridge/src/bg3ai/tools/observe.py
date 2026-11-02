@@ -503,16 +503,25 @@ def _combat_state_text() -> str:
         body += ("\nSHARED TURN: " + ", ".join(queueing._label(u) for u in mine)
                  + " can all act now, in any order (who=<member> on each action, end_turn for each)")
     if cur in party:
-        acts = core.game.try_rpc("state.actions", {"uuid": cur})
-        overview._learn_actions(cur, acts)
-        if acts:
-            mv = (acts.get("resources") or {}).get("Movement")  # [amount, max] (State.lua resourcesView)
-            rl = turn.reach_line(res, cur, mv[0] if isinstance(mv, (list, tuple)) and mv else None, queueing._label)
-            if rl:
-                body += "\n" + rl
-            body += "\nYOUR ACTIONS (" + core.H.get(cur) + ")\n" + render.render_actions(acts, core.H)
+        block = _turn_block(res, cur)
+        if block:
+            body += "\n" + block
     body += _light_note(res)
     return body
+
+
+def _turn_block(cs: Any, cur: str) -> str:
+    """The acting party member's turn block as get_combat_state shows it: its reach line and YOUR ACTIONS (one
+    state.actions read; cs is the state.combat already read). '' when the read fails. end_turn and
+    wait_for('my_turn') end with it too, so a party turn needs no get_combat_state first (a player sees the hotbar)."""
+    acts = core.game.try_rpc("state.actions", {"uuid": cur})
+    overview._learn_actions(cur, acts)
+    if not acts:
+        return ""
+    mv = (acts.get("resources") or {}).get("Movement")  # [amount, max] (State.lua resourcesView)
+    rl = turn.reach_line(cs, cur, mv[0] if isinstance(mv, (list, tuple)) and mv else None, queueing._label) \
+        if isinstance(cs, dict) else None
+    return "\n".join(([rl] if rl else []) + ["YOUR ACTIONS (" + core.H.get(cur) + ")", render.render_actions(acts, core.H)])
 
 
 _light_noted: set[str] = set()  # members told this combat that they fight with the lantern

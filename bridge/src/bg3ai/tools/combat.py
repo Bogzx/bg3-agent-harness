@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .. import boxclick, hotbar, hoverclick, render, turn, twostep
 from ..game import GameError, JobResult
-from . import core, overview, plumbing, reporting, world_tools
+from . import core, observe, overview, plumbing, reporting, world_tools
 
 # ---------------------------------------------------------------------------
 # act: combat
@@ -488,7 +488,9 @@ def _wait_for_party_turn(max_s: float) -> str:
             return "combat is over"
         mine = turn.party_acting(cs, party)
         if mine:
-            return "\n".join([_now_turn_text(mine)] + notes + turn.disabled_lines(cs, queueing._label))
+            cur = st.get("active") if st.get("active") in mine else mine[0]
+            return "\n".join([_now_turn_text(mine)] + notes + turn.disabled_lines(cs, queueing._label)
+                             + [x for x in (observe._turn_block(cs, cur),) if x])
         key = (cs.get("round"), cs.get("current"), tuple(turn.passing(cs)))
         if key != seen:
             seen, since = key, time.monotonic()
