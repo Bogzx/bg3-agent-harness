@@ -657,6 +657,7 @@ def run_failures(
     why: str,
     cap: str | None = None,
     session_minutes: float | None = None,
+    start: tuple[float, str | None] = (0.0, None),
 ) -> list[Json]:
     """Every failure of a bench run, tagged harness/agent/unknown as the legacy series tags them (runs.classify_run
     over the run's runner_events.jsonl, its play streams and the agent's reloads; its one session as the history),
@@ -664,10 +665,11 @@ def run_failures(
     A harness failure makes the run invalid (bg3bench results.validity): it doesn't score the model. name: the
     outcome to classify ("stopped" for an operator stop: listed apart, not a failure). A `timeout` whose agent ended
     its turn with more than EARLY_EXIT_MINUTES of the session_minutes left (no stop resume left) says so, not that the
-    time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min)."""
+    time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min). `start`: (run_start, start save): a launch
+    recovered before it is the run's note, not a failure (runs.recovered_launch)."""
     res = outcome.result
     logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    events = [e for e in logged if e.get("t", 0) >= t0 - 1]
+    events = [e for e in logged if e.get("t", 0) >= t0 - 1 and not runs.recovered_launch(e, *start)]  # pyright: ignore[reportUnknownMemberType]
     session = {"kind": "play", "session": SID, "started": outcome.started, "ended": res.ended}
     tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
@@ -956,9 +958,11 @@ class LiveRunHost:
         t_zero = cast(float, r.facts_writer().t0)  # _begin's facts_writer() wrote run_start before the kickoff
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         why, cap = foreign or getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
+        start = (t_zero, r.opt.start_save)
         failures = run_failures(
-            r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes
+            r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes, start
         )
+        relaunched: list[Json] = runs.recovered_launches(r.state.dir / "runner_events.jsonl", t0, *start)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         counts = {cls: sum(int(f.get("n") or 1) for f in failures if f["class"] == cls) for cls in runs.CLASSES}
         return (
             {
@@ -985,6 +989,7 @@ class LiveRunHost:
                 "agent_failures": counts[runs.AGENT],
                 "unknown_failures": counts[runs.UNKNOWN],
                 "failures": failures,
+                "recovered_launches": relaunched,  # launches relaunched before run_start: noted, not failures
             }
             | ({"verdict": goal["verdict"]} if goal else {})
             | ({FOREIGN_SAVE: foreign} if foreign else {})
