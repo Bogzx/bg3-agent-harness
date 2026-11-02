@@ -5,7 +5,11 @@
 -- paths the mod already reads live (State.lua, GuardSpells.lua, Guard.resources):
 --   race, level, classes (class/subclass/level), abilities, max_hp, ac, equipment (slot -> item template),
 --   inventory (item templates, sorted), spells (the SpellBook's ids), prepared, passives, statuses, resources
---   (Guard.resources: name -> {level -> amount}; read after a full restore).
+--   (Guard.resources: name -> {level -> amount}; read after a full restore), proficiencies (Proficiency.Flags, as
+--   StateWorld), skills (Stats.Skills by SkillId, as State.lua), boosts (BoostsContainer by type, as State.lua; each
+--   boost as "type|boost|params|params2" from its BoostInfo.Params, never its cause: an item's or a status's uuid
+--   differs between the twins). Character creation and level up write their choices there (skills, expertise,
+--   proficiencies); BoostInfo.Params is not read live yet (the mirror probe's profiles read it).
 -- The template is recorded, not compared (where the copy came from, not how it plays). A field that doesn't read is
 -- a problem too: it would hide a difference. Display names must be unique across all members (reaction ownership is
 -- matched by name on the client).
@@ -18,7 +22,7 @@ local Ar = BG3AI.Arena
 local Sym = {}
 Ar.Symmetry = Sym
 Sym.FIELDS = { "race", "level", "classes", "abilities", "max_hp", "ac", "equipment", "inventory", "spells",
-    "prepared", "passives", "statuses", "resources" }
+    "prepared", "passives", "statuses", "resources", "proficiencies", "skills", "boosts" }
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 
@@ -103,6 +107,31 @@ function Sym.profile(u)
         return sorted(out)
     end)
     p.resources = read(function() return BG3AI.Guard.resources(u) end)
+    p.proficiencies = read(function()
+        local out = {}
+        for _, f in pairs(e.Proficiency.Flags) do out[#out + 1] = tostring(f) end
+        return sorted(out)
+    end)
+    p.skills = read(function()
+        local out = {}
+        for i = 0, 17 do
+            local v = e.Stats.Skills[i + 1]
+            if v == nil then error("skills") end
+            out[tostring(Ext.Enums.SkillId[i])] = v
+        end
+        return out
+    end)
+    p.boosts = read(function()
+        local out = {}
+        for _, entry in pairs(e.BoostsContainer.Boosts) do
+            for _, b in ipairs(entry.Boosts) do
+                local pr = b.BoostInfo.Params
+                out[#out + 1] = table.concat({ tostring(entry.Type), tostring(pr.Boost), tostring(pr.Params),
+                    tostring(pr.Params2) }, "|")
+            end
+        end
+        return sorted(out)
+    end)
     return p
 end
 

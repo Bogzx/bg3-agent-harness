@@ -4,6 +4,9 @@
 -- test_arena_lua.lua runs it after its stubs and helpers, shared as globals.
 
 local SLOTS = { [0] = "Helmet", [3] = "Breast", [5] = "MeleeMainHand" }
+local SKILLS = { [0] = "Deception", "Intimidation", "Performance", "Persuasion", "Acrobatics", "SleightOfHand",
+    "Stealth", "Arcana", "History", "Investigation", "Nature", "Religion", "Athletics", "AnimalHandling", "Insight",
+    "Medicine", "Perception", "Survival" }
 
 -- One character's components: a level-4 fighter-like profile; over = fields to change.
 local function body(u, over)
@@ -44,7 +47,15 @@ local function body(u, over)
         PassiveContainer = { Passives = passives },
         StatusContainer = { Statuses = { h1 = "LONGREST_RECOVERY" } },
         ActionResources = { Resources = { ["res-action"] = { { Level = 0, Amount = 1 } } } },
+        Proficiency = { Flags = over.proficiencies or { "LightArmor", "MediumArmor", "MartialWeapons" } },
+        BoostsContainer = { Boosts = { { Type = "ProficiencyBonus", Boosts = {} } } },
     }
+    c.Stats.Skills = {}
+    for i = 1, 18 do c.Stats.Skills[i] = (over.skills or {})[i] or 0 end
+    for i, prm in ipairs(over.boosts or { "Skill,Athletics", "SavingThrow,Strength" }) do
+        c.BoostsContainer.Boosts[1].Boosts[i] = { BoostInfo = { Params = { Boost = "ProficiencyBonus", Params = prm,
+            Params2 = "" } } }
+    end
     for k, v in pairs(over.comps or {}) do c[k] = v or nil end
     world[u] = { pos = { 0, 0, 0 }, comps = c }
     osiv[key("GetTemplate", u)] = over.template or "Hireling_Fighter_tpl"
@@ -54,7 +65,7 @@ local savedEnums
 local function mirror(overB1, overB2)
     reset()
     savedEnums = Ext.Enums
-    Ext.Enums = { ItemSlot = SLOTS }
+    Ext.Enums = { ItemSlot = SLOTS, SkillId = SKILLS }
     body(A1); body(B1, overB1); body(A2); body(B2, overB2)
 end
 
@@ -94,6 +105,27 @@ test("arena.symmetry: any gameplay difference is a problem, with both values", f
     for _, d in ipairs(r.result.pairs[2].diffs) do d2[#d2 + 1] = d.field end
     eq(table.concat(d2, ","), "inventory,spells,passives", "pair 2 fields")
     assert(problems(r):find("pair 1 (Ana, Bo): race differs", 1, true), problems(r))
+end)
+
+-- Character creation and level up write the twins' choices into proficiencies, skills and boosts (D289 route 1).
+test("arena.symmetry: proficiencies, skills and boosts are compared (a skill choice, expertise, a proficiency)",
+    function()
+    local sk = {}
+    sk[13] = 2 -- Athletics +2 for B1 only
+    mirror({ skills = sk, boosts = { "Skill,Acrobatics", "SavingThrow,Strength" } },
+        { proficiencies = { "LightArmor", "MediumArmor", "MartialWeapons", "Shields" } })
+    local r = check(P)
+    eq(r.result.ok, false, "not ok")
+    local d1, d2 = {}, {}
+    for _, d in ipairs(r.result.pairs[1].diffs) do d1[#d1 + 1] = d.field end
+    for _, d in ipairs(r.result.pairs[2].diffs) do d2[#d2 + 1] = d.field end
+    eq(table.concat(d1, ","), "skills,boosts", "pair 1 fields")
+    eq(table.concat(d2, ","), "proficiencies", "pair 2 fields")
+    eq(r.result.members[B1].skills.Athletics, 2, "skills by name")
+    eq(enc(r.result.members[A1].boosts), enc({ "ProficiencyBonus|ProficiencyBonus|SavingThrow,Strength|",
+        "ProficiencyBonus|ProficiencyBonus|Skill,Athletics|" }), "boosts as type|boost|params|params2, sorted")
+    mirror({ comps = { BoostsContainer = false } })
+    assert(problems(check(P)):find("Bo: boosts doesn't read", 1, true), "an unread BoostsContainer")
 end)
 
 test("arena.symmetry: a field that doesn't read is a problem; two members with one display name too", function()
