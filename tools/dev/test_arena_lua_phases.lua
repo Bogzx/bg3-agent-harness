@@ -327,6 +327,8 @@ test("live round change: new TurnStarted before the old TurnEnded: round 2's fir
     for _, u in ipairs({ A1, B1, A2, B2 }) do fire("TurnEnded", "S_Player_" .. u) end -- the game shows all open again
     tick()
     eq(j.status, "done", "B2's end: " .. tostring(j.error))
+    eq(j.result.still_to_act, nil, "round 2's open members are not this group's still to act")
+    eq(enc(j.result.round_moved_on), enc({ from = 1, to = 2 }), "round_moved_on")
     for _, u in ipairs({ A1, B1, A2, B2 }) do eq(G.turn_is_over(u), false, u .. "'s new turn not over") end
     eq(G.is_my_turn(A1), true, "A1 acts")
     local r = refs("arena_turn")

@@ -324,6 +324,28 @@ test("turn pushes: no round seen for the combat (a save loaded mid-combat): roun
     restore()
 end)
 
+test("a group's last end settled after the next round started: round_moved_on, no still_to_act", function()
+    local restore = group_setup()
+    for _, u in ipairs({ P1, P2 }) do osiv[key("CombatGetGuidFor", u)] = "C1" end
+    A.dispatch("CombatRoundStarted", { "C1", "1" })
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("TurnStarted", { P2 })
+    G.end_requested[P2] = clock -- P2 ended; P1's is the group's last end
+    local j = job(op("end_turn", { char = P1 }))
+    tick(5)
+    eq(j.status, "running", "waits for the game")
+    A.dispatch("CombatRoundStarted", { "C1", "2" }) -- the live order: the new round's starts, then the old ends
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("TurnStarted", { P2 })
+    A.dispatch("TurnEnded", { P1 })
+    A.dispatch("TurnEnded", { P2 })
+    eq(j.status, "done", "done: " .. tostring(j.error))
+    eq(j.result.still_to_act, nil, "no still_to_act (P2's open turn is round 2's)")
+    eq(j.result.round_moved_on and j.result.round_moved_on.from, 1, "from")
+    eq(j.result.round_moved_on and j.result.round_moved_on.to, 2, "to")
+    restore()
+end)
+
 test("S088 whose turn: another side's TurnStarted after the group's ends the members' turns (Guard.turn_moved_on)", function()
     local restore = group_setup()
     local ok, err = pcall(function()

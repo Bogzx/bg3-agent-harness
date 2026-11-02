@@ -34,8 +34,22 @@ reg("end_turn", function(args)
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+    -- The round this turn is in. A group's last end can settle after the game started the next round (live
+    -- 2026-11-02: CombatRoundStarted and the new TurnStarted before the old TurnEnded): the members open then are the
+    -- new round's, not this group's still to act.
+    local round = G.round_of(char)
+    local function moved_on()
+        local now = G.round_of(char)
+        if round and now and now ~= round then return { from = round, to = now } end
+    end
     local function finish(job, requested, by_flags)
         local res = { ended = true }
+        local mv = moved_on()
+        if mv then
+            res.round_moved_on = mv
+            RPC.finish_job(job, "done", res)
+            return
+        end
         if by_flags then
             -- S087 05:57:40: the game showed this end (RequestedEndTurn / the turn closed), then, while it applied
             -- the group's ends (18 s to TurnEnded), showed the turn open again: Claude read as acting and the next
@@ -81,7 +95,6 @@ reg("end_turn", function(args)
     end
     local Ar = BG3AI.Arena
     local arena = Ar and Ar.active()
-    local round = arena and Ar.state.round
     return start("end_turn", char, {
         timeout_ms = arena and A.END_LAST_WAIT_MS + 1000 or 10000,
         osi = {
@@ -102,7 +115,7 @@ reg("end_turn", function(args)
             -- In an arena this is the group's last end (nobody else still to act): the game closes the group, which
             -- took up to 18 s to its TurnEnded (S087), and may show nothing until then. Done when the round moves
             -- on (a new round's open turns are not stale ends: nobody's EndTurn is sent again).
-            if arena and Ar.state.round ~= round then RPC.finish_job(job, "done", { ended = true }) return end
+            if arena and moved_on() then finish(job) return end
             -- S044/S045: our Spiritual Weapon's EndTurn (×4) and turns during Ketheric's mid-fight lines (×5) were
             -- ignored: 10 s TIMEOUT each. Hand back early so the bridge presses the HUD's End Turn instead.
             if RPC.now_ms() - job.started >= (arena and A.END_LAST_WAIT_MS or A.END_IGNORED_MS) then
