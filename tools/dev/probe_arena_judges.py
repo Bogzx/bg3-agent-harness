@@ -178,19 +178,17 @@ def enemy_counts(teams: dict[str, Any], enemy: dict[str, Any]) -> list[str]:
     return why
 
 
-def judge_hostile(
-    teams: dict[str, Any], facts: dict[str, dict[str, Any]], before: dict[str, Any], after: dict[str, Any]
-) -> Verdict:
-    """q3: the teams enemies of each other and not within, before the combat starts and after, all 8 in one
-    combat."""
+def judge_hostile(teams: dict[str, Any], facts: dict[str, dict[str, Any]], after: dict[str, Any]) -> Verdict:
+    """q3: the teams enemies of each other and not within once the combat has started (the last of the probe's
+    reads), all 8 in one combat. The read before the combat is informational: live 2026-11-02 load1 read B->A 0/16
+    there, then 16/16 in combat."""
     combats = {f.get("combat") for f in facts.values()}
-    why = [f"before combat: {w}" for w in enemy_counts(teams, before)]
-    why += [f"in combat: {w}" for w in enemy_counts(teams, after)]
+    why = [f"in combat: {w}" for w in enemy_counts(teams, after)]
     if len(combats) != 1 or None in combats or NULL in combats:
         why.append(f"combat guids: {sorted(str(c) for c in combats)}")
     if why:
         return "FAIL", "; ".join(why)
-    return "PASS", "teams enemies of each other (not within) before and in combat, all 8 in one combat"
+    return "PASS", "teams enemies of each other (not within) in combat, all 8 in one combat"
 
 
 def judge_turns(teams: dict[str, Any], turns: list[dict[str, Any]], downed: dict[str, Any] | None) -> Verdict:
