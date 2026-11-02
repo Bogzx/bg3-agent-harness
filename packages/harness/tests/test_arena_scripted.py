@@ -253,9 +253,9 @@ class FakeModGame:
     def __init__(self, fake: FakeMod) -> None:
         self.fake = fake
 
-    def rpc(self, op: str, args: dict[str, Any], side: str | None = None) -> Any:
+    def rpc(self, op: str, args: dict[str, Any], side: str | None = None, context: str = "server") -> Any:
         payload = json.dumps({"op": op, "args": args or {}, **({"side": side} if side else {})})
-        reply = json.loads(self.fake.answer("server", f"return Mods.BG3AI.BG3AI.rpc([==[{payload}]==])"))
+        reply = json.loads(self.fake.answer(context, f"return Mods.BG3AI.BG3AI.rpc([==[{payload}]==])"))
         if not reply.get("ok"):
             raise RuntimeError(f"{op}: {reply.get('error')}")
         return reply.get("result")
@@ -282,8 +282,8 @@ def test_two_scripted_clients_play_a_match_to_its_end_through_their_bridges(tmp_
             side_clients[s] = SideClient(sc.ScriptedClient(cfg), "none", None, env)
         agents = LiveAgents(side_clients, out, dict(os.environ), spec.wall_cap_min)
         outcome = am.run_arena(spec, sides, FakeModGame(fake), agents, out, alive.WallClock())
-    assert outcome.invalid is None and outcome.end is not None
-    assert (outcome.end["reason"], outcome.end["winner"]) == ("wipe", "A")  # A acts first in every round
+    assert outcome.invalid == "scripted: side A and B played the scripted client (a live check, never graded)"
+    assert outcome.end is not None and (outcome.end["reason"], outcome.end["winner"]) == ("wipe", "A")  # A first
     assert not [e for e in arena_events(out) if e["ev"] == "arena_turn_forced"]
     assert outcome.cost("A") == 0 and outcome.cost("B") == 0
     for s in ("A", "B"):  # each side's events file, written from its client's stream

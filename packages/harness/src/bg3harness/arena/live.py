@@ -39,8 +39,8 @@ class LiveGame:
     def __init__(self, r: Any):
         self.r = r
 
-    def rpc(self, op: str, args: dict[str, Any], side: str | None = None) -> Any:
-        return gio.rpc(op, args, timeout=EVAL_TIMEOUT, side=side)
+    def rpc(self, op: str, args: dict[str, Any], side: str | None = None, context: str = "server") -> Any:
+        return gio.rpc(op, args, context=context, timeout=EVAL_TIMEOUT, side=side)
 
     def alive(self) -> bool:
         return bool(self.r.game_alive())

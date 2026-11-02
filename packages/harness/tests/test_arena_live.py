@@ -185,3 +185,20 @@ def test_a_sides_op_carries_its_side_and_a_harness_op_none(monkeypatch):
     payloads = [json.loads(c.split("[==[")[1].split("]==]")[0]) for c in sent]
     assert payloads == [{"op": "act.end_turn", "args": {"char": "u1"}, "side": "B"}, {"op": "arena.status", "args": {}}]
     assert sent[1] == 'return Mods.BG3AI.BG3AI.rpc([==[{"op": "arena.status", "args": {}}]==])'
+
+
+def test_the_live_game_sends_an_op_to_the_context_asked_for(monkeypatch):
+    """The referee's ui.state and ui.react are the mod's client context's (live 7: sent to the server context, every
+    unowned reaction check failed "unknown op 'ui.state' in server context")."""
+    sent: list[tuple[str, str]] = []
+
+    def lua_eval(code: str, context: str, timeout: float) -> str:
+        sent.append((json.loads(code.split("[==[")[1].split("]==]")[0])["op"], context))
+        return json.dumps({"ok": True, "result": {}})
+
+    monkeypatch.setattr(gio, "lua_eval", lua_eval)
+    game = live.LiveGame(None)
+    game.rpc("ui.state", {}, context="client")
+    game.rpc("arena.status", {})
+    game.rpc("act.end_turn", {"char": "u1"}, "B")
+    assert sent == [("ui.state", "client"), ("arena.status", "server"), ("act.end_turn", "server")]

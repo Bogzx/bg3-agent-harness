@@ -15,6 +15,7 @@ import jsonschema
 import pytest
 from bg3harness.arena import match as am
 from bg3harness.arena.spec import ArenaSpec, ArenaSpecError, Side
+from bg3harness.testing.fakemod import unknown
 from bg3harness.testing.scripted import FakeClock, GameModel, Member
 
 REPO = Path(__file__).resolve().parents[3]
@@ -37,6 +38,15 @@ ARENA = {
 SIDES = {"A": Side("A", "pi/model-x"), "B": Side("B", "pi/model-y")}
 
 
+def wrong_context(ctx: str, op: str) -> dict[str, Any] | None:
+    """The mod's refusal of an op sent to a context that doesn't register it (Client/: ui.* and autoskip.*; Shared/:
+    events, job, sys, hotbar, in both; Server/: the rest), else None."""
+    shared, client = op.startswith(("events.", "job.", "sys.", "hotbar.")), op.startswith(("ui.", "autoskip."))
+    if shared or (ctx == "client") == client:
+        return None
+    return unknown(ctx, op)
+
+
 class ArenaModel(GameModel):
     """GameModel plus the mod's arena module: setup starts the match (in `order`, names, when given; one shared turn
     group per round, as live), a change of the acting side or the round is a phase: one ring arena_turn {side,
@@ -45,7 +55,7 @@ class ArenaModel(GameModel):
     round_cap + 1 ends it as a draw with the round left at the cap (caps=False: a mod without the cap),
     arena.status/end as Arena.lua answers them. The one game client's reaction prompt holds the game (a side's
     act.end_turn waits); read with no side, a prompt naming nobody of exactly one team is unowned (UIState.lua) and
-    the harness answers it."""
+    the harness answers it. An op sent to a context the mod doesn't register it in is refused (wrong_context)."""
 
     def __init__(self, clock: FakeClock, caps: bool = True, order: list[str] | None = None) -> None:
         super().__init__(clock=clock)
@@ -132,6 +142,8 @@ class ArenaModel(GameModel):
         return [s for s, team in self._match().teams.items() if any(m.name == who for m in team)]
 
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
+        if (refused := wrong_context(ctx, op)) is not None:
+            return refused
         if op == "act.end_turn" and self.reaction is not None:
             return {"ok": True, "result": self._failed_job(op, "a reaction prompt is open", side)}
         return super().reply_side(ctx, op, args, side)
@@ -139,6 +151,8 @@ class ArenaModel(GameModel):
     def reply(self, ctx: str, op: str, args: dict[str, Any]) -> Any:
         if not self.answers:
             return None
+        if (refused := wrong_context(ctx, op)) is not None:
+            return refused
         if op == "arena.setup":
             if self.setup_error:
                 return {"ok": True, "result": self._failed_job("arena.setup", self.setup_error)}
@@ -189,10 +203,10 @@ class Game:
         self.model = model
         self.calls: list[tuple[str, str | None]] = []
 
-    def rpc(self, op: str, args: dict[str, Any], side: str | None = None) -> Any:
+    def rpc(self, op: str, args: dict[str, Any], side: str | None = None, context: str = "server") -> Any:
         self.calls.append((op, side))
         m = self.model
-        r = m.reply_side("server", op, args, side) if side else m.reply("server", op, args)
+        r = m.reply_side(context, op, args, side) if side else m.reply(context, op, args)
         if r is None:
             raise TimeoutError(f"{op}: no answer")
         if not r["ok"]:
@@ -339,6 +353,7 @@ def test_a_full_match_to_a_wipe(tmp_path):
     turns = [(e["side"], e["character"], e["round"]) for e in evs if e["ev"] == "arena_turn"]
     assert turns == [("A", "Karlach", 1), ("B", "Wyll", 1), ("A", "Gale", 1), ("B", "Halsin", 1)]
     assert [e["ev"] for e in evs].count("arena_start") == 1 and evs[-1]["ev"] == "arena_end"
+    assert "invalid" not in evs[-1]  # two models' match
     assert agents.started == [
         ("A", "The fight is on. You play side A: Karlach, Gale.", None, ""),
         ("B", "The fight is on. You play side B: Wyll, Halsin.", None, ""),
@@ -445,7 +460,7 @@ def test_a_reaction_prompt_a_team_owns_is_left_to_that_side(tmp_path):
 
     def answer() -> None:  # side B answers its prompt once the runner has looked at it
         if model.reaction is not None and ("ui.state", None) in game.calls:
-            game.rpc("ui.react", {"use": True}, "B")
+            game.rpc("ui.react", {"use": True}, "B", context="client")
 
     clock.tick_hooks.append(answer)
     am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
@@ -805,6 +820,30 @@ def test_the_wall_cap_is_a_draw(tmp_path):
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.end is not None and (out.end["reason"], out.end["winner"]) == ("wall_cap", None)
     assert grade(tmp_path, arena)["result"] == "draw"
+
+
+BENCH_FACTS_SCHEMA = json.loads((REPO / "packages" / "bench" / "schema" / "arena-facts.v1.schema.json").read_text())
+
+
+@pytest.mark.parametrize("scripted", ["A", "B"])
+def test_a_match_the_scripted_client_plays_is_invalid_whatever_its_end(tmp_path, scripted):
+    """A side the harness's scripted client plays (player "scripted/none"): the match is a live check, invalid in the
+    harness's own outcome, its arena_end marked, both for the mod's end (a wipe) and the runner's (the wall cap)."""
+    sides = {**SIDES, scripted: Side(scripted, "scripted/none", "scripted", "scripted", "none")}
+    _model, game, clock, agents, spec = setup({"A": attacker, "B": passer})
+    out = am.run_arena(spec, sides, game, agents, tmp_path / "wipe", clock)
+    assert out.end is not None and out.end["reason"] == "wipe"
+    assert out.invalid == f"scripted: side {scripted} played the scripted client (a live check, never graded)"
+    arena = dict(ARENA, wall_cap_min=1, round_cap=100)
+    _model, game, clock, agents, spec = setup({"A": passer, "B": passer}, arena)
+    capped = am.run_arena(spec, sides, game, agents, tmp_path / "cap", clock)
+    assert capped.end is not None and capped.end["reason"] == "wall_cap"
+    assert capped.invalid is not None and capped.invalid.startswith("scripted: ")
+    for run, a in (("wipe", ARENA), ("cap", arena)):
+        end = [e for e in arena_events(tmp_path / run) if e["ev"] == "arena_end"]
+        assert len(end) == 1 and end[0]["invalid"] == "scripted"
+        jsonschema.validate(end[0], BENCH_FACTS_SCHEMA)
+        assert grade(tmp_path / run, a)["invalid_reason"] == "scripted"
 
 
 def test_an_operator_abort_is_invalid(tmp_path):

@@ -304,6 +304,10 @@
           "detail": {
             "type": "string",
             "description": "the runner's own end, when the mod's end came before it"
+          },
+          "invalid": {
+            "const": "scripted",
+            "description": "a side was the harness's scripted no-model client: a live check, never graded"
           }
         },
         "allOf": [
