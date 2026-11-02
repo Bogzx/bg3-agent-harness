@@ -242,7 +242,7 @@ end)
 
 reg("transfer", function(args)
     local item, from = party_item(args.item)
-    if G.in_combat(from) then G.refuse("not available during combat through this action (use the UI)") end
+    if G.in_combat(from) then G.refuse_ui("not available during combat through this action") end
     if G.b(G.q("IsEquipped", item)) then G.refuse("unequip it first") end
     -- One value only: G.q returns three and tonumber(n, base) raised "bad argument #1 to 'tonumber'"
     -- on every give/camp (S018-S024, 7 calls).
