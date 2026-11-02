@@ -169,7 +169,7 @@ def port_open(host: str = DEBUG_HOST, port: int = DEBUG_PORT, timeout: float = 1
 def lua_eval(code: str, context: str = "client", timeout: float = EVAL_TIMEOUT) -> str:
     from bg3ai.luadebug import LuaDebugClient
 
-    with LuaDebugClient(connect_timeout=5.0) as lua:
+    with LuaDebugClient(DEBUG_HOST, DEBUG_PORT, connect_timeout=5.0) as lua:  # not luadebug's fixed 9998
         return lua.evaluate(code, context=context, timeout=timeout)
 
 

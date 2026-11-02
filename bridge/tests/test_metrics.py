@@ -319,7 +319,7 @@ class Recording(unittest.TestCase):
             self.assertNotIn("ops", r2)  # a nested call that worked stays lean
 
     def test_game_rpc_hook(self):
-        g = Game()
+        g = Game(job_push=False)  # eval is faked below; job push would open its own connection to the game's port
         rec = M.Recorder(None)
         g.metrics = rec
         g.eval = lambda code, context="client", timeout=12.0: '{"ok":true,"result":{"x":1}}'

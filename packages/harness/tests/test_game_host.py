@@ -141,6 +141,30 @@ class Store(unittest.TestCase):
         self.assertIsNone(H.JsonStore(path)["x"])
 
 
+class LuaEval(unittest.TestCase):
+    def test_it_uses_the_configured_debug_port(self) -> None:
+        # it opened luadebug's fixed 9998 whatever $BG3LE_DEBUG_PORT said: a runner test's facts read reached the
+        # live game on the test machine (2026-11-02)
+        opened = []
+
+        class Client:
+            def __init__(self, host: str, port: int, connect_timeout: float) -> None:
+                opened.append((host, port))
+
+            def __enter__(self) -> Client:
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                pass
+
+            def evaluate(self, code: str, context: str, timeout: float) -> str:
+                return "ok"
+
+        with mock.patch("bg3ai.luadebug.LuaDebugClient", Client), mock.patch.object(G, "DEBUG_PORT", 4321):
+            self.assertEqual(G.lua_eval("return 1"), "ok")
+        self.assertEqual(opened, [("127.0.0.1", 4321)])
+
+
 class StatusFile(unittest.TestCase):
     def test_two_threads_writing_the_status_keep_both_fields(self) -> None:
         # CI on #41: the agent loop's stream thread wrote runner.status.json (claude_session) while the loop wrote it
