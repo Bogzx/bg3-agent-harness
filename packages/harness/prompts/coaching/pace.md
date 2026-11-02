@@ -5,7 +5,7 @@ think. The patterns that cover most of the game outside combat:
 1. **Go there, then act there:** `travel_to(objective="o1", wait=false)` returns at once. Append what to do on
    arrival right away: `queue_actions('[{"tool":"interact","target":"e15"},{"tool":"loot"}]')`. While it runs:
    `look`, read the events, write your notes, plan the next batch.
-2. **A sweep in one call:** `queue_actions('[{"tool":"move_to","target":"e7"},{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
+2. **A sweep in one call:** `queue_actions('[{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
    Before it ends, append the next batch. Each result's EVENTS shows `queue_done`, or `queue_interrupted` with why
    and what was left: handle that first.
 3. **Needing the outcome is not a reason to block.** Even when the next decision depends on the arrival (what's

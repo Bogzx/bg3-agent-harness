@@ -21,6 +21,19 @@ _BATCHABLE = {
     "end_turn", "choose_dialogue", "roll_check", "react", "manage_inventory", "wait", "press_key",
     "place_marker", "camp", "short_rest", "walk_toward", "travel_to",
 }
+WALK_STEPS = ("move_to", "walk_toward", "travel_to", "jump_to")
+
+
+def _cut_after_walk(steps: list, verb: str) -> tuple[list, str]:
+    """Out of combat a batch ends with its first walk step: the steps after it are dropped before anything runs
+    (human-gap research §4: launch-v1's walk_toward chains committed three headings before the first one's end was
+    seen). Returns (the steps up to and with that walk, '<verb>: <the dropped steps> (why)' or '')."""
+    i = next((k for k, st in enumerate(steps) if st.tool in WALK_STEPS), None)
+    if i is None or i == len(steps) - 1:
+        return steps, ""
+    rest = ", ".join(st.short() for st in steps[i + 1:])
+    return steps[: i + 1], (f"{verb}: {rest} (out of combat a batch ends with its first walk step, here step "
+                            f"{i + 1} {steps[i].short()})")
 
 
 def _as_json(arg: Any) -> str:
@@ -34,8 +47,9 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
                note: str = "") -> str:
     """Run several actions in order in ONE call, out of combat: a looting sweep, a dialogue chain. In combat it runs no steps (each call there is one action).
     actions: a list of steps (or the same list as a JSON string), e.g.
-    [{"tool":"move_to","target":"e12"},{"tool":"interact","target":"e12"},{"tool":"loot","take":"all"}]
+    [{"tool":"interact","target":"e12"},{"tool":"loot","take":"all"},{"tool":"interact","target":"e14"},{"tool":"loot","take":"all"}]
     Allowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
+    A walk step (move_to, walk_toward, travel_to, jump_to) is the last step a batch runs: the steps after the first one are not run, and the result lists them (interact, pick_up, talk_to and loot_corpse walk to their target themselves).
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
     Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step; and before a step once the call has run 90 s (time budget, a wait cut to fit). ignore="hostile,hp" disables some (dialogue, prompt, hostile, hp, damage, surface, teleport, trap); a fight starting always stops it.
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
@@ -53,6 +67,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
         steps = actq.parse_steps(actions, _BATCHABLE)
     except actq.StepError as e:
         return f"FAILED: {e}"
+    steps, cut = _cut_after_walk(steps, "not run")
     _hold_for_early_walks(None)  # a batch issued in a walk's last seconds starts after the arrival
     ex = queueing._make_executor(None, ignore)
     ex.budget_s = actq.BATCH_BUDGET_S  # the client waits for this call; a queue runs while the agent plays on
@@ -71,7 +86,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
         return pending[0] if pending else None
 
     rep = ex.run(nxt, peek)
-    body = queueing._report_text(rep, len(steps))
+    body = queueing._report_text(rep, len(steps)) + (f"\n{cut}" if cut else "")
     if rep.stopped:
         reporting._batch["last"] = "interrupted"
     changes = delta.changes_text(core.game, core.H)
@@ -84,7 +99,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
 @reporting._guard
 def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str | None = None,
                   replace: bool = False, ignore: str = "", note: str = "") -> str:
-    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Out of combat only: in combat it queues nothing, and a fight starting stops the queue. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
+    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Out of combat only: in combat it queues nothing, and a fight starting stops the queue. Same step format, conditions and interrupts as do_actions; a walk step (move_to, walk_toward, travel_to, jump_to) is the last step queued, the steps after the first one are not (the result lists them). On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
     t0 = time.monotonic()
     actions = _as_json(actions)
     if refused := session._note_refused(note):
@@ -99,7 +114,8 @@ def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str
         steps = actq.parse_steps(actions, _BATCHABLE)
     except actq.StepError as e:
         return reporting._finish("queue_actions", {}, f"FAILED: {e}", t0)
-    body = _enqueue(plumbing._who(who), steps, replace, ignore)
+    steps, cut = _cut_after_walk(steps, "not queued")
+    body = _enqueue(plumbing._who(who), steps, replace, ignore) + (f"\n{cut}" if cut else "")
     return reporting._finish("queue_actions", {"n": len(steps)}, body, t0)
 
 
@@ -632,11 +648,11 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
 ARRIVAL_LEAD_TOOLS = {"move_to", "walk_toward", "travel_to", "jump_to"}
 
 
-def walk_end_tail(walked: bool = True) -> str:
+def walk_end_tail(walked: bool = True, got: dict | None = None) -> str:
     """The tail of a result that may end a walk: CHANGES since the agent's last look and, when it ended a walk
     out of combat and dialogue, the minimap block, both from one read (the frontier in the same eval). ''/lines
-    each starting with a newline."""
-    got: dict = {}
+    each starting with a newline. got: filled with what the read fetched (regroup's PASSED line reads it)."""
+    got = {} if got is None else got
     changes = delta.changes_text(core.game, core.H, delta.ACTION_PARTS + (("frontier",) if walked else ()), got=got)
     block = ""
     st = got.get("status")

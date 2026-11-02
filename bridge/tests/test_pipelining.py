@@ -146,11 +146,11 @@ class AsyncTravel(Base):
         self.assertEqual(batch._trip_progress(P1), "30m left, ETA ~6s")
 
     def test_do_actions_can_travel(self):
-        out = batch.do_actions(json.dumps([{"tool": "travel_to", "marker": "m1"},
-                                            {"tool": "interact", "target": core.H.get(CHEST)}]))
-        self.assertIn("1. travel_to marker m1 Old well: 50m", out)
+        out = batch.do_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)},
+                                            {"tool": "travel_to", "marker": "m1"}]))
+        self.assertIn("1. interact", out)
+        self.assertIn("2. travel_to marker m1 Old well: 50m", out)
         self.assertIn("arrived", out)
-        self.assertIn("2. interact", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
 
 
@@ -266,8 +266,9 @@ class EarlyWake(Base):
     def test_queue_with_arrival_steps_waits_to_the_end(self):
         self.g.dur["act.move_to"] = 0.3
         self.g.dur["act.interact"] = 0.3
-        batch.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0},
-                                         {"tool": "interact", "target": core.H.get(CHEST)}]))
+        # the arrival step appended by a second call (a walk ends a batch: one call can't hold both)
+        batch.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0}]))
+        batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         out = batch.wait_for("queue", timeout_s=5)
         self.assertNotIn("arriving", out)
         self.assertIn("done (2 steps)", out)

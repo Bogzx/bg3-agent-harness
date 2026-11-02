@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .. import actq, delta, macros, render
+from .. import actq, delta, macros, passed, render
 from ..game import GameError
 from . import core, overview, plumbing, queueing, reporting, turn_plan
 
@@ -104,19 +104,23 @@ def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
 
 
 def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, left: list[str], t0: float,
-                  walked: bool = False) -> str:
-    """walked (regroup): the walks' end, so CHANGES comes with the minimap block (batch.walk_end_tail)."""
+                  walked: bool = False, sightings: passed.Sightings | None = None, walker: str | None = None) -> str:
+    """walked (regroup): the walks' end, so CHANGES comes with the minimap block (batch.walk_end_tail).
+    sightings: the trip's legs'; the PASSED line (what they saw that the end's read doesn't) comes before CHANGES."""
     if stop:
         lines.append(f"STOPPED: {stop}" + (f"; not reached: {', '.join(left)}" if left else ""))
         reporting._batch["last"] = "interrupted"
+    got: dict = {}
     if walked and not reporting._batch["active"]:
-        tail = batch.walk_end_tail()
-        if tail:
-            lines.append(tail.lstrip("\n"))
+        tail = batch.walk_end_tail(got=got).lstrip("\n")
     else:
-        changes = delta.changes_text(core.game, core.H)
-        if changes:
-            lines.append(changes)
+        tail = delta.changes_text(core.game, core.H, got=got)
+    if sightings is not None:
+        seen_line = sightings.line(core.H, got, walker)
+        if seen_line:
+            lines.append(seen_line)
+    if tail:
+        lines.append(tail)
     return reporting._finish(tool, args, "\n".join(lines), t0)
 
 

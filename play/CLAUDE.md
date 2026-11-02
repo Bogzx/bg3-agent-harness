@@ -33,12 +33,14 @@ Nobody will answer questions while you play: decide yourself.
   In combat a walk returns when it is over, whatever `wait` says.
 - **`wait_for`** blocks until its target: `my_turn`, `idle`, a job (`j12`), `queue`, or an event kind. It returns
   early on a prompt. `wait()` passes game time.
-- **`queue_actions`** runs steps back to back with no round trip per step: walk → open → loot → walk on. Another
-  `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
+- **`queue_actions`** runs steps back to back with no round trip per step: open → loot → pick up → walk on. A walk
+  step (`move_to`, `walk_toward`, `travel_to`, `jump_to`) is the last step a batch takes: the steps after the first
+  one are not queued, and the result lists them. Another `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
   stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view, low HP, or a failed step;
   the `queue_interrupted` event says why and what was left. `cancel_queue` stops it. Any direct action for the same
   character replaces the queue's current step. In combat `queue_actions` queues nothing.
-- **`do_actions`** is the blocking form: a short chain of steps in one call. Steps can carry `"if"`/`"unless"`
+- **`do_actions`** is the blocking form: a short chain of steps in one call, ending at its first walk step as
+  above. Steps can carry `"if"`/`"unless"`
   conditions (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`, `my_turn`, `in_dialogue`). The
   result ends with `CHANGES` (what moved, HP, items, who appeared). In combat `do_actions` runs no steps.
 - **In combat each call is one action**: `use_ability`, `move_to`, `walk_toward`, `jump_to` or `react`. It returns
@@ -132,7 +134,7 @@ think. The patterns that cover most of the game outside combat:
 1. **Go there, then act there:** `travel_to(objective="o1", wait=false)` returns at once. Append what to do on
    arrival right away: `queue_actions('[{"tool":"interact","target":"e15"},{"tool":"loot"}]')`. While it runs:
    `look`, read the events, write your notes, plan the next batch.
-2. **A sweep in one call:** `queue_actions('[{"tool":"move_to","target":"e7"},{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
+2. **A sweep in one call:** `queue_actions('[{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
    Before it ends, append the next batch. Each result's EVENTS shows `queue_done`, or `queue_interrupted` with why
    and what was left: handle that first.
 3. **Needing the outcome is not a reason to block.** Even when the next decision depends on the arrival (what's
