@@ -13,6 +13,7 @@ local ray = {}        -- ray.fn(a, b) -> hit | nil
 local heights = {}    -- heights.fn(x, z) -> {y...} | nil (Ext.Level.GetHeightsAt)
 local loca = {}
 local charScans = 0
+local partyRows = { { "P1" } } -- Osi.DB_PartyMembers rows
 
 local function entity(u)
     local w = world[u]
@@ -52,7 +53,7 @@ local function key(name, ...)
     return table.concat(parts, ":")
 end
 Osi = setmetatable({
-    DB_PartyMembers = { Get = function() return { { "P1" } } end },
+    DB_PartyMembers = { Get = function() return partyRows end },
     DB_WaypointInfo = { Get = function() return {} end },
     GetPosition = function(u)
         local p = osiv[key("GetPosition", u)]
@@ -81,6 +82,7 @@ local function test(name, fn)
     osiv = {}
     world = {}
     loca = {}
+    partyRows = { { "P1" } }
     ray.fn = function() return nil end
     heights.fn = nil
     local ok, err = pcall(fn)
@@ -358,7 +360,7 @@ test("pointSeen: a parapet at the edge, or a spot level with the eye's floor, is
     eq(V.pointSeen(V.context(), { 0, 0, 8 }), false, "a wall, not an edge")
 end)
 
-test("pointSeen over an edge: a wall face hit low, a drop over 4 m, the foot of a face, 15 m back: not seen",
+test("pointSeen over an edge: a wall face hit low, a drop over 15 m, the foot of a face, 15 m back: not seen",
     function()
     setup()
     -- a wall face (z 4..5, no floor tiles) hit 0.47 m up: not floor, so no look from its raw hit
@@ -372,8 +374,8 @@ test("pointSeen over an edge: a wall face hit low, a drop over 4 m, the foot of 
     eq(V.pointSeen(V.context(), { 0, -2.3, 12 }), false, "past a wall")
     V.rayCache = {}
     ray.fn = floor_to(4.2)
-    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -6.0 } end
-    eq(V.pointSeen(V.context(), { 0, -6.0, 9 }), false, "6 m down")
+    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -16.0 } end
+    eq(V.pointSeen(V.context(), { 0, -16.0, 20 }), false, "16 m down (the look is 46 degrees: only the drop bound)")
     heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -3.5 } end
     eq(V.pointSeen(V.context(), { 0, -3.5, 5.2 }), false, "1 m from the foot of a 3.5 m face")
     world.P1.pos = { 0, 0, -11 } -- 15 m back from the edge
@@ -381,6 +383,60 @@ test("pointSeen over an edge: a wall face hit low, a drop over 4 m, the foot of 
     ray.fn = floor_to(4.2)
     heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -2.3 } end
     eq(V.pointSeen(V.context(), { 0, -2.3, 7 }), false, "15 m back")
+end)
+
+-- Camera range (user 2026-11-02): ground the screen shows, about V.CAMERA_M round the leader, with the eye ray kept.
+test("pointSeen over an edge: what the overhead camera shows, 6 m and 14 m down, to 60 degrees", function()
+    setup()
+    ray.fn = floor_to(4.2)
+    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -6.0 } end
+    eq(V.pointSeen(V.context(), { 0, -6.0, 9 }), true, "6 m down, 5 m past the edge (51 degrees)")
+    eq(V.pointSeen(V.context(), { 0, -6.0, 7.5 }), false, "6 m down, 3.3 m past the edge (61 degrees: dead ground)")
+    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -14.0 } end
+    eq(V.pointSeen(V.context(), { 0, -14.0, 14 }), true, "14 m down, 10 m past the edge (55 degrees)")
+    eq(V.pointSeen(V.context(), { 0, -14.0, 12 }), false, "14 m down, 7.8 m past the edge (60.3 degrees)")
+    eq(V.pointSeen(V.context(), { 0, -14.0, 12.15 }), true, "14 m down, 7.95 m past the edge (59.9 degrees)")
+end)
+
+test("pointSeen: ground to CAMERA_M (40 m) from the leader is in view; past it, or behind a wall inside it, is not",
+    function()
+    setup()
+    ray.fn = floorThen(function() return nil end) -- open ground
+    eq(V.pointSeen(V.context(), { 0, 0, 30 }), true, "30 m: past the 18.5 m Sight, on screen")
+    eq(V.pointSeen(V.context(), { 39, 0, 0 }), true, "39 m")
+    eq(V.pointSeen(V.context(), { 0, 0, 41 }), false, "41 m: past the camera range")
+    eq(V.pointSeen(V.context(), { 0, 15, 38 }), false, "38 m off and 15 m up: 41 m (3D) away")
+    ray.fn = floorThen(function(a, b) -- a wall across z = 25
+        if a[3] < 25 and b[3] > 25 then
+            local t = (25 - a[3]) / (b[3] - a[3])
+            return { Position = { a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 25 } }
+        end
+    end)
+    eq(V.pointSeen(V.context(), { 0, 0, 30 }), false, "30 m, behind a wall")
+    eq(V.pointSeen(V.context(), { 0, 0, 10 }), true, "10 m, this side of the wall")
+end)
+
+test("pointSeen: the camera follows the selected member; a member off on their own keeps their Sight", function()
+    setup()
+    world.P2 = { pos = { 0, 0, -50 }, comps = { Sight = { Sight = 18.5 } } }
+    osiv[key("IsOnStage", "P2")] = 1
+    partyRows = { { "P1" }, { "P2" } }
+    ray.fn = floorThen(function() return nil end)
+    eq(V.pointSeen(V.context(), { 0, 0, 35 }), true, "35 m from the selected P1")
+    eq(V.pointSeen(V.context(), { 0, 0, -65 }), true, "15 m from P2: P2's own Sight")
+    eq(V.pointSeen(V.context(), { 30, 0, -50 }), false, "30 m from P2, 58 m from P1: not on screen")
+    world.P1.comps.ClientControl, world.P2.comps.ClientControl = nil, {} -- P2 selected: the camera is there
+    V.ctxCache = nil
+    eq(V.pointSeen(V.context(), { 30, 0, -50 }), true, "30 m from the selected P2")
+    eq(V.pointSeen(V.context(), { 30, 0, 0 }), false, "30 m from P1 (past its Sight), 58 m from the selected P2")
+end)
+
+test("the camera range is ground only: a door 30 m off in a clear ray is not perceived (Sight 18.5)", function()
+    setup(); door("D", { 30, 0, 0 })
+    ray.fn = floorThen(function() return nil end)
+    eq(visible("D"), false, "30 m")
+    door("D2", { 15, 0, 0 })
+    eq(visible("D2"), true, "15 m")
 end)
 
 test("pointSeen over an edge: an edge 6 m off, or a wall hit 0.1 m up its foot: not seen (app re-review)", function()
