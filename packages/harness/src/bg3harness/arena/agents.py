@@ -173,6 +173,11 @@ class AgentProcess:
     def model_s(self) -> float:
         return self.model.model_s(self.clock())
 
+    def cost_usd(self) -> float:
+        """The process's cost so far: spend.ProcessCost on its stream (pi: the running cost after each model
+        response, then the result's total)."""
+        return self.cost.usd
+
     def done(self) -> AgentExit | None:
         if self.exit is not None:
             return self.exit

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,31 @@ def test_an_agent_process_writes_its_sides_files_and_reports_its_exit(tmp_path):
     assert kinds == ["session_start", "init", "tool_call", "tool_result", "result", "session_end"]
     assert (tmp_path / "B-r1.jsonl").read_text().count("\n") == 4
     assert p.stop() is ex  # stopping an ended process changes nothing
+
+
+class SpendingClient(ScriptClient):
+    """Prints its lines, then thinks on (sleeps) until stopped."""
+
+    def command(self, req: clients.Request) -> list[str]:
+        out = "".join(json.dumps(x) + "\n" for x in self.lines)
+        return [
+            sys.executable,
+            "-c",
+            f"import sys, time; sys.stdout.write({out!r}); sys.stdout.flush(); time.sleep(60)",
+        ]
+
+
+def test_an_agent_process_reports_its_running_cost_after_each_response_and_keeps_it_when_stopped(tmp_path):
+    """pi's usage event after each model response carries the process's running cost: cost_usd has it while the
+    process runs (the match's money cap reads it), and a process stopped before its result keeps it."""
+    client = SpendingClient([{"kind": "usage", "cost_usd": 0.01}, {"kind": "usage", "cost_usd": 0.03}])
+    p = aagents.AgentProcess("A", aagents.SideClient(client, "m", None, {}), "go", "c", False, "", tmp_path, {})
+    deadline = time.monotonic() + 20
+    while p.cost_usd() < 0.03 and time.monotonic() < deadline:  # the pump thread reads the lines
+        time.sleep(0.02)
+    assert p.cost_usd() == 0.03 and p.done() is None
+    ex = p.stop()
+    assert ex.cost_usd == 0.03 and ex.reason != "exited"
 
 
 def test_an_agent_with_the_wrong_tool_count_is_an_mcp_failure(tmp_path):

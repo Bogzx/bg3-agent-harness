@@ -265,6 +265,7 @@ class Run:
         self.agents, self.side, self.prompt = agents, side, prompt
         self.conversation = conversation or f"conv-{side}"
         self.model = 0.0
+        self.cost = 0.01  # its client's running cost (USD); a play may add to it
         self.ended: set[str] = set()  # ender_once's ended members
         self.exit: am.AgentExit | None = None
         self.stopped = False
@@ -275,7 +276,7 @@ class Run:
                 self.agents.plays[self.side](self.agents.game, self.side, self)
 
     def end(self, reason: str = "exited", code: int | None = 0) -> None:
-        self.exit = am.AgentExit(reason, code, self.conversation, 0.01)
+        self.exit = am.AgentExit(reason, code, self.conversation, self.cost)
 
     def done(self) -> am.AgentExit | None:
         return self.exit
@@ -283,9 +284,12 @@ class Run:
     def model_s(self) -> float:
         return self.model
 
+    def cost_usd(self) -> float:
+        return self.cost
+
     def stop(self) -> am.AgentExit:
         self.stopped = True
-        return self.exit or am.AgentExit("stopped", -2, self.conversation, 0.01)
+        return self.exit or am.AgentExit("stopped", -2, self.conversation, self.cost)
 
 
 class Agents:

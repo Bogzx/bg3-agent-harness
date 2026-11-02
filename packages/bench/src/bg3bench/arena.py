@@ -24,7 +24,8 @@ checks against the arena_turn_forced events; or its client's fault after one res
 cap and the wall cap are draws (`round_cap`, `wall_cap`; the HP fractions are recorded, never a tiebreak). A match is
 invalid, rerun and never rated when its run record is (results.validity: runner error, harness failure, operator, off
 route, unseeded), when a side is the harness's scripted no-model client (`scripted`: a live check, not a model's
-play), when the harness ended it (`abort`) or the game failed (`fault`: a crash or hang), or when the facts
+play), when the harness ended it (`abort`), the game failed (`fault`: a crash or hang) or the match reached its money
+cap (`over_budget`: no winner), or when the facts
 don't match the arena or contradict themselves (INVALID). With the match's rolls.jsonl rows, `luck` is each side's
 stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_start's `uuids`).
 
@@ -72,9 +73,9 @@ KEYS = {
     "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off",
 }  # fmt: skip
 SHA1_LEN = 40
-END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault")
+END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "over_budget")
 CAP_REASONS = ("round_cap", "wall_cap")  # draws
-FAULT_REASONS = ("abort", "fault")  # the harness ended the match or the game failed: invalid, rerun
+FAULT_REASONS = ("abort", "fault", "over_budget")  # the harness ended it, the game failed, the money ran out: invalid
 FORFEIT_CAUSES = ("forced_turns", "client_fault")
 INVALID = (
     "no_start", "wrong_arena", "scripted", "unseeded", "off_side_turn", "inconsistent_turns", "no_end",

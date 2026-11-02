@@ -6,8 +6,8 @@ its pi client with its own bg3 server env and system text, and run_arena plays t
 arena.json (the match's manifest: the arena, both sides' players and profiles, the pins, the outcome).
 
 `make_runner(opt)` builds the run's runner (runner/play.py's Runner, a SessionRunner with the playthrough parts), as
-LiveRunHost's does. Cost: both sides' processes are charged to runtime/budget.json (spend.add_spend) as the match
-ends.
+LiveRunHost's does. Cost: a match with a paid side has a max_cost (both sides together; run_arena ends it
+over_budget there), and both sides' processes are charged to runtime/budget.json (spend.add_spend) as the match ends.
 """
 
 from __future__ import annotations
@@ -135,12 +135,15 @@ def start_game(r: Any, spec: ArenaSpec) -> None:
     r.check_settings()
 
 
-def budget_refusal(sides: Mapping[str, Side]) -> str | None:
-    """A side on a paid client (spend.PAID_CLIENTS): why the match can't start, else None. Both sides' costs go to
-    runtime/budget.json at the end, so it must be there with money left."""
+def budget_refusal(sides: Mapping[str, Side], max_cost: float | None = None) -> str | None:
+    """A side on a paid client (spend.PAID_CLIENTS): why the match can't start, else None. It needs a max_cost (the
+    match ends over_budget there), and both sides' costs go to runtime/budget.json at the end, so it must be there
+    with at least max_cost left (the match's reservation)."""
     paid = [s for s in SIDES if spend.is_paid(sides[s].client)]
     if not paid:
         return None
+    if max_cost is None:
+        return f"side {' and '.join(paid)} spends money: a match needs a money cap (play.py arena --max-cost USD)"
     try:
         budget = spend.read_budget(renv.RUNTIME / "budget.json")
     except spend.BudgetError as e:
@@ -150,8 +153,11 @@ def budget_refusal(sides: Mapping[str, Side]) -> str | None:
             f"side {' and '.join(paid)} spends money: a match needs a global budget, runtime/budget.json "
             '({"cap": USD, "spent": 0})'
         )
-    if round(budget["cap"] - budget["spent"], 6) <= 0:
+    left = round(budget["cap"] - budget["spent"], 6)
+    if left <= 0:
         return f"the global budget is used up (${budget['spent']:.2f} of ${budget['cap']:g})"
+    if left < max_cost:
+        return f"the global budget has ${left:.2f} left, less than the match's max_cost ${max_cost:g}"
     return None
 
 
@@ -162,12 +168,14 @@ def play(
     run_name: str,
     base_env: Mapping[str, str],
     log: Callable[[str], None] = renv.log,
+    max_cost: float | None = None,
 ) -> tuple[ArenaOutcome, Path]:
     """One match on the live game (see the module doc); returns the outcome and the run dir. Refused
-    (ArenaSetupError) before anything starts when a paid side has no budget left, and before the agents start when
+    (ArenaSetupError) before anything starts when a paid side has no max_cost or the budget hasn't max_cost left
+    (budget_refusal), and before the agents start when
     the recording (run_host.bench_recording: on unless BG3AI_BENCH_RECORD=0) can't record: it starts with the game
     up, into <run_dir>/recording/, and stops after the match's run_end with the game still up."""
-    if why := budget_refusal(sides):
+    if why := budget_refusal(sides, max_cost):
         raise ArenaSetupError(why)
     try:
         recording = run_host.bench_recording(base_env)
@@ -180,6 +188,7 @@ def play(
         "arena": spec.name,
         "save": {"name": spec.save, "sha1": spec.save_sha1},
         "seed": spec.seed,
+        "max_cost": max_cost,
         "sides": {},
     }
     for s in SIDES:
@@ -218,6 +227,7 @@ def play(
             log=log,
             aborted=lambda: bool(getattr(r, "abort", False)),
             writer=r.facts_writer(),
+            max_cost=max_cost,
         )
     finally:
         try:

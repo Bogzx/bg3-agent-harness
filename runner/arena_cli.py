@@ -4,8 +4,9 @@ game. The arena file is the bench's (bg3bench.arena.load: packages/bench/arenas/
 player is the bench's name for its profile (bg3bench.arena_matrix.player: "<client>/<model slug>"); the harness plays
 it (bg3harness.arena.live.play -> run_arena), never importing the bench. --out names the run dir
 (runtime/sessions/<out>/; default arena-<arena>-<time>). The seed is the arena file's: a match on another seed is a
-match of another arena file. Takes runtime/runner.lock like `run`. Exit 0 when the match ended valid, 1 invalid, 2
-refused before the game started.
+match of another arena file. --max-cost USD caps the match's play cost, both sides together (required when a side is
+paid; runtime/budget.json must have it left): the match ends over_budget there, invalid. Takes runtime/runner.lock
+like `run`. Exit 0 when the match ended valid, 1 invalid, 2 refused before the game started.
 """
 
 from __future__ import annotations
@@ -61,6 +62,13 @@ def parse(argv: list[str]) -> argparse.Namespace:
     )
     ap.add_argument("--out", help="the run's name: runtime/sessions/<out>/ (default arena-<arena>-<time>)")
     ap.add_argument("--allow-unverified", action="store_true", help="play profiles whose status is offline")
+    ap.add_argument(
+        "--max-cost",
+        type=float,
+        metavar="USD",
+        help="cap the match's play cost, both sides together: there it ends over_budget (invalid). Required for a "
+        "paid side (pi); runtime/budget.json {cap, spent} must have it left",
+    )
     return ap.parse_args(argv)
 
 
@@ -72,6 +80,9 @@ def main(argv: list[str]) -> int:
     except (barena.ArenaError, ArenaSpecError, MatrixFileError) as e:
         print(f"play.py arena refused: {e}", file=sys.stderr)
         return 2
+    if a.max_cost is not None and not a.max_cost > 0:
+        print(f"play.py arena refused: --max-cost must be > 0 USD (got {a.max_cost:g})", file=sys.stderr)
+        return 2
     run_name = a.out or f"arena-{spec.name}-{datetime.now():%Y%m%d-%H%M%S}"
     import legacy_cli as lcli  # the runner's lock and its Runner (the playthrough parts)
     import legacy_playthrough as lpt
@@ -79,7 +90,7 @@ def main(argv: list[str]) -> int:
 
     lock = lcli.acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
     try:
-        outcome, run_dir = live.play(spec, players, lpt.Runner, run_name, dict(os.environ))
+        outcome, run_dir = live.play(spec, players, lpt.Runner, run_name, dict(os.environ), max_cost=a.max_cost)
     except ArenaSetupError as e:
         print(f"play.py arena refused: {e}", file=sys.stderr)
         return 2

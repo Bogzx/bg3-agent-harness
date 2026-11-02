@@ -250,7 +250,7 @@
         }
       },
       "then": {
-        "description": "The match ended: once, at a turn boundary. wipe: every character of the loser is down or dead; forfeit: the side in `forfeit` lost (cause forced_turns: three of its turns in a row forced to an end; client_fault: its client failed again after one resume); round_cap, wall_cap: a draw (winner null, HP recorded, never a tiebreak); abort: the harness ended it; fault: the game crashed or hung (both invalid).",
+        "description": "The match ended: once, at a turn boundary. wipe: every character of the loser is down or dead; forfeit: the side in `forfeit` lost (cause forced_turns: three of its turns in a row forced to an end; client_fault: its client failed again after one resume); round_cap, wall_cap: a draw (winner null, HP recorded, never a tiebreak); abort: the harness ended it; fault: the game crashed or hung; over_budget: both sides' cost reached the match's max_cost (all three invalid, winner null).",
         "required": [
           "winner",
           "rounds",
@@ -289,7 +289,8 @@
               "round_cap",
               "wall_cap",
               "abort",
-              "fault"
+              "fault",
+              "over_budget"
             ]
           },
           "forfeit": {
@@ -310,6 +311,32 @@
           "invalid": {
             "const": "scripted",
             "description": "a side was the harness's scripted no-model client: a live check, never graded"
+          },
+          "cost": {
+            "type": "object",
+            "required": [
+              "A",
+              "B"
+            ],
+            "description": "each side's cost so far at the end, USD (the charged totals are arena.json's)",
+            "properties": {
+              "A": {
+                "type": "number",
+                "minimum": 0
+              },
+              "B": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "max_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "the match's money cap, both sides together (the match ends over_budget at it); null without one"
           }
         },
         "allOf": [

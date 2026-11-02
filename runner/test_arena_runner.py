@@ -49,7 +49,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         renv.KNOWLEDGE_DIR = renv.PLAY_DIR / "knowledge"
         self.runners: list[lpt.Runner] = []
 
-    def play(self, a: str, b: str, key: str | None = "test-key") -> tuple[int, str]:
+    def play(self, a: str, b: str, key: str | None = "test-key", *more: str) -> tuple[int, str]:
         """play.py arena on crash-companions-v1 until the Runner's ensure_game (the launch), which raises; `key`: the pi
         profile's API key in the env (a stand-in: nothing is called)."""
         runners = self.runners
@@ -68,7 +68,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         ):
             try:
                 code = arena_cli.main(["--arena", "crash-companions-v1", "--a", a, "--b", b, "--out", "t1",
-                                       "--allow-unverified"])  # fmt: skip
+                                       "--allow-unverified", *more])  # fmt: skip
             except LaunchError:
                 code = -1
         return code, err.getvalue()
@@ -86,24 +86,40 @@ class ArenaOnTheRealRunner(unittest.TestCase):
     def test_a_pi_side_reaches_the_launch_too(self):
         renv.RUNTIME.mkdir(parents=True, exist_ok=True)
         (renv.RUNTIME / "budget.json").write_text(json.dumps({"cap": 5, "spent": 1}))
-        code, err = self.play(PI, "scripted")
+        code, err = self.play(PI, "scripted", "test-key", "--max-cost", "0.5")
         self.assertEqual(code, -1, err)
         self.assertIsNone(self.runners[0]._client)
+
+    def test_a_pi_side_needs_a_max_cost_the_budget_has_left(self):
+        renv.RUNTIME.mkdir(parents=True, exist_ok=True)
+        (renv.RUNTIME / "budget.json").write_text(json.dumps({"cap": 5, "spent": 4.8}))
+        code, err = self.play(PI, "scripted")
+        self.assertEqual(code, 2)
+        self.assertIn("side A spends money: a match needs a money cap (play.py arena --max-cost USD)", err)
+        code, err = self.play(PI, "scripted", "test-key", "--max-cost", "0.5")
+        self.assertEqual(code, 2)
+        self.assertIn("the global budget has $0.20 left, less than the match's max_cost $0.5", err)
+        code, err = self.play(PI, "scripted", "test-key", "--max-cost", "0")
+        self.assertEqual(code, 2)
+        self.assertIn("--max-cost must be > 0 USD (got 0)", err)
+        self.assertEqual(self.runners, [])
+        code, err = self.play(PI, "scripted", "test-key", "--max-cost", "0.2")  # exactly what is left
+        self.assertEqual(code, -1, err)
 
     def test_a_pi_side_whose_api_key_isnt_set_is_refused(self):
         renv.RUNTIME.mkdir(parents=True, exist_ok=True)
         (renv.RUNTIME / "budget.json").write_text(json.dumps({"cap": 5, "spent": 1}))
-        code, err = self.play(PI, "scripted", key=None)
+        code, err = self.play(PI, "scripted", None, "--max-cost", "0.5")
         self.assertEqual(code, 2)
         self.assertIn(f"side A: {KEY_ENV} (the profile's api_key_env) is set neither", err)
 
     def test_a_pi_side_without_budget_left_is_refused_before_the_runner_is_built(self):
-        code, err = self.play(PI, "scripted")
+        code, err = self.play(PI, "scripted", "test-key", "--max-cost", "0.5")
         self.assertEqual(code, 2)
         self.assertIn("side A spends money: a match needs a global budget, runtime/budget.json", err)
         renv.RUNTIME.mkdir(parents=True, exist_ok=True)
         (renv.RUNTIME / "budget.json").write_text(json.dumps({"cap": 5, "spent": 5}))
-        code, err = self.play(PI, "scripted")
+        code, err = self.play(PI, "scripted", "test-key", "--max-cost", "0.5")
         self.assertEqual(code, 2)
         self.assertIn("the global budget is used up ($5.00 of $5)", err)
         self.assertEqual(self.runners, [])
@@ -147,7 +163,18 @@ class ArenaOnTheRealRunner(unittest.TestCase):
             contextlib.redirect_stderr(err),
         ):
             code = arena_cli.main(
-                ["--arena", "crash-companions-v1", "--a", "scripted", "--b", "scripted", "--out", "t1"]
+                [
+                    "--arena",
+                    "crash-companions-v1",
+                    "--a",
+                    "scripted",
+                    "--b",
+                    "scripted",
+                    "--out",
+                    "t1",
+                    "--max-cost",
+                    "1",
+                ]
             )
         self.assertEqual(code, 1, err.getvalue())  # invalid: the setup failed
         self.assertEqual(calls, ["game up", "made recording", "start", "check", "stop after run_end: True"])
@@ -157,6 +184,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         self.assertEqual(man["sides"]["A"], {"player": "scripted/none", "profile": "scripted", "client": "scripted",
                                              "model": "none"})  # fmt: skip
         self.assertEqual(man["exits"], {"A": [], "B": []})
+        self.assertEqual(man["max_cost"], 1.0)  # the cap reaches the manifest (scripted sides spend nothing)
         marks = [json.loads(x).get("mark") for x in (run_dir / "facts.jsonl").read_text().splitlines()]
         self.assertEqual((marks[0], marks[-1]), ("run_start", "run_end"))
 

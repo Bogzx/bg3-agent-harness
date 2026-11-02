@@ -26,10 +26,13 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    - a forfeit: a side whose own turns were forced to an end FORFEIT_TURNS times in a row (`forced_turns`), or
      whose agent failed again after FAULT_RESUMES resume or exited mid-fight more than EXIT_RESUMES times
      (`client_fault`);
-   - the game gone or not answering for HANG_S: `fault` (invalid, rerun); an operator's abort: `abort` (invalid).
+   - the game gone or not answering for HANG_S: `fault` (invalid, rerun); an operator's abort: `abort` (invalid);
+   - max_cost (USD, when given): both sides' cost so far (each process's running cost, Agents' cost_usd: pi's
+     comes after each model response) reaching it: `over_budget` (invalid, no winner, rerun), both agents stopped.
    The runner's own ends go to the mod as `arena.end {reason, winner}` (no answer from a dead game is needed) and
    into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, cause?}`, with the HP fractions
-   from the last `arena.status.hp`. arena.end answers with the match's first end: when that is the mod's own (it
+   from the last `arena.status.hp`. Every arena_end, the mod's too, carries `cost {A, B}` (each side's cost so far,
+   USD) and `max_cost` (None without one). arena.end answers with the match's first end: when that is the mod's own (it
    ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
    began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
@@ -118,6 +121,7 @@ class AgentExit:
 class AgentRun(Protocol):
     def done(self) -> AgentExit | None: ...  # None while the process runs
     def model_s(self) -> float: ...  # the process's model time so far
+    def cost_usd(self) -> float: ...  # the process's cost so far (USD)
     def stop(self) -> AgentExit: ...  # end the process (if it runs) and return its exit
 
 
@@ -168,6 +172,7 @@ class Referee:
         self.done = False  # arena_end written: later arena records are not the match's
         # the sides the harness's scripted client plays (a player "scripted/..."): the match is a live check, invalid
         self.scripted = [s for s in SIDES if sides[s].player.split("/")[0] == SCRIPTED]
+        self.money: Callable[[], dict[str, Any]] = dict  # arena_end's cost and max_cost (run_arena sets it)
 
     @property
     def turn(self) -> Turn | None:
@@ -220,7 +225,8 @@ class Referee:
             t = self.names.get(u.lower())
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
         if ev == "arena_end":
-            self.mod_end = {"winner": None, **fact, **self.invalid()}  # the ring leaves a nil winner (a draw) out
+            # the ring leaves a nil winner (a draw) out
+            self.mod_end = {"winner": None, **fact, **self.invalid(), **self.money()}
             self.done = True
             return self.mod_end
         if ev == "arena_combat_ended" and self.combat_ended is None:
@@ -241,7 +247,7 @@ class Referee:
         return len(own) == FORFEIT_TURNS and all(x.forced for x in own[:-1])
 
     def end(self, **fields: Any) -> dict[str, Any]:
-        self.event("arena_end", **fields, **self.invalid())
+        self.event("arena_end", **fields, **self.invalid(), **self.money())
         self.done = True
         return fields
 
@@ -367,9 +373,11 @@ def run_arena(
     log: Callable[[str], None] = lambda _m: None,
     aborted: Callable[[], bool] = lambda: False,
     writer: facts.FactsWriter | None = None,
+    max_cost: float | None = None,
 ) -> ArenaOutcome:
     """One match into `out` (facts.jsonl, rolls.jsonl; the agents write their own files); see the module doc.
-    writer: the run's facts writer when the caller has one (its run_start stays time zero)."""
+    writer: the run's facts writer when the caller has one (its run_start stays time zero); max_cost: the match's
+    money cap (USD, both sides together)."""
     out.mkdir(parents=True, exist_ok=True)
     writer = writer or facts.FactsWriter(out / "facts.jsonl", clock=clock.now)
     ref = Referee(spec, sides, writer)
@@ -394,6 +402,12 @@ def run_arena(
     for s in SIDES:
         runs[s] = agents.start(s, KICKOFF.format(side=s, names=", ".join(spec.teams[s])), None, "")
     closed_model = dict.fromkeys(SIDES, 0.0)  # model time of a side's ended processes
+    closed_cost = dict.fromkeys(SIDES, 0.0)  # and their cost
+
+    def spent() -> dict[str, float]:
+        return {s: round(closed_cost[s] + (runs[s].cost_usd() if s in runs else 0.0), 6) for s in SIDES}
+
+    ref.money = lambda: {"cost": spent(), "max_cost": max_cost}
     exits = dict.fromkeys(SIDES, 0)
     faults = dict.fromkeys(SIDES, 0)
     turn_mark: tuple[int, float] | None = None  # (index of the turn, the side's model time at its start)
@@ -461,6 +475,7 @@ def run_arena(
                 if ex is None:
                     continue
                 outcome.exits[s].append(ex)
+                closed_cost[s] += ex.cost_usd if ex.cost_usd is not None else runs[s].cost_usd()
                 closed_model[s] += runs.pop(s).model_s()
                 if ex.fault:
                     faults[s] += 1
@@ -477,6 +492,10 @@ def run_arena(
                     )
                 n = faults[s] + exits[s]
                 runs[s] = agents.start(s, RESUME, ex.conversation, f"-r{n}")
+            if max_cost is not None and sum((cost := spent()).values()) >= max_cost:
+                raise _Ended(
+                    "over_budget", detail=f"A ${cost['A']:.4f} + B ${cost['B']:.4f} reached max_cost ${max_cost:g}"
+                )
             turn = ref.turn
             gained = {s: model(s) - seen_model[s] for s in SIDES}
             seen_model = {s: model(s) for s in SIDES}
@@ -559,7 +578,7 @@ def run_arena(
             if e.forfeit:
                 fields.update(forfeit=e.forfeit, cause=e.cause)
             outcome.end = ref.end(**fields)
-            if e.reason in ("fault", "abort"):
+            if e.reason in ("fault", "abort", "over_budget"):
                 outcome.invalid = f"{e.reason}: {e.detail}"
             log(f"arena {spec.name}: {runners}")
     finally:
