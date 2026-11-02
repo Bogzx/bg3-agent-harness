@@ -5,6 +5,19 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: travel_to and regroup name what they passed
+
+- A trip's result (travel_to; regroup for its walkers' trips) has a PASSED line before CHANGES: what came into view
+  at a leg's end during the trip and is out of view at its end, nearest first from the walker's end spot, up to 6,
+  then `+N more`: `PASSED (seen on the way, out of view now): e12 Chest <container> 46m W | e7 Goblin hostile 28m SW
+  (5m down)`. Characters with their relation (and `dead`), leads with their kind (and `locked`/`trap`/`story`), as
+  CHANGES shows them; scenery and clutter are left out, and so is anything the agent's last view already had (CHANGES
+  says GONE for those). No line when nothing passed.
+- The read: state.nearby (radius 25, centred on the walker: its new `center` argument) in the check each finished
+  leg already makes, the same round trip (one op more in its server eval). A mod without `center` centres it on the
+  selected character.
+- Human-gap research §1e: CHANGES diffed the trip's start against its end only.
+
 ## 2026-11-02: walks out of combat return at their end (wait=true is the default)
 
 - `move_to`, `walk_toward` and `travel_to` default to `wait=true` and, out of combat, return at the walk's end with

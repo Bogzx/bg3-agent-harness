@@ -632,11 +632,11 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
 ARRIVAL_LEAD_TOOLS = {"move_to", "walk_toward", "travel_to", "jump_to"}
 
 
-def walk_end_tail(walked: bool = True) -> str:
+def walk_end_tail(walked: bool = True, got: dict | None = None) -> str:
     """The tail of a result that may end a walk: CHANGES since the agent's last look and, when it ended a walk
     out of combat and dialogue, the minimap block, both from one read (the frontier in the same eval). ''/lines
-    each starting with a newline."""
-    got: dict = {}
+    each starting with a newline. got: filled with what the read fetched (regroup's PASSED line reads it)."""
+    got = {} if got is None else got
     changes = delta.changes_text(core.game, core.H, delta.ACTION_PARTS + (("frontier",) if walked else ()), got=got)
     block = ""
     st = got.get("status")
