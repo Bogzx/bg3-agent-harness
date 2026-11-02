@@ -48,6 +48,11 @@
             "type": "string",
             "minLength": 1,
             "description": "its root template id, when the name alone is ambiguous"
+          },
+          "uuid": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "the character's uuid; arena.setup fails when it and the name disagree"
           }
         }
       }
@@ -147,6 +152,13 @@
           "$ref": "#/$defs/team"
         }
       }
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12,
+      "default": 2,
+      "description": "the character level arena.setup gives every member of both teams"
     },
     "seed": {
       "type": "integer",

@@ -1,0 +1,71 @@
+{
+  "schema": "arena.v1",
+  "name": "crash-companions-v1",
+  "title": "Crash site, companions four against four",
+  "about": "The crash_site_grove start save. Side A plays Shadowheart, Gale, Astarion and Lae'zel, side B Karlach, Wyll, Nightwarden Minthara and Minsc, every member set to level 2 by the arena's setup. The teams are not mirrors: a pairing swaps the sides on the same seed so team strength cancels, and the side-A win rate shows what is left. The spawn points are the ones live check 5 used.",
+  "save": {
+    "name": "Tav-34221263934__SCN-crash_site_grove",
+    "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
+  },
+  "location": {
+    "level": "WLD_Main_A",
+    "spawns": {
+      "A": [
+        229.8,
+        5.1,
+        268.2
+      ],
+      "B": [
+        229.8,
+        5.6,
+        278.7
+      ]
+    }
+  },
+  "teams": {
+    "A": [
+      {
+        "name": "Shadowheart",
+        "uuid": "3ed74f06-3c60-42dc-83f6-f034cb47c679"
+      },
+      {
+        "name": "Gale",
+        "uuid": "ad9af97d-75da-406a-ae13-7071c563f604"
+      },
+      {
+        "name": "Astarion",
+        "uuid": "c7c13742-bacd-460a-8f65-f864fe41f255"
+      },
+      {
+        "name": "Lae'zel",
+        "uuid": "58a69333-40bf-8358-1d17-fff240d7fb12"
+      }
+    ],
+    "B": [
+      {
+        "name": "Karlach",
+        "uuid": "2c76687d-93a2-477b-8b18-8a14b549304c"
+      },
+      {
+        "name": "Wyll",
+        "uuid": "c774d764-4a17-48dc-b470-32ace9ce447d"
+      },
+      {
+        "name": "Nightwarden Minthara",
+        "uuid": "25721313-0c15-4935-8176-9f134385451b"
+      },
+      {
+        "name": "Minsc",
+        "uuid": "0de603c5-42e2-4811-9dad-f652de080eba"
+      }
+    ]
+  },
+  "level": 2,
+  "seed": 2026,
+  "karmic": false,
+  "round_cap": 20,
+  "wall_cap_min": 30,
+  "turn_cap_s": 60,
+  "condition": "rules",
+  "tools_off": "arena-v1"
+}

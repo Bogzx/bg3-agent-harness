@@ -2,8 +2,9 @@
 """Arenas: two models fight each other in one turn-based fight. Arena files, the match grader and the ratings.
 
 An arena file (`arenas/<name>.json`, schema/arena.v1.schema.json; `load`, `validate`) fixes one fight: the start save
-(name + sha1), the level and the two spawn points, each side's team (character names, optional templates), the dice
-seed, Karmic Dice off (`karmic: false`), the round cap (default 20), the wall-clock cap in minutes (default 30), the
+(name + sha1), the game level and the two spawn points, each side's team (display names, optional templates and
+uuids: arena.setup fails when a name and its uuid disagree), the character level every member is set to (`level`,
+default 2), the dice seed, Karmic Dice off (`karmic: false`), the round cap (default 20), the wall-clock cap in minutes (default 30), the
 model-time cap per turn in seconds (`turn_cap_s`), the condition and the name of the bridge's tools-off list
 (TOOLS_OFF_LISTS). `draft` says why an arena can't be played yet (its spots are placeholders); the pairing planner
 (arena_matrix) gives a draft arena no matches. Arena files are not suite files: nothing here moves a bench-vX.Y score.
@@ -46,6 +47,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypeGuard
@@ -59,12 +61,14 @@ ARENA_DIR = PACKAGE_ROOT / "arenas"
 SIDES = ("A", "B")
 TEAM_MAX = 4
 ROUND_CAP, WALL_CAP_MIN = 20, 30
+LEVEL, LEVEL_MAX = 2, 12  # every member's character level after arena.setup
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MIN_PAIRINGS = 15  # a pair's pairings before its models are rated; below it, a pilot row
 FORFEIT_TURNS = 3  # forced turns in a row that forfeit the match
 TOOLS_OFF_LISTS = ("arena-v1",)  # the bridge's named arena tools-off lists (BG3AI_TOOLS_OFF values)
 KEYS = {
-    "schema", "name", "title", "about", "draft", "save", "location", "teams", "seed", "karmic", "round_cap",
-    "wall_cap_min", "turn_cap_s", "condition", "tools_off",
+    "schema", "name", "title", "about", "draft", "save", "location", "teams", "level", "seed", "karmic",
+    "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off",
 }  # fmt: skip
 SHA1_LEN = 40
 END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault")
@@ -129,18 +133,24 @@ def _check_location(loc: Any) -> list[str]:
 def _check_teams(teams: Any) -> list[str]:
     if not isinstance(teams, dict) or set(teams) != set(SIDES):
         return ["teams must list side A's and side B's characters"]
-    errs, seen = [], set()
+    errs, seen, uuids = [], set(), set()
     for side in SIDES:
         team = teams[side]
         if not isinstance(team, list) or not 1 <= len(team) <= TEAM_MAX:
             errs.append(f"teams.{side} must list 1 to {TEAM_MAX} characters")
             continue
         for m in team:
-            if not isinstance(m, dict) or not _str(m.get("name")) or set(m) - {"name", "template"}:
-                errs.append(f"teams.{side}: a character is {{name, template?}}: {m!r}")
+            if not isinstance(m, dict) or not _str(m.get("name")) or set(m) - {"name", "template", "uuid"}:
+                errs.append(f"teams.{side}: a character is {{name, template?, uuid?}}: {m!r}")
                 continue
             if "template" in m and not _str(m["template"]):
                 errs.append(f"teams.{side}: {m['name']}'s template must be a template id")
+            if "uuid" in m:
+                if not (isinstance(m["uuid"], str) and UUID_RE.match(m["uuid"])):
+                    errs.append(f"teams.{side}: {m['name']}'s uuid must be a lowercase uuid")
+                elif m["uuid"] in uuids:
+                    errs.append(f"teams: uuid {m['uuid']} is listed twice")
+                uuids.add(m.get("uuid"))
             if m["name"] in seen:
                 errs.append(f"teams: {m['name']} is listed twice")
             seen.add(m["name"])
@@ -166,6 +176,9 @@ def validate(a: Any, name: str) -> list[str]:
     errs += _check_save(a.get("save"), "draft" in a)
     errs += _check_location(a.get("location"))
     errs += _check_teams(a.get("teams"))
+    level = a.get("level", LEVEL)
+    if not _int(level) or not 1 <= level <= LEVEL_MAX:
+        errs.append(f"level must be an integer 1..{LEVEL_MAX}")
     seed = a.get("seed")
     if not _int(seed) or not 0 <= seed <= scenario.SEED_MAX:
         errs.append(f"seed must be an integer 0..{scenario.SEED_MAX}")
@@ -191,7 +204,7 @@ def validate(a: Any, name: str) -> list[str]:
 
 
 def with_defaults(a: Mapping[str, Any]) -> dict[str, Any]:
-    return {"round_cap": ROUND_CAP, "wall_cap_min": WALL_CAP_MIN, "condition": "rules", **a}
+    return {"level": LEVEL, "round_cap": ROUND_CAP, "wall_cap_min": WALL_CAP_MIN, "condition": "rules", **a}
 
 
 def load(path: str | Path) -> dict[str, Any]:

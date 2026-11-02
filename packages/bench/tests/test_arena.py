@@ -53,7 +53,7 @@ def match(winner="A", reason="wipe", hp=(0.75, 0.0), rounds=2, start=None, turns
 
 def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
     files = sorted((PKG / "arenas").glob("*.json"))
-    assert [p.stem for p in files] == ["draft_open_field"]
+    assert [p.stem for p in files] == ["crash-companions-v1", "draft_open_field"]
     for p in files:
         a = json.loads(p.read_text())
         jsonschema.validate(a, ARENA_SCHEMA)
@@ -61,11 +61,26 @@ def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
     assert "draft" in arena.load_named("draft_open_field")
 
 
+def test_the_companions_arena_is_the_crash_site_save_with_every_member_named_and_identified():
+    a = arena.load_named("crash-companions-v1")
+    saves = json.loads((PKG / "saves.json").read_text())
+    rows = [r for suite in saves["suites"].values() for r in suite["saves"] if r["name"] == a["save"]["name"]]
+    sha1s = {r["save_sha1"] for r in rows}
+    assert sha1s == {a["save"]["sha1"]} and "crash_site_grove" in a["save"]["name"]
+    assert arena.team_names(a) == {
+        "A": ["Shadowheart", "Gale", "Astarion", "Lae'zel"],
+        "B": ["Karlach", "Wyll", "Nightwarden Minthara", "Minsc"],
+    }
+    assert all("uuid" in m for s in ("A", "B") for m in a["teams"][s])
+    assert (a["level"], a["seed"], a["round_cap"], a["wall_cap_min"], a["turn_cap_s"]) == (2, 2026, 20, 30, 60)
+    assert "draft" not in a
+
+
 def test_load_fills_the_defaults(tmp_path):
-    bare = {k: v for k, v in READY.items() if k not in ("round_cap", "wall_cap_min", "condition")}
+    bare = {k: v for k, v in READY.items() if k not in ("round_cap", "wall_cap_min", "condition", "level")}
     (tmp_path / f"{bare['name']}.json").write_text(json.dumps(bare))
     a = arena.load(tmp_path / f"{bare['name']}.json")
-    assert (a["round_cap"], a["wall_cap_min"], a["condition"]) == (20, 30, "rules")
+    assert (a["round_cap"], a["wall_cap_min"], a["condition"], a["level"]) == (20, 30, "rules", 2)
 
 
 def _with(**kw):
@@ -87,6 +102,10 @@ BAD = {
     "five a side": _with(teams={"A": [{"name": f"a{i}"} for i in range(5)], "B": [{"name": "b"}]}),
     "an empty side": _with(teams={"A": [], "B": [{"name": "b"}]}),
     "an unknown member key": _with(teams={"A": [{"name": "a", "hp": 9}], "B": [{"name": "b"}]}),
+    "a member uuid that isn't one": _with(teams={"A": [{"name": "a", "uuid": "Shadowheart"}], "B": [{"name": "b"}]}),
+    "level 0": _with(level=0),
+    "level 13": _with(level=13),
+    "a level that isn't a number": _with(level="2"),
     "no seed": _with(seed=None),
     "a negative seed": _with(seed=-1),
     "round cap 0": _with(round_cap=0),
@@ -114,6 +133,9 @@ def test_validator_only_checks():
     assert any("same point" in e for e in arena.validate(same, READY["name"]))
     twice = _with(teams={"A": [{"name": "Karlach"}], "B": [{"name": "Karlach"}]})
     assert any("listed twice" in e for e in arena.validate(twice, READY["name"]))
+    u = "3ed74f06-3c60-42dc-83f6-f034cb47c679"
+    same_uuid = _with(teams={"A": [{"name": "Shadowheart", "uuid": u}], "B": [{"name": "Wyll", "uuid": u}]})
+    assert any(f"uuid {u} is listed twice" in e for e in arena.validate(same_uuid, READY["name"]))
     assert any("file's name" in e for e in arena.validate(READY, "other_name"))
     assert any("reloads" in e for e in arena.validate(_with(condition="rules+reloads:2"), READY["name"]))
     assert any("condition" in e for e in arena.validate(_with(condition="coaching"), READY["name"]))
