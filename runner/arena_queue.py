@@ -1,0 +1,360 @@
+# pyright: basic
+"""`runner/play.py arena-matrix --matrix <file.toml> [--plan | --table [--seed N]]`: an arena pairing matrix
+(bg3bench.arena_matrix's file, plan, reserves and charges) played match by match on this machine's game.
+
+- `--plan` prints the matches, each one's reserves and the estimate: what every budget file the matrix charges would
+  hold back over the whole matrix (each paid side at its arena's max_cost: the most it can spend) against what the
+  file has left. Writes nothing.
+- no flag plays the queue (runtime/matrix/<name>/queue.jsonl: bench.matrix's file and fold, so a stopped matrix
+  resumes from it) under one runner lock, one match at a time, in the plan's order: a pairing's two matches (the
+  sides swapped, the same arena and seed) back to back, an invalid match rerun at once (at most matrix.MAX_RERUNS
+  times, then the job gave up). Before each match: runtime/STOP stops the matrix (`stopped`); every budget file the
+  match charges (the matrix's own, each side's model files) must hold its reserves (arena_matrix.reserves:
+  spent + reserve <= cap; a missing or broken file stops it too: `budget`); the disk guard (bg3harness.diskguard,
+  the arena's wall cap) must pass (`disk: <why>`). The match plays through bg3harness.arena.live.play with each paid
+  side capped at its reserve (side_caps) and the match at their sum (max_cost, which live.play also checks against
+  runtime/budget.json and charges there). As it ends it is graded from its facts (bg3bench.arena.grade) and both
+  sides' costs go to the matrix's files (arena_matrix.charges). A match refused before the game (live.play's
+  ArenaSetupError: an API key unset, runtime/budget.json short, ...) is recorded, isn't an attempt, and stops the
+  matrix (`refused: <why>`). A match the matrix runner died in (started, never ended) is closed as `interrupted` on
+  the next start, each paid side charged its whole reserve (what it spent is unknown), and played again. A match
+  that ended over_budget is not rerun (`over_budget`: a rerun would spend as much again). A paid side's cost unknown
+  (the harness failed mid-match) stops the matrix (`cost unknown`).
+- `--table` grades every played match (the last attempt of each, its facts and rolls) and prints bg3bench.arena's
+  results table (pairings, pairs, side A, models) as JSON.
+
+Exit 0 when the matrix finished, 1 when it stopped, 2 refused before it began.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, TextIO
+
+import _harness  # noqa: F401  (packages/harness/src, packages/bench/src and bridge/src on sys.path)
+from bg3bench import arena as barena
+from bg3bench import arena_matrix, matrix
+from bg3bench.matrix_cli import MatrixFileError
+from bg3harness import diskguard, spend
+from bg3harness.arena import ArenaSpec, Side
+from bg3harness.arena.match import ArenaSetupError
+from bg3harness.runner import env as renv
+
+SIDES = ("A", "B")
+OVER_BUDGET = "over_budget"
+SEED = 2026  # the table's bootstrap seed
+
+
+@dataclass(frozen=True)
+class Played:
+    run_dir: Path
+    invalid: str | None  # the harness's own outcome (ArenaOutcome.invalid)
+    costs: dict[str, float | None]  # each side's cost, as charged to runtime/budget.json
+
+
+class RefusedError(Exception):
+    """The match was refused before the game started (nothing played, nothing spent)."""
+
+
+Play = Callable[[dict[str, Any], str], Played]  # (job, run name) -> the match; raises RefusedError
+
+
+def side_caps(job: Mapping[str, Any]) -> dict[str, float]:
+    """Each paid side's cap: its arena's max_cost (its reserve)."""
+    return {s: float(job["max_cost"]) for s in SIDES if job["sides"][s]["client"] in matrix.PAID_CLIENTS}
+
+
+def status(attempts: list[dict]) -> str:
+    """A job's state from its attempts: interrupted, done (a valid match), over_budget (its last match ended at its
+    money cap: never rerun), gave_up (more than MAX_RERUNS invalid matches) or pending."""
+    if attempts and attempts[-1]["result"] is None:
+        return "interrupted"
+    results = [a["result"] for a in attempts]
+    if any(r["valid"] for r in results):
+        return "done"
+    runs = [r for r in results if not r.get("refused")]
+    if runs and runs[-1].get("invalid_reason") == OVER_BUDGET:
+        return OVER_BUDGET
+    return "gave_up" if len(runs) > matrix.MAX_RERUNS else "pending"
+
+
+def graded(job: Mapping[str, Any], arena: Mapping[str, Any], run_dir: Path) -> dict[str, Any]:
+    """bg3bench.arena.grade of the match in run_dir (its facts.jsonl, rolls.jsonl), with its pairing id."""
+
+    def rows(name: str) -> list[dict] | None:
+        try:
+            text = (run_dir / name).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return [json.loads(x) for x in text.splitlines() if x.strip()]
+
+    return {**barena.grade(rows("facts.jsonl") or [], arena, rolls=rows("rolls.jsonl")), "pairing": job["pairing"]}
+
+
+class ArenaQueue:
+    def __init__(
+        self,
+        m: Mapping[str, Any],
+        root: Path,
+        base: Path,
+        play: Play | None,
+        *,
+        now: Callable[[], float] = time.time,
+        stopped: Callable[[], bool] = lambda: False,
+        disk: Callable[[dict[str, Any]], str | None] = lambda job: None,
+        log: Callable[[str], None] = lambda msg: None,
+    ):
+        self.m, self.root, self.base, self.play = m, root, base, play  # base: the budget files' paths start there
+        self.now, self.stopped, self.disk, self.log = now, stopped, disk, log
+        self.q = arena_matrix.open_queue(root, base / m["budget"]["file"], now)
+
+    def path(self, f: str) -> Path:
+        return self.base / f
+
+    def _append(self, rec: dict) -> None:  # bench.matrix's queue line
+        with (self.root / "queue.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+    def state(self) -> dict[str, dict[str, Any]]:
+        jobs = self.q.state()
+        for st in jobs.values():
+            st["status"] = status(st["attempts"])
+        return jobs
+
+    def _progress(self, state: str, stop: str | None = None, current: dict | None = None) -> None:
+        jobs = self.state()
+        results = [a["result"] for st in jobs.values() for a in st["attempts"] if a["result"] is not None]
+        results = [r for r in results if not r.get("refused")]
+        try:
+            own = matrix.read_budget(self.path(self.m["budget"]["file"]))
+        except (OSError, ValueError):
+            own = {"cap": None, "spent": None}
+        counts = {s: sum(1 for st in jobs.values() if st["status"] == s) for s in ("done", "pending", "gave_up")}
+        progress = {
+            "schema": matrix.SCHEMA,
+            "name": self.m["name"],
+            "updated": self.now(),
+            "state": state,
+            "stop_reason": stop,
+            "current": current,
+            "jobs": len(jobs),
+            **counts,
+            OVER_BUDGET: sum(1 for st in jobs.values() if st["status"] == OVER_BUDGET),
+            "runs": len(results),
+            "invalid_runs": sum(1 for r in results if not r["valid"]),
+            "cap_usd": own["cap"],
+            "spent_usd": own["spent"],
+        }
+        tmp = self.root / "progress.json.tmp"
+        tmp.write_text(json.dumps(progress, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, self.root / "progress.json")
+
+    def _stop(self, why: str) -> str:
+        self._progress("stopped", stop=why)
+        self.log(f"arena matrix {self.m['name']}: stopped: {why}")
+        return why
+
+    def _end(self, job: dict, attempt: int, result: dict[str, Any]) -> str | None:
+        """Records the match's end and charges its costs to the matrix's files; the stop it calls for, else None."""
+        self._append({"type": "end", "job": job["id"], "attempt": attempt, "t": self.now(), "result": result})
+        try:
+            amounts = arena_matrix.charges(job, result["costs"])
+        except ValueError:  # a paid side's cost is unknown: the budget can't be enforced past it
+            return matrix.COST_UNKNOWN
+        ok = True
+        for f, usd in sorted(amounts.items()):  # every file, even after a failure: each keeps what it can
+            if usd <= 0:
+                continue
+            try:
+                b = spend.add_spend(self.path(f), usd, self.now(), matrix=self.m["name"], job=job["id"])
+            except (OSError, ValueError):
+                b = None
+            ok = ok and b is not None
+        return None if ok else matrix.BUDGET
+
+    def run(self) -> str:
+        """Play until every match is done, gave up or ended over budget, or a stop (module doc); the stop reason."""
+        self.q.create(self.m["name"], self.m["jobs"])
+        for st in self.state().values():
+            if st["status"] == "interrupted":
+                job, attempt = st["job"], st["attempts"][-1]["attempt"]
+                costs = {s: side_caps(job).get(s, 0.0) for s in SIDES}  # unknown: each paid side's whole reserve
+                result = {"valid": False, "invalid_reason": "interrupted", "costs": costs, "run_dir": None}
+                if why := self._end(job, attempt, result):
+                    return self._stop(why)
+        while True:
+            jobs = self.state()
+            todo = [st for st in jobs.values() if st["status"] == "pending"]
+            if not todo:
+                self._progress("finished", stop=matrix.FINISHED)
+                return matrix.FINISHED
+            if self.stopped():
+                return self._stop(matrix.STOPPED)
+            st = todo[0]
+            job = st["job"]
+            reserves = arena_matrix.reserves(job)
+            try:
+                budgets = {f: matrix.read_budget(self.path(f)) for f in reserves}
+            except (OSError, ValueError) as e:
+                self.log(f"arena matrix {self.m['name']}: {e}")
+                return self._stop(matrix.BUDGET)
+            if short := arena_matrix.over_budget(job, budgets):
+                self.log(f"arena matrix {self.m['name']}: {job['id']}'s reserves don't fit in {', '.join(short)}")
+                return self._stop(matrix.BUDGET)
+            if (why := self.disk(job)) is not None:
+                return self._stop(f"{matrix.DISK}: {why}")
+            attempt = len(st["attempts"]) + 1
+            self._append({"type": "start", "job": job["id"], "attempt": attempt, "t": self.now()})
+            self._progress("running", current={"id": job["id"], "attempt": attempt})
+            name = f"{self.m['name']}~{job['id']}~a{attempt}"
+            assert self.play is not None, "a queue opened to read can't play"
+            try:
+                played = self.play(job, name)
+            except RefusedError as e:  # nothing played: not an attempt; the next match would be refused the same way
+                costs = dict.fromkeys(SIDES, 0.0)
+                self._end(job, attempt, {"valid": False, "invalid_reason": str(e), "refused": True, "costs": costs})
+                return self._stop(f"{matrix.REFUSED}: {e}")
+            except Exception as e:  # the harness failed mid-match: a paid side's cost is unknown
+                costs = {s: (None if s in side_caps(job) else 0.0) for s in SIDES}
+                why = f"error: {type(e).__name__}: {e}"
+                self.log(f"arena matrix {self.m['name']}: {job['id']}: {why}")
+                stop = self._end(job, attempt, {"valid": False, "invalid_reason": why, "costs": costs, "run_dir": None})
+                if stop:
+                    return self._stop(stop)
+                continue
+            g = graded(job, self.m["arenas"][job["arena"]], played.run_dir)
+            valid = g["valid"] and played.invalid is None
+            result = {
+                "valid": valid,
+                "invalid_reason": None if valid else g["invalid_reason"] or played.invalid,
+                "harness_invalid": played.invalid,
+                "result": g["result"],
+                "reason": g["reason"],
+                "costs": played.costs,
+                "run_dir": str(played.run_dir),
+            }
+            self.log(f"arena matrix {self.m['name']}: {job['id']}: {result['result'] or result['invalid_reason']}")
+            if stop := self._end(job, attempt, result):
+                return self._stop(stop)
+
+    def matches(self) -> list[dict[str, Any]]:
+        """Each played job's match (its valid attempt, else its last one with a run dir), graded."""
+        out = []
+        for st in self.state().values():
+            done = [a["result"] for a in st["attempts"] if a["result"] and a["result"].get("run_dir")]
+            if not done:
+                continue
+            pick = next((r for r in done if r["valid"]), done[-1])
+            job = st["job"]
+            out.append(graded(job, self.m["arenas"][job["arena"]], Path(pick["run_dir"])))
+        return out
+
+
+def print_estimate(m: Mapping[str, Any], repo: Path, out: TextIO) -> None:
+    """Every budget file's reserves over the whole matrix (each paid side at its max_cost) against what it has."""
+    total: dict[str, float] = {}
+    for j in m["jobs"]:
+        for f, r in arena_matrix.reserves(j).items():
+            total[f] = total.get(f, 0.0) + r
+    out.write("estimate (each paid side at its max_cost, the most the matrix can spend):\n")
+    for f, usd in sorted(total.items()):
+        try:
+            b = matrix.read_budget(repo / f)
+            left = f"${b['cap'] - b['spent']:.2f} left of ${b['cap']:g}"
+        except (OSError, ValueError) as e:
+            left = f"unreadable: {e}"
+        out.write(f"  {f}: up to ${usd:.2f} ({left})\n")
+
+
+def live_play(m: Mapping[str, Any], repo: Path, env: Mapping[str, str]) -> Play:
+    """The match on the live game: live.play with the playthrough Runner."""
+    import legacy_playthrough as lpt
+    from bg3harness.arena import live
+
+    def play(job: dict[str, Any], name: str) -> Played:
+        spec = ArenaSpec.from_dict(m["arenas"][job["arena"]])
+        sides = {
+            s: Side(s, d["player"], str(repo / d["profile"]), d["client"], d["slug"]) for s, d in job["sides"].items()
+        }
+        caps = side_caps(job)
+        try:
+            outcome, run_dir = live.play(
+                spec, sides, lpt.Runner, name, env, max_cost=sum(caps.values()) or None, side_caps=caps or None
+            )
+        except ArenaSetupError as e:
+            raise RefusedError(str(e)) from e
+        return Played(run_dir, outcome.invalid, {s: outcome.cost(s) for s in SIDES})
+
+    return play
+
+
+def parse(argv: list[str]) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(prog="play.py arena-matrix", description=(__doc__ or "").split("\n\n")[0])
+    ap.add_argument("--matrix", required=True, metavar="TOML", help="the matrix file (bg3bench.arena_matrix)")
+    what = ap.add_mutually_exclusive_group()
+    what.add_argument("--plan", action="store_true", help="print the matches, reserves and estimate; play nothing")
+    what.add_argument("--table", action="store_true", help="print the results table of the matches played so far")
+    ap.add_argument("--seed", type=int, default=SEED, help="--table's bootstrap seed")
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str], repo: Path | None = None, play: Play | None = None, out: TextIO = sys.stdout) -> int:
+    a = parse(argv)
+    repo = repo or renv.REPO
+    try:
+        m = arena_matrix.load(repo / a.matrix, repo)
+    except (MatrixFileError, ValueError) as e:
+        print(f"play.py arena-matrix refused: {e}", file=sys.stderr)
+        return 2
+    if a.plan:
+        arena_matrix.print_plan(m, out)
+        print_estimate(m, repo, out)
+        return 0
+    root = renv.RUNTIME / "matrix" / m["name"]
+    if a.table:
+        if not (root / "queue.jsonl").is_file():
+            print(f"play.py arena-matrix refused: no {root / 'queue.jsonl'}: play the matrix first", file=sys.stderr)
+            return 2
+        table = barena.results(ArenaQueue(m, root, repo, None).matches(), a.seed)
+        out.write(json.dumps(table, indent=1, default=str) + "\n")
+        return 0
+    if not m["jobs"]:
+        print(f"play.py arena-matrix refused: matrix {m['name']} has no match", file=sys.stderr)
+        return 2
+    import legacy_cli as lcli  # the runner's lock
+
+    lock = lcli.acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
+    from bg3harness.runner import run_host
+
+    def disk(job: dict[str, Any]) -> str | None:  # the match's recording must fit (its wall cap)
+        return diskguard.start_refusal(renv.RUNTIME, float(m["arenas"][job["arena"]]["wall_cap_min"]))
+
+    q = ArenaQueue(
+        m,
+        root,
+        repo,
+        play or live_play(m, repo, dict(os.environ)),
+        stopped=lambda: run_host.stop_file().exists(),
+        disk=disk,
+        log=renv.log,
+    )
+    try:
+        stop = q.run()
+    except ValueError as e:  # the queue holds another plan
+        print(f"play.py arena-matrix refused: {e}", file=sys.stderr)
+        return 2
+    out.write(f"arena matrix {m['name']}: {stop}\n")
+    for st in q.state().values():
+        last = st["attempts"][-1]["result"] if st["attempts"] else None
+        what = "" if last is None else f": {last.get('result') or last.get('invalid_reason')}"
+        out.write(f"  {st['job']['id']}: {st['status']} ({len(st['attempts'])} attempts){what}\n")
+    return 0 if stop == matrix.FINISHED else 1

@@ -28,7 +28,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
      (`client_fault`);
    - the game gone or not answering for HANG_S: `fault` (invalid, rerun); an operator's abort: `abort` (invalid);
    - max_cost (USD, when given): both sides' cost so far (each process's running cost, Agents' cost_usd: pi's
-     comes after each model response) reaching it: `over_budget` (invalid, no winner, rerun), both agents stopped.
+     comes after each model response) reaching it, or one side's reaching its own cap (side_caps, a matrix's per-side
+     reserve): `over_budget` (invalid, no winner), both agents stopped.
    The runner's own ends go to the mod as `arena.end {reason, winner}` (no answer from a dead game is needed) and
    into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, cause?}`, with the HP fractions
    from the last `arena.status.hp`. Every arena_end, the mod's too, carries `cost {A, B}` (each side's cost so far,
@@ -374,10 +375,11 @@ def run_arena(
     aborted: Callable[[], bool] = lambda: False,
     writer: facts.FactsWriter | None = None,
     max_cost: float | None = None,
+    side_caps: Mapping[str, float] | None = None,
 ) -> ArenaOutcome:
     """One match into `out` (facts.jsonl, rolls.jsonl; the agents write their own files); see the module doc.
     writer: the run's facts writer when the caller has one (its run_start stays time zero); max_cost: the match's
-    money cap (USD, both sides together)."""
+    money cap (USD, both sides together); side_caps: a side's own cap (USD) where it has one."""
     out.mkdir(parents=True, exist_ok=True)
     writer = writer or facts.FactsWriter(out / "facts.jsonl", clock=clock.now)
     ref = Referee(spec, sides, writer)
@@ -492,10 +494,11 @@ def run_arena(
                     )
                 n = faults[s] + exits[s]
                 runs[s] = agents.start(s, RESUME, ex.conversation, f"-r{n}")
-            if max_cost is not None and sum((cost := spent()).values()) >= max_cost:
-                raise _Ended(
-                    "over_budget", detail=f"A ${cost['A']:.4f} + B ${cost['B']:.4f} reached max_cost ${max_cost:g}"
-                )
+            cost, caps = spent(), side_caps or {}
+            capped = [s for s in SIDES if s in caps and cost[s] >= caps[s]]
+            if capped or (max_cost is not None and sum(cost.values()) >= max_cost):
+                what = f"side {capped[0]}'s cap ${caps[capped[0]]:g}" if capped else f"max_cost ${max_cost:g}"
+                raise _Ended("over_budget", detail=f"A ${cost['A']:.4f} + B ${cost['B']:.4f} reached {what}")
             turn = ref.turn
             gained = {s: model(s) - seen_model[s] for s in SIDES}
             seen_model = {s: model(s) for s in SIDES}

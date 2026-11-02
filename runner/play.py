@@ -6,6 +6,7 @@
     runner/play.py stop                  # finish the current session, then exit
     runner/play.py bench run --matrix M.toml   # bg3bench's matrix, each job one run_session on this game
     runner/play.py arena --arena NAME --a P.toml --b P.toml   # one two-team match (runner/arena_cli.py)
+    runner/play.py arena-matrix --matrix M.toml [--plan|--table]   # an arena pairing matrix (runner/arena_queue.py)
     runner/play.py run --playthrough NAME --until nautiloid_escaped --runs 3 [--run-hours 4]   # benchmark series
     runner/play.py runs --playthrough NAME [--failures]   # its runs: outcome, clean, failures by class
     runner/play.py judge --playthrough NAME [--run K]     # (re-)score runs' in-character decisions (runner.judging)
@@ -66,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
         import arena_cli
 
         return arena_cli.main(argv[1:])
+    if argv[:1] == ["arena-matrix"]:  # an arena pairing matrix, match by match (runner/arena_queue.py)
+        import arena_queue
+
+        return arena_queue.main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="play sessions until stopped")
