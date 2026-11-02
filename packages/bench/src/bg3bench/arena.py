@@ -6,7 +6,9 @@ An arena file (`arenas/<name>.json`, schema/arena.v1.schema.json; `load`, `valid
 uuids: arena.setup fails when a name and its uuid disagree), the character level every member is set to (`level`,
 default 2), the dice seed, Karmic Dice off (`karmic: false`), the round cap (default 20), the wall-clock cap in minutes (default 30), the
 model-time cap per turn in seconds (`turn_cap_s`), the condition and the name of the bridge's tools-off list
-(TOOLS_OFF_LISTS). `draft` says why an arena can't be played yet (its spots are placeholders); the pairing planner
+(TOOLS_OFF_LISTS). A mirror arena adds `mirror {pairs: [{class, template, race, stats, names {A, B}, kit}]}` (1 to
+TEAM_MAX pairs, tools/dev/make_arena_save.py mirror writes it): arena.setup makes each pair's twins per match, so its
+team entries are names only, pair i's names at index i of each team (the uuids come from the setup). `draft` says why an arena can't be played yet (its spots are placeholders); the pairing planner
 (arena_matrix) gives a draft arena no matches. Arena files are not suite files: nothing here moves a bench-vX.Y score.
 
 A **match** is one fight: model X plays side A, model Y side B. A **pairing** is two matches of one arena, seed and
@@ -70,8 +72,9 @@ FORFEIT_TURNS = 3  # forced turns in a row that forfeit the match
 TOOLS_OFF_LISTS = ("arena-v1",)  # the bridge's named arena tools-off lists (BG3AI_TOOLS_OFF values)
 KEYS = {
     "schema", "name", "title", "about", "draft", "save", "location", "teams", "level", "seed", "karmic",
-    "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off",
+    "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off", "mirror",
 }  # fmt: skip
+PAIR_KEYS = {"class", "template", "race", "stats", "names", "kit"}  # a mirror pair (class: informational)
 SHA1_LEN = 40
 END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "over_budget")
 CAP_REASONS = ("round_cap", "wall_cap")  # draws
@@ -160,6 +163,39 @@ def _check_teams(teams: Any) -> list[str]:
     return errs
 
 
+def _check_mirror(mirror: Any, teams: Any) -> list[str]:
+    """A mirror arena's pairs, and its teams as names only, pair i's at index i."""
+    if not isinstance(mirror, dict) or set(mirror) != {"pairs"}:
+        return ["mirror must be {pairs}"]
+    pairs = mirror["pairs"]
+    if not isinstance(pairs, list) or not 1 <= len(pairs) <= TEAM_MAX:
+        return [f"mirror.pairs must list 1 to {TEAM_MAX} pairs"]
+    errs: list[str] = []
+    for i, p in enumerate(pairs):
+        if not isinstance(p, dict) or set(p) != PAIR_KEYS:
+            errs.append(f"mirror.pairs[{i}] must be {{{', '.join(sorted(PAIR_KEYS))}}}")
+            continue
+        errs += [f"mirror.pairs[{i}].{k} must be a non-empty string" for k in ("class", "template", "race", "stats")
+                 if not _str(p[k])]  # fmt: skip
+        names = p["names"]
+        if not isinstance(names, dict) or set(names) != set(SIDES) or not all(_str(names[s]) for s in SIDES):
+            errs.append(f"mirror.pairs[{i}].names must name the A and the B twin")
+        if not isinstance(p["kit"], dict):
+            errs.append(f"mirror.pairs[{i}].kit must be an object")
+    if errs or not isinstance(teams, dict):
+        return errs
+    for s in SIDES:
+        team = teams.get(s)
+        rows: list[Any] = team if isinstance(team, list) else []
+        want = [p["names"][s] for p in pairs]
+        got = [m.get("name") if isinstance(m, dict) else m for m in rows]
+        if got != want:
+            errs.append(f"teams.{s} must name the mirror's pairs in order: {want}, not {got}")
+        elif any(set(m) != {"name"} for m in rows):
+            errs.append(f"teams.{s}: a mirror arena's characters are names only (arena.setup makes them)")
+    return errs
+
+
 def validate(a: Any, name: str) -> list[str]:
     """What is wrong with an arena file named `name` (its file stem); [] = valid."""
     if not isinstance(a, dict):
@@ -179,6 +215,8 @@ def validate(a: Any, name: str) -> list[str]:
     errs += _check_save(a.get("save"), "draft" in a)
     errs += _check_location(a.get("location"))
     errs += _check_teams(a.get("teams"))
+    if "mirror" in a:
+        errs += _check_mirror(a["mirror"], a.get("teams"))
     level = a.get("level", LEVEL)
     if not _int(level) or not 1 <= level <= LEVEL_MAX:
         errs.append(f"level must be an integer 1..{LEVEL_MAX}")

@@ -53,7 +53,7 @@ def match(winner="A", reason="wipe", hp=(0.75, 0.0), rounds=2, start=None, turns
 
 def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
     files = sorted((PKG / "arenas").glob("*.json"))
-    assert [p.stem for p in files] == ["crash-companions-v1", "draft_open_field"]
+    assert [p.stem for p in files] == ["crash-companions-v1", "crash-mirror-v1", "draft_open_field"]
     for p in files:
         a = json.loads(p.read_text())
         jsonschema.validate(a, ARENA_SCHEMA)
@@ -76,6 +76,19 @@ def test_the_companions_arena_is_the_crash_site_save_with_every_member_named_and
     assert "draft" not in a
 
 
+def test_the_mirror_arena_names_four_twin_pairs_and_waits_for_its_live_check():
+    a = arena.load_named("crash-mirror-v1")
+    companions = arena.load_named("crash-companions-v1")
+    pairs = a["mirror"]["pairs"]
+    assert [p["class"] for p in pairs] == ["Fighter", "Rogue", "Barbarian", "Ranger"]
+    assert arena.team_names(a) == {s: [p["names"][s] for p in pairs] for s in ("A", "B")}
+    assert all(set(m) == {"name"} for s in ("A", "B") for m in a["teams"][s])  # the setup makes the uuids
+    assert a["level"] == 2 and "draft" not in a
+    same = ("save", "location", "seed", "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off")
+    assert {k: a[k] for k in same} == {k: companions[k] for k in same}
+    assert "NOT READY FOR RATED MATCHES" in a["about"]
+
+
 def test_load_fills_the_defaults(tmp_path):
     bare = {k: v for k, v in READY.items() if k not in ("round_cap", "wall_cap_min", "condition", "level")}
     (tmp_path / f"{bare['name']}.json").write_text(json.dumps(bare))
@@ -92,6 +105,14 @@ def _with(**kw):
             a[k] = v
     return a
 
+
+def pair(cls: str, a: str, b: str) -> dict:
+    return {"class": cls, "template": "t", "race": "r", "stats": "s", "names": {"A": a, "B": b}, "kit": {}}
+
+
+PAIRS = [pair("Fighter", "Ash", "Birch"), pair("Rogue", "Cedar", "Dune")]
+NAME_ONLY = {"A": [{"name": "Ash"}, {"name": "Cedar"}], "B": [{"name": "Birch"}, {"name": "Dune"}]}
+MIRROR = _with(teams=NAME_ONLY, mirror={"pairs": PAIRS})
 
 BAD = {
     "no save outside a draft": _with(save={"name": None, "sha1": None}),
@@ -117,6 +138,18 @@ BAD = {
     "no karmic": _with(karmic=None),
     "no turn cap": _with(turn_cap_s=None),
     "a turn cap of 0": _with(turn_cap_s=0),
+    "a mirror with no pairs": _with(teams=NAME_ONLY, mirror={"pairs": []}),
+    "a mirror of five pairs": _with(teams=NAME_ONLY, mirror={"pairs": [*PAIRS] * 2 + [PAIRS[0]]}),
+    "a mirror key that isn't pairs": _with(teams=NAME_ONLY, mirror={"pairs": PAIRS, "seed": 1}),
+    "a mirror pair without its kit": _with(teams=NAME_ONLY, mirror={"pairs": [{**PAIRS[0], "kit": None}, PAIRS[1]]}),
+    "a mirror pair with one name": _with(
+        teams=NAME_ONLY, mirror={"pairs": [{**PAIRS[0], "names": {"A": "Ash"}}, PAIRS[1]]}
+    ),
+    "a mirror pair with an unknown key": _with(teams=NAME_ONLY, mirror={"pairs": [{**PAIRS[0], "hp": 9}, PAIRS[1]]}),
+    "a mirror twin with a uuid": _with(
+        teams={**NAME_ONLY, "A": [{"name": "Ash", "uuid": "3ed74f06-3c60-42dc-83f6-f034cb47c679"}, {"name": "Cedar"}]},
+        mirror={"pairs": PAIRS},
+    ),
 }
 
 
@@ -141,6 +174,23 @@ def test_validator_only_checks():
     assert any("condition" in e for e in arena.validate(_with(condition="coaching"), READY["name"]))
     assert arena.validate(_with(condition="rules+wiki"), READY["name"]) == []
     assert arena.validate([], "x") == ["an arena file is a JSON object"]
+
+
+def test_a_mirror_arena_with_name_only_teams_in_pair_order_is_valid_and_the_validator_checks_the_order():
+    assert arena.validate(MIRROR, READY["name"]) == []
+    jsonschema.validate(MIRROR, ARENA_SCHEMA)
+    order = _with(teams={**NAME_ONLY, "B": [{"name": "Dune"}, {"name": "Birch"}]}, mirror={"pairs": PAIRS})
+    other = _with(teams={**NAME_ONLY, "A": [{"name": "Ash"}, {"name": "Elm"}]}, mirror={"pairs": PAIRS})
+    short = _with(teams={**NAME_ONLY, "A": [{"name": "Ash"}]}, mirror={"pairs": PAIRS})
+    for bad in (order, other, short):  # the schema can't say it: the validator does
+        jsonschema.validate(bad, ARENA_SCHEMA)
+        assert any("must name the mirror's pairs in order" in e for e in arena.validate(bad, READY["name"]))
+    template = _with(
+        teams={**NAME_ONLY, "A": [{"name": "Ash", "template": "t"}, {"name": "Cedar"}]}, mirror={"pairs": PAIRS}
+    )
+    assert any("names only" in e for e in arena.validate(template, READY["name"]))
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(template, ARENA_SCHEMA)
 
 
 def test_load_names_the_file_and_every_problem(tmp_path):
