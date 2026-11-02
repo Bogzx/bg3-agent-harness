@@ -96,6 +96,11 @@ def queue(pilot, tmp: Path, player, **kw) -> aq.ArenaQueue:
     return aq.ArenaQueue(pilot, tmp / "matrix" / pilot["name"], tmp, player, now=lambda: 1.0, **kw)
 
 
+def progress(tmp: Path) -> tuple[str, str, int]:
+    p = json.loads((tmp / "matrix" / "arena-pilot" / "progress.json").read_text())
+    return p["state"], p["stop_reason"], p["pending"]
+
+
 def lines(tmp: Path) -> list[dict]:
     return [json.loads(x) for x in (tmp / "matrix" / "arena-pilot" / "queue.jsonl").read_text().splitlines()]
 
@@ -132,6 +137,7 @@ def test_a_match_the_matrix_runner_died_in_is_charged_its_reserves_and_played_ag
     with pytest.raises(KeyboardInterrupt):
         queue(pilot, tmp_path, player).run()
     assert [r["type"] for r in lines(tmp_path)] == ["plan", "start"]
+    assert progress(tmp_path)[:2] == ("stopped", "aborted: KeyboardInterrupt: ")  # never "running" after it died
     assert queue(pilot, tmp_path, player).run() == "finished"
     assert player.calls == [f"arena-pilot~{M1}~a1", f"arena-pilot~{M1}~a2", f"arena-pilot~{M2}~a1"]
     # the interrupted match: each paid side's whole reserve ($1); then the two played matches
@@ -165,10 +171,26 @@ def test_a_refused_match_stops_the_matrix_without_an_attempt(tmp_path, pilot):
     budgets(tmp_path)
     player = Player(tmp_path, "refused")
     assert queue(pilot, tmp_path, player).run().startswith("refused: side A: DEEPSEEK_API_KEY is set neither")
+    state, stop, pending = progress(tmp_path)
+    assert (state, pending) == ("stopped", 2) and stop.startswith("refused: side A: DEEPSEEK_API_KEY")
     assert queue(pilot, tmp_path, player).run() == "finished"
     st = queue(pilot, tmp_path, player).state()[M1]
     assert [bool(a["result"].get("refused")) for a in st["attempts"]] == [True, False]
     assert spent(tmp_path)["arena"] == pytest.approx(1.0)  # the refusal spent nothing
+
+
+def test_runtime_budget_json_short_of_the_matchs_cap_stops_the_matrix_before_it_starts(tmp_path, pilot):
+    """live.play charges runtime/budget.json and refuses a match whose cap ($1 + $1) it can't hold; the matrix
+    checks it with the reserves, so it stops on budget (resumable) before starting a match live.play would refuse."""
+    budgets(tmp_path)
+    glob = tmp_path / "runtime" / "budget.json"
+    glob.write_text(json.dumps({"cap": 4.5, "spent": 2.6}))
+    player = Player(tmp_path)
+    assert queue(pilot, tmp_path, player, global_budget=glob).run() == "budget"
+    assert player.calls == [] and [r["type"] for r in lines(tmp_path)] == ["plan"]
+    glob.write_text(json.dumps({"cap": 4.5, "spent": 2.5}))  # exactly $2 left
+    assert queue(pilot, tmp_path, player, global_budget=glob).run() == "finished"
+    assert json.loads(glob.read_text())["spent"] == 2.5  # live.play charges it, not the matrix
 
 
 def test_the_disk_guard_stops_the_matrix_before_a_match(tmp_path, pilot):

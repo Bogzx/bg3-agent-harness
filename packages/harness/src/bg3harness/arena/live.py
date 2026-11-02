@@ -170,13 +170,17 @@ def play(
     log: Callable[[str], None] = renv.log,
     max_cost: float | None = None,
     side_caps: Mapping[str, float] | None = None,
+    keep_game: bool = False,
 ) -> tuple[ArenaOutcome, Path]:
     """One match on the live game (see the module doc); returns the outcome and the run dir. Refused
     (ArenaSetupError) before anything starts when a paid side has no max_cost or the budget hasn't max_cost left
     (budget_refusal), and before the agents start when
     the recording (run_host.bench_recording: on unless BG3AI_BENCH_RECORD=0) can't record: it starts with the game
     up, into <run_dir>/recording/, and stops after the match's run_end with the game still up. side_caps: each side's
-    own money cap where it has one (a matrix's per-side reserve; run_arena)."""
+    own money cap where it has one (a matrix's per-side reserve; run_arena). A game up that the runner didn't launch
+    or load (NotOurGame) refuses the match. The match ends with the game stopped (Runner.end_run_game, as a bench
+    run's: a game the runner didn't launch is left alone), after the recording stops and scenario_undo, so the next
+    match starts in a new game; keep_game leaves it up (a live check reading the game after the match)."""
     if why := budget_refusal(sides, max_cost):
         raise ArenaSetupError(why)
     try:
@@ -202,7 +206,10 @@ def play(
         manifest["sides"][s] = {"player": sides[s].player, **fields}
     rec: hrec.RunRecording | None = None
     try:
-        start_game(r, spec)
+        try:
+            start_game(r, spec)
+        except gio.NotOurGame as e:  # a game up the runner didn't launch or load: refused, nothing played
+            raise ArenaSetupError(str(e)) from e
         if recording is not None:  # with the game up (the recorder records its window)
             rec = recording(run_dir / "recording")
             try:
@@ -238,7 +245,11 @@ def play(
             if rec is not None:
                 rec.stop()  # after the match's run_end, with the game still up: the recording covers the match
         finally:
-            r.scenario_undo()
+            try:
+                r.scenario_undo()
+            finally:
+                if not keep_game:  # the next match (a matrix's next attempt too) launches a game of its own
+                    r.end_run_game("match end", "the next match launches a new one")
     for s in SIDES:
         usd = outcome.cost(s)
         if usd:
