@@ -8,7 +8,7 @@
 -- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
 --   2. place: the names checked; every member and sitter detached, each team chained to its first member and
---      teleported to a line through its spawn (the sitters stay where they are)
+--      teleported to a line through its spawn (the sitters stay where they are, SetCanJoinCombat 0: read back 0)
 --   3. RestoreParty(host), then SetHitpointsPercentage 100 for anyone it left short; the seed and Karmic Dice
 --   4. each team its own spare "Hero Player<N>" faction (never the bare "Hero": the companions' factions descend from
 --      it), SetRelation hostile both ways, SetHostileAndEnterCombat (EnterCombat pairs if not all members in one
@@ -230,7 +230,19 @@ STEPS[2] = function(job) -- the names after joining; chained per team, on its li
         end
     end
     for _, u in ipairs(all_of(t)) do call(job, "DetachFromPartyGroup", { u }) end
-    for _, u in ipairs(job.sitters) do call(job, "DetachFromPartyGroup", { u }) end
+    -- the sitters can't join the fight at all (live 9: the avatar 21 m off joined ~3 min in, when a member came ~18 m
+    -- from him); arena.reset gives each its CanJoinCombat back
+    job.can_join, off = {}, {}
+    for _, u in ipairs(job.sitters) do
+        call(job, "DetachFromPartyGroup", { u })
+        job.can_join[u] = osi(Osi.CanJoinCombat, u)
+        call(job, "SetCanJoinCombat", { u, 0 })
+        local now = osi(Osi.CanJoinCombat, u)
+        if now ~= 0 then off[#off + 1] = ("%s CanJoinCombat %s"):format(tostring(V.name(u)), tostring(now)) end
+    end
+    if #off > 0 then
+        error("sitters that can still join the fight after SetCanJoinCombat 0: " .. table.concat(off, ", "), 0)
+    end
     for _, s in ipairs(Ar.SIDES) do
         for i = 2, #t[s] do call(job, "AttachToPartyGroup", { t[s][i], t[s][1] }) end
         for i, p in ipairs(Setup.line(job.spawns[s], #t[s])) do
@@ -326,7 +338,7 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
     end
     local sitters = {}
     for _, u in ipairs(job.sitters) do sitters[#sitters + 1] = { uuid = u, name = V.name(u) } end
-    local status = Ar.begin(t, { round_cap = job.round_cap })
+    local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, calls = job.calls, status = status })

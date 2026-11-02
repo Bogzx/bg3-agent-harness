@@ -222,3 +222,41 @@ test("a cross-team turn group without a readable turn order: the earliest turn s
     eq(r[1].side, "B", "the record's side")
     eq(r[1].round, 1, "the record's round")
 end)
+
+-- Live 2026-11-02 (live 9): the avatar, sitting out, joined the fight ~3 min in; nobody ends a sitter's turn and the
+-- match stalled until the runner faulted it.
+test("a character on no team entering the arena's combat ends the match as a fault, named; a summon, a prop or "
+    .. "another fight doesn't", function()
+    local PROP = "dddddddd-0000-0000-0000-0000000000d1"
+    begin()
+    osiv[key("IsCharacter", PROP)] = 0
+    fire("EnteredCombat", "S_Player_" .. SA, "combat1")     -- A1's summon
+    fire("EnteredCombat", "S_Item_" .. PROP, "combat1")     -- a prop on the turn order
+    osiv[key("CombatGetGuidFor", GOB)] = "combat2"
+    fire("EnteredCombat", "S_Goblin_" .. GOB, "combat2")     -- a fight elsewhere
+    eq(Ar.state.ended, nil, "still on")
+    fire("EnteredCombat", "S_Goblin_" .. GOB, "combat1")
+    local e = Ar.state.ended
+    eq(e and e.reason, "fault", "reason")
+    eq(e.winner, nil, "no winner")
+    eq(e.detail, "Goblin (not on a team) joined the fight", "detail")
+    local r = refs("arena_end")
+    eq(#r, 1, "recorded once")
+    eq(r[1].detail, e.detail, "the record's detail")
+end)
+
+test("a character on no team in the turn order ends the match at the next phase check; a prop there doesn't",
+    function()
+    local PROP = "dddddddd-0000-0000-0000-0000000000d1"
+    begin()
+    world[PROP] = { pos = { 3, 0, 0 }, comps = {} }
+    osiv[key("IsCharacter", PROP)] = 0
+    setTurn(A1, true, false)
+    order = { A1, PROP, B1 }
+    tick()
+    eq(Ar.state.ended, nil, "a prop: still on")
+    eq(#refs("arena_turn"), 1, "the phase recorded")
+    order = { A1, GOB, B1 }
+    tick()
+    eq(Ar.state.ended and Ar.state.ended.detail, "Goblin (not on a team) joined the fight", "the goblin")
+end)

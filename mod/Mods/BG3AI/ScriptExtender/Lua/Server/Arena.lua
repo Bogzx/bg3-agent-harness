@@ -155,8 +155,8 @@ end
 -- of open members from there (in turn order, skipping members whose turn is not open). Without such a group in the
 -- turn order (it doesn't read): the open members by the team tables, the side tie_fallback picks when both have one,
 -- group nil. nil when no team member's turn is open.
-function Ar.phase()
-    local gs = turnGroups()
+function Ar.phase(gs)
+    gs = gs or turnGroups()
     for _, g in ipairs(gs or {}) do
         local open, sides = {}, {}
         for _, u in ipairs(g.members) do
@@ -242,15 +242,26 @@ function Ar.wiped(side)
     return true
 end
 
-function Ar.finish(winner, reason)
+function Ar.finish(winner, reason, detail)
     local st = Ar.state
     if st.ended then return st.ended end
     st.ended = { winner = winner, reason = reason, rounds = st.round, hp_left_A = hpLeft("A"), hp_left_B = hpLeft("B"),
-        t = now_ms() }
+        detail = detail, t = now_ms() }
     record("arena_end", { winner = winner, reason = reason, rounds = st.round, hp_left_A = st.ended.hp_left_A,
-        hp_left_B = st.ended.hp_left_B })
+        hp_left_B = st.ended.hp_left_B, detail = detail })
     return st.ended
 end
+
+-- A character on no team in the arena's combat ends the match as a fault at once (the turn order's props are not
+-- characters). Live 2026-11-02 (live 9): the avatar, sitting out 21 m away, joined ~3 min in when a member came ~18 m
+-- from him; the game's turn sat on him, nobody ends a sitter's turn, and the match stalled until the runner faulted it.
+-- True if it ended the match.
+local function outsider(u)
+    if not u or Ar.side_of(u) or not truthy(osi(Osi.IsCharacter, u)) then return false end
+    Ar.finish(nil, "fault", tostring(V.name(u)) .. " (not on a team) joined the fight")
+    return true
+end
+
 
 -- A turn boundary: a side all downed or dead loses (both: a draw).
 function Ar.check_end()
@@ -354,7 +365,13 @@ function Ar.phase_check()
     local t = now_ms()
     if st.phaseAt and t - st.phaseAt < Ar.PHASE_EVERY_MS then return end
     st.phaseAt = t
-    local p = Ar.phase()
+    local gs = turnGroups()
+    for _, g in ipairs(gs or {}) do
+        for _, u in ipairs(g.members) do
+            if outsider(u) then return end
+        end
+    end
+    local p = Ar.phase(gs)
     if not p then return end
     local round = st.round or 1
     while p and passCantAct(p, round) do p = Ar.phase() end -- each pass leaves those members' turns not open
@@ -396,15 +413,25 @@ function Ar.combat_ended(combat)
     if not st.ended then record("arena_combat_ended", { rounds = st.round }) end
 end
 
+-- Someone enters the arena's combat: anyone on no team ends the match (outsider).
+function Ar.entered_combat(char, combat)
+    if not Ar.active() then return end
+    local st = Ar.state
+    if st.ended or not arenaCombat(combat) then return end
+    outsider(V.uuid(char))
+end
+
 if not Ar.listening then
     Ar.listening = true
-    for name, arity in pairs({ TurnStarted = 1, CombatRoundStarted = 2, CombatEnded = 1 }) do
+    for name, arity in pairs({ TurnStarted = 1, CombatRoundStarted = 2, CombatEnded = 1, EnteredCombat = 2 }) do
         local ok, err = pcall(Ext.Osiris.RegisterListener, name, arity, "after", function(a, b)
             local ok2, err2 = pcall(function()
                 if name == "TurnStarted" then
                     Ar.turn_started(a)
                 elseif name == "CombatRoundStarted" then
                     Ar.round_started(a, b)
+                elseif name == "EnteredCombat" then
+                    Ar.entered_combat(a, b)
                 else
                     Ar.combat_ended(a)
                 end
@@ -432,6 +459,8 @@ end
 -- combat. The match's round starts as that combat's (live 2026-11-02: setup's combat call fires round 1's
 -- CombatRoundStarted and first TurnStarted before this), then follows CombatRoundStarted; nil until known. The
 -- client gets the team uuids and display names. opts.round_cap: the rounds a match lasts at most (a draw after).
+-- opts.sitters: {uuid = its CanJoinCombat before setup} for the characters setup kept out of the fight; arena.reset
+-- gives them that back.
 function Ar.begin(teams, opts)
     if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
     local t, names = {}, {}
@@ -447,7 +476,7 @@ function Ar.begin(teams, opts)
     RPC.clear_sides()
     local combat = osi(Osi.CombatGetGuidFor, t.A[1])
     Ar.state = { teams = t, names = names, combat = combat, round = combat and roundNow(t.A[1]) or nil,
-        started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil }
+        started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters }
     broadcast({ teams = t, names = names })
     record("arena_start", { teams = t })
     return Ar.status()
@@ -463,6 +492,7 @@ function Ar.status()
 end
 
 function Ar.reset()
+    for u, can in pairs(Ar.state and Ar.state.sitters or {}) do pcall(Osi.SetCanJoinCombat, u, can) end
     Ar.state = nil
     RPC.clear_sides()
     broadcast({})

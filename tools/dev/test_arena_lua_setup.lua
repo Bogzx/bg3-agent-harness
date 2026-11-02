@@ -14,7 +14,7 @@ local ALL = { A1, A2, A3, A4, B1, B2, B3, B4 }
 NAMES[A3], NAMES[A4], NAMES[B3], NAMES[B4], NAMES[AV], NAMES[SH] = "Ari", "Axe", "Bix", "Bree", "Tav", "Sha"
 
 local saved = {}
-local calls, factionOf, enemyFrom, combatOf, scn
+local calls, factionOf, enemyFrom, combatOf, scn, canJoin
 
 local FACTIONS = { -- static data: guid -> name
     g0 = "Hero", g1 = "Hero Player1", g2 = "Hero Player2", g3 = "Hero Player3", g4 = "Hero Player4",
@@ -67,6 +67,12 @@ local function game(opts)
         "TeleportToPosition", "RestoreParty", "SetHitpointsPercentage", "SetRelation" }) do
         stub(n, record(n))
     end
+    canJoin = {}
+    stub("CanJoinCombat", function(u) return canJoin[u] or 1 end)
+    stub("SetCanJoinCombat", function(u, v)
+        calls[#calls + 1] = { "SetCanJoinCombat", u, v }
+        if not opts.join_switch_ignored then canJoin[u] = v end
+    end)
     stub("PROC_GLO_PartyMembers_Add", function(u, host)
         calls[#calls + 1] = { "PROC_GLO_PartyMembers_Add", u, host }
         partyRows[#partyRows + 1] = u
@@ -229,6 +235,25 @@ test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right
     eq(j.result.status.round, 1, "its status: round 1")
     eq(#refs("arena_start"), 1, "arena_start recorded")
     eq(enc(j.result.sitters), enc({ { uuid = AV, name = "Tav" }, { uuid = SH, name = "Sha" } }), "the sitters")
+    local sw = {}
+    for _, c in ipairs(named("SetCanJoinCombat")) do sw[#sw + 1] = c[2] .. "=" .. c[3] end
+    eq(table.concat(sw, ","), AV .. "=0," .. SH .. "=0", "the sitters can't join the fight")
+    eq(enc(Ar.state.sitters), enc({ [AV] = 1, [SH] = 1 }), "their CanJoinCombat before, for arena.reset")
+    rpc("arena.reset")
+    sw = {}
+    for _, c in ipairs(named("SetCanJoinCombat")) do sw[#sw + 1] = c[2] .. "=" .. c[3] end
+    table.sort(sw)
+    eq(table.concat(sw, ","), SH .. "=0," .. SH .. "=1," .. AV .. "=0," .. AV .. "=1", "arena.reset gives it back")
+end)
+
+test_setup("arena.setup: a sitter the game still lets join the fight fails setup, named", function()
+    game({ join_switch_ignored = true })
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "failed")
+    eq(j.error, "sitters that can still join the fight after SetCanJoinCombat 0: Tav CanJoinCombat 1, "
+        .. "Sha CanJoinCombat 1", "error")
+    eq(#named("TeleportToPosition"), 0, "nobody placed")
 end)
 
 test_setup("arena.setup: 3 v 3: the 2 others in the party sit out; IsEnemy 18/18 across, 0/12 within", function()
