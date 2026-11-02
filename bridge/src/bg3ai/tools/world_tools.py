@@ -401,6 +401,12 @@ def _pocket_handle(it: dict) -> str:
     return core.H.get(u, it.get("name")) if isinstance(u, str) and u else ""
 
 
+# state.inventory's cat (the item's ObjectCategory): PotionHealing, PotionUtility, PotionResistance (elixirs) are
+# drunk from the bags with no target; MagicScroll, MagicScroll_3, MagicScroll_Utility ... put a spell in hand.
+_POTION_CAT = re.compile(r"Potion")
+_SCROLL_CAT = re.compile(r"MagicScroll")
+
+
 def _carried_scroll(char: str, ability: str) -> dict | None:
     """A scroll (any carried item) named like `ability` ('Scroll of Invisibility' or just 'Invisibility'): the
     character's own first, else a party member's. S030 16:34: use_ability(Shadowheart, "Scroll of Invisibility")
@@ -527,9 +533,11 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     no target the ground there (a point/cone scroll). In combat (A7) it is read on the reader's turn for an action,
     like casting; the mod refuses it off-turn or with no action left.
     A scroll on another member's bags is named, not taken."""
-    if _shared_screen():  # its target is clicked
-        raise GameError(f"reading a scroll is {SHARED_SCREEN}")
     name = str(it.get("name"))
+    if _shared_screen() and not _POTION_CAT.match(str(it.get("cat") or "")):  # its target is clicked
+        # live 10 m2: a Potion of Healing was refused as a scroll; a potion is drunk with no click (the mod: drunk)
+        what = "reading a scroll" if _SCROLL_CAT.match(str(it.get("cat") or "")) else f"using {name}"
+        raise GameError(f"{what} is {SHARED_SCREEN}")
     if it.get("owner") and it.get("owner") != char:
         raise GameError(f"{queueing._label(char)} has no action called that; {queueing._label(it['owner'])} carries {name} "
                         f"({core.H.get(it['uuid'])}): use_ability(who=\"{overview._name_of(it['owner'])}\", ability=\"{name}\", "

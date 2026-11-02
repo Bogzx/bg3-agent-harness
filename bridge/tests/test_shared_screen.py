@@ -124,9 +124,27 @@ class Shared(unittest.TestCase):
 
     def test_scroll(self):
         g = self.use("A")
+        scroll = {"uuid": P2, "name": "Scroll of Revivify", "owner": P1, "cat": "MagicScroll_3"}
         with self.assertRaisesRegex(GameError, f"reading a scroll is {SHARED}"):
-            world_tools._use_scroll(P1, {"uuid": P2, "name": "Scroll of Revivify", "owner": P1}, "")
+            world_tools._use_scroll(P1, scroll, "")
         self.assertEqual(g.ops, [])
+        with self.assertRaisesRegex(GameError, f"using Alchemist's Fire is {SHARED}"):  # thrown: its target is clicked
+            world_tools._use_scroll(P1, {"uuid": P2, "name": "Alchemist's Fire", "owner": P1, "cat": "Throwable"}, FOE)
+        self.assertEqual(g.ops, [])
+
+    def test_potion_is_drunk_in_a_match(self):
+        # live 10 m2: "Potion of Healing: FAILED: reading a scroll is not available in a two-team match"
+        g = self.use("A")
+        potion = {"uuid": P2, "name": "Potion of Healing", "owner": P1, "cat": "PotionHealing"}
+
+        def act(tool, op, args, **k):  # the mod drinks it (ActionsInteract.lua: result.drunk)
+            g.ops.append(op)
+            return "use_ability: done — drunk"
+        with mock.patch.object(plumbing, "_act", act):
+            out = world_tools._use_scroll(P1, potion, "")
+        self.assertEqual(out, "use_ability: done — drunk")
+        self.assertIn("act.interact", g.ops)
+        self.assertFalse([op for op in g.ops if op.startswith("ui.") and op != "ui.selected"], g.ops)
 
     def test_flee(self):
         g = self.use("A")
