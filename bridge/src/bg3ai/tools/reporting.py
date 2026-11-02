@@ -497,7 +497,7 @@ def _auto_dialogue(tool: str, body: str, ev: str) -> str:
 
 
 # Tools whose own result already shows the fight (no extra combat read after them).
-_NO_AUTO_COMBAT = {"get_combat_state", "combat_turn", "end_turn", "screenshot", "zoom", "session_clock",
+_NO_AUTO_COMBAT = {"get_combat_state", "end_turn", "screenshot", "zoom", "session_clock",
                    "end_combat_report", "note"}
 
 

@@ -2,7 +2,7 @@
 1. **Observe** once: `look` (a delta), plus the one mode-specific tool you need.
 2. **Decide:** a short plan tied to an objective in `memory/objectives.md`.
 3. **Act** with the highest-level tool that fits: a macro for a chore (`loot_area`, `travel_to`,
-   `dialogue_advance`, …), `combat_turn` for a combat turn, `queue_actions` for other routine multi-step
+   `dialogue_advance`, …), `queue_actions` for other routine multi-step
    plans (then go straight back to step 1 while they run), `do_actions` for a short blocking chain.
 4. **Read the delta.** Handle interrupts (`queue_interrupted`, combat, dialogue) first.
 5. **Record** noteworthy events during the next walk, queue or enemy turn, not between actions (see Memory).

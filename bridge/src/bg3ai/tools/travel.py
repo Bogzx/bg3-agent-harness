@@ -624,7 +624,7 @@ def _camp_left_behind() -> str:
 
 
 _CAMP_BLOCKS = {  # the HUD's TravelError (camp button greyed) → why, and the way out
-    "Combat": "a fight is on: finish it first (combat_turn), then camp()",
+    "Combat": "a fight is on: finish it first, then camp()",
     "Dialog": "a conversation is open: finish it first (choose_dialogue)",
     "Condition": "a party member's condition blocks it (asleep after a rest, downed, ...): wait a few seconds, "
                  "heal/raise the downed member, then camp() again",

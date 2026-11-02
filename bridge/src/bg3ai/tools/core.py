@@ -36,11 +36,12 @@ _INSTRUCTION_PARTS: tuple[tuple[str, str], ...] = (
     ("", """Tools to play Baldur's Gate 3 as the player. All information is what the player can see.
 Start with get_status. Refer to things by their short id (e12) or a party member's name.
 queue_actions runs several steps back to back (walk, open, loot, walk on) and returns at once; call it
-again to append more. Movement (move_to, walk_toward, travel_to) also returns at once with a job id or a
-queue entry; wait_for blocks until a job, the queue or a turn is done. Other action tools block until they
-settle; pass wait=false to return at once.
-In combat, combat_turn plays a whole turn (with fallbacks) in one call and says who acts next. Chores are
-one call each: loot_area, dialogue_advance, travel_to, regroup, read_all, rest_if_needed."""),
+again to append more. Out of combat, movement (move_to, walk_toward, travel_to) also returns at once with a job
+id or a queue entry; wait_for blocks until a job, the queue or a turn is done. Other action tools block until
+they settle; pass wait=false to return at once.
+In combat each call is one action (use_ability, move_to, walk_toward, jump_to, react, end_turn): it returns when
+the action is over, with what changed; do_actions and queue_actions run no steps there. end_turn waits through
+the other combatants' turns until a party member can act. Chores are one call each: loot_area, dialogue_advance, travel_to, regroup, read_all, rest_if_needed."""),
     ("screenshot", """screenshot shows the game screen as a picture; zoom crops the last one."""),
     ("memory_read", """Memory: your notes live in memory/ (read and write with memory_list, memory_read, memory_search, memory_write,
 memory_edit, memory_append; note appends to the session log). knowledge/ holds read-only reference notes and the

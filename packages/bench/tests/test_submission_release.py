@@ -6,17 +6,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tarfile
 from pathlib import Path
 
+import bg3harness as harness
 import pytest
 from bg3harness import pins as harness_pins
+from bg3harness import run_manifest
 from bg3harness.runner import codewatch
 
 from bg3bench import pins, saves, suite
 from bg3bench.submission import consistency, pack, release, validate
 
 FIXTURE = Path(__file__).parent / "fixtures" / "submission" / "fight_act2_balthazar.bundle.tar.gz"
+# The rules files that pilot run (bench-v0.8) was served, as they were then: its manifest's prompt parts hash them.
+PILOT_RULES = FIXTURE.parent / "pilot-rules"
 PINS = {"game_build": "20981537", "bg3le_sha256": "a" * 64, "mod_sha1": "b" * 40}
 VERSIONS = {"harness": "1.2.3", "bench": "0.8.0"}
 # Released suites' files, frozen: what their published results were checked against. A new suite gets a new file.
@@ -44,9 +49,31 @@ def served() -> release.Served:
     return release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=fake_dump(fixture_files()))
 
 
-def test_served_matches_what_the_pilot_run_recorded(served):
+def pilot_prompts(tmp: Path) -> Path:
+    """This tree's prompts with the rules files the pilot run was served (PILOT_RULES), each checked against the
+    sha256 its manifest's prompt parts recorded: the inputs of that run's prompt hash, whatever the rules say now."""
+    root = tmp / "prompts"
+    shutil.copytree(Path(harness.prompts().HERE), root)
+    recorded = {p["file"]: p["sha256"] for p in json.loads(fixture_files()["manifest.json"])["prompt"]["parts"]}
+    rules = sorted(p for p in PILOT_RULES.rglob("*.md"))
+    for f in rules:
+        rel = f.relative_to(PILOT_RULES).as_posix()
+        assert hashlib.sha256(f.read_bytes()).hexdigest() == recorded[rel], f"{rel} is not what the pilot was served"
+        shutil.copyfile(f, root / rel)
+    assert {f.relative_to(PILOT_RULES).as_posix() for f in rules} == {k for k in recorded if k.startswith("rules/")}
+    return root
+
+
+def test_served_matches_what_the_pilot_run_recorded(tmp_path, monkeypatch):
+    """The release tool hashes what a real run hashed: the bench-v0.8 pilot's server dump and the rules it was
+    served (not this tree's, which a later suite may change) build its manifest's tools and prompt hash, and so
+    does bench-v0.8's frozen release, the one it ran on."""
+    root = pilot_prompts(tmp_path)
+    real = run_manifest.assemble
+    monkeypatch.setattr(run_manifest, "assemble", lambda c, client="mcp", **kw: real(c, client, root=root, **kw))
+    served = release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=fake_dump(fixture_files()))
     man = json.loads(fixture_files()["manifest.json"])
-    assert man["client"]["name"] == "pi" and man["condition"] == "rules"
+    assert man["client"]["name"] == "pi" and man["condition"] == "rules" and man["versions"]["suite"] == "bench-v0.8"
     doc = release.build(
         "bench-v0.8", VERSIONS, PINS, pack.load_scenarios(), saves.load()["bench-v0.8"], {"rules": served}
     )
@@ -57,6 +84,9 @@ def test_served_matches_what_the_pilot_run_recorded(served):
     assert cond["prompts"]["claude"]["condition"] == "rules+coaching"  # claude is served play/CLAUDE.md
     assert not {"load_game", "wiki_search", "memory_read"} & set(cond["tools"]["names"])
     assert release.errors(doc) == []
+    frozen = json.loads((release.RELEASES / "bench-v0.8.json").read_text(encoding="utf-8"))["conditions"]["rules"]
+    assert frozen["tools"]["allowlist_sha256"] == man["tools"]["allowlist_sha256"]
+    assert frozen["prompts"]["pi"] == cond["prompts"]["pi"]
 
 
 def test_session_env_turns_off_memory_and_the_conditions_tools():

@@ -32,10 +32,11 @@ TRADE_WINDOW_S = 60.0
 TRADE_TOOLS = ("trade", "choose_dialogue")
 KILL_WINDOW_S = 120.0
 COST_TOLERANCE = 0.25
-# A client's answer to a call of a tool it doesn't serve (pi; Claude Code), naming the tool: the call reached no tool
+# A client's answer to a call of a tool it doesn't serve (pi; Claude Code), naming the tool: the call reached no tool.
+# The name is whatever the model sent, spaces included ("mcp__bg3] choose_dialogue").
 UNKNOWN_TOOL = (
-    re.compile(r"Tool (\S+) not found"),
-    re.compile(r"<tool_use_error>Error: No such tool available: (\S+)</tool_use_error>"),
+    re.compile(r"Tool (.+) not found"),
+    re.compile(r"<tool_use_error>Error: No such tool available: (.+)</tool_use_error>"),
 )
 
 
@@ -82,6 +83,19 @@ def new_game_fingerprint(sc: Json) -> Json:
     }
 
 
+# The fingerprint fields the first snapshot itself holds (the others come from the settings mark).
+SNAPSHOT_FIELDS = ("party", "gold", "region", "area")
+
+
+def _unread(timeline: list[Json], want: Json) -> list[str]:
+    """The snapshot fields the first snapshot has no value for (null or absent) where the published start state has
+    one: read before the game had them on load (launch-v1 Opus x fight_act2_balthazar r2: area null at 1.3 s)."""
+    snap = next((r for r in timeline if r.get("kind") == "snapshot"), None)
+    if snap is None:
+        return []
+    return [k for k in SNAPSHOT_FIELDS if snap.get(k) is None and want.get(k) is not None]
+
+
 def _first_snapshot_s(timeline: list[Json]) -> float | None:
     """Seconds from the run_start mark to the first snapshot; None without either."""
     start = next(iter(_marks(timeline, "run_start")), None)
@@ -92,18 +106,27 @@ def _first_snapshot_s(timeline: list[Json]) -> float | None:
 def x01_start_state(b: Loaded) -> Outcome:
     """The first snapshot is the published start state. Not checkable (null, never a pass) when it came over
     START_SNAPSHOT_S after run_start and the run's start save is the release's (P01's sha1): the agent may have
-    played by then. Any other run is held to the fingerprint."""
+    played by then. From that save, a snapshot field the first snapshot has no value for (_unread) is not checkable
+    either: the rest must match, and with none of them read X01 is null. Any other run is held to the fingerprint."""
     want = b.release_scenario.get("fingerprint")
     if not want:
         return False, "the suite publishes no start-state fingerprint for this scenario"
     late = _first_snapshot_s(b.facts)
     sha1 = b.release_scenario.get("save_sha1")
-    if late is not None and late > START_SNAPSHOT_S and sha1 and b.manifest["scenario"].get("start_save_sha1") == sha1:
+    same_save = bool(sha1) and b.manifest["scenario"].get("start_save_sha1") == sha1
+    if late is not None and late > START_SNAPSHOT_S and same_save:
         return None, f"not checkable: first snapshot at {late:.1f} s"
     got = fingerprint(b.facts)
+    unread = _unread(b.facts, want) if same_save else []
+    if got is not None:
+        got = got | {k: want[k] for k in unread}
     if got != want:
         diff = sorted(k for k in want if (got or {}).get(k) != want.get(k))
         return False, f"first snapshot differs from the published start state in: {', '.join(diff) or 'all'}"
+    if unread and all(k in unread for k in SNAPSHOT_FIELDS if want.get(k) is not None):
+        return None, f"not checkable: the first snapshot has no {', '.join(unread)}"
+    if unread:
+        return True, f"not checkable (null in the first snapshot): {', '.join(unread)}"
     return True, ""
 
 

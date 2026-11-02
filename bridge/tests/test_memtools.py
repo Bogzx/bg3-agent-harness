@@ -317,7 +317,12 @@ class PaceGuard(Base):
         self.assertEqual(plumbing._walk_wait(True), (True, ""))
         with mock.patch.object(core.game, "try_rpc", return_value=None):
             self.assertEqual(plumbing._walk_wait(True), (True, ""))
-        self.assertEqual(plumbing._walk_wait(False), (False, ""))
+            self.assertEqual(plumbing._walk_wait(False), (False, ""))  # unknown: as asked
+
+    def test_a_walk_in_combat_always_blocks(self):
+        # D291: in combat each call is one action, returned when it is over
+        self.g.watch["combat"] = True
+        self.assertEqual(plumbing._walk_wait(False), (True, ""))
 
 
 if __name__ == "__main__":

@@ -9,8 +9,7 @@
   - after a walk's end, `LEADS` + `WAYS walkable` → no `get_frontier` / `get_nearby` / `look` after arriving.
   - `route(..., go=true)` checks and starts the trip → no `route` then `travel_to`.
   - `talk_to`: the opening lines and the first real choice → no `get_dialogue`.
-  - `COMBAT STARTED` → no `get_combat_state`. After `combat_turn`'s `NOW <who>'s turn: plan it; also <b>, <c>`, plan
-    them all in ONE `combat_turn` with a list.
+  - `COMBAT STARTED` → no `get_combat_state`.
   - EVENTS: items, gold, statuses, damage, deaths, approvals, level-ups → no `get_inventory` / `get_party` /
     `get_status` to check them.
   - `note()` and `note="…"` on travel_to/queue_actions/do_actions → no `memory_edit` of the session log mid-walk.

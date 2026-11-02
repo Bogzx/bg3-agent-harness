@@ -10,7 +10,7 @@ import json
 from test_turn_macros import GOB, NOT_JOBS, P1, Base, combat  # noqa: F401  (sets BG3AI_RUNTIME first)
 
 from bg3ai import render
-from bg3ai.tools import core, overview, combat as combat_tools, turn_tool
+from bg3ai.tools import core, overview, combat as combat_tools
 from bg3ai.game import GameError
 
 ACTS = {"resources": {"ActionPoint": [1, 1]}, "actions": [
@@ -82,14 +82,6 @@ class Names(Base):
         combat_tools.use_ability("Fire Bolt", target=self.gob)
         self.assertNotIn("which", self.g.ops("act.cast")[-1][1])
 
-    def test_combat_turn_plan_by_name(self):
-        self.g.combat = combat()
-        self.g.watch["combat"] = True
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
-        turn_tool.combat_turn(json.dumps({"action": {"ability": "Attack", "target": self.gob}}))
-        self.assertEqual([a["spell"] for _, a in self.g.ops("act.cast")], ["Target_MainHandAttack"])
-
-
 SUMMON = {"resources": {"BonusActionPoint": [1, 1]}, "actions": [
     {"spell": "Target_MainHandAttack_SpiritualWeapon_Greataxe", "name": "Greataxe Slash", "range": 1.5},
     {"spell": "Target_Slash_New", "name": "Lacerate", "range": 1.5},
@@ -144,12 +136,3 @@ class OwnAttack(Base):
                           {"spell": "Target_SpiritualWeapon", "name": "Spiritual Weapon", "range": 18}]
         self.assertEqual(overview._own_attack(P1, "Target_SpiritualWeapon_Greataxe"),
                          ("Target_SpiritualWeapon_Greataxe", ""))
-
-    def test_combat_turn_uses_the_summons_attack(self):
-        self.g.combat = combat()
-        self.g.watch["combat"] = True
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
-        out = turn_tool.combat_turn(json.dumps({"action": [{"ability": "Target_MainHandAttack", "target": self.gob}]}))
-        self.assertEqual([a["spell"] for _, a in self.g.ops("act.cast")],
-                         ["Target_MainHandAttack_SpiritualWeapon_Greataxe"])
-        self.assertIn("its own weapon attack 'greataxe slash'", out)

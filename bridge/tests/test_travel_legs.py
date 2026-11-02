@@ -1,17 +1,16 @@
 """Offline tests (S002 triage): travel_to retries a failed leg with an alternative one instead of ending the
-trip, and combat_turn steps into range when a cast is just out of it.
+trip.
 
 Run: cd bridge && uv run python -m unittest discover -s tests
 """
 
 from __future__ import annotations
 
-import json
 import unittest
 
 from bg3ai import macros
-from bg3ai.tools import core, plumbing, travel_macro, turn_tool
-from test_turn_macros import CHEST, GOB, P1, P2, Base, combat
+from bg3ai.tools import core, plumbing, travel_macro
+from test_turn_macros import CHEST, P1, P2, Base
 
 
 class LegRules(unittest.TestCase):
@@ -26,12 +25,6 @@ class LegRules(unittest.TestCase):
         self.assertFalse(macros.leg_retryable("dialogue", "a conversation started", "no walkable path there"))
         # live 13:09: from a ladder's top toward its foot the walk stood still ("no path to the destination")
         self.assertTrue(macros.leg_retryable("failed", f, "move_to: FAILED — no path to the destination — travelled=0"))
-
-    def test_range_gap(self):
-        self.assertEqual(macros.range_gap("FAILED: target is out of range (18.6 m, range 18.0 m): move closer first"),
-                         (18.6, 18.0))
-        self.assertIsNone(macros.range_gap("FAILED: no line of sight"))
-
 
 class TravelLegs(Base):
     def setUp(self) -> None:
@@ -377,159 +370,6 @@ class InTheWay(Base):
         self.assertEqual(travel_macro._in_the_way([0, 0, 0], [10, 0, 0], [{"uuid": "x", "pos": [-1, 0, 0]},
                                                                      {"uuid": "y", "pos": [2, 0, 3]},
                                                                      {"uuid": "z", "pos": [2, 5, 0]}], P1), [])
-
-
-class MeleeApproach(Base):
-    """S023-S025: melee moves ended 2.3-2.9 m from the target ("no walkable route gets closer than 2.5m", or a
-    plain move's 2.2 m + slack) and 22 attacks were refused out of range; a later step got in reach."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.g.combat = combat(gob_dist=6.0)
-        self.g.watch["combat"] = True
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
-
-    def test_route_ending_at_the_body_walks_beside_the_target(self):
-        self.g.approach = {"reachable": True, "pos": [3.5, 0.0, 0.0], "walk_m": 3.5, "limit": "route_end",
-                           "end_m": 2.5}
-        self.g.result_for = lambda op, a: ({"dist": 1.4, "target": a.get("target"), "in_reach": True}
-                                           if op == "act.move_to" else {})
-        out = turn_tool.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
-                                             "action": ["Shout_Dodge"]}), end=False)
-        mv = self.g.ops("act.move_to")[0][1]
-        self.assertEqual((mv.get("target"), mv.get("within")), (GOB, 1.5))
-        self.assertNotIn("pos", mv)
-        self.assertNotIn("stopped short", out)
-
-    def test_plain_move_passes_the_melee_reach_and_says_when_short(self):
-        self.g.result_for = lambda op, a: ({"dist": 2.6, "target": a.get("target"), "in_reach": False}
-                                           if op == "act.move_to" else {})
-        out = turn_tool.combat_turn(json.dumps({"move": self.gob, "action": ["Shout_Dodge"]}), end=False)
-        self.assertEqual(self.g.ops("act.move_to")[0][1].get("within"), 1.5)
-        self.assertIn("stopped short of melee reach", out)
-
-    def test_far_ledge_still_stays_put(self):
-        self.g.approach = {"reachable": True, "pos": [0.0, 0.0, 0.0], "walk_m": 0.2, "limit": "route_end",
-                           "end_m": 7.8}
-        out = turn_tool.combat_turn(json.dumps({"move": {"target": self.gob, "within": 1.5},
-                                             "action": ["Shout_Dodge"]}), end=False)
-        self.assertEqual(self.g.ops("act.move_to"), [])
-        self.assertIn("stays put", out)
-
-    def test_melee_out_of_range_steps_beside_it_and_attacks(self):
-        n = {"fails": 1}
-
-        def refuse(op, a):
-            if op == "act.cast" and n["fails"] > 0:
-                n["fails"] -= 1
-                return "target is out of range (2.5 m, range 1.5 m): move closer first"
-            return None
-        self.g.refuse_if = refuse
-        self.g.result_for = lambda op, a: ({"dist": 1.3, "target": a.get("target"), "in_reach": True}
-                                           if op == "act.move_to" else {})
-        out = turn_tool.combat_turn(json.dumps({"action": {"ability": "Target_MainHandAttack", "target": self.gob}}))
-        self.assertEqual(self.g.ops("act.move_to")[0][1].get("within"), 1.5)
-        self.assertEqual(self.g.ops("nav.approach"), [])
-        self.assertIn("stepped next to it", out)
-        self.assertEqual(self.casts(), ["Target_MainHandAttack", "Target_MainHandAttack"])
-
-
-class CombatOver(Base):
-    def test_combat_turn_after_the_fight_is_not_a_failure(self):
-        self.g.combat = {"active": False}
-        out = turn_tool.combat_turn(json.dumps({"action": ["Shout_Dodge"]}))
-        self.assertTrue(out.startswith("combat_turn: nothing to play — not in combat"), out)
-        self.assertEqual(self.casts(), [])
-
-    def test_container_spell_takes_its_first_variant(self):
-        self.g.combat = combat()
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
-        self.g.refuse_if = lambda op, a: ("choose a variant: Shout_SpiritGuardians_Radiant, Shout_SpiritGuardians_Necrotic"
-                                          if op == "act.cast" and a.get("spell") == "Shout_SpiritGuardians" else None)
-        out = turn_tool.combat_turn(json.dumps({"action": ["Shout_SpiritGuardians"]}))
-        self.assertEqual(self.casts(), ["Shout_SpiritGuardians", "Shout_SpiritGuardians_Radiant"])
-        self.assertIn("Shout_SpiritGuardians: took the first variant Shout_SpiritGuardians_Radiant", out)
-        self.assertNotIn("choose a variant", out)  # S040-S041: read and triaged as a FAILED step
-
-    def test_end_inside_the_plan_is_the_end_argument(self):
-        # S041 22:36:18: {"end": false} in the plan failed the call "unknown plan key(s) end"
-        self.g.combat = combat()
-        out = turn_tool.combat_turn(json.dumps({"action": ["Shout_Dodge"], "end": False}))
-        self.assertNotIn("unknown plan key", out)
-        self.assertEqual(self.g.ops("act.end_turn"), [])
-        self.assertEqual(turn_tool._plan_end('{"end": true}', False), True)
-        self.assertEqual(turn_tool._plan_end('{"action": []}', False), False)
-
-
-class StepIntoRange(Base):
-    def setUp(self) -> None:
-        super().setUp()
-        self.g.combat = combat(gob_dist=18.6)
-        self.g.watch["combat"] = True
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=GOB)
-        self.fails = 1
-
-        def refuse(op, a):
-            if op == "act.cast" and a.get("spell") == "Target_SacredFlame" and self.fails > 0:
-                self.fails -= 1
-                return "target is out of range (18.6 m, range 18.0 m): move closer first"
-            return None
-        self.g.refuse_if = refuse
-
-    def turn(self) -> str:
-        return turn_tool.combat_turn(json.dumps({"action": {"ability": "Target_SacredFlame", "target": self.gob}}))
-
-    def test_steps_in_and_casts(self):
-        self.g.approach = {"reachable": True, "pos": [0.8, 0.0, 0.0], "walk_m": 0.8, "limit": "in_range"}
-        out = self.turn()
-        self.assertEqual(self.g.ops("nav.approach")[0][1]["within"], 17.7)
-        self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [0.8, 0.0, 0.0])
-        self.assertEqual(self.casts(), ["Target_SacredFlame", "Target_SacredFlame"])
-        self.assertIn("stepped 0.8m into range", out)
-        self.assertIn(f"Target_SacredFlame {self.gob}: done", out)
-
-    def test_prefers_a_spot_in_range_and_sight(self):
-        # S032 17:45: "stepped 2.2m into range → FAILED — no line of sight" (the route point was behind cover)
-        self.g.los_spot = {"found": True, "pos": [1.5, 0.0, 2.0], "walk_m": 2.5}
-        self.g.approach = {"reachable": True, "pos": [0.8, 0.0, 0.0], "walk_m": 0.8, "limit": "in_range"}
-        out = self.turn()
-        self.assertEqual(self.g.ops("nav.los_spot")[0][1]["range"], 17.7)
-        self.assertEqual(self.g.ops("nav.approach"), [])
-        self.assertEqual(self.g.ops("act.move_to")[0][1]["pos"], [1.5, 0.0, 2.0])
-        self.assertIn("stepped 2.5m into range and sight", out)
-        self.assertEqual(self.casts(), ["Target_SacredFlame", "Target_SacredFlame"])
-
-    def test_not_enough_movement_stays_put(self):
-        self.g.approach = {"reachable": True, "pos": [0.3, 0.0, 0.0], "walk_m": 0.3, "limit": "movement"}
-        out = self.turn()
-        self.assertEqual(self.g.ops("act.move_to"), [])
-        self.assertEqual(self.casts(), ["Target_SacredFlame"])
-        self.assertIn("out of range (18.6 m, range 18.0 m)", out)
-
-    def test_a_ranged_cast_5m_short_steps_in(self):
-        # S041 22:35:03: Sacred Flame + Guiding Bolt at 22.9 m (range 18) failed, Shadowheart's move unused
-        self.g.refuse_if = lambda op, a: ("target is out of range (22.9 m, range 18.0 m): move closer first"
-                                          if op == "act.cast" and self.fails > 0 and not self.__setattr__(
-                                              "fails", self.fails - 1) else None)
-        self.g.approach = {"reachable": True, "pos": [5.0, 0.0, 0.0], "walk_m": 5.0, "limit": "in_range"}
-        out = self.turn()
-        self.assertIn("stepped 5m into range", out)
-        self.assertEqual(self.casts(), ["Target_SacredFlame", "Target_SacredFlame"])
-        self.fails = 1  # beyond the ranged cap: left to the fallbacks
-        self.g.combat = combat(gob_dist=18.6)  # our turn again (the first turn's end_turn handed it on)
-        self.g.refuse_if = lambda op, a: ("target is out of range (26.0 m, range 18.0 m): move closer first"
-                                          if op == "act.cast" else None)
-        n = len(self.g.ops("nav.approach"))
-        self.turn()
-        self.assertEqual(len(self.g.ops("nav.approach")), n)
-
-    def test_far_out_of_range_is_left_to_the_fallbacks(self):
-        self.fails = 0
-        self.g.refuse_if = lambda op, a: ("target is out of range (15.6 m, range 1.5 m): move closer first"
-                                          if op == "act.cast" else None)
-        self.g.approach = {"reachable": True, "pos": [9.0, 0.0, 0.0], "walk_m": 9.0, "limit": "in_range"}
-        self.turn()
-        self.assertEqual(self.g.ops("nav.approach"), [])
 
 
 if __name__ == "__main__":

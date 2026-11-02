@@ -55,8 +55,19 @@ def test_two_sides_take_turns(tmp_path: Path) -> None:
                 bridge_session(fake.port, tmp_path / "b", env("B")) as b,
             ):
                 tools = {t.name for t in (await a.list_tools()).tools}
-                assert {"end_turn", "combat_turn", "use_ability", "wait_for", "move_to", "react"} <= tools
-                assert not {"travel_to", "long_rest", "load_game", "memory_read", "screenshot", "get_dialogue"} & tools
+                assert {"end_turn", "use_ability", "wait_for", "move_to", "react"} <= tools
+                assert (
+                    not {
+                        "combat_turn",
+                        "travel_to",
+                        "long_rest",
+                        "load_game",
+                        "memory_read",
+                        "screenshot",
+                        "get_dialogue",
+                    }
+                    & tools
+                )
 
                 a_out["party"] = await call(a, "get_party")
                 a_out["combat"] = await call(a, "get_combat_state")

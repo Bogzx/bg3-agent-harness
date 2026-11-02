@@ -21,7 +21,7 @@ from bg3ai import capabilities
 from bg3ai.tools import core
 
 BRIDGE = Path(__file__).resolve().parents[1]
-FULL = 95
+FULL = 94
 
 # Prints the tool names and, for a note= call, what do_actions/queue_actions/travel_to answer. Port 1: never a
 # running game.
@@ -111,7 +111,7 @@ class Server(unittest.TestCase):
         self.assertEqual(game["instructions"], game["base"])
         for name in ("memory", "end_session", "session_start", "screenshot", "knowledge/"):
             self.assertNotIn(name, game["instructions"])
-        self.assertIn("combat_turn", game["instructions"])
+        self.assertIn("end_turn", game["instructions"])
         self.assertTrue(
             tools({"BG3AI_TOOLS": "game,memory", "BG3AI_SERVE_RULES": "1"})["instructions"].startswith(
                 full["base"].split("\nscreenshot shows")[0] + "\nMemory: "

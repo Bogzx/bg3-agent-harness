@@ -11,7 +11,6 @@ game, memory, notes, the wiki, raw clicks or keys. "Legal" is whatever the tool 
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 import re
 import time
@@ -31,7 +30,7 @@ ACTIONS: dict[str, str | None] = {
     "walk_toward": None,
     "choose_dialogue": None,
     "dialogue_advance": None,
-    "combat_turn": "plan",
+    "use_ability": "target",
     "end_turn": None,
 }
 ALLOWED = (*ACTIONS, OBSERVE, "session_start", "end_session")
@@ -54,10 +53,8 @@ def choose(rng: random.Random, actions: Sequence[str], seen: Sequence[str]) -> t
         return tool, {"direction": rng.choice(DIRECTIONS)}
     if tool == "choose_dialogue":
         return tool, {"option": rng.randint(1, 4)}
-    if arg == "plan":
-        h = rng.choice(list(seen))
-        plan = {"move": h, "action": [{"ability": "Target_MainHandAttack", "target": h}]}
-        return tool, {"plan": json.dumps(plan, separators=(",", ":"))}
+    if tool == "use_ability":
+        return tool, {"ability": "Target_MainHandAttack", "target": rng.choice(list(seen))}
     if arg is not None:
         return tool, {arg: rng.choice(list(seen))}
     return tool, {}

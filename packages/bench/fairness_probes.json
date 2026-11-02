@@ -86,18 +86,6 @@
    ]
   },
   {
-   "tool": "combat_turn",
-   "probes": [
-    {
-     "args": {
-      "plan": "{\"action\": [{\"ability\": \"Target_MainHandAttack\", \"target\": \"{hidden}\"}]}"
-     },
-     "hidden": "creature",
-     "expect": "refusal"
-    }
-   ]
-  },
-  {
    "tool": "confirm",
    "probes": [
     {

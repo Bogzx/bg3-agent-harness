@@ -5,6 +5,35 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: in combat each call is one action; combat_turn is removed
+
+- combat_turn is gone from tools/list (94 tools), with its plan parsing, fallbacks, retargeting, automatic bonus
+  heal, own-summon-first turns, list-of-plans chains and background end (fight-flow research, D291: in launch-v1
+  the agents played fights as whole turns planned from one read; the owner's rule is one action, observe, then the
+  next). Summons are played like any party member.
+- do_actions and queue_actions run no steps in combat: "REFUSED: in combat <tool> runs no steps: each call is one
+  action (use_ability, move_to, walk_toward, jump_to, react, end_turn)". `combat` is no longer an `ignore=` kind, so
+  a batch or queue started out of combat stops when a fight starts.
+- In combat use_ability, move_to, walk_toward, jump_to and react end with a CHANGES block (other combatants' HP,
+  deaths, moves, statuses since the agent's last look). That costs one act.watch read per call of these tools, also
+  out of combat.
+- In combat a walk (move_to, walk_toward) returns at its end whatever `wait` says.
+- end_turn and wait_for('my_turn') hand over with the acting member's turn block as get_combat_state shows it
+  (reach line, `YOUR ACTIONS (eN)` and the action list): one state.actions read more.
+- Texts: the server instructions say "In combat each call is one action (...)"; an attack that starts a fight says
+  `COMBAT: the attack started a fight (round N): get_combat_state shows the turn order`; SHARED TURN says
+  `(who=<member> on each action, end_turn for each)`; end_turn on an ended member says "its turn already ended (the
+  rest of its turn group is still acting)"; camp in a fight "a fight is on: finish it first, then camp()".
+- Compaction keeps its combat_turn rules for recorded runs (golden replay, obs_size).
+
+## 2026-11-02: end_turn on a member who can't act follows the mod's answer
+
+- `end_turn` no longer skips a member just because its combat row reads `downed` (the row says so for the DOWNED
+  status and for 0 HP). It sends the end, and the mod's refusal decides: downed gives the old "is downed: nothing to
+  play, its turn passes by itself" text, dead gives "is dead: it has no turn". A member at 0 HP without the Downed
+  status gets its turn ended, with "is at 0 HP without the Downed status (no death saving throws): the game kept its
+  turn open". Before, that member's turn stayed open and `end_turn` waited 80 s on it.
+
 ## 2026-11-02: a combat row that ended its turn no longer says current
 
 - get_combat_state rows print `current` only when the row has not `ended`: `ended current` is now `ended`. An ended
@@ -35,16 +64,17 @@ A server started without `BG3AI_SIDE` serves the same tools and rules as before 
   and map tools. `confirm` and `dismiss_popups` stay, since a popup can come up mid-fight.
 - A side's server adds the match's rules (`rules/arena.md`) after the other rules.
 - A side's server makes no clicks or key presses, because both sides share one game screen. `click_on`, `click`,
-  `press_key`, `flee`, reading a scroll, the walk-up-and-click actions and a reaction answered by a row click fail at
+  `press_key`, `flee`, reading a scroll or using a carried item other than a potion (a potion is drunk
+  without a click), the walk-up-and-click actions and a reaction answered by a row click fail at
   once with "not available in a two-team match: both sides share one game screen, so this server makes no clicks or
   key presses". `end_turn` ends a turn through the mod only, with no HUD End Turn press. A multi-target or two-step
   cast goes as with those routes off. With a side, `ui.selected` without a uuid means the other side's character
   holds the HUD.
 - In every condition, ALERTS leaves out an alert that names a tool the server has off, e.g. `trade sell=junk` when
   `trade` is off.
-- With a side, every turn end waits up to 22 s for the mod's answer (`end_turn`, a stunned member's end, and the
-  hold before the next action while a background end runs), since the mod's last end of a turn group can take up to
-  20 s to settle. Before, `end_turn` answered "not finished" after 15 s. Normal play keeps 15 / 5 / 16 s.
+- With a side, every turn end waits up to 22 s for the mod's answer (`end_turn` and a stunned member's end), since
+  the mod's last end of a turn group can take up to 20 s to settle. Before, `end_turn` answered "not finished" after
+  15 s. Normal play keeps 15 / 5 s.
 
 ## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
 

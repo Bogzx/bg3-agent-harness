@@ -28,8 +28,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .fakemod import Reply
+from .scripted_arena import SIDE_OPS, Arena
 
 SCENARIO_SWITCH = "BG3AI_SCENARIO_SETUP"
+FULL_TURN = {"action": 1, "bonus": 1, "reaction": 1, "movement": 9.0}  # a party member's resources at its turn start
 
 
 @dataclass
@@ -74,50 +76,6 @@ class Member:
         else:
             o["chained"] = True
         return o
-
-
-@dataclass
-class Arena:
-    """A two-team match: the teams (side -> members), the turn order (uuids), whose turn it is, each side's selected
-    character, and the characters the other side can't see."""
-
-    teams: dict[str, list[Member]]
-    order: list[str]
-    selected: dict[str, str]
-    turn: int = 0
-    round: int = 1
-    hidden: set[str] = field(default_factory=set[str])
-
-    def side_of(self, uuid: str) -> str | None:
-        return next((s for s, team in self.teams.items() if any(m.uuid == uuid for m in team)), None)
-
-    def member(self, ref: str) -> Member:
-        for team in self.teams.values():
-            for m in team:
-                if ref in (m.name, m.uuid):
-                    return m
-        raise KeyError(ref)
-
-    @property
-    def acting(self) -> Member:
-        return self.member(self.order[self.turn])
-
-    def sees(self, side: str, uuid: str) -> bool:
-        """Whether `side`'s characters see `uuid`: always their own, the other team unless hidden."""
-        return self.side_of(uuid) == side or uuid not in self.hidden
-
-    def refusal(self, side: str, char: str) -> str | None:
-        """Why `side` may not act with `char` now (the mod's guard texts), or None."""
-        who = self.member(char)
-        if self.side_of(who.uuid) != side:
-            return f"{who.name} is not on your side"
-        now = self.acting
-        owner = self.side_of(now.uuid)
-        if owner != side:
-            return f"not your turn (side {owner} is acting)"
-        if now.uuid != who.uuid:
-            return "it is not this character's turn"
-        return None
 
 
 def _uuid(n: int) -> str:
@@ -214,6 +172,7 @@ class GameModel:
         self.reaction: dict[str, Any] | None = None  # the reaction prompt on the client's screen
         self.reacted: list[tuple[str, bool]] = []  # (who, use) of each answered prompt
         self.moves: list[tuple[str, str, list[float]]] = []  # arena moves done: (side, uuid, pos)
+        self.res: dict[str, dict[str, Any]] = {}  # uuid -> this turn's action/bonus/reaction/movement (a fight)
 
     # ---- helpers ----
 
@@ -283,8 +242,9 @@ class GameModel:
         self.nearby.append(row)
         return uuid
 
-    def start_fight(self, enemies: list[str], hp: int = 7) -> None:
-        """A combat with the party first in the turn order; pushes combat_started and round_started."""
+    def start_fight(self, enemies: list[str], hp: int = 7, nearby: bool = False) -> None:
+        """A combat with the party first in the turn order; pushes combat_started and round_started. nearby: the
+        enemies are in state.nearby too (hostile, with HP), so a fight played with act.* ops shows in CHANGES."""
         order: list[dict[str, Any]] = []
         for i, m in enumerate(self.party):
             order.append(
@@ -311,6 +271,20 @@ class GameModel:
                     "hp": hp,
                 }
             )
+            if nearby:
+                self.nearby.append(
+                    {
+                        "uuid": uuid,
+                        "name": name,
+                        "dist": 5.0 + i,
+                        "pos": [15.0 + i, 0.0, 12.0],
+                        "item": False,
+                        "relation": "hostile",
+                        "hp": hp,
+                        "max_hp": hp,
+                    }
+                )
+        self.res = {m.uuid: dict(FULL_TURN) for m in self.party}
         order[0]["is_current"] = True
         self.combat = {
             "active": True,
@@ -329,6 +303,9 @@ class GameModel:
         assert self.combat is not None, "no fight"
         row = next(r for r in self.combat["order"] if r["name"] == name)
         self.combat["order"].remove(row)
+        for n in self.nearby:
+            if n["uuid"] == row["uuid"]:
+                n.update(hp=0, dead=True)
         self.push("died", self._ref_of(row["uuid"], name))
         self.ref_record(
             "kill",
@@ -519,7 +496,7 @@ class GameModel:
 
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Reply | None:
         """A call with a side in its envelope: in a match, answered from that team's view; else as without one."""
-        fn = _ARENA_OPS.get(op) if self.arena is not None else None
+        fn = SIDE_OPS.get(op) if self.arena is not None else None
         if fn is None:
             return self.reply(ctx, op, args)
         try:
@@ -624,9 +601,9 @@ class GameModel:
             return {"can": True}
         self.chosen.append(i)
         self.close_dialogue()
-        return self._job("ui.dialogue_choose", {"screen": "game", "ended": True, "lines": []})
+        return self.settled_job("ui.dialogue_choose", {"screen": "game", "ended": True, "lines": []})
 
-    def _failed_job(self, kind: str, error: str, side: str | None = None) -> dict[str, Any]:
+    def failed_job(self, kind: str, error: str, side: str | None = None) -> dict[str, Any]:
         """A guard refusal (Actions.lua guarded): a job that settled failed in the call."""
         jid = self.next_job
         self.next_job += 1
@@ -637,129 +614,11 @@ class GameModel:
 
     # ---- a match, from one side's view ----
 
-    def _match(self) -> Arena:
+    def match(self) -> Arena:
         assert self.arena is not None
         return self.arena
 
-    def arena_status(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        a = self._match()
-        party = [m.brief(a.selected[side], self.level) for m in a.teams[side]]
-        for b in party:
-            b["in_combat"] = True
-        now = a.acting.uuid
-        return {
-            "party": party,
-            "active": a.selected[side],
-            "level": self.level,
-            "region": self.region,
-            "in_combat": True,
-            "turn_based": True,
-            "in_dialogue": False,
-            "gold": self.gold,
-            "camp": [],
-            "combat": {"round": a.round, "current": now if a.sees(side, now) else None},
-        }
-
-    def arena_combat(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        a = self._match()
-        now = a.acting.uuid
-        order: list[dict[str, Any]] = []
-        for i, uuid in enumerate(a.order):
-            if not a.sees(side, uuid):
-                continue
-            m = a.member(uuid)
-            row: dict[str, Any] = {
-                "uuid": uuid,
-                "name": m.name,
-                "relation": "party" if a.side_of(uuid) == side else "hostile",
-                "initiative": 20 - i,
-                "hp_pct": round(100 * m.hp / m.max_hp),
-                "pos": list(m.pos),
-            }
-            if uuid == now:
-                row["is_current"] = True
-            if m.hp <= 0 and not m.dead:  # a player character at 0 HP is down, visibly, to both sides (S.combat)
-                row["downed"] = True
-            order.append(row)
-        seen = a.sees(side, now)
-        return {
-            "active": True,
-            "round": a.round,
-            "order": order,
-            "current": now if seen else None,
-            "turn_group": [now] if seen else [],
-        }
-
-    def arena_character(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        a = self._match()
-        uuid = args.get("uuid") or a.selected[side]
-        if not a.sees(side, uuid):
-            raise RuntimeError(f"no visible character {uuid}")
-        saved, self.party = self.party, [a.member(uuid)]
-        try:
-            return self.op_character(ctx, {"uuid": uuid})
-        finally:
-            self.party = saved
-
-    def arena_events(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        ring = self.events[ctx]
-        evs: list[dict[str, Any]] = []
-        for e in ring.since(args.get("seq"), None, len(ring.records) or 1):
-            views: dict[str, dict[str, Any]] | None = e.get("views")
-            if views is not None and side not in views:
-                continue
-            ev = {k: v for k, v in e.items() if k != "views"}
-            if views is not None:
-                ev["data"] = views[side]
-            evs.append(ev)
-        return {"latest": ring.seq, "events": evs[: int(args.get("limit") or 200)]}
-
-    def arena_ui_state(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        ui = self.op_ui_state(ctx, args)
-        a = self._match()
-        if self.reaction is not None and a.side_of(a.member(self.reaction["options"][0]["who"]).uuid) != side:
-            ui["reaction"] = {"other_side": True}
-        return ui
-
-    def arena_job_poll(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        jid = int(args.get("id") or 0)
-        if jid in self.job_sides and self.job_sides[jid] != side:
-            raise RuntimeError("not your job")
-        return self.op_job_poll(ctx, args)
-
-    def arena_react(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        a = self._match()
-        if self.reaction is None:
-            raise RuntimeError("no reaction prompt on screen")
-        who = self.reaction["options"][0]["who"]
-        if a.side_of(a.member(who).uuid) != side:
-            return self._failed_job("ui.react", "not your reaction", side)
-        use = bool(args.get("use"))
-        self.reacted.append((who, use))
-        self.reaction = None
-        return self._job("ui.react", {"answered": "use" if use else "skip"}, side)
-
-    def arena_end_turn_op(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        a = self._match()
-        why = a.refusal(side, str(args.get("char") or a.selected[side]))
-        if why:
-            return self._failed_job("act.end_turn", why, side)
-        self.arena_end_turn()
-        return self._job("act.end_turn", {"ended": True}, side)
-
-    def arena_move_to(self, ctx: str, args: dict[str, Any], side: str) -> dict[str, Any]:
-        a = self._match()
-        char = str(args.get("char") or a.selected[side])
-        why = a.refusal(side, char)
-        if why:
-            return self._failed_job("act.move_to", why, side)
-        m = a.member(char)
-        pos = [float(v) for v in args.get("pos") or m.pos]
-        m.pos = (pos[0], pos[1], pos[2])
-        self.moves.append((side, m.uuid, pos))
-        return self._job("act.move_to", {"arrived": True, "pos": pos}, side)
-
-    def _job(self, kind: str, result: dict[str, Any], side: str | None = None) -> dict[str, Any]:
+    def settled_job(self, kind: str, result: dict[str, Any], side: str | None = None) -> dict[str, Any]:
         """A job that settles in the call (RPC.start_job + finish_job in one tick); `side`: the side that started it."""
         jid = self.next_job
         self.next_job += 1
@@ -767,6 +626,111 @@ class GameModel:
         if side:
             self.job_sides[jid] = side
         return {"job": jid, "status": "done", "result": result}
+
+    # ---- a fight played one action per call (act.*; Server/Actions*.lua) ----
+
+    def _after(self, char: str) -> dict[str, Any]:
+        """Actions.lua A.summary: the actor's portrait after the action."""
+        m = self.member(char)
+        out: dict[str, Any] = {"pos": list(m.pos), "hp": m.hp, "max_hp": m.max_hp}
+        if self.combat is not None:
+            out.update(self.res.get(m.uuid, FULL_TURN), in_combat=True, my_turn=self.combat["current"] == m.uuid)
+        return out
+
+    def op_actions(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """state.actions (State.lua): the member's hotbar and this turn's resources ([amount, max])."""
+        m = self.member(args.get("uuid") or self.active)
+        r = self.res.get(m.uuid, FULL_TURN)
+        acts = [{"name": "Attack", "spell": "Target_MainHandAttack", "cost": "A", "range": 1.5}]
+        if m.cls == "Cleric":
+            acts.append({"name": "Healing Word", "spell": "Target_HealingWord", "cost": "B", "range": 18, "level": 1})
+        return {
+            "actions": acts,
+            "resources": {
+                "ActionPoint": [r["action"], 1],
+                "BonusActionPoint": [r["bonus"], 1],
+                "Movement": [r["movement"], FULL_TURN["movement"]],
+                "ReactionActionPoint": [r["reaction"], 1],
+            },
+        }
+
+    def op_watch(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        party = [{"uuid": m.uuid, "hp": m.hp, "max_hp": m.max_hp, "pos": list(m.pos)} for m in self.party]
+        return {"party": party, "seen": [], "combat": self.combat is not None, "dialogue": self.dialogue is not None}
+
+    def op_move_to(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        m = self.member(args.get("char") or self.active)
+        pos = args.get("pos") or next(n["pos"] for n in self.nearby if n["uuid"] == args.get("target"))
+        dist = round(sum((a - b) ** 2 for a, b in zip(m.pos, pos, strict=True)) ** 0.5, 1)
+        m.pos = (float(pos[0]), float(pos[1]), float(pos[2]))
+        if self.combat is not None:
+            r = self.res[m.uuid]
+            r["movement"] = round(max(0.0, r["movement"] - dist), 1)
+            for n in self.nearby:
+                if n.get("relation") == "hostile" and not n.get("dead"):
+                    n["dist"] = round(sum((a - b) ** 2 for a, b in zip(m.pos, n["pos"], strict=True)) ** 0.5, 1)
+        return self.settled_job("act.move_to", {"dist": 0.0, "after": self._after(m.uuid)})
+
+    def op_cast(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """A weapon attack on a target: 7 damage (a 7-HP enemy dies), the action spent."""
+        m = self.member(args.get("char") or self.active)
+        if self.combat is not None:
+            if self.combat["current"] != m.uuid:
+                raise RuntimeError("not this character's turn")
+            self.res[m.uuid]["action"] = 0
+        row = next(n for n in self.nearby if n["uuid"] == args.get("target"))
+        row["hp"] = max(0, row["hp"] - 7)
+        self.push("cast", {"caster": self._ref_of(m.uuid, m.name), "spell": args.get("spell"), "name": "Attack"})
+        self.push(
+            "damage",
+            {
+                "target": self._ref_of(row["uuid"], row["name"]),
+                "source": self._ref_of(m.uuid, m.name),
+                "amount": 7,
+                "type": "Slashing",
+            },
+        )
+        if row["hp"] == 0 and self.combat is not None:
+            self.kill(row["name"])
+        return self.settled_job(
+            "act.cast", {"cast": args.get("spell"), "target": row["uuid"], "after": self._after(m.uuid)}
+        )
+
+    def op_end_turn(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """The member's turn ends; each enemy left hits the first party member for 3, then the next party member's
+        turn starts (a new round after the last)."""
+        assert self.combat is not None, "not in combat"
+        m = self.member(args.get("char") or self.active)
+        if self.combat["current"] != m.uuid:
+            raise RuntimeError("not this character's turn")
+        order = self.combat["order"]
+        self.push("turn_ended", self._ref_of(m.uuid, m.name))
+        i = next(k for k, o in enumerate(order) if o["uuid"] == m.uuid)
+        for step in range(1, len(order) + 1):
+            o = order[(i + step) % len(order)]
+            if (i + step) % len(order) == 0:
+                self.combat["round"] += 1
+                self.push("round_started", {"round": self.combat["round"]})
+            self.push("turn_started", self._ref_of(o["uuid"], o["name"]))
+            if o["relation"] == "party":
+                self.combat["current"], self.combat["turn_group"] = o["uuid"], [o["uuid"]]
+                self.res[o["uuid"]] = dict(FULL_TURN)
+                break
+            hit = self.party[0]
+            hit.hp = max(0, hit.hp - 3)
+            self.push(
+                "damage",
+                {
+                    "target": self._ref_of(hit.uuid, hit.name),
+                    "source": self._ref_of(o["uuid"], o["name"]),
+                    "amount": 3,
+                    "type": "Piercing",
+                },
+            )
+            self.push("turn_ended", self._ref_of(o["uuid"], o["name"]))
+        for o in order:
+            o["is_current"] = o["uuid"] == self.combat["current"]
+        return self.settled_job("act.end_turn", {"after": self._after(m.uuid)})
 
     def op_job_poll(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         job = self.jobs.get(int(args.get("id") or 0))
@@ -852,7 +816,7 @@ class GameModel:
     def op_new_game(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         """ui.new_game: a new game at the difficulty the bridge asked for (the Options name); character creation."""
         self.difficulty = str(args.get("difficulty") or "Explorer")
-        return self._job("ui.new_game", {"screen": "character_creation", "difficulty": self.difficulty})
+        return self.settled_job("ui.new_game", {"screen": "character_creation", "difficulty": self.difficulty})
 
     def op_scn_difficulty(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         self._scn()
@@ -919,20 +883,6 @@ def _nearby(m: GameModel, kind_items: bool) -> list[dict[str, Any]]:
     return [{k: v for k, v in r.items() if k != "item"} for r in m.nearby if bool(r["item"]) == kind_items]
 
 
-# In a match, the ops whose answer depends on the side asking (GameModel.reply_side); the rest answer as without one.
-SideOpFn = Callable[[GameModel, str, dict[str, Any], str], Any]
-_ARENA_OPS: dict[str, SideOpFn] = {
-    "state.status": GameModel.arena_status,
-    "state.combat": GameModel.arena_combat,
-    "state.character": GameModel.arena_character,
-    "events.since": GameModel.arena_events,
-    "act.end_turn": GameModel.arena_end_turn_op,
-    "act.move_to": GameModel.arena_move_to,
-    "job.poll": GameModel.arena_job_poll,
-    "ui.react": GameModel.arena_react,
-    "ui.state": GameModel.arena_ui_state,
-}
-
 OpFn = Callable[[GameModel, str, dict[str, Any]], Any]
 _OPS: dict[str, OpFn] = {
     "sys.ping": lambda m, c, a: "pong",
@@ -945,6 +895,11 @@ _OPS: dict[str, OpFn] = {
     "state.journal": lambda m, c, a: copy.deepcopy(m.journal),
     "state.nearby": lambda m, c, a: {"characters": _nearby(m, False), "items": _nearby(m, True)},
     "act.prepared": lambda m, c, a: {"casters": []},
+    "act.watch": GameModel.op_watch,
+    "state.actions": GameModel.op_actions,
+    "act.move_to": GameModel.op_move_to,
+    "act.cast": GameModel.op_cast,
+    "act.end_turn": GameModel.op_end_turn,
     "nav.markers": lambda m, c, a: {"markers": [], "ms": 0},
     "ui.state": GameModel.op_ui_state,
     "ui.rest_info": lambda m, c, a: {"short_rests_left": 2, "short_rests_max": 2},

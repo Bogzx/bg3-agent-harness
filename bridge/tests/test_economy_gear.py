@@ -25,7 +25,6 @@ from test_economy import (  # sets BG3AI_RUNTIME before importing bg3ai
     overview,
     plumbing,
     reporting,
-    turn_tool,
     world_tools,
 )
 
@@ -691,22 +690,6 @@ class ScrollUse(unittest.TestCase):
         _, _, clicks = self._run("Shadowheart", "Scroll of Fear", target=self.GALE, name="Scroll of Fear",
                                  pos=(1.0, 2.0, 3.0))
         self.assertEqual((clicks, self.grounds), ([self.GALE], []))
-
-    def test_plan_fits_counts_a_carried_scroll(self):
-        # combat_turn's who-inference (ACT-2): a plan naming "Scroll of Fear" fits the member who carries it
-        from unittest import mock
-        inv = {"items": [{"uuid": self.SCROLL, "name": "Scroll of Fear", "owner": self.SH}]}
-
-        class G:
-            def try_rpc(self, op, args=None, context="server", default=None):
-                return inv if op == "state.inventory" else {"actions": []}
-
-        def no_action(char, ability):
-            raise GameError(f"{char} has no action called '{ability}'")
-        with mock.patch.object(core, "game", G()), mock.patch.object(overview, "_ability_id", no_action), \
-                mock.patch.object(overview, "_learn_actions", lambda *a: None):
-            self.assertTrue(turn_tool._plan_fits(self.SH, ["Scroll of Fear"]))
-            self.assertFalse(turn_tool._plan_fits(self.GALE, ["Scroll of Fear"]))
 
     def test_disarm_by_name_is_the_disarm_tool(self):
         from unittest import mock

@@ -1,5 +1,5 @@
 """Offline tests: the macros (loot_area, dialogue_advance, auto dialogue, travel_to, regroup, read_all,
-rest_if_needed), combat_turn's background end, namesakes and openers, and the clock's stuck signal. Fixtures:
+rest_if_needed), namesakes and openers, and the clock's stuck signal. Fixtures:
 test_turn_macros.py."""
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import tempfile
-import threading
 import time
 import unittest
 from pathlib import Path
@@ -35,12 +34,9 @@ from test_turn_macros import (  # sets BG3AI_RUNTIME before importing bg3ai
     observe,
     overview,
     plumbing,
-    queueing,
     reporting,
     travel,
     travel_macro,
-    turn,
-    turn_tool,
     world_tools,
 )
 
@@ -132,25 +128,6 @@ class OpenerCombat(Base):
         self.assertNotIn("combat: NOT", out)
         self.assertNotIn("started a fight", out)
 
-
-class NextUp(unittest.TestCase):
-    def test_wraps_round_and_skips_the_ended_character(self):
-        cs = combat(current=P1)
-        text, mine = turn.next_up(cs, {P1, P2}, lambda u: u[:2], ended=P1)
-        self.assertEqual(mine, P2)
-        self.assertEqual(text, "NEXT 99, 88, then 22 (yours)")
-        cs["order"] = cs["order"][:3]  # only Claude and enemies: back to Claude after them
-        text, mine = turn.next_up(cs, {P1}, lambda u: u[:2], ended=P1)
-        self.assertEqual((text, mine), ("NEXT 99, 88, then 11 (yours)", P1))
-
-    def test_movement_left(self):
-        self.assertEqual(turn.movement_left("destination is beyond remaining movement (path 14.2 m, 5.5 m left)"), 5.5)
-        self.assertTrue(turn.is_fatal("FAILED — it is not this character's turn"))
-
-
-# ---------------------------------------------------------------------------
-# macros
-# ---------------------------------------------------------------------------
 
 class LootArea(Base):
     def setUp(self) -> None:
@@ -247,195 +224,6 @@ class LootArea(Base):
         out = macro_tools.loot_area()
         self.assertIn("STOPPED: still in a conversation after 0.5s with no dialogue on screen", out)
         self.assertEqual(self.corpses, [])
-
-
-class CombatTurnBackgroundEnd(Base):
-    """Latency (naut series): the party's last end before enemy turns runs in the background (END_ASYNC); the
-    agent plans while the game ends the turn (1.6-5.3 s a time, ~35 s a run blocked)."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.g.combat = combat()
-        self.g.watch["combat"] = True
-
-        self.end_sent = threading.Event()  # the queue worker sent act.end_turn (after combat_turn returned, or just before)
-
-        def advance(op, args):  # ending the turn hands it to the goblin
-            if op == "act.end_turn":
-                self.g.combat["current"] = GOB
-                self.end_sent.set()
-        self.g.on_start = advance
-        turn_tool.END_ASYNC = True
-        self.g.dur["act.end_turn"] = 0.6
-
-    def plan(self, **kw) -> str:
-        return json.dumps(kw)
-
-    def gate_end(self) -> None:
-        """The background end runs until a hold waits on it (released at the hold's first busy check) or the test
-        releases it: nothing here may depend on a 0.6 s end outlasting the tool calls in between (flaky under
-        full-suite load, 2026-10-17: no 'waited' in the next combat_turn, 1 of 5 full runs)."""
-        self.g.dur["act.end_turn"] = 3600.0
-        mgr = queueing._queues()
-        busy, hold = mgr.busy, turn_tool._hold_for_bg_end
-        holding = threading.local()
-
-        def held_busy(who=None):
-            b = busy(who)
-            if b and getattr(holding, "on", False):
-                self.release_end()  # the hold saw the end running: it waits, then sees it done
-            return b
-
-        def gated_hold(char=None):
-            holding.on = True
-            try:
-                return hold(char)
-            finally:
-                holding.on = False
-        for p in (mock.patch.object(mgr, "busy", held_busy), mock.patch.object(turn_tool, "_hold_for_bg_end", gated_hold)):
-            p.start()
-            self.addCleanup(p.stop)
-
-    def release_end(self) -> None:
-        """The end finishes at its next poll (one not started yet finishes at once)."""
-        with self.g.lock:
-            self.g.dur["act.end_turn"] = 0.0
-            for j in self.g.jobs.values():
-                if j["op"] == "act.end_turn" and j["status"] == "running":
-                    j["end"] = 0.0
-
-    def test_returns_before_the_end_finishes_and_reports_it_later(self):
-        # The end is the character's queue step: its worker thread sends act.end_turn after combat_turn returned (or
-        # just before). Flaky under full-suite load when this asserted the op at once (se, 2026-10-16: 0 != 1 in 1 of
-        # 4 full runs, 10/10 alone): wait for it, bounded. The end runs until released, so "returned first" is no race.
-        self.gate_end()
-        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        self.assertIn("end_turn: ending in the background", out)
-        self.assertIn(f"NEXT {self.gob} Goblin", out)
-        self.assertIn("RUNNING queue", out)
-        until = time.monotonic() + 3.0
-        while not self.g.ops("act.end_turn") and time.monotonic() < until:
-            time.sleep(0.01)
-        self.assertEqual(len(self.g.ops("act.end_turn")), 1)
-        self.assertNotIn("queue_done", observe.get_events())  # still running
-        self.release_end()
-        evs = ""
-        until = time.monotonic() + 5.0
-        while "queue_done" not in evs and time.monotonic() < until:
-            time.sleep(0.1)
-            evs += observe.get_events()
-        self.assertIn("queue_done", evs)
-        self.assertEqual(len(self.g.ops("act.end_turn")), 1)
-
-    def test_next_combat_turn_waits_for_the_background_end(self):
-        self.gate_end()
-        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        # The enemies act after the end is sent: flipping the turn back to Claude before the worker sent it let the
-        # end's hand-over to the goblin land last, and the second combat_turn waited 30 s for a turn that never came
-        # (IndexError on the call list, 36 of 200 runs under load). The end itself still runs until the hold.
-        self.assertTrue(self.end_sent.wait(10.0))
-        self.g.combat["current"] = P1  # the enemies acted; Claude again
-        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        self.assertRegex(out, r"waited [\d.]+s for e\d+ Claude's turn end to finish first")
-        ends = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.end_turn"]
-        casts = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.cast"]
-        self.assertLess(ends[0], casts[1])
-
-    def test_a_direct_action_for_that_character_waits_too(self):
-        self.gate_end()
-        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        out = combat_tools.use_ability("Shout_Dodge")
-        self.assertIn("turn end to finish first", out)
-
-    def test_review_m4_queued_steps_wait_and_get_their_own_interrupts(self):
-        self.gate_end()
-        # the end's executor ignores every interrupt: steps queued for that character during it must not run in it
-        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        out = batch.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
-                                   who=core.H.get(P1))
-        self.assertIn("turn end to finish first", out)
-        q = queueing._queues().queues[P1]
-        ex = q.executor
-        self.assertEqual(ex.watcher.ignore, set())               # not the end's all-kinds set
-        # queue_actions returns before its worker sends the cast (flaky under full-suite load, 2026-10-17: the cast
-        # list still ended with combat_turn's own cast, before the end): wait for that worker, bounded
-        q.thread.join(5.0)
-        self.assertFalse(q.thread.is_alive())
-        ends = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.end_turn"]
-        casts = [i for i, (o, _) in enumerate(self.g.calls) if o == "act.cast"]
-        self.assertLess(ends[0], casts[-1])
-
-    def test_review_m5_cancel_queue_never_cancels_the_end_half_way(self):
-        self.gate_end()
-        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        until = time.monotonic() + 3.0
-        while not self.g.ops("act.end_turn") and time.monotonic() < until:
-            time.sleep(0.01)
-        out = batch.cancel_queue()
-        self.assertIn("turn end to finish first", out)
-        self.assertEqual(self.g.ops("job.cancel"), [])
-        end = next(j for j in self.g.jobs.values() if j["op"] == "act.end_turn")
-        core.game.rpc("job.poll", {"id": next(k for k, j in self.g.jobs.items() if j is end)})
-        self.assertEqual(end["status"], "done")
-
-    def test_review_m5_replace_waits_for_the_end_too(self):
-        self.gate_end()
-        turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        out = batch.queue_actions(json.dumps([{"tool": "use_ability", "ability": "Shout_Dodge"}]),
-                                   who=core.H.get(P1), replace=True)
-        self.assertIn("turn end to finish first", out)
-        self.assertFalse([j for j in self.g.jobs.values() if j["op"] == "act.end_turn"
-                          and j["status"] == "interrupted"])
-
-    def test_s084_a_member_shown_open_while_another_end_runs_names_the_running_end(self):
-        # S084 (7x in one fight): Gale's background end (the group's last) still running, the game showed Shadowheart
-        # (ended earlier) as open: Claude's plan was refused "e3 Shadowheart (yours) must act first … end it", and
-        # the end_turn on her found nothing to end
-        p3 = "33333333-2222-3333-4444-555555555555"
-        self.g.more_party = [{"uuid": p3, "name": "Shadowheart"}]
-        self.g.combat["order"].append({"uuid": p3, "name": "Shadowheart", "relation": "party"})
-        self.g.combat["current"] = p3
-        self.g.on_start = lambda op, a: None                 # the end never hands the turn on here
-        self.g.dur["act.end_turn"] = 3600.0
-        self.addCleanup(self.release_end)
-        self.assertTrue(turn_tool._end_in_background(P2))
-        with mock.patch.object(turn_tool, "END_BG_HOLD_S", 0.2):
-            out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1), wait_turn=5)
-        self.assertIn("Lae'zel's turn end is still running in the background", out)
-        self.assertIn("Shadowheart's turn open meanwhile", out)
-        self.assertNotIn("must act first", out)
-        self.assertIn("waited 0.2s for", out)                # the hold's wait is reported, not only "waited 0.0s"
-        self.assertEqual(self.g.ops("act.cast"), [])
-
-    def test_a_shared_turn_group_member_left_ends_inline(self):
-        self.g.combat["turn_group"] = [P1, P2]
-        self.g.combat["current"] = P1
-
-        def advance(op, args):
-            if op == "act.end_turn":
-                self.g.combat["turn_group"] = [P2]
-        self.g.on_start = advance
-        out = turn_tool.combat_turn(json.dumps({}), who=core.H.get(P1))
-        self.assertIn("end_turn: done", out)
-        self.assertNotIn("background", out)
-
-    def test_next_turn_ours_ends_inline_and_shows_its_actions(self):
-        self.g.combat["order"] = [o for o in self.g.combat["order"] if o["uuid"] in (P1, P2)] + \
-            [o for o in self.g.combat["order"] if o["uuid"] not in (P1, P2)]
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
-        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        self.assertIn("end_turn: done", out)
-        self.assertIn("'s turn: plan it", out)
-
-    def test_wait_next_blocks_as_before(self):
-        self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
-        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), wait_next=True)
-        self.assertNotIn("background", out)
-
-    def test_off_switch(self):
-        turn_tool.END_ASYNC = False
-        out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"))
-        self.assertIn("end_turn: done", out)
 
 
 class DialogueAdvance(Base):

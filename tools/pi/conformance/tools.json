@@ -442,7 +442,7 @@
  },
  {
   "name": "walk_toward",
-  "description": "Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (returns within ~1 s with a job id + ETA, or the result if it already ended; wait=true blocks only in combat). Good for \"head west\" or \"go toward the objective marker\" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so).",
+  "description": "Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (out of combat it returns within ~1 s with a job id + ETA, or the result if it already ended; in combat it returns at the walk's end). Good for \"head west\" or \"go toward the objective marker\" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so).",
   "inputSchema": {
    "properties": {
     "direction": {
@@ -588,7 +588,7 @@
  },
  {
   "name": "move_to",
-  "description": "Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen. Walks keep out of an off-limits area the game warned you about (round it, else refused); trespass=true walks in anyway.",
+  "description": "Walk to a visible entity (target=id) or a position (x,y,z). Out of combat it returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. In combat it returns at the walk's end, with what changed. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen. Walks keep out of an off-limits area the game warned you about (round it, else refused); trespass=true walks in anyway.",
   "inputSchema": {
    "properties": {
     "target": {
@@ -1627,7 +1627,7 @@
  },
  {
   "name": "feed_gale",
-  "description": "Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item and presses Donate. item: name or handle from get_inventory (one in a party bag).",
+  "description": "Give Gale a magic item to absorb, in the donation window his dialogue opens ('Give Gale a magic artefact'): selects the item, donates it and closes the window (Gale absorbs it then). item: name or handle from get_inventory (in a party bag or worn: the window offers both).",
   "inputSchema": {
    "properties": {
     "item": {
@@ -2233,7 +2233,7 @@
  },
  {
   "name": "do_actions",
-  "description": "Run several actions in order in ONE call: a whole combat turn, a looting sweep, a dialogue chain. Plan from one observation, then execute.\nactions: a list of steps (or the same list as a JSON string), e.g.\n[{\"tool\":\"move_to\",\"target\":\"e12\"},{\"tool\":\"use_ability\",\"ability\":\"Target_MainHandAttack\",\"target\":\"e12\",\"unless\":\"hp_below:30\"},{\"tool\":\"use_ability\",\"ability\":\"Shout_SecondWind\",\"if\":\"hp_below:50\"},{\"tool\":\"end_turn\"}]\nAllowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.\nOptional per step: \"if\"/\"unless\" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).\nStops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step. ignore=\"hostile,hp\" disables some (combat, dialogue, prompt, hostile, hp, damage, surface, teleport, trap).\nReturns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).\nnote: memory log line(s) appended to your session log at once, as note() does (no extra turn).",
+  "description": "Run several actions in order in ONE call, out of combat: a looting sweep, a dialogue chain. In combat it runs no steps (each call there is one action).\nactions: a list of steps (or the same list as a JSON string), e.g.\n[{\"tool\":\"move_to\",\"target\":\"e12\"},{\"tool\":\"interact\",\"target\":\"e12\"},{\"tool\":\"loot\",\"take\":\"all\"}]\nAllowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.\nOptional per step: \"if\"/\"unless\" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).\nStops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step; and before a step once the call has run 90 s (time budget, a wait cut to fit). ignore=\"hostile,hp\" disables some (dialogue, prompt, hostile, hp, damage, surface, teleport, trap); a fight starting always stops it.\nReturns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).\nnote: memory log line(s) appended to your session log at once, as note() does (no extra turn).",
   "inputSchema": {
    "properties": {
     "actions": {
@@ -2283,7 +2283,7 @@
  },
  {
   "name": "queue_actions",
-  "description": "Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note()).",
+  "description": "Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Out of combat only: in combat it queues nothing, and a fight starting stops the queue. Same step format, conditions and interrupts as do_actions. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note()).",
   "inputSchema": {
    "properties": {
     "actions": {
@@ -2390,73 +2390,6 @@
     }
    },
    "title": "wait_forArguments",
-   "type": "object"
-  },
-  "_meta": {
-   "anthropic/alwaysLoad": true
-  }
- },
- {
-  "name": "combat_turn",
-  "description": "A WHOLE combat turn in one call — or the turns of SEVERAL party members acting now: plan = a list\n[{\"who\":\"Karlach\",\"plan\":{...}},{\"who\":\"Gale\",\"plan\":{...}}] plays them in order (each as below, each turn ended);\na later member's plan waits for its turn like a sent-ahead plan (the chain waits ≤80 s in all); a member that already ended its turn is skipped, and one the game wants first is played first; it stops and\nhands back as soon as a turn is interrupted, a member's turn doesn't come in time, or the fight ends, and lists\nwho was NOT played. Use it when the result\nsays `NOW <a>'s turn: plan it; also <b>, <c>`.\nSingle turn:  move, action, bonus action, extra attacks, end turn. Each slot lists alternatives tried in order until one works (out of range after the move → the ranged attack; no ranged → Dash; else Disengage). If every action alternative is out of range, it tries the ranged weapon attack itself, else Dash + walk on when the move ran out of movement. A move that ends out of reach says how far it got and why (out of movement / fire on the route / no route closer).\nplan: an object (or the same as a JSON string), e.g. {\"move\":{\"target\":\"e12\",\"within\":1.5},\"action\":[{\"ability\":\"Target_MainHandAttack\",\"target\":\"e12\"},{\"ability\":\"Projectile_MainHandAttack\",\"target\":\"e12\"},{\"ability\":\"Shout_Dash\",\"then_move\":true},\"Shout_Disengage\"],\"bonus\":{\"ability\":\"Shout_SecondWind\",\"if\":\"hp_below:50\"},\"extra\":[[{\"ability\":\"Target_MainHandAttack\",\"target\":\"e12\"}]]}\nmove: \"e12\" (walk next to it), {\"target\",\"within\":<m>} (stop once that close, e.g. ranged), [x,y,z], \"o3\" (an objective: toward its marker, e.g. a Dash to the exit). Walks the real route (stairs, detours). If the walk doesn't fit the movement left it walks as far as it does (partial:false turns that off); it keeps out of fire on the way (avoid:false walks through).\nAbilities: the shown name or the id; a weapon attack the character doesn't have (a summon's) becomes its own weapon attack. Extra Attack: after the first weapon attack, an \"extra\" slot attack costs no action (the game's rule).\nAlternatives: an ability id, or {\"ability\",\"target\"|\"x,y,z\",\"upcast\",\"targets\",\"force\",\"if\",\"unless\",\"then_move\"}, or {\"tool\":<batchable tool>,...}. then_move: after it, walk the move again (a Dash does this by default; then_move:false turns it off).\norder: \"move,action,bonus,extra\" (default; e.g. \"bonus,move,action\" for Misty Step first). reactions: {\"Divine Smite\":\"ask\"} sets prompts first; on_reaction: \"use\"|\"skip\" answers reaction prompts open at the turn's start, mid-turn and while a sent-ahead plan waits (default: stop, nothing played into an open prompt).\nNo line of sight to a ranged target: it first steps (within the movement left and the ability's range) to the nearest spot that sees it, then casts again. A downed character has no turn to play (it passes by itself); another of your characters acting first makes a sent-ahead plan return at once; your summon (Spiritual Weapon …) acting first and not in the plan: its turn is played for it (its weapon attack on the plan's first target, else the nearest hostile) and then the plan.\nBefore each step: still this character's turn? target still visible and alive? (else the next alternative). Stops on the usual interrupts (combat/dialogue/prompt/hp/teleport; ignore=\"\" adds new hostiles in view).\nwho: required when NOW lists more than one of your characters; left out, the plan goes to the only one acting whose actions cover every ability it names (else REFUSED), and a plan sent ahead waits for the character selected when it was sent.\nA slot whose every alternative missed (target dead, out of range, no line of sight) tries the plan's own targeted abilities on the nearest other visible hostile in reach (retarget:false turns it off); fallbacks keep to the planned target's side (an ally-aimed heal only re-aims at a downed party member, a revive never). A melee swing the game refused without a reason steps within 1 m once and swings again. A melee move that ends out of reach says \"melee is out of reach this turn\" and skips the melee attacks on that target (ranged / Dash next). The move's target (a hostile) dead or out of sight (Shadow Blend, killed first): the plan is re-aimed at the nearest visible hostile, and walks on if movement is left (retarget:false keeps it). No bonus planned and an ally downed: Healing Word on them if this character has it (auto_bonus:false turns it off).\nAn empty plan {} just ends that character's turn (e.g. it already acted through single tools).\nend=true ends the turn and returns at once with who acts next, so you can plan the next turn while enemies act (wait_next=true blocks until a party member's turn). When enemies act next, the end itself runs in the background (\"ending in the background\", then queue_done): what you send next waits for it.\nNot this character's turn yet (enemies still acting): send the plan anyway; it waits up to wait_turn s for the turn (stops on a prompt), up to 120 s longer while enemies are still taking turns, then plays it (still their turns then: NOT PLAYED YET, nothing done: send it again).",
-  "inputSchema": {
-   "properties": {
-    "plan": {
-     "anyOf": [
-      {
-       "additionalProperties": true,
-       "type": "object"
-      },
-      {
-       "items": {
-        "additionalProperties": true,
-        "type": "object"
-       },
-       "type": "array"
-      },
-      {
-       "type": "string"
-      }
-     ],
-     "title": "Plan"
-    },
-    "who": {
-     "anyOf": [
-      {
-       "type": "string"
-      },
-      {
-       "type": "null"
-      }
-     ],
-     "default": null,
-     "title": "Who"
-    },
-    "end": {
-     "default": true,
-     "title": "End",
-     "type": "boolean"
-    },
-    "wait_next": {
-     "default": false,
-     "title": "Wait Next",
-     "type": "boolean"
-    },
-    "ignore": {
-     "default": "hostile",
-     "title": "Ignore",
-     "type": "string"
-    },
-    "wait_turn": {
-     "default": 30.0,
-     "title": "Wait Turn",
-     "type": "number"
-    }
-   },
-   "required": [
-    "plan"
-   ],
-   "title": "combat_turnArguments",
    "type": "object"
   },
   "_meta": {

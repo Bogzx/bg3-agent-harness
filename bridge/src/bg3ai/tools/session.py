@@ -154,7 +154,7 @@ def _movie_skipper(stop: "threading.Event") -> None:
 # turn; the rest (setup, saves, wiki, raw input, rare services) stay deferred.
 ALWAYS_LOAD = (
     # pipelining
-    "queue_actions", "do_actions", "wait_for", "cancel_queue", "combat_turn",
+    "queue_actions", "do_actions", "wait_for", "cancel_queue",
     # movement and interaction
     "travel_to", "move_to", "walk_toward", "interact", "pick_up", "talk_to", "jump_to", "loot", "loot_area",
     "loot_corpse", "use_ability", "end_turn", "react", "roll_check",
