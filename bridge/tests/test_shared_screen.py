@@ -169,6 +169,60 @@ class Shared(unittest.TestCase):
             if side:
                 self.assertIn(combat.END_IGNORED, out)
 
+    def test_end_turn_waits_out_the_mods_group_end(self):
+        """The mod's last end of a turn group settles up to 20 s later (S087: 18 s): with a side the job is waited on
+        that long, not answered "not finished" at 15 s; without a side the wait is 15 s as before."""
+        for side, want_s in (("A", combat.END_ARENA_WAIT_S), (None, 15)):
+            g = self.use(side)
+            waits = []
+
+            def run_job(op, args, context="server", wait_s=25.0, waits=waits, **k):
+                waits.append(wait_s)  # a job that settles 18 s after it starts
+                return JobResult("done", {"ended": True}) if wait_s >= 18 else JobResult("still_running", None)
+
+            g.run_job = run_job
+            with (
+                mock.patch.object(turn_tool, "_hold_for_bg_end", lambda: ""),
+                mock.patch.object(turn_tool, "_bg_end_running", lambda c: False),
+                mock.patch.object(plumbing, "_active", lambda: P1),
+                mock.patch.object(turn_plan, "_party_set", lambda: {P1}),
+            ):
+                out = combat.end_turn(wait=False)
+            self.assertEqual(waits, [want_s], side)
+            self.assertEqual(reporting._batch["last"], "done" if side else "still_running", out)
+
+    def test_passing_members_end_waits_out_the_mods_group_end(self):
+        for side, want_s in (("A", combat.END_ARENA_WAIT_S), (None, 5)):
+            g = self.use(side)
+            waits = []
+            g.run_job = lambda op, args, wait_s=25.0, waits=waits, **k: waits.append(wait_s) or JobResult("done", {})
+            row = {"uuid": P1, "passes": "Stunned", "is_current": True, "ended": True, "relation": "party"}
+            cs = {"current": P1, "order": [row]}  # S087: a Stunned member's open turn the game itself passes
+            turn_slots._end_passing(cs, -1e9, set(), None)
+            self.assertEqual(waits, [want_s], side)
+
+    def test_hold_for_a_background_end_lasts_as_long_as_the_mods_end(self):
+        """An end still running holds the next action until it settles: with a side up to END_ARENA_WAIT_S."""
+        for side, want_s in (("A", combat.END_ARENA_WAIT_S), (None, turn_tool.END_BG_HOLD_S)):
+            self.use(side)
+            clock = [0.0]
+
+            class Q:
+                def busy(self, c, clock=clock):  # the end settles 18 s after the hold starts
+                    return clock[0] < 18.0
+
+            with (
+                mock.patch.dict(turn_tool._bg_ends, {P1: 0.0}, clear=True),
+                mock.patch.object(queueing, "_queues", lambda: Q()),
+                mock.patch.object(turn_tool.time, "monotonic", lambda clock=clock: clock[0]),
+                mock.patch.object(turn_tool.time, "sleep", lambda s, clock=clock: clock.__setitem__(0, clock[0] + s)),
+                mock.patch.object(turn_tool, "_in_queue_worker", lambda: False),
+            ):
+                turn_tool._hold_for_bg_end()
+                held, left = clock[0], dict(turn_tool._bg_ends)
+            self.assertAlmostEqual(held, min(18.0, want_s), delta=0.1, msg=side)
+            self.assertEqual(left, {} if side else {P1: 0.0}, side)
+
     def test_multi_target_cast_takes_no_hotbar_route(self):
         for side, routed in (("A", False), (None, True)):
             self.use(side)

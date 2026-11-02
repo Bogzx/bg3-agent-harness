@@ -334,6 +334,15 @@ END_HUD_QUICK_S = 1.0   # ended this soon after the press: the press did it
 # order stays the fallback). OFF until acceptance sec_combat "end_turn after a companion's request (probe)" confirms;
 # flip live: BG3AI_END_HUD_FIRST=1 (bridge restart) or server.END_HUD_FIRST = True.
 END_HUD_FIRST = os.environ.get("BG3AI_END_HUD_FIRST", "0") == "1"
+# A two-team match: the mod's end of a turn group's last member waits up to Actions.lua A.END_LAST_WAIT_MS (20 s) for
+# the game to close the group (S087: 18 s) before it hands back, so a shorter job wait answers "not finished" while
+# the end still settles. With a side every act.end_turn job is waited on this long (normal play keeps its waits).
+END_ARENA_WAIT_S = 22.0
+
+
+def _end_wait_s(s: float) -> float:
+    """How long to wait for an act.end_turn job: s, with a side at least END_ARENA_WAIT_S."""
+    return max(s, END_ARENA_WAIT_S) if world_tools._shared_screen() else s
 
 
 def _peer_requested(cs: dict, char: str) -> str | None:
@@ -423,7 +432,7 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             r = JobResult("done", {"ended": True, "via": f"the HUD's End Turn at once ({queueing._label(peer)} had ended first)"},
                           None, hud.events, hud.elapsed_ms)
     if r is None:
-        r = core.game.run_job("act.end_turn", args, wait_s=15)
+        r = core.game.run_job("act.end_turn", args, wait_s=_end_wait_s(15))
         if hud_ok and r.status == "failed" and END_IGNORED in str(r.error or ""):
             r = _end_turn_by_hud(char, r)
     plumbing._remember_names(r.result)
