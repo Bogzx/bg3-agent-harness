@@ -124,3 +124,31 @@ def test_opus_rest_plays_the_rest_of_the_launch_list_in_launch_v1_opus_results_r
         for j in matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)["jobs"]
     }
     assert played == {("pi", "claude-opus-5-5", "medium", "rules", str(REPO / "profiles" / "claude-opus-5-5.toml"))}
+
+
+FIGHTS = ["fight_act1_grove_gate", "fight_act1_windmill", "fight_act2_balthazar", "fight_act2_moonrise_assault"]
+ORDER = ["deepseek-flash", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
+
+
+def fights_jobs(name: str) -> list[dict]:
+    return matrix_cli.load(MATRICES / f"{name}.toml", REPO)["jobs"]
+
+
+def test_the_one_action_fight_matrices_charge_each_model_to_its_own_budgets_under_the_fights_cap():
+    pilot, rerun = fights_jobs("fights-v09-pilot"), fights_jobs("fights-v09")
+    assert [(j["model"], j["scenario"]) for j in pilot] == [(m, "fight_act1_grove_gate") for m in ORDER]
+    assert [(j["model"], j["scenario"]) for j in rerun] == [(m, s) for m in ORDER for s in FIGHTS for _ in range(3)]
+    for j in pilot + rerun:
+        names = [Path(f).name for f in j["shared"]]
+        api = ["budget-deepseek.json"] if j["model"] == "deepseek-flash" else ["budget-anthropic.json"]
+        share = [] if j["model"] == "deepseek-flash" else [f"budget-{j['model'].split('-')[1]}.json"]
+        assert sorted(names) == sorted(share + api), j["id"]
+        assert 0.5 <= j["max_cost"] <= 6.5 and j["client"] == "pi"  # every reserve fits the $45 with room
+    for name in ("fights-v09-pilot", "fights-v09"):
+        assert raw_file(name)["budget"]["file"] == "runtime/budget-fights.json"
+    same = {(j["model"], j["scenario"]): j["max_cost"] for j in rerun}
+    assert all(same[j["model"], j["scenario"]] == j["max_cost"] for j in pilot)
+
+
+def raw_file(name: str) -> dict:
+    return tomllib.loads((MATRICES / f"{name}.toml").read_text())
