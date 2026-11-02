@@ -10,11 +10,24 @@ local T4 = "dddddddd-0000-0000-0000-0000000000d4"
 local HOST = "eeeeeeee-0000-0000-0000-0000000000e1"
 local TPL = "d9401d40-453b-4512-84ee-d1c6ab29afea"
 local HALFELF = "76057327-da03-4398-aaf0-c59345ef3a8b"
+-- The extender's array as the game hands it (live check 13c: SkillList.Skills, PassiveList.Passives are userdata;
+-- ipairs gives the ids): a full userdata (a temp file's handle) given its own metatable, so type() is "userdata".
+local function udArray(ids)
+    local u = io.tmpfile()
+    debug.setmetatable(u, { __index = function(_, i) return ids[i] end, __len = function() return #ids end })
+    return u
+end
+
 local LISTS = { -- the game's lists by uuid: {resource type, field, ids}
-    ["skills-fighter"] = { "SkillList", "Skills", { "Acrobatics", "Athletics", "Intimidation", "Perception" } },
-    ["styles"] = { "PassiveList", "Passives", { "FightingStyle_Defense", "FightingStyle_Duelling" } },
+    -- live check 13c's reads of the Fighter's SkillList 6a4f8598 and PassiveList da3203d8
+    ["skills-fighter"] = { "SkillList", "Skills", { "Acrobatics", "AnimalHandling", "Athletics", "History", "Insight",
+        "Intimidation", "Perception", "Survival" } },
+    ["styles"] = { "PassiveList", "Passives", { "FightingStyle_Archery", "FightingStyle_Defense",
+        "FightingStyle_Dueling", "FightingStyle_GreatWeaponFighting", "FightingStyle_Protection",
+        "FightingStyle_TwoWeaponFighting" } },
     ["cantrips"] = { "SpellList", "Spells", { "Target_FireBolt", "Target_RayOfFrost", "Target_MageHand" } },
 }
+for _, l in pairs(LISTS) do l[3] = udArray(l[3]) end
 
 local saved, calls, stats, created, tpl, inv
 

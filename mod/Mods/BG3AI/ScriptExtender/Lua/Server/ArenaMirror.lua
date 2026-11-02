@@ -134,14 +134,18 @@ function M.spawn(args)
     return { twins = made, reads = reads, calls = calls, template_stats = read(function() return tpl.Stats end) }
 end
 
--- The game's list for a choice, as a set; error when it doesn't read.
+-- The game's list for a choice, as a set of its ids' text; error when it doesn't read. The list field is the
+-- extender's array userdata (live check 13c: SkillList.Skills and PassiveList.Passives are userdata, ipairs gives the
+-- ids, tostring their names), not a Lua table.
 local function listSet(kind, list)
     local what = M.LISTS[kind]
     if not what then error("a choice of kind " .. tostring(kind) .. " (skills, expertise, passives or spells)", 0) end
-    local ids = read(function() return Ext.StaticData.Get(list, what[1])[what[2]] end)
-    if type(ids) ~= "table" then error(("the game's %s %s doesn't read"):format(what[1], tostring(list)), 0) end
-    local set = {}
-    for _, id in ipairs(ids) do set[tostring(id)] = true end
+    local set = read(function()
+        local out = {}
+        for _, id in ipairs(Ext.StaticData.Get(list, what[1])[what[2]]) do out[tostring(id)] = true end
+        return out
+    end)
+    if not set then error(("the game's %s %s doesn't read"):format(what[1], tostring(list)), 0) end
     return set
 end
 
