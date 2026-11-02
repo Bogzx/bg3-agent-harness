@@ -309,6 +309,15 @@ G.tb_flags = tb_flags
 -- over until that character's own TurnStarted, or until the game shows it inactive, or TURN_OVER_TTL_MS.
 G.turn_over = G.turn_over or {}
 G.TURN_OVER_TTL_MS = 90000
+-- Osiris TurnStarted / TurnEnded pair up per character, but not always in order. Live 2026-11-02 (arena, every round,
+-- phases4): when a shared group's close ends the round, the game fires CombatRoundStarted and the new round's
+-- TurnStarted for the group's members, then (same ms burst, ~5 ms later) the old round's TurnEnded for them. Taken as
+-- this turn's end, it marked the new turn over for TURN_OVER_TTL_MS: nobody acted for 90 s each round. A TurnStarted
+-- while the character's previous turn has had no TurnEnded leaves that TurnEnded owed (g -> the start's time); the
+-- next TurnEnded within TURN_BURST_MS of it is the older turn's and leaves the new turn open. In order (start, end,
+-- start, end) nothing is ever owed.
+G.turn_open = G.turn_open or {} -- g -> true from its TurnStarted to its TurnEnded
+G.end_owed = G.end_owed or {}   -- g -> when a TurnStarted came with its previous turn's TurnEnded still to come
 function G.turn_is_over(uuid)
     local g = G.guid(uuid) or uuid
     local t = g and G.turn_over[g]

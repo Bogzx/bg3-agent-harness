@@ -483,10 +483,19 @@ end
 function A.dispatch(event, args)
     if event == "TurnEnded" and args[1] then
         local g = G.guid(args[1]) or args[1]
-        if g then G.end_requested[g] = nil; G.turn_over[g] = G.now_ms() end
+        if g then
+            -- the older turn's end (G.end_owed): the turn open now is the new one
+            local late = G.end_owed[g] ~= nil and G.now_ms() - G.end_owed[g] <= G.TURN_BURST_MS
+            G.end_owed[g], G.turn_open[g] = nil, late or nil
+            if not late then G.end_requested[g] = nil; G.turn_over[g] = G.now_ms() end
+        end
     elseif event == "TurnStarted" and args[1] then
         local g = G.guid(args[1]) or args[1]
-        if g then G.turn_over[g] = nil; G.end_requested[g] = nil end
+        if g then
+            G.end_owed[g] = G.turn_open[g] and G.now_ms() or nil
+            G.turn_open[g] = true
+            G.turn_over[g] = nil; G.end_requested[g] = nil
+        end
         G.note_turn_started(args[1])
     elseif event == "AttackedBy" and args[1] then
         A.stirred(args[1], "a hit on the caster")
