@@ -153,6 +153,27 @@ test("a turn before the first CombatRoundStarted is round 1's, never round 0", f
     eq(Ar.state.round, 1, "round")
 end)
 
+-- Live 2026-11-02 (live 7 and every earlier load): setup's combat call fires round 1's CombatRoundStarted and the
+-- first group's TurnStarted before Ar.begin; the match's round stayed 0 through that group.
+test("a match begun mid-round takes its combat's round: CombatRoundStarted's, else the engine's; arena.status has it",
+    function()
+    fire("CombatRoundStarted", "combat1", 1)
+    fire("TurnStarted", "S_Player_" .. A1)
+    begin({ round_cap = 2 })
+    eq(Ar.state.round, 1, "round 1 from its CombatRoundStarted")
+    eq(rpc("arena.status").result.round, 1, "arena.status round")
+    eq(rpc("arena.end", "{reason=\"cap\"}").result.ended.rounds, 1, "an end in round 1's first group: 1 round")
+    reset()
+    engineRound = 3 -- no CombatRoundStarted seen (G.round_of nil): the engine's turn order
+    begin()
+    eq(Ar.state.round, 3, "the engine's round")
+    reset()
+    osiv[key("CombatGetGuidFor", A1)] = nil -- out of combat: no round yet, never 0
+    begin()
+    eq(Ar.state.round, nil, "no round")
+    eq(rpc("arena.status").result.round, nil, "arena.status round")
+end)
+
 test("another fight's rounds are not the match's", function()
     begin()
     osiv[key("CombatGetGuidFor", GOB)] = "combat2"

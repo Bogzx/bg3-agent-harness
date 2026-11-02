@@ -78,6 +78,7 @@ local function game(opts)
         calls[#calls + 1] = { "SetHostileAndEnterCombat", ... }
         for _, u in ipairs(opts.combat or ALL) do combatOf[u] = "combat1" end
         enemyFrom = reads + (opts.enemy_after or 0)
+        fire("CombatRoundStarted", "combat1", 1) -- round 1 starts before the match begins (live 7)
     end)
     stub("EnterCombat", function(x, y)
         calls[#calls + 1] = { "EnterCombat", x, y }
@@ -224,6 +225,8 @@ test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right
     eq(table.concat(Ar.state.teams.A, ","), table.concat(TA, ","), "team A begun")
     eq(table.concat(Ar.state.teams.B, ","), table.concat(TB, ","), "team B begun")
     eq(Ar.state.round_cap, 12, "the runner's round cap")
+    eq(Ar.state.round, 1, "the match begins in round 1")
+    eq(j.result.status.round, 1, "its status: round 1")
     eq(#refs("arena_start"), 1, "arena_start recorded")
     eq(enc(j.result.sitters), enc({ { uuid = AV, name = "Tav" }, { uuid = SH, name = "Sha" } }), "the sitters")
 end)
