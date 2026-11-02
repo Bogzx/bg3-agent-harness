@@ -74,70 +74,21 @@ Lines a result may end with:
 
 ## Combat
 - `get_combat_state()` → turn order (visible), whose turn, round, the active character's remaining economy.
-- `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells. `ability` = the name as the action list shows it (`"Fire Bolt"`, any case) or an id; lists show an id only where two actions share a name (then pass that id). Out of combat at a creature it says whether the hit started a fight: `COMBAT: the attack started a fight …` or `combat: NOT started — e24 Shadow took 3 damage but no fight began` (dormant/unaware: it won't act until combat starts). A scroll you carry works by name too (`"Scroll of Invisibility"`): the tool reads it and clicks the target (default: `who`; `targets` = one click per beam, e.g. Scorching Ray); never screenshot + click_on for it. In combat too, on the reader's turn for an action (like casting the spell); it also works as a `combat_turn` action alternative (`{"ability":"Scroll of Fear","target":"e12"}`).
+- `use_ability(ability, target | x,y,z, who, upcast=0, targets="")` → attack, spell, item or action from `get_actions`; `targets` = comma list for multi-target spells. `ability` = the name as the action list shows it (`"Fire Bolt"`, any case) or an id; lists show an id only where two actions share a name (then pass that id). Out of combat at a creature it says whether the hit started a fight: `COMBAT: the attack started a fight …` or `combat: NOT started — e24 Shadow took 3 damage but no fight began` (dormant/unaware: it won't act until combat starts). A scroll you carry works by name too (`"Scroll of Invisibility"`): the tool reads it and clicks the target (default: `who`; `targets` = one click per beam, e.g. Scorching Ray); never screenshot + click_on for it. In combat too, on the reader's turn for an action (like casting the spell).
 - `ability_preview(ability, target, who)` → hit chance or save DC, damage, range, line of sight.
 - `react(use, which="")` → answer a reaction prompt (Shield, Counterspell, opportunity attack).
-- `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act, combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
+- `end_turn(who, wait=true)` → end the turn; blocks through enemy turns until a party member can act (the result then lists that member's actions, `YOUR ACTIONS (eN)`), combat ends, or a reaction/roll prompt needs you (`wait=false` + `wait_for("my_turn")` to plan meanwhile).
 - `flee(who)` → the HUD's Flee for one character: they leave the fight and go to camp (the rest stay). Only with every enemy 27 m or more away (refused with the nearest enemy you see when closer); the game asks to confirm and the tool answers Yes.
-- `combat_turn(plan, who, end=true, wait_next=false, ignore="hostile", wait_turn=30)` → **a whole turn in one call** (see below). Returns at once after ending the turn with `NEXT …, then <ally> (yours)`, or `NOW <ally>'s turn` plus their actions: plan that turn while the enemies act and **send it at once**: a plan sent before the turn comes waits for it (up to `wait_turn` s, up to 120 s longer while the enemies' turns still move on; stops on a prompt), so no `wait_for("my_turn")` is needed. A very long enemy phase can still end the wait: `combat_turn: NOT PLAYED YET — the enemies are still taking their turns …` (nothing was played): send the same plan again. Party members with equal initiative share one turn (any order): plan them all in one call with a list, `plan='[{"who":"Karlach","plan":{…}},{"who":"Gale","plan":{…}}]'` (a later member's plan waits for their turn like a sent-ahead plan, ≤80 s in all; it stops and lists who was NOT played when a turn is interrupted or a turn doesn't come in time). The action that starts a fight already shows `COMBAT STARTED` with the turn order and your actions: no `get_combat_state` after it.
+- In combat each call is one action (`use_ability`, `move_to`, `walk_toward`, `jump_to`, `react`): it returns when the action is over, with `after={…}` (HP, action, bonus, movement left) and `CHANGES` (HP, deaths, moves); a walk returns at its end. `do_actions` and `queue_actions` run no steps in combat. The action that starts a fight already shows `COMBAT STARTED` with the turn order and your actions: no `get_combat_state` after it.
 - `end_combat_report(what_worked, what_to_change, next_goal)` → required after every fight; goes to your session log.
-- **Fight debrief (automatic):** the result that sees a fight end carries `FIGHT DEBRIEF (<clean|costly|near-wipe|wipe>, N rounds) vs …`: enemies and what they used on you, damage dealt/taken per member, who went down to whom, your abilities' hits/misses/targets, damage types that did little, surrounded/high ground, potions/scrolls used and carried unused. It is also logged (`[fight]`) and kept in memory/fights.jsonl. A `load_game` during a fight (or ≤10 min after a bad one) adds `LAST ATTEMPT: … — plan a different approach: …` (also on the next get_status); the retried fight's first combat state / combat_turn repeats the key facts once (`RETRY of the fight …`), and a fight vs enemies a past debrief knows opens with `LAST TIME vs …`. `WARNING: …` lines flag a repeated pattern (the same member down first again, a damage type that did little last time too). After a bad fight or reload: read it, change the plan, note one lesson (`note(tag="lesson")`).
+- **Fight debrief (automatic):** the result that sees a fight end carries `FIGHT DEBRIEF (<clean|costly|near-wipe|wipe>, N rounds) vs …`: enemies and what they used on you, damage dealt/taken per member, who went down to whom, your abilities' hits/misses/targets, damage types that did little, surrounded/high ground, potions/scrolls used and carried unused. It is also logged (`[fight]`) and kept in memory/fights.jsonl. A `load_game` during a fight (or ≤10 min after a bad one) adds `LAST ATTEMPT: … — plan a different approach: …` (also on the next get_status); the retried fight's first combat state repeats the key facts once (`RETRY of the fight …`), and a fight vs enemies a past debrief knows opens with `LAST TIME vs …`. `WARNING: …` lines flag a repeated pattern (the same member down first again, a damage type that did little last time too). After a bad fight or reload: read it, change the plan, note one lesson (`note(tag="lesson")`).
 
-### `combat_turn` plans
-JSON with slots run in `order` (default `move,action,bonus,extra`); each slot is a list of alternatives
-tried in order until one works:
-- `move`: `"e12"` (walk next to it), `{"target":"e12","within":18}` (stop once within 18 m: ranged/spell
-  range; no walk if already there), or `[x,y,z]`. If the walk doesn't fit the movement left, it walks as far
-  as it does (`"partial":false` turns that off). A failed move doesn't end the turn: the fallbacks decide.
-  It follows the real route (stairs, detours) and keeps out of fire on the way (`"avoid":false` walks through).
-  A move that ends out of reach says so and why: `now 9.9m from e12 — stopped short of ≤1.5m: out of
-  movement (9m left, the route needs 18.5m)` / `kept out of Fire on the route 4m ahead` / `no walkable
-  route gets closer than 7m (raised/blocked …)`. A melee move that ends clearly out of reach adds
-  `— melee is out of reach this turn` and the melee attacks on that target are skipped (no wasted try): the
-  plan's ranged alternative runs, else the ranged weapon attack itself (`action (auto fallback): …`), else
-  Dash + walk on (out of movement only). A route that needs ≈ all your movement often ends ~1.5 m short:
-  plan a ranged alternative or a Dash for it.
-- **Lost move target:** the move's target died or went out of sight (Shadow Blend, killed by an ally first):
-  `target: e24 Shadow is out of sight → the plan now aims at the nearest visible hostile e70 Wraith (12m)`,
-  and it walks on if movement is left. Nobody in sight: its attacks and a walk-on Dash are skipped. Only a
-  hostile move target is re-aimed: a move to an ally (a dead one you revive) stays on that ally.
-- **Retarget:** when every alternative of a slot missed its target (dead, out of range, no line of sight),
-  the plan's own targeted abilities are tried on the nearest other visible hostile in reach
-  (`action (auto fallback): Target_SacredFlame e15: done`; also for `extra` after a kill). `"retarget":false` turns it off.
-  Fallbacks keep to the planned target's side: an ability aimed at an ally is never re-aimed at a hostile (a heal
-  may go to another downed party member in reach), the ranged-attack fallback only hits a hostile target, and a
-  revive (Revivify, its scroll) is never re-aimed; a dead target is no miss for a revive.
-- **Melee refused without a reason** (`the game refused the cast (no reason given): a melee swing from 2.1 m …`):
-  with movement left it steps within 1 m of the target once and swings again (`stepped closer for the swing`).
-- **`who`:** required when `NOW` lists more than one of your characters (a shared turn). Left out there, the
-  plan goes to the only one acting whose actions cover every ability it names, else it is refused (`give
-  who=`). A plan sent ahead without `who` waits for the character selected when it was sent (or the only one
-  of yours with its abilities), never for whichever party turn comes first.
-- **Downed ally:** no `bonus` in the plan and an ally at 0 HP within range: Healing Word on them if this
-  character has it (`bonus (auto: ally downed): …`). `"auto_bonus":false` turns it off.
-- `action`, `bonus`: an ability name as listed (`"Dash"`) or id (`"Shout_Dash"`), or `{"ability","target" | "x","y","z","upcast","targets","if","unless","then_move"}`,
-  or `{"tool":<any do_actions tool>,...}`. `"then_move":true` walks the move again after it; a Dash does that by itself (`"then_move":false` to just Dash).
-- `extra`: a list of more slots, e.g. the Extra Attack: `[[{"ability":"Target_MainHandAttack","target":"e12"}]]`.
-  After the first weapon attack (a Main Hand Attack, Divine Smite, Reckless Attack) the next one costs no action,
-  as in the game; get_actions shows it as `[Extra Attack: free]`. Weapon actions (Lacerate, Cleave) and spells don't.
-- Summons (Spiritual Weapon) attack with their own action, e.g. "Greataxe Slash" (a bonus action). A plain
-  `Target_MainHandAttack` in a summon's plan is mapped to it.
-- `reactions`: `{"Divine Smite":"always"}` sets reaction prompts before the turn. `on_reaction`: `"use"` or
-  `"skip"` answers reaction prompts that pop up mid-turn, and the ones that come while a sent-ahead plan
-  waits for its turn (an enemy's attack → Shield Blow). Default: stop, name the prompt, and let you answer.
+### Combat facts
+- After the first weapon attack (a Main Hand Attack, Divine Smite, Reckless Attack) the next one costs no action
+  with Extra Attack, as in the game; get_actions shows it as `[Extra Attack: free]`. Weapon actions (Lacerate,
+  Cleave) and spells don't.
 - `targets` with 3+ names (Bless): the cast takes 2, so it goes on the first two and says who was left out.
   Spells with no higher-level form here (Guiding Bolt) ignore `upcast` and say so.
-- Before every step: still your turn? target still visible and alive? (if not: the next alternative). It stops,
-  without ending the turn, on HP below 35%, a prompt, a blocked teleport, or the turn being taken away.
-```json
-{"move":{"target":"e12","within":1.5},
- "action":[{"ability":"Target_MainHandAttack","target":"e12"},
-           {"ability":"Projectile_MainHandAttack","target":"e12"},
-           {"ability":"Shout_Dash","then_move":true},
-           "Shout_Disengage"],
- "bonus":{"ability":"Shout_SecondWind","if":"hp_below:50"}}
-```
-Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target is out of range … → Projectile_MainHandAttack e12: done`), `end_turn: done`, `NOW` (HP, action, bonus, movement), `CHANGES`, `NEXT`.
 
 ## Dialogue
 - `talk_to(npc, who)` → walk up (following them if they move) and start a conversation (`who` = the speaker). A camp companion out of sight while you are at camp: walks to where they stand in the camp first.
@@ -210,19 +161,6 @@ Result: one line per slot (`action: Target_MainHandAttack e12: FAILED — target
 - `press_key(key)` / `click(x, y, button="left")` → last resort (SDL key names; fractions of the last screenshot). Log each use. `press_key("escape")` with nothing open is refused (it would open the game menu); tools close the panels they open. F5 runs `save_game()`; F8 (quickload) is refused: `load_game`.
 
 ## Worked `do_actions` examples
-
-**A combat turn** (after one `get_combat_state` + `get_actions`; ids come from those reads; check the
-move with `path_preview` first if it's tight):
-```json
-[{"tool":"move_to","target":"e12"},
- {"tool":"use_ability","ability":"Target_MainHandAttack","target":"e12"},
- {"tool":"use_ability","ability":"Shout_SecondWind"},
- {"tool":"end_turn"}]
-```
-If a reaction prompt or a downed target stops it, read the result, then re-plan only what's left.
-Conditional variant: `{"tool":"use_ability","ability":"Shout_SecondWind","if":"hp_below:50"}` heals only when hurt.
-
-**A combat turn** is better done with `combat_turn` (fallbacks, re-checks, returns at once with who's next).
 
 **A looting sweep**: `loot_area()` does it in one call. For a hand-picked set, queue it (ids from `get_nearby`); send it with
 `queue_actions`, then plan the next leg while it runs; `queue_done` tells you it finished:
