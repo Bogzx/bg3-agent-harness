@@ -25,18 +25,27 @@ local function body(u, over)
     end
     local spells = {}
     for i, id in ipairs(over.spells or { "Target_MainHandAttack", "Shout_SecondWind" }) do
-        spells[i] = { Id = { Prototype = id } }
+        spells[i] = { Id = { Prototype = id }, SpellCastingAbility = (over.cast or {})[id] or "None",
+            PrepareType = (over.prep or {})[id] or "AlwaysPrepared" }
     end
     local passives = {}
     for i, id in ipairs(over.passives or { "ExtraAttack", "FightingStyle_Defense" }) do
-        passives[i] = { Passive = { PassiveId = id } }
+        passives[i] = { Passive = { PassiveId = id, ToggledOn = (over.toggled or {})[id] or false, Disabled = false } }
     end
+    -- the main hand: a weapon item with its own Weapon component (MELEE 0x1000, FINESSE 0x4)
+    local mh = u .. "-item-5"
+    world[mh] = { pos = { 0, 0, 0 }, comps = { Weapon = { WeaponProperties = over.weapon_props or 0x1000,
+        AttackRollBonus = {} } } }
+    osiv[key("GetEquippedItem", u, "MeleeMainHand")] = mh
     local c = {
         ServerCharacter = {},
         Race = { Race = over.race or "race-human" },
         EocLevel = { Level = 4 },
         Classes = { Classes = { { ClassUUID = "class-fighter", SubClassUUID = "sub-battlemaster", Level = 4 } } },
-        Stats = { Abilities = { 0, 16, 14, over.con or 15, 10, 12, 8 } },
+        Stats = { Abilities = { 0, 16, 14, over.con or 15, 10, 12, 8 },
+            AbilityModifiers = over.mods or { 0, 3, 2, 2, 0, 1, -1 },
+            ProficiencyBonus = 2, InitiativeBonus = over.initiative or 2, SpellCastingAbility = "Intelligence" },
+        DifficultyCheck = { SpellSaveDCBoost = 0, WeaponActionDC = 12 },
         Health = { Hp = 40, MaxHp = 40 },
         Resistances = { AC = 18 },
         InventoryOwner = { Inventories = {
@@ -46,7 +55,8 @@ local function body(u, over)
         SpellBookPrepares = { PreparedSpells = {} },
         PassiveContainer = { Passives = passives },
         StatusContainer = { Statuses = { h1 = "LONGREST_RECOVERY" } },
-        ActionResources = { Resources = { ["res-action"] = { { Level = 0, Amount = 1 } } } },
+        ActionResources = { Resources = { ["res-action"] = { { Level = 0, Amount = 1, MaxAmount = over.action_max or 1,
+            ReplenishType = { "Turn" } } } } },
         Proficiency = { Flags = over.proficiencies or { "LightArmor", "MediumArmor", "MartialWeapons" } },
         BoostsContainer = { Boosts = { { Type = "ProficiencyBonus", Boosts = {} } } },
     }
@@ -79,6 +89,46 @@ local P = string.format("{{%q,%q},{%q,%q}}", A1, B1, A2, B2)
 
 local function problems(r) return table.concat(r.result.problems, "; ") end
 
+-- Review 3 F7-F9: what ids and current amounts don't show.
+test("arena.symmetry F7: a spell cast with another ability, or always prepared vs to prepare, differs (DC, attack)",
+    function()
+    mirror({ cast = { Shout_SecondWind = "Wisdom" } }, { prep = { Shout_SecondWind = "RequiresPreparation" } })
+    local r = check(P)
+    eq(problems(r), "pair 1 (Ana, Bo): spellcast differs; pair 2 (Abe, Bea): spellcast differs", "problems")
+    local a = r.result.members[A1].spellcast
+    eq(enc(a), enc({ "Shout_SecondWind|None|AlwaysPrepared|-|-", "Target_MainHandAttack|None|AlwaysPrepared|-|-" }),
+        "A1 as read")
+    eq(enc(r.result.members[B1].spellcast[1]), enc("Shout_SecondWind|Wisdom|AlwaysPrepared|11|3"),
+        "B1: DC 8 + 2 + Wis 1, attack 2 + 1")
+end)
+
+test("arena.symmetry F7: initiative bonus and a finesse main hand (the better of Str/Dex) differ", function()
+    mirror({ initiative = 4 }, { weapon_props = 0x1004, mods = { 0, 3, 4, 2, 0, 1, -1 } })
+    local r = check(P)
+    eq(problems(r), "pair 1 (Ana, Bo): derived differs; pair 2 (Abe, Bea): derived differs", "problems")
+    local d = r.result.members[A1].derived
+    eq(enc({ d.proficiency_bonus, d.initiative_bonus, d.melee_main_hand, d.ranged_main_hand, d.movement,
+        d.spell_casting_ability }), enc({ 2, 2, "4096|Strength|5|0", "none", "none", "Intelligence" }), "A1 as read")
+    eq(r.result.members[B2].derived.melee_main_hand, "4100|Dexterity|6|0", "B2's finesse blade: Dex 4 over Str 3")
+end)
+
+test("arena.symmetry F8-F9: a resource's maximum with the same current amount, a passive's toggle state differ",
+    function()
+    mirror({ action_max = 2 }, { toggled = { FightingStyle_Defense = true } })
+    local r = check(P)
+    eq(problems(r), "pair 1 (Ana, Bo): resource_max differs; pair 2 (Abe, Bea): passive_state differs", "problems")
+    eq(enc(r.result.members[A1].resource_max), enc({ "res-action|0|1|Turn" }), "A1's resource as read")
+end)
+
+test("arena.symmetry F7-F9: a field these read that doesn't read is a problem (no DifficultyCheck, no MaxAmount)",
+    function()
+    mirror({ comps = { DifficultyCheck = false } }, nil)
+    world[A2].comps.ActionResources.Resources["res-action"][1].MaxAmount = nil
+    local r = check(P)
+    eq(problems(r), "Abe: resource_max doesn't read; Bo: derived doesn't read; Bo: spellcast doesn't read",
+        "problems")
+end)
+
 test("arena.symmetry: two identical pairs: ok, no problems; templates recorded, not compared", function()
     mirror(nil, { template = "Hireling_Fighter_other_tpl" })
     local r = check(P)
@@ -103,7 +153,7 @@ test("arena.symmetry: any gameplay difference is a problem, with both values", f
     eq(enc(r.result.pairs[1].diffs[2].b), enc({ 16, 14, 14, 10, 12, 8 }), "B1's abilities")
     local d2 = {}
     for _, d in ipairs(r.result.pairs[2].diffs) do d2[#d2 + 1] = d.field end
-    eq(table.concat(d2, ","), "inventory,spells,passives", "pair 2 fields")
+    eq(table.concat(d2, ","), "inventory,spells,passives,spellcast,passive_state", "pair 2 fields")
     assert(problems(r):find("pair 1 (Ana, Bo): race differs", 1, true), problems(r))
 end)
 
