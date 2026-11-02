@@ -565,14 +565,6 @@ def _ability_id(who: str, ability: str) -> str:
     return ids[0]
 
 
-def _unknown_ability_line(line: str, slot: str) -> bool:
-    """A combat_turn slot line whose alternatives all failed on a wrong ability id/name (refused before anything
-    was spent), e.g. 'action: Shout_Dodge: FAILED — unknown action Shout_Dodge (not an ability id; …)'."""
-    if not line.startswith(f"{slot}:") or ": done" in line:
-        return False
-    return "not an ability id" in line or "has no action called" in line
-
-
 def _id_words(i: str) -> list[str]:
     """Shout_Rage_Frenzy → ['rage', 'frenzy'] (the type prefix dropped, CamelCase split)."""
     parts = i.split("_")[1:] if "_" in i else [i]

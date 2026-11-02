@@ -21,6 +21,7 @@ from typing import Any
 from .fakemod import Reply
 
 SCENARIO_SWITCH = "BG3AI_SCENARIO_SETUP"
+FULL_TURN = {"action": 1, "bonus": 1, "reaction": 1, "movement": 9.0}  # a party member's resources at its turn start
 
 
 @dataclass
@@ -156,6 +157,7 @@ class GameModel:
         self.difficulty = "Balanced"
         self.names: dict[str, str] = {}
         self.chosen: list[int] = []
+        self.res: dict[str, dict[str, Any]] = {}  # uuid -> this turn's action/bonus/reaction/movement (a fight)
 
     # ---- helpers ----
 
@@ -215,8 +217,9 @@ class GameModel:
         self.nearby.append(row)
         return uuid
 
-    def start_fight(self, enemies: list[str], hp: int = 7) -> None:
-        """A combat with the party first in the turn order; pushes combat_started and round_started."""
+    def start_fight(self, enemies: list[str], hp: int = 7, nearby: bool = False) -> None:
+        """A combat with the party first in the turn order; pushes combat_started and round_started. nearby: the
+        enemies are in state.nearby too (hostile, with HP), so a fight played with act.* ops shows in CHANGES."""
         order: list[dict[str, Any]] = []
         for i, m in enumerate(self.party):
             order.append(
@@ -243,6 +246,20 @@ class GameModel:
                     "hp": hp,
                 }
             )
+            if nearby:
+                self.nearby.append(
+                    {
+                        "uuid": uuid,
+                        "name": name,
+                        "dist": 5.0 + i,
+                        "pos": [15.0 + i, 0.0, 12.0],
+                        "item": False,
+                        "relation": "hostile",
+                        "hp": hp,
+                        "max_hp": hp,
+                    }
+                )
+        self.res = {m.uuid: dict(FULL_TURN) for m in self.party}
         order[0]["is_current"] = True
         self.combat = {
             "active": True,
@@ -261,6 +278,9 @@ class GameModel:
         assert self.combat is not None, "no fight"
         row = next(r for r in self.combat["order"] if r["name"] == name)
         self.combat["order"].remove(row)
+        for n in self.nearby:
+            if n["uuid"] == row["uuid"]:
+                n.update(hp=0, dead=True)
         self.push("died", self._ref_of(row["uuid"], name))
         self.ref_record(
             "kill",
@@ -452,6 +472,109 @@ class GameModel:
         self.jobs[jid] = {"id": jid, "kind": kind, "status": "done", "result": result, "elapsed_ms": 0}
         return {"job": jid, "status": "done", "result": result}
 
+    # ---- a fight played one action per call (act.*; Server/Actions*.lua) ----
+
+    def _after(self, char: str) -> dict[str, Any]:
+        """Actions.lua A.summary: the actor's portrait after the action."""
+        m = self.member(char)
+        out: dict[str, Any] = {"pos": list(m.pos), "hp": m.hp, "max_hp": m.max_hp}
+        if self.combat is not None:
+            out.update(self.res.get(m.uuid, FULL_TURN), in_combat=True, my_turn=self.combat["current"] == m.uuid)
+        return out
+
+    def op_actions(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """state.actions (State.lua): the member's hotbar and this turn's resources ([amount, max])."""
+        m = self.member(args.get("uuid") or self.active)
+        r = self.res.get(m.uuid, FULL_TURN)
+        acts = [{"name": "Attack", "spell": "Target_MainHandAttack", "cost": "A", "range": 1.5}]
+        if m.cls == "Cleric":
+            acts.append({"name": "Healing Word", "spell": "Target_HealingWord", "cost": "B", "range": 18, "level": 1})
+        return {
+            "actions": acts,
+            "resources": {
+                "ActionPoint": [r["action"], 1],
+                "BonusActionPoint": [r["bonus"], 1],
+                "Movement": [r["movement"], FULL_TURN["movement"]],
+                "ReactionActionPoint": [r["reaction"], 1],
+            },
+        }
+
+    def op_watch(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        party = [{"uuid": m.uuid, "hp": m.hp, "max_hp": m.max_hp, "pos": list(m.pos)} for m in self.party]
+        return {"party": party, "seen": [], "combat": self.combat is not None, "dialogue": self.dialogue is not None}
+
+    def op_move_to(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        m = self.member(args.get("char") or self.active)
+        pos = args.get("pos") or next(n["pos"] for n in self.nearby if n["uuid"] == args.get("target"))
+        dist = round(sum((a - b) ** 2 for a, b in zip(m.pos, pos, strict=True)) ** 0.5, 1)
+        m.pos = (float(pos[0]), float(pos[1]), float(pos[2]))
+        if self.combat is not None:
+            r = self.res[m.uuid]
+            r["movement"] = round(max(0.0, r["movement"] - dist), 1)
+            for n in self.nearby:
+                if n.get("relation") == "hostile" and not n.get("dead"):
+                    n["dist"] = round(sum((a - b) ** 2 for a, b in zip(m.pos, n["pos"], strict=True)) ** 0.5, 1)
+        return self._job("act.move_to", {"dist": 0.0, "after": self._after(m.uuid)})
+
+    def op_cast(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """A weapon attack on a target: 7 damage (a 7-HP enemy dies), the action spent."""
+        m = self.member(args.get("char") or self.active)
+        if self.combat is not None:
+            if self.combat["current"] != m.uuid:
+                raise RuntimeError("not this character's turn")
+            self.res[m.uuid]["action"] = 0
+        row = next(n for n in self.nearby if n["uuid"] == args.get("target"))
+        row["hp"] = max(0, row["hp"] - 7)
+        self.push("cast", {"caster": self._ref_of(m.uuid, m.name), "spell": args.get("spell"), "name": "Attack"})
+        self.push(
+            "damage",
+            {
+                "target": self._ref_of(row["uuid"], row["name"]),
+                "source": self._ref_of(m.uuid, m.name),
+                "amount": 7,
+                "type": "Slashing",
+            },
+        )
+        if row["hp"] == 0 and self.combat is not None:
+            self.kill(row["name"])
+        return self._job("act.cast", {"cast": args.get("spell"), "target": row["uuid"], "after": self._after(m.uuid)})
+
+    def op_end_turn(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        """The member's turn ends; each enemy left hits the first party member for 3, then the next party member's
+        turn starts (a new round after the last)."""
+        assert self.combat is not None, "not in combat"
+        m = self.member(args.get("char") or self.active)
+        if self.combat["current"] != m.uuid:
+            raise RuntimeError("not this character's turn")
+        order = self.combat["order"]
+        self.push("turn_ended", self._ref_of(m.uuid, m.name))
+        i = next(k for k, o in enumerate(order) if o["uuid"] == m.uuid)
+        for step in range(1, len(order) + 1):
+            o = order[(i + step) % len(order)]
+            if (i + step) % len(order) == 0:
+                self.combat["round"] += 1
+                self.push("round_started", {"round": self.combat["round"]})
+            self.push("turn_started", self._ref_of(o["uuid"], o["name"]))
+            if o["relation"] == "party":
+                self.combat["current"], self.combat["turn_group"] = o["uuid"], [o["uuid"]]
+                self.res[o["uuid"]] = dict(FULL_TURN)
+                break
+            hit = self.party[0]
+            hit.hp = max(0, hit.hp - 3)
+            self.push(
+                "damage",
+                {
+                    "target": self._ref_of(hit.uuid, hit.name),
+                    "source": self._ref_of(o["uuid"], o["name"]),
+                    "amount": 3,
+                    "type": "Piercing",
+                },
+            )
+            self.push("turn_ended", self._ref_of(o["uuid"], o["name"]))
+        for o in order:
+            o["is_current"] = o["uuid"] == self.combat["current"]
+        return self._job("act.end_turn", {"after": self._after(m.uuid)})
+
     def op_job_poll(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         job = self.jobs.get(int(args.get("id") or 0))
         if job is None:
@@ -614,6 +737,11 @@ _OPS: dict[str, OpFn] = {
     "state.journal": lambda m, c, a: copy.deepcopy(m.journal),
     "state.nearby": lambda m, c, a: {"characters": _nearby(m, False), "items": _nearby(m, True)},
     "act.prepared": lambda m, c, a: {"casters": []},
+    "act.watch": GameModel.op_watch,
+    "state.actions": GameModel.op_actions,
+    "act.move_to": GameModel.op_move_to,
+    "act.cast": GameModel.op_cast,
+    "act.end_turn": GameModel.op_end_turn,
     "nav.markers": lambda m, c, a: {"markers": [], "ms": 0},
     "ui.state": GameModel.op_ui_state,
     "ui.rest_info": lambda m, c, a: {"short_rests_left": 2, "short_rests_max": 2},

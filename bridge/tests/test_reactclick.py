@@ -13,7 +13,7 @@ import unittest
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import reactclick  # noqa: E402
-from bg3ai.tools import world_tools, dialogue, queueing, turn_slots  # noqa: E402
+from bg3ai.tools import world_tools, dialogue  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
 
 W, H = 1920, 1080
@@ -179,17 +179,6 @@ class ReactTool(Base):
         self.assertIn("react: TIMEOUT", out)
         self.assertIn("Do Not React has never closed a prompt with one row per level", out)
         self.assertIn('set_reactions {"<name>": "never"}', out)
-
-    def test_combat_turn_reaction_answer_clicks_the_row(self):
-        saved = queueing._watch_conn
-        queueing._watch_conn = lambda: self.g
-        self.addCleanup(setattr, queueing, "_watch_conn", saved)
-        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult(
-            "done", {"needs_click": 1, "rows": 6})
-        out = turn_slots._answer_reaction(True)
-        self.assertIn("reaction prompt: used (clicked reaction row 1", out)
-        self.assertEqual(self.p.clicked, [1])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,9 +79,9 @@ def build(log: list | None = None) -> MCPServer:
         return "no dialogue open"
 
     @srv.tool()
-    def combat_turn(plan: str) -> str:
-        """A turn."""
-        record("combat_turn", plan=plan)
+    def use_ability(ability: str, target: str = "") -> str:
+        """An action."""
+        record("use_ability", ability=ability, target=target)
         return "not in combat"
 
     return srv

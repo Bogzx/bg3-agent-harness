@@ -21,7 +21,7 @@ from . import core, overview, plumbing, reporting
 def move_to(target: str = "", x: float | None = None, y: float | None = None, z: float | None = None,
             who: str | None = None, run: bool = True, wait: bool = False, within: float | None = None,
             trespass: bool = False) -> str:
-    """Walk to a visible entity (target=id) or a position (x,y,z). Returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. wait=true blocks only in combat. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen. Walks keep out of an off-limits area the game warned you about (round it, else refused); trespass=true walks in anyway."""
+    """Walk to a visible entity (target=id) or a position (x,y,z). Out of combat it returns within ~1 s: the real result if it already ended (blocked, refused, arrived), else a job id + ETA while the walk goes on; keep planning meanwhile. In combat it returns at the walk's end, with what changed. Stops early if combat/dialogue starts. who defaults to the active character (chained companions follow). Out of combat a destination past ~58 m goes via travel_to (legs) by itself. within=1.5 (with target): stop inside that melee reach. A floor plate as target is stood on (its centre; the companions stay put); walks go round the floor plates the party has seen. Walks keep out of an off-limits area the game warned you about (round it, else refused); trespass=true walks in anyway."""
     args: dict[str, Any] = {"char": plumbing._who(who), "run": run}
     if trespass:
         args["trespass"] = True
@@ -33,8 +33,7 @@ def move_to(target: str = "", x: float | None = None, y: float | None = None, z:
         args["pos"] = [x, y, z]
     else:
         raise ValueError("give target=<id> or x,y,z")
-    # combat_turn's moves (in_turn, BATCH_CHECKS): in combat _far_move is always None, no act.watch for it
-    far = None if reporting._batch.get("in_travel") or reporting._batch.get("in_turn") else \
+    far = None if reporting._batch.get("in_travel") else \
         _far_move(args["char"], args.get("target"), args.get("pos"))
     if far:  # S005: 'destination is too far away' ×4 (one move is capped at MOVE_CAP_M): walk it in legs
         dest, d = far

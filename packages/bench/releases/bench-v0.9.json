@@ -754,8 +754,8 @@
  "conditions": {
   "rules": {
    "tools": {
-    "allowlist_sha256": "7377d80cbfc8f07d380144ba924bf0fa23d9c6b89561109ecab831618c44a5ba",
-    "count": 82,
+    "allowlist_sha256": "12fde41007a0fd2d65760628be704b787279b6f2a0b0da2bcf25fd84056f5b5a",
+    "count": 81,
     "names": [
      "ability_preview",
      "camp",
@@ -764,7 +764,6 @@
      "choose_dialogue",
      "click",
      "click_on",
-     "combat_turn",
      "confirm",
      "create_character",
      "delete_marker",
@@ -843,19 +842,19 @@
    },
    "prompts": {
     "claude": {
-     "sha256": "30825570172a94a2688f965a95249da30d76893cad9d58aac0316ef2f75d7dfe",
+     "sha256": "28472659a67db2b752541fe576780229394f577fb1c2fb5904439c893627e14c",
      "condition": "rules+coaching"
     },
     "pi": {
-     "sha256": "d57bd58297d027fa5004b4a6aebc3a783f527d655d01a3317c6001d26bd5632d",
+     "sha256": "b3d0c29b3ddcb009c4ae5de9ee967ef3ce84cdccfd6a6dc5f192849402cb5d02",
      "condition": "rules"
     }
    },
    "variants": {
     "screenshots": {
      "tools": {
-      "allowlist_sha256": "24024c5cb6e15cbd542039bf8172c44e91087969ab7e84cf7444175a796d0bf9",
-      "count": 80,
+      "allowlist_sha256": "2f34b5908e42a21a9d202b4357a04759075f428f835331261386bd8f748c32eb",
+      "count": 79,
       "names": [
        "ability_preview",
        "camp",
@@ -864,7 +863,6 @@
        "choose_dialogue",
        "click",
        "click_on",
-       "combat_turn",
        "confirm",
        "create_character",
        "delete_marker",
@@ -941,7 +939,7 @@
      },
      "prompts": {
       "pi": {
-       "sha256": "aaff2d20c2fe6e157965ac1975b75dab5408ab0a7ef307a5d987269562e8f0fa",
+       "sha256": "1ea85be44971e8cd71177fa4bb60b05b8a0ac44282ea26c49b98c4802b56b4ba",
        "condition": "rules"
       }
      }

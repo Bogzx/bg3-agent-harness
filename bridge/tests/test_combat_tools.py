@@ -40,6 +40,8 @@ class FakeGame:
             return self.combat.pop(0) if len(self.combat) > 1 else self.combat[0]
         if op == "ui.state":
             return self.ui.pop(0) if len(self.ui) > 1 else self.ui[0]
+        if op == "state.actions":
+            return {"uuid": args["uuid"], "resources": {"ActionPoint": [1, 1]}, "actions": [{"name": "Attack"}]}
         raise AssertionError(f"unexpected op {op}")
 
     def try_rpc(self, op: str, args: dict | None = None, context: str = "server", default: Any = None) -> Any:
@@ -70,6 +72,8 @@ class EndTurn(unittest.TestCase):
         out = combat_tools.end_turn()
         self.assertRegex(out, r"^end_turn \S+ \S+: done")
         self.assertIn("'s turn", out)
+        self.assertIn("\nYOUR ACTIONS (", out)  # the member's hotbar with the hand-over
+        self.assertIn("NOW Action 1/1", out)
         self.assertEqual(reporting._batch["last"], "done")
 
     def test_combat_over(self):

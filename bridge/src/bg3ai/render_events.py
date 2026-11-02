@@ -18,21 +18,12 @@ _REDUNDANT_EVENTS = {"moved_done", "rest_flow"}
 _RUN_EVENTS = {"turn_ended", "turn_started", "item_effect"}
 
 
-def _ref_handle(x: Any, H: Handles) -> str | None:
-    return H.get(x["uuid"], x.get("name")) if isinstance(x, dict) and isinstance(x.get("uuid"), str) else None
-
-
-def _already_shown(e: dict, H: Handles, body: str, own: str | None, job: str | None) -> bool:
+def _already_shown(e: dict, H: Handles, body: str, job: str | None) -> bool:
     """True when the result's own text already reports this event (S013: 'think' grows with every repeated
-    line): the turn owner's cast/damage/statuses (combat_turn prints them), the job a wait_for returned, and
-    the queue report a wait_for('queue') printed."""
+    line): the job a wait_for returned and the queue report a wait_for('queue') printed."""
     kind, d = e.get("kind"), e.get("data")
     if not isinstance(d, dict):
         return False
-    if own and kind in ("cast", "damage", "status_applied"):
-        src = _ref_handle(d.get("caster") or d.get("source"), H)
-        if src == own or (kind == "status_applied" and src is None and _ref_handle(d.get("target"), H) == own):
-            return True
     if job and kind == "job_finished" and d.get("job") == job:
         return True
     if kind in ("queue_done", "queue_interrupted") and body and isinstance(d.get("who"), str):
@@ -247,9 +238,7 @@ def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", 
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
     (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP).
     echo: the cross-call duplicate filter (server passes ECHO)."""
-    m = re.match(r"TURN (e\d+)", body or "")
-    own = m.group(1) if m else None
-    evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, own, job)]
+    evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, job)]
     evs = echo.filter(evs) if echo is not None else evs
     evs = _drop_flicker(flap.filter(evs, party) if flap is not None else evs)
     evs = _group_statuses(evs, H)

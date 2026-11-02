@@ -111,7 +111,7 @@ ACTIONS_MIN_LINES = 8  # only whole lists (a short spent-action variant is cheap
 # finished walk leg's end position + arrival error when a later leg follows (the last position stays).
 HARNESS_FIELDS = True
 PATH_LEGS = True     # route's "  1. 17.6m W" / "  2. 19.5m W" -> "  1-2. 17.6m, 19.5m W" (same heading, nothing else)
-# --- combat (combat_turn / end_turn / wait_for text in a fight) ---
+# --- combat (action / end_turn / wait_for text in a fight; combat_turn's in recorded runs) ---
 COMBAT_NARRATIVE = True  # EVENTS: an actor's cast and the damage it dealt on one line, its turn_started folded in:
                          # "turn_started e86 / damage e86 -> e67 12 Slashing / damage e86 -> e67 3 Fire / cast e86: Main
                          # Hand Attack (attack)" -> "turn e86: Main Hand Attack (attack) -> e67 12 Slashing + 3 Fire"
@@ -149,6 +149,8 @@ PROSE_TOOLS = {"memory_read", "memory_search", "memory_list", "memory_write", "m
 
 # (key, pattern, short form). The pattern matches only the instruction text; named groups hold facts and the short
 # form keeps every one of them (tests/test_compact.py checks it). Matched spans are not facts (the checker skips them).
+# plan_while, plan_them, retarget and plan_it (and PHRASE_RULES' turn phrases) match combat_turn's text, which only
+# recorded runs hold now (the naut golden corpus, tools/vis/obs_size.py replays).
 HINT_RULES: list[tuple[str, str, str]] = [
     ("early_wake", r"\(early wake, lead_s=(?P<lead>[\d.]+)\): plan the next step now\. What you issue(?: for [^\n]*?)?"
                    r" runs after the walk arrives \(it does not cancel it\)(?:; wait_for again blocks to the end)?\.",
@@ -170,7 +172,8 @@ HINT_RULES: list[tuple[str, str, str]] = [
     ("no_change", r"No change since your last look \(full=true shows everything\)\.", "No change since your last look."),
     ("saving", r" in the background \(~2 s with the game's save freeze; your next call waits for them\)\. Keep playing; "
                r"SAVED shows on a later result\.", " in the background; SAVED shows later."),
-    ("shared_turn", r" can all act now, in any order \(combat_turn who=\.\.\., end each one's turn\)",
+    ("shared_turn", r" can all act now, in any order \((?:who=<member> on each action, end_turn for each|combat_turn who=\.\.\., "
+                    r"end each one's turn)\)",
      " can all act now, any order"),
     ("more_nearby", r"; get_nearby / get_frontier\)", ")"),
     ("more_items", r" item changes; get_inventory\)", " item changes)"),
