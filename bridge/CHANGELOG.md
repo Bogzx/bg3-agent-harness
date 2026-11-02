@@ -18,6 +18,8 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   deaths, moves, statuses since the agent's last look). That costs one act.watch read per call of these tools, also
   out of combat.
 - In combat a walk (move_to, walk_toward) returns at its end whatever `wait` says.
+- end_turn and wait_for('my_turn') hand over with the acting member's turn block as get_combat_state shows it
+  (reach line, `YOUR ACTIONS (eN)` and the action list): one state.actions read more.
 - Texts: the server instructions say "In combat each call is one action (...)"; an attack that starts a fight says
   `COMBAT: the attack started a fight (round N): get_combat_state shows the turn order`; SHARED TURN says
   `(who=<member> on each action, end_turn for each)`; end_turn on an ended member says "its turn already ended (the

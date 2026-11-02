@@ -32,7 +32,8 @@
 - **In combat each call is one action**: `use_ability`, `move_to`, `walk_toward`, `jump_to` or `react`. It returns
   when the action is over, with the character's resources left (`after={…}`) and `CHANGES` (HP, deaths, moves,
   statuses). `end_turn` ends a member's turn and waits through the other combatants' turns until a party member can
-  act; its result names who acts now, with the other combatants' actions in EVENTS.
+  act; its result names who acts now, with that member's actions (`YOUR ACTIONS`) and the other combatants' turns
+  in EVENTS. `wait_for("my_turn")` returns with them too.
 - **Macros** do a chore in one call and stop at the first interrupt: `loot_area` (visible bodies and unlocked
   containers nearby), `dialogue_advance` (filler lines only; it stops at every real choice), `travel_to`, `regroup`,
   `read_all` (new books and notes in your bags, with their text), and `rest_if_needed`.
