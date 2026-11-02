@@ -135,7 +135,7 @@ game unless it says so.
   fights-v09 re-run (a test pins its sha256). The scenario and grading files are bench-v0.9's (and bench-v0.8's), so
   suite.json pins the same digest and `shared` pairs bench-v0.10 with bench-v0.9; `bg3bench.suite.check` now follows
   a chain of `shared` pairs (v0.10 -> v0.9 -> v0.8), since the digest was first pinned for bench-v0.8. Its own
-  release file (`releases/bench-v0.10.json`: mod tree b01ba2ca, the same 81 bg3 tools, new prompt hashes for pi,
+  release file (`releases/bench-v0.10.json`: mod tree 18c0fa02, the same 81 bg3 tools, new prompt hashes for pi,
   claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). What changed
   for the agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
   - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and `route(go=true)`, a far
@@ -153,13 +153,19 @@ game unless it says so.
     walk_toward, path_preview, WAYS, jump solvers, move_to/jump_to's "not in view" and hazard names follow it.
     Characters and items keep the Sight stat.
   - At night in camp, `long_rest`, camp leave and `fast_travel` from camp refuse before pressing anything while the
-    camp story still wants a talk, and name who (the "!" over them), instead of failing 30 s later.
+    camp story still wants a talk, and name who (the "!" over them), instead of failing 30 s later. At camp,
+    get_status and look carry the same text in their TALK line before the agent tries. `long_rest` (and the sleep
+    press of camp leave and fast_travel) refuses at once while the game menu is open.
   - `use_ability` on a spell container lists its variants only when each reads as a spell's stats entry; a list
     that doesn't is read once more, then refused without the raw text.
   Metric definition change: a tool call counts as async only when its own background job is still running when the
   call returns (bridge metrics_record.py). A blocking walk's job starts and ends inside the call, and a walk that
   ended in the 0.3 s settle window no longer counts. Async % and the latency figures built on it are not 1:1 with
   bench-v0.9 or bench-v0.8 runs.
+  Invalid-run rule: a `launch_failed` before the run's run_start that relaunched the scenario's own start save is
+  the run's note (run record `recovered_launches`: t, attempt, save, error), not a harness failure; a launch failure
+  after run_start, or for a new-game start, still voids the run (bg3harness runs.recovered_launch). Records written
+  before it keep their failures, so re-grading a bench-v0.9 record doesn't change its validity.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

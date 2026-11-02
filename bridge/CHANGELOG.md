@@ -5,7 +5,7 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
-## 2026-11-02: required camp talks are named at night; a misread variant list is refused
+## 2026-11-02: required camp talks are named at night; no sleep press under the game menu; a misread variant list is refused
 
 - `long_rest`, camp leave and `fast_travel` from camp, at night in camp while the camp story still wants a talk
   (the "!" over a character), refuse before pressing anything and say who: "long_rest: FAILED — not pressed: the
@@ -13,7 +13,12 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   sleep only brings up its 'talks left' notice until then, and a talk with them clears it" (camp leave /
   fast_travel: "FAILED: nothing was pressed: ... Until the night ends, travel from camp is blocked"). Someone out
   of sight is counted, not named. Until now the sleep press got the game's "talks left" notice and the call failed
-  30 s later naming only widgets (launch-v1 Haiku act3_gold_max: 46 failed long rests).
+  30 s later naming only widgets (launch-v1 Haiku act3_gold_max: 46 failed long rests). At camp, `get_status` and
+  `look` add the same text to their TALK line ("TALK: the night at camp can't end yet: ..."), once while it is
+  unchanged.
+- `long_rest`, and the sleep press of camp leave and `fast_travel` from camp, refuse at once while the game menu is
+  open: "the game menu is open: close it first (press_key ESCAPE), then long_rest" (launch-v1 Haiku act3_gold_max
+  r1 pressed sleep twice under the pause menu its own click had opened).
 - `use_ability` on a spell container: its variant list is shown only when every id reads as a spell's stats entry;
   a list that doesn't is read once more, then refused with "choose a variant (this action's variant list did not
   read as spell names)" and no raw text (fights-v09 Balthazar r3 showed a level mesh name as Lay On Hands' variant).
