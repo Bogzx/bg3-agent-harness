@@ -46,3 +46,22 @@ test("a roll logged inside a side's op is the harness's (both teams are the part
     eq(#L.ring, n + 1, "logged")
     eq(L.ring[#L.ring].party, true, "B1's roll")
 end)
+
+test("turn_started / turn_ended carry the round the turn started in, in the live round-change order", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", "1")
+    for _, u in ipairs({ A1, B1 }) do fire("TurnStarted", "S_Player_" .. u) end
+    local s0 = RPC.eventSeq
+    fire("CombatRoundStarted", "combat1", "2")
+    for _, u in ipairs({ A1, B1 }) do fire("TurnStarted", "S_Player_" .. u) end
+    for _, u in ipairs({ A1, B1 }) do fire("TurnEnded", "S_Player_" .. u) end
+    for _, x in ipairs({ { "A", A1 }, { "B", B1 } }) do -- each side's own member (the other is out of sight here)
+        local got = {}
+        for _, ev in ipairs(rpc("events.since", "{seq=" .. s0 .. "}", x[1]).result.events) do
+            if ev.kind == "turn_started" or ev.kind == "turn_ended" then
+                got[#got + 1] = ev.kind .. " " .. ev.data.uuid .. " " .. tostring(ev.data.round)
+            end
+        end
+        eq(table.concat(got, "; "), "turn_started " .. x[2] .. " 2; turn_ended " .. x[2] .. " 1", x[1] .. "'s events")
+    end
+end)
