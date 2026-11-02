@@ -55,7 +55,8 @@
         "arena_end",
         "arena_reaction_unowned",
         "arena_turn_passed",
-        "arena_stall"
+        "arena_stall",
+        "arena_end_written"
       ]
     }
   },
@@ -520,6 +521,57 @@
             }
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_end_written"
+          }
+        }
+      },
+      "then": {
+        "description": "The mod wrote RequestedEndTurn on a shared turn group's members: every one had ended and the game kept the group open. character and members are named as in arena_turn, names are the display names, errors (by uuid) where a write failed. Not a turn: results ignore it.",
+        "required": [
+          "character",
+          "members",
+          "how"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "group": {
+            "type": "string"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            },
+            "minItems": 1
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "how": {
+            "const": "requested_end_write"
+          }
+        }
       }
     }
   ]

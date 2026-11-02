@@ -11,6 +11,7 @@ import jsonschema
 from bg3harness.arena import match as am
 from test_arena_match import (
     BENCH_FACTS_SCHEMA,
+    FACTS_SCHEMA,
     SIDES,
     Game,
     Run,
@@ -223,3 +224,32 @@ def test_a_member_the_mod_passed_that_the_game_keeps_current_is_the_games_fault(
     assert [(e["character"], e["why"]) for e in rec] == [("Karlach", "zero_hp")]
     for e in arena_events(tmp_path):
         jsonschema.validate(e, BENCH_FACTS_SCHEMA)
+
+
+def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_path):
+    """arena_end_written (the mod wrote RequestedEndTurn on a shared group the game kept open after every end) is
+    written to the facts like arena_turn: character and members by the arena's names, names and errors as given."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+    sent: list[bool] = []
+
+    def write_once() -> None:
+        if model.arena is not None and not sent:
+            sent.append(True)
+            k, w = model.match().member("Karlach").uuid, model.match().member("Wyll").uuid
+            names = ["Karlach (0)", "Wyll"]
+            model.ref_record(
+                "arena_end_written", round=1, group="team-1", character=w, members=[k, w], names=names,
+                errors={w: "Replicate failed"}, how="requested_end_write",
+            )  # fmt: skip
+
+    clock.tick_hooks.append(write_once)
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    [rec] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_end_written"]
+    assert (rec["character"], rec["members"], rec["names"]) == ("Wyll", ["Karlach", "Wyll"], ["Karlach (0)", "Wyll"])
+    assert (
+        rec["round"] == 1
+        and rec["how"] == "requested_end_write"
+        and list(rec["errors"].values()) == ["Replicate failed"]
+    )
+    jsonschema.validate(rec, FACTS_SCHEMA)
+    jsonschema.validate(rec, BENCH_FACTS_SCHEMA)

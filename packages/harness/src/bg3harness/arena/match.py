@@ -19,7 +19,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    a turn boundary, the round cap at the start of round round_cap + 1) is written as it is; its `arena_start`, an
    end the runner asked for and any arena record after the match's end are left out, as the referee writes those
    itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
-   ended the turn of a member that can't act) is written with `character` named as in arena_turn. A phase naming
+   ended the turn of a member that can't act) is written with `character` named as in arena_turn. Its
+   `arena_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
+   after every member's end: the mod wrote the members' RequestedEndTurn) is written with `character` and `members`
+   named as in arena_turn, `names` and `errors` (by uuid) as the mod gave them. A phase naming
    the other team's character is not the side's: not written, never forced. A turn below is a phase; a summon's
    phase is a turn of its side like any other.
 3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
@@ -227,6 +230,16 @@ class Referee:
             names = [t[1] if t is not None else n for t, n in zip(team, shown, strict=True)]
             self.turns.append(Turn(str(fact["side"]), members[0], names[0], int(fact["round"]), members, names))
             return {**fact, "character": names[0], "members": names}
+        if ev == "arena_end_written":
+            members = [str(u) for u in fact.get("members") or []]
+            shown = [str(n) for n in fact.get("names") or []]
+            shown += members[len(shown) :]
+            c = str(fact.get("character") or "")
+            return {
+                **fact,
+                "character": self._named(c, shown[members.index(c)] if c in members else c),
+                "members": [self._named(u, n) for u, n in zip(members, shown, strict=False)],
+            }
         if ev == "arena_turn_passed":
             u = str(fact.get("character") or "")
             t = self.names.get(u.lower())
@@ -242,6 +255,11 @@ class Referee:
         if ev == "arena_combat_ended" and self.combat_ended is None:
             self.combat_ended = fact
         return None
+
+    def _named(self, uuid: str, shown: str) -> str:
+        """A character as arena_turn names it: a team member by the arena file's name, anyone else by `shown`."""
+        t = self.names.get(uuid.lower())
+        return t[1] if t is not None else shown
 
     def forced(self) -> None:
         t = self.turn

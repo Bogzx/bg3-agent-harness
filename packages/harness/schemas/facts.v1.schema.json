@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/harness/schemas/facts.v1.schema.json",
   "title": "facts.jsonl v1: one record per line",
-  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up); 2026-11-01: a two-team match's `arena_start`, `arena_turn`, `arena_turn_forced`, `arena_end` and `arena_reaction_unowned` events (bg3harness.arena); 2026-11-02: `arena_turn_passed` and `arena_stall`.",
+  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up); 2026-11-01: a two-team match's `arena_start`, `arena_turn`, `arena_turn_forced`, `arena_end` and `arena_reaction_unowned` events (bg3harness.arena); 2026-11-02: `arena_turn_passed`, `arena_stall` and `arena_end_written`.",
   "type": "object",
   "required": ["v", "kind", "t"],
   "properties": {
@@ -71,7 +71,7 @@
           "gold", "item_added", "trade_open", "trade_end", "pickpocket", "stole", "crime", "kill", "loot",
           "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
           "game_over", "pos", "approval", "arena_start", "arena_turn", "arena_turn_forced", "arena_end",
-          "arena_reaction_unowned", "arena_turn_passed", "arena_stall"
+          "arena_reaction_unowned", "arena_turn_passed", "arena_stall", "arena_end_written"
         ]}
       },
       "allOf": [
@@ -156,6 +156,13 @@
                   "required": ["side", "character", "why", "round"],
                   "properties": {"side": {"enum": ["A", "B"]}, "character": {"$ref": "#/$defs/name"}, "name": {"type": "string"},
                                  "why": {"enum": ["downed", "dead", "zero_hp"]}, "round": {"type": "integer", "minimum": 0}, "error": {"type": "string"}}}},
+        {"if": {"properties": {"ev": {"const": "arena_end_written"}}},
+         "then": {"description": "the mod wrote RequestedEndTurn on a shared turn group's members (every one had ended, the game kept the group open): character and members named as in arena_turn, names the display names, errors by uuid where a write failed, how the mod's method",
+                  "required": ["character", "members", "how"],
+                  "properties": {"round": {"type": "integer", "minimum": 0}, "group": {"type": "string"}, "character": {"$ref": "#/$defs/name"},
+                                 "members": {"type": "array", "items": {"$ref": "#/$defs/name"}, "minItems": 1},
+                                 "names": {"type": "array", "items": {"type": "string"}},
+                                 "errors": {"type": "object", "additionalProperties": {"type": "string"}}, "how": {"const": "requested_end_write"}}}},
         {"if": {"properties": {"ev": {"const": "arena_stall"}}},
          "then": {"description": "a phase (or the match before its first one: no side, character or members, round 0) made no progress for its stall time (idle_s: wall time less model time): stall held (its side still held a member: the phase is capped) or game (the game held the turn: the match ends as a fault); status is the last arena.status, last each side's last tool calls",
                   "required": ["stall", "round", "idle_s", "status", "last"],
