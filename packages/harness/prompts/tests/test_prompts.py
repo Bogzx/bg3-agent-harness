@@ -50,6 +50,7 @@ TERMS = {
     "in_dialogue",
     "stopped",
     "done",
+    "after",
     "dialogue_line",
     "memory",
     "knowledge",

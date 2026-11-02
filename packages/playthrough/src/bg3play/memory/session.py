@@ -647,7 +647,7 @@ def stop_decision(
             return {
                 "decision": "block",
                 "reason": (
-                    f"Finish the fight first: you are in combat. Play it out turn by turn (combat_turn), "
+                    f"Finish the fight first: you are in combat. Play it out turn by turn, "
                     f"taking the time each turn needs: the session waits for the fight (WRAP UP comes "
                     f"after it ends), so reloading or leaving it is never about time. Don't save "
                     f"{sid}-end or edit HANDOFF.md during the fight. Your next message is a game tool "

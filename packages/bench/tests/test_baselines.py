@@ -98,8 +98,8 @@ def test_choose():
 
     rng = random.Random(0)
     assert random_agent.choose(rng, ["move_to"], [])[0] == "walk_toward"
-    tool, args = random_agent.choose(rng, ["combat_turn"], ["e5"])
-    assert tool == "combat_turn" and json.loads(args["plan"])["move"] == "e5"
+    tool, args = random_agent.choose(rng, ["use_ability"], ["e5"])
+    assert (tool, args) == ("use_ability", {"ability": "Target_MainHandAttack", "target": "e5"})
     assert random_agent.choose(rng, ["loot"], []) == ("loot", {})
     assert 1 <= random_agent.choose(rng, ["choose_dialogue"], [])[1]["option"] <= 4
     assert random_agent.handles("e12 and e3, e12, ae4, e3x") == ["e3", "e12"]
