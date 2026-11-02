@@ -3,6 +3,7 @@
   "name": "crash-companions-v1",
   "title": "Crash site, companions three against three",
   "about": "The crash_site_grove start save. Side A plays Gale, Astarion and Lae'zel, side B Karlach, Wyll and Minthara, every member set to level 1 by the arena's setup. The teams are not mirrors: a pairing swaps the sides on the same seed so team strength cancels, and the side-A win rate shows what is left. The spawn points are the ones live check 5 used.",
+  "draft": "its spawns are 0.50 m apart in height (A y 5.1, B y 5.6): the F2 rule (bg3bench.arena.check_geometry, the mod's arena.setup) needs under 0.3 m; new spawns come from a live height read (2026-11-02)",
   "save": {
     "name": "Tav-34221263934__SCN-crash_site_grove",
     "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"

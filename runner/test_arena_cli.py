@@ -40,6 +40,7 @@ class ArenaCliTest(unittest.TestCase):
         a = json.loads((REPO / "packages" / "bench" / "arenas" / "draft_open_field.json").read_text())
         a.pop("draft")
         a.update(name="open_field", save={"name": "Tav-1__SCN-arena", "sha1": "0" * 40})
+        a["location"]["spawns"] = {"A": [0.0, 0.0, 0.0], "B": [0.0, 0.0, 20.0]}  # fair (check_geometry)
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "open_field.json"
             path.write_text(json.dumps(a))

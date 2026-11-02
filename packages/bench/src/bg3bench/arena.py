@@ -6,7 +6,8 @@ An arena file (`arenas/<name>.json`, schema/arena.v1.schema.json; `load`, `valid
 uuids: arena.setup fails when a name and its uuid disagree), the character level every member is set to (`level`,
 default 2), the dice seed, Karmic Dice off (`karmic: false`), the round cap (default 20), the wall-clock cap in minutes (default 30), the
 model-time cap per turn in seconds (`turn_cap_s`), the condition and the name of the bridge's tools-off list
-(TOOLS_OFF_LISTS). A mirror arena adds `mirror {pairs: [{class, template, race, stats, names {A, B}, kit}]}` (1 to
+(TOOLS_OFF_LISTS). The spawns must stand both teams on the same terms (check_geometry: the mod's arena.setup
+refuses them otherwise), unless the arena is a draft. A mirror arena adds `mirror {pairs: [{class, template, race, stats, names {A, B}, kit}]}` (1 to
 TEAM_MAX pairs, tools/dev/make_arena_save.py mirror writes it): arena.setup makes each pair's twins per match, so its
 team entries are names only, pair i's names at index i of each team (the uuids come from the setup). `draft` says why an arena can't be played yet (its spots are placeholders); the pairing planner
 (arena_matrix) gives a draft arena no matches. Arena files are not suite files: nothing here moves a bench-vX.Y score.
@@ -64,6 +65,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2]  # packages/bench
 ARENA_DIR = PACKAGE_ROOT / "arenas"
 SIDES = ("A", "B")
 TEAM_MAX = 4
+# Spawn geometry, as the mod's arena.setup refuses it (Server/ArenaSetup.lua Setup.check_geometry, F2): each team on a
+# line along x through its spawn, LINE_GAP_M apart; the two spawns under SPAWN_DY_MAX_M apart in height; every
+# distance across the lines the same both ways (A's member i to B's member j = B's i to A's j) within PAIR_DIST_TOL_M.
+LINE_GAP_M, SPAWN_DY_MAX_M, PAIR_DIST_TOL_M = 1.5, 0.3, 0.1
 ROUND_CAP, WALL_CAP_MIN = 20, 30
 LEVEL, LEVEL_MAX = 2, 12  # every member's character level after arena.setup
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -134,6 +139,28 @@ def _check_location(loc: Any) -> list[str]:
     if not errs and spawns["A"] == spawns["B"]:
         errs.append("location.spawns: A and B start on the same point")
     return errs
+
+
+def _line(spot: Sequence[float], n: int) -> list[tuple[float, float, float]]:
+    return [(spot[0] + (i - (n - 1) / 2) * LINE_GAP_M, spot[1], spot[2]) for i in range(n)]
+
+
+def check_geometry(spawns: Mapping[str, Sequence[float]], n: int) -> list[str]:
+    """What puts one team on other terms than the other for n members a side (the mod's F2 rule); [] = fair."""
+    a, b = spawns["A"], spawns["B"]
+    if (dy := abs(a[1] - b[1])) >= SPAWN_DY_MAX_M:
+        return [f"location.spawns A and B are {dy:.2f} m apart in height (y); they must be under {SPAWN_DY_MAX_M} m"]
+    la, lb = _line(a, n), _line(b, n)
+    for i in range(n):
+        for j in range(n):
+            ab, ba = math.dist(la[i], lb[j]), math.dist(lb[i], la[j])
+            if abs(ab - ba) > PAIR_DIST_TOL_M:
+                why = (
+                    f"location.spawns: A's member {i + 1} is {ab:.2f} m from B's member {j + 1}, B's member {i + 1} "
+                    f"{ba:.2f} m from A's member {j + 1}; they must be the same within {PAIR_DIST_TOL_M} m"
+                )
+                return [why]
+    return []
 
 
 def _check_teams(teams: Any) -> list[str]:
@@ -213,10 +240,14 @@ def validate(a: Any, name: str) -> list[str]:
     if "draft" in a and not _str(a["draft"]):
         errs.append("draft must say why the arena can't be played yet")
     errs += _check_save(a.get("save"), "draft" in a)
-    errs += _check_location(a.get("location"))
-    errs += _check_teams(a.get("teams"))
+    errs += (loc_errs := _check_location(a.get("location")))
+    errs += (team_errs := _check_teams(a.get("teams")))
     if "mirror" in a:
         errs += _check_mirror(a["mirror"], a.get("teams"))
+    if not (loc_errs or team_errs or "draft" in a):  # a draft's spots are placeholders
+        pairs = a.get("mirror", {}).get("pairs") if isinstance(a.get("mirror"), dict) else None
+        n = len(pairs) if isinstance(pairs, list) and pairs else len(a["teams"]["A"])
+        errs += check_geometry(a["location"]["spawns"], n)
     level = a.get("level", LEVEL)
     if not _int(level) or not 1 <= level <= LEVEL_MAX:
         errs.append(f"level must be an integer 1..{LEVEL_MAX}")

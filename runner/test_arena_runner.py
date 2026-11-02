@@ -37,6 +37,17 @@ class LaunchError(Exception):
     pass
 
 
+def level_arena(name: str, dest: Path) -> Path:
+    """packages/bench/arenas/<name>.json as a test fixture, dest/<name>.json: its draft dropped (the crash site's
+    spawns are 0.50 m apart in height until live 15's height read, D349) and B's spawn at A's height."""
+    a = json.loads((REPO / "packages" / "bench" / "arenas" / f"{name}.json").read_text())
+    a.pop("draft", None)
+    a["location"]["spawns"]["B"][1] = a["location"]["spawns"]["A"][1]
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / f"{name}.json").write_text(json.dumps(a))
+    return dest / f"{name}.json"
+
+
 class ArenaOnTheRealRunner(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-arena-runner-"))
@@ -49,6 +60,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         renv.PLAY_DIR = self.tmp / "play"
         renv.KNOWLEDGE_DIR = renv.PLAY_DIR / "knowledge"
         self.runners: list[lpt.Runner] = []
+        self.arena = str(level_arena("crash-companions-v1", self.tmp / "arenas"))
 
     def play(self, a: str, b: str, key: str | None = "test-key", *more: str) -> tuple[int, str]:
         """play.py arena on crash-companions-v1 until the Runner's ensure_game (the launch), which raises; `key`: the pi
@@ -68,7 +80,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
             contextlib.redirect_stderr(err),
         ):
             try:
-                code = arena_cli.main(["--arena", "crash-companions-v1", "--a", a, "--b", b, "--out", "t1",
+                code = arena_cli.main(["--arena", self.arena, "--a", a, "--b", b, "--out", "t1",
                                        "--allow-unverified", *more])  # fmt: skip
             except LaunchError:
                 code = -1
@@ -165,7 +177,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
             mock.patch.object(live.run_host, "bench_recording", lambda env: Rec),
             contextlib.redirect_stderr(err),
         ):
-            argv = ["--arena", "crash-companions-v1", "--a", "scripted", "--b", "scripted", "--out", "t1"]
+            argv = ["--arena", self.arena, "--a", "scripted", "--b", "scripted", "--out", "t1"]
             code = arena_cli.main([*argv, "--max-cost", "1", *more])
         return code, calls, err.getvalue()
 
@@ -209,7 +221,7 @@ class ArenaOnTheRealRunner(unittest.TestCase):
             mock.patch.object(live.run_host, "bench_recording", lambda env: None),
             contextlib.redirect_stderr(err),
         ):
-            argv = ["--arena", "crash-companions-v1", "--a", "scripted", "--b", "scripted", "--out", "t1"]
+            argv = ["--arena", self.arena, "--a", "scripted", "--b", "scripted", "--out", "t1"]
             code = arena_cli.main(argv)
         self.assertEqual(code, 2, err.getvalue())
         self.assertIn("refused: the game is running with a save loaded that the runner didn't load", err.getvalue())

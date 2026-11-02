@@ -3,6 +3,7 @@
   "name": "crash-mirror-v1",
   "title": "Crash site, mirror twins four against four",
   "about": "The crash_site_grove start save, the spawn points of crash-companions-v1. Each side plays four twins that arena.setup makes for the match from the mirror pairs (tools/dev/make_arena_save.py mirror on ops/briefs/arena/live-mirror-3-spec.json): a Fighter, a Rogue, a Barbarian and a Ranger, one hireling template, the same race, kit and gear on both sides, level 2. Side A plays Ash, Cedar, Elm and Gorse, side B their twins Birch, Dune, Fir and Heath. NOT READY FOR RATED MATCHES (2026-11-02): live check 13 (the twins in a runner match) and the fix of the round-1 stall must pass first; until then only live checks play it.",
+  "draft": "its spawns are 0.50 m apart in height (A y 5.1, B y 5.6): the F2 rule (bg3bench.arena.check_geometry, the mod's arena.setup) needs under 0.3 m; new spawns come from a live height read, then live check 13 and the round-1 stall fix (2026-11-02)",
   "save": {
     "name": "Tav-34221263934__SCN-crash_site_grove",
     "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"

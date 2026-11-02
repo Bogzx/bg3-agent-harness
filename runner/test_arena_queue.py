@@ -25,17 +25,33 @@ import play as play_cli
 
 from bg3bench import arena_matrix
 from bg3harness.arena.match import ArenaSetupError
+from test_arena_runner import level_arena
 
 REPO = Path(__file__).resolve().parents[1]
 PILOT = "packages/bench/matrices/arena-pilot.toml"
 FILES = ("runtime/budget-arena.json", "runtime/budget-deepseek.json", "runtime/budget-haiku.json",
          "runtime/budget-anthropic.json")  # fmt: skip
 M1, M2 = (f"pi_deepseek-flash~vs~pi_claude-haiku-5-5~crash-companions-v1~r1~m{n}" for n in (1, 2))
+FX = REPO  # this repo with crash-companions-v1 as a playable fixture copy: set by fixture_repo
+
+
+@pytest.fixture(scope="module", autouse=True)
+def fixture_repo(tmp_path_factory):
+    """The pilot's arena is a draft until live 15's height read (D349): the matrix plays a level copy of it, in a repo
+    whose profiles and matrices are this one's."""
+    global FX
+    FX = tmp_path_factory.mktemp("repo")
+    for d in ("profiles", "packages/bench/matrices"):
+        (FX / d).parent.mkdir(parents=True, exist_ok=True)
+        (FX / d).symlink_to(REPO / d)
+    level_arena("crash-companions-v1", FX / "packages" / "bench" / "arenas")
+    yield
+    FX = REPO
 
 
 def facts(job: dict, out: Path, reason: str = "wipe") -> None:
     """A whole match's facts as the referee writes them: side A wipes side B in round 1 (or another end)."""
-    arena = arena_matrix.load(REPO / PILOT, REPO)["arenas"][job["arena"]]
+    arena = arena_matrix.load(FX / PILOT, FX)["arenas"][job["arena"]]
     teams = {s: [m["name"] for m in arena["teams"][s]] for s in ("A", "B")}
     recs: list[dict[str, Any]] = [
         {"ev": "arena_start", "arena": arena["name"], "seed": arena["seed"], "teams": teams,
@@ -78,7 +94,7 @@ class Player:
 
 @pytest.fixture
 def pilot():
-    return arena_matrix.load(REPO / PILOT, REPO)
+    return arena_matrix.load(FX / PILOT, FX)
 
 
 def budgets(tmp: Path, **caps: float) -> None:
@@ -247,7 +263,7 @@ def test_live_play_caps_each_paid_side_at_its_reserve_and_the_match_at_their_sum
 
 def test_play_py_prints_the_plan_and_its_estimate():
     out = io.StringIO()
-    assert aq.main(["--matrix", PILOT, "--plan"], repo=REPO, out=out) == 0
+    assert aq.main(["--matrix", PILOT, "--plan"], repo=FX, out=out) == 0
     text = out.getvalue()
     assert "arena matrix arena-pilot: 2 matches, 1 pairings" in text
     assert "runtime/budget-arena.json: up to $4.00" in text and "runtime/budget-haiku.json: up to $2.00" in text

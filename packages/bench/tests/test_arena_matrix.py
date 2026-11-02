@@ -19,13 +19,14 @@ FLASH = (REPO / "profiles" / "deepseek-flash.toml").read_text()
 CLAUDE = 'client = "claude"\nmodel = "claude-opus-5-5"\neffort = "high"\nstatus = "verified"\n'
 DRAFT = json.loads((PKG / "arenas" / "draft_open_field.json").read_text())
 SAVE = {"name": "Tav-1234__SCN-arena_open_field", "sha1": "0123456789abcdef0123456789abcdef01234567"}
+FAIR = {"level": DRAFT["location"]["level"], "spawns": {"A": [0.0, 0.0, 0.0], "B": [0.0, 0.0, 20.0]}}  # check_geometry
 
 
 def fake_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / "packages" / "bench" / "arenas").mkdir(parents=True)
     (repo / "profiles").mkdir()
-    ready = {k: v for k, v in {**DRAFT, "name": "field", "save": SAVE}.items() if k != "draft"}
+    ready = {k: v for k, v in {**DRAFT, "name": "field", "save": SAVE, "location": FAIR}.items() if k != "draft"}
     for a in (ready, {**ready, "name": "ridge", "condition": "rules+wiki"}, DRAFT):
         (repo / "packages" / "bench" / "arenas" / f"{a['name']}.json").write_text(json.dumps(a))
     for name, text in (("opus.toml", PI), ("flash.toml", FLASH), ("claude.toml", CLAUDE)):

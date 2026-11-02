@@ -20,7 +20,9 @@ EVENT_SCHEMA = json.loads((PKG / "schema" / "arena-facts.v1.schema.json").read_t
 FACTS_SCHEMA = json.loads((REPO / "packages" / "harness" / "schemas" / "facts.v1.schema.json").read_text())
 DRAFT = json.loads((PKG / "arenas" / "draft_open_field.json").read_text())
 SAVE = {"name": "Tav-1234__SCN-arena_open_field", "sha1": "0123456789abcdef0123456789abcdef01234567"}
-READY = {k: v for k, v in {**DRAFT, "save": SAVE}.items() if k != "draft"}
+# the draft with a save and fair spawns (check_geometry: level, apart along z, the teams' lines along x)
+FAIR = {"level": DRAFT["location"]["level"], "spawns": {"A": [0.0, 0.0, 0.0], "B": [0.0, 0.0, 20.0]}}
+READY = {k: v for k, v in {**DRAFT, "save": SAVE, "location": FAIR}.items() if k != "draft"}
 ARENA = arena.with_defaults(READY)
 TEAMS = arena.team_names(ARENA)
 SIDES = {"A": "pi/model-x", "B": "pi/model-y"}
@@ -73,7 +75,7 @@ def test_the_companions_arena_is_the_crash_site_save_with_every_member_named_and
     }
     assert all("uuid" in m for s in ("A", "B") for m in a["teams"][s])
     assert (a["level"], a["seed"], a["round_cap"], a["wall_cap_min"], a["turn_cap_s"]) == (1, 2026, 20, 30, 60)
-    assert "draft" not in a
+    assert "0.50 m apart in height" in a["draft"]  # until live 15's height read gives new spawns (D349)
 
 
 def test_the_mirror_arena_names_four_twin_pairs_and_waits_for_its_live_check():
@@ -83,7 +85,7 @@ def test_the_mirror_arena_names_four_twin_pairs_and_waits_for_its_live_check():
     assert [p["class"] for p in pairs] == ["Fighter", "Rogue", "Barbarian", "Ranger"]
     assert arena.team_names(a) == {s: [p["names"][s] for p in pairs] for s in ("A", "B")}
     assert all(set(m) == {"name"} for s in ("A", "B") for m in a["teams"][s])  # the setup makes the uuids
-    assert a["level"] == 2 and "draft" not in a
+    assert a["level"] == 2 and "0.50 m apart in height" in a["draft"]
     same = ("save", "location", "seed", "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off")
     assert {k: a[k] for k in same} == {k: companions[k] for k in same}
     assert "NOT READY FOR RATED MATCHES" in a["about"]
@@ -191,6 +193,35 @@ def test_a_mirror_arena_with_name_only_teams_in_pair_order_is_valid_and_the_vali
     assert any("names only" in e for e in arena.validate(template, READY["name"]))
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(template, ARENA_SCHEMA)
+
+
+def test_the_spawns_must_stand_both_teams_on_the_same_terms_unless_the_arena_is_a_draft():
+    """The mod's F2 rule (arena.setup refuses the same): under 0.3 m apart in height, and every distance across the
+    two teams' lines (along x) the same both ways within 0.1 m. The schema can't say it: the validator does."""
+
+    def at(a, b, **kw):
+        return _with(location={"level": "WLD_Main_A", "spawns": {"A": a, "B": b}}, **kw)
+
+    assert arena.validate(at([0, 0, 0], [0, 0.29, 20]), READY["name"]) == []
+    assert arena.validate(at([0, 0, 0], [0.05, 0, 20]), READY["name"]) == []  # within 0.1 m both ways
+    high = at([229.8, 5.1, 268.2], [229.8, 5.6, 278.7])  # crash-companions-v1's
+    assert arena.validate(high, READY["name"]) == [
+        "location.spawns A and B are 0.50 m apart in height (y); they must be under 0.3 m"
+    ]
+    assert any("0.30 m apart in height" in e for e in arena.validate(at([0, 0, 0], [0, 0.3, 20]), READY["name"]))
+    along = arena.validate(at([0, 0, 0], [20, 0, 0]), READY["name"])  # apart along x: A's 1st nearer B's 2nd
+    assert len(along) == 1 and "they must be the same within 0.1 m" in along[0]
+    assert arena.validate(at([0, 0, 0], [0, 0, 20]), READY["name"]) == []
+    for bad in (high, at([0, 0, 0], [20, 0, 0])):
+        jsonschema.validate(bad, ARENA_SCHEMA)
+        assert arena.validate({**bad, "draft": "spots to read live"}, READY["name"]) == []  # a draft's placeholders
+    one = at([0, 0, 0], [0.4, 0, 20], teams={"A": [{"name": "a"}], "B": [{"name": "b"}]})
+    assert arena.validate(one, READY["name"]) == []  # one a side: one distance, the same both ways
+    assert arena.validate(at([0, 0, 0], [0.4, 0, 20]), READY["name"]) != []  # two a side: it differs
+    mirror = {**MIRROR, "location": {"level": "WLD_Main_A", "spawns": {"A": [0, 0, 0], "B": [0.4, 0, 20]}}}
+    mirror["teams"] = {s: NAME_ONLY[s][:1] for s in ("A", "B")}
+    mirror["mirror"] = {"pairs": PAIRS[:1]}
+    assert arena.validate(mirror, READY["name"]) == []  # a mirror's line is its pairs
 
 
 def test_load_names_the_file_and_every_problem(tmp_path):
