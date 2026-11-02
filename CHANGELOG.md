@@ -77,7 +77,7 @@ game unless it says so.
   "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused, and act.chain fails 0.6 s after
   an attach the game didn't take instead of at 3 s). bench-v0.9's release cites it.
 - 0.3.0 (2026-11-02): what the agent sees and can do changed again after bench-v0.9's graded fight re-run (walks
-  out of combat block by default, the minimap block, roll_check's reroll, trade's SOLD list, known ground to 40 m,
+  out of combat block by default, the minimap block, the PASSED line, a walk ends a batch, roll_check's reroll, trade's SOLD list, known ground to 40 m,
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 
@@ -136,13 +136,18 @@ game unless it says so.
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
   `bg3bench.suite.check` also follows a chain of `shared` pairs now (vC -> vB -> vA: a version re-pinning its
   predecessor's digest that an older version pinned first). Its own
-  release file (`releases/bench-v0.10.json`: mod tree 18c0fa02, the same 81 bg3 tools, new prompt hashes for pi,
+  release file (`releases/bench-v0.10.json`: mod tree d124d235, the same 81 bg3 tools, new prompt hashes for pi,
   claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). What changed
   for the agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
   - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and `route(go=true)`, a far
     `move_to`) default to `wait=true` and return what `wait_for` on the walk returned, with its early stops, CHANGES
     and the minimap block; a walk still going after 90 s returns its progress and the id `wait_for` keeps waiting
     on. `wait=false` keeps the old pipelining.
+  - travel_to and regroup name what the trip passed: a PASSED line before CHANGES (what came into view at a leg's
+    end and is out of view at the trip's end, not in the agent's last view; nearest first, up to 6).
+  - Out of combat a batch ends with its first walk step: `do_actions` runs (`queue_actions` queues) the steps up to
+    and with the first `move_to`/`walk_toward`/`travel_to`/`jump_to` and lists the rest as not run (not queued);
+    batches without a walk, or with the walk last, are unchanged.
   - Every walk end out of combat and every `look` carry the minimap block (OBJECTIVES with distance, direction and
     height, WAYS, the 3 nearest unvisited LEADS), also after a walk that stopped short.
   - `roll_check` returns a failed roll with the roll screen open; a reroll is its own call, `roll_check(reroll=true)`.
