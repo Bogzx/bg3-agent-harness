@@ -429,6 +429,31 @@ class Tools(unittest.TestCase):
         self.assertIn("1 more left", out)
         self.assertGreaterEqual(g.trade_reads[0].get("max", 0), 500)  # every slot, not the screen's first 60
 
+    def test_sell_junk_names_what_it_sold_and_counts_what_it_kept(self):
+        # human-gap research 2026-11-02: 430 items sold in launch-v1 behind "(sold 30 junk items, ~277 g ...)",
+        # with the sale's item events dropped: the agent never learned what went. Every sold item is named now.
+        inv = s026_inventory()
+        inv["items"].append({"uuid": _u(30), "name": "Skull", "owner": CLAUDE, "cat": "JunkBio", "tab": "Misc",
+                             "value": 2})
+        trade = {"trader_gold": 500, "your_items": [
+            {"uuid": _u(6), "name": "Longsword", "price": 30}, {"uuid": _u(5), "name": "Skull", "price": 2},
+            {"uuid": _u(30), "name": "Skull", "price": 2}, {"uuid": _u(4), "name": "Cup", "price": 1},
+            {"uuid": _u(7), "name": "Potion of Healing", "price": 40, "count": 3},
+            {"uuid": _u(1), "name": "Sword of Justice", "price": 300}, {"uuid": _u(8), "name": "Tower-Shaped Key"},
+            {"uuid": _u(13), "name": "Thieves' Tools", "price": 20}]}
+        self.use(FakeGame(inv, trade))
+        out = progression.trade(sell="junk")
+        self.assertIn("sold 4 junk items, ~35 g", out)
+        self.assertIn("\nSOLD Longsword 30 g | Skull x2 4 g | Cup 1 g", out)
+        self.assertIn("\nKEPT (not junk) on this trade screen: 3 consumables, 1 books, keys and tools, 1 equipped, "
+                      "1 story", out)
+
+    def test_keep_kind_is_the_junk_rule(self):
+        inv = s026_inventory()
+        wanted = {u["uuid"] for u in economy.upgrades(inv)}
+        for it in inv["items"]:
+            self.assertEqual(economy.keep_kind(it, set(), wanted) is None, economy.is_junk(it, set(), wanted), it)
+
     def test_sell_junk_drops_the_sale_s_own_item_events(self):
         """Acceptance 12:21: every sold item of another member came back as 'item_added … owner=Claude' (the game
         moves it to the trader-facing character first) plus 'Gold count=799'; other item events stay."""

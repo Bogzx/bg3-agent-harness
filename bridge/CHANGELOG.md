@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: trade sell="junk" names what it sold
+
+- The result lists every item sold, grouped by name with the count and the gold at the shown prices, most gold
+  first (`SOLD Goblin Scimitar x4 12 g | Skull x2 4 g`), and counts what the junk rule kept back of the items on
+  the trade screen by kind (`KEPT (not junk) on this trade screen: 12 consumables, 4 equipped, 1 story`). The
+  sale's own item events stay out of EVENTS (the list replaces them). launch-v1's 36 sell=junk calls sold 430
+  items for ~4,000 g, and their results named none of them.
+
 ## 2026-11-02: roll_check stops on a failed roll; a reroll is its own call
 
 - A failed roll with Inspiration left returns with the roll screen still open (the roll line shows DC, die, bonus
