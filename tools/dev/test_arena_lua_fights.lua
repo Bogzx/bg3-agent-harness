@@ -95,3 +95,20 @@ test("state.combat, a turn group across the teams: the waiting side's member is 
     eq(ra[A1].is_current, nil, "A reads A1")
     eq(ca.current, B1, "A: current")
 end)
+
+-- Live check 8 (2026-11-02): side B's rows showed a downed A member without `downed` (party members only had it).
+test("state.combat: the other team's downed member reads downed (the status); an NPC at 0 HP without it does not",
+    function()
+    begin()
+    order = { A1, B1, GOB }
+    osiv[key("CanSee", B1, A1)], osiv[key("CanSee", B1, GOB)] = 1, 1
+    osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+    world[A1].comps.Health.Hp = 0
+    world[GOB].comps.Health = { Hp = 0, MaxHp = 10 }
+    local _, rows = combatAs("B")
+    eq(rows[A1] and rows[A1].downed, true, "B reads A1 downed")
+    eq(rows[GOB] and rows[GOB].relation ~= nil, true, "B sees the goblin")
+    eq(rows[GOB].downed, nil, "the goblin at 0 HP, no DOWNED: not downed")
+    local _, ra = combatAs("A")
+    eq(ra[A1].downed, true, "A reads its own A1 downed")
+end)

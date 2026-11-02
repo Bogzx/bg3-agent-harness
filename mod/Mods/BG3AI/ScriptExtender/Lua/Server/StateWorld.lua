@@ -486,9 +486,11 @@ function S.combat(ctx)
                             end)
                         end
                         if truthy(osi(Osi.IsDead, u)) then o.dead = true end
-                        -- the game's own downed state (bridge turn.is_downed), never a rounded hp_pct
-                        if ctx.is_party[u] and not o.dead and (truthy(osi(Osi.HasActiveStatus, u, "DOWNED"))
-                            or (h and h.hp == 0)) then
+                        -- the game's own downed state (bridge turn.is_downed), never a rounded hp_pct. Anyone else
+                        -- (an arena's other team; enemies never get DOWNED) by the status only: 0 HP would show
+                        -- hidden HP (HIDE_NPC_HP), and an NPC reads 0 HP before it counts as dead.
+                        if not o.dead and (truthy(osi(Osi.HasActiveStatus, u, "DOWNED"))
+                            or (ctx.is_party[u] and h and h.hp == 0)) then
                             o.downed = true
                         end
                         if ctx.is_party[u] then
