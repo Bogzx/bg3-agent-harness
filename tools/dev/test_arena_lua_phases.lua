@@ -303,3 +303,34 @@ test("live load2 replay: ends 30.5 s apart, B held 35 s: no ended member reopens
     tick()
     eq(j.status, "done", "B2's end: " .. tostring(j.error))
 end)
+
+-- Live 2026-11-02 phases4 (every round): when the group's last end closes the round the game fires CombatRoundStarted,
+-- the new round's TurnStarted for all members, then the old round's TurnEnded for them, in one ~10 ms burst.
+test("live round change: new TurnStarted before the old TurnEnded: round 2's first phase opens at once", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { { A1, B1, A2, B2 } }
+    openAll({ A1, B1, A2, B2 })
+    burst({ A1, B1, A2, B2 })
+    tick()
+    for _, x in ipairs({ { A1, "A" }, { B1, "B" }, { A2, "A" } }) do
+        local j = endTurn(x[1], x[2])
+        ticks(3)
+        eq(j.result and j.result.requested, true, x[1] .. "'s end pending")
+    end
+    local j = endTurn(B2, "B") -- the group's last end
+    ticks(math.floor(16900 / Ar.PHASE_EVERY_MS))
+    eq(j.status, "running", "the game walks the group (16.9 s)")
+    fire("CombatRoundStarted", "combat1", 2)
+    burst({ A1, B1, A2, B2 })
+    clock = clock + 6
+    for _, u in ipairs({ A1, B1, A2, B2 }) do fire("TurnEnded", "S_Player_" .. u) end -- the game shows all open again
+    tick()
+    eq(j.status, "done", "B2's end: " .. tostring(j.error))
+    for _, u in ipairs({ A1, B1, A2, B2 }) do eq(G.turn_is_over(u), false, u .. "'s new turn not over") end
+    eq(G.is_my_turn(A1), true, "A1 acts")
+    local r = refs("arena_turn")
+    eq(r[#r].round, 2, "a round 2 record")
+    eq(r[#r].phase, 1, "phase 1")
+    eq(members(r[#r]), A1, "A1's phase")
+end)

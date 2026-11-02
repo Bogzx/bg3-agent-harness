@@ -191,6 +191,7 @@ function reset()
     osiv[key("GetHostCharacter")] = A1
     osiv[key("GetRegion", A1)] = "ARENA_Level"
     G.turn_start, G.foe_start, G.turn_over, G.end_requested, G.end_alone, G.end_confirmed = {}, {}, {}, {}, {}, {}
+    G.turn_open, G.end_owed = {}, {}
     V.sideCtx, V.ctxCache, V.ctxFrame, V.memory = nil, nil, nil, {}
     N.frame = (N.frame or 0) + 1
     Ar.state = nil
