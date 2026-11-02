@@ -13,7 +13,9 @@ The budget file is the harness's (bg3harness.spend, which reads and updates it h
 runtime/budget.json `{"cap": USD, "spent": USD}`, shared by every matrix and every paid play.py run, updated under the
 same lock (`budget.json.lock`). A matrix may also name `shared` budget files: then its own file caps this matrix
 and each shared one caps everything that charges it (several matrices sharing one API key's money, each with its
-own share): every file is checked before a job and charged when it ends. A job does not
+own share): every file is checked before a job and charged when it ends. A job may name more `shared` files of its
+own (its plan entry's `shared`: a matrix file's [[group]] budget, e.g. one model's share and its API's money in a
+matrix of several models), checked and charged for that job only. A job does not
 start when `spent + its reserve > cap` of any of them (reserve = a paid client's per-run `max_cost` for the scenario, 0 when it has
 none: then the overshoot is at most one run; 0 for a subscription client, never charged); a missing or broken file
 stops the matrix (`budget`), also one gone or broken when a run's cost is added (the end record keeps the cost). A run's cost is added as it ends unless the runner already settled it (`RunResult.charged`:
@@ -241,13 +243,18 @@ class Matrix:
             },
         )
 
+    def _budgets(self, job: Mapping[str, Any]) -> list[Path]:
+        """The budget files a job is checked against and charged to: the matrix's, then the job's own shared ones."""
+        own = [Path(p) for p in job.get("shared") or ()]
+        return [*self.budgets, *(p for p in own if p not in self.budgets)]
+
     def _end(self, job: dict, attempt: int, result: RunResult) -> bool:
         """Records the attempt's end and adds its cost to the budget unless charged; False when the cost couldn't be
         added (the budget file gone or broken since the run started: the end record keeps the cost)."""
         self._append({"type": "end", "job": job["id"], "attempt": attempt, "t": self.now(), "result": asdict(result)})
         if result.cost_usd and not result.charged:
             ok = True
-            for path in self.budgets:  # every one, even after a failure: each keeps what it can
+            for path in self._budgets(job):  # every one, even after a failure: each keeps what it can
                 try:
                     b = spend.add_spend(path, result.cost_usd, self.now(), matrix=self._plan()["name"], job=job["id"])
                 except (OSError, ValueError):
@@ -297,7 +304,7 @@ class Matrix:
             st = todo[0]
             job = st["job"]
             try:
-                budgets = [read_budget(p) for p in self.budgets]
+                budgets = [read_budget(p) for p in self._budgets(job)]
             except (OSError, ValueError):
                 self._progress(jobs, "stopped", stop=BUDGET)
                 return BUDGET

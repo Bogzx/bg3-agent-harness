@@ -21,7 +21,9 @@ every file (bench.matrix).
 
 Cells that differ by model (e.g. 3 paid runs × 2 conditions plus 1 subscription run) go in `[[group]]` tables, each
 with its own models, scenarios, conditions and repeats, instead of the top-level four. The groups' jobs merge
-repeat-major (every group's repeat 1 first).
+repeat-major (every group's repeat 1 first). A group may have a `[group.budget]` of its own: `max_cost` for its
+scenarios (over the top level's) and `shared`, budget files its jobs also count against (on top of `file` and the
+top level's `shared`): a matrix of several models gives each model its own reserves and its own API's budgets.
 
 `order = "cell"` runs every repeat of a (model, scenario, condition) cell before the next cell, the cells in the file's
 order (groups, then models, scenarios, conditions as listed): a budget that runs out leaves whole cells, the last
@@ -127,6 +129,23 @@ def resolved(m: dict) -> dict[str, dict]:
         raise MatrixFileError(f"{m['path']}: {e}") from None
 
 
+def _budget(budget: object, path: Path, where: str) -> tuple[dict, list[str]]:
+    """A [budget] table's (the top level's or a group's) max_cost and shared, checked."""
+    if not isinstance(budget, dict):
+        raise MatrixFileError(f"{path}: {where} must be a table")
+    if where != "budget" and (extra := sorted(set(budget) - {"max_cost", "shared"})):
+        raise MatrixFileError(f"{path}: {where} takes max_cost and shared only, not {', '.join(extra)}")
+    max_cost = budget.get("max_cost", {})
+    if not isinstance(max_cost, dict) or not all(
+        isinstance(v, int | float) and not isinstance(v, bool) and v > 0 for v in max_cost.values()
+    ):
+        raise MatrixFileError(f"{path}: {where}.max_cost maps scenarios to USD > 0")
+    shared = budget.get("shared", [])
+    if not isinstance(shared, list) or not all(isinstance(f, str) and f for f in shared):
+        raise MatrixFileError(f"{path}: {where}.shared lists budget files")
+    return max_cost, shared
+
+
 def _group(raw: dict, path: Path, repo: Path, max_cost: dict, allow_unverified: bool) -> tuple[list[dict], list[str]]:
     """One grid's jobs and conditions (after _scenarios checked it)."""
     scenarios, repeats = raw["scenarios"], raw.get("repeats", 1)
@@ -154,14 +173,7 @@ def load(path: str | Path, repo: Path) -> dict:
     if not isinstance(name, str) or not name or name != matrix._slug(name):
         raise MatrixFileError(f"{path}: name must be a non-empty slug")
     budget = raw.get("budget", {})
-    max_cost = budget.get("max_cost", {})
-    if not isinstance(max_cost, dict) or not all(
-        isinstance(v, int | float) and not isinstance(v, bool) and v > 0 for v in max_cost.values()
-    ):
-        raise MatrixFileError(f"{path}: budget.max_cost maps scenarios to USD > 0")
-    shared = budget.get("shared", [])
-    if not isinstance(shared, list) or not all(isinstance(f, str) and f for f in shared):
-        raise MatrixFileError(f"{path}: budget.shared lists budget files")
+    max_cost, shared = _budget(budget, path, "budget")
     own = budget.get("file", BUDGET)
     if own in shared or len(set(shared)) != len(shared):
         raise MatrixFileError(f"{path}: budget.shared lists a budget file twice")
@@ -181,8 +193,15 @@ def load(path: str | Path, repo: Path) -> dict:
     loaded = {s: _load(s, path, repo) for s in sorted(named)}
     skipped = {s: why for s, sc in loaded.items() if (why := scenario.not_ready(sc))}
     jobs, conds = [], []
-    for g in groups:
-        g_jobs, g_conds = _group(g, path, repo, max_cost, raw.get("allow_unverified") is True)
+    for i, g in enumerate(groups):
+        g_max, g_shared = ({}, []) if g is raw else _budget(g.get("budget", {}), path, f"group[{i}].budget")
+        if unknown := sorted(set(g_max) - set(g["scenarios"])):
+            raise MatrixFileError(f"{path}: group[{i}].budget.max_cost names scenarios not in the group: {unknown}")
+        if set(g_shared) & {own, *shared} or len(set(g_shared)) != len(g_shared):
+            raise MatrixFileError(f"{path}: group[{i}].budget.shared lists a budget file twice")
+        g_jobs, g_conds = _group(g, path, repo, {**max_cost, **g_max}, raw.get("allow_unverified") is True)
+        for j in g_jobs if g_shared else ():
+            j["shared"] = [str(repo / f) for f in g_shared]
         jobs += g_jobs
         conds += [c for c in g_conds if c not in conds]
     if len({j["id"] for j in jobs}) != len(jobs):
@@ -254,7 +273,7 @@ def print_plan(m: dict, out: TextIO) -> None:
     _table(rows, out)
     reserve = sum(j["max_cost"] for j in paid)
     print(f"\n{len(jobs)} jobs ({len(paid)} paid), reserve {_usd(reserve)}", file=out)
-    for path in [m["budget"], *m["shared"]]:
+    for path in dict.fromkeys([m["budget"], *m["shared"], *(Path(f) for j in jobs for f in j.get("shared", ()))]):
         try:
             b = matrix.read_budget(path)
             print(f"budget {path}: {_usd(b['spent'])} of {_usd(b['cap'])} spent", file=out)

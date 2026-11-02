@@ -478,3 +478,63 @@ def test_a_matrix_share_and_the_shared_budget_both_count(tmp_path):
     own = json.loads((repo / "runtime" / "budget-pi.json").read_text())
     shared = json.loads((repo / "runtime" / "budget.json").read_text())
     assert (own["spent"], shared["spent"]) == (2.0, 17.0)
+
+
+GROUP_BUDGETS = """
+name = "two-apis"
+allow_gaps = true
+
+[budget]
+file = "runtime/budget.json"
+max_cost = { nautiloid = 1.0, grove = 1.0 }
+
+[[group]]
+models = ["profiles/pi.toml"]
+scenarios = ["nautiloid", "grove"]
+conditions = ["rules"]
+
+[group.budget]
+shared = ["runtime/budget-a.json"]
+max_cost = { grove = 3.5 }
+
+[[group]]
+models = ["profiles/pi2.toml"]
+scenarios = ["nautiloid"]
+conditions = ["rules"]
+"""
+
+
+def test_a_group_budget_gives_its_jobs_their_own_max_cost_and_shared_files(tmp_path):
+    repo = fake_repo(tmp_path)
+    (repo / "profiles" / "pi2.toml").write_text(PI.replace("anthropic/claude-opus-5.5", "deepseek/v4"))
+    (repo / "runtime" / "budget-a.json").write_text(json.dumps({"cap": 5.0, "spent": 1.25}))
+    m = matrix_cli.load(matrix_file(tmp_path, GROUP_BUDGETS), repo)
+    got = [(j["model"], j["scenario"], j["max_cost"], j.get("shared")) for j in m["jobs"]]
+    a = [str(repo / "runtime" / "budget-a.json")]
+    assert got == [
+        ("anthropic/claude-opus-5.5", "nautiloid", 1.0, a),
+        ("anthropic/claude-opus-5.5", "grove", 3.5, a),
+        ("deepseek/v4", "nautiloid", 1.0, None),  # no group budget: the plan entry is as before
+    ]
+    code, out = cli(repo, "plan", "--matrix", str(matrix_file(tmp_path, GROUP_BUDGETS)))
+    assert code == 0 and "reserve $5.50" in out and f"budget {a[0]}: $1.25 of $5.00 spent" in out
+
+
+@pytest.mark.parametrize(
+    ("budget", "why"),
+    [
+        ("file = 'runtime/b.json'", "group[0].budget takes max_cost and shared only, not file"),
+        ("max_cost = { nautiloid = 0 }", "group[0].budget.max_cost maps scenarios to USD > 0"),
+        ("max_cost = { grove = 1 }", "group[0].budget.max_cost names scenarios not in the group: ['grove']"),
+        ("shared = ['runtime/budget.json']", "group[0].budget.shared lists a budget file twice"),
+        ("shared = 'runtime/b.json'", "group[0].budget.shared lists budget files"),
+    ],
+)
+def test_bad_group_budgets_are_refused(tmp_path, capsys, budget, why):
+    body = (
+        "name = 'm'\n[[group]]\nscenarios = ['nautiloid']\nmodels = ['profiles/claude.toml']\nconditions = ['rules']\n"
+    )
+    code, _ = cli(
+        fake_repo(tmp_path), "plan", "--matrix", str(matrix_file(tmp_path, body + "[group.budget]\n" + budget))
+    )
+    assert code == 2 and why in capsys.readouterr().err
