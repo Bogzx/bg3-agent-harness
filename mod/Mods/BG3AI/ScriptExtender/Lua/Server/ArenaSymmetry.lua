@@ -17,6 +17,7 @@
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
 local V = BG3AI.Visibility
+local U = BG3AI.Util
 local Ar = BG3AI.Arena
 
 local Sym = {}
@@ -40,7 +41,7 @@ end
 local function inventories(e, equipment)
     return read(function()
         local out = {}
-        for _, inv in ipairs(e.InventoryOwner.Inventories) do
+        for _, inv in ipairs(U.items(e.InventoryOwner.Inventories)) do
             if (tostring(inv.InventoryData.Type) == "Equipment") == equipment then
                 for slot, it in pairs(inv.InventoryContainer.Items) do
                     local iu = V.entityUuid(it.Item)
@@ -68,7 +69,7 @@ function Sym.profile(u)
     p.level = read(function() return e.EocLevel.Level end)
     p.classes = read(function()
         local out = {}
-        for _, cl in ipairs(e.Classes.Classes) do
+        for _, cl in ipairs(U.items(e.Classes.Classes)) do
             out[#out + 1] = tostring(cl.ClassUUID) .. "/" .. tostring(cl.SubClassUUID) .. "/" .. tostring(cl.Level)
         end
         return sorted(out)
@@ -85,7 +86,7 @@ function Sym.profile(u)
     p.inventory = inventories(e, false)
     p.spells = read(function()
         local out = {}
-        for _, s in ipairs(e.SpellBook.Spells) do out[#out + 1] = tostring(s.Id.Prototype) end
+        for _, s in ipairs(U.items(e.SpellBook.Spells)) do out[#out + 1] = tostring(s.Id.Prototype) end
         return sorted(out)
     end)
     p.prepared = read(function()
@@ -97,7 +98,7 @@ function Sym.profile(u)
     end)
     p.passives = read(function()
         local out = {}
-        for _, pe in ipairs(e.PassiveContainer.Passives) do out[#out + 1] = tostring(pe.Passive.PassiveId) end
+        for _, pe in ipairs(U.items(e.PassiveContainer.Passives)) do out[#out + 1] = tostring(pe.Passive.PassiveId) end
         return sorted(out)
     end)
     p.statuses = read(function()
@@ -124,7 +125,7 @@ function Sym.profile(u)
     p.boosts = read(function()
         local out = {}
         for _, entry in pairs(e.BoostsContainer.Boosts) do
-            for _, b in ipairs(entry.Boosts) do
+            for _, b in ipairs(U.items(entry.Boosts)) do
                 local pr = b.BoostInfo.Params
                 out[#out + 1] = table.concat({ tostring(entry.Type), tostring(pr.Boost), tostring(pr.Params),
                     tostring(pr.Params2) }, "|")

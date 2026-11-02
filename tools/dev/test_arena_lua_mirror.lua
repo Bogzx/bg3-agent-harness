@@ -18,6 +18,25 @@ local function udArray(ids)
     return u
 end
 
+-- The extender's HashSet as the game hands it (SpellList.Spells; bg3se LuaSetProxy.inl): its index is membership, so
+-- an id reads true or false and every integer reads false (live check 13d: ipairs over it never ended); # is its size.
+local function udSet(ids)
+    local members = {}
+    for _, id in ipairs(ids) do members[id] = true end
+    local u = io.tmpfile()
+    debug.setmetatable(u, { __index = function(_, k) return members[k] == true end,
+        __len = function() return #ids end })
+    return u
+end
+
+-- Runs fn with an instruction cap: a walk that never ends fails the test instead of hanging it.
+local function capped(fn)
+    debug.sethook(function() error("no end within the instruction cap (a walk that never ends)", 2) end, "", 50000000)
+    local ok, err = pcall(fn)
+    debug.sethook()
+    if not ok then error(err, 0) end
+end
+
 local LISTS = { -- the game's lists by uuid: {resource type, field, ids}
     -- live check 13c's reads of the Fighter's SkillList 6a4f8598 and PassiveList da3203d8
     ["skills-fighter"] = { "SkillList", "Skills", { "Acrobatics", "AnimalHandling", "Athletics", "History", "Insight",
@@ -25,9 +44,10 @@ local LISTS = { -- the game's lists by uuid: {resource type, field, ids}
     ["styles"] = { "PassiveList", "Passives", { "FightingStyle_Archery", "FightingStyle_Defense",
         "FightingStyle_Dueling", "FightingStyle_GreatWeaponFighting", "FightingStyle_Protection",
         "FightingStyle_TwoWeaponFighting" } },
-    ["cantrips"] = { "SpellList", "Spells", { "Target_FireBolt", "Target_RayOfFrost", "Target_MageHand" } },
+    ["cantrips"] = { "SpellList", "Spells", { "Target_FireBolt", "Target_RayOfFrost", "Target_MageHand" }, set = true },
+    ["skills-unread"] = { "SkillList", "Skills", { "Acrobatics", false, "Athletics" } },
 }
-for _, l in pairs(LISTS) do l[3] = udArray(l[3]) end
+for _, l in pairs(LISTS) do l[3] = l.set and udSet(l[3]) or udArray(l[3]) end
 
 local saved, calls, stats, created, tpl, inv
 
@@ -86,6 +106,10 @@ local function game(opts)
     for _, n in ipairs({ "MakePlayer", "AddBoosts", "AddPassive", "AddSpell", "Equip" }) do
         stub(n, function(...) calls[#calls + 1] = { n, ... } end)
     end
+    stub("RemoveSurfaceLayerAtPosition", function(...)
+        calls[#calls + 1] = { "RemoveSurfaceLayerAtPosition", ... }
+        if opts.surface_call_fails then error("RemoveSurfaceLayerAtPosition: wrong arguments") end
+    end)
     stub("SetStoryDisplayName", function(u, name)
         calls[#calls + 1] = { "SetStoryDisplayName", u, name }
         if opts.shared_name then -- as scn.rename did live: one handle for every copy of the template
@@ -349,6 +373,57 @@ test("mirror_kit: a twin with its race but without a container the kit writes, o
         end
     end))
 
+test("a spells choice asks the game's SpellList set per pick, never walks it: the kit applies, a stray pick is refused",
+    guarded(function()
+        twin(T1)
+        twin(T2)
+        local spells = { kind = "spells", list = "cantrips", n = 2, exact = true,
+            ids = { "Target_FireBolt", "Target_RayOfFrost" } }
+        capped(function()
+            local r = Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ choices = { spells } }) })
+            local j = RPC.jobs[r.job]
+            runJob(j)
+            eq(j.status, "done", "job: " .. tostring(j.error))
+        end)
+        eq(enc(named("AddSpell")), enc({ { "AddSpell", T1, "Target_FireBolt", 0, 1 },
+            { "AddSpell", T1, "Target_RayOfFrost", 0, 1 }, { "AddSpell", T2, "Target_FireBolt", 0, 1 },
+            { "AddSpell", T2, "Target_RayOfFrost", 0, 1 } }), "each pick on both twins")
+        spells.ids = { "Target_FireBolt", "Target_Sleep" }
+        capped(function()
+            local args = { twins = { T1, T2 }, race = HALFELF, kit = kit({ choices = { spells } }) }
+            refused(function() Ar.Mirror.kit(args) end, "Target_Sleep is not in the game's list cantrips")
+        end)
+    end))
+
+test("a list that can't be checked fails closed naming it: an element that doesn't read, a set that answers no bool",
+    guarded(function()
+        twin(T1)
+        twin(T2)
+        local skills = { kind = "skills", list = "skills-unread", n = 1, exact = true, ids = { "Athletics" } }
+        refused(function() Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ choices = { skills } }) })
+        end, "the game's SkillList skills-unread can't be checked: element 2 of 3 reads false")
+        local get = Ext.StaticData.Get
+        local answersNil = setmetatable({}, { __index = function() return nil end })
+        Ext.StaticData.Get = function() return { Spells = answersNil } end
+        local spells = { kind = "spells", list = "cantrips", n = 1, exact = true, ids = { "Target_FireBolt" } }
+        local args = { twins = { T1, T2 }, race = HALFELF, kit = kit({ choices = { spells } }) }
+        local ok, err = pcall(Ar.Mirror.kit, args)
+        Ext.StaticData.Get = get
+        eq(ok, false, "refused")
+        eq(tostring(err):find("the game's SpellList cantrips can't be checked: Target_FireBolt reads nil", 1, true)
+            ~= nil, true, tostring(err))
+        eq(#calls, 0, "no call made")
+    end))
+
+test("U.items: an extender list's elements 1..#, bounded; a length past the cap is an error", function()
+    local s = udSet({ "a", "b", "c" })
+    local items, n = U.items(s)
+    eq(enc({ n, items[1], items[3] }), enc({ 3, false, false }), "a set's integers read false: 3 of them, no more")
+    eq(enc((U.items(udArray({ "x", "y" })))), enc({ "x", "y" }), "an array")
+    local ok, err = pcall(U.items, s, 2)
+    eq(enc({ ok, err }), enc({ false, "a list of length 3" }), "the cap")
+end)
+
 test("mirror_kit: an item that never arrives fails the job naming it", guarded(function()
     restore()
     game({ items_never_arrive = true })
@@ -462,6 +537,37 @@ test("a twin with another StatsId fails setup at the limit, naming it", guarded(
     eq(j.status, "failed", "failed")
     eq(tostring(j.error):find("Ash (" .. T1 .. ") has stats HeroHalfElfFemale", 1, true) ~= nil, true,
         tostring(j.error))
+end))
+
+-- Live check 13d: Cedar spawned on a surface at spot A (INSURFACE), Dune not: the pair's statuses differed.
+test("a mirror setup clears Ground and Cloud surfaces at every spot before the first twin spawns", guarded(function()
+    local j = mirrorSetup(mirrorArena())
+    eq(j.step, 1, "at the party step: " .. tostring(j.error))
+    local got = {}
+    for _, c in ipairs(calls) do
+        if c[1] == "CreateAt" then break end
+        if c[1] == "RemoveSurfaceLayerAtPosition" then got[#got + 1] = c end
+    end
+    local want = {}
+    for i = 1, 2 do
+        for _, s in ipairs({ "A", "B" }) do
+            local p = Ar.Setup.line(({ A = { 0, 0, 0 }, B = { 0, 0, 10 } })[s], 2)[i]
+            for _, layer in ipairs({ "Ground", "Cloud" }) do
+                want[#want + 1] = { "RemoveSurfaceLayerAtPosition", p[1], p[2], p[3], layer, 2.0 }
+            end
+        end
+    end
+    eq(enc(got), enc(want), "both layers at all 4 spots, before any CreateAt")
+end))
+
+test("a surface clear the game refuses fails setup naming it, before any twin spawns", guarded(function()
+    restore()
+    game({ surface_call_fails = true })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.status, "failed", "failed")
+    eq(tostring(j.error):find("RemoveSurfaceLayerAtPosition Ground at pair 1's spot A", 1, true) ~= nil, true,
+        tostring(j.error))
+    eq(#named("CreateAt"), 0, "no twin")
 end))
 
 test("mirror arena refusals: a pair short of a field, one name twice, teams that name other twins", guarded(function()
