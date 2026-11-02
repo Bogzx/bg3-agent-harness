@@ -124,7 +124,7 @@
    "W211": 1,
    "W212": 1,
    "W421": 1,
-   "W631": 3
+   "W631": 2
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/StateOps.lua": {
    "W631": 6

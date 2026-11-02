@@ -5,6 +5,15 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: the action list prints costs and ranges as the game states them
+
+- A cost's named resources read in words, after the action economy and the spell slot, in one fixed order:
+  `[A+Channel Divinity 1]` (was `[A+other:{'ChannelDivinity': 1}]`), `[A+slot L1]` (was `[A+slot L1]` or
+  `[slot L1+A]`, by run). The NOW line names those resources the same way (`Channel Divinity 1/1`).
+- A range the mod can't put in metres is left out: Throw read `Throw [A] ThrownObjectRangem point`, now
+  `Throw [A] point` (the game works the throw range out per object). The mod's state.actions sends `range` only in
+  metres (a number, or the wielded weapon's range).
+
 ## 2026-11-02: in combat each call is one action; combat_turn is removed
 
 - combat_turn is gone from tools/list (94 tools), with its plan parsing, fallbacks, retargeting, automatic bonus
