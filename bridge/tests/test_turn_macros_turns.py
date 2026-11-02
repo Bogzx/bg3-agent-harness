@@ -82,10 +82,37 @@ class CombatTurn(CombatTurnBase):
         p1.update(hp_pct=0, downed=True)
         out = turn_tool.combat_turn(self.plan(action="Shout_Dodge"), who=core.H.get(P1))
         self.assertIn("is downed: nothing to play", out)
+        self.g.on_start = None
+        self.g.refuse_if = lambda op, a: "character is downed" if op == "act.end_turn" else None  # Guard.actor
         out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertIn("skipped", out)
+        self.assertIn("is downed: nothing to play, its turn passes by itself", out)
         self.assertNotIn("FAILED", out)
-        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], [])
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
+        self.g.refuse_if = lambda op, a: "character is dead" if op == "act.end_turn" else None
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
+        self.assertIn("is dead: it has no turn", out)
+        self.assertNotIn("FAILED", out)
+
+    # Live 10 m1 a2 (D297): Lae'zel at 0 HP without the DOWNED status (the mod's row reads downed by its HP; the
+    # game rolled no death saving throw and kept her turn open). end_turn said "downed ... its turn passes by itself",
+    # sent no end and waited 80 s on that open turn. The mod ends it (it refuses only DOWNED or dead).
+    def test_zero_hp_member_without_downed_status_gets_its_turn_ended(self):
+        p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
+        p1.update(hp_pct=0, downed=True)
+
+        def advance(op, args):  # the end goes through: Lae'zel's turn next
+            if op == "act.end_turn":
+                self.g.combat["current"] = P2
+        self.g.on_start = advance
+        t = time.monotonic()
+        out = combat_tools.end_turn(who=core.H.get(P1))
+        self.assertLess(time.monotonic() - t, 5.0)
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
+        self.assertNotIn("passes by itself", out)
+        self.assertNotIn("skipped", out)
+        self.assertIn("is at 0 HP without the Downed status (no death saving throws): the game kept its turn open", out)
+        self.assertIn(f"now {core.H.get(P2)}'s turn", out)
 
     # S076 00:29-00:32 (Cazador try 6 r6): Karlach at 1/218 HP read hp_pct 0 (State.lua rounded it) and end_turn /
     # combat_turn refused her as downed while set_party showed hp=1/218 action=1. Not downed: she plays.
