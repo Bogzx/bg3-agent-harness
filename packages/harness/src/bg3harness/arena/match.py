@@ -14,8 +14,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    the record; `character` = the first; `names` as the mod gave them. Its `arena_end` (the mod's own end: a wipe at
    a turn boundary, the round cap at the start of round round_cap + 1) is written as it is; its `arena_start`, an
    end the runner asked for and any arena record after the match's end are left out, as the referee writes those
-   itself. A phase naming the other team's character is not the side's: not written, never forced. A turn below is
-   a phase; a summon's phase is a turn of its side like any other.
+   itself. Its `arena_turn_passed {side, character, name, why, round, error?}` (the mod ended a downed or dead
+   member's turn) is written with `character` named as in arena_turn. A phase naming the other team's character is
+   not the side's: not written, never forced. A turn below is a phase; a summon's phase is a turn of its side like
+   any other.
 3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
    - the mod's end (`arena.status.ended` or the ring's `arena_end`, any reason: a wipe, or the round cap as a draw
      with `rounds` = round_cap);
@@ -36,6 +38,16 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    character}` once any end went through. The cap of a side's FORFEIT_TURNS-th turn in a row is its forfeit,
    decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod keeps a
    match's first end, so no wipe at the next turn boundary can come before the forfeit).
+   Stall: a phase's idle clock (wall time less the larger of the two sides' model time gains, tick by tick; once
+   the phase was capped, its own side's model time no longer counts) runs from its last progress: a new phase, a
+   change of arena.status's turn, round or HP, a new referee or roll ring row. At STALL_CAPS x turn_cap_s x members
+   (at least STALL_MIN_S) the runner reads `state.combat` as the phase's side: a member of the phase still current,
+   not ended, not downed or dead means the side holds the turn, and the phase is capped as at the model-time cap
+   (`arena_stall {stall: "held", ...}` first; it counts toward the forfeit); none (every end went in, or nobody can
+   act), the read failing or a second stall of the same phase means the game holds it: `arena_stall {stall: "game",
+   ...}` and the match ends as `fault` (invalid, rerun), no act.end_turn sent. arena_stall {stall, side, character,
+   members, round, idle_s, status {turn, round, hp} (the last arena.status), last {A, B: the side's last
+   STALL_CALLS tool calls from its events file, {tool, result}}, detail?}.
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
@@ -52,6 +64,7 @@ arena_end carries `invalid: "scripted"`.
 from __future__ import annotations
 
 import contextlib
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,6 +82,9 @@ EXIT_RESUMES = 3  # a side's agent exiting (exit 0) mid-fight: resumed this many
 FAULT_RESUMES = 1  # a side's client failing (crash, API/MCP failure, hang): resumed once, then it forfeits
 END_SETTLE_S = 10.0  # a cap's act.end_turn job: polled this long for its end before the next member's
 END_POLL_S = 0.25
+STALL_CAPS = 3  # a phase idle this many times its turn cap (turn_cap_s x members) ...
+STALL_MIN_S = 300.0  # ... and at least this long has stalled
+STALL_CALLS = 3  # the tool calls of each side an arena_stall record shows
 UNOWNED_CHECK_S = 15.0  # a turn this old: ui.state is read for a prompt no team owns, then at most this often
 END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
 KICKOFF = "The fight is on. You play side {side}: {names}."
@@ -131,7 +147,10 @@ class Turn:
     name: str
     round: int
     members: list[str]  # uuids, in turn order, summons included (uuid is the first)
+    names: list[str] = field(default_factory=list)  # their names as written in arena_turn
     forced: bool = False
+    capped: bool = False  # the runner sent its cap's ends (forced once one went through)
+    stalled: bool = False  # a stall "held" capped it
 
 
 class Referee:
@@ -192,8 +211,12 @@ class Referee:
             if any(t is not None and t[0] != fact.get("side") for t in team):  # the other team's character
                 return None
             names = [t[1] if t is not None else n for t, n in zip(team, shown, strict=True)]
-            self.turns.append(Turn(str(fact["side"]), members[0], names[0], int(fact["round"]), members))
+            self.turns.append(Turn(str(fact["side"]), members[0], names[0], int(fact["round"]), members, names))
             return {**fact, "character": names[0], "members": names}
+        if ev == "arena_turn_passed":
+            u = str(fact.get("character") or "")
+            t = self.names.get(u.lower())
+            return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
         if ev == "arena_end":
             self.mod_end = {"winner": None, **fact, **self.invalid()}  # the ring leaves a nil winner (a draw) out
             self.done = True
@@ -288,6 +311,39 @@ def _decline_unowned(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callab
     log(f"arena {spec.name}: declined a reaction prompt no team owns ({detail})")
 
 
+def _held(game: ArenaGame, turn: Turn) -> list[str]:
+    """The phase's members its side still holds: in the side's own state.combat, current, not ended (an end of its
+    own pending counts as ended), not downed or dead. A member missing from the read isn't held."""
+    st = game.rpc("state.combat", {}, turn.side) or {}
+    rows = {str(r.get("uuid") or "").lower(): r for r in st.get("order") or []}
+    held = []
+    for u in turn.members:
+        r = rows.get(u.lower())
+        if r and r.get("is_current") and not (r.get("ended") or r.get("downed") or r.get("dead")):
+            held.append(u)
+    return held
+
+
+def _last_calls(path: Path, n: int = STALL_CALLS) -> list[dict[str, Any]]:
+    """A side's last n tool calls from its events file: {tool, result (its text, cut to 200 chars; None before it
+    came)}; [] without the file."""
+    calls: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    with contextlib.suppress(OSError):
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("kind") == "tool_call":
+                c = {"tool": e.get("tool"), "result": None}
+                calls.append(c)
+                by_id[str(e.get("call_id"))] = c
+            elif e.get("kind") == "tool_result" and (c := by_id.get(str(e.get("call_id")))) is not None:
+                c["result"] = str(e.get("text") or "")[:200]
+    return calls[-n:]
+
+
 def _end_turn(game: ArenaGame, clock: Clock, uuid: str, side: str) -> str | None:
     """act.end_turn for `uuid` as `side`, its job polled until it settles (at most END_SETTLE_S); the refusal or
     failure, else None."""
@@ -342,9 +398,26 @@ def run_arena(
     hp = dict.fromkeys(SIDES, 1.0)
     answered = clock.now()
     seen_turns, turn_at, ui_read = 0, started, started  # the turns so far, when the last began, the last ui.state
+    idle, tick_at, moved_sig = 0.0, started, None  # the stall's idle clock, its last tick, the last progress read
+    seen_model = dict.fromkeys(SIDES, 0.0)
 
     def model(side: str) -> float:
         return closed_model[side] + runs[side].model_s()
+
+    def cap_phase(turn: Turn, why: str) -> None:
+        """End the phase at a cap (`why`): its side's forfeit when it is the FORFEIT_TURNS-th in a row, else
+        act.end_turn for each member and arena_turn_forced once one went through."""
+        turn.capped = True
+        if ref.forfeits():
+            ref.forced()
+            log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {why}")
+            raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
+        errors = [_end_turn(game, clock, u, turn.side) for u in turn.members]
+        if all(errors):
+            log(f"arena {spec.name}: ending {turn.name}'s turn at the {why} failed: {'; '.join(map(str, errors))}")
+            return
+        ref.forced()
+        log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) ended at the {why}")
 
     try:
         while True:
@@ -355,7 +428,7 @@ def run_arena(
             if not game.alive():
                 raise _Ended("fault", detail="the game process is gone", game_up=False)
             try:
-                feed.poll()
+                rows = sum(feed.poll())
                 status = game.rpc("arena.status", {}) or {}
                 answered = now
             except Exception as e:  # a slow frame; a hang only after HANG_S
@@ -403,6 +476,40 @@ def run_arena(
                 n = faults[s] + exits[s]
                 runs[s] = agents.start(s, RESUME, ex.conversation, f"-r{n}")
             turn = ref.turn
+            gained = {s: model(s) - seen_model[s] for s in SIDES}
+            seen_model = {s: model(s) for s in SIDES}
+            excused = [gained[s] for s in SIDES if turn is None or not (turn.capped and s == turn.side)]
+            idle += max(0.0, now - tick_at - max(excused, default=0.0))
+            tick_at = now
+            sig = (len(ref.turns), json.dumps(status.get("turn"), sort_keys=True), status.get("round"), hp)
+            if rows or sig != moved_sig:
+                idle, moved_sig = 0.0, sig
+            if turn is not None and idle >= max(STALL_CAPS * spec.turn_cap_s * len(turn.members), STALL_MIN_S):
+                held, why = [], ""
+                if not (turn.stalled or turn.forced):
+                    try:
+                        held = _held(game, turn)
+                    except Exception as e:  # the game can't say: it holds the turn
+                        why = f"state.combat failed: {e}"
+                record = {
+                    "side": turn.side,
+                    "character": turn.name,
+                    "members": turn.names,
+                    "round": turn.round,
+                    "idle_s": round(idle, 1),
+                    "status": {k: status.get(k) for k in ("turn", "round", "hp")},
+                    "last": {s: _last_calls(out / f"{s}.events.jsonl") for s in SIDES},
+                    **({"detail": why} if why else {}),
+                }
+                stall = f"stall: {turn.name}'s phase (side {turn.side}, round {turn.round}) idle {idle:.0f} s"
+                idle = 0.0
+                if not held:
+                    ref.event("arena_stall", stall="game", **record)
+                    raise _Ended("fault", detail=f"{stall}, the game holds the turn" + (f" ({why})" if why else ""))
+                ref.event("arena_stall", stall="held", **record)
+                turn.stalled = True
+                cap_phase(turn, f"stall ({stall}, side {turn.side} holds it)")
+                continue
             if turn is None or turn.forced:
                 continue
             idx = len(ref.turns) - 1
@@ -411,16 +518,7 @@ def run_arena(
             cap = spec.turn_cap_s * len(turn.members)
             if model(turn.side) - turn_mark[1] < cap:
                 continue
-            if ref.forfeits():
-                ref.forced()
-                log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {cap:g} s cap")
-                raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
-            errors = [_end_turn(game, clock, u, turn.side) for u in turn.members]
-            if all(errors):
-                log(f"arena {spec.name}: ending {turn.name}'s turn at the cap failed: {'; '.join(map(str, errors))}")
-                continue
-            ref.forced()
-            log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) ended at the {cap:g} s cap")
+            cap_phase(turn, f"{cap:g} s cap")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
             e = status["ended"]
             outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})
