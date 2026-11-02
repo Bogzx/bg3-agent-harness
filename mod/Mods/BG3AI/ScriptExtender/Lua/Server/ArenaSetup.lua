@@ -17,7 +17,9 @@
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
 --   2. place: the names checked; every member and sitter detached, each team chained to its first member and
 --      teleported to a line through its spawn (the sitters stay where they are, SetCanJoinCombat 0: read back 0)
---   3. RestoreParty(host), then SetHitpointsPercentage 100 for anyone it left short; the seed and Karmic Dice
+--   3. where they landed (Setup.check_landed: each pair under SPAWN_DY_MAX_M apart in height, the cross distances
+--      the same both ways), then RestoreParty(host), then SetHitpointsPercentage 100 for anyone it left short; the
+--      seed and Karmic Dice
 --   4. each team its own spare "Hero Player<N>" faction (never the bare "Hero": the companions' factions descend from
 --      it), SetRelation hostile both ways, SetHostileAndEnterCombat (EnterCombat pairs if not all members in one
 --      combat)
@@ -161,17 +163,50 @@ function Setup.check_geometry(spawns, n)
         error(("location.spawns A and B are %.2f m apart in height (y); they must be under %.1f m"):format(dy,
             Setup.SPAWN_DY_MAX_M), 0)
     end
-    local a, b = Setup.line(spawns.A, n), Setup.line(spawns.B, n)
-    for i = 1, n do
-        for j = 1, n do
+    Setup.check_cross(Setup.line(spawns.A, n), Setup.line(spawns.B, n), "location.spawns")
+end
+
+-- Refuses positions a (team A, by member) and b (team B) where a distance across the teams differs both ways (A's
+-- member i to B's j vs B's i to A's j) by more than PAIR_DIST_TOL_M.
+function Setup.check_cross(a, b, what)
+    for i = 1, #a do
+        for j = 1, #a do
             local ab, ba = dist(a[i], b[j]), dist(b[i], a[j])
             if math.abs(ab - ba) > Setup.PAIR_DIST_TOL_M then
-                error(("location.spawns: A's member %d is %.2f m from B's member %d, B's member %d %.2f m from A's "
-                    .. "member %d; they must be the same within %.1f m"):format(i, ab, j, i, ba, j,
-                    Setup.PAIR_DIST_TOL_M), 0)
+                error(("%s: A's member %d is %.2f m from B's member %d, B's member %d %.2f m from A's member %d; "
+                    .. "they must be the same within %.1f m"):format(what, i, ab, j, i, ba, j, Setup.PAIR_DIST_TOL_M),
+                    0)
             end
         end
     end
+end
+
+-- Where the members landed (live 15: the file's spawns 0.18 m apart in height, the twins stood 0.73 m and 0.35 m
+-- apart: the game puts a teleported character on the ground under it): pair i (A[i], B[i]) under SPAWN_DY_MAX_M apart
+-- in height and the cross distances as check_cross wants, else an error naming the pair and both heights. A position
+-- that doesn't read is an error too.
+function Setup.check_landed(teams, names)
+    local at = {}
+    for _, s in ipairs(Ar.SIDES) do
+        at[s] = {}
+        for i, u in ipairs(teams[s]) do
+            local ok, x, y, z = pcall(Osi.GetPosition, u)
+            if not ok or type(x) ~= "number" then
+                error(("%s (%s): its position doesn't read after placing"):format(tostring(names[u]), u), 0)
+            end
+            at[s][i] = { x, y, z }
+        end
+    end
+    for i, a in ipairs(at.A) do
+        local b = at.B[i]
+        local dy = math.abs(a[2] - b[2])
+        if dy >= Setup.SPAWN_DY_MAX_M then
+            error(("pair %d (%s, %s) landed %.2f m apart in height (y %.2f, %.2f); a pair must stand under %.1f m "
+                .. "apart"):format(i, tostring(names[teams.A[i]]), tostring(names[teams.B[i]]), dy, a[2], b[2],
+                Setup.SPAWN_DY_MAX_M), 0)
+        end
+    end
+    Setup.check_cross(at.A, at.B, "where the members landed")
 end
 
 -- The two lowest-numbered "Hero Player<N>" factions nobody in the level uses and no team member holds.
@@ -309,6 +344,7 @@ STEPS[2] = function(job) -- the names after joining; chained per team, on its li
 end
 
 STEPS[3] = function(job)
+    Setup.check_landed(job.teams, job.names)
     call(job, "RestoreParty", { job.host })
     return Setup.SETTLE_MS
 end

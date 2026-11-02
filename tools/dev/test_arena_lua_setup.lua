@@ -67,9 +67,10 @@ local function game(opts)
         "RestoreParty", "SetHitpointsPercentage", "SetRelation" }) do
         stub(n, record(n))
     end
-    stub("TeleportToPosition", function(u, x, y, z, ...)
+    stub("TeleportToPosition", function(u, x, y, z, ...) -- opts.land[u]: where the game puts it off the asked spot
         calls[#calls + 1] = { "TeleportToPosition", u, x, y, z, ... }
-        world[u].pos = { x, y, z }
+        local d = (opts.land or {})[u] or { 0, 0, 0 }
+        world[u].pos = { x + d[1], y + d[2], z + d[3] }
     end)
     canJoin = {}
     stub("CanJoinCombat", function(u) return canJoin[u] or 1 end)
@@ -421,6 +422,39 @@ test_setup("arena.setup refusals: no scenario switch, a name twice or unknown, a
     assert(enc(setup(arena())):find("BG3AI_ARENA=1", 1, true), "switch off")
     eq(#calls, 0, "no game call")
 end)
+
+-- Live 15: the file's spawns 0.18 m apart in height, the twins landed 0.73 m and 0.35 m apart (the game stands a
+-- teleported character on the ground).
+test_setup("arena.setup fails where a pair landed 0.3 m or more apart in height, or off the cross distances",
+    function()
+        game({ land = { [B4] = { 0, 0.35, 0 } } })
+        local _, j = setup(arena())
+        run(j)
+        eq(j.status, "failed", "failed")
+        eq(j.error, "pair 4 (Axe, Bree) landed 0.35 m apart in height (y 0.00, 0.35); a pair must stand under 0.3 m "
+            .. "apart", "the pair and both heights")
+        eq(#named("RestoreParty") + #named("SetFaction"), 0, "stopped right after placing")
+        eq(Ar.active(), false, "no match")
+        game({ land = { [B4] = { 0.5, 0.2, 0 } } })
+        _, j = setup(arena())
+        run(j)
+        local want = "where the members landed: A's member 1 is 11.63 m from B's member 4"
+        eq(tostring(j.error):find(want, 1, true) ~= nil, true, tostring(j.error))
+        game({ land = { [B4] = { 0, 0.29, 0 } } })
+        _, j = setup(arena())
+        run(j)
+        eq(j.status, "done", "0.29 m: " .. tostring(j.error))
+        game()
+        _, j = setup(arena())
+        local tp = Osi.TeleportToPosition
+        rawset(Osi, "TeleportToPosition", function(u, ...)
+            tp(u, ...)
+            if u == A2 then world[A2] = nil end -- gone: no position
+        end)
+        run(j)
+        rawset(Osi, "TeleportToPosition", tp)
+        eq(tostring(j.error):find("its position doesn't read after placing", 1, true) ~= nil, true, tostring(j.error))
+    end)
 
 -- Both sides on the same terms (design review F2): one team higher, or the lines offset along x (pair i's A member
 -- then stands nearer B's later pairs than B's member does to A's), is refused before any game call.
