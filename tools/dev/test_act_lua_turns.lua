@@ -35,7 +35,7 @@ local P2 = "ffffffff-0000-0000-0000-000000000006"
 local function group_setup()
     -- no pending ends from an earlier test (a leftover request now stays pending END_DROP_MS)
     G.end_requested, G.end_alone, G.turn_over = {}, {}, {}
-    G.turn_start, G.foe_start = {}, {}
+    G.turn_start, G.foe_start, G.turn_open, G.end_owed = {}, {}, {}, {}
     world[P2] = { pos = { -1, 0, 0 }, comps = {} }
     osiv[key("IsCharacter", P2)] = 1
     osiv[key("IsOnStage", P2)] = 1
@@ -243,6 +243,48 @@ test("turn over (live window 2026-10-16): after TurnEnded the stale open-turn fl
     A.dispatch("TurnEnded", { P2 })
     clock = clock + G.TURN_OVER_TTL_MS + 1
     eq(G.is_my_turn(P2), true, "TTL")
+    restore()
+end)
+
+test("turn events in order (start, end, start, end ...) mark turns over exactly as before the pairing", function()
+    local restore = group_setup()
+    for _ = 1, 3 do
+        A.dispatch("TurnStarted", { P1 })
+        eq(G.is_my_turn(P1), true, "its turn after TurnStarted")
+        clock = clock + 5 -- an instant turn (a burst) ends the same way
+        A.dispatch("TurnEnded", { "S_Player_" .. P1 })
+        eq(G.turn_is_over(P1), true, "over after its TurnEnded")
+        eq(G.is_my_turn(P1), false, "not its turn")
+        clock = clock + 3000
+    end
+    A.dispatch("TurnEnded", { P2 }) -- an end with no start seen (a save loaded mid-turn): over, as before
+    eq(G.turn_is_over(P2), true, "P2 over")
+    -- a start whose earlier turn's end never came, the next end long after: that end is this turn's, as before
+    A.dispatch("TurnStarted", { P2 })
+    A.dispatch("TurnStarted", { P2 })
+    clock = clock + G.TURN_BURST_MS + 1
+    A.dispatch("TurnEnded", { P2 })
+    eq(G.turn_is_over(P2), true, "P2 over after an end 1 s on")
+    restore()
+end)
+
+test("live 2026-11-02: the next TurnStarted before the last turn's TurnEnded leaves the new turn open", function()
+    local restore = group_setup()
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("TurnStarted", { P2 })
+    G.end_requested[P1], G.end_requested[P2] = clock, clock -- both ended; the game closes the group and the round
+    clock = clock + 18000
+    A.dispatch("TurnStarted", { P1 }) -- the new round's starts first ...
+    A.dispatch("TurnStarted", { P2 })
+    clock = clock + 6
+    A.dispatch("TurnEnded", { P1 })   -- ... then the old round's ends, same ms burst
+    A.dispatch("TurnEnded", { P2 })
+    eq(G.turn_is_over(P1), false, "P1's new turn not over")
+    eq(G.end_pending(P1), false, "P1's old end gone")
+    eq(G.is_my_turn(P1), true, "P1's turn")
+    eq(G.is_my_turn(P2), true, "P2's turn")
+    A.dispatch("TurnEnded", { P1 }) -- this turn's own end, later
+    eq(G.turn_is_over(P1), true, "P1's own end marks it over")
     restore()
 end)
 

@@ -119,29 +119,28 @@ class JudgeTest(unittest.TestCase):
 
     def test_hostile(self):
         facts = {u: {"combat": "C1"} for u in A + B}
-        self.assertEqual(pj.judge_hostile(TEAMS, facts, matrix(), matrix())[0], "PASS")
-        v, why = pj.judge_hostile(TEAMS, {**facts, B[3]: {"combat": None}}, matrix(), matrix())
+        self.assertEqual(pj.judge_hostile(TEAMS, facts, matrix())[0], "PASS")
+        v, why = pj.judge_hostile(TEAMS, {**facts, B[3]: {"combat": None}}, matrix())
         self.assertEqual(v, "FAIL")
         self.assertIn("combat guids", why)
 
-    def test_hostile_fails_enemies_within_a_team_before_combat(self):
-        # the spike: a relation on the companions' parent made Shadowheart her own team's enemy before the fight
-        before = matrix() | {f"AA:{A[0]}>{A[1]}": 1, f"AA:{A[1]}>{A[0]}": 1}
-        v, why = pj.judge_hostile(TEAMS, {u: {"combat": "C1"} for u in A + B}, before, matrix())
+    def test_hostile_fails_enemies_within_a_team_in_combat(self):
+        # the spike: a relation on the companions' parent made Shadowheart her own team's enemy
+        inside = matrix() | {f"AA:{A[0]}>{A[1]}": 1, f"AA:{A[1]}>{A[0]}": 1}
+        v, why = pj.judge_hostile(TEAMS, {u: {"combat": "C1"} for u in A + B}, inside)
         self.assertEqual(v, "FAIL")
-        self.assertIn(f"before combat: IsEnemy within a team: 2/24 read of 24 (AA:{A[0]}>{A[1]}", why)
-        self.assertNotIn("in combat:", why)
+        self.assertIn(f"in combat: IsEnemy within a team: 2/24 read of 24 (AA:{A[0]}>{A[1]}", why)
 
     def test_hostile_fails_part_of_the_cross_pairs_or_a_missing_read(self):
         facts = {u: {"combat": "C1"} for u in A + B}
         some = matrix(enemy_across=0) | {f"AB:{A[0]}>{y}": 1 for y in B}  # only team A's leader an enemy of B
-        v, why = pj.judge_hostile(TEAMS, facts, matrix(), some)
+        v, why = pj.judge_hostile(TEAMS, facts, some)
         self.assertEqual(v, "FAIL")
         self.assertIn("in combat: IsEnemy across the teams: 4/32", why)
         one_way = {k: v for k, v in matrix().items() if not k.startswith("BA:")}
-        self.assertIn("IsEnemy across the teams: 16/32", pj.judge_hostile(TEAMS, facts, one_way, matrix())[1])
+        self.assertIn("IsEnemy across the teams: 16/32", pj.judge_hostile(TEAMS, facts, one_way)[1])
         short = {k: v for k, v in matrix().items() if not k.startswith("BB:")}
-        self.assertIn("within a team: 0/12 read of 24", pj.judge_hostile(TEAMS, facts, matrix(), short)[1])
+        self.assertIn("within a team: 0/12 read of 24", pj.judge_hostile(TEAMS, facts, short)[1])
 
     def test_stat_changes(self):
         before = {A[0]: {"name": "Minthara", "level": 4, "max_hp": 52}, A[1]: {"name": "Gale", "level": 2, "max_hp": 8}}
@@ -537,11 +536,48 @@ class StepsTest(unittest.TestCase):
         self.assertEqual([c[1] for c in ar.calls if c[0] == "SetFaction"], [[u, fa] for u in A] + [[u, fb] for u in B])
         self.assertEqual([c[1] for c in ar.calls if c[0] == "SetRelation"], [[fa, fb, 0], [fb, fa, 0]])
         self.assertIn(["SetHostileAndEnterCombat", [fa, fb, A[0], B[0]]], [list(c) for c in ar.calls])
-        self.assertEqual(sum("IsEnemy" in c for c in evs), 2)  # read before the combat call and after
+        self.assertEqual(sum("IsEnemy" in c for c in evs), 2)  # read before the combat call and once after (right)
+        self.assertEqual((rec["enemy_in_combat_reads"], rec["before_combat_info"]), (1, []))
         self.assertEqual(rec["verdict"], "PASS", rec["why"])
         self.assertEqual(rec["factions_before"][B[0]], "Companion4_c")
         saved = json.loads((self.tmp / "teams.json").read_text())
         self.assertEqual((saved["faction_a"], saved["faction_b"]), (fa, fb))
+
+    def hostile_over(self, reads: list[dict[str, int]]) -> dict[str, Any]:
+        """q3 with the IsEnemy matrix read in this order (the last read repeats)."""
+        facts = {u: {**standing(u, 0.0), "faction": f"Companion{i}_c", "combat": "C1"} for i, u in enumerate(A + B)}
+        ar = FakeArena(self.tmp, facts, [])
+        base_ev, left = ar.ev, list(reads)
+
+        def ev(code: str, timeout: float = 30.0) -> Any:
+            if "P.factions(" in code:
+                return SPIKE_FACTIONS
+            if "IsEnemy" in code:
+                return left.pop(0) if len(left) > 1 else left[0]
+            return base_ev(code, timeout)
+
+        ar.ev = ev  # type: ignore[method-assign]
+        return ar.hostile("auto")
+
+    def test_hostile_before_combat_is_informational_live_load1(self):
+        # live 2026-11-02 load1: B->A 0/16 before the combat call, 16/16 in combat
+        one_way = matrix() | {f"BA:{y}>{x}": 0 for x in A for y in B}
+        rec = self.hostile_over([one_way, matrix()])
+        self.assertEqual(rec["verdict"], "PASS", rec["why"])
+        self.assertEqual(rec["before_combat_info"], ["IsEnemy across the teams: 16/32"])
+
+    def test_hostile_reads_the_matrix_again_until_right_within_3_s(self):
+        one_way = matrix() | {f"BA:{y}>{x}": 0 for x in A for y in B}
+        rec = self.hostile_over([matrix(), one_way, one_way, matrix()])
+        self.assertEqual(rec["verdict"], "PASS", rec["why"])
+        self.assertEqual(rec["enemy_in_combat_reads"], 3)
+
+    def test_hostile_fails_when_the_matrix_is_still_wrong_after_3_s(self):
+        one_way = matrix() | {f"BA:{y}>{x}": 0 for x in A for y in B}
+        rec = self.hostile_over([matrix(), one_way])
+        self.assertEqual(rec["verdict"], "FAIL")
+        self.assertIn("in combat: IsEnemy across the teams: 16/32", rec["why"])
+        self.assertGreaterEqual(rec["enemy_in_combat_wait_s"], pa.ENEMY_WAIT_S)
 
     def test_enemy_matrix_reads_both_directions_across_and_within(self):
         sent: list[str] = []

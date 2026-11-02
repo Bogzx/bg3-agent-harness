@@ -20,7 +20,7 @@ BG3AI_SCENARIO_SETUP=1 (setup's scn.seed; nothing else in the environment):
     $P sides                                     # q9: the mod's arena begun: the client gets the teams (needs
                                                  #     BG3AI_ARENA=1 in the game's environment), loses them on reset
     $P hostile [--factions auto|<A>,<B>]         # q3: a spare faction per team (Name_guid each), hostile both
-                                                 #     ways; IsEnemy before and in combat; one combat
+                                                 #     ways; IsEnemy in combat (polled up to 3 s); one combat
     $P turns [--turns 10 --idle-s 8 --down-at 4] # q3: who starts each turn, does the game act for anyone
     $P act                                       # q4: move + attack + end turn for one member of each side
     $P tie [--no-force]                          # q5: an initiative tie across teams (seen, else forced): one turn?
@@ -53,6 +53,7 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = REPO / "runtime" / "probes" / "arena-s0"
+ENEMY_WAIT_S = 3.0  # q3: how long the IsEnemy matrix is read again after the combat starts until it is right
 HOSTILE = 0  # Osiris relation values: 0 hostile, 50 neutral, 100 allied (DOS2's convention; the probe reads them back)
 LINE_GAP_M = 1.5  # members of a side stand this far apart on a line through their spot
 TURN_WAIT_S = 25.0  # after an end_turn: the next TurnStarted within this
@@ -102,6 +103,7 @@ from probe_arena_judges import (  # noqa: E402  (tools/dev on the path)
     SETTLE_S,
     SIDES,
     dist,
+    enemy_counts,
     judge_act,
     judge_ai,
     judge_conns,
@@ -424,6 +426,17 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
         )
         return self.ev(code + "return P.js(o)") or {}
 
+    def enemy_settled(self, teams: dict[str, Any]) -> tuple[dict[str, Any], int, float]:
+        """The IsEnemy matrix read every 0.5 s until it is right (every pair across the teams, none within) or
+        ENEMY_WAIT_S has passed: the last read, the number of reads, the seconds waited."""
+        t0, n = self.clock(), 0
+        while True:
+            enemy, n = self.enemy_matrix(teams), n + 1
+            waited = self.clock() - t0
+            if not enemy_counts(teams, enemy) or waited >= ENEMY_WAIT_S:
+                return enemy, n, round(waited, 1)
+            self.sleep(0.5)
+
     def hostile(self, factions: str) -> dict[str, Any]:
         teams = self.teams()
         allu = teams["A"] + teams["B"]
@@ -468,8 +481,8 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
                 calls.append(self.call("EnterCombat", [x, y]))
             self.sleep(3.0)
         after = self.facts(allu)
-        enemy_after = self.enemy_matrix(teams)
-        verdict, why = judge_hostile(teams, after, enemy, enemy_after)
+        enemy_after, reads, waited = self.enemy_settled(teams)
+        verdict, why = judge_hostile(teams, after, enemy_after)
         teams.update(faction_a=fa, faction_b=fb)
         (self.out / "teams.json").write_text(json.dumps(teams, indent=1) + "\n")
         rec = {
@@ -481,7 +494,10 @@ return P.js({ max_party = P.q("GetMaxPartySize"), host = P.uuid(Osi.GetHostChara
             "factions_before": {u: before[u].get("faction") for u in allu},
             "calls": calls,
             "enemy_before_combat": enemy,
+            "before_combat_info": enemy_counts(teams, enemy),
             "enemy_in_combat": enemy_after,
+            "enemy_in_combat_reads": reads,
+            "enemy_in_combat_wait_s": waited,
             "before": before,
             "after_first_call": mid,
             "after": after,
@@ -857,8 +873,8 @@ PLAN = {
     "sides": "server BG3AI.Arena.begin(teams); client BG3AI.Arena.state (Ext.Net); server BG3AI.Arena.reset(); "
     "client again",
     "hostile": "two spare Hero Player<N> factions F_A, F_B; SetFaction(team A, F_A), SetFaction(team B, F_B); "
-    "SetRelation both ways 0; IsEnemy matrix; SetHostileAndEnterCombat(F_A, F_B, a1, b1), else EnterCombat pairs; "
-    "IsEnemy matrix again; turn order",
+    "SetRelation both ways 0; IsEnemy matrix (informational); SetHostileAndEnterCombat(F_A, F_B, a1, b1), else "
+    "EnterCombat pairs; IsEnemy matrix every 0.5 s until right, up to 3 s (the verdict); turn order",
     "turns": "per open turn: idle --idle-s (did the game act?), act.end_turn; one member downed at --down-at",
     "act": "Arena.begin unless active; per side: drive to its phase (the mod's view), act.move_to {target: nearest "
     "enemy}, act.cast attack, act.end_turn for each of the phase's open members one at a time; resources before/after",
