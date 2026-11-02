@@ -32,6 +32,7 @@
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
 local V = BG3AI.Visibility
+local U = BG3AI.Util
 local Ar = BG3AI.Arena
 
 local M = {}
@@ -49,8 +50,10 @@ M.NAME_WAIT_MS = 5000
 -- "a moment later"; names by the next tick, 10 ms). Not measured beyond that: the same later-tick bound as items.
 M.READY_WAIT_MS = 5000
 M.NULL = "00000000-0000-0000-0000-000000000000"
+-- kind -> the game's resource and its list field (bg3se GuidResources.h: SkillList.Skills Array<SkillId>,
+-- PassiveList.Passives Array<FixedString>, SpellList.Spells HashSet<FixedString>: set = asked per id, never walked)
 M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skills" },
-    passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells" } }
+    passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells", set = true } }
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -134,19 +137,36 @@ function M.spawn(args)
     return { twins = made, reads = reads, calls = calls, template_stats = read(function() return tpl.Stats end) }
 end
 
--- The game's list for a choice, as a set of its ids' text; error when it doesn't read. The list field is the
--- extender's array userdata (live check 13c: SkillList.Skills and PassiveList.Passives are userdata, ipairs gives the
--- ids, tostring their names), not a Lua table.
-local function listSet(kind, list)
+-- The game's list for a choice as a membership test: fn(id) -> bool; error, naming the list, when it can't be checked
+-- (fail closed). An array field (live check 13c: userdata, its elements the ids, tostring their names) is walked
+-- 1..# (U.items) and every element must read; a set field (SpellList.Spells) is asked per id: Spells[id] is true or
+-- false (bg3se LuaSetProxy.inl Index = HasElement; live check 13d: walking it read false at every index, forever).
+local function listHas(kind, list)
     local what = M.LISTS[kind]
     if not what then error("a choice of kind " .. tostring(kind) .. " (skills, expertise, passives or spells)", 0) end
-    local set = read(function()
-        local out = {}
-        for _, id in ipairs(Ext.StaticData.Get(list, what[1])[what[2]]) do out[tostring(id)] = true end
-        return out
-    end)
-    if not set then error(("the game's %s %s doesn't read"):format(what[1], tostring(list)), 0) end
-    return set
+    local where = ("the game's %s %s"):format(what[1], tostring(list))
+    local field = read(function() return Ext.StaticData.Get(list, what[1])[what[2]] end)
+    if not field then error(where .. " doesn't read", 0) end
+    if what.set then
+        return function(id)
+            local v = read(function() return field[id] end)
+            if type(v) ~= "boolean" then
+                error(("%s can't be checked: %s reads %s"):format(where, tostring(id), tostring(v)), 0)
+            end
+            return v
+        end
+    end
+    local ok, items, n = pcall(U.items, field)
+    if not ok then error(where .. " doesn't read: " .. tostring(items), 0) end
+    local set = {}
+    for k = 1, n do
+        local id = items[k]
+        if id == nil or id == false then
+            error(("%s can't be checked: element %d of %d reads %s"):format(where, k, n, tostring(id)), 0)
+        end
+        set[tostring(id)] = true
+    end
+    return function(id) return set[tostring(id)] == true end
 end
 
 local function checkChoice(c, i)
@@ -156,11 +176,11 @@ local function checkChoice(c, i)
     if (c.exact and #ids ~= n) or (not c.exact and (#ids < 1 or #ids > n)) then
         error(("%s: %d picked, the game's selector takes %s%d"):format(where, #ids, c.exact and "" or "1..", n), 0)
     end
-    local set, seen = listSet(c.kind, c.list), {}
+    local has, seen = listHas(c.kind, c.list), {}
     for _, id in ipairs(ids) do
         if seen[id] then error(where .. ": " .. tostring(id) .. " picked twice", 0) end
         seen[id] = true
-        if not set[tostring(id)] then
+        if not has(id) then
             error(("%s: %s is not in the game's list %s"):format(where, tostring(id), tostring(c.list)), 0)
         end
     end

@@ -59,7 +59,7 @@ KITS: dict[str, dict[str, Any]] = {
         "race": "HalfElf",
         "skills": ["Survival", "Perception", "Stealth"],
         "ability_bonus": ["Dexterity", "Wisdom"],
-        "passives": [["FavouredEnemy_BountyHunter"], ["NaturalExplorer_Beastmaster"], ["FightingStyle_Archery"]],
+        "passives": [["FavoredEnemy_BountyHunter"], ["NaturalExplorer_BeastTamer"], ["FightingStyle_Archery"]],
         "spells": [["Target_HuntersMark", "Target_CureWounds"]],
         "items": [
             "WPN_Shortbow",
@@ -212,8 +212,8 @@ class KitTest(unittest.TestCase):
         self.assertEqual(
             [(c["kind"], c["n"], c["ids"]) for c in ch if c["kind"] != "skills"],
             [
-                ("passives", 1, ["FavouredEnemy_BountyHunter"]),
-                ("passives", 1, ["NaturalExplorer_Beastmaster"]),
+                ("passives", 1, ["FavoredEnemy_BountyHunter"]),
+                ("passives", 1, ["NaturalExplorer_BeastTamer"]),
                 ("spells", 2, ["Target_HuntersMark", "Target_CureWounds"]),
                 ("passives", 1, ["FightingStyle_Archery"]),
             ],

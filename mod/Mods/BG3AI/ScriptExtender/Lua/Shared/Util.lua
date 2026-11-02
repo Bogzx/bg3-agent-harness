@@ -42,6 +42,19 @@ function U.comp(entity, name)
     return nil
 end
 
+-- An extender array's elements 1..#a as a Lua list (a Lua list's too), the walk bounded by its length: never an
+-- open-ended ipairs over extender userdata. A set's index is membership (bg3se LuaSetProxy.inl: every integer reads
+-- false), so ipairs over one never ends: live check 13d, SpellList.Spells hung the server. Errors when the length
+-- doesn't read or passes `cap` (U.ITEMS_CAP).
+U.ITEMS_CAP = 100000
+function U.items(a, cap)
+    local n = #a
+    if type(n) ~= "number" or n < 0 or n > (cap or U.ITEMS_CAP) then error("a list of length " .. tostring(n), 0) end
+    local out = {}
+    for k = 1, n do out[k] = a[k] end
+    return out, n
+end
+
 -- Load a module by path relative to the Lua/ folder; a missing or broken
 -- module is reported but doesn't stop the rest of the mod from loading.
 function U.require(path)
