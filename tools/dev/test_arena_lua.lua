@@ -77,7 +77,7 @@ local function entity(u, bare)
         end
         groups[#groups + 1] = { Members = members }
     end
-    e.CombatParticipant = { CombatHandle = { TurnOrder = { CurrentGroups = groups, Round = 1 } } }
+    e.CombatParticipant = { CombatHandle = { TurnOrder = { CurrentGroups = groups, Round = engineRound } } }
     return e
 end
 
@@ -173,6 +173,7 @@ function reset()
     clock = clock + 100000
     env = { BG3AI_ARENA = "1" }
     osiv, net, order = {}, {}, {}
+    engineRound = 1 -- the combat's TurnOrder.Round
     partyRows = { A1, A2, B1, B2, SA }
     world = {
         [A1] = { pos = { 0, 0, 0 }, comps = { ServerCharacter = {}, Health = { Hp = 10, MaxHp = 20 } } },

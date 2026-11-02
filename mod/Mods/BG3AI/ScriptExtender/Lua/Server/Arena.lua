@@ -284,7 +284,7 @@ function Ar.turn_started(char)
     local st = Ar.state
     if not Ar.member_side(u) then Ar.team(s) end -- a summon's turn: its name reaches the client
     arenaCombat(osi(Osi.CombatGetGuidFor, u))
-    if (st.round or 0) < 1 then st.round = 1 end -- a turn before the first CombatRoundStarted is round 1's
+    st.round = st.round or 1 -- a turn before the match's first round is known is round 1's
     st.turn = { side = s, uuid = u, round = st.round }
     Ar.check_end()
 end
@@ -306,7 +306,7 @@ function Ar.phase_check()
     st.phaseAt = t
     local p = Ar.phase()
     if not p then return end
-    local round = math.max(st.round or 0, 1)
+    local round = st.round or 1
     local last = st.phase
     if last and last.round == round and last.group == p.group and last.side == p.side then return end
     local n = (last and last.round == round and last.group == p.group) and last.phase + 1 or 1
@@ -368,7 +368,18 @@ if not Ar.listening then
     end)
 end
 
--- Begin a match with these teams ({A = {uuid x4}, B = {uuid x4}}): the setup op calls it once the teams stand. The
+-- The round of the combat u is in now: CombatRoundStarted's (G.round_of), else the engine's turn order; nil out of
+-- combat.
+local function roundNow(u)
+    local r = BG3AI.Guard.round_of(u)
+    if r then return r end
+    local ok, v = pcall(function() return V.entity(u).CombatParticipant.CombatHandle.TurnOrder.Round end)
+    return ok and tonumber(v) or nil
+end
+
+-- Begin a match with these teams ({A = {uuids}, B = {uuids}}): the setup op calls it once the teams stand, in
+-- combat. The match's round starts as that combat's (live 2026-11-02: setup's combat call fires round 1's
+-- CombatRoundStarted and first TurnStarted before this), then follows CombatRoundStarted; nil until known. The
 -- client gets the team uuids and display names. opts.round_cap: the rounds a match lasts at most (a draw after).
 function Ar.begin(teams, opts)
     if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
@@ -383,8 +394,9 @@ function Ar.begin(teams, opts)
         if #t[s] == 0 then error("team " .. s .. " is empty", 0) end
     end
     RPC.clear_sides()
-    Ar.state = { teams = t, names = names, round = 0, started = now_ms(),
-        round_cap = opts and tonumber(opts.round_cap) or nil }
+    local combat = osi(Osi.CombatGetGuidFor, t.A[1])
+    Ar.state = { teams = t, names = names, combat = combat, round = combat and roundNow(t.A[1]) or nil,
+        started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil }
     broadcast({ teams = t, names = names })
     record("arena_start", { teams = t })
     return Ar.status()
@@ -393,9 +405,10 @@ end
 function Ar.status()
     local st = Ar.state
     if not st then return { active = false, teams = nil, turn = nil, hp = nil, ended = nil } end
-    -- hp: each team's summed current HP over its summed max (the true values: harness only)
-    return { active = Ar.active(), teams = st.teams, turn = st.turn, hp = { A = hpLeft("A"), B = hpLeft("B") },
-        ended = st.ended }
+    -- hp: each team's summed current HP over its summed max (the true values: harness only); round: the match's
+    -- (nil before its combat)
+    return { active = Ar.active(), teams = st.teams, round = st.round, turn = st.turn,
+        hp = { A = hpLeft("A"), B = hpLeft("B") }, ended = st.ended }
 end
 
 function Ar.reset()
