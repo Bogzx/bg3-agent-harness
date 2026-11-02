@@ -20,6 +20,7 @@ for _, path in ipairs({
     "Server/Scenario.lua", -- harness only, refused without BG3AI_SCENARIO_SETUP=1 (B-mod)
     "Server/Arena.lua", -- harness only, refused without BG3AI_ARENA=1; inert until an arena begins
     "Server/ArenaSetup.lua", -- harness only: arena.setup (same switch)
+    "Server/ArenaSymmetry.lua", -- harness only: arena.symmetry (same switch)
 }) do
     U.require(path)
 end
