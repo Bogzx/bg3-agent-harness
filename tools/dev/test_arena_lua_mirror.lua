@@ -63,14 +63,21 @@ local function game(opts)
     for _, n in ipairs({ "MakePlayer", "AddBoosts", "AddPassive", "AddSpell", "Equip" }) do
         stub(n, function(...) calls[#calls + 1] = { n, ... } end)
     end
+    local landing = {}
     stub("SetStoryDisplayName", function(u, name)
         calls[#calls + 1] = { "SetStoryDisplayName", u, name }
         if opts.shared_name then -- as scn.rename did live: one handle for every copy of the template
             for _, c in ipairs(created) do NAMES[c] = name end
+        elseif opts.name_lag_ms then -- live check 13: the name lands after the call
+            landing[#landing + 1] = { u = u, name = name, at = clock + opts.name_lag_ms }
         else
             NAMES[u] = name
         end
     end)
+    saved.ticker = function()
+        for _, l in ipairs(landing) do if clock >= l.at then NAMES[l.u] = l.name end end
+    end
+    tickers[#tickers + 1] = saved.ticker
     stub("TemplateAddTo", function(root, u, n, show)
         calls[#calls + 1] = { "TemplateAddTo", root, u, n, show }
         if not opts.items_never_arrive then inv[u .. root] = u .. "-item-" .. root end
@@ -82,8 +89,9 @@ local function restore()
     for _, j in pairs(RPC.jobs) do
         if j.kind == "arena.mirror_kit" and j.status == "running" then j.status = "interrupted" end
     end
+    for i = #tickers, 1, -1 do if tickers[i] == saved.ticker then table.remove(tickers, i) end end
     for name, v in pairs(saved) do
-        if name ~= "ext" then rawset(Osi, name, v or nil) end
+        if name ~= "ext" and name ~= "ticker" then rawset(Osi, name, v or nil) end
     end
     Ext.Stats, Ext.StaticData.Get, Ext.Template = saved.ext[1], saved.ext[2], saved.ext[3]
     NAMES[T1], NAMES[T2], NAMES[T3], NAMES[T4] = nil, nil, nil, nil
@@ -184,10 +192,16 @@ test("mirror_spawn refusals: no entry, another race, one name twice; a failing C
         game({ stats_id = "HeroHalfElfFemale" })
         stats.BG3AI_Arena_Fighter_L1 = {}
         refused(function() Ar.Mirror.spawn(spawnArgs()) end, T1 .. " has stats HeroHalfElfFemale")
+    end))
+
+test("mirror_spawn: a name that hasn't landed yet is no refusal; reads.name is what the copy reads at the call",
+    guarded(function()
         restore()
-        game({ shared_name = true }) -- each name read after both are set: the first copy now reads "Birch"
+        game({ name_lag_ms = 3000 })
         stats.BG3AI_Arena_Fighter_L1 = {}
-        refused(function() Ar.Mirror.spawn(spawnArgs()) end, T1 .. " is named Birch")
+        local r = Ar.Mirror.spawn(spawnArgs())
+        eq(enc(r.twins), enc({ T1, T2 }), "twins")
+        eq(r.reads[1].name == "Ash", false, "Ash not read yet")
     end))
 
 test("mirror_kit: the same calls on both twins in the kit's order, then each item added, waited for and equipped",
@@ -325,6 +339,26 @@ test("a mirror setup fails on a twin that doesn't read its own name, or on any s
     if not ok then error(got, 0) end
     j = got
     eq(tostring(j.error):find("Ash (" .. T1 .. ") reads Alder", 1, true) ~= nil, true, tostring(j.error))
+end))
+
+-- Live check 13: setup failed in 0.58 s, both Fighters reading the template's name; a minute later each read its own.
+test("a mirror setup waits for the names to land: 3 s after the renames it goes on", guarded(function()
+    restore()
+    game({ name_lag_ms = 3000 })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.step, 1, "at the party step: " .. tostring(j.error))
+    eq(enc({ NAMES[T1], NAMES[T2], NAMES[T3], NAMES[T4] }), enc({ "Ash", "Birch", "Alder", "Bramble" }), "names")
+end))
+
+test("a name that never lands fails setup at NAME_WAIT_MS, naming the copy and what it reads", guarded(function()
+    restore()
+    game({ shared_name = true }) -- one handle for every copy: each reads the last name, Bramble
+    local from = clock
+    local j = mirrorSetup(mirrorArena())
+    eq(j.status, "failed", "failed")
+    local waited = clock - from
+    eq(waited >= Ar.Mirror.NAME_WAIT_MS and waited <= Ar.Mirror.NAME_WAIT_MS + 1000, true, "failed at " .. waited)
+    eq(tostring(j.error):find("Ash (" .. T1 .. ") reads Bramble", 1, true) ~= nil, true, tostring(j.error))
 end))
 
 test("mirror arena refusals: a pair short of a field, one name twice, teams that name other twins", guarded(function()

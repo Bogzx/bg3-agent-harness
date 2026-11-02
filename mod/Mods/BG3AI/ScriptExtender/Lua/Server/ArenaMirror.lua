@@ -6,8 +6,10 @@
 --   not `race`. Each copy is made a player (MakePlayer, the host's party XP: live, a copy then reads the host's level)
 --   and named with SetStoryDisplayName: the copies of one template share their display-name handle, so scn.rename
 --   (Ext.Loca on that handle) would rename both (live check 12 step 8: every copy of the template showed the last
---   name). Fails when a copy's StatsId or name doesn't read back as asked once both are named (its uuid in the error:
---   the copies stay in the world). -> {twins = [u1, u2], reads}
+--   name; live check 13: each copy gets its own handle). The name lands after the call, not in its tick (live check
+--   13: the copies still read the template's name in the call, their own a minute later): reads.name is what the copy
+--   reads at the call, and arena.setup waits for the names (NAME_WAIT_MS). Fails when a copy's StatsId doesn't read
+--   back as asked (its uuid in the error: the copies stay in the world). -> {twins = [u1, u2], reads}
 -- arena.mirror_kit {twins = [u1, u2], race, kit} (a job): the same level-1 choices on both twins, in the same order,
 --   by the game's own calls. kit (make_arena_save.py builds it from the spec's kit and the game data):
 --     race = {boosts, passives}: the race table's level-1 fixed parts (the game applies none to a spawned copy; its
@@ -34,6 +36,11 @@ M.SOURCE = "BG3AI_ArenaKit" -- AddBoosts' source id
 M.ITEM_WAIT_MS = 5000       -- an added item shows in the inventory within this (else the job fails)
 M.TIMEOUT_MS = 60000
 M.KIT_EVERY_MS = 250        -- arena.setup reads a mirror's kit jobs this often
+-- arena.setup waits this long after the renames for every twin to read its own name. The lag is not measured (live
+-- check 13: not in the call's tick, there a minute later); a SetStoryDisplayName lands like an added item, on a later
+-- tick, so the item bound (ITEM_WAIT_MS) is the bound here too, and the kits run meanwhile. A name still wrong at the
+-- limit fails setup naming the copy and what it reads.
+M.NAME_WAIT_MS = 5000
 M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skills" },
     passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells" } }
 
@@ -116,7 +123,6 @@ function M.spawn(args)
         reads[i] = { uuid = u, stats = read(function() return e.Data.StatsId end), name = V.name(u),
             level = read(function() return e.EocLevel.Level end) }
         if reads[i].stats ~= stats then bad[#bad + 1] = ("%s has stats %s"):format(u, tostring(reads[i].stats)) end
-        if reads[i].name ~= names[i] then bad[#bad + 1] = ("%s is named %s"):format(u, tostring(reads[i].name)) end
     end
     if #bad > 0 then error("the twins don't read as asked: " .. table.concat(bad, "; "), 0) end
     return { twins = made, reads = reads, calls = calls, template_stats = read(function() return tpl.Stats end) }

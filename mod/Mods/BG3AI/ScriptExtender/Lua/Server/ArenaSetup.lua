@@ -9,9 +9,9 @@
 --   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
 --      entries' grants nor the kit's boosts: live check 12 step 13): each pair arena.mirror_spawn + arena.mirror_kit
---      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name (all copies of a template
---      share one display-name handle) and arena.symmetry over the pairs must find nothing; pair i is teams.A[i] and
---      teams.B[i] (arena.teams, if given, must name them in that order)
+--      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name within NAME_WAIT_MS of
+--      the renames (a name lands after its call) and arena.symmetry over the pairs must find nothing; pair i is
+--      teams.A[i] and teams.B[i] (arena.teams, if given, must name them in that order)
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
 --   2. place: the names checked; every member and sitter detached, each team chained to its first member and
 --      teleported to a line through its spawn (the sitters stay where they are, SetCanJoinCombat 0: read back 0)
@@ -365,10 +365,11 @@ STEPS[-1] = function(job)
         end
         job.kits[i] = M.kit({ twins = { r.twins[1], r.twins[2] }, race = p.race, kit = p.kit }).job
     end
-    return Ar.Mirror.KIT_EVERY_MS
+    job.names_by = now_ms() + M.NAME_WAIT_MS -- the names land after the renames (live check 13)
+    return M.KIT_EVERY_MS
 end
 
-STEPS[0] = function(job) -- the kits done, then the twins as they must be
+STEPS[0] = function(job) -- the kits done and the names landed, then the twins as they must be
     for i, id in ipairs(job.kits) do
         local k = RPC.jobs[id]
         if k.status == "running" then
@@ -386,7 +387,14 @@ STEPS[0] = function(job) -- the kits done, then the twins as they must be
             end
         end
     end
-    if #off > 0 then error("twins that don't read their own name: " .. table.concat(off, "; "), 0) end
+    if #off > 0 then
+        if now_ms() < job.names_by then
+            job.step = job.step - 1 -- wait again
+            return Ar.Mirror.KIT_EVERY_MS
+        end
+        error(("twins that don't read their own name %d ms after the renames: %s"):format(Ar.Mirror.NAME_WAIT_MS,
+            table.concat(off, "; ")), 0)
+    end
     local sym = Ar.Symmetry.check(pairs)
     if not sym.ok then error("the twins are not mirrors: " .. table.concat(sym.problems, "; "), 0) end
     return 0
