@@ -227,17 +227,25 @@ local function hpLeft(side)
     return max > 0 and U.round(hp / max, 3) or 0
 end
 
--- Every member of the side downed or dead.
+-- Why a member can't act: dead; downed (the game's DOWNED status: its turn is the death saving throw, nothing to
+-- decide); else at 0 HP without either ("zero_hp"); else nil. Live 2026-11-02 (live 10, m1 a2): Lae'zel, downed
+-- mid-move, got DownedChanged down then up again at once with her HP still 0; from then on she had no DOWNED status,
+-- the game rolled no death saving throw for her and kept her turn open as if she could act (round 2: 4 min until the
+-- runner's cap ended it; round 3: 300 s to the stall fault).
+local function cantAct(u)
+    if truthy(osi(Osi.IsDead, u)) then return "dead" end
+    if truthy(osi(Osi.HasActiveStatus, u, "DOWNED")) then return "downed" end
+    local e = V.entity(u)
+    local h = e and U.comp(e, "Health")
+    local ok, hp = pcall(function() return h.Hp end)
+    if ok and hp == 0 then return "zero_hp" end
+    return nil
+end
+
+-- Every member of the side out of the fight (cantAct).
 function Ar.wiped(side)
     for _, u in ipairs(Ar.state.teams[side]) do
-        local dead = truthy(osi(Osi.IsDead, u))
-        local downed = truthy(osi(Osi.HasActiveStatus, u, "DOWNED"))
-        if not dead and not downed then
-            local e = V.entity(u)
-            local h = e and U.comp(e, "Health")
-            local ok, hp = pcall(function() return h.Hp end)
-            if not (ok and hp == 0) then return false end
-        end
+        if not cantAct(u) then return false end
     end
     return true
 end
@@ -309,14 +317,6 @@ end
 -- checks is not seen.
 Ar.PHASE_EVERY_MS = 250
 
--- Why a member can't act: dead or downed (a downed member's turn is the game's death saving throw, nothing to
--- decide), else nil.
-local function cantAct(u)
-    if truthy(osi(Osi.IsDead, u)) then return "dead" end
-    if truthy(osi(Osi.HasActiveStatus, u, "DOWNED")) then return "downed" end
-    return nil
-end
-
 -- The acting phase's members who can't act get their turn ended by the mod, one arena_turn_passed record each, so
 -- the phase closes and the next one starts. Live 2026-11-02 (live 7 rerun 3): round 2's phase 1 was A [Gale], downed
 -- in round 1; the game kept her turn open (no EndTurn of its own) and her phase held the rest of the group: 29.5
@@ -353,7 +353,8 @@ local function passCantAct(p, round)
     end
     local st = Ar.state
     if n == #p.members and not samePhase(st, round, p) then
-        st.phase = { round = round, group = p.group, side = p.side, phase = nextPhase(st, round, p) }
+        st.phase = { round = round, group = p.group, side = p.side, phase = nextPhase(st, round, p),
+            character = p.character, members = p.members }
     end
     return passed
 end
@@ -378,7 +379,8 @@ function Ar.phase_check()
     if not p or st.ended then return end
     if samePhase(st, round, p) then return end
     local n = nextPhase(st, round, p)
-    st.phase = { round = round, group = p.group, side = p.side, phase = n }
+    st.phase = { round = round, group = p.group, side = p.side, phase = n, character = p.character,
+        members = p.members }
     Ar.check_end()
     if st.ended then return end
     local names = {}
@@ -486,8 +488,13 @@ function Ar.status()
     local st = Ar.state
     if not st then return { active = false, teams = nil, turn = nil, hp = nil, ended = nil } end
     -- hp: each team's summed current HP over its summed max (the true values: harness only); round: the match's
-    -- (nil before its combat)
-    return { active = Ar.active(), teams = st.teams, round = st.round, turn = st.turn,
+    -- (nil before its combat); turn: the last phase recorded {side, uuid (its first member), members, round, phase},
+    -- nil before the first. Not the last TurnStarted: a shared group's burst ends on its last member, whichever side
+    -- (live 10 m1 a2: the turn read Wyll, B, while A's Lae'zel phase held the group).
+    local ph = st.phase
+    local turn = ph and { side = ph.side, uuid = ph.character, members = ph.members, round = ph.round,
+        phase = ph.phase } or nil
+    return { active = Ar.active(), teams = st.teams, round = st.round, turn = turn,
         hp = { A = hpLeft("A"), B = hpLeft("B") }, ended = st.ended }
 end
 

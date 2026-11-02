@@ -453,3 +453,49 @@ test("the rest of a recorded phase passed: still that phase, the next one takes 
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end
 end)
+
+-- Live 2026-11-02 (live 10, m1 a2, round 3 group Astarion, Gale, Karlach, Lae'zel, Minthara, Wyll): Lae'zel at 0 HP
+-- with no DOWNED status (downed and "revived" at once, mid-move) held her phase: the game kept her turn open, rolled
+-- no death saving throw, and nobody ended it until the stall fault.
+test("a member at 0 HP without DOWNED: its turn is passed as zero_hp and the next phase starts", function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 3)
+        order = { { A1, B1, A2, B2 } }
+        openAll({ A1, B1, A2, B2 })
+        burst({ A1, B1, A2, B2 })
+        tick() -- A [A1]
+        setTurn(A1, true, true)
+        setTurn(B1, true, true)
+        world[A2].comps.Health.Hp = 0 -- no DOWNED, not dead
+        tick()
+        eq(table.concat(ended, ","), A2, "EndTurn for A2")
+        local p = refs("arena_turn_passed")
+        eq(enc({ #p, p[1] and p[1].character, p[1] and p[1].why, p[1] and p[1].round }), enc({ 1, A2, "zero_hp", 3 }),
+            "A2's pass")
+        local r = refs("arena_turn")
+        eq(enc({ r[#r].side, members(r[#r]) }), enc({ "B", B2 }), "B2's phase comes")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
+
+-- Live 10 m1 a2 at the stall: arena.status's turn read Wyll (B), the group's last TurnStarted, while the phase was
+-- A's Lae'zel.
+test("arena.status's turn is the recorded phase, not the burst's last TurnStarted", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 3)
+    eq(rpc("arena.status").result.turn, nil, "no phase yet")
+    order = { { A1, B1, A2, B2 } }
+    openAll({ A1, B1, A2, B2 })
+    burst({ A1, B1, A2, B2 })
+    tick() -- A [A1]
+    local t = rpc("arena.status").result.turn
+    eq(enc({ t.side, t.uuid, enc(t.members), t.round, t.phase }), enc({ "A", A1, enc({ A1 }), 3, 1 }), "A1's phase")
+    setTurn(A1, true, true)
+    tick()
+    t = rpc("arena.status").result.turn
+    eq(enc({ t.side, t.uuid, t.phase }), enc({ "B", B1, 2 }), "B1's phase")
+end)
