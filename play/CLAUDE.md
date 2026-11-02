@@ -28,23 +28,22 @@ Nobody will answer questions while you play: decide yourself.
   marker, objective or waypoint, as chained walks) returns at once with the trip as the first entry of the
   character's queue. A `job_finished`/`queue_done` event in a later result says it arrived. A fast failure (no path,
   a hazard ahead) still comes back in the first result. Out of combat the server ignores `wait=true` on walks and
-  says so.
+  says so. In combat a walk returns when it is over.
 - **`wait_for`** blocks until its target: `my_turn`, `idle`, a job (`j12`), `queue`, or an event kind. It returns
   early on a prompt. `wait()` passes game time.
 - **`queue_actions`** runs steps back to back with no round trip per step: walk → open → loot → walk on. Another
   `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
   stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view, low HP, or a failed step;
   the `queue_interrupted` event says why and what was left. `cancel_queue` stops it. Any direct action for the same
-  character replaces the queue's current step.
+  character replaces the queue's current step. In combat `queue_actions` queues nothing.
 - **`do_actions`** is the blocking form: a short chain of steps in one call. Steps can carry `"if"`/`"unless"`
   conditions (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`, `my_turn`, `in_dialogue`). The
-  result ends with `CHANGES` (what moved, HP, items, who appeared).
-- **`combat_turn`** plays a whole combat turn in one call: move, action, bonus action, extra attacks, `end_turn`.
-  Each slot lists fallbacks (melee → ranged → Dash → Disengage), and every step is re-checked (still that
-  character's turn, target still visible and alive). It returns right after ending the turn with who acts next; its
-  result ends with `NOW <who>'s turn: plan it; also <b>, <c>`, and one call takes a list of plans:
-  `[{"who":"Karlach","plan":{…}},{"who":"Gale","plan":{…}}]`. A combat move that ends out of reach says
-  `stopped short of ≤Nm: <why>`.
+  result ends with `CHANGES` (what moved, HP, items, who appeared). In combat `do_actions` runs no steps.
+- **In combat each call is one action**: `use_ability`, `move_to`, `walk_toward`, `jump_to` or `react`. It returns
+  when the action is over, with the character's resources left (`after={…}`) and `CHANGES` (HP, deaths, moves,
+  statuses). `end_turn` ends a member's turn and waits through the other combatants' turns until a party member can
+  act; its result names who acts now, with that member's actions (`YOUR ACTIONS`) and the other combatants' turns
+  in EVENTS. `wait_for("my_turn")` returns with them too.
 - **Macros** do a chore in one call and stop at the first interrupt: `loot_area` (visible bodies and unlocked
   containers nearby), `dialogue_advance` (filler lines only; it stops at every real choice), `travel_to`, `regroup`,
   `read_all` (new books and notes in your bags, with their text), and `rest_if_needed`.
@@ -112,7 +111,7 @@ models.
 ## Tool names in Claude Code
 **The real names of the game tools are `mcp__bg3__<name>`** (`mcp__bg3__get_status`, `mcp__bg3__travel_to`): this
 file shortens them to the bare name, but a call to the bare name fails with "No such tool available". The core ones
-(`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`, `interact`, `look`, `combat_turn`, …) are loaded
+(`queue_actions`, `do_actions`, `wait_for`, `travel_to`, `move_to`, `interact`, `look`, `end_turn`, …) are loaded
 from the start, and so are `screenshot`, `click`, `press_key`, `dismiss_popups`, `lockpick`, `regroup`, `get_map`, the
 rests, `camp` and `level_up`: call them directly. Load others with ToolSearch only when you need one: `ToolSearch` is
 Claude Code's own tool, the one name here WITHOUT the prefix (`mcp__bg3__ToolSearch` does not exist), e.g. ToolSearch
@@ -147,9 +146,8 @@ not because an earlier call in this session did: one blocking walk invites the n
 while you think. Also don't: call `wait()` to pass time (use `wait_for` with a target: `my_turn`, `idle`, a job, an
 event kind); write long notes between two actions instead of during a walk; call `interact`/`move_to` directly on a
 character whose queue is running (a direct action supersedes the queue: append instead, or `cancel_queue` on
-purpose); make one tool call per step of a plan you already know. In combat use `combat_turn`; in dialogue,
-`dialogue_advance` for filler. Follow a result's `RUNNING …` (append, don't wait), `NEXT: …` and `PACE: …`. After
-`stopped short of ≤Nm`, plan from the distance it gives, not from the move being `done`.
+purpose); make one tool call per step of a plan you already know. In dialogue, `dialogue_advance` for
+filler. Follow a result's `RUNNING …` (append, don't wait), `NEXT: …` and `PACE: …`.
 Results carry two pace hints: `NEXT: …` after a walk that still runs (what can be done while it runs) and `PACE: …`
 (a wait came before there was nothing else to do).
 
@@ -164,8 +162,7 @@ Results carry two pace hints: `NEXT: …` after a walk that still runs (what can
   - after a walk's end, `LEADS` + `WAYS walkable` → no `get_frontier` / `get_nearby` / `look` after arriving.
   - `route(..., go=true)` checks and starts the trip → no `route` then `travel_to`.
   - `talk_to`: the opening lines and the first real choice → no `get_dialogue`.
-  - `COMBAT STARTED` → no `get_combat_state`. After `combat_turn`'s `NOW <who>'s turn: plan it; also <b>, <c>`, plan
-    them all in ONE `combat_turn` with a list.
+  - `COMBAT STARTED` → no `get_combat_state`.
   - EVENTS: items, gold, statuses, damage, deaths, approvals, level-ups → no `get_inventory` / `get_party` /
     `get_status` to check them.
   - `note()` and `note="…"` on travel_to/queue_actions/do_actions → no `memory_edit` of the session log mid-walk.
@@ -207,7 +204,7 @@ on them and act at once. Save deep thinking for real decisions.
 1. **Observe** once: `look` (a delta), plus the one mode-specific tool you need.
 2. **Decide:** a short plan tied to an objective in `memory/objectives.md`.
 3. **Act** with the highest-level tool that fits: a macro for a chore (`loot_area`, `travel_to`,
-   `dialogue_advance`, …), `combat_turn` for a combat turn, `queue_actions` for other routine multi-step
+   `dialogue_advance`, …), `queue_actions` for other routine multi-step
    plans (then go straight back to step 1 while they run), `do_actions` for a short blocking chain.
 4. **Read the delta.** Handle interrupts (`queue_interrupted`, combat, dialogue) first.
 5. **Record** noteworthy events during the next walk, queue or enemy turn, not between actions (see Memory).

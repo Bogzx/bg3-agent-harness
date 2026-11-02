@@ -21,8 +21,16 @@ TRANSITION_TOOLS = ("long_rest", "short_rest", "fast_travel")
 TRANSITION_MAX_S = 20.0
 TRANSITION_SETTLE_S = 1.0
 TRANSITION_POLL_S = 0.25
-_TRANSITION_DONE = ("end_day_ok", "end_day_failed", "rest_started", "rest_start_failed", "rest_cancelled",
-                    "gather_failed", "ready_failed", "rest_denied")
+_TRANSITION_DONE = (
+    "end_day_ok",
+    "end_day_failed",
+    "rest_started",
+    "rest_start_failed",
+    "rest_cancelled",
+    "gather_failed",
+    "ready_failed",
+    "rest_denied",
+)
 _TRANSITION_LAST: dict = {}
 
 
@@ -79,6 +87,7 @@ def _transition_wait(tool: str) -> dict:
 
 def _transition_after(tool: str):
     """boxclick's after-click step for a transition box: hold every client call, wait on the server, release."""
+
     def after(res: dict) -> dict:
         hold_client(TRANSITION_MAX_S + TRANSITION_SETTLE_S + 5.0, f"{tool}: the game is changing screens after the Yes")
         try:
@@ -87,4 +96,5 @@ def _transition_after(tool: str):
             release_client()
         res["closed"] = True
         return res
+
     return after

@@ -180,7 +180,7 @@ def at_zero_hp(model, then):
     `then` plays the side on."""
 
     def play(game: Game, side: str, run: Run) -> None:
-        karlach = model._match().member("Karlach")
+        karlach = model.match().member("Karlach")
         if my_turn(game, side) == karlach.uuid:
             karlach.hp = 0
         then(game, side, run)
@@ -208,7 +208,7 @@ def test_a_member_the_mod_passed_that_the_game_keeps_current_is_the_games_fault(
     model, game, clock, agents, spec = setup({"A": looper, "B": passer})
 
     def passed(game: Game, side: str, run: Run) -> None:
-        u = model._match().member("Karlach").uuid
+        u = model.match().member("Karlach").uuid
         if my_turn(game, side) == u and not run.ended:
             run.ended.add(u)
             model.ref_record("arena_turn_passed", side="A", character=u, name="Karlach", why="zero_hp", round=1)

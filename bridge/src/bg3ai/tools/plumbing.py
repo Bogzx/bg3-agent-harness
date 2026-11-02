@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Any
 
-from .. import economy, macros, party, render, turn
+from .. import delta, economy, macros, party, render, turn
 from ..game import GameError, JobResult
 from . import core, reporting
 
@@ -476,7 +476,6 @@ def _input_exclusive(fn):
 
     @functools.wraps(fn)
     def wrapper(*a, **kw):
-        turn_tool._hold_for_bg_end()  # first (unlocked): the end may need the lock for its HUD fallback
         with _InputHeld():
             return fn(*a, **kw)
     return wrapper
@@ -485,9 +484,6 @@ def _input_exclusive(fn):
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
          wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
     if op in _INPUT_OPS or (context == "client" and op.startswith("ui.")):
-        if args.get("char"):  # its own background end first, unlocked (_act_run's hold then finds it done)
-            held = turn_tool._hold_for_bg_end(args["char"])
-            note = "\n".join(x for x in (held, note) if x)
         with _InputHeld():
             return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
     return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
@@ -504,9 +500,6 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         args = dict(args, avoid=reporting.OFFLIMITS.avoid())  # the mod keeps the walk out of them (Actions.lua, vis V26)
     if not reporting._batch["active"]:
         held = batch._hold_for_early_walks(args.get("char"))
-        note = "\n".join(x for x in (held, note) if x)
-    if args.get("char"):
-        held = turn_tool._hold_for_bg_end(args["char"])  # its turn is still being ended in the background
         note = "\n".join(x for x in (held, note) if x)
     if not wait and not reporting._batch["active"] and context == "server":
         return _start_async(tool, op, args, t0, note)
@@ -558,7 +551,9 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
     if post is not None:  # a line from after the job (use_ability: did the opener start a fight?)
         note = "\n".join(x for x in (post(r), note) if x)
-    return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
+    changes = _combat_changes(tool)
+    body = "\n".join(x for x in (_job_text(tool, r, args.get("char")), note, changes) if x)
+    return reporting._finish(tool, args, body, t0)
 
 
 def _close_left_trade(wait_s: float = 2.0) -> bool:
@@ -668,20 +663,38 @@ PACE_GUARD_NOTE = ("(pace guard: wait=true ignored outside combat: the walk runs
 
 
 def _walk_wait(wait: bool) -> tuple[bool, str]:
-    """The pace guard (move_to, walk_toward; travel_to never blocks): wait=true on a walk blocks only in combat
-    (moving before an attack). Outside it the walk runs while the agent plans: S001 learned wait=true from its own
-    results and pipelined 0% (impl-setup part 5). Until 2026-10-13 a client PreToolUse hook (pace_guard.py) also
-    rewrote the call; the server's check is the one that holds for any client."""
-    if not wait or reporting._batch["active"]:
+    """The pace guard (move_to, walk_toward; travel_to never blocks). In combat a walk always blocks: a combat call
+    is one action, returned when it is over (owner 2026-11-02: one action, observe, then the next). Outside it the
+    walk runs while the agent plans: S001 learned wait=true from its own results and pipelined 0% (impl-setup part
+    5). Until 2026-10-13 a client PreToolUse hook (pace_guard.py) also rewrote the call; the server's check is the one
+    that holds for any client."""
+    if reporting._batch["active"]:
         return wait, ""
     w = core.game.try_rpc("act.watch")
-    if not isinstance(w, dict) or w.get("combat"):
-        return True, ""  # in combat, or unknown: keep the old blocking behaviour
-    return False, PACE_GUARD_NOTE
+    if not isinstance(w, dict):
+        return wait, ""  # unknown: as asked
+    if w.get("combat"):
+        return True, ""
+    return False, PACE_GUARD_NOTE if wait else ""
+
+
+# In combat each of these returns what changed (other combatants' HP, positions, deaths, who came into view) with
+# its own outcome: the next action is decided on it (fight-flow research 2026-11-02: single tools had no CHANGES).
+COMBAT_CHANGES_TOOLS = ("use_ability", "move_to", "walk_toward", "jump_to", "react")
+
+
+def _combat_changes(tool: str) -> str:
+    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed)."""
+    if tool not in COMBAT_CHANGES_TOOLS or reporting._batch["active"]:
+        return ""
+    w = core.game.try_rpc("act.watch")
+    if not (isinstance(w, dict) and w.get("combat")):
+        return ""
+    return delta.changes_text(core.game, core.H)
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402
-    overview, progression, uitools, batch, queueing, turn_plan, turn_tool, macro_tools,
+    overview, progression, uitools, batch, queueing, turn_plan, macro_tools,
 )

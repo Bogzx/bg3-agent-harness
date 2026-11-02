@@ -20,55 +20,30 @@
 
 ## Each turn (loop)
 ```
-s = get_combat_state()      # ONLY when no result has shown the fight yet (COMBAT STARTED and combat_turn's
-                            # NOW/NEXT already carry it): turn order, resources left, enemies (health,
+s = get_combat_state()      # ONLY when no result has shown the fight yet (COMBAT STARTED and end_turn's
+                            # hand-over already carry it): turn order, resources left, enemies (health,
                             # distance, line of sight), allies, the acting character's actions
-→ plan the WHOLE turn from this one read, with a fallback for each slot
    path_preview(target=…)   # only if the move might not fit remaining movement or needs a jump
    ability_preview(ability, target)  # only if a hit chance or save DC decides between options
-→ combat_turn(plan='{"move":{"target":"e12","within":1.5},
-                     "action":[{"ability":"Target_MainHandAttack","target":"e12"},
-                               {"ability":"Projectile_MainHandAttack","target":"e12"},
-                               "Shout_Disengage"],
-                     "bonus":{"ability":"<bonus action id>","if":"hp_below:50"}}')
-→ it returns right after end_turn: "NEXT e14 Goblin, e15 Imp, then Lae'zel (yours)".
-   Plan Lae'zel's turn NOW, while the enemies act, and send it at once: combat_turn waits for her turn
-   (30 s) and plays it the moment it comes (no wait_for("my_turn")). "NOW Lae'zel's turn" = she is up already.
-   **Several members acting now** (a shared turn, "then Lae'zel + Claude (yours, shared turn)", or adjacent
-   initiative): ONE call, `combat_turn(plan='[{"who":"Lae'zel","plan":{…}},{"who":"Claude","plan":{…}}]')`.
-   It plays them in order and stops, listing who was NOT played, if a turn is interrupted or doesn't come
-   within ~80 s. A member that ended can't act again this round; `"plan":{}` just ends its turn.
-→ if it says STOPPED / "turn NOT ended": read why, then finish the turn (combat_turn with what's left)
+→ one action per call: use_ability / move_to / walk_toward / jump_to / react. Each returns when the action is
+   over, with after={…} (HP, action, bonus, movement left) and CHANGES (HP, deaths, moves).
+→ end_turn(who=…) ends that member's turn; it returns when a party member can act, with their YOUR ACTIONS.
 ```
-One observation, one call per turn: that's the target pace. Think during the enemy turns, not during yours.
-**Fallbacks are the plan's safety net.** The usual chain: the attack you want → the ranged option (throw,
-cantrip, bow: `Projectile_MainHandAttack` needs a bow equipped, `Throw_Throw` throws an object) →
-`Shout_Dash` with `"then_move":true` (if you must close in) → `Shout_Disengage` or `Shout_Hide` (if
-nothing reaches). BG3 has **no Dodge action**; use only ids `get_actions` lists. A dead or vanished target skips to the next alternative, so you can
-also list a second target (`{"ability":"…","target":"e15"}`). If every alternative misses (target dead, out of
-range, no line of sight), the same abilities go to the nearest other visible hostile in reach by themselves.
-Still plan a bonus action every turn (Healing Word for a downed ally is automatic if nothing else is planned).
-**Ranged and spells:** `"move":{"target":"e12","within":<range in m>}` walks only until in range (and not
-at all if already in range); keep casters out of melee.
-**Extra Attack** (level 5 martials): add `"extra":[[{"ability":"Target_MainHandAttack","target":"e12"},
-{"ability":"Target_MainHandAttack","target":"e15"}]]`.
-**Reaction prompts** (Shield, Counterspell, Divine Smite, opportunity attacks): decide them up front.
-`"reactions":{"Divine Smite":"always"}` sets the game's own prompt setting; `"on_reaction":"use"` or
-`"skip"` answers prompts that appear during this turn. Otherwise a prompt stops the turn: `get_dialogue`
-shows it, `react(use=true, which="…")` or `react(use=false)` answers it, then finish the turn.
-**Movement:** a move that doesn't fit the movement left walks as far as it can (then the fallbacks decide).
-Running for an exit mid-fight: `{"move":"o3","action":[{"ability":"Shout_Dash","then_move":true}]}`
-walks toward the objective marker, one call per member per round. A single tool with no `who` acts as
-the one member whose turn it is.
-Check a tight or vertical route with `path_preview` first; a jump is `{"tool":"jump_to",…}` as an alternative.
-`do_actions` still works for odd turns (e.g. two characters' steps in one list), but `combat_turn` is the default.
+BG3 has **no Dodge action**; use only ids `get_actions` lists.
+**Ranged and spells:** `move_to(target="e12", within=<range in m>)` stops inside that range.
+**Reaction prompts** (Shield, Counterspell, Divine Smite, opportunity attacks): `set_reactions` sets the game's
+own prompt setting. A prompt that appears: `get_dialogue` shows it, `react(use=true, which="…")` or
+`react(use=false)` answers it.
+**Movement:** in a fight `walk_toward` cuts a walk longer than the movement left to what is left; it takes an
+objective id (`o3`) too. A single tool with no `who` acts as the one member whose turn it is.
+Check a tight or vertical route with `path_preview` first; a jump is `jump_to`.
+`do_actions` and `queue_actions` run no steps in combat.
 
 **Ids that fail every session (S023-S025):** spells with variants need the variant id, never the base
 one: `Target_SpiritualWeapon_Greatsword` (or _Maul, _Halberd…), `Shout_SpiritGuardians_Radiant`
 (or _Necrotic), likewise Chromatic Orb, Enhance Ability, Protection from Energy; `get_actions` lists
 them. Multi-target spells take at most two targets (`"targets":"e1,e3"`; Bless on 3 is refused).
-`combat_turn` works only once combat has started: to open a fight from exploration, attack with
-`do_actions([{"tool":"use_ability",…}])`, then play the turns with `combat_turn`.
+To open a fight from exploration, attack with `use_ability`.
 
 **Priorities each turn:**
 1. **Downed ally?** Healing Word (bonus action, ranged) or Help (action, adjacent) gets them up. A

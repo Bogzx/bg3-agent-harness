@@ -23,10 +23,6 @@ TRAVEL_PROGRESS_M = 1.0  # a leg that gets less than this much closer is a stall
 TRAVEL_STALL_LEGS = 2    # stalls in a row before travel_to gives up (S001 retried in place while burning)
 TRAVEL_LEG_RETRIES = 2   # failed legs per trip that get an alternative leg instead of ending it (S002)
 TRAVEL_MIN_GAIN_M = 5.0  # a plain leg gaining less (acceptance 12:xx: 4 m / 2 m legs) asks for a longer one first
-# combat_turn: a ranged cast (range > melee) this far past its range steps in first (S002: 18.6 m vs 18 m; S041
-# 22:35:03 Sacred Flame + Guiding Bolt at 22.9 m (range 18) failed with Shadowheart's whole move unused).
-# nav.los_spot / nav.approach cap the step at the movement left; a melee/touch step has no cap but that (S080).
-STEP_INTO_RANGE_RANGED_M = 7.0
 REGROUP_NEAR_M = 6.0
 DIALOGUE_MAX = 12
 
@@ -241,15 +237,6 @@ def leg_retryable(stop_kind: str | None, stopped: str | None, text: str) -> bool
     if stop_kind not in (None, "failed") or (stopped and not str(stopped).endswith(" failed")):
         return False
     return bool(_LEG_PATH_FAIL.search(text or "")) and not _LEG_NOT_PATH.search(text or "")
-
-
-_OUT_OF_RANGE = re.compile(r"out of range \(([\d.]+) m, range ([\d.]+) m\)")
-
-
-def range_gap(text: str) -> tuple[float, float] | None:
-    """'target is out of range (18.6 m, range 18.0 m)' -> (18.6, 18.0); None for other failures."""
-    m = _OUT_OF_RANGE.search(text or "")
-    return (float(m.group(1)), float(m.group(2))) if m else None
 
 
 # What walking through a harmful surface costs, roughly (BG3 rules, [wiki]): (what happens, worst damage per

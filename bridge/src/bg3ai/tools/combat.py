@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .. import boxclick, hotbar, hoverclick, render, turn, twostep
 from ..game import GameError, JobResult
-from . import core, overview, plumbing, reporting, world_tools
+from . import core, observe, overview, plumbing, reporting, world_tools
 
 # ---------------------------------------------------------------------------
 # act: combat
@@ -302,7 +302,7 @@ def _opener_combat(tu: str, res: Any, talk_before: bool = False) -> str:
         cs = core.game.try_rpc("state.combat") or {}
         if cs.get("active"):
             return ("COMBAT: the attack started a fight" + (f" (round {cs['round']})" if cs.get("round") else "")
-                    + ": play the turns with combat_turn (get_combat_state shows the order)")
+                    + ": get_combat_state shows the turn order")
         if time.monotonic() >= end:
             break
         time.sleep(0.15)
@@ -376,8 +376,6 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
     while time.monotonic() < deadline:
         cs = core.game.try_rpc("state.combat") or {}
         if not cs.get("active") or char not in turn.acting(cs):
-            if turn_plan._turn_batch():  # combat_turn's NEXT line reads the turn from this read, not again
-                turn_plan._cs_keep(cs)
             late = time.monotonic() - pressed
             via = ("the HUD's End Turn (the game ignored the order)" if late <= END_HUD_QUICK_S else
                    f"the game, slowly ({late + END_LUA_IGNORED_S:.0f} s after the order: end-of-turn effects; the HUD's "
@@ -393,8 +391,6 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
 def end_turn(who: str | None = None, wait: bool = True) -> str:
     """End the current character's turn; blocks through enemy turns until a party member can act or combat ends (wait=false: return right after ending it; then wait_for('my_turn'))."""
     t0 = time.monotonic()
-    held = turn_tool._hold_for_bg_end()  # combat_turn's background end of the last turn: this one comes after it
-    pre = held + "\n" if held else ""
     if who:
         char = plumbing._who_uuid(who)
     else:
@@ -407,24 +403,16 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             char = mine[0]
     args = {"char": char}
     if core._session_over():
-        return reporting._finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes."
-                                 + ("\n" + held if held else ""), t0)  # the refusal is the outcome: first
-    if turn_tool._bg_end_running(char):
-        # review L1: an end still running after the hold (END_BG_HOLD_S): a second order would race its HUD press
-        reporting._batch["last"] = "done"
-        return reporting._finish("end_turn", args, pre + f"end_turn {queueing._label(char)}: its turn end is still running in the "
-                       "background (the game is slow to hand the turn on): wait_for(target=\"queue\"), don't end it "
-                       "again", t0)
+        return reporting._finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     cs = core.game.try_rpc("state.combat") or {}
-    if char in turn.downed(cs):
-        # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2).
-        body = f"end_turn {queueing._label(char)}: skipped — {turn_slots._downed_text(char)}"
-        if wait and not reporting._batch["active"]:
-            body += "\n" + _wait_for_party_turn(80.0)
-        return reporting._finish("end_turn", args, pre + body, t0)
+    # A row's `downed` is the DOWNED status or 0 HP (StateWorld.lua): who can't end is the mod's to say (its refusal,
+    # _cant_end). Live 10 m1 a2 (D297): Lae'zel at 0 HP without DOWNED read as downed, end_turn skipped her turn the
+    # game kept open and waited the 80 s of _wait_for_party_turn on it.
+    down_row = char in turn.downed(cs)
     # a two-team match: the end goes through the mod only (no HUD press on the shared screen)
     hud_ok = not world_tools._shared_screen()
-    peer = _peer_requested(cs, char) if hud_ok and END_HUD_FIRST and cs.get("active") else None
+    peer = (_peer_requested(cs, char) if hud_ok and END_HUD_FIRST and cs.get("active") and not down_row
+            else None)
     r = None
     if peer:
         hud = _end_turn_by_hud(char, JobResult("failed", None, f"after {queueing._label(peer)}'s end", [], 0))
@@ -437,6 +425,14 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             r = _end_turn_by_hud(char, r)
     plumbing._remember_names(r.result)
     reporting._batch["last"] = r.status
+    cant = _cant_end(char, r)
+    if cant:
+        # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2): not a failure
+        reporting._batch["last"] = "done"
+        body = f"end_turn {queueing._label(char)}: skipped — {cant}"
+        if wait and not reporting._batch["active"]:
+            body += "\n" + _wait_for_party_turn(80.0)
+        return reporting._finish("end_turn", args, body, t0)
     nothing = _nothing_to_end(r)
     if nothing:
         # S023-S025: 24 end_turn calls on a turn combat_turn had already ended (shared turn groups) or that
@@ -446,17 +442,31 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         body = f"end_turn {queueing._label(char)}: nothing to end — {nothing}"
         if wait:
             body += ("\n" if not reporting._batch["active"] else " — ") + _wait_for_party_turn(80.0)
-        return reporting._finish("end_turn", args, pre + body, t0)
+        return reporting._finish("end_turn", args, body, t0)
     body = plumbing._job_text("end_turn", r)
     if not reporting._batch["active"]:
         # Name whose turn it was: in a shared turn group the game moves the selection, and the agent
         # read Lae'zel's after={...} as Claude's (claude-run-2 S001).
         body = body.replace("end_turn:", f"end_turn {queueing._label(char)}:", 1)
+    if down_row and r.status == "done":
+        body += (f"\n{queueing._label(char)} is at 0 HP without the Downed status (no death saving throws): the game "
+                 "kept its turn open")
     if r.status == "done" and wait and not reporting._batch["active"]:
         body += "\n" + _wait_for_party_turn(80.0)
     elif r.status == "done" and wait:
         body += " — " + _wait_for_party_turn(80.0)
-    return reporting._finish("end_turn", args, pre + body, t0)
+    return reporting._finish("end_turn", args, body, t0)
+
+
+def _cant_end(char: str, r) -> str:
+    """Why the mod refused to end char's turn because char can't act ('' = it didn't): downed (the DOWNED status,
+    Guard.is_downed) or dead."""
+    err = str(r.error or "") if r.status != "done" else ""
+    if err.startswith("character is downed"):
+        return turn_slots._downed_text(char)
+    if err.startswith("character is dead"):
+        return f"{queueing._label(char)} is dead: it has no turn"
+    return ""
 
 
 def _nothing_to_end(r) -> str:
@@ -464,7 +474,7 @@ def _nothing_to_end(r) -> str:
     is someone else's turn, or combat is over. Names who acts now."""
     err = str(r.error or "") if r.status != "done" else ""
     if "already ended its turn" in err:
-        why = "its turn already ended (combat_turn ends it; the rest of its turn group is still acting)"
+        why = "its turn already ended (the rest of its turn group is still acting)"
     elif "not this character's turn" in err:
         why = "it is not its turn"
     elif err.startswith("not in combat"):
@@ -511,7 +521,9 @@ def _wait_for_party_turn(max_s: float) -> str:
             return "combat is over"
         mine = turn.party_acting(cs, party)
         if mine:
-            return "\n".join([_now_turn_text(mine)] + notes + turn.disabled_lines(cs, queueing._label))
+            cur = st.get("active") if st.get("active") in mine else mine[0]
+            return "\n".join([_now_turn_text(mine)] + notes + turn.disabled_lines(cs, queueing._label)
+                             + [x for x in (observe._turn_block(cs, cur),) if x])
         key = (cs.get("round"), cs.get("current"), tuple(turn.passing(cs)))
         if key != seen:
             seen, since = key, time.monotonic()
@@ -523,7 +535,7 @@ def _wait_for_party_turn(max_s: float) -> str:
         if time.monotonic() > deadline:
             reporting._batch["last"] = "interrupted"
             return "other combatants are still acting (use wait or get_combat_state)"
-        time.sleep(turn_tool.TURN_POLL_S)
+        time.sleep(turn_slots.TURN_POLL_S)
 
 
 FLEE_MIN_M = 27.0   # live2 §2: the Flee button's tooltip "Enemy too close! (5.5/27m)"; at 47 m it asked
@@ -653,5 +665,5 @@ _NOTE_TAG = re.compile(r"^\[[A-Za-z][\w -]*\]")
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402, F401
-    memory, uitools, queueing, turn_plan, turn_slots, turn_tool, session,
+    memory, uitools, queueing, turn_plan, turn_slots, session,
 )

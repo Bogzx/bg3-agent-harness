@@ -26,7 +26,6 @@ from bg3ai.tools import (
     reporting,
     turn_plan,
     turn_slots,
-    turn_tool,
     uitools,
     world_tools,
 )
@@ -124,9 +123,28 @@ class Shared(unittest.TestCase):
 
     def test_scroll(self):
         g = self.use("A")
+        scroll = {"uuid": P2, "name": "Scroll of Revivify", "owner": P1, "cat": "MagicScroll_3"}
         with self.assertRaisesRegex(GameError, f"reading a scroll is {SHARED}"):
-            world_tools._use_scroll(P1, {"uuid": P2, "name": "Scroll of Revivify", "owner": P1}, "")
+            world_tools._use_scroll(P1, scroll, "")
         self.assertEqual(g.ops, [])
+        with self.assertRaisesRegex(GameError, f"using Alchemist's Fire is {SHARED}"):  # thrown: its target is clicked
+            world_tools._use_scroll(P1, {"uuid": P2, "name": "Alchemist's Fire", "owner": P1, "cat": "Throwable"}, FOE)
+        self.assertEqual(g.ops, [])
+
+    def test_potion_is_drunk_in_a_match(self):
+        # live 10 m2: "Potion of Healing: FAILED: reading a scroll is not available in a two-team match"
+        g = self.use("A")
+        potion = {"uuid": P2, "name": "Potion of Healing", "owner": P1, "cat": "PotionHealing"}
+
+        def act(tool, op, args, **k):  # the mod drinks it (ActionsInteract.lua: result.drunk)
+            g.ops.append(op)
+            return "use_ability: done — drunk"
+
+        with mock.patch.object(plumbing, "_act", act):
+            out = world_tools._use_scroll(P1, potion, "")
+        self.assertEqual(out, "use_ability: done — drunk")
+        self.assertIn("act.interact", g.ops)
+        self.assertFalse([op for op in g.ops if op.startswith("ui.") and op != "ui.selected"], g.ops)
 
     def test_flee(self):
         g = self.use("A")
@@ -143,22 +161,11 @@ class Shared(unittest.TestCase):
             with mock.patch.object(world_tools, "_inp", lambda: None):
                 self.assertIn(want, dialogue._react_click({"use": True}, 2, 0.0))
 
-    def test_reaction_answered_in_a_turn(self):
-        for side, want in (("A", f"which is {SHARED}"), (None, "the input shim is not available")):
-            self.use(side)
-            watch = G(side)
-            watch.jobs["ui.react"] = JobResult("done", {"needs_click": 2})
-            queueing._watch_game = watch
-            with mock.patch.object(world_tools, "_inp", lambda: None):
-                self.assertIn(want, turn_slots._answer_reaction(True))
-
     def test_end_turn_goes_through_the_mod_only(self):
         for side, hud_calls in (("A", 0), (None, 1)):
             g = self.use(side)
             g.jobs["act.end_turn"] = JobResult("failed", None, combat.END_IGNORED)
             with (
-                mock.patch.object(turn_tool, "_hold_for_bg_end", lambda: ""),
-                mock.patch.object(turn_tool, "_bg_end_running", lambda c: False),
                 mock.patch.object(plumbing, "_active", lambda: P1),
                 mock.patch.object(turn_plan, "_party_set", lambda: {P1}),
                 mock.patch.object(combat, "END_HUD_FIRST", True),
@@ -182,8 +189,6 @@ class Shared(unittest.TestCase):
 
             g.run_job = run_job
             with (
-                mock.patch.object(turn_tool, "_hold_for_bg_end", lambda: ""),
-                mock.patch.object(turn_tool, "_bg_end_running", lambda c: False),
                 mock.patch.object(plumbing, "_active", lambda: P1),
                 mock.patch.object(turn_plan, "_party_set", lambda: {P1}),
             ):
@@ -200,28 +205,6 @@ class Shared(unittest.TestCase):
             cs = {"current": P1, "order": [row]}  # S087: a Stunned member's open turn the game itself passes
             turn_slots._end_passing(cs, -1e9, set(), None)
             self.assertEqual(waits, [want_s], side)
-
-    def test_hold_for_a_background_end_lasts_as_long_as_the_mods_end(self):
-        """An end still running holds the next action until it settles: with a side up to END_ARENA_WAIT_S."""
-        for side, want_s in (("A", combat.END_ARENA_WAIT_S), (None, turn_tool.END_BG_HOLD_S)):
-            self.use(side)
-            clock = [0.0]
-
-            class Q:
-                def busy(self, c, clock=clock):  # the end settles 18 s after the hold starts
-                    return clock[0] < 18.0
-
-            with (
-                mock.patch.dict(turn_tool._bg_ends, {P1: 0.0}, clear=True),
-                mock.patch.object(queueing, "_queues", lambda: Q()),
-                mock.patch.object(turn_tool.time, "monotonic", lambda clock=clock: clock[0]),
-                mock.patch.object(turn_tool.time, "sleep", lambda s, clock=clock: clock.__setitem__(0, clock[0] + s)),
-                mock.patch.object(turn_tool, "_in_queue_worker", lambda: False),
-            ):
-                turn_tool._hold_for_bg_end()
-                held, left = clock[0], dict(turn_tool._bg_ends)
-            self.assertAlmostEqual(held, min(18.0, want_s), delta=0.1, msg=side)
-            self.assertEqual(left, {} if side else {P1: 0.0}, side)
 
     def test_multi_target_cast_takes_no_hotbar_route(self):
         for side, routed in (("A", False), (None, True)):

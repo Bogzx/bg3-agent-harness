@@ -55,7 +55,7 @@ class FightSource(unittest.TestCase):
         loads, calls, got = self._run(active=False)
         self.assertEqual(loads, [core.FIGHT_SAVE, core.BASE])
         self.assertEqual(calls, [])
-        self.assertIn(("combat_turn on a safe fight", "SKIP", f"{core.FIGHT_SAVE} loaded with no fight on"), got)
+        self.assertIn(("one-action turns on a safe fight", "SKIP", f"{core.FIGHT_SAVE} loaded with no fight on"), got)
 
     def test_fight_save_checked_by_check(self):
         self.assertEqual(core.SAVE_NEEDS[core.FIGHT_SAVE]["level"], "CTY_Main_A")
@@ -78,7 +78,7 @@ class HudEndReads(unittest.TestCase):
         def took(name, **kw):
             combat.S.game.rpc("state.combat")  # end_turn's own read
             ct._end_turn_by_hud("c", cast(Any, "r"))
-            combat.S.game.rpc("state.combat")  # the NEXT line's
+            combat.S.game.rpc("state.combat")  # the wait's
             return "out", 0.1
 
         with (
@@ -86,7 +86,7 @@ class HudEndReads(unittest.TestCase):
             mock.patch.object(combat, "took", took),
             mock.patch.object(ct, "_end_turn_by_hud", hud),
         ):
-            out, _, counts, hud_n = combat.counted("combat_turn")
+            out, _, counts, hud_n = combat.counted("end_turn")
             self.assertIs(ct._end_turn_by_hud, hud)  # restored after the call
         self.assertEqual((out, counts["state.combat"], counts["ui.command"], hud_n), ("out", 5, 1, 3))
 

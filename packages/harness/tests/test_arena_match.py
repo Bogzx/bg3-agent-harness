@@ -84,10 +84,10 @@ class ArenaModel(GameModel):
 
     def team_uuids(self) -> dict[str, list[str]]:
         """Each team's uuids as arena.setup's result and arena.status give them (Ar.state.teams: no summons)."""
-        return {s: [m.uuid for m in team if m.uuid not in self.summons] for s, team in self._match().teams.items()}
+        return {s: [m.uuid for m in team if m.uuid not in self.summons] for s, team in self.match().teams.items()}
 
     def hp(self, side: str) -> float:
-        a = self._match()
+        a = self.match()
         team = a.teams[side]
         return round(sum(m.hp for m in team) / sum(m.max_hp for m in team), 3)
 
@@ -115,7 +115,7 @@ class ArenaModel(GameModel):
 
     def _push_turn(self, kind: str, who: Member | None = None, rnd: int | None = None) -> None:
         super()._push_turn(kind, who, rnd)
-        a = self._match()
+        a = self.match()
         if kind != "turn_started":  # a round change: round_started, this turn_started, then the old round's turn_ended
             return
         now = a.acting
@@ -152,18 +152,18 @@ class ArenaModel(GameModel):
             self.ref_record("arena_combat_ended", rounds=self.mod_round)
 
     def owners(self, who: str) -> list[str]:
-        return [s for s, team in self._match().teams.items() if any(m.name == who for m in team)]
+        return [s for s, team in self.match().teams.items() if any(m.name == who for m in team)]
 
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
         if (refused := wrong_context(ctx, op)) is not None:
             return refused
         if op == "act.end_turn" and self.reaction is not None:
-            return {"ok": True, "result": self._failed_job(op, "a reaction prompt is open", side)}
+            return {"ok": True, "result": self.failed_job(op, "a reaction prompt is open", side)}
         if op == "act.end_turn" and self.refuse_end:
-            return {"ok": True, "result": self._failed_job(op, self.refuse_end, side)}
+            return {"ok": True, "result": self.failed_job(op, self.refuse_end, side)}
         if op == "act.end_turn" and self.hold:
-            self.held_ends.add(self._match().member(str(args["char"])).uuid)
-            return {"ok": True, "result": self._job(op, {"ended": True}, side)}
+            self.held_ends.add(self.match().member(str(args["char"])).uuid)
+            return {"ok": True, "result": self.settled_job(op, {"ended": True}, side)}
         if op == "state.combat" and self.combat_error:
             return {"ok": False, "error": self.combat_error}
         r = super().reply_side(ctx, op, args, side)
@@ -171,7 +171,7 @@ class ArenaModel(GameModel):
             for row in r["result"]["order"]:
                 if row["uuid"] in self.held_ends:
                     row["ended"] = True
-                if row["relation"] == "party" and self._match().member(row["uuid"]).hp == 0:
+                if row["relation"] == "party" and self.match().member(row["uuid"]).hp == 0:
                     row["downed"] = True
         return r
 
@@ -182,7 +182,7 @@ class ArenaModel(GameModel):
             return refused
         if op == "arena.setup":
             if self.setup_error:
-                return {"ok": True, "result": self._failed_job("arena.setup", self.setup_error)}
+                return {"ok": True, "result": self.failed_job("arena.setup", self.setup_error)}
             self.setup_args = dict(args)
             self.round_cap = args.get("round_cap") if self.caps else None
             teams = args["arena"]["teams"]
@@ -190,8 +190,8 @@ class ArenaModel(GameModel):
             extra = {s: [n for n, side in self.summon_names.items() if side == s] for s in ("A", "B")}
             names = {s: [m["name"] for m in teams[s]] + extra[s] for s in ("A", "B")}
             self.start_arena(names["A"], names["B"], self.order)
-            self.summons = {self._match().member(n).uuid for n in self.summon_names}
-            return {"ok": True, "result": self._job("arena.setup", {"ok": True, "teams": self.team_uuids()})}
+            self.summons = {self.match().member(n).uuid for n in self.summon_names}
+            return {"ok": True, "result": self.settled_job("arena.setup", {"ok": True, "teams": self.team_uuids()})}
         if op == "arena.status":
             a = self.arena
             if a is None:
@@ -219,7 +219,7 @@ class ArenaModel(GameModel):
         if op == "ui.react" and self.reaction is not None:
             self.reacted.append((self.reaction["options"][0]["who"], bool(args.get("use"))))
             self.reaction = None
-            return {"ok": True, "result": self._job("ui.react", {"answered": "skip"})}
+            return {"ok": True, "result": self.settled_job("ui.react", {"answered": "skip"})}
         return super().reply(ctx, op, args)
 
 
@@ -325,7 +325,7 @@ def attacker(game: Game, side: str, run: Run) -> None:
     if not (char := my_turn(game, side)):
         return
     m = game.model
-    a = m._match()
+    a = m.match()
     foe = next((x for x in a.teams["B" if side == "A" else "A"] if x.hp > 0), None)
     if foe is not None:
         m.arena_damage(foe.name, a.acting.name, foe.hp)
@@ -381,7 +381,7 @@ def test_a_full_match_to_a_wipe(tmp_path):
     start = evs[0]
     assert start["ev"] == "arena_start" and start["teams"] == {"A": ["Karlach", "Gale"], "B": ["Wyll", "Halsin"]}
     assert start["sides"] == {"A": "pi/model-x", "B": "pi/model-y"} and start["seed"] == 7
-    assert start["uuids"]["A"] == [m.uuid for m in model._match().teams["A"]]
+    assert start["uuids"]["A"] == [m.uuid for m in model.match().teams["A"]]
     turns = [(e["side"], e["character"], e["round"]) for e in evs if e["ev"] == "arena_turn"]
     assert turns == [("A", "Karlach", 1), ("B", "Wyll", 1), ("A", "Gale", 1), ("B", "Halsin", 1)]
     assert [e["ev"] for e in evs].count("arena_start") == 1 and evs[-1]["ev"] == "arena_end"
@@ -510,7 +510,7 @@ def test_an_end_of_the_mods_own_before_the_runners_is_the_one_written(tmp_path):
 
     def wipe_first(op: str, args: dict[str, Any], side: str | None = None) -> Any:
         if op == "arena.end":
-            for m in model._match().teams["B"]:
+            for m in model.match().teams["B"]:
                 m.hp = 0
             model.finish("A", "wipe")
         return rpc(op, args, side)
@@ -567,7 +567,7 @@ def test_the_third_forced_turn_forfeits_before_any_end_turn_so_no_wipe_comes_fir
     def wipe_after_end_turn(op: str, args: dict[str, Any], side: str | None = None) -> Any:
         r = rpc(op, args, side)
         if op == "act.end_turn" and side == "B" and game.calls.count(("act.end_turn", "B")) >= 3:
-            for m in model._match().teams["A"]:
+            for m in model.match().teams["A"]:
                 m.hp = 0
             model.finish("B", "wipe")
         return r
@@ -634,7 +634,7 @@ def test_a_capped_phase_has_turn_cap_times_its_members_and_ends_each_open_member
     def half(game: Game, side: str, run: Run) -> None:
         if not (char := my_turn(game, side)):
             return
-        if game.model._match().acting.name in ("Karlach", "Gale"):
+        if game.model.match().acting.name in ("Karlach", "Gale"):
             run.model += 5
             game.rpc("act.end_turn", {"char": char}, side)
         else:
@@ -645,12 +645,12 @@ def test_a_capped_phase_has_turn_cap_times_its_members_and_ends_each_open_member
 
     def watch(op: str, args: dict[str, Any], side: str | None = None) -> Any:
         if op == "act.end_turn" and side == "A":
-            ends.append((model._match().member(args["char"]).name, side, agents.runs["A"].model))
+            ends.append((model.match().member(args["char"]).name, side, agents.runs["A"].model))
         return rpc(op, args, side)
 
     game.rpc = watch  # type: ignore[method-assign]
     am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
-    a = model._match()
+    a = model.match()
     runner = [(n, m) for n, _s, m in ends[2:6]]  # round 1: Karlach and Gale by the agent, then the runner's four
     assert [n for n, _m in runner] == ["Karlach", "Gale", "Astarion", "Shadowheart"]
     assert runner[0][1] >= 10 + 4 * spec.turn_cap_s  # the phase's cap: 4 x turn_cap_s past its start
@@ -672,7 +672,7 @@ def test_the_caps_ends_go_one_at_a_time(tmp_path):
 
     def slow(op: str, args: dict[str, Any], side: str | None = None) -> Any:
         if op == "act.end_turn" and side == "A":
-            log.append("end " + model._match().member(args["char"]).name)
+            log.append("end " + model.match().member(args["char"]).name)
             r = rpc(op, args, side)
             running[r["job"]] = 2
             return {"job": r["job"], "status": "running"}
@@ -730,7 +730,7 @@ def test_a_summons_phase_is_a_turn_of_its_side_capped_and_counted_toward_forfeit
 
     def watch(op: str, args: dict[str, Any], side: str | None = None) -> Any:
         if op == "act.end_turn" and side == "B":
-            ended.append(model._match().member(args["char"]).name)
+            ended.append(model.match().member(args["char"]).name)
         return rpc(op, args, side)
 
     game.rpc = watch  # type: ignore[method-assign]

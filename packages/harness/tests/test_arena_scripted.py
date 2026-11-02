@@ -220,26 +220,26 @@ class FightModel(ArenaModel):
 
     def arena_end_turn(self) -> None:
         super().arena_end_turn()
-        a = self._match()
+        a = self.match()
         while self.ended is None and a.acting.hp == 0:
             super().arena_end_turn()
 
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
         if self.arena is None:
             return super().reply_side(ctx, op, args, side)
-        a = self._match()
+        a = self.match()
         if op == "state.actions":
             acts = [{"name": "Main Hand Attack", "spell": "Target_MainHandAttack", "cost": {"action": 1}}]
             return {"ok": True, "result": {"actions": acts, "resources": {"ActionPoint": [1, 1], "Movement": [9, 9]}}}
         if op == "act.cast":
             me, foe = a.member(args["char"]), a.member(args["target"])
             if (why := a.refusal(side, me.uuid)) or a.side_of(foe.uuid) == side:
-                return {"ok": True, "result": self._failed_job("act.cast", why or "a teammate", side)}
+                return {"ok": True, "result": self.failed_job("act.cast", why or "a teammate", side)}
             dist = sum((p - q) ** 2 for p, q in zip(me.pos, foe.pos, strict=True)) ** 0.5
             if dist > self.REACH:
-                return {"ok": True, "result": self._failed_job("act.cast", "out of reach", side)}
+                return {"ok": True, "result": self.failed_job("act.cast", "out of reach", side)}
             self.arena_damage(foe.name, me.name, self.HIT)
-            return {"ok": True, "result": self._job("act.cast", {"cast": True}, side)}
+            return {"ok": True, "result": self.settled_job("act.cast", {"cast": True}, side)}
         if op == "act.move_to" and args.get("target"):
             me, foe = a.member(args["char"]), a.member(args["target"])
             if not a.refusal(side, me.uuid):

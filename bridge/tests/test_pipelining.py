@@ -555,7 +555,7 @@ class AlwaysLoad(unittest.TestCase):
     def test_core_tools_are_marked_and_the_rest_deferred(self):
         tools = {t.name: t for t in asyncio.run(core.mcp.list_tools())}
         self.assertEqual(session._mark_always_load(), [])  # every listed name exists
-        for name in ("queue_actions", "do_actions", "wait_for", "look", "travel_to", "combat_turn"):
+        for name in ("queue_actions", "do_actions", "wait_for", "look", "travel_to", "end_turn"):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)
         for name in ("wiki_page", "wiki_search", "load_game", "list_saves"):
             self.assertEqual((tools[name].meta or {}).get("anthropic/alwaysLoad"), True, name)

@@ -1,4 +1,4 @@
-"""Tool results stay terse: events the result already reports are left out, repeated action lists shrink.
+"""Tool results stay terse: events the result already reports are left out.
 
 Why: model think time grew from ~1.2 s to ~2.9 s per turn over S003..S013; every repeated line is re-read
 on every later turn (research/impl-act.md, 'Think time')."""
@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from bg3ai import render  # noqa: E402
-from bg3ai.tools import observe, plumbing  # noqa: E402
+from bg3ai.tools import plumbing  # noqa: E402
 
 U1, U2, U3 = ("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222",
               "33333333-3333-3333-3333-333333333333")
@@ -25,21 +25,6 @@ class EventDedup(unittest.TestCase):
     def setUp(self):
         self.H = render.Handles()
         self.wyll, self.mari, self.gale = (self.H.get(U1, "Wyll"), self.H.get(U2, "Mari"), self.H.get(U3, "Gale"))
-
-    def test_turn_owner_cast_damage_status_dropped_others_kept(self):
-        evs = [{"kind": "cast", "data": {"caster": ref(U1, "Wyll"), "spell": "Projectile_EldritchBlast"}},
-               {"kind": "damage", "data": {"target": ref(U2, "Mari"), "source": ref(U1, "Wyll"), "amount": 10}},
-               {"kind": "status_applied", "data": {"target": ref(U1, "Wyll"), "name": "Dark One's Blessing"}},
-               {"kind": "damage", "data": {"target": ref(U1, "Wyll"), "source": ref(U2, "Mari"), "amount": 3}},
-               {"kind": "cast", "data": {"caster": ref(U3, "Gale"), "spell": "Projectile_FireBolt"}}]
-        out = render.render_events(evs, self.H, body=f"TURN {self.wyll} Wyll (round 1)\naction: ...")
-        self.assertNotIn("EldritchBlast", out)
-        self.assertNotIn("amount=10", out)
-        self.assertNotIn("Blessing", out)
-        self.assertIn("amount=3", out)          # the enemy's hit on the owner is news
-        self.assertIn("FireBolt", out)          # another character's cast too
-        full = render.render_events(evs, self.H)  # outside combat_turn nothing is dropped
-        self.assertIn("EldritchBlast", full)
 
     def test_turn_ended_runs_share_a_line(self):
         evs = [{"kind": "turn_ended", "data": ref(U1, "Wyll")}, {"kind": "turn_ended", "data": ref(U3, "Gale")},
@@ -57,72 +42,6 @@ class EventDedup(unittest.TestCase):
         self.assertNotIn("j13", out)
         self.assertIn("j14", out)
         self.assertNotIn("queue_interrupted", out)
-
-
-def acts(*names, slots=3):
-    return {"resources": {"ActionPoint": {"amount": 1, "max": 1}},
-            "actions": [{"name": n, "spell": f"Target_{n}", "range": 1.5,
-                         "uses": slots if n == "Bless" else None} for n in names]}
-
-
-class ActionsDelta(unittest.TestCase):
-    def setUp(self):
-        observe._acts_shown.clear()
-
-    def test_full_list_once_then_only_changes(self):
-        many = [f"A{i}" for i in range(12)]
-        first = observe._actions_delta(U1, acts(*many, "Bless"))
-        self.assertIn("\nA0 1.5m", first)
-        again = observe._actions_delta(U1, acts(*many, "Bless", slots=2))
-        self.assertNotIn("\nA0 1.5m", again)
-        self.assertIn("as listed before", again)
-        self.assertIn("+ Bless 1.5m uses 2", again)    # changed uses: shown again, not as removed
-        self.assertNotIn("- Bless", again)
-        gone = observe._actions_delta(U1, acts(*many[1:], "Bless", slots=2))
-        self.assertIn("- A0", gone)
-        self.assertIn("\nA5 1.5m", observe._actions_delta(U2, acts(*many)))  # per character
-
-    def test_spent_slot_level_is_one_line_not_also_removed(self):
-        """S026 09:31: Shadowheart's last L3 slot spent: 13 L3 spells listed in '+ UNAVAILABLE' with full costs and
-        again as 13 '- ...' lines (~1.6 KB); now one names-only line, no '-' lines."""
-        base = [f"A{i}" for i in range(30)]
-        l3 = [f"Third {i}" for i in range(13)]
-        observe._actions_delta(U1, acts(*base, *l3))
-        spent = acts(*base, *l3)
-        for a in spent["actions"]:
-            if a["name"].startswith("Third"):
-                a.update(available=False, reason="no spell slot of level 3+", cost={"action": 1, "slot": 3})
-        out = observe._actions_delta(U1, spent)
-        self.assertIn("as listed before", out)
-        self.assertIn("+ UNAVAILABLE: no spell slot of level 3+: Third 0, Third 1,", out)
-        self.assertEqual(out.count("Third 5"), 1)
-        self.assertNotIn("\n- ", out)
-
-    def test_names_only_mode_keeps_ids_for_shared_names(self):
-        from bg3ai import render
-        self.addCleanup(setattr, render, "ACTION_IDS", render.ACTION_IDS)
-        render.ACTION_IDS = False
-        a = acts("Fire Bolt", "Bless", *[f"A{i}" for i in range(10)])
-        a["actions"].append({"name": "Main Hand Attack", "spell": "Target_MainHandAttack", "cost": {"action": 1}})
-        a["actions"].append({"name": "Main Hand Attack", "spell": "Target_MainHandAttack_Lantern", "cost": {"action": 1}})
-        first = observe._actions_delta(U1, a)
-        self.assertIn("\nFire Bolt 1.5m", first)
-        self.assertNotIn("Target_Fire Bolt", first)
-        self.assertIn("Main Hand Attack (Target_MainHandAttack_Lantern)", first)  # two share the name: ids kept
-        a["actions"][1]["uses"] = 2  # Bless used once: a '+', not also a '-'
-        again = observe._actions_delta(U1, a)
-        self.assertIn("+ Bless", again)
-        self.assertNotIn("- Bless", again)
-
-    def test_mostly_different_list_is_shown_whole(self):
-        observe._actions_delta(U1, acts("A", "B", "C", "D"))
-        out = observe._actions_delta(U1, acts("E", "F", "G", "D"))
-        self.assertNotIn("as listed before", out)
-        self.assertIn("\nE 1.5m", out)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class AfterTrim(unittest.TestCase):
