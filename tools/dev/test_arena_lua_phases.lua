@@ -264,3 +264,42 @@ test("the group's last end: no close in END_LAST_WAIT_MS fails 'ignored'", funct
     eq(j.status, "failed", "status")
     eq(j.error, A.END_IGNORED, "error")
 end)
+
+-- Live load2 (2026-11-02, phases3): one act.end_turn at a time, the next ~30.5 s later (the driver waited 30 s per end
+-- for an engine flag a shared group never changes), B's first phase held 35 s. The game changes no flag on these
+-- ends; the group closes only once every member has ended. A1's end was 120 s old during B's phase and A1 reopened:
+-- the driver ended the reopened members again (48 ends) and the group never closed (25 min in round 1).
+test("live load2 replay: ends 30.5 s apart, B held 35 s: no ended member reopens and the group's last end closes it",
+    function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { { A1, A2, B1, B2 } }
+    openAll({ A1, A2, B1, B2 })
+    burst({ A1, A2, B1, B2 })
+    tick()
+    local function drive(u, side)
+        local p = Ar.phase()
+        eq(p and p.side, side, "the acting side at " .. u .. "'s end")
+        eq(p.members[1], u, "the phase's first member")
+        local j = endTurn(u, side)
+        ticks(2)
+        eq(j.status, "done", u .. "'s end: " .. tostring(j.error))
+        eq(j.result.requested, true, u .. "'s end pending")
+        ticks(math.floor(30500 / Ar.PHASE_EVERY_MS))
+    end
+    drive(A1, "A")
+    drive(A2, "A")
+    ticks(math.floor(35000 / Ar.PHASE_EVERY_MS)) -- B's first phase held
+    drive(B1, "B")                              -- A1's end is now over 120 s old
+    eq(G.is_my_turn(A1), false, "A1 stays ended")
+    local j = endTurn(B2, "B")                  -- the group's last end
+    tick()
+    eq(j.status, "running", "B2's end waits for the game")
+    for _, r in ipairs(refs("arena_turn")) do
+        if r.phase > 2 then eq(r.side, "B", "no phase back to A (phase " .. r.phase .. ")") end
+    end
+    for _, u in ipairs({ A1, A2, B1, B2 }) do setTurn(u, false, false) end
+    for _, u in ipairs({ A1, A2, B1, B2 }) do fire("TurnEnded", "S_Player_" .. u) end
+    tick()
+    eq(j.status, "done", "B2's end: " .. tostring(j.error))
+end)
