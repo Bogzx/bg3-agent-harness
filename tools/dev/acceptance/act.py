@@ -485,7 +485,7 @@ def sec_act() -> None:
     item(
         "act latency: end hold 0.4 s + dialogue_advance idle exit",
         "PASS" if ok else "FAIL",
-        f"END_REQUEST_AFTER_MS={v}; dialogue_advance {dt:.1f}s: {first_line(out)[:80]}; bridge END_ASYNC={S.END_ASYNC} "
+        f"END_REQUEST_AFTER_MS={v}; dialogue_advance {dt:.1f}s: {first_line(out)[:80]}; bridge "
         f"TURN_POLL_S={S.TURN_POLL_S} DIALOGUE_IDLE_OPEN_S={S.DIALOGUE_IDLE_OPEN_S}",
     )
     # swap_party where the camp button is greyed by the area: the reason at once (S039 21:48:34)

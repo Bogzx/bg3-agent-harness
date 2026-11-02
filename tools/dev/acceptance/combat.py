@@ -1,8 +1,7 @@
-"""Section combat: a fight loaded mid-way (FIGHT_SAVE: combat_turn, end_turn, melee reach)."""
+"""Section combat: a fight loaded mid-way (FIGHT_SAVE: one action per call, end_turn, melee reach)."""
 
 from __future__ import annotations
 
-import json
 import re
 import time
 
@@ -37,12 +36,25 @@ def counted(name: str, **kw) -> tuple[str, float, dict, int]:
     return out, dt, counts, hud_n[0]
 
 
+def _action_row(tool: str, out: str, dt: float, counts: dict) -> tuple[str, bool]:
+    """One counted combat action's evidence and whether its RPCs kept to the job push (one job.poll per short job)."""
+    jobs = sum(v for k, v in counts.items() if k.startswith("act."))
+    polls = counts.get("job.poll", 0)
+    return (
+        f"{tool} {dt:.1f}s {sum(counts.values())} RPCs ({jobs} act jobs, {polls} job.polls, "
+        f"{counts.get('state.combat', 0)} state.combat)",
+        polls <= 2 * jobs + 2,
+    )
+
+
 def sec_combat() -> None:
     """A real fight (BASE reloaded after): FIGHT_SAVE was saved mid-fight, so loading it puts the party in one. Plays
-    party turns with combat_turn: melee approach + attack by the SHOWN ability name, the RPC count with the job push,
-    and the names in the action lists. live2/live9: the old opener (walk BASE's party to the shadow pack W of the
-    Moonrise road, then a Ranged Attack) ended in the House of Healing with nobody in view, and the section played
-    no turn."""
+    party turns one action per call, as the agent does (bench-v0.9 one-action combat): move_to the nearest hostile
+    (within melee reach; in combat the walk returns at its end; past the movement left, walk_toward it), an attack by
+    the SHOWN ability name (Ranged Attack when the swing has no reach or no melee weapon), end_turn; each
+    call's RPCs counted with the job push, and the names in the action lists. live2/live9: the old opener (walk BASE's
+    party to the shadow pack W of the Moonrise road, then a Ranged Attack) ended in the House of Healing with nobody
+    in view, and the section played no turn."""
     if not load_verified(FIGHT_SAVE):
         load_verified(BASE)
         return
@@ -51,7 +63,7 @@ def sec_combat() -> None:
     jp = jobpush.shared(S.game.host, S.game.port)
     jp.ensure()
     cs = S.game.try_rpc("state.combat") or {}
-    if not need(bool(cs.get("active")), "combat_turn on a safe fight", f"{FIGHT_SAVE} loaded with no fight on"):
+    if not need(bool(cs.get("active")), "one-action turns on a safe fight", f"{FIGHT_SAVE} loaded with no fight on"):
         load_verified(BASE)
         return
     gc = call("get_combat_state")
@@ -65,9 +77,7 @@ def sec_combat() -> None:
     from bg3ai import turn as T
 
     played = 0
-    bg_ends: list[tuple] = []  # (who, combat_turn s, background end s after it returned, queue text, turn passed)
-    rts: list[tuple] = []  # (metrics record, single state.combat RPCs, FAILED lines) per combat_turn (batched checks)
-    ct_raw: list[str] = []  # the raw combat_turn results (vis combat compaction check)
+    raws: list[tuple[str, str]] = [("get_combat_state", gc)]  # (tool, raw result): vis combat compaction check
     probed = False
     end = time.monotonic() + 150
     while time.monotonic() < end and played < 3:
@@ -98,6 +108,7 @@ def sec_combat() -> None:
                 log(f"end_turn probe: group handed on after {time.monotonic() - t_hand:.1f}s")
                 continue
         who_u = now[0]
+        wh = S.H.get(who_u)
         nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
         foes = [c for c in nb.get("characters") or [] if c.get("relation") == "hostile" and not c.get("dead")]
         here = party[who_u].get("pos") or [0, 0, 0]
@@ -107,155 +118,98 @@ def sec_combat() -> None:
             call("wait", seconds=3)
             continue
         fh = S.H.get(foe["uuid"], foe.get("name"))
-        plan = json.dumps(
-            {
-                "move": {"target": fh, "within": 1.5},
-                "on_reaction": "skip",
-                "end": True,
-                "action": [
-                    {"ability": "Main Hand Attack", "target": fh},
-                    {"ability": "Ranged Attack", "target": fh},
-                    "Dash",
-                ],
-            }
-        )
-        recs: list[dict] = []
-        orig_td = S.METRICS.tool_done
+        rows: list[str] = []
+        outs: list[tuple[str, str]] = []
+        rpc_ok: list[bool] = []
 
-        def tool_done(tool, *a, **k):  # the combat_turn's own metrics record (rt_n / watch_n)
-            r = orig_td(tool, *a, **k)
-            if tool == "combat_turn" and r and not r.get("nested"):
-                recs.append(r)
-            return r
+        def act(tool: str, label: str, **kw) -> tuple[str, int]:  # one counted call, its row and job-push check
+            out, dt, counts, hud_n = counted(tool, **kw)
+            row, ok_rpc = _action_row(label, out, dt, counts)
+            rows.append(row + (f" hud={hud_n}" if tool == "end_turn" else ""))
+            outs.append((tool, out))
+            rpc_ok.append(ok_rpc or tool == "end_turn")  # end_turn's polls wait out enemy turns
+            return out, hud_n
 
-        S.METRICS.tool_done = tool_done
-        try:
-            out, dt, counts, hud_n = counted("combat_turn", plan=plan, who=S.H.get(who_u))
-        finally:
-            S.METRICS.tool_done = orig_td
-        if recs:
-            rts.append((recs[-1], counts.get("state.combat", 0), out.count("FAILED"), hud_n))
-        ct_raw.append(out)
-        log(f"RPCs by op: {dict(sorted(counts.items(), key=lambda kv: -kv[1]))}")
-        if "end_turn: ending in the background" in out:  # latency round 2026-10-16 (S.END_ASYNC)
-            b0 = time.monotonic()
-            while S._queues().busy(who_u) and time.monotonic() - b0 < S.END_BG_HOLD_S:
-                time.sleep(0.1)
-            q = S._last_queue_text(who_u)
-            cs2 = S.game.try_rpc("state.combat") or {}
-            bg_ends.append(
-                (
-                    party[who_u].get("name"),
-                    dt,
-                    time.monotonic() - b0,
-                    q,
-                    who_u not in T.acting(cs2) or not cs2.get("active"),
-                )
+        mv, _ = act("move_to", "move_to", target=fh, within=1.5, who=wh)
+        # in combat a walk returns at its end (research §3.3): never a job id + ETA to poll
+        reached = moved = bool(re.search(r"(?m)^move_to: done", mv))
+        walk_blocked = "still running" not in mv and not re.search(r"(?m)^move_to: started j\d+", mv)
+        if any(p in mv for p in T.MOVE_SHORT):  # past the movement left: walk_toward cuts the walk to it
+            wt, _ = act("walk_toward", "walk_toward", target=fh, who=wh)
+            moved = bool(re.search(r"(?m)^walk_toward[^\n]*: done", wt))
+            walk_blocked = (
+                walk_blocked and "still running" not in wt and not re.search(r"(?m)^walk_toward: started", wt)
             )
-        jobs = sum(v for k, v in counts.items() if k.startswith("act."))
-        polls = counts.get("job.poll", 0)
-        rpcs = sum(counts.values())
-        # "move eN: FAILED — beyond remaining movement … → partial 8.7m toward it: done" is a move too (live window
-        # 2026-10-16: Claude walked 9 m and the check said moved=False)
-        moved = bool(re.search(r"(?m)^move \S+: (?:done|FAILED[^\n]*→ partial [\d.]+m[^\n]*: done)", out))
-        hit = bool(re.search(r"(MainHandAttack|Main Hand Attack|Ranged Attack) e\d+: done", out))
-        dashed_on = bool(re.search(r"Shout_Dash: done", out)) and len(re.findall(r"(?m)^move ", out)) >= 2
-        unknown = "has no action called 'Main Hand Attack'" in out  # Ranged Attack: only with a ranged weapon
-        # round 2 fixes: no melee sent into a sure range miss after a short move; no Dash walking toward a target
-        # that vanished (re-aimed at the nearest visible hostile instead)
-        range_miss = bool(re.search(r"MainHandAttack \S+: FAILED — target is out of range", out))
-        lost_walk = "move " in out and "target is not visible; last seen" in out
+        hit, unknown, range_miss = False, False, False
+        for ability in ("Main Hand Attack", "Ranged Attack"):  # Ranged Attack: only with a ranged weapon
+            ua, _ = act("use_ability", f"use_ability {ability}", ability=ability, target=fh, who=wh)
+            unknown = unknown or (ability == "Main Hand Attack" and "has no action called" in ua)
+            # the walk reached melee reach: the swing is not refused for range
+            range_miss = range_miss or (reached and ability == "Main Hand Attack" and "out of range" in ua)
+            hit = bool(re.search(r"(?m)^use_ability[^\n]*: done", ua))
+            if hit or ("has no action called" not in ua and "out of range" not in ua):
+                break
+        et, _ = act("end_turn", "end_turn", who=wh)
+        # end_turn blocks until a party member acts (with that member's actions) or the fight stops it
+        cs2 = S.game.try_rpc("state.combat") or {}
+        nxt = re.search(r"(?m)^now (e\d+)'s", et)
+        handed = (
+            "combat is over" in et
+            or "waiting stopped" in et
+            or bool(nxt and "YOUR ACTIONS" in et and who_u not in T.acting(cs2))
+        )
+        raws += outs
+        log("RPCs: " + "; ".join(rows))
         played += 1
+        text = "\n".join(o for _, o in outs)
         ok = (
             not unknown
             and (moved or hit)
-            and polls <= 2 * jobs + 2
-            and "EXCEPTION" not in out
-            and "FAILED: it is not" not in out
+            and walk_blocked
+            and all(rpc_ok)
+            and handed
+            and "EXCEPTION" not in text
+            and "FAILED: it is not" not in text
             and not range_miss
-            and not lost_walk
-            and "unknown plan key" not in out
-        )  # act 2026-10-11: "end" inside a plan (S041 22:36:18)
-        if "melee is out of reach" in out or "the plan now aims at" in out:
-            log(
-                "round-2 lines: "
-                + " | ".join(
-                    l for l in out.splitlines() if "melee is out of reach" in l or "now aims" in l or "skipped (" in l
-                )
-            )
+        )
         item(
-            f"combat_turn #{played} (melee approach, names, job push)",
+            f"one-action turn #{played} (move_to, attack by name, end_turn; job push)",
             "PASS" if ok else "FAIL",
-            f"{party[who_u].get('name')} {dt:.1f}s; {rpcs} RPCs ({jobs} act jobs, {polls} job.polls; push heard={jp.seen}); "
-            f"moved={moved} attacked={hit} dash+walk={dashed_on} range_miss={range_miss} lost_walk={lost_walk}; vs {foe.get('name')}; "
-            + " | ".join(l for l in out.splitlines()[:4]),
+            f"{party[who_u].get('name')} vs {foe.get('name')}: moved={moved} walk_blocked={walk_blocked} "
+            f"attacked={hit} range_miss={range_miss} handed_on={handed} push heard={jp.seen}; "
+            + "; ".join(rows)
+            + " | "
+            + " | ".join(first_line(o)[:90] for _, o in outs),
         )
     if not played:
-        item("combat_turn on a safe fight", "SKIP", "the fight ended before a party turn")
+        item("one-action turns on a safe fight", "SKIP", "the fight ended before a party turn")
     if not probed:
         item(
             "end_turn after a companion's request (probe)",
             "SKIP",
             "no shared turn group with the avatar in the turns played (the party's initiatives differed)",
         )
-    # latency (2026-10-16): the party's last end before enemy turns runs in the background; it must still end the turn
-    # ("end_turn: done", incl. the HUD fallback) and the turn must pass. The numbers = what the agent no longer waits.
-    if not bg_ends:
-        item(
-            "combat_turn background end",
-            "SKIP",
-            f"no background end (END_ASYNC={S.END_ASYNC}; shared group or the next turn ours each time)",
-        )
-    else:
-        ok = all("end_turn" in q and "STOPPED" not in q and ": done" in q and passed for _, _, _, q, passed in bg_ends)
-        item(
-            "combat_turn background end",
-            "PASS" if ok else "FAIL",
-            "; ".join(
-                f"{n}: returned {d:.1f}s, end done {b:.1f}s later, passed={p}, {q.splitlines()[-1][:90] if q else '-'}"
-                for n, d, b, q, p in bg_ends
-            ),
-        )
-    # act 2026-10-16 "combat_turn serial RPCs": the step checks ride on the watcher's read after each step (one round
-    # trip with its events + act.watch); a read nobody can have changed is reused. Single state.combat RPCs left: the
-    # end_turn tool's own, the NEXT line's, one after each failed alternative (the start one is in a multi). An end the
-    # game ignored (live 2026-10-24, Karlach: 5) presses the HUD's End Turn: its check before the press and its polls
-    # wait for the game, not step checks; the poll that saw the turn move on stands for the NEXT line's read.
-    if rts:
-        from bg3ai import actq
-
-        ok = actq.BATCH_CHECKS and all("rt_n" in r and n - max(0, h - 1) <= 3 + f for r, n, f, h in rts)
-        item(
-            "combat_turn batched step checks",
-            "PASS" if ok else "FAIL",
-            f"BATCH_CHECKS={actq.BATCH_CHECKS}; "
-            + "; ".join(
-                f"rt_n={r.get('rt_n')} rpc_n={r.get('rpc_n')} watch_n={r.get('watch_n', 0)} single state.combat={n} "
-                f"failed={f} hud={h} ms-job={r['ms'] - r.get('job_ms', 0):.0f}"
-                for r, n, f, h in rts
-            ),
-        )
-    combat_compaction_check([gc] + ct_raw)
+    combat_compaction_check(raws)
     melee_probe()
     load_verified(BASE)
 
 
-def combat_compaction_check(raws: list[str]) -> None:
-    """vis 2026-10-16 combat compaction (compact.py COMBAT_NARRATIVE .. KIND_GROUP) on this fight's live results:
-    0 lost facts (compact_check), smaller, an enemy turn's cast + damage on one line, no @(x,y,z) on move lines."""
+def combat_compaction_check(raws: list[tuple[str, str]]) -> None:
+    """vis 2026-10-16 combat compaction (compact.py COMBAT_NARRATIVE .. KIND_GROUP) on this fight's live results
+    ((tool, raw) in call order): 0 lost facts (compact_check), smaller, an enemy turn's cast + damage on one line, no
+    @(x,y,z) on move lines."""
     from bg3ai import compact
     from bg3ai import compact_check as cc
 
     comp, shown, probs, a, b, outs = compact.Compactor(), [], [], 0, 0, []
-    for i, raw in enumerate(r for r in raws if r):
-        tool = "get_combat_state" if i == 0 else "combat_turn"
+    for i, (tool, raw) in enumerate((t, r) for t, r in raws if r):
         out = comp.apply(tool, raw)
         probs += [f"#{i} {p}" for p in cc.check(raw, out, comp.elided, "\n".join(shown))]
         shown.append(out)
         outs.append(out)
         a, b = a + cc.est_tokens(raw), b + cc.est_tokens(out)
     if len(outs) < 2:
-        item("vis: combat compaction keeps every fact (live)", "SKIP", "no combat_turn result")
+        item("vis: combat compaction keeps every fact (live)", "SKIP", "no combat action result")
         return
     text = "\n".join(outs[1:])
     narr = re.findall(r"(?m)^\s+(?:turn|cast) e\d+[^:\n]*: [^\n]* -> e\d+[^\n]*$", text)
@@ -263,7 +217,7 @@ def combat_compaction_check(raws: list[str]) -> None:
     item(
         "vis: combat compaction keeps every fact (live)",
         "PASS" if not probs and b < a and not pos else "FAIL",
-        f"{len(outs) - 1} combat_turn: tokens ~{a}->~{b} ({(b - a) / max(1, a):+.0%}); narrative lines "
+        f"{len(outs) - 1} combat action results: tokens ~{a}->~{b} ({(b - a) / max(1, a):+.0%}); narrative lines "
         f"{len(narr)} e.g. {narr[:2]}; move lines with @: {pos[:1]}; problems {probs[:3]}",
     )
 
@@ -341,7 +295,7 @@ MELEE_PROBE_M = (2.4, 2.1, 1.9, 1.6)  # centre-to-centre distances swung from, o
 def melee_probe() -> None:
     """ACT-3 (S065 ×9 'first melee refused, no reason given'): the centre distance the engine accepts for a melee
     swing cast WithoutMove (use_ability in combat). Our guard lets one through up to weapon range + both Stand radii
-    (2.5 m for two medium creatures); combat_turn's melee move stops at ≤2.1 m. One swing per party turn: walk to d m
+    (2.5 m for two medium creatures); move_to within=1.5 stops at ≤2.1 m. One swing per party turn: walk to d m
     from the nearest visible hostile (on the line toward it), measure, swing, end the turn. Record-only (PASS when
     measured): the rows say where the engine's reach really ends; set G.radius / A.MELEE_STOP_SLACK from them."""
     from bg3ai import turn as T
