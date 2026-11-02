@@ -68,6 +68,7 @@ class SameText(unittest.TestCase):
         self.assertIn("step 1: 'look' can't be batched or queued (a step is one of: camp, choose_dialogue,", out)
         self.assertIn("walk_toward; call other tools on their own)", out)
 
+
 class ObjectArgs(unittest.TestCase):
     """The object and its JSON text reach the game alike (each failed with TypeError on json.loads(dict) before)."""
 

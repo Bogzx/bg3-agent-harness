@@ -39,8 +39,11 @@ def jobs(g) -> list[str]:
 class BatchesInCombat(CombatTurnBase):
     def test_do_actions_runs_no_steps(self):
         out = batch.do_actions(json.dumps(STEPS))
-        self.assertIn("REFUSED: in combat do_actions runs no steps: each call is one action (use_ability, move_to, "
-                      "walk_toward, jump_to, react, end_turn)", out)
+        self.assertIn(
+            "REFUSED: in combat do_actions runs no steps: each call is one action (use_ability, move_to, "
+            "walk_toward, jump_to, react, end_turn)",
+            out,
+        )
         self.assertEqual(jobs(self.g), [])
 
     def test_queue_actions_queues_nothing(self):
@@ -69,9 +72,11 @@ class CombatNotIgnorable(Base):
         def fight(op, a):  # the first walk starts a fight
             if op == "act.move_to":
                 self.g.watch["combat"] = True
+
         self.g.on_start = fight
-        out = batch.do_actions(json.dumps([{"tool": "move_to", "x": 1, "y": 0, "z": 1},
-                                           {"tool": "move_to", "x": 2, "y": 0, "z": 2}]))
+        out = batch.do_actions(
+            json.dumps([{"tool": "move_to", "x": 1, "y": 0, "z": 1}, {"tool": "move_to", "x": 2, "y": 0, "z": 2}])
+        )
         self.assertEqual(len(self.g.ops("act.move_to")), 1, out)
         self.assertIn("combat", out.lower())
 
@@ -103,20 +108,34 @@ class ChangesInCombat(CombatTurnBase):
         delta.changes_text = REAL_CHANGES
         delta.TRACKER.reset()
         self.addCleanup(delta.TRACKER.reset)
-        self.g.nearby = {"characters": [
-            {"uuid": GOB, "name": "Goblin", "relation": "hostile", "hp": 7, "max_hp": 7, "dist": 1.5},
-            {"uuid": IMP, "name": "Imp", "relation": "hostile", "hp": 10, "max_hp": 10, "dist": 6.0},
-        ], "items": []}
+        self.g.nearby = {
+            "characters": [
+                {"uuid": GOB, "name": "Goblin", "relation": "hostile", "hp": 7, "max_hp": 7, "dist": 1.5},
+                {"uuid": IMP, "name": "Imp", "relation": "hostile", "hp": 10, "max_hp": 10, "dist": 6.0},
+            ],
+            "items": [],
+        }
         REAL_CHANGES(self.g, core.H)  # the agent's last look
         # the mod's portrait summary in a fight (Actions.lua A.summary: in_combat, my_turn)
-        self.g.result_for = lambda op, a: {"dist": 1.0, "after": {"hp": 20, "max_hp": 20, "action": 0, "bonus": 1,
-                                                                   "movement": 3, "in_combat": True, "my_turn": True}}
+        self.g.result_for = lambda op, a: {
+            "dist": 1.0,
+            "after": {
+                "hp": 20,
+                "max_hp": 20,
+                "action": 0,
+                "bonus": 1,
+                "movement": 3,
+                "in_combat": True,
+                "my_turn": True,
+            },
+        }
 
         def hit(op, a):
             if op == "act.cast":
                 gob, imp = self.g.nearby["characters"]
                 gob.update(hp=0, dead=True)
                 imp.update(hp=4)
+
         self.g.on_start = hit
 
     def test_use_ability_ends_with_changes(self):
@@ -140,9 +159,15 @@ class HandOver(CombatTurnBase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.g.actions_by = {P2: {"resources": {"ActionPoint": [1, 1], "Movement": [9, 9]},
-                                  "actions": [{"name": "Attack", "spell": "Target_MainHandAttack"},
-                                              {"name": "Action Surge", "spell": "Shout_ActionSurge"}]}}
+        self.g.actions_by = {
+            P2: {
+                "resources": {"ActionPoint": [1, 1], "Movement": [9, 9]},
+                "actions": [
+                    {"name": "Attack", "spell": "Target_MainHandAttack"},
+                    {"name": "Action Surge", "spell": "Shout_ActionSurge"},
+                ],
+            }
+        }
 
     def test_end_turn_shows_the_next_members_actions(self):
         self.g.on_start = lambda op, a: op == "act.end_turn" and self.g.combat.update(current=P2)
