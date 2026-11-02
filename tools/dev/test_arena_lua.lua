@@ -29,6 +29,7 @@ tickers = {}
 net = {}          -- Ext.Net broadcasts
 order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid...} (a turn group) each
 partyRows = {}
+engineRound = 1  -- the combat's TurnOrder.Round
 decoded = {}      -- an encoded answer -> the value it encodes (rpc() reads answers back as tables)
 
 os.getenv = function(n) return env[n] end -- luacheck: ignore 122
@@ -173,7 +174,7 @@ function reset()
     clock = clock + 100000
     env = { BG3AI_ARENA = "1" }
     osiv, net, order = {}, {}, {}
-    engineRound = 1 -- the combat's TurnOrder.Round
+    engineRound = 1
     partyRows = { A1, A2, B1, B2, SA }
     world = {
         [A1] = { pos = { 0, 0, 0 }, comps = { ServerCharacter = {}, Health = { Hp = 10, MaxHp = 20 } } },
