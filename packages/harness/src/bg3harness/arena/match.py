@@ -158,7 +158,9 @@ class Referee:
                     f"arena.status team {s} has {len(teams.get(s) or [])} characters, the arena "
                     f"{len(self.spec.teams[s])}"
                 )
-            for uuid, name in zip(teams[s], self.spec.teams[s], strict=True):
+            for uuid, name, want in zip(teams[s], self.spec.teams[s], self.spec.uuids[s], strict=True):
+                if want is not None and uuid.lower() != want:
+                    raise ArenaSetupError(f"arena.status team {s} has {uuid} for {name}, the arena {want}")
                 self.names[uuid.lower()] = (s, name)
         self.event(
             "arena_start",

@@ -58,6 +58,11 @@ class ArenaCliTest(unittest.TestCase):
         self.assertTrue(s["A"].player.startswith("pi/"))
         self.assertEqual(s["A"].profile, PI)
 
+    def test_a_scripted_side_plays_no_profile_and_is_recorded_as_scripted(self):
+        s = arena_cli.sides("scripted", PI, allow_unverified=True)
+        self.assertEqual((s["A"].player, s["A"].profile, s["A"].client), ("scripted/none", "scripted", "scripted"))
+        self.assertTrue(s["B"].player.startswith("pi/"))
+
     def test_an_arena_name_resolves_to_the_bench_s_file(self):
         self.assertEqual(arena_cli.arena_path("open_field").name, "open_field.json")
         self.assertEqual(arena_cli.arena_path("x/y.json"), Path("x/y.json"))

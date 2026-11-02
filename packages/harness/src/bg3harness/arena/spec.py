@@ -29,6 +29,7 @@ class ArenaSpec:
     save: str  # the start save's name
     save_sha1: str
     teams: dict[str, tuple[str, ...]]  # side -> character names, in the arena file's order
+    uuids: dict[str, tuple[str | None, ...]]  # side -> each character's uuid when the file gives one
     seed: int
     karmic: bool
     round_cap: int
@@ -50,12 +51,15 @@ class ArenaSpec:
             errs.append("save needs a name and a sha1")
         teams_raw: Mapping[str, Any] = a["teams"] if isinstance(a.get("teams"), Mapping) else {}
         teams: dict[str, tuple[str, ...]] = {}
+        uuids: dict[str, tuple[str | None, ...]] = {}
         for s in SIDES:
             members = teams_raw.get(s)
-            names = [m.get("name") for m in members if isinstance(m, Mapping)] if isinstance(members, list) else []
+            rows = [m for m in members if isinstance(m, Mapping)] if isinstance(members, list) else []
+            names = [m.get("name") for m in rows]
             if not names or not all(isinstance(n, str) and n for n in names):
                 errs.append(f"team {s} needs its characters' names")
             teams[s] = tuple(n for n in names if isinstance(n, str))
+            uuids[s] = tuple(str(m["uuid"]).lower() if m.get("uuid") else None for m in rows)
         for key, kind in (("seed", int), ("round_cap", int), ("wall_cap_min", (int, float)),
                           ("turn_cap_s", (int, float)), ("tools_off", str), ("name", str)):  # fmt: skip
             v = a.get(key)
@@ -70,6 +74,7 @@ class ArenaSpec:
             save=save["name"],
             save_sha1=save["sha1"],
             teams=teams,
+            uuids=uuids,
             seed=a["seed"],
             karmic=False,
             round_cap=a["round_cap"],

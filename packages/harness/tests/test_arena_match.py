@@ -780,6 +780,25 @@ def test_a_failed_setup_starts_no_agent(tmp_path):
     assert not arena_events(tmp_path)
 
 
+def test_a_team_member_whose_uuid_disagrees_with_the_arena_file_starts_no_match(tmp_path):
+    """The arena file gives Karlach's uuid; arena.status reports another character there: the setup fails closed."""
+    karlach = "000001f4-0000-4000-8000-0000000001f4"  # the fake game's first character
+    teams = {"A": [{"name": "Karlach", "uuid": karlach}, {"name": "Gale"}], "B": ARENA["teams"]["B"]}
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer}, dict(ARENA, teams=teams))
+    assert model.arena is None
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None and agents.started  # the right uuid plays
+
+    wrong = {"A": [{"name": "Karlach", "uuid": "0" * 8 + "-0000-4000-8000-" + "0" * 12}, {"name": "Gale"}]}
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer}, dict(ARENA, teams={**teams, **wrong}))
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path / "wrong", clock)
+    assert out.end is None and out.invalid == (
+        f"setup: ArenaSetupError: arena.status team A has {karlach} for Karlach, the arena "
+        "00000000-0000-4000-8000-000000000000"
+    )
+    assert agents.started == []
+
+
 def test_the_wall_cap_is_a_draw(tmp_path):
     arena = dict(ARENA, wall_cap_min=1, round_cap=100)
     _model, game, clock, agents, spec = setup({"A": passer, "B": passer}, arena)
