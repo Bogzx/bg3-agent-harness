@@ -75,7 +75,7 @@ SPEC: dict[str, Any] = {
     "schema": "arena-mirror.v1",
     "name": "mirror_crash_site",
     "level": 2,
-    "location": {"level": "WLD_Main_A", "spawns": {"A": [229.8, 5.1, 268.2], "B": [229.8, 5.6, 278.7]}},
+    "location": {"level": "WLD_Main_A", "spawns": {"A": [229.8, 5.1, 268.2], "B": [229.8, 5.3, 278.7]}},
     "pairs": [
         {"class": "Fighter", "template": None, "names": {"A": "Ash", "B": "Birch"}, "kit": KITS["Fighter"]},
         {"class": "Barbarian", "template": None, "names": {"A": "Alder", "B": "Bramble"}, "kit": KITS["Barbarian"]},
@@ -115,6 +115,14 @@ class SpecTest(unittest.TestCase):
             (spec(level=3), "level must be one of 1, 2"),
             (spec(location={"level": "WLD_Main_A", "spawns": {"A": [1, 2, 3]}}), "location.spawns.B"),
             (spec(pairs=SPEC["pairs"][:3]), "pairs must list 4"),
+            (
+                spec(location={"level": "WLD_Main_A", "spawns": {"A": [229.8, 5.1, 268.2], "B": [229.8, 5.6, 278.7]}}),
+                re.escape("location.spawns A and B are 0.50 m apart in height (y); they must be under 0.3 m"),
+            ),
+            (
+                spec(location={"level": "WLD_Main_A", "spawns": {"A": [0, 0, 0], "B": [0.5, 0, 10.5]}}),
+                re.escape("A's member 1 is 10.69 m from B's member 2, B's member 1 10.55 m from A's member 2"),
+            ),
         ]
         druid = spec()
         druid["pairs"][3]["class"] = "Cleric"  # its domain is a subclass at level 1 (D300)

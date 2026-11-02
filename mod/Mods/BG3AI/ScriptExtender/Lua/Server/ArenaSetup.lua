@@ -10,7 +10,8 @@
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
 --      entries' grants nor the kit's boosts: live check 12 step 13): every spot cleared of Ground and Cloud surfaces
 --      (RemoveSurfaceLayerAtPosition, SURFACE_CLEAR_M), then each pair arena.mirror_spawn + arena.mirror_kit
---      (Server/ArenaMirror.lua); once every kit is done, each twin must read its own name and StatsId within
+--      (Server/ArenaMirror.lua), pair i's side Setup.spawn_order(seed, n)[i] made first (recorded as spawn_order);
+--      once every kit is done, each twin must read its own name and StatsId within
 --      NAME_WAIT_MS of the spawn (both land after the spawn tick) and arena.symmetry over the pairs must find
 --      nothing; pair i is teams.A[i] and teams.B[i] (arena.teams, if given, must name them in that order)
 --   1. party: SetMaxPartySizeOverride(8); PROC_GLO_PartyMembers_Add(member, host) for each not in DB_PartyMembers
@@ -24,7 +25,9 @@
 --      the combat call): every pair across the teams an enemy, none within, all members in one combat, else the job
 --      fails with the matrix; no character on no team in that combat (the job fails naming each)
 --   6. a mirror arena: arena.symmetry over the pairs again, statuses included (a twin on a surface reads INSURFACE)
---   7. Ar.begin(teams, {round_cap})
+--   7. Ar.begin(teams, {round_cap, positions}): positions = where each member stands, in the result and arena_start
+-- Refused at the call: spawns whose heights differ by SPAWN_DY_MAX_M or more, or whose lines don't give each pair the
+-- same distances both ways (Setup.check_geometry).
 -- The result records each member's name, level, max HP and faction before and after (joining the party reset two
 -- companions' stat blocks in the spike: Minthara 52 -> 11 max HP, Karlach 32 -> 14).
 
@@ -48,6 +51,10 @@ Setup.TIMEOUT_MS = 60000
 Setup.SURFACE_CLEAR_M = 2.0
 Setup.SURFACE_LAYERS = { "Ground", "Cloud" } -- bg3se SurfaceLayer8
 Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike stood up
+-- Spawn geometry (both sides stand on the same terms): the spawns at most this far apart in height, and every distance
+-- across the lines the same both ways (A's member i to B's member j = B's i to A's j) within this
+Setup.SPAWN_DY_MAX_M = 0.3
+Setup.PAIR_DIST_TOL_M = 0.1
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -129,6 +136,42 @@ function Setup.line(spot, n)
         out[#out + 1] = { spot[1] + (i - (n - 1) / 2) * Setup.LINE_GAP_M, spot[2], spot[3] }
     end
     return out
+end
+
+-- Which side's twin each of n pairs makes first: A when seed + i is even, else B. It alternates pair to pair and the
+-- seed flips it, so no side's twins are always made first (initiative ties may go by creation order; not read live).
+function Setup.spawn_order(seed, n)
+    if type(seed) ~= "number" or seed % 1 ~= 0 or seed < 0 then
+        error("a mirror arena needs arena.seed (an integer 0 or more): it orders each pair's spawn", 0)
+    end
+    local out = {}
+    for i = 1, n do out[i] = (seed + i) % 2 == 0 and "A" or "B" end
+    return out
+end
+
+local function dist(p, q)
+    return math.sqrt((p[1] - q[1]) ^ 2 + (p[2] - q[2]) ^ 2 + (p[3] - q[3]) ^ 2)
+end
+
+-- Refuses spawns that put one team higher (|dy| >= SPAWN_DY_MAX_M) or nearer the other's members than the other is
+-- to its own (the lines run along x: spawns apart along x make pair i's A member nearer B's later pairs).
+function Setup.check_geometry(spawns, n)
+    local dy = math.abs(spawns.A[2] - spawns.B[2])
+    if dy >= Setup.SPAWN_DY_MAX_M then
+        error(("location.spawns A and B are %.2f m apart in height (y); they must be under %.1f m"):format(dy,
+            Setup.SPAWN_DY_MAX_M), 0)
+    end
+    local a, b = Setup.line(spawns.A, n), Setup.line(spawns.B, n)
+    for i = 1, n do
+        for j = 1, n do
+            local ab, ba = dist(a[i], b[j]), dist(b[i], a[j])
+            if math.abs(ab - ba) > Setup.PAIR_DIST_TOL_M then
+                error(("location.spawns: A's member %d is %.2f m from B's member %d, B's member %d %.2f m from A's "
+                    .. "member %d; they must be the same within %.1f m"):format(i, ab, j, i, ba, j,
+                    Setup.PAIR_DIST_TOL_M), 0)
+            end
+        end
+    end
 end
 
 -- The two lowest-numbered "Hero Player<N>" factions nobody in the level uses and no team member holds.
@@ -358,12 +401,18 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
             return
         end
     end
-    local sitters = {}
+    local sitters, positions = {}, {}
     for _, u in ipairs(job.sitters) do sitters[#sitters + 1] = { uuid = u, name = V.name(u) } end
-    local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join })
+    for _, u in ipairs(all_of(t)) do -- where each member stands as the fight starts (none when it doesn't read)
+        local ok, x, y, z = pcall(Osi.GetPosition, u)
+        if ok and type(x) == "number" then positions[u] = { x, y, z } end
+    end
+    local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
-            reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, calls = job.calls, status = status })
+            reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,
+        positions = positions,
+        calls = job.calls, status = status })
 end
 
 -- A mirror arena: the twins, spawned and given their kits (their kit jobs run on their own).
@@ -386,7 +435,7 @@ STEPS[-1] = function(job)
         local spots = {}
         for k, s in ipairs(Ar.SIDES) do spots[k] = Setup.line(job.spawns[s], #mi.pairs)[i] end
         local r = M.spawn({ stats = p.stats, template = p.template, race = p.race, spots = spots,
-            names = { p.names.A, p.names.B } })
+            names = { p.names.A, p.names.B }, first = job.spawn_order[i] == "A" and 1 or 2 })
         for k, s in ipairs(Ar.SIDES) do
             job.teams[s][i] = r.twins[k]
             job.names[r.twins[k]] = p.names[s]
@@ -480,7 +529,11 @@ function Setup.start(args)
     local avatars = set_of(avatarList)
     local spawnsIn = type(arena.location) == "table" and arena.location.spawns or nil
     local mirror = arena.mirror
-    if mirror ~= nil then Setup.check_mirror(mirror, arena.teams) end
+    local spawnOrder
+    if mirror ~= nil then
+        Setup.check_mirror(mirror, arena.teams)
+        spawnOrder = Setup.spawn_order(arena.seed, #mirror.pairs)
+    end
     for _, s in ipairs(Ar.SIDES) do
         teams[s] = {}
         spawns[s] = vec3(type(spawnsIn) == "table" and spawnsIn[s] or nil, "location.spawns." .. s)
@@ -499,6 +552,7 @@ function Setup.start(args)
     if mirror == nil and #teams.A ~= #teams.B then
         error(("team A lists %d characters, team B %d: the teams must be the same size"):format(#teams.A, #teams.B), 0)
     end
+    Setup.check_geometry(spawns, mirror and #mirror.pairs or #teams.A)
     if args.round_cap ~= nil and not tonumber(args.round_cap) then error("round_cap must be a number", 0) end
     local level = arena.level
     if type(level) ~= "number" or level % 1 ~= 0 or level < 1 or level > 12 then
@@ -509,8 +563,8 @@ function Setup.start(args)
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
         teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
         round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -1 or 1, next_at = 0,
-        before = {}, calls = {}, mirror = mirror })
-    job.partial = { teams = teams, calls = job.calls }
+        before = {}, calls = {}, mirror = mirror, spawn_order = spawnOrder })
+    job.partial = { teams = teams, calls = job.calls, spawn_order = spawnOrder }
     return { job = job.id, status = job.status }
 end
 

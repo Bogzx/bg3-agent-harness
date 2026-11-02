@@ -462,7 +462,7 @@ end
 -- CombatRoundStarted and first TurnStarted before this), then follows CombatRoundStarted; nil until known. The
 -- client gets the team uuids and display names. opts.round_cap: the rounds a match lasts at most (a draw after).
 -- opts.sitters: {uuid = its CanJoinCombat before setup} for the characters setup kept out of the fight; arena.reset
--- gives them that back.
+-- gives them that back. opts.positions: {uuid = {x, y, z}} where setup's members stand, recorded in arena_start.
 function Ar.begin(teams, opts)
     if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
     local t, names = {}, {}
@@ -480,7 +480,7 @@ function Ar.begin(teams, opts)
     Ar.state = { teams = t, names = names, combat = combat, round = combat and roundNow(t.A[1]) or nil,
         started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters }
     broadcast({ teams = t, names = names })
-    record("arena_start", { teams = t })
+    record("arena_start", { teams = t, positions = opts and opts.positions or nil })
     return Ar.status()
 end
 

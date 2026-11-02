@@ -10,7 +10,9 @@
 --   13: the copies still read the template's name in the call, their own on the next tick). Nothing else of a copy is
 --   read as fact in the spawn tick either (live check 13b: its Race component read empty there): `reads` (StatsId,
 --   name, level) is what the copy reads at the call, and arena.setup checks names and StatsId once they land
---   (NAME_WAIT_MS). -> {twins = [u1, u2], reads}
+--   (NAME_WAIT_MS). first = 1 or 2 (default 1): the spot whose copy is made (CreateAt, then MakePlayer and the name)
+--   first; arena.setup alternates it per pair by the seed, since the initiative tie-break may follow creation order.
+--   -> {twins = [u1, u2] (in spot order), order = [spot indices in creation order], reads}
 -- arena.mirror_kit {twins = [u1, u2], race, kit} (a job): the same level-1 choices on both twins, in the same order,
 --   by the game's own calls, once both twins read ready (READY_WAIT_MS: race set, items readable, the containers the
 --   calls write present; a copy fresh from CreateAt has none of it in its spawn tick, live check 13b).
@@ -109,13 +111,16 @@ function M.spawn(args)
         if type(names[i]) ~= "string" or names[i] == "" then error("names[" .. i .. "] must be a name", 0) end
     end
     if names[1]:lower() == names[2]:lower() then error("the twins need two names", 0) end
+    local first = args.first == nil and 1 or args.first
+    if first ~= 1 and first ~= 2 then error("first must be 1 or 2 (the spot made first)", 0) end
+    local order = { first, 3 - first }
     local host = V.uuid(osi(Osi.GetHostCharacter))
     if not host then error("no host character", 0) end
     local old = tpl.Stats
     tpl.Stats = stats
     local ok, made = pcall(function()
         local out = {}
-        for i = 1, 2 do
+        for _, i in ipairs(order) do
             local p = spots[i]
             out[i] = V.uuid(Osi.CreateAt(args.template, p[1], p[2], p[3], 0, 0, ""))
             if not out[i] then error("CreateAt made no copy", 0) end
@@ -125,16 +130,17 @@ function M.spawn(args)
     tpl.Stats = old
     if not ok then error(made, 0) end
     local calls, reads = {}, {}
-    for i, u in ipairs(made) do
-        call(calls, "MakePlayer", { u, host })
-        call(calls, "SetStoryDisplayName", { u, names[i] })
+    for _, i in ipairs(order) do
+        call(calls, "MakePlayer", { made[i], host })
+        call(calls, "SetStoryDisplayName", { made[i], names[i] })
     end
     for i, u in ipairs(made) do
         local e = V.entity(u)
         reads[i] = { uuid = u, stats = read(function() return e.Data.StatsId end), name = V.name(u),
             level = read(function() return e.EocLevel.Level end) }
     end
-    return { twins = made, reads = reads, calls = calls, template_stats = read(function() return tpl.Stats end) }
+    return { twins = made, order = order, reads = reads, calls = calls,
+        template_stats = read(function() return tpl.Stats end) }
 end
 
 -- The game's list for a choice as a membership test: fn(id) -> bool; error, naming the list, when it can't be checked
