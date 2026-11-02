@@ -15,7 +15,7 @@ from pathlib import Path
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import boxclick  # noqa: E402
-from bg3ai.tools import world_tools, inventory, uitools  # noqa: E402
+from bg3ai.tools import world_tools, inventory, transition, uitools  # noqa: E402
 from bg3ai import game as game_mod
 from bg3ai.game import JobResult, NotReady  # noqa: E402
 
@@ -262,8 +262,8 @@ class BoxAct(Base):
         world_tools._inp = lambda: self.scr
         self.addCleanup(setattr, world_tools, "_inp", self.saved_inp)
         self.g.rpc = lambda op, args=None, context="server", **kw: self.scr.rpc(op, args or {})
-        self.addCleanup(setattr, world_tools, "TRANSITION_SETTLE_S", world_tools.TRANSITION_SETTLE_S)
-        world_tools.TRANSITION_SETTLE_S = 0.0
+        self.addCleanup(setattr, transition, "TRANSITION_SETTLE_S", transition.TRANSITION_SETTLE_S)
+        transition.TRANSITION_SETTLE_S = 0.0
 
     def test_long_rest_clicks_and_reruns(self):
         calls = []
@@ -318,8 +318,8 @@ class RestTransition(Base):
         world_tools._inp = lambda: self.scr
         self.addCleanup(setattr, world_tools, "_inp", self.saved_inp)
         for k, v in (("TRANSITION_POLL_S", 0.0), ("TRANSITION_SETTLE_S", 0.0)):
-            self.addCleanup(setattr, world_tools, k, getattr(world_tools, k))
-            setattr(world_tools, k, v)
+            self.addCleanup(setattr, transition, k, getattr(transition, k))
+            setattr(transition, k, v)
         self.addCleanup(game_mod.release_client)
         self.clicked = False
         orig = self.scr.click
@@ -376,7 +376,7 @@ class RestTransition(Base):
         self.assertEqual({c for _op, c, _h in after if _h}, {"server"}, after)
         self.assertNotIn("ui.box_open", [op for op, _c, _h in self.log])
         self.assertIn("camp.rest_flow", [op for op, _c, _h in after])
-        self.assertEqual(world_tools._TRANSITION_LAST.get("transition"), "the game answered (end_day_ok)")
+        self.assertEqual(transition._TRANSITION_LAST.get("transition"), "the game answered (end_day_ok)")
         self.assertEqual(game_mod.client_held(), "")
 
     def test_s086_a_camp_scene_after_the_yes_stops_without_reading_the_ui(self):
@@ -388,14 +388,14 @@ class RestTransition(Base):
 
     def test_a_load_back_to_running_ends_the_wait(self):
         self.state = ["Running", "UnloadLevel", None, "LoadLevel", "Running"]
-        r = world_tools._transition_wait("fast_travel")
+        r = transition._transition_wait("fast_travel")
         self.assertEqual(r["transition"], "the game loaded")
 
     def test_no_word_from_the_game_goes_on_after_the_budget(self):
         self.flow = [{"steps": ["requested", "gathered"]}]
-        self.addCleanup(setattr, world_tools, "TRANSITION_MAX_S", world_tools.TRANSITION_MAX_S)
-        world_tools.TRANSITION_MAX_S = 0.05
-        r = world_tools._transition_wait("long_rest")
+        self.addCleanup(setattr, transition, "TRANSITION_MAX_S", transition.TRANSITION_MAX_S)
+        transition.TRANSITION_MAX_S = 0.05
+        r = transition._transition_wait("long_rest")
         self.assertEqual(r["transition"], "no word from the game")
 
     def test_the_hold_refuses_client_evals_at_once(self):
