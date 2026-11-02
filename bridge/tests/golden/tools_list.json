@@ -1367,7 +1367,7 @@
  {
   "name": "roll_check",
   "title": null,
-  "description": "Resolve the skill-check roll on screen: optionally add boosts shown on the roll screen (comma list, e.g. \"Guidance\"), roll, and continue.",
+  "description": "Resolve the skill-check roll on screen: optionally add boosts shown on the roll screen (comma list, e.g. \"Guidance\"), roll, and continue. A success continues in the same call. A failure with Inspiration left returns with the roll screen still open (DC, roll, bonus, Inspiration left): then roll_check(reroll=true) rerolls it for 1 Inspiration, roll_check() continues with the failure.",
   "input_schema": {
    "properties": {
     "boosts": {
@@ -1375,9 +1375,9 @@
      "title": "Boosts",
      "type": "string"
     },
-    "reroll_on_fail": {
+    "reroll": {
      "default": false,
-     "title": "Reroll On Fail",
+     "title": "Reroll",
      "type": "boolean"
     }
    },

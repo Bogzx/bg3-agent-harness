@@ -96,7 +96,7 @@ Lines a result may end with:
 - `pickpocket(npc, who, take="", min_chance=0)` → sneak up and open the pickpocket window; the result lists their pockets with the game's own odds: `POCKETS …: e40 Gold x12 81% DC8 | e41 Dagger 2g 54% DC12 …` (best odds first). `take="<name or id>"` steals it (also in the first call), `min_chance=60` takes nothing below 60 %; the result says `stole …` or `CAUGHT? … failed` with the roll vs DC. A failed steal is a crime if they notice: sneak, stay unseen, save first. `who=` steals with that member (it takes control of them first; the odds are theirs); `odds ?` = the game hadn't shown that item's odds yet (list again). `pickpocket(npc, leave=true)` closes the window.
 - `get_dialogue()` → current line and numbered options with check tags. A tagged option shows the check and your speaker's bonus (`← Persuasion check: e2 +5 (party best e1 +6 …)`). Or the roll, reaction or popup on screen.
 - `choose_dialogue(option)` → pick answer N; clicks through the filler after it and returns the next real choice, roll or the end. N is the number in the last DIALOGUE shown: a long answer list is listed whole (the harness scrolls it), and an answer below the fold is scrolled to and picked by its text.
-- `roll_check(boosts="", reroll_on_fail=false)` → resolve the roll on screen (boosts as offered, e.g. "Guidance").
+- `roll_check(boosts="", reroll=false)` → resolve the roll on screen (boosts as offered, e.g. "Guidance"). A failure with Inspiration left returns with the roll screen open: `roll_check(reroll=true)` rerolls it for 1 Inspiration, `roll_check()` continues.
 - Cutscenes are auto-skipped; their lines arrive as `dialogue_line` events. Answers are never auto-picked.
 
 ## Items

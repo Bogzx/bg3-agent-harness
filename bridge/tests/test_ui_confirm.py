@@ -49,40 +49,66 @@ class RollCheck(Base):
         self.assertEqual(len(calls), 3)
         self.assertTrue(out.startswith("(rolled without Guidance: the roll offers no boosts)"), out)
 
-    def test_reroll_on_fail(self):
+    def test_a_failed_roll_returns_with_the_screen_open(self):
+        # human-gap research 2026-11-02: 15 Inspiration points went on rerolls chosen before the failure was seen
+        # (reroll_on_fail=true). A failure with Inspiration left now returns; nothing is pressed after the roll.
         calls = []
 
         def run_job(op, args, context="server", wait_s=25.0, **kw):
             calls.append(dict(args))
-            if len(calls) == 1:
-                return JobResult("done", {"roll": {"phase": "result", "success": False}})
-            return JobResult("done", {"roll": {"phase": "result", "success": True}})
+            return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 4, "bonus": -1,
+                                               "dc": 20, "skill": "Persuasion", "inspiration": 4}})
         self.g.run_job = run_job
-        dialogue.roll_check(reroll_on_fail=True)
-        self.assertEqual(calls[1], {"reroll": True})
-        self.assertEqual(len(calls), 3)
+        out = dialogue.roll_check()
+        self.assertEqual(calls, [{"reroll": False}])  # rolled; no reroll, no Continue
+        self.assertIn("roll: Persuasion DC 20: d20 4 - 1 = 3 → FAILED (inspiration 4)", out)
+        self.assertIn(dialogue.ROLL_OPEN_NOTE, out)
 
-    def test_reroll_shows_both_rolls_plainly(self):
-        # S013-S026: the reroll returned the same failed roll twice and the outcome was a missing key.
+    def test_reroll_on_fail_is_gone(self):
+        import inspect
+        self.assertNotIn("reroll_on_fail", inspect.signature(dialogue.roll_check).parameters)
+
+    def test_reroll_is_its_own_call(self):
+        # the second call, on the open result screen: RollAgainCommand, then Continue on a success
         calls = []
 
         def run_job(op, args, context="server", wait_s=25.0, **kw):
             calls.append(dict(args))
             if len(calls) == 1:
-                return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 4, "bonus": 7,
-                                                   "dc": 21, "skill": "Persuasion", "inspiration": 4},
-                                          "phases": "WaitForStart@0 StartRoll@300 ResultReady@6500"})
-            if len(calls) == 2:
                 return JobResult("done", {"roll": {"phase": "result", "success": True, "result": 17, "bonus": 7,
                                                    "dc": 21, "skill": "Persuasion", "inspiration": 3},
-                                          "rerolled": True})
+                                          "rerolled": True, "phases": "WaitForReRoll@0 ResultReady@6500"})
             return JobResult("done", {"screen": "dialogue"})
         self.g.run_job = run_job
-        out = dialogue.roll_check(reroll_on_fail=True)
-        self.assertIn("roll: Persuasion DC 21: d20 4 + 7 = 11 → FAILED (inspiration 4)", out)
-        self.assertIn("reroll (1 Inspiration): Persuasion DC 21: d20 17 + 7 = 24 → SUCCESS", out)
+        out = dialogue.roll_check(reroll=True)
+        self.assertEqual(calls, [{"reroll": True}, {}])
+        self.assertIn("reroll (1 Inspiration): Persuasion DC 21: d20 17 + 7 = 24 → SUCCESS (inspiration 3)", out)
         self.assertNotIn("phases", out)
-        self.assertEqual(out.count("⏱"), min(out.count("⏱"), 1))
+        self.assertNotIn(dialogue.ROLL_OPEN_NOTE, out)
+
+    def test_a_failed_reroll_returns_again(self):
+        calls = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            calls.append(dict(args))
+            return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 3, "bonus": -1,
+                                               "dc": 20, "inspiration": 3}, "rerolled": True})
+        self.g.run_job = run_job
+        out = dialogue.roll_check(reroll=True)
+        self.assertEqual(calls, [{"reroll": True}])
+        self.assertIn("reroll (1 Inspiration) DC 20: d20 3 - 1 = 2 → FAILED (inspiration 3)", out)
+        self.assertIn(dialogue.ROLL_OPEN_NOTE, out)
+
+    def test_continue_on_the_open_result_accepts_it(self):
+        # roll_check() on the result screen: ui.roll presses Continue (its result is the dialogue, no roll)
+        calls = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            calls.append(dict(args))
+            return JobResult("done", {"screen": "dialogue"})
+        self.g.run_job = run_job
+        dialogue.roll_check()
+        self.assertEqual(calls, [{"reroll": False}])
 
     def test_reroll_ignored_and_no_inspiration(self):
         calls = []
@@ -90,16 +116,13 @@ class RollCheck(Base):
         def run_job(op, args, context="server", wait_s=25.0, **kw):
             calls.append(dict(args))
             if len(calls) == 1:
-                return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 2, "bonus": 1,
-                                                   "inspiration": 2}})
-            if len(calls) == 2:
                 return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 2},
                                           "reroll_ignored": True})
             return JobResult("done", {"screen": "game"})
         self.g.run_job = run_job
-        out = dialogue.roll_check(reroll_on_fail=True)
+        out = dialogue.roll_check(reroll=True)
         self.assertIn("the game kept the first result", out)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 2)  # nothing to choose: Continue
         calls.clear()
 
         def run_job2(op, args, context="server", wait_s=25.0, **kw):
@@ -108,9 +131,10 @@ class RollCheck(Base):
                 return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 2, "inspiration": 0}})
             return JobResult("done", {"screen": "game"})
         self.g.run_job = run_job2
-        out = dialogue.roll_check(reroll_on_fail=True)
-        self.assertIn("no Inspiration points left", out)
-        self.assertEqual(len(calls), 2)  # no reroll request, straight to Continue
+        out = dialogue.roll_check()
+        self.assertIn("no Inspiration points left to reroll", out)
+        self.assertNotIn(dialogue.ROLL_OPEN_NOTE, out)
+        self.assertEqual(len(calls), 2)  # no reroll possible: straight to Continue
 
     def test_batch_state_get(self):
         self.assertEqual(reporting._batch.get("nope", 7), 7)

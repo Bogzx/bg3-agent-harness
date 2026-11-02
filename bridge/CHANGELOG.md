@@ -5,6 +5,15 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-02: roll_check stops on a failed roll; a reroll is its own call
+
+- A failed roll with Inspiration left returns with the roll screen still open (the roll line shows DC, die, bonus
+  and Inspiration left) and says how to go on: `roll_check(reroll=true)` rolls again for 1 Inspiration,
+  `roll_check()` continues with the failure. A success still continues in the same call; a failure with no
+  Inspiration left, or a reroll the game ignored, continues too (nothing to choose).
+- `reroll_on_fail` is removed (not refused): it rerolled before the failure was seen (human-gap research: 15 of
+  launch-v1's Inspiration points were spent that way). `reroll` replaces it and acts on the result on screen.
+
 ## 2026-11-02: the action list prints costs and ranges as the game states them
 
 - A cost's named resources read in words, after the action economy and the spell slot, in one fixed order:
