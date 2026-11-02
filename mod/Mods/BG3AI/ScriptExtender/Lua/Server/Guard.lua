@@ -316,8 +316,14 @@ G.TURN_OVER_TTL_MS = 90000
 -- while the character's previous turn has had no TurnEnded leaves that TurnEnded owed (g -> the start's time); the
 -- next TurnEnded within TURN_BURST_MS of it is the older turn's and leaves the new turn open. In order (start, end,
 -- start, end) nothing is ever owed.
-G.turn_open = G.turn_open or {} -- g -> true from its TurnStarted to its TurnEnded
-G.end_owed = G.end_owed or {}   -- g -> when a TurnStarted came with its previous turn's TurnEnded still to come
+G.turn_open = G.turn_open or {} -- g -> {round = the round it started in} from its TurnStarted to its TurnEnded
+G.end_owed = G.end_owed or {}   -- g -> {t, round} of a TurnStarted that came with the previous turn's end to come
+-- combat guid -> its round, from CombatRoundStarted (fired before the round's TurnStarted burst; live 2026-11-02)
+G.combat_round = G.combat_round or {}
+function G.round_of(g)
+    local c = G.q("CombatGetGuidFor", g)
+    return c and G.combat_round[c] or nil
+end
 function G.turn_is_over(uuid)
     local g = G.guid(uuid) or uuid
     local t = g and G.turn_over[g]

@@ -505,5 +505,24 @@ do
     Ext.Stats.Get, Ext.Loca.GetTranslatedString, E.spellInfo = realGet, realLoca, {}
 end
 
+-- turn_started / turn_ended come from E.turn (Actions.dispatch's turn pairing, arena eac2da4a/00cf506f), not from a
+-- listener here: one push per Osiris event, with the round the turn started in; a character out of sight pushes none.
+do
+    check("no TurnStarted / TurnEnded listener in Events.lua",
+        listeners.TurnStarted == nil and listeners.TurnEnded == nil)
+    local n = #pushed
+    E.turn("turn_ended", "S_Player_" .. SH, 1)
+    local d = last("turn_ended")
+    check("turn_ended pushed once", #pushed == n + 1 and d ~= nil)
+    check("turn_ended: the party member", d and d.uuid == SH, d and d.uuid)
+    check("turn_ended: the round its turn started in", d and d.round == 1, d and d.round)
+    E.turn("turn_started", "Goblin_" .. GOB, nil)
+    d = last("turn_started")
+    check("turn_started: a visible enemy, round unknown", d and d.uuid == GOB and d.round == nil, d and d.round)
+    n = #pushed
+    E.turn("turn_started", "Hidden_dddddddd-0000-0000-0000-000000000004", 2)
+    check("turn_started: nothing for a character out of sight", #pushed == n)
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end
