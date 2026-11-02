@@ -14,10 +14,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    the record; `character` = the first; `names` as the mod gave them. Its `arena_end` (the mod's own end: a wipe at
    a turn boundary, the round cap at the start of round round_cap + 1) is written as it is; its `arena_start`, an
    end the runner asked for and any arena record after the match's end are left out, as the referee writes those
-   itself. Its `arena_turn_passed {side, character, name, why, round, error?}` (the mod ended a downed or dead
-   member's turn) is written with `character` named as in arena_turn. A phase naming the other team's character is
-   not the side's: not written, never forced. A turn below is a phase; a summon's phase is a turn of its side like
-   any other.
+   itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
+   ended the turn of a member that can't act) is written with `character` named as in arena_turn. A phase naming
+   the other team's character is not the side's: not written, never forced. A turn below is a phase; a summon's
+   phase is a turn of its side like any other.
 3. Every POLL_S: the ring, then `arena.status`. The match ends at the first of
    - the mod's end (`arena.status.ended` or the ring's `arena_end`, any reason: a wipe, or the round cap as a draw
      with `rounds` = round_cap);
@@ -46,7 +46,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    the phase was capped, its own side's model time no longer counts) runs from its last progress: a new phase, a
    change of arena.status's turn, round or HP, a new referee or roll ring row. At STALL_CAPS x turn_cap_s x members
    (at least STALL_MIN_S) the runner reads `state.combat` as the phase's side: a member of the phase still current,
-   not ended, not downed or dead means the side holds the turn, and the phase is capped as at the model-time cap
+   not ended and not passed by the mod (its arena_turn_passed: who can't act is the mod's call, not state.combat's
+   downed or dead) means the side holds the turn, and the phase is capped as at the model-time cap
    (`arena_stall {stall: "held", ...}` first; it counts toward the forfeit); none (every end went in, or nobody can
    act), the read failing or a second stall of the same phase means the game holds it: `arena_stall {stall: "game",
    ...}` and the match ends as `fault` (invalid, rerun), no act.end_turn sent. So does a match whose first phase
@@ -158,6 +159,7 @@ class Turn:
     forced: bool = False
     capped: bool = False  # the runner sent its cap's ends (forced once one went through)
     stalled: bool = False  # a stall "held" capped it
+    passed: set[str] = field(default_factory=set)  # lowercase uuids of members the mod passed (arena_turn_passed)
 
 
 class Referee:
@@ -224,6 +226,9 @@ class Referee:
         if ev == "arena_turn_passed":
             u = str(fact.get("character") or "")
             t = self.names.get(u.lower())
+            turn = self.turn
+            if turn is not None and fact.get("side") == turn.side and fact.get("round") == turn.round:
+                turn.passed.add(u.lower())
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
         if ev == "arena_end":
             # the ring leaves a nil winner (a draw) out
@@ -322,13 +327,16 @@ def _decline_unowned(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callab
 
 def _held(game: ArenaGame, turn: Turn) -> list[str]:
     """The phase's members its side still holds: in the side's own state.combat, current, not ended (an end of its
-    own pending counts as ended), not downed or dead. A member missing from the read isn't held."""
+    own pending counts as ended), and not passed by the mod. Who can't act is the mod's call (Arena.lua cantAct:
+    dead, DOWNED or 0 HP), told by its arena_turn_passed, never state.combat's downed/dead: live 10 m1 a2 r3 read
+    Lae'zel at 0 HP without DOWNED (the mod then let her act) as downed, a fault instead of the cap. A member
+    missing from the read isn't held."""
     st = game.rpc("state.combat", {}, turn.side) or {}
     rows = {str(r.get("uuid") or "").lower(): r for r in st.get("order") or []}
     held = []
     for u in turn.members:
         r = rows.get(u.lower())
-        if r and r.get("is_current") and not (r.get("ended") or r.get("downed") or r.get("dead")):
+        if r and r.get("is_current") and not r.get("ended") and u.lower() not in turn.passed:
             held.append(u)
     return held
 

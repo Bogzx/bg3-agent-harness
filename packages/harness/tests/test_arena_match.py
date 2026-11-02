@@ -944,7 +944,8 @@ def test_both_schemas_take_a_passed_turn_and_a_stall():
     passed = {**base, "ev": "arena_turn_passed", "side": "A", "character": "Gale", "name": "Gale", "why": "downed"}
     stall = {**base, "ev": "arena_stall", "stall": "held", "side": "A", "character": "Gale", "members": ["Gale"]}
     stall.update(round=2, idle_s=300.0, status={"turn": None, "round": 2, "hp": {}}, last={"A": [], "B": []})
-    for good in ({**passed, "round": 2}, {**passed, "round": 2, "error": "x"}, stall):
+    zero_hp = {**passed, "round": 2, "why": "zero_hp"}  # Arena.lua cantAct: 0 HP without DOWNED
+    for good in ({**passed, "round": 2}, {**passed, "round": 2, "error": "x"}, zero_hp, stall):
         jsonschema.validate(good, FACTS_SCHEMA)
         jsonschema.validate(good, BENCH_FACTS_SCHEMA)
     no_phase = {k: v for k, v in stall.items() if k not in ("side", "character", "members")}

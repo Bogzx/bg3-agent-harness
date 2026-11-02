@@ -167,3 +167,54 @@ def test_a_match_whose_first_phase_never_comes_is_the_games_fault(tmp_path):
     jsonschema.validate(st, BENCH_FACTS_SCHEMA)
     assert grade(tmp_path)["invalid_reason"] == "fault"
     assert not [c for c in game.calls if c[0] == "act.end_turn"]
+
+
+def at_zero_hp(model, then):
+    """Karlach drops to 0 HP in her own phase without the mod passing her (live 10 m1 a2: Lae'zel at 0 HP without
+    DOWNED, so the mod's cantAct let her act); her state.combat row reads downed (StateWorld's party hp fallback).
+    `then` plays the side on."""
+
+    def play(game: Game, side: str, run: Run) -> None:
+        karlach = model._match().member("Karlach")
+        if my_turn(game, side) == karlach.uuid:
+            karlach.hp = 0
+        then(game, side, run)
+
+    return play
+
+
+def test_a_member_state_combat_reads_downed_but_the_mod_never_passed_is_held_and_capped(tmp_path):
+    """Who can't act is the mod's call (its arena_turn_passed), not state.combat's downed: a 0-HP member the mod
+    never passed, still current and not ended, is held by its side, so its stall is capped, not a fault."""
+    model, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    agents.plays["A"] = at_zero_hp(model, looper)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None, out.invalid
+    assert out.end is not None and out.end["hp_left_A"] < 1  # Karlach did drop to 0
+    first = stalls(tmp_path)[0]
+    assert (first["stall"], first["character"]) == ("held", "Karlach")
+    forced = [e["character"] for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert forced[0] == "Karlach"
+
+
+def test_a_member_the_mod_passed_that_the_game_keeps_current_is_the_games_fault(tmp_path):
+    """The mod passed Karlach (arena_turn_passed why zero_hp) but the game keeps her turn current: nobody the side
+    could end, so the stall is the game's (fault), with no act.end_turn from the runner."""
+    model, game, clock, agents, spec = setup({"A": looper, "B": passer})
+
+    def passed(game: Game, side: str, run: Run) -> None:
+        u = model._match().member("Karlach").uuid
+        if my_turn(game, side) == u and not run.ended:
+            run.ended.add(u)
+            model.ref_record("arena_turn_passed", side="A", character=u, name="Karlach", why="zero_hp", round=1)
+
+    agents.plays["A"] = at_zero_hp(model, passed)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault", out.end
+    [st] = stalls(tmp_path)
+    assert (st["stall"], st["character"]) == ("game", "Karlach")
+    assert ("act.end_turn", "A") not in game.calls
+    rec = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_passed"]
+    assert [(e["character"], e["why"]) for e in rec] == [("Karlach", "zero_hp")]
+    for e in arena_events(tmp_path):
+        jsonschema.validate(e, BENCH_FACTS_SCHEMA)

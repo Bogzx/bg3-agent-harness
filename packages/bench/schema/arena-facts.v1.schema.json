@@ -433,7 +433,8 @@
           "why": {
             "enum": [
               "downed",
-              "dead"
+              "dead",
+              "zero_hp"
             ]
           },
           "round": {

@@ -155,7 +155,7 @@
          "then": {"description": "the mod ended the turn of a phase's member who can't act (why: downed or dead) so the next phase starts; character named as in arena_turn, name the display name, error when the game's EndTurn failed",
                   "required": ["side", "character", "why", "round"],
                   "properties": {"side": {"enum": ["A", "B"]}, "character": {"$ref": "#/$defs/name"}, "name": {"type": "string"},
-                                 "why": {"enum": ["downed", "dead"]}, "round": {"type": "integer", "minimum": 0}, "error": {"type": "string"}}}},
+                                 "why": {"enum": ["downed", "dead", "zero_hp"]}, "round": {"type": "integer", "minimum": 0}, "error": {"type": "string"}}}},
         {"if": {"properties": {"ev": {"const": "arena_stall"}}},
          "then": {"description": "a phase (or the match before its first one: no side, character or members, round 0) made no progress for its stall time (idle_s: wall time less model time): stall held (its side still held a member: the phase is capped) or game (the game held the turn: the match ends as a fault); status is the last arena.status, last each side's last tool calls",
                   "required": ["stall", "round", "idle_s", "status", "last"],
