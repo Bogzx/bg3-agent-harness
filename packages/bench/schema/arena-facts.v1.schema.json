@@ -56,7 +56,8 @@
         "arena_reaction_unowned",
         "arena_turn_passed",
         "arena_stall",
-        "arena_end_written"
+        "arena_end_written",
+        "arena_group_end_written"
       ]
     }
   },
@@ -558,12 +559,15 @@
       "if": {
         "properties": {
           "ev": {
-            "const": "arena_end_written"
+            "enum": [
+              "arena_group_end_written",
+              "arena_end_written"
+            ]
           }
         }
       },
       "then": {
-        "description": "The mod wrote RequestedEndTurn on a shared turn group's members: every one had ended and the game kept the group open. character and members are named as in arena_turn, names are the display names, errors (by uuid) where a write failed. Not a turn: results ignore it.",
+        "description": "A turn group's end, not the match's (arena_end_written before 2026-11-03, still valid): the mod wrote RequestedEndTurn on a shared turn group's members, in every round where the game kept the group open after the last end: every one had ended and the game kept the group open. character and members are named as in arena_turn, names are the display names, errors (by uuid) where a write failed. Not a turn: results ignore it.",
         "required": [
           "character",
           "members",

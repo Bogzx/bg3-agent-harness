@@ -407,7 +407,7 @@ end
 -- RequestedEndTurn) and never closed the group; writing TurnBased.RequestedEndTurn = true + Replicate("TurnBased") on
 -- the four closed it at once (round 2 opened in the same burst). Written only when every other member of char's
 -- engine turn group is a team member with an end the mod sent or a pass of the mod's (G.end_requested), on each
--- member that still reads active and not requested, char included; recorded as arena_end_written. -> the members
+-- member that still reads active and not requested, char included; recorded as arena_group_end_written. -> the members
 -- written, or nil (nothing written: no arena, the group doesn't read, char alone in it, or a member the mod didn't
 -- end).
 function Ar.write_group_end(char)
@@ -437,7 +437,7 @@ function Ar.write_group_end(char)
             if not ok then errors[u] = tostring(err) end
         end
     end
-    record("arena_end_written", { round = st.round, group = group.team or group.members[1], character = c,
+    record("arena_group_end_written", { round = st.round, group = group.team or group.members[1], character = c,
         members = out, names = names, errors = next(errors) and errors or nil, how = "requested_end_write" })
     return out
 end

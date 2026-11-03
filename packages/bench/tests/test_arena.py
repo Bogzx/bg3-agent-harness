@@ -359,6 +359,17 @@ def test_the_event_schema_refuses_malformed_referee_events(rec):
         jsonschema.validate(rec, EVENT_SCHEMA)
 
 
+@pytest.mark.parametrize("name", ["arena_group_end_written", "arena_end_written"])
+def test_a_group_end_the_mod_wrote_fits_both_schemas_under_its_name_and_its_old_one(name):
+    # bp-live 2026-11-03: arena_end_written after every round read as a match end; it is a turn group's end (the mod's
+    # RequestedEndTurn write, each round the game keeps a shared group open), renamed; old records stay valid
+    rec = ev(1, name, round=2, group="g1", character="Ash", members=["Ash", "Birch"], how="requested_end_write")
+    jsonschema.validate(rec, EVENT_SCHEMA)
+    jsonschema.validate(rec, FACTS_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({k: v for k, v in rec.items() if k != "how"}, EVENT_SCHEMA)
+
+
 def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():
     phase = {"members": ["Karlach", "Gale"], "names": ["Karlach", "Gale"], "round": 1, "phase": 2, "shared": True}
     jsonschema.validate(ev(1, "arena_turn", side="A", character="Karlach", **phase), EVENT_SCHEMA)
