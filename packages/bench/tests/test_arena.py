@@ -412,6 +412,21 @@ def test_a_group_end_the_mod_wrote_fits_both_schemas_under_its_name_and_its_old_
         jsonschema.validate({k: v for k, v in rec.items() if k != "how"}, EVENT_SCHEMA)
 
 
+def test_a_pass_with_its_death_save_and_a_readmission_fit_both_schemas():
+    # arena/downed-save 135075ef: a downed member is passed after its turn's death save (death_save), and a passed
+    # member that stands up with its turn back is readmitted
+    passed = ev(1, "arena_turn_passed", side="A", character="Ash", why="downed", round=3, death_save="rolled")
+    back = {**ev(2, "arena_turn_readmitted", side="A", character="Ash", round=3, why="stood up"), "name": "Ash"}
+    for rec in (passed, back, {**passed, "death_save": "none in time"}):
+        jsonschema.validate(rec, EVENT_SCHEMA)
+        jsonschema.validate(rec, FACTS_SCHEMA)
+    for bad in ({**passed, "death_save": "maybe"}, {k: v for k, v in back.items() if k != "round"}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, EVENT_SCHEMA)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, FACTS_SCHEMA)
+
+
 def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():
     phase = {"members": ["Karlach", "Gale"], "names": ["Karlach", "Gale"], "round": 1, "phase": 2, "shared": True}
     jsonschema.validate(ev(1, "arena_turn", side="A", character="Karlach", **phase), EVENT_SCHEMA)

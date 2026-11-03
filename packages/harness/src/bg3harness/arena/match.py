@@ -19,7 +19,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    a turn boundary, the round cap at the start of round round_cap + 1) is written as it is; its `arena_start`, an
    end the runner asked for and any arena record after the match's end are left out, as the referee writes those
    itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
-   ended the turn of a member that can't act) is written with `character` named as in arena_turn. Its
+   ended the turn of a member that can't act; `death_save` for a downed one) is written with `character` named as in
+   arena_turn, and its `arena_turn_readmitted {side, character, name, round, why}` (a passed member stood up with its
+   turn back) the same way, the member no longer passed. Its
    `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
    after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
    match's) is written with `character` and `members`
@@ -287,6 +289,12 @@ class Referee:
             turn = self.turn
             if turn is not None and fact.get("side") == turn.side and fact.get("round") == turn.round:
                 turn.passed.add(u.lower())
+            return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
+        if ev == "arena_turn_readmitted":  # a passed member stood up with its turn back: it can act again
+            u = str(fact.get("character") or "")
+            t = self.names.get(u.lower())
+            if self.turn is not None:
+                self.turn.passed.discard(u.lower())
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
         if ev == "arena_end":
             # the ring leaves a nil winner (a draw) out

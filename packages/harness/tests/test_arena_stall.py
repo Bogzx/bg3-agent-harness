@@ -246,6 +246,55 @@ def test_a_member_the_mod_passed_that_the_game_keeps_current_is_the_games_fault(
         jsonschema.validate(e, BENCH_FACTS_SCHEMA)
 
 
+def test_a_readmitted_member_reaches_the_facts_named_and_is_no_longer_passed(tmp_path):
+    """arena_turn_readmitted (a member the mod passed stood up with its turn back): written named as in arena_turn,
+    and the phase's passed set loses it, so the runner counts it as one who can act again."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+    sent: list[bool] = []
+
+    def pass_then_back() -> None:
+        if model.arena is not None and not sent:
+            sent.append(True)
+            u = model.match().member("Karlach").uuid
+            model.ref_record(
+                "arena_turn_passed",
+                side="A",
+                character=u,
+                name="Karlach (0)",
+                why="downed",
+                round=1,
+                death_save="rolled",
+            )
+            model.ref_record(
+                "arena_turn_readmitted",
+                side="A",
+                character=u,
+                name="Karlach (0)",
+                round=1,
+                why="stood up after its turn was passed",
+            )
+
+    clock.tick_hooks.append(pass_then_back)
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    [p] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_passed"]
+    [r] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_readmitted"]
+    assert (p["character"], p["death_save"]) == ("Karlach", "rolled")
+    assert (r["character"], r["side"], r["round"]) == ("Karlach", "A", 1)
+    for e in (p, r):
+        jsonschema.validate(e, FACTS_SCHEMA)
+        jsonschema.validate(e, BENCH_FACTS_SCHEMA)
+
+
+def test_translate_readmitted_takes_the_member_out_of_the_phases_passed_set():
+    ref = am.Referee.__new__(am.Referee)
+    ref.names, ref.done = {"uk": ("A", "Karlach")}, False
+    ref.turns = [am.Turn("A", "uw", "Wyll", 1, ["uw", "uk"])]
+    out = ref.translate({"ev": "arena_turn_passed", "side": "A", "character": "UK", "why": "downed", "round": 1})
+    assert out is not None and out["character"] == "Karlach" and ref.turn.passed == {"uk"}
+    out = ref.translate({"ev": "arena_turn_readmitted", "side": "A", "character": "UK", "round": 1})
+    assert out is not None and out["character"] == "Karlach" and ref.turn.passed == set()
+
+
 def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_path):
     """arena_group_end_written (the mod wrote RequestedEndTurn on a shared group the game kept open after every end) is
     written to the facts like arena_turn: character and members by the arena's names, names and errors as given."""

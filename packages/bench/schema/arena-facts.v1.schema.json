@@ -57,7 +57,8 @@
         "arena_turn_passed",
         "arena_stall",
         "arena_end_written",
-        "arena_group_end_written"
+        "arena_group_end_written",
+        "arena_turn_readmitted"
       ]
     }
   },
@@ -475,6 +476,48 @@
             "minimum": 0
           },
           "error": {
+            "type": "string"
+          },
+          "death_save": {
+            "description": "downed only: the turn's death save was in the roll log before the pass, or not within the mod's wait",
+            "enum": [
+              "rolled",
+              "none in time"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn_readmitted"
+          }
+        }
+      },
+      "then": {
+        "description": "A member the mod passed this round stood up (a third death save success) with its turn open again: the pass is withdrawn and it acts in its phase. character is named as in arena_turn. Not a turn: results ignore it.",
+        "required": [
+          "side",
+          "character",
+          "round"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "why": {
             "type": "string"
           }
         }
