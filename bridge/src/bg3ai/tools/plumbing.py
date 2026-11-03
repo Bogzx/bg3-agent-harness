@@ -482,17 +482,20 @@ def _input_exclusive(fn):
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False) -> str:
-    """block (with wait=False): an out-of-combat walk that returns at its end (_start_async, _walk_wait)."""
+         wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False,
+         t0: float | None = None) -> str:
+    """block (with wait=False): an out-of-combat walk that returns at its end (_start_async, _walk_wait).
+    t0: the tool call's start (a walk's 90 s budget and the call deadline count from it), else now."""
     if op in _INPUT_OPS or (context == "client" and op.startswith("ui.")):
         with _InputHeld():
-            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block)
-    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block)
+            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block, t0)
+    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block, t0)
 
 
 def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-             wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False) -> str:
-    t0 = time.monotonic()
+             wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False,
+             t0: float | None = None) -> str:
+    t0 = time.monotonic() if t0 is None else t0
     if core._session_over():
         return reporting._finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     if op in _WALK_OPS and context == "server" and _tb_wanted["on"]:

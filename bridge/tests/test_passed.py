@@ -127,6 +127,23 @@ class Passed(Base):
             n_nearby, 3 + sum(1 for g in self.g.reads if "act.watch" not in dict(g) and "state.nearby" in dict(g))
         )
 
+    def test_a_companions_trip_counts_what_is_in_view_around_it_at_the_end(self):
+        # P2 walks; P1 (selected) stays at the start: the end's CHANGES read is centred on P1, the ladder is 4 m from
+        # P2's end spot and 70 m from P1, so it is in view (around the walker), not passed
+        delta.TRACKER.last = {"ents": {DOOR: {"name": "Door"}}}
+        self.g.watch["party"][0]["pos"] = [0.0, 0.0, 0.0]
+        self.g.watch["party"][1]["pos"] = [0.0, 0.0, 1.0]
+        self.g.reach = lambda a: {"reachable": True, "pos": [min(75.0, self.g._at(a["char"])[0] + a["max_m"]), 0, 0]}
+        out = travel_macro.travel_to(x=75.0, y=0.0, z=0.0, who=P2)
+        self.assertIn("arrived", out)
+        self.assertEqual(self.g.active, P1)
+        line = out.split("PASSED", 1)[1].split("\n", 1)[0]
+        self.assertIn("Chest", line)
+        self.assertNotIn("Ladder", line)
+        # one read around the walker after the legs' (which rode in their end checks)
+        around = [a for op, a in self.g.calls if op == "state.nearby" and a == {"radius": 25, "center": P2}]
+        self.assertEqual(len(around), len(self.leg_reads()) + 1)
+
     def test_nothing_passed_no_line(self):
         self.g.world = [w for w in WORLD if w["uuid"] == LADDER]
         self.g.reach = lambda a: {"reachable": True, "pos": [min(75.0, self.g._at(a["char"])[0] + a["max_m"]), 0, 0]}

@@ -27,8 +27,15 @@ WALK_STEPS = ("move_to", "walk_toward", "travel_to", "jump_to")
 def _cut_after_walk(steps: list, verb: str) -> tuple[list, str]:
     """Out of combat a batch ends with its first walk step: the steps after it are dropped before anything runs
     (human-gap research §4: launch-v1's walk_toward chains committed three headings before the first one's end was
-    seen). Returns (the steps up to and with that walk, '<verb>: <the dropped steps> (why)' or '')."""
-    i = next((k for k, st in enumerate(steps) if st.tool in WALK_STEPS), None)
+    seen). A walk step with an if/unless may be skipped, so it cuts nothing here: the steps after it carry it
+    (Step.after_walks) and the executor doesn't run them once it has run. Returns (the steps up to and with the first
+    unconditional walk, '<verb>: <the dropped steps> (why)' or '')."""
+    cond: list = []
+    for k, st in enumerate(steps):
+        st.after_walks = list(cond)
+        if st.tool in WALK_STEPS and (st.cond_if or st.cond_unless):
+            cond.append((st, k + 1))
+    i = next((k for k, st in enumerate(steps) if st.tool in WALK_STEPS and not (st.cond_if or st.cond_unless)), None)
     if i is None or i == len(steps) - 1:
         return steps, ""
     rest = ", ".join(st.short() for st in steps[i + 1:])
@@ -49,7 +56,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
     actions: a list of steps (or the same list as a JSON string), e.g.
     [{"tool":"interact","target":"e12"},{"tool":"loot","take":"all"},{"tool":"interact","target":"e14"},{"tool":"loot","take":"all"}]
     Allowed: move_to, walk_toward, travel_to (a whole trip as one step, e.g. after a climb), interact, pick_up, loot, loot_corpse, talk_to, jump_to, set_party, use_ability, end_turn, choose_dialogue, roll_check, react, manage_inventory, wait, press_key, place_marker, camp, short_rest.
-    A walk step (move_to, walk_toward, travel_to, jump_to) is the last step a batch runs: the steps after the first one are not run, and the result lists them (interact, pick_up, talk_to and loot_corpse walk to their target themselves).
+    A walk step (move_to, walk_toward, travel_to, jump_to) is the last step a batch runs: the steps after the first one that runs are not run (one its if/unless skips doesn't count), and the result lists them (interact, pick_up, talk_to and loot_corpse walk to their target themselves).
     Optional per step: "if"/"unless" with in_combat, in_dialogue, my_turn, hp_below:<pct>, item_present:<id>, target_visible:<id> (a failed condition skips the step).
     Stops and drops the rest on: combat or a conversation starting, a reaction/roll/popup, a new hostile in view, HP falling below 35%, any damage taken outside combat, stepping into a harmful surface (fire, acid, ...), a trap spotted on the way, a blocked teleport, or a failed step; and before a step once the call has run 90 s (time budget, a wait cut to fit). ignore="hostile,hp" disables some (dialogue, prompt, hostile, hp, damage, surface, teleport, trap); a fight starting always stops it.
     Returns each step's outcome, why it stopped (and what was left), a NOW line and CHANGES (position, HP, items, new things in view, mode). wait=false queues the steps instead (see queue_actions).
@@ -99,7 +106,7 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
 @reporting._guard
 def queue_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, who: str | None = None,
                   replace: bool = False, ignore: str = "", note: str = "") -> str:
-    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Out of combat only: in combat it queues nothing, and a fight starting stops the queue. Same step format, conditions and interrupts as do_actions; a walk step (move_to, walk_toward, travel_to, jump_to) is the last step queued, the steps after the first one are not (the result lists them). On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
+    """Append steps to a character's action queue and return at once; they run back to back while you observe and plan the next move. Out of combat only: in combat it queues nothing, and a fight starting stops the queue. Same step format, conditions and interrupts as do_actions; a walk step (move_to, walk_toward, travel_to, jump_to) is the last step queued, the steps after the first one are not (the result lists them); after a walk step with if/unless they are queued and run only if that step is skipped. On the end you get a queue_done or queue_interrupted event (why, what was left) in any later result; wait_for('queue') blocks until it is done. replace=true drops what was still queued first. Each character has its own queue, so two characters can act at once. Your own direct action for that character pre-empts the queue. note: memory log line(s) for your session log, written at once (as note())."""
     t0 = time.monotonic()
     actions = _as_json(actions)
     if refused := session._note_refused(note):

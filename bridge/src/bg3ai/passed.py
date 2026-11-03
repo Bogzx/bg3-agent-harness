@@ -70,13 +70,21 @@ class Sightings:
         self.known |= other.known
         self.seen.update(other.seen)
 
-    def line(self, handles: Handles, got: dict, walker: str | None) -> str:
+    def line(self, handles: Handles, got: dict, walker: str | None, views: tuple = ()) -> str:
         """The PASSED line after the trip's end read (got: delta.fetch's parts); '' when nothing passed or the end's
-        view wasn't read (then nothing can be said to be out of view)."""
+        view wasn't read (then nothing can be said to be out of view). views: more state.nearby reads of the end
+        (around the walker when it isn't the selected member the end read is centred on): in view too."""
         near = got.get("nearby")
         if not isinstance(near, dict):
             return ""
-        now = {r.get("uuid") for k in ("characters", "items") for r in near.get(k) or [] if isinstance(r, dict)}
+        now = {
+            r.get("uuid")
+            for v in (near, *views)
+            if isinstance(v, dict)
+            for k in ("characters", "items")
+            for r in v.get(k) or []
+            if isinstance(r, dict)
+        }
         rows = [(u, r) for u, r in self.seen.items() if u not in self.known and u not in now]
         if not rows:
             return ""

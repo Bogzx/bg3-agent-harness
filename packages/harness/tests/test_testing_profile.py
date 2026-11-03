@@ -17,7 +17,7 @@ from unittest import mock
 
 from bg3harness import steam_paths
 from bg3harness.testing import liveport
-from bg3harness.testing.profile import DEAD_PORT, DIR_VARS, ENV, PORT_VAR, leaks, temp_profile
+from bg3harness.testing.profile import DEAD_PORT, DIR_VARS, ENV, PORT_VAR, SHELL_PORT_VAR, leaks, temp_profile
 
 FAR = str(Path.home() / "bg3ai-not-a-temp-dir")  # outside the temp dir; nothing is created there
 
@@ -51,6 +51,9 @@ class TempProfile(unittest.TestCase):
         env = {PORT_VAR: "9998"}  # the live game's, exported by the shell
         self.addCleanup(temp_profile(env).rmdir)
         self.assertEqual(env[PORT_VAR], DEAD_PORT)
+        self.assertEqual(env[SHELL_PORT_VAR], "9998")  # kept for the guard, whichever caller runs first
+        temp_profile(env)  # a second call (the plugin after the root conftest) keeps it
+        self.assertEqual(env[SHELL_PORT_VAR], "9998")
 
 
 class LivePort(unittest.TestCase):
@@ -91,7 +94,9 @@ class PytestPlugin(unittest.TestCase):
     """A pytest run with none of the repo's conftests (its own rootdir, as `uv run --project packages/playthrough
     pytest` has) and a shell that exports the real profile folders."""
 
-    def pytest(self, test: str, extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def pytest(
+        self, test: str, extra: dict[str, str] | None = None, args: tuple[str, ...] = ()
+    ) -> subprocess.CompletedProcess[str]:
         d = Path(tempfile.mkdtemp(prefix="bg3ai-plugin-"))
         self.addCleanup(shutil.rmtree, d, True)
         (d / "pytest.ini").write_text("[pytest]\nmarkers = live\n")
@@ -101,7 +106,7 @@ class PytestPlugin(unittest.TestCase):
         env.update(zip(DIR_VARS, map(str, real), strict=True))
         env["BG3AI_RUNTIME"] = str(Path(__file__).resolve().parents[3] / "runtime")  # the repo's own runtime/
         env.update(extra or {})
-        cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(d)]
+        cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *args, str(d)]
         return subprocess.run(cmd, cwd=d, env=env, capture_output=True, text=True, timeout=120)
 
     def test_the_runner_reads_the_temp_profile(self) -> None:
@@ -161,6 +166,24 @@ class PytestPlugin(unittest.TestCase):
         )
         self.assertIn("3 passed, 1 error", out)  # Plain::test_game's call passes, its teardown is the error
         self.assertEqual(len(accepted), 1)  # the live test's; the plain one never got a connection
+
+    def test_the_root_conftest_guards_the_port_with_plugin_autoload_off(self) -> None:
+        # review-v010-human-gap #4: with PYTEST_DISABLE_PLUGIN_AUTOLOAD the root conftest set the dead port but
+        # installed no socket guard, so code that hard-codes 9998 reached the game. Here only the root conftest loads.
+        srv = socket.create_server(("127.0.0.1", 0))
+        self.addCleanup(srv.close)
+        accepted: list[socket.socket] = []
+        threading.Thread(target=lambda: accepted.append(srv.accept()[0]), daemon=True).start()
+        port = srv.getsockname()[1]
+        root = str(Path(__file__).resolve().parents[3])
+        run = self.pytest(
+            f"import socket\ndef test_plain():\n    socket.create_connection(('127.0.0.1', {port}), 2).close()\n",
+            {PORT_VAR: str(port), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONPATH": root},
+            ("-p", "conftest"),
+        )
+        out = run.stdout + run.stderr
+        self.assertIn(f"connect to 127.0.0.1:{port} refused: a test reached the real game's debug port", out)
+        self.assertEqual(accepted, [])
 
 
 if __name__ == "__main__":

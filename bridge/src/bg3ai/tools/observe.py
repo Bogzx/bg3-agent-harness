@@ -438,7 +438,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         head += f" (you are standing in {res['standing_in']})"
     wait, block = plumbing._walk_wait(wait)
     body = plumbing._act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait,
-                block=block)
+                block=block, t0=t0)  # the 90 s budget counts from the call (nav.reach_toward ran first)
     left = turn.movement_left(body) if WALK_CLIP_MOVEMENT and turn.move_too_long(body) else None
     over = turn_plan._path_over(body)
     if left is not None and left >= 1.0 and over is not None and res.get("straight_m") is not None:

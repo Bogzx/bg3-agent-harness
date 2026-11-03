@@ -27,6 +27,7 @@ DIR_VARS = ("BG3AI_SAVE_DIR", "BG3AI_SE_DIR", "BG3AI_PROFILE_DIR")
 RUNTIME_VAR = "BG3AI_RUNTIME"
 PORT_VAR = "BG3LE_DEBUG_PORT"
 DEAD_PORT = "1"  # tcpmux: nothing listens, and an unprivileged fake can't bind it
+SHELL_PORT_VAR = "BG3AI_TEST_SHELL_PORT"  # the port the shell named before it was replaced (liveport guards it)
 
 
 def temp_profile(environ: MutableMapping[str, str] = os.environ) -> Path:
@@ -38,6 +39,8 @@ def temp_profile(environ: MutableMapping[str, str] = os.environ) -> Path:
     environ["BG3AI_SE_DIR"] = str(root / "se")
     environ["BG3AI_PROFILE_DIR"] = str(root / "profile")
     environ[RUNTIME_VAR] = str(root / "runtime")
+    if environ.get(PORT_VAR) not in (None, "", DEAD_PORT):
+        environ.setdefault(SHELL_PORT_VAR, environ[PORT_VAR])
     environ[PORT_VAR] = DEAD_PORT
     return root
 

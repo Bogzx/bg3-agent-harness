@@ -97,6 +97,9 @@ class Step:
     args: dict
     cond_if: list = field(default_factory=list)  # [(pred, arg)] all must hold
     cond_unless: list = field(default_factory=list)  # [(pred, arg)] none may hold
+    # [(walk step, its number in its call)]: the conditional walk steps before this one in its call; once one of
+    # them has run, this step is not run (a batch ends with its first walk step; batch._cut_after_walk)
+    after_walks: list = field(default_factory=list, compare=False, repr=False)
 
     def short(self) -> str:
         """`interact e5`, `move_to 12,0,-3`: what the agent wrote, briefly."""
@@ -559,6 +562,7 @@ class Executor:
         mon = threading.Thread(target=self._monitor, args=(done, peek_next), name="actq-monitor", daemon=True)
         mon.start()
         i = 0
+        walked: set[int] = set()  # id() of the walk steps that ran (Step.after_walks)
         self._deadline = None if self.budget_s is None else time.monotonic() + self.budget_s
         try:
             while True:
@@ -573,6 +577,12 @@ class Executor:
                 if step is None:
                     break
                 i += 1
+                ran = next(((w, n) for w, n in step.after_walks if id(w) in walked), None)
+                if ran:
+                    rep.skipped += 1
+                    rep.lines.append(f"{i}. {step.short()}: not run (out of combat a batch ends with its first walk "
+                                     f"step, here step {ran[1]} {ran[0].short()})")
+                    continue
                 ok, why = self._conds_ok(step)
                 if not ok:
                     rep.skipped += 1
@@ -596,6 +606,7 @@ class Executor:
                 rep.lines.append(f"{i}. {text}")
                 if status == "done":
                     rep.done += 1
+                    walked.add(id(step))
                     rep.last_result = result if result is not None else rep.last_result
                     if step.tool in ("talk_to", "choose_dialogue", "roll_check", "react"):
                         self.watcher.settle()

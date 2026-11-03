@@ -409,7 +409,7 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
                           max_wait=core.DIALOGUE_DRAIN_MAX_S if tool in core._DIALOGUE_TOOLS else None)
         if ev:
             out.append(ev)
-        auto = _auto_dialogue(tool, body, ev)
+        auto = _auto_dialogue(tool, body, ev, t0)
         if auto:
             out.append(auto)
             ev = core._events_text()
@@ -465,10 +465,11 @@ _NO_AUTO_DIALOGUE = {"dialogue_advance", "choose_dialogue", "get_dialogue", "rol
                      "zoom", "session_clock", "end_combat_report"}
 
 
-def _auto_dialogue(tool: str, body: str, ev: str) -> str:
+def _auto_dialogue(tool: str, body: str, ev: str, t0: float | None = None) -> str:
     """When this call opened a conversation (talk_to done, an interact that starts one, or a dialogue_started
     event), click through its opening filler and show the first real choice now: saves the get_dialogue +
-    dialogue_advance turns the agent spent on every conversation (S002/S003). Filler only, never an answer."""
+    dialogue_advance turns the agent spent on every conversation (S002/S003). Filler only, never an answer.
+    t0: the call's start; the autopilot stops at t0 + CALL_DEADLINE_S (macro_tools)."""
     if not macro_tools.AUTO_DIALOGUE or tool in _NO_AUTO_DIALOGUE or "DIALOGUE " in body:
         return ""
     head = body.lstrip().split("\n", 1)[0]
@@ -481,8 +482,9 @@ def _auto_dialogue(tool: str, body: str, ev: str) -> str:
     else:
         return ""
     try:
-        n, lines, stop = macro_tools._dialogue_autopilot(open_s=open_s,
-                                             line_s=macro_tools.AUTO_DIALOGUE_READ_LINE_S if tool in _READ_TOOLS else None)
+        n, lines, stop = macro_tools._dialogue_autopilot(
+            open_s=open_s, line_s=macro_tools.AUTO_DIALOGUE_READ_LINE_S if tool in _READ_TOOLS else None,
+            deadline=None if t0 is None else t0 + macro_tools.CALL_DEADLINE_S)
     except GameError:
         return ""
     if n == 0 and stop == "conversation ended":
