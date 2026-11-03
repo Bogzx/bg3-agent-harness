@@ -38,7 +38,7 @@ GAME = "game"
 # wiki, saves and reloads, screenshots and raw input (the one client's screen and input show both teams), ui_action (a
 # named UI command on the one client's screen carries no side check), travel, camp and rest, conversations and rolls,
 # trade and the out-of-fight world actions, looting, character creation and levelling, the journal and map. confirm and
-# dismiss_popups stay: a popup can come up mid-fight.
+# dismiss_popups stay: a popup can come up mid-fight; only the acting side answers one (uitools._side_gate).
 LISTS: dict[str, tuple[str, ...]] = {
     "arena-v1": (
         "memory",

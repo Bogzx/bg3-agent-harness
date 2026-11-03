@@ -499,6 +499,14 @@ function G.side_gate()
     if acting and acting ~= side then G.refuse("not your turn (side " .. acting .. " is acting)") end
 end
 
+-- A side's answer to a box on the one shared screen (the bridge's confirm / dismiss_popups ask first): a box names no
+-- owner, and only the acting side acts, so a box on screen is the acting side's. Refused with G.side_gate's text.
+BG3AI.RPC.register("guard.side_gate", function()
+    local ok, e = pcall(G.side_gate)
+    if not ok then error(G.is_refusal(e) and e.reason or e, 0) end
+    return { ok = true }
+end)
+
 function G.not_in_dialogue(char)
     local blocked, why = G.dialogue_info(char)
     if blocked then

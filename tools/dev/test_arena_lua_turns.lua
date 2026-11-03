@@ -19,6 +19,16 @@ test("in combat, the side not acting: 'not your turn (side A is acting)'", funct
     refused(function() as("A", G.combat_gate, A2, "turn") end, "it is not this character's turn")
 end)
 
+test("guard.side_gate (confirm / dismiss_popups ask it first): only the acting side may answer a box", function()
+    begin()
+    setTurn(A1, true, false)
+    local r = rpc("guard.side_gate", "{}", "B")
+    eq(r.ok, false, "B while A acts")
+    eq(r.error, "not your turn (side A is acting)", "B's refusal")
+    eq(rpc("guard.side_gate", "{}", "A").ok, true, "A acts")
+    eq(rpc("guard.side_gate", "{}").ok, true, "no side")
+end)
+
 test("between turns, the side of the last team member whose turn started acts", function()
     begin()
     fire("TurnStarted", "S_Player_" .. B2)

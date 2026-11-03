@@ -54,14 +54,24 @@ def _saveload_word(name: str) -> str | None:
 def dismiss_popups() -> str:
     """Close informational popups (tutorials, info boxes, reward/book panels). Decision popups are never closed; they're listed so you can answer with confirm."""
     t0 = time.monotonic()
+    _side_gate()
     res = core.game.rpc("ui.dismiss", {}, context="client")
     return reporting._finish("dismiss_popups", {}, render.compact(res, core.H), t0)
+
+
+def _side_gate() -> None:
+    """In a match, a box on the one shared screen is the acting side's (a box names no owner and only the acting side
+    acts): the mod refuses the other side ("not your turn (side A is acting)", a GameError) before anything is
+    pressed. No side (normal play): no call."""
+    if world_tools._shared_screen():
+        core.game.rpc("guard.side_gate", {})
 
 
 @core.mcp.tool()
 @reporting._guard
 def confirm(answer: str = "yes", amount: int = 0) -> str:
     """Answer the open Yes/No (OK/Cancel, Confirm...) question box: answer = "yes" | "no" | a button label | its number. Shows the next question if the game asks another. A stack-split box ("how many?", POPUP ... split): amount=N sets how many before "yes"."""
+    _side_gate()
     args: dict[str, Any] = {"answer": answer}
     if amount:
         args["amount"] = int(amount)
