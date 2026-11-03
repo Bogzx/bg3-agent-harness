@@ -9,10 +9,12 @@
 local function bolt()
     spell("Projectile_Bolt", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
 end
-local KEPT = "IgnoreHasSpell,IgnoreCastChecks,NoMovement,IgnoreTargetChecks,AvoidDangerousAuras"
+-- window 7: the check flags go too (CAST_DROP_CHECKS); IgnoreHasSpell stays
+local KEPT = "IgnoreHasSpell,NoMovement,AvoidDangerousAuras"
 local function opts() return table.concat(last_cast.CastOptions, ",") end
 
-test("cast rolls: the cast state loses IgnoreSpellRolls, its other flags stay (H4)", function()
+test("cast rolls: the cast state loses IgnoreSpellRolls and the check flags, its other flags stay (H4, w7)",
+    function()
     bolt()
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     eq(j.status, "running", "status " .. tostring(j.error))
@@ -252,24 +254,57 @@ test("late cast: the stamp expires after ROLL_STAMP_MS (F2)", function()
     eq(#st.CastOptions, 1, "not touched"); eq(A.roll_wait[G.guid(P1)], nil, "stamp gone")
 end)
 
-test("probe switch (REVIEW-5 F1/F3): CAST_DROP_EXTRA also drops the check flags of the awaited cast only", function()
+test("check flags (window 7): dropped by default; the probe switch picks them; a reaction keeps its flags", function()
     bolt()
     job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
-    eq(opts(), KEPT, "off: only IgnoreSpellRolls dropped")
+    eq(opts(), KEPT, "default: IgnoreCastChecks and IgnoreTargetChecks dropped with IgnoreSpellRolls")
+    local react = state_of(P1, "Target_OpportunityAttack", { "IgnoreCastChecks", "IsReaction" })
+    eq(#react.CastOptions, 2, "a reaction keeps its flags")
+    reset()
+    A.CAST_DROP_EXTRA = false -- probe "off": the old flags
+    bolt()
+    job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    eq(opts(), "IgnoreHasSpell,IgnoreCastChecks,NoMovement,IgnoreTargetChecks,AvoidDangerousAuras", "off")
     reset()
     A.CAST_DROP_EXTRA = true
     bolt()
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
-    eq(opts(), "NoMovement,AvoidDangerousAuras", "on: the check flags dropped too"); eq(j.roll.state, "cleared", "ok")
-    local react = state_of(P1, "Target_OpportunityAttack", { "IgnoreCastChecks", "IsReaction" })
-    eq(#react.CastOptions, 2, "a reaction keeps its flags")
-    -- one flag at a time (window 6: all three at once refused every cast)
+    eq(opts(), "NoMovement,AvoidDangerousAuras", "all three"); eq(j.roll.state, "cleared", "ok")
     reset()
     A.CAST_DROP_EXTRA = { "IgnoreTargetChecks" }
     bolt()
     job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     eq(opts(), "IgnoreHasSpell,IgnoreCastChecks,NoMovement,AvoidDangerousAuras", "only IgnoreTargetChecks dropped")
-    A.CAST_DROP_EXTRA = false
+end)
+
+test("check flags: one that won't clear only warns; the cast goes on with its roll", function()
+    local warned = {}
+    local pw = Ext.Utils.PrintWarning
+    Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
+    cast_sticky = { "IgnoreCastChecks" }
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    Ext.Utils.PrintWarning = pw
+    eq(j.roll.state, "cleared", "not failed"); eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    eq(opts(), "IgnoreHasSpell,NoMovement,AvoidDangerousAuras,IgnoreCastChecks", "the roll flag went")
+    eq(#warned, 1, "one warning")
+    assert(warned[1]:find("IgnoreCastChecks stayed set", 1, true), warned[1])
+end)
+
+test("engine refusal (window 7): CastSpellFailed says the game's own reason when the cast entity has one", function()
+    cast_outcome = "CantCast"
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    A.dispatch("CastSpellFailed", { P1, "Projectile_Bolt" })
+    eq(j.status, "failed", "status")
+    assert(j.error:find("the game refused the cast: it can't be cast now (its requirements aren't met) (the game's"
+        .. " CantCast)", 1, true), j.error)
+    reset()
+    cast_outcome = "None" -- nothing read: the old words
+    bolt()
+    j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    A.dispatch("CastSpellFailed", { P1, "Projectile_Bolt" })
+    assert(j.error:find("the game refused the cast (no reason given)", 1, true), j.error)
 end)
 
 test("self-check: a hook that doesn't register is said loudly at load (REVIEW-5)", function()

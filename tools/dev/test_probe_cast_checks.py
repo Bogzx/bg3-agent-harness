@@ -25,6 +25,11 @@ def args(**kw) -> argparse.Namespace:
         "immobile": "ENSNARED",
         "rager": "Karlach",
         "surger": "Lae'zel",
+        "area": "Thunderwave",
+        "area_caster": "Gale",
+        "two_step": "Revivify",
+        "two_step_who": "Shadowheart",
+        "two_step_target": "",
     }
     base.update(kw)
     return argparse.Namespace(**base)
@@ -58,6 +63,7 @@ class ProbeTest(unittest.TestCase):
         self.assertEqual(probe.switch("off"), "false")
         self.assertEqual(probe.switch("all"), "true")
         self.assertEqual(probe.switch("IgnoreTargetChecks"), '{"IgnoreTargetChecks"}')
+        self.assertEqual(probe.switch("default"), "Mods.BG3AI.BG3AI.Actions.CAST_DROP_CHECKS")
         with self.assertRaises(ValueError):
             probe.switch("on")
 
@@ -80,6 +86,46 @@ class ProbeTest(unittest.TestCase):
             lines[3], "mode IgnoreCastChecks: control refused -> can't be dropped (it stops a normal cast)"
         )
         self.assertIn("not read (the mode isn't usable)", lines[4])
+
+    def test_live_plan_rage_first_then_the_fight_optional_cases_need_their_args(self):
+        live = probe.plan("live", args(heavy=""))
+        self.assertEqual(
+            [c["case"] for c in live], ["rage_ooc", "control", "shout", "area", "plain", "turn_undead", "hide"]
+        )
+        self.assertEqual((live[0]["need"], live[0]["expect"]), ("no_combat", "refused"))
+        self.assertEqual(live[1]["need"], "any")  # out of combat the control attack starts the fight
+        full = probe.plan("live", args(two_step_target="e9"))
+        self.assertEqual(full[-2]["case"], "two_step")
+        self.assertEqual((full[-2]["target"], full[-2]["pos2"]), ("e9", True))
+        self.assertEqual((full[-1]["case"], full[-1]["expect"]), ("heavy_shove", "refused"))
+
+    def test_expected_marks_pass_fail_and_the_engine_reason(self):
+        rows = [
+            {
+                "case": "rage_ooc",
+                "expect": "refused",
+                "verdict": "refused",
+                "text": "use_ability: FAILED — the game refused the cast: it can't be cast now (its requirements aren't"
+                " met) (the game's CantCast)",
+            },
+            {"case": "control", "expect": "cast", "verdict": "cast", "text": "use_ability: done"},
+            {
+                "case": "shout",
+                "expect": "cast",
+                "verdict": "refused",
+                "text": "use_ability: FAILED — the game refused the cast (no reason given)",
+            },
+            {"case": "heavy_shove", "expect": "refused", "verdict": "cast", "text": "use_ability: done"},
+            {"case": "hide", "expect": "cast", "verdict": "not run", "text": "not its turn"},
+            {"case": "x", "mode": "off", "verdict": "cast"},
+        ]
+        lines = probe.expected(rows)
+        self.assertEqual(len(lines), 5)
+        self.assertTrue(lines[0].startswith("PASS    rage_ooc") and lines[0].endswith("(engine reason read)"))
+        self.assertTrue(lines[1].startswith("PASS    control"))
+        self.assertTrue(lines[2].startswith("FAIL    shout") and lines[2].endswith("(no engine reason read)"))
+        self.assertIn("only the guard's CanShoveWeight stops it", lines[3])
+        self.assertTrue(lines[4].startswith("not run hide"))
 
 
 if __name__ == "__main__":
