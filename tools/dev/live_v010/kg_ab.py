@@ -148,6 +148,15 @@ def parse(text: str) -> dict:
     }
 
 
+def clean_start(chk: dict) -> bool:
+    """After the restore: out of combat and dialogue, every member within 3 m of its snapshot spot. worst_m 0 (all
+    back exactly) is the perfect start; a missing or non-number worst_m (the read failed) is not clean."""
+    worst = chk.get("worst_m")
+    if chk.get("in_combat") or chk.get("in_dialogue") or not isinstance(worst, (int, float)):
+        return False
+    return worst <= 3
+
+
 def trip(scenario: str, k: int, rule: str, goal: dict) -> int:
     """One trip in this process (spawned by run)."""
     srv = server()
@@ -159,7 +168,7 @@ def trip(scenario: str, k: int, rule: str, goal: dict) -> int:
             return 3
         time.sleep(3.0)
         chk = check()
-        if chk.get("in_combat") or chk.get("in_dialogue") or (chk.get("worst_m") or 99) > 3:
+        if not clean_start(chk):
             print(f"not a clean start: {chk}")
             return 3
         print(label, "rule", set_rule(rule))
