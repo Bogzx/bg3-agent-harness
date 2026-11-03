@@ -134,7 +134,7 @@ game unless it says so.
   bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
   fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
-  Its own release file (`releases/bench-v0.10.json`: mod tree 28de3b1a, the same 81 bg3 tools, new prompt hashes for
+  Its own release file (`releases/bench-v0.10.json`: mod tree fcfcd6aa, the same 81 bg3 tools, new prompt hashes for
   pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). Its
   conditions also pin the served tool definitions, `tools.defs_sha256` (release v1, optional; release.defs_digest:
   each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
@@ -186,6 +186,12 @@ game unless it says so.
     Nearby rows, party rows and CHANGES say who starts or stops concentrating (`concentrating on Cloudkill`).
   - An answer the game ignores for 3 s is pressed once with its bound number key, and the result says so (`note=`);
     the settle after an answer compares the whole node, so a list scrolled during the wait isn't taken as answered.
+    Answer rows pair with the game's answers by the number each row shows, so a list with a wrapped row is answered
+    with its tags (window 4: Lae'zel's cage counted 7 rows of 6 and the press was ignored); with no readable bound
+    key, the ignored answer gets the number key it shows.
+  - `flee` fails at once with the reason the greyed-out Flee button's tooltip shows (`FAILED: the game won't flee
+    now (Flee is greyed out: Enemy too close! (10.6/27 m))`), with no command or cursor search, and runs each Flee
+    command name once (window 4: 48 s before failing).
   - A fall down a drop link of the walk's own route is no longer failed as an engine teleport, and `end_turn`'s End
     Turn press refused by the busy UI is asked again after the cooldown instead of failing at once.
   Metric definition change: a tool call counts as async only when its own background job is still running when the
