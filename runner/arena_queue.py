@@ -90,8 +90,15 @@ def status(attempts: list[dict]) -> str:
     return "gave_up" if len(runs) > matrix.MAX_RERUNS else "pending"
 
 
+def job_arena(job: Mapping[str, Any], arena: Mapping[str, Any]) -> dict[str, Any]:
+    """The arena as the job plays it: on the job's seed (arena_matrix.plan: the arena's + repeat - 1). A queue planned
+    before jobs had a seed played the arena's."""
+    return {**arena, "seed": job.get("seed", arena["seed"])}
+
+
 def graded(job: Mapping[str, Any], arena: Mapping[str, Any], run_dir: Path) -> dict[str, Any]:
-    """bg3bench.arena.grade of the match in run_dir (its facts.jsonl, rolls.jsonl), with its pairing id."""
+    """bg3bench.arena.grade of the match in run_dir (its facts.jsonl, rolls.jsonl) against the job's seed, with its
+    pairing id."""
 
     def rows(name: str) -> list[dict] | None:
         try:
@@ -100,7 +107,8 @@ def graded(job: Mapping[str, Any], arena: Mapping[str, Any], run_dir: Path) -> d
             return None
         return [json.loads(x) for x in text.splitlines() if x.strip()]
 
-    return {**barena.grade(rows("facts.jsonl") or [], arena, rolls=rows("rolls.jsonl")), "pairing": job["pairing"]}
+    g = barena.grade(rows("facts.jsonl") or [], job_arena(job, arena), rolls=rows("rolls.jsonl"))
+    return {**g, "pairing": job["pairing"]}
 
 
 class ArenaQueue:
@@ -312,7 +320,7 @@ def live_play(m: Mapping[str, Any], repo: Path, env: Mapping[str, str]) -> Play:
     from bg3harness.arena import live
 
     def play(job: dict[str, Any], name: str) -> Played:
-        spec = ArenaSpec.from_dict(m["arenas"][job["arena"]])
+        spec = ArenaSpec.from_dict(job_arena(job, m["arenas"][job["arena"]]))  # arena.json records spec.seed
         sides = {
             s: Side(s, d["player"], str(repo / d["profile"]), d["client"], d["slug"]) for s, d in job["sides"].items()
         }

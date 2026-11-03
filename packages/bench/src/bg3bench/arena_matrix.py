@@ -23,7 +23,9 @@ relative to the repo):
 
 Give `models` or `pairs`. A pair may name one profile twice (a self-match: graded, never rated). The jobs are
 matches, repeat-major, the two matches of a pairing one after the other (match 1: the pair's first model on side A,
-match 2: on side B), so a stopped matrix leaves whole pairings. A draft arena (arena.load's `draft`) gets no
+match 2: on side B), so a stopped matrix leaves whole pairings. Each job's `seed` is its arena's seed + repeat - 1:
+a pairing's two matches share it, each repeat rolls its own dice (fairness audit S1-4: one seed for every repeat
+counted the same initiative and opening rolls again in every pairing); the runner plays and grades the job's seed. A draft arena (arena.load's `draft`) gets no
 matches: plan lists it as skipped. A paid side (matrix.PAID_CLIENTS) needs its arena's max_cost.
 
 Each match charges both models: `reserves(job)` is what each budget file holds back before the match starts (the
@@ -42,7 +44,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from bg3bench import arena, matrix
+from bg3bench import arena, matrix, scenario
 from bg3bench.matrix_cli import MatrixFileError, load_profile
 
 ARENAS = Path("packages/bench/arenas")
@@ -116,12 +118,16 @@ def plan(
     own: str = BUDGET,
     condition: Mapping[str, str] | None = None,
     max_cost_models: Mapping[str, float] | None = None,
+    seeds: Mapping[str, int],
 ) -> list[dict[str, Any]]:
     """The matches. A model is matrix_cli.load_profile's {"slug", "client", "effort", "profile"}; budgets: profile
     -> its model budget files; condition: arena -> its condition id (default rules); max_cost_models: profile -> its
-    side's cap in place of the arena's (each side's in sides.<A|B>.max_cost; the arena's stays in max_cost)."""
+    side's cap in place of the arena's (each side's in sides.<A|B>.max_cost; the arena's stays in max_cost); seeds:
+    arena -> its seed (a job's `seed` is it + repeat - 1)."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
+    if over := sorted(a for a in arenas if seeds[a] + repeats - 1 > scenario.SEED_MAX):
+        raise ValueError(f"arena {over[0]}: seed {seeds[over[0]]} + {repeats - 1} repeats is past {scenario.SEED_MAX}")
     max_cost, budgets, condition = max_cost or {}, budgets or {}, condition or {}
     per_model = max_cost_models or {}
 
@@ -142,6 +148,7 @@ def plan(
                             "arena": a,
                             "condition": condition.get(a, "rules"),
                             "repeat": r,
+                            "seed": seeds[a] + r - 1,
                             "sides": {"A": side(first, a), "B": side(second, a)},
                             "max_cost": max_cost.get(a),
                             "budgets": {
@@ -237,16 +244,20 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
     if len({player(m) for m in models.values()}) != len(models):
         raise MatrixFileError(f"{path}: two profiles play the same client and model")
     playable = [a for a in names if a not in skipped]
-    jobs = plan(
-        [(models[a], models[b]) for a, b in pairs],
-        playable,
-        repeats,
-        max_cost=budget["max_cost"],
-        budgets=budget["models"],
-        own=budget["file"],
-        condition={a: arenas[a]["condition"] for a in playable},
-        max_cost_models=budget["max_cost_models"],
-    )
+    try:
+        jobs = plan(
+            [(models[a], models[b]) for a, b in pairs],
+            playable,
+            repeats,
+            max_cost=budget["max_cost"],
+            budgets=budget["models"],
+            own=budget["file"],
+            condition={a: arenas[a]["condition"] for a in playable},
+            max_cost_models=budget["max_cost_models"],
+            seeds={a: arenas[a]["seed"] for a in playable},
+        )
+    except ValueError as e:
+        raise MatrixFileError(f"{path}: {e}") from None
     for j in jobs:
         for side in arena.SIDES:
             if j["sides"][side]["client"] in matrix.PAID_CLIENTS and side_cap(j, side) is None:
