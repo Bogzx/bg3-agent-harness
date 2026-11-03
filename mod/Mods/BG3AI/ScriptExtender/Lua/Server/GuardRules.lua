@@ -16,6 +16,7 @@
 local G = BG3AI.Guard
 
 G.rules_unread = G.rules_unread or {} -- "spell|term" -> true: logged once
+G.rules_last = G.rules_last or {} -- caster guid -> {spell, terms}: the unread terms of its last rule check
 
 local function lower(s) return tostring(s):lower():gsub("_", " ") end
 
@@ -258,8 +259,9 @@ function G.rule_eval(src, ctx)
     return v, why, unread
 end
 
-local function log_unread(spell, what, unread)
+local function log_unread(spell, what, unread, last)
     for _, t in ipairs(unread) do
+        last[#last + 1] = what .. ": " .. t
         local k = spell .. "|" .. what .. "|" .. t
         if not G.rules_unread[k] then
             G.rules_unread[k] = true
@@ -295,6 +297,10 @@ function G.check_rules(char, spell, st, target)
     if G.RULES_OFF then return end
     local name = G.spell_facts(spell)
     name = name and name.name or spell
+    -- this check's unread terms, per caster: a cast the engine then doesn't check either (a check flag that stayed
+    -- set) carries them in its cast_unchecked record (ActionsRolls.lua)
+    local last = {}
+    G.rules_last[G.guid(char) or tostring(char)] = { spell = spell, terms = last }
     for _, r in ipairs(requirements(st)) do
         local req, neg = r[1], r[2]
         if req == "Combat" and not neg and not G.in_combat(char) then
@@ -312,7 +318,7 @@ function G.check_rules(char, spell, st, target)
     end
     local v, why, unread = G.rule_eval(field("RequirementConditions"), { source = char, target = target,
         subject = char })
-    log_unread(spell, "RequirementConditions", unread)
+    log_unread(spell, "RequirementConditions", unread, last)
     if v == false then G.refuse(name .. " can't be used now: " .. why) end
     -- A Shout, a Zone or an area spell (AreaRadius / ExplodeRadius) applies its TargetConditions to each creature it
     -- reaches, not to the pick: Turn Undead's "Tagged('UNDEAD')" filters who flees, the caster isn't checked
@@ -325,7 +331,7 @@ function G.check_rules(char, spell, st, target)
         local which = st_type == "Teleportation" and "OriginTargetConditions"
             or "TargetConditions"
         v, why, unread = G.rule_eval(field(which), { source = char, target = target, subject = target })
-        log_unread(spell, which, unread)
+        log_unread(spell, which, unread, last)
         if v == false then G.refuse(name .. " can't target that: " .. why) end
     end
 end

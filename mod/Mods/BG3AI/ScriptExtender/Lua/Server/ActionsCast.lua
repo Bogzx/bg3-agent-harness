@@ -521,6 +521,7 @@ reg("cast", function(args)
             -- on bg3le; the 5-input form is kept as a fallback for builds
             -- without it.
             A.cast_rolls(job, char, spell)
+            job.cast_at_pos = true -- an engine refusal there is said neutrally (A.engine_refusal)
             G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
                 { char, spell, pos[1], pos[2], pos[3] })
         else
