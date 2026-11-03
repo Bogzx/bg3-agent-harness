@@ -2,7 +2,7 @@
   "schema": "arena.v1",
   "name": "arena-v0",
   "title": "Arena v0: crash site, Fighter and Rogue mirror twins, two against two",
-  "about": "The crash_site_grove start save. Each side plays two twins that arena.setup makes for every match from the mirror pairs (pairs 1-2 of tools/dev/make_arena_save.py mirror on ops/briefs/arena/live-mirror-3-spec.json with live 15's spawns): a Fighter and a Rogue, one hireling template, Half-Elf, the same kit and gear on both sides, level 2. Side A plays Ash and Cedar, side B their twins Birch and Dune. The spawns and teams are the ones live 15 (2026-11-02) played to a wipe: A at x 229.8 z 268.2, B at z 276.0 (y 5.28, the live height read).",
+  "about": "The crash_site_grove start save. Each side plays two twins that arena.setup makes for every match from the mirror pairs (pairs 1-2 of tools/dev/make_arena_save.py mirror on ops/briefs/arena/live-mirror-3-spec.json): a Fighter and a Rogue, one hireling template, Half-Elf, the same kit and gear on both sides, level 2. Side A plays Ash and Cedar, side B their twins Birch and Dune. The spawns are site 2 of the arena site search (2026-11-03, tools/dev/probe_arena_site.py, ops/logs/live.md '# arena site search'), as landed: the members (x 212.25 and 213.75, Setup.line) landed at the asked x/z with y A 10.975 / 10.980, B 11.019 / 10.949 (all four within 0.069 m), lines 8 m apart, no one-sided high ground within 9 m, no character or prop that can join a fight within 26 m, the sitters 10 m or more off. The crash-site strip live 15 used favours side A (the wreck's deck, the Nautiloid Tank).",
   "save": {
     "name": "Tav-34221263934__SCN-crash_site_grove",
     "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
@@ -11,14 +11,14 @@
     "level": "WLD_Main_A",
     "spawns": {
       "A": [
-        229.8,
-        5.1,
-        268.2
+        213.0,
+        10.98,
+        288.0
       ],
       "B": [
-        229.8,
-        5.28,
-        276.0
+        213.0,
+        10.98,
+        296.0
       ]
     }
   },

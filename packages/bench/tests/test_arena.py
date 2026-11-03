@@ -63,14 +63,27 @@ def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
     assert "draft" in arena.load_named("draft_open_field")
 
 
+# The site search's fine reads at site 2 (2026-11-03, ops/logs/live.md '# arena site search'): where each member
+# (Setup.line: spawn x -+ 0.75) landed; x/z as asked
+SITE_2_LANDED = {"A": [(212.25, 10.9746, 288.0), (213.75, 10.9805, 288.0)],
+                 "B": [(212.25, 11.0186, 296.0), (213.75, 10.9492, 296.0)]}  # fmt: skip
+
+
 def test_arena_v0_is_live_15s_two_against_two():
     # live 15 (2026-11-02, ops/logs/live.md): pairs 1-2 of the live-mirror-3 spec (Fighter Ash/Birch, Rogue
-    # Cedar/Dune), A at z 268.2, B at the live height read z 276.0 y 5.28, setup spawn_order [A, B] (an odd seed)
+    # Cedar/Dune), setup spawn_order [A, B] (an odd seed); the spawns are the site search's site 2, as landed
     a = arena.load_named("arena-v0")
     saves = json.loads((PKG / "saves.json").read_text())
     rows = [r for suite in saves["suites"].values() for r in suite["saves"] if r["name"] == a["save"]["name"]]
     assert {r["save_sha1"] for r in rows} == {a["save"]["sha1"]} and "crash_site_grove" in a["save"]["name"]
-    assert a["location"]["spawns"] == {"A": [229.8, 5.1, 268.2], "B": [229.8, 5.28, 276.0]}
+    spawns = a["location"]["spawns"]
+    assert spawns == {"A": [213.0, 10.98, 288.0], "B": [213.0, 10.98, 296.0]}
+    for s, members in SITE_2_LANDED.items():  # the file's spawn = its line's centre where the members landed
+        assert [round(sum(m[0] for m in members) / 2, 2), round(sum(m[1] for m in members) / 2, 2), members[0][2]] == (
+            spawns[s]
+        )
+    ys = [m[1] for line in SITE_2_LANDED.values() for m in line]
+    assert max(ys) - min(ys) < 0.2  # under setup's 0.3 m with margin, every pair and across the pairs
     assert arena.team_names(a) == {"A": ["Ash", "Cedar"], "B": ["Birch", "Dune"]}
     assert a["mirror"]["pairs"] == arena.load_named("crash-mirror-v1")["mirror"]["pairs"][:2]
     assert (a["level"], a["seed"] % 2, a["karmic"], a["round_cap"], a["wall_cap_min"], a["tools_off"]) == (
