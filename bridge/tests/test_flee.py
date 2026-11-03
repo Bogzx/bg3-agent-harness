@@ -178,6 +178,18 @@ class Flee(unittest.TestCase):
         self.assertEqual(self.names(), ["state.combat", "ui.flee_probe"])
         self.assertEqual(self.inp.clicks, [])
 
+    def test_greyed_out_reason_from_the_games_flee_capability(self):
+        # v010 live window 5 (Balthazar's fight, enemy at 1.4 m): the HUD's FleeBlockCause empty, FleeDistance -1/-1;
+        # the reason is the game's eoc::FleeCapabilityComponent of the fleeing character
+        self.flee = {"can": False, "value": -1, "max": -1, "flags": ["EnemyTooClose"], "at": 1.42, "need": 27}
+        out = combat.flee()
+        self.assertIn("FAILED: the game won't flee now (Flee is greyed out: Enemy too close! (1.4/27 m))", out)
+        self.assertEqual([a for op, a in self.ops if op == "ui.flee_probe"], [{"char": P1}])
+
+    def test_greyed_out_several_flags_no_distance(self):
+        self.flee = {"can": False, "value": -1, "max": -1, "flags": ["CantMove", "Downed"], "at": -1, "need": 27}
+        self.assertIn("(Flee is greyed out: can't move; downed)", combat.flee())
+
     def test_greyed_out_without_a_cause(self):
         self.flee = {"can": False, "value": -1, "max": 27}
         self.assertIn("(Flee is greyed out: the game gives no reason)", combat.flee())
@@ -237,7 +249,7 @@ class FleeRecords(Flee):
         self.assertEqual(rec["flee"]["ops"]["ui.flee_probe"][0], tries + 2)  # the first probe, hover's own, each spot
         self.assertNotIn("tries", out)  # numbers for the record, not the agent's text
         probes = [a for op, a in self.ops if op == "ui.flee_probe"]
-        self.assertEqual(probes[0], {})  # commands and button
+        self.assertEqual(probes[0], {"char": P1})  # commands, button and Claude's flee state
         self.assertTrue(all(a == {"button_only": True} for a in probes[1:]))
 
     def test_refused_early_return_has_its_record(self):

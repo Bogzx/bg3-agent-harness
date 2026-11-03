@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: flee's greyed-out reason from the game's flee state
+
+- `flee` on a greyed Flee button names the game's reason when the HUD's own tooltip fields are empty (v010 live window
+  5: FleeBlockCause empty, FleeDistance -1/-1, so it said `the game gives no reason`): ui.flee_probe {char} reads the
+  fleeing character's eoc::FleeCapabilityComponent (Flags: EnemyTooClose, CantMove, Downed, Incapacitated, Region,
+  Condition, Summon, PartyFollower; CurrentFleeDistance / FleeDistance): `Flee is greyed out: Enemy too close!
+  (1.4/27 m)`.
+
 ## 2026-11-03: dialogue rows pair with their answers by the number shown; flee says why the game won't
 
 - Answer rows pair with the live answer VMs by the number each row shows (the game's AnswerTextPrefix, AnswerIdx + 1)

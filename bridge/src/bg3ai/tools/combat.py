@@ -546,7 +546,7 @@ def flee(who: str | None = None) -> str:
     with plumbing._InputHeld():
         if not uitools._hud_has(char):   # the HUD's Flee is the selected character's
             core.game.run_job("act.select", {"char": char}, wait_s=5)
-        how = _flee_press(rpc, inp, hover)
+        how = _flee_press(rpc, inp, hover, char)
         if not how.startswith("pressed"):
             return f"FAILED: {how}"
         ans = boxclick.click_box(rpc, inp, "yes")
@@ -581,12 +581,12 @@ def _nearest_hostile(cs: dict, char: str) -> tuple[float, str, str] | None:
     return min(out) if out else None
 
 
-def _flee_press(rpc, inp, hover: dict | None = None) -> str:
+def _flee_press(rpc, inp, hover: dict | None = None, char: str | None = None) -> str:
     """Press the HUD's Flee until the game asks "Do you want to flee from combat?": its command when a page has one
     (as End Turn's), else a hover-checked click on the button (a command can do nothing, as Steal's did).
     hover: filled with the hover search's tries and outcome (for the metrics record)."""
     no_ask = "the game didn't ask to flee (an enemy within 27 m, maybe one you can't see)"
-    probe = rpc("ui.flee_probe", {}) or {}
+    probe = rpc("ui.flee_probe", {"char": char} if char else {}) or {}
     st = probe.get("flee") if isinstance(probe.get("flee"), dict) else {}
     if st.get("can") is False:
         # v010 live window 4 (48 s): the button greyed out (CanFlee false), so no command asked and no cursor spot was
@@ -622,11 +622,23 @@ def _flee_press(rpc, inp, hover: dict | None = None) -> str:
     return no_ask
 
 
+# eoc::FleeCapabilityComponent.Flags (FleeErrorFlags) -> the reason in words ("Enemy too close!" is the tooltip's own
+# text, live2 §2; the others are the flag names said plainly)
+FLEE_FLAGS = {"EnemyTooClose": "Enemy too close!", "Region": "fleeing isn't allowed in this area",
+              "CantMove": "can't move", "Downed": "downed", "Incapacitated": "incapacitated",
+              "Condition": "a condition prevents it", "Summon": "a summon can't flee",
+              "PartyFollower": "a party follower can't flee"}
+
+
 def _flee_block(st: dict) -> str:
-    """The Flee button's tooltip warning: 'Enemy too close! (10.6/27 m)'; the game's cause or a plain fallback."""
-    cause = str(st.get("cause") or "the game gives no reason").strip()
+    """The Flee button's tooltip warning: 'Enemy too close! (10.6/27 m)'. The HUD's FleeBlockCause and FleeDistance
+    when set, else the game's FleeCapability flags and distances (window 5: the HUD's fields were empty, -1/-1)."""
+    flags = [f for f in st.get("flags") or [] if isinstance(f, str)]
+    cause = str(st.get("cause") or "; ".join(FLEE_FLAGS.get(f, f) for f in flags) or "the game gives no reason").strip()
     v, mx = st.get("value"), st.get("max")
-    if isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)):
+    if not (isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0):
+        v, mx = st.get("at"), st.get("need")
+    if isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0:
         cause += f" ({v:.1f}/{mx:g} m)"
     return cause
 
