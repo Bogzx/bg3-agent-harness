@@ -606,8 +606,15 @@ def _guard(fn):
             saving.SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
         who_prev = getattr(plumbing._who_tl, "note", "")
         plumbing._who_tl.note = ""
+        logged = getattr(core._logged, "n", 0)
+        core._logged.extra = None
         try:
             out = fn(*a, **kw)
+            if getattr(core._logged, "n", 0) == logged:
+                # a return that skipped _finish (flee's FAILED, the REFUSED early outs) still gets its metrics and
+                # actions.jsonl record: launch-v1's two ~49 s flee failures left none
+                core._log(fn.__name__, kw, out if isinstance(out, str) else type(out).__name__,
+                          (time.monotonic() - t0) * 1000)
             if plumbing._who_tl.note and isinstance(out, str):  # _who picked the member acting now (ACT-P2); last, so
                 out = out + "\n" + plumbing._who_tl.note           # a result's own first word (FAILED, done) stays first
             if waited and isinstance(out, str):  # last too: the new game's line is no outcome of this call

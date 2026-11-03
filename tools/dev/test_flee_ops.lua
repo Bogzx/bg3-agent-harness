@@ -28,7 +28,9 @@ function UI.path(o, p)
     end
     return o
 end
+local finds = 0 -- tree searches (the probe's cost)
 function UI.find(el, pred, opts)
+    finds = finds + 1
     local budget = (opts or {}).max or 20000
     local function rec(e)
         budget = budget - 1
@@ -73,6 +75,34 @@ ok(not okc, "ui.flee: an unknown name fails")
 pages = { { name = "HotBar", el = { DataContext = {}, kids = {} } } }
 r = ops["ui.flee_probe"]()
 ok(#r.commands == 0 and r.button == nil, "flee_probe: nothing named flee")
+
+-- the hover search's probes: the button found once, no commands scan, until it goes
+local FL = BG3AI.FleeOps
+fleeCmd.can = true
+pages = { { name = "HotBar",
+            el = { DataContext = { CurrentPlayer = { RequestFlee = fleeCmd } }, kids = { fleeBtn } } } }
+FL.found, finds = nil, 0
+local realCommands, scans = FL.commands, 0
+FL.commands = function() scans = scans + 1 return realCommands() end
+for i = 1, 5 do
+    fleeBtn.IsMouseOver = i == 5
+    r = ops["ui.flee_probe"]({ button_only = true })
+end
+ok(r.button and r.button.over and #r.commands == 0 and finds == 1 and scans == 0,
+    "flee_probe button_only: one tree search for 5 probes, no commands scan (finds " .. finds .. ", scans "
+        .. scans .. ")")
+fleeBtn.Name = "Gone" -- the HUD rebuilt: the cached element lost its name
+r = ops["ui.flee_probe"]({ button_only = true })
+ok(r.button == nil and finds == 2, "flee_probe: a cached button that lost its name is searched for again")
+fleeBtn.Name = "FleeButton"
+r = ops["ui.flee_probe"]({ button_only = true }) -- found and cached again
+pages[1].el.IsVisible = false
+r = ops["ui.flee_probe"]({ button_only = true })
+ok(r.button == nil, "flee_probe: a hidden page's cached button is not reused")
+pages[1].el.IsVisible = nil
+r = ops["ui.flee_probe"]({})
+ok(r.button and #r.commands == 1 and scans == 1, "flee_probe without button_only still scans the commands")
+FL.commands = realCommands
 
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
