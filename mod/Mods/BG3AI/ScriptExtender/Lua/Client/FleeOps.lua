@@ -69,14 +69,34 @@ function FL.button()
     return nil
 end
 
+-- Whether the game lets the selected character flee, as the HUD's FleeButton reads it (HotBar.xaml: IsEnabled =
+-- SelectedCharacter.PlayerCharacterProperties.CanFlee; its tooltip, which a player sees on hover, shows FleeBlockCause
+-- and FleeDistance.Value/Max): {can, cause?, value?, max?}, nil when no visible page's DataContext has CanFlee.
+-- v010 live window 4: flee failed after 48 s (20 commands without a question box, then 48 hover spots never "over")
+-- with the button on screen; a disabled button never gets the mouse.
+function FL.state()
+    for _, w in ipairs(visiblePages()) do
+        local ok, dc = pcall(function() return w.el.DataContext end)
+        local p = ok and dc and UI.path(dc, "CurrentPlayer.SelectedCharacter.PlayerCharacterProperties")
+        local can = p and UI.prop(p, "CanFlee")
+        if can ~= nil then
+            local cause, dist = UI.prop(p, "FleeBlockCause"), UI.prop(p, "FleeDistance")
+            return { can = can == true, cause = type(cause) == "string" and cause ~= "" and cause or nil,
+                value = dist and tonumber(UI.prop(dist, "Value")), max = dist and tonumber(UI.prop(dist, "Max")) }
+        end
+    end
+    return nil
+end
+
 -- button_only: the button's state only (the hover search's probe), without the commands scan
 RPC.register("ui.flee_probe", function(args)
     local cmds = {}
-    for _, c in ipairs((args or {}).button_only and {} or FL.commands()) do
+    local only = (args or {}).button_only
+    for _, c in ipairs(only and {} or FL.commands()) do
         cmds[#cmds + 1] = { widget = c.widget, name = c.name, can = (UI.execute(c.cmd, nil, true)) == true }
     end
     local b = FL.button()
-    return { commands = cmds, button = b and { widget = b.widget, name = b.name,
+    return { commands = cmds, flee = not only and FL.state() or nil, button = b and { widget = b.widget, name = b.name,
         over = UI.get(b.el, "IsMouseOver") == true, enabled = UI.get(b.el, "IsEnabled") ~= false } or nil }
 end)
 

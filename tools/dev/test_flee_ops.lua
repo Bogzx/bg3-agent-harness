@@ -104,5 +104,21 @@ r = ops["ui.flee_probe"]({})
 ok(r.button and #r.commands == 1 and scans == 1, "flee_probe without button_only still scans the commands")
 FL.commands = realCommands
 
+-- v010 live window 4: the game's own CanFlee and the tooltip's FleeBlockCause / FleeDistance (HotBar.xaml FleeButton)
+local pcp = { CanFlee = false, FleeBlockCause = "Enemy too close!", FleeDistance = { Value = 10.63, Max = 27 } }
+pages = { { name = "HotBar", el = { DataContext = { CurrentPlayer = { SelectedCharacter = {
+    PlayerCharacterProperties = pcp } } }, kids = { fleeBtn } } } }
+r = ops["ui.flee_probe"]({})
+ok(r.flee and r.flee.can == false and r.flee.cause == "Enemy too close!" and r.flee.value == 10.63
+    and r.flee.max == 27, "flee_probe: CanFlee false with the tooltip's cause and distance")
+r = ops["ui.flee_probe"]({ button_only = true })
+ok(r.flee == nil, "flee_probe button_only: no flee state read (the hover probe stays cheap)")
+pcp.CanFlee, pcp.FleeBlockCause = true, ""
+r = ops["ui.flee_probe"]({})
+ok(r.flee and r.flee.can == true and r.flee.cause == nil, "flee_probe: CanFlee true, an empty cause is none")
+pages = { { name = "HotBar", el = { DataContext = {}, kids = { fleeBtn } } } }
+r = ops["ui.flee_probe"]({})
+ok(r.flee == nil, "flee_probe: no CanFlee on any page -> no flee state (the bridge goes on as before)")
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

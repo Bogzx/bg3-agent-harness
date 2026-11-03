@@ -587,11 +587,17 @@ def _flee_press(rpc, inp, hover: dict | None = None) -> str:
     hover: filled with the hover search's tries and outcome (for the metrics record)."""
     no_ask = "the game didn't ask to flee (an enemy within 27 m, maybe one you can't see)"
     probe = rpc("ui.flee_probe", {}) or {}
-    ran = False
+    st = probe.get("flee") if isinstance(probe.get("flee"), dict) else {}
+    if st.get("can") is False:
+        # v010 live window 4 (48 s): the button greyed out (CanFlee false), so no command asked and no cursor spot was
+        # ever over it. What its tooltip shows a player: FleeBlockCause and FleeDistance.Value/Max.
+        return f"the game won't flee now (Flee is greyed out: {_flee_block(st)})"
+    ran, tried = False, set()
     for c in probe.get("commands") or []:
-        if not c.get("can"):
+        if not c.get("can") or c["name"] in tried:   # window 4: one command name on 20 pages, 2 s box wait each
             continue
         ran = True
+        tried.add(c["name"])
         rpc("ui.flee", {"name": c["name"], "widget": c.get("widget")})
         if _box_shows(rpc):
             return f"pressed Flee ({c['name']})"
@@ -614,6 +620,15 @@ def _flee_press(rpc, inp, hover: dict | None = None) -> str:
     if _box_shows(rpc):
         return "pressed Flee (clicked)"
     return no_ask
+
+
+def _flee_block(st: dict) -> str:
+    """The Flee button's tooltip warning: 'Enemy too close! (10.6/27 m)'; the game's cause or a plain fallback."""
+    cause = str(st.get("cause") or "the game gives no reason").strip()
+    v, mx = st.get("value"), st.get("max")
+    if isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)):
+        cause += f" ({v:.1f}/{mx:g} m)"
+    return cause
 
 
 def _box_shows(rpc) -> bool:

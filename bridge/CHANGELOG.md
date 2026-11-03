@@ -5,6 +5,18 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: dialogue rows pair with their answers by the number shown; flee says why the game won't
+
+- Answer rows pair with the live answer VMs by the number each row shows (the game's AnswerTextPrefix, AnswerIdx + 1)
+  when the other pairings fail, so a list with a wrapped row is answered with SelectAnswerCommand and keeps its tags.
+  v010 live window 4: Lae'zel's cage "Get rid of them." (6 answers, the 4th "[PALADIN] [DECEPTION] ..." on two lines)
+  was counted as 7 rows from the first row's height, went out without VMs, and the row's button press was ignored
+  twice. An answer the game ignores for 3 s with no readable BoundEvent gets the number key it shows (1-9).
+- `flee`: when the game has the Flee button greyed out (CanFlee false), it fails at once with the reason the button's
+  tooltip shows a player: `FAILED: the game won't flee now (Flee is greyed out: Enemy too close! (10.6/27 m))`. No
+  command is run and no cursor search is made. Each Flee command name runs once (window 4: one name on 20 pages, a
+  2 s wait for the question after each; with the 48-spot cursor search the call took 48 s).
+
 ## 2026-11-03: an answer the game ignores is pressed with its number key; a scrolled answer list is the same node
 
 - `choose_dialogue` (and every tool that answers through ui.dialogue_choose): when the game still shows the same
