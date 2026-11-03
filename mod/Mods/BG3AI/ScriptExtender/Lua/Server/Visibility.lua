@@ -178,6 +178,12 @@ function V.context()
         if f and c and c.frame == f then return c.ctx end
         local party, isParty = V.party()
         local ctx = { party = party, is_party = isParty, observers = V.observers(party), rules = V.rules() }
+        -- the side's camera: on its own selected character (Arena.lead: its member whose turn is open, else its first
+        -- living one), as the side's player would have it; never the HUD's selection or the host
+        local lead = BG3AI.Arena.lead(side)
+        for _, o in ipairs(ctx.observers) do
+            if o.uuid == lead then ctx.leader = o.pos end
+        end
         V.sideCtx[side] = { frame = f, ctx = ctx }
         return ctx
     end

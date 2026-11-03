@@ -283,3 +283,18 @@ test("walked cells, normal play (no arena): every member's step is known, one st
     eq(N.visited("ARENA_Level", FAR), true, "visited")
     eq(as("A", N.known, nil, FAR), true, "a side with no arena active is no side")
 end)
+
+-- The camera centre for ground in view (V.pointSeen's CAMERA_M range): a side's context had no leader, so the range
+-- centred on the side's first team row wherever the action was (arena-v010-merge.md fix 2).
+test("a side's camera centre: its own member whose turn is open, else its first living one", function()
+    begin()
+    setTurn(A2, true, false)
+    local a = as("A", V.context)
+    eq(a.leader and a.leader[1], world[A2].pos[1], "A's camera: A2, whose turn is open")
+    local b = as("B", V.context)
+    eq(b.leader and b.leader[1], world[B1].pos[1], "B's camera: B1, its first living member")
+    osiv[key("IsDead", B1)] = 1
+    N.frame = N.frame + 1
+    b = as("B", V.context)
+    eq(b.leader and b.leader[1], world[B2].pos[1], "B's camera with B1 dead: B2")
+end)
