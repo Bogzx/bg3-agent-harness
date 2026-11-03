@@ -105,6 +105,13 @@ class ClickRow(unittest.TestCase):
         self.assertEqual(p.clicked, [1], r)
         self.assertLessEqual(r["tries"], 3)
 
+    def test_a_lone_row_is_found(self):
+        # v010 live window 7 (RK-prompt.jpg): Karlach's lone Reckless Attack row at y ~0.675, off the 1-row seed (0.707)
+        p = FakePrompt(rows=1, top=0.675)
+        r = reactclick.click_row(p.rpc, p, 1)
+        self.assertTrue(r.get("closed"), r)
+        self.assertEqual(p.clicked, [1])
+
     def test_never_clicks_off_the_row(self):
         p = FakePrompt(rows=6, top=0.9)   # rows off the searched band: no hover anywhere
         r = reactclick.click_row(p.rpc, p, 2, budget_s=3.0)
