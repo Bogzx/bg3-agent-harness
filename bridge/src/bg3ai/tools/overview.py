@@ -10,7 +10,7 @@ from typing import Any
 
 from .. import companions, delta, economy, leveling, minimap, party, render, spellprep
 from ..game import GameError, NotReady
-from . import core, plumbing, reporting
+from . import camp_night, core, plumbing, reporting
 
 # ---------------------------------------------------------------------------
 # observe
@@ -304,12 +304,12 @@ _TALK = companions.TalkTracker()
 def _talk_line(st: Any, force: bool = False, ui: Any = None) -> str:
     """get_status/look: 'TALK: e5 Wyll wants to talk …' (the "!" over a companion) when it changes. At night camp
     (ui's minimap) also the camp '!' over the characters in view whose talk the story still wants before the night
-    can end (travel.night_talk_marks): launch-v1 haiku r2 had no TALK line for Shadowheart (HasExclamationDialog
+    can end (camp_night.night_talk_marks): launch-v1 haiku r2 had no TALK line for Shadowheart (HasExclamationDialog
     unset: the camp's '!' is the story's own marker) and learned it only from 17 long_rest refusals. Never raises."""
     try:
         night = ""
         if _at_camp(ui) and isinstance(st, dict) and not st.get("in_combat") and not st.get("in_dialogue"):
-            night = travel.night_talk_marks()
+            night = camp_night.night_talk_marks()
         return _TALK.line(st, queueing._label, force=force, extra=(night,) if night else ())
     except Exception:
         return ""

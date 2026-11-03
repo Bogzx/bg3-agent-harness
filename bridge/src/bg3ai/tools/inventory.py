@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from .. import actq, economy, party
 from ..game import GameError, JobResult
-from . import core, galefeed, overview, plumbing, reporting, travel, world_tools
+from . import camp_night, core, galefeed, overview, plumbing, reporting, travel, world_tools
 
 # ---------------------------------------------------------------------------
 # act: items, rest, progression
@@ -537,7 +537,7 @@ def _rest_blocked() -> str:
     if woke:
         core.METRICS.write({"type": "can_rest", "t": round(time.time(), 3), "can": can, "refused": True, "woke": True})
         return woke
-    talks = travel.night_talks_left()
+    talks = camp_night.night_talks_left()
     if talks:
         return f"long_rest: FAILED — not pressed: {talks}"
     if not _rest_reasons(can, _REST_HARD_FLAGS):
