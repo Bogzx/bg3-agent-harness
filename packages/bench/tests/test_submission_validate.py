@@ -112,6 +112,7 @@ def release_for(d: Path) -> validate.Release:
         scenarios={
             sc["name"]: {
                 "digest": man["scenario"]["digest"],  # the suite the pilot played (files edited since)
+                "save": sc["start"]["save"],
                 "save_sha1": sc["start"]["save_sha1"],
                 "fingerprint": consistency.fingerprint(facts.load(d / "facts.jsonl")),
             }
@@ -316,6 +317,11 @@ def bad_start(rows: list[dict]) -> None:
     snap["party"][0]["level"] += 1
 
 
+def foreign_start(rows: list[dict]) -> None:
+    # REVIEW-4 2.5: foreign_save was the runner's own flag; the facts' first load mark names the save that was loaded
+    next(r for r in rows if r.get("mark") == "load")["detail"] = "Tav-1__SCN-another_run"
+
+
 def pins(m: dict) -> None:
     m["pins"]["game_build"] = "1"
 
@@ -341,6 +347,7 @@ TAMPERS: dict[str, tuple[str, Callable[[Path], None]]] = {
     "wrong prompt hash": ("C01", lambda b: edit_json(b, "manifest.json", prompt)),
     "duplicate run id": ("D01", lambda b: None),
     "bad start snapshot": ("X01", lambda b: edit_facts(b, bad_start)),
+    "foreign start save": ("X03", lambda b: edit_facts(b, foreign_start)),
     "extra tool": ("A02", lambda b: add_event(b, kind="tool_call", tool="teleport", args={}, call_id="x")),
     "reload without the condition": ("A02", lambda b: add_event(b, kind="tool_call", tool="load_game", args={})),
     "hidden reasoning": ("S02", lambda b: add_event(b, kind="thinking", text="secret plan")),
@@ -370,6 +377,7 @@ def test_tampered_copies_are_rejected_by_their_code(tmp_path, what):
         "bad start snapshot",
         "extra tool",
         "undeclared effort",
+        "foreign start save",
     ):
         assert v.failed == [code]
 
