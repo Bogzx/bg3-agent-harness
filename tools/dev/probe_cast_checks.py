@@ -1,34 +1,34 @@
-"""Live probe ($0, REVIEW-5 F1/F3/F4): once a harness cast loses its check flags too, does the engine refuse what a
-human player can't do?
+"""Live probe ($0, REVIEW-5 F1/F3/F4): once a harness cast loses one check flag, does the engine refuse what a human
+player can't do?
 
 A cast the harness orders (Osi.UseSpell) carries IgnoreHasSpell, IgnoreCastChecks, IgnoreSpellRolls,
-IgnoreTargetChecks; the mod drops IgnoreSpellRolls at the cast state's creation (Server/ActionsRolls.lua). With the
-probe switch `A.CAST_DROP_EXTRA` on, the awaited cast also loses IgnoreCastChecks, IgnoreTargetChecks and
-IgnoreHasSpell (NoMovement and AvoidDangerousAuras stay). Whether the engine re-checks the target and the
-requirements at that point, or ran them at the request (so nothing changes), is what this probe decides.
+IgnoreTargetChecks; the mod drops IgnoreSpellRolls at the cast state's creation (Server/ActionsRolls.lua). The probe
+switch `A.CAST_DROP_EXTRA` also drops check flags from the awaited cast. Window 6: dropping all three at once refused
+every cast, the control too; so each mode drops ONE flag (--modes off,IgnoreTargetChecks,IgnoreCastChecks,
+IgnoreHasSpell; "all" = the three). The guard's own rule checks (Server/GuardRules.lua) are switched off for the probe
+(G.RULES_OFF), so the engine's verdict is what is measured.
 
-Each case goes through bg3ai.tools.combat.use_ability (the agent's tool), with the switch off and then on (--modes):
-    control       a normal attack at --target: must still work with the switch on
+Each case goes through bg3ai.tools.combat.use_ability (the agent's tool), once per mode:
+    control       a normal attack at --target: a mode is usable only if this still casts
     hold_person   Hold Person at --target (an undead or non-humanoid: TargetConditions refuse it)   F1
     heavy_shove   Shove at --heavy (Strength x 12 < its weight: CanShoveWeight refuses it)            F1
     prone_attack  the attack while the caster has PRONE (applied by the probe), in its turn            F4
-    jump_webbed   Jump 3 m while the caster has --immobile (applied by the probe; Requirements !Immobile) F3
+    jump_webbed   Jump 3 m while the caster has --immobile (ENSNARED, live: blocks Movement)           F3
     rage_ooc      Rage out of combat (Requirements Combat)                                             F3
     surge_ooc     Action Surge out of combat (Requirements Combat)                                     F3
 Verdict per case and mode: cast (the engine let it through), refused (the game refused the cast: CastSpellFailed),
 guard (the harness refused before any order), not run (precondition not met: not its turn, in/out of combat, a
-status that didn't apply). A case the engine refuses only with the switch on = the engine re-checks once the flag is
-gone (F1a/F3 can be fixed by dropping it); cast both ways = the Lua terms are the fix.
+status that didn't apply). Per usable mode: a case refused only with that flag gone = the engine re-checks it.
 
 Probe-only state (save nothing): action resources refilled and the target healed before each order, statuses applied
-and removed, the switch restored to off at the end.
+and removed; the switch and RULES_OFF restored at the end.
 
 One command per scene, a fight loaded with this branch's mod (combat cases; the caster's turn: the probe ends other
 party members' turns to reach it), then a scene out of combat for the ooc cases:
     uv run --project bridge python tools/dev/probe_cast_checks.py --plan combat --target <undead uuid> \\
-        --heavy <giant uuid> [--caster Karlach] [--hold-caster Shadowheart] [--immobile ENSNARED]
+        --heavy <heavy uuid> [--caster Karlach] [--hold-caster <who has Hold Person prepared>] [--immobile ENSNARED]
     uv run --project bridge python tools/dev/probe_cast_checks.py --plan ooc [--rager Karlach] [--surger <fighter>]
-    [--modes off,on] [--only case,case] [--out runtime/probes/cast-checks.jsonl]
+    [--modes off,IgnoreTargetChecks,...] [--only case,case] [--out runtime/probes/cast-checks.jsonl]
 """
 
 from __future__ import annotations
@@ -44,6 +44,8 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 
 A_LUA = "Mods.BG3AI.BG3AI.Actions"
+G_LUA = "Mods.BG3AI.BG3AI.Guard"
+FLAGS = ("IgnoreTargetChecks", "IgnoreCastChecks", "IgnoreHasSpell")
 REFILL = """local e = Ext.Entity.Get(%s)
 for _, list in pairs(e.ActionResources.Resources) do
     for _, r in ipairs(list) do r.Amount = r.MaxAmount end
@@ -109,27 +111,48 @@ def verdict(text: str) -> str:
     return "guard"
 
 
+def switch(mode: str) -> str:
+    """The Lua value of A.CAST_DROP_EXTRA for a mode: off, all, or one flag name. Pure (tests)."""
+    if mode == "off":
+        return "false"
+    if mode == "all":
+        return "true"
+    if mode not in FLAGS:
+        raise ValueError(f"unknown mode {mode!r}: off, all or one of {', '.join(FLAGS)}")
+    return '{"' + mode + '"}'
+
+
 def summary(rows: list[dict[str, Any]]) -> list[str]:
-    """One line per case: its verdict per mode and what it means. Pure (tests)."""
+    """Per mode: is it usable (the control still casts), then each case's verdict and what it means. Pure (tests)."""
     by: dict[str, dict[str, str]] = {}
+    modes: list[str] = []
     for r in rows:
         by.setdefault(r["case"], {})[r["mode"]] = r["verdict"]
+        if r["mode"] != "off" and r["mode"] not in modes:
+            modes.append(r["mode"])
     out = []
-    for case, m in by.items():
-        off, on = m.get("off"), m.get("on")
-        if case == "control":
-            meaning = (
-                "OK: still works with the flags dropped" if on == "cast" else "BROKEN: the switch stops a normal cast"
-            )
-        elif on == "refused" and off != "refused":
-            meaning = "the engine re-checks once the flags are gone: dropping them fixes it"
-        elif on == "cast":
-            meaning = "the engine lets it through even without the flags: needs the Lua check"
-        elif on == "guard":
-            meaning = "the harness refuses it already"
-        else:
-            meaning = "inconclusive (read the rows)"
-        out.append(f"{case:13} off={off or '-':9} on={on or '-':9} {meaning}")
+    for mode in modes:
+        ctrl = by.get("control", {}).get(mode)
+        usable = ctrl == "cast"
+        out.append(
+            f"mode {mode}: control {ctrl or 'not run'} -> "
+            + ("usable" if usable else "can't be dropped (it stops a normal cast)" if ctrl == "refused" else "unknown")
+        )
+        for case, m in by.items():
+            if case == "control" or mode not in m:
+                continue
+            off, on = m.get("off"), m[mode]
+            if not usable:
+                meaning = "not read (the mode isn't usable)"
+            elif on == "refused" and off != "refused":
+                meaning = f"the engine re-checks once {mode} is gone"
+            elif on == "cast":
+                meaning = "the engine lets it through anyway: the guard's Lua check is the fix"
+            elif on == "guard":
+                meaning = "the harness refuses it before any order"
+            else:
+                meaning = "inconclusive (read the rows)"
+            out.append(f"  {case:13} off={off or '-':9} {mode}={on:9} {meaning}")
     return out
 
 
@@ -144,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--immobile", default="ENSNARED", help="a status that makes the caster Immobile")
     ap.add_argument("--rager", default="Karlach")
     ap.add_argument("--surger", default="Lae'zel")
-    ap.add_argument("--modes", default="off,on")
+    ap.add_argument("--modes", default="off," + ",".join(FLAGS), help="off, all, or flag names (one per mode)")
     ap.add_argument("--only", default="")
     ap.add_argument("--turn-wait", type=float, default=120.0)
     ap.add_argument("--out", type=Path, default=REPO / "runtime" / "probes" / "cast-checks.jsonl")
@@ -180,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[dict[str, Any]] = []
     a.out.parent.mkdir(parents=True, exist_ok=True)
     try:
+        lua(f"{G_LUA}.RULES_OFF = true return 'ok'")  # the engine's verdict is measured, not the guard's rules
         for c in cases:
             for mode in [m for m in a.modes.split(",") if m]:
                 row: dict[str, Any] = {"case": c["case"], "mode": mode, "who": c["who"], "ability": c["ability"]}
@@ -198,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
                 if why:
                     row.update(verdict="not run", text=why)
                 else:
-                    lua(f"{A_LUA}.CAST_DROP_EXTRA = {'true' if mode == 'on' else 'false'} return 'ok'")
+                    lua(f"{A_LUA}.CAST_DROP_EXTRA = {switch(mode)} return 'ok'")
                     lua(REFILL % json.dumps(who))
                     tgt = c.get("target")
                     if tgt:
@@ -225,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                     fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 print(json.dumps({k: row.get(k) for k in ("case", "mode", "verdict", "options")}))
     finally:
-        lua(f"{A_LUA}.CAST_DROP_EXTRA = false return 'ok'")
+        lua(f"{A_LUA}.CAST_DROP_EXTRA = false {G_LUA}.RULES_OFF = false return 'ok'")
     for line in summary(rows):
         print(line)
     return 0

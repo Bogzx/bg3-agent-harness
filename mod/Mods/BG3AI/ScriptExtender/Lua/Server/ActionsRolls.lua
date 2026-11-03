@@ -25,7 +25,9 @@ A.ROLL_STOP_MS = 2500 -- a failed clear: no CastedSpell this long after the purg
 A.roll_wait = A.roll_wait or {} -- caster guid -> {job, spell, t}: the last order's stamp, kept past its job
 
 -- The flags the write drops. CAST_DROP_EXTRA (probe switch, tools/dev/probe_cast_checks.py, REVIEW-5 F1/F3; off by
--- default): the awaited cast also loses the check flags, to see whether the engine then refuses what a player can't.
+-- default): the awaited cast also loses check flags, to see whether the engine then refuses what a player can't.
+-- false = none, a list = those flags (one at a time: window 6, dropping all three refused every cast, the control
+-- too), true = all of CAST_DROP_PROBE.
 A.CAST_DROP = { "IgnoreSpellRolls" }
 A.CAST_DROP_PROBE = { "IgnoreCastChecks", "IgnoreTargetChecks", "IgnoreHasSpell" }
 A.CAST_DROP_EXTRA = A.CAST_DROP_EXTRA or false
@@ -136,10 +138,12 @@ function A.roll_cast_state(entity)
     if same and job.status == "running" and job.roll.state == "pending" then -- the awaited cast
         if not names then return roll_failed(job, "its CastOptions don't read as flag names") end
         local drop = A.CAST_DROP
-        if A.CAST_DROP_EXTRA then
+        local extra = A.CAST_DROP_EXTRA == true and A.CAST_DROP_PROBE or type(A.CAST_DROP_EXTRA) == "table"
+            and A.CAST_DROP_EXTRA or nil
+        if extra then
             drop = {}
             for _, f in ipairs(A.CAST_DROP) do drop[#drop + 1] = f end
-            for _, f in ipairs(A.CAST_DROP_PROBE) do drop[#drop + 1] = f end
+            for _, f in ipairs(extra) do drop[#drop + 1] = f end
         end
         local after, stuck = strip(st, names, drop)
         if #stuck > 0 then

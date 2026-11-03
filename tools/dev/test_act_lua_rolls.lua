@@ -263,6 +263,12 @@ test("probe switch (REVIEW-5 F1/F3): CAST_DROP_EXTRA also drops the check flags 
     eq(opts(), "NoMovement,AvoidDangerousAuras", "on: the check flags dropped too"); eq(j.roll.state, "cleared", "ok")
     local react = state_of(P1, "Target_OpportunityAttack", { "IgnoreCastChecks", "IsReaction" })
     eq(#react.CastOptions, 2, "a reaction keeps its flags")
+    -- one flag at a time (window 6: all three at once refused every cast)
+    reset()
+    A.CAST_DROP_EXTRA = { "IgnoreTargetChecks" }
+    bolt()
+    job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    eq(opts(), "IgnoreHasSpell,IgnoreCastChecks,NoMovement,AvoidDangerousAuras", "only IgnoreTargetChecks dropped")
     A.CAST_DROP_EXTRA = false
 end)
 
