@@ -308,3 +308,9 @@ test("transfer of a worn item: the fact 'it is equipped' (the bridge's give uneq
     eq(j.status, "failed", "refused")
     eq(j.error, "it is equipped", "the words bridge/src/bg3ai/tools/inventory.py matches")
 end)
+
+test("interact on a living character states what interact does, no 'use talk_to' order", function()
+    osiv[key("IsCharacter", NPC)] = 1
+    local j = job(op("interact", { char = P1, target = NPC }))
+    eq(j.status, "failed", "refused"); eq(j.error, "interact doesn't talk to characters (talk_to does)", "words")
+end)

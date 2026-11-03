@@ -185,7 +185,7 @@ reg("interact", function(args)
         if G.is_dead(target) then
             G.refuse("looting corpses is not supported by this action yet")
         end
-        G.refuse("use talk_to to talk to characters")
+        G.refuse("interact doesn't talk to characters (talk_to does)")
     end
     -- Locked: as in the game, a party member carrying its key opens it (the
     -- player would select them and click). With no key the click is still sent, as a player's, and the game
