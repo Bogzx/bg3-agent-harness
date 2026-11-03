@@ -655,7 +655,8 @@ A.inner = { interrupt = interrupt, osi_tasks = osi_tasks, listen = listen, pos_v
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads A and the
 -- helpers in A.inner.
-for _, part in ipairs({ "Server/ActionsMove.lua", "Server/ActionsInteract.lua", "Server/ActionsCast.lua",
+for _, part in ipairs({ "Server/ActionsMove.lua", "Server/ActionsInteract.lua", "Server/ActionsRolls.lua",
+    "Server/ActionsCast.lua",
     "Server/ActionsParty.lua", "Server/ActionsClick.lua" }) do
     Ext.Require(part)
 end

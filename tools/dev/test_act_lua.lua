@@ -22,6 +22,9 @@ function entity(u)
     local e = {}
     for k, v in pairs(w.comps or {}) do e[k] = v end
     function e:Replicate() end
+    if w.comp_names then -- a test's component name list (otherwise the read errors, as other tests expect)
+        e.GetAllComponentNames = function() return w.comp_names end
+    end
     return e
 end
 
