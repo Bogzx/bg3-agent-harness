@@ -773,7 +773,8 @@ G.inner = { b = b }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads G and the
 -- helpers in G.inner.
-for _, part in ipairs({ "Server/GuardGate.lua", "Server/GuardSpells.lua", "Server/GuardCast.lua" }) do
+for _, part in ipairs({ "Server/GuardGate.lua", "Server/GuardSpells.lua", "Server/GuardCast.lua",
+    "Server/GuardRules.lua" }) do
     Ext.Require(part)
 end
 

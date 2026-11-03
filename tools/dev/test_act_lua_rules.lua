@@ -1,0 +1,121 @@
+-- Part of test_act_lua.lua (split for the 1000-line cap): REVIEW-5 F1/F3, a spell's own rules the harness cast skips
+-- (IgnoreCastChecks / IgnoreTargetChecks stay: window 6, dropping them refused every cast). Server/GuardRules.lua
+-- reads Requirements, RequirementConditions and TargetConditions and refuses what a greyed hotbar or the cursor
+-- refuses; a term it can't read is logged, never refused. test_act_lua.lua runs it after its stubs and helpers.
+
+local function rules(spell_name, st, target)
+    spell(spell_name, st)
+    return function() G.check_rules(P1, spell_name, Ext.Stats.Get(spell_name), target) end
+end
+local function passes(fn)
+    local ok, err = pcall(fn)
+    if not ok then error("refused: " .. tostring(err.reason or err), 2) end
+end
+
+test("rules: Requirements Combat / !Combat (Rage, Action Surge out of combat; Arcane Recovery in a fight)", function()
+    refused(rules("Shout_Rage", { SpellType = "Shout", Requirements = "Combat" }), "can only be used in combat")
+    local j = job(op("cast", { char = P1, spell = "Shout_Rage" }))
+    eq(j.status, "failed", "refused through act.cast")
+    assert(j.error:find("can only be used in combat", 1, true), j.error)
+    eq(#called("UseSpell"), 0, "no order")
+    G.RULES_OFF = true -- the probe's switch: the engine's own verdict is measured
+    passes(rules("Shout_Rage", { SpellType = "Shout", Requirements = "Combat" }))
+    G.RULES_OFF = false
+    combat_setup(9)
+    passes(rules("Shout_Rage", { SpellType = "Shout", Requirements = "Combat" }))
+    refused(rules("Shout_ArcaneRecovery", { SpellType = "Shout", Requirements = "!Combat " }),
+        "can't be used in combat")
+    -- bg3se's list form
+    refused(rules("Shout_X", { SpellType = "Shout", Requirements = { { Requirement = "Combat", Not = true } } }),
+        "can't be used in combat")
+end)
+
+test("rules: Requirements !Immobile refuse Jump while Ensnared (window 6: it went through live)", function()
+    stats["ENSNARED"] = { StatusType = "BOOST", StatusGroups = { "SG_Condition", "SG_Restrained" },
+        Boosts = "ActionResourceBlock(Movement)" }
+    G._disabling = {}
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ statuses = function() return { { id = "ENSNARED", name = "Ensnared" } } end },
+        { __index = savedV })
+    local ok, err = pcall(rules("Projectile_Jump", { SpellType = "Projectile", Requirements = "!Immobile" }))
+    BG3AI.Visibility = savedV
+    G._disabling = {}
+    eq(ok, false, "refused"); eq(err.reason, "Projectile_Jump can't be used while the caster can't move (Ensnared)")
+    passes(rules("Projectile_Jump", { SpellType = "Projectile", Requirements = "!Immobile" }))
+end)
+
+test("rules: RequirementConditions on the caster (Rage twice; a Rage-only action)", function()
+    osiv[key("HasActiveStatus", P1, "RAGE")] = 1
+    osiv[key("HasActiveStatus", P1, "CALM_EMOTIONS")] = 0
+    refused(rules("Shout_Rage", { SpellType = "Shout",
+        RequirementConditions = "not HasStatus('RAGE') and not HasStatus('CALM_EMOTIONS')" }),
+        "Shout_Rage can't be used now: the caster has rage")
+    osiv[key("HasActiveStatus", P1, "RAGE")] = 0
+    passes(rules("Shout_Rage", { SpellType = "Shout",
+        RequirementConditions = "not HasStatus('RAGE') and not HasStatus('CALM_EMOTIONS')" }))
+    refused(rules("Target_Frenzy", { SpellType = "Target", RequirementConditions = "HasStatus('RAGE')" }, NPC),
+        "the caster doesn't have rage")
+end)
+
+test("rules: TargetConditions (Hold Person on an undead, a heal on a dead target, an item)", function()
+    Ext.StaticData = { GetAll = function() return { "t-hum", "t-und" } end,
+        Get = function(id) return { Name = ({ ["t-hum"] = "HUMANOID", ["t-und"] = "UNDEAD" })[id] } end }
+    G._tag_ids = nil
+    local hold = { SpellType = "Target",
+        TargetConditions = "Character() and not Self() and Tagged('HUMANOID') and not Tagged('UNDEAD')" }
+    osiv[key("IsCharacter", NPC)] = 1
+    osiv[key("IsTagged", NPC, "t-und")] = 1
+    refused(rules("Target_HoldPerson", hold, NPC), "Target_HoldPerson can't target that: the target is undead")
+    -- a humanoid: HUMANOID read true, UNDEAD false -> allowed
+    osiv[key("IsTagged", NPC, "t-und")] = 0
+    osiv[key("IsTagged", NPC, "t-hum")] = 1
+    passes(rules("Target_HoldPerson", hold, NPC))
+    -- tags unreadable (no answer): not refused
+    osiv[key("IsTagged", NPC, "t-hum")] = nil
+    osiv[key("IsTagged", NPC, "t-und")] = nil
+    passes(rules("Target_HoldPerson", hold, NPC))
+    osiv[key("IsDead", NPC)] = 1
+    refused(rules("Target_HealingWord", { SpellType = "Target", TargetConditions = "not Dead() and Character()" }, NPC),
+        "the target is dead")
+    osiv[key("IsCharacter", NPC)] = 0
+    passes(rules("Target_X", { SpellType = "Target", TargetConditions = "Character() or Item()" }, NPC)) -- Item unread
+    osiv[key("IsItem", NPC)] = 0
+    refused(rules("Target_X", { SpellType = "Target", TargetConditions = "Character() or Item()" }, NPC),
+        "it is not a character and it is not an item")
+    G._tag_ids = nil
+end)
+
+test("rules: Shove weight (CanShoveWeight: Strength x 12 kg >= the target's weight)", function()
+    local shove = { SpellType = "Target", TargetConditions = "not Self() and CanShoveWeight()" }
+    osiv[key("GetAbility", P1, "Strength")] = 10
+    world[NPC].comps.Data = { Weight = 200000 } -- 200 kg > 120
+    refused(rules("Target_Shove", shove, NPC), "Target_Shove can't target that: it is too heavy to shove")
+    world[NPC].comps.Data = { Weight = 80000 }
+    passes(rules("Target_Shove", shove, NPC))
+    osiv[key("HasActiveStatus", P1, "ENLARGE")] = 1 -- x 28.2 = 282 kg
+    world[NPC].comps.Data = { Weight = 200000 }
+    passes(rules("Target_Shove", shove, NPC))
+end)
+
+test("rules: an unread term is logged once, never refused; a false known term still refuses", function()
+    local warned = {}
+    local pw = Ext.Utils.PrintWarning
+    Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
+    G.rules_unread = {}
+    local st = { SpellType = "Target", TargetConditions = "Player(context.Source) and MysteryTerm() or Dead()" }
+    osiv[key("IsDead", NPC)] = 0
+    passes(rules("Target_Odd", st, NPC))
+    passes(rules("Target_Odd", st, NPC))
+    eq(#warned, 2, "Player and MysteryTerm, once each")
+    assert(warned[1]:find("Target_Odd TargetConditions: term Player not read", 1, true), warned[1])
+    passes(rules("Target_Ops", { SpellType = "Target", TargetConditions = "HasHPPercentageLessThan(50) >= 1" }, NPC))
+    -- unknown AND false = false
+    osiv[key("IsCharacter", NPC)] = 0
+    refused(rules("Target_Y", { SpellType = "Target", TargetConditions = "MysteryTerm() and Character()" }, NPC),
+        "it is not a character")
+    Ext.Utils.PrintWarning = pw
+    -- a two-step spell checks its first pick against OriginTargetConditions
+    osiv[key("IsCharacter", NPC)] = 1
+    passes(rules("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Character()",
+        TargetConditions = "not Character()" }, NPC))
+end)
