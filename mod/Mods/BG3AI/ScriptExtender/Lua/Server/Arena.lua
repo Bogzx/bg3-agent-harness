@@ -336,7 +336,7 @@ end
 
 local function passCantAct(p, round)
     local G = BG3AI.Guard
-    local passed, n = false, 0
+    local passed, n, last = false, 0, nil
     for _, u in ipairs(p.members) do
         local why = cantAct(u)
         if why then
@@ -348,9 +348,14 @@ local function passCantAct(p, round)
             G.end_requested[G.guid(u) or u] = now_ms()
             record("arena_turn_passed", { side = p.side, character = u, name = V.name(u), why = why, round = round,
                 error = (not ok) and tostring(err) or nil })
-            passed, n = true, n + 1
+            passed, n, last = true, n + 1, u
         end
     end
+    -- The pass is an end the mod sends: the group's last one gets the group's ends written as act.end_turn's would
+    -- (Ar.write_group_end: nothing unless every other member's end is the mod's). Live smoke 2026-11-03 (m1 r1, L3):
+    -- Ash, the twins' group's last open member, passed with no write; the game never closes that group on its own, so
+    -- 30 s later (Guard END_DROP_MS) Birch's requested end read as one the game dropped and his turn reopened.
+    if last then Ar.write_group_end(last) end
     local st = Ar.state
     if n == #p.members and not samePhase(st, round, p) then
         st.phase = { round = round, group = p.group, side = p.side, phase = nextPhase(st, round, p),
