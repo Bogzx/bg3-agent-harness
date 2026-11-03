@@ -14,6 +14,7 @@ from __future__ import annotations
 import errno
 import socket
 from collections.abc import Iterable
+from typing import Any, cast
 
 from bg3harness.testing.profile import DEAD_PORT
 
@@ -34,30 +35,37 @@ hits: list[str] = []  # the refused attempts not yet reported
 def guarded_ports(env_port: str | None) -> frozenset[int]:
     """9998, and the port the shell's $BG3LE_DEBUG_PORT named before the test profile replaced it (not the dead one:
     a nested pytest run, or a shell that already exports it)."""
-    extra = {int(env_port)} if env_port and env_port.isdigit() and env_port != DEAD_PORT else set()
+    extra: set[int] = {int(env_port)} if env_port and env_port.isdigit() and env_port != DEAD_PORT else set()
     return frozenset({LIVE_PORT} | extra)
 
 
+def _host_port(address: object) -> tuple[object, object] | None:
+    """(host, port) of an AF_INET/AF_INET6 address; None for a unix socket's path or name."""
+    if not isinstance(address, tuple):
+        return None
+    t = cast("tuple[object, ...]", address)
+    return (t[0], t[1]) if len(t) >= 2 else None
+
+
 def blocked(address: object) -> bool:
-    return not allowed and isinstance(address, tuple) and len(address) >= 2 and address[1] in ports
+    hp = _host_port(address)
+    return not allowed and hp is not None and hp[1] in ports
 
 
-def _refuse(address: tuple) -> str:
-    msg = (
-        f"connect to {address[0]}:{address[1]} refused: a test reached the real game's debug port "
-        f"(mark it live to opt in)"
-    )
+def _refuse(address: object) -> str:
+    host, port = _host_port(address) or ("?", "?")
+    msg = f"connect to {host}:{port} refused: a test reached the real game's debug port (mark it live to opt in)"
     hits.append(msg)
     return msg
 
 
-def _connect(self: socket.socket, address) -> None:
+def _connect(self: socket.socket, address: Any) -> None:  # Any: typeshed's socket._Address
     if blocked(address):
         raise LivePortError(errno.ECONNREFUSED, _refuse(address))
     return _real_connect(self, address)
 
 
-def _connect_ex(self: socket.socket, address) -> int:
+def _connect_ex(self: socket.socket, address: Any) -> int:
     if blocked(address):
         _refuse(address)
         return errno.ECONNREFUSED

@@ -145,7 +145,7 @@ class LuaEval(unittest.TestCase):
     def test_it_uses_the_configured_debug_port(self) -> None:
         # it opened luadebug's fixed 9998 whatever $BG3LE_DEBUG_PORT said: a runner test's facts read reached the
         # live game on the test machine (2026-11-02)
-        opened = []
+        opened: list[tuple[str, int]] = []
 
         class Client:
             def __init__(self, host: str, port: int, connect_timeout: float) -> None:
