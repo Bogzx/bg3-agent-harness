@@ -342,6 +342,8 @@ def test_the_shipped_release_is_the_one_this_code_builds():
     repo = suite.PACKAGE_ROOT.parents[1]
     mod = codewatch.mod_tree_hashes(repo / "mod")
     assert shipped["pins"]["mod_sha1"] == harness_pins.tree_digest(mod), "the mod changed: rebuild the release"
+    code = harness_pins.code_digest(repo)
+    assert shipped["pins"]["code_sha1"] == code, "the code changed (bridge, runner, harness, play, pi): rebuild it"
     cids = sorted(shipped["conditions"])
     served = {cid: release.serve(cid, release.CLIENTS, repo) for cid in cids}
     variants = {

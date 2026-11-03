@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 import bg3harness
+from bg3harness import pins as harness_pins
 
 import bg3bench
 from bg3bench import pins as R
@@ -77,7 +78,7 @@ class Pins(TmpDir):
         )
         self.assertNotEqual(other["diff"], pins["repo"]["diff"])
         clean = R.repo_pin(self.tmp, _git({"rev-parse": "92634f4", "status": "", "diff": ""}))
-        self.assertEqual(clean, {"commit": "92634f4", "dirty": False, "diff": None})
+        self.assertEqual(clean, {"commit": "92634f4", "dirty": False, "diff": None, "code_sha1": None})
         # no BUILDINFO: the binary's own sha256; no git, no manifest: None, never an exception
         (dist / "BUILDINFO").unlink()
         (dist / "libbg3le.so").write_bytes(b"elf")
@@ -89,6 +90,31 @@ class Pins(TmpDir):
         )
         (dist / "libbg3le.so").unlink()  # nothing built: no sha256
         self.assertIsNone(R.bg3le_pin(dist, self.tmp, _git({}))["sha256"])
+
+    def test_code_digest_hashes_the_code_blobs_not_the_tests(self):
+        # REVIEW-4 2.1: the release pins the code a run plays with besides the mod (bridge, runner, harness, play,
+        # the pi client, uv.lock); its tests are left out, so a test-only commit keeps the pin
+        tree = (
+            "100644 blob aa11\tbridge/src/bg3ai/tools/travel.py\n"
+            "100644 blob bb22\tpackages/harness/src/bg3harness/pi_client.py\n"
+            "100644 blob cc33\tbridge/tests/test_travel.py\n"
+            "100644 blob dd44\trunner/test_runs.py\n"
+        )
+        code = harness_pins.code_digest(self.tmp, _git({"ls-tree": tree}))
+        want = R.tree_digest(
+            {"bridge/src/bg3ai/tools/travel.py": "aa11", "packages/harness/src/bg3harness/pi_client.py": "bb22"}
+        )
+        self.assertEqual(code, want)
+        edited = tree.replace("aa11", "ee55")
+        self.assertNotEqual(harness_pins.code_digest(self.tmp, _git({"ls-tree": edited})), code)
+        tests_only = tree.replace("cc33", "ff66").replace("dd44", "0077")
+        self.assertEqual(harness_pins.code_digest(self.tmp, _git({"ls-tree": tests_only})), code)
+        self.assertIsNone(harness_pins.code_digest(self.tmp, _git({})))  # no git
+        pinned = R.repo_pin(self.tmp, _git({"rev-parse": "92634f4", "status": "", "diff": "", "ls-tree": tree}))
+        self.assertEqual(pinned["code_sha1"], code)
+        # a local edit under packages/harness/src makes the run dirty (it wasn't in the dirty paths before)
+        for path in harness_pins.CODE_TREE:  # every pinned path is under a dirty-checked one
+            self.assertTrue(any(path == c or path.startswith(c + "/") for c in harness_pins.CODE_PATHS), path)
 
     def test_git_runs_or_gives_none(self):
         repo = self.tmp / "repo"

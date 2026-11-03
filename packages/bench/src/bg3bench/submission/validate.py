@@ -38,7 +38,7 @@ from bg3harness.run_manifest import tools_digest
 import bg3bench
 from bg3bench import facts, luck, scenario
 from bg3bench.submission import bundle, codes, consistency, pack, scrub
-from bg3bench.submission.release import condition_entry, defs_digest
+from bg3bench.submission.release import CODE_PIN, condition_entry, defs_digest
 from bg3bench.submission.release import default_path as release_default_path
 from bg3bench.submission.release import errors as release_errors
 
@@ -59,7 +59,7 @@ class Release:
 
     suite: str
     versions: Json  # {"harness", "bench"}
-    pins: Json  # {"game_build", "bg3le_sha256", "mod_sha1"}
+    pins: Json  # {"game_build", "bg3le_sha256", "mod_sha1"} (+ "code_sha1" from bench-v0.10)
     scenarios: dict[str, Json]  # name -> {"digest", "save_sha1", "fingerprint"}
     conditions: dict[str, Json]  # id -> {"tools": {"allowlist_sha256", "names"}, "prompts": {client: {"sha256"}}}
 
@@ -329,6 +329,9 @@ def p02_pins(man: Json, release: Release) -> Outcome:
         return False, f"pins differ from the release: {', '.join(wrong)}"
     if (pins.get("repo") or {}).get("dirty") is not False:
         return False, "the repo was dirty (or not recorded)"
+    want = release.pins.get(CODE_PIN)
+    if want and (pins.get("repo") or {}).get(CODE_PIN) != want:  # releases before bench-v0.10 have no code pin
+        return False, f"the code differs from the release's (repo.code_sha1 {(pins.get('repo') or {}).get(CODE_PIN)})"
     return True, ""
 
 

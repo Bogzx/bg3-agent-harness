@@ -47,7 +47,12 @@ CHECKS: tuple[Check, ...] = (
     ),
     Check("F04", _PW, "reject", "not a pilot, valid, no invalid_reason, not a holdout scenario"),
     Check("P01", _PW, "reject", "released suite; harness/bench versions, scenario digest and start save match it"),
-    Check("P02", _PW, "reject", "game build, bg3le sha256 and mod sha1 equal the suite's pins; repo not dirty"),
+    Check(
+        "P02",
+        _PW,
+        "reject",
+        "game build, bg3le sha256, mod sha1 and (if pinned) the code's sha1 equal the suite's pins; repo not dirty",
+    ),
     Check("C01", _PW, "reject", "prompt sha256 and tool allowlist sha256 equal the condition's"),
     Check(
         "C02",

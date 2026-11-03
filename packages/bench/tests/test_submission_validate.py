@@ -904,3 +904,27 @@ def test_a_bad_fight_log_fails_f03(tmp_path, rows, name):
     d, bdir = packed_with_fights(tmp_path, rows, name)
     v = run(bdir, release_for(d))
     assert not v.accepted and v.failed == ["F03"], [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
+def test_p02_holds_a_run_to_the_releases_code_pin():
+    # REVIEW-4 2.1: a committed local bridge patch kept the repo clean and passed P02; from bench-v0.10 the release
+    # pins the code (code_sha1) and the run's repo pin must cite it
+    game = {"game_build": "1", "bg3le_sha256": "b" * 64, "mod_sha1": "c" * 40}
+    man = {
+        "pins": {
+            "game_build": "1",
+            "bg3le": {"sha256": "b" * 64},
+            "mod": {"sha1": "c" * 40},
+            "repo": {"commit": "abc", "dirty": False, "code_sha1": "d" * 40},
+        }
+    }
+
+    def rel(pins: dict) -> validate.Release:
+        return validate.Release("bench-v0.10", {}, pins, {}, {})
+
+    assert validate.p02_pins(man, rel({**game, "code_sha1": "d" * 40})) == (True, "")
+    ok, why = validate.p02_pins(man, rel({**game, "code_sha1": "e" * 40}))
+    assert not ok and "the code differs from the release's" in why
+    old = {**man, "pins": {**man["pins"], "repo": {"commit": "abc", "dirty": False}}}
+    assert not validate.p02_pins(old, rel({**game, "code_sha1": "d" * 40}))[0]  # a run that cites no code pin
+    assert validate.p02_pins(old, rel(game)) == (True, "")  # bench-v0.8/v0.9 releases have no code pin
