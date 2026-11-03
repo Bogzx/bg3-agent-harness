@@ -135,8 +135,11 @@ game unless it says so.
   fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
   Its own release file (`releases/bench-v0.10.json`: mod tree d124d235, the same 81 bg3 tools, new prompt hashes for
-  pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). What changed
-  for the agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
+  pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). Its
+  conditions also pin the served tool definitions, `tools.defs_sha256` (release v1, optional; release.defs_digest:
+  each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
+  otherwise; bench-v0.8 and v0.9's releases have no such field and keep checking names only. What changed for the
+  agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
   - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and `route(go=true)`, a far
     `move_to`) default to `wait=true` and return what `wait_for` on the walk returned, with its early stops, CHANGES
     and the minimap block; a walk still going after 90 s returns its progress and the id `wait_for` keeps waiting

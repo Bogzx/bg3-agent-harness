@@ -45,7 +45,8 @@
           "properties": {
             "allowlist_sha256": {"$ref": "#/$defs/sha256", "description": "bg3harness.run_manifest.tools_digest of names"},
             "count": {"type": "integer", "minimum": 1},
-            "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
+            "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
+            "defs_sha256": {"$ref": "#/$defs/sha256", "description": "bg3bench.submission.release.defs_digest of the served tools' definitions (bg3-tools.json entries named in names); optional, added 2026-11-03 (still v1): a release without it doesn't pin them"}
           }
         },
         "prompts": {

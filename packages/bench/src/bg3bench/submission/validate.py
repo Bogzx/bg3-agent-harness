@@ -38,7 +38,7 @@ from bg3harness.run_manifest import tools_digest
 import bg3bench
 from bg3bench import facts, luck, scenario
 from bg3bench.submission import bundle, codes, consistency, pack, scrub
-from bg3bench.submission.release import condition_entry
+from bg3bench.submission.release import condition_entry, defs_digest
 from bg3bench.submission.release import default_path as release_default_path
 from bg3bench.submission.release import errors as release_errors
 
@@ -352,9 +352,13 @@ def c02_served(b: Loaded) -> Outcome:
         return False, "the release's tool names don't hash to its allowlist"
     if "bg3-tools.json" not in b.raw:
         return False, "bg3-tools.json missing"
-    dumped = {t.get("name") for t in json.loads(b.raw["bg3-tools.json"]) if isinstance(t, dict)}
+    listed = json.loads(b.raw["bg3-tools.json"])
+    dumped = {t.get("name") for t in listed if isinstance(t, dict)}
     if missing := sorted(set(names) - dumped):
         return False, f"allowed tools the server didn't list: {missing[:5]}"
+    want = (b.release_condition.get("tools") or {}).get("defs_sha256")
+    if want and defs_digest(listed, names) != want:
+        return False, "the served tool definitions differ from the release's (descriptions, parameters or hints)"
     prompt = b.manifest.get("prompt") or {}
     parts = {p.get("file"): p.get("sha256") for p in prompt.get("parts") or []}
     if "bg3-instructions.txt" not in b.raw:

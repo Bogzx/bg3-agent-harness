@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "kind": "bg3bench.release",
- "about": "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, count, allowlist_sha256) and per client the sha256 of the prompt it is served; its variants: the same under a client profile's tool groups off (keyed by those groups), which a run naming those tools is checked against.",
+ "about": "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, count, allowlist_sha256, and defs_sha256: the sha256 of their served definitions) and per client the sha256 of the prompt it is served; its variants: the same under a client profile's tool groups off (keyed by those groups), which a run naming those tools is checked against.",
  "suite": "bench-v0.10",
  "versions": {
   "harness": "0.3.0",
@@ -838,7 +838,8 @@
      "wait_for",
      "walk_toward",
      "zoom"
-    ]
+    ],
+    "defs_sha256": "8e99dcc73b5b0630dd448928e38b48f059c045fd2fc1464a0e5e6214c6a94c0e"
    },
    "prompts": {
     "claude": {
@@ -935,7 +936,8 @@
        "wait",
        "wait_for",
        "walk_toward"
-      ]
+      ],
+      "defs_sha256": "ea22cce58b76f5704f04c1b3dacbc524de5796bb080e94277c2844850a391a49"
      },
      "prompts": {
       "pi": {

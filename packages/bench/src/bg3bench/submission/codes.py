@@ -49,7 +49,12 @@ CHECKS: tuple[Check, ...] = (
     Check("P01", _PW, "reject", "released suite; harness/bench versions, scenario digest and start save match it"),
     Check("P02", _PW, "reject", "game build, bg3le sha256 and mod sha1 equal the suite's pins; repo not dirty"),
     Check("C01", _PW, "reject", "prompt sha256 and tool allowlist sha256 equal the condition's"),
-    Check("C02", _PJ, "reject", "the tool list names equal the allowlist; the served texts hash to prompt.parts"),
+    Check(
+        "C02",
+        _PJ,
+        "reject",
+        "the tool list names equal the allowlist, its definitions the release's; served texts hash to prompt.parts",
+    ),
     Check("C03", _PJ, "reject", "caps, seed (and seed applied) and difficulty equal the scenario's"),
     Check("D01", ("worker",), "reject", "no submission with this bundle hash; no accepted one by this user and run id"),
     Check(
