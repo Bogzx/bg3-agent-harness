@@ -142,6 +142,10 @@ test("vanished: a character seen moments ago that is invisible now (S030 Soft-St
     V.memory = {}
     V.remember("SH", "Shadow", { 2, 0, 0 }, "neutral")
     osiv[key("IsInvisible", "SH")] = 1
+    -- P1 2 m off with line of sight: the side sees where it stands (8726553f, fairness audit S2-4: without that it
+    -- is the plain last-seen hint). The stub's Osi answers nil to anything not set, so the LOS is set here.
+    eq((V.vanished("SH")), false, "no line of sight: not seen to vanish")
+    osiv[key("HasLineOfSight", "P1", "SH")] = 1
     local gone, m = V.vanished("SH")
     eq(gone, true, "vanished"); eq(m.ago_s, 0, "ago")
     osiv[key("IsInvisible", "SH")] = 0
