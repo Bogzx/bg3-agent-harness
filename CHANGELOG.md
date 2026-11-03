@@ -104,7 +104,17 @@ game unless it says so.
   (Server/GuardRules.lua: Combat/!Combat/!Immobile and the cheap condition terms), so the agent gets a plain refusal
   and loses no action. When the game refuses a cast, the result now gives the game's own reason
   (`SpellCastOutcome.Result`, e.g. "it can't be cast now (its requirements aren't met) (the game's CantCast)")
-  instead of "no reason given", when the cast entity has one.
+  instead of "no reason given", when the cast entity has one. At a ground point, the game's target reasons
+  (MissingTarget, TooFewTargets, InvalidTarget) read "it can't be cast at that spot", because they can depend on
+  hidden creatures there. A check flag that stays set is recorded: the done result carries `unchecked`, and the
+  referee gets a `cast_unchecked` row with the flags and any rule terms the guard couldn't read for that cast.
+- Melee reach is now measured with the creatures' Hit bounds (`AIBounds.Hit`, 0.2 m for a medium creature), not their
+  Stand footprint (0.5 m). One measure (`G.melee_reach`) serves the guard's range check, move_to's stop and its
+  already-there test, and the walk into range before a cast. Window 8 (the engine checking): a 1.5 m greataxe swing
+  was refused from 2.1 m centre to centre (10 of 10) and cast from 1.4 m. The guard had allowed 2.5 m, and
+  `move_to target` said already_there at 2.1 m, so the agent could not close in. A plain `move_to target` now stops
+  inside the mover's own melee reach. A guard refusal on a Shout's caster names "the caster" (it said "the target
+  has flanked" for Hide).
 
 ### Benchmark (`packages/bench`)
 

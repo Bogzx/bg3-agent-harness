@@ -144,3 +144,24 @@ test("rules: a Shout, Zone or area spell's TargetConditions filter who it reache
     refused(rules("Target_MainHandAttack", { SpellType = "Target", TargetConditions = "not Dead()" }, NPC),
         "the target is dead")
 end)
+
+test("rules: Hide is refused while FLANKED, through act.cast and sneak; the guard's rules are on by default (w8)",
+    function()
+    -- window 8: with the guard's rules off the engine let a flanked Hide through (both check flags dropped): the
+    -- engine doesn't re-check RequirementConditions on a UseSpell cast, the guard is what enforces them
+    eq(G.RULES_OFF, false, "on by default")
+    local hide = { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0,
+        RequirementConditions = "not HasStatus('FLANKED')" }
+    spell("Shout_Hide", hide)
+    osiv[key("HasActiveStatus", P1, "FLANKED")] = 1
+    local j = job(op("cast", { char = P1, spell = "Shout_Hide" }))
+    eq(j.status, "failed", "act.cast")
+    eq(j.error, "Shout_Hide can't be used now: the caster has flanked", "the caster, not 'the target'")
+    j = job(op("sneak", { char = P1, on = true }))
+    eq(j.status, "failed", "sneak"); eq(j.error, "Shout_Hide can't be used now: the caster has flanked", "sneak text")
+    eq(#called("UseSpell"), 0, "no order")
+    osiv[key("HasActiveStatus", P1, "FLANKED")] = 0
+    spell("Shout_Hide", hide)
+    j = job(op("sneak", { char = P1, on = true }))
+    eq(j.status, "running", "not flanked: hides " .. tostring(j.error))
+end)

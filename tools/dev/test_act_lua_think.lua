@@ -204,7 +204,7 @@ test("cast: a refused melee swing says how far it swung from and our reach (ACT-
     world[GOB].pos = { 2.1, 0, 0 }
     local w = A.cast_failed_why(P1, GOB, "Target_MainHandAttack")
     assert(w:find("no reason given", 1, true) and w:find("melee swing from 2.1 m centre to centre", 1, true), w)
-    assert(w:find("our reach 2.5 m: range 1.5 m", 1, true) and not w:find("path is blocked", 1, true), w)
+    assert(w:find("our reach 1.9 m: range 1.5 m", 1, true) and not w:find("path is blocked", 1, true), w)
     stats.Projectile_Bolt = { SpellType = "Projectile", TargetRadius = "18" }
     assert(A.cast_failed_why(P1, GOB, "Projectile_Bolt"):find("path is blocked", 1, true)) -- ranged: unchanged
 end)

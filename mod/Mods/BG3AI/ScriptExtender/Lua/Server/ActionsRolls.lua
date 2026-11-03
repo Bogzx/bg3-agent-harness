@@ -86,6 +86,10 @@ function A.unrolled_result(job, res)
     if job.roll and job.roll.unrolled then
         res.unrolled = "the game cast it without its roll (" .. tostring(job.roll.why) .. ")"
     end
+    if job.roll and job.roll.unchecked then
+        res.unchecked = "the game cast it without checking its own rules (" .. table.concat(job.roll.unchecked, ",")
+            .. " stayed set)"
+    end
     return res
 end
 
@@ -128,7 +132,16 @@ local function strip(st, names, drop)
         Ext.Utils.PrintWarning("[BG3AI] cast checks: " .. table.concat(kept, ",") .. " stayed set (the engine won't"
             .. " check those rules for this cast; the guard's check ran before the order)")
     end
-    return after, stuck
+    return after, stuck, kept
+end
+
+-- Audit S2-1: a check flag that stayed set = a cast the engine didn't check. Not refused (a stuck write was never
+-- seen live, and a purge after the cast state exists doesn't surely stop it, audit S2 b): recorded for the referee
+-- with the terms the guard couldn't read for it (nothing checked those), and the done result says it.
+local function unchecked(caster, spell, kept)
+    local last = G.rules_last and G.rules_last[caster]
+    referee("cast_unchecked", { uuid = caster, spell = spell, flags = table.concat(kept, ","),
+        rules_unread = last and last.spell == spell and #last.terms > 0 and table.concat(last.terms, "; ") or nil })
 end
 
 -- The roll flag plus the check flags of CAST_DROP_EXTRA.
@@ -155,6 +168,7 @@ A.FAIL_REASONS = {
     CantMove = "the caster can't move", MovementFailed = "the move to cast it failed",
     ServerTimeout = "the game timed out",
 }
+A.SPOT_REASONS = { MissingTarget = true, TooFewTargets = true, InvalidTarget = true }
 function A.engine_refusal(job)
     local e = job and job.cast_entity
     if not e then return nil end
@@ -162,6 +176,9 @@ function A.engine_refusal(job)
     if not ok or r == nil then return nil end
     r = tostring(r)
     if r == "None" or r == "0" then return nil end
+    -- audit S3-2: at a ground point these depend on which creatures the engine finds there, hidden ones too; a
+    -- player's cursor at that spot shows none of it
+    if job.cast_at_pos and A.SPOT_REASONS[r] then return "it can't be cast at that spot" end
     return (A.FAIL_REASONS[r] or "reason " .. r) .. " (the game's " .. r .. ")"
 end
 
@@ -183,7 +200,11 @@ function A.roll_cast_state(entity)
     if same and job.status == "running" and job.roll.state == "pending" then -- the awaited cast
         if not names then return roll_failed(job, "its CastOptions don't read as flag names") end
         job.cast_entity = entity -- its SpellCastOutcome says why the engine refused it (A.engine_refusal)
-        local after, stuck = strip(st, names, drop_list())
+        local after, stuck, kept = strip(st, names, drop_list())
+        if #kept > 0 then
+            job.roll.unchecked = kept
+            unchecked(caster, w.spell, kept)
+        end
         if #stuck > 0 then
             return roll_failed(job, table.concat(stuck, ",") .. " stayed set: "
                 .. (after and table.concat(after, ",") or "unread"))
@@ -194,7 +215,8 @@ function A.roll_cast_state(entity)
     end
     -- Not the awaited cast: only an Osiris order's cast carries the flag; it rolls and is checked too.
     if not names or not has(names, "IgnoreSpellRolls") then return end
-    local _, stuck = strip(st, names, drop_list())
+    local _, stuck, kept = strip(st, names, drop_list())
+    if #kept > 0 then unchecked(caster, p or o or w.spell, kept) end
     if same then
         RPC.push("late_cast", { uuid = caster, spell = w.spell,
             note = (job.status == "running" and "a second cast for one order" or "an earlier order went off after its"
