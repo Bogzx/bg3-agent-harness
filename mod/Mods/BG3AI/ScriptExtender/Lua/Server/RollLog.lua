@@ -22,6 +22,10 @@
 --             roll's delay, so the deferred OnCreate still sees it).
 --   osi       Osiris RollResult/6 (fires live: research/ovh/live1.md §4): success, active, criticality only
 --   dialog    Osiris DialogRollResult/5 (osi reference arity; not yet seen firing)
+--   cast      Osiris CastedSpell/5 of a spell with an attack roll (its SpellRoll has Attack(...)): one record per
+--             attack cast (event "attack", roller = the caster, spell), never merged with another source nor batched,
+--             so its streams are exactly the draws since the previous record (did the attack draw a die, from
+--             which stream). natural nil: no source has an attack's d20 (below).
 -- roll.snapshot reports which sources fired at least once, and which hooks are in place.
 -- So natural/dc are recorded for passive and skill/ability checks only (live, only their RequestedRoll carried a d20
 -- and DC). For saving throws and attack rolls two live probe passes (2026-10-24, tools/dev/probe_roll_sources.py:
@@ -44,12 +48,13 @@ L.MERGE_MS = 250
 L.ring = L.ring or {}
 L.seq = L.seq or 0
 L.PENDING_MAX = 64
-L.fired = L.fired or { osi = 0, dialog = 0, finished = 0, requested = 0 }
+L.fired = L.fired or { osi = 0, dialog = 0, finished = 0, requested = 0, cast = 0 }
 L.seen = L.seen or { finished_create = 0, finished_empty = 0, requested_create = 0 } -- raw hook hits
 L.hooks = L.hooks or {}
 L.lastRolls = L.lastRolls or nil -- stream key -> NumRolls at the previous record
 L.batch = L.batch or nil -- {recs, total, t0}: the records sharing the last nonzero stream delta
 L.pending = L.pending or {} -- roll entities (RequestedRoll) not finished yet
+L.lone = L.lone or setmetatable({}, { __mode = "k" }) -- records no other source merges into (cast)
 
 local truthy = U.truthy
 
@@ -128,7 +133,7 @@ local function mergeTarget(src, data, t)
             return rec
         end
         if t - rec.t <= L.MERGE_MS and rec.roller == data.roller and not rec.srcs[src]
-            and not (data.roll_uuid and rec.roll_uuid) then
+            and not (data.roll_uuid and rec.roll_uuid) and not L.lone[rec] then
             found = rec
         end
     end
@@ -165,9 +170,10 @@ local function addDrawn(rec, d)
     for k, n in pairs(d) do rec.streams[k] = (rec.streams[k] or 0) + n end
 end
 
-function L.add(src, data)
+-- lone: a record of its own (no merge, no batch; its streams are its own draws).
+function L.add(src, data, lone)
     local t = now_ms()
-    local rec = (data.roller or data.roll_uuid) and mergeTarget(src, data, t)
+    local rec = not lone and (data.roller or data.roll_uuid) and mergeTarget(src, data, t)
     if rec and rec.srcs[src] then return rec end -- the same roll seen again (a one-frame read twice)
     L.fired[src] = (L.fired[src] or 0) + 1
     local d = drawn()
@@ -185,6 +191,11 @@ function L.add(src, data)
     rec.party = isParty(data.roller)
     L.ring[#L.ring + 1] = rec
     while #L.ring > L.CAP do table.remove(L.ring, 1) end
+    if lone then
+        L.lone[rec], L.batch = true, nil
+        if d then apportion({ recs = { rec }, total = d }) end
+        return rec
+    end
     if d then
         L.batch = { recs = { rec }, total = d, t0 = t }
     elseif L.batch and t - L.batch.t0 <= L.MERGE_MS then
@@ -266,6 +277,19 @@ listen("DialogRollResult", 5, function(char, success, _, _, crit)
     L.pollRequested()
     L.add("dialog", { roller = V.uuid(char), success = truthy(success), active = true, dialog = true,
         crit = CRIT[tonumber(crit)] })
+end)
+
+-- An attack-roll spell: its stats' SpellRoll (Default) calls Attack(...) (as Server/Events.lua's cast event reads it).
+function L.attackSpell(spell)
+    local ok, r = pcall(function() return tostring(Ext.Stats.Get(spell).SpellRoll.Default or "") end)
+    return ok and r:find("Attack%(") ~= nil
+end
+
+-- CastedSpell(caster, spell, spellType, spellElement, storyActionID)
+listen("CastedSpell", 5, function(caster, spell)
+    if not L.attackSpell(spell) then return end
+    L.pollRequested()
+    L.add("cast", { roller = V.uuid(caster), event = "attack", spell = spell }, true)
 end)
 
 -- esv::roll::FinishedEvent (BG3Extender GameDefinitions/Components/Roll.h): the natural die and the DC.
