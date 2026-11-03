@@ -582,12 +582,33 @@ def _read1(op: str, args: dict | None = None, context: str = "server") -> Any:
     return r1(op, args, context) if r1 else core.game.rpc(op, args, context)
 
 
+# The start of the outermost tool call on this thread (a tool that calls another, as route(go=true) calls travel_to):
+# what the inner one's time limits count from (call_t0; review-v010-final #3).
+_call = threading.local()
+
+
+def call_t0() -> float:
+    """When the tool call running on this thread started (the outermost one), or now outside any."""
+    t0 = getattr(_call, "t0", None)
+    return time.monotonic() if t0 is None else t0
+
+
 def _guard(fn):
     """Wrap a tool so game errors become readable text instead of exceptions."""
     import functools
 
     @functools.wraps(fn)
     def wrapper(*a, **kw):
+        outer = getattr(_call, "t0", None) is not None
+        if not outer:
+            _call.t0 = time.monotonic()
+        try:
+            return run(*a, **kw)
+        finally:
+            if not outer:
+                _call.t0 = None
+
+    def run(*a, **kw):
         t0 = time.monotonic()
         try:
             core.LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)
@@ -606,8 +627,15 @@ def _guard(fn):
             saving.SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
         who_prev = getattr(plumbing._who_tl, "note", "")
         plumbing._who_tl.note = ""
+        logged = getattr(core._logged, "n", 0)
+        core._logged.extra = None
         try:
             out = fn(*a, **kw)
+            if getattr(core._logged, "n", 0) == logged:
+                # a return that skipped _finish (flee's FAILED, the REFUSED early outs) still gets its metrics and
+                # actions.jsonl record: launch-v1's two ~49 s flee failures left none
+                core._log(fn.__name__, kw, out if isinstance(out, str) else type(out).__name__,
+                          (time.monotonic() - t0) * 1000)
             if plumbing._who_tl.note and isinstance(out, str):  # _who picked the member acting now (ACT-P2); last, so
                 out = out + "\n" + plumbing._who_tl.note           # a result's own first word (FAILED, done) stays first
             if waited and isinstance(out, str):  # last too: the new game's line is no outcome of this call

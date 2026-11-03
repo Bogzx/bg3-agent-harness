@@ -413,12 +413,21 @@ function N.project(points, p)
         local dx, dz = bx - ax, bz - az
         local l2 = dx * dx + dz * dz
         local t = 0
-        if l2 > 1e-6 then t = math.max(0, math.min(1, ((p[1] - ax) * dx + (p[3] - az) * dz) / l2)) end
+        if l2 > 1e-6 then
+            t = math.max(0, math.min(1, ((p[1] - ax) * dx + (p[3] - az) * dz) / l2))
+        elseif math.abs(b[2] - a[2]) > 1e-6 then
+            -- a drop/climb link straight down/up (same x,z): the point on it at p's height (launch-v1 crash_site_grove:
+            -- a 5 m fall down the route's drop was "off the route" by its full height, so a "teleport")
+            t = math.max(0, math.min(1, (p[2] - a[2]) / (b[2] - a[2])))
+        end
         local qx, qz = ax + dx * t, az + dz * t
         local off = math.sqrt((p[1] - qx) ^ 2 + (p[3] - qz) ^ 2)
         local qy = a[2] + (b[2] - a[2]) * t
         local seg = U.dist(a, b)
-        if off < bestOff then bestArc, bestOff, bestDy = walked + seg * t, off, p[2] - qy end
+        -- equally near in x,z (the top and the foot of a vertical link): the one at p's height
+        if off < bestOff - 1e-6 or (off <= bestOff + 1e-6 and math.abs(p[2] - qy) < math.abs(bestDy)) then
+            bestArc, bestOff, bestDy = walked + seg * t, off, p[2] - qy
+        end
         walked = walked + seg
     end
     return bestArc, bestOff, bestDy

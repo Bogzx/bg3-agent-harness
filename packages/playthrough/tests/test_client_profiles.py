@@ -11,7 +11,7 @@ def test_the_repo_profiles_parse_through_runner_profiles():
         "name": "deepseek-flash",
         "client": "pi",
         "model": "deepseek-flash",
-        "effort": "medium",
+        "effort": "high",  # what pi serves it, declared since bench-v0.10 (validator C04, REVIEW-4)
         "provider": "deepseek",
         "api_key_env": "DEEPSEEK_API_KEY",
         "error": None,

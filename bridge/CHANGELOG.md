@@ -5,6 +5,69 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: dialogue rows pair with their answers by the number shown; flee says why the game won't
+
+- Answer rows pair with the live answer VMs by the number each row shows (the game's AnswerTextPrefix, AnswerIdx + 1)
+  when the other pairings fail, so a list with a wrapped row is answered with SelectAnswerCommand and keeps its tags.
+  v010 live window 4: Lae'zel's cage "Get rid of them." (6 answers, the 4th "[PALADIN] [DECEPTION] ..." on two lines)
+  was counted as 7 rows from the first row's height, went out without VMs, and the row's button press was ignored
+  twice. An answer the game ignores for 3 s with no readable BoundEvent gets the number key it shows (1-9).
+- `flee`: when the game has the Flee button greyed out (CanFlee false), it fails at once with the reason the button's
+  tooltip shows a player: `FAILED: the game won't flee now (Flee is greyed out: Enemy too close! (10.6/27 m))`. No
+  command is run and no cursor search is made. Each Flee command name runs once (window 4: one name on 20 pages, a
+  2 s wait for the question after each; with the 48-spot cursor search the call took 48 s).
+
+## 2026-11-03: an answer the game ignores is pressed with its number key; a scrolled answer list is the same node
+
+- `choose_dialogue` (and every tool that answers through ui.dialogue_choose): when the game still shows the same
+  answers 3 s after the answer's SelectAnswerCommand (or its button press), the mod presses the answer's own bound
+  key once (BoundEvent `UISelectSlot<n>` -> number key n) and the result says so: `note=the game ignored the
+  answer's command for 3.0 s (same answers still shown): pressed its key 3 instead`. An answer with no number key
+  bound is not pressed again; the note says the game has not taken it.
+- The settle after an answer (and after a roll's Continue) compares the node by speaker, line, the list's whole
+  length and the text at each answer number both reads show, not by the first visible row: a list wheeled during
+  the wait (the bridge's ui.answer_list) no longer ends the job `done` on the unanswered node.
+- Why (ops/logs/dialogue-click.md): v010 live windows 1 and 3 and launch-v1: 51 of 1186 choices, all on two
+  nodes (Lae'zel's cage "Get rid of them." 33, Gimblebock 18), returned `still running` after 20 s with the same
+  answers back; the number key took the same answer at once.
+
+## 2026-11-03: clouds, surfaces and concentration in combat output; drop links; a busy End Turn press
+
+- `get_combat_state` lists the `HAZARD` lines `look` prints (nav.hazards: the harmful clouds and surfaces a party
+  member sees within 12 m of the selected character), every call. The turn block that ends `end_turn` and
+  `wait_for('my_turn')` and the result of a combat action (`use_ability`, `move_to`, `walk_toward`, `jump_to`,
+  `react`) add them when the patches in view changed since they were last shown (one appeared, went or moved over
+  2 m; `HAZARD none in view now` when the last one went), the same delta `look` keeps. The read rides in the eval
+  those calls already make (state.status / state.actions / the CHANGES read): no extra round trip.
+- state.nearby rows carry `concentration` (the creature's spell, as state.combat rows already did); get_nearby shows
+  `concentrating on Cloudkill`, and CHANGES says `~ e7 Balthazar concentrating on Cloudkill` /
+  `no longer concentrating on Cloudkill` (and on a creature that comes into view). Party rows in get_status show
+  their own concentration the same way.
+- A walk down a drop link of its own route (the engine's path steps off a ledge; the walker falls straight down in
+  one tick) is no longer failed as `engine teleported the character (not allowed)`: Navigation N.project put a point
+  on a vertical route segment at its top, so the landing was "off the route" by the drop's height.
+- `ui.command` refused by the busy UI at its first call answers "refused before its first UI call" again (its
+  confirm-box fallback made a second refused call, which read as "met it after a UI call ran"), so the bridge asks it
+  again after the cooldown: end_turn's HUD End Turn no longer fails at once with `bg3le: UI busy`.
+- Why (ops/logs/act2-fights-analysis.md, ops/logs/combat-info.md): in all 11 lost launch-v1 Balthazar runs Cloudkill
+  sat on the party and the agent learnt of it only as `+Cloudkill` on whoever it had hit; v09 Moonrise lost turns to
+  the teleport and busy failures.
+
+## 2026-11-03: a walk there ends in its talk or use on arrival; do_actions' walk end has the minimap block; a walk a conversation ended says so
+
+- `talk_to` / `interact` on a target past reach or out of sight walk there first (travel_to, blocking) and then talk
+  or use it in the same call, its result in that result (`e7 is 50m away: walking there first; arrived, then
+  interact e7`). A walk there that stops short (a hostile in view, damage, a prompt) does nothing more and says
+  `interact e7: not run (the walk there stopped before arriving)`; it was queued after the trip and ran where the
+  walk had stopped. A walk still going at the ~90 s walk budget queues the talk/use for the arrival, as before. The
+  two tools' descriptions say so. review-v010-final #1.
+- `do_actions` that ends with its walk step ends with the minimap block (OBJECTIVES, WAYS, LEADS) as every other walk
+  end; so does `wait_for('queue')` when the steps after a conditional walk are listed as not run. review-v010-final #4.
+- A blocking walk whose wait a dialogue screen ended starts with the walk's own result when the conversation ended
+  the walk (`move_to: INTERRUPTED — a conversation started`); it said `wait_for('j1') keeps waiting for it` for a
+  walk that was over. A conversation that doesn't stop the walk (someone else's) still gives the id to wait on.
+  review-v010-final #6.
+
 ## 2026-11-03: travel_to doesn't take along a member who is far away at the start
 
 - The leader's `travel_to` no longer re-chains or waits for a member more than 24 m away when the trip starts

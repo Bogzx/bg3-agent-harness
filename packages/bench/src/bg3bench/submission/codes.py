@@ -43,11 +43,20 @@ CHECKS: tuple[Check, ...] = (
         "every file's sha256 equals bundle.json files[]; canonical bundle.json; run_hash recomputes",
     ),
     Check(
-        "F03", _PW, "reject", "bundle, manifest, result and every facts/rolls/events/fights line match their schemas"
+        "F03",
+        _PW,
+        "reject",
+        "bundle, manifest, result and every facts/rolls/events/fights line match their schemas; bundle.json's"
+        " fields and attempt.cell agree with the manifest",
     ),
     Check("F04", _PW, "reject", "not a pilot, valid, no invalid_reason, not a holdout scenario"),
     Check("P01", _PW, "reject", "released suite; harness/bench versions, scenario digest and start save match it"),
-    Check("P02", _PW, "reject", "game build, bg3le sha256 and mod sha1 equal the suite's pins; repo not dirty"),
+    Check(
+        "P02",
+        _PW,
+        "reject",
+        "game build, bg3le sha256, mod sha1 and (if pinned) the code's sha1 equal the suite's pins; repo not dirty",
+    ),
     Check("C01", _PW, "reject", "prompt sha256 and tool allowlist sha256 equal the condition's"),
     Check(
         "C02",
@@ -56,6 +65,7 @@ CHECKS: tuple[Check, ...] = (
         "the tool list names equal the allowlist, its definitions the release's; served texts hash to prompt.parts",
     ),
     Check("C03", _PJ, "reject", "caps, seed (and seed applied) and difficulty equal the scenario's"),
+    Check("C04", _PJ, "reject", "the events' model is the manifest's slug; the served effort is the declared one"),
     Check("D01", ("worker",), "reject", "no submission with this bundle hash; no accepted one by this user and run id"),
     Check(
         "D02",

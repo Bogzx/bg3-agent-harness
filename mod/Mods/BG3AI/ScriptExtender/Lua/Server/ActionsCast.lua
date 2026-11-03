@@ -209,6 +209,81 @@ function A.set_task_pos2(char, spell, p)
     return nil, tostring(err)
 end
 
+-- Forced hits (ops/logs/arena-dice.md "H4 cast path"; live 2026-11-03: Osi.UseSpell casts hit 8/8 at AC 35 and
+-- Sacred Flame never rolled a save, while the hotbar route missed 9/9): a cast an Osiris UseSpell /
+-- UseSpellAtPosition starts carries IgnoreSpellRolls in its SpellCastState.CastOptions, so its SpellRoll (attack
+-- roll, saving throw) was skipped and its success applied. A player's cast rolls. The order marks the caster, and
+-- when the cast entity is made (SpellCastState OnCreate, before the roll) the flag is dropped and read back. Live
+-- (cast-rolls probe rerun): CastOptions reads and writes as a Lua table of flag names, and the write there gave 6/6
+-- misses at AC 35 and 2/6 saves made; the cast's start request is too late. A write that doesn't take, or a
+-- CastedSpell with no cast state seen, fails the job saying the cast went without its roll; no unrolled fallback.
+A.roll_wait = A.roll_wait or {} -- caster guid -> the job whose cast must roll (one order per caster at a time)
+
+-- At the order (right before the Osiris call): the cast it becomes must lose IgnoreSpellRolls.
+function A.cast_rolls(job, char, spell)
+    job.roll = { spell = spell, state = "pending" }
+    A.roll_wait[G.guid(char)] = job
+end
+
+local function roll_failed(job, why)
+    job.roll.state = "failed"
+    for k, j in pairs(A.roll_wait) do if j == job then A.roll_wait[k] = nil end end
+    pcall(G.osi, "PurgeOsirisQueue", job.char)
+    RPC.finish_job(job, "failed", nil, "the game cast it without its roll (" .. why .. ")")
+end
+
+-- CastOptions as a list of flag names, or nil.
+local function flag_names(v)
+    if type(v) ~= "table" then return nil end
+    local out = {}
+    for _, n in ipairs(v) do out[#out + 1] = tostring(n) end
+    return out
+end
+
+local function has(names, flag)
+    for _, n in ipairs(names) do if n == flag then return true end end
+    return false
+end
+
+-- SpellCastState OnCreate: the waiting job's cast loses IgnoreSpellRolls (the other flags kept).
+function A.roll_cast_state(entity)
+    if not next(A.roll_wait) then return end
+    local st = entity.SpellCastState
+    local ok, u = pcall(function() return st.Caster.Uuid.EntityUuid end)
+    local caster = ok and G.guid(u) or nil
+    local job = caster and A.roll_wait[caster]
+    if not job or job.roll.state ~= "pending" or job.status ~= "running" then return end
+    local names = flag_names(st.CastOptions)
+    if not names then return roll_failed(job, "its CastOptions don't read as flag names") end
+    if has(names, "IgnoreSpellRolls") then
+        local keep = {}
+        for _, n in ipairs(names) do if n ~= "IgnoreSpellRolls" then keep[#keep + 1] = n end end
+        st.CastOptions = keep
+    end
+    local after = flag_names(st.CastOptions)
+    if not after or has(after, "IgnoreSpellRolls") then
+        return roll_failed(job, "IgnoreSpellRolls stayed set: " .. (after and table.concat(after, ",") or "unread"))
+    end
+    job.roll.state, job.roll.options = "cleared", after
+    A.roll_wait[caster] = nil
+end
+
+-- CastedSpell of the job's cast: a cast whose state was never seen went without the clear.
+function A.roll_checked(job)
+    if job.roll and job.roll.state == "pending" then
+        roll_failed(job, "the mod saw no cast state for it")
+        return false
+    end
+    return not (job.roll and job.roll.state == "failed")
+end
+
+if A.roll_hook == nil then
+    A.roll_hook = pcall(Ext.Entity.OnCreate, "SpellCastState", function(e)
+        local ok, err = pcall(A.roll_cast_state, e)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] cast roll: " .. tostring(err)) end
+    end)
+end
+
 -- After UseSpell(first pick): a two-step cast's second pick goes into the queued task. Revivify: the spot beside
 -- the body; a teleport (Dimension Door): the landing given.
 -- clicked: the hotbar route (act.cast ui=true) gives the second pick by a click, nothing is written; only the
@@ -520,9 +595,11 @@ reg("cast", function(args)
             -- Engine form has 6 inputs (6th = WithoutMove), verified live
             -- on bg3le; the 5-input form is kept as a fallback for builds
             -- without it.
+            A.cast_rolls(job, char, spell)
             G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
                 { char, spell, pos[1], pos[2], pos[3] })
         else
+            A.cast_rolls(job, char, spell)
             G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
             A.give_second_pick(job, char, spell, targets, landing)
         end
@@ -545,7 +622,7 @@ reg("cast", function(args)
                 if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
             end,
             CastedSpell = function(job, a)
-                if matches(a) and not job.casted then
+                if matches(a) and not job.casted and A.roll_checked(job) then
                     -- Hits usually land before CastedSpell; give stragglers a
                     -- short settle window (see on_tick), then report.
                     job.casted = RPC.now_ms()
@@ -806,6 +883,7 @@ reg("cast", function(args)
                     j.walked = U.round(walk_m, 1)
                     j.osi_task = "spell"
                     j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
+                    A.cast_rolls(j, char, spell)
                     G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
                     A.give_second_pick(j, char, spell, targets, landing)
                 end)

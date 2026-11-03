@@ -38,7 +38,7 @@ from bg3harness.run_manifest import tools_digest
 import bg3bench
 from bg3bench import facts, luck, scenario
 from bg3bench.submission import bundle, codes, consistency, pack, scrub
-from bg3bench.submission.release import condition_entry, defs_digest
+from bg3bench.submission.release import CODE_PIN, condition_entry, defs_digest
 from bg3bench.submission.release import default_path as release_default_path
 from bg3bench.submission.release import errors as release_errors
 
@@ -59,7 +59,7 @@ class Release:
 
     suite: str
     versions: Json  # {"harness", "bench"}
-    pins: Json  # {"game_build", "bg3le_sha256", "mod_sha1"}
+    pins: Json  # {"game_build", "bg3le_sha256", "mod_sha1"} (+ "code_sha1" from bench-v0.10)
     scenarios: dict[str, Json]  # name -> {"digest", "save_sha1", "fingerprint"}
     conditions: dict[str, Json]  # id -> {"tools": {"allowlist_sha256", "names"}, "prompts": {client: {"sha256"}}}
 
@@ -284,6 +284,10 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
         errs.append("bundle.json model differs from the manifest's")
     if env.get("client") != {"name": client.get("name"), "version": client.get("version")}:
         errs.append("bundle.json client differs from the manifest's")
+    # X07 picks its reference runs by this cell
+    cell = f"{same['scenario']}/{model.get('slug')}/{same['condition']}"
+    if (env.get("attempt") or {}).get("cell") != cell:
+        errs.append(f"bundle.json attempt.cell {(env.get('attempt') or {}).get('cell')!r} != {cell!r}")
     return (False, "; ".join(errs[:10])) if errs else (True, "")
 
 
@@ -329,6 +333,9 @@ def p02_pins(man: Json, release: Release) -> Outcome:
         return False, f"pins differ from the release: {', '.join(wrong)}"
     if (pins.get("repo") or {}).get("dirty") is not False:
         return False, "the repo was dirty (or not recorded)"
+    want = release.pins.get(CODE_PIN)
+    if want and (pins.get("repo") or {}).get(CODE_PIN) != want:  # releases before bench-v0.10 have no code pin
+        return False, f"the code differs from the release's (repo.code_sha1 {(pins.get('repo') or {}).get(CODE_PIN)})"
     return True, ""
 
 
@@ -388,6 +395,29 @@ def c03_settings(b: Loaded) -> Outcome:
         errs.append("the facts' settings mark doesn't show the seed applied")
     if gs.get("difficulty") and s.get("difficulty") != gs.get("difficulty"):
         errs.append(f"difficulty {s.get('difficulty')} != the scenario's {gs.get('difficulty')}")
+    return (False, "; ".join(errs)) if errs else (True, "")
+
+
+def c04_model(b: Loaded) -> Outcome:
+    """The model the events say played is the manifest's: every process's session_start and init name the manifest's
+    slug, and the effort the endpoint served (the usage and result events' served.effort, after the client's clamp)
+    is the declared reasoning_effort. A client that reports no served effort (Claude Code) is held to the names."""
+    model = b.manifest.get("model") or {}
+    slug, effort = model.get("slug"), model.get("reasoning_effort")
+    names, served = set(), set()
+    for evs in b.events.values():
+        for e in evs:
+            if e.get("kind") == "session_start":
+                names.add((e.get("detail") or {}).get("model"))
+            elif e.get("kind") == "init":
+                names.add(e.get("model"))
+            if e.get("kind") in ("usage", "result"):
+                served.update((e.get("served") or {}).get("effort") or ())
+    errs = []
+    if other := sorted(str(n) for n in names - {slug}):
+        errs.append(f"the events name model {', '.join(other)}, the manifest {slug}")
+    if served and served != {effort}:
+        errs.append(f"served effort {', '.join(sorted(served))}, declared {effort}")
     return (False, "; ".join(errs)) if errs else (True, "")
 
 
@@ -563,6 +593,7 @@ def validate(
     add("C01", _guarded(c01_prompt_tools, b))
     add("C02", _guarded(c02_served, b))
     add("C03", _guarded(c03_settings, b))
+    add("C04", _guarded(c04_model, b))
     if "D01" in runs_here:
         add("D01", (None, "no submission store here") if ctx.duplicate is None else _dup(ctx.duplicate, verdict, env))
     if "D02" in runs_here:

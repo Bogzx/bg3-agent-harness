@@ -14,7 +14,21 @@ from pathlib import Path
 from typing import Any
 
 # Repo paths whose working-tree state a run plays with (runtime/, playthroughs/ and docs are not code).
-CODE_PATHS = ("runner", "bridge", "mod", "play", "tools", "patches", "memory-template")
+CODE_PATHS = (
+    "runner",
+    "bridge",
+    "mod",
+    "play",
+    "tools",
+    "patches",
+    "memory-template",
+    "packages/harness/src",
+    "uv.lock",
+)
+# The code a run plays with besides the mod (pinned on its own): the bg3 tools, the runner and harness, the agent's
+# text and knowledge files, the pi client and the locked Python deps. Its tests are left out. code_sha1 hashes their
+# committed blobs; a run whose tree differs from its commit is dirty (CODE_PATHS covers them all).
+CODE_TREE = ("bridge/src", "runner", "packages/harness/src", "play", "tools/pi", "uv.lock")
 
 
 def _git(cwd: Path, *args: str) -> str | None:
@@ -54,9 +68,29 @@ def tree_digest(hashes: dict[str, str]) -> str:
     return hashlib.sha1("".join(f"{k}\0{v}\n" for k, v in sorted(hashes.items())).encode()).hexdigest()
 
 
+def _is_test(path: str) -> bool:
+    parts = path.split("/")
+    return "tests" in parts[:-1] or parts[-1].startswith("test_")
+
+
+def code_digest(repo: Path, git=_git) -> str | None:
+    """tree_digest over CODE_TREE's files at HEAD (their git blob sha1s), tests left out; None without git."""
+    out = git(repo, "ls-tree", "-r", "HEAD", "--", *CODE_TREE)
+    if out is None:
+        return None
+    blobs = {}
+    for line in out.splitlines():
+        meta, _, path = line.partition("\t")
+        kind_sha = meta.split()
+        if len(kind_sha) == 3 and kind_sha[1] == "blob" and path and not _is_test(path):
+            blobs[path] = kind_sha[2]
+    return tree_digest(blobs) if blobs else None
+
+
 def repo_pin(repo: Path, git=_git) -> dict:
     """The repo commit and whether the code paths differ from it (tracked edits or untracked files); diff: a sha1 of
-    `git diff HEAD` plus the untracked names over CODE_PATHS, so two dirty trees with different edits differ."""
+    `git diff HEAD` plus the untracked names over CODE_PATHS, so two dirty trees with different edits differ;
+    code_sha1: code_digest, what a release pins (bg3bench P02)."""
     head = (git(repo, "rev-parse", "HEAD") or "").strip() or None
     status = git(repo, "status", "--porcelain", "--", *CODE_PATHS)
     diff = git(repo, "diff", "HEAD", "--", *CODE_PATHS)
@@ -66,6 +100,7 @@ def repo_pin(repo: Path, git=_git) -> dict:
         "commit": head,
         "dirty": dirty,
         "diff": hashlib.sha1(((diff or "") + untracked).encode()).hexdigest()[:16] if dirty else None,
+        "code_sha1": code_digest(repo, git),
     }
 
 

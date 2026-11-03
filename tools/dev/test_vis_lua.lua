@@ -54,12 +54,14 @@ Ext = {
     Utils = { MonotonicTime = function() return 1000 end, PrintWarning = function() end, Print = function() end },
     Osiris = { RegisterListener = function() end },
     Loca = { GetTranslatedString = function(h) return h end },
+    Stats = { Get = function(id) return id == "Target_Cloudkill" and { DisplayName = "Cloudkill" } or nil end },
     Events = { Tick = { Subscribe = function() end } },
     Entity = { Get = function(u)
         local d = ents[u]
         if not d then return nil end
         local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = d.pos } } }
         e.CampPresence, e.HasExclamationDialog, e.Trader = d.CampPresence, d.HasExclamationDialog, d.Trader
+        e.Concentration = d.Concentration
         if d.item then e.ServerItem = d.item return e end
         e.ServerCharacter = {}
         if d.size then e.ObjectSize = { Size = d.size } end
@@ -445,6 +447,30 @@ test("S2-4: the 'turned invisible' hint needs the side's sight of where it stand
     end)
     Osi.IsInvisible, ents[WITHERS].pos = realInvisible, { -1418.7, 8.3, -2585.5 }
     V.memory[WITHERS] = nil
+    if not ok then error(err, 0) end
+end)
+
+test("get_nearby: a visible creature's concentration (act2 Balthazar's Cloudkill), none unseen", function()
+    local realChars, gobPos = V.characters, ents[GOB].pos
+    ents[GOB].pos = { -1419.0, 8.4, -2590.0 }
+    ents[GOB].Concentration = { SpellId = { Prototype = "Target_Cloudkill" } }
+    V.characters = function() return { { V.entity(WITHERS), ents[WITHERS].pos }, { V.entity(GOB), ents[GOB].pos } } end
+    local ok, err = pcall(function()
+        sees[WITHERS], sees[GOB] = true, true
+        local function conc()
+            local out = {}
+            for _, o in ipairs(S.nearby(ctx(), { kinds = { "characters" } }).characters) do
+                out[#out + 1] = o.uuid:sub(-3) .. "=" .. tostring(o.concentration)
+            end
+            table.sort(out)
+            return table.concat(out, ",")
+        end
+        eq(conc(), "009=Cloudkill,352=nil", "the caster's spell, by its shown name")
+        onStage[GOB] = false
+        eq(conc(), "352=nil", "not visible: no row, so no concentration")
+    end)
+    sees[GOB], onStage[GOB] = nil, nil
+    V.characters, ents[GOB].pos, ents[GOB].Concentration = realChars, gobPos, nil
     if not ok then error(err, 0) end
 end)
 

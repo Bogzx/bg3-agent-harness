@@ -335,6 +335,62 @@ do
     check("S081 scroll: no ScrollViewer = no", S.answersScroll({ _children = { { _name = "answerList", _children = {} } } }) == false)
 end
 
+-- 12b. v010 live window 4 (Lae'zel's cage "Get rid of them.", 6 answers, 5 rows on screen; answer 4 "[PALADIN]
+--      [DECEPTION] Your quarry looks dangerous, ..." wraps to two lines; answer_list read {rows 5, total 7}): the VMs
+--      have no text, listWindow counts 7 rows from the first row's height (42 of ExtentHeight 294), so the old rules
+--      went rows_only (no VM) and the game ignored the row's button press twice. Rows pair with the live VMs by the
+--      number each row shows (AnswerTextPrefix "4. " = AnswerIdx + 1).
+do
+    local texts = { "Rather demanding for a woman in your position. Why should I?",
+        "Don't worry - I'll get them out of here, one way or another.",
+        "[PERSUASION] Shoot the trap down. We must kill it before it harms someone.",
+        "[PALADIN] [DECEPTION] Your quarry looks dangerous, but I've handled worse. Leave it to me, get to safety.",
+        "Attack the tieflings.", "Leave." }
+    local function row(k, prefix)
+        local it = item({}, texts[k])
+        it._props = { ActualHeight = k == 4 and 84.0 or 42.0 }
+        if prefix ~= false then
+            it._children[#it._children + 1] = { Type = "TextBlock", _name = "AnswerTextPrefix",
+                _props = { Inlines = coll({ run(tostring(k)), run(". ") }) } }
+        end
+        return it
+    end
+    local function list(first, n, prefix)
+        local rows = {}
+        for k = first, first + n - 1 do rows[#rows + 1] = row(k, prefix) end
+        local sv = { Type = "ls.LSScrollViewer", _props = { VerticalOffset = (first - 1) * 42.0, ExtentHeight = 294.0,
+            ScrollableHeight = 84.0 }, _children = rows }
+        return { _children = { { _name = "answerList", _children = { sv } } } }
+    end
+    local vms6 = {}
+    for k = 1, 6 do vms6[k] = vm({ { Type = "Text" } }) vms6[k]._props.AnswerIdx = k - 1 end
+
+    local out, changing, counts = S.dialogueAnswers(list(1, 5), ad(vms6, true))
+    check("w4 by number: not changing", changing == false)
+    check("w4 by number: 5 rows, numbered as shown", #out == 5 and out[1].i == 1 and out[5].i == 5, #out)
+    check("w4 by number: row 4 is VM 4 (the [PALADIN] [DECEPTION] answer)", out[4] and out[4].vm == vms6[4]
+        and out[4].num == 4 and out[4].tags and out[4].tags[1] == "PALADIN", out[4] and out[4].text)
+    check("w4 by number: 1 more below, flagged", counts and counts.by_number == true and counts.below == 1
+        and counts.above == nil, counts and counts.below)
+    -- scrolled down one row: rows 2-6 keep the game's numbers (the old window arithmetic is what failed here)
+    local out2, _, c2 = S.dialogueAnswers(list(2, 5), ad(vms6, true))
+    check("w4 by number scrolled: rows 2-6 are VMs 2-6", #out2 == 5 and out2[1].i == 2 and out2[1].vm == vms6[2]
+        and out2[5].i == 6 and out2[5].vm == vms6[6] and c2.above == 1 and c2.below == nil, #out2)
+    -- a row whose number no VM carries (the previous node's rows): not paired by number
+    local vmsOld = {}
+    for k = 1, 3 do vmsOld[k] = vms6[k] end
+    local out3, _, c3 = S.dialogueAnswers(list(1, 5), ad(vmsOld, true))
+    check("w4 by number: a row number no VM has -> no VM claimed", not (c3 and c3.by_number) and not (out3[4] and
+        out3[4].vm), c3 and c3.rows_only)
+    -- rows without a shown number: the old rules (rows only here), the row's number unread
+    local out4, _, c4 = S.dialogueAnswers(list(1, 5, false), ad(vms6, true))
+    check("w4 no prefix: rows only as before", c4 and c4.rows_only == true and out4[1].num == nil, c4 and c4.rows_only)
+    QUIET = true
+    local _, ch5 = S.dialogueAnswers(list(1, 5), ad(vms6, true))
+    check("w4 by number: not right after our own command", ch5 == true)
+    QUIET = false
+end
+
 -- 13. Audit UI-4: ui.dialogue_choose for an option outside the visible rows. The i-th answer VM is the i-th row
 --     only when the list's scroll extent counts exactly the VMs (by_position); for rows-only answers (a hidden
 --     text-less VM: S015 "7 VMs, 6 shown") Answers.At(i) is another answer, so choose asks the bridge to wheel
@@ -404,6 +460,121 @@ do
     check("UI-4 text check: same text (case/punctuation) passes", okc and pressed[1] == 3, err)
     okc, err = choose(7, "answer 9")
     check("UI-4 text check: another text is refused", not okc and tostring(err):find("the list changed") and #pressed == 0, err)
+
+    -- 13b. dialogue-click (v010 live windows 1 and 3, launch-v1 Lae'zel's cage / Gimblebock): the job after a choose.
+    --   (a) the bridge wheels the list during the job: the same node, not "done" (window 3: done 0.5 s after the
+    --   bridge's ui.answer_list, node unchanged); (b) the game ignores SelectAnswerCommand: after 3 s the answer's
+    --   bound number key is pressed once and the result says so; (c) a command the game takes: no key.
+    local A = BG3AI.UIActions
+    local t, job, fin, keys = 0, nil, nil, {}
+    BG3AI.RPC.now_ms = function() return t end
+    BG3AI.RPC.start_job = function(_, spec) job = spec job.id = 1 job.started = t return job end
+    BG3AI.RPC.finish_job = function(_, status, res) fin = { status, res } end
+    BG3AI.UI.isVisible = function() return true end
+    BG3AI.UI.frame = 0
+    Ext.Utils.PrintWarning = function() end
+    Ext.Input.InjectKeyPress = function(k) keys[#keys + 1] = k end
+    for k = 1, 10 do vms[k]._props.BoundEvent = "UISelectSlot" .. k end
+    local function node(first, n, total, extra)
+        local d = { speaker = "Lae'zel", text = "Tsk'va. Get rid of them.", options = {} }
+        for k = first, first + n - 1 do d.options[#d.options + 1] = { i = k, text = "answer " .. k } end
+        if first > 1 then d.more_above = first - 1 end
+        if total > first + n - 1 then d.more_below = total - (first + n - 1) end
+        for k, v in pairs(extra or {}) do d[k] = v end
+        return d
+    end
+    local now
+    S2.dialogue = function() return now end
+    local function start(i)
+        t, fin, keys, job = 0, nil, {}, nil
+        now = node(1, 5, 6)
+        shown, counts = rows(1, 5, false), { below = 1, above = 0, by_position = true }
+        local okc2, e2 = pcall(ops["ui.dialogue_choose"], { i = i })
+        return okc2, e2
+    end
+    local function tick(ms, d)
+        t, now = ms, d or now
+        BG3AI.UI.frame = BG3AI.UI.frame + 20
+        job.next_check = 0
+        job.on_tick(job)
+    end
+
+    check("dialogue-click: UISelectSlot3 -> NUM_3", A.answerSlotKey("UISelectSlot3") == "NUM_3")
+    check("dialogue-click: other bindings -> no key",
+        A.answerSlotKey("UIAccept") == nil and A.answerSlotKey(nil) == nil)
+    check("dialogue-click: a wheeled window is the same node", A.sameNode(node(2, 5, 6), node(1, 5, 6)))
+    check("dialogue-click: another answer at the same number is another node",
+        not A.sameNode(node(1, 5, 6, { options = { { i = 1, text = "Attack." } } }), node(1, 5, 6)))
+    check("dialogue-click: another list length is another node", not A.sameNode(node(1, 5, 5), node(1, 5, 6)))
+
+    local okc3, e3 = start(3)
+    check("dialogue-click: choose starts a job", okc3 and job ~= nil, e3)
+    tick(1000, node(2, 5, 6))   -- (a) the bridge scrolled the list down one row
+    check("dialogue-click (a): a wheeled list is not a new decision point", fin == nil, fin and fin[1])
+    tick(2900)
+    check("dialogue-click (b): no key before 3 s", #keys == 0)
+    tick(3100)
+    check("dialogue-click (b): ignored 3 s -> the answer's own number key, once", #keys == 1 and keys[1] == "NUM_3",
+        table.concat(keys, ","))
+    tick(4000)
+    check("dialogue-click (b): pressed only once", #keys == 1 and fin == nil)
+    tick(4500, { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } })
+    check("dialogue-click (b): the next node ends the job, the result says the key was pressed",
+        fin and fin[1] == "done" and tostring(fin[2].note):find("pressed its key 3 instead"),
+        fin and tostring(fin[2].note))
+
+    start(2)
+    tick(500, { speaker = "Lae'zel", text = "Tsk'va. Get rid of them.", listening = true })
+    tick(3500)
+    check("dialogue-click (c): a command the game took presses no key", #keys == 0 and fin == nil)
+    tick(5000, { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } })
+    check("dialogue-click (c): done, no note", fin and fin[1] == "done" and fin[2].note == nil)
+
+    -- (d) orchestrator's merge condition: the node moves between the tick's first read and the press (a late
+    --     command lands): the read right before InjectKeyPress sees it and nothing is pressed.
+    start(3)
+    tick(1000)
+    local nextNode = { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } }
+    local reads = 0
+    S2.dialogue = function()
+        reads = reads + 1
+        if reads == 1 then return node(1, 5, 6) end   -- the tick's first read: still the same answers
+        return nextNode                                 -- the read right before the press: the next node
+    end
+    tick(3100)
+    check("dialogue-click (d): the node moved before the press -> no key", #keys == 0 and reads == 2,
+        table.concat(keys, ",") .. " reads=" .. reads)
+    S2.dialogue = function() return now end
+    tick(3500, nextNode)
+    check("dialogue-click (d): the job ends on the next node with no note", fin and fin[1] == "done"
+        and fin[2].note == nil)
+
+    -- window 4: BoundEvent nil, the row shows "4.": the key is the shown number (what key:4 by hand did)
+    vms[4]._props.BoundEvent = nil
+    t, keys, job = 0, {}, nil
+    now = node(1, 5, 6)
+    shown, counts = rows(1, 5, false), { below = 1, above = 0, by_position = true }
+    shown[4].num = 4
+    pcall(ops["ui.dialogue_choose"], { i = 4 })
+    tick(3100)
+    check("w4: no BoundEvent -> the shown number's key", #keys == 1 and keys[1] == "NUM_4", table.concat(keys, ","))
+    check("w4 numberKey: 1-9 only", A.numberKey(9) == "NUM_9" and A.numberKey(10) == nil and A.numberKey(nil) == nil)
+    -- by_number: option 6 below the rows on screen is the VM the game numbers 6 (AnswerIdx 5), not Answers.At(6)
+    local swapped = { vms[1], vms[2], vms[3], vms[4], vms[6], vms[5] }
+    for k = 1, 6 do vms[k]._props.AnswerIdx = k - 1 end
+    adObj = ad(swapped, true)
+    shown, counts = rows(1, 5, false), { below = 1, by_number = true }
+    cmds = {}
+    local okn, en = pcall(ops["ui.dialogue_choose"], { i = 6, dry = true })
+    check("w4 by number: hidden option 6 is the VM numbered 6", okn and cmds[1] and cmds[1][2] == vms[6], en)
+    adObj = ad(vms, true)
+    for k = 1, 10 do vms[k]._props.AnswerIdx = 0 end
+
+    vms[4]._props.BoundEvent = nil
+    start(4)
+    tick(3100)
+    check("dialogue-click: no bound key -> nothing pressed, the partial says so",
+        #keys == 0 and tostring(job.partial.note):find("no number key"), job.partial and job.partial.note)
 end
 
 -- A25 (S088 06:16:18): the reaction prompt's rows as shown. Gale's Shield at levels I-VI; the decision VMs carried no

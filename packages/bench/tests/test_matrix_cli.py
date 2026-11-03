@@ -419,7 +419,8 @@ def test_the_variance_pilot_plan(tmp_path):
     ]
     cells = {(r[1], r[4]) for r in rows}
     assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 16  # every model plays every ready scenario
-    assert {r[2] for r in rows} == {"medium"} and {r[5] for r in rows} == {"rules"}
+    # the efforts: deepseek-flash declares what pi serves it (high), Opus through Claude Code medium
+    assert {(r[1], r[2]) for r in rows} == {("pi", "high"), ("claude", "medium")} and {r[5] for r in rows} == {"rules"}
     assert all(r[6:] == (["$0.25", "$0.25"] if r[1] == "pi" else ["-", "-"]) for r in rows)
     assert "96 jobs (48 paid), reserve $12.00" in out
     assert "scenario fight_act1_windmill_tactician: skipped, not ready: no start save yet" in out

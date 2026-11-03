@@ -246,6 +246,19 @@ function S.dialogueAnswers(widget, ad)
         -- 144, 216, 350), and ExtentHeight / row height counts every answer. When that count is the VM count,
         -- the rows pair with VMs by position whatever texts the VMs have (with one texted VM, e.g. "Leave.",
         -- the rule above found none and get_dialogue showed no options at all).
+        -- v010 live window 4 (Lae'zel's cage, 6 answers, 5 rows; the 4th "[PALADIN] [DECEPTION] ..." wraps to two
+        -- lines): the VMs have no text and listWindow's first-row arithmetic counted 7 answers, so no pairing above
+        -- held and the rows went out rows_only, whose button press the game ignored (twice; 33 of 40 launch-v1
+        -- choices on that node "still running"). Each row shows the game's own number (AnswerTextPrefix, AnswerIdx
+        -- + 1): pair the rows with the live VMs by that number, whatever the rows' heights or the scroll.
+        if #items > 0 and props(ad).ShowAnswers == true and not UI.quiet(6) and (texted == 0 or current) then
+            local byNum, last = S.pairRenderedByNumber(items, vms, n)
+            if byNum then
+                local below = last - byNum[#byNum].i
+                return byNum, false, { below = below > 0 and below or nil,
+                    above = byNum[1].i > 1 and byNum[1].i - 1 or nil, by_number = true }
+            end
+        end
         if n > #items and #items > 0 and props(ad).ShowAnswers == true then
             local win = S.listWindow(list, items)
             if win and win.total == n then
@@ -285,7 +298,7 @@ function S.dialogueAnswers(widget, ad)
         if text then
             local vm = try(vms.At, vms, idx)
             local tags, body = S.splitTags(text)
-            local a = { i = #out + 1, text = body, vm = vm }
+            local a = { i = #out + 1, text = body, vm = vm, num = S.rowNumber(item) }
             if #tags > 0 then a.tags = tags end
             if vm then addTags(a, try(S.answerTags, vm)) end
             if vm and props(vm).Enabled == false then a.off = true end
@@ -435,11 +448,54 @@ function S.renderedRows(items, first)
         local text = textEl and answerText(textEl) or UI.allText(item)
         if not clean(text) then return nil end
         local tags, body = S.splitTags(text)
-        local a = { i = (first or 1) + k - 1, text = body, row = k }
+        local a = { i = (first or 1) + k - 1, text = body, row = k, num = S.rowNumber(item) }
         if #tags > 0 then a.tags = tags end
         out[#out + 1] = a
     end
     return out
+end
+
+-- The number the game shows on a rendered answer row (its AnswerTextPrefix "4. ", bound to AnswerIdx + 1): the
+-- number a player reads and the number key that picks it. nil when the row has none.
+function S.rowNumber(item)
+    local el = UI.byName(item, "AnswerTextPrefix")
+    return tonumber(tostring(el and answerText(el) or ""):match("^%s*(%d+)%."))
+end
+
+-- The live answer VMs by the number the game shows for them (AnswerIdx + 1), and the highest such number.
+function S.vmsByNumber(vms, n)
+    local by, last = {}, 0
+    for k = 1, n do
+        local vm = try(vms.At, vms, k)
+        local idx = vm and tonumber(props(vm).AnswerIdx)
+        if idx then
+            by[idx + 1] = vm
+            if idx + 1 > last then last = idx + 1 end
+        end
+    end
+    return by, last
+end
+
+-- Rendered rows paired with the live VMs by the row's shown number (texts from the rows only, never a row's
+-- DataContext): { {i = shown number, text, tags, vm, row, num} }, and the highest number in Answers. nil unless every
+-- row shows a number that one VM carries and has text.
+function S.pairRenderedByNumber(items, vms, n)
+    local by, last = S.vmsByNumber(vms, n)
+    local out = {}
+    for k, item in ipairs(items) do
+        local num = S.rowNumber(item)
+        local vm = num and by[num]
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and answerText(textEl) or UI.allText(item)
+        if not (vm and clean(text)) then return nil end
+        local tags, body = S.splitTags(text)
+        local a = { i = num, text = body, vm = vm, row = k, num = num }
+        if #tags > 0 then a.tags = tags end
+        addTags(a, try(S.answerTags, vm))
+        if props(vm).Enabled == false then a.off = true end
+        out[#out + 1] = a
+    end
+    return out, last
 end
 
 -- The continue answer VM (ActiveDialogue.ContinueAnswer) when present.

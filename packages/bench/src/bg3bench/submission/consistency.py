@@ -162,11 +162,16 @@ def _after(ts: Iterable[float], t: float, window: float) -> bool:
 
 
 def x03_events_vs_facts(b: Loaded) -> Outcome:
-    """The facts against the agent's tool calls. Loads: every load_game call has a load mark within 60 s and every
-    load mark after the start a load_game call (or ended the run). Trades: every trade_open has a trade or
+    """The facts against the agent's tool calls. Loads: a save start's first load mark is the release's start save
+    folder (a foreign save is a reject here, not the runner's own foreign_save), every load_game call has a load mark
+    within 60 s and every load mark after the start a load_game call (or ended the run). Trades: every trade_open has a trade or
     choose_dialogue call at most 60 s before it (pilot: at most 16 s). Kills by the party: each comes at most 120 s
     after some tool call (pilot: 62 s; a combat_turn call plays the allies' turns too). A failed trade call opens
     no trade, so calls without a trade are fine."""
+    start = (b.release_scenario or {}).get("save")
+    first = next(iter(_marks(b.facts, "load")), None)
+    if start and first is not None and first.get("detail") != start:  # a save start loads the release's save first
+        return False, f"the run started from {first.get('detail')!r}, not the start save {start}"
     calls = [e["t"] for e in _tool_calls(b, "load_game")]
     loads = [m["t"] for m in _marks(b.facts, "load")][1:]  # the first is the start save
     ends = [m["t"] for m in _marks(b.facts, "run_end")]

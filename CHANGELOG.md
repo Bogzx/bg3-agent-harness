@@ -77,9 +77,25 @@ game unless it says so.
   "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused, and act.chain fails 0.6 s after
   an attach the game didn't take instead of at 3 s). bench-v0.9's release cites it.
 - 0.3.0 (2026-11-02): what the agent sees and can do changed again after bench-v0.9's graded fight re-run (walks
-  out of combat block by default, the minimap block, the PASSED line, a walk ends a batch, roll_check's reroll, trade's SOLD list, known ground to 40 m,
+  out of combat block by default, the minimap block, the PASSED line, a walk ends a batch, roll_check's reroll, trade's SOLD list, known ground to 16 m,
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
+
+- Casts the harness starts now roll their dice. A cast an Osiris `UseSpell` or
+  `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,
+  IgnoreCastChecks, IgnoreTargetChecks and AvoidDangerousAuras), so the game skipped its spell roll. Every attack the
+  harness started hit without a d20 (30 of 30 arena attacks; 8 of 8 at AC 35 in the Balthazar save), and Sacred Flame
+  never rolled a save (8 of 8 did full damage). The game AI's casts and the hotbar click route rolled (the hotbar
+  missed 9 of 9 at AC 35). After each order (`use_ability` casts, the cast after a walk into range, sneak's Hide), the
+  mod drops IgnoreSpellRolls from the cast's `SpellCastState.CastOptions` when the cast entity is made and reads it
+  back (live, by hand: 6 of 6 attacks missed at AC 35, and 2 of 6 Sacred Flame saves were made). When the write
+  doesn't take, or the cast ends with no cast state seen, the cast fails and says it went without its roll. Live
+  check through `use_ability` (tools/dev/check_cast_rolls.py, 2026-11-03, PASS): 3 hits in 21 weapon attacks and 0
+  of 6 Eldritch Blast beams at AC 35, 1 Sacred Flame save made in 12, and every cast drew its spell die. The harness
+  has cast through Osiris `UseSpell` since the mod's first commit (043d06a4, 2026-10-09), so attacks and saving
+  throws cast by the harness never rolled in any run before this: party attacks could not miss and party save
+  spells always landed (launch-v1: 368 of 368 harness weapon attacks dealt damage). bench-v0.10 results are not
+  comparable with bench-v0.8 or v0.9 results for any scenario with a fight.
 
 ### Benchmark (`packages/bench`)
 
@@ -134,22 +150,23 @@ game unless it says so.
   bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
   fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
-  Its own release file (`releases/bench-v0.10.json`: mod tree 24376dc8, the same 81 bg3 tools, new prompt hashes for
+  Its own release file (`releases/bench-v0.10.json`: mod tree 06480674, the same 81 bg3 tools, new prompt hashes for
   pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). Its
   conditions also pin the served tool definitions, `tools.defs_sha256` (release v1, optional; release.defs_digest:
   each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
   otherwise; bench-v0.8 and v0.9's releases have no such field and keep checking names only. What changed for the
   agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
-  - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and `route(go=true)`, a far
-    `move_to`) default to `wait=true` and return what `wait_for` on the walk returned, with its early stops, CHANGES
-    and the minimap block; a walk still going after 90 s returns its progress and the id `wait_for` keeps waiting
-    on. `wait=false` keeps the old pipelining.
+  - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and a far `move_to`) default
+    to `wait=true`, `route(go=true)` always blocks (it has no `wait`), and they return what `wait_for` on the walk
+    returned, with its early stops, CHANGES and the minimap block; a walk still going after 90 s returns its
+    progress and the id `wait_for` keeps waiting on. `wait=false` keeps the old pipelining.
   - travel_to and regroup name what the trip passed: a PASSED line before CHANGES (what came into view at a leg's
     end and is out of view at the trip's end, not in the agent's last view; nearest first, up to 6).
-  - The leader's `travel_to` doesn't take along a member more than 24 m away at the trip's start (not re-chained,
-    not waited for; said once: `not with you: e1 Shadowheart 77m (unchained, stays there)`), checks for stragglers
-    only after legs that don't arrive, gives a straggler's walk back 30-60 s for the gap (was a flat 30 s), and a
-    stop on a straggler says how its walk back ended (was a guessed "stuck on a ladder, gap or door?").
+  - The leader's `travel_to` doesn't re-chain or wait for a member more than 24 m away at the trip's start (said
+    once: `not with you: e1 Shadowheart 77m (unchained, stays there)`; one already chained stays chained, so the
+    game's follow can still bring it), checks for stragglers only after legs that don't arrive, gives a
+    straggler's walk back 30-60 s for the gap (was a flat 30 s), and a stop on a straggler says how its walk back
+    ended (was a guessed "stuck on a ladder, gap or door?").
   - Out of combat a batch ends with its first walk step: `do_actions` runs (`queue_actions` queues) the steps up to
     and with the first `move_to`/`walk_toward`/`travel_to`/`jump_to` and lists the rest as not run (not queued);
     batches without a walk, or with the walk last, are unchanged. A walk step with `if`/`unless` ends the batch only
@@ -161,8 +178,10 @@ game unless it says so.
     and presses nothing.
   - `trade(sell="junk")` names every item it sold (SOLD, by name with count and gold) and counts what the junk rule
     kept back (KEPT).
-  - Known ground (FAIRNESS.md): ground within 40 m of the leader with a clear eye ray (was the observer's Sight,
-    ~18.5 m), and ground up to 15 m below an edge at up to 60 degrees (was 4 m, 45 degrees). route, travel_to,
+  - Known ground (FAIRNESS.md) from the camera: ground within 16 m of the leader (what the default camera shows at
+    16:9, measured live; owner D448; earlier bench-v0.10 builds used 40 m) or within a member's own Sight (~18.5 m)
+    with a clear eye ray, and ground up to 15 m below an
+    edge at up to 41 degrees, the camera's measured pitch (was 4 m, 45 degrees). route, travel_to,
     walk_toward, path_preview, WAYS, jump solvers, move_to/jump_to's "not in view" and hazard names follow it.
     Characters and items keep the Sight stat.
   - At night in camp, `long_rest`, camp leave and `fast_travel` from camp refuse before pressing anything while the
@@ -172,6 +191,27 @@ game unless it says so.
     game menu is open.
   - `use_ability` on a spell container lists the variants that read as a spell's stats entry and says how many
     entries didn't (after one more read); with none that reads it refuses without names. The raw text is never shown.
+  - `talk_to` / `interact` on a target past reach or out of sight walk there and then talk or use it in the same
+    call; a walk there that stops short runs no step and says so (`not run (the walk there stopped before
+    arriving)`); one still walking at the ~90 s budget queues it for the arrival. `do_actions` ending at its walk step
+    carries the minimap block too, and a blocking walk that its walker's own conversation ended says it ended. A
+    travel_to inside another call (route go=true, a far move_to, a walk there) counts its budget from that call's
+    start.
+  - Combat output lists the harmful clouds and surfaces a party member sees within 12 m (`HAZARD` lines, as `look`):
+    `get_combat_state` every call; the turn block and a combat action's result when the patches in view changed.
+    Nearby rows, party rows and CHANGES say who starts or stops concentrating (`concentrating on Cloudkill`).
+  - An answer the game ignores for 3 s is pressed once with its bound number key, and the result says so (`note=`);
+    the settle after an answer compares the whole node, so a list scrolled during the wait isn't taken as answered.
+    Answer rows pair with the game's answers by the number each row shows, so a list with a wrapped row is answered
+    with its tags (window 4: Lae'zel's cage counted 7 rows of 6 and the press was ignored); with no readable bound
+    key, the ignored answer gets the number key it shows.
+  - `flee` fails at once with the reason the greyed-out Flee button's tooltip shows (`FAILED: the game won't flee
+    now (Flee is greyed out: Enemy too close! (10.6/27 m))`), with no command or cursor search, and runs each Flee
+    command name once (window 4: 48 s before failing).
+  - Attacks and saving throws cast by the harness roll their dice (above, under Harness): before, they never
+    rolled, so bench-v0.10 results are not comparable with bench-v0.8 or v0.9 results for scenarios with fights.
+  - A fall down a drop link of the walk's own route is no longer failed as an engine teleport, and `end_turn`'s End
+    Turn press refused by the busy UI is asked again after the cooldown instead of failing at once.
   Metric definition change: a tool call counts as async only when its own background job is still running when the
   call returns (bridge metrics_record.py). A blocking walk's job starts and ends inside the call, and a walk that
   ended in the 0.3 s settle window no longer counts. Async % and the latency figures built on it are not 1:1 with
@@ -190,6 +230,24 @@ game unless it says so.
   Evidence video and panel: a blocking walk's timeline entry shows the walk's outcome, not its start line; results the
   bridge reports as failed (FAILED/REFUSED lines, bg3harness triage.failed_lines) are marked as fails; the local
   panel's results list shows a run's recovered launches.
+  What a valid bundle is (REVIEW-4, 2026-11-03; bench-v0.10 and later: the job validates a suite at its released
+  commit, so bench-v0.8 and v0.9 submissions keep their rules):
+  - P02 also requires the code the release pins: release pins `code_sha1` (optional in release v1;
+    bg3harness.pins.code_digest, the git blobs at HEAD of bridge/src, runner, packages/harness/src, play, tools/pi
+    and uv.lock, tests left out) and the run's `pins.repo.code_sha1` must equal it. packages/harness/src and uv.lock
+    are dirty-checked now too. The release is rebuilt whenever that code changes (the release test says so).
+  - New check C04 (reject, panel and job): every process's session_start and init name the manifest's model slug,
+    and the effort the usage/result events say was served is the declared `reasoning_effort`. launch-v1's 36
+    DeepSeek runs declared `medium` and pi served `high` (the DeepSeek profiles' thinking_level_map has no medium
+    and pi clamps up), so the three DeepSeek pi profiles (deepseek-flash, deepseek-v4-pro, deepseek-v4.1-flash-pi)
+    now declare `effort = "high"`: their bench-v0.10 rows read high, and launch-v1's DeepSeek row (declared medium)
+    is not 1:1 with them by label, only by what was served.
+  - X03 rejects a save start whose first load mark is not the release's start save folder.
+  - F03 also rejects a bundle.json whose `attempt.cell` is not `<scenario>/<model slug>/<condition>` of its own
+    manifest (X07 picks its reference runs by the cell). All 146 launch-v1 bundles pass.
+  - results: a leaderboard row is (client, model, reasoning effort, condition); runs, groups and the ranking's
+    models carry `effort` (results v1, optional). The suite digest is re-pinned under bench-v0.10 (no score moves
+    for runs of one effort per model).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

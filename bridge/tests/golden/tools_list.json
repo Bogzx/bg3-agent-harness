@@ -584,7 +584,7 @@
  {
   "name": "get_combat_state",
   "title": null,
-  "description": "Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy.",
+  "description": "Turn order (visible combatants, with what each is concentrating on), whose turn it is, round, the clouds and harmful surfaces in view (HAZARD lines, as look), and the active character's remaining action economy.",
   "input_schema": {
    "properties": {},
    "title": "get_combat_stateArguments",
@@ -799,7 +799,7 @@
  {
   "name": "interact",
   "title": null,
-  "description": "Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id.",
+  "description": "Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival, its result in the same call; a walk there that stops short doesn't use it (says not run), one still going after ~90 s uses it on arrival (queued)). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id.",
   "input_schema": {
    "properties": {
     "target": {
@@ -1111,7 +1111,7 @@
  {
   "name": "talk_to",
   "title": null,
-  "description": "Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first and talks on arrival (queued).",
+  "description": "Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first (travel_to) and talks on arrival, the conversation in the same result; a walk there that stops short doesn't talk (says not run), one still going after ~90 s talks on arrival (queued).",
   "input_schema": {
    "properties": {
     "npc": {

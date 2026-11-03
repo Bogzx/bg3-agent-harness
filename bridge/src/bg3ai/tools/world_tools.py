@@ -120,7 +120,7 @@ INTERACT_WAIT_S = 40.0
 @core.mcp.tool()
 @reporting._guard
 def interact(target: str, who: str | None = None, wait: bool = True) -> str:
-    """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id."""
+    """Use/open/activate a visible object: door, lever, chest, corpse (opens loot), book, ladder, waypoint. Walks there first (past 40 m: a travel_to, then the use on arrival, its result in the same call; a walk there that stops short doesn't use it (says not run), one still going after ~90 s uses it on arrival (queued)). A locked door/chest opens when anyone in the party carries its key (that member walks up and opens it). wait=false returns at once with a job id."""
     char = plumbing._who(who)
     _EMPTY_CLOSED[0] = -1e9
     out = plumbing._act("interact", "act.interact", {"char": char, "target": plumbing._interact_uuid(target)},

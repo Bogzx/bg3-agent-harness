@@ -17,7 +17,9 @@ them.
 it. That file ships with the repo, so a fresh checkout validates against the released suite; the bench's tests fail
 when this tree builds another one (a scenario, saves.json, a version, the mod, the tools or a prompt changed).
 --pins-from reads the game pins from the reference runs' manifest.json files, which must all cite the same pins;
-the flags override them. The build refuses a suite that isn't the installed one, suite files not pinned for it
+the flags override them. code_sha1 is this repo's code at HEAD (bg3harness.pins.code_digest over CODE_TREE: the
+bg3 tools, runner, harness, the agent's text, the pi client, uv.lock): a run must cite it (P02), so a release is
+rebuilt whenever that code changes. The build refuses a suite that isn't the installed one, suite files not pinned for it
 (bg3bench.suite.check), saves.json disagreeing with the scenario files, reference runs with different pins, and
 missing pins.
 """
@@ -37,6 +39,7 @@ from typing import Any
 
 import jsonschema
 from bg3harness import client_setup
+from bg3harness import pins as harness_pins
 from bg3harness.run_manifest import tools_digest
 
 from bg3bench import conditions, pins, results, saves, scenario, suite
@@ -51,6 +54,9 @@ RELEASES = suite.PACKAGE_ROOT / "releases"  # <suite>.json: committed when the s
 CLIENTS = ("pi", "claude")
 NO_MEMORY = "memory"  # the bridge's memory tool group: off in every bench run (bg3harness.runner.run_host)
 PIN_KEYS = ("game_build", "bg3le_sha256", "mod_sha1")
+# The code a run plays with besides the mod (bg3harness.pins.code_digest of the repo the release is built from).
+# Optional: bench-v0.8 and v0.9's releases predate it, and P02 checks it only when the release has it.
+CODE_PIN = "code_sha1"
 # The tool groups a client profile can turn off on top of the condition's (bg3harness.profiles.tools_off: screenshots
 # for a pi model without image input), and the clients whose profiles do. Each is a variant of every condition.
 VARIANTS = (("screenshots",),)
@@ -184,7 +190,7 @@ def build(
         "about": ABOUT,
         "suite": tag,
         "versions": {"harness": versions["harness"], "bench": versions["bench"]},
-        "pins": {k: game_pins[k] for k in PIN_KEYS},
+        "pins": {k: game_pins[k] for k in (*PIN_KEYS, CODE_PIN) if k in game_pins},
         "scenarios": out_sc,
         "saves": [
             {
@@ -270,6 +276,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ReleaseError("; ".join(bad))
         game_pins = common_pins([json.loads(p.read_text()) for p in a.pins_from])
         game_pins |= {k: getattr(a, k) for k in PIN_KEYS if getattr(a, k)}
+        if not (code := harness_pins.code_digest(a.repo)):
+            raise ReleaseError(f"no code digest: {a.repo} is not a git checkout")
+        game_pins[CODE_PIN] = code
         cids = a.condition or ["rules"]
         clients = a.client or list(CLIENTS)
         served = {cid: serve(cid, clients, a.repo) for cid in cids}

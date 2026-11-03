@@ -639,6 +639,11 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "", bloc
         waited, _ = batch._wait(h, t0 + WALK_BUDGET_S, t0=t0)
         if h not in _async:  # it ended: the walk's own result, as wait_for(h) returns it
             return reporting._finish(tool, args, waited + ("\n" + note if note else ""), t0)
+        # the wait stopped on a screen it saw before the job's end (the walker's own conversation ends its walk:
+        # Actions.lua DialogActorJoined): poll once more before saying it goes on (review-v010-final #6)
+        ended = _ended_job_text(tool, h, args.get("char"))
+        if ended:
+            return reporting._finish(tool, args, ended + "\n" + waited + ("\n" + note if note else ""), t0)
         return reporting._finish(tool, args, f"{body}\n{waited}\nwait_for('{h}') keeps waiting for it"
                                  + ("\n" + note if note else ""), t0)
     if note:
@@ -659,6 +664,18 @@ _WALKS = ("move_to", "walk_toward", "travel_to")
 # A blocking walk (out of combat, wait=true) returns by this long after its call started, arrived or not: the MCP
 # clients give up on a request after 110 s (clients.py; actq.BATCH_BUDGET_S is the same budget for do_actions).
 WALK_BUDGET_S = 90.0
+
+
+def _ended_job_text(tool: str, h: str, char: str | None) -> str | None:
+    """The job's own result line when async job `h` has ended (as wait_for(h) shows it), else None (still running)."""
+    jv = core.game.rpc("job.poll", {"id": int(h[1:])})
+    if not isinstance(jv, dict) or jv.get("status") == "running":
+        return None
+    _async.pop(h, None)
+    core.METRICS.bg_end(h)
+    r = JobResult(jv["status"], jv.get("result"), jv.get("error"), elapsed_ms=jv.get("elapsed_ms", 0))
+    _remember_names(r.result)
+    return _job_text(tool, r, char)
 
 
 def _settle(poll, limit: float | None = None) -> dict | None:
@@ -703,7 +720,9 @@ def _combat_changes(tool: str, ended: bool = True) -> str:
     w = core.game.try_rpc("act.watch")
     if not (isinstance(w, dict) and w.get("combat")):
         return batch.walk_end_tail().lstrip("\n") if ended and tool in batch.ARRIVAL_LEAD_TOOLS else ""
-    return delta.changes_text(core.game, core.H)
+    got: dict = {}  # the clouds and surfaces in view ride in the same read: HAZARD lines when they changed
+    changes = delta.changes_text(core.game, core.H, (*delta.ACTION_PARTS, "hazards"), got=got)
+    return "\n".join([x for x in (changes,) if x] + overview._hazard_lines(got.get("hazards")))
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

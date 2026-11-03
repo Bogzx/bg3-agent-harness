@@ -324,10 +324,12 @@ end
 -- for walking).
 -- Range = what the screen shows (user 2026-11-02, FAIRNESS.md "Navigation knows only ground"): the camera follows
 -- the leader (ctx.leader: the selected member, else the first on stage) and shows ground about CAMERA_M round it,
--- far past the Sight stat (18.5 m), which stays the range for characters and items. Ground only: pointSeen's
--- callers are N.known and the hazard patches.
+-- the Sight stat (18.5 m) stays the range for characters and items, and each member's own Sight is a range for ground
+-- too. Ground only: pointSeen's callers are N.known and the hazard patches. CAMERA_M as measured at 16:9 (live window
+-- 3, K0, 2026-11-03: the default full zoom-out shows ground to 31.1 m ahead, 5.3 m behind and 13.5 m to each side of
+-- the leader; their mean 15.9 m -> 16 m; owner D448, replacing the 40 m of 2026-11-02).
 V.POINT_LIFT = 0.5
-V.CAMERA_M = 40.0
+V.CAMERA_M = 16.0
 -- Live N14b (2026-10-28, the Gauntlet altar): a spot 8 m off on the ledge 2.3 m below read "not in view": the eye ray
 -- to it ran into the altar floor's own top 3.8 m out, short of the drop edge (Claude later stood at 4 m), while the
 -- player's camera above sees over that edge. A ray to a lower spot that stops on the observer's own floor is looked
@@ -339,7 +341,8 @@ V.CAMERA_M = 40.0
 -- - the edge: along the ray, every EDGE_STEP_M up to EDGE_SCAN_M past the hit and no further than EDGE_NEAR_M from
 --   the observer, the first point with no floor within EDGE_DY_M of the feet; a floor that goes on is no edge;
 -- - the look: from PEEK_H above the last floor point, PEEK_BACK_M back toward the eye (never from the raw hit), no
---   steeper down than PEEK_MAX_DOWN (tan of 60 degrees; the dead ground at a face's foot stays unseen), a clear ray
+--   steeper down than PEEK_MAX_DOWN (tan of 41 degrees, the camera's pitch measured at 16:9, K0: 40.7; the dead
+--   ground at a face's foot stays unseen), a clear ray
 --   to the spot.
 -- No heights answer or a ray error: not seen.
 V.EDGE_DY_M = 0.5
@@ -351,7 +354,7 @@ V.EDGE_SCAN_M = 3.0
 -- 1 m up: from 0.5 m the edge's own lip (0.3-0.55 m ahead) capped the look at ~45 degrees whatever PEEK_MAX_DOWN said
 V.PEEK_H = 1.0
 V.PEEK_BACK_M = 0.3
-V.PEEK_MAX_DOWN = math.tan(math.rad(60))
+V.PEEK_MAX_DOWN = math.tan(math.rad(41))
 local function hdist(p, q) return math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2) end
 -- A floor height at (x, z) within tol of y: true / false / nil (no answer).
 local function floorNear(x, z, y, tol)

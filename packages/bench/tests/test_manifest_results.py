@@ -278,7 +278,7 @@ def test_release_refuses_a_cell_whose_runs_differ_in_game_pins():
     same = [({**m, "pins": {**m.get("pins", {}), **pinned}}, r) for m, r in pairs]
     assert results.build_results(same, seed=0, created=1.0, b=20)["groups"][0]["n_runs"] == 3
     rebuilt = {**same[2][0], "pins": {**same[2][0]["pins"], "mod": {"sha1": "c" * 40}}}
-    with pytest.raises(ValueError, match=r"different game pins: nautiloid/pi/opus/None \(mod_sha1\)"):
+    with pytest.raises(ValueError, match=r"different game pins: nautiloid/pi/opus@medium/None \(mod_sha1\)"):
         results.build_results([*same[:2], (rebuilt, r3)], seed=0, created=1.0, b=20)
     # another cell may play another setup: only the runs of one cell are compared
     other = {**rebuilt, "model": {**rebuilt["model"], "slug": "deepseek"}}

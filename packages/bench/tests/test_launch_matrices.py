@@ -74,13 +74,14 @@ def test_the_deepseek_matrix_plans_18_jobs_cell_by_cell_cheapest_reserve_last(na
 
 
 def test_both_deepseek_matrices_play_one_results_row():
-    # results.build_results groups by (client, model, condition), so the two matrices' runs make one row
+    # results.build_results groups by (client, model, effort, condition), so the two matrices' runs make one row; the
+    # profile declares "high" since bench-v0.10 (pi served high to every launch-v1 run, which declared "medium")
     played = {
         (j["client"], j["model"], j["effort"], j["condition"], j["profile"])
         for name in ("deepseek", "deepseek-rest")
         for j in matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)["jobs"]
     }
-    assert played == {("pi", "deepseek-flash", "medium", "rules", str(REPO / "profiles" / "deepseek-flash.toml"))}
+    assert played == {("pi", "deepseek-flash", "high", "rules", str(REPO / "profiles" / "deepseek-flash.toml"))}
 
 
 def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():

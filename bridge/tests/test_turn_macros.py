@@ -74,6 +74,7 @@ class FakeGame:
         self.safe: dict = {"safe": True}  # nav.safe_spot reply
         self.landing: dict | None = None  # nav.landing reply (None: op unknown, like a mod not reloaded yet)
         self.nearby: dict = {"characters": [], "items": []}
+        self.hazards: list | None = None  # nav.hazards patches (None: op unknown, like a mod not reloaded yet)
         self.inv: dict = {"items": []}
         self.on_start = None  # hook(op, args)
         self.sheets: dict[str, dict] = {}  # state.character replies by uuid
@@ -197,6 +198,8 @@ class FakeGame:
                 return dict(self.activity)
             if op == "autoskip.status" and self.autoskip is not None:
                 return json.loads(json.dumps(self.autoskip))
+            if op == "nav.hazards" and self.hazards is not None:
+                return {"hazards": json.loads(json.dumps(self.hazards))}
             if op == "state.nearby":
                 return json.loads(json.dumps(self.nearby))
             if op == "state.character" and args.get("uuid") in self.sheets:

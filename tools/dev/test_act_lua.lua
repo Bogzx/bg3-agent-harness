@@ -30,7 +30,8 @@ Ext = {
     Utils = { MonotonicTime = function() return clock end, PrintWarning = function() end, Print = function() end,
         Version = function() return 0 end },
     Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end } },
-    Entity = { Get = entity },
+    Entity = { Get = entity,
+        OnCreate = function(name, fn) create_hooks[name] = fn end },
     Level = { GetHeightsAt = function() return { 0.0 } end },
     Stats = { Get = function(n) return stats[n] end },
     StaticData = { Get = function(uuid) return { Name = uuid } end },
@@ -63,6 +64,33 @@ LADDER = "acacacac-0000-0000-0000-000000000008"
 party_rows = { P1 }
 
 usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
+-- The game's side of an Osiris UseSpell / UseSpellAtPosition (ops/logs/arena-dice.md "H4 cast path"): the cast
+-- entity's SpellCastState is made with CastOptions carrying IgnoreSpellRolls, and its OnCreate hook runs. As live,
+-- CastOptions reads as a fresh Lua table of flag names and is written as one. Knobs: cast_opts nil = no cast at all;
+-- cast_sticky = writes don't take; cast_seen = "state" | "none" (no OnCreate for it).
+create_hooks = {}
+USESPELL_OPTS = { "IgnoreHasSpell", "IgnoreCastChecks", "IgnoreSpellRolls", "NoMovement", "IgnoreTargetChecks",
+    "AvoidDangerousAuras" } -- live, the cast-rolls probe
+cast_opts, cast_sticky, cast_seen = USESPELL_OPTS, false, "state"
+local function names_copy(t) local o = {} for i, n in ipairs(t) do o[i] = n end return o end
+local function with_options(o, names)
+    local cur = names_copy(names)
+    return setmetatable(o, { __index = function(_, k) if k == "CastOptions" then return names_copy(cur) end end,
+        __newindex = function(t, k, val)
+            if k ~= "CastOptions" then rawset(t, k, val) return end
+            assert(type(val) == "table", "CastOptions takes a table of flag names")
+            if not cast_sticky then cur = names_copy(val) end
+        end })
+end
+last_cast = nil -- the SpellCastState of the last stub cast
+local function game_cast(c, sp)
+    if cast_opts == nil then return end
+    local st = with_options({ Caster = { Uuid = { EntityUuid = c } }, SpellId = { OriginatorPrototype = sp } },
+        cast_opts)
+    if cast_seen ~= "none" and create_hooks.SpellCastState then create_hooks.SpellCastState({ SpellCastState = st }) end
+    last_cast = st
+end
+
 Osi = setmetatable({
     DB_PartyMembers = { Get = function()
         local rows = {}
@@ -80,7 +108,10 @@ Osi = setmetatable({
     PurgeOsirisQueue = record("PurgeOsirisQueue"),
     Use = record("Use"),
     Pickup = record("Pickup"),
-    UseSpell = record("UseSpell"),
+    UseSpell = function(c, sp, ...)
+        record("UseSpell")(c, sp, ...)
+        game_cast(c, sp)
+    end,
     MakePlayerActive = record("MakePlayerActive"),
     EndTurn = record("EndTurn"),
     ToInventory = record("ToInventory"),
@@ -93,6 +124,7 @@ Osi = setmetatable({
             error("Incorrect number of IN arguments for 'UseSpellAtPosition'; expected 6, got 5", 0)
         end
         record("UseSpellAtPosition")(...)
+        game_cast(...)
     end,
 }, { __index = function(_, name)
     return function(...) return osiv[key(name, ...)] end
@@ -128,6 +160,8 @@ function reset()
     Ext.System = nil
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
+    cast_opts, cast_sticky, cast_seen, last_cast = USESPELL_OPTS, false, "state", nil
+    if A then A.roll_wait = {} end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
     if G then G.turn_open, G.end_owed, G.combat_round = {}, {}, {} end -- the TurnStarted/TurnEnded pairing too
@@ -194,7 +228,7 @@ end
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_cast.lua", "test_act_lua_think.lua",
     "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_reach.lua", "test_act_lua_revive.lua",
-    "test_act_lua_idle.lua" }) do
+    "test_act_lua_idle.lua", "test_act_lua_rolls.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

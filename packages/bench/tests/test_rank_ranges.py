@@ -88,7 +88,7 @@ def test_the_release_ranks_on_the_common_pass_fail_set_and_leaves_partial_models
         "scenarios": SCORED[:7],  # no choice, no maximise, not s07 (haiku has no valid run of it)
         "of": 8,
         "min_cells": 6,
-        "models": [{"client": "pi", "model": m} for m in ("sonnet", "haiku", "deepseek", "opus")],
+        "models": [{"client": "pi", "model": m, "effort": "medium"} for m in ("sonnet", "haiku", "deepseek", "opus")],
     }
     g = {x["model"]: x for x in out["groups"]}
     assert g["sonnet"]["suite_score"] == pytest.approx(2 / 3) and g["haiku"]["suite_score"] == pytest.approx(1 / 3)
@@ -139,10 +139,31 @@ def test_a_row_is_a_model_through_one_client_and_claude_code_runs_stay_out():
     assert by["codex", "claude-opus-5-5"]["suite_score"] == pytest.approx(1 / 3)
     (rank,) = out["ranking"]
     assert rank["models"] == [
-        {"client": "pi", "model": "claude-opus-5-5"},
-        {"client": "codex", "model": "claude-opus-5-5"},
+        {"client": "pi", "model": "claude-opus-5-5", "effort": "medium"},
+        {"client": "codex", "model": "claude-opus-5-5", "effort": "medium"},
     ]
     assert (
         results.build_results(pairs_for("claude-opus-5-5", cells, client="claude"), seed=0, created=1.0, b=10)["groups"]
         == []
     )
+
+
+def test_a_row_is_a_model_at_one_effort():
+    # REVIEW-4 2.2: groups keyed on (client, slug, condition) put a model's high-effort runs in its medium row
+    cells = {"a": [True, True], "b": [True, False]}
+    medium = pairs_for("deepseek-v4-pro", cells)
+    high = [
+        (
+            {**m, "run_id": m["run_id"] + "-high", "model": {**m["model"], "reasoning_effort": "high"}},
+            {**r, "run_id": r["run_id"] + "-high", "passed": False},
+        )
+        for m, r in pairs_for("deepseek-v4-pro", cells)
+    ]
+    out = results.build_results([*medium, *high], seed=0, created=1.0, b=50)
+    assert_valid("results.v1.schema.json", out)
+    rows = {(g["model"], g["effort"]): g for g in out["groups"]}
+    assert set(rows) == {("deepseek-v4-pro", "high"), ("deepseek-v4-pro", "medium")}
+    assert (rows[("deepseek-v4-pro", "medium")]["n_runs"], rows[("deepseek-v4-pro", "high")]["n_runs"]) == (4, 4)
+    assert rows[("deepseek-v4-pro", "high")]["suite_score"] == 0.0
+    assert {r["effort"] for r in out["runs"]} == {"high", "medium"}
+    assert [m["effort"] for m in out["ranking"][0]["models"]] == ["medium", "high"]

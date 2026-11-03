@@ -466,7 +466,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
 @core.mcp.tool()
 @reporting._guard
 def get_combat_state() -> str:
-    """Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy."""
+    """Turn order (visible combatants, with what each is concentrating on), whose turn it is, round, the clouds and harmful surfaces in view (HAZARD lines, as look), and the active character's remaining action economy."""
     t0 = time.monotonic()
     return reporting._finish("get_combat_state", {}, _combat_state_text(), t0)
 
@@ -488,8 +488,10 @@ def _combat_state_text() -> str:
     limit = render.turn_limit_line(timer)
     if limit:
         body += "\n" + limit
-    # One read should be enough to plan the whole turn: add the acting party member's actions.
-    st = core.game.try_rpc("state.status") or {}
+    # One read should be enough to plan the whole turn: add the acting party member's actions. The clouds and
+    # surfaces in view (nav.hazards, as look lists them) ride in the same eval as the status.
+    st, hz = _read_with_hazards("state.status", {})
+    st = st or {}
     turn_plan._remember_party(st)  # the result's events text reads the party from it, not from a second read
     party = {c.get("uuid") for c in st.get("party") or []}
     hint = reporting._fight_hint(res, party)
@@ -502,26 +504,43 @@ def _combat_state_text() -> str:
     if len(mine) > 1:
         body += ("\nSHARED TURN: " + ", ".join(queueing._label(u) for u in mine)
                  + " can all act now, in any order (who=<member> on each action, end_turn for each)")
+    hzl = overview._hazard_lines(hz, always=True)  # the full combat view: every patch in view, every call
+    if hzl:
+        body += "\n" + "\n".join(hzl)
     if cur in party:
-        block = _turn_block(res, cur)
+        block = _turn_block(res, cur, hazards=False)
         if block:
             body += "\n" + block
     body += _light_note(res)
     return body
 
 
-def _turn_block(cs: Any, cur: str) -> str:
+def _read_with_hazards(op: str, args: dict, char: str | None = None) -> tuple[Any, Any]:
+    """(op's result, the nav.hazards patches) from ONE server eval; (None, None) when the eval fails. The patches are
+    the ones a party member sees within 12 m of `char` (default: the selected character), as look lists them."""
+    try:
+        res, hz = delta.multi_rpc(core.game, [(op, args), ("nav.hazards", {"char": char} if char else {})])
+    except GameError:
+        return None, None
+    return res, (hz.get("hazards") if isinstance(hz, dict) else None)
+
+
+def _turn_block(cs: Any, cur: str, hazards: bool = True) -> str:
     """The acting party member's turn block as get_combat_state shows it: its reach line and YOUR ACTIONS (one
     state.actions read; cs is the state.combat already read). '' when the read fails. end_turn and
-    wait_for('my_turn') end with it too, so a party turn needs no get_combat_state first (a player sees the hotbar)."""
-    acts = core.game.try_rpc("state.actions", {"uuid": cur})
+    wait_for('my_turn') end with it too, so a party turn needs no get_combat_state first (a player sees the hotbar).
+    hazards: also the HAZARD lines around `cur` when the patches in view changed since they were last shown (the
+    same eval; Balthazar: the agent learnt of the Cloudkill cloud only from '+Cloudkill' on whoever it had hit)."""
+    acts, hz = _read_with_hazards("state.actions", {"uuid": cur}, cur) if hazards else \
+        (core.game.try_rpc("state.actions", {"uuid": cur}), None)
     overview._learn_actions(cur, acts)
     if not acts:
         return ""
     mv = (acts.get("resources") or {}).get("Movement")  # [amount, max] (State.lua resourcesView)
     rl = turn.reach_line(cs, cur, mv[0] if isinstance(mv, (list, tuple)) and mv else None, queueing._label) \
         if isinstance(cs, dict) else None
-    return "\n".join(([rl] if rl else []) + ["YOUR ACTIONS (" + core.H.get(cur) + ")", render.render_actions(acts, core.H)])
+    return "\n".join(overview._hazard_lines(hz) + ([rl] if rl else [])
+                     + ["YOUR ACTIONS (" + core.H.get(cur) + ")", render.render_actions(acts, core.H)])
 
 
 _light_noted: set[str] = set()  # members told this combat that they fight with the lantern
