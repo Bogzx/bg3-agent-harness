@@ -560,6 +560,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         end
     end
     G.known_spell(char, spell)
+    G.check_rules(char, spell, st, target) -- REVIEW-5 F1/F3: the stats' own requirements (GuardRules.lua)
 
     local level = tonumber(st.Level) or 0
     if upcast then
