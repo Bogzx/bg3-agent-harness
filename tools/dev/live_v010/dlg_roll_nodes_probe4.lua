@@ -14,6 +14,9 @@
 --      Skill and Ability (pairs with the answers on screen by text even without the instance).
 -- Read-only (Peek, proxies, pcall everywhere). Run at a node with a skill check showing (Lae'zel's cage):
 --   call.py ROLL4 lua:server "$(cat tools/dev/live_v010/dlg_roll_nodes_probe4.lua)"
+-- MODE (set by sed in the w9 list): "safe" = W0-W2 only (Peek, which reads through bg3le's safe_read), "w4" = W0-W2 +
+-- W4 (proxies on the static dialogs), "w3" = W0-W2 + W3 (proxies at guessed instance addresses: the riskiest, last).
+local MODE = "all"
 local I = Ext._Internal
 local function try(f, ...)
     local ok, v = pcall(f, ...)
@@ -189,7 +192,7 @@ if #found == 0 and m1 and m1.keys[1] then
 end
 
 -- W3: each instance, read at its address and 8 bytes later.
-for _, f in ipairs(found) do
+for _, f in ipairs((MODE == "all" or MODE == "w3") and found or {}) do
     for _, shift in ipairs({ 0, 8 }) do
         local inst = try(I.PointedObject, f.v + shift, "dlg::DialogInstance")
         local cur = plain(get(get(inst, "CurrentNode"), "UUID"))
@@ -209,7 +212,7 @@ end
 
 -- W4: the static dialogs in use (RefCount > 0) and their roll nodes.
 local dm = try(Ext.Utils.GetDialogManager)
-local cached = list(get(dm, "CachedDialogs"), 2000)
+local cached = (MODE == "all" or MODE == "w4") and list(get(dm, "CachedDialogs"), 2000) or {}
 out.w4_cached = #cached
 for _, d in ipairs(cached) do
     local rc = get(d, "RefCount")
@@ -233,4 +236,5 @@ for _, d in ipairs(cached) do
 end
 -- the raw addresses are for reading the dump, not for JSON numbers
 if m1 then for _, k in ipairs(m1.keys) do k.v = nil end end
+out.mode = MODE
 return Ext.Json.Stringify(out)
