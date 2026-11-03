@@ -144,6 +144,13 @@ _RES_ALIASES = {"ActionPoint": "Action", "BonusActionPoint": "Bonus", "ReactionA
                 "Movement": "Move", "SpellSlot": "Slots"}
 
 
+def resource_label(name: str) -> str:
+    """An action resource's name as words: the short alias of the action economy (Action, Bonus, Move, Slots), else
+    the resource id split at its capitals ('ChannelDivinity' -> 'Channel Divinity', 'LayOnHandsCharge' -> 'Lay On
+    Hands Charge')."""
+    return _RES_ALIASES.get(name) or re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)
+
+
 def resources_text(res: dict) -> str:
     """{'ActionPoint':[1,1],'SpellSlot':{'1':[4,4]}} -> 'Action 1/1 · Slots L1 4/4 ...' (fixed order first).
     MoveBlocked (State.lua moveView: the status that keeps the member from walking) -> 'Move 0/9m (Lethargic)'."""
@@ -153,7 +160,7 @@ def resources_text(res: dict) -> str:
     parts = []
     for k in keys:
         v = res[k]
-        name = _RES_ALIASES.get(k, k)
+        name = resource_label(k)
         if isinstance(v, dict):
             slots = " ".join(f"L{lvl} {num(cm[0])}/{num(cm[1])}" for lvl, cm in sorted(v.items(), key=lambda kv: str(kv[0]))
                              if isinstance(cm, (list, tuple)) and len(cm) == 2)

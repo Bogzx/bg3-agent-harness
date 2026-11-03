@@ -571,7 +571,9 @@ function S.actions(uuid)
         local a = { spell = id, name = info.name, cost = next(cost) and cost or nil,
             target = TARGET_KIND[info.type] or "entity" }
         if info.level and info.level > 0 then a.level = info.level end
-        local rng = tonumber(info.range) or (type(info.range) == "string" and info.range ~= "" and (wranges[info.range] or info.range)) or nil
+        -- A named range is the wielded weapon's (weaponRanges); one with no value here (ThrownObjectRange: the game
+        -- works it out per thrown object) is left out, never sent as its name (fight-flow pilot: "ThrownObjectRangem")
+        local rng = tonumber(info.range) or (type(info.range) == "string" and wranges[info.range]) or nil
         if rng and rng ~= 0 then a.range = rng end
         local area = tonumber(info.area)
         if area and area > 0 then info.area = area end

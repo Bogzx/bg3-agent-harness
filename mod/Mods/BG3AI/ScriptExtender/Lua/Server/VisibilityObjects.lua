@@ -311,32 +311,40 @@ function V.unboundedPerceived(ctx, uuid, e, pos, kind)
     return v
 end
 
--- Is a spot on the ground in view: within a party member's sight range, with
--- an unobstructed ray from its eye to `lift` m above the spot (a burning
--- floor, a cloud)? nil when the ray API is unusable (uncalibrated or broken):
--- the caller decides (nav hazards keep the patch: fail-safe for walking).
+-- Is a spot on the ground in view: in range (within CAMERA_M of the leader, or within a party member's own sight
+-- range), with an unobstructed ray from a member's eye to `lift` m above the spot (a burning floor, a cloud)? nil
+-- when the ray API is unusable (uncalibrated or broken): the caller decides (nav hazards keep the patch: fail-safe
+-- for walking).
+-- Range = what the screen shows (user 2026-11-02, FAIRNESS.md "Navigation knows only ground"): the camera follows
+-- the leader (ctx.leader: the selected member, else the first on stage) and shows ground about CAMERA_M round it,
+-- far past the Sight stat (18.5 m), which stays the range for characters and items. Ground only: pointSeen's
+-- callers are N.known and the hazard patches.
 V.POINT_LIFT = 0.5
+V.CAMERA_M = 40.0
 -- Live N14b (2026-10-28, the Gauntlet altar): a spot 8 m off on the ledge 2.3 m below read "not in view": the eye ray
 -- to it ran into the altar floor's own top 3.8 m out, short of the drop edge (Claude later stood at 4 m), while the
 -- player's camera above sees over that edge. A ray to a lower spot that stops on the observer's own floor is looked
--- over the edge, within bounds (FAIRNESS.md "Navigation knows only ground"):
+-- over the edge, within bounds (FAIRNESS.md "Navigation knows only ground"; drop and angle widened to what the
+-- overhead camera shows, user 2026-11-02):
 -- - the hit is floor: Ext.Level.GetHeightsAt there has a height within EDGE_FLOOR_M of the hit (not a wall's or a
 --   parapet's face), within EDGE_DY_M of the feet, at most EDGE_NEAR_M (x/z) from the observer;
 -- - the spot is at most EDGE_DROP_M below the feet;
 -- - the edge: along the ray, every EDGE_STEP_M up to EDGE_SCAN_M past the hit and no further than EDGE_NEAR_M from
 --   the observer, the first point with no floor within EDGE_DY_M of the feet; a floor that goes on is no edge;
 -- - the look: from PEEK_H above the last floor point, PEEK_BACK_M back toward the eye (never from the raw hit), no
---   steeper down than PEEK_MAX_DOWN (tan; the dead ground at a face's foot stays unseen), a clear ray to the spot.
+--   steeper down than PEEK_MAX_DOWN (tan of 60 degrees; the dead ground at a face's foot stays unseen), a clear ray
+--   to the spot.
 -- No heights answer or a ray error: not seen.
 V.EDGE_DY_M = 0.5
 V.EDGE_FLOOR_M = 0.15
 V.EDGE_NEAR_M = 5.0
-V.EDGE_DROP_M = 4.0
+V.EDGE_DROP_M = 15.0
 V.EDGE_STEP_M = 0.25
 V.EDGE_SCAN_M = 3.0
-V.PEEK_H = 0.5
+-- 1 m up: from 0.5 m the edge's own lip (0.3-0.55 m ahead) capped the look at ~45 degrees whatever PEEK_MAX_DOWN said
+V.PEEK_H = 1.0
 V.PEEK_BACK_M = 0.3
-V.PEEK_MAX_DOWN = 1.0
+V.PEEK_MAX_DOWN = math.tan(math.rad(60))
 local function hdist(p, q) return math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2) end
 -- A floor height at (x, z) within tol of y: true / false / nil (no answer).
 local function floorNear(x, z, y, tol)
@@ -382,8 +390,10 @@ function V.pointSeen(ctx, pt, lift)
     local o1 = ctx.observers[1]
     if not (o1 and o1.pos and V.rayCalibrated(o1)) then return nil end
     local tgt = { pt[1], pt[2] + (lift or V.POINT_LIFT), pt[3] }
+    local lead = ctx.leader or o1.pos
+    local onScreen = U.dist(lead, tgt) <= V.CAMERA_M
     for _, o in ipairs(ctx.observers) do
-        if o.pos and U.dist(o.pos, tgt) <= o.sight then
+        if o.pos and (onScreen or U.dist(o.pos, tgt) <= o.sight) then
             local eye = { o.pos[1], o.pos[2] + V.EYE_H, o.pos[3] }
             local ok, hit = pcall(raycast, eye, tgt)
             if not ok then return nil end

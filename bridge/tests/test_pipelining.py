@@ -52,7 +52,7 @@ class AsyncTravel(Base):
     def test_returns_at_once_and_the_queue_walks_the_legs(self):
         self.g.dur["act.move_to"] = 0.15
         t0 = time.monotonic()
-        out = travel_macro.travel_to(marker="m1")
+        out = travel_macro.travel_to(marker="m1", wait=False)
         self.assertLess(time.monotonic() - t0, 0.1)  # did not wait for the first 0.15 s leg
         self.assertIn("travel_to marker m1 Old well: started (50m)", out)
         self.assertIn("queued 1 step(s)", out)
@@ -69,7 +69,7 @@ class AsyncTravel(Base):
 
     def test_arrival_steps_append_after_the_trip(self):
         self.g.dur["act.move_to"] = 0.1
-        travel_macro.travel_to(marker="m1")
+        travel_macro.travel_to(marker="m1", wait=False)
         out = batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         self.assertIn("queued 1 step(s)", out)
         batch.wait_for("queue", timeout_s=5)
@@ -78,7 +78,7 @@ class AsyncTravel(Base):
 
     def test_cancel_queue_stops_the_trip(self):
         self.g.dur["act.move_to"] = 0.5
-        travel_macro.travel_to(marker="m1")
+        travel_macro.travel_to(marker="m1", wait=False)
         self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
         out = batch.cancel_queue()
         self.assertIn("cancelled", out)
@@ -91,7 +91,7 @@ class AsyncTravel(Base):
     def test_queue_after_an_async_walk_waits_for_it(self):
         # move_to returns at once; queue_actions right after must not supersede the walk.
         self.g.dur["act.move_to"] = 0.3
-        out = world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
         self.assertIn("started j", out)
         h = out.split("started ", 1)[1].split(",")[0].split()[0]
         q = batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
@@ -104,7 +104,7 @@ class AsyncTravel(Base):
 
     def test_cancel_queue_also_stops_the_walk_it_waits_for(self):
         self.g.dur["act.move_to"] = 1.0
-        h = world_tools.move_to(x=5.0, y=0.0, z=0.0).split("started ", 1)[1].split(",")[0].split()[0]
+        h = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False).split("started ", 1)[1].split(",")[0].split()[0]
         batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         time.sleep(0.1)
         batch.cancel_queue()
@@ -118,16 +118,16 @@ class AsyncTravel(Base):
         self.assertFalse(queueing._queues().busy())
         self.assertEqual(self.g.ops("act.move_to"), [])
 
-    def test_wait_true_does_not_block_and_shows_progress(self):
+    def test_wait_false_does_not_block_and_shows_progress(self):
         plumbing.SETTLE_S = 0.2
         self.enterContext(mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules+coaching"}))  # NEXT: is coaching
         self.g.dur["act.move_to"] = 1.0
         self.g.watch["party"][0]["pos"] = [0.0, 0.0, 0.0]
         t0 = time.monotonic()
-        out = travel_macro.travel_to(marker="m1", wait=True)
+        out = travel_macro.travel_to(marker="m1", wait=False)
         self.assertLess(time.monotonic() - t0, 0.6)
         self.assertIn("travel_to marker m1 Old well: started (50m); 50m left", out)
-        self.assertIn("wait=true ignored", out)
+        self.assertNotIn("ignored", out)
         self.assertIn(f"RUNNING queue {who()}: travel_to", out)
         self.assertIn("(queue_actions appends after it)", out)
         self.assertIn("NEXT: queue_actions", out)
@@ -146,11 +146,11 @@ class AsyncTravel(Base):
         self.assertEqual(batch._trip_progress(P1), "30m left, ETA ~6s")
 
     def test_do_actions_can_travel(self):
-        out = batch.do_actions(json.dumps([{"tool": "travel_to", "marker": "m1"},
-                                            {"tool": "interact", "target": core.H.get(CHEST)}]))
-        self.assertIn("1. travel_to marker m1 Old well: 50m", out)
+        out = batch.do_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)},
+                                            {"tool": "travel_to", "marker": "m1"}]))
+        self.assertIn("1. interact", out)
+        self.assertIn("2. travel_to marker m1 Old well: 50m", out)
         self.assertIn("arrived", out)
-        self.assertIn("2. interact", out)
         self.assertEqual(len(self.g.ops("act.move_to")), 2)
 
 
@@ -164,7 +164,7 @@ class EarlyWake(Base):
 
     def walk(self, dur: float) -> str:
         self.g.dur["act.move_to"] = dur  # the fake's ETA is 1.0 s
-        out = world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
         return out.split("started ", 1)[1].split(",")[0].split()[0]
 
     def test_wakes_early_and_the_next_action_waits_for_the_walk(self):
@@ -251,7 +251,7 @@ class EarlyWake(Base):
                                                              "level": "TUT"}]))
         self.g.reach = lambda a: {"reachable": True, "pos": [50.0, 0.0, 0.0]}
         self.g.dur["act.move_to"] = 1.0
-        travel_macro.travel_to(marker="m1")
+        travel_macro.travel_to(marker="m1", wait=False)
         self.assertTrue(wait_until(lambda: self.g.ops("act.move_to")))
         batch._trips[P1] = {"dest": [50.0, 0.0, 0.0], "d0": 50.0, "t0": time.monotonic() - 4.0}
         self.g.watch["party"][0]["pos"] = [45.0, 0.0, 0.0]  # 45 m in 4 s: ~0.4 s left
@@ -266,8 +266,9 @@ class EarlyWake(Base):
     def test_queue_with_arrival_steps_waits_to_the_end(self):
         self.g.dur["act.move_to"] = 0.3
         self.g.dur["act.interact"] = 0.3
-        batch.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0},
-                                         {"tool": "interact", "target": core.H.get(CHEST)}]))
+        # the arrival step appended by a second call (a walk ends a batch: one call can't hold both)
+        batch.queue_actions(json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0}]))
+        batch.queue_actions(json.dumps([{"tool": "interact", "target": core.H.get(CHEST)}]))
         out = batch.wait_for("queue", timeout_s=5)
         self.assertNotIn("arriving", out)
         self.assertIn("done (2 steps)", out)
@@ -489,10 +490,10 @@ class SettleAndPace(Base):
     def test_long_walk_returns_after_the_window(self):
         self.g.dur["act.move_to"] = 3.0
         t0 = time.monotonic()
-        out = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=True)
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
         self.assertLess(time.monotonic() - t0, 0.8)
         self.assertTrue(out.startswith("move_to: started j1, ETA"), out)
-        self.assertIn("\n(pace guard: wait=true ignored outside combat", out.split("RUNNING")[0])  # before the status lines
+        self.assertNotIn("pace guard", out)
         self.assertIn("RUNNING j1 move_to", out)
 
     def test_wait_true_blocks_in_combat(self):
@@ -504,33 +505,33 @@ class SettleAndPace(Base):
 
     def test_pace_hint_when_waiting_right_after_issuing(self):
         self.g.dur["act.move_to"] = 0.6
-        world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
         self.assertIn("PACE:", batch.wait_for("j1", timeout_s=2))
-        world_tools.move_to(x=6.0, y=0.0, z=0.0)
+        world_tools.move_to(x=6.0, y=0.0, z=0.0, wait=False)
         observe.get_events()  # independent work in between: no nudge
         self.assertNotIn("PACE:", batch.wait_for("j2", timeout_s=2))
 
     def test_rules_only_condition_has_no_pace_hint(self):
         os.environ["BG3AI_PROMPT_CONDITION"] = "rules"
         self.g.dur["act.move_to"] = 0.6
-        world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
         self.assertNotIn("PACE:", batch.wait_for("j1", timeout_s=2))
 
     def test_next_hint_three_times_then_after_a_nudge(self):
         self.g.dur["act.move_to"] = 5.0
         seen = []
         for i in range(5):
-            seen.append("NEXT:" in world_tools.move_to(x=float(i), y=0.0, z=0.0))
+            seen.append("NEXT:" in world_tools.move_to(x=float(i), y=0.0, z=0.0, wait=False))
             observe.get_events()
         self.assertEqual(seen, [True, True, True, False, False])
-        world_tools.move_to(x=9.0, y=0.0, z=0.0)
+        world_tools.move_to(x=9.0, y=0.0, z=0.0, wait=False)
         batch.wait_for("idle", timeout_s=0.1)  # right after issuing: nudged
-        self.assertIn("NEXT:", world_tools.move_to(x=10.0, y=0.0, z=0.0))
+        self.assertIn("NEXT:", world_tools.move_to(x=10.0, y=0.0, z=0.0, wait=False))
 
     def test_rules_only_condition_has_no_next_hint(self):
         self.enterContext(mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules"}))
         self.g.dur["act.move_to"] = 5.0
-        self.assertNotIn("NEXT:", world_tools.move_to(x=5.0, y=0.0, z=0.0))
+        self.assertNotIn("NEXT:", world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False))
         self.assertEqual(reporting._pace["next_shown"], 0)  # the 3 showings stay for a coaching session
 
     def test_queue_result_shows_what_runs(self):
@@ -562,10 +563,11 @@ class AlwaysLoad(unittest.TestCase):
         for name in ("new_game", "ui_dump"):  # lockpick, click: preloaded since S002-S007; fast_travel since S026
             self.assertFalse((tools[name].meta or {}).get("anthropic/alwaysLoad"), name)
 
-    def test_movement_defaults_to_async(self):
+    def test_movement_blocks_by_default(self):
+        # human-gap research 2026-11-02 (item 4): a walk is one call, returned at its end; wait=false pipelines
         import inspect
         for fn in (world_tools.move_to, observe.walk_toward, travel_macro.travel_to):
-            self.assertIs(inspect.signature(fn).parameters["wait"].default, False, fn.__name__)
+            self.assertIs(inspect.signature(fn).parameters["wait"].default, True, fn.__name__)
 
 
 class PipeliningMetric(unittest.TestCase):

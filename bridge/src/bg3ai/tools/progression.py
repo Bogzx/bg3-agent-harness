@@ -206,7 +206,7 @@ def _level_up_steps(uuid: str, args: dict, note: str) -> str:
 def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = False, sell: str = "",
           keep: str = "", full: bool = False, donate: bool = False, count: int = 0) -> str:
     """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
-    sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; get_inventory(filter="junk") previews it.
+    sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; the result names everything sold (SOLD, by name with count and gold) and counts what was kept back by kind (KEPT); get_inventory(filter="junk") previews it.
     Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only.
     confirm refuses an uneven table before the barter (a trader with no gold swaps items only); donate=true gives the offered items (or an overpay's difference) for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
     if sell:
@@ -391,7 +391,8 @@ def _sell_junk(keep: str = "") -> str:
     t0 = time.monotonic()
     inv = core.game.rpc("state.inventory", {})
     plumbing._remember_names(inv)
-    junk = {it["uuid"]: it for it in economy.junk(inv, inventory._keep_set(keep))}
+    keep_set = inventory._keep_set(keep)
+    junk = {it["uuid"]: it for it in economy.junk(inv, keep_set)}
     st = core.game.rpc("ui.trade", {"max": 500}, context="client")  # every slot, not the default 60
     plumbing._remember_names(st)
     on_screen = [it for it in (st.get("your_items") or []) if isinstance(it, dict) and it.get("uuid") in junk]
@@ -424,15 +425,53 @@ def _sell_junk(keep: str = "") -> str:
             done += len(ch)
     finally:
         core._EV_DROP["until"] = time.monotonic() + core.EV_DROP_TAIL_S  # late AddedTo events of this sale
+    sold = _sold_lines([it for it in on_screen if it["uuid"] in set(picked[:done])], junk)
     if done < len(picked):
         return out + (f"\n(sold {done} of {len(picked)} junk items in {done // SELL_CHUNK} barter(s) before this "
-                      f"one failed; trade sell=junk again sells the rest)" if done else "")
+                      f"one failed; trade sell=junk again sells the rest)" + sold if done else "")
     left = len(on_screen) - len(picked)
     if len(chunks) > 1:
         out += f"\n({len(chunks)} barters of up to {SELL_CHUNK} items)"
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
         f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
-    return out + note
+    return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set)
+
+
+def _sold_lines(items: list[dict], junk: dict) -> str:
+    """'\nSOLD Goblin Scimitar x16 48 g | Javelin x10 20 g | ...': every item a sell=junk barter sold, grouped by name
+    (count, gold at the shown prices), most gold first. The sale's own item events are dropped from EVENTS
+    (core._EV_DROP), so this is where the agent sees what went (human-gap research 2026-11-02: launch-v1's 36
+    sell=junk calls sold 430 items for ~4,000 g and named none of them)."""
+    groups: dict[str, list[int]] = {}
+    for it in items:
+        name = str(it.get("name") or junk.get(it["uuid"], {}).get("name") or "?")
+        g = groups.setdefault(name, [0, 0])
+        g[0] += economy._count(it) if it.get("count") else economy._count(junk.get(it["uuid"], {}))
+        g[1] += it.get("price") or 0
+    if not groups:
+        return ""
+    rows = sorted(groups.items(), key=lambda kv: (-kv[1][1], kv[0]))
+    return "\nSOLD " + " | ".join(f"{n}{f' x{c}' if c > 1 else ''} {g} g" for n, (c, g) in rows)
+
+
+def _kept_line(screen: list, junk: dict, inv: dict, keep_set: set[str]) -> str:
+    """'\nKEPT (not junk) on this trade screen: 12 consumables, 4 equipped, ...': what the junk rule held back of the
+    items offered for sale here, counted by why (economy.keep_kind), most first."""
+    by_uuid = {it["uuid"]: it for it in (inv or {}).get("items") or [] if isinstance(it, dict) and it.get("uuid")}
+    wanted = {u["uuid"] for u in economy.upgrades(inv)}
+    kinds: dict[str, int] = {}
+    for it in screen:
+        if not isinstance(it, dict) or it.get("uuid") in junk:
+            continue
+        rec = by_uuid.get(it.get("uuid"))
+        kind = economy.keep_kind(rec, keep_set, wanted) if rec else "other"
+        if kind in (None, "gold"):
+            continue
+        kinds[kind] = kinds.get(kind, 0) + economy._count(it if it.get("count") else rec or {})
+    if not kinds:
+        return ""
+    return "\nKEPT (not junk) on this trade screen: " + ", ".join(
+        f"{n} {k}" for k, n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

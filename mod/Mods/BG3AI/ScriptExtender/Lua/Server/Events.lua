@@ -566,9 +566,31 @@ end
 -- camp.can_rest -> {blocked=[{name, flags}], global_disabled, long_rest_state}: asked before the rest button press.
 RPC.register("camp.can_rest", function() return E.canRest() end)
 
--- camp.rest_flow {since_ms?} -> {steps=[...], step_ms=[...], story={...}, can_rest={...}}: the End-the-Day
--- handshake steps seen recently (step_ms: how long ago each one fired), the camp story flags and the engine's
--- rest validation (diagnostics for the bridge's metrics log; can_rest's reasons are shown to the agent).
+-- Who the camp story still wants a talk with before the night can end (GLO_Camp.txt "Required talks":
+-- DB_Camp_RequiredTalks(character, dialog); the story shows the "!" over each). At night the sleep press runs
+-- PROC_Camp_TryLeaveNightMode_CampNightCheck: while any row is left it only opens the "talks left" message box and
+-- the night goes on; a row clears when that character joins a conversation (DialogActorJoined). launch-v1 haiku
+-- act3_gold_max: 46 long_rest "the night at camp didn't end" until the agent happened to talk to Shadowheart (r2,
+-- r4) or Withers (r5). -> {{uuid, name} | {} per character}: named when in the party or perceived (the "!" is on
+-- screen), else an empty row (counted, not named). nil when the DB can't be read.
+function E.requiredTalks()
+    local ok, rows = pcall(function() return Osi.DB_Camp_RequiredTalks:Get(nil, nil) end)
+    if not ok or type(rows) ~= "table" then return nil end
+    local out, seen = {}, {}
+    for _, r in ipairs(rows) do
+        local u = V.uuid(r[1])
+        if u and not seen[u] then
+            seen[u] = true
+            out[#out + 1] = visibleChar(u) and ref(u) or {}
+        end
+    end
+    return out
+end
+
+-- camp.rest_flow {since_ms?} -> {steps=[...], step_ms=[...], story={...}, can_rest={...}, required_talks}: the
+-- End-the-Day handshake steps seen recently (step_ms: how long ago each one fired), the camp story flags and the
+-- engine's rest validation (diagnostics for the bridge's metrics log; can_rest's reasons are shown to the agent),
+-- and E.requiredTalks (shown: travel.py night_talks_left).
 RPC.register("camp.rest_flow", function(args)
     local now = Ext.Utils.MonotonicTime()
     local since = now - (tonumber(args and args.since_ms) or 30000)
@@ -583,7 +605,8 @@ RPC.register("camp.rest_flow", function(args)
         story[n] = ok and rows and #rows or -1
     end
     local okc, can = pcall(E.canRest)
-    return { steps = steps, step_ms = stepMs, story = story, can_rest = okc and can or nil }
+    return { steps = steps, step_ms = stepMs, story = story, can_rest = okc and can or nil,
+             required_talks = E.requiredTalks() }
 end)
 
 return E

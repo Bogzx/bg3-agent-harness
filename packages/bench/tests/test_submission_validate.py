@@ -21,6 +21,7 @@ from test_submission_pack import mp4
 
 from bg3bench import behaviour, facts, saves
 from bg3bench.submission import bundle, codes, consistency, pack, validate
+from bg3bench.submission.release import defs_digest
 
 FIXTURES = Path(__file__).parent / "fixtures" / "submission"
 GOLD, FIGHT = "act3_gold_max", "fight_act2_balthazar"
@@ -98,7 +99,8 @@ def good_run(tmp: Path, name: str, start_snapshot: bool = True) -> Path:
 
 def release_for(d: Path) -> validate.Release:
     man = json.loads((d / "manifest.json").read_text())
-    names = sorted({t["name"] for t in json.loads((d / "bg3-tools.json").read_text())} - OFF)
+    tools = json.loads((d / "bg3-tools.json").read_text())
+    names = sorted({t["name"] for t in tools} - OFF)
     sc = pack.load_scenarios()[man["scenario"]["name"]]
     return validate.Release(
         suite=man["versions"]["suite"],
@@ -113,7 +115,11 @@ def release_for(d: Path) -> validate.Release:
         },
         conditions={
             "rules": {
-                "tools": {"allowlist_sha256": man["tools"]["allowlist_sha256"], "names": names},
+                "tools": {
+                    "allowlist_sha256": man["tools"]["allowlist_sha256"],
+                    "names": names,
+                    "defs_sha256": defs_digest(tools, names),
+                },
                 "prompts": {"pi": {"sha256": man["prompt"]["sha256"]}},
             }
         },
@@ -626,6 +632,27 @@ def cond(fn: Callable[[dict], dict]) -> Callable[[validate.Release], dict]:
     return lambda r: {"rules": fn(dict(r.conditions["rules"]))}
 
 
+def edit_tool(bdir: Path, key: str, value: object) -> None:
+    """One served tool's definition changed in bg3-tools.json (the first allowed one: names stay the same)."""
+    tools = json.loads((bdir / "bg3-tools.json").read_text())
+    tool = next(t for t in tools if t["name"] not in OFF)
+    tool[key] = value
+    (bdir / "bg3-tools.json").write_text(json.dumps(tools))
+
+
+def test_a_release_without_defs_sha256_does_not_check_the_definitions(tmp_path):
+    """bench-v0.8/v0.9's releases pin names only: their bundles re-validate unchanged, an edited description too."""
+    d = good_run(tmp_path, FIGHT)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    edit_tool(bdir, "description", "a description of another build")
+    rehash(bdir)
+    names_only = cond(lambda c: {**c, "tools": {k: v for k, v in c["tools"].items() if k != "defs_sha256"}})
+    release = rel(conditions=names_only)(release_for(d))
+    v = validate.validate(bdir, release, where="job", ctx=ctx_for(env_of(bdir)))
+    assert "C02" not in v.failed, [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
 def unlinked(name: str) -> Callable[[Path], None]:
     return lambda b: (b / name).unlink()
 
@@ -714,6 +741,15 @@ ERRORS: dict[str, tuple] = {
         None,
         {},
     ),
+    "a tool's description edited": (
+        "C02",
+        lambda b: edit_tool(b, "description", "a description of another build"),
+        True,
+        None,
+        {},
+    ),
+    "a tool's parameters edited": ("C02", lambda b: edit_tool(b, "inputSchema", {"type": "object"}), True, None, {}),
+    "a tool's client hint edited": ("C02", lambda b: edit_tool(b, "_meta", {}), True, None, {}),
     "instructions missing": ("C02", unlinked("bg3-instructions.txt"), True, None, {}),
     "instructions edited": ("C02", lambda b: (b / "bg3-instructions.txt").write_text("other"), True, None, {}),
     "caps differ": (

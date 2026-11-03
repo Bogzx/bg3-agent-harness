@@ -87,7 +87,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "the tool list names equal the allowlist; the served texts hash to prompt.parts"
+      "summary": "the tool list names equal the allowlist, its definitions the release's; served texts hash to prompt.parts"
     },
     {
       "code": "C03",

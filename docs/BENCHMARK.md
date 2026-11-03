@@ -97,6 +97,10 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
 - bench-v0.9 (bg3bench 0.9.0): the same scenarios and graders as bench-v0.8; a new release file
   (`packages/bench/releases/bench-v0.9.json`) for the mod and bg3 tools after the bench-v0.8 runs.
   `releases/bench-v0.8.json` stays what the bench-v0.8 results were checked against.
+- bench-v0.10 (bg3bench 0.10.0): the same scenarios and graders again; a new release file
+  (`packages/bench/releases/bench-v0.10.json`) for the mod and bg3 tools after bench-v0.9's fight re-run
+  (CHANGELOG.md lists what changed for the agent). `releases/bench-v0.9.json` is frozen. A call's async flag now
+  needs its own job still running at return, so async % is not comparable with earlier suites.
 
 ### Game Over and the run's own saves (2026-10-25, bench B3)
 

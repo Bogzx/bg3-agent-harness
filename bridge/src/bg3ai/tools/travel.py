@@ -12,7 +12,7 @@ from typing import Any
 
 from .. import actq, areablock, busywait, companions, longnav, macros, navhints, party, render
 from ..game import GameError, JobResult, NotReady
-from . import core, overview, plumbing, reporting, transition, world_tools
+from . import camp_night, core, overview, plumbing, reporting, transition, world_tools
 
 
 @core.mcp.tool()
@@ -223,6 +223,9 @@ def _end_night_first() -> str:
     if b.get("dialogue"):
         return ("FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends the night "
                 "(the party sleeps: a long rest)")
+    talks = camp_night.night_talks_left()
+    if talks:
+        return f"FAILED: nothing was pressed: {talks}. Until the night ends, travel from camp is blocked"
     out = world_tools._box_act("long_rest", "ui.long_rest", {"sleep_only": True}, wait_s=60)
     res = reporting._batch.get("result")
     if isinstance(res, dict) and res.get("night_ended"):
@@ -340,6 +343,8 @@ def fast_travel(waypoint: str) -> str:
         res = reporting._batch.get("result")
         overview.trip_arrived(sub, f"the trip to {(res.get('arrived') if isinstance(res, dict) else None) or waypoint}")
         out += _left_behind_after_trip(waypoint)
+        if not reporting._batch["active"]:
+            out += batch.walk_end_tail()  # the arrival: CHANGES + the minimap block, as at a walk's end
     return (left + "\n" + out) if left else out
 
 

@@ -385,6 +385,24 @@ class AutoDialogue(Base):
         self.g.push("dialogue_started", {"speakers": [{"name": "Shadowheart"}]})
         self.assertNotIn("STOPPED", overview.get_status())
 
+    def test_a_call_past_its_deadline_clicks_no_filler(self):
+        # review-v010-human-gap #1: a walk stopped by a conversation near its 90 s budget still clicked up to 12 filler
+        # lines after it; the result could arrive after the client's 110 s. Past the call's deadline: none.
+        self.g.ui_seq = [{"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}}, self.CHOICE]
+        t0 = time.monotonic() - macro_tools.CALL_DEADLINE_S - 1
+        out = reporting._auto_dialogue("travel_to", "travel_to: STOPPED - a conversation started", "dialogue_started", t0)
+        self.assertEqual(self.g.ops("ui.dialogue_choose"), [])
+        self.assertIn(f"STOPPED: {macro_tools.TIME_UP}", out)
+        self.assertIn("Hello there.", out)  # the conversation as it stands
+
+    def test_a_playing_line_hands_back_at_the_call_deadline(self):
+        self.g.ui = {"screen": "dialogue", "dialogue": {"text": "*A long cinematic line.*"}}  # no prompt yet: playing
+        t0 = time.monotonic() - macro_tools.CALL_DEADLINE_S + 0.5
+        t = time.monotonic()
+        out = reporting._auto_dialogue("travel_to", "travel_to: STOPPED - a conversation started", "dialogue_started", t0)
+        self.assertLess(time.monotonic() - t, 5.0)  # was the line's 15 s window on top of the call
+        self.assertIn(f"STOPPED: {macro_tools.TIME_UP}", out)
+
     def test_ambient_dialogue_event_adds_nothing(self):
         self.g.push("dialogue_started", {"speakers": [{"name": "Lae'zel"}]})
         out = batch.wait_for("idle", timeout_s=0.1)

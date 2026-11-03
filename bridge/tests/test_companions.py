@@ -18,6 +18,7 @@ os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 from bg3ai import companions  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
 from bg3ai.tools import batch, core, inventory, overview, plumbing, travel, travel_macro, world_tools  # noqa: E402
+from test_turn_macros import P1, P2, Base  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 TABLE = companions.load_ties((REPO / "play/knowledge/companions.md").read_text())
@@ -79,6 +80,68 @@ class Talk(unittest.TestCase):
         H = render.Handles()
         line = render.character_line({"uuid": "11111111-2222-3333-4444-555555555555", "name": "Wyll", "wants_talk": True}, H)
         self.assertIn("wants to talk(!)", line)
+
+
+class NightTalk(Base):
+    """get_status at night camp names the talk the camp story still wants (DB_Camp_RequiredTalks) before the agent
+    presses sleep. launch-v1 haiku act3_gold_max r2 19:29-19:42: no TALK line for Shadowheart (HasExclamationDialog
+    unset), 17 long_rest and 4 camp leave refusals until it happened to talk to her."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sh = P2
+        self.flow = {"steps": [], "story": {"DB_Camp_NightMode": 1}, "required_talks": [{"uuid": P2, "name": "Shadowheart"}]}
+        self.g.ui = {"screen": "game", "region": "Campsite"}
+        orig = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "camp.rest_flow":
+                return self.flow
+            if op == "state.status":
+                return {"active": P1, "level": "CampNight", "party": [{"uuid": P1, "name": "Claude"},
+                                                                      {"uuid": P2, "name": "Shadowheart"}]}
+            return orig(op, args, context)
+
+        self.g.rpc = rpc
+        overview._TALK.text = ""
+        self.addCleanup(setattr, overview._TALK, "text", "")
+
+    def test_get_status_at_night_camp_names_the_required_talk(self) -> None:
+        out = overview.get_status()
+        h = core.H.get(self.sh)
+        self.assertIn(f"TALK: night at camp: the '!' over {h} Shadowheart\n", out + "\n")
+        # facts on screen only (arena-bridge review 2026-11-03 #2): no companion-scene suffix, no how-to
+        self.assertNotIn("may not wait", out)
+        self.assertNotIn("talk_to(<id>) now", out)
+        self.assertNotIn("can't end yet", out)
+        self.assertNotIn("TALK:", overview.get_status())  # unchanged: said once
+        self.flow["required_talks"] = []  # the talk was had: the line goes
+        self.assertNotIn("night at camp", overview.get_status(full=True))
+
+    def test_a_required_talk_not_in_view_is_not_on_the_talk_line(self) -> None:
+        # Withers (launch-v1 r5): a row whose character is neither in the party nor in sight: no '!' on screen
+        self.flow["required_talks"] = [{}, {}]
+        self.assertNotIn("TALK:", overview.get_status(full=True))
+
+    def test_a_companion_scene_keeps_its_own_line_next_to_the_night_one(self) -> None:
+        bits = ["e9 Gale wants to talk (the '!' over them)"]
+        line = companions.TalkTracker().line({}, str, extra=("night at camp: the '!' over e5 Shadowheart",))
+        self.assertEqual(line, "TALK: night at camp: the '!' over e5 Shadowheart")  # no companion scene: no suffix
+        t = companions.TalkTracker()
+        orig = companions.talk_bits
+        companions.talk_bits = lambda st, label: bits
+        self.addCleanup(setattr, companions, "talk_bits", orig)
+        line = t.line({}, str, extra=("night at camp: the '!' over e5 Shadowheart",))
+        self.assertEqual(line, "TALK: e9 Gale wants to talk (the '!' over them) → talk_to(<id>) now (a companion's own "
+                         "scene; it may not wait) | night at camp: the '!' over e5 Shadowheart")
+
+    def test_nothing_by_day_or_away_from_camp(self) -> None:
+        self.flow["story"] = {"DB_Camp_NightMode": 0}  # the story checks required talks only when the night ends
+        self.assertNotIn("night at camp", overview.get_status(full=True))
+        self.flow["story"] = {"DB_Camp_NightMode": 1}
+        self.g.ui = {"screen": "game", "region": "Blighted Village"}
+        self.assertNotIn("night at camp", overview.get_status(full=True))
+        self.assertNotIn("camp.rest_flow", [op for op, _ in self.g.calls])  # no extra read away from camp
 
 
 class Hint(unittest.TestCase):

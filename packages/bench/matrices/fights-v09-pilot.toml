@@ -1,0 +1,69 @@
+# One-action combat pilot (bench-v0.9 after PR #98): fight_act1_grove_gate once per model, DeepSeek V4.1 Flash,
+# Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5 through pi, in that order (the groups' order). It measures what a fight
+# costs now, to decide whether fights-v09 (every launch fight x 4 models x 3) fits the $45 the owner gave (D292).
+# max_cost per model and fight: the most one launch-v1 run of it cost (launch-v1-<model> and launch-v1-pilot) x the
+# one-action research's extra combat cost for that model (ops/logs/fight-flow-research.md: deepseek +49%, haiku +60%,
+# sonnet +69%, opus +88%) x 2, at least $0.50. It is the run's cap (over_budget past it) and what the budgets hold
+# back while it plays; launch-v1's time-cap reserves (opus balthazar $31.46) don't fit a $45 budget.
+# Budgets: runtime/budget-fights.json (cap $45: this pilot and the fights-v09 re-run together, owner D292) for every
+# job; each model's group adds its own files: DeepSeek runtime/budget-deepseek.json, a Claude model its share
+# (runtime/budget-<haiku|sonnet|opus>.json) and runtime/budget-anthropic.json. A job starts only if its max_cost fits
+# every one of its files, and its cost goes into each.
+# Estimate from launch-v1's 48 fight runs (mean per model and fight x 3 runs x 4 fights, then x the research's
+# factor): deepseek $0.93 -> $1.39, haiku $2.31 -> $3.70, sonnet $5.59 -> $9.44, opus $10.06 -> $18.92 = $33.45 for
+# the 48 runs; the pilot (one grove_gate each) $2.12; together $35.58 under the $45 cap. DeepSeek's launch runs
+# were mostly off-peak: at peak prices its share doubles (+$1.4). The factor is the research's upper bound.
+name = "fights-v09-pilot"
+allow_gaps = false
+allow_unverified = false
+
+[budget]
+file = "runtime/budget-fights.json"
+
+[[group]]
+models = ["profiles/deepseek-flash.toml"]
+scenarios = [
+  "fight_act1_grove_gate",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-deepseek.json"]
+max_cost = { fight_act1_grove_gate = 0.5 }
+
+[[group]]
+models = ["profiles/claude-haiku-5-5.toml"]
+scenarios = [
+  "fight_act1_grove_gate",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-haiku.json", "runtime/budget-anthropic.json"]
+max_cost = { fight_act1_grove_gate = 0.5 }
+
+[[group]]
+models = ["profiles/claude-sonnet-5-5.toml"]
+scenarios = [
+  "fight_act1_grove_gate",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-sonnet.json", "runtime/budget-anthropic.json"]
+max_cost = { fight_act1_grove_gate = 2.4 }
+
+[[group]]
+models = ["profiles/claude-opus-5-5.toml"]
+scenarios = [
+  "fight_act1_grove_gate",
+]
+conditions = ["rules"]
+repeats = 1
+
+[group.budget]
+shared = ["runtime/budget-opus.json", "runtime/budget-anthropic.json"]
+max_cost = { fight_act1_grove_gate = 2.97 }

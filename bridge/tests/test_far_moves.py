@@ -122,7 +122,7 @@ class FarMoves(Base):
                 self.assertTrue(queued.wait(5.0))
             return real(op, a, context, timeout)
         self.g.rpc = rpc
-        travel_macro.travel_to(target=h)
+        travel_macro.travel_to(target=h, wait=False)
         batch.queue_actions(f'[{{"tool": "talk_to", "npc": "{h}"}}]')
         queued.set()
         out = batch.wait_for("queue", timeout_s=5)
@@ -231,7 +231,7 @@ class NotesWindow(Base):
         self.g.result_for = lambda op, a: {"after": {"pos": a.get("pos")}} if op == "act.move_to" else {}
         self.g.reach = lambda a: {"reachable": True, "pos": [30.0, 0.0, 0.0]}
         (self.tmp / "markers.json").write_text('[{"id": "m1", "label": "Far", "pos": [60, 0, 0], "level": "TUT"}]')
-        out = travel_macro.travel_to(marker="m1")
+        out = travel_macro.travel_to(marker="m1", wait=False)
         self.assertIn("NOTES WINDOW: ~30s of walking left", out)  # 60 m at TRIP_MPS before the speed is known
         again = session.session_clock()
         self.assertNotIn("NOTES WINDOW", again)  # once per trip

@@ -11,7 +11,7 @@ import json
 import unittest
 from unittest import mock
 
-from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing the server)
+from test_turn_macros import Base  # sets BG3AI_RUNTIME before importing the server
 
 # isort: split
 from bg3ai.game import JobResult
@@ -52,7 +52,10 @@ class Validation(unittest.TestCase):
             self.assertLessEqual({"array", "string"}, types, tool)
 
 
-class SameText(unittest.TestCase):
+class SameText(Base):
+    # Base's fake game, out of combat: a plain TestCase reached the real Game on BG3LE_DEBUG_PORT (9998), the live
+    # BG3 on the test machine, and failed both refusal tests with "in combat ... runs no steps" whenever it was in
+    # combat (an arena match), whatever test files ran before it
     def test_as_json(self):
         self.assertEqual(batch._as_json(STEPS), json.dumps(STEPS))
         self.assertEqual(batch._as_json('[{"tool":"wait"}]'), '[{"tool":"wait"}]')

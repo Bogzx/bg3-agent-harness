@@ -104,7 +104,7 @@ class DeadlineMath(unittest.TestCase):
     def test_kickoff_has_pace_preflight(self):
         k = pprompts.build_kickoff("S004", "pt1", None, [])
         self.assertIn("PACE PRE-FLIGHT", k)
-        self.assertIn("Never pass wait=true", k)
+        self.assertIn("Pass wait=false to move_to, walk_toward and travel_to (they block by default)", k)
         self.assertIn("stuck.md", k)
         self.assertNotIn(time.strftime("%Y-%m-%d"), rpolicy.PACE_PREFLIGHT)  # static: cache-friendly
 

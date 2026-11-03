@@ -512,6 +512,32 @@ test("state.actions: lists only prepared class spells (A4: S065 showed Shadowhea
     eq(table.concat(ids, ","), "Target_CureWounds,Target_Sanctuary", "no unprepared Bless")
 end)
 
+test("state.actions range: metres or a weapon's range, never an unresolved name (pilot: ThrownObjectRangem)", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    if not BG3AI.State or not BG3AI.State.actions then dofile(LUA .. "/Server/State.lua") end
+    stats.Throw_Throw = { SpellType = "Throw", UseCosts = "ActionPoint:1", TargetRadius = "ThrownObjectRange" }
+    stats.Target_MainHandAttack = { SpellType = "Target", UseCosts = "ActionPoint:1",
+        TargetRadius = "MeleeMainWeaponRange" }
+    stats.Projectile_FireBolt = { SpellType = "Projectile", UseCosts = "ActionPoint:1", TargetRadius = "18" }
+    local function book(id) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = "Unknown" } end
+    world[P1].comps.SpellBook = { Spells = { book("Throw_Throw"), book("Target_MainHandAttack"),
+        book("Projectile_FireBolt") } }
+    BG3AI.State.spellCache = {}
+    local ok, list = pcall(BG3AI.State.actions, P1)
+    BG3AI.Visibility = savedV
+    world[P1].comps.SpellBook = nil
+    eq(ok, true, "actions read: " .. tostring(list))
+    local rng = {}
+    for _, a in ipairs(list) do rng[a.spell] = a.range or "none" end
+    eq(rng.Throw_Throw, "none", "Throw: no range")
+    eq(rng.Target_MainHandAttack, 1.5, "the melee weapon's range")
+    eq(rng.Projectile_FireBolt, 18, "metres")
+end)
+
 test("state.combat hp_pct: a member at 1/218 HP reads 1 %, not 0 (S076 Karlach called downed)", function()
     if not BG3AI.State or not BG3AI.State.hp_pct then dofile(LUA .. "/Server/State.lua") end
     eq(BG3AI.State.hp_pct(1, 218), 1, "1/218")

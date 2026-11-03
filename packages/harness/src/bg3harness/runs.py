@@ -132,6 +132,33 @@ def read_jsonl(path: Path) -> list[dict]:
     return out
 
 
+def recovered_launch(e: dict, run_start: float, start_save: str | None) -> bool:
+    """A bench run's `launch_failed` that the controller recovered from before the run began: it came before the run's
+    run_start mark and was a launch of the run's start save. A run past its start loaded that save and passed its
+    settings check (run_host.LiveRunHost._begin raises otherwise), so the agent got the same clean start: the event
+    is the run's note (record `recovered_launches`), not a harness failure (D364: bench-v0.9 balthazar r2 was voided
+    by one LinuxCrashReporter launch 134 s before its run_start, the same save relaunched). A new-game start has no
+    start save, and a launch_failed after run_start is a mid-run relaunch: both stay harness failures."""
+    t = e.get("t")
+    return (
+        e.get("kind") == "launch_failed"
+        and start_save is not None
+        and e.get("save") == start_save
+        and isinstance(t, (int, float))
+        and t < run_start
+    )
+
+
+def recovered_launches(path: Path, since: float, run_start: float, start_save: str | None) -> list[dict]:
+    """The run's recovered launches (recovered_launch) in its runner_events.jsonl since `since` (its start), as its
+    record lists them."""
+    return [
+        {k: e.get(k) for k in ("t", "attempt", "save", "error")}
+        for e in read_jsonl(path)
+        if e.get("t", 0) >= since - 1 and recovered_launch(e, run_start, start_save)
+    ]
+
+
 def event_failures(events: list[dict]) -> tuple[list[dict], list[dict]]:
     """(failures, operator actions) from the run's runner_events.jsonl records."""
     fails, ops = [], []

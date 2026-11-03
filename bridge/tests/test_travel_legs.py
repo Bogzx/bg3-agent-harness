@@ -316,7 +316,7 @@ class InTheWay(Base):
 
         def rpc(op, args=None, context="server", timeout=12.0):
             r = orig(op, args, context, timeout)
-            if op == "state.nearby":
+            if op == "state.nearby" and "center" not in (args or {}):  # not a leg end's read (the PASSED line)
                 self.g.nearby["characters"][0]["pos"] = [11.0, 0.0, 5.0]  # steps aside after the first look
             return r
         self.g.rpc = rpc

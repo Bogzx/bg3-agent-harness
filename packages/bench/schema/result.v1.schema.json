@@ -148,6 +148,22 @@
       "minItems": 1,
       "items": {"type": "string", "minLength": 1}
     },
+    "recovered_launches": {
+      "description": "launches of the run's start save that failed and were relaunched before its run_start mark (bg3harness runs.recovered_launch): the agent got the same start, so they are disclosed here and are not harness failures. Absent: none. Optional, added 2026-11-02 (still v1).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["t", "attempt", "save", "error"],
+        "additionalProperties": false,
+        "properties": {
+          "t": {"type": "number"},
+          "attempt": {"type": ["integer", "null"]},
+          "save": {"type": "string", "minLength": 1},
+          "error": {"type": ["string", "null"]}
+        }
+      }
+    },
     "choices": {
       "description": "a choice scenario's picks (bg3bench.choices.grade over the facts' choice events; never right or wrong) and their persona fit by the judge (null: not judged). Optional, added 2026-10-22 (still v1).",
       "type": "object",

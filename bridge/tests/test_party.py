@@ -86,6 +86,14 @@ class Pure(unittest.TestCase):
         line = render.character_line({"uuid": P2, "name": "Spiritual Weapon", "summon": True, "owner": P1}, H)
         self.assertTrue(line.endswith("summon of " + H.get(P1)), line)
 
+    def test_party_line_shows_a_conditions_turns_left(self):
+        # the mod's status rows (VisibilityObjects.lua V.statuses): {id, name, turns}, turns only while the lifetime
+        # runs out. The renderer read a 'duration' no Lua sends, so no row ever showed the turns the icon shows.
+        H = render.Handles()
+        row = {"uuid": P1, "name": "Wyll", "statuses": [{"id": "SLEEP", "name": "Asleep", "turns": 2},
+                                                         {"id": "BLESS", "name": "Blessed"}]}
+        self.assertIn("[Asleep(2t),Blessed]", render.character_line(row, H))
+
 
 class Cohesion(Base):
     def setUp(self) -> None:

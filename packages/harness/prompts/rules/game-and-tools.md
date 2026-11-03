@@ -14,19 +14,24 @@
 **Acting.** Anything the engine can do has an action tool: `move_to`, `walk_toward`, `interact`, `talk_to`, `loot`,
 `use_ability`, `end_turn`, `choose_dialogue`, `roll_check`, `react`, `fast_travel`, `manage_inventory`,
 `short_rest`/`long_rest`, `camp`, `level_up`, `trade`, and so on. For a screen no tool covers, `ui_action` acts on it.
-- **Movement is async.** `move_to` and `walk_toward` return at once with `started j12, ETA 3s`; `travel_to` (a
-  marker, objective or waypoint, as chained walks) returns at once with the trip as the first entry of the
-  character's queue. A `job_finished`/`queue_done` event in a later result says it arrived. A fast failure (no path,
-  a hazard ahead) still comes back in the first result. Out of combat the server ignores `wait=true` on walks and
-  says so. In combat a walk returns when it is over.
+- **A walk returns at its end.** `move_to`, `walk_toward` and `travel_to` (a marker, objective or waypoint, as
+  chained walks) return when the walk is over, arrived or stopped, with what changed and the minimap block:
+  `OBJECTIVES` (distance, direction, height), `WAYS` and the nearest unvisited `LEADS`. A prompt, a conversation or
+  a fight that starts ends the wait early and says so. A trip still going after ~90 s returns its progress, and
+  `wait_for` keeps waiting. Out of combat `wait=false` returns at once instead (`started j12, ETA 3s`, or the trip as
+  the first entry of the character's queue); a `job_finished`/`queue_done` event in a later result says it arrived.
+  In combat a walk returns when it is over, whatever `wait` says.
 - **`wait_for`** blocks until its target: `my_turn`, `idle`, a job (`j12`), `queue`, or an event kind. It returns
   early on a prompt. `wait()` passes game time.
-- **`queue_actions`** runs steps back to back with no round trip per step: walk → open → loot → walk on. Another
-  `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
+- **`queue_actions`** runs steps back to back with no round trip per step: open → loot → pick up → walk on. A walk
+  step (`move_to`, `walk_toward`, `travel_to`, `jump_to`) is the last step a batch takes: the steps after the first
+  one are not queued, and the result lists them (after one with an `"if"`/`"unless"` they are queued and run only if
+  it is skipped). Another `queue_actions` call appends; right after a `move_to` with `wait=false` it waits for that walk before its first step. The queue
   stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view, low HP, or a failed step;
   the `queue_interrupted` event says why and what was left. `cancel_queue` stops it. Any direct action for the same
   character replaces the queue's current step. In combat `queue_actions` queues nothing.
-- **`do_actions`** is the blocking form: a short chain of steps in one call. Steps can carry `"if"`/`"unless"`
+- **`do_actions`** is the blocking form: a short chain of steps in one call, ending at its first walk step as
+  above. Steps can carry `"if"`/`"unless"`
   conditions (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`, `my_turn`, `in_dialogue`). The
   result ends with `CHANGES` (what moved, HP, items, who appeared). In combat `do_actions` runs no steps.
 - **In combat each call is one action**: `use_ability`, `move_to`, `walk_toward`, `jump_to` or `react`. It returns

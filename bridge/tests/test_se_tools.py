@@ -308,6 +308,29 @@ class NightCamp(unittest.TestCase):
         self.assertIn("camp: FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends "
                       "the night (the party sleeps: a long rest)", out)
 
+    def test_camp_leave_at_night_with_a_required_talk_left_says_so_without_pressing(self):
+        # launch-v1 haiku act3_gold_max r5 08:46-08:57: camp leave and fast_travel failed "the night at camp hasn't
+        # ended" (the sleep press inside them refused 30 s later) until the agent talked to Withers, out of sight
+        fake = NightFake()
+        base = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "camp.rest_flow":
+                return {"steps": [], "story": {"DB_Camp_NightMode": 1}, "required_talks": [{}]}
+            return base(op, args, context)
+
+        fake.rpc = fake.try_rpc = rpc
+        self.use(fake)
+        out = getattr(travel.camp, "fn", travel.camp)("leave")
+        self.assertEqual(fake.jobs, [])
+        self.assertIn("camp: FAILED: nothing was pressed: the night at camp can't end yet: the game still wants a talk "
+                      "with someone not in view first;", out)
+        self.assertNotIn("'!'", out)  # nobody in view: no '!' a player could see
+        self.assertNotRegex(out, r"\d people")  # never a count of people not in view
+        out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
+        self.assertEqual(fake.jobs, [])
+        self.assertIn("the night at camp can't end yet", out)
+
     def test_a_busy_ui_is_not_read_as_no_night(self):
         # A UI stuck busy 26 min: the refused travel_block read counted as "not night", so camp leave went on to
         # act.leave_camp and failed "cannot travel right now" 13 times without the reason

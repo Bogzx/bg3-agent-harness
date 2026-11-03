@@ -482,16 +482,20 @@ def _input_exclusive(fn):
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
+         wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False,
+         t0: float | None = None) -> str:
+    """block (with wait=False): an out-of-combat walk that returns at its end (_start_async, _walk_wait).
+    t0: the tool call's start (a walk's 90 s budget and the call deadline count from it), else now."""
     if op in _INPUT_OPS or (context == "client" and op.startswith("ui.")):
         with _InputHeld():
-            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
-    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
+            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block, t0)
+    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block, t0)
 
 
 def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-             wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
-    t0 = time.monotonic()
+             wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False,
+             t0: float | None = None) -> str:
+    t0 = time.monotonic() if t0 is None else t0
     if core._session_over():
         return reporting._finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     if op in _WALK_OPS and context == "server" and _tb_wanted["on"]:
@@ -502,7 +506,7 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         held = batch._hold_for_early_walks(args.get("char"))
         note = "\n".join(x for x in (held, note) if x)
     if not wait and not reporting._batch["active"] and context == "server":
-        return _start_async(tool, op, args, t0, note)
+        return _start_async(tool, op, args, t0, note, block=block)
     ex = reporting._batch["exec"]
     if reporting._batch["active"]:
         wait_s = max(wait_s, 120.0)  # a batch/queue step runs to completion (interrupts cancel it)
@@ -551,7 +555,7 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
     if post is not None:  # a line from after the job (use_ability: did the opener start a fight?)
         note = "\n".join(x for x in (post(r), note) if x)
-    changes = _combat_changes(tool)
+    changes = _combat_changes(tool, ended=r.status != "still_running")
     body = "\n".join(x for x in (_job_text(tool, r, args.get("char")), note, changes) if x)
     return reporting._finish(tool, args, body, t0)
 
@@ -594,9 +598,11 @@ def _follow_on(tool: str, r: JobResult, args: dict) -> tuple[JobResult, str]:
                f"(sending {tool} again would supersede it)")
 
 
-def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> str:
+def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "", block: bool = False) -> str:
     """Start a mod job and return at once: "move_to: started j12, ETA 3.4s (14m)". The mod announces the
-    end with a job_finished event (notify), so any later tool result shows it; wait_for('j12') blocks."""
+    end with a job_finished event (notify), so any later tool result shows it; wait_for('j12') blocks.
+    block: wait for its end here instead (batch._wait, what wait_for('j12') returns), until WALK_BUDGET_S after t0;
+    a walk still going then returns its progress and id."""
     started = core.game.rpc(op, dict(args, notify=True))
     if op in _WALK_OPS and isinstance(started, dict) and _tb_refused(started.get("status"), started.get("error")):
         tb = _leave_turn_based_for_walk()
@@ -622,12 +628,19 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
         r = JobResult(view["status"], view.get("result"), view.get("error"), elapsed_ms=view.get("elapsed_ms", 0))
         _remember_names(r.result)
         reporting._batch["last"] = r.status
-        return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
+        tail = batch.walk_end_tail() if tool in batch.ARRIVAL_LEAD_TOOLS else ""
+        return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else "") + tail, t0)
     body = f"{tool}: started {h}"
     if started.get("eta_s") is not None:
         body += f", ETA {render.num(float(started['eta_s']))}s"
     if started.get("route_m") is not None:
         body += f" ({render.num(float(started['route_m']))}m)"
+    if block:
+        waited, _ = batch._wait(h, t0 + WALK_BUDGET_S, t0=t0)
+        if h not in _async:  # it ended: the walk's own result, as wait_for(h) returns it
+            return reporting._finish(tool, args, waited + ("\n" + note if note else ""), t0)
+        return reporting._finish(tool, args, f"{body}\n{waited}\nwait_for('{h}') keeps waiting for it"
+                                 + ("\n" + note if note else ""), t0)
     if note:
         body += "\n" + note
     if tool in _WALKS:
@@ -643,6 +656,9 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
 # 2026-10-10); a later failure still arrives as a job_finished event on the next result.
 SETTLE_S = 0.3
 _WALKS = ("move_to", "walk_toward", "travel_to")
+# A blocking walk (out of combat, wait=true) returns by this long after its call started, arrived or not: the MCP
+# clients give up on a request after 110 s (clients.py; actq.BATCH_BUDGET_S is the same budget for do_actions).
+WALK_BUDGET_S = 90.0
 
 
 def _settle(poll, limit: float | None = None) -> dict | None:
@@ -657,25 +673,21 @@ def _settle(poll, limit: float | None = None) -> dict | None:
         time.sleep(0.1)
 
 
-PACE_GUARD_NOTE = ("(pace guard: wait=true ignored outside combat: the walk runs while you plan. Do something that "
-                   "doesn't depend on the arrival (notes, look, the next leg), then wait_for(\"queue\" | job id) only "
-                   "if you still need the outcome. Don't pass wait=true to walks.)")
-
-
-def _walk_wait(wait: bool) -> tuple[bool, str]:
-    """The pace guard (move_to, walk_toward; travel_to never blocks). In combat a walk always blocks: a combat call
-    is one action, returned when it is over (owner 2026-11-02: one action, observe, then the next). Outside it the
-    walk runs while the agent plans: S001 learned wait=true from its own results and pipelined 0% (impl-setup part
-    5). Until 2026-10-13 a client PreToolUse hook (pace_guard.py) also rewrote the call; the server's check is the one
-    that holds for any client."""
+def _walk_wait(wait: bool) -> tuple[bool, bool]:
+    """How a walk (move_to, walk_toward) waits: (wait, block) for _act. In combat a walk always blocks: a combat call
+    is one action, returned when it is over (owner 2026-11-02: one action, observe, then the next). Out of combat
+    wait=true (the default) blocks too, through the async job (block): the result is the walk's own, as wait_for
+    returns it, with the same early stops (a prompt, a dialogue, a fight starting ends the walk); wait=false starts it
+    and returns, for pipelining. Human-gap research 2026-11-02: 74-89% of launch-v1's out-of-combat walks were
+    followed at once by wait_for (2,866 calls); until then out of combat wait=true was ignored (the pace guard)."""
     if reporting._batch["active"]:
-        return wait, ""
+        return wait, False
     w = core.game.try_rpc("act.watch")
     if not isinstance(w, dict):
-        return wait, ""  # unknown: as asked
+        return wait, False  # unknown: as asked (waited on by the job's own wait)
     if w.get("combat"):
-        return True, ""
-    return False, PACE_GUARD_NOTE if wait else ""
+        return True, False
+    return False, wait
 
 
 # In combat each of these returns what changed (other combatants' HP, positions, deaths, who came into view) with
@@ -683,13 +695,14 @@ def _walk_wait(wait: bool) -> tuple[bool, str]:
 COMBAT_CHANGES_TOOLS = ("use_ability", "move_to", "walk_toward", "jump_to", "react")
 
 
-def _combat_changes(tool: str) -> str:
-    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed)."""
+def _combat_changes(tool: str, ended: bool = True) -> str:
+    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed). Out of
+    combat, a walk that ended (jump_to, a blocking move_to/walk_toward) gets CHANGES + the minimap block instead."""
     if tool not in COMBAT_CHANGES_TOOLS or reporting._batch["active"]:
         return ""
     w = core.game.try_rpc("act.watch")
     if not (isinstance(w, dict) and w.get("combat")):
-        return ""
+        return batch.walk_end_tail().lstrip("\n") if ended and tool in batch.ARRIVAL_LEAD_TOOLS else ""
     return delta.changes_text(core.game, core.H)
 
 

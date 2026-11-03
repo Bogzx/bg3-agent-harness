@@ -511,13 +511,39 @@ function G.disabling_fix(char, name)
     return ""
 end
 
+-- The variant ids in `spell`'s stats ContainerSpells that are a spell's stats entry (ModifierList SpellData), and
+-- the count of entries that are not: nil when it lists none. fights-v09 Balthazar S001 15:59:38: Target_LayOnHands'
+-- list once read "BLD_GEN_Crane_Elevator_B.BLD_GEN_Crane_Elevator_B_Mesh.0", a world mesh name, between two good
+-- casts of its Cure variant; every other logged read gave its three variants. The value is a slot of the stats string
+-- pool, a global string-table entry (bg3se StatsObject.inl GetFixedStringRef), so the wrong text came from that entry.
+-- No check on the variants' SpellContainerID: Lay On Hands' variants name no container (they are rows of their own in
+-- the action list).
+local function container_spells(spell)
+    local st = Ext.Stats.Get(spell)
+    local raw = tostring(st and st.ContainerSpells or "")
+    if raw == "" then return nil end
+    local ids, bad = {}, 0
+    for id in raw:gmatch("[^;]+") do
+        local v = Ext.Stats.Get(id)
+        local ok, kind = pcall(function() return v and v.ModifierList end)
+        if ok and kind == "SpellData" then ids[#ids + 1] = id else bad = bad + 1 end
+    end
+    if #ids == 0 and bad == 0 then return nil end
+    return ids, bad
+end
+
 function G.check_cast(char, spell, target, pos, upcast, force)
     if type(spell) ~= "string" or spell == "" then G.refuse("no action given") end
     local st = Ext.Stats.Get(spell)
     if not st then G.refuse("unknown action") end
-    local variants = tostring(st.ContainerSpells or "")
-    if variants ~= "" then
-        G.refuse("choose a variant: " .. variants:gsub(";", ", "))
+    local variants, bad = container_spells(spell)
+    if bad and bad > 0 then variants, bad = container_spells(spell) end -- one more read before giving up
+    if variants and #variants == 0 then
+        G.refuse("choose a variant (this action's variant list did not read as spell names)")
+    elseif variants then
+        G.refuse("choose a variant: " .. table.concat(variants, ", ") .. (bad > 0
+            and " (" .. bad .. " more " .. (bad == 1 and "entry" or "entries") .. " of its variant list did not read"
+                .. " as spell names)" or ""))
     end
     if G.linked_box(st) then
         local ids, from = G.box_variants(char, spell)

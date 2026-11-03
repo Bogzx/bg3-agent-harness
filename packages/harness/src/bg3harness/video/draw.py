@@ -22,7 +22,7 @@ from pathlib import Path
 from bg3ai.tool_classes import READ_TOOLS
 from PIL import Image, ImageDraw, ImageFont
 
-from .timeline import Gap, Item, Lanes, Member, Meta, Strip
+from .timeline import FAIL_KINDS, Gap, Item, Lanes, Member, Meta, Strip
 
 WIDTH, HEIGHT = 1920, 1080
 GAME_X, GAME_Y, GAME_W, GAME_H = 24, 96, 1408, 792
@@ -330,7 +330,7 @@ def _groups(items: Sequence[Item]) -> list[tuple[Item, Item | None]]:
     """The decisions' rows, oldest first: each call with its result (by the call's id) when that has come, then
     every other entry on its own."""
     calls = {i.ref for i in items if i.kind == "call" and i.ref}
-    results = {i.ref: i for i in items if i.kind in ("result", "error") and i.ref in calls}
+    results = {i.ref: i for i in items if i.kind in ("result", *FAIL_KINDS) and i.ref in calls}
     return [
         (i, results.get(i.ref) if i.kind == "call" else None)
         for i in items
@@ -384,7 +384,7 @@ def column_image(items: Sequence[Item]) -> Image.Image:
 
 
 def _result(d: ImageDraw.ImageDraw, it: Item, x: float, y: float, width: float) -> None:
-    failed = it.kind == "error"
+    failed = it.kind in FAIL_KINDS
     s = ("✕ " if failed else "") + it.text
     text(d, (x, y), clip(s, "mono", 18, width), "mono", 18, RUST if failed else INK_2, "la")
 

@@ -103,18 +103,39 @@ def is_junk(it: dict, keep: set[str] | None = None, wanted: set[str] | None = No
     """Sell/stash candidates: what a skilled player sells at every trader. Never: equipped, story, bags,
     food, consumables (potions, scrolls, arrows, throwables), keys/tools/light, kept items (keep), gear
     someone should wear (wanted), magic gear (rarity >= uncommon: the agent decides)."""
-    if (it.get("equipped_slot") or it.get("story") or it.get("container") or it.get("unique") or it.get("gold")
-            or is_food(it) or is_consumable(it)):
-        return False
-    if it.get("uuid") in (keep or set()) or it.get("uuid") in (wanted or set()):
-        return False
+    return keep_kind(it, keep, wanted) is None
+
+
+def keep_kind(it: dict, keep: set[str] | None = None, wanted: set[str] | None = None) -> str | None:
+    """Why the junk rule (is_junk) keeps an item, as a kind for a count ("equipped", "consumables", ...); None:
+    it is junk. The sell=junk result counts what it kept back by these kinds."""
+    if it.get("gold"):
+        return "gold"
+    if it.get("equipped_slot"):
+        return "equipped"
+    if it.get("story"):
+        return "story"
+    if it.get("container"):
+        return "bags"
+    if it.get("unique"):
+        return "unique"
+    if is_food(it):
+        return "food"
+    if is_consumable(it):
+        return "consumables"
+    if it.get("uuid") in (keep or set()):
+        return "kept (keep=)"
+    if it.get("uuid") in (wanted or set()):
+        return "gear to wear"
     if it.get("tab") == "BooksAndKeys" or _KEEP_NAME.search(it.get("name") or ""):
-        return False
-    if _equipable(it):
-        return _rar(it) == 0 and (it.get("value") or 0) > 0
-    if _JUNK_CAT.match(it.get("cat") or ""):
-        return True
-    return it.get("tab") == "Misc" and _rar(it) == 0 and (it.get("value") or 0) > 0
+        return "books, keys and tools"
+    if _rar(it) > 0 and (_equipable(it) or not _JUNK_CAT.match(it.get("cat") or "")):
+        return "magic or rare"
+    if _equipable(it) or _JUNK_CAT.match(it.get("cat") or ""):
+        return None if not _equipable(it) or (it.get("value") or 0) > 0 else "no value"
+    if it.get("tab") == "Misc" and (it.get("value") or 0) > 0:
+        return None
+    return "no value" if (it.get("value") or 0) <= 0 else "other"
 
 
 def junk(inv: dict, keep: set[str] | None = None) -> list[dict]:

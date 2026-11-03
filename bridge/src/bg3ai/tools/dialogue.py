@@ -142,46 +142,62 @@ def _roll_step(op_args: dict, label: str, wait_s: float) -> tuple[str, dict | No
     if res.get("phases"):
         core.METRICS.write({"type": "roll_phases", "t": round(time.time(), 3), "phases": res["phases"]})
     if reporting._batch.get("last") == "done" and roll and roll.get("phase") == "result":
-        line = _roll_line(roll, label)
+        line = _roll_line(roll, "reroll (1 Inspiration)" if res.get("rerolled") else label)
         if res.get("retriggered"):
             line += f" (start re-sent {res['retriggered']}x)"
         text = re.sub(r"\Aroll_check: done — [^\n]*", lambda _m: line, text, count=1)
     return text, roll
 
 
+# A failed roll stops with the result screen up, as for a player: whether to spend an Inspiration point is decided on
+# the failure, in a call of its own (human-gap research 2026-11-02: 37 of 128 launch-v1 rolls were sent with the old
+# reroll_on_fail=true, and 15 Inspiration points went on rerolls chosen before the failure was seen). reroll_on_fail
+# is removed, not refused: what it did (reroll before the result is known) is no longer something a call can ask for.
+ROLL_OPEN_NOTE = ("the roll screen stays open on the failed result: roll_check(reroll=true) rolls again for 1 "
+                  "Inspiration; roll_check() continues with the failure")
+
+
 @core.mcp.tool()
 @reporting._guard
-def roll_check(boosts: str = "", reroll_on_fail: bool = False) -> str:
-    """Resolve the skill-check roll on screen: optionally add boosts shown on the roll screen (comma list, e.g. "Guidance"), roll, and continue."""
-    args: dict[str, Any] = {"reroll": reroll_on_fail}
+def roll_check(boosts: str = "", reroll: bool = False) -> str:
+    """Resolve the skill-check roll on screen: optionally add boosts shown on the roll screen (comma list, e.g. "Guidance"), roll, and continue. A success continues in the same call. A failure with Inspiration left returns with the roll screen still open (DC, roll, bonus, Inspiration left): then roll_check(reroll=true) rerolls it for 1 Inspiration, roll_check() continues with the failure."""
+    args: dict[str, Any] = {"reroll": reroll}
     if boosts:
         args["boosts"] = [b.strip() for b in boosts.split(",") if b.strip()]
+    if reroll:
+        # review-v010-human-gap #8: ui.roll sends RollAgainCommand on any result screen; the game offers the reroll
+        # only on a failure. A success on screen: nothing is sent.
+        ui = core.game.try_rpc("ui.state", context="client")
+        shown = ui.get("roll") if isinstance(ui, dict) else None
+        if isinstance(shown, dict) and shown.get("phase") == "result" and shown.get("success") is True:
+            return reporting._finish("roll_check", args, "roll_check: REFUSED — the roll on screen succeeded; the "
+                                     "game offers a reroll only on a failure (nothing was pressed; roll_check() "
+                                     "continues)", time.monotonic())
     try:
-        first, roll = _roll_step(args, "roll", 20)
+        first, roll = _roll_step(args, "roll", 25 if reroll else 20)
     except GameError as e:
         # S035 19:24:20: roll_check(boosts="Guidance") on a roll without Guidance → FAILED, and the agent rolled bare
         # in a second call. A boost the roll doesn't offer can't be added by hand either: roll without it, say so.
         if not args.get("boosts") or "no boost '" not in str(e):
             raise
         args.pop("boosts")
-        first, roll = _roll_step(args, "roll", 20)
+        first, roll = _roll_step(args, "roll", 25 if reroll else 20)
         first = f"(rolled without {boosts}: {str(e).split(' on this roll ', 1)[-1].strip('()')})\n" + first
-    # ui.roll stops at the result screen (so a reroll can be chosen); "roll, and continue" means one call:
-    # press Continue (or reroll a failure first) here, not in a second roll_check round trip (live S002).
-    outs = [first]
+    # ui.roll stops at the result screen (so a reroll can be chosen). A success needs no choice: Continue is pressed
+    # here, not in a second roll_check round trip (live S002). On the result screen ui.roll without reroll is that
+    # Continue itself (its result is the dialogue after it, no roll): nothing more to press.
     if reporting._batch.get("last") != "done" or not isinstance(roll, dict) or roll.get("phase") != "result":
         return first
-    if reroll_on_fail and not roll.get("success"):
-        if roll.get("inspiration") == 0:
-            outs.append("(no reroll: no Inspiration points left)")
+    res = reporting._batch.get("result") if isinstance(reporting._batch.get("result"), dict) else {}
+    outs = [first]
+    if not roll.get("success"):
+        if res.get("reroll_ignored"):
+            outs.append("(no reroll: the game kept the first result; the Inspiration reroll was not offered)")
+        elif roll.get("inspiration") == 0:
+            outs.append("(no Inspiration points left to reroll)")
         else:
-            again, _ = _roll_step({"reroll": True}, "reroll (1 Inspiration)", 25)
-            res = reporting._batch.get("result") if isinstance(reporting._batch.get("result"), dict) else {}
-            if res.get("reroll_ignored"):
-                again = "(no reroll: the game kept the first result; the Inspiration reroll was not offered)"
-            outs.append(again)
-            if reporting._batch.get("last") != "done":
-                return "\n".join(outs)
+            clock = re.search(r"\n⏱[^\n]*$", first)  # the note goes before the result's clock line
+            return (first[:clock.start()] if clock else first) + "\n" + ROLL_OPEN_NOTE + (clock.group(0) if clock else "")
     outs.append(plumbing._act("roll_check", "ui.roll", {}, context="client", wait_s=30))
     outs = [re.sub(r"\n⏱[^\n]*$", "", o) for o in outs[:-1]] + outs[-1:]
     return "\n".join(outs)

@@ -232,6 +232,19 @@ ok(not okr and tostring(er):find("conversation is open", 1, true) and #commands 
     "dialogue on screen -> refused, no CampTravel: " .. tostring(er))
 widgets = {}
 
+-- the game menu open when long_rest is called (launch-v1 haiku r1: two sleep presses under it, 30 s each, the
+-- night never ended): refused at once, CampTravel never pressed; sleep_only (camp leave, fast travel) too
+for _, args in ipairs({ {}, { sleep_only = true } }) do
+    clock = clock + 60000
+    widgets = {}
+    W("GameMenu", {}, { { "Resume", "ResumeBtn", function() end } })
+    nCamp = #commands
+    okr, er = pcall(ops["ui.long_rest"], args)
+    ok(not okr and tostring(er):find("the game menu is open", 1, true) and #commands == nCamp,
+        "game menu on screen -> refused, no CampTravel: " .. tostring(er))
+end
+widgets = {}
+
 -- ui.confirm on a dead box: still_open + needs_click
 widgets = {}
 W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() end }, { "No", nil, function() end } })

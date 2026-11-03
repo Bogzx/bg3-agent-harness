@@ -5,6 +5,122 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: a walk step its condition skips doesn't end the batch
+
+- `do_actions` / `queue_actions`: a walk step with `if`/`unless` no longer drops the steps after it before anything
+  runs. They run when the condition skips the walk; when the walk runs, they are not run and each says so:
+  `3. interact e12: not run (out of combat a batch ends with its first walk step, here step 1 move_to 5,0,0)`. The
+  first walk step without a condition still drops the rest at once, as before. Steps a later `queue_actions` call
+  appends are not affected. Docstrings, rules text (game-and-tools.md) and play/knowledge/tools.md say so.
+- review-v010-human-gap #5.
+
+## 2026-11-02: out of combat a batch ends with its first walk step
+
+- `do_actions` and `queue_actions` (and `do_actions(wait=false)`): a walk step (`move_to`, `walk_toward`,
+  `travel_to`, `jump_to`) is the last step a batch takes. The steps after the first walk step are dropped before
+  anything runs; the steps up to and with the walk run (or are queued) as before. The result lists the dropped ones:
+  `not run: interact e12, loot (out of combat a batch ends with its first walk step, here step 2 move_to e12)`
+  (`not queued: ...` for queue_actions). Batches without a walk step, or with the walk last, are unchanged
+  (inventory chores, looting sweeps of interact/loot/pick_up, dialogue chains). A `queue_actions` call made while a
+  walk or trip runs still appends after it (a separate call, after travel_to/move_to/walk_toward wait=false).
+- Chosen over refusing the whole batch: the steps after the walk never run blind either way, and this way the call
+  still does the part up to the walk instead of costing a round trip and a resend.
+- Docstrings: do_actions' example no longer starts with a move_to (interact walks to its target itself). Rules text
+  (game-and-tools.md) and coaching/pace.md's sweep example say the same.
+- Human-gap research §4: 76 deepseek do_actions batches were walk_toward chains (three headings committed before the
+  first one's end was seen).
+
+## 2026-11-02: travel_to and regroup name what they passed
+
+- A trip's result (travel_to; regroup for its walkers' trips) has a PASSED line before CHANGES: what came into view
+  at a leg's end during the trip and is out of view at its end, nearest first from the walker's end spot, up to 6,
+  then `+N more`: `PASSED (seen on the way, out of view now): e12 Chest <container> 46m W | e7 Goblin hostile 28m SW
+  (5m down)`. Characters with their relation (and `dead`), leads with their kind (and `locked`/`trap`/`story`), as
+  CHANGES shows them; scenery and clutter are left out, and so is anything the agent's last view already had (CHANGES
+  says GONE for those). No line when nothing passed.
+- The read: state.nearby (radius 25, centred on the walker: its new `center` argument) in the check each finished
+  leg already makes, the same round trip (one op more in its server eval). A mod without `center` centres it on the
+  selected character.
+- Human-gap research §1e: CHANGES diffed the trip's start against its end only.
+
+## 2026-11-02: required camp talks are named at night; no sleep press under the game menu; a misread variant list is refused
+
+- `long_rest`, camp leave and `fast_travel` from camp, at night in camp while the camp story still wants a talk
+  (the "!" over a character), refuse before pressing anything and say who: "long_rest: FAILED — not pressed: the
+  night at camp can't end yet: the game still wants a talk with e4 Shadowheart first (the '!' over them); going to
+  sleep only brings up its 'talks left' notice until then, and a talk with them clears it" (camp leave /
+  fast_travel: "FAILED: nothing was pressed: ... Until the night ends, travel from camp is blocked"). Someone out
+  of sight is said as "someone not in view", neither named nor counted (the game's notice doesn't count them
+  either). Until now the sleep press got the game's "talks left" notice and the call failed 30 s later naming only
+  widgets (launch-v1 Haiku act3_gold_max: 46 failed long rests). At night camp, `get_status` and `look` add only
+  what the screen shows to their TALK line, the camp '!' over the characters in view ("TALK: night at camp: the
+  '!' over e4 Shadowheart"), once while it is unchanged; nothing when none of them is in view.
+- `long_rest`, and the sleep press of camp leave and `fast_travel` from camp, refuse at once while the game menu is
+  open: "the game menu is open: close it first (press_key ESCAPE), then long_rest" (launch-v1 Haiku act3_gold_max
+  r1 pressed sleep twice under the pause menu its own click had opened).
+- `use_ability` on a spell container lists only the variants that read as a spell's stats entry and says how many
+  entries didn't ("choose a variant: Target_LayOnHands_Cure, ... (1 more entry of its variant list did not read as
+  spell names)"), after one more read; with none that reads, "choose a variant (this action's variant list did not
+  read as spell names)". The raw text is never shown (fights-v09 Balthazar r3 showed a level mesh name as Lay On
+  Hands' variant).
+
+## 2026-11-02: walks out of combat return at their end (wait=true is the default)
+
+- `move_to`, `walk_toward` and `travel_to` default to `wait=true` and, out of combat, return at the walk's end with
+  the walk's own result: what `wait_for(<job>)` / `wait_for('queue:<who>')` returned until now (the same early
+  stops: a prompt, a dialogue or a fight starting ends the wait and says so), with CHANGES and the minimap block.
+  The `started j12` line is not shown when the walk ended. `route(go=true)` and a far `move_to` (via travel_to)
+  block the same way.
+- A walk or trip still going 90 s after the call started (plumbing.WALK_BUDGET_S, under the clients' 110 s MCP
+  timeout) returns its progress (`still waiting for j12 after 90s`, the RUNNING line with metres/ETA left) and
+  `wait_for('j12') keeps waiting for it` (`queue:<who>` for a trip), never a tool timeout.
+- `wait=false` keeps the old behaviour (returns within ~1 s, `started j12, ETA 3s`, NEXT hints for pipelining).
+  The pace-guard note ("wait=true ignored outside combat") and travel_to's "(wait=true ignored ...)" are gone.
+- Metrics: a call's `async` flag now needs its own background job still running when it returned (a blocking walk's
+  job starts and ends inside the call); a walk that ended in the 0.3 s settle window no longer counts as async.
+- Human-gap research: 74-89% of launch-v1's out-of-combat walks were followed at once by wait_for (2,866 calls,
+  ~93 min of model think, ~$22).
+
+## 2026-11-02: every walk end and every look carry the minimap block
+
+- Out of combat, every walk end (wait_for on a walk or trip, a walk that ends in the settle window, a blocking
+  walk, jump_to, travel_to's settle, regroup, a fast travel's arrival) and every `look` end with three lines, always
+  (not only when something changed), arrived or stopped short:
+  `OBJECTIVES o1 Escape the ship 16m W (3.4m down) [Escape the Nautiloid] | o2 ... | +1 more (get_map lists all)`
+  (up to 3, here first, nearest first; another area's marker says `(another area)`; `none on the map`), the
+  `WAYS walkable:` line, and `LEADS (unvisited; get_frontier lists all):` with the 3 nearest unvisited leads (was
+  the first 5 unvisited, and only after a walk that ended `done`).
+- One renderer (bridge/src/bg3ai/minimap.py). Its frontier read (`nav.frontier ways_cached`) moved into the CHANGES
+  read's eval, so a walk end no longer makes a separate nav.frontier round trip (launch-v1: median 56 ms, p90 96 ms
+  each); look and the other walk ends read it in their existing eval. A busy spot's block is under 300 tokens.
+- `look(full=true)` no longer prints its separate OBJECTIVE lines: the block carries them.
+
+## 2026-11-02: trade sell="junk" names what it sold
+
+- The result lists every item sold, grouped by name with the count and the gold at the shown prices, most gold
+  first (`SOLD Goblin Scimitar x4 12 g | Skull x2 4 g`), and counts what the junk rule kept back of the items on
+  the trade screen by kind (`KEPT (not junk) on this trade screen: 12 consumables, 4 equipped, 1 story`). The
+  sale's own item events stay out of EVENTS (the list replaces them). launch-v1's 36 sell=junk calls sold 430
+  items for ~4,000 g, and their results named none of them.
+
+## 2026-11-02: roll_check stops on a failed roll; a reroll is its own call
+
+- A failed roll with Inspiration left returns with the roll screen still open (the roll line shows DC, die, bonus
+  and Inspiration left) and says how to go on: `roll_check(reroll=true)` rolls again for 1 Inspiration,
+  `roll_check()` continues with the failure. A success still continues in the same call; a failure with no
+  Inspiration left, or a reroll the game ignored, continues too (nothing to choose).
+- `reroll_on_fail` is removed (not refused): it rerolled before the failure was seen (human-gap research: 15 of
+  launch-v1's Inspiration points were spent that way). `reroll` replaces it and acts on the result on screen.
+
+## 2026-11-02: the action list prints costs and ranges as the game states them
+
+- A cost's named resources read in words, after the action economy and the spell slot, in one fixed order:
+  `[A+Channel Divinity 1]` (was `[A+other:{'ChannelDivinity': 1}]`), `[A+slot L1]` (was `[A+slot L1]` or
+  `[slot L1+A]`, by run). The NOW line names those resources the same way (`Channel Divinity 1/1`).
+- A range the mod can't put in metres is left out: Throw read `Throw [A] ThrownObjectRangem point`, now
+  `Throw [A] point` (the game works the throw range out per object). The mod's state.actions sends `range` only in
+  metres (a number, or the wielded weapon's range).
+
 ## 2026-11-02: in combat each call is one action; combat_turn is removed
 
 - combat_turn is gone from tools/list (94 tools), with its plan parsing, fallbacks, retargeting, automatic bonus

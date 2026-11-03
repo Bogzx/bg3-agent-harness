@@ -114,7 +114,9 @@ class Recorder:
             job_ms = sum((min(b, t1) - max(a, t0)) * 1000 for a, b, _, _ in self.jobs if b > t0 and a < t1)
             busy = job_ms > 0 or self.last_active >= t0 or self.active_now
             bg = None if nested else self._bg_open_at(t0, exclude_from=t0)
-            started = not nested and any(t0 <= v[0] <= t1 + 0.001 for v in self.bg.values())
+            # its own job still running when it returned (a blocking walk's job starts and ends inside the call)
+            started = not nested and any(t0 <= v[0] <= t1 + 0.001 and (v[1] is None or v[1] > t1 + 0.001)
+                                         for v in self.bg.values())
         rec = {"type": "tool", "tool": tool, "t0": round(t0, 3), "t1": round(t1, 3), "ms": round(ms, 1),
                "rpc_ms": round(sum((b - a) * 1000 for a, b, _ in rpc), 1), "rpc_n": len(rpc),
                "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy),

@@ -20,6 +20,7 @@ from .render_base import (  # noqa: F401  (re-exported: callers use render.<name
     num,
     pos,
     raised_ladder,
+    resource_label,
     resources_text,
 )
 from .render_events import (  # noqa: F401
@@ -56,8 +57,8 @@ def _statuses(c: dict) -> str:
     for s in st:
         if isinstance(s, dict):
             n = s.get("name") or s.get("id")
-            if s.get("duration") not in (None, -1):
-                n = f"{n}({num(s['duration'])}t)"
+            if isinstance(s.get("turns"), int):  # the mod's row (VisibilityObjects.lua V.statuses): turns left
+                n = f"{n}({num(s['turns'])}t)"
             names.append(str(n))
         else:
             names.append(str(s))
@@ -359,20 +360,30 @@ def public_levels(x: Any) -> Any:
 
 
 
+_COST_ORDER = ("action", "bonus", "reaction", "movement", "slot")  # the action economy first, then slots
+
+
 def _cost_text(cost: Any) -> str:
+    """{'slot': 1, 'action': 1, 'other': {'ChannelDivinity': 1}} -> 'A+slot L1+Channel Divinity 1': a fixed order (the
+    mod's cost table comes in Lua's pairs order, which differs between runs), named resources by resource_label."""
     if not isinstance(cost, dict):
         return ""
-    short = {"action": "A", "bonus": "B", "reaction": "R", "movement": "m"}
+    short = {"action": "A", "bonus": "B", "reaction": "R"}
     parts = []
-    for k, v in cost.items():
+    for k in _COST_ORDER:
+        v = cost.get(k)
+        if v is None:
+            continue
         if k == "movement":
             parts.append(f"{num(v)}m")
         elif k == "slot":
             parts.append(f"slot L{num(v)}")
-        elif k in short:
-            parts.append(short[k] if v in (1, 1.0, True) else f"{num(v)}{short[k]}")
         else:
-            parts.append(f"{k}:{num(v)}")
+            parts.append(short[k] if v in (1, 1.0, True) else f"{num(v)}{short[k]}")
+    other = cost.get("other")
+    if isinstance(other, dict):
+        parts += [f"{resource_label(str(n))} {num(v)}" for n, v in sorted(other.items())]
+    parts += [f"{k}:{num(v)}" for k, v in sorted(cost.items()) if k not in _COST_ORDER and k != "other"]
     return "+".join(parts)
 
 
@@ -449,8 +460,8 @@ def render_actions(r: Any, H: Handles) -> str:
             bits.append("[Extra Attack: free]")  # the EXTRA_ATTACK status: no action cost now (Guard.lua)
         elif c:
             bits.append(f"[{c}]")
-        if a.get("range") not in (None, "", 0):
-            bits.append(f"{num(a['range']) if not isinstance(a['range'], str) else a['range']}m")
+        if isinstance(a.get("range"), (int, float)) and a["range"]:  # the mod sends a range only as metres
+            bits.append(f"{num(a['range'])}m")
         if a.get("target") and a.get("target") != "entity":
             bits.append(str(a["target"]))
         if a.get("aoe"):

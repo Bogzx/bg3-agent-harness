@@ -157,6 +157,30 @@ def test_calls_moves_and_thinking_gaps():
     assert r["think_s"] == [3, 0.5, 2]
 
 
+def test_a_walk_that_arrived_is_not_refused_by_what_its_result_reports_about_the_world():
+    """bench-v0.10 walks return at their end with EVENTS, CHANGES, PASSED and the minimap block: a companion's queue
+    failing meanwhile, or a lead named "Stuck Door", is not the walk's refusal; the walk's own lines are."""
+    arrived = (
+        "move_to: done — @(1, 2, 3)\n"
+        "EVENTS\n"
+        "  queue Shadowheart: interrupted — 2. loot: FAILED — container empty\n"
+        "CHANGES\n"
+        "  + e9 Stuck Door <door> 6m N\n"
+        "PASSED (seen on the way, out of view now): e7 Goblin hostile 41m S\n"
+        "OBJECTIVES o1 Find the helm 40m N\n"
+        "WAYS walkable: N 20m+ | blocked: no walkable ground S\n"
+        "LEADS (unvisited; get_frontier lists all): e12 Stuck Door <door> 14m N"
+    )
+    stopped = "travel_to: FAILED — no walkable ground leads further toward it (12m left)\nOBJECTIVES o1 x 4m N"
+    events = [
+        call(1, "move_to", "a"),
+        result(2, "a", arrived),
+        call(3, "travel_to", "b"),
+        result(4, "b", stopped),
+    ]
+    assert behaviour.metrics(run("act1_gold_max", events=events), {})["moves"] == {"calls": 2, "refused": 1}
+
+
 def test_load_run_reads_session_chunks_in_time_order(tmp_path):
     d = tmp_path / "run"
     d.mkdir()

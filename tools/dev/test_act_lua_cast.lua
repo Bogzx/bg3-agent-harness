@@ -895,3 +895,50 @@ test("sneak: UseSpell with the full 5 arguments", function()
     job(op("sneak", { char = P1, on = true }))
     eq(called("UseSpell")[1].n, 5, "arity")
 end)
+
+test("cast: a container's variant list must read as spells (fights-v09 Balthazar: a mesh name as the list)", function()
+    local LOH = "Target_LayOnHands"
+    local ids = { "Target_LayOnHands_SmallHeal", "Target_LayOnHands_BigHeal", "Target_LayOnHands_Cure" }
+    for _, id in ipairs(ids) do
+        spell(id, { ModifierList = "SpellData", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    end
+    local reads, lists = 0, {}
+    spell(LOH, setmetatable({ ModifierList = "SpellData", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 },
+        { __index = function(_, k)
+            if k ~= "ContainerSpells" then return nil end
+            reads = reads + 1
+            return lists[reads] or lists[#lists]
+        end }))
+    local function cast_error(...)
+        reads, lists = 0, { ... }
+        local j = job(op("cast", { char = P1, spell = LOH, target = P1 }))
+        eq(j.status, "failed", "a container is refused")
+        return j.error
+    end
+    local good = table.concat(ids, ";")
+    local err = cast_error(good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, Target_LayOnHands_Cure",
+        1, true), err)
+    local mesh = "BLD_GEN_Crane_Elevator_B.BLD_GEN_Crane_Elevator_B_Mesh.0"
+    err = cast_error(mesh, good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal", 1, true), "a second read: " .. err)
+    eq(reads, 2, "read twice")
+    err = cast_error(mesh)
+    assert(not err:find("BLD_GEN", 1, true), "the raw string is never shown: " .. err)
+    assert(err:find("variant list did not read as spell names", 1, true), err)
+    stats.Target_Wall = { ModifierList = "Wall" } -- a stats entry that is not a spell
+    err = cast_error("Target_LayOnHands_SmallHeal;Target_Wall")
+    -- one bad entry hides only itself (arena-bridge review 2026-11-03 finding 3)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal (1 more entry of its variant list did not read"
+        .. " as spell names)", 1, true), err)
+    assert(not err:find("Target_Wall", 1, true), err)
+    eq(reads, 2, "a list with a bad entry is read twice")
+    err = cast_error("Target_LayOnHands_SmallHeal;Target_Wall", good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, "
+        .. "Target_LayOnHands_Cure", 1, true) and not err:find("did not read", 1, true),
+        "the second read wins: " .. err)
+    err = cast_error("Target_Wall;" .. mesh)
+    assert(err:find("choose a variant (this action's variant list did not read as spell names)", 1, true), err)
+    assert(not err:find("Target_Wall", 1, true) and not err:find("BLD_GEN", 1, true), err)
+    stats.Target_Wall = nil
+end)

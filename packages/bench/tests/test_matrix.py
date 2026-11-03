@@ -513,3 +513,23 @@ def test_a_missing_shared_budget_stops_before_a_job_and_one_gone_at_the_end_stop
     m2, own, _ = make(tmp_path, gone, shared=[shared])
     assert m2.run() == matrix.BUDGET
     assert json.loads(own.read_text())["spent"] == 1.0  # the own file still took the cost
+
+
+def test_a_jobs_own_shared_budget_is_checked_and_charged_for_that_job_only(tmp_path):
+    """A matrix of two models, each with its API's budget (a matrix file's [[group]] budget): a job counts against
+    the matrix's file and its own shared one, never the other model's."""
+    a, b = tmp_path / "budget-a.json", tmp_path / "budget-b.json"
+    a.write_text(json.dumps({"cap": 10.0, "spent": 8.5}))  # $1.5 left: one $1 run with a $1.5 reserve
+    b.write_text(json.dumps({"cap": 10.0, "spent": 0.0}))
+    jobs = matrix.plan(MODELS[1:], ["nautiloid", "grove"], ["rules"], 1, max_cost={"nautiloid": 1.5, "grove": 1.5})
+    jobs[0]["shared"], jobs[1]["shared"] = [str(a)], [str(b)]
+    run = FakeRun()
+    m, own, _ = make(tmp_path, run, jobs=jobs)
+    assert m.run() == matrix.FINISHED and len(run.calls) == 2
+    spent = {p.name: json.loads(p.read_text())["spent"] for p in (own, a, b)}
+    assert spent == {"budget.json": 2.0, "budget-a.json": 9.5, "budget-b.json": 1.0}
+    jobs2 = [{**j, "id": j["id"] + "-2"} for j in jobs]  # a's $0.5 left is short of the next reserve: stop there
+    run2 = FakeRun()
+    (tmp_path / "again").mkdir()
+    m2, _, _ = make(tmp_path / "again", run2, jobs=jobs2)
+    assert m2.run() == matrix.BUDGET and run2.calls == []

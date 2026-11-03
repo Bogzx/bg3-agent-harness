@@ -731,6 +731,11 @@ function S.nearby(ctx, args)
     local center = ctx.observers[1] and ctx.observers[1].pos
     local active = selectedCharacter(ctx.party)
     for _, o in ipairs(ctx.observers) do if o.uuid == active and o.pos then center = o.pos end end
+    -- args.center (a party member): the scan centres on them, not on the selected character (travel_to's legs read
+    -- what came into the party's view where the walker is: the bridge's PASSED line). The same visibility rule.
+    if args.center then
+        for _, o in ipairs(ctx.observers) do if o.uuid == args.center and o.pos then center = o.pos end end
+    end
     if not center then return { characters = {}, items = {} } end
     local out = { characters = {}, items = {} }
     local shown = {}
