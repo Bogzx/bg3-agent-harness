@@ -24,13 +24,18 @@ A.ROLL_STAMP_MS = 20000
 A.ROLL_STOP_MS = 2500 -- a failed clear: no CastedSpell this long after the purge = stopped
 A.roll_wait = A.roll_wait or {} -- caster guid -> {job, spell, t}: the last order's stamp, kept past its job
 
--- The flags the write drops. CAST_DROP_EXTRA (probe switch, tools/dev/probe_cast_checks.py, REVIEW-5 F1/F3; off by
--- default): the awaited cast also loses check flags, to see whether the engine then refuses what a player can't.
--- false = none, a list = those flags (one at a time: window 6, dropping all three refused every cast, the control
--- too), true = all of CAST_DROP_PROBE.
+-- The flags the write drops. CAST_DROP: the roll flag; a cast that keeps it is stopped or marked unrolled.
+-- CAST_DROP_EXTRA: check flags the cast loses as well, so the engine checks the spell's own rules as for a player
+-- (Requirements, RequirementConditions, TargetConditions). Default CAST_DROP_CHECKS (window 7 per-flag probe: with
+-- either one dropped the control cast still went, and without IgnoreCastChecks the engine refused Rage out of
+-- combat itself). IgnoreHasSpell stays: dropping it refused every cast (window 6/7). The guard's own rule check
+-- (GuardRules.lua) still runs first: a clear text and no wasted action. A check flag that won't clear only warns
+-- (the guard covered it). Probe switch (tools/dev/probe_cast_checks.py): false = none, a list = those flags, true =
+-- all of CAST_DROP_PROBE.
 A.CAST_DROP = { "IgnoreSpellRolls" }
+A.CAST_DROP_CHECKS = { "IgnoreCastChecks", "IgnoreTargetChecks" }
 A.CAST_DROP_PROBE = { "IgnoreCastChecks", "IgnoreTargetChecks", "IgnoreHasSpell" }
-A.CAST_DROP_EXTRA = A.CAST_DROP_EXTRA or false
+if A.CAST_DROP_EXTRA == nil then A.CAST_DROP_EXTRA = A.CAST_DROP_CHECKS end
 
 -- At the order (right before the Osiris call): the cast it becomes must lose IgnoreSpellRolls.
 function A.cast_rolls(job, char, spell)
@@ -113,11 +118,51 @@ local function strip(st, names, drop)
     end
     if any then st.CastOptions = keep end
     local after = flag_names(st.CastOptions)
-    local stuck = {}
+    local stuck, kept = {}, {}
     for _, f in ipairs(drop) do
-        if not after or has(after, f) then stuck[#stuck + 1] = f end
+        if not after or has(after, f) then
+            if has(A.CAST_DROP, f) then stuck[#stuck + 1] = f else kept[#kept + 1] = f end
+        end
+    end
+    if #kept > 0 then
+        Ext.Utils.PrintWarning("[BG3AI] cast checks: " .. table.concat(kept, ",") .. " stayed set (the engine won't"
+            .. " check those rules for this cast; the guard's check ran before the order)")
     end
     return after, stuck
+end
+
+-- The roll flag plus the check flags of CAST_DROP_EXTRA.
+local function drop_list()
+    local extra = A.CAST_DROP_EXTRA == true and A.CAST_DROP_PROBE or type(A.CAST_DROP_EXTRA) == "table"
+        and A.CAST_DROP_EXTRA or {}
+    local drop = {}
+    for _, f in ipairs(A.CAST_DROP) do drop[#drop + 1] = f end
+    for _, f in ipairs(extra) do drop[#drop + 1] = f end
+    return drop
+end
+
+-- The engine's own reason for refusing the job's cast (SpellCastOutcome.Result on the cast entity, bg3se
+-- SpellCastFailReason), in plain words; nil when it doesn't read.
+A.FAIL_REASONS = {
+    Canceled = "the cast was cancelled", InvalidSpell = "the action isn't valid for this character",
+    MissingTarget = "it has no target", CantCast = "it can't be cast now (its requirements aren't met)",
+    InvalidTarget = "the target isn't a valid target for it", CantUseSource = "the caster can't use its source",
+    CantSpendUseCosts = "its cost can't be paid", MissingAnimations = "the game has no animation for it",
+    MissingTargetPosition = "it has no target position", TooManyTargets = "too many targets",
+    TooFewTargets = "too few targets", MissingCaster = "no caster", DeadTarget = "the target is dead",
+    EqualTargets = "the same target was picked twice", CantFindCastPosition = "no spot to cast it from",
+    BlockedRequiredMove = "the move it needs is blocked", InvalidCastPosition = "the cast position isn't valid",
+    CantMove = "the caster can't move", MovementFailed = "the move to cast it failed",
+    ServerTimeout = "the game timed out",
+}
+function A.engine_refusal(job)
+    local e = job and job.cast_entity
+    if not e then return nil end
+    local ok, r = pcall(function() return e.SpellCastOutcome.Result end)
+    if not ok or r == nil then return nil end
+    r = tostring(r)
+    if r == "None" or r == "0" then return nil end
+    return (A.FAIL_REASONS[r] or "reason " .. r) .. " (the game's " .. r .. ")"
 end
 
 -- SpellCastState OnCreate of a stamped caster.
@@ -137,15 +182,8 @@ function A.roll_cast_state(entity)
     local same = (p == nil and o == nil) or p == w.spell or o == w.spell
     if same and job.status == "running" and job.roll.state == "pending" then -- the awaited cast
         if not names then return roll_failed(job, "its CastOptions don't read as flag names") end
-        local drop = A.CAST_DROP
-        local extra = A.CAST_DROP_EXTRA == true and A.CAST_DROP_PROBE or type(A.CAST_DROP_EXTRA) == "table"
-            and A.CAST_DROP_EXTRA or nil
-        if extra then
-            drop = {}
-            for _, f in ipairs(A.CAST_DROP) do drop[#drop + 1] = f end
-            for _, f in ipairs(extra) do drop[#drop + 1] = f end
-        end
-        local after, stuck = strip(st, names, drop)
+        job.cast_entity = entity -- its SpellCastOutcome says why the engine refused it (A.engine_refusal)
+        local after, stuck = strip(st, names, drop_list())
         if #stuck > 0 then
             return roll_failed(job, table.concat(stuck, ",") .. " stayed set: "
                 .. (after and table.concat(after, ",") or "unread"))
@@ -154,9 +192,9 @@ function A.roll_cast_state(entity)
         job.state_ms = RPC.now_ms() -- the cast exists: it started (on_tick's no-start check counts it)
         return
     end
-    -- Not the awaited cast: only an Osiris order's cast carries the flag; it rolls too.
+    -- Not the awaited cast: only an Osiris order's cast carries the flag; it rolls and is checked too.
     if not names or not has(names, "IgnoreSpellRolls") then return end
-    local _, stuck = strip(st, names, A.CAST_DROP)
+    local _, stuck = strip(st, names, drop_list())
     if same then
         RPC.push("late_cast", { uuid = caster, spell = w.spell,
             note = (job.status == "running" and "a second cast for one order" or "an earlier order went off after its"
