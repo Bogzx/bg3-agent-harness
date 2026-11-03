@@ -3,12 +3,14 @@ screenshot and click its way through (claude-run-2 S001: 23 screenshots and 13 c
 the ladder; S002: path_preview 'error_cause=3' and a screenshot to find the way up to the Helm)."""
 from __future__ import annotations
 
+import time
 import unittest
+from unittest import mock
 
 from test_turn_macros import Base, P1  # noqa: F401  (sets BG3AI_RUNTIME first)
 
 from bg3ai import longnav, render, route  # noqa: E402
-from bg3ai.tools import core, observe, batch, travel_macro  # noqa: E402
+from bg3ai.tools import core, observe, batch, plumbing, travel_macro  # noqa: E402
 
 LADDER = "11111111-2222-3333-4444-000000000070"
 DOOR = "11111111-2222-3333-4444-000000000040"
@@ -86,6 +88,32 @@ class RouteTool(Base):
         self.assertIn("go: not started", observe.route(x=1.0, y=2.0, z=3.0, go=True))
         observe.route(x=1.0, y=2.0, z=3.0)
         self.assertEqual(len(seen), 2)
+
+    def test_go_counts_the_walk_budget_from_the_route_call(self):
+        """review-v010-final #3: route(go=true)'s trip counted its 90 s budget (and the 100 s dialogue deadline) from
+        travel_to's own start, after route's path search, so the call could return past the clients' 110 s."""
+        self.reply = WITH_CLIMB
+        deadlines: list[float] = []
+        real_wait = batch._wait
+
+        def spy(tgt, deadline, *a, **kw):
+            deadlines.append(deadline)
+            return real_wait(tgt, deadline, *a, **kw)
+
+        self.enterContext(mock.patch.object(batch, "_wait", spy))
+        real = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "nav.route":
+                time.sleep(0.5)  # a path search that takes a while
+            return real(op, args, context, timeout)
+
+        self.g.rpc = rpc
+        self.g.dur["act.move_to"] = 0.5
+        t = time.monotonic()
+        observe.route(x=20.0, y=0.0, z=0.0, go=True)
+        self.assertTrue(deadlines)
+        self.assertLess(deadlines[0] - t, plumbing.WALK_BUDGET_S + 0.25)  # from the call, not from after the search
 
     def test_unseen_goal_gets_the_straight_line_only(self):
         """Audit C1/C5 (user 2026-10-18): a goal the party hasn't seen or walked: distance and direction, no walk."""

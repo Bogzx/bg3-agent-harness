@@ -582,12 +582,33 @@ def _read1(op: str, args: dict | None = None, context: str = "server") -> Any:
     return r1(op, args, context) if r1 else core.game.rpc(op, args, context)
 
 
+# The start of the outermost tool call on this thread (a tool that calls another, as route(go=true) calls travel_to):
+# what the inner one's time limits count from (call_t0; review-v010-final #3).
+_call = threading.local()
+
+
+def call_t0() -> float:
+    """When the tool call running on this thread started (the outermost one), or now outside any."""
+    t0 = getattr(_call, "t0", None)
+    return time.monotonic() if t0 is None else t0
+
+
 def _guard(fn):
     """Wrap a tool so game errors become readable text instead of exceptions."""
     import functools
 
     @functools.wraps(fn)
     def wrapper(*a, **kw):
+        outer = getattr(_call, "t0", None) is not None
+        if not outer:
+            _call.t0 = time.monotonic()
+        try:
+            return run(*a, **kw)
+        finally:
+            if not outer:
+                _call.t0 = None
+
+    def run(*a, **kw):
         t0 = time.monotonic()
         try:
             core.LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)

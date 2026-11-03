@@ -40,7 +40,9 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
     A trip that stops twice at the same blocked spot says "tried 2x: blocked" and names another way (a waypoint, another side); route() shows the dead ends, unlocked waypoints and the closest spot you have been.
     note: memory log line(s) appended to your session log at once, as note() does: write notes with the walk, no extra turn.
     An off-limits area the game warned you about (a guard's trespass talk) is walked round; a goal inside it, or a way with no way round, is refused (trespass=true walks in anyway)."""
-    t0 = time.monotonic()
+    # called by another tool (route go=true, a far move_to, talk_to's walk there): its walk budget and the dialogue
+    # deadline count from that call's start (review-v010-final #3); a batch step's own time is its own
+    t0 = time.monotonic() if reporting._batch["active"] else reporting.call_t0()
     if refused := session._note_refused(note):
         return reporting._finish("travel_to", {}, refused, t0)
     memory._note_quiet(note)
