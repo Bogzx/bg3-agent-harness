@@ -169,6 +169,11 @@ game unless it says so.
   call returns (bridge metrics_record.py). A blocking walk's job starts and ends inside the call, and a walk that
   ended in the 0.3 s settle window no longer counts. Async % and the latency figures built on it are not 1:1 with
   bench-v0.9 or bench-v0.8 runs.
+  The behaviour card shifts with blocking walks too, with no change in play: the `wait_for` calls that followed walks
+  are gone and a walk's time is inside its own call, so calls per minute, the read share and the think gaps (tool
+  result to next call) are not 1:1 with earlier suites. `moves.refused` now reads a walk's own lines only (not its
+  EVENTS, CHANGES, PASSED or minimap block: a companion's queue failing during the walk is not the walk's refusal),
+  and a walk's own result now carries its outcome, which earlier suites reported in the `wait_for` after it.
   Invalid-run rule: a `launch_failed` before the run's run_start that relaunched the scenario's own start save is
   the run's note (run record `recovered_launches`: t, attempt, save, error), not a harness failure; a launch failure
   after run_start, or for a new-game start, still voids the run (bg3harness runs.recovered_launch). Records written

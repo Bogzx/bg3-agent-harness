@@ -65,6 +65,10 @@ READ_TOOLS = frozenset(
 )
 HAND_TOOLS = frozenset({"click", "press_key", "mouse", "drag"})
 REFUSED = re.compile(r"FAILED|no walkable|timed out|stuck", re.IGNORECASE)
+# What a walk's result reports about the world rather than the walk (bench-v0.10: walks return at their end): EVENTS
+# and CHANGES (a header and its indented lines; EVENTS holds e.g. a companion's queue failing meanwhile), and the
+# one-line PASSED and minimap blocks (OBJECTIVES, WAYS, LEADS). A move counts as refused on its own lines only.
+WORLD_BLOCKS = re.compile(r"(CHANGES|EVENTS|PASSED|OBJECTIVES|WAYS|LEADS)\b")
 THEFT_CRIMES = frozenset({"Steal", "LootOwnedCorpse", "UseForbiddenItem"})  # something was taken
 TRIED_CRIMES = frozenset({"PickPocketFailed"})
 SOCIAL_SKILLS = ("Persuasion", "Intimidation", "Deception")
@@ -299,6 +303,19 @@ def _tool(e: Json) -> str:
     return str(e.get("tool") or "").split("__")[-1]
 
 
+def _own_lines(text: str) -> str:
+    """A tool result without its WORLD_BLOCKS: the call's own outcome."""
+    own: list[str] = []
+    in_block = False
+    for line in text.splitlines():
+        if not line.startswith(" ") and WORLD_BLOCKS.match(line):
+            in_block = True
+        elif not (in_block and line.startswith("  ")):
+            in_block = False
+            own.append(line)
+    return "\n".join(own)
+
+
 def _calls(run: Run) -> dict[str, Any]:
     names: dict[str, str] = {}
     c: Counter[str] = Counter()
@@ -321,7 +338,7 @@ def _calls(run: Run) -> dict[str, Any]:
                 last_result = None
         elif k == "tool_result":
             last_result = e.get("t")
-            if names.get(str(e.get("call_id"))) in MOVE_TOOLS and REFUSED.search(str(e.get("text") or "")):
+            if names.get(str(e.get("call_id"))) in MOVE_TOOLS and REFUSED.search(_own_lines(str(e.get("text") or ""))):
                 c["move_refused"] += 1
     return {**c, "think_s": gaps}
 
