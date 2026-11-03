@@ -474,6 +474,25 @@ do
     tick(5000, { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } })
     check("dialogue-click (c): done, no note", fin and fin[1] == "done" and fin[2].note == nil)
 
+    -- (d) orchestrator's merge condition: the node moves between the tick's first read and the press (a late
+    --     command lands): the read right before InjectKeyPress sees it and nothing is pressed.
+    start(3)
+    tick(1000)
+    local nextNode = { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } }
+    local reads = 0
+    S2.dialogue = function()
+        reads = reads + 1
+        if reads == 1 then return node(1, 5, 6) end   -- the tick's first read: still the same answers
+        return nextNode                                 -- the read right before the press: the next node
+    end
+    tick(3100)
+    check("dialogue-click (d): the node moved before the press -> no key", #keys == 0 and reads == 2,
+        table.concat(keys, ",") .. " reads=" .. reads)
+    S2.dialogue = function() return now end
+    tick(3500, nextNode)
+    check("dialogue-click (d): the job ends on the next node with no note", fin and fin[1] == "done"
+        and fin[2].note == nil)
+
     vms[4]._props.BoundEvent = nil
     start(4)
     tick(3100)

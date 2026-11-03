@@ -676,23 +676,34 @@ local function settleDialogue(kind, before, opts)
         -- and re-rendered (see S.dialogueAnswers SAFETY note).
         if RPC.now_ms() - job.started < 250 or UI.frame - (job.frame0 or UI.frame) < 3 then return nil end
         local screen, d = dialogueSnapshot()
+        local function taken(scr, dd)
+            return scr ~= "dialogue" or not dd or dd.changing or not dd.options or not sameNode(dd, before)
+        end
         if confirm and not confirm.taken then
-            if screen ~= "dialogue" or not d or d.changing or not d.options or not sameNode(d, before) then
+            if taken(screen, d) then
                 confirm.taken = true
             elseif not confirm.pressed and RPC.now_ms() - job.started >= A.CONFIRM_MS
                 and UI.frame - job.frame0 >= 10 then
-                confirm.pressed = true
-                local ms = RPC.now_ms() - job.started
-                Ext.Utils.PrintWarning(("[BG3AI] %s: the %s was ignored for %d ms (%s, BoundEvent %s); %s"):format(
-                    kind, confirm.via, ms, tostring(confirm.diag), tostring(confirm.bound),
-                    confirm.key and ("pressing " .. confirm.key) or "no key bound"))
-                if confirm.key then
-                    pcall(Ext.Input.InjectKeyPress, confirm.key)
-                    confirm.note = ("the game ignored the answer's %s for %.1f s (same answers still shown): "
-                        .. "pressed its key %s instead"):format(confirm.via, ms / 1000, (confirm.key:gsub("^NUM_", "")))
+                -- Read again right before the press, in this tick: a late command that moved the node since the read
+                -- above must not make key n answer the NEXT node. Not atomic: the game takes the injected key on a
+                -- later frame, so a node change inside that frame can still meet it.
+                if taken(dialogueSnapshot()) then
+                    confirm.taken = true
                 else
-                    confirm.note = ("the game has not taken the answer's %s for %.1f s (same answers still shown; "
-                        .. "no number key is bound to it)"):format(confirm.via, ms / 1000)
+                    confirm.pressed = true
+                    local ms = RPC.now_ms() - job.started
+                    Ext.Utils.PrintWarning(("[BG3AI] %s: the %s was ignored for %d ms (%s, BoundEvent %s); %s"):format(
+                        kind, confirm.via, ms, tostring(confirm.diag), tostring(confirm.bound),
+                        confirm.key and ("pressing " .. confirm.key) or "no key bound"))
+                    if confirm.key then
+                        pcall(Ext.Input.InjectKeyPress, confirm.key)
+                        confirm.note = ("the game ignored the answer's %s for %.1f s (same answers still shown): "
+                            .. "pressed its key %s instead"):format(confirm.via, ms / 1000,
+                            (confirm.key:gsub("^NUM_", "")))
+                    else
+                        confirm.note = ("the game has not taken the answer's %s for %.1f s (same answers still "
+                            .. "shown; no number key is bound to it)"):format(confirm.via, ms / 1000)
+                    end
                 end
             end
         end
