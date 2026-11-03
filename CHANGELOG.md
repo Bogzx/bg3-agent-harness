@@ -81,14 +81,16 @@ game unless it says so.
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 
-- Casts the harness starts now roll their dice (draft, waits for the live check). Osiris `UseSpell` and
-  `UseSpellAtPosition` queue a task whose `SpellCastOptions` has IgnoreSpellRolls (0x4) set, so the cast skipped its
-  spell roll: every attack the harness started hit without a d20 (live 2026-11-03: 30 of 30 arena attacks, and
-  attacks at AC 37 in the arena and in the Balthazar save; the game AI's attacks rolled). The mod clears the bit on
-  the queued task right after each order (`use_ability` casts, the cast after a walk into range, sneak's Hide) and
-  reads it back. When the task is missing or keeps the bit, the queue is purged and the cast fails with the reason.
-  This affects every earlier fight result: party attacks could not miss. Live check: `tools/dev/probe_cast_rolls.py`
-  (`clear` mode) at +20 AC.
+- Casts the harness starts now roll their dice (draft, waits for the live check). A cast an Osiris `UseSpell` or
+  `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,
+  IgnoreCastChecks, IgnoreTargetChecks and AvoidDangerousAuras), so the game skipped its spell roll. Every attack the
+  harness started hit without a d20 (30 of 30 arena attacks; 8 of 8 at AC 35 in the Balthazar save), and Sacred Flame
+  never rolled a save (8 of 8 did full damage). The game AI's casts and the hotbar click route rolled (the hotbar
+  missed 9 of 9 at AC 35). After each order (`use_ability` casts, the cast after a walk into range, sneak's Hide), the
+  mod clears the bit on the cast's start request before the cast system takes it, or else on the cast's state when
+  it is made, and reads it back. When a write doesn't take, or the cast ends with neither seen, the cast fails and
+  says it went without its roll. This affects every earlier fight result: party attacks could not miss and party
+  save spells always landed. Live check: `tools/dev/probe_cast_rolls.py` (`request` and `state` modes).
 
 ### Benchmark (`packages/bench`)
 

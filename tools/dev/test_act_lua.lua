@@ -30,7 +30,15 @@ Ext = {
     Utils = { MonotonicTime = function() return clock end, PrintWarning = function() end, Print = function() end,
         Version = function() return 0 end },
     Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end } },
-    Entity = { Get = entity },
+    Entity = { Get = entity,
+        OnSystemUpdate = function(name, fn) sys_hooks[name] = fn end,
+        OnCreate = function(name, fn) create_hooks[name] = fn end,
+        GetAllEntitiesWithComponent = function(name)
+            if name == "ServerSpellCastRequests" then
+                return { { ServerSpellCastRequests = { StartRequests = cast_requests } } }
+            end
+            return {}
+        end },
     Level = { GetHeightsAt = function() return { 0.0 } end },
     Stats = { Get = function(n) return stats[n] end },
     StaticData = { Get = function(uuid) return { Name = uuid } end },
@@ -63,24 +71,36 @@ LADDER = "acacacac-0000-0000-0000-000000000008"
 party_rows = { P1 }
 
 usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
--- Osiris UseSpell / UseSpellAtPosition queue a task whose SpellCastOptions has IgnoreSpellRolls (0x4) set, as the game
--- does (ops/logs/arena-dice.md "H4 cast path"; 7 = IgnoreHasSpell|IgnoreCastChecks|IgnoreSpellRolls). task_opts nil:
--- no task is queued; task_sticky: the byte ignores writes.
-task_opts, task_sticky = 7, false
-local function queue_task(c, sp)
-    if task_opts == nil or not world or not world[c] then return end
-    local comps = world[c].comps
-    comps.ServerCharacter = comps.ServerCharacter or { OsirisController = { Tasks = {} } }
-    local tasks = comps.ServerCharacter.OsirisController.Tasks
-    local last = tasks[#tasks]
-    local id = last and last.Spell and (last.Spell.OriginatorPrototype or last.Spell)
-    local t = (id == sp and last.SpellCastOptions == nil) and last or { Spell = { OriginatorPrototype = sp } }
-    if t ~= last then tasks[#tasks + 1] = t end
-    if task_sticky then
-        setmetatable(t, { __index = { SpellCastOptions = task_opts }, __newindex = function() end })
-    else
-        t.SpellCastOptions = task_opts
+-- The game's side of an Osiris UseSpell / UseSpellAtPosition (ops/logs/arena-dice.md "H4 cast path"): a
+-- CastStartRequest whose CastOptions has IgnoreSpellRolls (0x4; 7 = IgnoreHasSpell|IgnoreCastChecks|IgnoreSpellRolls)
+-- goes through the ServerCastRequest system (its pre-update hook first), then the cast entity's SpellCastState is
+-- made from it (its OnCreate hook). Knobs: cast_opts nil = no cast at all; cast_sticky = CastOptions writes don't
+-- take; cast_seen = "both" | "state" (the request not seen by the hook) | "none".
+sys_hooks, create_hooks, cast_requests = {}, {}, {}
+cast_opts, cast_sticky, cast_seen = 7, false, "both"
+local function bitfield(v)
+    return setmetatable({}, { __index = function(_, k) if k == "__Value" then return v end end })
+end
+local function with_options(o, v)
+    local cur = bitfield(v)
+    return setmetatable(o, { __index = function(_, k) if k == "CastOptions" then return cur end end,
+        __newindex = function(t, k, val)
+            if k ~= "CastOptions" then rawset(t, k, val) elseif not cast_sticky then cur = bitfield(val) end
+        end })
+end
+last_cast = nil -- {request, state} of the last stub cast
+local function game_cast(c, sp)
+    if cast_opts == nil then return end
+    local caster = { Uuid = { EntityUuid = c } }
+    local r = with_options({ Caster = caster, Spell = { OriginatorPrototype = sp } }, cast_opts)
+    if cast_seen == "both" then
+        cast_requests = { r }
+        if sys_hooks.ServerCastRequest then sys_hooks.ServerCastRequest() end
+        cast_requests = {}
     end
+    local st = with_options({ Caster = caster, SpellId = { OriginatorPrototype = sp } }, r.CastOptions.__Value)
+    if cast_seen ~= "none" and create_hooks.SpellCastState then create_hooks.SpellCastState({ SpellCastState = st }) end
+    last_cast = { request = r, state = st }
 end
 Osi = setmetatable({
     DB_PartyMembers = { Get = function()
@@ -101,7 +121,7 @@ Osi = setmetatable({
     Pickup = record("Pickup"),
     UseSpell = function(c, sp, ...)
         record("UseSpell")(c, sp, ...)
-        queue_task(c, sp)
+        game_cast(c, sp)
     end,
     MakePlayerActive = record("MakePlayerActive"),
     EndTurn = record("EndTurn"),
@@ -115,7 +135,7 @@ Osi = setmetatable({
             error("Incorrect number of IN arguments for 'UseSpellAtPosition'; expected 6, got 5", 0)
         end
         record("UseSpellAtPosition")(...)
-        queue_task(...)
+        game_cast(...)
     end,
 }, { __index = function(_, name)
     return function(...) return osiv[key(name, ...)] end
@@ -148,7 +168,8 @@ function reset()
     Ext.System = nil
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
-    task_opts, task_sticky = 7, false
+    cast_opts, cast_sticky, cast_seen, last_cast = 7, false, "both", nil
+    if A then A.roll_wait = {} end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test

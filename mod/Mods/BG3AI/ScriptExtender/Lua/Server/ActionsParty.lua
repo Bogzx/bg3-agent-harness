@@ -561,8 +561,8 @@ reg("sneak", function(args)
         timeout_ms = 8000,
         start = function(job)
             job.osi_task = "spell"
-            G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1)
             A.cast_rolls(job, char, "Shout_Hide") -- the hide check rolls as a player's (ActionsCast.lua)
+            G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1)
         end,
         on_tick = function(job)
             if G.b(G.q("HasActiveStatus", char, "SNEAKING")) then

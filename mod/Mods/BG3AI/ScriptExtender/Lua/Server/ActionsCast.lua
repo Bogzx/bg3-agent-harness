@@ -190,21 +190,16 @@ A.TASK_POS2_OFF = "the engine-task write for a second pick is off (audit ACT-9)"
 -- Give the queued UseSpell task its second target (OsirisUseSpellTask.TargetPos2, bg3se OsirisTask.h). Returns
 -- true, or nil + why. Read-checked before the write; any proxy error is caught. Nothing is written while
 -- A.TASK_POS2 is off.
--- The newest queued Osiris UseSpell task of `char` for `spell`, or nil.
-function A.queued_spell_task(char, spell)
-    local tasks = Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks
-    for i = #tasks, 1, -1 do
-        local ok2, sp = pcall(function() return tasks[i].Spell end)
-        local id = ok2 and sp and (type(sp) == "string" and sp or sp.OriginatorPrototype or sp.Prototype)
-        if id == spell then return tasks[i] end
-    end
-    return nil
-end
-
 function A.set_task_pos2(char, spell, p)
     if not A.TASK_POS2 then return nil, A.TASK_POS2_OFF end
     local ok, err = pcall(function()
-        local t = A.queued_spell_task(char, spell)
+        local tasks = Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks
+        local t
+        for i = #tasks, 1, -1 do
+            local ok2, sp = pcall(function() return tasks[i].Spell end)
+            local id = ok2 and sp and (type(sp) == "string" and sp or sp.OriginatorPrototype or sp.Prototype)
+            if id == spell then t = tasks[i] break end
+        end
         if not t then error("no queued spell task", 0) end
         t.TargetPos2 = { p[1], p[2], p[3] }
         local q = t.TargetPos2
@@ -214,38 +209,93 @@ function A.set_task_pos2(char, spell, p)
     return nil, tostring(err)
 end
 
--- Forced hits (ops/logs/arena-dice.md "H4 cast path", live 2026-11-03: 30 of 30 attacks hit, 2 of 2 at AC 37, no
--- d20 drawn): Osiris UseSpell / UseSpellAtPosition queue a task whose SpellCastOptions byte has IgnoreSpellRolls
--- (0x4; bg3se Controllers/OsirisTask.h OsirisUseSpellTask, Enumerations/ECS.inl SpellCastOptions), so the cast
--- skipped its SpellRoll (the attack roll) and applied its success. A player's cast rolls: right after every order
--- the bit is cleared on the queued task and read back. When that fails the queue is purged (the task would land
--- without its roll) and the job fails, saying why; there is no unrolled fallback.
+-- Forced hits (ops/logs/arena-dice.md "H4 cast path"; live 2026-11-03: Osi.UseSpell casts hit 8/8 at AC 35 and
+-- Sacred Flame never rolled a save, while the hotbar route missed 9/9): a cast an Osiris UseSpell /
+-- UseSpellAtPosition starts carries IgnoreSpellRolls (0x4 of SpellCastOptions, bg3se Enumerations/ECS.inl), so its
+-- SpellRoll (attack roll, saving throw) was skipped and its success applied. A player's cast rolls. The queued
+-- Osiris task was never found live, so the bit is dropped where the cast carries it:
+--   request  its esv::spell_cast::CastStartRequest (ServerSpellCastRequests.StartRequests), in the pre-update of the
+--            ServerCastRequest system, before the cast is made from it
+--   state    the cast's SpellCastState.CastOptions when the cast entity is made (when the request was missed)
+-- and read back. A write that doesn't take, or a cast whose CastedSpell comes with neither seen, fails the job
+-- saying the cast went without its roll; there is no unrolled fallback.
 A.IGNORE_SPELL_ROLLS = 0x4
+A.roll_wait = A.roll_wait or {} -- caster guid -> the job whose cast must roll (one order per caster at a time)
 
--- true, or nil + why: the queued task for `spell` no longer ignores its rolls.
-function A.clear_ignore_rolls(char, spell)
-    local ok, err = pcall(function()
-        local t = A.queued_spell_task(char, spell)
-        if not t then error("no queued spell task", 0) end
-        local o = math.tointeger(tonumber(t.SpellCastOptions))
-        if not o then error("its SpellCastOptions don't read (" .. tostring(t.SpellCastOptions) .. ")", 0) end
-        if o & A.IGNORE_SPELL_ROLLS ~= 0 then t.SpellCastOptions = o & ~A.IGNORE_SPELL_ROLLS end
-        local after = math.tointeger(tonumber(t.SpellCastOptions))
-        if not after or after & A.IGNORE_SPELL_ROLLS ~= 0 then
-            error("IgnoreSpellRolls is still set (" .. tostring(t.SpellCastOptions) .. ")", 0)
-        end
-    end)
-    if ok then return true end
-    return nil, "the game would cast it without its roll (" .. tostring(err) .. "), so it was not cast"
+-- A bitfield's integer (bg3se BitfieldValueMetatable __Value) or a plain number.
+local function bits(v)
+    if type(v) == "number" then return v end
+    local ok, n = pcall(function() return v.__Value end)
+    return ok and math.tointeger(tonumber(n)) or nil
 end
 
--- The order's follow-up: clear the bit, else purge the queue and fail the job. Returns true when the cast may go on.
+-- At the order (right after the Osiris call): the cast it becomes must lose IgnoreSpellRolls.
 function A.cast_rolls(job, char, spell)
-    local ok, why = A.clear_ignore_rolls(char, spell)
-    if ok then return true end
-    pcall(G.osi, "PurgeOsirisQueue", char)
-    RPC.finish_job(job, "failed", nil, why)
-    return false
+    job.roll = { spell = spell, state = "pending" }
+    A.roll_wait[G.guid(char)] = job
+end
+
+local function roll_failed(job, why)
+    job.roll.state = "failed"
+    for k, j in pairs(A.roll_wait) do if j == job then A.roll_wait[k] = nil end end
+    pcall(G.osi, "PurgeOsirisQueue", job.char)
+    RPC.finish_job(job, "failed", nil, "the game cast it without its roll (" .. why .. ")")
+end
+
+-- Drop the bit from `obj.CastOptions` for the waiting job of `caster`; where = "request" | "state".
+function A.clear_roll_bit(caster, obj, where)
+    local job = caster and A.roll_wait[caster]
+    if not job or job.roll.state ~= "pending" or job.status ~= "running" then return end
+    local before = bits(obj.CastOptions)
+    if not before then return roll_failed(job, "its " .. where .. "'s CastOptions don't read") end
+    if before & A.IGNORE_SPELL_ROLLS ~= 0 then obj.CastOptions = before & ~A.IGNORE_SPELL_ROLLS end
+    local after = bits(obj.CastOptions)
+    if not after or after & A.IGNORE_SPELL_ROLLS ~= 0 then
+        return roll_failed(job, "IgnoreSpellRolls stayed set on its " .. where .. ": " .. tostring(after))
+    end
+    job.roll.state, job.roll.where, job.roll.options = "cleared", where, after
+    A.roll_wait[caster] = nil
+end
+
+local function entity_guid(h)
+    local ok, u = pcall(function() return h.Uuid.EntityUuid end)
+    return ok and G.guid(u) or nil
+end
+
+function A.roll_requests()
+    if not next(A.roll_wait) then return end
+    for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerSpellCastRequests") or {}) do
+        for _, r in ipairs(e.ServerSpellCastRequests.StartRequests or {}) do
+            A.clear_roll_bit(entity_guid(r.Caster), r, "request")
+        end
+    end
+end
+
+function A.roll_cast_state(entity)
+    if not next(A.roll_wait) then return end
+    local st = entity.SpellCastState
+    if st then A.clear_roll_bit(entity_guid(st.Caster), st, "cast state") end
+end
+
+-- CastedSpell of the job's cast: a cast whose request and state were never seen went without the clear.
+function A.roll_checked(job)
+    if job.roll and job.roll.state == "pending" then
+        roll_failed(job, "the mod saw neither its cast request nor its cast state")
+        return false
+    end
+    return not (job.roll and job.roll.state == "failed")
+end
+
+local function roll_hook(what, fn)
+    return function(...)
+        local ok, err = pcall(fn, ...)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] cast roll " .. what .. ": " .. tostring(err)) end
+    end
+end
+A.roll_hooks = A.roll_hooks or {}
+if A.roll_hooks.request == nil then
+    A.roll_hooks.request = pcall(Ext.Entity.OnSystemUpdate, "ServerCastRequest", roll_hook("request", A.roll_requests))
+    A.roll_hooks.state = pcall(Ext.Entity.OnCreate, "SpellCastState", roll_hook("state", A.roll_cast_state))
 end
 
 -- After UseSpell(first pick): a two-step cast's second pick goes into the queued task. Revivify: the spot beside
@@ -559,12 +609,13 @@ reg("cast", function(args)
             -- Engine form has 6 inputs (6th = WithoutMove), verified live
             -- on bg3le; the 5-input form is kept as a fallback for builds
             -- without it.
+            A.cast_rolls(job, char, spell)
             G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
                 { char, spell, pos[1], pos[2], pos[3] })
-            A.cast_rolls(job, char, spell)
         else
+            A.cast_rolls(job, char, spell)
             G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
-            if A.cast_rolls(job, char, spell) then A.give_second_pick(job, char, spell, targets, landing) end
+            A.give_second_pick(job, char, spell, targets, landing)
         end
     end
     return start("cast", char, {
@@ -585,7 +636,7 @@ reg("cast", function(args)
                 if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
             end,
             CastedSpell = function(job, a)
-                if matches(a) and not job.casted then
+                if matches(a) and not job.casted and A.roll_checked(job) then
                     -- Hits usually land before CastedSpell; give stragglers a
                     -- short settle window (see on_tick), then report.
                     job.casted = RPC.now_ms()
@@ -846,8 +897,9 @@ reg("cast", function(args)
                     j.walked = U.round(walk_m, 1)
                     j.osi_task = "spell"
                     j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
+                    A.cast_rolls(j, char, spell)
                     G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
-                    if A.cast_rolls(j, char, spell) then A.give_second_pick(j, char, spell, targets, landing) end
+                    A.give_second_pick(j, char, spell, targets, landing)
                 end)
             end
             if ui then
