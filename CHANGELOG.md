@@ -115,6 +115,18 @@ game unless it says so.
   `move_to target` said already_there at 2.1 m, so the agent could not close in. A plain `move_to target` now stops
   inside the mover's own melee reach. A guard refusal on a Shout's caster names "the caster" (it said "the target
   has flanked" for Hide).
+- The guard's rule check reads the condition terms the launch-v1 casts use that it left unread before.
+  - From the game's own helper scripts (Shared `CommonConditions.khn`): HasHelpableCondition (Help),
+    IsCrowdControlled, MobileShootingCasterCondition, CanUseWeaponActions, HasHPMoreThan (Sleep).
+  - Read directly: Player, Locked (Knock), HasPassive (Sculpt Spells).
+  - IsProficientWithEquippedWeapon: the character's Proficiency flags against the equipped weapons'
+    ProficiencyGroup flags.
+  - IsImmuneToStatus: refused only when the immunity is listed; otherwise it stays unknown.
+  - A condition ending in ';' (Grease) now reads.
+  - A status-group term (`HasStatus('SG_...')`) never read as off before (a Lua `x and false or nil` slip), so it
+    was never refused; it now reads.
+  - Replaying the 199 launch-v1 casts gives the same 3 refusals as before (Prayer of Healing in combat) and no new
+    one.
 
 ### Benchmark (`packages/bench`)
 
