@@ -116,7 +116,12 @@ def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, lef
     else:
         tail = delta.changes_text(core.game, core.H, got=got)
     if sightings is not None:
-        seen_line = sightings.line(core.H, got, walker)
+        views: tuple = ()
+        st = got.get("status")
+        if walker and isinstance(got.get("nearby"), dict) and isinstance(st, dict) and st.get("active") != walker:
+            # the end's CHANGES read is centred on the selected member: a companion's trip ends elsewhere
+            views = (core.game.try_rpc("state.nearby", {"radius": passed.RADIUS_M, "center": walker}),)
+        seen_line = sightings.line(core.H, got, walker, views)
         if seen_line:
             lines.append(seen_line)
     if tail:
