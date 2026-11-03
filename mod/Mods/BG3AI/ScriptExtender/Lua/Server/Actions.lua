@@ -390,7 +390,8 @@ end
 
 -- The move's result with its reactions: {by = {uuid, name}, name = the spell's shown name, damage = what it did to
 -- the mover (AttackedBy since the move began), type, resolved = false when the hold ran out first}. Only casters the
--- mover's side can see (the party always); an unnamed (technical) spell is left out, as the event log does.
+-- mover's side can see (the party always) are named; one it can't see is {unseen = true, damage, type} when it
+-- did damage, else left out; an unnamed (technical) spell is left out, as the event log does.
 function A.reaction_annotate(job, result)
     local V = BG3AI.Visibility
     local me = G.guid(job.char)
@@ -398,15 +399,20 @@ function A.reaction_annotate(job, result)
     local ctx = V and V.context and V.context()
     for g, c in pairs(move_reactions(job)) do
         local seen = ctx and (ctx.is_party[g] or V.characterVisible(ctx, g, V.entity(g)))
-        local st = seen and Ext.Stats.Get(c.spell)
-        local name = st and U.loca(st.DisplayName)
-        if name then
-            local dmg, dtype = 0, nil
-            for _, h in ipairs(A.hits[me] or {}) do
-                if h.by == g and h.t >= job.started then dmg, dtype = dmg + h.amount, dtype or h.type end
+        local dmg, dtype = 0, nil
+        for _, h in ipairs(A.hits[me] or {}) do
+            if h.by == g and h.t >= job.started then dmg, dtype = dmg + h.amount, dtype or h.type end
+        end
+        if seen then
+            local st = Ext.Stats.Get(c.spell)
+            local name = st and U.loca(st.DisplayName)
+            if name then
+                list[#list + 1] = { by = { uuid = g, name = V.name(g) }, name = name, damage = dmg, type = dtype,
+                    resolved = c.done ~= nil or nil, t = c.t }
             end
-            list[#list + 1] = { by = { uuid = g, name = V.name(g) }, name = name, damage = dmg, type = dtype,
-                resolved = c.done ~= nil or nil, t = c.t }
+        elseif dmg > 0 then
+            -- a reactor the side can't see: not who or what, only the damage it felt (the event log's "Someone")
+            list[#list + 1] = { unseen = true, damage = dmg, type = dtype, resolved = c.done ~= nil or nil, t = c.t }
         end
     end
     if #list == 0 then return result end

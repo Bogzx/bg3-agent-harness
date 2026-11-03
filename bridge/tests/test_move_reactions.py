@@ -52,6 +52,12 @@ class MoveReactions(unittest.TestCase):
         text = plumbing._job_text("move_to", JobResult("done", res), ASH)
         self.assertTrue(text.endswith("Main Hand Attack (still resolving when this answered)"), text)
 
+    def test_a_reactor_the_side_cant_see_is_not_named_only_the_damage_shows(self):
+        res = {"dist": 1, "reactions": [{"unseen": True, "damage": 7, "type": "Fire", "resolved": True}]}
+        text = plumbing._job_text("move_to", JobResult("done", res), ASH)
+        a = core.H.get(ASH)
+        self.assertTrue(text.endswith(f"REACTIONS to the move\n  reaction by someone unseen -> {a} Ash 7 Fire"), text)
+
     def test_no_reactions_no_block(self):
         text = plumbing._job_text("move_to", JobResult("done", {"dist": 1}), ASH)
         self.assertNotIn("REACTIONS", text)
