@@ -335,6 +335,62 @@ do
     check("S081 scroll: no ScrollViewer = no", S.answersScroll({ _children = { { _name = "answerList", _children = {} } } }) == false)
 end
 
+-- 12b. v010 live window 4 (Lae'zel's cage "Get rid of them.", 6 answers, 5 rows on screen; answer 4 "[PALADIN]
+--      [DECEPTION] Your quarry looks dangerous, ..." wraps to two lines; answer_list read {rows 5, total 7}): the VMs
+--      have no text, listWindow counts 7 rows from the first row's height (42 of ExtentHeight 294), so the old rules
+--      went rows_only (no VM) and the game ignored the row's button press twice. Rows pair with the live VMs by the
+--      number each row shows (AnswerTextPrefix "4. " = AnswerIdx + 1).
+do
+    local texts = { "Rather demanding for a woman in your position. Why should I?",
+        "Don't worry - I'll get them out of here, one way or another.",
+        "[PERSUASION] Shoot the trap down. We must kill it before it harms someone.",
+        "[PALADIN] [DECEPTION] Your quarry looks dangerous, but I've handled worse. Leave it to me, get to safety.",
+        "Attack the tieflings.", "Leave." }
+    local function row(k, prefix)
+        local it = item({}, texts[k])
+        it._props = { ActualHeight = k == 4 and 84.0 or 42.0 }
+        if prefix ~= false then
+            it._children[#it._children + 1] = { Type = "TextBlock", _name = "AnswerTextPrefix",
+                _props = { Inlines = coll({ run(tostring(k)), run(". ") }) } }
+        end
+        return it
+    end
+    local function list(first, n, prefix)
+        local rows = {}
+        for k = first, first + n - 1 do rows[#rows + 1] = row(k, prefix) end
+        local sv = { Type = "ls.LSScrollViewer", _props = { VerticalOffset = (first - 1) * 42.0, ExtentHeight = 294.0,
+            ScrollableHeight = 84.0 }, _children = rows }
+        return { _children = { { _name = "answerList", _children = { sv } } } }
+    end
+    local vms6 = {}
+    for k = 1, 6 do vms6[k] = vm({ { Type = "Text" } }) vms6[k]._props.AnswerIdx = k - 1 end
+
+    local out, changing, counts = S.dialogueAnswers(list(1, 5), ad(vms6, true))
+    check("w4 by number: not changing", changing == false)
+    check("w4 by number: 5 rows, numbered as shown", #out == 5 and out[1].i == 1 and out[5].i == 5, #out)
+    check("w4 by number: row 4 is VM 4 (the [PALADIN] [DECEPTION] answer)", out[4] and out[4].vm == vms6[4]
+        and out[4].num == 4 and out[4].tags and out[4].tags[1] == "PALADIN", out[4] and out[4].text)
+    check("w4 by number: 1 more below, flagged", counts and counts.by_number == true and counts.below == 1
+        and counts.above == nil, counts and counts.below)
+    -- scrolled down one row: rows 2-6 keep the game's numbers (the old window arithmetic is what failed here)
+    local out2, _, c2 = S.dialogueAnswers(list(2, 5), ad(vms6, true))
+    check("w4 by number scrolled: rows 2-6 are VMs 2-6", #out2 == 5 and out2[1].i == 2 and out2[1].vm == vms6[2]
+        and out2[5].i == 6 and out2[5].vm == vms6[6] and c2.above == 1 and c2.below == nil, #out2)
+    -- a row whose number no VM carries (the previous node's rows): not paired by number
+    local vmsOld = {}
+    for k = 1, 3 do vmsOld[k] = vms6[k] end
+    local out3, _, c3 = S.dialogueAnswers(list(1, 5), ad(vmsOld, true))
+    check("w4 by number: a row number no VM has -> no VM claimed", not (c3 and c3.by_number) and not (out3[4] and
+        out3[4].vm), c3 and c3.rows_only)
+    -- rows without a shown number: the old rules (rows only here), the row's number unread
+    local out4, _, c4 = S.dialogueAnswers(list(1, 5, false), ad(vms6, true))
+    check("w4 no prefix: rows only as before", c4 and c4.rows_only == true and out4[1].num == nil, c4 and c4.rows_only)
+    QUIET = true
+    local _, ch5 = S.dialogueAnswers(list(1, 5), ad(vms6, true))
+    check("w4 by number: not right after our own command", ch5 == true)
+    QUIET = false
+end
+
 -- 13. Audit UI-4: ui.dialogue_choose for an option outside the visible rows. The i-th answer VM is the i-th row
 --     only when the list's scroll extent counts exactly the VMs (by_position); for rows-only answers (a hidden
 --     text-less VM: S015 "7 VMs, 6 shown") Answers.At(i) is another answer, so choose asks the bridge to wheel
@@ -492,6 +548,27 @@ do
     tick(3500, nextNode)
     check("dialogue-click (d): the job ends on the next node with no note", fin and fin[1] == "done"
         and fin[2].note == nil)
+
+    -- window 4: BoundEvent nil, the row shows "4.": the key is the shown number (what key:4 by hand did)
+    vms[4]._props.BoundEvent = nil
+    t, keys, job = 0, {}, nil
+    now = node(1, 5, 6)
+    shown, counts = rows(1, 5, false), { below = 1, above = 0, by_position = true }
+    shown[4].num = 4
+    pcall(ops["ui.dialogue_choose"], { i = 4 })
+    tick(3100)
+    check("w4: no BoundEvent -> the shown number's key", #keys == 1 and keys[1] == "NUM_4", table.concat(keys, ","))
+    check("w4 numberKey: 1-9 only", A.numberKey(9) == "NUM_9" and A.numberKey(10) == nil and A.numberKey(nil) == nil)
+    -- by_number: option 6 below the rows on screen is the VM the game numbers 6 (AnswerIdx 5), not Answers.At(6)
+    local swapped = { vms[1], vms[2], vms[3], vms[4], vms[6], vms[5] }
+    for k = 1, 6 do vms[k]._props.AnswerIdx = k - 1 end
+    adObj = ad(swapped, true)
+    shown, counts = rows(1, 5, false), { below = 1, by_number = true }
+    cmds = {}
+    local okn, en = pcall(ops["ui.dialogue_choose"], { i = 6, dry = true })
+    check("w4 by number: hidden option 6 is the VM numbered 6", okn and cmds[1] and cmds[1][2] == vms[6], en)
+    adObj = ad(vms, true)
+    for k = 1, 10 do vms[k]._props.AnswerIdx = 0 end
 
     vms[4]._props.BoundEvent = nil
     start(4)

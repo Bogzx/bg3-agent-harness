@@ -55,6 +55,7 @@ class Flee(unittest.TestCase):
         self.button = None  # {"over_at": (x, y)} when the HUD has a findable Flee button
         self.box = False
         self.fled = False
+        self.flee = None  # ui.flee_probe's flee state ({can, cause, value, max}), None: not read
         self.inp = FakeInput()
         test = self
 
@@ -81,6 +82,9 @@ class Flee(unittest.TestCase):
                     b = test.button
                     return {
                         "commands": test.commands,
+                        **(
+                            {"flee": test.flee} if test.flee is not None and not (args or {}).get("button_only") else {}
+                        ),
                         "button": b
                         and {
                             "widget": "HotBar",
@@ -162,6 +166,30 @@ class Flee(unittest.TestCase):
         self.assertIn("FAILED: the game won't flee now", out)
         self.assertNotIn("ui.flee", self.names())
         self.assertNotIn("click_box", self.names())
+
+    def test_greyed_out_by_the_game_stops_at_once_with_its_reason(self):
+        # v010 live window 4: CanFlee false (an enemy within 27 m the party can't see); 20 commands + 48 hover
+        # spots, 48 s
+        self.flee = {"can": False, "cause": "Enemy too close!", "value": 10.63, "max": 27}
+        self.commands = [{"widget": w, "name": "Flee", "can": True} for w in ("HotBar", "PlayerPortraits")]
+        self.button = {"over_at": (831, 922)}
+        out = combat.flee()
+        self.assertIn("FAILED: the game won't flee now (Flee is greyed out: Enemy too close! (10.6/27 m))", out)
+        self.assertEqual(self.names(), ["state.combat", "ui.flee_probe"])
+        self.assertEqual(self.inp.clicks, [])
+
+    def test_greyed_out_without_a_cause(self):
+        self.flee = {"can": False, "value": -1, "max": 27}
+        self.assertIn("(Flee is greyed out: the game gives no reason)", combat.flee())
+
+    def test_one_command_name_runs_once(self):
+        # window 4: ui.flee ran 20 times (one name on many pages), each followed by the 2 s wait for the question
+        self.flee = {"can": True}
+        self.command_works = False
+        self.commands = [{"widget": f"Page{k}", "name": "Flee", "can": True} for k in range(20)]
+        out = combat.flee()
+        self.assertIn("FAILED: the game didn't ask to flee", out)
+        self.assertEqual([op for op in self.names() if op == "ui.flee"], ["ui.flee"])
 
     def test_no_question_no_yes(self):
         self.command_works = False

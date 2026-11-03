@@ -653,6 +653,12 @@ function A.answerSlotKey(bound)
     local n = tonumber(tostring(bound or ""):match("^UISelectSlot(%d)$"))
     return n and ("NUM_" .. n) or nil
 end
+-- The number key for an answer's shown number (1-9), what a player presses when the binding isn't readable (window 4:
+-- BoundEvent nil on Lae'zel's rows; key 4 by hand took answer 4 both times). Pure.
+function A.numberKey(num)
+    num = tonumber(num)
+    return num and num >= 1 and num <= 9 and num % 1 == 0 and ("NUM_" .. math.floor(num)) or nil
+end
 A.CONFIRM_MS = 3000
 
 -- Waits until the dialogue reaches a decision point after an action:
@@ -797,7 +803,12 @@ RPC.register("ui.dialogue_choose", function(args)
         if #answers == 0 then first = 1 end
         local below, above = counts and counts.below or 0, counts and counts.above or 0
         local hidden = not a and ((i > last and i <= last + below) or (i < first and i >= first - above))
-        if hidden and counts.by_position then
+        if hidden and counts.by_number then
+            -- below or above the rows on screen: the live VM the game numbers i (AnswerIdx + 1)
+            local vms = UI.prop(S.activeDialogue(dc), "Answers")
+            local vm = vms and S.vmsByNumber(vms, UI.count(vms))[i]
+            if vm then a = { i = i, vm = vm, num = i, off = UI.prop(vm, "Enabled") == false } end
+        elseif hidden and counts.by_position then
             -- An answer outside the visible rows of a long list (companion menus): the live VM at that
             -- position in Answers. Only when the list's scroll extent counts exactly the VMs (by_position):
             -- with a hidden text-less VM (S015: 7 VMs, 6 shown) or rows-only answers, the i-th VM is not
@@ -838,7 +849,7 @@ RPC.register("ui.dialogue_choose", function(args)
             confirm.bound = confirm.bound or UI.get(btn, "BoundEvent")
         end
         confirm.bound = confirm.bound ~= nil and tostring(confirm.bound) or nil
-        confirm.key = A.answerSlotKey(confirm.bound)
+        confirm.key = A.answerSlotKey(confirm.bound) or A.numberKey(a.num)
     end
     if args.dry then return { can = true } end
     return settleDialogue("ui.dialogue_choose", cur0, { skip = args.skip, timeout_ms = args.timeout_ms,
