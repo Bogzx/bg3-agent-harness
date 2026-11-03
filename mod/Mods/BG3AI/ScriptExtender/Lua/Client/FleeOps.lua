@@ -93,8 +93,9 @@ end
 
 -- The game's own flee state of `char` (eoc::FleeCapabilityComponent, what the HUD is built from): Flags
 -- (FleeErrorFlags: Region, EnemyTooClose, CantMove, Downed, Incapacitated, Condition, Summon, PartyFollower),
--- FleeDistance and CurrentFleeDistance, into st.flags / st.need / st.at. v010 live window 5 (Balthazar's fight, enemy at 1.4 m):
--- CanFlee false but the VM's FleeBlockCause empty and FleeDistance -1/-1, so flee said "the game gives no reason".
+-- FleeDistance and CurrentFleeDistance, into st.flags / st.need / st.at. v010 live window 5 (Balthazar's fight,
+-- enemy at 1.4 m): CanFlee false but the VM's FleeBlockCause empty and FleeDistance -1/-1, so flee said "the game
+-- gives no reason".
 function FL.capability(char, st)
     local ok, cap = pcall(function() return Ext.Entity.Get(char).FleeCapability end)
     if not ok or cap == nil then return end
