@@ -129,7 +129,7 @@ print(json.dumps({"game": core.game.side, "watch": queueing._watch_conn().side})
 class Server(unittest.TestCase):
     def test_every_game_of_the_server_has_the_side(self):
         for side, want in (("A", "A"), ("B", "B"), ("", None)):
-            env = {**os.environ, "BG3AI_SIDE": side, "BG3LE_DEBUG_PORT": "1"}
+            env = {**os.environ, "BG3AI_SIDE": side, "BG3AI_ARENA_TURN_CAP_S": "90", "BG3LE_DEBUG_PORT": "1"}
             r = subprocess.run(
                 [sys.executable, "-c", PROBE_SIDE],
                 cwd=BRIDGE,
@@ -184,9 +184,13 @@ class Server(unittest.TestCase):
         self.assertFalse(off & set(served["batchable"]))
 
     def test_a_sides_server_serves_the_match_rules(self):
-        side = tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1"})["instructions"]
+        side = tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1", "BG3AI_ARENA_TURN_CAP_S": "60"})["instructions"]
         self.assertIn("## Two-team match", side)
-        self.assertTrue(side.rstrip().endswith(ARENA_MD.read_text(encoding="utf-8").strip()))
+        filled = ARENA_MD.read_text(encoding="utf-8").strip().replace("{turn_cap_s}", "60")
+        self.assertTrue(side.rstrip().endswith(filled))
+        self.assertIn("60 s of model time per character", " ".join(side.split()))
+        with self.assertRaisesRegex(AssertionError, "BG3AI_ARENA_TURN_CAP_S"):  # no cap: no rules, no server
+            tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1"})
         self.assertNotIn("## Two-team match", tools({"BG3AI_TOOLS_OFF": "arena-v1"})["instructions"])
         self.assertNotIn("## Two-team match", tools({})["instructions"])
 

@@ -53,7 +53,8 @@ def load(path: Path | None = None, condition: str | None = None, off: frozenset[
     (the server doesn't serve them: $BG3AI_SERVE_RULES=0, Claude Code reads play/CLAUDE.md).
     `off`: the tools the session's condition removed (capabilities.py); a rules-only text leaves out the rules of
     a group with a tool off. The coaching conditions are the playthrough's text with every group (assemble.py).
-    arena: the session plays one side of a two-team match (BG3AI_SIDE): the match's rules come last."""
+    arena: the session plays one side of a two-team match (BG3AI_SIDE): the match's rules come last, with the
+    arena's per-turn cap from $BG3AI_ARENA_TURN_CAP_S (the runner's side_env sets it; unset: RulesMissingError)."""
     path = path or (Path(p) if (p := os.environ.get("BG3AI_RULES_PATH")) else None)
     try:
         if path is not None:
@@ -63,7 +64,10 @@ def load(path: Path | None = None, condition: str | None = None, off: frozenset[
         caps = mod.ALL_CAPS
         if not mod.CONDITIONS.get(cond):
             caps = frozenset(c for c, names in mod.CAPABILITIES.items() if not set(names) & set(off))
-        return mod.assemble(cond, caps=caps, arena=arena).text.strip()
+        cap = os.environ.get("BG3AI_ARENA_TURN_CAP_S") if arena else None
+        if arena and not cap:
+            raise RulesMissingError("a side's rules state the arena's per-turn cap: BG3AI_ARENA_TURN_CAP_S is unset")
+        return mod.assemble(cond, caps=caps, arena=arena, turn_cap_s=float(cap) if cap else None).text.strip()
     except OSError as e:
         if required:
             raise RulesMissingError(f"no rules for this session ({e}); set $BG3AI_RULES_PATH or install the "
