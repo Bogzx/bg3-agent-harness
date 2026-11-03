@@ -319,8 +319,25 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "turns": {"A": 2, "B": 1},
         "forced": {"A": 0, "B": 0},
         "r1_pattern": "A1|B1",
+        "favoured": {"side": "A", "why": "first"},
         "luck": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("pattern", "want"),
+    [
+        ("A1|B2|A1", {"side": "B", "why": "pair"}),  # seed 1: B's twins back to back
+        ("B1|A2|B1", {"side": "A", "why": "pair"}),  # seed 3
+        ("B1|A1|B1|A1", {"side": "B", "why": "first"}),  # seed 5: no pair, B acted first
+        ("A2|B2", {"side": "A", "why": "first"}),  # both have a pair: the first actor
+        (None, None),
+        ("", None),
+    ],
+)
+def test_the_favoured_side_is_read_from_round_1s_order_alone(pattern, want):
+    # REVIEW-7 (a): the pair side when only one side has a pair, else the first actor; fixed before any result
+    assert arena.favoured(pattern) == want
 
 
 def test_round_1s_phase_pattern_counts_each_phases_characters_in_order():
