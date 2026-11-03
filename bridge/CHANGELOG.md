@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: react(use=true) clicks a lone reaction row instead of pressing its command
+
+- Live window 7: pressing the lone row's command (InterruptReactCommand) left Karlach's Reckless Attack prompt up and
+  the row unchecked (TIMEOUT twice). The row's parameter is a PassThrough multi-binding (decision, interruptor), which
+  bg3le most likely reads as nil (as with DonateBtn), and Lua can't build it. A lone row not yet chosen now goes to the
+  same hover-checked mouse click as prompts with one row per level (`needs_click`); a row already chosen is still
+  accepted by command, and several interruptors still use their rows and Accept.
+
 ## 2026-11-04: react(use=true) on a lone reaction row takes the reaction
 
 - A reaction prompt with one interruptor and one row (Reckless Attack after a natural 1, v010 live window 6) has its

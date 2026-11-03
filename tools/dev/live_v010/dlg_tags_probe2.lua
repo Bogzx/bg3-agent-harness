@@ -19,7 +19,7 @@ end
 local function named(o)
     local out = {}
     for _, k in ipairs(NAMES) do
-        local v = UI.get(o, k)
+        local v = UI.prop(o, k)
         if v ~= nil then out[k] = show(v) end
     end
     return out
@@ -42,12 +42,12 @@ for k = 1, UI.count(vms) do
     local vm = vms:At(k)
     local v = { idx = UI.prop(vm, "AnswerIdx"), params = {} }
     for _, p in UI.items(UI.prop(UI.prop(vm, "CtxAnswer"), "Params"), 12) do
-        if UI.get(p, "Type") == "Tag" then
-            local tag = UI.get(p, "TooltipCustomData")
-            v.params[#v.params + 1] = { named = named(p), extender = items(UI.get(p, "ExtenderData")),
-                rolls = items(UI.get(p, "Rolls")), tooltip = items(UI.get(p, "TooltipEntries")),
-                tag = tag and { named = named(tag), modifiers = items(UI.get(tag, "Modifiers")),
-                    advantages = items(UI.get(tag, "Advantages")) } or nil }
+        if UI.prop(p, "Type") == "Tag" then
+            local tag = UI.prop(p, "TooltipCustomData")
+            v.params[#v.params + 1] = { named = named(p), extender = items(UI.prop(p, "ExtenderData")),
+                rolls = items(UI.prop(p, "Rolls")), tooltip = items(UI.prop(p, "TooltipEntries")),
+                tag = tag and { named = named(tag), modifiers = items(UI.prop(tag, "Modifiers")),
+                    advantages = items(UI.prop(tag, "Advantages")) } or nil }
         end
     end
     if #v.params > 0 then r[#r + 1] = v end
