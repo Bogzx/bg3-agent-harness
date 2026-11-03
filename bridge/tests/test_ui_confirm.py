@@ -264,7 +264,7 @@ class Confirm(Base):
         out = inventory.long_rest()
         h = core.H.get(sh)
         self.assertIn(f"long_rest: FAILED — not pressed: the night at camp can't end yet: the game still wants a talk "
-                      f"with {h} Shadowheart first (the '!' over them)", out)
+                      f"with {h} Shadowheart (the '!' over them) first;", out)
         self.assertNotIn("DB_Camp", out)
         self.assertEqual(seen, [])
         flow["required_talks"] = []  # the talk was had (DialogActorJoined cleared the row): pressed, the night ends
