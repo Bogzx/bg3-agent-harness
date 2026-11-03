@@ -81,3 +81,26 @@ test("out of combat a move_to doesn't wait for anyone's cast", function()
     restore()
     eq(j.status, "done", "at once " .. tostring(j.error))
 end)
+
+-- A reactor the party can't see (hidden, invisible): REACTIONS names neither it nor its spell, but the damage the
+-- mover took shows, as the mover's own HP drop does (it was dropped from the result before).
+test("combat move_to: an unseen enemy's reaction is not named, its damage to the mover still shows", function()
+    combat_setup(12)
+    local restore = seen_stub()
+    BG3AI.Visibility.characterVisible = function() return false end
+    local ok, err = pcall(function()
+        local j = job(op("move_to", { char = P1, pos = { 8.5, 0, 0 } })) -- away from it: a spot, not the unseen one
+        A.dispatch("CastSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        arrive(j, { 8.5, 0, 0 })
+        A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 13, "Attack", 0 })
+        A.dispatch("CastedSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(10)
+        eq(j.status, "done", "answered " .. tostring(j.error))
+        local r = j.result.reactions or {}
+        eq(#r, 1, "one reaction")
+        eq(r[1].unseen, true, "unseen"); eq(r[1].by, nil, "no reactor named"); eq(r[1].name, nil, "no spell named")
+        eq(r[1].damage, 13, "its damage"); eq(r[1].type, "Slashing", "type")
+    end)
+    restore()
+    if not ok then error(err, 0) end
+end)

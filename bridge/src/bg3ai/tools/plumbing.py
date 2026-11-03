@@ -346,6 +346,9 @@ def _reactions_text(reactions: list, char: str | None) -> str:
         dmg = x.get("damage") or 0
         hit = f" -> {who} {render.num(dmg)}" + (f" {x['type']}" if dmg and x.get("type") else "") if dmg else ""
         open_ = "" if x.get("resolved") else " (still resolving when this answered)"
+        if x.get("unseen"):  # a reactor the side can't see: only the damage it felt (Actions.lua)
+            lines.append(f"reaction by someone unseen{hit}{open_}")
+            continue
         lines.append(f"reaction {queueing._label(str(by.get('uuid') or by.get('name') or '?'))}: "
                      f"{x.get('name') or '?'}{hit}{open_}")
     return ("REACTIONS to the move\n  " + "\n  ".join(lines)) if lines else ""
