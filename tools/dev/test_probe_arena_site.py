@@ -118,3 +118,15 @@ def test_a_member_spot_that_snapped_away_in_the_fine_read_is_a_reason_not_a_cras
             "fine": [{"ask": [-0.75, -4.0], "ok": True, "at": [0.1, 5.0, -4.0]}]}  # fmt: skip
     (s,) = ps.rank(data)
     assert s["reasons"] == ["a member spot didn't land where asked (fine)"] and s["dy"] == 0.0
+
+
+def test_a_loose_pickup_is_listed_not_a_reason_and_the_lua_skips_contained_items(tmp_path):
+    potion = {"uuid": "p", "name": "Potion of Speed", "pos": [0.0, 5.0, -8.0], "hp": 1, "item": True, "pickup": True}
+    unread = {"uuid": "b", "name": "Spiked Bulb", "pos": [0.0, 5.0, 8.0], "hp": 1, "item": True}  # flag unread
+    _, sites = run(tmp_path, FakeGame(flat, joiners=(potion, unread)), fine=99)
+    s = next(s for s in sites if (s["cx"], s["za"], s["zb"]) == (0.0, -4.0, 4.0))
+    assert s["pickups"] == ["Potion of Speed (item) 4.1 m"]
+    assert s["reasons"] == ["can join the fight within 15 m: Spiked Bulb (item) 4.1 m"]  # unread counts (fail closed)
+    assert s["joiner_m"] == 4.1
+    lua = ps.joiners_lua(0, 0, 10)
+    assert "e.InventoryMember ~= nil or Osi.GetInventoryOwner(u) ~= nil" in lua and "not inside" in lua

@@ -16,7 +16,9 @@ Offline (--rank FILE), and at the end of a live run: the ranked sites. A site is
 the same x (Setup.line: LINE_GAP_M apart along x), GAP_MIN..GAP_MAX m apart in z. It passes when:
   - level: all members' landed heights within LEVEL_M (fine) and robust: every neighbour of a member spot within
     ROBUST_M of its line (a landing drift can't lift a member);
-  - no joiner (an item or character that can join the fight) within JOIN_M of a member of either line;
+  - no joiner (an item or character that can join the fight) within JOIN_M of a member of either line. Items
+    inside an inventory (InventoryMember / GetInventoryOwner) are not read; a loose pickup (ServerItem.CanBePickedUp)
+    is listed under the site's pickups, not as a reason (whether one joins a fight is unread);
   - no one-sided high ground: every coarse spot within RISE_NEAR_M of a line that is RISE_M or more above it has a
     mirror (the same offset with z flipped, from the other line) that is RISE_M or more above that line, both ways;
   - every sitter SITTER_M or more from every member of both lines (Setup.check_sitters).
@@ -78,9 +80,13 @@ for _, comp in ipairs({{"ServerCharacter", "ServerItem"}}) do
         local okp, p = pcall(function() return e.Transform.Transform.Translate end)
         if okp and p and math.sqrt((p[1] - {cx!r}) ^ 2 + (p[3] - {cz!r}) ^ 2) <= {r!r} then
             local u = e.Uuid and e.Uuid.EntityUuid
-            if u and not party[u:lower()] and Osi.CanJoinCombat(u) == 1 and Osi.IsDead(u) ~= 1 then
+            local item = comp == "ServerItem"
+            -- an item inside an inventory (a container's, a corpse's, a character's) stands where its owner does
+            local inside = item and (e.InventoryMember ~= nil or Osi.GetInventoryOwner(u) ~= nil)
+            if u and not inside and not party[u:lower()] and Osi.CanJoinCombat(u) == 1 and Osi.IsDead(u) ~= 1 then
+                local okq, pick = pcall(function() return e.ServerItem.CanBePickedUp end)
                 out[#out + 1] = {{uuid = u, name = V.name(u), pos = {{p[1], p[2], p[3]}}, hp = Osi.GetHitpoints(u),
-                    item = comp == "ServerItem"}}
+                    item = item, pickup = item and okq and pick == true or nil}}
             end
         end
     end
@@ -184,15 +190,17 @@ def judge(site: dict, h: dict, fine: dict | None, party: list[dict], joiners: li
         reasons.append("coarse only (no fine read)")
     out["A"] = [site["cx"], round(ys["A"], 2), site["za"]]
     out["B"] = [site["cx"], round(ys["B"], 2), site["zb"]]
-    near = []
+    near, pickups = [], []
+    blocking = [j for j in joiners if not j.get("pickup")]  # a loose pickup (CanBePickedUp): listed, not a reason
     for j in joiners:
         d = min(_dist((j["pos"][0], j["pos"][2]), m) for s in spots for m in spots[s])
         if d < JOIN_M:
-            near.append(f"{j['name']}{' (item)' if j.get('item') else ''} {d:.1f} m")
+            (pickups if j.get("pickup") else near).append(f"{j['name']}{' (item)' if j.get('item') else ''} {d:.1f} m")
     if near:
         reasons.append("can join the fight within 15 m: " + ", ".join(near))
+    out["pickups"] = pickups
     out["joiner_m"] = round(min((min(_dist((j["pos"][0], j["pos"][2]), m) for s in spots for m in spots[s])
-                                 for j in joiners), default=math.inf), 1)  # fmt: skip
+                                 for j in blocking), default=math.inf), 1)  # fmt: skip
     for s, o in (("A", "B"), ("B", "A")):
         a = (site["cx"], ys[s], site["za"] if s == "A" else site["zb"])
         b = (site["cx"], ys[o], site["za"] if o == "A" else site["zb"])
