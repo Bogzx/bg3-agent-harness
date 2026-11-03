@@ -196,7 +196,8 @@ end
 -- tree until the next layout pass, still pointing at the freed VMs. VMs are
 -- taken from ActiveDialogue.Answers (live) and paired by index with the
 -- rendered texts; if the counts differ the node is changing and nothing is
--- returned (changing = true).
+-- returned (changing = true). Exception: S.rowNumber (a row's AnswerIdx), only
+-- under the by-number pairing's guard (answers shown, not UI.quiet, rows current).
 function S.dialogueAnswers(widget, ad)
     local out = {}
     local list = UI.byName(widget, "answerList")
@@ -249,8 +250,8 @@ function S.dialogueAnswers(widget, ad)
         -- v010 live window 4 (Lae'zel's cage, 6 answers, 5 rows; the 4th "[PALADIN] [DECEPTION] ..." wraps to two
         -- lines): the VMs have no text and listWindow's first-row arithmetic counted 7 answers, so no pairing above
         -- held and the rows went out rows_only, whose button press the game ignored (twice; 33 of 40 launch-v1
-        -- choices on that node "still running"). Each row shows the game's own number (AnswerTextPrefix, AnswerIdx
-        -- + 1): pair the rows with the live VMs by that number, whatever the rows' heights or the scroll.
+        -- choices on that node "still running"). Pair each row with the live VM of the same AnswerIdx (the number
+        -- the row shows, minus 1), whatever the rows' heights or the scroll.
         if #items > 0 and props(ad).ShowAnswers == true and not UI.quiet(6) and (texted == 0 or current) then
             local byNum, last = S.pairRenderedByNumber(items, vms, n)
             if byNum then
@@ -298,7 +299,8 @@ function S.dialogueAnswers(widget, ad)
         if text then
             local vm = try(vms.At, vms, idx)
             local tags, body = S.splitTags(text)
-            local a = { i = #out + 1, text = body, vm = vm, num = S.rowNumber(item) }
+            local ai = vm and tonumber(props(vm).AnswerIdx)
+            local a = { i = #out + 1, text = body, vm = vm, num = ai and ai + 1 }
             if #tags > 0 then a.tags = tags end
             if vm then addTags(a, try(S.answerTags, vm)) end
             if vm and props(vm).Enabled == false then a.off = true end
@@ -448,18 +450,19 @@ function S.renderedRows(items, first)
         local text = textEl and answerText(textEl) or UI.allText(item)
         if not clean(text) then return nil end
         local tags, body = S.splitTags(text)
-        local a = { i = (first or 1) + k - 1, text = body, row = k, num = S.rowNumber(item) }
+        local a = { i = (first or 1) + k - 1, text = body, row = k }
         if #tags > 0 then a.tags = tags end
         out[#out + 1] = a
     end
     return out
 end
 
--- The number the game shows on a rendered answer row (its AnswerTextPrefix "4. ", bound to AnswerIdx + 1): the
--- number a player reads and the number key that picks it. nil when the row has none.
+-- The number a rendered answer row shows (AnswerTextPrefix binds AnswerIdx + 1), from the row's DataContext (SAFETY
+-- note at S.dialogueAnswers). Window 5: the prefix's text reads "." (its number run has no readable Text). nil: unread.
 function S.rowNumber(item)
-    local el = UI.byName(item, "AnswerTextPrefix")
-    return tonumber(tostring(el and answerText(el) or ""):match("^%s*(%d+)%."))
+    local dc = try(function() return item.DataContext end)
+    local idx = dc and tonumber(UI.prop(dc, "AnswerIdx"))
+    return idx and idx + 1 or nil
 end
 
 -- The live answer VMs by the number the game shows for them (AnswerIdx + 1), and the highest such number.
@@ -476,9 +479,8 @@ function S.vmsByNumber(vms, n)
     return by, last
 end
 
--- Rendered rows paired with the live VMs by the row's shown number (texts from the rows only, never a row's
--- DataContext): { {i = shown number, text, tags, vm, row, num} }, and the highest number in Answers. nil unless every
--- row shows a number that one VM carries and has text.
+-- Rows paired with the live VMs by S.rowNumber (texts from the rows, tags also from the VM: window 5's rendered tag
+-- runs read empty): { {i = shown number, text, tags, vm, row, num} }, the highest number; nil unless all pair.
 function S.pairRenderedByNumber(items, vms, n)
     local by, last = S.vmsByNumber(vms, n)
     local out = {}
