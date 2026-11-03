@@ -277,18 +277,36 @@ test("check flags (window 7): dropped by default; the probe switch picks them; a
     eq(opts(), "IgnoreHasSpell,IgnoreCastChecks,NoMovement,AvoidDangerousAuras", "only IgnoreTargetChecks dropped")
 end)
 
-test("check flags: one that won't clear only warns; the cast goes on with its roll", function()
-    local warned = {}
-    local pw = Ext.Utils.PrintWarning
+test("check flags (audit S2-1): one that stays set is a done cast marked unchecked + a cast_unchecked row", function()
+    local warned, rows = {}, {}
+    local pw, ref = Ext.Utils.PrintWarning, BG3AI.Referee
     Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
-    cast_sticky = { "IgnoreCastChecks" }
-    bolt()
-    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
-    Ext.Utils.PrintWarning = pw
-    eq(j.roll.state, "cleared", "not failed"); eq(#called("PurgeOsirisQueue"), 0, "no purge")
-    eq(opts(), "IgnoreHasSpell,NoMovement,AvoidDangerousAuras,IgnoreCastChecks", "the roll flag went")
-    eq(#warned, 1, "one warning")
-    assert(warned[1]:find("IgnoreCastChecks stayed set", 1, true), warned[1])
+    BG3AI.Referee = { record = function(ev, d) rows[#rows + 1] = { ev = ev, d = d } end }
+    G.rules_unread = {}
+    cast_sticky = { "IgnoreTargetChecks" }
+    spell("Projectile_Odd", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0,
+        TargetConditions = "MysteryTerm()" })
+    local j = job(op("cast", { char = P1, spell = "Projectile_Odd", target = NPC }))
+    eq(j.roll.state, "cleared", "the roll flag went: not failed"); eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    eq(opts(), "IgnoreHasSpell,NoMovement,AvoidDangerousAuras,IgnoreTargetChecks", "IgnoreTargetChecks stayed")
+    A.dispatch("CastedSpell", { P1, "Projectile_Odd" })
+    tick(math.ceil(A.PROJECTILE_SETTLE_MS / 60) + 5)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    eq(j.result.unchecked, "the game cast it without checking its own rules (IgnoreTargetChecks stayed set)", "field")
+    eq(#rows, 1, "one referee row"); eq(rows[1].ev, "cast_unchecked", "event")
+    eq(rows[1].d.uuid, G.guid(P1), "uuid"); eq(rows[1].d.spell, "Projectile_Odd", "spell")
+    eq(rows[1].d.flags, "IgnoreTargetChecks", "flags")
+    eq(rows[1].d.rules_unread, "TargetConditions: MysteryTerm", "the guard couldn't read it either")
+    assert(warned[#warned]:find("IgnoreTargetChecks stayed set", 1, true), warned[#warned])
+    -- a late cast whose flags won't clear: both rows
+    rows = {}
+    local late = setmetatable({ Caster = { Uuid = { EntityUuid = P1 } }, SpellId = { Prototype = "Projectile_Odd" } },
+        { __index = function(_, k)
+            if k == "CastOptions" then return { "IgnoreSpellRolls", "IgnoreTargetChecks" } end
+        end, __newindex = function() end })
+    create_hooks.SpellCastState({ SpellCastState = late })
+    Ext.Utils.PrintWarning, BG3AI.Referee = pw, ref
+    eq(#rows, 2, "rows"); eq(rows[1].ev, "cast_unchecked", "late unchecked"); eq(rows[2].ev, "cast_unrolled", "late")
 end)
 
 test("engine refusal (window 7): CastSpellFailed says the game's own reason when the cast entity has one", function()
@@ -318,4 +336,32 @@ test("self-check: a hook that doesn't register is said loudly at load (REVIEW-5)
     eq(A.roll_hook, false, "not registered")
     eq(#said, 1, "said once"); assert(said[1]:find("SELF-CHECK FAILED", 1, true), said[1])
     A.roll_hook = hook
+end)
+
+test("engine refusal (audit S3-2): at a ground point, target reasons are said neutrally", function()
+    spell("Target_Spot", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    for _, r in ipairs({ "MissingTarget", "TooFewTargets", "InvalidTarget" }) do
+        reset()
+        spell("Target_Spot", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+        cast_outcome = r
+        local j = job(op("cast", { char = P1, spell = "Target_Spot", pos = { 5, 0, 0 } }))
+        A.dispatch("CastSpellFailed", { P1, "Target_Spot" })
+        eq(j.status, "failed", "status")
+        assert(j.error:find("the game refused the cast: it can't be cast at that spot", 1, true), j.error)
+        assert(not j.error:find(r, 1, true), "no engine code: " .. j.error)
+    end
+    -- a creature target keeps the game's reason (the guard checked it is in view first)
+    reset()
+    bolt()
+    cast_outcome = "InvalidTarget"
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    A.dispatch("CastSpellFailed", { P1, "Projectile_Bolt" })
+    assert(j.error:find("the target isn't a valid target for it (the game's InvalidTarget)", 1, true), j.error)
+    -- other reasons at a point stay
+    reset()
+    spell("Target_Spot", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    cast_outcome = "CantCast"
+    j = job(op("cast", { char = P1, spell = "Target_Spot", pos = { 5, 0, 0 } }))
+    A.dispatch("CastSpellFailed", { P1, "Target_Spot" })
+    assert(j.error:find("(the game's CantCast)", 1, true), j.error)
 end)

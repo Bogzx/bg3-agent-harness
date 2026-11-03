@@ -104,7 +104,10 @@ game unless it says so.
   (Server/GuardRules.lua: Combat/!Combat/!Immobile and the cheap condition terms), so the agent gets a plain refusal
   and loses no action. When the game refuses a cast, the result now gives the game's own reason
   (`SpellCastOutcome.Result`, e.g. "it can't be cast now (its requirements aren't met) (the game's CantCast)")
-  instead of "no reason given", when the cast entity has one.
+  instead of "no reason given", when the cast entity has one. At a ground point, the game's target reasons
+  (MissingTarget, TooFewTargets, InvalidTarget) read "it can't be cast at that spot", because they can depend on
+  hidden creatures there. A check flag that stays set is recorded: the done result carries `unchecked`, and the
+  referee gets a `cast_unchecked` row with the flags and any rule terms the guard couldn't read for that cast.
 
 ### Benchmark (`packages/bench`)
 
