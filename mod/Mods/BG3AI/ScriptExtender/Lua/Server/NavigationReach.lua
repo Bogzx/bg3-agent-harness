@@ -9,7 +9,7 @@ local truthy = U.truthy
 local osi = V.osi
 local round = U.round
 local I = N.inner
-local store, currentLevel, DIRS, DIR_VEC, floorAt = I.store, I.currentLevel, I.DIRS, I.DIR_VEC, I.floorAt
+local currentLevel, DIRS, DIR_VEC, floorAt = I.currentLevel, I.DIRS, I.DIR_VEC, I.floorAt
 local rawPath, gatedPath = I.rawPath, I.gatedPath
 
 N.WALK_DROP_MAX_M = 6.0 -- BG3 fall damage grows past ~4 m; 6+ m can down a hurt character
@@ -88,7 +88,7 @@ end)
 RPC.register("nav.explored", function(args)
     local lvl = currentLevel()
     if not lvl then error("no level", 0) end
-    local l = store().levels[lvl]
+    local l = I.walkedStore(lvl)
     local out = { level = lvl, cells = 0, cell_m = N.CELL_XZ, subregion = N.subregion }
     if not l then return out end
     out.cells = l.n

@@ -245,3 +245,41 @@ test("a summon's turn: its side's, and its name reaches the client", function()
     eq(Ar.state.turn.side, "A", "turn.side")
     eq(net[#net].names.A[3], "Aspect", "the summon's name")
 end)
+
+-- Walked cells (Navigation.lua): known ground and explored cells per side. arena-v010-merge.md fix 1: the ~1 Hz record
+-- ran with no side, so both teams' steps went into one store and N.known answered true for side A on a spot only
+-- side B stood on (a move_to there passed "in view or walked", and the answer told A where B went).
+local FAR = { 40.0, 0.0, 40.0 }
+local function walkB1There()
+    PersistentVars = nil
+    world[B1].pos = { FAR[1], FAR[2], FAR[3] }
+    N.lastRecord = 0
+    tick()
+end
+
+test("walked cells: a spot only side B stood on is B's known ground, not A's; the harness's view has it", function()
+    begin()
+    walkB1There()
+    eq(as("B", N.known, nil, FAR), true, "B's own step")
+    eq(as("A", N.known, nil, FAR), false, "A: only B stood there")
+    eq(as("A", N.visited, "ARENA_Level", FAR), false, "A visited")
+    eq(as("B", N.visited, "ARENA_Level", FAR), true, "B visited")
+    eq(N.known(nil, FAR), true, "no side: every step, as today")
+    eq(as("A", N.nearestVisited, "ARENA_Level", FAR).to_goal_m > 40, true, "A's nearest walked cell: its own, not B's")
+    eq(as("B", N.nearestVisited, "ARENA_Level", FAR).to_goal_m < 5, true, "B's nearest walked cell")
+end)
+
+test("walked cells: a side's memory ends with the match", function()
+    begin()
+    walkB1There()
+    RPC.clear_sides()
+    eq(as("B", N.visited, "ARENA_Level", FAR), false, "B after the match's end")
+end)
+
+test("walked cells, normal play (no arena): every member's step is known, one store", function()
+    env = {}
+    walkB1There()
+    eq(N.known(nil, FAR), true, "known")
+    eq(N.visited("ARENA_Level", FAR), true, "visited")
+    eq(as("A", N.known, nil, FAR), true, "a side with no arena active is no side")
+end)
