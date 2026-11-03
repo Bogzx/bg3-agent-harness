@@ -171,6 +171,23 @@ test("a side all downed or dead at a turn boundary ends the match: reason wipe, 
     eq(rpc("arena.end", "{reason=\"cap\",winner=\"B\"}").result.ended.winner, "A", "the mod's end is kept")
 end)
 
+-- Review R2 (review-arena-v0.md): A downs B's last member mid-phase, then the runner forfeits A (its third forced turn
+-- in a row) before any turn boundary: the wipe is the end.
+test("arena.end after a wipe no turn boundary has checked: the wipe is the end, not the runner's reason", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 2)
+    fire("TurnStarted", "S_Player_" .. A1)
+    eq(Ar.state.ended, nil, "the match is on")
+    osiv[key("HasActiveStatus", B1, "DOWNED")] = 1
+    world[B1].comps.Health.Hp = 0
+    osiv[key("HasActiveStatus", B2, "DOWNED")] = 1
+    world[B2].comps.Health.Hp = 0
+    local e = rpc("arena.end", "{reason=\"forfeit\",winner=\"B\"}").result.ended
+    eq(e.reason, "wipe", "reason")
+    eq(e.winner, "A", "winner")
+    eq(#refs("arena_end"), 1, "one end recorded")
+end)
+
 test("both sides wiped at once: reason wipe, no winner", function()
     begin()
     for _, u in ipairs({ A1, A2, B1, B2 }) do osiv[key("IsDead", u)] = 1 end
@@ -337,4 +354,39 @@ test("a character on no team in the turn order ends the match at the next phase 
     order = { A1, GOB, B1 }
     tick()
     eq(Ar.state.ended and Ar.state.ended.detail, "Goblin (not on a team) joined the fight", "the goblin")
+end)
+
+-- Review C4 (arena-fight-analysis.md): a slow side whose turn the runner ended at its cap sent its next action into
+-- the other side's phase and read only "not your turn". The side is told, as a fact, and only that side.
+test("the runner's cap end: the side gets turn_forced; its refusals name the cap until its next phase", function()
+    begin()
+    order = { A1, B1 }
+    setTurn(A1, true, false)
+    tick()
+    local why = "the per-turn time cap (90 s of model time)"
+    local r = rpc("act.end_turn", "{char=" .. string.format("%q", A1) .. ",forced=" .. string.format("%q", why) .. "}",
+        "A")
+    eq(r.ok, true, "the end starts: " .. enc(r))
+    local a = kinds(rpc("events.since", "{seq=0}", "A"), "turn_forced")
+    eq(#a, 1, "side A told once")
+    eq(a[1].data.name, "Ana", "whose turn")
+    eq(a[1].data.why, why, "which cap")
+    eq(#kinds(rpc("events.since", "{seq=0}", "B"), "turn_forced"), 0, "side B is not told")
+    setTurn(A1, true, true) -- A1 ended: B's phase
+    setTurn(B1, true, false)
+    tick()
+    refused(function() as("A", G.combat_gate, A1, "turn") end,
+        "not your turn (side B is acting): Ana's turn was ended at " .. why)
+    as("B", G.combat_gate, B1, "turn") -- B acts
+    setTurn(B1, true, true) -- B's phase over: A's next one
+    setTurn(A1, false, false)
+    setTurn(A2, true, false)
+    order = { A2, B2 }
+    tick()
+    setTurn(A2, true, true)
+    setTurn(B2, true, false)
+    tick()
+    local ok, err = pcall(as, "A", G.combat_gate, A2, "turn")
+    eq(ok, false, "refused")
+    eq(err.reason, "not your turn (side B is acting)", "A's new phase: the forced one is over")
 end)

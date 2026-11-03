@@ -44,13 +44,20 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
    began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
-   `act.end_turn` for each of its members in turn order, sent as that side, one at a time (each job polled until it
-   settles, at most END_SETTLE_S; a member that already ended is refused), then `arena_turn_forced {side,
-   character}` once any end went through. The cap of a side's FORFEIT_TURNS-th turn in a row is its forfeit,
-   decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod keeps a
-   match's first end, so no wipe at the next turn boundary can come before the forfeit).
-   Stall: a phase's idle clock (wall time less the larger of the two sides' model time gains, tick by tick; once
-   the phase was capped, its own side's model time no longer counts) runs from its last progress: a new phase, a
+   `act.end_turn {char, forced}` for each of its members in turn order, sent as that side (forced: the cap as the
+   mod tells the side, "the per-turn time cap (N s of model time)" or "the stall cap (...)"), one at a time (each
+   job polled until it
+   settles, at most END_SETTLE_S, which outlasts the mod's own wait for a group's last end; a member whose turn is
+   no longer open is refused), then `arena_turn_forced {side, character}` once an end went through and every
+   other member's was refused as not open (ENDED_REFUSALS). An end the game ignored, one still running at
+   END_SETTLE_S or any other failure writes no arena_turn_forced: the cap's ends are sent again once (CAP_TRIES),
+   then the stall decides (held: capped again; the game's: a fault). The cap of a side's FORFEIT_TURNS-th turn in
+   a row is its forfeit, decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is
+   sent (the mod keeps a match's first end, so no wipe at the next turn boundary can come before the forfeit; a
+   wipe already there when arena.end comes is the end: the mod checks for one first).
+   Stall: a phase's idle clock (wall time less the phase's own side's model time gain, tick by tick; the other
+   side thinking during it is no progress of the phase; once the phase was capped, no model time counts; before the
+   first phase, the larger of the two sides' gains) runs from its last progress: a new phase, a
    change of arena.status's turn, round or HP, a new referee or roll ring row. At STALL_CAPS x turn_cap_s x members
    (at least STALL_MIN_S) the runner reads `state.combat` as the phase's side: a member of the phase still current,
    not ended and not passed by the mod (its arena_turn_passed: who can't act is the mod's call, not state.combat's
@@ -94,7 +101,21 @@ HANG_S = 60.0  # arena.status unanswered this long: the game hung
 FORFEIT_TURNS = 3  # a side's own turns forced to an end in a row
 EXIT_RESUMES = 3  # a side's agent exiting (exit 0) mid-fight: resumed this many times, then it forfeits
 FAULT_RESUMES = 1  # a side's client failing (crash, API/MCP failure, hang): resumed once, then it forfeits
-END_SETTLE_S = 10.0  # a cap's act.end_turn job: polled this long for its end before the next member's
+# A cap's act.end_turn job: polled this long for its end before the next member's. It outlasts the mod's own job:
+# in a match a group's last end waits up to Actions.lua A.END_LAST_WAIT_MS (20 s) for the game to close the group
+# (the job's timeout is 1 s more) before it fails "the game ignored the end-turn order".
+END_SETTLE_S = 22.0
+# The refusals of a cap's end for a member whose turn is no longer open (ActionsParty.lua end_turn, Guard.lua): not
+# a failed end.
+ENDED_REFUSALS = (
+    "this character already ended its turn",
+    "it is not this character's turn",
+    "not your turn",
+    "character is dead",
+    "character is downed",
+    "not in combat",
+)
+CAP_TRIES = 2  # a model-time cap whose ends didn't go through is sent this many times, then the stall decides
 END_POLL_S = 0.25
 STALL_CAPS = 3  # a phase idle this many times its turn cap (turn_cap_s x members) ...
 STALL_MIN_S = 300.0  # ... and at least this long has stalled
@@ -166,6 +187,7 @@ class Turn:
     forced: bool = False
     capped: bool = False  # the runner sent its cap's ends (forced once one went through)
     stalled: bool = False  # a stall "held" capped it
+    cap_tries: int = 0  # the times the runner sent its cap's ends
     passed: set[str] = field(default_factory=set)  # lowercase uuids of members the mod passed (arena_turn_passed)
 
 
@@ -407,15 +429,28 @@ def _last_calls(path: Path, n: int = STALL_CALLS) -> list[dict[str, Any]]:
     return calls[-n:]
 
 
-def _end_turn(game: ArenaGame, clock: Clock, uuid: str, side: str) -> str | None:
-    """act.end_turn for `uuid` as `side`, its job polled until it settles (at most END_SETTLE_S); the refusal or
-    failure, else None."""
-    job = game.rpc("act.end_turn", {"char": uuid}, side) or {}
-    deadline = clock.now() + END_SETTLE_S
-    while job.get("status") not in ("done", "failed") and clock.now() < deadline:
-        clock.sleep(END_POLL_S)
-        job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}, side) or {}
-    return str(job.get("error")) if job.get("status") == "failed" else None
+def _end_turn(game: ArenaGame, clock: Clock, uuid: str, side: str, forced: str) -> str | None:
+    """act.end_turn for `uuid` as `side` at a cap (`forced`: which one, as the mod tells the side: its turn_forced
+    event and its out-of-phase refusals), its job polled until it settles (at most END_SETTLE_S); None when it is
+    done, else the refusal, the failure or "still <status>" (not settled: not an end)."""
+    try:
+        job = game.rpc("act.end_turn", {"char": uuid, "forced": forced}, side) or {}
+        deadline = clock.now() + END_SETTLE_S
+        while job.get("status") not in ("done", "failed") and clock.now() < deadline:
+            clock.sleep(END_POLL_S)
+            job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}, side) or {}
+    except Exception as e:  # a refusal (the op's error) or no answer
+        return str(e)
+    if job.get("status") == "done":
+        return None
+    if job.get("status") == "failed":
+        return str(job.get("error"))
+    return f"act.end_turn still {job.get('status')} after {END_SETTLE_S:g} s"
+
+
+def _ended_refusal(err: str) -> bool:
+    """A cap end's refusal for a member whose turn is no longer open (ENDED_REFUSALS)."""
+    return err.startswith(ENDED_REFUSALS)
 
 
 def run_arena(
@@ -476,16 +511,18 @@ def run_arena(
     def model(side: str) -> float:
         return closed_model[side] + runs[side].model_s()
 
-    def cap_phase(turn: Turn, why: str) -> None:
-        """End the phase at a cap (`why`): its side's forfeit when it is the FORFEIT_TURNS-th in a row, else
-        act.end_turn for each member and arena_turn_forced once one went through."""
+    def cap_phase(turn: Turn, why: str, told: str) -> None:
+        """End the phase at a cap (`why`; `told`: the cap as its side is told): its side's forfeit when it is the
+        FORFEIT_TURNS-th in a row, else act.end_turn for each member and arena_turn_forced once they went through."""
         turn.capped = True
         if ref.forfeits():
             ref.forced()
             log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {why}")
             raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
-        errors = [_end_turn(game, clock, u, turn.side) for u in turn.members]
-        if all(errors):
+        turn.cap_tries += 1
+        errors = [_end_turn(game, clock, u, turn.side, told) for u in turn.members]
+        failed = [e for e in errors if e is not None and not _ended_refusal(e)]
+        if failed or all(errors):
             log(f"arena {spec.name}: ending {turn.name}'s turn at the {why} failed: {'; '.join(map(str, errors))}")
             return
         ref.forced()
@@ -556,7 +593,8 @@ def run_arena(
             turn = ref.turn
             gained = {s: model(s) - seen_model[s] for s in SIDES}
             seen_model = {s: model(s) for s in SIDES}
-            excused = [gained[s] for s in SIDES if turn is None or not (turn.capped and s == turn.side)]
+            # the phase's own side thinking is its progress; the other side's (planning in the other phase) is not
+            excused = list(gained.values()) if turn is None else [] if turn.capped else [gained[turn.side]]
             idle += max(0.0, now - tick_at - max(excused, default=0.0))
             tick_at = now
             sig = (len(ref.turns), json.dumps(status.get("turn"), sort_keys=True), status.get("round"), hp)
@@ -591,9 +629,13 @@ def run_arena(
                     raise _Ended("fault", detail=f"{stall}, the game holds the turn" + (f" ({why})" if why else ""))
                 ref.event("arena_stall", stall="held", **record)
                 turn.stalled = True
-                cap_phase(turn, f"stall ({stall}, side {turn.side} holds it)")
+                cap_phase(
+                    turn,
+                    f"stall ({stall}, side {turn.side} holds it)",
+                    f"the stall cap (no progress for {record['idle_s']:.0f} s)",
+                )
                 continue
-            if turn is None or turn.forced:
+            if turn is None or turn.forced or turn.cap_tries >= CAP_TRIES:
                 continue
             idx = len(ref.turns) - 1
             if turn_mark is None or turn_mark[0] != idx:
@@ -601,7 +643,7 @@ def run_arena(
             cap = spec.turn_cap_s * len(turn.members)
             if model(turn.side) - turn_mark[1] < cap:
                 continue
-            cap_phase(turn, f"{cap:g} s cap")
+            cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
             e = status["ended"]
             outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})

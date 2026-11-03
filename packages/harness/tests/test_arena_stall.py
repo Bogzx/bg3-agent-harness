@@ -125,6 +125,26 @@ def test_once_capped_its_sides_model_time_no_longer_excuses_a_phase_the_game_hol
     assert [(e["stall"], e["character"]) for e in stalls(tmp_path)] == [("game", "Karlach")]
 
 
+def off_turn_thinker(game: Game, side: str, run: Run) -> None:
+    """Thinks all the time, 1 s of model time a second, its own phase or not (plans during the other side's), and
+    ends each of its members' turns once."""
+    run.model += 1.0
+    if (char := my_turn(game, side)) and char not in run.ended:
+        run.ended.add(char)
+        game.rpc("act.end_turn", {"char": char}, side)
+
+
+def test_the_other_side_thinking_doesnt_excuse_a_phase_its_side_holds(tmp_path):
+    """Review R1 (review-arena-v0.md): A holds its phase with no model time while B thinks on through it. B's model
+    time is no progress of A's phase: A is stalled (held) and capped, three in a row forfeit, not a 30 min wall-cap
+    draw."""
+    _model, game, clock, agents, spec = setup({"A": looper, "B": off_turn_thinker})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None and out.end is not None
+    assert (out.end["winner"], out.end["reason"], out.end.get("forfeit")) == ("B", "forfeit", "A"), out.end
+    assert [(e["stall"], e["side"]) for e in stalls(tmp_path)] == [("held", "A")] * 3
+
+
 def test_a_second_stall_of_a_phase_whose_ends_the_game_refuses_is_the_games(tmp_path):
     model, game, clock, agents, spec = setup({"A": looper, "B": passer})
     model.refuse_end = "the game ignored the end-turn order"
@@ -253,3 +273,78 @@ def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_p
     )
     jsonschema.validate(rec, FACTS_SCHEMA)
     jsonschema.validate(rec, BENCH_FACTS_SCHEMA)
+
+
+def slow_ends(game: Game, clock, settle_s: float, outcome: str) -> list[tuple[str, float]]:
+    """Side A's act.end_turn jobs run `settle_s` s, then end: outcome "done" (the game takes the end then) or the
+    mod's "the game ignored the end-turn order". Returns the log of (what, when) for the runner's ends."""
+    rpc, jobs, log = game.rpc, {}, []
+
+    def slow(op, args, side=None, context="server"):
+        if op == "act.end_turn" and side == "A":
+            jid = 9000 + len(jobs)
+            jobs[jid] = (clock.now(), args)
+            log.append(("sent", clock.now()))
+            return {"job": jid, "status": "running"}
+        if op == "job.poll" and side == "A" and args.get("id") in jobs:
+            t0, a = jobs[args["id"]]
+            if clock.now() - t0 < settle_s:
+                return {"id": args["id"], "status": "running"}
+            del jobs[args["id"]]
+            log.append((outcome, clock.now()))
+            if outcome == "done":
+                return rpc("act.end_turn", a, side)
+            return {"id": args["id"], "status": "failed", "error": "the game ignored the end-turn order"}
+        return rpc(op, args, side)
+
+    game.rpc = slow  # type: ignore[method-assign]
+    return log
+
+
+def test_a_cap_end_still_running_at_10_s_that_the_game_then_ignores_is_never_forced(tmp_path):
+    """Review C1 (arena-fight-analysis.md): the mod's end of a group's last member runs up to 21 s. A cap's end
+    still running at 15 s, then ignored, is no end: no arena_turn_forced, the ends sent again once, then the stall
+    finds the side still holding the phase (held, not the game's fault at once)."""
+    _model, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    log = slow_ends(game, clock, 15.0, "ignored")
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert [w for w, _t in log][:4] == ["sent", "ignored", "sent", "ignored"]  # the cap's two tries
+    assert [e["stall"] for e in stalls(tmp_path)][:1] == ["held"]
+    assert out.end is not None
+
+
+def test_a_cap_end_done_at_15_s_is_forced_once_it_is_done(tmp_path):
+    """A cap's end that the game takes at 15 s: arena_turn_forced is written after it is done, not at 10 s."""
+    _model, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    log = slow_ends(game, clock, 15.0, "done")
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    forced = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert forced and log[:2] and log[1][0] == "done"
+    assert forced[0]["t"] >= log[1][1] >= log[0][1] + 15
+
+
+def test_the_caps_end_turn_says_which_cap_ended_the_turn(tmp_path):
+    """Review C4: the runner's cap ends carry `forced` (the mod's turn_forced event for the side and its
+    out-of-phase refusals name it): the model-time cap with its seconds, the stall cap with its idle time."""
+    sent: list[str] = []
+
+    def watch(game: Game) -> None:
+        rpc = game.rpc
+
+        def w(op, args, side=None, context="server"):
+            if op == "act.end_turn" and "forced" in args:
+                sent.append(args["forced"])
+            return rpc(op, args, side)
+
+        game.rpc = w  # type: ignore[method-assign]
+
+    _m, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    watch(game)
+    am.run_arena(spec, SIDES, game, agents, tmp_path / "cap", clock)
+    assert sent[0] == f"the per-turn time cap ({spec.turn_cap_s:g} s of model time)"
+    sent.clear()
+    _m, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    watch(game)
+    am.run_arena(spec, SIDES, game, agents, tmp_path / "stall", clock)
+    assert sent[0].startswith("the stall cap (no progress for 30") and sent[0].endswith(" s)"), sent
