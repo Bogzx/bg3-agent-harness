@@ -154,6 +154,29 @@ ok(pj.status == "done" and table.concat(picked, ",") == "0,1" and table.concat(n
     "pickpocket: refused select retried on the same row (" .. tostring(pj.status) .. " picked " ..
     table.concat(picked, ",") .. " items " .. table.concat(names, ",") .. ")")
 
+-- 6b. ui.command refused at its first UI call (the busy cooldown is on): nothing was pressed, so the answer says
+-- "refused before its first UI call" and the bridge asks it again. v09 moonrise (sonnet r1): end_turn's HUD press
+-- "failed too: bg3le: UI busy" and was not asked again: the confirm-box fallback after the refusal was a second
+-- refused UI call, which turned the answer into "met it after a UI call ran".
+BG3AI.UIState = BG3AI.UIState or {}
+Ext.IO = Ext.IO or { LoadFile = function() return nil end }
+local realRequire = Ext.Require
+Ext.Require = function() end -- its other parts (prompts, menu): not needed for ui.command
+dofile(LUA .. "/Client/UIActions.lua")
+Ext.Require = realRequire
+local realWidget, realWidgets, realAnyDC = UI.widget, UI.widgets, UI.anyDC
+UI.widget = function() UI.checkBusy() return nil end
+UI.widgets = function() UI.checkBusy() return {} end
+local pressedEnd = 0
+UI.anyDC = function() UI.checkBusy() return { EndTurn = { CanExecute = function() return true end,
+    Execute = function() pressedEnd = pressedEnd + 1 end } } end
+UI.busyUntil = clock + UI.BUSY_COOLDOWN_MS
+local rc = call("ui.command", { widget = "*", command = "EndTurn" })
+ok(rc.ok == false and tostring(rc.error):find(RPC.BUSY_BEFORE, 1, true) ~= nil and pressedEnd == 0,
+    "ui.command refused at its gate: BUSY_BEFORE, nothing pressed (" .. tostring(rc.error) .. ")")
+free()
+UI.widget, UI.widgets, UI.anyDC = realWidget, realWidgets, realAnyDC
+
 -- 7. The acting calls in these files go through UI.pcall, not a bare pcall.
 local function src(name)
     local f = assert(io.open(LUA .. "/Client/" .. name, "r"))

@@ -745,6 +745,8 @@ function S.nearby(ctx, args)
                     local o = { uuid = u, name = V.name(u), relation = relation(ctx, u), pos = pos1(p), dist = round(d, 1),
                         statuses = V.statuses(e) }
                     if #o.statuses == 0 then o.statuses = nil end
+                    -- the concentration icon over a visible creature (bridge CHANGES: "concentrating on Cloudkill")
+                    o.concentration = concentration(e)
                     local dead = truthy(osi(Osi.IsDead, u))
                     if dead then o.dead = true end
                     local h = health(e)

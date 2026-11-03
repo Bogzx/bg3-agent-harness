@@ -584,7 +584,7 @@
  {
   "name": "get_combat_state",
   "title": null,
-  "description": "Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy.",
+  "description": "Turn order (visible combatants, with what each is concentrating on), whose turn it is, round, the clouds and harmful surfaces in view (HAZARD lines, as look), and the active character's remaining action economy.",
   "input_schema": {
    "properties": {},
    "title": "get_combat_stateArguments",
