@@ -55,8 +55,8 @@ def _statuses(c: dict) -> str:
     for s in st:
         if isinstance(s, dict):
             n = s.get("name") or s.get("id")
-            if s.get("duration") not in (None, -1):
-                n = f"{n}({num(s['duration'])}t)"
+            if isinstance(s.get("turns"), int):  # the mod's row (VisibilityObjects.lua V.statuses): turns left
+                n = f"{n}({num(s['turns'])}t)"
             names.append(str(n))
         else:
             names.append(str(s))
