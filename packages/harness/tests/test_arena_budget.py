@@ -96,3 +96,22 @@ def test_a_side_reaching_its_own_cap_ends_the_match_over_budget(tmp_path):
     assert out.end is not None and out.end["reason"] == "over_budget" and model.ends == [{"reason": "over_budget"}]
     assert out.invalid == "over_budget: A $0.3100 + B $0.0100 reached side A's cap $0.3"
     assert end_of(tmp_path)["cost"] == {"A": 0.31, "B": 0.01}
+
+
+def test_arena_end_s_cost_counts_what_the_agents_spend_after_the_end(tmp_path, monkeypatch):
+    """Window 6: arena_end's cost was read at the end moment and missed ~$0.0006 a match, the responses charged
+    between the end and the agents' stop; it is written after the stop, equal to the costs charged."""
+    stop = Run.stop
+
+    def last_response(self: Run) -> am.AgentExit:
+        if not self.stopped:
+            self.cost = round(self.cost + 0.0006, 6)
+        return stop(self)
+
+    monkeypatch.setattr(Run, "stop", last_response)
+    _model, game, clock, agents, spec = setup({"A": attacker, "B": passer})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock, max_cost=1.0)
+    assert out.end is not None and out.end["reason"] == "wipe"
+    assert end_of(tmp_path)["cost"] == {"A": out.cost("A"), "B": out.cost("B")} == {"A": 0.0106, "B": 0.0106}
+    evs = [e["ev"] for e in arena_events(tmp_path)]
+    assert evs.count("arena_end") == 1 and evs[-1] == "arena_end"

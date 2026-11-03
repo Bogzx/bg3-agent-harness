@@ -43,8 +43,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
      reserve): `over_budget` (invalid, no winner), both agents stopped.
    The runner's own ends go to the mod as `arena.end {reason, winner}` (no answer from a dead game is needed) and
    into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, failed?, cause?}`, with the HP
-   fractions from the last `arena.status.hp`. Every arena_end, the mod's too, carries `cost {A, B}` (each side's cost
-   so far, USD) and `max_cost` (None without one). arena.end answers with the match's first end: when that is the
+   fractions from the last `arena.status.hp`. Every arena_end, the mod's too, carries `cost {A, B}` (each side's cost,
+   USD, read once both agents are stopped: it is written then, so a response charged after the end counts) and
+   `max_cost` (None without one). arena.end answers with the match's first end: when that is the
    mod's own (it ended the match after this tick's read), the mod's end is the one written, its `detail` naming the
    runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
@@ -216,7 +217,10 @@ class Referee:
         self.turns: list[Turn] = []
         self.mod_end: dict[str, Any] | None = None  # the mod's own arena_end from the ring
         self.combat_ended: dict[str, Any] | None = None  # the mod's arena_combat_ended
-        self.done = False  # arena_end written: later arena records are not the match's
+        self.done = False  # the match ended: later arena records are not the match's
+        # arena_end's fields, written by write_end once both agents are stopped, so its cost holds every response
+        # charged, the last ones too (window 6: written at the end moment it missed ~$0.0006 a match)
+        self.pending_end: dict[str, Any] | None = None
         # the sides the harness's scripted client plays (a player "scripted/..."): the match is a live check, invalid
         self.scripted = [s for s in SIDES if sides[s].player.split("/")[0] == SCRIPTED]
         self.money: Callable[[], dict[str, Any]] = dict  # arena_end's cost and max_cost (run_arena sets it)
@@ -286,9 +290,10 @@ class Referee:
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
         if ev == "arena_end":
             # the ring leaves a nil winner (a draw) out
-            self.mod_end = {"winner": None, **fact, **self.invalid(), **self.money()}
+            self.mod_end = {"winner": None, **fact, **self.invalid()}
+            self.pending_end = self.mod_end
             self.done = True
-            return self.mod_end
+            return None
         if ev == "arena_combat_ended" and self.combat_ended is None:
             self.combat_ended = fact
         return None
@@ -312,9 +317,15 @@ class Referee:
         return len(own) == FORFEIT_TURNS and all(x.forced for x in own[:-1])
 
     def end(self, **fields: Any) -> dict[str, Any]:
-        self.event("arena_end", **fields, **self.invalid(), **self.money())
+        self.pending_end = {"ev": "arena_end", **fields, **self.invalid()}
         self.done = True
         return fields
+
+    def write_end(self) -> None:
+        """arena_end, once: the end's fields with the cost and max_cost as they stand now (after the stops)."""
+        if self.pending_end is not None:
+            self.writer.timed_events([{**self.pending_end, **self.money()}])
+            self.pending_end = None
 
     def invalid(self) -> dict[str, str]:
         """arena_end's `invalid` field: "scripted" when a side is the scripted client, else none."""
@@ -737,6 +748,7 @@ def run_arena(
     finally:
         for s, run in runs.items():
             outcome.exits[s].append(run.stop())
+        ref.write_end()
     if outcome.invalid is None and ref.scripted:
         sides_ = " and ".join(ref.scripted)
         outcome.invalid = f"{SCRIPTED}: side {sides_} played the scripted client (a live check, never graded)"
