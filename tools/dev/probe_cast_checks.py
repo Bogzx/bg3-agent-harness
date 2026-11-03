@@ -345,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
                                 ).split(",")
                             )
                             text = combat.use_ability(
-                                c["ability"], target=tgt, x=x + c["landing_m"], y=y, z=z, who=c["who"]
+                                c["ability"], target=tgt or "", x=x + c["landing_m"], y=y, z=z, who=c["who"]
                             )
                         elif c.get("jump_m"):
                             x, y, z = (
