@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest import mock
 
-from test_turn_macros import P1, P2, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
+from test_turn_macros import GOB, P1, P2, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai.game import GameError
 from bg3ai.tools import core, plumbing, observe, world_tools, travel, batch, travel_macro, session  # noqa: E402
@@ -189,8 +189,7 @@ class LastSeen(FarMoves):
         self.g.refuse_if = lambda op, a: "target is not visible" if op == "act.talk" and len(self.g.ops("act.talk")) == 1 else None
         out = travel.talk_to(self.h)
         self.assertIn("is out of sight: going to where you last saw them", out)
-        self.assertIn(f"then talk_to {self.h} on arrival", out)
-        batch.wait_for("queue", timeout_s=5)
+        self.assertIn(f"; arrived, then talk_to {self.h}", out)
         ops = [c[0] for c in self.g.calls if c[0] in ("act.move_to", "act.talk")]
         self.assertEqual(ops[0], "act.talk")
         self.assertEqual(ops[-1], "act.talk")  # after the walk
@@ -202,8 +201,8 @@ class LastSeen(FarMoves):
         self.g.refuse_if = lambda op, a: ("target is too far away (50m from this character, max 40m)"
                                           if op == "act.interact" and len(self.g.ops("act.interact")) == 1 else None)
         out = world_tools.interact(far)
-        self.assertIn(f"{far} is 50m away: walking there first; then interact {far} on arrival", out)
-        batch.wait_for("queue", timeout_s=5)
+        self.assertIn(f"{far} is 50m away: walking there first; arrived, then interact {far}", out)
+        self.assertTrue(out.rstrip().splitlines()[-1].startswith("interact: done"), out)  # its result, in this call
         ops = [c[0] for c in self.g.calls if c[0] in ("act.move_to", "act.interact")]
         self.assertEqual((ops[0], ops[-1]), ("act.interact", "act.interact"))
         self.assertEqual(self.g.ops("act.move_to")[-1][1]["pos"], [50.0, 0.0, 0.0])
@@ -218,7 +217,39 @@ class LastSeen(FarMoves):
         self.g.refuse_if = lambda op, a: ("character is too far away (47m from this character, max 40m)"
                                           if op == "act.talk" and len(self.g.ops("act.talk")) == 1 else None)
         out = travel.talk_to(far)
-        self.assertIn("is 47m away: walking there first; then talk_to", out)
+        self.assertIn("is 47m away: walking there first; arrived, then talk_to", out)
+
+    def test_a_walk_there_that_stops_short_runs_no_step(self):
+        # review-v010-final #1: the trip blocks to its end now; a trip that stopped (here: a hostile came into view)
+        # still got its interact queued after it, and it ran where the walk had stopped
+        far = core.H.get(self.FAR, "Bedroll")
+        self.g.refuse_if = lambda op, a: ("target is too far away (50m from this character, max 40m)"
+                                          if op == "act.interact" and len(self.g.ops("act.interact")) == 1 else None)
+        walked = self.g.on_start
+
+        def hostile(op, a):
+            walked(op, a)
+            if op == "act.move_to":
+                self.g.watch["seen"] = [{"uuid": GOB, "hostile": True, "name": "Goblin"}]
+
+        self.g.on_start = hostile
+        out = world_tools.interact(far)
+        self.assertIn("STOPPED: hostile in view", out)
+        self.assertIn(f"interact {far}: not run (the walk there stopped before arriving)", out)
+        self.assertNotIn("on arrival", out)
+        batch.wait_for("queue", timeout_s=5)
+        self.assertEqual(len(self.g.ops("act.interact")), 1)  # only the refused first one
+
+    def test_a_walk_there_still_going_at_the_budget_queues_the_step(self):
+        far = core.H.get(self.FAR, "Bedroll")
+        self.g.refuse_if = lambda op, a: ("target is too far away (50m from this character, max 40m)"
+                                          if op == "act.interact" and len(self.g.ops("act.interact")) == 1 else None)
+        self.enterContext(mock.patch.object(plumbing, "WALK_BUDGET_S", 0.5))
+        self.g.dur["act.move_to"] = 1.0
+        out = world_tools.interact(far)
+        self.assertIn(f"then interact {far} on arrival (queued 1 step(s)", out)
+        batch.wait_for("queue", timeout_s=10)
+        self.assertEqual(len(self.g.ops("act.interact")), 2)  # after the arrival
 
     def test_inside_do_actions_a_refusal_stays_a_refusal(self):
         self.g.refuse_if = lambda op, a: "target is too far away (50m from this character, max 40m)" if op == "act.interact" else None

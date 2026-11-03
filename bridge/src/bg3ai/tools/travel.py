@@ -66,8 +66,9 @@ def _stale_trip_line(target: str, seen: tuple[list, int | None], here: list, d: 
 def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, step) -> str | None:
     """A refusal that a walk fixes, as a player clicks it and the character walks there: the target is past the
     act range (S023 interact 75 m, S028 talk_to 47/50 m and interact 40 m at camp) or out of sight but seen on this
-    level (S026 talk_to 7x). Starts travel_to there and queues `step` for the arrival; None when it doesn't apply
-    (inside do_actions, in combat, another refusal, never seen)."""
+    level (S026 talk_to 7x). Walks there (travel_to) and on arrival runs `step` (talk_to or interact) in the same call;
+    a trip still going at its walk budget gets it queued for the arrival, a trip that stopped short doesn't run it.
+    None when it doesn't apply (inside do_actions, in combat, another refusal, never seen)."""
     if reporting._batch["active"]:
         return None
     far = _TOO_FAR_RX.search(out)
@@ -102,8 +103,28 @@ def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, st
     trip = travel_macro.travel_to(who=who, trespass=True, **dest)  # to the one they mean, as a click on them (their guard too)
     if "FAILED" in trip or "REFUSED" in trip:
         return out + "\n" + trip
-    queued = batch._enqueue(char, [step], ignore=None)
-    return f"{line}; then {tool} {target} on arrival ({queued})\n{trip}"
+    if queueing._queues().busy(char):  # still walking at the walk budget: the step waits in the queue for the arrival
+        queued = batch._enqueue(char, [step], ignore=None)
+        return f"{line}; then {tool} {target} on arrival ({queued})\n{trip}"
+    # The trip blocked to its end (bench-v0.10). review-v010-final #1: the step was queued after it whatever the end, so
+    # an interact/talk_to ran after a trip that stopped short (a hostile in view, damage, a prompt): only on arrival
+    # now, here, its result in this call, as a queue entry after the trip did.
+    q = queueing._queues().queues.get(char)
+    rep = q.last_report if q is not None else None
+    if rep is None or rep.stopped:
+        return f"{line}\n{trip}\n{tool} {target}: not run (the walk there stopped before arriving)"
+    return f"{line}; arrived, then {tool} {target}\n{trip}\n{_step_now(step, char)}"
+
+
+def _step_now(step, char: str) -> str:
+    """_walk_first's step (talk_to or interact) after the arrival, in the same call (its time limits from its start)."""
+    t0 = reporting.call_t0()
+    if step.tool == "talk_to":
+        return plumbing._act("talk_to", "act.talk", {"char": char, "npc": plumbing._uuid(step.args["npc"])}, wait_s=30,
+                             t0=t0)
+    return plumbing._act("interact", "act.interact",
+                         {"char": char, "target": plumbing._interact_uuid(step.args["target"])},
+                         wait_s=world_tools.INTERACT_WAIT_S, t0=t0)
 
 
 @core.mcp.tool()
