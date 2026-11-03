@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: react(use=true) on a lone reaction row takes the reaction
+
+- A reaction prompt with one interruptor and one row (Reckless Attack after a natural 1, v010 live window 6) has its
+  Accept button collapsed; a player answers by clicking the row. `react(use=true)` now presses that row's own command
+  (InterruptReactCommand with the row's parameter) instead of InterruptAcceptPlayerCommand, which closed the prompt
+  without the reaction. A row already chosen (checked) is accepted as before; prompts with one row per level still go
+  to the hover-checked click; several interruptors still use their rows and Accept.
+
 ## 2026-11-03: ui_action can't change the difficulty, its settings or the game options
 
 - `ui_action` refuses a command that would change the difficulty (UpdateDifficultyCommand,
