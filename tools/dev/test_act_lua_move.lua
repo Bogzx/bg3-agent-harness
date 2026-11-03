@@ -146,10 +146,11 @@ test("move_to entity: walks to a verified point, never CharacterMoveTo", functio
     eq(j.status, "running", "status")
     eq(#called("CharacterMoveTo"), 0, "CharacterMoveTo calls")
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "move calls"); near(mv[1][3], 8.5, "dest x")
-    arrive(j, { 8.5, 0, 0 })
+    -- the mover's own melee reach (1.5 + 0.2 + 0.2 Hit radii) less the stop slack: 1.5 m -> the 1.0 m ring
+    eq(#mv, 1, "move calls"); near(mv[1][3], 9.0, "dest x")
+    arrive(j, { 9.0, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error))
-    near(j.result.dist, 1.5, "dist to target"); eq(j.result.target, NPC, "target")
+    near(j.result.dist, 1.0, "dist to target"); eq(j.result.target, NPC, "target")
 end)
 
 test("move_to entity: unreachable -> failed job, no movement", function()
@@ -168,13 +169,13 @@ end)
 
 test("move_to entity within: stops inside the edge-to-edge melee reach (S025 Spiritual Weapon 2.4 m)", function()
     world[NPC].pos = { 2.0, 0, 0 }
-    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 } } } }
-    -- 2.0 m is 'already there' for a plain move (2.2 m centres) but outside 1.5 + 0.5 + 0.25 - 0.4 = 1.85 m.
+    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 }, Hit = { Radius = 0.15 } } } }
+    -- 2.0 m is outside 1.5 + 0.2 + 0.15 = 1.85 m (Hit radii); the walk stops 0.4 m inside it (1.45 m: the 1.0 m ring)
     local j = job(op("move_to", { char = P1, target = NPC, within = 1.5 }))
     eq(j.status, "running", "status " .. tostring(j.error))
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "move calls"); near(mv[1][3], 0.5, "dest x (ring 1.5 m on the actor's side)")
-    arrive(j, { 0.5, 0, 0 })
+    eq(#mv, 1, "move calls"); near(mv[1][3], 1.0, "dest x (ring 1.0 m on the actor's side)")
+    arrive(j, { 1.0, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.in_reach, true, "in_reach")
     world[NPC].comps.Bound = nil
 end)

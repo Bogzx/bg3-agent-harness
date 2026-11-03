@@ -441,6 +441,26 @@ class Recording(unittest.TestCase):
         self.assertEqual((r["noesis_parked"], r["noesis_leaked"], r["noesis_gen"], r["lua_client_mb"]),
                          (2707, 10, 68, 2.1))
 
+    def test_mem_sampler_hit_radius_fallbacks(self):
+        """A melee reach on an assumed Hit radius is never silent: the server's count goes into the mem record."""
+        n = [0]
+
+        class G:
+            def rpc(self, op, args=None, context="server", timeout=3.0):
+                if context == "server":
+                    return {"context": "server", "lua_mb": 3.5, "hit_fallbacks": n[0]}
+                return {"context": "client", "lua_mb": 2.1}
+
+        rec = M.Recorder(None)
+        rec.write = lambda r: None
+        clock = [0.0]
+        ms = M.MemSampler(rec, G(), rss=lambda: 5000, now=lambda: clock[0])
+        clock[0] += 61
+        self.assertNotIn("hit_radius_fallbacks", ms.tick())  # none: no field
+        n[0] = 2
+        clock[0] += 61
+        self.assertEqual(ms.tick()["hit_radius_fallbacks"], 2)
+
     def test_rss_from_proc(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
