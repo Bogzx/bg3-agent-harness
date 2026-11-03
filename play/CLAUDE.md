@@ -35,7 +35,8 @@ Nobody will answer questions while you play: decide yourself.
   early on a prompt. `wait()` passes game time.
 - **`queue_actions`** runs steps back to back with no round trip per step: open → loot → pick up → walk on. A walk
   step (`move_to`, `walk_toward`, `travel_to`, `jump_to`) is the last step a batch takes: the steps after the first
-  one are not queued, and the result lists them. Another `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
+  one are not queued, and the result lists them (after one with an `"if"`/`"unless"` they are queued and run only if
+  it is skipped). Another `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
   stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view, low HP, or a failed step;
   the `queue_interrupted` event says why and what was left. `cancel_queue` stops it. Any direct action for the same
   character replaces the queue's current step. In combat `queue_actions` queues nothing.

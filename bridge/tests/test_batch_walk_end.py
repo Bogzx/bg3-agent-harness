@@ -64,6 +64,57 @@ class WalkEndsBatch(Base):
         )
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
 
+    def test_a_walk_step_its_condition_skips_doesnt_end_the_batch(self):
+        out = batch.do_actions(
+            json.dumps(
+                [
+                    {"tool": "move_to", "x": 5, "y": 0, "z": 0, "if": "in_combat"},
+                    {"tool": "interact", "target": self.chest},
+                    {"tool": "move_to", "x": 6, "y": 0, "z": 0},
+                    {"tool": "loot", "take": "all"},
+                ]
+            )
+        )
+        self.assertIn("1. move_to 5,0,0: skipped (if in_combat)", out)
+        self.assertIn("2. interact", out)
+        self.assertIn("3. move_to: done", out)
+        self.assertIn(
+            "not run: loot (out of combat a batch ends with its first walk step, here step 3 move_to 6,0,0)", out
+        )
+        self.assertEqual(len(self.g.ops("act.interact")), 1)
+        self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [6])
+
+    def test_a_conditional_walk_step_that_runs_ends_the_batch(self):
+        out = batch.do_actions(
+            json.dumps(
+                [
+                    {"tool": "move_to", "x": 5, "y": 0, "z": 0, "unless": "in_combat"},
+                    {"tool": "interact", "target": self.chest},
+                    {"tool": "move_to", "x": 6, "y": 0, "z": 0},
+                ]
+            )
+        )
+        self.assertIn("1. move_to: done", out)
+        for n, short in ((2, f"interact {self.chest}"), (3, "move_to 6,0,0")):
+            self.assertIn(
+                f"{n}. {short}: not run (out of combat a batch ends with its first walk step, "
+                "here step 1 move_to 5,0,0)",
+                out,
+            )
+        self.assertEqual(self.g.ops("act.interact"), [])
+        self.assertEqual(len(self.g.ops("act.move_to")), 1)
+
+    def test_a_queue_after_a_conditional_walk_keeps_a_later_calls_steps(self):
+        batch.queue_actions(
+            json.dumps(
+                [{"tool": "move_to", "x": 5, "y": 0, "z": 0, "unless": "in_combat"}, {"tool": "wait", "seconds": 0.2}]
+            )
+        )
+        batch.queue_actions(json.dumps([{"tool": "interact", "target": self.chest}]))
+        self.wait_idle()
+        self.assertEqual(len(self.g.ops("act.move_to")), 1)
+        self.assertEqual(len(self.g.ops("act.interact")), 1)
+
     def test_queue_actions_queues_to_the_walk(self):
         out = batch.queue_actions(
             json.dumps([{"tool": "move_to", "x": 5, "y": 0, "z": 0}, {"tool": "interact", "target": self.chest}])

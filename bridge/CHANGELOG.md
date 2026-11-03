@@ -5,6 +5,15 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: a walk step its condition skips doesn't end the batch
+
+- `do_actions` / `queue_actions`: a walk step with `if`/`unless` no longer drops the steps after it before anything
+  runs. They run when the condition skips the walk; when the walk runs, they are not run and each says so:
+  `3. interact e12: not run (out of combat a batch ends with its first walk step, here step 1 move_to 5,0,0)`. The
+  first walk step without a condition still drops the rest at once, as before. Steps a later `queue_actions` call
+  appends are not affected. Docstrings, rules text (game-and-tools.md) and play/knowledge/tools.md say so.
+- review-v010-human-gap #5.
+
 ## 2026-11-02: out of combat a batch ends with its first walk step
 
 - `do_actions` and `queue_actions` (and `do_actions(wait=false)`): a walk step (`move_to`, `walk_toward`,
