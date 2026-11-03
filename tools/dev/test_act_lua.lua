@@ -63,6 +63,25 @@ LADDER = "acacacac-0000-0000-0000-000000000008"
 party_rows = { P1 }
 
 usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
+-- Osiris UseSpell / UseSpellAtPosition queue a task whose SpellCastOptions has IgnoreSpellRolls (0x4) set, as the game
+-- does (ops/logs/arena-dice.md "H4 cast path"; 7 = IgnoreHasSpell|IgnoreCastChecks|IgnoreSpellRolls). task_opts nil:
+-- no task is queued; task_sticky: the byte ignores writes.
+task_opts, task_sticky = 7, false
+local function queue_task(c, sp)
+    if task_opts == nil or not world or not world[c] then return end
+    local comps = world[c].comps
+    comps.ServerCharacter = comps.ServerCharacter or { OsirisController = { Tasks = {} } }
+    local tasks = comps.ServerCharacter.OsirisController.Tasks
+    local last = tasks[#tasks]
+    local id = last and last.Spell and (last.Spell.OriginatorPrototype or last.Spell)
+    local t = (id == sp and last.SpellCastOptions == nil) and last or { Spell = { OriginatorPrototype = sp } }
+    if t ~= last then tasks[#tasks + 1] = t end
+    if task_sticky then
+        setmetatable(t, { __index = { SpellCastOptions = task_opts }, __newindex = function() end })
+    else
+        t.SpellCastOptions = task_opts
+    end
+end
 Osi = setmetatable({
     DB_PartyMembers = { Get = function()
         local rows = {}
@@ -80,7 +99,10 @@ Osi = setmetatable({
     PurgeOsirisQueue = record("PurgeOsirisQueue"),
     Use = record("Use"),
     Pickup = record("Pickup"),
-    UseSpell = record("UseSpell"),
+    UseSpell = function(c, sp, ...)
+        record("UseSpell")(c, sp, ...)
+        queue_task(c, sp)
+    end,
     MakePlayerActive = record("MakePlayerActive"),
     EndTurn = record("EndTurn"),
     ToInventory = record("ToInventory"),
@@ -93,6 +115,7 @@ Osi = setmetatable({
             error("Incorrect number of IN arguments for 'UseSpellAtPosition'; expected 6, got 5", 0)
         end
         record("UseSpellAtPosition")(...)
+        queue_task(...)
     end,
 }, { __index = function(_, name)
     return function(...) return osiv[key(name, ...)] end
@@ -125,6 +148,7 @@ function reset()
     Ext.System = nil
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
+    task_opts, task_sticky = 7, false
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test
@@ -189,7 +213,7 @@ end
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_cast.lua", "test_act_lua_think.lua",
     "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_reach.lua", "test_act_lua_revive.lua",
-    "test_act_lua_idle.lua" }) do
+    "test_act_lua_idle.lua", "test_act_lua_rolls.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

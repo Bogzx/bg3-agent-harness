@@ -190,16 +190,21 @@ A.TASK_POS2_OFF = "the engine-task write for a second pick is off (audit ACT-9)"
 -- Give the queued UseSpell task its second target (OsirisUseSpellTask.TargetPos2, bg3se OsirisTask.h). Returns
 -- true, or nil + why. Read-checked before the write; any proxy error is caught. Nothing is written while
 -- A.TASK_POS2 is off.
+-- The newest queued Osiris UseSpell task of `char` for `spell`, or nil.
+function A.queued_spell_task(char, spell)
+    local tasks = Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks
+    for i = #tasks, 1, -1 do
+        local ok2, sp = pcall(function() return tasks[i].Spell end)
+        local id = ok2 and sp and (type(sp) == "string" and sp or sp.OriginatorPrototype or sp.Prototype)
+        if id == spell then return tasks[i] end
+    end
+    return nil
+end
+
 function A.set_task_pos2(char, spell, p)
     if not A.TASK_POS2 then return nil, A.TASK_POS2_OFF end
     local ok, err = pcall(function()
-        local tasks = Ext.Entity.Get(char).ServerCharacter.OsirisController.Tasks
-        local t
-        for i = #tasks, 1, -1 do
-            local ok2, sp = pcall(function() return tasks[i].Spell end)
-            local id = ok2 and sp and (type(sp) == "string" and sp or sp.OriginatorPrototype or sp.Prototype)
-            if id == spell then t = tasks[i] break end
-        end
+        local t = A.queued_spell_task(char, spell)
         if not t then error("no queued spell task", 0) end
         t.TargetPos2 = { p[1], p[2], p[3] }
         local q = t.TargetPos2
@@ -207,6 +212,40 @@ function A.set_task_pos2(char, spell, p)
     end)
     if ok then return true end
     return nil, tostring(err)
+end
+
+-- Forced hits (ops/logs/arena-dice.md "H4 cast path", live 2026-11-03: 30 of 30 attacks hit, 2 of 2 at AC 37, no
+-- d20 drawn): Osiris UseSpell / UseSpellAtPosition queue a task whose SpellCastOptions byte has IgnoreSpellRolls
+-- (0x4; bg3se Controllers/OsirisTask.h OsirisUseSpellTask, Enumerations/ECS.inl SpellCastOptions), so the cast
+-- skipped its SpellRoll (the attack roll) and applied its success. A player's cast rolls: right after every order
+-- the bit is cleared on the queued task and read back. When that fails the queue is purged (the task would land
+-- without its roll) and the job fails, saying why; there is no unrolled fallback.
+A.IGNORE_SPELL_ROLLS = 0x4
+
+-- true, or nil + why: the queued task for `spell` no longer ignores its rolls.
+function A.clear_ignore_rolls(char, spell)
+    local ok, err = pcall(function()
+        local t = A.queued_spell_task(char, spell)
+        if not t then error("no queued spell task", 0) end
+        local o = math.tointeger(tonumber(t.SpellCastOptions))
+        if not o then error("its SpellCastOptions don't read (" .. tostring(t.SpellCastOptions) .. ")", 0) end
+        if o & A.IGNORE_SPELL_ROLLS ~= 0 then t.SpellCastOptions = o & ~A.IGNORE_SPELL_ROLLS end
+        local after = math.tointeger(tonumber(t.SpellCastOptions))
+        if not after or after & A.IGNORE_SPELL_ROLLS ~= 0 then
+            error("IgnoreSpellRolls is still set (" .. tostring(t.SpellCastOptions) .. ")", 0)
+        end
+    end)
+    if ok then return true end
+    return nil, "the game would cast it without its roll (" .. tostring(err) .. "), so it was not cast"
+end
+
+-- The order's follow-up: clear the bit, else purge the queue and fail the job. Returns true when the cast may go on.
+function A.cast_rolls(job, char, spell)
+    local ok, why = A.clear_ignore_rolls(char, spell)
+    if ok then return true end
+    pcall(G.osi, "PurgeOsirisQueue", char)
+    RPC.finish_job(job, "failed", nil, why)
+    return false
 end
 
 -- After UseSpell(first pick): a two-step cast's second pick goes into the queued task. Revivify: the spot beside
@@ -522,9 +561,10 @@ reg("cast", function(args)
             -- without it.
             G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
                 { char, spell, pos[1], pos[2], pos[3] })
+            A.cast_rolls(job, char, spell)
         else
             G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
-            A.give_second_pick(job, char, spell, targets, landing)
+            if A.cast_rolls(job, char, spell) then A.give_second_pick(job, char, spell, targets, landing) end
         end
     end
     return start("cast", char, {
@@ -807,7 +847,7 @@ reg("cast", function(args)
                     j.osi_task = "spell"
                     j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
                     G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
-                    A.give_second_pick(j, char, spell, targets, landing)
+                    if A.cast_rolls(j, char, spell) then A.give_second_pick(j, char, spell, targets, landing) end
                 end)
             end
             if ui then

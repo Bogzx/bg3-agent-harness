@@ -81,6 +81,15 @@ game unless it says so.
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 
+- Casts the harness starts now roll their dice (draft, waits for the live check). Osiris `UseSpell` and
+  `UseSpellAtPosition` queue a task whose `SpellCastOptions` has IgnoreSpellRolls (0x4) set, so the cast skipped its
+  spell roll: every attack the harness started hit without a d20 (live 2026-11-03: 30 of 30 arena attacks, and
+  attacks at AC 37 in the arena and in the Balthazar save; the game AI's attacks rolled). The mod clears the bit on
+  the queued task right after each order (`use_ability` casts, the cast after a walk into range, sneak's Hide) and
+  reads it back. When the task is missing or keeps the bit, the queue is purged and the cast fails with the reason.
+  This affects every earlier fight result: party attacks could not miss. Live check: `tools/dev/probe_cast_rolls.py`
+  (`clear` mode) at +20 AC.
+
 ### Benchmark (`packages/bench`)
 
 - Statistics: Wilson intervals, pass^k, a two-level bootstrap, paired differences and the luck covariate.
