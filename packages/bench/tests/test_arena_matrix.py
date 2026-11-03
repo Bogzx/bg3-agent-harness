@@ -127,6 +127,27 @@ def test_reserves_and_charges_go_to_both_models_files(tmp_path):
     assert arena_matrix.charges(vs_claude, {"A": 2.0, "B": 9.0})["runtime/budget-arena.json"] == 2.0
 
 
+def test_a_models_own_max_cost_is_its_sides_cap_and_reserve(tmp_path):
+    # arena v0 pilot: Opus costs ~30x DeepSeek per match; one per-arena cap is either too tight for Opus or loose for
+    # DeepSeek. budget.max_cost_models gives a model's side its own cap; the other side keeps the arena's.
+    body = BODY + '\n[budget.max_cost_models]\n"profiles/opus.toml" = 2.5\n'
+    opus_flash = load(tmp_path, body)["jobs"][0]
+    assert (opus_flash["sides"]["A"]["max_cost"], opus_flash["sides"]["B"]["max_cost"]) == (2.5, 3.0)
+    assert arena_matrix.reserves(opus_flash) == {
+        "runtime/budget-arena.json": 5.5,
+        "runtime/budget-opus.json": 2.5,
+        "runtime/budget-anthropic.json": 2.5,
+        "runtime/budget-deepseek.json": 3.0,
+    }
+    assert arena_matrix.side_cap(opus_flash, "A") == 2.5
+    # a queue planned before max_cost_models (no per-side value) keeps the arena's cap
+    old = {
+        **opus_flash,
+        "sides": {s: {k: v for k, v in opus_flash["sides"][s].items() if k != "max_cost"} for s in ("A", "B")},
+    }
+    assert arena_matrix.side_cap(old, "A") == 3.0
+
+
 def test_over_budget_names_every_file_the_reserve_does_not_fit(tmp_path):
     job = load(tmp_path)["jobs"][0]
     budgets = {f: {"cap": 10.0, "spent": 0.0} for f in arena_matrix.reserves(job)}
@@ -182,6 +203,14 @@ BAD = {
     "an unknown key": ("repeats = 2", 'repeats = 2\norder = "cell"'),
     "repeats 0": ("repeats = 2", "repeats = 0"),
     "a bad name": ('name = "arena-test"', 'name = "arena test"'),
+    "max_cost_models for a profile not in it": (
+        '"profiles/flash.toml" = ["runtime/budget-deepseek.json"]',
+        '"profiles/flash.toml" = ["runtime/budget-deepseek.json"]\n\n[budget.max_cost_models]\n"profiles/x.toml" = 1.0',
+    ),
+    "max_cost_models not USD > 0": (
+        '"profiles/flash.toml" = ["runtime/budget-deepseek.json"]',
+        '"profiles/flash.toml" = ["runtime/budget-deepseek.json"]\n\n[budget.max_cost_models]\n"profiles/opus.toml" = 0',
+    ),
 }
 
 

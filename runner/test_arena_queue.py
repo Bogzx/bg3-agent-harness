@@ -274,3 +274,11 @@ def test_play_py_prints_the_plan_and_its_estimate():
     finally:
         sys.stderr = sys_err
     assert "play.py arena-matrix refused" in err.getvalue()
+
+
+def test_a_paid_sides_cap_is_its_models_max_cost_else_its_arenas():
+    # arena v0 pilot: [budget.max_cost_models] gives Opus's side its own cap; a subscription side has none
+    job = {"max_cost": 0.5, "sides": {"A": {"client": "pi", "max_cost": 2.5}, "B": {"client": "pi"}}}
+    assert aq.side_caps(job) == {"A": 2.5, "B": 0.5}
+    job["sides"]["B"] = {"client": "claude", "max_cost": 9.0}
+    assert aq.side_caps(job) == {"A": 2.5}

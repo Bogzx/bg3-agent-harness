@@ -3,8 +3,8 @@
 (bg3bench.arena_matrix's file, plan, reserves and charges) played match by match on this machine's game.
 
 - `--plan` prints the matches, each one's reserves and the estimate: what every budget file the matrix charges would
-  hold back over the whole matrix (each paid side at its arena's max_cost: the most it can spend) against what the
-  file has left. Writes nothing.
+  hold back over the whole matrix (each paid side at its max_cost, its model's or its arena's: the most it can
+  spend) against what the file has left. Writes nothing.
 - no flag plays the queue (runtime/matrix/<name>/queue.jsonl: bench.matrix's file and fold, so a stopped matrix
   resumes from it) under one runner lock, one match at a time, in the plan's order: a pairing's two matches (the
   sides swapped, the same arena and seed) back to back, an invalid match rerun at once (at most matrix.MAX_RERUNS
@@ -71,8 +71,9 @@ Play = Callable[[dict[str, Any], str], Played]  # (job, run name) -> the match; 
 
 
 def side_caps(job: Mapping[str, Any]) -> dict[str, float]:
-    """Each paid side's cap: its arena's max_cost (its reserve)."""
-    return {s: float(job["max_cost"]) for s in SIDES if job["sides"][s]["client"] in matrix.PAID_CLIENTS}
+    """Each paid side's cap (its reserve): its model's max_cost_models entry, else its arena's max_cost."""
+    paid = [s for s in SIDES if job["sides"][s]["client"] in matrix.PAID_CLIENTS]
+    return {s: float(arena_matrix.side_cap(job, s) or 0.0) for s in paid}
 
 
 def status(attempts: list[dict]) -> str:

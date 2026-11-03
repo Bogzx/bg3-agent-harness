@@ -18,6 +18,9 @@ relative to the repo):
     [budget.models]                                   # a side's cost also goes into its model's files (bench's)
     "profiles/a.toml" = ["runtime/budget-opus.json", "runtime/budget-anthropic.json"]
 
+    [budget.max_cost_models]                          # optional: USD per side per match for that model's side,
+    "profiles/a.toml" = 2.0                           # in place of its arena's max_cost (a dear model, a cheap one)
+
 Give `models` or `pairs`. A pair may name one profile twice (a self-match: graded, never rated). The jobs are
 matches, repeat-major, the two matches of a pairing one after the other (match 1: the pair's first model on side A,
 match 2: on side B), so a stopped matrix leaves whole pairings. A draft arena (arena.load's `draft`) gets no
@@ -88,7 +91,19 @@ def _budget(raw: dict, path: Path, arenas: Sequence[str], profiles: Sequence[str
         raise MatrixFileError(f"{path}: budget.models names profiles not in the matrix: {unknown}")
     if any(own in v for v in models.values()):
         raise MatrixFileError(f"{path}: budget.models lists the matrix's own file {own}")
-    return {"file": own, "max_cost": {k: float(v) for k, v in max_cost.items()}, "models": models}
+    per_model = budget.get("max_cost_models", {})
+    if not isinstance(per_model, dict) or not all(
+        isinstance(v, int | float) and not isinstance(v, bool) and v > 0 for v in per_model.values()
+    ):
+        raise MatrixFileError(f"{path}: budget.max_cost_models maps profiles to USD > 0")
+    if unknown := sorted(set(per_model) - set(profiles)):
+        raise MatrixFileError(f"{path}: budget.max_cost_models names profiles not in the matrix: {unknown}")
+    return {
+        "file": own,
+        "max_cost": {k: float(v) for k, v in max_cost.items()},
+        "models": models,
+        "max_cost_models": {k: float(v) for k, v in per_model.items()},
+    }
 
 
 def plan(
@@ -100,12 +115,19 @@ def plan(
     budgets: Mapping[str, Sequence[str]] | None = None,
     own: str = BUDGET,
     condition: Mapping[str, str] | None = None,
+    max_cost_models: Mapping[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """The matches. A model is matrix_cli.load_profile's {"slug", "client", "effort", "profile"}; budgets: profile
-    -> its model budget files; condition: arena -> its condition id (default rules)."""
+    -> its model budget files; condition: arena -> its condition id (default rules); max_cost_models: profile -> its
+    side's cap in place of the arena's (each side's in sides.<A|B>.max_cost; the arena's stays in max_cost)."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
     max_cost, budgets, condition = max_cost or {}, budgets or {}, condition or {}
+    per_model = max_cost_models or {}
+
+    def side(m: Mapping[str, Any], a: str) -> dict[str, Any]:
+        return {**m, "player": player(m), "max_cost": per_model.get(m["profile"], max_cost.get(a))}
+
     jobs = []
     for r in range(1, repeats + 1):
         for x, y in pairs:
@@ -120,10 +142,7 @@ def plan(
                             "arena": a,
                             "condition": condition.get(a, "rules"),
                             "repeat": r,
-                            "sides": {
-                                "A": {**first, "player": player(first)},
-                                "B": {**second, "player": player(second)},
-                            },
+                            "sides": {"A": side(first, a), "B": side(second, a)},
                             "max_cost": max_cost.get(a),
                             "budgets": {
                                 "own": own,
@@ -138,7 +157,12 @@ def plan(
 
 
 def _side_reserve(job: Mapping[str, Any], side: str) -> float:
-    return (job["max_cost"] or 0.0) if job["sides"][side]["client"] in matrix.PAID_CLIENTS else 0.0
+    return (side_cap(job, side) or 0.0) if job["sides"][side]["client"] in matrix.PAID_CLIENTS else 0.0
+
+
+def side_cap(job: Mapping[str, Any], side: str) -> float | None:
+    """A side's money cap per match: its model's (budget.max_cost_models), else its arena's."""
+    return job["sides"][side].get("max_cost", job["max_cost"])
 
 
 def _per_file(job: Mapping[str, Any], amount: Mapping[str, float]) -> dict[str, float]:
@@ -221,10 +245,11 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
         budgets=budget["models"],
         own=budget["file"],
         condition={a: arenas[a]["condition"] for a in playable},
+        max_cost_models=budget["max_cost_models"],
     )
     for j in jobs:
         for side in arena.SIDES:
-            if j["sides"][side]["client"] in matrix.PAID_CLIENTS and j["max_cost"] is None:
+            if j["sides"][side]["client"] in matrix.PAID_CLIENTS and side_cap(j, side) is None:
                 raise MatrixFileError(f"{path}: arena {j['arena']} has no budget.max_cost for a paid side")
     return {"name": name, "path": str(path), "jobs": jobs, "budget": budget, "arenas": arenas, "skipped": skipped}
 
