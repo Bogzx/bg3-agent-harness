@@ -756,12 +756,15 @@ reg("move_to", function(args)
         -- Entity targets: walk to a verified reachable point next to them.
         G.target_visible(target)
         G.within(char, target, G.MAX_MOVE_DIST, "destination")
-        -- within (melee, combat_turn): stop inside the guard's own edge-to-edge reach, not at 2.2 m
-        -- centres (S023-S025: 22 melee attacks refused "out of range (2.5 m, range 1.5 m)" after a move
-        -- said done; a Spiritual Weapon is small, so 2.2-2.7 m was outside its reach).
-        melee = tonumber(args.within) and G.melee_reach(char, target, tonumber(args.within)) or nil
-        reach = melee and math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK)) or A.MOVE_REACH
-        local range = not melee and tonumber(args.range)
+        -- Stop inside the edge-to-edge melee reach (G.melee_reach, the guard's own measure): of `within` when given
+        -- (combat_turn), else of the mover's own weapon. S023-S025: 22 melee attacks refused "out of range" after a
+        -- move said done; window 8: move_to said already_there at 2.1 m (centres, the old 2.2 m stop) while the
+        -- engine refuses a 1.5 m weapon from there.
+        local range = not tonumber(args.within) and tonumber(args.range)
+        if not range then
+            melee = G.melee_reach(char, target, tonumber(args.within) or G.weapon_melee_range(char))
+            reach = math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK))
+        end
         if range then -- in_reach is tested against the range itself (centres, walk_arrived)
             -- live N10 step 2: the game ended a touch walk (reach 2.5 m, centres) 1.8 m short of its point, 3.3 m off:
             -- aim RANGE_STOP_SLACK inside the reach whatever its size (never nearer than 1 m), as spell_reach measures
@@ -770,6 +773,12 @@ reg("move_to", function(args)
         end
         local plan = range and A.range_point(char, target, reach, range, (not args.trespass) and args.avoid or nil)
             or G.approach_point(char, target, reach)
+        if melee and not range and not plan.here and G.b(G.q("IsCharacter", target)) then
+            -- already in reach (the slack is for a walk's stop, not for standing still)
+            local here, tpos = G.pos(char), G.pos(target)
+            local d = here and tpos and U.dist(here, tpos)
+            if d and d <= melee then plan = { here = true, dist = d } end
+        end
         if plan.here then
             return start("move_to", char, {
                 timeout_ms = 1000,

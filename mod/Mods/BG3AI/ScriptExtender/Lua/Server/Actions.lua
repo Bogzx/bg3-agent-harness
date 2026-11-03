@@ -35,8 +35,8 @@ BG3AI.Actions = A
 A.active = {}   -- char guid -> running job
 
 local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fast
-A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
-                     -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
+A.MOVE_REACH = 2.2   -- move_to {target}: stop at most this far (centres); nearer when the mover's melee reach
+                     -- (G.melee_reach, Hit radii: 1.9 m for a 1.5 m weapon between medium creatures) is shorter
 -- end_turn in a shared group (others still to act): report the request as done after this. 1500 until 2026-10-16:
 -- the outcome at 1.5 s was always the same "requested" (the game ends the group only when the others end too), so
 -- the hold only waited (naut series: 12 shared ends x 1.6 s). 400 ms leaves a few frames for the game to set
