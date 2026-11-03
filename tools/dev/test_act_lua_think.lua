@@ -186,7 +186,7 @@ end)
 test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed' x12)", function()
     osiv[key("HasLineOfSight", P1, GOB)] = 1
     eq(A.cast_failed_why(P1, nil), "the game refused the cast (no reason given)", "no target")
-    assert(A.cast_failed_why(P1, GOB):find("path is blocked", 1, true))
+    eq(A.cast_failed_why(P1, GOB), "the game refused the cast (no reason given)", "no guess (window 8 m2)")
     osiv[key("HasLineOfSight", P1, GOB)] = 0
     assert(A.cast_failed_why(P1, GOB):find("no line of sight to the target now", 1, true))
     osiv[key("IsDead", GOB)] = 1
@@ -206,7 +206,8 @@ test("cast: a refused melee swing says how far it swung from and our reach (ACT-
     assert(w:find("no reason given", 1, true) and w:find("melee swing from 2.1 m centre to centre", 1, true), w)
     assert(w:find("our reach 1.9 m: range 1.5 m", 1, true) and not w:find("path is blocked", 1, true), w)
     stats.Projectile_Bolt = { SpellType = "Projectile", TargetRadius = "18" }
-    assert(A.cast_failed_why(P1, GOB, "Projectile_Bolt"):find("path is blocked", 1, true)) -- ranged: unchanged
+    assert(not w:find("step closer", 1, true) and not w:find("engine's reach", 1, true), w) -- facts, no guess
+    eq(A.cast_failed_why(P1, GOB, "Projectile_Bolt"), "the game refused the cast (no reason given)", "ranged")
 end)
 
 test("cast: Revivify is two-step: the body, then the ground beside it (S057/S058 0 of 14 casts)", function()

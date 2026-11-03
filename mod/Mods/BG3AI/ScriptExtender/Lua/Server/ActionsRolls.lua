@@ -155,7 +155,7 @@ local function drop_list()
 end
 
 -- The engine's own reason for refusing the job's cast (SpellCastOutcome.Result on the cast entity, bg3se
--- SpellCastFailReason), in plain words; nil when it doesn't read.
+-- SpellCastFailReason), in plain words, and the game's code; nil when it doesn't read.
 A.FAIL_REASONS = {
     Canceled = "the cast was cancelled", InvalidSpell = "the action isn't valid for this character",
     MissingTarget = "it has no target", CantCast = "it can't be cast now (its requirements aren't met)",
@@ -178,8 +178,8 @@ function A.engine_refusal(job)
     if r == "None" or r == "0" then return nil end
     -- audit S3-2: at a ground point these depend on which creatures the engine finds there, hidden ones too; a
     -- player's cursor at that spot shows none of it
-    if job.cast_at_pos and A.SPOT_REASONS[r] then return "it can't be cast at that spot" end
-    return (A.FAIL_REASONS[r] or "reason " .. r) .. " (the game's " .. r .. ")"
+    if job.cast_at_pos and A.SPOT_REASONS[r] then return "it can't be cast at that spot", r end
+    return (A.FAIL_REASONS[r] or "reason " .. r) .. " (the game's " .. r .. ")", r
 end
 
 -- SpellCastState OnCreate of a stamped caster.
