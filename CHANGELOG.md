@@ -81,7 +81,7 @@ game unless it says so.
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 
-- Casts the harness starts now roll their dice (draft, waits for the live check). A cast an Osiris `UseSpell` or
+- Casts the harness starts now roll their dice. A cast an Osiris `UseSpell` or
   `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,
   IgnoreCastChecks, IgnoreTargetChecks and AvoidDangerousAuras), so the game skipped its spell roll. Every attack the
   harness started hit without a d20 (30 of 30 arena attacks; 8 of 8 at AC 35 in the Balthazar save), and Sacred Flame
@@ -89,8 +89,13 @@ game unless it says so.
   missed 9 of 9 at AC 35). After each order (`use_ability` casts, the cast after a walk into range, sneak's Hide), the
   mod drops IgnoreSpellRolls from the cast's `SpellCastState.CastOptions` when the cast entity is made and reads it
   back (live, by hand: 6 of 6 attacks missed at AC 35, and 2 of 6 Sacred Flame saves were made). When the write
-  doesn't take, or the cast ends with no cast state seen, the cast fails and says it went without its roll. This
-  affects every earlier fight result: party attacks could not miss and party save spells always landed.
+  doesn't take, or the cast ends with no cast state seen, the cast fails and says it went without its roll. Live
+  check through `use_ability` (tools/dev/check_cast_rolls.py, 2026-11-03, PASS): 3 hits in 21 weapon attacks and 0
+  of 6 Eldritch Blast beams at AC 35, 1 Sacred Flame save made in 12, and every cast drew its spell die. The harness
+  has cast through Osiris `UseSpell` since the mod's first commit (043d06a4, 2026-10-09), so attacks and saving
+  throws cast by the harness never rolled in any run before this: party attacks could not miss and party save
+  spells always landed (launch-v1: 368 of 368 harness weapon attacks dealt damage). bench-v0.10 results are not
+  comparable with bench-v0.8 or v0.9 results for any scenario with a fight.
 
 ### Benchmark (`packages/bench`)
 
@@ -203,6 +208,8 @@ game unless it says so.
   - `flee` fails at once with the reason the greyed-out Flee button's tooltip shows (`FAILED: the game won't flee
     now (Flee is greyed out: Enemy too close! (10.6/27 m))`), with no command or cursor search, and runs each Flee
     command name once (window 4: 48 s before failing).
+  - Attacks and saving throws cast by the harness roll their dice (above, under Harness): before, they never
+    rolled, so bench-v0.10 results are not comparable with bench-v0.8 or v0.9 results for scenarios with fights.
   - A fall down a drop link of the walk's own route is no longer failed as an engine teleport, and `end_turn`'s End
     Turn press refused by the busy UI is asked again after the cooldown instead of failing at once.
   Metric definition change: a tool call counts as async only when its own background job is still running when the
