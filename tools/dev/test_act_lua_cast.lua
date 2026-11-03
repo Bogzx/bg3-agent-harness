@@ -59,6 +59,7 @@ test("cast: a projectile's late hit is in the result, not no_damage (acceptance 
 end)
 
 test("cast: an order the engine silently drops fails after CAST_NO_START_MS (S035 jump_to 25 s x3)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
     tick(100) -- 6 s: still waiting
@@ -78,6 +79,7 @@ test("cast: an order the engine silently drops fails after CAST_NO_START_MS (S03
 end)
 
 test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_MS, not 8 s", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Thing", target = NPC }))
@@ -95,6 +97,7 @@ test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_
 end)
 
 test("cast in combat while Stunned is refused; a dropped order while Fearful names the fear (S066/S067)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Projectile_EB", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
     spell("STUNNED", { StatusType = "INCAPACITATED" })
@@ -194,6 +197,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
 end)
 
 test("cast in combat: a dropped order right after a hit on the caster is ordered once more (S066-S069 x6)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Target_Swing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     world[NPC].pos = { 1.5, 0, 0 }
@@ -203,6 +207,7 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
     clock = clock + 1000
     local j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     eq(#called("UseSpell"), 1, "first order")
+    cast_seen = "state" -- the second order starts
     tick(52) -- 3.1 s, no CastSpell, no step
     eq(j.status, "running", "ordered again " .. tostring(j.error))
     eq(#called("UseSpell"), 2, "second order"); eq(#called("PurgeOsirisQueue"), 1, "the dropped one purged first")
@@ -214,6 +219,7 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
     A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 2, "", 0 }) -- a Bleeding tick at the turn start
     clock = clock + 500
+    cast_seen = "none"
     j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     tick(52)
     eq(j.status, "running", "second order")
@@ -259,6 +265,7 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
 end)
 
 test("cast in combat: an enemy's reaction cast holds the no-start, then the order goes once more (A30, S094)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     A.react_seen = nil
     spell("Target_Keene", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
@@ -272,6 +279,7 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     -- nothing spent; the same call later worked. The reaction plays past 3 s: no purge while it does.
     local j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     eq(#called("UseSpellAtPosition"), 1, "first order")
+    cast_seen = "state" -- the second order starts
     tick(8)
     A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
     tick(44) -- 3.1 s after the order, the enemy's cast not over
@@ -290,6 +298,7 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     eq(j.status, "done", "the second order cast " .. tostring(j.error))
     -- dropped twice: names the reaction as a player sees it (an unseen caster unnamed)
     AP.Amount = 1
+    cast_seen = "none"
     j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
     tick(60)

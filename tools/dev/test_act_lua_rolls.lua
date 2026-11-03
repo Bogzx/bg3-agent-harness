@@ -94,3 +94,55 @@ test("cast rolls: sneak's Hide is cleared; a flag that won't clear fails the sne
     j = job(op("sneak", { char = P1, on = true }))
     eq(j.status, "failed", "status"); assert(j.error:find("without its roll", 1, true), j.error)
 end)
+
+-- Live window 5 (ops/logs/live.md, melee-swap A/B): the cast state was made at 70-270 ms, then Karlach's own
+-- reaction prompt (Reckless Attack) paused the cast; the 3 s no-start check said "never started" and its purge
+-- cancelled the cast. The state's creation is the start; a pause held CAST_PAUSED_MS is reported, nothing purged.
+local PAUSED = "ls::anubis::PausedComponent"
+local function swing()
+    combat_setup(9)
+    spell("Target_Swing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    world[NPC].pos = { 1.5, 0, 0 }
+    return job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+end
+
+test("cast start: a cast whose state was made is not 'never started' after 3 s (window 5)", function()
+    local j = swing()
+    eq(j.status, "running", "started " .. tostring(j.error))
+    tick(60) -- 3.6 s: no CastSpell, no step, no pause read
+    eq(j.status, "running", "still running " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 0, "not purged")
+    A.dispatch("CastSpell", { P1, "Target_Swing", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_Swing", "Target", "None", 0 })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error))
+end)
+
+test("cast start: a cast held paused for a reaction is reported as paused, its task kept (window 5)", function()
+    local j = swing()
+    tick(15) -- 0.9 s: the interrupt pauses it
+    world[P1].comp_names = { "eoc::interrupt::ZoneParticipantComponent", PAUSED }
+    tick(10) -- 0.6 s paused: an enemy's quick reaction looks the same, wait
+    eq(j.status, "running", "short pause " .. tostring(j.error))
+    tick(10) -- 1.2 s paused
+    eq(j.status, "interrupted", "status " .. tostring(j.error))
+    eq(j.error, A.CAST_PAUSED, "says paused")
+    eq(j.result.began, true, "began"); eq(j.result.paused, true, "paused")
+    eq(#called("PurgeOsirisQueue"), 0, "the held cast is not purged")
+    world[P1].comp_names = nil
+end)
+
+test("cast start: a short pause that clears lets the cast finish as usual", function()
+    local j = swing()
+    world[P1].comp_names = { PAUSED }
+    tick(12) -- 0.72 s
+    world[P1].comp_names = nil
+    tick(8)
+    world[P1].comp_names = { PAUSED } -- a second short pause: the clock starts again
+    tick(12)
+    world[P1].comp_names = nil
+    eq(j.status, "running", "not reported " .. tostring(j.error))
+    A.dispatch("CastedSpell", { P1, "Target_Swing", "Target", "None", 0 })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error))
+end)
