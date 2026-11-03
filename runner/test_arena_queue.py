@@ -49,7 +49,7 @@ def fixture_repo(tmp_path_factory):
     FX = REPO
 
 
-def facts(job: dict, out: Path, reason: str = "wipe") -> None:
+def facts(job: dict, out: Path, reason: str = "wipe", **end: Any) -> None:
     """A whole match's facts as the referee writes them: side A wipes side B in round 1 (or another end)."""
     arena = arena_matrix.load(FX / PILOT, FX)["arenas"][job["arena"]]
     teams = {s: [m["name"] for m in arena["teams"][s]] for s in ("A", "B")}
@@ -63,7 +63,7 @@ def facts(job: dict, out: Path, reason: str = "wipe") -> None:
                      "group": "g", "shared": True})  # fmt: skip
     winner = "A" if reason == "wipe" else None
     recs.append({"ev": "arena_end", "winner": winner, "reason": reason, "rounds": 1, "hp_left_A": 1.0,
-                 "hp_left_B": 0.0 if reason == "wipe" else 0.5})  # fmt: skip
+                 "hp_left_B": 0.0 if reason == "wipe" else 0.5, **end})  # fmt: skip
     out.mkdir(parents=True, exist_ok=True)
     rows = [{"v": 1, "kind": "event", "t": 1000.0 + i, **r} for i, r in enumerate(recs)]
     (out / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
@@ -71,7 +71,7 @@ def facts(job: dict, out: Path, reason: str = "wipe") -> None:
 
 class Player:
     """The fake live.play: each call writes a match into tmp/<run name>; `script` gives the next calls' outcomes
-    ("wipe", "over_budget", "invalid", "refused", "crash", "kill"), then wipes."""
+    ("wipe", "over_budget", "invalid", "client_fault", "refused", "crash", "kill"), then wipes."""
 
     def __init__(self, tmp: Path, *script: str, costs: dict[str, float] | None = None) -> None:
         self.tmp, self.script, self.calls = tmp, list(script), []
@@ -87,6 +87,9 @@ class Player:
         if what == "kill":
             raise KeyboardInterrupt  # the matrix runner dies mid-match: its start has no end
         out = self.tmp / "sessions" / name
+        if what == "client_fault":  # side A's client failed again after its resume: invalid, rerun
+            facts(job, out, "client_fault", failed="A", cause="api_error")
+            return aq.Played(out, "client_fault: side A's agent: api_error", dict(self.costs))
         facts(job, out, "over_budget" if what == "over_budget" else "wipe")
         invalid = "fault: the game process is gone" if what == "invalid" else None
         return aq.Played(out, invalid, dict(self.costs))
@@ -172,6 +175,24 @@ def test_an_over_budget_match_is_not_rerun_and_an_invalid_one_is(tmp_path, pilot
     assert (st[M1]["status"], st[M2]["status"]) == ("over_budget", "done")
     assert st[M2]["attempts"][0]["result"]["invalid_reason"] == "fault: the game process is gone"
     assert aq.barena.results(q.matches(), 2026, b=10)["counts"]["incomplete"] == 1  # m1 has no valid match
+
+
+def test_a_client_fault_is_rerun_and_counts_in_its_models_failure_rate(tmp_path, pilot):
+    """Owner D459 (fairness audit S1-1): side A's client failing past its resume makes the match invalid (rerun, not
+    a forfeit), and the table's failures count it for side A's model over every attempt, the rerun one too."""
+    budgets(tmp_path)
+    player = Player(tmp_path, "client_fault")
+    q = queue(pilot, tmp_path, player)
+    assert q.run() == "finished"
+    assert player.calls == [f"arena-pilot~{M1}~a1", f"arena-pilot~{M1}~a2", f"arena-pilot~{M2}~a1"]
+    st = q.state()
+    assert st[M1]["attempts"][0]["result"]["invalid_reason"] == "client_fault"
+    table = aq.barena.results(q.matches(), 2026, b=10, attempts=q.attempts())
+    assert table["counts"]["invalid"] == 0  # the rerun is the job's match
+    a = st[M1]["job"]["sides"]["A"]["player"]
+    by = {r["player"]: r for r in table["failures"]}
+    assert (by[a]["n_matches"], by[a]["client_faults"], by[a]["causes"]) == (3, 1, {"api_error": 1})
+    assert sum(r["client_faults"] for r in table["failures"]) == 1
 
 
 def test_the_stop_file_stops_between_matches_and_the_matrix_resumes(tmp_path, pilot):

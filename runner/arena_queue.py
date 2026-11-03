@@ -289,6 +289,17 @@ class ArenaQueue:
             out.append(graded(job, self.m["arenas"][job["arena"]], Path(pick["run_dir"])))
         return out
 
+    def attempts(self) -> list[dict[str, Any]]:
+        """Every played attempt's match (a rerun job's invalid ones too), graded: the table's per-model failure rate
+        (bg3bench.arena.failures) counts a model's client faults over all of them."""
+        out = []
+        for st in self.state().values():
+            job = st["job"]
+            for a in st["attempts"]:
+                if a["result"] and a["result"].get("run_dir"):
+                    out.append(graded(job, self.m["arenas"][job["arena"]], Path(a["result"]["run_dir"])))
+        return out
+
 
 def print_estimate(m: Mapping[str, Any], repo: Path, out: TextIO) -> None:
     """Every budget file's reserves over the whole matrix (each paid side at its max_cost) against what it has."""
@@ -355,7 +366,8 @@ def main(argv: list[str], repo: Path | None = None, play: Play | None = None, ou
         if not (root / "queue.jsonl").is_file():
             print(f"play.py arena-matrix refused: no {root / 'queue.jsonl'}: play the matrix first", file=sys.stderr)
             return 2
-        table = barena.results(ArenaQueue(m, root, repo, None).matches(), a.seed)
+        q = ArenaQueue(m, root, repo, None)
+        table = barena.results(q.matches(), a.seed, attempts=q.attempts())
         out.write(json.dumps(table, indent=1, default=str) + "\n")
         return 0
     if not m["jobs"]:
