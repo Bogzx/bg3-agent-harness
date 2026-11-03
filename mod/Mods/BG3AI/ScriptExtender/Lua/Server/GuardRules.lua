@@ -130,8 +130,9 @@ function G.rule_has_status(u, id)
     if id:sub(1, 3) ~= "SG_" then return yes(G.q("HasActiveStatus", u, id)) end
     local found, read = false, false
     pcall(function()
-        for _, s in pairs(Ext.Entity.Get(u).ServerCharacter.StatusManager.Statuses) do
-            read = true
+        local list = Ext.Entity.Get(u).ServerCharacter.StatusManager.Statuses
+        read = list ~= nil -- an empty list is read: no status, so in no group
+        for _, s in pairs(list) do
             local st = Ext.Stats.Get(tostring(s.StatusId))
             for _, g in ipairs(st and st.StatusGroups or {}) do
                 if tostring(g) == id then found = true end
@@ -139,7 +140,8 @@ function G.rule_has_status(u, id)
         end
     end)
     if found then return true end
-    return read and false or nil
+    if read then return false end -- ("read and false or nil" was always nil: groups never read as off)
+    return nil
 end
 
 local function armour(u)
@@ -151,6 +153,63 @@ local function armour(u)
         return t ~= "None" and t ~= "Cloth"
     end)
     if ok then return r end
+    return nil
+end
+
+-- Any of these statuses or status groups (thoth HasAnyStatus): true if one is on, false if all read off.
+local function any_status(u, ids)
+    local unknown = false
+    for _, id in ipairs(ids) do
+        local v = G.rule_has_status(u, id)
+        if v == true then return true end
+        if v == nil then unknown = true end
+    end
+    if unknown then return nil end
+    return false
+end
+
+-- The status lists of the game's own helpers (Shared CommonConditions.khn).
+G.HELPABLE = { "SG_Helpable_Condition", "DOWNED", "HAG_DOWNED", "SCL_DOWNED", "SG_Prone", "SG_Restrained", "PRONE",
+    "SLEEPING", "SLEEP", "ENSNARING_STRIKE", "WEB", "BURNING", "HYPNOTIC_PATTERN", "COL_NIGHTSONG_SOULCAGE" }
+G.CROWD_CONTROLLED = { "SG_Fleeing", "SG_Incapacitated", "SG_Stunned", "SG_Unconscious", "SG_Restrained" }
+
+-- A bg3se bitfield as a set of names (it reads as a table of flag names, as CastOptions does live), or nil.
+local function flag_set(v)
+    if type(v) ~= "table" then return nil end
+    local out = {}
+    for _, n in ipairs(v) do out[tostring(n)] = true end
+    return out
+end
+
+-- IsProficientWithEquippedWeapon: the character's Proficiency flags against the equipped weapons' ProficiencyGroup
+-- flags (bg3se eoc::stats::proficiency::*). True if one equipped weapon shares a group; false only when every
+-- weapon read and none does; nil when nothing reads.
+function G.proficient_weapon(u)
+    local okp, mine = pcall(function() return flag_set(Ext.Entity.Get(u).Proficiency.Flags) end)
+    if not okp or not mine then return nil end
+    local any_read = false
+    for _, slot in ipairs({ "Melee Main Weapon", "Ranged Main Weapon" }) do
+        local item = G.q("GetEquippedItem", u, slot)
+        if item then
+            local okg, groups = pcall(function() return flag_set(Ext.Entity.Get(item).ProficiencyGroup.Flags) end)
+            if okg and groups and next(groups) then
+                any_read = true
+                for g in pairs(groups) do if mine[g] then return true end end
+            end
+        end
+    end
+    if any_read then return false end
+    return nil
+end
+
+-- IsImmuneToStatus: true when the status (or its group) is in the entity's StatusImmunities; not being listed is
+-- not read as "not immune" (immunities from boosts may not show there), so that is unknown.
+function G.immune_to(u, id)
+    local ok, r = pcall(function()
+        local m = Ext.Entity.Get(u).StatusImmunities.PersonalStatusImmunities
+        return m[id] ~= nil
+    end)
+    if ok and r then return true end
     return nil
 end
 
@@ -182,6 +241,38 @@ local function term(node, ctx)
         -- a Shout's target is its caster (window 8 live: "Hide can't be used now: the target has flanked")
         local w = (u == ctx.source or u ~= ctx.target) and "the caster" or "the target"
         return G.rule_has_status(u, str1()), w .. " has " .. s, w .. " doesn't have " .. s
+    end
+    local function num(i) return a[i] and a[i].k == "id" and tonumber(a[i].v) or nil end
+    local function label(u) return (u == ctx.source or u ~= ctx.target) and "the caster" or "the target" end
+    -- terms the game's helpers define (Shared CommonConditions.khn) or that read from Osi / components
+    if name == "HasHPMoreThan" and num(1) and #a <= 2 then
+        local u = #a == 2 and who(2) or ctx.target -- thoth: entity or context.Target
+        local hp = u and tonumber((G.q("GetHitpoints", u)))
+        if not hp then return nil end
+        return hp > num(1), string.format("%s has more than %d HP", label(u), num(1)),
+            string.format("%s has %d HP or less", label(u), num(1))
+    end
+    if name == "HasPassive" and str1() and #a <= 2 then
+        local u = who(2)
+        if not u then return nil end
+        return yes(G.q("HasPassive", u, str1())), label(u) .. " has " .. lower(str1()),
+            label(u) .. " doesn't have " .. lower(str1())
+    end
+    if name == "IsImmuneToStatus" and str1() and #a <= 2 then
+        local u = who(2)
+        if not u then return nil end
+        return G.immune_to(u, str1()), label(u) .. " is immune to " .. lower(str1():gsub("^SG_", "")),
+            label(u) .. " is not immune to " .. lower(str1():gsub("^SG_", ""))
+    end
+    if name == "IsProficientWithEquippedWeapon" then
+        local u = (a[1] and a[1].v == "context.Target") and ctx.target or ctx.source
+        return G.proficient_weapon(u), "the caster is proficient with the weapon",
+            "the caster is not proficient with the weapon held"
+    end
+    if name == "IsCrowdControlled" and #a <= 1 then
+        local u = #a == 1 and who(1) or ctx.target -- thoth: entity or context.Target
+        if not u then return nil end
+        return any_status(u, G.CROWD_CONTROLLED), label(u) .. " can't act", label(u) .. " can act"
     end
     if #a > 1 or (#a == 1 and not who(1)) then return nil end
     local u = who(1)
@@ -215,6 +306,26 @@ local function term(node, ctx)
         local mult = G.b(G.q("HasActiveStatus", ctx.source, "ENLARGE")) and 28.2
             or G.b(G.q("HasActiveStatus", ctx.source, "REDUCE")) and 5.1 or 12
         return str * mult >= tonumber(w) / 1000, "it is light enough to shove", "it is too heavy to shove"
+    end
+    if name == "Player" then
+        return yes(G.q("IsPlayer", u)), subj .. " is a player character", subj .. " is not a player character"
+    end
+    if name == "Locked" then return yes(G.q("IsLocked", u)), "it is locked", "it is not locked" end
+    if name == "HasHelpableCondition" and #a == 0 then
+        return any_status(u, G.HELPABLE), "it needs help (downed, prone, held, asleep, burning...)",
+            "it has nothing to help with (not downed, prone, held, asleep or burning)"
+    end
+    if name == "MobileShootingCasterCondition" then
+        local v = any_status(u, { "DASH", "DISENGAGE" })
+        return v, "the caster has dashed or disengaged", "the caster has neither dashed nor disengaged this turn"
+    end
+    if name == "CanUseWeaponActions" and #a == 0 then
+        -- thoth: not Tagged('AI_BLOCKWEAPONACTIONS') | Player()
+        if G.b(G.q("IsPlayer", u)) then return true, "it can use weapon actions" end
+        local id = tag_id("AI_BLOCKWEAPONACTIONS")
+        local t = id and yes(G.q("IsTagged", u, id))
+        if t == nil then return nil end
+        return not t, "it can use weapon actions", "it can't use weapon actions"
     end
     return nil
 end
@@ -256,7 +367,8 @@ end
 function G.rule_eval(src, ctx)
     local unread = {}
     if src == nil or tostring(src):match("^%s*$") then return true, nil, unread end
-    local v, why = eval(parse(tostring(src)), ctx, unread)
+    -- a stats string may end in ';' (Target_Grease: "not Item();"): a separator, not part of the condition
+    local v, why = eval(parse((tostring(src):gsub("[;%s]+$", ""))), ctx, unread)
     return v, why, unread
 end
 
