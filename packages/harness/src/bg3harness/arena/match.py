@@ -75,7 +75,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    arena.status), last {A, B: the side's last STALL_CALLS tool calls from its events file, {tool, result}},
    detail?}.
    Each tick of a match still on, `arena.camera {}` (client context, no side: Client/ArenaCamera.lua) puts the game
-   camera on the fighters; its errors are logged (once until the error changes) and never end the match.
+   camera on the fighters; its answer (on the fighters, skipped and why, failed and the error) is logged when it
+   changes, and a failure never ends the match.
 5. A reaction prompt no team owns (a summon's name on both teams, no rows read) waits for an answer neither side may
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
@@ -542,7 +543,7 @@ def run_arena(
     seen_turns, turn_at, ui_read = 0, started, started  # the turns so far, when the last began, the last ui.state
     idle, tick_at, moved_sig = 0.0, started, None  # the stall's idle clock, its last tick, the last progress read
     prompt_side: str | None = None  # the side whose reaction prompt the last ui.state read found open (S2-1)
-    camera_err: str | None = None  # the last arena.camera error (logged once until it changes)
+    camera_seen: str | None = None  # the last arena.camera answer (on, skipped: why, failed: error), logged on change
     seen_model = dict.fromkeys(SIDES, 0.0)
 
     def model(side: str) -> float:
@@ -589,12 +590,13 @@ def run_arena(
             if ref.mod_end is not None or status.get("ended"):
                 break
             try:  # the view on the fight (the recording's); the camera never ends a match
-                game.rpc("arena.camera", {}, context="client")
-                camera_err = None
+                cam = game.rpc("arena.camera", {}, context="client") or {}
+                cam_now = f"skipped: {cam['skipped']}" if cam.get("skipped") else "on the fighters"
             except Exception as e:
-                if str(e) != camera_err:
-                    camera_err = str(e)
-                    log(f"arena {spec.name}: arena.camera: {e}")
+                cam_now = f"failed: {e}"
+            if cam_now != camera_seen:
+                camera_seen = cam_now
+                log(f"arena {spec.name}: arena.camera {cam_now}")
             if ref.combat_ended is not None:
                 n = int(ref.combat_ended.get("rounds") or ref.round)
                 raise _Ended("fault", detail=f"the arena's combat ended without a wipe (rounds {n})", rounds=n)

@@ -278,15 +278,38 @@ end)
 
 test("arena.camera: never during a side's input (a running job, a client op within 2 s)", function()
     local cam = camera_scene({ 10, 2, 20 }, { 14, 2, 20 })
-    rpc("ui.selected", "{}", "A") -- a side's client op (a click is several: project, move, hover check, click)
-    eq(rpc("arena.camera").result.skipped, "side A's input", "right after A's op")
+    RPC.register("ui.screen_pos", function() return {} end) -- Client/Pick.lua's (not loaded here)
+    rpc("ui.screen_pos", "{}", "A") -- a click's first step: project through the camera
+    eq(rpc("arena.camera").result.skipped, "side A's input", "right after A's projection")
     eq(cam.PlayerInControl, false, "not written")
     clock = clock + 2000
-    rpc("ui.state", "{}", "B") -- a read: not input
-    eq(rpc("arena.camera").result.moved, true, "2 s later")
+    rpc("ui.selected", "{}", "B") -- a read: not input
+    eq(rpc("arena.camera").result.moved, true, "2 s later, after B's read")
     RPC.with_side("B", RPC.start_job, "ui.flee", {})
     cam.PlayerInControl = false
     eq(rpc("arena.camera").result.skipped, "side B's ui.flee", "B's job runs")
+end)
+
+test("arena.camera: live window 6's scripted match: the sides' reads never hold the camera off", function()
+    -- w6-scripted (ops/logs/live.md 'Run 4a'): each get_combat_state sends ui.story_timer, here at the logged times
+    -- (s after 22:35:00), the runner ticks every 1 s and the game's attack focus has taken the view before each tick.
+    -- Counted as input, these reads left 0.4-1.2 s gaps and the view never came to the fight.
+    local cam = camera_scene({ 212.25, 11, 288 }, { 213.75, 11, 296 })
+    local reads = { { 9.84, "A" }, { 11.59, "A" }, { 13.97, "B" }, { 16.44, "B" }, { 17.14, "B" }, { 19.5, "A" },
+        { 21.14, "A" }, { 24.38, "B" }, { 26.64, "B" } }
+    local moved, i = 0, 1
+    for tick = 10.2, 29.2, 1.0 do
+        while reads[i] and reads[i][1] <= tick do
+            clock = math.floor(reads[i][1] * 1000)
+            rpc("ui.story_timer", "{}", reads[i][2])
+            i = i + 1
+        end
+        clock = math.floor(tick * 1000)
+        cam.PlayerInControl = false
+        if rpc("arena.camera").result.moved then moved = moved + 1 end
+    end
+    eq(moved, 20, "ticks that put the view on the fight")
+    eq(cam.TargetDestination[1], 213, "x")
 end)
 
 test("arena.camera: the harness's only (refused with a side and without an arena)", function()

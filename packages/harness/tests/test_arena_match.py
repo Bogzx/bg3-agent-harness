@@ -84,6 +84,7 @@ class ArenaModel(GameModel):
         self.held_ends: set[str] = set()  # the uuids whose end the game took while holding
         self.cameras = 0  # arena.camera calls (no side)
         self.camera_error: str | None = None  # arena.camera fails with it
+        self.camera_skips = 0  # the first arena.camera calls this many answer skipped (a side's input)
 
     def team_uuids(self) -> dict[str, list[str]]:
         """Each team's uuids as arena.setup's result and arena.status give them (Ar.state.teams: no summons)."""
@@ -215,7 +216,8 @@ class ArenaModel(GameModel):
             return {"ok": True, "result": {"ended": self.ended}}
         if op == "arena.camera":
             self.cameras += 1
-            return {"ok": False, "error": self.camera_error} if self.camera_error else {"ok": True, "result": {}}
+            r = {"moved": False, "skipped": "side A's input"} if self.cameras <= self.camera_skips else {"moved": True}
+            return {"ok": False, "error": self.camera_error} if self.camera_error else {"ok": True, "result": r}
         if op == "ui.state" and self.reaction is not None and self.arena is not None:
             ui = super().reply(ctx, op, args)
             assert ui is not None

@@ -68,7 +68,11 @@ RPC.QUIET_OPS = {
 RPC.Ctx = RPC.Ctx or {}
 RPC.SIDES = { "A", "B" }
 RPC.eventSide = RPC.eventSide or {} -- seq -> "A" | "B" | false (no side: the harness's), only while an arena is active
-RPC.sideInputAt = RPC.sideInputAt or {} -- side -> when its last client op (not a QUIET_OPS read) began (arena.camera)
+RPC.sideInputAt = RPC.sideInputAt or {} -- side -> when its last CAMERA_INPUT_OPS op began (arena.camera)
+-- A click's steps that go through the camera (Client/Pick.lua: project, check the hover): arena.camera doesn't move the
+-- view right after one. Reads (ui.story_timer, ui.selected, ...) aren't input: counting them kept the camera from ever
+-- moving in a match (live window 6: each get_combat_state's ui.story_timer, every ~2 s per side).
+RPC.CAMERA_INPUT_OPS = { ["ui.screen_pos"] = true, ["ui.hover_check"] = true, ["ui.ground_check"] = true }
 
 function RPC.arena_active()
     local Ar = BG3AI.Arena
@@ -170,7 +174,7 @@ function BG3AI.rpc(json)
     local UI = BG3AI.UI
     local hits, calls, job0 = UI and UI.busyHits, UI and UI.calls, RPC.nextJob
     local side = (req.side == "A" or req.side == "B") and req.side or nil
-    if side and CONTEXT == "client" and not RPC.QUIET_OPS[req.op] then RPC.sideInputAt[side] = now_ms() end
+    if side and RPC.CAMERA_INPUT_OPS[req.op] then RPC.sideInputAt[side] = now_ms() end
     local ok2, res
     if side then
         ok2, res = pcall(RPC.with_side, side, fn, req.args or {})

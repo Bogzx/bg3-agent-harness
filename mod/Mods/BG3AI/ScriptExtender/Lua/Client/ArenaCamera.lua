@@ -12,7 +12,7 @@ BG3AI.ArenaCamera = C
 C.SHIFT_M = 2.0        -- re-write when the fighters' centroid moved more than this from the last written target
 C.MIN_D, C.MAX_D = 8, 12 -- distance range (12: the clamp outside the combat-focus mode)
 C.SPREAD_PAD_M = 6     -- distance = the fighters' spread (farthest from the centroid) + this, within the range
-C.INPUT_QUIET_MS = 2000 -- no write this soon after a side's last client op (RPC.sideInputAt)
+C.INPUT_QUIET_MS = 2000 -- no write this soon after a side's last click step (RPC.sideInputAt)
 
 local function comp(e, name)
     local ok, v = pcall(function() return e[name] end)
@@ -41,8 +41,9 @@ function C.fighters()
     return out
 end
 
--- Why the camera must not move now: a side's client job is running or a side's client op ran within
--- C.INPUT_QUIET_MS (a click is several ops: project, move the cursor, check the hover, click); nil when free.
+-- Why the camera must not move now: a side's client job is running or one of a side's click steps through the
+-- camera (RPC.CAMERA_INPUT_OPS) ran within C.INPUT_QUIET_MS (a click is several ops: project, move the cursor, check
+-- the hover, click); nil when free.
 function C.inputBusy()
     for _, job in pairs(RPC.jobs) do
         if job.status == "running" and job.side then return "side " .. job.side .. "'s " .. tostring(job.kind) end
