@@ -145,7 +145,7 @@ local function test(name, fn)
     count = count + 1
     env = { BG3AI_ARENA = "1" }
     pages, entities, UI.commands = { HotBar = { name = "HotBar" } }, {}, {}
-    clock, RPC.jobs, RPC.sideInputAt, BG3AI.ArenaCamera.last = 1000, {}, {}, nil
+    clock, RPC.jobs, RPC.sideInputAt = 1000, {}, {}
     channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana" }, B = { "Bo" } } })
     local ok, err = pcall(fn)
     if ok then print("ok   " .. name) else failures = failures + 1; print("FAIL " .. name .. ": " .. tostring(err)) end
@@ -310,6 +310,17 @@ test("arena.camera: live window 6's scripted match: the sides' reads never hold 
     end
     eq(moved, 20, "ticks that put the view on the fight")
     eq(cam.TargetDestination[1], 213, "x")
+end)
+
+test("arena.camera: a view slid off the fight while still the player's (live window 6 run 7) is taken back", function()
+    -- cam-w6-scripted-3 520.6: PlayerInControl true, target (213.0, 7.4, 243.7), the fighters' centroid 51 m north
+    local cam = camera_scene({ 212.6, 10.98, 294.06 }, { 212.69, 10.99, 295.56 })
+    eq(rpc("arena.camera").result.moved, true, "first write")
+    cam.TargetDestination = { 213.0, 7.4, 243.7 }
+    eq(cam.PlayerInControl, true, "still the player's")
+    eq(rpc("arena.camera").result.moved, true, "re-written")
+    eq(cam.TargetDestination[3] > 294, true, "back on the fighters")
+    eq(rpc("arena.camera").result.moved, false, "then held")
 end)
 
 test("arena.camera: the harness's only (refused with a side and without an arena)", function()
