@@ -260,6 +260,19 @@ do
     check("srcs listed", table.concat(view.srcs, ",") == "finished,osi,requested", table.concat(view.srcs, ","))
 end
 
+-- A roll with no skill (death save, concentration save) carries SkillId's "Sentinel" default (bg3se Hit.h
+-- ConditionRoll.Skill): not a skill name, so no skill field.
+fresh()
+do
+    local c = { Roller = ent(HOST), Subject = ent(HOST), RollUuid = "roll-s", DC = 10, Finished = true,
+        Canceled = false, Skill = "Sentinel", Ability = "None", Roll = {}, Result = { Total = 7, NaturalRoll = 7 } }
+    onCreate.RequestedRoll({ RequestedRoll = c })
+    postUpdate.ServerRoll()
+    local r = L.ring[1]
+    check("no skill: Sentinel dropped", r and r.natural == 7 and r.skill == nil and r.ability == nil,
+        r and tostring(r.skill))
+end
+
 -- A batch of requested rolls by one roller pairs with the Osiris results in order (oldest first).
 fresh()
 do
@@ -285,6 +298,39 @@ do
     postUpdate.ServerRoll()
     local r = L.ring[1]
     check("bad face and dc dropped", r and r.natural == nil and r.dc == nil and r.result == 31 and r.party == false)
+end
+
+-- cast: an attack-roll spell's CastedSpell is a record of its own (roller = caster, event "attack", natural nil)
+-- holding exactly the draws since the previous record; a save spell is none; a RollResult of the same roller right
+-- after it is not merged into it and doesn't share its draws.
+fresh()
+do
+    Ext.Stats = { Get = function(id)
+        local rolls = { Target_MainHandAttack = "Attack(AttackType.MeleeWeaponAttack)",
+            Target_SacredFlame = "not SavingThrow(Ability.Dexterity, SourceSpellDC())" }
+        return rolls[id] and { SpellRoll = { Default = rolls[id] } } or nil
+    end }
+    check("listens CastedSpell/5", listeners["CastedSpell/5"] ~= nil)
+    L.lastRolls = L.counts()
+    RS.Streams[2].State.NumRolls = RS.Streams[2].State.NumRolls + 2
+    RS.Streams[1].State.NumRolls = RS.Streams[1].State.NumRolls + 1
+    fire("CastedSpell/5", "Player_" .. HOST, "Target_MainHandAttack", "Target", "None", 7)
+    local r = L.ring[1]
+    local dmg = "PlayerDamage:" .. HOST
+    check("attack cast recorded", #L.ring == 1 and r.event == "attack" and r.roller == HOST
+        and r.spell == "Target_MainHandAttack" and r.natural == nil and r.srcs.cast and r.party == true, #L.ring)
+    check("attack cast: its own draws", r.streams and r.streams[dmg] == 2 and r.streams.Generic == 1
+        and r.stream == dmg and r.streams_shared == nil)
+    fire("CastedSpell/5", "Player_" .. HOST, "Target_SacredFlame", "Target", "None", 8)
+    fire("CastedSpell/5", "Player_" .. HOST, "Shout_Unknown", "Shout", "None", 9)
+    check("no record for a non-attack cast", #L.ring == 1, #L.ring)
+    osi(1, true)
+    check("RollResult after it: not merged, no shared draws", #L.ring == 2 and not r.srcs.osi
+        and L.ring[2].srcs.osi and L.ring[2].streams == nil and r.streams[dmg] == 2, #L.ring)
+    fire("CastedSpell/5", "Player_" .. GOB, "Target_MainHandAttack", "Target", "None", 10)
+    check("attack that drew nothing: no streams", #L.ring == 3 and L.ring[3].roller == GOB
+        and L.ring[3].streams == nil and L.ring[3].party == false)
+    check("fired cast counted", L.fired.cast == 2, L.fired.cast)
 end
 
 -- Snapshot: hooks, raw hook hits and pending entities.

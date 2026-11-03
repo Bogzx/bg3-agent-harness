@@ -113,8 +113,10 @@ The three harness-only files are not agent-facing:
   included (trades, pickpockets, thefts, crimes, kills, loot), in the facts v1 event shapes.
 * **Roll log** (`RollLog.lua`, ops `roll.since` / `roll.snapshot`): every die roll the game makes, for the
   benchmark's luck number (D9). `natural` and `dc` are filled where the game exposes them, which on this build is
-  passive and skill/ability checks (the RequestedRoll component); saving throws and attack rolls are logged with
-  `natural`/`dc` null (success, roller and stream counts only), so the luck number is the checks' luck. Closed
+  passive and skill/ability checks plus death and concentration saves (the RequestedRoll component). Spell saving
+  throws are logged with `natural`/`dc` null (success, roller and stream counts only). Attack rolls have no
+  RollResult: each attack-roll cast (CastedSpell) is logged as its own `event: "attack"` record with the caster
+  and the exact stream draws since the previous record, `natural` null. So the luck number is the checks' luck. Closed
   2026-10-24 after two live probe passes found no source for them (`tools/dev/probe_roll_sources.py`; evidence in
   research/fix/vis.md "R2" and research/fix/live.md Window D2: `runtime/probes/fix-live/rolls-dump.txt`,
   `rolls2-dump.txt`, `runtime/probes/fix-vis/rolls.json`, `rolls2.json`; the passive checks' PASS in
