@@ -43,7 +43,11 @@ CHECKS: tuple[Check, ...] = (
         "every file's sha256 equals bundle.json files[]; canonical bundle.json; run_hash recomputes",
     ),
     Check(
-        "F03", _PW, "reject", "bundle, manifest, result and every facts/rolls/events/fights line match their schemas"
+        "F03",
+        _PW,
+        "reject",
+        "bundle, manifest, result and every facts/rolls/events/fights line match their schemas; bundle.json's"
+        " fields and attempt.cell agree with the manifest",
     ),
     Check("F04", _PW, "reject", "not a pilot, valid, no invalid_reason, not a holdout scenario"),
     Check("P01", _PW, "reject", "released suite; harness/bench versions, scenario digest and start save match it"),

@@ -290,6 +290,13 @@ def declare(bdir: Path, **model) -> None:
     """Change the declared model fields in the manifest and bundle.json alike (F03 checks they agree)."""
     edit_json(bdir, "manifest.json", lambda m: m["model"].update(model))
     edit_json(bdir, bundle.ENVELOPE, lambda e: e["model"].update(model))
+    if "slug" in model:  # the cell names the slug too (F03)
+        edit_json(bdir, bundle.ENVELOPE, lambda e: e["attempt"].update(cell=_with_slug(e, model["slug"])))
+
+
+def _with_slug(env: dict, slug: str) -> str:
+    sc, _, cond = env["attempt"]["cell"].split("/")
+    return f"{sc}/{slug}/{cond}"
 
 
 def edit_facts(bdir: Path, fn: Callable[[list[dict]], None]) -> None:
@@ -380,6 +387,16 @@ def test_tampered_copies_are_rejected_by_their_code(tmp_path, what):
         "foreign start save",
     ):
         assert v.failed == [code]
+
+
+def test_attempt_cell_of_another_cell_fails_f03(good):
+    """X07 picks its reference set by attempt.cell, so a cell naming another scenario/model/condition is refused."""
+    bdir, release = good
+    edit_json(bdir, bundle.ENVELOPE, lambda e: e["attempt"].update(cell="act1_gold_1000/deepseek-v4-pro/default"))
+    rehash(bdir)
+    v = run(bdir, release)
+    assert v.failed == ["F03"]
+    assert "attempt.cell" in next(r.detail for r in v.checks if r.code == "F03")
 
 
 def test_render_for_another_run_fails_e03(good):

@@ -284,6 +284,10 @@ def f03_schemas(raw: dict[str, bytes], env: Json) -> Outcome:
         errs.append("bundle.json model differs from the manifest's")
     if env.get("client") != {"name": client.get("name"), "version": client.get("version")}:
         errs.append("bundle.json client differs from the manifest's")
+    # X07 picks its reference runs by this cell
+    cell = f"{same['scenario']}/{model.get('slug')}/{same['condition']}"
+    if (env.get("attempt") or {}).get("cell") != cell:
+        errs.append(f"bundle.json attempt.cell {(env.get('attempt') or {}).get('cell')!r} != {cell!r}")
     return (False, "; ".join(errs[:10])) if errs else (True, "")
 
 

@@ -219,6 +219,8 @@ game unless it says so.
     now declare `effort = "high"`: their bench-v0.10 rows read high, and launch-v1's DeepSeek row (declared medium)
     is not 1:1 with them by label, only by what was served.
   - X03 rejects a save start whose first load mark is not the release's start save folder.
+  - F03 also rejects a bundle.json whose `attempt.cell` is not `<scenario>/<model slug>/<condition>` of its own
+    manifest (X07 picks its reference runs by the cell). All 146 launch-v1 bundles pass.
   - results: a leaderboard row is (client, model, reasoning effort, condition); runs, groups and the ranking's
     models carry `effort` (results v1, optional). The suite digest is re-pinned under bench-v0.10 (no score moves
     for runs of one effort per model).

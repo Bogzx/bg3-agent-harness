@@ -32,7 +32,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "bundle, manifest, result and every facts/rolls/events/fights line match their schemas"
+      "summary": "bundle, manifest, result and every facts/rolls/events/fights line match their schemas; bundle.json's fields and attempt.cell agree with the manifest"
     },
     {
       "code": "F04",
