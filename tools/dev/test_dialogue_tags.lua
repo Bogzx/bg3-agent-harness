@@ -66,6 +66,7 @@ BG3AI = {
 }
 
 dofile(LUA .. "/Client/UIState.lua")
+dofile(LUA .. "/Client/UIStateArena.lua")
 local S = BG3AI.UIState
 
 local failures, passed = 0, 0

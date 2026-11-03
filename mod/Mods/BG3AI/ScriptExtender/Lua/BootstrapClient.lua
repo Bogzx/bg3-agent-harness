@@ -12,6 +12,7 @@ for _, path in ipairs({
     "Shared/HotbarMap.lua", -- worker se: hotbar slot -> spell id from the engine component (ACT-8)
     "Client/UI.lua",
     "Client/UIState.lua",
+    "Client/UIStateArena.lua", -- a reaction prompt is its side's (split for the line cap)
     "Client/UIActions.lua",
     "Client/AutoSkip.lua",
     "Client/UISettings.lua",

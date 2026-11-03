@@ -110,6 +110,7 @@ BG3AI = { UI = UI, Util = { loca = function(h) return h end } }
 dofile(LUA .. "/Shared/RPC.lua")
 dofile(LUA .. "/Shared/Arena.lua")
 dofile(LUA .. "/Client/UIState.lua")
+dofile(LUA .. "/Client/UIStateArena.lua")
 local function try(f, ...)
     local ok, v = pcall(f, ...)
     if ok then return v end
