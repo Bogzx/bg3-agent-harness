@@ -946,8 +946,9 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     assert ref.translate({**passed, "round": 1}) == {**passed, "round": 1, "character": "Gale"}  # the arena's name
     summon = {**passed, "character": "summon-1", "name": "Wolf", "why": "dead", "round": 1}
     assert ref.translate(summon) == {**summon, "character": "Wolf"}  # not a team member: the record's name
-    cap = ref.translate({"ev": "arena_end", "reason": "round_cap", "rounds": 4, "hp_left_A": 1, "hp_left_B": 1})
-    assert cap is not None and cap["winner"] is None and ref.mod_end == cap
+    # the mod's end is the match's, held until the agents are stopped (write_end), then written once with the money
+    end = {"ev": "arena_end", "reason": "round_cap", "rounds": 4, "hp_left_A": 1, "hp_left_B": 1}
+    assert ref.translate(end) is None and ref.mod_end == ref.pending_end == {"winner": None, **end}
     assert ref.translate({**phase, "character": "ua1", "members": ["ua1"], "names": ["Karlach"], "round": 4}) is None
     assert ref.translate({"ev": "arena_end", "reason": "wipe", "rounds": 4}) is None
     assert ref.translate({**passed, "round": 4}) is None  # after the end
@@ -957,6 +958,10 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     ref2.end(winner="A", reason="forfeit", rounds=1, hp_left_A=1, hp_left_B=1, forfeit="B", cause="forced_turns")
     assert ref2.translate({"ev": "arena_end", "reason": "forfeit", "rounds": 1}) is None  # the runner's own end
     assert ref2.mod_end is None
+    ref.write_end()
+    ref.write_end()  # once
+    written = [json.loads(line) for line in (tmp_path / "f.jsonl").read_text().splitlines()]
+    assert [w["reason"] for w in written if w.get("ev") == "arena_end"] == ["round_cap"]
 
 
 def test_the_spec_refuses_a_draft_or_incomplete_arena():
