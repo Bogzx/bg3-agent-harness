@@ -140,16 +140,17 @@ game unless it says so.
   each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
   otherwise; bench-v0.8 and v0.9's releases have no such field and keep checking names only. What changed for the
   agent (bridge/CHANGELOG.md, 2026-11-02, and docs/FAIRNESS.md):
-  - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and `route(go=true)`, a far
-    `move_to`) default to `wait=true` and return what `wait_for` on the walk returned, with its early stops, CHANGES
-    and the minimap block; a walk still going after 90 s returns its progress and the id `wait_for` keeps waiting
-    on. `wait=false` keeps the old pipelining.
+  - Walks out of combat return at their end: `move_to`, `walk_toward`, `travel_to` (and a far `move_to`) default
+    to `wait=true`, `route(go=true)` always blocks (it has no `wait`), and they return what `wait_for` on the walk
+    returned, with its early stops, CHANGES and the minimap block; a walk still going after 90 s returns its
+    progress and the id `wait_for` keeps waiting on. `wait=false` keeps the old pipelining.
   - travel_to and regroup name what the trip passed: a PASSED line before CHANGES (what came into view at a leg's
     end and is out of view at the trip's end, not in the agent's last view; nearest first, up to 6).
-  - The leader's `travel_to` doesn't take along a member more than 24 m away at the trip's start (not re-chained,
-    not waited for; said once: `not with you: e1 Shadowheart 77m (unchained, stays there)`), checks for stragglers
-    only after legs that don't arrive, gives a straggler's walk back 30-60 s for the gap (was a flat 30 s), and a
-    stop on a straggler says how its walk back ended (was a guessed "stuck on a ladder, gap or door?").
+  - The leader's `travel_to` doesn't re-chain or wait for a member more than 24 m away at the trip's start (said
+    once: `not with you: e1 Shadowheart 77m (unchained, stays there)`; one already chained stays chained, so the
+    game's follow can still bring it), checks for stragglers only after legs that don't arrive, gives a
+    straggler's walk back 30-60 s for the gap (was a flat 30 s), and a stop on a straggler says how its walk back
+    ended (was a guessed "stuck on a ladder, gap or door?").
   - Out of combat a batch ends with its first walk step: `do_actions` runs (`queue_actions` queues) the steps up to
     and with the first `move_to`/`walk_toward`/`travel_to`/`jump_to` and lists the rest as not run (not queued);
     batches without a walk, or with the walk last, are unchanged. A walk step with `if`/`unless` ends the batch only
