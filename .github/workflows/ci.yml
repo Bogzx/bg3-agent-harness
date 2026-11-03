@@ -52,12 +52,18 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: true # third_party/bg3le: tools/test_bg3le_{patches,static_data,ui_busy}.py skip without it
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
-      # bench's Inspect export too: packages/bench/tests/test_export_inspect.py skips without it
-      - run: uv sync --locked --extra inspect
+      # bench's Inspect export (test_export_inspect.py) and scipy (test_stats.py's cross-check) skip without them
+      - run: uv sync --locked --extra inspect --group crosscheck
+      - name: ffmpeg (test_recorder.py and test_video_render.py encode with it)
+        run: |
+          command -v ffmpeg && exit 0
+          sudo apt-get update -q && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: pytest -m "not live and not e2e"
         run: uv run pytest -m "not live and not e2e" --cov --cov-report=
       - name: Coverage per package, with the floors of pyproject [tool.bg3ci.coverage-min]

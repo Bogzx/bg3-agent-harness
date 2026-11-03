@@ -119,6 +119,13 @@ def test_e2e_leaves_out_only_the_sudo_install_of_system_libraries(ci: dict[str, 
 
 
 @pytest.mark.integration
+def test_test_job_leaves_out_only_the_sudo_install_of_ffmpeg(ci: dict[str, list[tuple[str, str]]]) -> None:
+    assert table("test") == single_commands("test", ci["test"])
+    assert "sudo apt-get install -y --no-install-recommends ffmpeg" in block(ci["test"], "ffmpeg")
+    assert "--group" in task.steps("test")[0].argv  # bench's crosscheck group: test_stats.py's scipy cross-check
+
+
+@pytest.mark.integration
 def test_quick_is_the_check_jobs_ruff_steps_and_the_test_jobs_pytest_collected(
     ci: dict[str, list[tuple[str, str]]],
 ) -> None:
