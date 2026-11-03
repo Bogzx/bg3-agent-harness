@@ -12,7 +12,7 @@ a digest pinned for the current version. The fix is one of:
 
 A new version whose score moves outside these files (the mod or the bg3 tools its release pins changed) pins the
 same digest as the version before it; suite.json's `shared` names that pair ({new: old}), and only versions linked
-by named pairs may share a digest (a chain counts: v0.10 -> v0.9 -> v0.8 shares v0.8's digest).
+by named pairs may share a digest (a chain counts: with vC -> vB and vB -> vA, all three may pin vA's digest).
 
 Never edit an existing entry: an entry is what a published result was graded with.
 """

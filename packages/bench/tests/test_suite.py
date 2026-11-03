@@ -83,7 +83,7 @@ def test_a_version_shares_its_predecessors_digest_only_when_suite_json_pairs_the
 
 
 def test_a_chain_of_shared_pairs_may_share_one_digest(copy):
-    """bench-v0.10 re-pins bench-v0.9's files, which are bench-v0.8's: v0.10 -> v0.9 -> v0.8 links all three."""
+    """A version re-pinning its predecessor's digest that an older version pinned first: v9.9 -> v9.8 -> v9.7."""
     now = suite.digest(copy)
     three = {"bench-v9.7": [now], "bench-v9.8": [now], "bench-v9.9": [now]}
     chain = {"bench-v9.8": "bench-v9.7", "bench-v9.9": "bench-v9.8"}
