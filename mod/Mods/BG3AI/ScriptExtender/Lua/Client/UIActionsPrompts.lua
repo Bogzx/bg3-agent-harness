@@ -169,6 +169,20 @@ local function reactRows(w)
     return UI.findAll(w, function(e) return UI.name(e) == "ReactButton" end, { prune = true })
 end
 
+-- The job after an answer: done when the shown prompt has one event fewer, or none.
+local function reactWait(dc)
+    local before = UI.count(UI.path(dc, "Data.InterruptEvents"))
+    return waitJob("ui.react", 10000, function()
+        local w2 = reactionPopup()
+        local d2 = w2 and try(function() return w2.DataContext end)
+        local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
+        if n < before or n == 0 then
+            local wmap = UI.widgetMap()
+            return "done", { pending = n > 0 and n or nil, reaction = n > 0 and S.reaction(wmap) or nil }
+        end
+    end)
+end
+
 RPC.register("ui.react", function(args)
     local w = reactionPopup() or error("no reaction prompt on screen")
     local dc = try(function() return w.DataContext end)
@@ -186,6 +200,18 @@ RPC.register("ui.react", function(args)
             if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
             return { needs_click = i, rows = #btns }
         end
+        -- v010 live window 6 (Karlach's Reckless Attack after a natural 1): one interruptor with one row. Its Accept
+        -- button is collapsed (ReactionDecisionPopup.xaml: Interruptors.Count = 1), and a player answers by clicking
+        -- the row, a ToggleButton whose command is InterruptReactCommand(PassThrough(decision, interruptor)).
+        -- InterruptAcceptPlayerCommand with no row chosen closed the prompt without the reaction. Press the row.
+        if #btns == 1 and #roots <= 1 and UI.prop(btns[1], "IsChecked") ~= true then
+            if args.which and tonumber(args.which) ~= 1 then
+                error("no reaction option " .. tostring(args.which) .. " (1 shown)")
+            end
+            check(UI.press(btns[1], args.dry))
+            if args.dry then return { can = true } end
+            return reactWait(dc)
+        end
     end
     if args.use == false then
         check(UI.command(dc, "InterruptDontReactPlayerCommand", ev, args.dry))
@@ -200,16 +226,7 @@ RPC.register("ui.react", function(args)
         check(UI.command(dc, "InterruptAcceptPlayerCommand", ev, args.dry))
     end
     if args.dry then return { can = true } end
-    local before = UI.count(UI.path(dc, "Data.InterruptEvents"))
-    return waitJob("ui.react", 10000, function()
-        local w2 = reactionPopup()
-        local d2 = w2 and try(function() return w2.DataContext end)
-        local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
-        if n < before or n == 0 then
-            local wmap = UI.widgetMap()
-            return "done", { pending = n > 0 and n or nil, reaction = n > 0 and S.reaction(wmap) or nil }
-        end
-    end)
+    return reactWait(dc)
 end)
 
 RPC.register("ui.react_probe", function(args)

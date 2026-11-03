@@ -372,6 +372,35 @@ do
     shield.buttons, sent = rows(2, 2), {}
     r = ops["ui.react"]({ use = true, which = 2 })
     ok(r.job and r.needs_click == nil, "ui.react: two interruptors -> commands, no click")
+    -- v010 live window 6: Karlach's Reckless Attack, one interruptor with one row. Its Accept button is collapsed;
+    -- InterruptAcceptPlayerCommand closed the prompt without the reaction. The row's own command answers it.
+    local _prop = UIt.prop
+    UIt.prop = function(e, k)
+        if k == "IsChecked" and type(e) == "table" then return e.checked end
+        return _prop(e, k)
+    end
+    local reckless = popup(true, { { id = "reckless" } })
+    reckless.buttons = rows(1)
+    local pressedRow
+    reckless.buttons[2].onPress = function(b) pressedRow = b.k end
+    pages, sent = { reckless }, {}
+    r = ops["ui.react"]({ use = true })
+    ok(r.job and pressedRow == 1 and #sent == 0 and r.needs_click == nil,
+        "ui.react: lone interruptor, one row -> the row's own command, no Accept, no click (sent " .. #sent .. ")")
+    okr, errr = pcall(ops["ui.react"], { use = true, which = 2 })
+    ok(not okr and tostring(errr):find("no reaction option 2 (1 shown)", 1, true),
+        "ui.react: lone row, which 2 refused")
+    reckless.DataContext.Data.InterruptEvents = {}
+    jr = run(r.job, 600)
+    ok(jr.status == "done", "ui.react: the reaction taken -> done: " .. tostring(jr.status))
+    -- the row already chosen (Decision Use, the toggle checked): pressing it would undo the choice -> Accept as before
+    reckless.DataContext.Data.InterruptEvents = { { id = "reckless" } }
+    reckless.buttons[2].checked, pressedRow, sent = true, nil, {}
+    r = ops["ui.react"]({ use = true })
+    ok(r.job and pressedRow == nil and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand",
+        "ui.react: a checked lone row -> Accept")
+    UIt.prop = _prop
+    pages = { shield }
     -- ui.react_probe: over the wanted row, over another, watch reads no rows
     shield.buttons = rows(6)
     shield.buttons[1 + 4].over = true                                       -- row 4 under the cursor
