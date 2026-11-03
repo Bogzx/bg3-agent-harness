@@ -112,6 +112,17 @@ class Make(unittest.TestCase):
         self.model.difficulty = "DIFFICULTY_MEDIUM"
         self.assertEqual(self.make().name, "Tav-123__SCN-fight_act1_windmill")
 
+    def test_a_tactician_twin_wants_tactician(self) -> None:
+        # bench-start-states: a Tactician twin's save is its base's start at Tactician; Balanced-only refused it
+        want = mss.scenario_difficulty("fight_act1_windmill_tactician")
+        self.assertEqual(want, "Tactician")
+        self.assertEqual(mss.scenario_difficulty("fight_act1_windmill"), "Balanced")
+        self.model.difficulty = "DIFFICULTY_MEDIUM"
+        self.refused("'DIFFICULTY_MEDIUM'.*set Tactician", name="fight_act1_windmill_tactician", difficulty=want)
+        self.model.difficulty = "DIFFICULTY_HARD"
+        made = self.make("fight_act1_windmill_tactician", difficulty=want)
+        self.assertEqual(made.name, "Tav-123__SCN-fight_act1_windmill_tactician")
+
     def test_difficulty_names(self) -> None:
         for name in ("Balanced", "DIFFICULTY_MEDIUM", "DifficultyMedium", "difficultymedium"):
             self.assertEqual(difficulty.option_name(name), "Balanced")
