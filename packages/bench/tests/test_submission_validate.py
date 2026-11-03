@@ -74,6 +74,9 @@ def good_run(tmp: Path, name: str, start_snapshot: bool = True) -> Path:
         "repo": {"commit": "c" * 40, "dirty": False, "diff": None},
     }
     man["scenario"]["start_save_sha1"] = sc["start"]["save_sha1"]
+    # the fixtures are DeepSeek runs whose profile said "medium" while pi served "high" (its thinking_level_map has no
+    # medium for this model): a run that declares what it was served, as C04 requires
+    man["model"]["reasoning_effort"] = "high"
     if start_snapshot:
         rows = jsonl((d / "facts.jsonl").read_text())
         i = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
@@ -109,6 +112,7 @@ def release_for(d: Path) -> validate.Release:
         scenarios={
             sc["name"]: {
                 "digest": man["scenario"]["digest"],  # the suite the pilot played (files edited since)
+                "save": sc["start"]["save"],
                 "save_sha1": sc["start"]["save_sha1"],
                 "fingerprint": consistency.fingerprint(facts.load(d / "facts.jsonl")),
             }
@@ -282,6 +286,12 @@ def edit_json(bdir: Path, name: str, fn: Callable[[dict], None]) -> None:
     (bdir / name).write_text(json.dumps(doc, indent=1, sort_keys=True))
 
 
+def declare(bdir: Path, **model) -> None:
+    """Change the declared model fields in the manifest and bundle.json alike (F03 checks they agree)."""
+    edit_json(bdir, "manifest.json", lambda m: m["model"].update(model))
+    edit_json(bdir, bundle.ENVELOPE, lambda e: e["model"].update(model))
+
+
 def edit_facts(bdir: Path, fn: Callable[[list[dict]], None]) -> None:
     rows = jsonl((bdir / "facts.jsonl").read_text())
     fn(rows)
@@ -305,6 +315,11 @@ def more_gold(rows: list[dict]) -> None:
 def bad_start(rows: list[dict]) -> None:
     snap = next(r for r in rows if r["kind"] == "snapshot")
     snap["party"][0]["level"] += 1
+
+
+def foreign_start(rows: list[dict]) -> None:
+    # REVIEW-4 2.5: foreign_save was the runner's own flag; the facts' first load mark names the save that was loaded
+    next(r for r in rows if r.get("mark") == "load")["detail"] = "Tav-1__SCN-another_run"
 
 
 def pins(m: dict) -> None:
@@ -332,9 +347,12 @@ TAMPERS: dict[str, tuple[str, Callable[[Path], None]]] = {
     "wrong prompt hash": ("C01", lambda b: edit_json(b, "manifest.json", prompt)),
     "duplicate run id": ("D01", lambda b: None),
     "bad start snapshot": ("X01", lambda b: edit_facts(b, bad_start)),
+    "foreign start save": ("X03", lambda b: edit_facts(b, foreign_start)),
     "extra tool": ("A02", lambda b: add_event(b, kind="tool_call", tool="teleport", args={}, call_id="x")),
     "reload without the condition": ("A02", lambda b: add_event(b, kind="tool_call", tool="load_game", args={})),
     "hidden reasoning": ("S02", lambda b: add_event(b, kind="thinking", text="secret plan")),
+    "undeclared effort": ("C04", lambda b: declare(b, reasoning_effort="low")),
+    "another model": ("C04", lambda b: declare(b, slug="deepseek-v4-pro")),
     "oversize": ("F01", oversize),
     "bad schema": ("F03", lambda b: edit_json(b, "result.json", schema)),
 }
@@ -352,7 +370,15 @@ def test_tampered_copies_are_rejected_by_their_code(tmp_path, what):
     v = run(bdir, release_for(d), duplicate="an accepted submission has this run id" if code == "D01" else None)
     assert not v.accepted
     assert code in v.failed, v.failed
-    if what in ("edited gold", "wrong pins", "duplicate run id", "bad start snapshot", "extra tool"):
+    if what in (
+        "edited gold",
+        "wrong pins",
+        "duplicate run id",
+        "bad start snapshot",
+        "extra tool",
+        "undeclared effort",
+        "foreign start save",
+    ):
         assert v.failed == [code]
 
 
@@ -904,3 +930,40 @@ def test_a_bad_fight_log_fails_f03(tmp_path, rows, name):
     d, bdir = packed_with_fights(tmp_path, rows, name)
     v = run(bdir, release_for(d))
     assert not v.accepted and v.failed == ["F03"], [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
+def test_p02_holds_a_run_to_the_releases_code_pin():
+    # REVIEW-4 2.1: a committed local bridge patch kept the repo clean and passed P02; from bench-v0.10 the release
+    # pins the code (code_sha1) and the run's repo pin must cite it
+    game = {"game_build": "1", "bg3le_sha256": "b" * 64, "mod_sha1": "c" * 40}
+    man = {
+        "pins": {
+            "game_build": "1",
+            "bg3le": {"sha256": "b" * 64},
+            "mod": {"sha1": "c" * 40},
+            "repo": {"commit": "abc", "dirty": False, "code_sha1": "d" * 40},
+        }
+    }
+
+    def rel(pins: dict) -> validate.Release:
+        return validate.Release("bench-v0.10", {}, pins, {}, {})
+
+    assert validate.p02_pins(man, rel({**game, "code_sha1": "d" * 40})) == (True, "")
+    ok, why = validate.p02_pins(man, rel({**game, "code_sha1": "e" * 40}))
+    assert not ok and "the code differs from the release's" in why
+    old = {**man, "pins": {**man["pins"], "repo": {"commit": "abc", "dirty": False}}}
+    assert not validate.p02_pins(old, rel({**game, "code_sha1": "d" * 40}))[0]  # a run that cites no code pin
+    assert validate.p02_pins(old, rel(game)) == (True, "")  # bench-v0.8/v0.9 releases have no code pin
+
+
+def test_c04_names_the_model_or_effort_the_events_contradict(good):
+    # REVIEW-4 2.2: nothing compared the declared model and effort with what the events say played. launch-v1's 36
+    # DeepSeek runs declared reasoning_effort "medium" and pi served "high" in every one (profiles/deepseek-flash.toml
+    # thinking_level_map: medium = false)
+    bdir, release = good
+    assert "C04" not in run(bdir, release).failed
+    declare(bdir, reasoning_effort="medium")
+    rehash(bdir)
+    v = run(bdir, release)
+    assert v.failed == ["C04"]
+    assert next(r.detail for r in v.checks if r.code == "C04") == "served effort high, declared medium"

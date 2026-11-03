@@ -37,6 +37,7 @@
           "scenario": {"type": "string", "minLength": 1},
           "client": {"$ref": "#/$defs/client"},
           "model": {"type": "string", "minLength": 1},
+          "effort": {"$ref": "#/$defs/str_or_null", "description": "the reasoning effort the run declared (manifest model.reasoning_effort; C04 holds it to the served one). Optional, added 2026-11-03"},
           "condition": {"$ref": "#/$defs/str_or_null"},
           "valid": {"type": "boolean"},
           "passed": {"type": ["boolean", "null"], "description": "null: a maximise scenario's run (no pass); added 2026-10-25"},
@@ -94,6 +95,7 @@
         "properties": {
           "client": {"$ref": "#/$defs/client"},
           "model": {"type": "string", "minLength": 1},
+          "effort": {"$ref": "#/$defs/str_or_null", "description": "the reasoning effort its runs declared (manifest model.reasoning_effort; C04 holds it to the served one). Optional, added 2026-11-03"},
           "condition": {"$ref": "#/$defs/str_or_null"},
           "n_runs": {"type": "integer", "minimum": 1},
           "n_invalid": {"type": "integer", "minimum": 0},
@@ -176,7 +178,7 @@
           "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "the common set: pass/fail scenarios (no choice, no maximise) every ranked model has a valid run of"},
           "of": {"type": "integer", "minimum": 0, "description": "the condition's pass/fail scenarios (no choice, no maximise; any run)"},
           "min_cells": {"type": "integer", "minimum": 0, "description": "the pass/fail scenarios with a valid run a model needs to be ranked (results.RANKED_SHARE of `of`, rounded up)"},
-          "models": {"type": "array", "items": {"type": "object", "required": ["client", "model"], "additionalProperties": false, "properties": {"client": {"$ref": "#/$defs/client"}, "model": {"type": "string", "minLength": 1}}}, "description": "the condition's groups (a model through one client) ranked by suite_score (best first), then the unranked"}
+          "models": {"type": "array", "items": {"type": "object", "required": ["client", "model"], "additionalProperties": false, "properties": {"client": {"$ref": "#/$defs/client"}, "model": {"type": "string", "minLength": 1}, "effort": {"$ref": "#/$defs/str_or_null"}}}, "description": "the condition's groups (a model at one effort through one client) ranked by suite_score (best first), then the unranked"}
         }
       }
     }
