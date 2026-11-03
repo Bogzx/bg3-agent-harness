@@ -593,13 +593,14 @@ function G.last_seen_hint(target)
     if type(V) ~= "table" or type(V.lastSeen) ~= "function" then return "" end
     local okv, gone, mv = pcall(V.vanished or function() return false end, G.guid(target))
     if okv and gone and type(mv) == "table" and type(mv.pos) == "table" then
-        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f)): reveal it (See Invisibility, "
-            .. "Faerie Fire, or an area attack on that spot) or wait for it to show itself when it attacks", mv.ago_s or 0,
+        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f)); See Invisibility,"
+            .. " Faerie Fire or an area attack on that spot reveal it, and it shows itself when it attacks",
+            mv.ago_s or 0,
             mv.pos[1], mv.pos[2], mv.pos[3])
     end
     local ok, m = pcall(V.lastSeen, G.guid(target))
     if not ok or type(m) ~= "table" or type(m.pos) ~= "table" then return "" end
-    return string.format("; last seen @(%.1f,%.1f,%.1f) %ds ago: travel_to that spot first",
+    return string.format("; last seen @(%.1f,%.1f,%.1f) %ds ago",
         m.pos[1], m.pos[2], m.pos[3], m.ago_s or 0)
 end
 
@@ -618,14 +619,14 @@ function G.point_ok(char, pos)
     if not p then G.refuse("cannot locate character") end
     local dd = U.dist(p, pos)
     if dd > G.MAX_MOVE_DIST then
-        G.refuse(string.format("destination is too far away (%.0fm from this character; one walk reaches %.0fm: use travel_to)",
+        G.refuse(string.format("destination is too far away (%.0fm from this character; one walk reaches %.0fm; travel_to has no such limit)",
             dd, G.MAX_MOVE_DIST))
     end
     local N = BG3AI.Nav
     if type(N) == "table" and type(N.known) == "function" then
         local ok, r = pcall(N.known, nil, pos)
         if not (ok and r == true) then
-            G.refuse("that spot is not in view and the party hasn't walked there: pick ground you can see")
+            G.refuse("that spot is not in view and the party hasn't walked there")
         end
     end
 end
@@ -693,13 +694,12 @@ function G.wedged_hint(char, goal)
     if not ok or type(w) ~= "table" then return "" end
     if not w.to and w.away then
         return string.format("; no walkable ground reads around you, and the only landing (next to %s) is %.1fm %s,"
-            .. " away from the goal: don't jump there; try again in a moment (right after a climb the ground can read"
-            .. " blocked), or route", tostring(w.away), math.abs(w.away_dy or 0), (w.away_dy or 0) < 0 and "below" or "above")
+            .. " away from the goal (right after a climb the ground can read blocked for a moment)", tostring(w.away), math.abs(w.away_dy or 0), (w.away_dy or 0) < 0 and "below" or "above")
     end
     if not w.to then return "" end -- nobody to land next to: maybe a small balcony whose way out is its ladder
-    return string.format("; you are wedged: no walkable ground leads out from where you stand: jump_to (%.1f,%.1f,%.1f)"
-        .. " next to %s (%.1fm)%s, then try again", w.to[1], w.to[2], w.to[3], tostring(w.near), w.dist_m or 0,
-        w.in_reach == false and " if it is in reach" or "")
+    return string.format("; you are wedged: no walkable ground leads out from where you stand; the nearest landing is"
+        .. " (%.1f,%.1f,%.1f) next to %s (%.1fm)%s", w.to[1], w.to[2], w.to[3], tostring(w.near), w.dist_m or 0,
+        w.in_reach == false and ", past this character's jump reach" or "")
 end
 
 -- A ladder pulled up out of reach, used from below (Navigation.lua N.ladderRaised, S059 08:56): say so instead of
@@ -714,8 +714,8 @@ function G.raised_ladder_refuse(target, from)
     local okr, gap = pcall(N.ladderRaised, p)
     if not okr or type(gap) ~= "number" then return end
     G.refuse(string.format("this ladder is pulled up: its foot hangs %.1fm above the floor, out of reach from below"
-        .. " (a player can't climb it from here; it is lowered from above, often by a lever up there): find another"
-        .. " way up (route connectors=true, get_frontier)", gap))
+        .. " (a player can't climb it from here; it is lowered from above, often by a lever up there); route"
+        .. " connectors=true and get_frontier list the other ways up", gap))
 end
 
 function G.closest_hint(char, goal)
@@ -727,7 +727,7 @@ function G.closest_hint(char, goal)
     if type(c.dy_to_goal) == "number" and math.abs(c.dy_to_goal) >= 1.5 then
         up = string.format(", it is %.1fm %s that spot", math.abs(c.dy_to_goal), c.dy_to_goal > 0 and "above" or "below")
     end
-    return string.format("; closest walkable spot (%.1f,%.1f,%.1f) is %.1fm from it (walk %.0fm%s): move_to that, then a ladder/jump_to",
+    return string.format("; closest walkable spot (%.1f,%.1f,%.1f) is %.1fm from it (walk %.0fm%s)",
         c.pos[1], c.pos[2], c.pos[3], c.to_goal_m or 0, c.path_m or 0, up)
 end
 
@@ -740,7 +740,7 @@ function G.point_reachable(char, pos)
         if okz and zone then return {} end
     end
     local r, info = G.reachable(char, pos)
-    if info.needs_jump and G.in_combat(char) then G.refuse("needs a jump: use jump_to") end
+    if info.needs_jump and G.in_combat(char) then G.refuse("needs a jump (move_to doesn't jump; jump_to does)") end
     if r == true and info.drop then
         -- Navigation.lua N.path: a walk never takes a fall that hurts (S035 Faith-Leap death)
         local d = info.drop.pos or {}
@@ -866,10 +866,10 @@ function G.approach_point(char, target, reach)
             end
         end
     end
-    if jump_only then G.refuse("needs a jump: use jump_to") end
+    if jump_only then G.refuse("needs a jump (move_to doesn't jump; jump_to does)") end
     G.raised_ladder_refuse(target, a)
     -- NAV-8: "no answer" because this frame's path budget was spent is not "no pathfinding": no walk without proof
-    if not known and busy then G.refuse("path searches are busy this moment: send it again") end
+    if not known and busy then G.refuse("path searches are busy this moment") end
     if not known and d <= G.UNVERIFIED_APPROACH_M and b(G.q("HasLineOfSight", char, target)) then
         -- No pathfinding answer at all (Nav missing, or nothing floor-like
         -- around a small target): a short walk toward something in plain

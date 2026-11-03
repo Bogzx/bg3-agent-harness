@@ -49,12 +49,12 @@ test("rules: RequirementConditions on the caster (Rage twice; a Rage-only action
     osiv[key("HasActiveStatus", P1, "CALM_EMOTIONS")] = 0
     refused(rules("Shout_Rage", { SpellType = "Shout",
         RequirementConditions = "not HasStatus('RAGE') and not HasStatus('CALM_EMOTIONS')" }),
-        "Shout_Rage can't be used now: the caster has rage")
+        "Shout_Rage can't be used now: the caster has the Rage status")
     osiv[key("HasActiveStatus", P1, "RAGE")] = 0
     passes(rules("Shout_Rage", { SpellType = "Shout",
         RequirementConditions = "not HasStatus('RAGE') and not HasStatus('CALM_EMOTIONS')" }))
     refused(rules("Target_Frenzy", { SpellType = "Target", RequirementConditions = "HasStatus('RAGE')" }, NPC),
-        "the caster doesn't have rage")
+        "the caster doesn't have the Rage status")
 end)
 
 test("rules: TargetConditions (Hold Person on an undead, a heal on a dead target, an item)", function()
@@ -156,9 +156,10 @@ test("rules: Hide is refused while FLANKED, through act.cast and sneak; the guar
     osiv[key("HasActiveStatus", P1, "FLANKED")] = 1
     local j = job(op("cast", { char = P1, spell = "Shout_Hide" }))
     eq(j.status, "failed", "act.cast")
-    eq(j.error, "Shout_Hide can't be used now: the caster has flanked", "the caster, not 'the target'")
+    eq(j.error, "Shout_Hide can't be used now: the caster has the Flanked status", "the caster, not 'the target'")
     j = job(op("sneak", { char = P1, on = true }))
-    eq(j.status, "failed", "sneak"); eq(j.error, "Shout_Hide can't be used now: the caster has flanked", "sneak text")
+    eq(j.status, "failed", "sneak")
+    eq(j.error, "Shout_Hide can't be used now: the caster has the Flanked status", "sneak text")
     eq(#called("UseSpell"), 0, "no order")
     osiv[key("HasActiveStatus", P1, "FLANKED")] = 0
     spell("Shout_Hide", hide)
@@ -201,9 +202,10 @@ test("rules: the helper terms read from the game (Sleep HP, Help, Knock, Mobile 
     passes(tr("Target_Knock", "Locked()", NPC))
     -- HasPassive, IsImmuneToStatus (listed = immune; not listed = unknown, never refused)
     osiv[key("HasPassive", P1, "SculptSpells")] = 1
-    refused(tr("Target_X", "not HasPassive('SculptSpells', context.Source)", NPC), "the caster has sculptspells")
+    refused(tr("Target_X", "not HasPassive('SculptSpells', context.Source)", NPC),
+        "the caster has the passive Sculptspells")
     world[NPC].comps.StatusImmunities = { PersonalStatusImmunities = { SLEEP = {} } }
-    refused(tr("Target_Sleep", "not IsImmuneToStatus('SLEEP')", NPC), "the target is immune to sleep")
+    refused(tr("Target_Sleep", "not IsImmuneToStatus('SLEEP')", NPC), "the target is immune to the Sleep status")
     world[NPC].comps.StatusImmunities = { PersonalStatusImmunities = {} }
     passes(tr("Target_Sleep", "not IsImmuneToStatus('SLEEP')", NPC))
     -- Grease: "not Item();" (a trailing ';' made the whole condition unread)
@@ -276,4 +278,56 @@ test("engine refusal, window 8 m2: Sneak Attack's InvalidTarget at 1.0 m says th
         .. " not a character)", "false term")
     osiv[key("IsCharacter", GOB)] = 1
     eq(G.explain_target(P1, "Target_Heal", GOB), "Target_Heal's target conditions all read as met here", "all met")
+end)
+
+test("rules: a status requirement reads as a fact with the game's status name (w8 'the caster has flanked')", function()
+    local loca = Ext.Loca.GetTranslatedString
+    Ext.Loca.GetTranslatedString = function(h) return h == "h-hunt" and "Hunter's Mark" or nil end
+    stats.HUNTERS_MARK = { DisplayName = "h-hunt;1" }
+    osiv[key("HasActiveStatus", NPC, "HUNTERS_MARK")] = 0
+    refused(rules("Target_X", { SpellType = "Target", TargetConditions = "HasStatus('HUNTERS_MARK')" }, NPC),
+        "Target_X can't target that: the target doesn't have the Hunter's Mark status")
+    Ext.Loca.GetTranslatedString = loca
+    -- a group: what kind of status, not a verb's object
+    stats.SLEEPING = { StatusGroups = { "SG_Incapacitated" } }
+    world[NPC].comps.ServerCharacter = { StatusManager = { Statuses = {} } }
+    local ctx = { source = P1, target = NPC, subject = NPC }
+    local v, why = G.rule_eval("HasStatus('SG_Incapacitated')", ctx)
+    eq(v, false, "none"); eq(why, "the target has no status of the Incapacitated kind", "group words")
+    world[NPC].comps.ServerCharacter = { StatusManager = { Statuses = { { StatusId = "SLEEPING" } } } }
+    v, why = G.rule_eval("not HasStatus('SG_Incapacitated')", ctx)
+    eq(v, false, "one"); eq(why, "the target has a status of the Incapacitated kind", "group words, not")
+    world[NPC].comps.ServerCharacter = nil
+end)
+
+test("transfer of a worn item: the fact 'it is equipped' (the bridge's give unequips on these words)", function()
+    party_rows = { P1, NPC }
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    osiv[key("IsEquipped", GEM)] = 1
+    local j = job(op("transfer", { item = GEM, to = NPC }))
+    eq(j.status, "failed", "refused")
+    eq(j.error, "it is equipped", "the words bridge/src/bg3ai/tools/inventory.py matches")
+end)
+
+test("interact on a living character states what interact does, no 'use talk_to' order", function()
+    osiv[key("IsCharacter", NPC)] = 1
+    local j = job(op("interact", { char = P1, target = NPC }))
+    eq(j.status, "failed", "refused"); eq(j.error, "interact doesn't talk to characters (talk_to does)", "words")
+end)
+
+test("tool facts stay facts: loot_corpse loots a corpse, a give in a fight needs the UI tools", function()
+    osiv[key("IsCharacter", NPC)], osiv[key("IsDead", NPC)] = 1, 1
+    local j = job(op("interact", { char = P1, target = NPC }))
+    -- arena: the corpse refusal stays arena/int's G.refuse_ui (a side gets its no-UI note)
+    assert(j.error:find("looting corpses is not supported by this action yet (", 1, true), j.error)
+    osiv[key("IsDead", NPC)] = 0
+    party_rows = { P1, NPC }
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    osiv[key("IsInCombat", P1)] = 1
+    j = job(op("transfer", { item = GEM, to = NPC }))
+    -- arena: G.refuse_ui adds its own note (arena/int's "(use the UI)" without a side)
+    assert(j.error:find("not available during combat through this action (", 1, true), j.error)
+    osiv[key("IsInCombat", P1)] = 0
+    j = job(op("pickup", { char = P1, item = GEM }))
+    eq(j.error, "that item is inside a container (loot takes items out of a container)", "in a container")
 end)

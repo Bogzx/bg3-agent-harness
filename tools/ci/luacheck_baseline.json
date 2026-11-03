@@ -89,7 +89,7 @@
    "W631": 1
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Guard.lua": {
-   "W631": 6
+   "W631": 3
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/GuardCast.lua": {
    "W431": 1,
@@ -159,7 +159,7 @@
   },
   "tools/dev/test_act_lua_think.lua": {
    "W211": 1,
-   "W631": 23
+   "W631": 22
   },
   "tools/dev/test_act_lua_turns.lua": {
    "W311": 1,
