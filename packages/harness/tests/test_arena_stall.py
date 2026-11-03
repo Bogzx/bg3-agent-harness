@@ -273,3 +273,52 @@ def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_p
     )
     jsonschema.validate(rec, FACTS_SCHEMA)
     jsonschema.validate(rec, BENCH_FACTS_SCHEMA)
+
+
+def slow_ends(game: Game, clock, settle_s: float, outcome: str) -> list[tuple[str, float]]:
+    """Side A's act.end_turn jobs run `settle_s` s, then end: outcome "done" (the game takes the end then) or the
+    mod's "the game ignored the end-turn order". Returns the log of (what, when) for the runner's ends."""
+    rpc, jobs, log = game.rpc, {}, []
+
+    def slow(op, args, side=None, context="server"):
+        if op == "act.end_turn" and side == "A":
+            jid = 9000 + len(jobs)
+            jobs[jid] = (clock.now(), args)
+            log.append(("sent", clock.now()))
+            return {"job": jid, "status": "running"}
+        if op == "job.poll" and side == "A" and args.get("id") in jobs:
+            t0, a = jobs[args["id"]]
+            if clock.now() - t0 < settle_s:
+                return {"id": args["id"], "status": "running"}
+            del jobs[args["id"]]
+            log.append((outcome, clock.now()))
+            if outcome == "done":
+                return rpc("act.end_turn", a, side)
+            return {"id": args["id"], "status": "failed", "error": "the game ignored the end-turn order"}
+        return rpc(op, args, side)
+
+    game.rpc = slow  # type: ignore[method-assign]
+    return log
+
+
+def test_a_cap_end_still_running_at_10_s_that_the_game_then_ignores_is_never_forced(tmp_path):
+    """Review C1 (arena-fight-analysis.md): the mod's end of a group's last member runs up to 21 s. A cap's end
+    still running at 15 s, then ignored, is no end: no arena_turn_forced, the ends sent again once, then the stall
+    finds the side still holding the phase (held, not the game's fault at once)."""
+    _model, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    log = slow_ends(game, clock, 15.0, "ignored")
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert [w for w, _t in log][:4] == ["sent", "ignored", "sent", "ignored"]  # the cap's two tries
+    assert [e["stall"] for e in stalls(tmp_path)][:1] == ["held"]
+    assert out.end is not None
+
+
+def test_a_cap_end_done_at_15_s_is_forced_once_it_is_done(tmp_path):
+    """A cap's end that the game takes at 15 s: arena_turn_forced is written after it is done, not at 10 s."""
+    _model, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    log = slow_ends(game, clock, 15.0, "done")
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    forced = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert forced and log[:2] and log[1][0] == "done"
+    assert forced[0]["t"] >= log[1][1] >= log[0][1] + 15
