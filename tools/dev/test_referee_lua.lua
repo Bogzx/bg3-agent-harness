@@ -325,6 +325,15 @@ do
     fire("KilledBy/4", "S_Citizen_" .. OTHER, P, P, 0)
     check("not every speaker ever: only that dialogue's", lastOf("kill").trader == false)
     check("net fired counted", R.fired["net/TradeOffered"] == 1, R.fired["net/TradeOffered"])
+    -- REVIEW-5 F8: the client's refused rule change (Client/UIActions.lua refuseRule) is a ring record
+    local rule = netHandlers["65734c81-edd1-4b6f-b10e-663fec0e768e/RuleChangeRefused"]
+    check("rule-change channel", rule ~= nil and R.registered["net/RuleChangeRefused"] == true)
+    rule({ command = "UpdateDifficultyCommand", widget = "NewGameSettings", what = "difficulty" }, 65537)
+    local rc = lastOf("rule_change")
+    check("rule change recorded", rc and rc.refused == true and rc.command == "UpdateDifficultyCommand"
+        and rc.what == "difficulty" and rc.widget == "NewGameSettings", rc and rc.command)
+    rule(nil, 65537)
+    check("a bad message still records", lastOf("rule_change").command == "?" and R.fired["net/RuleChangeRefused"] == 2)
     check("isTrader nil uuid", not R.isTrader(nil, nil))
     -- live4: a self-kill (a mephit's death burst) goes to the last hit; the engine's names are kept.
     local MEPHIT, MASTER = "dddddddd-0000-0000-0000-00000000000a", "dddddddd-0000-0000-0000-00000000000b"
