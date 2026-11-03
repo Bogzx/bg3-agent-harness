@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/harness/schemas/facts.v1.schema.json",
   "title": "facts.jsonl v1: one record per line",
-  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up); 2026-11-01: a two-team match's `arena_start`, `arena_turn`, `arena_turn_forced`, `arena_end` and `arena_reaction_unowned` events (bg3harness.arena); 2026-11-02: `arena_turn_passed`, `arena_stall` and `arena_end_written`; 2026-11-03: `arena_group_end_written`, the same record renamed (a turn group's end the mod wrote, every round the game keeps a shared group open; not the match's end): `arena_end_written` stays valid for records written before.",
+  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up); 2026-11-01: a two-team match's `arena_start`, `arena_turn`, `arena_turn_forced`, `arena_end` and `arena_reaction_unowned` events (bg3harness.arena); 2026-11-02: `arena_turn_passed`, `arena_stall` and `arena_end_written`; 2026-11-03: `arena_group_end_written`, the same record renamed (a turn group's end the mod wrote, every round the game keeps a shared group open; not the match's end): `arena_end_written` stays valid for records written before; 2026-11-03: the `cast_unrolled` and `cast_unchecked` events (a harness cast the game resolved without its roll, or without checking its own rules: ActionsRolls.lua).",
   "type": "object",
   "required": ["v", "kind", "t"],
   "properties": {
@@ -72,7 +72,7 @@
           "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
           "game_over", "pos", "approval", "arena_start", "arena_turn", "arena_turn_forced", "arena_end",
           "arena_reaction_unowned", "arena_turn_passed", "arena_stall", "arena_end_written",
-          "arena_group_end_written"
+          "arena_group_end_written", "cast_unrolled", "cast_unchecked"
         ]}
       },
       "allOf": [
@@ -188,7 +188,15 @@
                                  "invalid": {"const": "scripted", "description": "a side was the harness's scripted no-model client: a live check, never graded"}},
                   "allOf": [{"if": {"properties": {"reason": {"const": "forfeit"}}}, "then": {"required": ["forfeit", "cause"], "properties": {"cause": {"enum": ["forced_turns", "client_exit"]}}}},
                             {"if": {"properties": {"reason": {"const": "client_fault"}}}, "then": {"required": ["failed", "cause"], "properties": {"winner": {"type": "null"}}}},
-                            {"if": {"properties": {"reason": {"enum": ["round_cap", "wall_cap"]}}}, "then": {"properties": {"winner": {"type": "null"}}}}]}}
+                            {"if": {"properties": {"reason": {"enum": ["round_cap", "wall_cap"]}}}, "then": {"properties": {"winner": {"type": "null"}}}}]}},
+        {"if": {"properties": {"ev": {"const": "cast_unrolled"}}},
+         "then": {"description": "a harness cast went through without its roll: clearing IgnoreSpellRolls failed and the cast resolved (added 2026-11-03)",
+                  "required": ["spell"], "properties": {"uuid": {"type": "string"}, "spell": {"type": "string"}, "why": {"type": "string"}}}},
+        {"if": {"properties": {"ev": {"const": "cast_unchecked"}}},
+         "then": {"description": "a harness cast the engine didn't check: a check flag (IgnoreCastChecks, IgnoreTargetChecks) stayed set (added 2026-11-03, audit S2-1)",
+                  "required": ["spell", "flags"], "properties": {"uuid": {"type": "string"}, "spell": {"type": "string"},
+                    "flags": {"type": "string", "description": "the flags that stayed set, comma-separated"},
+                    "rules_unread": {"type": "string", "description": "the spell's terms the guard couldn't read, '; '-separated (nothing checked them)"}}}}
       ]
     },
     "sides_names": {
