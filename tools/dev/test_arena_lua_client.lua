@@ -14,6 +14,7 @@ local env = {}
 local channel             -- the client's ArenaTeams handler
 local pages, entities = {}, {}
 local decoded = {}
+local clock = 1000        -- Ext.Utils.MonotonicTime
 
 os.getenv = function(n) return env[n] end -- luacheck: ignore 122
 
@@ -33,7 +34,7 @@ end
 Ext = {
     IsServer = function() return false end,
     IsClient = function() return true end,
-    Utils = { MonotonicTime = function() return 1000 end, Print = function() end, PrintWarning = function() end,
+    Utils = { MonotonicTime = function() return clock end, Print = function() end, PrintWarning = function() end,
         GetGameState = function() return "Running" end, GetGlobalSwitches = function() return {} end },
     Events = { Tick = { Subscribe = function() end } },
     Json = { Parse = function(s) return load("return " .. s)() end,
@@ -120,6 +121,7 @@ BG3AI.UIActions = { inner = { try = try, check = function(ok, err) if not ok the
     settleDialogue = function() end }, waitJob = function() return { job = 1 } end }
 dofile(LUA .. "/Client/UIActionsPrompts.lua")
 dofile(LUA .. "/Client/UISettings.lua")
+dofile(LUA .. "/Client/ArenaCamera.lua")
 local RPC, Ar, S = BG3AI.RPC, BG3AI.Arena, BG3AI.UIState
 
 local function rpc(op, args, side)
@@ -143,6 +145,7 @@ local function test(name, fn)
     count = count + 1
     env = { BG3AI_ARENA = "1" }
     pages, entities, UI.commands = { HotBar = { name = "HotBar" } }, {}, {}
+    clock, RPC.jobs, RPC.sideInputAt, BG3AI.ArenaCamera.last = 1000, {}, {}, nil
     channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana" }, B = { "Bo" } } })
     local ok, err = pcall(fn)
     if ok then print("ok   " .. name) else failures = failures + 1; print("FAIL " .. name .. ": " .. tostring(err)) end
@@ -231,6 +234,66 @@ end)
 test("ui.reactions for the other side's character: '<name> is not on your side'", function()
     entities = { { Uuid = { EntityUuid = A1 }, ClientControl = {} } }
     eq(rpc("ui.reactions", "{char=" .. string.format("%q", A1) .. "}", "B").error, "Ana is not on your side", "B")
+end)
+
+-- arena.camera: a camera entity and the two fighters at these positions (Get by uuid).
+local function camera_scene(pa, pb, deadB)
+    local cam = { GameCameraBehavior = { PlayerInControl = false, TargetDestination = { 0, 0, 0 } } }
+    local ents = { [A1] = { Transform = { Transform = { Translate = pa } } },
+        [B1] = { Transform = { Transform = { Translate = pb } }, Death = deadB and {} or nil } }
+    entities = { cam }
+    Ext.Entity.Get = function(u) return ents[u] end
+    return cam.GameCameraBehavior, ents
+end
+
+test("arena.camera: the view goes to the living fighters' centroid, at a distance from their spread", function()
+    local cam = camera_scene({ 10, 2, 20 }, { 14, 2, 20 })
+    local r = rpc("arena.camera").result
+    eq(r.moved, true, "moved")
+    eq(cam.TargetDestination[1], 12, "x")
+    eq(cam.TargetDestination[3], 20, "z")
+    eq(cam.PlayerInControl, true, "the camera held")
+    eq(cam.DistanceDestination, 8, "spread 2 m + 6 -> 8")
+    camera_scene({ 0, 2, 0 }, { 30, 2, 0 })
+    eq(rpc("arena.camera").result.distance, 12, "a wide spread caps at 12")
+    local cam2 = camera_scene({ 10, 2, 20 }, { 50, 2, 20 }, true)
+    rpc("arena.camera")
+    eq(cam2.TargetDestination[1], 10, "a dead fighter is out of the centroid")
+end)
+
+test("arena.camera: held while the view is ours and the fighters moved <= 2 m; re-written after a focus or a shift",
+    function()
+    local cam, ents = camera_scene({ 10, 2, 20 }, { 14, 2, 20 })
+    rpc("arena.camera")
+    eq(rpc("arena.camera").result.moved, false, "held")
+    ents[A1].Transform.Transform.Translate = { 13, 2, 20 } -- centroid +1.5 m
+    eq(rpc("arena.camera").result.moved, false, "a small shift")
+    ents[A1].Transform.Transform.Translate = { 16, 2, 20 } -- +3 m from the written target
+    eq(rpc("arena.camera").result.moved, true, "a > 2 m shift")
+    cam.PlayerInControl = false -- an attack's focus took the camera
+    cam.TargetDestination = { 0, 0, 0 }
+    eq(rpc("arena.camera").result.moved, true, "taken back after a focus")
+    eq(cam.TargetDestination[1], 15, "x")
+end)
+
+test("arena.camera: never during a side's input (a running job, a client op within 2 s)", function()
+    local cam = camera_scene({ 10, 2, 20 }, { 14, 2, 20 })
+    rpc("ui.selected", "{}", "A") -- a side's client op (a click is several: project, move, hover check, click)
+    eq(rpc("arena.camera").result.skipped, "side A's input", "right after A's op")
+    eq(cam.PlayerInControl, false, "not written")
+    clock = clock + 2000
+    rpc("ui.state", "{}", "B") -- a read: not input
+    eq(rpc("arena.camera").result.moved, true, "2 s later")
+    RPC.with_side("B", RPC.start_job, "ui.flee", {})
+    cam.PlayerInControl = false
+    eq(rpc("arena.camera").result.skipped, "side B's ui.flee", "B's job runs")
+end)
+
+test("arena.camera: the harness's only (refused with a side and without an arena)", function()
+    camera_scene({ 10, 2, 20 }, { 14, 2, 20 })
+    eq(rpc("arena.camera", "{}", "A").error, "arena.camera is the harness's (no side)", "side A")
+    channel({})
+    eq(rpc("arena.camera").error, "no active arena", "no arena")
 end)
 
 print(string.format("%d/%d passed", count - failures, count))

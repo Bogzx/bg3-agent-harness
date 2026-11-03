@@ -68,6 +68,7 @@ RPC.QUIET_OPS = {
 RPC.Ctx = RPC.Ctx or {}
 RPC.SIDES = { "A", "B" }
 RPC.eventSide = RPC.eventSide or {} -- seq -> "A" | "B" | false (no side: the harness's), only while an arena is active
+RPC.sideInputAt = RPC.sideInputAt or {} -- side -> when its last client op (not a QUIET_OPS read) began (arena.camera)
 
 function RPC.arena_active()
     local Ar = BG3AI.Arena
@@ -169,6 +170,7 @@ function BG3AI.rpc(json)
     local UI = BG3AI.UI
     local hits, calls, job0 = UI and UI.busyHits, UI and UI.calls, RPC.nextJob
     local side = (req.side == "A" or req.side == "B") and req.side or nil
+    if side and CONTEXT == "client" and not RPC.QUIET_OPS[req.op] then RPC.sideInputAt[side] = now_ms() end
     local ok2, res
     if side then
         ok2, res = pcall(RPC.with_side, side, fn, req.args or {})
