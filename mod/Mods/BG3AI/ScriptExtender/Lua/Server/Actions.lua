@@ -97,9 +97,13 @@ A.PICKUP_REORDER_MS = 1500 -- pickup: an order gone from the task queue (nothing
 
 -- The engine's CastSpellFailed carries no reason. S024-S041: ~12 "the action failed — purged_tasks=1" in
 -- combat_turn (Toll the Dead, Ranged Attack extra attacks, Spiritual Weapon attacks), each read as a mystery.
--- Say what a player would see at that moment: the target gone, no line of sight, or the projectile's blocked path.
-function A.cast_failed_why(char, target, spell)
-    local why = "the game refused the cast (no reason given)"
+-- Say the game's own reason when its cast entity has one (A.engine_refusal, job given) and what a player would see
+-- at that moment: the target gone or out of sight. Only facts: window 8 m2, a Sneak Attack refused InvalidTarget
+-- at 1.0 m was told "probably just outside the engine's reach: step closer", and stepped and swung into the same
+-- refusal twice (its TargetConditions want advantage or an ally near the target).
+function A.cast_failed_why(char, target, spell, job)
+    local eng, code = A.engine_refusal(job)
+    local why = eng and ("the game refused the cast: " .. eng) or "the game refused the cast (no reason given)"
     -- S059 08:57-08:59: Dimension Door refused x3 with "the shot's path is blocked". It is a two-step teleport:
     -- the one who goes (the caster or an ally beside them), then the spot they land on.
     if A.two_step_spell(spell) and not A.revive_spell(spell) then
@@ -130,20 +134,22 @@ function A.cast_failed_why(char, target, spell)
         return nil
     end)
     if ok and txt then return why .. ": " .. txt end
-    -- ACT-3 (S065 x9): the first melee swing right after combat_turn's move was refused here and read as "the
-    -- shot's path is blocked". A swing has no path: say how far it swung from and the reach our guard allowed
-    -- (the engine's own melee reach is unmeasured: tools/dev/acceptance.py "melee reach probe").
+    -- InvalidTarget at a creature: the guard's reading of the spell's target conditions (what is unmet or unread)
+    if code == "InvalidTarget" and not job.cast_at_pos then
+        local okt, tc = pcall(G.explain_target, char, spell, target)
+        if okt and tc then return why .. "; " .. tc end
+    end
+    if eng then return why end
+    -- ACT-3 (S065 x9): a refused swing with no reason from the game: how far it swung from and our reach
     local okm, mel = pcall(function()
         local range, melee = G.spell_range(spell and Ext.Stats.Get(spell), char)
         local p, q = G.pos(char), G.pos(target)
         if not (range and melee and p and q) then return nil end
         return string.format("a melee swing from %.1f m centre to centre (our reach %.1f m: range %.1f m + both"
-            .. " bounding radii), probably just outside the engine's reach: step closer (within 1 m) and swing again",
-            U.dist(p, q), G.melee_reach(char, target, range), range)
+            .. " bounding radii)", U.dist(p, q), G.melee_reach(char, target, range), range)
     end)
     if okm and mel then return why .. ": " .. mel end
-    return why .. ": usually the shot's path is blocked (cover, a ledge, a creature in the way) though the target"
-        .. " is in sight; try another target or step to a clearer spot"
+    return why
 end
 
 ------------------------------------------------------------------------
