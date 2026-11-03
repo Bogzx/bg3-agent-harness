@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/harness/schemas/facts.v1.schema.json",
   "title": "facts.jsonl v1: one record per line",
-  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up); 2026-11-03: the `rule_change` event (a ui_action the mod refused because it would change the difficulty, its settings such as Karmic Dice, or the game options; REVIEW-5 F8).",
+  "description": "What the game state was, written by the harness per run (never seen by the agent). The benchmark's graders read it; the harness does not decide what counts as winning. Time zero of a run is the first run_start mark. `t` is wall-clock epoch seconds; `game_t` is game seconds since run_start with paused time (menu think-pause) excluded, or null when the harness cannot measure it; grading on game time (decision D7) needs it on every record from the run_start mark on. Records are in non-decreasing `t` order: a record with its own earlier time (a referee ring record, a dialogue choice) is written at the last record's `t` and keeps its own in `at`. Compatible extensions (2026-10-21, still v1: readers skip what they don't know): the `choice` event and the `settings` mark; 2026-10-29: the `game_over` event (the game's Game Over screen came up: the party wiped by the game's own rule); the `pos` event, the snapshot's `leader` and each member's `pos` (positions, [x, y, z] m, y up); 2026-11-03: the `rule_change` event (a ui_action the mod refused because it would change the difficulty, its settings such as Karmic Dice, or the game options; REVIEW-5 F8); the `cast_unrolled` and `cast_unchecked` events (a harness cast the game resolved without its roll, or without checking its own rules: ActionsRolls.lua).",
   "type": "object",
   "required": ["v", "kind", "t"],
   "properties": {
@@ -70,7 +70,7 @@
           "combat_started", "combat_ended", "died", "downed", "revived", "level_up", "joined",
           "gold", "item_added", "trade_open", "trade_end", "pickpocket", "stole", "crime", "kill", "loot",
           "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
-          "game_over", "pos", "approval", "rule_change"
+          "game_over", "pos", "approval", "rule_change", "cast_unrolled", "cast_unchecked"
         ]}
       },
       "allOf": [
@@ -133,7 +133,15 @@
            "command": {"type": "string", "description": "the UI command the agent asked for"},
            "what": {"type": "string", "description": "what it would have changed (difficulty, karmic, a setting on the NewGameSettings page ...)"},
            "widget": {"type": "string"},
-           "refused": {"const": true}}}}
+           "refused": {"const": true}}}},
+        {"if": {"properties": {"ev": {"const": "cast_unrolled"}}},
+         "then": {"description": "a harness cast went through without its roll: clearing IgnoreSpellRolls failed and the cast resolved (added 2026-11-03)",
+                  "required": ["spell"], "properties": {"uuid": {"type": "string"}, "spell": {"type": "string"}, "why": {"type": "string"}}}},
+        {"if": {"properties": {"ev": {"const": "cast_unchecked"}}},
+         "then": {"description": "a harness cast the engine didn't check: a check flag (IgnoreCastChecks, IgnoreTargetChecks) stayed set (added 2026-11-03, audit S2-1)",
+                  "required": ["spell", "flags"], "properties": {"uuid": {"type": "string"}, "spell": {"type": "string"},
+                    "flags": {"type": "string", "description": "the flags that stayed set, comma-separated"},
+                    "rules_unread": {"type": "string", "description": "the spell's terms the guard couldn't read, '; '-separated (nothing checked them)"}}}}
       ]
     },
     "mark": {
