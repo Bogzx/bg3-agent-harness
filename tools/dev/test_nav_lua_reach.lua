@@ -33,6 +33,16 @@ test("onRoute: a jump link up a ledge stays on the route", function()
     eq(N.onRoute(LEDGE, { -3.8, 0, 0 }, { -8.5, 2.5, 0 }), true, "ledge")
 end)
 
+-- launch-v1 crash_site_grove, walk_toward "4m (path 6m)": the engine's route steps off a ledge; the walker fell 5.0 m
+-- at the same x,z in one tick and the walk failed "engine teleported the character"
+test("onRoute: a drop link straight down stays on the route", function()
+    local DROP = { { 290.3, 23.9, 352.7 }, { 290.3, 23.9, 349.7 }, { 290.3, 18.9, 349.7 }, { 290.3, 18.9, 347.7 } }
+    eq(N.onRoute(DROP, { 290.3, 23.9, 349.7 }, { 290.3, 18.9, 349.7 }), true, "the drop")
+    eq(N.onRoute(DROP, { 290.3, 23.9, 350.5 }, { 290.3, 18.9, 348.2 }), true, "the drop with the steps either side")
+    -- the same fall where the route has no drop is still a teleport
+    eq(N.onRoute(STRAIGHT, { -5, 0, 0 }, { -5, -5, 0 }), false, "no drop on the route")
+end)
+
 test("onRoute: no route -> false", function()
     eq(N.onRoute(nil, { 0, 0, 0 }, { 5, 0, 0 }), false, "nil")
 end)

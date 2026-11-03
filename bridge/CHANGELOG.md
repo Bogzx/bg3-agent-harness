@@ -5,6 +5,28 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: clouds, surfaces and concentration in combat output; drop links; a busy End Turn press
+
+- `get_combat_state` lists the `HAZARD` lines `look` prints (nav.hazards: the harmful clouds and surfaces a party
+  member sees within 12 m of the selected character), every call. The turn block that ends `end_turn` and
+  `wait_for('my_turn')` and the result of a combat action (`use_ability`, `move_to`, `walk_toward`, `jump_to`,
+  `react`) add them when the patches in view changed since they were last shown (one appeared, went or moved over
+  2 m; `HAZARD none in view now` when the last one went), the same delta `look` keeps. The read rides in the eval
+  those calls already make (state.status / state.actions / the CHANGES read): no extra round trip.
+- state.nearby rows carry `concentration` (the creature's spell, as state.combat rows already did); get_nearby shows
+  `concentrating on Cloudkill`, and CHANGES says `~ e7 Balthazar concentrating on Cloudkill` /
+  `no longer concentrating on Cloudkill` (and on a creature that comes into view). Party rows in get_status show
+  their own concentration the same way.
+- A walk down a drop link of its own route (the engine's path steps off a ledge; the walker falls straight down in
+  one tick) is no longer failed as `engine teleported the character (not allowed)`: Navigation N.project put a point
+  on a vertical route segment at its top, so the landing was "off the route" by the drop's height.
+- `ui.command` refused by the busy UI at its first call answers "refused before its first UI call" again (its
+  confirm-box fallback made a second refused call, which read as "met it after a UI call ran"), so the bridge asks it
+  again after the cooldown: end_turn's HUD End Turn no longer fails at once with `bg3le: UI busy`.
+- Why (ops/logs/act2-fights-analysis.md, ops/logs/combat-info.md): in all 11 lost launch-v1 Balthazar runs Cloudkill
+  sat on the party and the agent learnt of it only as `+Cloudkill` on whoever it had hit; v09 Moonrise lost turns to
+  the teleport and busy failures.
+
 ## 2026-11-03: travel_to doesn't take along a member who is far away at the start
 
 - The leader's `travel_to` no longer re-chains or waits for a member more than 24 m away when the trip starts

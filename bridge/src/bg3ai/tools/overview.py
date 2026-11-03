@@ -496,7 +496,8 @@ def get_party(camp: bool = False) -> str:
     for c, sheet in zip(party, sheets):
         lines.append(render.character_line(c, core.H, st.get("active")))
         if sheet:
-            skip = {"uuid", "name", "classes", "hp", "max_hp", "temp_hp", "level", "statuses", "pos"}
+            skip = {"uuid", "name", "classes", "hp", "max_hp", "temp_hp", "level", "statuses", "pos",
+                    "concentration"}  # on the member's line above
             lines.append("   " + render.compact({k: v for k, v in sheet.items() if k not in skip}, core.H))
         if c["uuid"] in casters:
             lines.append("   prepared " + spellprep.caster_text(casters[c["uuid"]], named=False))

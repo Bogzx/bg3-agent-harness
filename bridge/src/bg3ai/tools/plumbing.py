@@ -703,7 +703,9 @@ def _combat_changes(tool: str, ended: bool = True) -> str:
     w = core.game.try_rpc("act.watch")
     if not (isinstance(w, dict) and w.get("combat")):
         return batch.walk_end_tail().lstrip("\n") if ended and tool in batch.ARRIVAL_LEAD_TOOLS else ""
-    return delta.changes_text(core.game, core.H)
+    got: dict = {}  # the clouds and surfaces in view ride in the same read: HAZARD lines when they changed
+    changes = delta.changes_text(core.game, core.H, (*delta.ACTION_PARTS, "hazards"), got=got)
+    return "\n".join([x for x in (changes,) if x] + overview._hazard_lines(got.get("hazards")))
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

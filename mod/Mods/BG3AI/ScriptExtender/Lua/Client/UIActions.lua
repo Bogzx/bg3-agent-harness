@@ -269,6 +269,10 @@ RPC.register("ui.command", function(args)
     local ok, res = pcall(commandOp, args)
     if ok then return res end
     if tostring(res):find(A.SAVELOAD_HINT, 1, true) then error(res, 0) end
+    -- A busy refusal stands as it is: reading for a box now would be a second refused UI call, and RPC.lua would
+    -- answer "met it after a UI call ran" for a press refused at its gate, so the bridge didn't ask it again (v09
+    -- moonrise: end_turn's HUD End Turn "failed too: bg3le: UI busy")
+    if UI.BUSY_ERR and tostring(res):find(UI.BUSY_ERR, 1, true) then error(res, 0) end
     -- With a confirmation box open, "Yes"/"OK"/"No" (as command or param) means
     -- its button (live S005: ui_action Yes -> "no command 'Yes' on ls.Widget").
     if A.confirmBox and A.confirmBox() then
