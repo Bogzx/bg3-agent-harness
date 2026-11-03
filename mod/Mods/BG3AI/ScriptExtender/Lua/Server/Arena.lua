@@ -107,7 +107,8 @@ local function record(ev, data)
 end
 
 -- Without the turn order: the side whose open member's turn started first (the game's own order), else the side of
--- the last turn started, else A. Recorded once per round and side, so an audit sees every such call.
+-- the last turn started, else the side the match's seed and round give (A when seed + round is odd, else B: no side
+-- is the default every time; REVIEW-5 F9). Recorded once per round and side, so an audit sees every such call.
 local function tie_fallback(open)
     local st, G = Ar.state, BG3AI.Guard
     local best, side
@@ -116,7 +117,7 @@ local function tie_fallback(open)
         local s = Ar.side_of(u)
         if t and (best == nil or t < best or (t == best and s < side)) then best, side = t, s end
     end
-    side = side or (st.turn and st.turn.side) or "A"
+    side = side or (st.turn and st.turn.side) or (((st.seed or 0) + (st.round or 1)) % 2 == 1 and "A" or "B")
     local k = tostring(st.round) .. "|" .. side
     if st.tieFallback ~= k then
         st.tieFallback = k
@@ -536,7 +537,8 @@ function Ar.begin(teams, opts)
     RPC.clear_sides()
     local combat = osi(Osi.CombatGetGuidFor, t.A[1])
     Ar.state = { teams = t, names = names, combat = combat, round = combat and roundNow(t.A[1]) or nil,
-        started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters }
+        started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters,
+        seed = opts and tonumber(opts.seed) or nil }
     broadcast({ teams = t, names = names })
     record("arena_start", { teams = t, positions = opts and opts.positions or nil })
     return Ar.status()

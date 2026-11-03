@@ -27,7 +27,8 @@
 --      the combat call): every pair across the teams an enemy, none within, all members in one combat, else the job
 --      fails with the matrix; no character on no team in that combat (the job fails naming each)
 --   6. a mirror arena: arena.symmetry over the pairs again, statuses included (a twin on a surface reads INSURFACE)
---   7. Ar.begin(teams, {round_cap, positions}): positions = where each member stands, in the result and arena_start
+--   7. Ar.begin(teams, {round_cap, positions, seed}): positions = where each member stands, in the result and
+--      arena_start; seed = the arena's (Arena.lua tie_fallback's side)
 -- Refused at the call: spawns whose heights differ by SPAWN_DY_MAX_M or more, or whose lines don't give each pair the
 -- same distances both ways (Setup.check_geometry).
 -- The result records each member's name, level, max HP and faction before and after (joining the party reset two
@@ -473,7 +474,8 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
         local ok, x, y, z = pcall(Osi.GetPosition, u)
         if ok and type(x) == "number" then positions[u] = { x, y, z } end
     end
-    local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions })
+    local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions,
+        seed = job.arena.seed })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,

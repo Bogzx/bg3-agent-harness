@@ -318,6 +318,25 @@ test("a cross-team turn group without a readable turn order: the earliest turn s
     eq(r[1].round, 1, "the record's round")
 end)
 
+-- REVIEW-5 F9: with no turn start stamped and no last turn, the fallback was always A; now the seed and round pick it
+test("a cross-team turn group with no turn start or last turn: the side alternates by seed + round, not always A",
+    function()
+    local function fallback(seed, round)
+        reset()
+        begin({ seed = seed })
+        fire("CombatRoundStarted", "combat1", round)
+        setTurn(A1, true, false)
+        setTurn(B1, true, false)
+        order = {}
+        return Ar.acting_side()
+    end
+    eq(fallback(nil, 1), "A", "no seed, round 1")
+    eq(fallback(nil, 2), "B", "no seed, round 2")
+    eq(fallback(3, 1), "B", "seed 3, round 1")
+    eq(fallback(3, 2), "A", "seed 3, round 2")
+    eq(refs("arena_tie_fallback")[1].side, "A", "recorded")
+end)
+
 -- Live 2026-11-02 (live 9): the avatar, sitting out, joined the fight ~3 min in; nobody ends a sitter's turn and the
 -- match stalled until the runner faulted it.
 test("a character on no team entering the arena's combat ends the match as a fault, named; a summon, a prop or "

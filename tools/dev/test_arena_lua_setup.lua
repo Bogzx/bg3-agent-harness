@@ -222,6 +222,7 @@ test_setup("arena.setup: party, lines, spare factions, one combat, IsEnemy right
     for _ in pairs(j.result.positions) do pc = pc + 1 end
     eq(pc, 8, "every member's position")
     eq(enc(refs("arena_start")[1].positions), enc(j.result.positions), "arena_start records them too")
+    eq(Ar.state.seed, 7, "the arena's seed reaches the match (its tie fallback side)")
     eq(#named("SetMaxPartySizeOverride"), 1, "party size")
     eq(named("SetMaxPartySizeOverride")[1][2], 8, "8")
     local added = {}
