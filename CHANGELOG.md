@@ -134,7 +134,7 @@ game unless it says so.
   bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
   fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
-  Its own release file (`releases/bench-v0.10.json`: mod tree 81babe46, the same 81 bg3 tools, new prompt hashes for
+  Its own release file (`releases/bench-v0.10.json`: mod tree a323a7b5, the same 81 bg3 tools, new prompt hashes for
   pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). Its
   conditions also pin the served tool definitions, `tools.defs_sha256` (release v1, optional; release.defs_digest:
   each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
@@ -162,8 +162,9 @@ game unless it says so.
     and presses nothing.
   - `trade(sell="junk")` names every item it sold (SOLD, by name with count and gold) and counts what the junk rule
     kept back (KEPT).
-  - Known ground (FAIRNESS.md): ground within 16 m of the leader (what the default camera shows at 16:9, measured
-    live; owner D448) or within a member's own Sight (~18.5 m) with a clear eye ray, and ground up to 15 m below an
+  - Known ground (FAIRNESS.md) from the camera: ground within 16 m of the leader (what the default camera shows at
+    16:9, measured live; owner D448; earlier bench-v0.10 builds used 40 m) or within a member's own Sight (~18.5 m)
+    with a clear eye ray, and ground up to 15 m below an
     edge at up to 41 degrees, the camera's measured pitch (was 4 m, 45 degrees). route, travel_to,
     walk_toward, path_preview, WAYS, jump solvers, move_to/jump_to's "not in view" and hazard names follow it.
     Characters and items keep the Sight stat.
