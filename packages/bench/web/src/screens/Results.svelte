@@ -8,7 +8,8 @@
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
   import {
-    attempts, bytes, minutes, renderNote, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo,
+    attempts, bytes, minutes, relaunches, renderNote, uploadProblem, validateProblem, verdict, videoProblem,
+    wantsVideo,
   } from "../lib/run";
   import type { Prepared, RenderState, RunRow, Submission } from "../lib/types";
 
@@ -96,7 +97,8 @@
               <td>{r.scenario ?? "–"}</td>
               <td>{r.model ?? "–"}<div class="faint">{r.client ?? ""} · {r.condition ?? ""}</div></td>
               <td><span class="st {r.valid === false ? 'FAIL' : r.passed === true ? 'PASS' : 'none'}">{verdict(r)}</span>
-                {#if r.t_pass_s !== null}<div class="faint">at {minutes(r.t_pass_s)}</div>{/if}</td>
+                {#if r.t_pass_s !== null}<div class="faint">at {minutes(r.t_pass_s)}</div>{/if}
+                {#if relaunches(r)}<div class="faint" title={r.recovered_launches.map((l) => l.error ?? "?").join("\n")}>{relaunches(r)}</div>{/if}</td>
               <td class="num">{minutes(r.wall_s)}</td>
               <td class="num">{usd(r.cost_usd)}</td>
               <td class="num">{r.luck_z === null ? "–" : r.luck_z.toFixed(2)}</td>

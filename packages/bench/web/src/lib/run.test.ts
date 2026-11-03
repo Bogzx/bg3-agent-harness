@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
-  pairLinks, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo, youtubeId, youtubeNote,
+  pairLinks, relaunches, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo, youtubeId, youtubeNote,
 } from "./run";
 import type { Plan, VideoTodo, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
@@ -18,7 +18,7 @@ function run(over: Partial<RunRow>): RunRow {
   return {
     run_id: "r", dir: "d", series: null, scenario: "s", model: "m", condition: "rules", client: "pi",
     created: null, passed: null, score: null, outcome: null, t_pass_s: null, wall_s: null, cost_usd: null,
-    valid: true, invalid_reason: null, pilot: [], luck_z: null, saves_bytes: 0, ...over,
+    valid: true, invalid_reason: null, pilot: [], recovered_launches: [], luck_z: null, saves_bytes: 0, ...over,
   };
 }
 
@@ -222,5 +222,14 @@ describe("pairLinks", () => {
     const { items, unmatched } = pairLinks([todo("1")], `nope ${A}\nnot a link\n${A}\n${B}`);
     expect(items.map((i) => i.run)).toEqual(["d1"]);
     expect(unmatched).toEqual([`nope ${A}`, "not a link", B]);
+  });
+});
+
+describe("relaunches", () => {
+  it("discloses a valid run's relaunches before its start (result.json recovered_launches)", () => {
+    const l = { t: 1, attempt: 1, save: "Tav-1__SCN-x", error: "LinuxCrashReporter" };
+    expect(relaunches(run({}))).toBe("");
+    expect(relaunches(run({ recovered_launches: [l] }))).toBe("1 relaunch before its start");
+    expect(relaunches(run({ recovered_launches: [l, { ...l, attempt: 2 }] }))).toBe("2 relaunches before its start");
   });
 });

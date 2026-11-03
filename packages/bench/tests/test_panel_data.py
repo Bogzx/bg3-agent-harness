@@ -168,10 +168,22 @@ def test_results_and_queue_ignore_broken_files(tmp_path):
     (run / "result.json").write_text(json.dumps({"valid": False, "invalid_reason": "operator", "pilot": ["p"]}))
     (row,) = panel.results(tmp_path / "sessions")
     assert row["run_id"] == "ok-r1" and row["saves_bytes"] == 5 and row["pilot"] == ["p"] and row["valid"] is False
+    assert row["recovered_launches"] == []
     assert panel.results(tmp_path / "none") == []
     (tmp_path / "matrix" / "m").mkdir(parents=True)
     (tmp_path / "matrix" / "m" / "progress.json").write_text("[]")
     assert panel.queue(tmp_path / "matrix") == []
+
+
+def test_a_result_row_carries_the_runs_recovered_launches(tmp_path):
+    # bench-v0.10: a failed launch of the start save before run_start is disclosed in result.json, the run stays valid
+    run = tmp_path / "sessions" / "r"
+    run.mkdir(parents=True)
+    launch = {"t": 1793400000.0, "attempt": 1, "save": "Tav-1__SCN-fight_act2_balthazar", "error": "LinuxCrashReporter"}
+    (run / "manifest.json").write_text(json.dumps({"run_id": "r1"}))
+    (run / "result.json").write_text(json.dumps({"valid": True, "recovered_launches": [launch]}))
+    (row,) = panel.results(tmp_path / "sessions")
+    assert row["valid"] is True and row["recovered_launches"] == [launch]
 
 
 @pytest.mark.parametrize(("state", "live", "shown"), [
