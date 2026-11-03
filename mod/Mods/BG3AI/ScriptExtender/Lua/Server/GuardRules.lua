@@ -448,3 +448,89 @@ function G.check_rules(char, spell, st, target)
         if v == false then G.refuse(name .. " can't target that: " .. why) end
     end
 end
+
+------------------------------------------------------------------------
+-- After the game refused a cast at a creature (InvalidTarget): the spell's target conditions as the guard reads
+-- them, the parts not read as met only. Window 8 m2: Sneak Attack (Melee) at 1.0 m was refused twice; its
+-- TargetConditions want advantage or an ally near the target, terms the guard doesn't read.
+------------------------------------------------------------------------
+
+local function attack_words(x)
+    local t = x and x.v and x.v:match("^AttackType%.(.+)$")
+    if not t then return "an attack" end
+    return "a " .. t:gsub("(%l)(%u)", "%1 %2"):lower() -- MeleeWeaponAttack -> "a melee weapon attack"
+end
+
+-- Plain words for terms the guard doesn't evaluate (CommonConditions.khn), as (when true, when false).
+local function unread_words(node)
+    local a, name = node.args, node.name
+    if name == "HasAdvantage" then
+        return "the caster has advantage on " .. attack_words(a[1]),
+            "the caster doesn't have advantage on " .. attack_words(a[1])
+    end
+    if name == "HasDisadvantage" then
+        return "the caster has disadvantage on " .. attack_words(a[1]),
+            "the caster doesn't have disadvantage on " .. attack_words(a[1])
+    end
+    if name == "HasAllyWithinRange" then
+        -- thoth: an ally of the caster within distance (default 1.5) of the target, without exclusionStatus
+        local d = a[2] and a[2].k == "id" and tonumber(a[2].v) or 1.5
+        local ex = a[1] and a[1].k == "str" and (" that is not " .. lower(a[1].v:gsub("^SG_", ""))) or ""
+        local w = string.format("an ally of the caster%s within %s m of the target", ex, tostring(d))
+        return "there is " .. w, "there is no " .. w
+    end
+    local args = {}
+    for _, x in ipairs(a) do args[#args + 1] = x.k == "str" and ("'" .. x.v .. "'") or x.v end
+    local raw = name .. "(" .. table.concat(args, ",") .. ")"
+    return raw, "not " .. raw
+end
+
+-- (value, words of what is needed and not read as met; nil when read as met). neg: the node sits under a 'not'.
+local function needs(node, ctx, neg)
+    if node.op == "unknown" then return nil, "(a condition the guard can't parse)" end
+    if node.op == "not" then return needs(node[1], ctx, not neg) end
+    if node.op == "and" or node.op == "or" then
+        local is_and = (node.op == "and") ~= (neg == true) -- not (a or b) = not a and not b
+        local va, wa = needs(node[1], ctx, neg)
+        local vb, wb = needs(node[2], ctx, neg)
+        if is_and then
+            if va == true and vb == true then return true end
+            local v = (va == false or vb == false) and false or nil
+            return v, (wa and wb) and (wa .. " and " .. wb) or wa or wb
+        end
+        if va == true or vb == true then return true end
+        local v = (va == false and vb == false) and false or nil
+        return v, "(" .. wa .. " or " .. wb .. ")"
+    end
+    local v, when_true, when_false = term(node, ctx)
+    if v ~= nil then
+        if neg then v, when_true, when_false = not v, when_false, when_true end
+        if v then return true end
+        return false, when_true .. " (no: " .. (when_false or "not met") .. ")"
+    end
+    local t, f = unread_words(node)
+    return nil, (neg and f or t) .. " (not read)"
+end
+
+-- The words for a cast at target: "<spell> needs <...>" or a line saying every term read as met; nil when the
+-- spell's target conditions don't apply to the pick (a Shout, a Zone, an area) or there are none.
+function G.explain_target(char, spell, target)
+    local st = spell and Ext.Stats.Get(spell)
+    if not st or not target then return nil end
+    local function field(k)
+        local ok, v = pcall(function() return st[k] end)
+        return ok and v or nil
+    end
+    local st_type = tostring(field("SpellType") or "")
+    local area = (tonumber(field("AreaRadius")) or 0) > 0 or (tonumber(field("ExplodeRadius")) or 0) > 0
+    if st_type == "Shout" or st_type == "Zone" or st_type == "Wall" or area then return nil end
+    local which = st_type == "Teleportation" and "OriginTargetConditions" or "TargetConditions"
+    local src = field(which)
+    if src == nil or tostring(src):match("^[;%s]*$") then return nil end
+    local name = G.spell_facts(spell)
+    name = name and name.name or spell
+    local v, w = needs(parse((tostring(src):gsub("[;%s]+$", ""))), { source = char, target = target,
+        subject = target }, false)
+    if v == true or not w then return name .. "'s target conditions all read as met here" end
+    return name .. " needs, at this target: " .. w
+end

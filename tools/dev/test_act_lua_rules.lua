@@ -226,3 +226,54 @@ test("rules: the helper terms read from the game (Sleep HP, Help, Knock, Mobile 
     passes(rules("Projectile_MobileShooting", mobile, NPC))
     world.BOW = nil
 end)
+
+test("engine refusal, window 8 m2: Sneak Attack's InvalidTarget at 1.0 m says the game's reason and the unread"
+    .. " target conditions, no 'step closer' guess", function()
+    -- A Cedar's Sneak Attack (Melee) at 1.0 m: refused InvalidTarget twice; the old words guessed the engine's reach
+    -- ("step closer (within 1 m) and swing again"), move_to said already_there, the retry was refused again.
+    combat_setup(30)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "RAPIER"
+    osiv[key("GetStatString", "RAPIER")] = "WPN_Rapier"
+    stats.WPN_Rapier = { WeaponRange = 150 }
+    spell("Target_SneakAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0,
+        TargetConditions = "Character() and not Self() and not Dead() and ((HasAdvantage(AttackType.MeleeWeaponAttack)"
+            .. " or HasAllyWithinRange('SG_Incapacitated',1.5)) and not HasDisadvantage(AttackType.MeleeWeaponAttack))"
+            .. " and not Tagged('INANIMATE')" })
+    local bound = { Bound = { AIBounds = { Move = { Radius = 0.25 }, Hit = { Radius = 0.2 },
+        Stand = { Radius = 0.5 } } } }
+    world[P1].comps.Bound, world[GOB].comps.Bound = bound, bound
+    osiv[key("IsCharacter", GOB)] = 1
+    osiv[key("HasLineOfSight", P1, GOB)] = 1
+    osiv[key("IsDead", GOB)] = 0
+    local sd = Ext.StaticData
+    Ext.StaticData = { GetAll = function() return { "t-inan" } end, Get = function() return { Name = "INANIMATE" } end }
+    G._tag_ids = nil
+    osiv[key("IsTagged", GOB, "t-inan")] = 0
+    world[GOB].pos = { 1.0, 0, 0 }
+    cast_outcome = "InvalidTarget"
+    local j = job(op("cast", { char = P1, spell = "Target_SneakAttack", target = GOB }))
+    eq(j.status, "running", "the guard lets it go (its terms are unread) " .. tostring(j.error))
+    A.dispatch("CastSpellFailed", { P1, "Target_SneakAttack" })
+    eq(j.status, "failed", "status")
+    local e = j.error
+    assert(e:find("the game refused the cast: the target isn't a valid target for it (the game's InvalidTarget)",
+        1, true), e)
+    assert(e:find("needs, at this target: (the caster has advantage on a melee weapon attack (not read) or there is"
+        .. " an ally of the caster that is not incapacitated within 1.5 m of the target (not read)) and the caster"
+        .. " doesn't have disadvantage on a melee weapon attack (not read)", 1, true), e)
+    for _, guess in ipairs({ "step closer", "engine's reach", "swing again", "path is blocked", "try another",
+        "clearer spot" }) do
+        assert(not e:find(guess, 1, true), guess .. ": " .. e)
+    end
+    Ext.StaticData, G._tag_ids = sd, nil
+    -- a term read as false is said as the fact
+    reset()
+    spell("Target_Heal", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        TargetConditions = "Character() and not Dead()" })
+    osiv[key("IsCharacter", GOB)], osiv[key("IsDead", GOB)] = 0, 0
+    eq(G.explain_target(P1, "Target_Heal", GOB), "Target_Heal needs, at this target: it is a character (no: it is"
+        .. " not a character)", "false term")
+    osiv[key("IsCharacter", GOB)] = 1
+    eq(G.explain_target(P1, "Target_Heal", GOB), "Target_Heal's target conditions all read as met here", "all met")
+end)
