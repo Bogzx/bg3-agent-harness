@@ -96,6 +96,11 @@ game unless it says so.
   throws cast by the harness never rolled in any run before this: party attacks could not miss and party save
   spells always landed (launch-v1: 368 of 368 harness weapon attacks dealt damage). bench-v0.10 results are not
   comparable with bench-v0.8 or v0.9 results for any scenario with a fight.
+- A move in combat (`move_to`, `walk_toward`, `jump_to`) answers only after the casts its walk set off from the
+  mover's foes have resolved, at most 8 s after the move ended, and its result names them under REACTIONS (who,
+  what, the damage to the mover). Arena window 8, seed 7 m1: `move_to` answered "done, hp 20/20" 0.6 s before the
+  opportunity attack it provoked landed (critical, 13), and the agent read it a call later as an ordinary enemy
+  cast. Offline only: whether the engine starts such a reaction's cast before the walk ends is not checked live.
 
 ### Benchmark (`packages/bench`)
 

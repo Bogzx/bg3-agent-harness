@@ -605,6 +605,7 @@ reg("cast", function(args)
         end
     end
     return start("cast", char, {
+        react_hold = base == "Projectile_Jump", -- a jump out of reach provokes as a walk does (A.reaction_hold)
         standup_of = standup_of,
         eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
         timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
