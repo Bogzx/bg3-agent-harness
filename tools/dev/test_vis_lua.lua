@@ -397,5 +397,56 @@ test("get_nearby can_trade: a non-hostile trader (Trader tag or Trade offered), 
     if not ok then error(err, 0) end
 end)
 
+-- Fairness audit S2-3 (2026-11-03): the ray cache had no side in its keys, so within RAY_CACHE_MS one side's verdict
+-- (B 2 m from a door) answered the other's (A behind a wall): A's look listed a door it can't see.
+test("S2-3: the ray cache is a side's own: B's clear ray to a door doesn't answer A behind a wall", function()
+    local DOOR = "dddddddd-0000-0000-0000-0000000000d1"
+    local door = { 0, 0, 0 }
+    local atA, atB = { -6, 0, 0 }, { 2, 0, 0 }
+    ents[DOOR] = { pos = door, item = {} }
+    Ext.Level = { RaycastClosest = function(a, b)
+        if a[1] == b[1] and a[3] == b[3] and b[2] < a[2] then return { Distance = 1.6 } end -- the floor
+        if a[1] < -5 then return { Distance = 1.0 } end -- A: a wall 1 m ahead
+        return nil -- B: clear
+    end }
+    local side
+    BG3AI.RPC.side = function() return side end
+    local function c(at)
+        return { party = {}, is_party = {}, observers = { { uuid = CLAUDE, pos = at, sight = 18.5 } } }
+    end
+    local ok, err = pcall(function()
+        side = "B"
+        eq(V.largePerceived(c(atB), DOOR, V.entity(DOOR), door, "door"), true, "B, 2 m off: seen")
+        side = "A"
+        eq(V.largePerceived(c(atA), DOOR, V.entity(DOOR), door, "door"), false, "A behind the wall, same frame")
+        side = nil
+        eq(V.largePerceived(c(atA), DOOR, V.entity(DOOR), door, "door"), false, "no side (the harness), from A's spot")
+    end)
+    BG3AI.RPC.side, ents[DOOR] = nil, nil
+    if not ok then error(err, 0) end
+end)
+
+-- Fairness audit S2-4 (2026-11-03): "it turned invisible" read the live IsInvisible of anyone the side saw within
+-- 120 s, wherever the change happened. A side sees it vanish only where it would see it now: in sight range and line
+-- of sight of one of its members. Out of sight it is the plain "last seen" hint, as for one that walked off.
+test("S2-4: the 'turned invisible' hint needs the side's sight of where it stands: else the plain last seen", function()
+    local realInvisible = Osi.IsInvisible
+    Osi.IsInvisible = function(u) return u == WITHERS and 1 or 0 end
+    local ok, err = pcall(function()
+        V.remember(WITHERS, "Withers", ents[WITHERS].pos, "neutral")
+        los = false
+        eq((V.vanished(WITHERS, ctx())), false, "out of line of sight: not seen to vanish")
+        los = true
+        local gone, m = V.vanished(WITHERS, ctx())
+        eq(gone, true, "in sight range and line of sight: seen to vanish")
+        eq(m and m.ago_s, 0, "with its last sighting")
+        ents[WITHERS].pos = { -1450.0, 8.0, -2620.0 }
+        eq((V.vanished(WITHERS, ctx())), false, "invisible past sight range")
+    end)
+    Osi.IsInvisible, ents[WITHERS].pos = realInvisible, { -1418.7, 8.3, -2585.5 }
+    V.memory[WITHERS] = nil
+    if not ok then error(err, 0) end
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

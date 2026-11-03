@@ -335,6 +335,9 @@ end
 
 reg("select", function(args)
     local char = G.actor(args.char)
+    -- the one client's selection: only the acting side's (fairness audit S2-2: the other side's set_reactions then
+    -- failed "not the selected character" and the recording's camera moved)
+    G.side_gate()
     local function selected()
         if controls(char) then return true end
         if controller() then return false end

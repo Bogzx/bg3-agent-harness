@@ -390,3 +390,14 @@ test("the runner's cap end: the side gets turn_forced; its refusals name the cap
     eq(ok, false, "refused")
     eq(err.reason, "not your turn (side B is acting)", "A's new phase: the forced one is over")
 end)
+
+-- Fairness audit S2-2 (2026-11-03): act.select took the one client's selection in the other side's phase (B's
+-- set_reactions then failed "not the selected character", and the recording's camera moved).
+test("act.select in the other side's phase: 'not your turn (side B is acting)'; in its own phase it starts", function()
+    begin()
+    setTurn(B1, true, false)
+    local r = rpc("act.select", "{char=" .. string.format("%q", A1) .. "}", "A")
+    eq(enc(r):find("not your turn (side B is acting)", 1, true) ~= nil, true, "A selects in B's phase: " .. enc(r))
+    r = rpc("act.select", "{char=" .. string.format("%q", B1) .. "}", "B")
+    eq(enc(r):find("not your turn", 1, true), nil, "B selects in its own phase: " .. enc(r))
+end)

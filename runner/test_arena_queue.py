@@ -54,7 +54,7 @@ def facts(job: dict, out: Path, reason: str = "wipe") -> None:
     arena = arena_matrix.load(FX / PILOT, FX)["arenas"][job["arena"]]
     teams = {s: [m["name"] for m in arena["teams"][s]] for s in ("A", "B")}
     recs: list[dict[str, Any]] = [
-        {"ev": "arena_start", "arena": arena["name"], "seed": arena["seed"], "teams": teams,
+        {"ev": "arena_start", "arena": arena["name"], "seed": job["seed"], "teams": teams,
          "sides": {s: job["sides"][s]["player"] for s in ("A", "B")}},
     ]  # fmt: skip
     order = [x for pair in zip(teams["A"], teams["B"], strict=True) for x in pair]  # A, B, A, B, A, B
@@ -259,6 +259,34 @@ def test_live_play_caps_each_paid_side_at_its_reserve_and_the_match_at_their_sum
     monkeypatch.setattr(live, "play", refused)
     with pytest.raises(aq.RefusedError, match=r"less than the match's max_cost \$2"):
         aq.live_play(pilot, REPO, {})(pilot["jobs"][0], "n2")
+
+
+def test_a_repeats_match_plays_and_is_graded_on_its_jobs_seed(tmp_path, pilot, monkeypatch):
+    """Fairness audit S1-4: repeat 2 plays the arena's seed + 1 (live.play's spec, so arena.json and arena_start
+    record it), and its grade checks that seed: the arena's own seed there is an unseeded match."""
+    from bg3harness.arena import live
+
+    job = {**pilot["jobs"][0], "repeat": 2, "seed": pilot["jobs"][0]["seed"] + 1}
+    seen: dict[str, Any] = {}
+
+    class Outcome:
+        invalid = None
+
+        def cost(self, side: str) -> float:
+            return 0.0
+
+    def fake_play(spec, sides, make_runner, name, env, max_cost=None, side_caps=None):
+        seen["seed"] = spec.seed
+        return Outcome(), tmp_path / name
+
+    monkeypatch.setattr(live, "play", fake_play)
+    aq.live_play(pilot, REPO, {})(job, "n1")
+    arena = pilot["arenas"][job["arena"]]
+    assert seen["seed"] == arena["seed"] + 1
+    facts(job, tmp_path / "m")
+    assert aq.graded(job, arena, tmp_path / "m")["valid"] is True
+    facts({**job, "seed": arena["seed"]}, tmp_path / "old")
+    assert aq.graded(job, arena, tmp_path / "old")["invalid_reason"] == "unseeded"
 
 
 def test_play_py_prints_the_plan_and_its_estimate():

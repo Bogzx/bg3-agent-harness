@@ -154,8 +154,15 @@ local function observerFp(ctx)
     return ctx.rayFp
 end
 
+-- A verdict is its asker's: an arena side's (or, with no side, the harness's) own. Fairness audit S2-3: keyed by
+-- uuid alone, B's clear ray to a door answered A's question behind a wall within RAY_CACHE_MS (one frame runs the
+-- harness, A and B).
+local function sideKey(key)
+    return (U.side() or "") .. "|" .. key
+end
+
 local function rayCacheGet(ctx, key, now)
-    local c = V.rayCache[key]
+    local c = V.rayCache[sideKey(key)]
     if not c then return nil end
     if now - c.t < V.RAY_CACHE_MS or (c.fp == observerFp(ctx) and now - c.t < V.RAY_STILL_MS) then return c end
     return nil
@@ -164,7 +171,7 @@ end
 local function rayCachePut(ctx, key, now, v)
     V.rayCacheN = (V.rayCacheN or 0) + 1
     if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
-    V.rayCache[key] = { t = now, v = v, fp = observerFp(ctx) }
+    V.rayCache[sideKey(key)] = { t = now, v = v, fp = observerFp(ctx) }
 end
 
 -- Was an eye within OBSERVER_SAME_M of `eye` already tried? (records it if not)
@@ -715,15 +722,19 @@ function V.lastSeen(uuid)
     return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
 end
 
--- A character the party saw on this level that is invisible now (not revealed):
--- a player saw it vanish. S030 Soft-Step Trial: a Shadow 1.8 m away answered
--- "target is not visible; last seen 2s ago: travel_to that spot" 3x.
+-- A character the party saw on this level that is invisible now (not revealed), where the party would see it if it
+-- weren't (in a member's sight range and line of sight): a player saw it vanish. S030 Soft-Step Trial: a Shadow 1.8 m
+-- away answered "target is not visible; last seen 2s ago: travel_to that spot" 3x. Out of sight it is the plain
+-- last-seen hint: fairness audit S2-4, a side was told "it turned invisible" of an enemy that went invisible out of
+-- its view. ctx: the asker's context (default V.context(), the side's).
 V.INVISIBLE_SEEN_S = 120
-function V.vanished(uuid)
-    if not uuid or not U.comp(V.entity(uuid), "ServerCharacter") then return false end
+function V.vanished(uuid, ctx)
+    local e = uuid and V.entity(uuid)
+    if not e or not U.comp(e, "ServerCharacter") then return false end
     local m = V.lastSeen(uuid)
     if not m or m.ago_s > V.INVISIBLE_SEEN_S then return false end
-    return truthy(V.osi(Osi.IsInvisible, uuid)) and not truthy(V.osi(Osi.IsDead, uuid)), m
+    if not truthy(V.osi(Osi.IsInvisible, uuid)) or truthy(V.osi(Osi.IsDead, uuid)) then return false end
+    return V.perceived(ctx or V.context(), uuid, V.pos(e)), m
 end
 
 function V.recall(exclude, around, radius)

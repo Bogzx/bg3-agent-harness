@@ -85,6 +85,25 @@ def test_plan_is_the_same_every_time(tmp_path):
     assert load(tmp_path / "a")["jobs"] == load(tmp_path / "b")["jobs"]
 
 
+def test_each_repeat_plays_its_own_seed_and_a_pairings_two_matches_share_it(tmp_path):
+    """Fairness audit S1-4: every repeat played the arena's one seed, so the same initiative and opening dice counted
+    again in every pairing. Repeat r plays the arena's seed + r - 1 (repeat 1 the arena's own)."""
+    jobs = load(tmp_path)["jobs"]
+    seed = DRAFT["seed"]
+    assert [j["seed"] for j in jobs] == [seed] * 6 + [seed + 1] * 6
+    for one, two in zip(jobs[::2], jobs[1::2]):
+        assert one["seed"] == two["seed"]
+
+
+def test_a_repeats_seed_past_the_largest_is_refused(tmp_path):
+    repo = fake_repo(tmp_path)
+    p = repo / "packages" / "bench" / "arenas" / "field.json"
+    p.write_text(json.dumps({**json.loads(p.read_text()), "seed": 2**31 - 1}))
+    (repo / "arena.toml").write_text(BODY)
+    with pytest.raises(MatrixFileError, match="seed"):
+        arena_matrix.load(repo / "arena.toml", repo)
+
+
 def test_explicit_pairs_allow_a_self_match_and_take_the_arenas_condition(tmp_path):
     body = (
         BODY.replace(
