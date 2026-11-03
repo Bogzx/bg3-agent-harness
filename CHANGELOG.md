@@ -77,7 +77,7 @@ game unless it says so.
   "(Condition)", get_status doesn't wait 3 s per read on a re-chain the game refused, and act.chain fails 0.6 s after
   an attach the game didn't take instead of at 3 s). bench-v0.9's release cites it.
 - 0.3.0 (2026-11-02): what the agent sees and can do changed again after bench-v0.9's graded fight re-run (walks
-  out of combat block by default, the minimap block, the PASSED line, a walk ends a batch, roll_check's reroll, trade's SOLD list, known ground to 40 m,
+  out of combat block by default, the minimap block, the PASSED line, a walk ends a batch, roll_check's reroll, trade's SOLD list, known ground to 16 m,
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 
@@ -162,8 +162,9 @@ game unless it says so.
     and presses nothing.
   - `trade(sell="junk")` names every item it sold (SOLD, by name with count and gold) and counts what the junk rule
     kept back (KEPT).
-  - Known ground (FAIRNESS.md): ground within 40 m of the leader with a clear eye ray (was the observer's Sight,
-    ~18.5 m), and ground up to 15 m below an edge at up to 60 degrees (was 4 m, 45 degrees). route, travel_to,
+  - Known ground (FAIRNESS.md): ground within 16 m of the leader (what the default camera shows at 16:9, measured
+    live; owner D448) or within a member's own Sight (~18.5 m) with a clear eye ray, and ground up to 15 m below an
+    edge at up to 41 degrees, the camera's measured pitch (was 4 m, 45 degrees). route, travel_to,
     walk_toward, path_preview, WAYS, jump solvers, move_to/jump_to's "not in view" and hazard names follow it.
     Characters and items keep the Sight stat.
   - At night in camp, `long_rest`, camp leave and `fast_travel` from camp refuse before pressing anything while the

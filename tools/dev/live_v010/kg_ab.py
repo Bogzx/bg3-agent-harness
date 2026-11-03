@@ -16,8 +16,8 @@ run: first a snapshot (party positions, the mod's breadcrumb store PersistentVar
 as BG3AI._kg_snap and in runtime/probes/v010/kg-snap-<scenario>.json). Then per goal both rules, in alternating
 order (goal 0 new then old, goal 1 old then new, ...). Each trip runs in its own process (no bridge state carried
 from one trip to the next) and starts with a restore: every party member teleported back to its snapshot spot, the
-breadcrumb store put back, N.seenPts emptied; then the rule's constants (new: CAMERA_M 40, EDGE_DROP_M 15, PEEK_H 1,
-PEEK_MAX_DOWN tan 60, or $V010_NEW_RULE's measured values; old: 0, 4, 0.5, 1 = origin/main's rule), then
+breadcrumb store put back, N.seenPts emptied; then the rule's constants (new: CAMERA_M 16, EDGE_DROP_M 15, PEEK_H 1,
+PEEK_MAX_DOWN tan 41, or $V010_NEW_RULE's measured values; old: 0, 4, 0.5, 1 = origin/main's rule), then
 travel_to(x, y, z, fast="never") as the agent
 calls it (blocking), and one wait_for on its id if it returned "still waiting" (cap 150 s a trip). The new
 constants are set back after every trip, whatever happened. Per trip a row in runtime/probes/v010/kg-trips.jsonl
@@ -48,7 +48,7 @@ _M = os.environ.get("V010_NEW_RULE", "").split(",")
 NEW = (
     f"{float(_M[0])}, {float(_M[1])}, {float(_M[2])}, math.tan(math.rad({float(_M[3])}))"
     if len(_M) == 4
-    else "40, 15, 1.0, math.tan(math.rad(60))"
+    else "16, 15, 1.0, math.tan(math.rad(41))"
 )
 RULES = {"new": NEW, "old": "0, 4, 0.5, 1"}
 

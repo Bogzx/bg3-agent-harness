@@ -375,7 +375,11 @@ test("pointSeen over an edge: a wall face hit low, a drop over 15 m, the foot of
     V.rayCache = {}
     ray.fn = floor_to(4.2)
     heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -16.0 } end
-    eq(V.pointSeen(V.context(), { 0, -16.0, 20 }), false, "16 m down (the look is 46 degrees: only the drop bound)")
+    world.P1.comps.Sight.Sight = 40 -- in range, so only the drop bound decides
+    V.ctxCache = nil
+    eq(V.pointSeen(V.context(), { 0, -16.0, 24 }), false, "16 m down (the look is 39 degrees: only the drop bound)")
+    world.P1.comps.Sight.Sight = 18.5
+    V.ctxCache = nil
     heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -3.5 } end
     eq(V.pointSeen(V.context(), { 0, -3.5, 5.2 }), false, "1 m from the foot of a 3.5 m face")
     world.P1.pos = { 0, 0, -11 } -- 15 m back from the edge
@@ -385,50 +389,56 @@ test("pointSeen over an edge: a wall face hit low, a drop over 15 m, the foot of
     eq(V.pointSeen(V.context(), { 0, -2.3, 7 }), false, "15 m back")
 end)
 
--- Camera range (user 2026-11-02): ground the screen shows, about V.CAMERA_M round the leader, with the eye ray kept.
-test("pointSeen over an edge: what the overhead camera shows, 6 m and 14 m down, to 60 degrees", function()
+-- Camera range (owner D448, 2026-11-03; measured at 16:9, live window 3 K0): ground the screen shows, V.CAMERA_M
+-- (16 m) round the leader, and over an edge no steeper than the camera's 41 degree pitch, with the eye ray kept.
+test("pointSeen over an edge: what the overhead camera shows, 6 m and 8 m down, to 41 degrees", function()
     setup()
     ray.fn = floor_to(4.2)
     heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -6.0 } end
-    eq(V.pointSeen(V.context(), { 0, -6.0, 9 }), true, "6 m down, 5 m past the edge (51 degrees)")
-    eq(V.pointSeen(V.context(), { 0, -6.0, 7.5 }), false, "6 m down, 3.3 m past the edge (61 degrees: dead ground)")
-    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -14.0 } end
-    eq(V.pointSeen(V.context(), { 0, -14.0, 14 }), true, "14 m down, 10 m past the edge (55 degrees)")
-    eq(V.pointSeen(V.context(), { 0, -14.0, 12 }), false, "14 m down, 7.8 m past the edge (60.3 degrees)")
-    eq(V.pointSeen(V.context(), { 0, -14.0, 12.15 }), true, "14 m down, 7.95 m past the edge (59.9 degrees)")
+    eq(V.pointSeen(V.context(), { 0, -6.0, 12 }), true, "6 m down, 7.8 m past the edge (38.7 degrees)")
+    eq(V.pointSeen(V.context(), { 0, -6.0, 11 }), false, "6 m down, 6.8 m past the edge (42.5 degrees: dead ground)")
+    heights.fn = function(_, z) return z <= 4.2 and { 0.0 } or { -8.0 } end
+    eq(V.pointSeen(V.context(), { 0, -8.0, 13.9 }), true, "8 m down, 9.7 m past the edge (40.4 degrees)")
+    eq(V.pointSeen(V.context(), { 0, -8.0, 13.5 }), false, "8 m down, 9.3 m past the edge (41.5 degrees)")
 end)
 
-test("pointSeen: ground to CAMERA_M (40 m) from the leader is in view; past it, or behind a wall inside it, is not",
+test("pointSeen: ground to CAMERA_M (16 m) from the leader is in view; past it, or behind a wall inside it, is not",
     function()
     setup()
+    world.P1.comps.Sight.Sight = 10 -- below the camera range, so the camera range shows
     ray.fn = floorThen(function() return nil end) -- open ground
-    eq(V.pointSeen(V.context(), { 0, 0, 30 }), true, "30 m: past the 18.5 m Sight, on screen")
-    eq(V.pointSeen(V.context(), { 39, 0, 0 }), true, "39 m")
-    eq(V.pointSeen(V.context(), { 0, 0, 41 }), false, "41 m: past the camera range")
-    eq(V.pointSeen(V.context(), { 0, 15, 38 }), false, "38 m off and 15 m up: 41 m (3D) away")
-    ray.fn = floorThen(function(a, b) -- a wall across z = 25
-        if a[3] < 25 and b[3] > 25 then
-            local t = (25 - a[3]) / (b[3] - a[3])
-            return { Position = { a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 25 } }
+    eq(V.pointSeen(V.context(), { 0, 0, 12 }), true, "12 m: past P1's 10 m Sight, on screen")
+    eq(V.pointSeen(V.context(), { 15.5, 0, 0 }), true, "15.5 m")
+    eq(V.pointSeen(V.context(), { 0, 0, 17 }), false, "17 m: past the camera range")
+    eq(V.pointSeen(V.context(), { 0, 8, 14 }), false, "14 m off and 8 m up: 16.4 m (3D) away")
+    ray.fn = floorThen(function(a, b) -- a wall across z = 10
+        if a[3] < 10 and b[3] > 10 then
+            local t = (10 - a[3]) / (b[3] - a[3])
+            return { Position = { a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 10 } }
         end
     end)
-    eq(V.pointSeen(V.context(), { 0, 0, 30 }), false, "30 m, behind a wall")
-    eq(V.pointSeen(V.context(), { 0, 0, 10 }), true, "10 m, this side of the wall")
+    eq(V.pointSeen(V.context(), { 0, 0, 12 }), false, "12 m, behind a wall")
+    eq(V.pointSeen(V.context(), { 0, 0, 8 }), true, "8 m, this side of the wall")
+    world.P1.comps.Sight.Sight = 18.5 -- the default Sight reaches past the camera range
+    V.ctxCache = nil
+    ray.fn = floorThen(function() return nil end)
+    eq(V.pointSeen(V.context(), { 0, 0, 18 }), true, "18 m: within P1's own 18.5 m Sight")
 end)
 
 test("pointSeen: the camera follows the selected member; a member off on their own keeps their Sight", function()
     setup()
-    world.P2 = { pos = { 0, 0, -50 }, comps = { Sight = { Sight = 18.5 } } }
+    world.P1.comps.Sight.Sight = 10
+    world.P2 = { pos = { 0, 0, -50 }, comps = { Sight = { Sight = 10 } } }
     osiv[key("IsOnStage", "P2")] = 1
     partyRows = { { "P1" }, { "P2" } }
     ray.fn = floorThen(function() return nil end)
-    eq(V.pointSeen(V.context(), { 0, 0, 35 }), true, "35 m from the selected P1")
-    eq(V.pointSeen(V.context(), { 0, 0, -65 }), true, "15 m from P2: P2's own Sight")
-    eq(V.pointSeen(V.context(), { 30, 0, -50 }), false, "30 m from P2, 58 m from P1: not on screen")
+    eq(V.pointSeen(V.context(), { 0, 0, 14 }), true, "14 m from the selected P1")
+    eq(V.pointSeen(V.context(), { 0, 0, -58 }), true, "8 m from P2: P2's own Sight")
+    eq(V.pointSeen(V.context(), { 14, 0, -50 }), false, "14 m from P2, 52 m from P1: not on screen")
     world.P1.comps.ClientControl, world.P2.comps.ClientControl = nil, {} -- P2 selected: the camera is there
     V.ctxCache = nil
-    eq(V.pointSeen(V.context(), { 30, 0, -50 }), true, "30 m from the selected P2")
-    eq(V.pointSeen(V.context(), { 30, 0, 0 }), false, "30 m from P1 (past its Sight), 58 m from the selected P2")
+    eq(V.pointSeen(V.context(), { 14, 0, -50 }), true, "14 m from the selected P2")
+    eq(V.pointSeen(V.context(), { 14, 0, 0 }), false, "14 m from P1 (past its Sight), 52 m from the selected P2")
 end)
 
 test("the camera range is ground only: a door 30 m off in a clear ray is not perceived (Sight 18.5)", function()
