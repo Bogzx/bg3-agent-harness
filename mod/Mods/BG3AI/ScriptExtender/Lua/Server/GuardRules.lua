@@ -167,19 +167,20 @@ local function term(node, ctx)
     end
     local function str1() return #a >= 1 and a[1].k == "str" and a[1].v or nil end
     local name = node.name
-    local subj = ctx.subject == ctx.target and "the target" or "the caster"
+    local subj = (ctx.subject == ctx.source or ctx.subject ~= ctx.target) and "the caster" or "the target"
     if name == "Tagged" and str1() and #a <= 2 then
         local u, id = who(2), tag_id(str1())
         if not u or not id then return nil end
         local v = yes(G.q("IsTagged", u, id))
-        return v, (u == ctx.target and "the target" or "the caster") .. " is " .. lower(str1()),
-            (u == ctx.target and "the target" or "the caster") .. " is not " .. lower(str1())
+        local w = (u == ctx.source or u ~= ctx.target) and "the caster" or "the target"
+        return v, w .. " is " .. lower(str1()), w .. " is not " .. lower(str1())
     end
     if name == "HasStatus" and str1() and #a <= 2 then
         local u = who(2)
         if not u then return nil end
         local s = lower(str1():gsub("^SG_", ""))
-        local w = u == ctx.target and "the target" or "the caster"
+        -- a Shout's target is its caster (window 8 live: "Hide can't be used now: the target has flanked")
+        local w = (u == ctx.source or u ~= ctx.target) and "the caster" or "the target"
         return G.rule_has_status(u, str1()), w .. " has " .. s, w .. " doesn't have " .. s
     end
     if #a > 1 or (#a == 1 and not who(1)) then return nil end

@@ -908,10 +908,10 @@ test("A27 a linked container with no variants (Shout_Shield_Wizard shape) still 
 end)
 
 test("spell_reach: a touch spell reaches edge to edge, a ranged one centre to centre (live N9 step 3)", function()
-    stats.Target_Longstrider = { TargetRadius = "1.5" } -- touch: 1.5 m + both bounding radii (0.5 each, stub)
+    stats.Target_Longstrider = { TargetRadius = "1.5" } -- touch: 1.5 m + both Hit radii (0.2 each, unread)
     world[NPC].pos = { 9.47, 0, 0 }                     -- N9: Wyll 9.47 m from Claude
     local r = RPC.ops["act.spell_reach"]({ char = P1, spell = "Target_Longstrider", target = NPC })
-    eq(r.range_m, 1.5, "range"); eq(r.melee, true, "touch"); eq(r.reach_m, 2.5, "reach"); eq(r.dist_m, 9.47, "dist")
+    eq(r.range_m, 1.5, "range"); eq(r.melee, true, "touch"); eq(r.reach_m, 1.9, "reach"); eq(r.dist_m, 9.47, "dist")
     stats.Target_Bless = { TargetRadius = "9" }
     r = RPC.ops["act.spell_reach"]({ char = P1, spell = "Target_Bless", target = NPC })
     eq(r.melee, false, "ranged"); eq(r.reach_m, 9, "reach")

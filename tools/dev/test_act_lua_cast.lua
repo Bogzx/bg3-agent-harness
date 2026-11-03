@@ -854,20 +854,58 @@ test("cast: a harmful area spell says where it bursts and who is in the blast be
     if not ok then error(err, 0) end
 end)
 
-test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
+test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Hit radii; G.radius: Stand)", function()
     combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.4 }, Hit = { Radius = 1.28 }, Stand = { Radius = 0.7 } } } }
     eq(G.radius(GOB), 0.7, "Stand radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.25 } } } }
     eq(G.radius(GOB), 0.25, "Move fallback")
-    world[GOB].comps.Bound = nil
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Hit = { Radius = 0.7 }, Stand = { Radius = 0.9 } } } }
+    eq(G.hit_radius(GOB), 0.7, "Hit radius"); eq(G.hit_radius(P1), 0.2, "Hit fallback")
     spell("Target_Slash", { TargetRadius = "MeleeMainWeaponRange", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
-    local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m
+    local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m = 1.5 + 0.2 + 0.7
     eq(j.status, "running", "status " .. tostring(j.error))
     world[GOB].pos = { 2.7, 0, 0 }
     j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB }))
     eq(j.status, "failed", "status"); assert(j.error:find("out of range"), j.error)
+end)
+
+test("melee reach, window 8 live: 2.1 m is out (guard and move_to agree), 1.4 m is in", function()
+    -- Karlach, greataxe (WeaponRange 150), on an Apostate Destroyer, both checks dropped: the engine refused the swing
+    -- from 2.1 m centres (InvalidTarget, 10/10) while the guard allowed it (Stand radii: 1.5 + 0.5 + 0.5 = 2.5) and
+    -- move_to said already_there; from 1.4 m it cast. By the Hit radii (medium 0.2) the reach is 1.9 m.
+    combat_setup(30)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "AXE"
+    osiv[key("GetStatString", "AXE")] = "WPN_Greataxe"
+    stats.WPN_Greataxe = { WeaponRange = 150 }
+    spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    local bound = { Bound = { AIBounds = { Move = { Radius = 0.25 }, Hit = { Radius = 0.2 },
+        Stand = { Radius = 0.5 } } } }
+    world[P1].comps.Bound, world[GOB].comps.Bound = bound, bound
+    osiv[key("IsCharacter", GOB)] = 1
+    world[GOB].pos = { 2.1, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "2.1 m swing"); assert(j.error:find("out of range (2.1 m, range 1.5 m)", 1, true), j.error)
+    j = job(op("move_to", { char = P1, target = GOB }))
+    eq(j.result and j.result.already_there, nil, "2.1 m is not 'already there'")
+    eq(#called("CharacterMoveToPosition"), 1, "it closes in")
+    reset()
+    combat_setup(30)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "AXE"
+    osiv[key("GetStatString", "AXE")] = "WPN_Greataxe"
+    stats.WPN_Greataxe = { WeaponRange = 150 }
+    spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    world[P1].comps.Bound, world[GOB].comps.Bound = bound, bound
+    osiv[key("IsCharacter", GOB)] = 1
+    world[GOB].pos = { 1.4, 0, 0 }
+    j = job(op("move_to", { char = P1, target = GOB }))
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.already_there, true, "already there")
+    eq(j.result.in_reach, true, "in reach")
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "1.4 m swing " .. tostring(j.error))
 end)
 
 test("cast: ranged weapon range from the equipped weapon's stats", function()
