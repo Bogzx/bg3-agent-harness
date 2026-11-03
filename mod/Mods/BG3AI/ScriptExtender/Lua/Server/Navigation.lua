@@ -80,25 +80,8 @@ local function levelStore(level)
     return l
 end
 
--- A match (two teams in one game, BG3AI.RPC sides): each side remembers only where its own team walked. The level
--- store above (saved with the game) is the harness's view, both teams' steps, and is never read under a side: side
--- B's known ground, explored cells and trail must not name a spot only side A stood on. Cleared at the match's end
--- (RPC.clear_sides).
-local function sideWalked(level)
-    local w = U.sided(N, "walked")
-    local l = w[level]
-    if not l then
-        l = { cells = {}, n = 0, places = {} }
-        w[level] = l
-    end
-    return l
-end
-
--- The walked cells and trail a reader uses: the side's own under a side, else the level's store (nil when none).
-local function walkedStore(level)
-    if U.side() then return sideWalked(level) end
-    return store().levels[level]
-end
+-- The walked cells and trail a reader uses (a side's own in a match): NavigationSides.lua.
+local function walkedStore(level) return N.walkedStore(level) end
 
 local function cellOf(p)
     return math.floor(p[1] / N.CELL_XZ), math.floor(p[2] / N.CELL_Y), math.floor(p[3] / N.CELL_XZ)
@@ -169,39 +152,6 @@ end
 N.subregion = N.subregion or nil
 N.lastRecord = 0
 
--- In a match, each side's team into its own walked store (sideWalked): the cells and the trail of its first member.
-local function recordSides(lvl, now)
-    local R = BG3AI.RPC
-    if not (R and R.arena_active and R.arena_active()) then return end
-    for _, side in ipairs(R.SIDES) do
-        U.with_side(side, function()
-            local l = sideWalked(lvl)
-            local team = V.party()
-            for _, u in ipairs(team) do
-                if truthy(osi(Osi.IsOnStage, u)) then
-                    local e = V.entity(u)
-                    local p = e and V.pos(e)
-                    if p then
-                        local k = cellKey(cellOf(p))
-                        if not l.cells[k] then
-                            l.cells[k] = 1
-                            l.n = l.n + 1
-                        end
-                    end
-                end
-            end
-            local lead = team[1] and V.entity(team[1])
-            local lp = lead and V.pos(lead)
-            local last = l.places[#l.places]
-            if lp and (not last or U.dist({ last.x, last.y, last.z }, lp) >= N.PLACE_GAP) then
-                l.places[#l.places + 1] = { x = round(lp[1], 1), y = round(lp[2], 1), z = round(lp[3], 1),
-                    sub = N.subregion, gt = now }
-                while #l.places > N.PLACES_CAP do table.remove(l.places, 1) end
-            end
-        end)
-    end
-end
-
 local function record()
     local t = Ext.Utils.MonotonicTime()
     if t - N.lastRecord < N.RECORD_MS then return end
@@ -210,7 +160,7 @@ local function record()
     local lvl = currentLevel()
     if not lvl or lvl:find("^SYS_") then return end
     local now = Ext.Utils.GameTime and Ext.Utils.GameTime() or nil
-    recordSides(lvl, now)
+    N.recordSides(lvl, now)
     local party = V.party()
     if #party == 0 then return end
     local l = levelStore(lvl)
@@ -1007,16 +957,16 @@ function N.path(charUuid, target, deadline, noSearch)
 end
 
 -- File-local helpers the other parts use.
-N.inner = { store = store, mirror = mirror, levelStore = levelStore, walkedStore = walkedStore,
-    currentLevel = currentLevel, DIRS = DIRS,
+N.inner = { store = store, mirror = mirror, levelStore = levelStore, walkedStore = walkedStore, cellOf = cellOf,
+    cellKey = cellKey, currentLevel = currentLevel, DIRS = DIRS,
     DIR_VEC = DIR_VEC, floorAt = floorAt, readResult = readResult, rawPath = rawPath, gatedPath = gatedPath,
     pathKey = pathKey,
     helperBox = helperBox, inBox = inBox }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads N and the
 -- helpers in N.inner.
-for _, part in ipairs({ "Server/NavigationReach.lua", "Server/NavigationTerrain.lua", "Server/NavigationRoute.lua",
-    "Server/NavigationOps.lua", "Server/NavigationDoors.lua" }) do
+for _, part in ipairs({ "Server/NavigationSides.lua", "Server/NavigationReach.lua", "Server/NavigationTerrain.lua",
+    "Server/NavigationRoute.lua", "Server/NavigationOps.lua", "Server/NavigationDoors.lua" }) do
     Ext.Require(part)
 end
 
