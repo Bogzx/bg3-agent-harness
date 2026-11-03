@@ -183,6 +183,12 @@ AUTO_DIALOGUE_READ_LINE_S = 3.0
 # Autopilot (fast reflexes): the bridge clicks through filler itself after choose_dialogue and when a
 # conversation opens, so the agent sees the next real choice at once. AUTO_DIALOGUE = False turns it off.
 AUTO_DIALOGUE = True
+# The whole call, from its start, stays inside this (the clients give a tool call 110 s: clients.py http_server).
+# A walk that ends in a conversation near its 90 s budget still ran the autopilot after it (up to 12 lines x 15 s)
+# and the result could arrive after the client gave up (review-v010-human-gap #1). Past it the autopilot stops and
+# shows the conversation as it stands.
+CALL_DEADLINE_S = 100.0
+TIME_UP = "this call's time ran out with the conversation open"
 
 
 def _line_stuck(waited_s: float) -> str | None:
@@ -204,13 +210,15 @@ def _line_stuck(waited_s: float) -> str | None:
 
 def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.5,
                         line_s: float | None = None, strict: bool = True,
-                        idle_open_s: float | None = None) -> tuple[int, list[str], str | None]:
+                        idle_open_s: float | None = None,
+                        deadline: float | None = None) -> tuple[int, list[str], str | None]:
     """Click through FILLER only (macros.dialogue_filler: a Continue prompt or one untagged, non-committing
     option) until a real choice, a roll/reaction/popup, or the end. Returns (lines advanced, report lines,
     stop reason). open_s: how long a dialogue that is still opening may take to appear. strict (the bridge's
     own autopilot): only a Continue prompt or a bare "..."/Continue/End option, never a spoken answer, even
     the only one; dialogue_advance (the agent asked for it) also takes a single plain non-committing answer.
-    idle_open_s: no dialogue on screen and the game says no party member is in a conversation → wait only this long."""
+    idle_open_s: no dialogue on screen and the game says no party member is in a conversation → wait only this long.
+    deadline (monotonic): stop there with TIME_UP, the dialogue shown as it stands (the caller's call deadline)."""
     line_s = DIALOGUE_LINE_WAIT_S if line_s is None else line_s
     lines: list[str] = []
     stop = None
@@ -223,6 +231,11 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
     while n < max(1, min(int(max_lines), 30)):
         ui = core.game.try_rpc("ui.state", context="client") or {}
         scr = ui.get("screen")
+        if deadline is not None and time.monotonic() >= deadline:
+            stop = TIME_UP
+            if scr == "dialogue":
+                lines.extend(reporting._render_ui(ui, brief=True))
+            break
         if scr in (None, "game") and n == 0 and time.monotonic() < open_until:
             if not idle_checked:
                 idle_checked = True
@@ -258,7 +271,8 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
                 stop = f"a real choice ({len(reporting._listed['texts'])} options)"  # S081: "(6 options)" under 7 listed
             break
         said = (ui.get("dialogue") or {}).get("text")
-        r = core.game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20)
+        wait_s = 20.0 if deadline is None else max(1.0, min(20.0, deadline - time.monotonic()))
+        r = core.game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=wait_s)
         n += 1
         lines.append(f"{n}. " + (f"'{core.H.scrub(str(said))[:90]}' → " if said else "") +
                      ("continue" if i == 0 else f"option {i}") + ("" if r.status == "done" else f" {r.status.upper()}"
