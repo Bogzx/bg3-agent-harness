@@ -65,7 +65,8 @@ class LivePort(unittest.TestCase):
             self.assertTrue(liveport.blocked(("127.0.0.1", 9998)))
             self.assertTrue(liveport.blocked(("::1", 4321, 0, 0)))
             self.assertFalse(liveport.blocked(("127.0.0.1", 4322)))
-            self.assertFalse(liveport.blocked("\0bg3ai-input"))  # an abstract unix socket (input.py)
+            self.assertTrue(liveport.blocked("\0bg3ai-input"))  # the live game's input shim (input.py)
+            self.assertFalse(liveport.blocked("\0bg3ai-input-test-7"))  # a test's own shim (native/bg3sdl/test)
             with mock.patch.object(liveport, "allowed", True):  # a test marked live
                 self.assertFalse(liveport.blocked(("127.0.0.1", 9998)))
 

@@ -864,6 +864,20 @@ class Gates(unittest.TestCase):
     def tearDown(self):
         G.rpc, G.lua_eval, renv.log = self.saved
 
+    def test_the_games_mouse_is_the_harnesss_first(self):
+        """Live window 7: the shim's agent mode and a centred cursor before anything else (gio.take_input), logged."""
+        r = self._runner()
+        logs, saved = [], G.take_input
+        renv.log = logs.append
+        G.take_input = lambda: self.calls.append(("take_input", None)) or "input shim: agent mode on, cursor (960, 540)"
+        G.rpc = lambda op, args=None, context="server", timeout=0: self.calls.append((op, args))
+        try:
+            r.apply_play_settings()
+        finally:
+            G.take_input = saved
+        self.assertEqual(self.calls[0], ("take_input", None))
+        self.assertEqual(logs[0], "input shim: agent mode on, cursor (960, 540)")
+
     def test_settings_errors_never_raise(self):
         r = self._runner()
 
