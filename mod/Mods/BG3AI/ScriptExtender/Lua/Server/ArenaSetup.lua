@@ -57,6 +57,7 @@ Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike s
 -- across the lines the same both ways (A's member i to B's member j = B's i to A's j) within this
 Setup.SPAWN_DY_MAX_M = 0.3
 Setup.PAIR_DIST_TOL_M = 0.1
+Setup.SITTER_MIN_M = 10.0 -- a sitter this far or more from every member of both lines (fairness audit S1-3)
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -207,6 +208,29 @@ function Setup.check_landed(teams, names)
         end
     end
     Setup.check_cross(at.A, at.B, "where the members landed")
+    return at
+end
+
+-- The sitters (fairness audit S1-3: bodies in the field, out of the fight) stand SITTER_MIN_M or more from every
+-- member of both lines as landed (on the ground: x/z), else an error naming the sitter, the member and the distance.
+-- A sitter whose position doesn't read is an error too.
+function Setup.check_sitters(at, teams, sitters, names)
+    for _, u in ipairs(sitters) do
+        local ok, x, _, z = pcall(Osi.GetPosition, u)
+        if not ok or type(x) ~= "number" then
+            error(("the sitter %s (%s): its position doesn't read"):format(tostring(V.name(u)), u), 0)
+        end
+        for _, s in ipairs(Ar.SIDES) do
+            for i, p in ipairs(at[s]) do
+                local d = math.sqrt((p[1] - x) ^ 2 + (p[3] - z) ^ 2)
+                if d < Setup.SITTER_MIN_M then
+                    error(("the sitter %s stands %.1f m from %s (team %s's line); a sitter must stand %g m or more "
+                        .. "from both lines"):format(tostring(V.name(u)), d, tostring(names[teams[s][i]]), s,
+                        Setup.SITTER_MIN_M), 0)
+                end
+            end
+        end
+    end
 end
 
 -- The two lowest-numbered "Hero Player<N>" factions nobody in the level uses and no team member holds.
@@ -344,7 +368,7 @@ STEPS[2] = function(job) -- the names after joining; chained per team, on its li
 end
 
 STEPS[3] = function(job)
-    Setup.check_landed(job.teams, job.names)
+    Setup.check_sitters(Setup.check_landed(job.teams, job.names), job.teams, job.sitters, job.names)
     call(job, "RestoreParty", { job.host })
     return Setup.SETTLE_MS
 end
@@ -387,17 +411,23 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
     local t = job.teams
     local c, seen = one_combat(t)
     if not c then error("the teams are not in one combat: " .. table.concat(seen, ", "), 0) end
-    -- nobody else in it: the sitters, and any other character in the level
-    local member, out, others = set_of(all_of(t)), {}, {}
+    -- nobody else in it: the sitters, any other character in the level, and any item (live 14: a Nautiloid Tank and
+    -- a Cartilaginous Chest took turns in the combat; fairness audit S1-3)
+    local member, out, others, item = set_of(all_of(t)), {}, {}, {}
     for _, u in ipairs(job.sitters) do others[#others + 1] = u end
-    for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerCharacter") or {}) do
-        local u = V.entityUuid(e)
-        if u then others[#others + 1] = u:lower() end
+    for _, comp in ipairs({ "ServerCharacter", "ServerItem" }) do
+        for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent(comp) or {}) do
+            local u = V.entityUuid(e)
+            if u then
+                others[#others + 1] = u:lower()
+                if comp == "ServerItem" then item[u:lower()] = true end
+            end
+        end
     end
     for _, u in ipairs(others) do
         if not member[u] and osi(Osi.CombatGetGuidFor, u) == c then
             member[u] = true
-            out[#out + 1] = tostring(V.name(u))
+            out[#out + 1] = tostring(V.name(u)) .. (item[u] and " (an item)" or "")
         end
     end
     if #out > 0 then error("not on a team and in the fight: " .. table.concat(out, ", "), 0) end
