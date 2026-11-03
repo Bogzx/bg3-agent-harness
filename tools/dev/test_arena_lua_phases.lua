@@ -7,6 +7,10 @@ local function openAll(us)
     for _, u in ipairs(us) do setTurn(u, true, false) end
 end
 
+-- A death save in the roll log (the Osiris RollResult row of the downed member's turn).
+local function deathSave(u, success)
+    BG3AI.RollLog.add("osi", { roller = u, subject = u, event = "death save", success = success, active = false })
+end
 local function burst(us) -- the game's TurnStarted for each member of a group, all at once
     for _, u in ipairs(us) do fire("TurnStarted", "S_Player_" .. u) end
 end
@@ -372,12 +376,13 @@ test("a downed member's phase: the mod ends its turn, recorded, and the next pha
         world[A1].comps.Health.Hp = 0
         osiv[key("IsDead", B1)] = 1
         burst({ A1, B1, A2, B2 })
+        deathSave(A1, false) -- its turn's death save (window 8: 0.2-0.6 s after the start)
         tick()
         eq(table.concat(ended, ","), A1 .. "," .. B1, "EndTurn for the downed A1, then the dead B1")
         local p = refs("arena_turn_passed")
         eq(#p, 2, "one record each")
-        eq(enc({ p[1].side, p[1].character, p[1].name, p[1].why, p[1].round }), enc({ "A", A1, "Ana", "downed", 2 }),
-            "A1's record")
+        eq(enc({ p[1].side, p[1].character, p[1].name, p[1].why, p[1].round, p[1].death_save }),
+            enc({ "A", A1, "Ana", "downed", 2, "rolled" }), "A1's record")
         eq(enc({ p[2].side, p[2].character, p[2].why }), enc({ "B", B1, "dead" }), "B1's record")
         local r = refs("arena_turn")
         eq(#r, 1, "one phase recorded")
@@ -435,7 +440,9 @@ test("a phase passed whole between two of the other side's: both recorded, the p
         osiv[key("HasActiveStatus", A1, "DOWNED")] = 1 -- Astarion, downed in round 1
         world[A1].comps.Health.Hp = 0
         burst({ A1, A2, B1, A3, B2, B3 })
+        deathSave(A1, false)
         tick()
+        clock = clock + Ar.DEATH_SAVE_WAIT_MS -- the phases take longer than the save's wait
         setTurn(A2, true, true) -- Gale ends
         tick()
         osiv[key("HasActiveStatus", A3, "DOWNED")] = 1 -- Karlach downs Lae'zel, then ends
@@ -464,6 +471,7 @@ test("the rest of a recorded phase passed: still that phase, the next one takes 
         burst({ A1, A2, B1, B2 })
         tick() -- A [A1, A2], phase 1
         setTurn(A1, true, true)
+        clock = clock + Ar.DEATH_SAVE_WAIT_MS -- its turn started long before: no save to wait for
         osiv[key("HasActiveStatus", A2, "DOWNED")] = 1 -- downed in its own phase, before acting
         world[A2].comps.Health.Hp = 0
         tick()
@@ -677,4 +685,85 @@ test("a pass with a member still to act after it writes nothing: that member's t
         eq(#replicated, 0, "no write: A2 is still to act")
         eq(G.is_my_turn(A2), true, "A2 acts")
     end)
+end)
+
+-- Window 8 seed 7 (arena-fight-analysis.md S3): the pass came 0.2-0.6 s BEFORE the turn's death save. A third success
+-- removes DOWNED with 1 HP and the game resets the turn (Status_DOWNED OnRemoveFunctors ResetCombatTurn).
+test("a downed member at its turn start: passed only after its death save; a third success keeps its turn", function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 3)
+        order = { { A1, A2, B1, B2 } }
+        openAll({ A1, A2, B1, B2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+        world[A1].comps.Health.Hp = 0
+        burst({ A1, A2, B1, B2 })
+        tick()
+        eq(#ended, 0, "no pass before its save"); eq(#refs("arena_turn"), 0, "the phase is held, not recorded")
+        -- the save: the third success, DOWNED gone with 1 HP
+        deathSave(A1, true)
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 0
+        world[A1].comps.Health.Hp = 1
+        tick()
+        eq(#ended, 0, "not passed"); eq(#refs("arena_turn_passed"), 0, "no pass record")
+        local r = refs("arena_turn")
+        eq(enc({ r[1].side, members(r[1]) }), enc({ "A", A1 .. "," .. A2 }), "A1 acts in A's phase")
+        eq(Ar.held(A1), false, "A1 acts")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
+
+test("a downed member whose save doesn't come in DEATH_SAVE_WAIT_MS: passed, recorded as 'none in time'", function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 3)
+        order = { { A1, A2, B1, B2 } }
+        openAll({ A1, A2, B1, B2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+        world[A1].comps.Health.Hp = 0
+        burst({ A1, A2, B1, B2 })
+        for _ = 1, math.floor(Ar.DEATH_SAVE_WAIT_MS / Ar.PHASE_EVERY_MS) - 1 do tick() end
+        eq(#ended, 0, "still waiting")
+        tick(); tick()
+        eq(table.concat(ended, ","), A1, "passed after the bound")
+        eq(refs("arena_turn_passed")[1].death_save, "none in time", "said")
+        eq(members(refs("arena_turn")[1]), A2, "A2's phase")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
+end)
+
+test("a member passed, then standing up with its turn reset (a late third success): readmitted to its phase",
+    function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 3)
+        order = { { A1, A2, B1, B2 } }
+        openAll({ A1, A2, B1, B2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+        world[A1].comps.Health.Hp = 0
+        burst({ A1, A2, B1, B2 })
+        deathSave(A1, false) -- a save that doesn't stand them up: passed
+        tick()
+        eq(table.concat(ended, ","), A1, "passed"); eq(G.still_to_act(A1), false, "ended")
+        -- the game then stands A1 up and resets its turn (ResetCombatTurn): active, no end requested
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 0
+        world[A1].comps.Health.Hp = 1
+        setTurn(A1, true, false)
+        tick()
+        local rr = refs("arena_turn_readmitted")
+        eq(#rr, 1, "one record"); eq(enc({ rr[1].side, rr[1].character, rr[1].round }), enc({ "A", A1, 3 }), "A1's")
+        eq(Ar.open(A1), true, "its turn is open again"); eq(Ar.held(A1), false, "A1 acts in A's phase")
+        tick()
+        eq(#refs("arena_turn_readmitted"), 1, "once")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
 end)

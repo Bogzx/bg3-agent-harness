@@ -335,11 +335,46 @@ local function nextPhase(st, round, p)
     return (last and last.round == round and last.group == p.group) and last.phase + 1 or 1
 end
 
+-- A downed member's death save comes with its turn (window 8 seed 7: arena_turn_passed 146.4 s, the save 146.6 s;
+-- 0.2-0.6 s after the pass in every case). A third success removes DOWNED with 1 HP and the game resets the turn
+-- (Status_DOWNED OnRemoveFunctors ResetCombatTurn), so a pass sent first can take that turn away. A downed member is
+-- passed once a roll of its own is in the roll log after its TurnStarted, or DEATH_SAVE_WAIT_MS after that start
+-- (bounded; the pass record says which). Downed later in its turn (its start long past): passed at once.
+Ar.DEATH_SAVE_WAIT_MS = 1500
+
+local function saveSince(u, t0)
+    local L, G = BG3AI.RollLog, BG3AI.Guard
+    local g = G.guid(u) or u
+    for i = #(L and L.ring or {}), 1, -1 do
+        local r = L.ring[i]
+        if r.t < t0 then break end
+        if r.roller and (G.guid(r.roller) or r.roller) == g then return r end
+    end
+    return nil
+end
+
+-- "wait" while the downed member's save may still come this turn; else the save record (or false: none).
+local function deathSave(u)
+    local G = BG3AI.Guard
+    local s = G.turn_start[G.guid(u) or u]
+    if not s then return false end
+    local r = saveSince(u, s.t)
+    if r then return r end
+    if now_ms() - s.t < Ar.DEATH_SAVE_WAIT_MS then return "wait" end
+    return false
+end
+
 local function passCantAct(p, round)
     local G = BG3AI.Guard
-    local passed, n, last = false, 0, nil
+    local passed, n, last, waiting = false, 0, nil, false
     for _, u in ipairs(p.members) do
         local why = cantAct(u)
+        local save
+        if why == "downed" then
+            save = deathSave(u)
+            if save == "wait" then waiting, why = true, nil end
+            if save and save ~= "wait" then why = cantAct(u) end -- the save may have stood them up
+        end
         if why then
             if not passed then
                 Ar.check_end() -- a side all downed or dead: the match is over, nobody's turn to pass
@@ -348,7 +383,10 @@ local function passCantAct(p, round)
             local ok, err = pcall(Osi.EndTurn, u)
             G.end_requested[G.guid(u) or u] = now_ms()
             record("arena_turn_passed", { side = p.side, character = u, name = V.name(u), why = why, round = round,
-                error = (not ok) and tostring(err) or nil })
+                error = (not ok) and tostring(err) or nil,
+                death_save = why == "downed" and (save and "rolled" or "none in time") or nil })
+            Ar.state.passed = Ar.state.passed or {}
+            Ar.state.passed[G.guid(u) or u] = round
             passed, n, last = true, n + 1, u
         end
     end
@@ -362,7 +400,26 @@ local function passCantAct(p, round)
         st.phase = { round = round, group = p.group, side = p.side, phase = nextPhase(st, round, p),
             character = p.character, members = p.members }
     end
-    return passed
+    return passed, waiting
+end
+
+-- A member passed this round that stands up (a third death save success: DOWNED gone, HP > 0) with its turn open
+-- again (the game's ResetCombatTurn): the pass is withdrawn so its phase takes it, one arena_turn_readmitted record.
+local function readmit(round)
+    local G, st = BG3AI.Guard, Ar.state
+    for g, r in pairs(st.passed or {}) do
+        if r ~= round then
+            st.passed[g] = nil
+        elseif not cantAct(g) then
+            local active, req = G.tb_flags(g)
+            if active and not req then
+                st.passed[g] = nil
+                G.end_requested[g], G.end_alone[g], G.end_confirmed[g] = nil, nil, nil
+                record("arena_turn_readmitted", { side = Ar.side_of(g), character = g, name = V.name(g), round = round,
+                    why = "stood up after its turn was passed" })
+            end
+        end
+    end
 end
 
 function Ar.phase_check()
@@ -378,10 +435,16 @@ function Ar.phase_check()
             if outsider(u) then return end
         end
     end
+    local round = st.round or 1
+    readmit(round)
     local p = Ar.phase(gs)
     if not p then return end
-    local round = st.round or 1
-    while p and passCantAct(p, round) do p = Ar.phase() end -- each pass leaves those members' turns not open
+    while p do -- each pass leaves those members' turns not open
+        local passed, waiting = passCantAct(p, round)
+        if waiting then return end -- a downed member's death save may still come: the phase is held, not recorded
+        if not passed then break end
+        p = Ar.phase()
+    end
     if not p or st.ended then return end
     if samePhase(st, round, p) then return end
     local n = nextPhase(st, round, p)
