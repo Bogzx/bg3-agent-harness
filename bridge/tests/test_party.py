@@ -57,6 +57,12 @@ class Pure(unittest.TestCase):
         st = status({"pos": [30, -6, 0]})
         self.assertEqual(party.apart_line(party.apart(st), self.label), "PARTY APART: e2 Lae'zel 31m, 6m below → regroup()")
 
+    def test_a_walk_back_gets_time_for_the_gap(self):
+        # deepseek grove r3: Shadowheart 83 m behind walked 26 m in a flat 30 s, then "the walk back failed"
+        self.assertEqual(party.walk_back_s(12.0), 30.0)
+        self.assertEqual(party.walk_back_s(83.0), 51.5)
+        self.assertEqual(party.walk_back_s(300.0), 60.0)
+
     def test_stragglers(self):
         rows = [{"uuid": P2, "pos": [20, 0, 0]}, {"uuid": P3, "pos": [3, 0, 0]}, {"uuid": "x", "pos": [30, 0, 0], "downed": True}]
         self.assertEqual([u for u, _ in party.stragglers(rows, [0, 0, 0])], [P2])
@@ -213,11 +219,13 @@ class Cohesion(Base):
         self.assertNotIn("behind", out)
         self.assertIn("arrived", out)
 
-    def _trip(self, follower_moves: bool) -> str:
+    def _trip(self, follower_moves: bool, x: float = 30.0, back_path: bool = True) -> str:
         plumbing.SETTLE_S = 10.0
         self.g.result_for = lambda op, a: {"after": {"pos": a.get("pos")}} if op == "act.move_to" else {}
 
         def reach(a):
+            if a.get("char") == P2 and not back_path:
+                return {"reachable": False}
             here = [m for m in self.g.ops("act.move_to") if m[1]["char"] == a.get("char", P1)]
             x = here[-1][1]["pos"][0] if here else 0.0
             dest = a["pos"][0]
@@ -233,19 +241,61 @@ class Cohesion(Base):
             elif follower_moves:  # the walk back works
                 self.g.watch["party"][1]["pos"] = list(a["pos"])
         self.g.on_start = walk
-        return travel_macro.travel_to(x=30.0, y=0.0, z=0.0)
+        return travel_macro.travel_to(x=x, y=0.0, z=0.0)
 
     def test_leader_trip_walks_a_straggler_back(self):
-        out = self._trip(follower_moves=True)
+        out = self._trip(follower_moves=True, x=50.0)
         p2 = [a for _, a in self.g.ops("act.move_to") if a.get("char") == P2]
         self.assertTrue(p2, out)
         self.assertIn("fell behind: walked back", out)
         self.assertIn("arrived", out)
 
     def test_leader_trip_stops_when_a_member_cannot_keep_up(self):
-        out = self._trip(follower_moves=False)
+        out = self._trip(follower_moves=False, x=50.0)
         self.assertIn("can't keep up", out)
         self.assertNotIn("arrived", out)
+
+    def test_the_stop_says_how_the_walk_back_ended_not_a_guess(self):
+        # keep-up-v010 P3: the text guessed "(stuck on a ladder, gap or door?)"; it gives the walk back's own end
+        out = self._trip(follower_moves=False, x=50.0, back_path=False)
+        stop = next(ln for ln in out.splitlines() if ln.startswith("STOPPED"))
+        self.assertNotIn("ladder", stop)
+        self.assertIn("29m behind can't keep up — its walk back: no walkable ground leads further toward it (29m left); route(", stop)
+
+    def test_no_straggler_check_after_the_leg_that_arrives(self):
+        # launch-v1 deepseek act3_gold_max r3: the leg arrived, then "e5 Tav 19m behind can't keep up" stopped the
+        # trip and dropped its queued talk_to
+        out = self._trip(follower_moves=False, x=30.0)
+        self.assertIn("arrived", out)
+        self.assertNotIn("behind", out)
+        self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
+
+    def test_a_member_far_away_at_the_start_is_not_taken_along(self):
+        # bp-live v010 grove probe: Shadowheart unchained ~77 m off; travel_to chained her, her walk back failed and
+        # the trip stopped at once ("e1 Shadowheart 51m behind can't keep up")
+        self.st = status({"pos": [-77, 0, 0], "chained": False})
+        self.g.watch["party"][1]["pos"] = [-77.0, 0.0, 0.0]
+        out = self._trip(follower_moves=False, x=50.0)
+        self.assertIn(f"not with you: {core.H.get(P2)} Lae'zel 77m (unchained, stays there)", out)
+        self.assertIn("arrived", out)
+        self.assertNotIn("behind", out)
+        self.assertEqual(self.chains(), [])
+        self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
+
+    def test_a_chained_member_far_away_at_the_start_is_not_waited_for(self):
+        self.st = status({"pos": [-40, 0, 0]})
+        self.g.watch["party"][1]["pos"] = [-40.0, 0.0, 0.0]
+        out = self._trip(follower_moves=False, x=50.0)
+        self.assertIn(f"not with you: {core.H.get(P2)} Lae'zel 40m (not waited for)", out)
+        self.assertIn("arrived", out)
+        self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
+
+    def test_a_near_unchained_member_is_still_chained(self):
+        self.st = status({"pos": [8, 0, 0], "chained": False})
+        out = self._trip(follower_moves=True, x=50.0)
+        self.assertIn("chained to follow", out)
+        self.assertNotIn("not with you", out)
+        self.assertEqual(self.chains()[:1], [P2])
 
     def test_camp_walk_does_not_wait_for_companions_at_their_tents(self):
         # Logs pass 4 #5: every Campsite walk stopped "e4 Karlach 37m … can't keep up" (companions idle at camp)
@@ -268,7 +318,7 @@ class Cohesion(Base):
                 self.g.watch["party"][1]["pos"][0] = min(30.0, 5.0 + 8.0 * (time.monotonic() - t_arr[0]))
             return r
         self.g.rpc = rpc
-        out = self._trip(follower_moves=False)
+        out = self._trip(follower_moves=False, x=50.0)
         self.assertNotIn("can't keep up", out)
         self.assertIn("caught up", out)
         self.assertEqual([a for _, a in self.g.ops("act.move_to") if a.get("char") == P2], [])
