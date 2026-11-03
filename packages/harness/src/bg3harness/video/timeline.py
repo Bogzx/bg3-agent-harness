@@ -228,7 +228,8 @@ def _first_line(text: str) -> str:
 WALK_TOOLS = frozenset({"move_to", "walk_toward", "travel_to", "jump_to", "regroup", "route"})
 _WALK_START = re.compile(r"^heading |: started\b")
 _WALK_OUTCOME = re.compile(
-    r"^(?:still waiting for |stopped waiting|arrived\b|(?:move_to|walk_toward|travel_to|jump_to): )"
+    r"^(?:still waiting for |stopped waiting|arrived\b|(?:move_to|walk_toward|travel_to|jump_to): "
+    r"|(?:queue \S+ [^:\n]+: )?STOPPED\b)"
 )
 
 
@@ -236,7 +237,8 @@ def result_line(tool: str, text: str) -> str:
     """The panel's line for a result: its first line, or for a walk whose first line is its start, the walk's
     outcome: the first line the bridge reports as failed (triage, outside the EVENTS blocks: a companion's failure
     isn't this walk's), else the outcome line (the job's own `walk_toward: done …`, the trip's `arrived …`, a wait
-    the walk budget or a prompt ended); the first line when there is none."""
+    the walk budget or a prompt ended, a trip's `STOPPED: …` or its queue's `queue e4 Claude: STOPPED: …`); the
+    first line when there is none."""
     first = _first_line(text)
     if tool not in WALK_TOOLS or not _WALK_START.search(first):
         return first
