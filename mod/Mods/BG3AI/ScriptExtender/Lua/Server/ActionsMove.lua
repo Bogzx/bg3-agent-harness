@@ -143,8 +143,7 @@ local WALK_OSI = {
         if c.dir and c.dir ~= dir then
             RPC.push("loop_stopped", { uuid = job.char, item = item, reversal = true, job = job.id })
             interrupt(job, "stuck: the walk took ladder " .. item .. " " .. c.dir .. " and then back " .. dir
-                .. " (the game's route loops through it); climb it yourself first (interact " .. item
-                .. "), then send this again from that floor, or route")
+                .. " (the game's route loops through it); interact on " .. item .. " climbs it")
             return
         end
         c.dir, c.y = dir, here[2]
@@ -810,8 +809,7 @@ reg("move_to", function(args)
         for _, a in ipairs(areas) do
             if in_area(dest, a) then
                 G.refuse("the destination is inside " .. a.area .. " you were warned about (a second offence"
-                    .. " there can start a fight): talk to its guard first (a pass, a check), or trespass=true to"
-                    .. " walk in anyway")
+                    .. " there can start a fight; trespass=true walks in anyway)")
             end
             plates[#plates + 1] = a
         end
@@ -828,8 +826,7 @@ reg("move_to", function(args)
             areas = through
             if via == nil and #through > 0 then
                 G.refuse("the way there crosses " .. area_names(through) .. " you were warned about and no way"
-                    .. " round it was found: go another way, talk to its guard first, or trespass=true to walk"
-                    .. " through anyway")
+                    .. " round it was found (trespass=true walks through anyway)")
             end
         end
     end

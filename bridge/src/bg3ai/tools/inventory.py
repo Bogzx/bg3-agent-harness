@@ -226,7 +226,7 @@ def manage_inventory(op: str, item: str, who: str | None = None, to: str | None 
     if o == "give":
         targs = {"item": plumbing._uuid(item), "to": plumbing._uuid(to) if to else None}
         out = plumbing._act("manage_inventory", "act.transfer", targs)
-        if "unequip it first" in out.split("\n", 1)[0]:
+        if "it is equipped" in out.split("\n", 1)[0]:
             # S028 15:51 (Spellcrux Amulet, Karlach → Gale): a player drags a worn item onto another portrait;
             # here the refusal cost a 3-step batch (unequip, give, equip). Take it off its wearer, then give.
             row = next((it for it in (core.game.try_rpc("state.inventory", {}) or {}).get("items") or []

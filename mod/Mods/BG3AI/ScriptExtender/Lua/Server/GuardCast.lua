@@ -185,7 +185,7 @@ function G.jump_floor_ok(pos)
     end
     if #hs == 0 then
         G.refuse(string.format("no ground at all under (%.1f,%.1f,%.1f) (the void): a jump there froze the game"
-            .. " twice; pick a landing on a floor you can see (get_layout / route)", pos[1], pos[2], pos[3]))
+            .. " twice", pos[1], pos[2], pos[3]))
     elseif not near then
         G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height;"
             .. " give the floor's own y (get_layout / route)", pos[1], pos[2], pos[3], G.JUMP_FLOOR_SLACK_M))
@@ -375,7 +375,7 @@ function G.blast_risk(char, st, flags, spell, target, pos)
     else
         ring = ring .. (hostile > 0 and (hostile .. " hostile only") or "nobody")
     end
-    G.refuse(head .. "; " .. ring .. ": aim elsewhere or move first, or force=true to cast anyway")
+    G.refuse(head .. "; " .. ring .. " (force=true casts anyway)")
 end
 
 -- Extra Attack (live stats, 2026-10-10): after a weapon attack the ExtraAttack passive applies EXTRA_ATTACK,
@@ -410,7 +410,7 @@ G.ACTING_STATUSES = { HASTE_LETHARGY = true }
 -- by 08:30:34 with no end order; S088 06:19:53): orders sent before that worked (S072 two attacks, S089 Dash). S091
 -- showed `DISABLED e5 Claude: Lethargic (1 turn)` beside `Move 9/9m` and the agent planned to walk off the Orb of
 -- Negation's platform.
-G.LETHARGY_EFFECT = "cannot move; its turn passes once the rest of its turn group has ended (act with it first)"
+G.LETHARGY_EFFECT = "cannot move; its turn passes once the rest of its turn group has ended"
 -- A FEAR status (FEARED from Orin's Death Growl: StatusType FEAR, SG_Fleeing, saved with FearStatusSavingCheck() at the
 -- turn start). S065 11:51/11:53: end_turn said "now e4's turn"; the game moved Claude 2 m / 5 m away by itself and his
 -- move_to was refused "not this character's turn" (round 2: his turn ended 6 s in; round 3: still his on the turn
@@ -581,7 +581,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         shown = shown and shown.name or spell
         if #free > 0 then
             -- by shown name, the usable ones first (combat_turn's quick pick takes the first)
-            G.refuse(shown .. " casts nothing by itself: use_ability which=<one of " .. G.variant_list(char, ids) .. ">"
+            G.refuse(shown .. " casts nothing by itself: its variants (which=) are " .. G.variant_list(char, ids)
                 .. (spell_flags(st).CallAlliesSpell and ", x,y,z = the ground where they appear" or "")
                 .. (from and " (from the " .. from .. ")" or ""))
         elseif #ids > 0 then
@@ -608,7 +608,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     end
     local blk = G.in_combat(char) and G.blocking_status(char)
     if blk and blk.type == "INCAPACITATED" then
-        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn): end its turn"
+        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn)"
             .. G.disabling_fix(char, blk.name))
     end
 
@@ -649,7 +649,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         -- (1.5 m warhammer + 0.5 + 0.49 for Claude vs an imp = 2.49 m).
         local reach = range and (melee and G.melee_reach(char, target, range) or range + 0.5)
         if reach and not G.same(char, target) and d > reach then
-            G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))
+            G.refuse(string.format("target is out of range (%.1f m, range %.1f m)", d, range))
         end
         if st_type ~= "Shout" and not G.same(char, target) and not G.los_ok(char, target, d) then
             G.refuse("no line of sight to target")
@@ -679,7 +679,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         -- Projectile_Jump has TargetRadius 4.5 (live), below a strong
         -- character's jump; jump_max above is its cap instead.
         if range and p and spell ~= G.JUMP_SPELL and U.dist(p, pos) > range + 0.5 then
-            G.refuse(string.format("target point is out of range (%.1f m, range %.1f m): move closer first",
+            G.refuse(string.format("target point is out of range (%.1f m, range %.1f m)",
                 U.dist(p, pos), range))
         end
         if not force and spell ~= G.JUMP_SPELL then G.blast_risk(char, st, flags, spell, nil, pos) end

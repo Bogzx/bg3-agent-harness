@@ -114,12 +114,13 @@ function A.cast_failed_why(char, target, spell, job)
     local why = eng and ("the game refused the cast: " .. eng) or "the game refused the cast (no reason given)"
     -- S059 08:57-08:59: Dimension Door refused x3 with "the shot's path is blocked". It is a two-step teleport:
     -- the one who goes (the caster or an ally beside them), then the spot they land on.
+    local shown = spell and G.spell_facts(spell)
+    shown = shown and shown.name or tostring(spell)
     if A.two_step_spell(spell) and not A.revive_spell(spell) then
-        return why .. ": " .. tostring(spell) .. " is a two-step teleport (who goes, then the landing spot"
-            .. (A.last_place_why and (", which could not be given: " .. A.last_place_why) or "") .. "). The landing"
-            .. " must be a spot the caster can SEE and stand on: a floor above you (behind its own ceiling/ledge) or"
-            .. " behind a wall is out of sight; stand where you can see the landing (e.g. at the foot of an open"
-            .. " drop, or on the far side of a gap), or climb/walk (route)"
+        return why .. ": " .. shown .. " is a two-step teleport (who goes, then the landing spot"
+            .. (A.last_place_why and (", which could not be given: " .. A.last_place_why) or "") .. "). The game"
+            .. " takes only a landing the caster can see and stand on: a floor above the caster (behind its own"
+            .. " ceiling or ledge) or a spot behind a wall is out of its sight"
     end
     if not target or G.same(char, target) then return why end
     -- S043/S057/S058: Revivify 0 of 14 live. The game data makes it a two-step cast (Teleportation_Revivify:
@@ -127,11 +128,11 @@ function A.cast_failed_why(char, target, spell, job)
     -- UseSpell can't express. Party members CAN be revived: say so, and what the cast lacked.
     if A.two_step_spell(spell) then
         local playable = G.b(G.q("IsTagged", target, "PLAYABLE_25bf5042-5bf6-4360-8df8-ab107ccb0d37"))
-        return why .. ": " .. tostring(spell) .. " is a two-step cast (the body, then the spot they stand up on)"
+        return why .. ": " .. shown .. " is a two-step cast (the body, then the spot they stand up on)"
             .. (A.last_place_why and (" and the spot could not be given (" .. A.last_place_why .. ")") or "")
             .. (playable and "" or "; this one is not a party member: only party members come back")
-            .. ". Read a Scroll of Revivify by name (use_ability ability=\"Scroll of Revivify\" target=<the body>:"
-            .. " it clicks the body, then the ground beside it), or Withers at camp"
+            .. "; a Scroll of Revivify through use_ability (ability=\"Scroll of Revivify\", target=<the body>) gives"
+            .. " both picks (the body, then the ground beside it); Withers revives at camp"
     end
     local ok, txt = pcall(function()
         if G.is_dead(target) then return "the target was already dead when it fired" end
@@ -308,7 +309,7 @@ function A.loop_watch(char, item)
     RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
     if job and job.status == "running" then
         interrupt(job, "stuck: the character kept using the same item (" .. s.n
-            .. " times, e.g. re-climbing a ladder); try another route or a jump")
+            .. " times, e.g. re-climbing a ladder)")
     else
         pcall(G.osi, "PurgeOsirisQueue", char)
     end
@@ -737,7 +738,7 @@ function A.tb_gate(kind, args)
     local char = args.char and G.guid(args.char) or G.host()
     if not char or G.in_combat(char) then return end
     if G.b(G.q("IsInForceTurnBasedMode", char)) then
-        G.refuse(A.TB_REFUSAL .. " (the game switched it on): a walk gets only the turn's movement; leave it first")
+        G.refuse(A.TB_REFUSAL .. " (the game switched it on): a walk gets only the turn's movement")
     end
 end
 

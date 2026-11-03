@@ -14,11 +14,33 @@
 -- logged once per spell and term, never refused.
 
 local G = BG3AI.Guard
+local U = BG3AI.Util
 
 G.rules_unread = G.rules_unread or {} -- "spell|term" -> true: logged once
 G.rules_last = G.rules_last or {} -- caster guid -> {spell, terms}: the unread terms of its last rule check
 
 local function lower(s) return tostring(s):lower():gsub("_", " ") end
+
+-- A status, a status group or a passive as the game names it: the stats DisplayName when it reads ("Flanked"),
+-- else the id in words ("FLANKED" -> "Flanked", "SG_Incapacitated" -> "Incapacitated").
+local function game_name(id)
+    id = tostring(id)
+    if id:sub(1, 3) ~= "SG_" then
+        local ok, n = pcall(function() return U.loca(Ext.Stats.Get(id).DisplayName) end)
+        if ok and type(n) == "string" and n ~= "" then return n end
+    end
+    local w = lower(id:gsub("^SG_", ""))
+    return (w:gsub("^%l", string.upper))
+end
+-- "the caster has the Flanked status" / "has an Incapacitated status" (a group): a status name is not a verb's
+-- object ("the caster has flanked", window 8).
+local function status_words(id)
+    local n = game_name(id)
+    if tostring(id):sub(1, 3) == "SG_" then
+        return "a status of the " .. n .. " kind", "no status of the " .. n .. " kind"
+    end
+    return "the " .. n .. " status", "the " .. n .. " status"
+end
 
 ------------------------------------------------------------------------
 -- The condition language: and / or / not, parentheses, Name(args) with 'string', number or context.X arguments.
@@ -237,10 +259,11 @@ local function term(node, ctx)
     if name == "HasStatus" and str1() and #a <= 2 then
         local u = who(2)
         if not u then return nil end
-        local s = lower(str1():gsub("^SG_", ""))
+        local yes_w, no_w = status_words(str1())
         -- a Shout's target is its caster (window 8 live: "Hide can't be used now: the target has flanked")
         local w = (u == ctx.source or u ~= ctx.target) and "the caster" or "the target"
-        return G.rule_has_status(u, str1()), w .. " has " .. s, w .. " doesn't have " .. s
+        local neg = str1():sub(1, 3) == "SG_" and (w .. " has " .. no_w) or (w .. " doesn't have " .. no_w)
+        return G.rule_has_status(u, str1()), w .. " has " .. yes_w, neg
     end
     local function num(i) return a[i] and a[i].k == "id" and tonumber(a[i].v) or nil end
     local function label(u) return (u == ctx.source or u ~= ctx.target) and "the caster" or "the target" end
@@ -255,14 +278,15 @@ local function term(node, ctx)
     if name == "HasPassive" and str1() and #a <= 2 then
         local u = who(2)
         if not u then return nil end
-        return yes(G.q("HasPassive", u, str1())), label(u) .. " has " .. lower(str1()),
-            label(u) .. " doesn't have " .. lower(str1())
+        return yes(G.q("HasPassive", u, str1())), label(u) .. " has the passive " .. game_name(str1()),
+            label(u) .. " doesn't have the passive " .. game_name(str1())
     end
     if name == "IsImmuneToStatus" and str1() and #a <= 2 then
         local u = who(2)
         if not u then return nil end
-        return G.immune_to(u, str1()), label(u) .. " is immune to " .. lower(str1():gsub("^SG_", "")),
-            label(u) .. " is not immune to " .. lower(str1():gsub("^SG_", ""))
+        local sw = str1():sub(1, 3) == "SG_" and ("statuses of the " .. game_name(str1()) .. " kind")
+            or ("the " .. game_name(str1()) .. " status")
+        return G.immune_to(u, str1()), label(u) .. " is immune to " .. sw, label(u) .. " is not immune to " .. sw
     end
     if name == "IsProficientWithEquippedWeapon" then
         local u = (a[1] and a[1].v == "context.Target") and ctx.target or ctx.source
