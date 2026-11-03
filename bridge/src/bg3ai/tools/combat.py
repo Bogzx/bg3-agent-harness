@@ -631,16 +631,23 @@ FLEE_FLAGS = {"EnemyTooClose": "Enemy too close!", "Region": "fleeing isn't allo
 
 
 def _flee_block(st: dict) -> str:
-    """The Flee button's tooltip warning: 'Enemy too close! (10.6/27 m)'. The HUD's FleeBlockCause and FleeDistance
-    when set, else the game's FleeCapability flags and distances (window 5: the HUD's fields were empty, -1/-1)."""
-    flags = [f for f in st.get("flags") or [] if isinstance(f, str)]
-    cause = str(st.get("cause") or "; ".join(FLEE_FLAGS.get(f, f) for f in flags) or "the game gives no reason").strip()
+    """The Flee button's tooltip warning: 'Enemy too close! (2.3/27 m)'. The HUD's FleeBlockCause and FleeDistance
+    when set, else the game's FleeCapability flags in words, the distance (0.1 m) after the enemy one (window 5:
+    'Enemy too close! (2.3/27 m); fleeing isn't allowed in this area')."""
     v, mx = st.get("value"), st.get("max")
     if not (isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0):
         v, mx = st.get("at"), st.get("need")
-    if isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0:
-        cause += f" ({v:.1f}/{mx:g} m)"
-    return cause
+    dist = (f" ({round(v, 1):g}/{round(mx, 1):g} m)"
+            if isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0 else "")
+    if st.get("cause"):
+        return str(st["cause"]).strip() + dist
+    flags = [f for f in st.get("flags") or [] if isinstance(f, str)]
+    parts = [FLEE_FLAGS.get(f, f) + (dist if f == "EnemyTooClose" else "") for f in flags]
+    if not parts:
+        return "the game gives no reason" + dist
+    if "EnemyTooClose" not in flags:
+        parts[-1] += dist
+    return "; ".join(parts)
 
 
 def _box_shows(rpc) -> bool:
