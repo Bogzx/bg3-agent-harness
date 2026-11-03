@@ -287,6 +287,7 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "result": "A",
         "reason": "wipe",
         "forfeit": None,
+        "fault": None,
         "rounds": 2,
         "hp_left": {"A": 0.75, "B": 0},
         "turns": {"A": 2, "B": 1},
@@ -390,15 +391,16 @@ INVALID = {
     "past_round_cap": {"rounds": 21},
     "abort": {"winner": None, "reason": "abort", "hp": (0.5, 0.5)},
     "fault": {"winner": None, "reason": "fault", "hp": (0.5, 0.5)},
+    "client_fault": {"winner": None, "reason": "client_fault", "failed": "B", "cause": "api_error", "hp": (0.5, 0.5)},
 }
 INCONSISTENT = {
     "wipe with the loser standing": {"hp": (0.5, 0.1)},
     "wipe without a winner": {"winner": None},
     "a round cap with a winner": {"winner": "A", "reason": "round_cap", "hp": (0.5, 0.2)},
     "a wall cap with a winner": {"winner": "B", "reason": "wall_cap", "hp": (0.2, 0.5)},
-    "a forfeit without a side": {"winner": "B", "reason": "forfeit", "cause": "client_fault"},
+    "a forfeit without a side": {"winner": "B", "reason": "forfeit", "cause": "client_exit"},
     "a forfeit without a cause": {"winner": "B", "reason": "forfeit", "forfeit": "A"},
-    "a forfeit won by the forfeiter": {"winner": "A", "reason": "forfeit", "forfeit": "A", "cause": "client_fault"},
+    "a forfeit won by the forfeiter": {"winner": "A", "reason": "forfeit", "forfeit": "A", "cause": "client_exit"},
     "a forced-turns forfeit with no forced turns": {
         "winner": "B",
         "reason": "forfeit",
@@ -510,13 +512,39 @@ def test_the_other_sides_turns_do_not_break_a_streak_but_a_played_turn_does():
 def test_a_match_that_goes_on_past_a_forfeit_contradicts_itself():
     g = arena.grade(match(turns=SIX, forced=(0, 2, 4), hp=(0.0, 0.5), winner="B"), ARENA)
     assert g["invalid_reason"] == "inconsistent_end"
-    other = {"winner": "A", "reason": "forfeit", "forfeit": "B", "cause": "client_fault", "hp": (1.0, 1.0)}
+    other = {"winner": "A", "reason": "forfeit", "forfeit": "B", "cause": "client_exit", "hp": (1.0, 1.0)}
     assert arena.grade(match(turns=SIX, forced=(0, 2, 4), **other), ARENA)["invalid_reason"] == "inconsistent_end"
 
 
-def test_a_client_fault_forfeit_needs_no_forced_turns():
-    g = arena.grade(match(winner="A", reason="forfeit", forfeit="B", cause="client_fault", hp=(0.6, 0.9)), ARENA)
-    assert (g["valid"], g["result"], g["forfeit"]) == (True, "A", {"side": "B", "cause": "client_fault"})
+def test_a_client_exit_forfeit_needs_no_forced_turns():
+    g = arena.grade(match(winner="A", reason="forfeit", forfeit="B", cause="client_exit", hp=(0.6, 0.9)), ARENA)
+    assert (g["valid"], g["result"], g["forfeit"]) == (True, "A", {"side": "B", "cause": "client_exit"})
+
+
+def test_a_client_fault_is_invalid_no_forfeit_and_names_the_failed_side():
+    """Owner D459 (fairness audit S1-1): a side's client failing past its resume (an API error, our MCP server, a
+    hang) is no result: invalid, not a forfeit loss. A forfeit with the old cause client_fault contradicts itself."""
+    fault = {"winner": None, "reason": "client_fault", "failed": "B", "cause": "mcp_failed", "hp": (0.6, 0.9)}
+    g = arena.grade(match(**fault), ARENA)
+    assert (g["valid"], g["invalid_reason"], g["result"], g["forfeit"]) == (False, "client_fault", None, None)
+    assert g["fault"] == {"side": "B", "cause": "mcp_failed"}
+    old = arena.grade(match(winner="A", reason="forfeit", forfeit="B", cause="client_fault", hp=(0.6, 0.9)), ARENA)
+    assert old["invalid_reason"] == "inconsistent_end"
+
+
+def test_failures_count_each_models_own_client_faults_over_all_its_matches():
+    ok = {"valid": True, "fault": None}
+    ms = [
+        {**ok, "sides": {"A": "x", "B": "y"}},
+        {"valid": False, "fault": {"side": "B", "cause": "api_error"}, "sides": {"A": "x", "B": "y"}},
+        {"valid": False, "fault": {"side": "A", "cause": "api_error"}, "sides": {"A": "y", "B": "x"}},
+        {"valid": False, "fault": {"side": "B", "cause": "agent_hang"}, "sides": {"A": "x", "B": "y"}},
+        {"valid": False, "fault": None, "sides": {"A": "y", "B": "y"}},  # the game's fault, y against itself
+    ]
+    assert arena.failures(ms) == [
+        {"player": "x", "n_matches": 4, "client_faults": 0, "causes": {}, "rate": 0.0},
+        {"player": "y", "n_matches": 5, "client_faults": 3, "causes": {"api_error": 2, "agent_hang": 1}, "rate": 0.6},
+    ]
 
 
 def test_a_forced_turn_must_name_the_turn_in_progress():

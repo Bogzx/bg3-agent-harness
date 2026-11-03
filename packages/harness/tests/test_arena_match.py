@@ -748,29 +748,41 @@ def test_a_summons_phase_is_a_turn_of_its_side_capped_and_counted_toward_forfeit
     assert (g["valid"], g["result"], g["forced"]) == (True, "A", {"A": 0, "B": 3})
 
 
-def test_a_client_fault_is_resumed_once_then_forfeits(tmp_path):
+@pytest.mark.parametrize(
+    ("reason", "code", "cause"),
+    [("api_error", 1, "api_error"), ("mcp_failed", 1, "mcp_failed"), ("agent_hang", -15, "agent_hang"),
+     ("exited", 1, "crash")],
+)  # fmt: skip
+def test_a_client_fault_is_resumed_once_then_the_match_is_invalid(tmp_path, reason, code, cause):
+    """Owner D459 (fairness audit S1-1): a side's provider ("overloaded" twice), our bridge/MCP server or a hang
+    failing again after its resume is not the model's play: the match is invalid (client_fault, rerun), no winner,
+    arena_end naming the side and the cause. It was a forfeit loss."""
     faults = []
 
     def flaky(game: Game, side: str, run: Run) -> None:
         if len(faults) < 2:
             faults.append(run.conversation)
-            run.end("mcp_failed", 1)
+            run.end(reason, code)
             return
         passer(game, side, run)
 
     _model, game, clock, agents, spec = setup({"A": passer, "B": flaky})
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.end is not None
-    assert (out.end["winner"], out.end["reason"], out.end["forfeit"], out.end["cause"]) == (
-        "A",
-        "forfeit",
-        "B",
-        "client_fault",
-    )
+    assert (out.end["winner"], out.end["reason"], out.end.get("forfeit")) == (None, "client_fault", None)
+    [end] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_end"]
+    assert (end["failed"], end["cause"]) == ("B", cause)
+    assert (out.end["failed"], out.end["cause"]) == ("B", cause)  # arena.json's `end` (live.play writes out.end)
+    assert out.invalid is not None and out.invalid.startswith("client_fault: side B's agent")
     assert agents.started[2:] == [("B", "The fight is on.", "conv-B", "-r1")]  # one resume, same conversation
-    assert [e.reason for e in out.exits["B"]] == ["mcp_failed", "mcp_failed"]
+    assert [e.reason for e in out.exits["B"]] == [reason, reason]
     g = grade(tmp_path)
-    assert (g["valid"], g["result"], g["forfeit"]) == (True, "A", {"side": "B", "cause": "client_fault"})
+    assert (g["valid"], g["invalid_reason"], g["result"], g["fault"]) == (
+        False,
+        "client_fault",
+        None,
+        {"side": "B", "cause": cause},
+    )
 
 
 def test_an_agent_that_exits_mid_fight_is_resumed_up_to_three_times(tmp_path):
@@ -780,8 +792,15 @@ def test_an_agent_that_exits_mid_fight_is_resumed_up_to_three_times(tmp_path):
     _model, game, clock, agents, spec = setup({"A": quitter, "B": passer})
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert [t for (s, _p, _c, t) in agents.started if s == "A"] == ["", "-r1", "-r2", "-r3"]
-    assert out.end is not None and (out.end["forfeit"], out.end["cause"]) == ("A", "client_fault")
+    assert out.end is not None and (out.end["forfeit"], out.end["cause"]) == ("A", "client_exit")
     assert len(out.exits["A"]) == 4
+    g = grade(tmp_path)
+    assert (g["valid"], g["result"], g["forfeit"], g["fault"]) == (
+        True,
+        "B",
+        {"side": "A", "cause": "client_exit"},
+        None,
+    )
 
 
 def test_a_game_crash_is_an_invalid_match(tmp_path):

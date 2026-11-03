@@ -23,11 +23,14 @@ hp_left_A, hp_left_B, forfeit?, cause?}`. A turn is a phase: one same-side run o
 off its side only when it names a character of the other team; a name on neither team (a summon) counts on the
 phase's side. A side wins when every character of the other side is down or dead (`wipe`) or when the other side forfeits
 (`forfeit`: three of its turns in a row forced to an end at the per-turn cap, cause `forced_turns`, which the grader
-checks against the arena_turn_forced events; or its client's fault after one resume, cause `client_fault`). The round
+checks against the arena_turn_forced events; or its model ending its session again after three resumes, cause
+`client_exit`). The round
 cap and the wall cap are draws (`round_cap`, `wall_cap`; the HP fractions are recorded, never a tiebreak). A match is
 invalid, rerun and never rated when its run record is (results.validity: runner error, harness failure, operator, off
 route, unseeded), when a side is the harness's scripted no-model client (`scripted`: a live check, not a model's
-play), when the harness ended it (`abort`), the game failed (`fault`: a crash or hang) or the match reached its money
+play), when the harness ended it (`abort`), the game failed (`fault`: a crash or hang), a side's client failed again
+after its resume (`client_fault`: an API or provider error, our bg3 MCP server, a hang or a crash; `failed` names the
+side, `cause` the failure; owner D459: the model's infrastructure, not its play) or the match reached its money
 cap (`over_budget`: no winner), or when the facts
 don't match the arena or contradict themselves (INVALID). With the match's rolls.jsonl rows, `luck` is each side's
 stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_start's `uuids`).
@@ -40,6 +43,8 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
   its Wilson interval, n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row).
 - `side_a`: side A's win rate over every valid match (a model against itself too) with a bootstrap interval over
   pairings: an interval that excludes 0.5 says the arena favours a side.
+- `failures`: per model, over every graded match it played a side of (valid or not), the matches its own client
+  failed (`client_fault` with `failed` = its side): n_matches, client_faults, rate and the causes counted.
 - `models`: per model its matches and points over complete pairings; a model in a rated pair has a Bradley-Terry
   strength fit over the rated pairs' pairings (a draw = half a win to each; one virtual draw against a fixed
   reference player keeps an undefeated model finite) with a percentile bootstrap interval over those pairings
@@ -81,10 +86,11 @@ KEYS = {
 }  # fmt: skip
 PAIR_KEYS = {"class", "template", "race", "stats", "names", "kit"}  # a mirror pair (class: informational)
 SHA1_LEN = 40
-END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "over_budget")
+END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "client_fault", "over_budget")
 CAP_REASONS = ("round_cap", "wall_cap")  # draws
-FAULT_REASONS = ("abort", "fault", "over_budget")  # the harness ended it, the game failed, the money ran out: invalid
-FORFEIT_CAUSES = ("forced_turns", "client_fault")
+# the harness ended it, the game failed, a side's client failed past its resume, the money ran out: invalid
+FAULT_REASONS = ("abort", "fault", "client_fault", "over_budget")
+FORFEIT_CAUSES = ("forced_turns", "client_exit")
 INVALID = (
     "no_start", "wrong_arena", "scripted", "unseeded", "off_side_turn", "inconsistent_turns", "no_end",
     "past_round_cap", "inconsistent_end",
@@ -432,8 +438,9 @@ def grade(
 ) -> dict:
     """One match from its facts records (facts.check'd), its run record when given (results.validity with the
     arena's seed) and its rolls.jsonl rows when given: {arena, valid, invalid_reason, sides {A, B: player}, result
-    (A, B, draw; None when invalid), reason, forfeit {side, cause} or None, rounds, hp_left {A, B}, turns {A, B},
-    forced {A, B}, luck (None without rolls or arena_start uuids)}."""
+    (A, B, draw; None when invalid), reason, forfeit {side, cause} or None, fault {side, cause} (a client_fault end:
+    the side whose client failed) or None, rounds, hp_left {A, B}, turns {A, B}, forced {A, B}, luck (None without
+    rolls or arena_start uuids)}."""
     records = list(records)
     valid, why = validity(dict(record), arena["seed"]) if record is not None else (True, None)
     if valid:
@@ -453,6 +460,9 @@ def grade(
         "result": (end["winner"] or "draw") if ok else None,
         "reason": end.get("reason"),
         "forfeit": {"side": end["forfeit"], "cause": end["cause"]} if ok and end["reason"] == "forfeit" else None,
+        "fault": {"side": end.get("failed"), "cause": end.get("cause")}
+        if end.get("reason") == "client_fault"
+        else None,
         "rounds": end.get("rounds"),
         "hp_left": {s: end.get(f"hp_left_{s}") for s in SIDES},
         "turns": {s: sum(1 for turn in turns if turn["side"] == s) for s in SIDES},
@@ -578,9 +588,11 @@ def results(
     b: int = 2000,
     alpha: float = 0.05,
     min_pairings: int = MIN_PAIRINGS,
+    attempts: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict:
     """Matches (grade's dicts, each with its `pairing` id) -> {seed, b, alpha, min_pairings, counts, pairs, side_a,
-    models}: the v1 table (module docstring). The bootstraps (side A's rate, then the ratings) draw from one
+    failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
+    too) for `failures`; without it, `matches`. The bootstraps (side A's rate, then the ratings) draw from one
     random.Random(seed)."""
     matches = list(matches)
     complete, counts = pairings(matches)
@@ -631,5 +643,25 @@ def results(
             {"a": x, "b": y, **{k: v for k, v in row.items() if k != "ids"}} for (x, y), row in sorted(rows.items())
         ],
         "side_a": side_a,
+        "failures": failures(matches if attempts is None else attempts),
         "models": models,
     }
+
+
+def failures(matches: Iterable[Mapping[str, Any]]) -> list[dict]:
+    """Per model over every graded match it played a side of (valid or not, a match against itself once): {player,
+    n_matches, client_faults (matches invalid because its own client failed: grade's `fault` on its side), rate,
+    causes {cause: n}}, by player."""
+    per: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        fault = m.get("fault") or {}
+        for p in {m["sides"][s] for s in SIDES}:
+            row = per.setdefault(p, {"player": p, "n_matches": 0, "client_faults": 0, "causes": {}})
+            row["n_matches"] += 1
+            if fault and m["sides"].get(fault.get("side")) == p:
+                row["client_faults"] += 1
+                cause = str(fault.get("cause"))
+                row["causes"][cause] = row["causes"].get(cause, 0) + 1
+    for row in per.values():
+        row["rate"] = round(row["client_faults"] / row["n_matches"], 4)
+    return [per[p] for p in sorted(per)]

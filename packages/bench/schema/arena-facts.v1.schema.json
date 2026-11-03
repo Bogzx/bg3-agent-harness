@@ -251,7 +251,7 @@
         }
       },
       "then": {
-        "description": "The match ended: once, at a turn boundary. wipe: every character of the loser is down or dead; forfeit: the side in `forfeit` lost (cause forced_turns: three of its turns in a row forced to an end; client_fault: its client failed again after one resume); round_cap, wall_cap: a draw (winner null, HP recorded, never a tiebreak); abort: the harness ended it; fault: the game crashed or hung; over_budget: both sides' cost reached the match's max_cost (all three invalid, winner null).",
+        "description": "The match ended: once, at a turn boundary. wipe: every character of the loser is down or dead; forfeit: the side in `forfeit` lost (cause forced_turns: three of its turns in a row forced to an end; client_exit: its model ended its session again after three resumes); round_cap, wall_cap: a draw (winner null, HP recorded, never a tiebreak); abort: the harness ended it; fault: the game crashed or hung; client_fault: the client of the side in `failed` failed again after one resume (an API or provider error, the bg3 MCP server, a hang, a crash: its infrastructure, not its play; `cause` names it); over_budget: both sides' cost reached the match's max_cost (all four invalid, winner null).",
         "required": [
           "winner",
           "rounds",
@@ -291,6 +291,7 @@
               "wall_cap",
               "abort",
               "fault",
+              "client_fault",
               "over_budget"
             ]
           },
@@ -298,12 +299,14 @@
             "$ref": "#/$defs/side",
             "description": "the side that forfeited (reason forfeit)"
           },
+          "failed": {
+            "$ref": "#/$defs/side",
+            "description": "the side whose client failed (reason client_fault)"
+          },
           "cause": {
-            "enum": [
-              "forced_turns",
-              "client_fault"
-            ],
-            "description": "why it forfeited (reason forfeit)"
+            "type": "string",
+            "minLength": 1,
+            "description": "why it forfeited (reason forfeit: forced_turns or client_exit) or why the client failed (reason client_fault: api_error, mcp_failed, agent_hang, killed, crash, ...)"
           },
           "detail": {
             "type": "string",
@@ -353,7 +356,15 @@
               "required": [
                 "forfeit",
                 "cause"
-              ]
+              ],
+              "properties": {
+                "cause": {
+                  "enum": [
+                    "forced_turns",
+                    "client_exit"
+                  ]
+                }
+              }
             }
           },
           {
@@ -368,6 +379,26 @@
               }
             },
             "then": {
+              "properties": {
+                "winner": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reason": {
+                  "const": "client_fault"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "failed",
+                "cause"
+              ],
               "properties": {
                 "winner": {
                   "type": "null"

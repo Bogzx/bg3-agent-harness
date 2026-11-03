@@ -31,17 +31,21 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    - the mod's `arena_combat_ended` (the arena's combat ended without a wipe): `fault` (invalid, rerun);
    - a turn of round round_cap + 1 (a mod that doesn't cap: a draw, `rounds` = round_cap) or the wall cap (a draw);
    - a forfeit: a side whose own turns were forced to an end FORFEIT_TURNS times in a row (`forced_turns`), or
-     whose agent failed again after FAULT_RESUMES resume or exited mid-fight more than EXIT_RESUMES times
-     (`client_fault`);
+     whose model ended its session (exit 0) mid-fight more than EXIT_RESUMES times (`client_exit`);
+   - a side's client failing again after FAULT_RESUMES resume (an API or provider error, the bg3 MCP server
+     failing, a hang, a crash or kill: the model's infrastructure, not its play; owner D459): `client_fault`
+     (invalid, rerun, no winner), with `failed` = the side and `cause` = the exit's reason (api_error, mcp_failed,
+     agent_hang, killed, crash);
    - the game gone or not answering for HANG_S: `fault` (invalid, rerun); an operator's abort: `abort` (invalid);
    - max_cost (USD, when given): both sides' cost so far (each process's running cost, Agents' cost_usd: pi's
      comes after each model response) reaching it, or one side's reaching its own cap (side_caps, a matrix's per-side
      reserve): `over_budget` (invalid, no winner), both agents stopped.
    The runner's own ends go to the mod as `arena.end {reason, winner}` (no answer from a dead game is needed) and
-   into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, cause?}`, with the HP fractions
-   from the last `arena.status.hp`. Every arena_end, the mod's too, carries `cost {A, B}` (each side's cost so far,
-   USD) and `max_cost` (None without one). arena.end answers with the match's first end: when that is the mod's own (it
-   ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
+   into facts as `arena_end {winner, reason, rounds, hp_left_A, hp_left_B, forfeit?, failed?, cause?}`, with the HP
+   fractions from the last `arena.status.hp`. Every arena_end, the mod's too, carries `cost {A, B}` (each side's cost
+   so far, USD) and `max_cost` (None without one). arena.end answers with the match's first end: when that is the
+   mod's own (it ended the match after this tick's read), the mod's end is the one written, its `detail` naming the
+   runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
    began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
    `act.end_turn {char, forced}` for each of its members in turn order, sent as that side (forced: the cap as the
@@ -73,9 +77,13 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
    once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then at most every UNOWNED_CHECK_S: a turn that
-   moves on costs no read.
+   moves on costs no read. The same read finds a prompt one side owns (its rows name only that side's characters)
+   while the other side's phase is on: until the next read or the next phase, that side's model time counts as the
+   phase's progress on the stall clock (the game waits for its answer, not for the acting side; fairness audit
+   S2-1).
 6. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
-   EXIT_RESUMES, anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES.
+   EXIT_RESUMES (then a forfeit), anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES (then
+   client_fault: invalid).
 
 Both agents are stopped at the end; their exits and costs are in the outcome. A match a side of which the harness's
 scripted client plays (a player "scripted/...") is a live check: invalid ("scripted: ...") whatever its end, and its
@@ -100,7 +108,7 @@ SETUP_TIMEOUT_S = 180.0  # arena.setup's job and the match becoming active
 HANG_S = 60.0  # arena.status unanswered this long: the game hung
 FORFEIT_TURNS = 3  # a side's own turns forced to an end in a row
 EXIT_RESUMES = 3  # a side's agent exiting (exit 0) mid-fight: resumed this many times, then it forfeits
-FAULT_RESUMES = 1  # a side's client failing (crash, API/MCP failure, hang): resumed once, then it forfeits
+FAULT_RESUMES = 1  # a side's client failing (crash, API/MCP failure, hang): resumed once, then the match is invalid
 # A cap's act.end_turn job: polled this long for its end before the next member's. It outlasts the mod's own job:
 # in a match a group's last end waits up to Actions.lua A.END_LAST_WAIT_MS (20 s) for the game to close the group
 # (the job's timeout is 1 s more) before it fails "the game ignored the end-turn order".
@@ -122,6 +130,9 @@ STALL_MIN_S = 300.0  # ... and at least this long has stalled
 STALL_CALLS = 3  # the tool calls of each side an arena_stall record shows
 UNOWNED_CHECK_S = 15.0  # a turn this old: ui.state is read for a prompt no team owns, then at most this often
 END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
+# the runner's ends that make the match invalid (rerun, never graded): the game failed, our client side failed past
+# its resume (client_fault), an operator's abort, the money cap
+INVALID_ENDS = ("fault", "client_fault", "abort", "over_budget")
 KICKOFF = "The fight is on. You play side {side}: {names}."
 RESUME = "The fight is on."
 
@@ -323,10 +334,18 @@ class _Ended(Exception):  # noqa: N818 - control flow inside run_arena
         detail: str = "",
         rounds: int | None = None,
         game_up: bool = True,
+        failed: str | None = None,
     ):
         super().__init__(reason)
         self.reason, self.winner, self.forfeit, self.cause, self.detail = reason, winner, forfeit, cause, detail
         self.rounds, self.game_up = rounds, game_up  # game_up: the game answers, the mod hears the end
+        self.failed = failed  # client_fault: the side whose client failed
+
+
+def _fault_cause(ex: AgentExit) -> str:
+    """A client fault's cause for arena_end: the exit's reason (api_error, mcp_failed, agent_hang, killed, ...), or
+    "crash" for a process that exited non-zero with no other reason."""
+    return "crash" if ex.reason == "exited" else ex.reason
 
 
 def _setup(spec: ArenaSpec, game: ArenaGame, clock: Clock) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -373,24 +392,37 @@ def _teams(spec: ArenaSpec, result: Mapping[str, Any], status: Mapping[str, Any]
     return got
 
 
-def _decline_unowned(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callable[[str], None]) -> None:
-    """A reaction prompt no team owns on the game client's screen (ui.state with no side: reaction.unowned): declined,
-    and arena_reaction_unowned written."""
+def _prompt_owner(rx: Mapping[str, Any], ref: Referee) -> str | None:
+    """The side whose characters an open reaction prompt's rows all name (the arena file's names, and the names its
+    phases were written with: summons), None when a row names nobody of one side or the rows name both."""
+    sides = {name: side for side, name in ref.names.values()}
+    for t in ref.turns:
+        sides.update(dict.fromkeys(t.names, t.side))
+    owners = {sides.get(str(r.get("who"))) for r in rx.get("options") or [] if isinstance(r, dict)}
+    return owners.pop() if len(owners) == 1 and None not in owners else None
+
+
+def _reaction_check(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callable[[str], None]) -> str | None:
+    """The game client's reaction prompt (ui.state with no side): one no team owns (reaction.unowned) is declined and
+    arena_reaction_unowned written; returns the side that owns an open one (None: no prompt, or none owned)."""
     try:
         ui = game.rpc("ui.state", {}, context="client") or {}
         rx = ui.get("reaction") if ui.get("screen") == "reaction" else None
-        if not (isinstance(rx, dict) and rx.get("unowned")):
-            return
+        if not isinstance(rx, dict):
+            return None
+        if not rx.get("unowned"):
+            return _prompt_owner(rx, ref)
         job = game.rpc("ui.react", {"use": False}, context="client") or {}
     except Exception as e:  # read again at the next check
         log(f"arena {spec.name}: the unowned reaction check failed: {e}")
-        return
+        return None
     if job.get("status") == "failed":
         log(f"arena {spec.name}: declining an unowned reaction prompt failed: {job.get('error')}")
-        return
+        return None
     detail = str(rx.get("prompt") or "")
     ref.event("arena_reaction_unowned", round=ref.round, detail=detail)
     log(f"arena {spec.name}: declined a reaction prompt no team owns ({detail})")
+    return None
 
 
 def _held(game: ArenaGame, turn: Turn) -> list[str]:
@@ -506,6 +538,7 @@ def run_arena(
     answered = clock.now()
     seen_turns, turn_at, ui_read = 0, started, started  # the turns so far, when the last began, the last ui.state
     idle, tick_at, moved_sig = 0.0, started, None  # the stall's idle clock, its last tick, the last progress read
+    prompt_side: str | None = None  # the side whose reaction prompt the last ui.state read found open (S2-1)
     seen_model = dict.fromkeys(SIDES, 0.0)
 
     def model(side: str) -> float:
@@ -559,10 +592,10 @@ def run_arena(
             if now - started >= spec.wall_cap_min * 60:
                 raise _Ended("wall_cap")
             if len(ref.turns) != seen_turns:
-                seen_turns, turn_at = len(ref.turns), now
+                seen_turns, turn_at, prompt_side = len(ref.turns), now, None
             if now - max(turn_at, ui_read) >= UNOWNED_CHECK_S:
                 ui_read = now
-                _decline_unowned(spec, game, ref, log)
+                prompt_side = _reaction_check(spec, game, ref, log)
             for s in SIDES:
                 ex = runs[s].done()
                 if ex is None:
@@ -575,12 +608,16 @@ def run_arena(
                 else:
                     exits[s] += 1
                 log(f"arena {spec.name}: side {s}'s agent ended mid-fight ({ex.reason}, exit {ex.exit_code})")
-                if faults[s] > FAULT_RESUMES or exits[s] > EXIT_RESUMES:
+                if faults[s] > FAULT_RESUMES:  # its infrastructure, not its play: no result (owner D459)
+                    raise _Ended(
+                        "client_fault", failed=s, cause=_fault_cause(ex), detail=f"side {s}'s agent: {ex.reason}"
+                    )
+                if exits[s] > EXIT_RESUMES:
                     raise _Ended(
                         "forfeit",
                         winner=other(s),
                         forfeit=s,
-                        cause="client_fault",
+                        cause="client_exit",
                         detail=f"side {s}'s agent: {ex.reason}",
                     )
                 n = faults[s] + exits[s]
@@ -595,6 +632,8 @@ def run_arena(
             seen_model = {s: model(s) for s in SIDES}
             # the phase's own side thinking is its progress; the other side's (planning in the other phase) is not
             excused = list(gained.values()) if turn is None else [] if turn.capped else [gained[turn.side]]
+            if turn is not None and prompt_side not in (None, turn.side):  # the game waits on that side's answer
+                excused.append(gained[prompt_side])
             idle += max(0.0, now - tick_at - max(excused, default=0.0))
             tick_at = now
             sig = (len(ref.turns), json.dumps(status.get("turn"), sort_keys=True), status.get("round"), hp)
@@ -676,8 +715,10 @@ def run_arena(
             }
             if e.forfeit:
                 fields.update(forfeit=e.forfeit, cause=e.cause)
+            if e.failed:
+                fields.update(failed=e.failed, cause=e.cause)
             outcome.end = ref.end(**fields)
-            if e.reason in ("fault", "abort", "over_budget"):
+            if e.reason in INVALID_ENDS:
                 outcome.invalid = f"{e.reason}: {e.detail}"
             log(f"arena {spec.name}: {runners}")
     finally:

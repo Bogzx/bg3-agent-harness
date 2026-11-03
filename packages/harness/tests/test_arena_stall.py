@@ -348,3 +348,44 @@ def test_the_caps_end_turn_says_which_cap_ended_the_turn(tmp_path):
     watch(game)
     am.run_arena(spec, SIDES, game, agents, tmp_path / "stall", clock)
     assert sent[0].startswith("the stall cap (no progress for 30") and sent[0].endswith(" s)"), sent
+
+
+def test_the_other_sides_reaction_prompt_is_not_the_acting_sides_stall(tmp_path):
+    """Fairness audit S2-1: in B's phase the game opens A's reaction prompt (Karlach's Shield) and waits for A, who
+    thinks 1 s a second and answers after 400 s. That waiting is the prompt's: A's model time is no idle of B's
+    phase, so B is never stalled or capped (it was: held at 300 s, a forced turn toward B's forfeit)."""
+    waited: set[tuple[int, str]] = set()
+
+    def b_waits_a_tick(game: Game, side: str, run: Run) -> None:
+        """Ends each turn on its second tick in it (no model time); while the prompt holds the game the end fails."""
+        if (char := my_turn(game, side)) is None:
+            return
+        if (game.model.mod_round, char) not in waited:
+            waited.add((game.model.mod_round, char))
+            return
+        game.rpc("act.end_turn", {"char": char}, side)
+
+    model, game, clock, agents, spec = setup({"A": passer, "B": b_waits_a_tick})
+    opened: list[float] = []
+
+    def open_in_bs_phase() -> None:
+        a = model.arena
+        if a is None or opened or model.mod_round != 2 or a.side_of(a.acting.uuid) != "B":
+            return
+        model.open_reaction("Karlach")
+        opened.append(clock.now())
+
+    def a_answers_late() -> None:
+        if model.reaction is None or not opened:
+            return
+        agents.runs["A"].model += 1.0
+        if clock.now() - opened[0] >= 400:
+            game.rpc("ui.react", {"use": True}, "A", context="client")
+
+    clock.tick_hooks.insert(0, open_in_bs_phase)
+    clock.tick_hooks.insert(1, a_answers_late)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert opened and model.reacted == [("Karlach", True)]
+    assert stalls(tmp_path) == []
+    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
+    assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None
