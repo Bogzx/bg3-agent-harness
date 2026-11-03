@@ -324,7 +324,9 @@ class NightCamp(unittest.TestCase):
         out = getattr(travel.camp, "fn", travel.camp)("leave")
         self.assertEqual(fake.jobs, [])
         self.assertIn("camp: FAILED: nothing was pressed: the night at camp can't end yet: the game still wants a talk "
-                      "with someone out of sight first (the '!' over them)", out)
+                      "with someone not in view first;", out)
+        self.assertNotIn("'!'", out)  # nobody in view: no '!' a player could see
+        self.assertNotRegex(out, r"\d people")  # never a count of people not in view
         out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
         self.assertEqual(fake.jobs, [])
         self.assertIn("the night at camp can't end yet", out)

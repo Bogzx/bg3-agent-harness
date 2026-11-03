@@ -238,8 +238,11 @@ class TalkTracker:
         self.text = ""
 
     def line(self, st: Any, label: Callable[[str], str], force: bool = False, extra: tuple[str, ...] = ()) -> str:
-        bits = talk_bits(st, label) + list(extra)
-        text = ("TALK: " + " | ".join(bits) + " → talk_to(<id>) now (a companion's own scene; it may not wait)") if bits else ""
+        bits = talk_bits(st, label)
+        # extra (the night camp's '!'): facts only, without the companion scenes' suffix (a required talk waits)
+        parts = ([" | ".join(bits) + " → talk_to(<id>) now (a companion's own scene; it may not wait)"] if bits
+                 else []) + [x for x in extra if x]
+        text = ("TALK: " + " | ".join(parts)) if parts else ""
         if text == self.text and not force:
             return ""
         self.text = text
