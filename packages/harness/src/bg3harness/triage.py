@@ -88,6 +88,12 @@ def failures(name: str, block: dict, text: str) -> list[tuple[str, str]]:
     return _line_failures(name, _split_events(t)[0])
 
 
+def failed_lines(name: str, text: str) -> list[str]:
+    """The lines of one result that report its own failure, by failures()' rule line by line, outside its EVENTS
+    blocks (the evidence video's side panel shows the line and marks the call failed)."""
+    return [ln for ln in _split_events(text)[0] if _line_failures(name, [ln])]
+
+
 def background_failures(block: dict, text: str) -> list[tuple[str, str]]:
     """(step, message) for each failure echoed in a result's EVENTS blocks: a background action the call didn't run
     (act3_gold_max: a straggler's walk-back queue_interrupted `leg 2: move_to: TIMEOUT` in the leader's wait_for,

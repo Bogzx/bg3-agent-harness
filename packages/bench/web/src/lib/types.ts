@@ -120,6 +120,8 @@ export interface RunRow {
   valid: boolean | null;
   invalid_reason: string | null;
   pilot: string[];
+  /** launches of its start save that failed and were relaunched before its start (result v1, bench-v0.10) */
+  recovered_launches: { t: number; attempt: number | null; save: string; error: string | null }[];
   luck_z: number | null;
   saves_bytes: number;
 }

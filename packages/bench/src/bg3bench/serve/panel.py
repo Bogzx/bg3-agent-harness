@@ -265,6 +265,9 @@ def result_row(run_dir: Path, man: dict, res: dict) -> dict[str, Any]:
         "valid": res.get("valid"),
         "invalid_reason": res.get("invalid_reason"),
         "pilot": res.get("pilot") or [],
+        # launches of its start save that failed and were relaunched before run_start (result v1, bench-v0.10): a
+        # valid run's disclosure, shown on its row
+        "recovered_launches": res.get("recovered_launches") or [],
         "luck_z": (res.get("luck") or {}).get("z"),
         "saves_bytes": _dir_size(run_dir / "saves"),
     }

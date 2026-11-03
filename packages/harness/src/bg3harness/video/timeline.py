@@ -7,14 +7,18 @@
   card for its real length, so the run clock stays true; refused are a gap without a logged reason and more than
   MAX_PAUSED_S or MAX_PAUSED_SHARE of the run paused in all.
 - panel_items(): the side panel's entries from every play process's events (Sxxx.events.jsonl): the agent's visible
-  text, its tool calls and the first line of each result (no image file paths). Never its hidden reasoning:
-  thinking events and every field but the visible ones are dropped, whatever a client's stream carries.
-  A call shows as a one-line summary of its arguments (summary()); a result carries its call's id.
+  text, its tool calls and one line of each result (no image file paths): its first line, except a walk's that
+  starts with its start line (bench-v0.10's walks block: the outcome follows), which shows the walk's outcome
+  (result_line()). Never its hidden reasoning: thinking events and every field but the visible ones are dropped,
+  whatever a client's stream carries. A call shows as a one-line summary of its arguments (summary()); a result
+  carries its call's id, and one the bridge reports as failed (bg3harness.triage.failed_lines: its FAILED/REFUSED/NOT
+  READY markers, a failed step, outside its EVENTS blocks) is kind "failed".
 - changes(): when the side panel changes, coalesced to at most one change per MIN_CHANGE_S.
 - strip_states(): the header and the party card, one state per second of run clock (the clock, the cost so far, the
   gold and the party's HP from facts.jsonl snapshots with their time, a member downed or revived since by the facts
   event's own time, the goal).
-- lanes(): the timeline under the game over the whole run: fights, kills, downs, failed tool results, agent text.
+- lanes(): the timeline under the game over the whole run: fights, kills, downs, failed tool results (errors and
+  failed), agent text.
 - sync_table(): render.json (render.v1), which the run page and the validator read: {schema: 1, run_hash,
   video_start, video_end, fps, events: [{file, seq, at_s}]}, `file` the events log's name (S001.events.jsonl).
 
@@ -30,6 +34,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
+from .. import triage
 from ..clients import RUNNING_COST
 
 MAX_GAP_S = 5.0  # the most recording a run may miss anywhere in its window without a logged reason
@@ -37,6 +42,7 @@ MAX_PAUSED_S = 60.0  # logged pauses: at most this long in all
 MAX_PAUSED_SHARE = 0.05  # and at most this share of the run
 REASON_SLACK_S = 12.0  # a stop is logged up to ~10 s after its segment's end (the recorder waits for ffmpeg to exit)
 MIN_CHANGE_S = 0.5  # the side panel changes at most twice a second
+FAIL_KINDS = ("error", "failed")  # results the timeline marks as fails
 FPS = 15  # the recorder's
 RENDER_SCHEMA = 1  # render.json's version (the bench's render.v1 schema)
 # Claude's tool results name the image file it saved ("[Image: source: /home/<user>/.claude/...jpg]"): a local path
@@ -63,9 +69,10 @@ class Clip:
 
 @dataclass(frozen=True)
 class Item:
-    """One side-panel entry: kind "call" (a tool call: `tool` and the summary of its arguments), "result" (its
-    result's first line), "error" (a result the tool marked as an error) or "text" (the agent's visible text). `ref`
-    is the call's id on a call and on its result ("" when the client gives none)."""
+    """One side-panel entry: kind "call" (a tool call: `tool` and the summary of its arguments), "result" (one line of
+    its result: result_line()), "error" (a result the tool marked as an error), "failed" (a result the bridge reports
+    as failed: triage.failed_lines) or "text" (the agent's visible text). `ref` is the call's id on a call and on its
+    result ("" when the client gives none)."""
 
     at_s: float
     file: str
@@ -216,6 +223,30 @@ def _first_line(text: str) -> str:
     return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
 
 
+# Walks that block out of combat (bench-v0.10): the result starts with the start line ("travel_to marker m1 Old well:
+# started (50m)", "heading N toward N: 20m", "move_to: started j1, ETA 1s (4m)") and the outcome comes after it.
+WALK_TOOLS = frozenset({"move_to", "walk_toward", "travel_to", "jump_to", "regroup", "route"})
+_WALK_START = re.compile(r"^heading |: started\b")
+_WALK_OUTCOME = re.compile(
+    r"^(?:still waiting for |stopped waiting|arrived\b|(?:move_to|walk_toward|travel_to|jump_to): )"
+)
+
+
+def result_line(tool: str, text: str) -> str:
+    """The panel's line for a result: its first line, or for a walk whose first line is its start, the walk's
+    outcome: the first line the bridge reports as failed (triage, outside the EVENTS blocks: a companion's failure
+    isn't this walk's), else the outcome line (the job's own `walk_toward: done …`, the trip's `arrived …`, a wait
+    the walk budget or a prompt ended); the first line when there is none."""
+    first = _first_line(text)
+    if tool not in WALK_TOOLS or not _WALK_START.search(first):
+        return first
+    failed = triage.failed_lines(tool, text)
+    if failed:
+        return failed[0]
+    # an EVENTS block's lines are indented: never this walk's outcome
+    return next((ln.rstrip() for ln in text.splitlines()[1:] if _WALK_OUTCOME.match(ln)), first)
+
+
 def _args(args: Mapping[str, Any]) -> str:
     """A tool call's arguments in one line: values as JSON, `k=v` joined (`attack e12` reads `action="attack"
     target="e12"`)."""
@@ -284,6 +315,7 @@ def panel_items(logs: Mapping[str, Iterable[Mapping[str, Any]]], start: float) -
     left out."""
     out: list[Item] = []
     for name, events in logs.items():
+        tools: dict[str, str] = {}  # call id -> its tool
         for e in events:
             kind, at = e.get("kind"), round(float(e["t"]) - start, 3)
             if e.get("src") != "client":
@@ -295,10 +327,14 @@ def panel_items(logs: Mapping[str, Iterable[Mapping[str, Any]]], start: float) -
             elif kind == "tool_call":
                 args: Mapping[str, Any] = e.get("args") or {}
                 tool = str(e.get("tool"))
+                tools[str(e.get("call_id") or "")] = tool
                 out.append(Item(at, name, seq, "call", summary(tool, args), tool, str(e.get("call_id") or "")))
             elif kind == "tool_result":
-                kind_ = "error" if e.get("is_error") else "result"
-                out.append(Item(at, name, seq, kind_, _first_line(text), ref=str(e.get("call_id") or "")))
+                ref = str(e.get("call_id") or "")
+                tool = tools.get(ref, "") if ref else ""
+                failed = triage.failed_lines(tool, text)
+                kind_ = "error" if e.get("is_error") else "failed" if failed else "result"
+                out.append(Item(at, name, seq, kind_, result_line(tool, text), ref=ref))
     return sorted(out, key=lambda i: (i.at_s, i.file, i.seq))
 
 
@@ -473,8 +509,8 @@ def lanes(
 ) -> Lanes:
     """The timeline's marks inside [0, duration_s]: a fight from combat_started to its combat_ended (by the combat's
     id; from 0 when it started before the run, to the end when it hadn't ended), a kill per facts `kill` (the one
-    nearest t_pass_s, within a second, is the goal pass), a down per facts `downed`, a fail per error result, a
-    tick per agent text."""
+    nearest t_pass_s, within a second, is the goal pass), a down per facts `downed`, a fail per error or failed
+    result, a tick per agent text."""
     evs = sorted(((float(f["t"]) - start, f) for f in facts if f.get("kind") == "event"), key=lambda p: p[0])
     inside = [(at, f) for at, f in evs if 0 <= at <= duration_s]
     opened: dict[str, float] = {}
@@ -494,7 +530,7 @@ def lanes(
         tuple(sorted((round(a, 3), round(b, 3)) for a, b in fights)),
         tuple((round(at, 3), goal is not None and at == goal and abs(at - (t_pass_s or 0)) <= 1) for at in kills),
         tuple(round(at, 3) for at, f in inside if f.get("ev") == "downed"),
-        tuple(i.at_s for i in items if i.kind == "error"),
+        tuple(i.at_s for i in items if i.kind in FAIL_KINDS),
         tuple(i.at_s for i in items if i.kind == "text"),
     )
 

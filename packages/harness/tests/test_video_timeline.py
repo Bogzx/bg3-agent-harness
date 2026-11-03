@@ -4,6 +4,8 @@ states, timeline lanes, tool call summaries, render.json)."""
 from __future__ import annotations
 
 import itertools
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -303,3 +305,70 @@ def test_a_wipe_is_the_game_over_event_or_every_member_down():
     assert T.wiped_at([snap(1.0), fact(5.0, "Tav"), fact(6.0, "Tav", "revived"), fact(7.0, "Us")], T0) is None
     assert T.wiped_at([snap(1.0), snap(4.0, "Tav", "Us")], T0) == 4.0
     assert T.strip_states(3.0, [snap(1.0), over], {}, T0)[0].wiped_s == 9.0
+
+
+WALKS = json.loads((Path(__file__).parent / "fixtures" / "video" / "walk_results_v010.json").read_text())["results"]
+
+
+@pytest.mark.parametrize(
+    ("name", "tool", "kind", "line"),
+    [
+        ("move_to_done", "move_to", "result", "move_to: done — @(3,0,4)"),
+        ("move_to_failed", "move_to", "failed", "move_to: FAILED — no path: blocked by a closed gate"),
+        ("walk_toward_done", "walk_toward", "result", "walk_toward: done — @(0,0,20)"),
+        ("walk_toward_failed", "walk_toward", "failed", "walk_toward: FAILED — stopped: fell short of the ledge"),
+        ("travel_to_done", "travel_to", "result", "arrived (0m from it)"),
+        ("travel_to_failed", "travel_to", "failed", "leg 1: move_to: FAILED — no path: the bridge is out"),
+        ("move_to_dialogue", "move_to", "result", "stopped waiting: dialogue on screen"),
+        ("move_to_long", "move_to", "result", "still waiting for j1 after 0.6s"),
+    ],
+)
+def test_a_blocking_walk_shows_its_outcome_not_its_start_line(name: str, tool: str, kind: str, line: str):
+    # bench-v0.10: walks out of combat return at their end; the start line comes first (fixture: the bridge's own text)
+    logs = {
+        "S001": [
+            ev(0, 1.0, "tool_call", tool=tool, args={}, call_id="c1"),
+            ev(1, 2.0, "tool_result", text=WALKS[name], call_id="c1"),
+        ]
+    }
+    res = T.panel_items(logs, T0)[1]
+    assert (res.kind, res.text) == (kind, line)
+
+
+def test_a_companions_failure_in_events_is_not_the_walks_and_a_failed_roll_is_no_tool_failure():
+    arrived = (
+        "move_to: done — @(1,2,3)\nEVENTS\n  queue e5 Lae'zel: STOPPED: step 2 loot failed\n"
+        "  2. loot: FAILED — container empty\nOBJECTIVES none on the map"
+    )
+    roll = "roll: Persuasion (Charisma Check) DC 16: d20 4 + 7 = 11 → FAILED"
+    logs = {
+        "S001": [
+            ev(0, 1.0, "tool_call", tool="move_to", args={}, call_id="c1"),
+            ev(1, 2.0, "tool_result", text=arrived, call_id="c1"),
+            ev(2, 3.0, "tool_call", tool="roll_check", args={}, call_id="c2"),
+            ev(3, 4.0, "tool_result", text=roll, call_id="c2"),
+        ]
+    }
+    items = T.panel_items(logs, T0)
+    assert [(i.kind, i.text) for i in items if i.ref and i.kind != "call"] == [
+        ("result", "move_to: done — @(1,2,3)"),
+        ("result", roll),
+    ]
+
+
+def test_a_refusal_the_bridge_reports_is_a_failed_result_and_a_timeline_fail():
+    # bench-v0.10's camp night refusal (bridge tools/travel.py; bridge/tests/test_se_tools.py): not an MCP error
+    refused = (
+        "camp: FAILED: nothing was pressed: the night at camp can't end yet: the game still wants a talk with "
+        "someone out of sight first (the '!' over them)"
+    )
+    logs = {
+        "S001": [
+            ev(0, 1.0, "tool_call", tool="camp", args={"action": "leave"}, call_id="c1"),
+            ev(1, 2.0, "tool_result", text=refused, call_id="c1"),
+            ev(2, 3.0, "tool_result", text="out of range", is_error=True, call_id="c2"),
+        ]
+    }
+    items = T.panel_items(logs, T0)
+    assert [(i.kind, i.text) for i in items[1:]] == [("failed", refused), ("error", "out of range")]
+    assert T.lanes([], items, T0, 10.0).fails == (2.0, 3.0)
