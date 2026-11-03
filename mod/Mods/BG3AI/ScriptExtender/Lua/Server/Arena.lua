@@ -567,4 +567,14 @@ end)
 
 op("arena.reset", function() return Ar.reset() end)
 
+-- A side's answer to a box on the one shared screen (the bridge's confirm / dismiss_popups ask first; a side's op, not
+-- the harness's): a box names no owner, and only the acting side acts, so a box on screen is the acting side's.
+-- Refused with Guard.side_gate's text.
+RPC.register("guard.side_gate", function()
+    local G = BG3AI.Guard
+    local ok, e = pcall(G.side_gate)
+    if not ok then error(G.is_refusal(e) and e.reason or e, 0) end
+    return { ok = true }
+end)
+
 return Ar
