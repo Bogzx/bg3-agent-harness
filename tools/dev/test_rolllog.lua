@@ -260,6 +260,19 @@ do
     check("srcs listed", table.concat(view.srcs, ",") == "finished,osi,requested", table.concat(view.srcs, ","))
 end
 
+-- A roll with no skill (death save, concentration save) carries SkillId's "Sentinel" default (bg3se Hit.h
+-- ConditionRoll.Skill): not a skill name, so no skill field.
+fresh()
+do
+    local c = { Roller = ent(HOST), Subject = ent(HOST), RollUuid = "roll-s", DC = 10, Finished = true,
+        Canceled = false, Skill = "Sentinel", Ability = "None", Roll = {}, Result = { Total = 7, NaturalRoll = 7 } }
+    onCreate.RequestedRoll({ RequestedRoll = c })
+    postUpdate.ServerRoll()
+    local r = L.ring[1]
+    check("no skill: Sentinel dropped", r and r.natural == 7 and r.skill == nil and r.ability == nil,
+        r and tostring(r.skill))
+end
+
 -- A batch of requested rolls by one roller pairs with the Osiris results in order (oldest first).
 fresh()
 do
