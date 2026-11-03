@@ -158,3 +158,20 @@ def test_no_valid_match_rates_nobody():
     r = arena.results([m("p", "x", "y", None, valid=False)], seed=1, b=10)
     assert (r["models"], r["pairs"]) == ([], [])
     assert r["side_a"] == {"n_matches": 0, "n_pairings": 0, "rate": None, "ci": None}
+
+
+def test_side_a_rate_by_round_1_pattern_with_n():
+    # fairness audit 2026-11-03: if one round-1 pattern decides most matches, initiative outweighs the models
+    ms = [
+        dict(m("p1", "x", "y", "B"), r1_pattern="A1|B2|A1"),
+        dict(m("p1", "y", "x", "B"), r1_pattern="A1|B2|A1"),
+        dict(m("p2", "x", "y", "A"), r1_pattern="B1|A2|B1"),
+        dict(m("p2", "y", "x", "draw"), r1_pattern="B1|A2|B1"),
+        dict(m("p3", "x", "y", "A", valid=False), r1_pattern="A1|B2|A1"),  # invalid: not counted
+        m("p3", "y", "x", "A"),  # no pattern (graded before it existed)
+    ]
+    assert arena.results(ms, seed=1, b=10)["side_a_by_pattern"] == {
+        "A1|B2|A1": {"n_matches": 2, "rate": 0.0},
+        "B1|A2|B1": {"n_matches": 2, "rate": 0.75},
+        "none": {"n_matches": 1, "rate": 1.0},
+    }

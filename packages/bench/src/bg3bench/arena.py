@@ -43,6 +43,8 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
   its Wilson interval, n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row).
 - `side_a`: side A's win rate over every valid match (a model against itself too) with a bootstrap interval over
   pairings: an interval that excludes 0.5 says the arena favours a side.
+- `side_a_by_pattern`: side A's win rate and n per round-1 phase pattern (grade's `r1_pattern`, e.g. "A1|B2|A1"):
+  if one pattern decides most matches, the seed's initiative order outweighs the models' play.
 - `failures`: per model, over every graded match it played a side of (valid or not), the matches its own client
   failed (`client_fault` with `failed` = its side): n_matches, client_faults, rate and the causes counted.
 - `models`: per model its matches and points over complete pairings; a model in a rated pair has a Bradley-Terry
@@ -335,6 +337,18 @@ def _turns(records: list[dict], end_t: float) -> list[dict] | None:
     return turns
 
 
+def r1_pattern(records: Iterable[dict]) -> str | None:
+    """The first round's phases in order, each its side and how many characters it moves: "A1|B2|A1" (fairness audit
+    2026-11-03: under seed 1 side B acted with both twins before A's second, and B won both pilot matches). From the
+    arena_turn records of the lowest round any has; None without one."""
+    turns = [r for r in _events(records, "arena_turn") if isinstance(r.get("round"), int)]
+    if not turns:
+        return None
+    first = min(r["round"] for r in turns)
+    return "|".join(f"{r.get('side')}{len(r.get('members') or [r.get('character')])}" for r in turns
+                    if r["round"] == first)  # fmt: skip
+
+
 def _forced_out(turns: list[dict]) -> str | None:
     """The first side whose own turns were forced to an end FORFEIT_TURNS times in a row, None if neither."""
     streak = dict.fromkeys(SIDES, 0)
@@ -439,8 +453,8 @@ def grade(
     """One match from its facts records (facts.check'd), its run record when given (results.validity with the
     arena's seed) and its rolls.jsonl rows when given: {arena, valid, invalid_reason, sides {A, B: player}, result
     (A, B, draw; None when invalid), reason, forfeit {side, cause} or None, fault {side, cause} (a client_fault end:
-    the side whose client failed) or None, rounds, hp_left {A, B}, turns {A, B}, forced {A, B}, luck (None without
-    rolls or arena_start uuids)}."""
+    the side whose client failed) or None, rounds, hp_left {A, B}, turns {A, B}, forced {A, B}, r1_pattern (round 1's
+    phases: r1_pattern), luck (None without rolls or arena_start uuids)}."""
     records = list(records)
     valid, why = validity(dict(record), arena["seed"]) if record is not None else (True, None)
     if valid:
@@ -467,6 +481,7 @@ def grade(
         "hp_left": {s: end.get(f"hp_left_{s}") for s in SIDES},
         "turns": {s: sum(1 for turn in turns if turn["side"] == s) for s in SIDES},
         "forced": {s: sum(1 for turn in turns if turn["side"] == s and turn["forced"]) for s in SIDES},
+        "r1_pattern": r1_pattern(records),
         "luck": luck(rolls, uuids) if rolls is not None and isinstance(uuids, dict) else None,
     }
 
@@ -563,6 +578,15 @@ def _side_a(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha:
     return {"n_matches": n, "n_pairings": len(ids), "rate": rate, "ci": _ci(draws, alpha)}
 
 
+def _side_a_by_pattern(matches: list[Mapping[str, Any]]) -> dict[str, dict]:
+    """Side A's win rate (a draw = half) per round-1 phase pattern over valid matches, with n; a match with no pattern
+    under "none"."""
+    by: dict[str, list[float]] = {}
+    for m in matches:
+        by.setdefault(m.get("r1_pattern") or "none", []).append(_points(m, "A"))
+    return {k: {"n_matches": len(v), "rate": sum(v) / len(v)} for k, v in sorted(by.items())}
+
+
 def _pair_rows(complete: dict[str, list[dict]], min_pairings: int) -> dict[tuple[str, str], dict]:
     rows: dict[tuple[str, str], dict] = {}
     for ms in complete.values():
@@ -591,7 +615,7 @@ def results(
     attempts: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict:
     """Matches (grade's dicts, each with its `pairing` id) -> {seed, b, alpha, min_pairings, counts, pairs, side_a,
-    failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
+    side_a_by_pattern, failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
     too) for `failures`; without it, `matches`. The bootstraps (side A's rate, then the ratings) draw from one
     random.Random(seed)."""
     matches = list(matches)
@@ -643,6 +667,7 @@ def results(
             {"a": x, "b": y, **{k: v for k, v in row.items() if k != "ids"}} for (x, y), row in sorted(rows.items())
         ],
         "side_a": side_a,
+        "side_a_by_pattern": _side_a_by_pattern([m for m in matches if m["valid"]]),
         "failures": failures(matches if attempts is None else attempts),
         "models": models,
     }

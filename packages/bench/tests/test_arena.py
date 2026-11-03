@@ -305,8 +305,20 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "hp_left": {"A": 0.75, "B": 0},
         "turns": {"A": 2, "B": 1},
         "forced": {"A": 0, "B": 0},
+        "r1_pattern": "A1|B1",
         "luck": None,
     }
+
+
+def test_round_1s_phase_pattern_counts_each_phases_characters_in_order():
+    # fairness audit 2026-11-03 'Why B won both': seed 1 gave Cedar (A) | Dune + Birch (B, one phase) | Ash (A)
+    def turn(side, members, rnd):
+        return ev(1, "arena_turn", side=side, character=members[0], members=members, names=members, round=rnd)
+
+    recs = [turn("A", ["Cedar"], 1), turn("B", ["Dune", "Birch"], 1), turn("A", ["Ash"], 1), turn("B", ["Dune"], 2)]
+    assert arena.r1_pattern(recs) == "A1|B2|A1"
+    assert arena.r1_pattern([turn("A", ["Ash"], 2)]) == "A1"  # the lowest round there is
+    assert arena.r1_pattern([]) is None
 
 
 TURN = ev(
