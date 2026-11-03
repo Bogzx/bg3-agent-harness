@@ -20,8 +20,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    end the runner asked for and any arena record after the match's end are left out, as the referee writes those
    itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
    ended the turn of a member that can't act) is written with `character` named as in arena_turn. Its
-   `arena_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
-   after every member's end: the mod wrote the members' RequestedEndTurn) is written with `character` and `members`
+   `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
+   after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
+   match's) is written with `character` and `members`
    named as in arena_turn, `names` and `errors` (by uuid) as the mod gave them. A phase naming
    the other team's character is not the side's: not written, never forced. A turn below is a phase; a summon's
    phase is a turn of its side like any other.
@@ -263,7 +264,7 @@ class Referee:
             names = [t[1] if t is not None else n for t, n in zip(team, shown, strict=True)]
             self.turns.append(Turn(str(fact["side"]), members[0], names[0], int(fact["round"]), members, names))
             return {**fact, "character": names[0], "members": names}
-        if ev == "arena_end_written":
+        if ev == "arena_group_end_written":
             members = [str(u) for u in fact.get("members") or []]
             shown = [str(n) for n in fact.get("names") or []]
             shown += members[len(shown) :]

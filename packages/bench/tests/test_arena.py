@@ -305,8 +305,20 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "hp_left": {"A": 0.75, "B": 0},
         "turns": {"A": 2, "B": 1},
         "forced": {"A": 0, "B": 0},
+        "r1_pattern": "A1|B1",
         "luck": None,
     }
+
+
+def test_round_1s_phase_pattern_counts_each_phases_characters_in_order():
+    # fairness audit 2026-11-03 'Why B won both': seed 1 gave Cedar (A) | Dune + Birch (B, one phase) | Ash (A)
+    def turn(side, members, rnd):
+        return ev(1, "arena_turn", side=side, character=members[0], members=members, names=members, round=rnd)
+
+    recs = [turn("A", ["Cedar"], 1), turn("B", ["Dune", "Birch"], 1), turn("A", ["Ash"], 1), turn("B", ["Dune"], 2)]
+    assert arena.r1_pattern(recs) == "A1|B2|A1"
+    assert arena.r1_pattern([turn("A", ["Ash"], 2)]) == "A1"  # the lowest round there is
+    assert arena.r1_pattern([]) is None
 
 
 TURN = ev(
@@ -357,6 +369,17 @@ TURN = ev(
 def test_the_event_schema_refuses_malformed_referee_events(rec):
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(rec, EVENT_SCHEMA)
+
+
+@pytest.mark.parametrize("name", ["arena_group_end_written", "arena_end_written"])
+def test_a_group_end_the_mod_wrote_fits_both_schemas_under_its_name_and_its_old_one(name):
+    # bp-live 2026-11-03: arena_end_written after every round read as a match end; it is a turn group's end (the mod's
+    # RequestedEndTurn write, each round the game keeps a shared group open), renamed; old records stay valid
+    rec = ev(1, name, round=2, group="g1", character="Ash", members=["Ash", "Birch"], how="requested_end_write")
+    jsonschema.validate(rec, EVENT_SCHEMA)
+    jsonschema.validate(rec, FACTS_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({k: v for k, v in rec.items() if k != "how"}, EVENT_SCHEMA)
 
 
 def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():

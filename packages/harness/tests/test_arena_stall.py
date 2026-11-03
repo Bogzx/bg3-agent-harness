@@ -247,7 +247,7 @@ def test_a_member_the_mod_passed_that_the_game_keeps_current_is_the_games_fault(
 
 
 def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_path):
-    """arena_end_written (the mod wrote RequestedEndTurn on a shared group the game kept open after every end) is
+    """arena_group_end_written (the mod wrote RequestedEndTurn on a shared group the game kept open after every end) is
     written to the facts like arena_turn: character and members by the arena's names, names and errors as given."""
     model, game, clock, agents, spec = setup({"A": passer, "B": passer})
     sent: list[bool] = []
@@ -258,13 +258,13 @@ def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_p
             k, w = model.match().member("Karlach").uuid, model.match().member("Wyll").uuid
             names = ["Karlach (0)", "Wyll"]
             model.ref_record(
-                "arena_end_written", round=1, group="team-1", character=w, members=[k, w], names=names,
+                "arena_group_end_written", round=1, group="team-1", character=w, members=[k, w], names=names,
                 errors={w: "Replicate failed"}, how="requested_end_write",
             )  # fmt: skip
 
     clock.tick_hooks.append(write_once)
     am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
-    [rec] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_end_written"]
+    [rec] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_group_end_written"]
     assert (rec["character"], rec["members"], rec["names"]) == ("Wyll", ["Karlach", "Wyll"], ["Karlach (0)", "Wyll"])
     assert (
         rec["round"] == 1

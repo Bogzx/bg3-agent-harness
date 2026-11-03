@@ -300,7 +300,8 @@ class ScrollUse(unittest.TestCase):
     cancel_how: str | None = "escape"  # hotbar.cancel's answer: the spell in hand put back with ESCAPE
 
     def _run(self, who, ability, target="", owner=None, click_ok=True, name="Scroll of Invisibility",
-             res="use_ability: done — used", screen=None, rpc=None, targets="", pos=None, ground=None, jobs=None):
+             res="use_ability: done — used", screen=None, rpc=None, targets="", pos=None, ground=None, jobs=None,
+             cat=None):
         from bg3ai import clicker, twostep
         calls, clicks = [], []
         self.grounds = []
@@ -313,7 +314,7 @@ class ScrollUse(unittest.TestCase):
             def try_rpc(self, op, args=None, context="server", default=None):
                 rpcs.append((op, dict(args or {})))
                 if op == "state.inventory":
-                    return {"items": [{"uuid": scroll, "name": name, "owner": own}]}
+                    return {"items": [{"uuid": scroll, "name": name, "owner": own, **({"cat": cat} if cat else {})}]}
                 if op == "ui.state" and screen:
                     return {"screen": screen}
                 if rpc is not None and op in rpc:
@@ -502,6 +503,19 @@ class ScrollUse(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(clicks, [])
         self.assertIn("drunk", out.split("\n")[0])
+
+    def test_a_potion_aimed_at_someone_else_is_refused_not_drunk_by_its_user(self):
+        # live smoke 2026-11-03 (L5): "Potion of Healing" target=e1 (downed Ash) was drunk by Cedar at 14/17,
+        # "done — used drunk", the target dropped silently
+        out, calls, clicks = self._run("Shadowheart", "Potion of Healing", target=self.GALE, name="Potion of Healing",
+                                       cat="Potion", res="use_ability: done — drunk")
+        self.assertIn("Potion of Healing is drunk by whoever uses it", out)
+        self.assertIn("nothing used", out)
+        self.assertEqual((calls, clicks), ([], []))  # no act.interact: nothing drunk
+        out, calls, _ = self._run("Shadowheart", "Potion of Healing", target=self.SH, name="Potion of Healing",
+                                  cat="Potion", res="use_ability: done — drunk")
+        self.assertIn("drunk", out.split("\n")[0])  # aimed at its user: drunk as before
+        self.assertEqual(len(calls), 1)
 
     def test_scroll_in_combat_is_read_and_its_action_settled(self):
         # A7: claude-run-2's Orin plan reads scrolls mid-fight; the mod reads it on the reader's turn (combat_scroll)
