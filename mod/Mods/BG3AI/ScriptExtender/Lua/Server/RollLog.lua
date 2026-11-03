@@ -223,10 +223,12 @@ local function positive(n)
     n = tonumber(n)
     return n and n > 0 and n or nil
 end
+-- "None" (AbilityId) and "Sentinel" (SkillId's default, bg3se Hit.h ConditionRoll.Skill: a death or concentration
+-- save) name no ability or skill.
 local function name(x)
     if x == nil then return nil end
     local s = tostring(x)
-    return s ~= "None" and s or nil
+    return s ~= "None" and s ~= "Sentinel" and s or nil
 end
 
 -- RequestedRoll entities (the roll in progress): kept from their OnCreate until Finished or gone.
