@@ -210,8 +210,10 @@ game unless it says so.
     are dirty-checked now too. The release is rebuilt whenever that code changes (the release test says so).
   - New check C04 (reject, panel and job): every process's session_start and init name the manifest's model slug,
     and the effort the usage/result events say was served is the declared `reasoning_effort`. launch-v1's 36
-    DeepSeek runs declared `medium` and pi served `high` (profiles/deepseek-flash.toml has no medium level), so
-    such a run is rejected until the profile declares what it is served.
+    DeepSeek runs declared `medium` and pi served `high` (the DeepSeek profiles' thinking_level_map has no medium
+    and pi clamps up), so the three DeepSeek pi profiles (deepseek-flash, deepseek-v4-pro, deepseek-v4.1-flash-pi)
+    now declare `effort = "high"`: their bench-v0.10 rows read high, and launch-v1's DeepSeek row (declared medium)
+    is not 1:1 with them by label, only by what was served.
   - X03 rejects a save start whose first load mark is not the release's start save folder.
   - results: a leaderboard row is (client, model, reasoning effort, condition); runs, groups and the ranking's
     models carry `effort` (results v1, optional). The suite digest is re-pinned under bench-v0.10 (no score moves
