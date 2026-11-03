@@ -148,11 +148,13 @@ game unless it says so.
     end and is out of view at the trip's end, not in the agent's last view; nearest first, up to 6).
   - Out of combat a batch ends with its first walk step: `do_actions` runs (`queue_actions` queues) the steps up to
     and with the first `move_to`/`walk_toward`/`travel_to`/`jump_to` and lists the rest as not run (not queued);
-    batches without a walk, or with the walk last, are unchanged.
+    batches without a walk, or with the walk last, are unchanged. A walk step with `if`/`unless` ends the batch only
+    when it runs (the steps after it then say "not run").
   - Every walk end out of combat and every `look` carry the minimap block (OBJECTIVES with distance, direction and
     height, WAYS, the 3 nearest unvisited LEADS), also after a walk that stopped short.
   - `roll_check` returns a failed roll with the roll screen open; a reroll is its own call, `roll_check(reroll=true)`.
-    `reroll_on_fail` is removed (it spent Inspiration before the failure was seen).
+    `reroll_on_fail` is removed (it spent Inspiration before the failure was seen). A reroll on a success is refused
+    and presses nothing.
   - `trade(sell="junk")` names every item it sold (SOLD, by name with count and gold) and counts what the junk rule
     kept back (KEPT).
   - Known ground (FAIRNESS.md): ground within 40 m of the leader with a clear eye ray (was the observer's Sight,
@@ -181,6 +183,9 @@ game unless it says so.
   before it keep their failures, so re-grading a bench-v0.9 record doesn't change its validity. result.json
   discloses such launches in the optional `recovered_launches` (result v1, [{t, attempt, save, error}]; absent when
   none).
+  Evidence video and panel: a blocking walk's timeline entry shows the walk's outcome, not its start line; results the
+  bridge reports as failed (FAILED/REFUSED lines, bg3harness triage.failed_lines) are marked as fails; the local
+  panel's results list shows a run's recovered launches.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
