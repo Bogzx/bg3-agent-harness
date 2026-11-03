@@ -862,7 +862,15 @@ test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Hit radii; G.ra
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.25 } } } }
     eq(G.radius(GOB), 0.25, "Move fallback")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Hit = { Radius = 0.7 }, Stand = { Radius = 0.9 } } } }
+    local warned, pw = {}, Ext.Utils.PrintWarning
+    Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
+    G.hit_fallback, G.hit_fallback_n = {}, 0
     eq(G.hit_radius(GOB), 0.7, "Hit radius"); eq(G.hit_radius(P1), 0.2, "Hit fallback")
+    eq(G.hit_radius(P1), 0.2, "again"); eq(G.hit_radius(GOB), 0.7, "read")
+    Ext.Utils.PrintWarning = pw
+    eq(#warned, 1, "the fallback warned once per entity"); eq(G.hit_fallback_n, 1, "counted for the mem metrics")
+    assert(warned[1]:find("no AIBounds.Hit radius for", 1, true) and warned[1]:find("0.2 m assumed", 1, true),
+        warned[1])
     spell("Target_Slash", { TargetRadius = "MeleeMainWeaponRange", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m = 1.5 + 0.2 + 0.7
     eq(j.status, "running", "status " .. tostring(j.error))

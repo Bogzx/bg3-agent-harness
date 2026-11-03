@@ -62,12 +62,23 @@ function G.radius(uuid)
 end
 
 -- The bound the engine hits a creature by: AIBounds.Hit (live, Nautiloid: medium creatures 0.20, while Stand is
--- 0.50); a medium creature's 0.2 m when it doesn't read.
+-- 0.50); a medium creature's 0.2 m when it doesn't read. A fallback is never silent: one bg3le warning per entity,
+-- and the count goes into the bridge's mem metrics record (sys.mem hit_fallbacks -> hit_radius_fallbacks).
 G.HIT_RADIUS_M = 0.2
+G.hit_fallback = G.hit_fallback or {} -- guid -> true: warned once
+G.hit_fallback_n = G.hit_fallback_n or 0
 function G.hit_radius(uuid)
     local e = G.entity(uuid)
     local ok, r = pcall(function() return e.Bound.Bound.AIBounds.Hit.Radius end)
     if ok and type(r) == "number" and r > 0 and r < 5 then return r end
+    local k = G.guid(uuid) or tostring(uuid)
+    if not G.hit_fallback[k] then
+        G.hit_fallback[k] = true
+        G.hit_fallback_n = G.hit_fallback_n + 1
+        local okn, name = pcall(function() return U.loca(G.q("GetDisplayName", uuid)) end)
+        Ext.Utils.PrintWarning(string.format("[BG3AI] melee reach: no AIBounds.Hit radius for %s (%s): %.1f m assumed"
+            .. " (a medium creature's)", tostring(okn and name or "?"), k, G.HIT_RADIUS_M))
+    end
     return G.HIT_RADIUS_M
 end
 
