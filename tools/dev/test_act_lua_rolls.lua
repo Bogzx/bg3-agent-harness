@@ -36,13 +36,31 @@ test("cast rolls: UseSpellAtPosition's cast too", function()
     eq(j.status, "running", "status " .. tostring(j.error)); eq(opts(), KEPT, "flags")
 end)
 
-test("cast rolls: a flag that won't clear -> purged and failed, saying it went without its roll", function()
+test("cast rolls: a flag that won't clear -> purged; no cast after it: failed as stopped (audit S2 b)", function()
     cast_sticky = true
     bolt()
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    eq(#called("PurgeOsirisQueue"), 1, "the queue purged at once")
+    eq(j.status, "running", "waits to see whether the purge stopped it")
+    tick(math.ceil(A.ROLL_STOP_MS / 60) - 2)
+    eq(j.status, "running", "still waiting")
+    tick(3)
     eq(j.status, "failed", "status")
-    assert(j.error:find("without its roll (IgnoreSpellRolls stayed set: ", 1, true), j.error)
-    eq(#called("PurgeOsirisQueue") >= 1, true, "the queue purged")
+    assert(j.error:find("would have cast it without its roll (IgnoreSpellRolls stayed set: ", 1, true), j.error)
+    assert(j.error:find("stopped, nothing cast", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 1, "no second purge")
+end)
+
+test("cast rolls: a flag that won't clear and the cast resolves anyway -> failed, saying it went through", function()
+    cast_sticky = true
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    tick(10)
+    A.dispatch("CastSpell", { P1, "Projectile_Bolt" })
+    A.dispatch("CastedSpell", { P1, "Projectile_Bolt" })
+    tick(1)
+    eq(j.status, "failed", "status")
+    assert(j.error:find("purging the queue didn't stop it, it resolved and its effects stand", 1, true), j.error)
 end)
 
 test("cast rolls: CastOptions that don't read as names fail the cast", function()
@@ -51,6 +69,7 @@ test("cast rolls: CastOptions that don't read as names fail the cast", function(
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     local st = { Caster = { Uuid = { EntityUuid = P1 } }, CastOptions = 7 }
     create_hooks.SpellCastState({ SpellCastState = st })
+    tick(math.ceil(A.ROLL_STOP_MS / 60) + 1)
     eq(j.status, "failed", "status"); assert(j.error:find("don't read as flag names", 1, true), j.error)
 end)
 
@@ -60,7 +79,7 @@ test("cast rolls: CastedSpell with no cast state seen fails the cast", function(
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     eq(j.status, "running", "status " .. tostring(j.error)); eq(j.roll.state, "pending", "pending")
     A.dispatch("CastedSpell", { P1, "Projectile_Bolt" })
-    eq(j.status, "failed", "status"); assert(j.error:find("saw no cast state for it", 1, true), j.error)
+    eq(j.status, "failed", "status"); assert(j.error:find("saw no cast state for it): it resolved", 1, true), j.error)
 end)
 
 test("cast rolls: another caster's cast state is not touched", function()
@@ -92,7 +111,19 @@ test("cast rolls: sneak's Hide is cleared; a flag that won't clear fails the sne
     cast_sticky = true
     spell("Shout_Hide", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0 })
     j = job(op("sneak", { char = P1, on = true }))
-    eq(j.status, "failed", "status"); assert(j.error:find("without its roll", 1, true), j.error)
+    eq(j.status, "running", "waits to see whether the purge stopped it")
+    tick(math.ceil(A.ROLL_STOP_MS / 60) + 1)
+    eq(j.status, "failed", "status"); assert(j.error:find("stopped, nothing cast", 1, true), j.error)
+    -- the hide went through anyway: SNEAKING came after the purge
+    reset()
+    cast_sticky = true
+    spell("Shout_Hide", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0 })
+    j = job(op("sneak", { char = P1, on = true }))
+    osiv[key("HasActiveStatus", P1, "SNEAKING")] = 1
+    tick(1)
+    eq(j.status, "failed", "sneaking anyway")
+    assert(j.error:find("didn't stop it, it resolved", 1, true), j.error)
+    osiv[key("HasActiveStatus", P1, "SNEAKING")] = nil
 end)
 
 -- Live window 5 (ops/logs/live.md, melee-swap A/B): the cast state was made at 70-270 ms, then Karlach's own

@@ -225,11 +225,38 @@ function A.cast_rolls(job, char, spell)
     A.roll_wait[G.guid(char)] = job
 end
 
-local function roll_failed(job, why)
-    job.roll.state = "failed"
+-- Audit S2 (b): a clear that fails at the cast state's creation purges the queue after the cast entity exists. Live
+-- (window 5) a purge cancelled a started, paused cast, but that it always stops one is not shown. So the job reports
+-- only once it is known: the cast's CastedSpell (or, for sneak, its status) within ROLL_STOP_MS = it went through
+-- unrolled, said so; none = stopped. resolved: the CastedSpell is the news (no cast state was seen for it).
+A.ROLL_STOP_MS = 2500
+
+local function roll_failed(job, why, resolved)
+    job.roll.state, job.roll.why = "failed", why
     for k, j in pairs(A.roll_wait) do if j == job then A.roll_wait[k] = nil end end
+    job.stopping = true -- the purge is ours; on_finish purges no more
     pcall(G.osi, "PurgeOsirisQueue", job.char)
-    RPC.finish_job(job, "failed", nil, "the game cast it without its roll (" .. why .. ")")
+    if resolved then
+        RPC.finish_job(job, "failed", nil, "the game cast it without its roll (" .. why .. "): it resolved, its"
+            .. " effects stand")
+        return
+    end
+    job.roll.failed_ms = RPC.now_ms()
+end
+
+-- A job's on_tick, first: while its clear has failed, nothing else of it runs; true until it has reported.
+-- went: the job's own sign that the cast resolved (sneak: SNEAKING came).
+function A.roll_stop_tick(job, went)
+    local r = job.roll
+    if not r or r.state ~= "failed" or job.status ~= "running" then return false end
+    if r.casted or went then
+        RPC.finish_job(job, "failed", nil, "the game cast it without its roll (" .. r.why .. "): purging the queue"
+            .. " didn't stop it, it resolved and its effects stand")
+    elseif RPC.now_ms() - r.failed_ms >= A.ROLL_STOP_MS then
+        RPC.finish_job(job, "failed", nil, "the game would have cast it without its roll (" .. r.why .. "): stopped,"
+            .. string.format(" nothing cast (the queue purged, no cast in %.1f s)", A.ROLL_STOP_MS / 1000))
+    end
+    return true
 end
 
 -- CastOptions as a list of flag names, or nil.
@@ -288,9 +315,10 @@ end
 -- CastedSpell of the job's cast: a cast whose state was never seen went without the clear.
 function A.roll_checked(job)
     if job.roll and job.roll.state == "pending" then
-        roll_failed(job, "the mod saw no cast state for it")
+        roll_failed(job, "the mod saw no cast state for it", true)
         return false
     end
+    if job.roll and job.roll.state == "failed" then job.roll.casted = true end -- the purge didn't stop it
     return not (job.roll and job.roll.state == "failed")
 end
 
@@ -688,6 +716,7 @@ reg("cast", function(args)
             end,
         }),
         on_tick = function(job)
+            if A.roll_stop_tick(job) then return end
             if job.phase == "approach" then return approach_tick(job) end
             if job.ui_failed and job.clicked_ms and not job.casted and not job.began
                 and RPC.now_ms() - job.clicked_ms >= A.CAST_UI_REFUSED_MS then

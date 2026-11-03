@@ -565,7 +565,9 @@ reg("sneak", function(args)
             G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1)
         end,
         on_tick = function(job)
-            if G.b(G.q("HasActiveStatus", char, "SNEAKING")) then
+            local hid = G.b(G.q("HasActiveStatus", char, "SNEAKING"))
+            if A.roll_stop_tick(job, hid) then return end
+            if hid then
                 RPC.finish_job(job, "done", { sneaking = true })
             end
         end,
