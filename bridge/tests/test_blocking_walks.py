@@ -98,8 +98,42 @@ class Blocking(Base):
         self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [30.0, 50.0])
         self.assertFalse(queueing._queues().busy(P1))
 
+    def test_a_conversation_that_ends_the_walk_returns_the_walks_end(self):
+        # review-v010-final #6: the walker's own conversation ends its walk in the game (Actions.lua DialogActorJoined
+        # finishes the job "a conversation started"). Here the bridge reads the dialogue screen before it polls the
+        # job: the result said "wait_for('j1') keeps waiting for it" for a walk that had ended.
+        self.g.dur["act.move_to"] = 5.0
+        real = self.g.rpc
+        reads = {"n": 0}
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "ui.state" and any(
+                j["status"] == "running" and j["op"] == "act.move_to" for j in self.g.jobs.values()
+            ):
+                reads["n"] += 1
+                if reads["n"] == 2:  # the conversation opens: the screen shows it and the walk is over
+                    self.g.ui = {
+                        "screen": "dialogue",
+                        "dialogue": {"speaker": "Lae'zel", "text": "Wait.", "options": []},
+                    }
+                    for j in self.g.jobs.values():
+                        if j["status"] == "running" and j["op"] == "act.move_to":
+                            j["status"], j["error"] = "interrupted", "a conversation started"
+            return real(op, args, context, timeout)
+
+        self.g.rpc = rpc
+        t0 = time.monotonic()
+        out = world_tools.move_to(x=5.0, y=0.0, z=0.0)
+        self.assertLess(time.monotonic() - t0, 3.0)
+        self.assertEqual(reads["n"], 2)  # the screen was seen first
+        self.assertTrue(out.startswith("move_to: INTERRUPTED — a conversation started"), out)
+        self.assertIn("stopped waiting: dialogue on screen", out)
+        self.assertNotIn("keeps waiting", out)
+        self.assertNotIn("j1", plumbing._async)
+
     def test_a_prompt_ends_the_wait_with_the_reason(self):
-        # same early stops as wait_for: a dialogue screen opening mid-walk returns, the walk's id to wait on
+        # same early stops as wait_for: a dialogue screen opening mid-walk returns. Here it is someone else's
+        # conversation (it doesn't stop this walk): the walk's id to wait on
         self.g.dur["act.move_to"] = 3.0
 
         def talk():
