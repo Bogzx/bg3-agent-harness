@@ -604,3 +604,60 @@ test("normal play: a shared group's ignored last end writes nothing and fails at
             .RequestedEndTurn), "false,false", "no flag written")
         eq(#replicated + #refs("arena_group_end_written"), 0, "no write, no record")
     end) end)
+
+-- Live smoke 2026-11-03 (m1 r1, L3): the group Cedar | Dune, Birch | Ash; Ash downed in B's phase was passed (EndTurn,
+-- no act.end_turn job, so no write); the game never closes the twins' group on its own, so 30 s later (END_DROP_MS)
+-- Birch's requested end read as one the game dropped and his turn reopened: a 4th phase with his leftover move and
+-- bonus action. The pass of the group's last open member writes the group's ends, as its last end_turn would. (This
+-- fake doesn't replay the 30 s reopen itself: its group reads a fifth member, so the drop rule never fires here; the
+-- write is what fails without the fix.)
+test("the group's last open member passed: the group's ends written; no ended member reopens after END_DROP_MS",
+    function() withEnds(function(ended)
+        begin()
+        fire("CombatRoundStarted", "combat1", 1)
+        local grp = { A1, B1, B2, A2 }
+        order = { grp }
+        openAll(grp)
+        burst(grp)
+        tick()
+        for _, d in ipairs({ { A1, "A" }, { B1, "B" }, { B2, "B" } }) do
+            local j = endTurn(d[1], d[2])
+            ticks(2)
+            eq(j.status, "done", d[1] .. "'s end: " .. tostring(j.error))
+            eq(j.result.requested, true, d[1] .. "'s end pending")
+        end
+        local phases, sent = #refs("arena_turn"), #ended -- the three act.end_turn EndTurns
+        osiv[key("HasActiveStatus", A2, "DOWNED")] = 1 -- downed in B's phase
+        world[A2].comps.Health.Hp = 0
+        tick()
+        eq(enc({ #ended - sent, ended[#ended] }), enc({ 1, A2 }), "A2's turn passed")
+        ticks(math.floor((G.END_DROP_MS + 2000) / Ar.PHASE_EVERY_MS))
+        eq(#refs("arena_turn"), phases, "no phase after the pass (B1/B2 never reopen)")
+        for _, u in ipairs({ B1, B2 }) do eq(Ar.open(u), false, u .. " not open") end
+        local rep = {}
+        for _, u in ipairs(grp) do rep[#rep + 1] = u .. ":TurnBased" end
+        eq(table.concat(replicated, ","), table.concat(rep, ","), "the group's ends written once, at the pass")
+    end) end)
+
+test("a pass with a member still to act after it writes nothing: that member's turn stays open", function()
+    withEnds(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 1)
+        local grp = { B1, B2, A1, A2 }
+        order = { grp }
+        openAll(grp)
+        burst(grp)
+        tick()
+        for _, d in ipairs({ { B1, "B" }, { B2, "B" } }) do
+            local j = endTurn(d[1], d[2])
+            ticks(2)
+            eq(j.result and j.result.requested, true, d[1] .. "'s end pending")
+        end
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+        world[A1].comps.Health.Hp = 0
+        tick()
+        eq(#refs("arena_turn_passed"), 1, "A1 passed")
+        eq(#replicated, 0, "no write: A2 is still to act")
+        eq(G.is_my_turn(A2), true, "A2 acts")
+    end)
+end)
