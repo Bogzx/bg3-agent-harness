@@ -6,7 +6,9 @@ ModSnapshot.test_game_mod_path_from_the_game_environ under pytest only.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -33,6 +35,26 @@ class RelaunchRestores(unittest.TestCase):
         finally:
             case.tearDown()
         self.assertEqual((rcode.game_mod_path, rcode.list_saves, G.port_open), real)
+
+
+class UnittestGuard(unittest.TestCase):
+    def test_testenv_guards_the_live_port_without_pytest(self) -> None:
+        """A plain `python3 -m unittest` run loads no pytest plugin: testenv installs the socket guard itself."""
+        code = (
+            "import testenv, socket; from bg3harness.testing import liveport as L; "
+            "print(socket.socket.connect is L._connect, 9998 in L.ports)"
+        )
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST", "BG3AI_TEST"))}
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).parent,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+        self.assertEqual(out.stdout.split(), ["True", "True"])
 
 
 class RealDirs(unittest.TestCase):

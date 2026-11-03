@@ -8,11 +8,17 @@ module imports this before play, the legacy runner or bg3harness.runner. It also
 bridge/src on sys.path (runner/_harness.py), so a test module can import bg3harness.runner without importing play first.
 """
 
+import os
 from pathlib import Path
 
 import _harness  # noqa: F401  (first: bg3harness on sys.path; nothing it imports reads the profile folders)
-from bg3harness.testing.profile import temp_profile
+from bg3harness.testing import liveport
+from bg3harness.testing.profile import PORT_VAR, SHELL_PORT_VAR, temp_profile
 
+# The socket guard too, as the pytest plugin installs it (bg3harness.testing.pytest_profile): a plain
+# `python3 -m unittest runner/test_x.py` loads no pytest plugin, and code that hard-codes 9998 (port probes,
+# skipper.start_background) reached the live game's debug port. Before temp_profile: it replaces the shell's port.
+liveport.install(liveport.guarded_ports(os.environ.get(SHELL_PORT_VAR) or os.environ.get(PORT_VAR)))
 ROOT = temp_profile()  # the same dir as packages/harness/tests/conftest.py's when both run in one process
 SAVE_DIR = ROOT / "saves"
 SE_DIR = ROOT / "se"
