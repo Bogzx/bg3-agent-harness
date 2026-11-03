@@ -165,3 +165,64 @@ test("rules: Hide is refused while FLANKED, through act.cast and sneak; the guar
     j = job(op("sneak", { char = P1, on = true }))
     eq(j.status, "running", "not flanked: hides " .. tostring(j.error))
 end)
+
+test("rules: the helper terms read from the game (Sleep HP, Help, Knock, Mobile Shooting, proficiency, Grease)",
+    function()
+    local function tr(spell_name, cond, target)
+        return rules(spell_name, { SpellType = "Target", TargetConditions = cond }, target)
+    end
+    -- Sleep: not HasHPMoreThan(24) (thoth: entity.HP > value, the target by default)
+    osiv[key("GetHitpoints", NPC)] = 30
+    refused(tr("Target_Sleep", "not HasHPMoreThan(24)", NPC), "can't target that: the target has more than 24 HP")
+    osiv[key("GetHitpoints", NPC)] = 20
+    passes(tr("Target_Sleep", "not HasHPMoreThan(24)", NPC))
+    -- a player caster: IsCrowdControlled doesn't matter (Sleep's "not (not Player(context.Source) and ...)")
+    osiv[key("IsPlayer", P1)] = 1
+    passes(tr("Target_Sleep", "not (not Player(context.Source) and IsCrowdControlled(context.Target))", NPC))
+    -- Help: HasHelpableCondition (the khn status list)
+    stats["PRONE"] = { StatusGroups = { "SG_Prone" } }
+    world[NPC].comps.ServerCharacter = { StatusManager = { Statuses = { { StatusId = "BLESS" } } } }
+    for _, id in ipairs(G.HELPABLE) do
+        if id:sub(1, 3) ~= "SG_" then osiv[key("HasActiveStatus", NPC, id)] = 0 end
+    end
+    eq(G.rule_has_status(NPC, "SG_Prone"), false, "a status group reads as off (was always unknown)")
+    refused(tr("Target_Help", "HasHelpableCondition()", NPC), "it has nothing to help with")
+    osiv[key("HasActiveStatus", NPC, "PRONE")] = 1
+    passes(tr("Target_Help", "HasHelpableCondition()", NPC))
+    osiv[key("HasActiveStatus", NPC, "PRONE")] = 0
+    world[NPC].comps.ServerCharacter = { StatusManager = { Statuses = { { StatusId = "PRONE" } } } }
+    eq(G.rule_has_status(NPC, "SG_Prone"), true, "in the group")
+    world[NPC].comps.ServerCharacter = { StatusManager = { Statuses = {} } }
+    eq(G.rule_has_status(NPC, "SG_Prone"), false, "no status at all: in no group")
+    -- Knock: Locked()
+    osiv[key("IsLocked", NPC)] = 0
+    refused(tr("Target_Knock", "Locked()", NPC), "it is not locked")
+    osiv[key("IsLocked", NPC)] = 1
+    passes(tr("Target_Knock", "Locked()", NPC))
+    -- HasPassive, IsImmuneToStatus (listed = immune; not listed = unknown, never refused)
+    osiv[key("HasPassive", P1, "SculptSpells")] = 1
+    refused(tr("Target_X", "not HasPassive('SculptSpells', context.Source)", NPC), "the caster has sculptspells")
+    world[NPC].comps.StatusImmunities = { PersonalStatusImmunities = { SLEEP = {} } }
+    refused(tr("Target_Sleep", "not IsImmuneToStatus('SLEEP')", NPC), "the target is immune to sleep")
+    world[NPC].comps.StatusImmunities = { PersonalStatusImmunities = {} }
+    passes(tr("Target_Sleep", "not IsImmuneToStatus('SLEEP')", NPC))
+    -- Grease: "not Item();" (a trailing ';' made the whole condition unread)
+    osiv[key("IsItem", NPC)] = 1
+    refused(tr("Target_Grease", "not Item();", NPC), "it is an item")
+    -- Mobile Shooting's RequirementConditions (the engine doesn't check them, window 8)
+    local mobile = { SpellType = "Projectile", RequirementConditions = "CanUseWeaponActions() and"
+        .. " IsProficientWithEquippedWeapon(context.Source, true, false) and MobileShootingCasterCondition()" }
+    world[P1].comps.Proficiency = { Flags = { "Longbows", "MartialWeapons" } }
+    osiv[key("GetEquippedItem", P1, "Ranged Main Weapon")] = "BOW"
+    world.BOW = { pos = { 0, 0, 0 }, comps = { ProficiencyGroup = { Flags = { "Longbows" } } } }
+    osiv[key("HasActiveStatus", P1, "DASH")] = 0
+    osiv[key("HasActiveStatus", P1, "DISENGAGE")] = 0
+    refused(rules("Projectile_MobileShooting", mobile, NPC), "the caster has neither dashed nor disengaged")
+    osiv[key("HasActiveStatus", P1, "DASH")] = 1
+    passes(rules("Projectile_MobileShooting", mobile, NPC))
+    world.BOW.comps.ProficiencyGroup = { Flags = { "HeavyCrossbows" } }
+    refused(rules("Projectile_MobileShooting", mobile, NPC), "the caster is not proficient with the weapon held")
+    world.BOW.comps.ProficiencyGroup = nil -- unreadable: unknown, not refused
+    passes(rules("Projectile_MobileShooting", mobile, NPC))
+    world.BOW = nil
+end)
