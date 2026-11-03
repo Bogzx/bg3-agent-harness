@@ -143,6 +143,9 @@ class CombatTools(CombatTurnBase):
         out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
         self.assertIn("skipped", out)
         self.assertIn("is downed: nothing to play, its turn passes by itself", out)
+        # live smoke L5: only a thrown potion heals another, and this server can't throw one: no potion named
+        self.assertIn("Healing Word or Help (adjacent).", out)
+        self.assertNotIn("potion", out)
         self.assertNotIn("FAILED", out)
         self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
         self.g.refuse_if = lambda op, a: "character is dead" if op == "act.end_turn" else None
