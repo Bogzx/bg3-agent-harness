@@ -81,6 +81,17 @@ game unless it says so.
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 
+- Casts the harness starts now roll their dice (draft, waits for the live check). A cast an Osiris `UseSpell` or
+  `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,
+  IgnoreCastChecks, IgnoreTargetChecks and AvoidDangerousAuras), so the game skipped its spell roll. Every attack the
+  harness started hit without a d20 (30 of 30 arena attacks; 8 of 8 at AC 35 in the Balthazar save), and Sacred Flame
+  never rolled a save (8 of 8 did full damage). The game AI's casts and the hotbar click route rolled (the hotbar
+  missed 9 of 9 at AC 35). After each order (`use_ability` casts, the cast after a walk into range, sneak's Hide), the
+  mod drops IgnoreSpellRolls from the cast's `SpellCastState.CastOptions` when the cast entity is made and reads it
+  back (live, by hand: 6 of 6 attacks missed at AC 35, and 2 of 6 Sacred Flame saves were made). When the write
+  doesn't take, or the cast ends with no cast state seen, the cast fails and says it went without its roll. This
+  affects every earlier fight result: party attacks could not miss and party save spells always landed.
+
 ### Benchmark (`packages/bench`)
 
 - Statistics: Wilson intervals, pass^k, a two-level bootstrap, paired differences and the luck covariate.
