@@ -18,7 +18,7 @@ from . import camp_night, core, overview, plumbing, reporting, world_tools
 @core.mcp.tool()
 @reporting._guard
 def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
-    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first and talks on arrival (queued)."""
+    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first (travel_to) and talks on arrival, the conversation in the same result; a walk there that stops short doesn't talk (says not run), one still going after ~90 s talks on arrival (queued)."""
     char = plumbing._who(who)
     out = plumbing._act("talk_to", "act.talk", {"char": char, "npc": plumbing._uuid(npc)}, wait_s=30, wait=wait)
     # S026: 7 refusals out of sight (Mattis, e511, e720); S028: 2 "too far away (47-50m, max 40m)" at camp.
