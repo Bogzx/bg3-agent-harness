@@ -74,6 +74,14 @@ A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (Attack
 A.CAST_REACT_HOLD_MS = 8000
 A.CAST_REACT_SETTLE_MS = 500
 A.react_seen = nil -- {t, done?, caster, spell}: the last cast by a character outside the party
+-- Window 8 seed 7 m1 (arena-fight-analysis.md, S2): move_to answered "done, hp 20/20" 0.6 s before the opportunity
+-- attack its own walk provoked landed (Birch, critical 13); the agent read it a call later as an ordinary enemy cast.
+-- A move in combat (move_to, walk_toward, a jump) answers only once the casts of the mover's foes that began during
+-- it have resolved (their CastedSpell + CAST_REACT_SETTLE_MS for its damage), at most MOVE_REACT_HOLD_MS after the
+-- move ended, and names them in its result as reactions (who, what, the damage it did to the mover).
+A.MOVE_REACT_HOLD_MS = 8000
+A.casts = A.casts or {} -- caster guid -> {t, done?, spell}: its last cast (CastSpell, its CastedSpell)
+A.hits = A.hits or {} -- defender guid -> {{t, by, amount, type}...}: the damage it took (AttackedBy), the last 20
 -- act.cast {ui=true} (audit ACT-8, the hotbar N-target route): the bridge clicks the hotbar cell and each target as a
 -- player does, after this job started; the job only checks the cast and watches CastSpell/CastedSpell. The clicks
 -- take ~1 s + 0.5 s per target (hotbar.py budget, hard cap 3x + 4 s): no start this long = failed (the bridge cancels
@@ -327,6 +335,99 @@ function A.stirred(u, why)
     hits[g] = { t = G.now_ms(), why = why }
 end
 
+-- Every cast's start and end (A.casts) and every hit's damage (A.hits), for a move's reactions (A.reaction_hold).
+function A.track_cast(event, caster, spell)
+    local g = G.guid(caster)
+    if not g then return end
+    local now, c = G.now_ms(), A.casts[g]
+    if event == "CastedSpell" and c and not c.done and c.spell == tostring(spell) then
+        c.done = now
+        return
+    end
+    if not c then
+        A.cast_n = (A.cast_n or 0) + 1
+        if A.cast_n > 500 then A.casts, A.cast_n = {}, 1 end
+    end
+    A.casts[g] = { t = now, done = event == "CastedSpell" and now or nil, spell = tostring(spell) }
+end
+
+function A.note_hit(defender, owner, attacker, dtype, amount)
+    local d = G.guid(defender)
+    if not d then return end
+    if not A.hits[d] then
+        A.hit_rows = (A.hit_rows or 0) + 1
+        if A.hit_rows > 500 then A.hits, A.hit_rows = {}, 1 end
+        A.hits[d] = {}
+    end
+    local list = A.hits[d]
+    list[#list + 1] = { t = G.now_ms(), by = G.guid(owner) or G.guid(attacker), amount = tonumber(amount) or 0,
+        type = tostring(dtype or "") }
+    if #list > 20 then table.remove(list, 1) end
+end
+
+-- Is caster on the other side from char: in a match the other team, else anyone outside the party.
+local function foe_of(char, caster)
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active and Ar.active() and Ar.side_of then
+        local a, b = Ar.side_of(char), Ar.side_of(caster)
+        if a and b then return a ~= b end
+    end
+    return not G.is_party(caster)
+end
+
+-- The mover's foes whose cast began during the job: {guid -> cast}.
+local function move_reactions(job)
+    local out, me = {}, G.guid(job.char)
+    for g, c in pairs(A.casts) do
+        if g ~= me and c.t >= job.started and foe_of(me, g) then out[g] = c end
+    end
+    return out
+end
+
+-- RPC job hold for a move in combat: true while a foe's cast that began during it is unresolved or just resolved.
+function A.reaction_hold(job)
+    if not (job.char and G.in_combat(job.char)) then return false end
+    local now = G.now_ms()
+    job.hold_from = job.hold_from or now
+    if now - job.hold_from >= A.MOVE_REACT_HOLD_MS then
+        job.react_cut = true
+        return false
+    end
+    for _, c in pairs(move_reactions(job)) do
+        if not c.done or now - c.done < A.CAST_REACT_SETTLE_MS then return true end
+    end
+    return false
+end
+
+-- The move's result with its reactions: {by = {uuid, name}, name = the spell's shown name, damage = what it did to
+-- the mover (AttackedBy since the move began), type, resolved = false when the hold ran out first}. Only casters the
+-- mover's side can see (the party always); an unnamed (technical) spell is left out, as the event log does.
+function A.reaction_annotate(job, result)
+    local V = BG3AI.Visibility
+    local me = G.guid(job.char)
+    local list = {}
+    local ctx = V and V.context and V.context()
+    for g, c in pairs(move_reactions(job)) do
+        local seen = ctx and (ctx.is_party[g] or V.characterVisible(ctx, g, V.entity(g)))
+        local st = seen and Ext.Stats.Get(c.spell)
+        local name = st and U.loca(st.DisplayName)
+        if name then
+            local dmg, dtype = 0, nil
+            for _, h in ipairs(A.hits[me] or {}) do
+                if h.by == g and h.t >= job.started then dmg, dtype = dmg + h.amount, dtype or h.type end
+            end
+            list[#list + 1] = { by = { uuid = g, name = V.name(g) }, name = name, damage = dmg, type = dtype,
+                resolved = c.done ~= nil or nil, t = c.t }
+        end
+    end
+    if #list == 0 then return result end
+    table.sort(list, function(a, b) return a.t < b.t end)
+    for _, r in ipairs(list) do r.t = nil end
+    if type(result) ~= "table" then result = {} end
+    result.reactions = list
+    return result
+end
+
 -- CastSpell / CastedSpell by a character outside the party (A30): its start, and its end on the same caster's
 -- CastedSpell (a CastedSpell alone counts as both).
 function A.foe_cast(event, caster, spell)
@@ -369,8 +470,10 @@ function A.dispatch(event, args)
         G.combat_round[args[1]] = tonumber(args[2])
     elseif event == "AttackedBy" and args[1] then
         U.each_side(A.stirred, args[1], "a hit on the caster")
+        A.note_hit(args[1], args[2], args[3], args[4], args[5])
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
         U.each_side(A.foe_cast, event, args[1], args[2]) -- "outside the party" is per side in an arena
+        A.track_cast(event, args[1], args[2])
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
     elseif (event == "Unlocked" or event == "Opened") and args[1] then
@@ -568,6 +671,9 @@ local function start(kind, char, spec)
     end
     spec.act = true
     spec.char = char
+    if kind == "move_to" or spec.react_hold then
+        spec.hold, spec.annotate = A.reaction_hold, A.reaction_annotate
+    end
     spec.interrupt = spec.interrupt or {}
     local user_tick = spec.on_tick
     local last = 0

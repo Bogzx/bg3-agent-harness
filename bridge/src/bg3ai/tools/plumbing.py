@@ -333,10 +333,34 @@ def _trim_after(res: Any, tool: str = "", char: str | None = None) -> Any:
     return out
 
 
+def _reactions_text(reactions: list, char: str | None) -> str:
+    """A move's reactions (Actions.lua reaction_annotate): the casts of the mover's foes its move set off, each as
+    "reaction <who>: <what> -> <mover> <damage> <type>", as the event log names a cast (window 8 seed 7 m1: the
+    opportunity attack landed after move_to had answered)."""
+    who = queueing._label(char) if char else "the mover"
+    lines = []
+    for x in reactions:
+        if not isinstance(x, dict):
+            continue
+        by = x.get("by") or {}
+        dmg = x.get("damage") or 0
+        hit = f" -> {who} {render.num(dmg)}" + (f" {x['type']}" if dmg and x.get("type") else "") if dmg else ""
+        open_ = "" if x.get("resolved") else " (still resolving when this answered)"
+        lines.append(f"reaction {queueing._label(str(by.get('uuid') or by.get('name') or '?'))}: "
+                     f"{x.get('name') or '?'}{hit}{open_}")
+    return ("REACTIONS to the move\n  " + "\n  ".join(lines)) if lines else ""
+
+
 def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
     res = r.result
     if isinstance(res, dict) and "phases" in res:  # ui.roll's state timeline: metrics only (_roll_step)
         res = {k: v for k, v in res.items() if k != "phases"}
+    reactions = res.get("reactions") if isinstance(res, dict) else None
+    if reactions:
+        res = {k: v for k, v in res.items() if k != "reactions"}
+        tail = _reactions_text(reactions, char)
+        text = _job_text(name, JobResult(r.status, res, r.error, r.events, r.elapsed_ms), char)
+        return text + ("\n" + tail if tail else "")
     r = JobResult(r.status, _trim_after(res, name, char), r.error, r.events, r.elapsed_ms)
     if isinstance(r.result, dict) and r.result.get("by_game"):
         return _game_moved_text(name, r.result, char)
