@@ -51,16 +51,17 @@ test("cast rolls: a flag that won't clear -> purged; no cast after it: failed as
     eq(#called("PurgeOsirisQueue"), 1, "no second purge")
 end)
 
-test("cast rolls: a flag that won't clear and the cast resolves anyway -> failed, saying it went through", function()
+test("cast rolls: a flag that won't clear and the cast resolves anyway -> done, marked unrolled (F7)", function()
     cast_sticky = true
     bolt()
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     tick(10)
     A.dispatch("CastSpell", { P1, "Projectile_Bolt" })
     A.dispatch("CastedSpell", { P1, "Projectile_Bolt" })
-    tick(1)
-    eq(j.status, "failed", "status")
-    assert(j.error:find("purging the queue didn't stop it, it resolved and its effects stand", 1, true), j.error)
+    tick(math.ceil(A.PROJECTILE_SETTLE_MS / 60) + 5)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    local why = tostring(j.result.unrolled)
+    assert(why:find("without its roll (IgnoreSpellRolls stayed set", 1, true), why)
 end)
 
 test("cast rolls: CastOptions that don't read as names fail the cast", function()
@@ -73,13 +74,15 @@ test("cast rolls: CastOptions that don't read as names fail the cast", function(
     eq(j.status, "failed", "status"); assert(j.error:find("don't read as flag names", 1, true), j.error)
 end)
 
-test("cast rolls: CastedSpell with no cast state seen fails the cast", function()
+test("cast rolls: CastedSpell with no cast state seen -> done, marked unrolled (F7)", function()
     cast_seen = "none"
     bolt()
     local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     eq(j.status, "running", "status " .. tostring(j.error)); eq(j.roll.state, "pending", "pending")
     A.dispatch("CastedSpell", { P1, "Projectile_Bolt" })
-    eq(j.status, "failed", "status"); assert(j.error:find("saw no cast state for it): it resolved", 1, true), j.error)
+    tick(math.ceil(A.PROJECTILE_SETTLE_MS / 60) + 5)
+    eq(j.status, "done", "status " .. tostring(j.error))
+    assert(tostring(j.result.unrolled):find("saw no cast state for it", 1, true), j.result.unrolled)
 end)
 
 test("cast rolls: another caster's cast state is not touched", function()
@@ -121,8 +124,8 @@ test("cast rolls: sneak's Hide is cleared; a flag that won't clear fails the sne
     j = job(op("sneak", { char = P1, on = true }))
     osiv[key("HasActiveStatus", P1, "SNEAKING")] = 1
     tick(1)
-    eq(j.status, "failed", "sneaking anyway")
-    assert(j.error:find("didn't stop it, it resolved", 1, true), j.error)
+    eq(j.status, "done", "sneaking anyway")
+    assert(tostring(j.result.unrolled):find("without its roll", 1, true), j.result.unrolled)
     osiv[key("HasActiveStatus", P1, "SNEAKING")] = nil
 end)
 
@@ -176,4 +179,102 @@ test("cast start: a short pause that clears lets the cast finish as usual", func
     A.dispatch("CastedSpell", { P1, "Target_Swing", "Target", "None", 0 })
     tick(10)
     eq(j.status, "done", "done " .. tostring(j.error))
+end)
+
+-- REVIEW-5 F2: the order's stamp outlives its job; every Osiris cast state of the caster loses IgnoreSpellRolls; only
+-- the awaited spell marks the job; a late or second cast is a late_cast event.
+local pushed_events -- RPC.push calls since a test cleared it
+local real_push = RPC.push
+RPC.push = function(kind, data)
+    if pushed_events then pushed_events[#pushed_events + 1] = { kind = kind, data = data } end
+    return real_push(kind, data)
+end
+local function pushes(kind)
+    local out = {}
+    for _, p in ipairs(pushed_events or {}) do if p.kind == kind then out[#out + 1] = p.data end end
+    return out
+end
+local function state_of(caster, sp, names)
+    local st = { Caster = { Uuid = { EntityUuid = caster } }, SpellId = { Prototype = sp }, CastOptions = names }
+    create_hooks.SpellCastState({ SpellCastState = st })
+    return st
+end
+
+test("late cast: a state after the job gave up is cleared and told as late_cast (F2)", function()
+    cast_seen = "none"
+    combat_setup(9)
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    tick(60) -- 3.6 s: never started
+    eq(j.status, "failed", "gave up " .. tostring(j.error))
+    pushed_events = {}
+    local st = state_of(P1, "Projectile_Bolt", { "IgnoreSpellRolls", "NoMovement" })
+    eq(table.concat(st.CastOptions, ","), "NoMovement", "cleared")
+    local late = pushes("late_cast")
+    eq(#late, 1, "late_cast"); eq(late[1].spell, "Projectile_Bolt", "spell")
+    assert(late[1].note:find("an earlier order went off", 1, true), late[1].note)
+end)
+
+test("late cast: two states for one order are both cleared; the second is a late_cast (F2)", function()
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    eq(j.roll.state, "cleared", "first cleared")
+    pushed_events = {}
+    local st = state_of(P1, "Projectile_Bolt", { "IgnoreSpellRolls" })
+    eq(#st.CastOptions, 0, "second cleared")
+    local late = pushes("late_cast")
+    eq(#late, 1, "late_cast"); assert(late[1].note:find("a second cast for one order", 1, true), late[1].note)
+end)
+
+test("late cast: another spell's state leaves the job pending; the player's own cast is left alone (F2)", function()
+    cast_seen = "none"
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    pushed_events = {}
+    local react = state_of(P1, "Target_OpportunityAttack", { "IsReaction", "IsInterrupt" })
+    eq(j.roll.state, "pending", "still pending"); eq(#react.CastOptions, 2, "untouched")
+    local other = state_of(P1, "Target_Other", { "IgnoreSpellRolls" })
+    eq(#other.CastOptions, 0, "an Osiris cast of another spell still loses the flag")
+    eq(j.roll.state, "pending", "pending")
+    eq(#pushes("late_cast"), 0, "no late_cast for another spell")
+    A.dispatch("CastedSpell", { P1, "Projectile_Bolt" }) -- end the job
+    tick(40)
+    pushed_events = {}
+    local hotbar = state_of(P1, "Projectile_Bolt", { "FromClient", "NoUnsheath" })
+    eq(#hotbar.CastOptions, 2, "the hotbar cast untouched"); eq(#pushes("late_cast"), 0, "no late_cast for it")
+end)
+
+test("late cast: the stamp expires after ROLL_STAMP_MS (F2)", function()
+    bolt()
+    job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    clock = clock + A.ROLL_STAMP_MS + 1
+    local st = state_of(P1, "Projectile_Bolt", { "IgnoreSpellRolls" })
+    eq(#st.CastOptions, 1, "not touched"); eq(A.roll_wait[G.guid(P1)], nil, "stamp gone")
+end)
+
+test("probe switch (REVIEW-5 F1/F3): CAST_DROP_EXTRA also drops the check flags of the awaited cast only", function()
+    bolt()
+    job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    eq(opts(), KEPT, "off: only IgnoreSpellRolls dropped")
+    reset()
+    A.CAST_DROP_EXTRA = true
+    bolt()
+    local j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
+    eq(opts(), "NoMovement,AvoidDangerousAuras", "on: the check flags dropped too"); eq(j.roll.state, "cleared", "ok")
+    local react = state_of(P1, "Target_OpportunityAttack", { "IgnoreCastChecks", "IsReaction" })
+    eq(#react.CastOptions, 2, "a reaction keeps its flags")
+    A.CAST_DROP_EXTRA = false
+end)
+
+test("self-check: a hook that doesn't register is said loudly at load (REVIEW-5)", function()
+    local said = {}
+    local onc, pe, pw, hook = Ext.Entity.OnCreate, Ext.Utils.PrintError, Ext.Utils.PrintWarning, A.roll_hook
+    Ext.Entity.OnCreate = function() error("no OnCreate on this build") end
+    Ext.Utils.PrintError = function(m) said[#said + 1] = m end
+    A.roll_hook = nil
+    dofile(LUA .. "/Server/ActionsRolls.lua")
+    Ext.Entity.OnCreate, Ext.Utils.PrintError, Ext.Utils.PrintWarning = onc, pe, pw
+    eq(A.roll_hook, false, "not registered")
+    eq(#said, 1, "said once"); assert(said[1]:find("SELF-CHECK FAILED", 1, true), said[1])
+    A.roll_hook = hook
 end)

@@ -1,0 +1,235 @@
+"""Live probe ($0, REVIEW-5 F1/F3/F4): once a harness cast loses its check flags too, does the engine refuse what a
+human player can't do?
+
+A cast the harness orders (Osi.UseSpell) carries IgnoreHasSpell, IgnoreCastChecks, IgnoreSpellRolls,
+IgnoreTargetChecks; the mod drops IgnoreSpellRolls at the cast state's creation (Server/ActionsRolls.lua). With the
+probe switch `A.CAST_DROP_EXTRA` on, the awaited cast also loses IgnoreCastChecks, IgnoreTargetChecks and
+IgnoreHasSpell (NoMovement and AvoidDangerousAuras stay). Whether the engine re-checks the target and the
+requirements at that point, or ran them at the request (so nothing changes), is what this probe decides.
+
+Each case goes through bg3ai.tools.combat.use_ability (the agent's tool), with the switch off and then on (--modes):
+    control       a normal attack at --target: must still work with the switch on
+    hold_person   Hold Person at --target (an undead or non-humanoid: TargetConditions refuse it)   F1
+    heavy_shove   Shove at --heavy (Strength x 12 < its weight: CanShoveWeight refuses it)            F1
+    prone_attack  the attack while the caster has PRONE (applied by the probe), in its turn            F4
+    jump_webbed   Jump 3 m while the caster has --immobile (applied by the probe; Requirements !Immobile) F3
+    rage_ooc      Rage out of combat (Requirements Combat)                                             F3
+    surge_ooc     Action Surge out of combat (Requirements Combat)                                     F3
+Verdict per case and mode: cast (the engine let it through), refused (the game refused the cast: CastSpellFailed),
+guard (the harness refused before any order), not run (precondition not met: not its turn, in/out of combat, a
+status that didn't apply). A case the engine refuses only with the switch on = the engine re-checks once the flag is
+gone (F1a/F3 can be fixed by dropping it); cast both ways = the Lua terms are the fix.
+
+Probe-only state (save nothing): action resources refilled and the target healed before each order, statuses applied
+and removed, the switch restored to off at the end.
+
+One command per scene, a fight loaded with this branch's mod (combat cases; the caster's turn: the probe ends other
+party members' turns to reach it), then a scene out of combat for the ooc cases:
+    uv run --project bridge python tools/dev/probe_cast_checks.py --plan combat --target <undead uuid> \\
+        --heavy <giant uuid> [--caster Karlach] [--hold-caster Shadowheart] [--immobile ENSNARED]
+    uv run --project bridge python tools/dev/probe_cast_checks.py --plan ooc [--rager Karlach] [--surger <fighter>]
+    [--modes off,on] [--only case,case] [--out runtime/probes/cast-checks.jsonl]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "bridge" / "src"))
+
+A_LUA = "Mods.BG3AI.BG3AI.Actions"
+REFILL = """local e = Ext.Entity.Get(%s)
+for _, list in pairs(e.ActionResources.Resources) do
+    for _, r in ipairs(list) do r.Amount = r.MaxAmount end
+end
+e:Replicate("ActionResources")
+return 'ok'"""
+# The awaited cast's flags after the write (nil when no cast state came)
+OPTIONS = (
+    "local w = "
+    + A_LUA
+    + """.roll_wait[Mods.BG3AI.BG3AI.Guard.guid(%s)] local o = w and w.job and w.job.roll and w.job.roll.options
+return o and table.concat(o, ",") or "none\""""
+)
+
+
+def plan(name: str, a: argparse.Namespace) -> list[dict[str, Any]]:
+    """The cases of a plan, from the CLI args. Pure (tests)."""
+    if name == "combat":
+        return [
+            {"case": "control", "who": a.caster, "ability": a.attack, "target": a.target, "need": "combat"},
+            {
+                "case": "hold_person",
+                "who": a.hold_caster,
+                "ability": "Hold Person",
+                "target": a.target,
+                "need": "combat",
+            },
+            {"case": "heavy_shove", "who": a.caster, "ability": "Shove", "target": a.heavy, "need": "combat"},
+            {
+                "case": "prone_attack",
+                "who": a.caster,
+                "ability": a.attack,
+                "target": a.target,
+                "status": "PRONE",
+                "need": "combat",
+            },
+            {
+                "case": "jump_webbed",
+                "who": a.caster,
+                "ability": "Jump",
+                "jump_m": 3.0,
+                "status": a.immobile,
+                "need": "combat",
+            },
+        ]
+    if name == "ooc":
+        return [
+            {"case": "rage_ooc", "who": a.rager, "ability": "Rage", "need": "no_combat"},
+            {"case": "surge_ooc", "who": a.surger, "ability": "Action Surge", "need": "no_combat"},
+        ]
+    raise ValueError(f"no plan {name!r}")
+
+
+def verdict(text: str) -> str:
+    """The tool result as cast / refused / guard. Pure (tests)."""
+    first = text.split("\n", 1)[0]
+    if first.startswith("REFUSED") or "REFUSED" in first.split("—", 1)[0]:
+        return "guard"
+    if "FAILED" not in first:
+        return "cast"
+    if "the game refused the cast" in first or "the game would not" in first:
+        return "refused"
+    return "guard"
+
+
+def summary(rows: list[dict[str, Any]]) -> list[str]:
+    """One line per case: its verdict per mode and what it means. Pure (tests)."""
+    by: dict[str, dict[str, str]] = {}
+    for r in rows:
+        by.setdefault(r["case"], {})[r["mode"]] = r["verdict"]
+    out = []
+    for case, m in by.items():
+        off, on = m.get("off"), m.get("on")
+        if case == "control":
+            meaning = (
+                "OK: still works with the flags dropped" if on == "cast" else "BROKEN: the switch stops a normal cast"
+            )
+        elif on == "refused" and off != "refused":
+            meaning = "the engine re-checks once the flags are gone: dropping them fixes it"
+        elif on == "cast":
+            meaning = "the engine lets it through even without the flags: needs the Lua check"
+        elif on == "guard":
+            meaning = "the harness refuses it already"
+        else:
+            meaning = "inconclusive (read the rows)"
+        out.append(f"{case:13} off={off or '-':9} on={on or '-':9} {meaning}")
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
+    ap.add_argument("--plan", choices=("combat", "ooc"), default="combat")
+    ap.add_argument("--target", default="", help="combat: an undead / non-humanoid enemy (uuid or handle)")
+    ap.add_argument("--heavy", default="", help="combat: an enemy too heavy to shove")
+    ap.add_argument("--caster", default="Karlach")
+    ap.add_argument("--hold-caster", default="Shadowheart")
+    ap.add_argument("--attack", default="Main Hand Attack")
+    ap.add_argument("--immobile", default="ENSNARED", help="a status that makes the caster Immobile")
+    ap.add_argument("--rager", default="Karlach")
+    ap.add_argument("--surger", default="Lae'zel")
+    ap.add_argument("--modes", default="off,on")
+    ap.add_argument("--only", default="")
+    ap.add_argument("--turn-wait", type=float, default=120.0)
+    ap.add_argument("--out", type=Path, default=REPO / "runtime" / "probes" / "cast-checks.jsonl")
+    a = ap.parse_args(argv)
+
+    from bg3ai import turn
+    from bg3ai.luadebug import LuaDebugClient
+    from bg3ai.tools import combat, core, plumbing, turn_plan
+
+    dbg = LuaDebugClient(connect_timeout=5.0)
+    dbg.connect()
+
+    def lua(code: str) -> str:
+        return str(dbg.evaluate(code, context="server", timeout=30.0, statement=True))
+
+    def in_combat() -> bool:
+        return bool((core.game.try_rpc("state.combat") or {}).get("active"))
+
+    def reach_turn(uuid: str) -> bool:
+        end = time.monotonic() + a.turn_wait
+        while time.monotonic() < end:
+            cs = core.game.try_rpc("state.combat") or {}
+            now = turn.party_acting(cs, turn_plan._party_set())
+            if uuid in now:
+                return True
+            if now:
+                combat.end_turn(who=now[0])
+            time.sleep(2.0)
+        return False
+
+    only = {x for x in a.only.split(",") if x}
+    cases = [c for c in plan(a.plan, a) if not only or c["case"] in only]
+    rows: list[dict[str, Any]] = []
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        for c in cases:
+            for mode in [m for m in a.modes.split(",") if m]:
+                row: dict[str, Any] = {"case": c["case"], "mode": mode, "who": c["who"], "ability": c["ability"]}
+                who = plumbing._who(c["who"])
+                why = ""
+                if c["need"] == "no_combat" and in_combat():
+                    why = "in combat"
+                elif c["need"] == "combat" and (not in_combat() or not reach_turn(who)):
+                    why = "not its turn (or no fight)"
+                st = c.get("status")
+                if not why and st:
+                    lua(f"Osi.ApplyStatus({json.dumps(who)}, {json.dumps(st)}, 12.0, 1, {json.dumps(who)}) return 'ok'")
+                    time.sleep(0.5)
+                    if lua(f"return tostring(Osi.HasActiveStatus({json.dumps(who)}, {json.dumps(st)}))") != "1":
+                        why = f"status {st} didn't apply"
+                if why:
+                    row.update(verdict="not run", text=why)
+                else:
+                    lua(f"{A_LUA}.CAST_DROP_EXTRA = {'true' if mode == 'on' else 'false'} return 'ok'")
+                    lua(REFILL % json.dumps(who))
+                    tgt = c.get("target")
+                    if tgt:
+                        lua(f"Osi.SetHitpointsPercentage({json.dumps(plumbing._uuid(tgt))}, 100.0) return 'ok'")
+                    try:
+                        if c.get("jump_m"):
+                            x, y, z = (
+                                float(v)
+                                for v in lua(
+                                    f"local x, y, z = Osi.GetPosition({json.dumps(who)}) "
+                                    "return string.format('%f,%f,%f', x, y, z)"
+                                ).split(",")
+                            )
+                            text = combat.use_ability(c["ability"], x=x + c["jump_m"], y=y, z=z, who=c["who"])
+                        else:
+                            text = combat.use_ability(c["ability"], target=tgt or "", who=c["who"])
+                    except Exception as e:  # a probe reports, it doesn't stop the other cases
+                        text = f"use_ability: FAILED — {e}"
+                    row.update(text=str(text)[:500], verdict=verdict(str(text)), options=lua(OPTIONS % json.dumps(who)))
+                if st and not why:
+                    lua(f"Osi.RemoveStatus({json.dumps(who)}, {json.dumps(st)}) return 'ok'")
+                rows.append(row)
+                with a.out.open("a") as fh:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                print(json.dumps({k: row.get(k) for k in ("case", "mode", "verdict", "options")}))
+    finally:
+        lua(f"{A_LUA}.CAST_DROP_EXTRA = false return 'ok'")
+    for line in summary(rows):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
