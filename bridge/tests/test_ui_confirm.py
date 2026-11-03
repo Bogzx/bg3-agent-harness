@@ -86,6 +86,14 @@ class RollCheck(Base):
         self.assertNotIn("phases", out)
         self.assertNotIn(dialogue.ROLL_OPEN_NOTE, out)
 
+    def test_a_reroll_on_a_success_is_refused_without_a_press(self):
+        calls = []
+        self.g.run_job = lambda op, args, **kw: calls.append(dict(args)) or JobResult("done", {})
+        self.g.ui = {"screen": "dialogue", "roll": {"phase": "result", "success": True, "result": 17, "dc": 12}}
+        out = dialogue.roll_check(reroll=True)
+        self.assertEqual(calls, [])  # no RollAgainCommand: an Inspiration point a player couldn't spend
+        self.assertIn("roll_check: REFUSED — the roll on screen succeeded", out)
+
     def test_a_failed_reroll_returns_again(self):
         calls = []
 

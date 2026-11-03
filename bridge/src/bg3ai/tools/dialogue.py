@@ -164,6 +164,15 @@ def roll_check(boosts: str = "", reroll: bool = False) -> str:
     args: dict[str, Any] = {"reroll": reroll}
     if boosts:
         args["boosts"] = [b.strip() for b in boosts.split(",") if b.strip()]
+    if reroll:
+        # review-v010-human-gap #8: ui.roll sends RollAgainCommand on any result screen; the game offers the reroll
+        # only on a failure. A success on screen: nothing is sent.
+        ui = core.game.try_rpc("ui.state", context="client")
+        shown = ui.get("roll") if isinstance(ui, dict) else None
+        if isinstance(shown, dict) and shown.get("phase") == "result" and shown.get("success") is True:
+            return reporting._finish("roll_check", args, "roll_check: REFUSED — the roll on screen succeeded; the "
+                                     "game offers a reroll only on a failure (nothing was pressed; roll_check() "
+                                     "continues)", time.monotonic())
     try:
         first, roll = _roll_step(args, "roll", 25 if reroll else 20)
     except GameError as e:
