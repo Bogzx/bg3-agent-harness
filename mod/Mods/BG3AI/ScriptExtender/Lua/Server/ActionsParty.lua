@@ -612,7 +612,7 @@ reg("sneak", function(args)
             local hid = G.b(G.q("HasActiveStatus", char, "SNEAKING"))
             if A.roll_stop_tick(job, hid) then return end
             if hid then
-                RPC.finish_job(job, "done", { sneaking = true })
+                RPC.finish_job(job, "done", A.unrolled_result(job, { sneaking = true }))
             end
         end,
         on_finish = function(job)
