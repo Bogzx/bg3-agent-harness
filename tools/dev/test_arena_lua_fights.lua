@@ -112,3 +112,33 @@ test("state.combat: the other team's downed member reads downed (the status); an
     local _, ra = combatAs("A")
     eq(ra[A1].downed, true, "A reads its own A1 downed")
 end)
+
+-- arena C5 (live 10 m1 a2): a member at 0 HP without DOWNED read "hp 0% downed" for its side and "hp 0%" for the other;
+-- its own row read "downed can_act" and its own party sheet had no downed.
+test("a team member at 0 HP without DOWNED: both sides read downed where its HP shows; never can_act; the sheet agrees",
+    function()
+    begin()
+    order = { A1, B1 }
+    osiv[key("CanSee", B1, A1)] = 1
+    world[A1].comps.Health.Hp = 0
+    world[A1].comps.TurnBased.CanActInCombat = true
+    local _, rb = combatAs("B")
+    eq(rb[A1] and rb[A1].hp_pct, 0, "B sees A1's HP")
+    eq(rb[A1].downed, true, "B reads A1 downed")
+    local ca, ra = combatAs("A")
+    eq(ra[A1].downed, true, "A reads its own A1 downed")
+    eq(ra[A1].can_act, nil, "a downed A1 can't act")
+    eq(table.concat(ca.party_can_act or {}, ","):find(A1, 1, true), nil, "A's party_can_act: no A1")
+    local sheet
+    for _, m in ipairs(rpc("state.status", "{}", "A").result.party) do if m.uuid == A1 then sheet = m end end
+    eq(sheet and sheet.downed, true, "A's party sheet: A1 downed")
+    local rules = V.rules
+    V.rules, V.sideCtx = function() return { HIDE_NPC_HP = true } end, nil -- the side context is cached per frame
+    local ok, err = pcall(function()
+        local _, hidden = combatAs("B")
+        eq(hidden[A1].hp_pct, nil, "HP hidden")
+        eq(hidden[A1].downed, nil, "HP hidden: no 0 HP downed")
+    end)
+    V.rules, V.sideCtx = rules, nil
+    if not ok then error(err, 0) end
+end)

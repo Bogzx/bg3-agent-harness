@@ -309,7 +309,8 @@ local function partyBrief(ctx, uuid, active)
     local cl = classes(e)
     if #cl > 0 then o.classes = cl end
     if truthy(osi(Osi.IsDead, uuid)) then o.dead = true end
-    if truthy(osi(Osi.HasActiveStatus, uuid, "DOWNED")) then o.downed = true end
+    -- 0 HP without DOWNED (live 10 m1 a2) is downed too, as the combat row reads it (arena C5)
+    if truthy(osi(Osi.HasActiveStatus, uuid, "DOWNED")) or (not o.dead and h.hp == 0) then o.downed = true end
     if inCombat(uuid) then o.in_combat = true end
     if uuid == active then o.active = true end
     if not truthy(osi(Osi.IsOnStage, uuid)) then o.off_stage = true end
