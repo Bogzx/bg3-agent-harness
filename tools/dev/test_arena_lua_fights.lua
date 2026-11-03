@@ -142,3 +142,33 @@ test("a team member at 0 HP without DOWNED: both sides read downed where its HP 
     V.rules, V.sideCtx = rules, nil
     if not ok then error(err, 0) end
 end)
+
+-- A move's reactions (Actions.lua reaction_annotate) are read as the mover's side (RPC as_job): a reactor that side
+-- can't see is not named, nor its spell; the damage the mover took from it still shows (the event log's "Someone").
+test("a move's reactions as the mover's side sees them: an unseen reactor isn't named, its damage still shows",
+    function()
+    local A = BG3AI.Actions
+    local function moved(seen)
+        reset()
+        begin()
+        osiv[key("CanSee", A1, B1)] = seen and 1 or nil
+        local job = RPC.start_job("act.move_to", { char = A1, annotate = A.reaction_annotate })
+        job.side = "A"
+        A.casts, A.hits = {}, {}
+        A.track_cast("CastSpell", B1, "Projectile_FireBolt")
+        A.note_hit(A1, B1, B1, "Fire", 7)
+        A.track_cast("CastedSpell", B1, "Projectile_FireBolt")
+        RPC.finish_job(job, "done", {})
+        return job.result.reactions or {}
+    end
+    local r = moved(false)
+    eq(#r, 1, "one reaction")
+    eq(r[1].unseen, true, "unseen")
+    eq(r[1].by, nil, "no reactor named")
+    eq(r[1].name, nil, "no spell named")
+    eq(r[1].damage, 7, "its damage")
+    eq(r[1].type, "Fire", "type")
+    r = moved(true)
+    eq(r[1].by and r[1].by.uuid, B1, "a seen reactor is named")
+    eq(r[1].name, "Fire Bolt", "and its spell")
+end)
