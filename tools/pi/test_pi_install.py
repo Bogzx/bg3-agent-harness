@@ -16,6 +16,16 @@ import sys
 import unittest
 from pathlib import Path
 
+try:
+    import pytest
+
+    e2e = pytest.mark.e2e  # the version check runs in CI's e2e job, the one that installs tools/pi
+except ImportError:  # plain unittest (system python3)
+
+    def e2e(f):
+        return f
+
+
 PI_DIR = Path(__file__).resolve().parent
 REPO = PI_DIR.parents[1]
 CI_YML = REPO / ".github" / "workflows" / "ci.yml"
@@ -23,6 +33,7 @@ CONFORMANCE = "tools/pi/conformance/test_pi_conformance.py"
 PI_VERSION = "1.3.0"
 PACKAGES = ("@earendil-works/pi-coding-agent", "@earendil-works/pi-mcp")
 BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
+VERSION_TEST = "tools/pi/test_pi_install.py::PinnedTest::test_installed_binary_version"
 
 
 class PinnedTest(unittest.TestCase):
@@ -35,6 +46,7 @@ class PinnedTest(unittest.TestCase):
         for p in PACKAGES:
             self.assertEqual(lock[f"node_modules/{p}"]["version"], PI_VERSION, p)
 
+    @e2e
     @unittest.skipUnless(BINARY.exists(), "tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts")
     def test_installed_binary_version(self):
         out = subprocess.run([str(BINARY), "--version"], capture_output=True, text=True, timeout=60, check=True)
@@ -53,16 +65,16 @@ def ci_jobs() -> dict[str, str]:
     return {name: "\n".join(lines) for name, lines in jobs.items()}
 
 
-def selected(expr: str) -> list[str]:
-    """The conformance tests `pytest -m expr` collects."""
+def selected(expr: str, path: str = CONFORMANCE) -> list[str]:
+    """The tests under path that `pytest -m expr` collects."""
     out = subprocess.run(
-        [sys.executable, "-m", "pytest", "--co", "-q", "-p", "no:cacheprovider", "-m", expr, CONFORMANCE],
+        [sys.executable, "-m", "pytest", "--co", "-q", "-p", "no:cacheprovider", "-m", expr, path],
         cwd=REPO,
         capture_output=True,
         text=True,
         timeout=120,
     )
-    return [line for line in out.stdout.splitlines() if line.startswith(CONFORMANCE + "::")]
+    return [line for line in out.stdout.splitlines() if line.startswith(path.split("::")[0] + "::")]
 
 
 @unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest only: uv run pytest tools/pi/test_pi_install.py")
@@ -82,6 +94,8 @@ class CiTest(unittest.TestCase):
                         self.assertGreater(len(tests), 10)
                     else:
                         self.assertEqual(tests, [])
+                    # and the installed binary's version check, which skips where node_modules is missing
+                    self.assertEqual(selected(expr, VERSION_TEST), [VERSION_TEST] if installs else [])
 
 
 if __name__ == "__main__":
