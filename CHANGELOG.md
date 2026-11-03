@@ -134,7 +134,7 @@ game unless it says so.
   bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
   fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
-  Its own release file (`releases/bench-v0.10.json`: mod tree d124d235, the same 81 bg3 tools, new prompt hashes for
+  Its own release file (`releases/bench-v0.10.json`: mod tree 24376dc8, the same 81 bg3 tools, new prompt hashes for
   pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). Its
   conditions also pin the served tool definitions, `tools.defs_sha256` (release v1, optional; release.defs_digest:
   each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
@@ -160,11 +160,12 @@ game unless it says so.
     walk_toward, path_preview, WAYS, jump solvers, move_to/jump_to's "not in view" and hazard names follow it.
     Characters and items keep the Sight stat.
   - At night in camp, `long_rest`, camp leave and `fast_travel` from camp refuse before pressing anything while the
-    camp story still wants a talk, and name who (the "!" over them), instead of failing 30 s later. At camp,
-    get_status and look carry the same text in their TALK line before the agent tries. `long_rest` (and the sleep
-    press of camp leave and fast_travel) refuses at once while the game menu is open.
-  - `use_ability` on a spell container lists its variants only when each reads as a spell's stats entry; a list
-    that doesn't is read once more, then refused without the raw text.
+    camp story still wants a talk, and name who (the "!" over them; someone out of sight as "someone not in view"),
+    instead of failing 30 s later. At night camp, get_status and look show the camp "!" over the characters in view
+    in their TALK line. `long_rest` (and the sleep press of camp leave and fast_travel) refuses at once while the
+    game menu is open.
+  - `use_ability` on a spell container lists the variants that read as a spell's stats entry and says how many
+    entries didn't (after one more read); with none that reads it refuses without names. The raw text is never shown.
   Metric definition change: a tool call counts as async only when its own background job is still running when the
   call returns (bridge metrics_record.py). A blocking walk's job starts and ends inside the call, and a walk that
   ended in the 0.3 s settle window no longer counts. Async % and the latency figures built on it are not 1:1 with

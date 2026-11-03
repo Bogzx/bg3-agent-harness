@@ -10,7 +10,7 @@
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "43efad6edc549f878e3ab8b5a24fe56aee3fc36f0e1116bd259f5ae17e5260fc",
-  "mod_sha1": "d124d235d347dc1715e69ae98ee4d9b7c6920d14"
+  "mod_sha1": "24376dc80bd4ddcc1d7e32a774d58d7e2d3bf4fa"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
