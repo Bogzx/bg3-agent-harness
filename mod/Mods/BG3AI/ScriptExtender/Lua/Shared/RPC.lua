@@ -142,7 +142,10 @@ end)
 ------------------------------------------------------------------------
 -- Jobs: long-running actions. A job is a table:
 --   { id, kind, status = "running"|"done"|"failed"|"interrupted"|"timeout",
---     started, deadline, result, error, on_event(job, ev), on_tick(job) }
+--     started, deadline, result, error, on_event(job, ev), on_tick(job),
+--     hold(job)?, annotate(job, result)? }
+-- hold: asked when the job would finish; while it answers true the finish waits (no on_tick runs, the deadline
+-- doesn't fail it) and is made once it answers false. annotate: the finish's result as reported (it may add to it).
 -- The bridge polls "job.poll" until status ~= "running".
 ------------------------------------------------------------------------
 
@@ -174,6 +177,18 @@ function RPC.finish_job(job, status, result, err)
     -- its on_tick met the busy UI this tick: whatever it concluded came from refused reads; it ticks again
     local tk = RPC.ticking
     if tk and tk.job == job and BG3AI.UI and BG3AI.UI.busyHits ~= tk.hits then return end
+    if job.hold and not job.held then
+        local ok, wait = pcall(job.hold, job)
+        if ok and wait then
+            job.held = { status = status, result = result, err = err }
+            return
+        end
+    end
+    job.held = nil
+    if job.annotate then
+        local ok, r = pcall(job.annotate, job, result)
+        if ok then result = r end
+    end
     job.status = status
     job.result = result
     job.error = err
@@ -220,7 +235,14 @@ end)
 local function tick_jobs()
     local t = now_ms()
     for _, job in pairs(RPC.jobs) do
-        if job.status == "running" then
+        if job.status == "running" and job.held then
+            local h = job.held
+            local ok, more = pcall(job.hold, job)
+            if not (ok and more) then
+                job.hold = nil
+                RPC.finish_job(job, h.status, h.result, h.err)
+            end
+        elseif job.status == "running" then
             -- S086 hang (Client/UI.lua UI.busy): while the UI is busy no job touches it; one that met it this tick
             -- stays running (no verdict, no failure from the busy error) and ticks again once the UI is free
             local UI = BG3AI.UI

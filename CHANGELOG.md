@@ -127,6 +127,11 @@ game unless it says so.
     was never refused; it now reads.
   - Replaying the 199 launch-v1 casts gives the same 3 refusals as before (Prayer of Healing in combat) and no new
     one.
+- A move in combat (`move_to`, `walk_toward`, `jump_to`) answers only after the casts its walk set off from the
+  mover's foes have resolved, at most 8 s after the move ended, and its result names them under REACTIONS (who,
+  what, the damage to the mover). Arena window 8, seed 7 m1: `move_to` answered "done, hp 20/20" 0.6 s before the
+  opportunity attack it provoked landed (critical, 13), and the agent read it a call later as an ordinary enemy
+  cast. Offline only: whether the engine starts such a reaction's cast before the walk ends is not checked live.
 
 ### Benchmark (`packages/bench`)
 

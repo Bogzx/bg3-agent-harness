@@ -177,6 +177,7 @@ function reset()
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test
+    if A then A.casts, A.hits = {}, {} end -- casts and hits seen (a move's reactions) are per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
     if A then A.trip_t = nil end -- a fast travel's arrival (act.trip_arrived) is per test
@@ -236,9 +237,9 @@ end
 
 -- ---- the tests: these files, in order, on the stubs above (split for the 1000-line cap) ----
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
-for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_cast.lua", "test_act_lua_think.lua",
-    "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_reach.lua", "test_act_lua_revive.lua",
-    "test_act_lua_idle.lua", "test_act_lua_rolls.lua", "test_act_lua_rules.lua" }) do
+for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_react.lua", "test_act_lua_cast.lua",
+    "test_act_lua_think.lua", "test_act_lua_turns.lua", "test_act_lua_prep.lua", "test_act_lua_reach.lua",
+    "test_act_lua_revive.lua", "test_act_lua_idle.lua", "test_act_lua_rolls.lua", "test_act_lua_rules.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 
