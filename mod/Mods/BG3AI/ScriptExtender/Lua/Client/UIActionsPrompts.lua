@@ -6,7 +6,7 @@ local S = BG3AI.UIState
 local A = BG3AI.UIActions
 local I = A.inner
 local dialogueSnapshot, waitJob, settleDialogue = I.dialogueSnapshot, I.waitJob, I.settleDialogue
-local check, sig, try = I.check, I.sig, I.try
+local check, try = I.check, I.try
 
 ------------------------------------------------------------------------
 -- Active roll
@@ -133,11 +133,10 @@ RPC.register("ui.roll", function(args)
             return waitRollResult("ui.roll", false, true)
         end
         local _, d0 = dialogueSnapshot()
-        local before = sig(d0)
         local ok, err = UI.command(dc, "ContinueCommand", nil, args.dry)
         if not ok then check(UI.command(dc, "CancelCommand", nil, args.dry), err) end
         if args.dry then return { can = true } end
-        return settleDialogue("ui.roll", before, { timeout_ms = 30000, leaving = "roll",
+        return settleDialogue("ui.roll", d0, { timeout_ms = 30000, leaving = "roll",
             before_text = d0 and d0.text, before_speaker = d0 and d0.speaker })
     end
     error("roll is animating (" .. st .. "); poll ui.state")

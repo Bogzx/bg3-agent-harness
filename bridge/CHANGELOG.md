@@ -5,6 +5,20 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: an answer the game ignores is pressed with its number key; a scrolled answer list is the same node
+
+- `choose_dialogue` (and every tool that answers through ui.dialogue_choose): when the game still shows the same
+  answers 3 s after the answer's SelectAnswerCommand (or its button press), the mod presses the answer's own bound
+  key once (BoundEvent `UISelectSlot<n>` -> number key n) and the result says so: `note=the game ignored the
+  answer's command for 3.0 s (same answers still shown): pressed its key 3 instead`. An answer with no number key
+  bound is not pressed again; the note says the game has not taken it.
+- The settle after an answer (and after a roll's Continue) compares the node by speaker, line, the list's whole
+  length and the text at each answer number both reads show, not by the first visible row: a list wheeled during
+  the wait (the bridge's ui.answer_list) no longer ends the job `done` on the unanswered node.
+- Why (ops/logs/dialogue-click.md): v010 live windows 1 and 3 and launch-v1: 51 of 1186 choices, all on two
+  nodes (Lae'zel's cage "Get rid of them." 33, Gimblebock 18), returned `still running` after 20 s with the same
+  answers back; the number key took the same answer at once.
+
 ## 2026-11-03: clouds, surfaces and concentration in combat output; drop links; a busy End Turn press
 
 - `get_combat_state` lists the `HAZARD` lines `look` prints (nav.hazards: the harmful clouds and surfaces a party
