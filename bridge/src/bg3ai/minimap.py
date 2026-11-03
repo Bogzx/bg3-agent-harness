@@ -14,6 +14,7 @@ compass direction, height), the open directions, and the nearest things not walk
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from . import render
@@ -24,7 +25,7 @@ MAX_LEADS = 3  # unvisited leads shown, nearest first, then "+N more"
 DY_MIN_M = 1.5  # a height difference this big is shown ("3m down"), as get_frontier shows a lead's
 
 
-def here(status: Any) -> list | None:
+def here(status: Any) -> Sequence[Any] | None:
     """The active member's position in a state.status payload (where the markers' distances are measured from)."""
     if not isinstance(status, dict):
         return None
@@ -34,7 +35,7 @@ def here(status: Any) -> list | None:
     return p if isinstance(p, (list, tuple)) and len(p) >= 3 else None
 
 
-def _height(m: dict, at: list | None) -> str:
+def _height(m: dict, at: Sequence[Any] | None) -> str:
     p = m.get("pos")
     if at is None or not (isinstance(p, (list, tuple)) and len(p) >= 3):
         return ""
@@ -42,7 +43,7 @@ def _height(m: dict, at: list | None) -> str:
     return f" ({render.num(round(abs(dy), 1))}m {'up' if dy > 0 else 'down'})" if abs(dy) >= DY_MIN_M else ""
 
 
-def objectives_line(markers: Any, at: list | None) -> str:
+def objectives_line(markers: Any, at: Sequence[Any] | None) -> str:
     """'OBJECTIVES o1 <label> 16m W (3m down) [quest] | ... | +2 more'; '' when the markers weren't read."""
     if not isinstance(markers, list):
         return ""
@@ -79,7 +80,7 @@ def leads_line(frontier: Any, handles: Handles) -> str:
         return ""
     new = sorted(
         (x for x in frontier["leads"] if isinstance(x, dict) and x.get("unvisited")),
-        key=lambda x: x.get("dist") if isinstance(x.get("dist"), (int, float)) else float("inf"),
+        key=lambda x: float(x["dist"]) if isinstance(x.get("dist"), (int, float)) else float("inf"),
     )
     head = "LEADS (unvisited; get_frontier lists all): "
     if not new:

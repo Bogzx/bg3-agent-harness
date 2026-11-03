@@ -429,7 +429,8 @@ class CrashRecovery(FakeRunBase):
         self.assertEqual(res.reason, "exited")
         self.assertEqual(len(self.claude_runs()), 2)
         log = (renv.RUNTIME / "runner.log").read_text()
-        self.assertIn("FAULT crash: debug port 9998 stopped answering (game process still alive)", log)
+        # the configured port: the test profile points BG3LE_DEBUG_PORT at a dead one (bg3harness.testing.profile)
+        self.assertIn(f"FAULT crash: debug port {G.DEBUG_PORT} stopped answering (game process still alive)", log)
         self.assertNotEqual(self.r.game_proc.pid, self.g.port_lost_pid)       # the deaf game was killed
         self.assertTrue(self.g.port_open())
         self.assert_recovered("crash", 20)
