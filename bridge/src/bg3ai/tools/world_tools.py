@@ -545,9 +545,10 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     tgt0 = plumbing._uuid(target) if target else char
     if _POTION_CAT.match(str(it.get("cat") or "")) and tgt0 != char:
         # live smoke 2026-11-03 (L5): "Potion of Healing" target=e1 (a downed ally) was drunk by the user and the
-        # target dropped without a word; a potion's use is its user drinking it
+        # target dropped without a word; a potion's use is its user drinking it. Window 4 (2026-11-03): no game call
+        # throws an item (no Osiris throw; Throw_Throw takes its item from the UI only), so throwing isn't available
         raise GameError(f"{name} is drunk by whoever uses it: {queueing._label(char)} would drink it, not "
-                        f"{queueing._label(tgt0)}; nothing used")
+                        f"{queueing._label(tgt0)}; throwing items isn't available; nothing used")
     # live N4 (2026-10-28): read on a living Claude it answered "Claude REVIVED": the revive check only asked "not
     # dead" after the read. Live N7 2d: on the reader herself (who=target, alive) it skipped this check and read "done
     # ... cast on e1 Shadowheart by a click" (the click landed; the game took no target, the scroll stayed)

@@ -510,6 +510,7 @@ class ScrollUse(unittest.TestCase):
         out, calls, clicks = self._run("Shadowheart", "Potion of Healing", target=self.GALE, name="Potion of Healing",
                                        cat="Potion", res="use_ability: done — drunk")
         self.assertIn("Potion of Healing is drunk by whoever uses it", out)
+        self.assertIn("throwing items isn't available", out)
         self.assertIn("nothing used", out)
         self.assertEqual((calls, clicks), ([], []))  # no act.interact: nothing drunk
         out, calls, _ = self._run("Shadowheart", "Potion of Healing", target=self.SH, name="Potion of Healing",
