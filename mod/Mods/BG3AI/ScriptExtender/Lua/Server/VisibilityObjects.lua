@@ -154,8 +154,15 @@ local function observerFp(ctx)
     return ctx.rayFp
 end
 
+-- A verdict is its asker's: an arena side's (or, with no side, the harness's) own. Fairness audit S2-3: keyed by
+-- uuid alone, B's clear ray to a door answered A's question behind a wall within RAY_CACHE_MS (one frame runs the
+-- harness, A and B).
+local function sideKey(key)
+    return (U.side() or "") .. "|" .. key
+end
+
 local function rayCacheGet(ctx, key, now)
-    local c = V.rayCache[key]
+    local c = V.rayCache[sideKey(key)]
     if not c then return nil end
     if now - c.t < V.RAY_CACHE_MS or (c.fp == observerFp(ctx) and now - c.t < V.RAY_STILL_MS) then return c end
     return nil
@@ -164,7 +171,7 @@ end
 local function rayCachePut(ctx, key, now, v)
     V.rayCacheN = (V.rayCacheN or 0) + 1
     if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
-    V.rayCache[key] = { t = now, v = v, fp = observerFp(ctx) }
+    V.rayCache[sideKey(key)] = { t = now, v = v, fp = observerFp(ctx) }
 end
 
 -- Was an eye within OBSERVER_SAME_M of `eye` already tried? (records it if not)
