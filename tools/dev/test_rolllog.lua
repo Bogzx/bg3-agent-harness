@@ -260,6 +260,19 @@ do
     check("srcs listed", table.concat(view.srcs, ",") == "finished,osi,requested", table.concat(view.srcs, ","))
 end
 
+-- A roll with no skill (death save, concentration save) carries SkillId's "Sentinel" default (bg3se Hit.h
+-- ConditionRoll.Skill): not a skill name, so no skill field.
+fresh()
+do
+    local c = { Roller = ent(HOST), Subject = ent(HOST), RollUuid = "roll-s", DC = 10, Finished = true,
+        Canceled = false, Skill = "Sentinel", Ability = "None", Roll = {}, Result = { Total = 7, NaturalRoll = 7 } }
+    onCreate.RequestedRoll({ RequestedRoll = c })
+    postUpdate.ServerRoll()
+    local r = L.ring[1]
+    check("no skill: Sentinel dropped", r and r.natural == 7 and r.skill == nil and r.ability == nil,
+        r and tostring(r.skill))
+end
+
 -- A batch of requested rolls by one roller pairs with the Osiris results in order (oldest first).
 fresh()
 do
@@ -285,6 +298,112 @@ do
     postUpdate.ServerRoll()
     local r = L.ring[1]
     check("bad face and dc dropped", r and r.natural == nil and r.dc == nil and r.result == 31 and r.party == false)
+end
+
+-- cast: an attack-roll spell's CastedSpell is a record of its own (roller = caster, event "attack", natural nil)
+-- holding exactly the draws since the previous record; a save spell is none; a RollResult of the same roller right
+-- after it is not merged into it and doesn't share its draws.
+fresh()
+do
+    Ext.Stats = { Get = function(id)
+        local rolls = { Target_MainHandAttack = "Attack(AttackType.MeleeWeaponAttack)",
+            Target_SacredFlame = "not SavingThrow(Ability.Dexterity, SourceSpellDC())" }
+        return rolls[id] and { SpellRoll = { Default = rolls[id] } } or nil
+    end }
+    check("listens CastedSpell/5", listeners["CastedSpell/5"] ~= nil)
+    L.lastRolls = L.counts()
+    RS.Streams[2].State.NumRolls = RS.Streams[2].State.NumRolls + 2
+    RS.Streams[1].State.NumRolls = RS.Streams[1].State.NumRolls + 1
+    fire("CastedSpell/5", "Player_" .. HOST, "Target_MainHandAttack", "Target", "None", 7)
+    local r = L.ring[1]
+    local dmg = "PlayerDamage:" .. HOST
+    check("attack cast recorded", #L.ring == 1 and r.event == "attack" and r.roller == HOST
+        and r.spell == "Target_MainHandAttack" and r.natural == nil and r.srcs.cast and r.party == true, #L.ring)
+    check("attack cast: its own draws", r.streams and r.streams[dmg] == 2 and r.streams.Generic == 1
+        and r.stream == dmg and r.streams_shared == nil)
+    fire("CastedSpell/5", "Player_" .. HOST, "Target_SacredFlame", "Target", "None", 8)
+    fire("CastedSpell/5", "Player_" .. HOST, "Shout_Unknown", "Shout", "None", 9)
+    check("no record for a non-attack cast", #L.ring == 1, #L.ring)
+    osi(1, true)
+    check("RollResult after it: not merged, no shared draws", #L.ring == 2 and not r.srcs.osi
+        and L.ring[2].srcs.osi and L.ring[2].streams == nil and r.streams[dmg] == 2, #L.ring)
+    fire("CastedSpell/5", "Player_" .. GOB, "Target_MainHandAttack", "Target", "None", 10)
+    check("attack that drew nothing: no streams", #L.ring == 3 and L.ring[3].roller == GOB
+        and L.ring[3].streams == nil and L.ring[3].party == false)
+    check("fired cast counted", L.fired.cast == 2, L.fired.cast)
+end
+
+-- castroll: a cast's SpellCastRolls (live window 5 shape) is read each frame from its cast state's OnCreate; at the
+-- caster's CastedSpell an attack's d20/total/DC goes into the cast record's cast_roll (not natural: the luck
+-- covariate stays the checks'), a saving throw into the saver's RollResult record, else a "save" record of its own.
+local function condRoll(rollType, nat, total, dc, crit)
+    return { RollType = {}, Difficulty = dc, Ability = "None", Skill = "Sentinel", RollUuid = ZERO,
+        Roll = { Roll = { RollType = rollType, Advantage = false, Disadvantage = false },
+            Result = { NaturalRoll = nat, Total = total, Critical = crit or "None" } } }
+end
+local function castEntity(caster, spell, rolls)
+    local e = { SpellCastState = { Caster = ent(caster), SpellId = { Prototype = spell } },
+        SpellCastRolls = { Rolls = rolls } }
+    onCreate.SpellCastState(e)
+    return e
+end
+fresh()
+do
+    check("subscribed cast state", onCreate.SpellCastState ~= nil and L.hooks.cast_create == true)
+    L.casts = {}
+    -- an attack: the rolls are empty at the state's creation, filled a few frames later, the entity gone by CastedSpell
+    local e = castEntity(HOST, "Projectile_MainHandAttack", {})
+    postUpdate.ServerRoll()
+    e.SpellCastRolls.Rolls = { { Target = ent(GOB), Casts = { { Hit = { ConditionRolls = {
+        condRoll("RangedWeaponAttack", 15, 20, 15) } } } } } }
+    postUpdate.ServerRoll()
+    e.SpellCastRolls = nil
+    postUpdate.ServerRoll()
+    fire("CastedSpell/5", "Player_" .. HOST, "Projectile_MainHandAttack", "Projectile", "None", 11)
+    local r = L.ring[#L.ring]
+    local c = r and r.cast_roll
+    check("attack cast: cast_roll from SpellCastRolls", r and r.event == "attack" and c and c.natural == 15
+        and c.total == 20 and c.dc == 15 and c.type == "RangedWeaponAttack" and c.target == GOB
+        and c.skill == nil and c.critical == nil and r.subject == GOB, c and c.natural)
+    check("attack cast: natural/dc stay nil (luck unchanged)", r and r.natural == nil and r.dc == nil
+        and r.result == nil)
+    check("cast taken", #L.casts == 0, #L.casts)
+
+    -- a save: Sacred Flame on GOB; GOB's RollResult came 1.5 s before the CastedSpell
+    local n0 = #L.ring
+    castEntity(HOST, "Target_SacredFlame", { { Target = ent(GOB), Casts = { { Hit = { ConditionRolls = {
+        condRoll("SavingThrow", 14, 14, 15) } } } } } })
+    postUpdate.ServerRoll()
+    clock = clock + 1000
+    listeners["RollResult/6"]("save", "Goblin_" .. GOB, "Player_" .. HOST, 0, 1, 0)
+    clock = clock + 1500
+    fire("CastedSpell/5", "Player_" .. HOST, "Target_SacredFlame", "Target", "None", 12)
+    local s = L.ring[n0 + 1]
+    check("save: cast_roll joins the saver's RollResult record", #L.ring == n0 + 1 and s.srcs.osi and s.srcs.castroll
+        and s.cast_roll.natural == 14 and s.cast_roll.dc == 15 and s.cast_roll.type == "SavingThrow"
+        and s.subject == HOST and s.spell == "Target_SacredFlame" and s.natural == nil, #L.ring - n0)
+
+    -- a save with no RollResult: a record of its own; another caster's cast is not taken
+    castEntity(GOB, "Target_MainHandAttack", {})
+    castEntity(HOST, "Target_SacredFlame", { { Target = ent(GOB), Casts = { { Hit = { ConditionRolls = {
+        condRoll("SavingThrow", 3, 5, 15) } } } } } })
+    clock = clock + 5000
+    fire("CastedSpell/5", "Player_" .. HOST, "Target_SacredFlame", "Target", "None", 13)
+    local o = L.ring[#L.ring]
+    check("save alone: its own record", o.event == "save" and o.roller == GOB and o.subject == HOST
+        and o.srcs.castroll and o.cast_roll.natural == 3 and o.party == false and o.natural == nil)
+    check("other caster's cast kept", #L.casts == 1 and L.casts[1].caster == GOB, #L.casts)
+
+    -- two beams: both in cast_rolls, the first in cast_roll; a d20 not in yet (0) is no roll
+    L.casts = {}
+    castEntity(HOST, "Projectile_EldritchBlast", { { Target = ent(GOB), Casts = {
+        { Hit = { ConditionRolls = { condRoll("RangedSpellAttack", 20, 25, 13, "Success") } } },
+        { Hit = { ConditionRolls = { condRoll("RangedSpellAttack", 7, 12, 13) } } },
+        { Hit = { ConditionRolls = { condRoll("RangedSpellAttack", 0, 0, 13) } } } } } })
+    fire("CastedSpell/5", "Player_" .. HOST, "Projectile_EldritchBlast", "Projectile", "None", 14)
+    local b = L.ring[#L.ring]
+    check("beams: cast_rolls", b.event == "attack" and b.cast_roll.natural == 20 and b.cast_roll.critical == "Success"
+        and b.cast_rolls and #b.cast_rolls == 2 and b.cast_rolls[2].natural == 7)
 end
 
 -- Snapshot: hooks, raw hook hits and pending entities.

@@ -148,6 +148,8 @@ class FactsTest(unittest.TestCase):
         {"ev": "loot", "from": "corpse", "item": "Gold", "src": "Goblin"},
         {"ev": "combat_started", "combat": "d24e"},
         {"ev": "combat_ended", "combat": "d24e"},
+        # REVIEW-5 F8: a ui_action the mod refused (Referee.lua "RuleChangeRefused")
+        {"ev": "rule_change", "refused": True, "command": "UpdateDifficultyCommand", "what": "difficulty"},
     ]
 
     def test_every_record_is_a_valid_fact(self):
@@ -166,6 +168,9 @@ class FactsTest(unittest.TestCase):
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(bad, FACTS_SCHEMA)
         bad = referee.to_fact({"seq": 1, "t": 1.0, "ev": "approval", "companion": "Karlach", "delta": 1})  # no total
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(bad, FACTS_SCHEMA)
+        bad = referee.to_fact({"seq": 1, "t": 1.0, "ev": "rule_change", "command": "ValueChanged"})  # no what/refused
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(bad, FACTS_SCHEMA)
 

@@ -22,12 +22,24 @@
 --             roll's delay, so the deferred OnCreate still sees it).
 --   osi       Osiris RollResult/6 (fires live: research/ovh/live1.md §4): success, active, criticality only
 --   dialog    Osiris DialogRollResult/5 (osi reference arity; not yet seen firing)
+--   cast      Osiris CastedSpell/5 of a spell with an attack roll (its SpellRoll has Attack(...)): one record per
+--             attack cast (event "attack", roller = the caster, spell), never merged with another source nor batched,
+--             so its streams are exactly the draws since the previous record (did the attack draw a die, from
+--             which stream). natural nil; its d20 is in cast_roll (below).
+--   castroll  the cast's SpellCastRolls component (eoc::spell_cast::RollsComponent: Rolls[i].Target,
+--             .Casts[j].Hit.ConditionRolls[k] = RollType, Roll.Result.NaturalRoll/Total/Critical, Difficulty; live
+--             window 5 2026-11-03: Ranged Attack 15/20 vs 15, Sacred Flame's save 14/14 vs 15, filled ~100-500 ms
+--             after the cast state, before the hit). Every cast state is tracked from its OnCreate and read each
+--             frame (its entity can be gone by CastedSpell); at the caster's CastedSpell an attack roll goes into the
+--             cast record (cast_roll, the first; cast_rolls when several) and a saving throw into the saver's
+--             RollResult record (within CAST_MERGE_MS) or a record of its own (event "save", roller = the saver).
+--             cast_roll = {type, natural, total, dc, critical, advantage, disadvantage, ability, skill, target} is
+--             kept apart from natural/result/dc on purpose: bg3bench.luck counts every record with a natural, and
+--             whether attacks and saves enter the luck covariate is the owner's call (2026-11-03), not this log's.
 -- roll.snapshot reports which sources fired at least once, and which hooks are in place.
 -- So natural/dc are recorded for passive and skill/ability checks only (live, only their RequestedRoll carried a d20
--- and DC). For saving throws and attack rolls two live probe passes (2026-10-24, tools/dev/probe_roll_sources.py:
--- the one-frame roll events, SpellCastRolls re-read each tick, HitNotification, AttackedBy, StatusApplied's
--- ConditionRolls) found no source with their d20 or DC: their records carry success/roller/streams with natural and
--- dc nil (research/fix/vis.md R2). Closed: no more probing on this build.
+-- and DC). Saving throws and attack rolls of a spell cast carry theirs in cast_roll (the 2026-10-24 probe passes
+-- missed SpellCastRolls: their casts skipped the roll, IgnoreSpellRolls, ops/logs/arena-dice.md "H4").
 -- Streams: the stream counts are read at each new record; rolls the engine made in one frame arrive as one batch of
 -- records (24 passive checks -> 24 RollResults in a row), so a batch's draws are shared out over its records
 -- (streams_shared = batch size when > 1) instead of all landing on the first.
@@ -44,12 +56,16 @@ L.MERGE_MS = 250
 L.ring = L.ring or {}
 L.seq = L.seq or 0
 L.PENDING_MAX = 64
-L.fired = L.fired or { osi = 0, dialog = 0, finished = 0, requested = 0 }
+L.CASTS_MAX = 32 -- tracked spell casts (castroll)
+L.CAST_MERGE_MS = 3000 -- a save's cast_roll joins the saver's RollResult record this long before the CastedSpell
+L.fired = L.fired or { osi = 0, dialog = 0, finished = 0, requested = 0, cast = 0, castroll = 0 }
 L.seen = L.seen or { finished_create = 0, finished_empty = 0, requested_create = 0 } -- raw hook hits
 L.hooks = L.hooks or {}
 L.lastRolls = L.lastRolls or nil -- stream key -> NumRolls at the previous record
 L.batch = L.batch or nil -- {recs, total, t0}: the records sharing the last nonzero stream delta
 L.pending = L.pending or {} -- roll entities (RequestedRoll) not finished yet
+L.lone = L.lone or setmetatable({}, { __mode = "k" }) -- records no other source merges into (cast)
+L.casts = L.casts or {} -- {entity, caster, spell, rolls = {"i:j:k" -> cast_roll}, gone}: casts since their state
 
 local truthy = U.truthy
 
@@ -128,7 +144,7 @@ local function mergeTarget(src, data, t)
             return rec
         end
         if t - rec.t <= L.MERGE_MS and rec.roller == data.roller and not rec.srcs[src]
-            and not (data.roll_uuid and rec.roll_uuid) then
+            and not (data.roll_uuid and rec.roll_uuid) and not L.lone[rec] then
             found = rec
         end
     end
@@ -165,9 +181,10 @@ local function addDrawn(rec, d)
     for k, n in pairs(d) do rec.streams[k] = (rec.streams[k] or 0) + n end
 end
 
-function L.add(src, data)
+-- lone: a record of its own (no merge, no batch; its streams are its own draws).
+function L.add(src, data, lone)
     local t = now_ms()
-    local rec = (data.roller or data.roll_uuid) and mergeTarget(src, data, t)
+    local rec = not lone and (data.roller or data.roll_uuid) and mergeTarget(src, data, t)
     if rec and rec.srcs[src] then return rec end -- the same roll seen again (a one-frame read twice)
     L.fired[src] = (L.fired[src] or 0) + 1
     local d = drawn()
@@ -185,6 +202,11 @@ function L.add(src, data)
     rec.party = isParty(data.roller)
     L.ring[#L.ring + 1] = rec
     while #L.ring > L.CAP do table.remove(L.ring, 1) end
+    if lone then
+        L.lone[rec], L.batch = true, nil
+        if d then apportion({ recs = { rec }, total = d }) end
+        return rec
+    end
     if d then
         L.batch = { recs = { rec }, total = d, t0 = t }
     elseif L.batch and t - L.batch.t0 <= L.MERGE_MS then
@@ -223,10 +245,12 @@ local function positive(n)
     n = tonumber(n)
     return n and n > 0 and n or nil
 end
+-- "None" (AbilityId) and "Sentinel" (SkillId's default, bg3se Hit.h ConditionRoll.Skill: a death or concentration
+-- save) name no ability or skill.
 local function name(x)
     if x == nil then return nil end
     local s = tostring(x)
-    return s ~= "None" and s or nil
+    return s ~= "None" and s ~= "Sentinel" and s or nil
 end
 
 -- RequestedRoll entities (the roll in progress): kept from their OnCreate until Finished or gone.
@@ -264,6 +288,112 @@ listen("DialogRollResult", 5, function(char, success, _, _, crit)
     L.pollRequested()
     L.add("dialog", { roller = V.uuid(char), success = truthy(success), active = true, dialog = true,
         crit = CRIT[tonumber(crit)] })
+end)
+
+-- An attack-roll spell: its stats' SpellRoll (Default) calls Attack(...) (as Server/Events.lua's cast event reads it).
+function L.attackSpell(spell)
+    local ok, r = pcall(function() return tostring(Ext.Stats.Get(spell).SpellRoll.Default or "") end)
+    return ok and r:find("Attack%(") ~= nil
+end
+
+-- One ConditionRoll of a SpellCastRolls as a cast_roll, or nil before its d20 is in.
+local function castRoll(cr, target)
+    local ok, v = pcall(function()
+        local res, def = cr.Roll.Result, cr.Roll.Roll
+        local nat = d20(res.NaturalRoll)
+        if not nat then return nil end
+        local crit = tostring(res.Critical)
+        return { type = tostring(def.RollType), natural = nat, total = tonumber(res.Total),
+            dc = positive(cr.Difficulty), critical = crit ~= "None" and crit ~= "nil" and crit or nil,
+            advantage = def.Advantage or nil, disadvantage = def.Disadvantage or nil, ability = name(cr.Ability),
+            skill = name(cr.Skill), target = target }
+    end)
+    return ok and v or nil
+end
+
+-- Reads a tracked cast's rolls into c.rolls (the latest values win); false once its entity is gone.
+local function readCast(c)
+    local ok, rolls = pcall(function() return c.entity.SpellCastRolls.Rolls end)
+    if not ok or rolls == nil then return false end
+    for i, r in ipairs(rolls) do
+        local target = entityUuid(r.Target)
+        local okc, casts = pcall(function() return r.Casts end)
+        for j, cast in ipairs(okc and casts or {}) do
+            local okr, conds = pcall(function() return cast.Hit.ConditionRolls end)
+            for k, cr in ipairs(okr and conds or {}) do
+                local d = castRoll(cr, target)
+                if d then c.rolls[string.format("%03d:%03d:%03d", i, j, k)] = d end
+            end
+        end
+    end
+    return true
+end
+
+function L.pollCasts()
+    for _, c in ipairs(L.casts) do
+        if not c.gone and not readCast(c) then c.gone = true end
+    end
+end
+
+-- The caster's tracked casts (of this spell when any is; else all of the caster's), read once more and dropped:
+-- their cast_rolls in order.
+function L.takeCasts(caster, spell)
+    local same = false
+    for _, c in ipairs(L.casts) do
+        if c.caster == caster and c.spell == spell then same = true end
+    end
+    local keep, got = {}, {}
+    for _, c in ipairs(L.casts) do
+        if c.caster == caster and (not same or c.spell == spell) then
+            if not c.gone then readCast(c) end
+            local keys = {}
+            for k in pairs(c.rolls) do keys[#keys + 1] = k end
+            table.sort(keys)
+            for _, k in ipairs(keys) do got[#got + 1] = c.rolls[k] end
+        else
+            keep[#keep + 1] = c
+        end
+    end
+    L.casts = keep
+    return got
+end
+
+-- A saving throw of a cast: into the saver's RollResult record (the oldest within CAST_MERGE_MS without a d20), else
+-- a record of its own.
+function L.addSave(caster, spell, d)
+    local t, found = now_ms(), nil
+    for k = #L.ring, math.max(1, #L.ring - L.PENDING_MAX), -1 do
+        local rec = L.ring[k]
+        if t - rec.t > L.CAST_MERGE_MS then break end
+        if rec.roller == d.target and rec.srcs.osi and not rec.srcs.castroll and rec.natural == nil
+            and not L.lone[rec] then
+            found = rec
+        end
+    end
+    if not found then
+        return L.add("castroll", { roller = d.target, subject = caster, event = "save", spell = spell, cast_roll = d })
+    end
+    L.fired.castroll = (L.fired.castroll or 0) + 1
+    found.srcs.castroll, found.cast_roll = true, d
+    found.subject, found.spell = found.subject or caster, found.spell or spell
+    return found
+end
+
+-- CastedSpell(caster, spell, spellType, spellElement, storyActionID)
+listen("CastedSpell", 5, function(caster, spell)
+    local who = V.uuid(caster)
+    local atk, saves = {}, {}
+    for _, d in ipairs(L.takeCasts(who, spell)) do
+        if d.type:find("Attack") then atk[#atk + 1] = d
+        elseif d.type:find("SavingThrow") then saves[#saves + 1] = d end
+    end
+    if not L.attackSpell(spell) and #atk == 0 and #saves == 0 then return end
+    L.pollRequested()
+    if L.attackSpell(spell) or #atk > 0 then
+        L.add("cast", { roller = who, event = "attack", spell = spell, subject = atk[1] and atk[1].target,
+            cast_roll = atk[1], cast_rolls = #atk > 1 and atk or nil }, true)
+    end
+    for _, d in ipairs(saves) do L.addSave(who, spell, d) end
 end)
 
 -- esv::roll::FinishedEvent (BG3Extender GameDefinitions/Components/Roll.h): the natural die and the DC.
@@ -315,9 +445,20 @@ hook("requested_create", "RequestedRoll OnCreate", function()
         while #L.pending > L.PENDING_MAX do table.remove(L.pending, 1) end
     end))
 end)
+hook("cast_create", "SpellCastState OnCreate", function()
+    Ext.Entity.OnCreate("SpellCastState", guarded("cast state", function(entity)
+        local st = entity.SpellCastState
+        local caster = entityUuid(st.Caster)
+        if not caster then return end
+        local ok, spell = pcall(function() return st.SpellId.Prototype end)
+        L.casts[#L.casts + 1] = { entity = entity, caster = caster, spell = ok and spell or nil, rolls = {} }
+        while #L.casts > L.CASTS_MAX do table.remove(L.casts, 1) end
+    end))
+end)
 local function frame()
     L.scanFinished()
     L.pollRequested()
+    L.pollCasts()
 end
 hook("post_update", "ServerRoll post-update hook", function()
     Ext.Entity.OnSystemPostUpdate("ServerRoll", guarded("post-update", frame))

@@ -135,6 +135,19 @@ local okNet, errNet = pcall(function()
 end)
 R.registered["net/TradeOffered"] = okNet and true or tostring(errNet)
 
+-- REVIEW-5 F8: a ui_action the client refused because it would change the difficulty, its settings (Karmic Dice) or
+-- the game options (Client/UIActions.lua refuseRule): every attempt is a record, for the graders.
+R.fired["net/RuleChangeRefused"] = R.fired["net/RuleChangeRefused"] or 0
+local okRule, errRule = pcall(function()
+    Ext.Net.CreateChannel("65734c81-edd1-4b6f-b10e-663fec0e768e", "RuleChangeRefused", function(msg)
+        R.fired["net/RuleChangeRefused"] = R.fired["net/RuleChangeRefused"] + 1
+        msg = type(msg) == "table" and msg or {}
+        R.record("rule_change", { refused = true, command = tostring(msg.command or "?"),
+            widget = type(msg.widget) == "string" and msg.widget or nil, what = tostring(msg.what or "?") })
+    end)
+end)
+R.registered["net/RuleChangeRefused"] = okRule and true or tostring(errRule)
+
 -- A trader: one the party traded with or that offered Trade in a dialogue (R.traders), or a merchant with the
 -- Trader tag. Not Osi.CanTrade: it held for every windmill goblin, Barth, Arka ... (diverse-2026-10-25 facts).
 function R.isTrader(u, e) return u ~= nil and (R.traders[u] or U.comp(e, "Trader") ~= nil) end

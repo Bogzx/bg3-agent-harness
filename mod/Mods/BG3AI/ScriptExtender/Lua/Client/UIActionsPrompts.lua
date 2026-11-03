@@ -150,8 +150,9 @@ end)
 --   use=true : which = option number from ui.state reaction.options selects
 --              that reaction's toggle first; then "React"
 --              (InterruptAcceptPlayerCommand(event)).
---              A prompt with several rows (Gale's Shield at levels I-VI) -> {needs_click = which, rows}: the bridge
---              clicks that row with the mouse (bridge reactclick.py), nothing is sent here.
+--              One interruptor with several rows (Gale's Shield at levels I-VI), or with one row not yet chosen
+--              (Karlach's Reckless Attack) -> {needs_click = which, rows}: the bridge clicks that row with the
+--              mouse (bridge reactclick.py), nothing is sent here.
 -- ui.react_probe {which?, watch?} -> {open, events, rows, over?, over_row?}
 --   For that click: is the cursor over row `which` (over), or over another row (over_row = its number)?
 --   watch=true reads only whether the prompt shows and its event count (the bridge's watch after the click).
@@ -169,6 +170,20 @@ local function reactRows(w)
     return UI.findAll(w, function(e) return UI.name(e) == "ReactButton" end, { prune = true })
 end
 
+-- The job after an answer: done when the shown prompt has one event fewer, or none.
+local function reactWait(dc)
+    local before = UI.count(UI.path(dc, "Data.InterruptEvents"))
+    return waitJob("ui.react", 10000, function()
+        local w2 = reactionPopup()
+        local d2 = w2 and try(function() return w2.DataContext end)
+        local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
+        if n < before or n == 0 then
+            local wmap = UI.widgetMap()
+            return "done", { pending = n > 0 and n or nil, reaction = n > 0 and S.reaction(wmap) or nil }
+        end
+    end)
+end
+
 RPC.register("ui.react", function(args)
     local w = reactionPopup() or error("no reaction prompt on screen")
     local dc = try(function() return w.DataContext end)
@@ -177,11 +192,18 @@ RPC.register("ui.react", function(args)
         -- S091 08:12:16 + S092 08:43:38 / 08:44:52 (TIMEOUT 4 of 5, by name and by number): on a prompt with one row per
         -- spell level (Gale's Shield I-VI) the row's press + InterruptAcceptPlayerCommand never answered it (the
         -- Accept button is collapsed for a lone interruptor), while each hand click on a Shield row cast it at once
-        -- (S092 08:45:05, 08:47:50, 08:51:28, 08:53:30, 08:55:36). Single-row prompts (Counterspell, Shield Blow) go on
-        -- by command, which works live; so do prompts with several interruptors (their Accept button shows).
+        -- (S092 08:45:05, 08:47:50, 08:51:28, 08:53:30, 08:55:36). Prompts with several interruptors (their Accept
+        -- button shows) and a lone row already chosen go on by command.
         local btns = reactRows(w)
         local roots = UI.findAll(w, function(e) return UI.name(e) == "InterruptorRoot" end, { prune = true })
-        if #btns > 1 and #roots <= 1 then
+        -- v010 live windows 6-7 (Karlach's Reckless Attack, one interruptor, one row): the Accept button is collapsed
+        -- (ReactionDecisionPopup.xaml: Interruptors.Count = 1); InterruptAcceptPlayerCommand with no row chosen closed
+        -- the prompt without the reaction (w6), and the row's press (InterruptReactCommand) left the row unchecked and
+        -- the prompt up, TIMEOUT twice (w7 RK-after.jpg). The row's CommandParameter is a PassThroughConverter
+        -- multi-binding (decision, interruptor); bg3le reads converter-bound parameters as nil (DonateBtn, live D10),
+        -- so the press most likely ran the command with nil, and Lua can't build that pair. A click on the row is
+        -- what answers it: the bridge clicks. A row already chosen (checked) is accepted by command below, as before.
+        if #roots <= 1 and (#btns > 1 or (#btns == 1 and UI.prop(btns[1], "IsChecked") ~= true)) then
             local i = tonumber(args.which) or 1
             if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
             return { needs_click = i, rows = #btns }
@@ -200,16 +222,7 @@ RPC.register("ui.react", function(args)
         check(UI.command(dc, "InterruptAcceptPlayerCommand", ev, args.dry))
     end
     if args.dry then return { can = true } end
-    local before = UI.count(UI.path(dc, "Data.InterruptEvents"))
-    return waitJob("ui.react", 10000, function()
-        local w2 = reactionPopup()
-        local d2 = w2 and try(function() return w2.DataContext end)
-        local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
-        if n < before or n == 0 then
-            local wmap = UI.widgetMap()
-            return "done", { pending = n > 0 and n or nil, reaction = n > 0 and S.reaction(wmap) or nil }
-        end
-    end)
+    return reactWait(dc)
 end)
 
 RPC.register("ui.react_probe", function(args)

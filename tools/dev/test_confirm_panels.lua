@@ -372,6 +372,32 @@ do
     shield.buttons, sent = rows(2, 2), {}
     r = ops["ui.react"]({ use = true, which = 2 })
     ok(r.job and r.needs_click == nil, "ui.react: two interruptors -> commands, no click")
+    -- v010 live windows 6-7: Karlach's Reckless Attack, one interruptor with one row. Its Accept button is collapsed;
+    -- InterruptAcceptPlayerCommand closed the prompt without the reaction (w6), and the row's press (its
+    -- CommandParameter, a PassThrough multi-binding, reads nil) left it unanswered (w7). The bridge clicks the row.
+    local _prop = UIt.prop
+    UIt.prop = function(e, k)
+        if k == "IsChecked" and type(e) == "table" then return e.checked end
+        return _prop(e, k)
+    end
+    local reckless = popup(true, { { id = "reckless" } })
+    reckless.buttons = rows(1)
+    local pressedRow
+    reckless.buttons[2].onPress = function(b) pressedRow = b.k end
+    pages, sent = { reckless }, {}
+    r = ops["ui.react"]({ use = true })
+    ok(r.needs_click == 1 and r.rows == 1 and r.job == nil and pressedRow == nil and #sent == 0,
+        "ui.react: lone interruptor, one row -> needs_click 1, no press, no command (sent " .. #sent .. ")")
+    okr, errr = pcall(ops["ui.react"], { use = true, which = 2 })
+    ok(not okr and tostring(errr):find("no reaction option 2 (1 shown)", 1, true),
+        "ui.react: lone row, which 2 refused")
+    -- the row already chosen (Decision Use, the toggle checked): pressing it would undo the choice -> Accept as before
+    reckless.buttons[2].checked, pressedRow, sent = true, nil, {}
+    r = ops["ui.react"]({ use = true })
+    ok(r.job and pressedRow == nil and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand",
+        "ui.react: a checked lone row -> Accept")
+    UIt.prop = _prop
+    pages = { shield }
     -- ui.react_probe: over the wanted row, over another, watch reads no rows
     shield.buttons = rows(6)
     shield.buttons[1 + 4].over = true                                       -- row 4 under the cursor
