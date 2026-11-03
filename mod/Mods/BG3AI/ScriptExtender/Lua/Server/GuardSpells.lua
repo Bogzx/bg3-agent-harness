@@ -318,7 +318,7 @@ function G.known_spell(char, spell)
         -- only with a ranged weapon equipped (a melee weapon attack only with a melee one): say which is missing
         if spell == "Projectile_MainHandAttack" or spell == "Projectile_OffhandAttack" then
             G.refuse("the character does not have that action: no ranged weapon equipped (Ranged Attack needs a bow"
-                .. " or crossbow in the ranged slot); use a cantrip, Throw, or the melee attack")
+                .. " or crossbow in the ranged slot)")
         end
         G.refuse("the character does not have that action")
     end
@@ -460,7 +460,7 @@ function G.pick_variant(char, box, which)
     end
     local used = G.variant_used(char, hit[1])
     if used then
-        G.refuse(G.spell_facts(hit[1]).name .. " was already called: pick another of "
+        G.refuse(G.spell_facts(hit[1]).name .. " was already called; its variants: "
             .. G.variant_list(char, ids))
     end
     return hit[1]

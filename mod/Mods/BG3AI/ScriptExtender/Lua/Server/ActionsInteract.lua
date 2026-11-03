@@ -202,7 +202,7 @@ reg("interact", function(args)
         local fresh = not h and A.unlocked_lately(target)
         if fresh and G.b(G.q("IsOpened", target)) then
             G.refuse("it is open now (the game unlocked or opened it " .. math.floor((G.now_ms() - fresh) / 1000)
-                .. " s ago): walk through it (interact on an open door closes it)")
+                .. " s ago; interact on an open door closes it)")
         elseif fresh then
             keyless, relocked = true, true
         elseif not h then
@@ -475,8 +475,7 @@ reg("interact", function(args)
                     RPC.finish_job(job, "failed", { used = true, climbed = false, used_twice = lj.retried or nil },
                         "used the ladder but did not climb it (still on the same floor after "
                         .. math.floor(A.LADDER_CLIMB_MS / 1000) .. " s" .. (lj.retried and ", Used twice" or "")
-                        .. "): the game didn't start the climb; walk round by the route, or jump_to the ladder's foot"
-                        .. " if the drop is safe")
+                        .. "): the game didn't start the climb")
                 end
                 return
             end
@@ -512,7 +511,7 @@ reg("pickup", function(args)
     end
     if not item or not G.b(G.q("IsItem", item)) then G.refuse("that is not an item") end
     if G.q("GetInventoryOwner", item) ~= nil then
-        G.refuse("that item is inside a container (open it and loot instead)")
+        G.refuse("that item is inside a container")
     end
     -- launch-v1 act3_gold_max r1: Pickup on a wall Iron Torch (CanBePickedUp false, listed <usable>) never ran, and
     -- the game raised no PickupFailed: the job re-sent the order twice and timed out after 40 s, twice.

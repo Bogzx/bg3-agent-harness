@@ -197,7 +197,8 @@ end)
 test("lockpick: a party member carries the key -> refused, points to interact", function()
     keyed_door(P1)
     local j = job(op("lockpick", { char = P1, target = DOOR }))
-    eq(j.status, "failed", "status"); assert(j.error:find("use interact"), j.error)
+    eq(j.status, "failed", "status")
+    assert(j.error:find("carries its key (interact opens it with the key)", 1, true), j.error)
 end)
 
 -- The click's own request (NETMSG_CHARACTER_LOCKPICK -> LockpickingSystem.PickLockRequests).
@@ -810,8 +811,8 @@ test("A27 Gather Your Allies alone is refused before any cost, listing the group
         undo()
         eq(j.status, "failed", where .. " status")
         -- the usable ones first: combat_turn's quick pick (_WHICH_VARIANTS) takes Keene's, not the used Watch
-        assert(j.error:find("Gather Your Allies casts nothing by itself: use_ability which=<one of Guildmaster Keene's"
-            .. " Fixers, Gur Huntwardens, The Watch [already called]>", 1, true), j.error)
+        assert(j.error:find("Gather Your Allies casts nothing by itself: its variants (which=) are Guildmaster Keene's"
+            .. " Fixers, Gur Huntwardens, The Watch [already called]", 1, true), j.error)
         assert(j.error:find("x,y,z = the ground where they appear", 1, true), j.error)
         no_ids(j.error)
         eq(#called("UseSpell"), 0, where .. " no cast")
@@ -842,7 +843,7 @@ test("A27 which: an unknown or used group is refused with the list; no point = '
         "no variant 'Harpers' in Gather Your Allies: The Watch, Guildmaster Keene's Fixers, Gur Huntwardens")
     osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_GURALLIESCONSUMED")] = 1
     fails({ char = P1, spell = GYA, which = "Gur", pos = { 5, 0, 0 } },
-        "Gur Huntwardens was already called: pick another of The Watch, Guildmaster Keene's Fixers, Gur Huntwardens"
+        "Gur Huntwardens was already called; its variants: The Watch, Guildmaster Keene's Fixers, Gur Huntwardens"
         .. " [already called]")
     -- S093 09:38 (fairness leak): the Watch called and consumed; every refusal and the all-used one, names only
     osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_WATCHALLIESCONSUMED")] = 1
