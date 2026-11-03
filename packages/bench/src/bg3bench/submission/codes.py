@@ -61,6 +61,7 @@ CHECKS: tuple[Check, ...] = (
         "the tool list names equal the allowlist, its definitions the release's; served texts hash to prompt.parts",
     ),
     Check("C03", _PJ, "reject", "caps, seed (and seed applied) and difficulty equal the scenario's"),
+    Check("C04", _PJ, "reject", "the events' model is the manifest's slug; the served effort is the declared one"),
     Check("D01", ("worker",), "reject", "no submission with this bundle hash; no accepted one by this user and run id"),
     Check(
         "D02",

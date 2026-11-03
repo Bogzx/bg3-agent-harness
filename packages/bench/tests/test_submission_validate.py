@@ -74,6 +74,9 @@ def good_run(tmp: Path, name: str, start_snapshot: bool = True) -> Path:
         "repo": {"commit": "c" * 40, "dirty": False, "diff": None},
     }
     man["scenario"]["start_save_sha1"] = sc["start"]["save_sha1"]
+    # the fixtures are DeepSeek runs whose profile said "medium" while pi served "high" (its thinking_level_map has no
+    # medium for this model): a run that declares what it was served, as C04 requires
+    man["model"]["reasoning_effort"] = "high"
     if start_snapshot:
         rows = jsonl((d / "facts.jsonl").read_text())
         i = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
@@ -282,6 +285,12 @@ def edit_json(bdir: Path, name: str, fn: Callable[[dict], None]) -> None:
     (bdir / name).write_text(json.dumps(doc, indent=1, sort_keys=True))
 
 
+def declare(bdir: Path, **model) -> None:
+    """Change the declared model fields in the manifest and bundle.json alike (F03 checks they agree)."""
+    edit_json(bdir, "manifest.json", lambda m: m["model"].update(model))
+    edit_json(bdir, bundle.ENVELOPE, lambda e: e["model"].update(model))
+
+
 def edit_facts(bdir: Path, fn: Callable[[list[dict]], None]) -> None:
     rows = jsonl((bdir / "facts.jsonl").read_text())
     fn(rows)
@@ -335,6 +344,8 @@ TAMPERS: dict[str, tuple[str, Callable[[Path], None]]] = {
     "extra tool": ("A02", lambda b: add_event(b, kind="tool_call", tool="teleport", args={}, call_id="x")),
     "reload without the condition": ("A02", lambda b: add_event(b, kind="tool_call", tool="load_game", args={})),
     "hidden reasoning": ("S02", lambda b: add_event(b, kind="thinking", text="secret plan")),
+    "undeclared effort": ("C04", lambda b: declare(b, reasoning_effort="low")),
+    "another model": ("C04", lambda b: declare(b, slug="deepseek-v4-pro")),
     "oversize": ("F01", oversize),
     "bad schema": ("F03", lambda b: edit_json(b, "result.json", schema)),
 }
@@ -352,7 +363,14 @@ def test_tampered_copies_are_rejected_by_their_code(tmp_path, what):
     v = run(bdir, release_for(d), duplicate="an accepted submission has this run id" if code == "D01" else None)
     assert not v.accepted
     assert code in v.failed, v.failed
-    if what in ("edited gold", "wrong pins", "duplicate run id", "bad start snapshot", "extra tool"):
+    if what in (
+        "edited gold",
+        "wrong pins",
+        "duplicate run id",
+        "bad start snapshot",
+        "extra tool",
+        "undeclared effort",
+    ):
         assert v.failed == [code]
 
 
@@ -928,3 +946,16 @@ def test_p02_holds_a_run_to_the_releases_code_pin():
     old = {**man, "pins": {**man["pins"], "repo": {"commit": "abc", "dirty": False}}}
     assert not validate.p02_pins(old, rel({**game, "code_sha1": "d" * 40}))[0]  # a run that cites no code pin
     assert validate.p02_pins(old, rel(game)) == (True, "")  # bench-v0.8/v0.9 releases have no code pin
+
+
+def test_c04_names_the_model_or_effort_the_events_contradict(good):
+    # REVIEW-4 2.2: nothing compared the declared model and effort with what the events say played. launch-v1's 36
+    # DeepSeek runs declared reasoning_effort "medium" and pi served "high" in every one (profiles/deepseek-flash.toml
+    # thinking_level_map: medium = false)
+    bdir, release = good
+    assert "C04" not in run(bdir, release).failed
+    declare(bdir, reasoning_effort="medium")
+    rehash(bdir)
+    v = run(bdir, release)
+    assert v.failed == ["C04"]
+    assert next(r.detail for r in v.checks if r.code == "C04") == "served effort high, declared medium"

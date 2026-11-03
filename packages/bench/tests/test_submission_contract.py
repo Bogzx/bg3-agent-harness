@@ -127,7 +127,7 @@ def test_is_canonical():
 
 def test_check_codes_are_the_plan_table():
     assert [c.code for c in codes.CHECKS] == [
-        *("F01", "F02", "F03", "F04", "P01", "P02", "C01", "C02", "C03", "D01", "D02"),
+        *("F01", "F02", "F03", "F04", "P01", "P02", "C01", "C02", "C03", "C04", "D01", "D02"),
         *("X01", "X02", "X03", "X04", "X05", "X06", "X07", "G01", "G02", "A01", "A02"),
         *("E01", "E02", "E03", "E04", "S01", "S02"),
     ]

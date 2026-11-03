@@ -394,6 +394,29 @@ def c03_settings(b: Loaded) -> Outcome:
     return (False, "; ".join(errs)) if errs else (True, "")
 
 
+def c04_model(b: Loaded) -> Outcome:
+    """The model the events say played is the manifest's: every process's session_start and init name the manifest's
+    slug, and the effort the endpoint served (the usage and result events' served.effort, after the client's clamp)
+    is the declared reasoning_effort. A client that reports no served effort (Claude Code) is held to the names."""
+    model = b.manifest.get("model") or {}
+    slug, effort = model.get("slug"), model.get("reasoning_effort")
+    names, served = set(), set()
+    for evs in b.events.values():
+        for e in evs:
+            if e.get("kind") == "session_start":
+                names.add((e.get("detail") or {}).get("model"))
+            elif e.get("kind") == "init":
+                names.add(e.get("model"))
+            if e.get("kind") in ("usage", "result"):
+                served.update((e.get("served") or {}).get("effort") or ())
+    errs = []
+    if other := sorted(str(n) for n in names - {slug}):
+        errs.append(f"the events name model {', '.join(other)}, the manifest {slug}")
+    if served and served != {effort}:
+        errs.append(f"served effort {', '.join(sorted(served))}, declared {effort}")
+    return (False, "; ".join(errs)) if errs else (True, "")
+
+
 # ------------------------------------------------------------------------------------------- evidence and scrub
 
 
@@ -566,6 +589,7 @@ def validate(
     add("C01", _guarded(c01_prompt_tools, b))
     add("C02", _guarded(c02_served, b))
     add("C03", _guarded(c03_settings, b))
+    add("C04", _guarded(c04_model, b))
     if "D01" in runs_here:
         add("D01", (None, "no submission store here") if ctx.duplicate is None else _dup(ctx.duplicate, verdict, env))
     if "D02" in runs_here:

@@ -101,6 +101,17 @@
       "summary": "caps, seed (and seed applied) and difficulty equal the scenario's"
     },
     {
+      "code": "C04",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the events' model is the manifest's slug; the served effort is the declared one"
+    },
+    {
       "code": "D01",
       "where": [
         "worker"
