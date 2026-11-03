@@ -82,6 +82,9 @@ def test_arena_v0_is_live_15s_two_against_two():
         "arena-v1",
     )
     assert "draft" not in a
+    # the match rules state the cap as a fact (arena-builds C4): the number there is this arena's
+    rules = (REPO / "packages/harness/prompts/rules/arena.md").read_text(encoding="utf-8")
+    assert f"{a['turn_cap_s']} s of model time per character" in " ".join(rules.split())
 
 
 def test_the_companions_arena_is_the_crash_site_save_with_every_member_named_and_identified():

@@ -14,8 +14,8 @@ perceive. The other player's calls and text never reach you, only their effects 
   it is open your results show WAITING and the game waits for that side; answering it is refused: "not your
   reaction".
 - The match ends at a turn boundary when every character of one side is downed or dead: the other side wins. At the
-  match's round cap it is a draw. A turn that runs past the per-turn time cap is ended for that side; three such
-  turns in a row lose the match.
+  match's round cap it is a draw. A turn gets 90 s of model time per character in it (the model's own time, not
+  the tools'); past that it is ended for that side, and three such turns in a row lose the match.
 - A reaction prompt with one row per spell level (one reacting character whose reaction spell it can cast at more
   than one slot level, e.g. Shield) is answered only by a click on a row, and a match makes no clicks: `react` with
   use=true fails on it; declining it works. Prompts with one row (an opportunity attack, a reaction with one usable
