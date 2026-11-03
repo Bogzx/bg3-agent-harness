@@ -104,6 +104,41 @@ class WalkEndsBatch(Base):
         self.assertEqual(self.g.ops("act.interact"), [])
         self.assertEqual(len(self.g.ops("act.move_to")), 1)
 
+    def test_a_batch_that_ends_with_its_walk_carries_the_minimap_block(self):
+        # review-v010-final #4: do_actions' walk end had CHANGES only, every other walk end the minimap block too
+        out = batch.do_actions(
+            json.dumps([{"tool": "interact", "target": self.chest}, {"tool": "move_to", "x": 5, "y": 0, "z": 0}])
+        )
+        self.assertIn("2. move_to: done", out)
+        self.assertIn("\nOBJECTIVES none on the map", out)
+        # the walk ran last even with the steps after it listed as not run
+        out = batch.do_actions(
+            json.dumps(
+                [
+                    {"tool": "move_to", "x": 5, "y": 0, "z": 0, "unless": "in_combat"},
+                    {"tool": "interact", "target": self.chest},
+                ]
+            )
+        )
+        self.assertIn(f"2. interact {self.chest}: not run", out)
+        self.assertIn("\nOBJECTIVES none on the map", out)
+        out = batch.do_actions(json.dumps([{"tool": "interact", "target": self.chest}]))
+        self.assertNotIn("OBJECTIVES", out)  # no walk, no block
+
+    def test_a_queues_walk_end_with_not_run_steps_carries_the_minimap_block(self):
+        batch.queue_actions(
+            json.dumps(
+                [
+                    {"tool": "move_to", "x": 5, "y": 0, "z": 0, "unless": "in_combat"},
+                    {"tool": "interact", "target": self.chest},
+                ]
+            )
+        )
+        self.wait_idle()
+        out = batch.wait_for("queue")
+        self.assertIn(f"2. interact {self.chest}: not run", out)
+        self.assertIn("\nOBJECTIVES none on the map", out)
+
     def test_a_queue_after_a_conditional_walk_keeps_a_later_calls_steps(self):
         batch.queue_actions(
             json.dumps(

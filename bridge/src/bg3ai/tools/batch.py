@@ -96,10 +96,19 @@ def do_actions(actions: list[dict[str, Any]] | dict[str, Any] | str, wait: bool 
     body = queueing._report_text(rep, len(steps)) + (f"\n{cut}" if cut else "")
     if rep.stopped:
         reporting._batch["last"] = "interrupted"
-    changes = delta.changes_text(core.game, core.H)
-    if changes:
-        body += "\n" + changes
+    # a batch ends with its walk step: that walk's end carries the minimap block too (review-v010-final #4)
+    body += walk_end_tail(_last_ran(body) in ARRIVAL_LEAD_TOOLS)  # (no block if a fight or talk started: its read)
     return reporting._finish("do_actions", {"n": len(steps)}, body, t0)
+
+
+_NOT_RUN = re.compile(r": (?:not run|skipped) \(")
+
+
+def _last_ran(body: str) -> str | None:
+    """The tool of the last step a batch/queue report ran ('N. <tool> ...' lines; not the ones it skipped or didn't
+    run after its walk step), or None."""
+    ran = [m.group(1) for m in re.finditer(r"(?m)^\d+\. (\w+)(.*)$", body) if not _NOT_RUN.search(m.group(2))]
+    return ran[-1] if ran else None
 
 
 @core.mcp.tool()
@@ -643,8 +652,7 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
             break
         time.sleep(0.1)
     if low in ("queue", "idle") or low.startswith("queue:"):
-        steps = re.findall(r"(?m)^\d+\. (\w+)", body)
-        walked = bool(steps) and steps[-1] in ARRIVAL_LEAD_TOOLS and not (view.get("combat") or {}).get("active")
+        walked = _last_ran(body) in ARRIVAL_LEAD_TOOLS and not (view.get("combat") or {}).get("active")
     body += walk_end_tail(walked and not reporting._batch["active"])
     return body, noop
 
