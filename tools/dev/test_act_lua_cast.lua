@@ -928,6 +928,17 @@ test("cast: a container's variant list must read as spells (fights-v09 Balthazar
     assert(err:find("variant list did not read as spell names", 1, true), err)
     stats.Target_Wall = { ModifierList = "Wall" } -- a stats entry that is not a spell
     err = cast_error("Target_LayOnHands_SmallHeal;Target_Wall")
-    assert(err:find("did not read as spell names", 1, true) and not err:find("Target_Wall", 1, true), err)
+    -- one bad entry hides only itself (arena-bridge review 2026-11-03 finding 3)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal (1 more entry of its variant list did not read"
+        .. " as spell names)", 1, true), err)
+    assert(not err:find("Target_Wall", 1, true), err)
+    eq(reads, 2, "a list with a bad entry is read twice")
+    err = cast_error("Target_LayOnHands_SmallHeal;Target_Wall", good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, "
+        .. "Target_LayOnHands_Cure", 1, true) and not err:find("did not read", 1, true),
+        "the second read wins: " .. err)
+    err = cast_error("Target_Wall;" .. mesh)
+    assert(err:find("choose a variant (this action's variant list did not read as spell names)", 1, true), err)
+    assert(not err:find("Target_Wall", 1, true) and not err:find("BLD_GEN", 1, true), err)
     stats.Target_Wall = nil
 end)
