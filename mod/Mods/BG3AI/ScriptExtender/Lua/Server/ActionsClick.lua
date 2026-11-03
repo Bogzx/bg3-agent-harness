@@ -168,7 +168,7 @@ reg("lockpick", function(args)
     local h = G.party_key(target, char)
     if h then
         local ok, n = pcall(function() return BG3AI.Visibility.name(h) end)
-        G.refuse((ok and n or "a party member") .. " carries its key: use interact on it (opens it with the key)")
+        G.refuse((ok and n or "a party member") .. " carries its key (interact opens it with the key)")
     end
     return approach("lockpick", char, target, function(job) needs_click(job, target, "roll", "Lockpick") end)
 end)

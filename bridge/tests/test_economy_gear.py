@@ -201,7 +201,7 @@ class GiveEquipped(unittest.TestCase):
                 calls.append((op, dict(args)))
                 return JobResult(status="done", result={"unequipped": True})
 
-        results = iter(["manage_inventory: FAILED — unequip it first", "manage_inventory: done — amount=1 to=e3"])
+        results = iter(["manage_inventory: FAILED — it is equipped", "manage_inventory: done — amount=1 to=e3"])
 
         def fake_act(tool, op, args, **kw):
             calls.append((op, dict(args)))

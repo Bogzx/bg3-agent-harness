@@ -147,11 +147,11 @@ function A.equip_why(char, item)
     local w = G.guid(G.q("GetEquippedItem", char, "Melee Main Weapon"))
     local wst = w and stats_of(w)
     if offhand and w and wst and not G.same(w, item) and has_prop(wst, "Twohanded") then
-        why[#why + 1] = ("the main hand holds a two-handed weapon (%s): equip a one-handed weapon first"):format(
+        why[#why + 1] = ("the main hand holds a two-handed weapon (%s)"):format(
             name_of(w) or "a weapon")
     end
     local h = holder(item)
-    if h and not G.same(h, char) then why[#why + 1] = "it is in another member's bag (give it first)" end
+    if h and not G.same(h, char) then why[#why + 1] = "it is in another member's bag" end
     if not G.b(G.q("IsProficientWith", char, item)) then why[#why + 1] = "not proficient with it" end
     if #why == 0 then return "cannot equip that" end
     return "cannot equip that: " .. table.concat(why, "; ")
@@ -217,8 +217,8 @@ end)
 
 reg("transfer", function(args)
     local item, from = party_item(args.item)
-    if G.in_combat(from) then G.refuse("not available during combat through this action (use the UI)") end
-    if G.b(G.q("IsEquipped", item)) then G.refuse("unequip it first") end
+    if G.in_combat(from) then G.refuse("not available during combat through this action") end
+    if G.b(G.q("IsEquipped", item)) then G.refuse("it is equipped") end
     -- One value only: G.q returns three and tonumber(n, base) raised "bad argument #1 to 'tonumber'"
     -- on every give/camp (S018-S024, 7 calls).
     local stack = tonumber((G.q("GetStackAmount", item))) or 1

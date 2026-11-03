@@ -193,7 +193,7 @@ test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed'
     assert(A.cast_failed_why(P1, GOB):find("already dead", 1, true))
     stats.Teleportation_Revivify = { SpellType = "Teleportation", OriginTargetConditions = "Dead()", TargetRadius = "9" }
     local w = A.cast_failed_why(P1, GOB, "Teleportation_Revivify")
-    assert(w:find("two-step cast", 1, true) and w:find("Scroll of Revivify", 1, true), w)
+    assert(w:find("two-step cast", 1, true) and not w:find("Scroll of Revivify", 1, true), w)
     assert(w:find("not a party member", 1, true), w) -- GOB has no PLAYABLE tag
     osiv[key("IsDead", GOB)] = 0
 end)
@@ -262,7 +262,7 @@ test("cast (ACT-9): with the TargetPos2 write off (default), a two-step spell is
         local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
         assert(msg:find(pat, 1, true), msg)
     end
-    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "Scroll of Revivify")
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "can't give its second pick yet")
     eq(#called("UseSpell"), 0, "no UseSpell")
     local ok, why = A.set_task_pos2(P1, "Teleportation_Revivify", { 1, 0, 1 })
     eq(ok, nil, "no write"); assert(why:find("ACT-9", 1, true), why)
@@ -349,7 +349,7 @@ test("cast: Dimension Door landing checks: range from AreaRadius, a landing in t
     nav.unseen = function(p) return p[2] > -1 and p[3] > 4 end
     fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "in view")
     nav.unseen = function(p) return p[2] ~= 7 end
-    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "no floor within 2 m of that height; give")
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "no floor within 2 m of that height")
     nav.unseen = nil
     Ext.Level.GetHeightsAt = heights
     fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 } }, "one who goes")
@@ -522,7 +522,7 @@ test("cast ui=true (ACT-9 player route): Revivify clicks one body; the result sa
     eq(j.result.via, "hotbar", "via"); eq(j.result.teleported, nil, "not a teleport")
     -- without ui, still ACT-9's refusal
     osiv[key("IsDead", NPC)] = 1
-    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "Scroll of Revivify")
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "can't give its second pick yet")
     world[P1].comps.ServerCharacter = nil
 end)
 
@@ -530,7 +530,8 @@ test("cast: a refused Dimension Door says the landing must be in sight, not 'the
     stats.Teleportation_DimensionDoor = DD
     A.last_place_why = nil
     local w = A.cast_failed_why(P1, P1, "Teleportation_DimensionDoor")
-    assert(w:find("two-step teleport", 1, true) and w:find("SEE", 1, true), w)
+    assert(w:find("two-step teleport", 1, true) and w:find("a landing the caster can see", 1, true), w)
+    assert(not w:find("stand where", 1, true), w) -- facts only
     assert(not w:find("path is blocked", 1, true), w)
     assert(not A.cast_failed_why(P1, GOB, "Teleportation_DimensionDoor"):find("Revivify", 1, true))
 end)
@@ -705,7 +706,7 @@ test("target not visible: names where the party last saw it (S026 09:02)", funct
         lastSeen = function(u) if u == NPC then return { pos = { -67.2, 28.2, 141.7 }, ago_s = 669 } end end,
     }
     local ok, err = pcall(function()
-        refused(function() G.target_visible(NPC) end, "target is not visible; last seen @(-67.2,28.2,141.7) 669s ago: travel_to")
+        refused(function() G.target_visible(NPC) end, "target is not visible; last seen @(-67.2,28.2,141.7) 669s ago")
         BG3AI.Visibility.lastSeen = function() return nil end
         refused(function() G.target_visible(NPC) end, "target is not visible")
         eq(G.last_seen_hint(NPC), "", "never seen: no hint")
@@ -726,7 +727,7 @@ test("target not visible: one that turned invisible says so (S030 Soft-Step Shad
         refused(function() G.target_visible(NPC) end, "target is not visible; it turned invisible 2s ago")
         assert(not G.last_seen_hint(NPC):find("travel_to"), "no walk advice for an invisible one")
         BG3AI.Visibility.vanished = function() return false end
-        assert(G.last_seen_hint(NPC):find("travel_to that spot first"), "a plain out-of-sight one keeps the old hint")
+        eq(G.last_seen_hint(NPC):find("travel_to", 1, true), nil, "a plain out-of-sight one: the fact only")
     end)
     BG3AI.Visibility = nil
     if not ok then error(err, 0) end
@@ -791,9 +792,10 @@ test("wedged hint: a landing only away from the goal says don't jump (naut2 run 
     local ok, err = pcall(function()
         local h = G.wedged_hint(P1, { -41, 7.7, -357 })
         eq(got[2], 7.7, "the goal reaches N.wedged")
-        assert(h:find("next to Lae'zel%) is 2.9m below, away from the goal: don't jump there"), h)
+        assert(h:find("next to Lae'zel%) is 2.9m below, away from the goal"), h)
+        assert(not h:find("don't jump", 1, true), h)
         assert(not h:find("jump_to"), h)
-        assert(G.wedged_hint(P1):find("jump_to %(%-42.3,4.5,%-363.3%) next to Lae'zel"), "no goal: as before")
+        assert(G.wedged_hint(P1):find("the nearest landing is %(%-42.3,4.5,%-363.3%) next to Lae'zel"), "no goal: as before")
     end)
     BG3AI.Nav = savedNav
     if not ok then error(err, 0) end

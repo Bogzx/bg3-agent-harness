@@ -740,7 +740,7 @@ test("interact V24: a door opened moments ago that still reads locked: 'it is op
     A.dispatch("Opened", { DOOR })
     osiv[key("IsOpened", DOOR)] = 1
     clock = clock + 2000
-    interact_refused("it is open now (the game unlocked or opened it 2 s ago)")
+    interact_refused("it is open now (the game unlocked or opened it 2 s ago")
     eq(#called("Use"), 0, "Use")
 end)
 

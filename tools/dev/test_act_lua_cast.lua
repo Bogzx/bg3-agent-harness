@@ -171,7 +171,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     eq(d[3].fix, "an adjacent ally's Help (an action) ends it", "prone fix")
     eq(d[4].effect, "cannot move"); eq(d[4].fix, nil, "fear: no fix")
     eq(d[5].name, "Lethargic")
-    eq(d[5].effect, "cannot move; its turn passes once the rest of its turn group has ended (act with it first)",
+    eq(d[5].effect, "cannot move; its turn passes once the rest of its turn group has ended",
         "lethargic: acts (S072) but never walks, its turn goes with the group's (S074/S089/S091)")
     -- the movement figure / walk guard: whatever "cannot act" or "cannot move"
     eq(G.move_blocked(P1), "Sleeping", "move_blocked: the first that stops a walk")
@@ -191,7 +191,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     on = { { id = "SLEEPING_EYEBITE", name = "Sleeping" } }
     local j = job(op("cast", { char = P1, spell = "Projectile_SR", target = NPC }))
     eq(j.status, "failed", "asleep")
-    eq(j.error, "cannot act while Sleeping (it takes the whole turn): end its turn; an adjacent ally's Help "
+    eq(j.error, "cannot act while Sleeping (it takes the whole turn); an adjacent ally's Help "
         .. "(an action) ends it; any damage ends it")
     BG3AI.Visibility = savedV
 end)
@@ -588,7 +588,7 @@ test("cast out of range in combat (or a point target): refused as before, no wal
     world[NPC].pos = { 6, 0, 0 }
     combat_setup(9)
     local j = job(op("cast", { char = P1, spell = "Target_Help", target = NPC }))
-    eq(j.status, "failed", "status"); assert(j.error:find("move closer first"), j.error)
+    eq(j.status, "failed", "status"); assert(j.error:find("out of range %(") and not j.error:find("closer"), j.error)
     eq(#called("CharacterMoveToPosition"), 0, "no walk")
 end)
 
@@ -670,7 +670,7 @@ test("equip: a failed equip says why (S025: two-handed Sword of Justice; the Moo
     eq(A.equip_why(P1, SHIELD), "cannot equip that", "live: a shield goes on beside the Moonlantern")
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = SWORD
     local why = A.equip_why(P1, SHIELD)
-    assert(why:find("two%-handed") and why:find("one%-handed weapon first"), why)
+    assert(why:find("two%-handed") and not why:find("first", 1, true), why)
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = nil
 end)
 
@@ -793,7 +793,7 @@ test("cast: a harmful area spell says where it bursts and who is in the blast be
         eq(j.status, "failed", "S085 status")
         assert(j.error:find("the way to that point is blocked: it would burst at %(%-24%.5,27%.0,742%.0%)"), j.error)
         assert(j.error:find(NPC:gsub("%-", "%%-") .. " Lady Croup %(neutral, 3%.4 m%)"), j.error)
-        assert(j.error:find("blast %(4 m%)"), j.error); assert(j.error:find("force=true to cast anyway"), j.error)
+        assert(j.error:find("blast %(4 m%)"), j.error); assert(j.error:find("force=true casts"), j.error)
         assert(not j.error:find(GOB, 1, true), "the hostile below is out of that blast: " .. j.error)
         eq(#called("UseSpellAtPosition"), 0, "nothing cast")
         local r = rays[#rays]

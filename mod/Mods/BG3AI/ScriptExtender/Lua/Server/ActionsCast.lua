@@ -116,7 +116,7 @@ function A.landing_ok(char, spell, dest)
     G.point_ok(char, dest)
     local p, rng = G.pos(char), A.landing_range(spell)
     if p and rng and U.dist(p, dest) > rng + 0.5 then
-        G.refuse(string.format("the landing is out of range (%.1f m, range %.1f m): move closer first",
+        G.refuse(string.format("the landing is out of range (%.1f m, range %.1f m)",
             U.dist(p, dest), rng))
     end
     -- Over the Faith-Leap chasm at the walkway's height (Navigation.lua N.helperZone): the game decides, as for move_to
@@ -132,12 +132,12 @@ function A.landing_ok(char, spell, dest)
     end
     if near then return end
     if #hs == 0 then
-        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f) (the void): pick a floor you can"
-            .. " see", dest[1], dest[2], dest[3]))
+        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f) (the void)",
+            dest[1], dest[2], dest[3]))
     end
     if chasm then
         G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in a Chasm or within %.1f m of one (the void): a fall"
-            .. " there is fatal; pick a spot on the floor you stand on or can see, away from its edge",
+            .. " there is fatal",
             dest[1], dest[2], dest[3], A.LANDING_CHASM_MARGIN_M))
     end
     -- the floors named below are only ones the party sees or has walked (N.known); others go unnamed
@@ -150,10 +150,10 @@ function A.landing_ok(char, spell, dest)
     end
     G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height",
         dest[1], dest[2], dest[3], A.LANDING_FLOOR_SLACK_M)
-        .. (best and string.format(" (the nearest floor there is at y=%.1f); give the floor's own y", best)
+        .. (best and string.format(" (the nearest floor there is at y=%.1f)", best)
             or void and string.format(" (the only floor there is the void's bottom at y=%.1f, a Chasm: a fall there"
-                .. " is fatal); pick a spot on the floor you stand on or can see", void)
-            or "; give the floor's own y"))
+                .. " is fatal)", void)
+            or ""))
 end
 
 -- A teleport's caster has gone from where the cast was ordered (or died / went down there): it was cast, whatever
@@ -388,12 +388,10 @@ reg("cast", function(args)
     if A.two_step_spell(base) and not targets[2] and not A.TASK_POS2 and not ui then
         if A.revive_spell(base) then
             G.refuse(tostring(base) .. " is a two-step cast (the body, then the spot they stand up on) and this"
-                .. " action can't give its second pick yet. Read a Scroll of Revivify by name (use_ability"
-                .. " ability=\"Scroll of Revivify\" target=<the body>: it clicks the body, then the ground beside it),"
-                .. " or Withers at camp")
+                .. " action can't give its second pick yet")
         end
         G.refuse(tostring(base) .. " is a two-step teleport (who goes, then the landing) and this action can't give"
-            .. " its landing yet: walk, jump or climb there (route),")
+            .. " its landing yet")
     end
     if #targets == 0 and not pos then
         local st = Ext.Stats.Get(base)
@@ -405,7 +403,7 @@ reg("cast", function(args)
     end
     if pos and #targets == 0 and not ui and A.needs_entity(base) then
         G.refuse(tostring(base) .. " takes a creature or an object as its target, not a ground point (cast at the"
-            .. " point it does nothing): give target=<its id> (get_nearby lists objects too)")
+            .. " point it does nothing)")
     end
 
     -- Upcasting to the spell's own level is just a normal cast.
@@ -443,7 +441,7 @@ reg("cast", function(args)
             G.target_visible(t)
             G.within(char, t, G.MAX_INTERACT_DIST, "target")
             if c.range and U.dist(G.pos(char), G.pos(t)) > c.range + 0.5 then
-                G.refuse((i == 2 and "second" or ("target " .. i)) .. " is out of range: move closer first")
+                G.refuse((i == 2 and "second" or ("target " .. i)) .. " is out of range")
             end
         end
         if spell ~= base then
@@ -649,7 +647,7 @@ reg("cast", function(args)
                     end
                     if base == "Projectile_Jump" then
                         why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"
-                            .. " character, or no clear arc): pick a nearer, lower landing (route / get_layout)"
+                            .. " character, or no clear arc)"
                     end
                     local blk = combat and G.blocking_status(char)
                     if blk then
@@ -689,10 +687,8 @@ reg("cast", function(args)
                                 RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1),
                                     now_at = U.vec(p, 1), landing = dest },
                                     string.format("teleported, then FELL %.1fm below the landing (to y=%.1f) and %s:"
-                                        .. " the point had no floor under it (the void or an edge). %s Teleport only"
-                                        .. " onto a floor you stand on or can see, away from its edge",
-                                        drop, p[2], dead and "DIED" or "is DOWNED",
-                                        dead and "Revive them or load a save." or "Help them up."))
+                                        .. " the point had no floor under it (the void or an edge)",
+                                        drop, p[2], dead and "DIED" or "is DOWNED"))
                                 return
                             end
                             job.fell_m = U.round(drop, 1)
@@ -736,7 +732,7 @@ reg("cast", function(args)
                             RPC.finish_job(job, "failed", { cast = spell, moved_m = U.round(moved, 1) },
                                 string.format("the jump went nowhere: moved %.1fm, the landing is still %.1fm away"
                                     .. " (the game shortens a landing it can't reach: too far or too high, no clear arc,"
-                                    .. " or no floor there): pick a nearer, lower spot on solid floor (get_layout)",
+                                    .. " or no floor there)",
                                     moved, off))
                             return
                         elseif off > A.JUMP_OFF_M then
@@ -746,10 +742,8 @@ reg("cast", function(args)
                             if dead or downed then
                                 RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1) },
                                     string.format("FELL %.1fm below the landing (to y=%.1f) and %s: the landing had no"
-                                        .. " floor at that height (a chasm or a drop). %s Never jump there again; walk"
-                                        .. " (route / get_layout) or aim at solid floor at your own height",
-                                        drop, p[2], dead and "DIED" or "is DOWNED",
-                                        dead and "Load a save or revive them." or "Help them up."))
+                                        .. " floor at that height (a chasm or a drop)",
+                                        drop, p[2], dead and "DIED" or "is DOWNED"))
                                 return
                             end
                             job.fell_m = U.round(drop, 1)
