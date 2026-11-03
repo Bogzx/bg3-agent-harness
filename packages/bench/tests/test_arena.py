@@ -55,12 +55,33 @@ def match(winner="A", reason="wipe", hp=(0.75, 0.0), rounds=2, start=None, turns
 
 def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
     files = sorted((PKG / "arenas").glob("*.json"))
-    assert [p.stem for p in files] == ["crash-companions-v1", "crash-mirror-v1", "draft_open_field"]
+    assert [p.stem for p in files] == ["arena-v0", "crash-companions-v1", "crash-mirror-v1", "draft_open_field"]
     for p in files:
         a = json.loads(p.read_text())
         jsonschema.validate(a, ARENA_SCHEMA)
         assert arena.validate(a, p.stem) == []
     assert "draft" in arena.load_named("draft_open_field")
+
+
+def test_arena_v0_is_live_15s_two_against_two():
+    # live 15 (2026-11-02, ops/logs/live.md): pairs 1-2 of the live-mirror-3 spec (Fighter Ash/Birch, Rogue
+    # Cedar/Dune), A at z 268.2, B at the live height read z 276.0 y 5.28, setup spawn_order [A, B] (an odd seed)
+    a = arena.load_named("arena-v0")
+    saves = json.loads((PKG / "saves.json").read_text())
+    rows = [r for suite in saves["suites"].values() for r in suite["saves"] if r["name"] == a["save"]["name"]]
+    assert {r["save_sha1"] for r in rows} == {a["save"]["sha1"]} and "crash_site_grove" in a["save"]["name"]
+    assert a["location"]["spawns"] == {"A": [229.8, 5.1, 268.2], "B": [229.8, 5.28, 276.0]}
+    assert arena.team_names(a) == {"A": ["Ash", "Cedar"], "B": ["Birch", "Dune"]}
+    assert a["mirror"]["pairs"] == arena.load_named("crash-mirror-v1")["mirror"]["pairs"][:2]
+    assert (a["level"], a["seed"] % 2, a["karmic"], a["round_cap"], a["wall_cap_min"], a["tools_off"]) == (
+        2,
+        1,
+        False,
+        20,
+        30,
+        "arena-v1",
+    )
+    assert "draft" not in a
 
 
 def test_the_companions_arena_is_the_crash_site_save_with_every_member_named_and_identified():

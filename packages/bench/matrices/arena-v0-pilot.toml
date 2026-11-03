@@ -1,0 +1,33 @@
+# Arena v0 pilot: Opus 5.5, Sonnet 5.5, Haiku 5.5 and DeepSeek flash, round robin (6 pairs) on arena-v0, every pairing
+# two matches with the sides swapped on the arena's seed. `repeats` is N, the pairings per pair (3 = 36 matches,
+# 5 = 60; publish-plan.md's spend quote). Played by `runner/play.py arena-matrix --matrix
+# packages/bench/matrices/arena-v0-pilot.toml` after the smoke matrix passed; --plan prints the matches and the
+# estimate. The matrix's own file runtime/budget-arena-v0.json caps the whole pilot (set its cap before the run).
+name = "arena-v0-pilot"
+models = [
+  "profiles/claude-opus-5-5.toml",
+  "profiles/claude-sonnet-5-5.toml",
+  "profiles/claude-haiku-5-5.toml",
+  "profiles/deepseek-flash.toml",
+]
+arenas = ["arena-v0"]
+repeats = 3
+
+[budget]
+file = "runtime/budget-arena-v0.json"
+max_cost = { arena-v0 = 0.50 }               # USD per side per match for a model not listed below
+
+# Each model's side cap per match (its reserve; a side that reaches it ends the match over_budget, no winner, so the
+# caps sit well above the quote): publish-plan.md's per-side estimates Opus ~$0.80, Sonnet ~$0.17, Haiku ~$0.17,
+# DeepSeek ~$0.025 (live 8: $0.03 / $0.02 per side), about 2.5x and more.
+[budget.max_cost_models]
+"profiles/claude-opus-5-5.toml" = 2.00
+"profiles/claude-sonnet-5-5.toml" = 0.60
+"profiles/claude-haiku-5-5.toml" = 0.50
+"profiles/deepseek-flash.toml" = 0.15
+
+[budget.models]                              # each side's cost also goes into its model's files
+"profiles/claude-opus-5-5.toml" = ["runtime/budget-opus.json", "runtime/budget-anthropic.json"]
+"profiles/claude-sonnet-5-5.toml" = ["runtime/budget-sonnet.json", "runtime/budget-anthropic.json"]
+"profiles/claude-haiku-5-5.toml" = ["runtime/budget-haiku.json", "runtime/budget-anthropic.json"]
+"profiles/deepseek-flash.toml" = ["runtime/budget-deepseek.json"]
