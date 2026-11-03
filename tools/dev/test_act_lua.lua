@@ -70,11 +70,12 @@ usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
 -- The game's side of an Osiris UseSpell / UseSpellAtPosition (ops/logs/arena-dice.md "H4 cast path"): the cast
 -- entity's SpellCastState is made with CastOptions carrying IgnoreSpellRolls, and its OnCreate hook runs. As live,
 -- CastOptions reads as a fresh Lua table of flag names and is written as one. Knobs: cast_opts nil = no cast at all;
--- cast_sticky = writes don't take; cast_seen = "state" | "none" (no OnCreate for it).
+-- cast_sticky = writes don't take (true) or keep those names (a list); cast_outcome = the cast entity's
+-- SpellCastOutcome.Result (the engine's fail reason); cast_seen = "state" | "none" (no OnCreate for it).
 create_hooks = {}
 USESPELL_OPTS = { "IgnoreHasSpell", "IgnoreCastChecks", "IgnoreSpellRolls", "NoMovement", "IgnoreTargetChecks",
     "AvoidDangerousAuras" } -- live, the cast-rolls probe
-cast_opts, cast_sticky, cast_seen = USESPELL_OPTS, false, "state"
+cast_opts, cast_sticky, cast_seen, cast_outcome = USESPELL_OPTS, false, "state", nil
 local function names_copy(t) local o = {} for i, n in ipairs(t) do o[i] = n end return o end
 local function with_options(o, names)
     local cur = names_copy(names)
@@ -82,7 +83,16 @@ local function with_options(o, names)
         __newindex = function(t, k, val)
             if k ~= "CastOptions" then rawset(t, k, val) return end
             assert(type(val) == "table", "CastOptions takes a table of flag names")
-            if not cast_sticky then cur = names_copy(val) end
+            if cast_sticky == true then return end
+            if type(cast_sticky) == "table" then -- these names stay whatever is written
+                for _, n in ipairs(cur) do
+                    local kept = false
+                    for _, sticky in ipairs(cast_sticky) do if sticky == n then kept = true end end
+                    for _, w in ipairs(val) do if w == n then kept = false end end
+                    if kept then val[#val + 1] = n end
+                end
+            end
+            cur = names_copy(val)
         end })
 end
 last_cast = nil -- the SpellCastState of the last stub cast
@@ -90,7 +100,8 @@ local function game_cast(c, sp)
     if cast_opts == nil then return end
     local st = with_options({ Caster = { Uuid = { EntityUuid = c } }, SpellId = { OriginatorPrototype = sp } },
         cast_opts)
-    if cast_seen ~= "none" and create_hooks.SpellCastState then create_hooks.SpellCastState({ SpellCastState = st }) end
+    local ent = { SpellCastState = st, SpellCastOutcome = cast_outcome and { Result = cast_outcome } or nil }
+    if cast_seen ~= "none" and create_hooks.SpellCastState then create_hooks.SpellCastState(ent) end
     last_cast = st
 end
 
@@ -160,8 +171,9 @@ function reset()
     Ext.System = nil
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
-    cast_opts, cast_sticky, cast_seen, last_cast = USESPELL_OPTS, false, "state", nil
+    cast_opts, cast_sticky, cast_seen, last_cast, cast_outcome = USESPELL_OPTS, false, "state", nil, nil
     if A then A.roll_wait = {} end
+    if A then A.CAST_DROP_EXTRA = A.CAST_DROP_CHECKS end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test

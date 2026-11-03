@@ -96,6 +96,15 @@ game unless it says so.
   throws cast by the harness never rolled in any run before this: party attacks could not miss and party save
   spells always landed (launch-v1: 368 of 368 harness weapon attacks dealt damage). bench-v0.10 results are not
   comparable with bench-v0.8 or v0.9 results for any scenario with a fight.
+- Casts the harness starts are now checked by the game's own rules, as a player's are. The same cast-state write
+  also drops IgnoreCastChecks and IgnoreTargetChecks; IgnoreHasSpell stays, because dropping it refused every cast.
+  Before this, a harness cast skipped the spell's Requirements, RequirementConditions and TargetConditions.
+  Window 7 showed Rage cast out of combat and Jump cast while Ensnared; with IgnoreCastChecks dropped, the game
+  refused Rage out of combat by itself. The guard still checks the readable rules before the order
+  (Server/GuardRules.lua: Combat/!Combat/!Immobile and the cheap condition terms), so the agent gets a plain refusal
+  and loses no action. When the game refuses a cast, the result now gives the game's own reason
+  (`SpellCastOutcome.Result`, e.g. "it can't be cast now (its requirements aren't met) (the game's CantCast)")
+  instead of "no reason given", when the cast entity has one.
 
 ### Benchmark (`packages/bench`)
 

@@ -563,6 +563,11 @@ reg("cast", function(args)
                     return
                 end
                 local why = A.cast_failed_why(char, targets[1], spell)
+                local eng = A.engine_refusal(job)
+                if eng then
+                    why = why:gsub("^the game refused the cast %(no reason given%)",
+                        "the game refused the cast: " .. eng:gsub("%%", "%%%%"), 1)
+                end
                 if job.ui and not job.clicked_ms and not job.began then
                     -- L8 23:59 (se, Dimension Door): picking the level in the upcast picker sent this 0.12 s
                     -- before the first target click, and the job failed while the bridge went on clicking. In the

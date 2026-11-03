@@ -16,6 +16,19 @@ Each case goes through bg3ai.tools.combat.use_ability (the agent's tool), once p
     jump_webbed   Jump 3 m while the caster has --immobile (ENSNARED, live: blocks Movement)           F3
     rage_ooc      Rage out of combat (Requirements Combat)                                             F3
     surge_ooc     Action Surge out of combat (Requirements Combat)                                     F3
+--plan live (window 7 follow-up): the default the mod now ships (IgnoreCastChecks + IgnoreTargetChecks dropped,
+mode "default"), the guard's rules off, on the casts a bench run needs; each case has its expected verdict and the
+summary says PASS/FAIL per case and whether the engine's own reason (SpellCastOutcome) was read on a refusal:
+    rage_ooc      Rage out of combat: refused by the engine (first, before the fight)
+    control       a normal attack at --target (out of combat it starts the fight): cast
+    shout         Dash: cast            area      --area at --target (Thunderwave): cast
+    plain         Sacred Flame (a save, no attack roll: no reaction prompt): cast
+    turn_undead   Turn Undead (a Shout whose TargetConditions filter who it reaches): cast
+    hide          Hide: cast            two_step  --two-step at --two-step-target, landing 1.5 m beside the caster
+                                                  (A.TASK_POS2 on for it; not run without a target): cast
+    heavy_shove   Shove at --heavy: refused by the engine, or cast = only the guard stops it (not run without --heavy)
+    uv run --project bridge python tools/dev/probe_cast_checks.py --plan live --target <undead enemy> \\
+        [--heavy <heavy enemy>] [--two-step Revivify --two-step-who <cleric> --two-step-target <a body>]
 Verdict per case and mode: cast (the engine let it through), refused (the game refused the cast: CastSpellFailed),
 guard (the harness refused before any order), not run (precondition not met: not its turn, in/out of combat, a
 status that didn't apply). Per usable mode: a case refused only with that flag gone = the engine re-checks it.
@@ -91,6 +104,62 @@ def plan(name: str, a: argparse.Namespace) -> list[dict[str, Any]]:
                 "need": "combat",
             },
         ]
+    if name == "live":
+        cases = [
+            {"case": "rage_ooc", "who": a.rager, "ability": "Rage", "need": "no_combat", "expect": "refused"},
+            {
+                "case": "control",
+                "who": a.caster,
+                "ability": a.attack,
+                "target": a.target,
+                "need": "any",
+                "expect": "cast",
+            },
+            {"case": "shout", "who": a.caster, "ability": "Dash", "need": "combat", "expect": "cast"},
+            {
+                "case": "area",
+                "who": a.area_caster,
+                "ability": a.area,
+                "target": a.target,
+                "need": "combat",
+                "expect": "cast",
+            },
+            {
+                "case": "plain",
+                "who": a.hold_caster,
+                "ability": "Sacred Flame",
+                "target": a.target,
+                "need": "combat",
+                "expect": "cast",
+            },
+            {"case": "turn_undead", "who": a.hold_caster, "ability": "Turn Undead", "need": "combat", "expect": "cast"},
+            {"case": "hide", "who": a.caster, "ability": "Hide", "need": "combat", "expect": "cast"},
+        ]
+        if a.two_step_target:
+            cases.append(
+                {
+                    "case": "two_step",
+                    "who": a.two_step_who,
+                    "ability": a.two_step,
+                    "target": a.two_step_target,
+                    "landing_m": 1.5,
+                    "pos2": True,
+                    "need": "any",
+                    "expect": "cast",
+                }
+            )
+        if a.heavy:
+            cases.append(
+                {
+                    "case": "heavy_shove",
+                    "who": a.caster,
+                    "ability": "Shove",
+                    "target": a.heavy,
+                    "need": "combat",
+                    "expect": "refused",
+                }
+            )
+        return cases
     if name == "ooc":
         return [
             {"case": "rage_ooc", "who": a.rager, "ability": "Rage", "need": "no_combat"},
@@ -112,13 +181,16 @@ def verdict(text: str) -> str:
 
 
 def switch(mode: str) -> str:
-    """The Lua value of A.CAST_DROP_EXTRA for a mode: off, all, or one flag name. Pure (tests)."""
+    """The Lua value of A.CAST_DROP_EXTRA for a mode: off (no check flag dropped), default (the shipped
+    CAST_DROP_CHECKS), all, or one flag name. Pure (tests)."""
     if mode == "off":
         return "false"
+    if mode == "default":
+        return A_LUA + ".CAST_DROP_CHECKS"
     if mode == "all":
         return "true"
     if mode not in FLAGS:
-        raise ValueError(f"unknown mode {mode!r}: off, all or one of {', '.join(FLAGS)}")
+        raise ValueError(f"unknown mode {mode!r}: off, default, all or one of {', '.join(FLAGS)}")
     return '{"' + mode + '"}'
 
 
@@ -156,9 +228,28 @@ def summary(rows: list[dict[str, Any]]) -> list[str]:
     return out
 
 
+def expected(rows: list[dict[str, Any]]) -> list[str]:
+    """--plan live: PASS/FAIL per case against its expected verdict; a refusal says whether the engine's own reason
+    was read. Pure (tests)."""
+    out = []
+    for r in rows:
+        if "expect" not in r:
+            continue
+        v = r["verdict"]
+        mark = "not run" if v == "not run" else "PASS" if v == r["expect"] else "FAIL"
+        line = f"{mark:7} {r['case']:12} expected {r['expect']:7} got {v}"
+        if v == "refused":
+            first = str(r.get("text", "")).split("\n", 1)[0]
+            line += " (engine reason read)" if "(the game's " in first else " (no engine reason read)"
+        if r["case"] == "heavy_shove" and v == "cast":
+            line += ": the engine lets it through; only the guard's CanShoveWeight stops it"
+        out.append(line)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    ap.add_argument("--plan", choices=("combat", "ooc"), default="combat")
+    ap.add_argument("--plan", choices=("combat", "ooc", "live"), default="combat")
     ap.add_argument("--target", default="", help="combat: an undead / non-humanoid enemy (uuid or handle)")
     ap.add_argument("--heavy", default="", help="combat: an enemy too heavy to shove")
     ap.add_argument("--caster", default="Karlach")
@@ -167,7 +258,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--immobile", default="ENSNARED", help="a status that makes the caster Immobile")
     ap.add_argument("--rager", default="Karlach")
     ap.add_argument("--surger", default="Lae'zel")
-    ap.add_argument("--modes", default="off," + ",".join(FLAGS), help="off, all, or flag names (one per mode)")
+    ap.add_argument("--area", default="Thunderwave")
+    ap.add_argument("--area-caster", default="Gale")
+    ap.add_argument("--two-step", default="Revivify")
+    ap.add_argument("--two-step-who", default="Shadowheart")
+    ap.add_argument("--two-step-target", default="", help="live: the first pick (a body for Revivify)")
+    ap.add_argument(
+        "--modes",
+        default="",
+        help="off, default, all, or flag names (one per mode); default: off + each flag, live: default",
+    )
     ap.add_argument("--only", default="")
     ap.add_argument("--turn-wait", type=float, default=120.0)
     ap.add_argument("--out", type=Path, default=REPO / "runtime" / "probes" / "cast-checks.jsonl")
@@ -198,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(2.0)
         return False
 
+    if not a.modes:
+        a.modes = "default" if a.plan == "live" else "off," + ",".join(FLAGS)
     only = {x for x in a.only.split(",") if x}
     cases = [c for c in plan(a.plan, a) if not only or c["case"] in only]
     rows: list[dict[str, Any]] = []
@@ -207,12 +309,16 @@ def main(argv: list[str] | None = None) -> int:
         for c in cases:
             for mode in [m for m in a.modes.split(",") if m]:
                 row: dict[str, Any] = {"case": c["case"], "mode": mode, "who": c["who"], "ability": c["ability"]}
+                if "expect" in c:
+                    row["expect"] = c["expect"]
                 who = plumbing._who(c["who"])
                 why = ""
                 if c["need"] == "no_combat" and in_combat():
                     why = "in combat"
                 elif c["need"] == "combat" and (not in_combat() or not reach_turn(who)):
                     why = "not its turn (or no fight)"
+                elif c["need"] == "any" and in_combat() and not reach_turn(who):
+                    why = "not its turn"
                 st = c.get("status")
                 if not why and st:
                     lua(f"Osi.ApplyStatus({json.dumps(who)}, {json.dumps(st)}, 12.0, 1, {json.dumps(who)}) return 'ok'")
@@ -227,8 +333,21 @@ def main(argv: list[str] | None = None) -> int:
                     tgt = c.get("target")
                     if tgt:
                         lua(f"Osi.SetHitpointsPercentage({json.dumps(plumbing._uuid(tgt))}, 100.0) return 'ok'")
+                    if c.get("pos2"):
+                        lua(f"{A_LUA}.TASK_POS2 = true return 'ok'")
                     try:
-                        if c.get("jump_m"):
+                        if c.get("landing_m"):
+                            x, y, z = (
+                                float(v)
+                                for v in lua(
+                                    f"local x, y, z = Osi.GetPosition({json.dumps(who)}) "
+                                    "return string.format('%f,%f,%f', x, y, z)"
+                                ).split(",")
+                            )
+                            text = combat.use_ability(
+                                c["ability"], target=tgt, x=x + c["landing_m"], y=y, z=z, who=c["who"]
+                            )
+                        elif c.get("jump_m"):
                             x, y, z = (
                                 float(v)
                                 for v in lua(
@@ -241,6 +360,9 @@ def main(argv: list[str] | None = None) -> int:
                             text = combat.use_ability(c["ability"], target=tgt or "", who=c["who"])
                     except Exception as e:  # a probe reports, it doesn't stop the other cases
                         text = f"use_ability: FAILED — {e}"
+                    finally:
+                        if c.get("pos2"):
+                            lua(f"{A_LUA}.TASK_POS2 = false return 'ok'")
                     row.update(text=str(text)[:500], verdict=verdict(str(text)), options=lua(OPTIONS % json.dumps(who)))
                 if st and not why:
                     lua(f"Osi.RemoveStatus({json.dumps(who)}, {json.dumps(st)}) return 'ok'")
@@ -249,8 +371,8 @@ def main(argv: list[str] | None = None) -> int:
                     fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 print(json.dumps({k: row.get(k) for k in ("case", "mode", "verdict", "options")}))
     finally:
-        lua(f"{A_LUA}.CAST_DROP_EXTRA = false {G_LUA}.RULES_OFF = false return 'ok'")
-    for line in summary(rows):
+        lua(f"{A_LUA}.CAST_DROP_EXTRA = {A_LUA}.CAST_DROP_CHECKS {G_LUA}.RULES_OFF = false return 'ok'")
+    for line in summary(rows) if a.plan != "live" else expected(rows):
         print(line)
     return 0
 
