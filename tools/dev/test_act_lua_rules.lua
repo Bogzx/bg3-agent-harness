@@ -119,3 +119,28 @@ test("rules: an unread term is logged once, never refused; a false known term st
     passes(rules("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Character()",
         TargetConditions = "not Character()" }, NPC))
 end)
+
+test("rules: a Shout, Zone or area spell's TargetConditions filter who it reaches, not the pick (launch-v1 replay)",
+    function()
+    Ext.StaticData = { GetAll = function() return { "t-und" } end, Get = function() return { Name = "UNDEAD" } end }
+    G._tag_ids = nil
+    osiv[key("IsTagged", P1, "t-und")] = 0
+    osiv[key("IsCharacter", P1)] = 1
+    osiv[key("HasActiveStatus", P1, "LOW_GHOST_POSSESSED")] = 0
+    -- Turn Undead: the harness passes the caster as a Shout's target; the caster is not undead
+    passes(rules("Shout_TurnUndead", { SpellType = "Shout", AreaRadius = 9,
+        TargetConditions = "Character() and Tagged('UNDEAD') or HasStatus('LOW_GHOST_POSSESSED')" }, P1))
+    -- Aid (Self()) with an ally named as the target
+    passes(rules("Shout_MAG_Aid_Self", { SpellType = "Shout", TargetConditions = "Self()" }, NPC))
+    osiv[key("IsDead", NPC)] = 1
+    passes(rules("Zone_Thunderwave", { SpellType = "Zone", TargetConditions = "not Dead()" }, NPC))
+    passes(rules("Target_Shatter", { SpellType = "Target", AreaRadius = 3, TargetConditions = "not Dead()" }, NPC))
+    passes(rules("Projectile_Fireball", { SpellType = "Projectile", ExplodeRadius = 4,
+        TargetConditions = "not Dead()" }, NPC))
+    -- the Requirements still hold for a Shout; a single-target spell still checks its pick
+    combat_setup(9)
+    refused(rules("Shout_PrayerOfHealing", { SpellType = "Shout", AreaRadius = 9, Requirements = "!Combat" }, P1),
+        "can't be used in combat")
+    refused(rules("Target_MainHandAttack", { SpellType = "Target", TargetConditions = "not Dead()" }, NPC),
+        "the target is dead")
+end)

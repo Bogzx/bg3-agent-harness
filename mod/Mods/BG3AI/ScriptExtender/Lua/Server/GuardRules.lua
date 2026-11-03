@@ -314,10 +314,15 @@ function G.check_rules(char, spell, st, target)
         subject = char })
     log_unread(spell, "RequirementConditions", unread)
     if v == false then G.refuse(name .. " can't be used now: " .. why) end
-    if target then
+    -- A Shout, a Zone or an area spell (AreaRadius / ExplodeRadius) applies its TargetConditions to each creature it
+    -- reaches, not to the pick: Turn Undead's "Tagged('UNDEAD')" filters who flees, the caster isn't checked
+    -- (launch-v1 replay: Aid with targets given, Prayer of Healing, Turn Undead would be refused).
+    local st_type = tostring(field("SpellType") or "")
+    local area = (tonumber(field("AreaRadius")) or 0) > 0 or (tonumber(field("ExplodeRadius")) or 0) > 0
+    if target and st_type ~= "Shout" and st_type ~= "Zone" and st_type ~= "Wall" and not area then
         -- a two-step spell (Revivify, Dimension Door) checks its first pick against OriginTargetConditions; its
         -- TargetConditions are the second pick's (the landing)
-        local which = tostring(field("SpellType") or "") == "Teleportation" and "OriginTargetConditions"
+        local which = st_type == "Teleportation" and "OriginTargetConditions"
             or "TargetConditions"
         v, why, unread = G.rule_eval(field(which), { source = char, target = target, subject = target })
         log_unread(spell, which, unread)
