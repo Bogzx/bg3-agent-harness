@@ -43,8 +43,10 @@ def night_talks_left(log: bool = True) -> str:
         who += (" and " if named else "") + "someone not in view"
     if log:
         core.METRICS.write({"type": "night_talks", "t": round(time.time(), 3), "named": len(named), "unseen": unseen})
-    return (f"the night at camp can't end yet: the game still wants a talk with {who} first; "
-            "going to sleep only brings up its 'talks left' notice until then, and a talk with them clears it")
+    return (
+        f"the night at camp can't end yet: the game still wants a talk with {who} first; "
+        "going to sleep only brings up its 'talks left' notice until then, and a talk with them clears it"
+    )
 
 
 def night_talk_marks() -> str:
