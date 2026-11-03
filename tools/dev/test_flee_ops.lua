@@ -116,6 +116,19 @@ ok(r.flee == nil, "flee_probe button_only: no flee state read (the hover probe s
 pcp.CanFlee, pcp.FleeBlockCause = true, ""
 r = ops["ui.flee_probe"]({})
 ok(r.flee and r.flee.can == true and r.flee.cause == nil, "flee_probe: CanFlee true, an empty cause is none")
+-- v010 live window 5: the HUD's cause and distance empty (-1/-1); the game's FleeCapability of the fleeing character
+pcp.CanFlee, pcp.FleeBlockCause, pcp.FleeDistance = false, nil, { Value = -1, Max = -1 }
+local caps = { ["claude-uuid"] = { FleeCapability = { Flags = { "EnemyTooClose" }, FleeDistance = 27.0,
+    CurrentFleeDistance = 1.42 } } }
+Ext = { Entity = { Get = function(u) return caps[u] end } }
+r = ops["ui.flee_probe"]({ char = "claude-uuid" })
+ok(r.flee and r.flee.can == false and r.flee.cause == nil and r.flee.flags and r.flee.flags[1] == "EnemyTooClose"
+    and r.flee.need == 27.0 and r.flee.at == 1.42, "flee_probe {char}: the game's FleeCapability flags and distances")
+r = ops["ui.flee_probe"]({})
+ok(r.flee and r.flee.flags == nil, "flee_probe without char: no component read")
+r = ops["ui.flee_probe"]({ char = "nobody" })
+ok(r.flee and r.flee.can == false and r.flee.flags == nil, "flee_probe: no entity -> the HUD state only")
+Ext = nil
 pages = { { name = "HotBar", el = { DataContext = {}, kids = { fleeBtn } } } }
 r = ops["ui.flee_probe"]({})
 ok(r.flee == nil, "flee_probe: no CanFlee on any page -> no flee state (the bridge goes on as before)")

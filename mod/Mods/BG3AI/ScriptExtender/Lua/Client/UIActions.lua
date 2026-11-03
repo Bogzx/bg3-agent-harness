@@ -147,6 +147,45 @@ local function refuseSaveLoad(what)
     error(what .. A.SAVELOAD_HINT, 0)
 end
 
+-- REVIEW-5 F8: the escape hatch (ui_action -> ui.command) reached any command on any open DataContext, so mid-run the
+-- agent could change what the scenario pins (Scenario.lua): the difficulty (NewGameSettings.xaml
+-- UpdateDifficultyCommand / UpdateCustomDifficultyCommand), its custom settings such as Karmic Dice (the page's
+-- ValueChanged, ChangeDisplayCustomSettingsCommand; the page opens in a run through EditSessionSettings) and the game
+-- options (GameOptions: ResetOptionsToDefaultCommand, ConfirmSettings ...). Refused by name or by the page that is
+-- open, the attempt written to the referee ring (Server/Referee.lua "rule_change"). Internal jobs call UI.command
+-- directly and are not affected.
+A.RULE_WORDS = { "difficulty", "karmic", "ruleset", "sessionsettings", "customsettings", "gameoption",
+    "resetoptions", "confirmsettings", "startnewgame", "startnewcustomgame" }
+A.RULE_PAGES = { NewGameSettings = true, NewGameSettings_c = true, GameOptions = true, GameOptions_c = true }
+A.RULE_HINT = "; the scenario fixes the difficulty, its settings (Karmic Dice ...) and the game options for the run"
+A.RULE_NET = { "65734c81-edd1-4b6f-b10e-663fec0e768e", "RuleChangeRefused" }
+
+-- the first rule word in any of the names (case, spaces, _ - . ignored), or nil. Pure.
+function A.ruleWord(...)
+    for k = 1, select("#", ...) do
+        local s = tostring(select(k, ...) or ""):lower():gsub("[%s_%-%.]", "")
+        for _, w in ipairs(A.RULE_WORDS) do if s:find(w, 1, true) then return w end end
+    end
+    return nil
+end
+
+-- the open settings page's widget name, or nil
+function A.rulePage()
+    for n in pairs(A.RULE_PAGES) do
+        local w = UI.widget(n)
+        if w and UI.isVisible(w) then return n end
+    end
+    return nil
+end
+
+local function refuseRule(args, what)
+    pcall(function()
+        Ext.Net.CreateChannel(A.RULE_NET[1], A.RULE_NET[2]):SendToServer({ command = tostring(args.command),
+            widget = args.widget, target = args.target, param = args.param, what = what })
+    end)
+    error(("ui_action %s refused: it changes %s"):format(tostring(args.command), what) .. A.RULE_HINT, 0)
+end
+
 ------------------------------------------------------------------------
 -- ui.key {key, mods?, hold_ms?}
 --   key: a key name as a player would say it ("ESCAPE", "Delete", "1",
@@ -245,6 +284,10 @@ local function dcOf(widget)
 end
 
 local function commandOp(args)
+    local rw = A.ruleWord(args.command, args.target, args.param)
+    if rw then refuseRule(args, rw) end
+    local rp = A.RULE_PAGES[tostring(args.widget)] and args.widget or A.rulePage()
+    if rp and not A.leaveName(args.command) then refuseRule(args, "a setting on the " .. rp .. " page") end
     if not args.dry then
         local w = A.saveLoadName(args.command)
         if w then refuseSaveLoad("ui.command " .. tostring(args.command) .. " refused (" .. w .. ")") end
@@ -268,7 +311,9 @@ end
 RPC.register("ui.command", function(args)
     local ok, res = pcall(commandOp, args)
     if ok then return res end
-    if tostring(res):find(A.SAVELOAD_HINT, 1, true) then error(res, 0) end
+    if tostring(res):find(A.SAVELOAD_HINT, 1, true) or tostring(res):find(A.RULE_HINT, 1, true) then
+        error(res, 0)
+    end
     -- A busy refusal stands as it is: reading for a box now would be a second refused UI call, and RPC.lua would
     -- answer "met it after a UI call ran" for a press refused at its gate, so the bridge didn't ask it again (v09
     -- moonrise: end_turn's HUD End Turn "failed too: bg3le: UI busy")

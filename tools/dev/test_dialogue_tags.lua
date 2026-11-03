@@ -335,60 +335,86 @@ do
     check("S081 scroll: no ScrollViewer = no", S.answersScroll({ _children = { { _name = "answerList", _children = {} } } }) == false)
 end
 
--- 12b. v010 live window 4 (Lae'zel's cage "Get rid of them.", 6 answers, 5 rows on screen; answer 4 "[PALADIN]
---      [DECEPTION] Your quarry looks dangerous, ..." wraps to two lines; answer_list read {rows 5, total 7}): the VMs
---      have no text, listWindow counts 7 rows from the first row's height (42 of ExtentHeight 294), so the old rules
---      went rows_only (no VM) and the game ignored the row's button press twice. Rows pair with the live VMs by the
---      number each row shows (AnswerTextPrefix "4. " = AnswerIdx + 1).
+-- 12b. v010 live windows 4 and 5 (Lae'zel's cage "Get rid of them.", 6 answers, 5 rows on screen; answer 4
+--      "[PALADIN] [DECEPTION] Your quarry looks dangerous, ..." wraps to two lines; answer_list {rows 5, total 7}):
+--      listWindow counts 7 rows from the first row's height (42 of ExtentHeight 294), so the old rules went rows_only
+--      (no VM, no tags) and the game ignored the row's button press on every row. Window 5's client reads (dcdiag,
+--      dcdiag2): each row's AnswerTextPrefix reads only "." and the rendered texts carry no [TAG] runs, while each
+--      row's DataContext is its VM with AnswerIdx 0..4 and Answers holds 6 VMs (AnswerIdx 0..5). Rows pair with the
+--      live VMs by that AnswerIdx; the tags come from the live VMs.
 do
     local texts = { "Rather demanding for a woman in your position. Why should I?",
         "Don't worry - I'll get them out of here, one way or another.",
-        "[PERSUASION] Shoot the trap down. We must kill it before it harms someone.",
-        "[PALADIN] [DECEPTION] Your quarry looks dangerous, but I've handled worse. Leave it to me, get to safety.",
+        "Shoot the trap down. We must kill it before it harms someone.",
+        "Your quarry looks dangerous, but I've handled worse. Leave it to me, get to safety.",
         "Attack the tieflings.", "Leave." }
-    local function row(k, prefix)
+    local tagsOf = { [3] = { { Text = "Persuasion" } }, [4] = { { Text = "Paladin" }, { Text = "Deception" } } }
+    local vms6 = {}
+    for k = 1, 6 do vms6[k] = vm({ { Type = "Text" } }, tagsOf[k]) vms6[k]._props.AnswerIdx = k - 1 end
+    local function row(k, dc)
         local it = item({}, texts[k])
         it._props = { ActualHeight = k == 4 and 84.0 or 42.0 }
-        if prefix ~= false then
-            it._children[#it._children + 1] = { Type = "TextBlock", _name = "AnswerTextPrefix",
-                _props = { Inlines = coll({ run(tostring(k)), run(". ") }) } }
-        end
+        -- as read live: the number run has no Text, the prefix reads "."
+        it._children[#it._children + 1] = { Type = "TextBlock", _name = "AnswerTextPrefix", _tostring = ".",
+            _props = { Inlines = coll({ run(nil), run(".") }) } }
+        if dc ~= false then it.DataContext = { Type = "gui::VMDialogueAnswer", _props = { AnswerIdx = k - 1 } } end
         return it
     end
-    local function list(first, n, prefix)
+    local function list(first, n, dc)
         local rows = {}
-        for k = first, first + n - 1 do rows[#rows + 1] = row(k, prefix) end
+        for k = first, first + n - 1 do rows[#rows + 1] = row(k, dc) end
         local sv = { Type = "ls.LSScrollViewer", _props = { VerticalOffset = (first - 1) * 42.0, ExtentHeight = 294.0,
             ScrollableHeight = 84.0 }, _children = rows }
         return { _children = { { _name = "answerList", _children = { sv } } } }
     end
-    local vms6 = {}
-    for k = 1, 6 do vms6[k] = vm({ { Type = "Text" } }) vms6[k]._props.AnswerIdx = k - 1 end
 
     local out, changing, counts = S.dialogueAnswers(list(1, 5), ad(vms6, true))
-    check("w4 by number: not changing", changing == false)
-    check("w4 by number: 5 rows, numbered as shown", #out == 5 and out[1].i == 1 and out[5].i == 5, #out)
-    check("w4 by number: row 4 is VM 4 (the [PALADIN] [DECEPTION] answer)", out[4] and out[4].vm == vms6[4]
-        and out[4].num == 4 and out[4].tags and out[4].tags[1] == "PALADIN", out[4] and out[4].text)
-    check("w4 by number: 1 more below, flagged", counts and counts.by_number == true and counts.below == 1
+    check("w5 by AnswerIdx: not changing", changing == false)
+    check("w5 by AnswerIdx: 5 rows, numbered as shown", #out == 5 and out[1].i == 1 and out[5].i == 5, #out)
+    check("w5 by AnswerIdx: row 1 (plain) is the live VM 1", out[1] and out[1].vm == vms6[1] and out[1].num == 1)
+    check("w5 by AnswerIdx: row 4 is the live VM 4", out[4] and out[4].vm == vms6[4] and out[4].num == 4,
+        out[4] and out[4].text)
+    check("w5 tags from the live VMs: [PERSUASION] on 3, [PALADIN] [DECEPTION] on 4",
+        out[3] and out[3].tags and out[3].tags[1] == "PERSUASION" and out[4] and out[4].tags
+        and out[4].tags[1] == "PALADIN" and out[4].tags[2] == "DECEPTION" and out[1].tags == nil,
+        out[4] and out[4].tags and table.concat(out[4].tags, ","))
+    check("w5 by AnswerIdx: 1 more below, flagged", counts and counts.by_number == true and counts.below == 1
         and counts.above == nil, counts and counts.below)
     -- scrolled down one row: rows 2-6 keep the game's numbers (the old window arithmetic is what failed here)
     local out2, _, c2 = S.dialogueAnswers(list(2, 5), ad(vms6, true))
-    check("w4 by number scrolled: rows 2-6 are VMs 2-6", #out2 == 5 and out2[1].i == 2 and out2[1].vm == vms6[2]
+    check("w5 by AnswerIdx scrolled: rows 2-6 are VMs 2-6", #out2 == 5 and out2[1].i == 2 and out2[1].vm == vms6[2]
         and out2[5].i == 6 and out2[5].vm == vms6[6] and c2.above == 1 and c2.below == nil, #out2)
-    -- a row whose number no VM carries (the previous node's rows): not paired by number
+    -- a row whose AnswerIdx no live VM carries (the previous node's rows): no VM claimed
     local vmsOld = {}
     for k = 1, 3 do vmsOld[k] = vms6[k] end
     local out3, _, c3 = S.dialogueAnswers(list(1, 5), ad(vmsOld, true))
-    check("w4 by number: a row number no VM has -> no VM claimed", not (c3 and c3.by_number) and not (out3[4] and
+    check("w5: a row AnswerIdx no VM has -> no VM claimed", not (c3 and c3.by_number) and not (out3[4] and
         out3[4].vm), c3 and c3.rows_only)
-    -- rows without a shown number: the old rules (rows only here), the row's number unread
-    local out4, _, c4 = S.dialogueAnswers(list(1, 5, false), ad(vms6, true))
-    check("w4 no prefix: rows only as before", c4 and c4.rows_only == true and out4[1].num == nil, c4 and c4.rows_only)
+    -- rows whose DataContext can't be read: rows only, as before
+    local _, _, c4 = S.dialogueAnswers(list(1, 5, false), ad(vms6, true))
+    check("w5 no row DataContext: rows only as before", c4 and c4.rows_only == true, c4 and c4.rows_only)
+    -- right after one of our commands the rows may point at released VMs: no row DataContext is read
+    local dcReads = 0
+    local function counted(w)
+        for _, r in ipairs(w._children[1]._children[1]._children) do
+            local dc = r.DataContext
+            r.DataContext = nil
+            setmetatable(r, { __index = function(_, k)
+                if k == "DataContext" then dcReads = dcReads + 1 return dc end
+            end })
+        end
+        return w
+    end
     QUIET = true
-    local _, ch5 = S.dialogueAnswers(list(1, 5), ad(vms6, true))
-    check("w4 by number: not right after our own command", ch5 == true)
+    local _, ch5 = S.dialogueAnswers(counted(list(1, 5)), ad(vms6, true))
+    check("w5: right after our own command no row DataContext is read", ch5 == true and dcReads == 0, dcReads)
     QUIET = false
+    -- a list whose rows all pair by index (#rows == #Answers): no row DataContext read either
+    local two = { vms6[1], vms6[2] }
+    local w2 = counted(list(1, 2))
+    local out6 = S.dialogueAnswers(w2, ad(two, true))
+    check("w5: a fully rendered list reads no row DataContext; num from the live VM",
+        #out6 == 2 and dcReads == 0 and out6[2].num == 2, dcReads)
 end
 
 -- 13. Audit UI-4: ui.dialogue_choose for an option outside the visible rows. The i-th answer VM is the i-th row
