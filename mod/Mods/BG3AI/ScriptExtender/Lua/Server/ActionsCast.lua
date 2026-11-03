@@ -265,7 +265,24 @@ function A.roll_cast_state(entity)
         return roll_failed(job, "IgnoreSpellRolls stayed set: " .. (after and table.concat(after, ",") or "unread"))
     end
     job.roll.state, job.roll.options = "cleared", after
+    job.state_ms = RPC.now_ms() -- the cast exists: it started (on_tick's no-start check counts it)
     A.roll_wait[caster] = nil
+end
+
+-- Live window 5 (ops/logs/live.md, melee-swap A/B): 3 of 10 Main Hand Attacks "never started" although their cast
+-- state was made at 70-270 ms: Karlach's own reaction prompt (Reckless Attack, "needs 15 to hit") paused the cast
+-- (ls::anubis::PausedComponent on the caster from ~0.8-1.4 s) and the 3 s no-start check purged it. A started cast
+-- the game holds paused this long is reported as paused, its tasks kept: it goes on once the prompt is answered.
+A.CAST_PAUSED_COMP = "ls::anubis::PausedComponent"
+A.CAST_PAUSED_MS = 1000
+A.CAST_PAUSED = "the cast started and the game paused it for a reaction decision (a reaction prompt is open):"
+    .. " answer it (react); the cast goes on after it and its outcome shows in the events"
+
+function A.cast_paused(char)
+    local ok, names = pcall(function() return Ext.Entity.Get(char):GetAllComponentNames() end)
+    if not ok or type(names) ~= "table" then return false end
+    for _, n in ipairs(names) do if n == A.CAST_PAUSED_COMP then return true end end
+    return false
 end
 
 -- CastedSpell of the job's cast: a cast whose state was never seen went without the clear.
@@ -676,6 +693,16 @@ reg("cast", function(args)
                 and RPC.now_ms() - job.clicked_ms >= A.CAST_UI_REFUSED_MS then
                 RPC.finish_job(job, "failed", nil, job.ui_failed)
                 return
+            end
+            if job.state_ms and not job.began then job.began, job.hp0 = true, hp_of(char) end
+            if job.state_ms and not job.casted then
+                if not A.cast_paused(char) then job.paused_ms = nil
+                elseif not job.paused_ms then job.paused_ms = RPC.now_ms()
+                elseif RPC.now_ms() - job.paused_ms >= A.CAST_PAUSED_MS then
+                    job.stopping = true -- on_finish's purge of leftover tasks would cancel the held cast
+                    RPC.finish_job(job, "interrupted", { began = true, paused = true, cast = spell }, A.CAST_PAUSED)
+                    return
+                end
             end
             if not job.casted and not job.began and job.ordered_ms then
                 local p = G.pos(char)
