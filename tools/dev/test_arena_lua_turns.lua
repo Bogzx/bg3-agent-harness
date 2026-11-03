@@ -161,6 +161,23 @@ test("a side all downed or dead at a turn boundary ends the match: reason wipe, 
     eq(rpc("arena.end", "{reason=\"cap\",winner=\"B\"}").result.ended.winner, "A", "the mod's end is kept")
 end)
 
+-- Review R2 (review-arena-v0.md): A downs B's last member mid-phase, then the runner forfeits A (its third forced turn
+-- in a row) before any turn boundary: the wipe is the end.
+test("arena.end after a wipe no turn boundary has checked: the wipe is the end, not the runner's reason", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 2)
+    fire("TurnStarted", "S_Player_" .. A1)
+    eq(Ar.state.ended, nil, "the match is on")
+    osiv[key("HasActiveStatus", B1, "DOWNED")] = 1
+    world[B1].comps.Health.Hp = 0
+    osiv[key("HasActiveStatus", B2, "DOWNED")] = 1
+    world[B2].comps.Health.Hp = 0
+    local e = rpc("arena.end", "{reason=\"forfeit\",winner=\"B\"}").result.ended
+    eq(e.reason, "wipe", "reason")
+    eq(e.winner, "A", "winner")
+    eq(#refs("arena_end"), 1, "one end recorded")
+end)
+
 test("both sides wiped at once: reason wipe, no winner", function()
     begin()
     for _, u in ipairs({ A1, A2, B1, B2 }) do osiv[key("IsDead", u)] = 1 end

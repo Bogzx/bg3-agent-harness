@@ -125,6 +125,26 @@ def test_once_capped_its_sides_model_time_no_longer_excuses_a_phase_the_game_hol
     assert [(e["stall"], e["character"]) for e in stalls(tmp_path)] == [("game", "Karlach")]
 
 
+def off_turn_thinker(game: Game, side: str, run: Run) -> None:
+    """Thinks all the time, 1 s of model time a second, its own phase or not (plans during the other side's), and
+    ends each of its members' turns once."""
+    run.model += 1.0
+    if (char := my_turn(game, side)) and char not in run.ended:
+        run.ended.add(char)
+        game.rpc("act.end_turn", {"char": char}, side)
+
+
+def test_the_other_side_thinking_doesnt_excuse_a_phase_its_side_holds(tmp_path):
+    """Review R1 (review-arena-v0.md): A holds its phase with no model time while B thinks on through it. B's model
+    time is no progress of A's phase: A is stalled (held) and capped, three in a row forfeit, not a 30 min wall-cap
+    draw."""
+    _model, game, clock, agents, spec = setup({"A": looper, "B": off_turn_thinker})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is None and out.end is not None
+    assert (out.end["winner"], out.end["reason"], out.end.get("forfeit")) == ("B", "forfeit", "A"), out.end
+    assert [(e["stall"], e["side"]) for e in stalls(tmp_path)] == [("held", "A")] * 3
+
+
 def test_a_second_stall_of_a_phase_whose_ends_the_game_refuses_is_the_games(tmp_path):
     model, game, clock, agents, spec = setup({"A": looper, "B": passer})
     model.refuse_end = "the game ignored the end-turn order"

@@ -556,11 +556,14 @@ end
 
 op("arena.status", function() return Ar.status() end)
 
--- The runner's end (caps, forfeits, faults): {reason, winner?}; a match the mod already ended keeps that end.
+-- The runner's end (caps, forfeits, faults): {reason, winner?}; a match the mod already ended keeps that end, and so
+-- does a wipe already there that no turn boundary has checked yet (a side downed mid-phase, then the runner's cap or
+-- forfeit: the wipe is the end, not the runner's reason).
 op("arena.end", function(args)
     if not Ar.state then error("no arena", 0) end
     local w = args.winner
     if w ~= nil and w ~= "A" and w ~= "B" then error("winner must be A or B", 0) end
+    Ar.check_end()
     Ar.finish(w, tostring(args.reason or "aborted"))
     return Ar.status()
 end)

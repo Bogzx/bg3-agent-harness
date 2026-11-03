@@ -48,9 +48,11 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    settles, at most END_SETTLE_S; a member that already ended is refused), then `arena_turn_forced {side,
    character}` once any end went through. The cap of a side's FORFEIT_TURNS-th turn in a row is its forfeit,
    decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is sent (the mod keeps a
-   match's first end, so no wipe at the next turn boundary can come before the forfeit).
-   Stall: a phase's idle clock (wall time less the larger of the two sides' model time gains, tick by tick; once
-   the phase was capped, its own side's model time no longer counts) runs from its last progress: a new phase, a
+   match's first end, so no wipe at the next turn boundary can come before the forfeit; a wipe already there when
+   arena.end comes is the end: the mod checks for one first).
+   Stall: a phase's idle clock (wall time less the phase's own side's model time gain, tick by tick; the other
+   side thinking during it is no progress of the phase; once the phase was capped, no model time counts; before the
+   first phase, the larger of the two sides' gains) runs from its last progress: a new phase, a
    change of arena.status's turn, round or HP, a new referee or roll ring row. At STALL_CAPS x turn_cap_s x members
    (at least STALL_MIN_S) the runner reads `state.combat` as the phase's side: a member of the phase still current,
    not ended and not passed by the mod (its arena_turn_passed: who can't act is the mod's call, not state.combat's
@@ -556,7 +558,8 @@ def run_arena(
             turn = ref.turn
             gained = {s: model(s) - seen_model[s] for s in SIDES}
             seen_model = {s: model(s) for s in SIDES}
-            excused = [gained[s] for s in SIDES if turn is None or not (turn.capped and s == turn.side)]
+            # the phase's own side thinking is its progress; the other side's (planning in the other phase) is not
+            excused = list(gained.values()) if turn is None else [] if turn.capped else [gained[turn.side]]
             idle += max(0.0, now - tick_at - max(excused, default=0.0))
             tick_at = now
             sig = (len(ref.turns), json.dumps(status.get("turn"), sort_keys=True), status.get("round"), hp)
