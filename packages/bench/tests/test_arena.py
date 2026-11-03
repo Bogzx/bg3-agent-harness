@@ -78,7 +78,7 @@ def test_arena_v0_is_live_15s_two_against_two():
         1,
         False,
         20,
-        30,
+        60,  # owner D459 (2026-11-03): an arena's wall cap is 60 min
         "arena-v1",
     )
     assert "draft" not in a

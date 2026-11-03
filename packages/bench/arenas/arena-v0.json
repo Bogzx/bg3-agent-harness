@@ -44,7 +44,7 @@
   "seed": 1,
   "karmic": false,
   "round_cap": 20,
-  "wall_cap_min": 30,
+  "wall_cap_min": 60,
   "turn_cap_s": 90,
   "condition": "rules",
   "tools_off": "arena-v1",
