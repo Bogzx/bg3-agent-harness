@@ -106,7 +106,12 @@ game unless it says so.
   (`SpellCastOutcome.Result`, e.g. "it can't be cast now (its requirements aren't met) (the game's CantCast)")
   instead of "no reason given", when the cast entity has one. At a ground point, the game's target reasons
   (MissingTarget, TooFewTargets, InvalidTarget) read "it can't be cast at that spot", because they can depend on
-  hidden creatures there. A check flag that stays set is recorded: the done result carries `unchecked`, and the
+  hidden creatures there. An InvalidTarget at a creature adds the guard's reading of the spell's TargetConditions:
+  the terms not read as met, in plain words, each marked "(not read)" or with the fact that fails it (window 8:
+  Sneak Attack "needs ... the caster has advantage on a melee weapon attack (not read) or there is an ally of the
+  caster ... within 1.5 m of the target"). The old guesses after a refusal ("probably just outside the engine's
+  reach: step closer", "usually the shot's path is blocked ... try another target") are gone; they sent a Sneak
+  Attack at 1.0 m into the same refusal twice. A check flag that stays set is recorded: the done result carries `unchecked`, and the
   referee gets a `cast_unchecked` row with the flags and any rule terms the guard couldn't read for that cast.
 - Melee reach is now measured with the creatures' Hit bounds (`AIBounds.Hit`, 0.2 m for a medium creature), not their
   Stand footprint (0.5 m). One measure (`G.melee_reach`) serves the guard's range check, move_to's stop and its
