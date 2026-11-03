@@ -31,14 +31,7 @@ Ext = {
         Version = function() return 0 end },
     Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end } },
     Entity = { Get = entity,
-        OnSystemUpdate = function(name, fn) sys_hooks[name] = fn end,
-        OnCreate = function(name, fn) create_hooks[name] = fn end,
-        GetAllEntitiesWithComponent = function(name)
-            if name == "ServerSpellCastRequests" then
-                return { { ServerSpellCastRequests = { StartRequests = cast_requests } } }
-            end
-            return {}
-        end },
+        OnCreate = function(name, fn) create_hooks[name] = fn end },
     Level = { GetHeightsAt = function() return { 0.0 } end },
     Stats = { Get = function(n) return stats[n] end },
     StaticData = { Get = function(uuid) return { Name = uuid } end },
@@ -71,37 +64,33 @@ LADDER = "acacacac-0000-0000-0000-000000000008"
 party_rows = { P1 }
 
 usp_arity = 6 -- UseSpellAtPosition inputs the "game" accepts
--- The game's side of an Osiris UseSpell / UseSpellAtPosition (ops/logs/arena-dice.md "H4 cast path"): a
--- CastStartRequest whose CastOptions has IgnoreSpellRolls (0x4; 7 = IgnoreHasSpell|IgnoreCastChecks|IgnoreSpellRolls)
--- goes through the ServerCastRequest system (its pre-update hook first), then the cast entity's SpellCastState is
--- made from it (its OnCreate hook). Knobs: cast_opts nil = no cast at all; cast_sticky = CastOptions writes don't
--- take; cast_seen = "both" | "state" (the request not seen by the hook) | "none".
-sys_hooks, create_hooks, cast_requests = {}, {}, {}
-cast_opts, cast_sticky, cast_seen = 7, false, "both"
-local function bitfield(v)
-    return setmetatable({}, { __index = function(_, k) if k == "__Value" then return v end end })
-end
-local function with_options(o, v)
-    local cur = bitfield(v)
-    return setmetatable(o, { __index = function(_, k) if k == "CastOptions" then return cur end end,
+-- The game's side of an Osiris UseSpell / UseSpellAtPosition (ops/logs/arena-dice.md "H4 cast path"): the cast
+-- entity's SpellCastState is made with CastOptions carrying IgnoreSpellRolls, and its OnCreate hook runs. As live,
+-- CastOptions reads as a fresh Lua table of flag names and is written as one. Knobs: cast_opts nil = no cast at all;
+-- cast_sticky = writes don't take; cast_seen = "state" | "none" (no OnCreate for it).
+create_hooks = {}
+USESPELL_OPTS = { "IgnoreHasSpell", "IgnoreCastChecks", "IgnoreSpellRolls", "NoMovement", "IgnoreTargetChecks",
+    "AvoidDangerousAuras" } -- live, the cast-rolls probe
+cast_opts, cast_sticky, cast_seen = USESPELL_OPTS, false, "state"
+local function names_copy(t) local o = {} for i, n in ipairs(t) do o[i] = n end return o end
+local function with_options(o, names)
+    local cur = names_copy(names)
+    return setmetatable(o, { __index = function(_, k) if k == "CastOptions" then return names_copy(cur) end end,
         __newindex = function(t, k, val)
-            if k ~= "CastOptions" then rawset(t, k, val) elseif not cast_sticky then cur = bitfield(val) end
+            if k ~= "CastOptions" then rawset(t, k, val) return end
+            assert(type(val) == "table", "CastOptions takes a table of flag names")
+            if not cast_sticky then cur = names_copy(val) end
         end })
 end
-last_cast = nil -- {request, state} of the last stub cast
+last_cast = nil -- the SpellCastState of the last stub cast
 local function game_cast(c, sp)
     if cast_opts == nil then return end
-    local caster = { Uuid = { EntityUuid = c } }
-    local r = with_options({ Caster = caster, Spell = { OriginatorPrototype = sp } }, cast_opts)
-    if cast_seen == "both" then
-        cast_requests = { r }
-        if sys_hooks.ServerCastRequest then sys_hooks.ServerCastRequest() end
-        cast_requests = {}
-    end
-    local st = with_options({ Caster = caster, SpellId = { OriginatorPrototype = sp } }, r.CastOptions.__Value)
+    local st = with_options({ Caster = { Uuid = { EntityUuid = c } }, SpellId = { OriginatorPrototype = sp } },
+        cast_opts)
     if cast_seen ~= "none" and create_hooks.SpellCastState then create_hooks.SpellCastState({ SpellCastState = st }) end
-    last_cast = { request = r, state = st }
+    last_cast = st
 end
+
 Osi = setmetatable({
     DB_PartyMembers = { Get = function()
         local rows = {}
@@ -168,7 +157,7 @@ function reset()
     Ext.System = nil
     party_rows = { P1 }
     if A then A.TASK_POS2 = false end
-    cast_opts, cast_sticky, cast_seen, last_cast = 7, false, "both", nil
+    cast_opts, cast_sticky, cast_seen, last_cast = USESPELL_OPTS, false, "state", nil
     if A then A.roll_wait = {} end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too

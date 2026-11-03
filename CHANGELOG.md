@@ -87,10 +87,10 @@ game unless it says so.
   harness started hit without a d20 (30 of 30 arena attacks; 8 of 8 at AC 35 in the Balthazar save), and Sacred Flame
   never rolled a save (8 of 8 did full damage). The game AI's casts and the hotbar click route rolled (the hotbar
   missed 9 of 9 at AC 35). After each order (`use_ability` casts, the cast after a walk into range, sneak's Hide), the
-  mod clears the bit on the cast's start request before the cast system takes it, or else on the cast's state when
-  it is made, and reads it back. When a write doesn't take, or the cast ends with neither seen, the cast fails and
-  says it went without its roll. This affects every earlier fight result: party attacks could not miss and party
-  save spells always landed. Live check: `tools/dev/probe_cast_rolls.py` (`request` and `state` modes).
+  mod drops IgnoreSpellRolls from the cast's `SpellCastState.CastOptions` when the cast entity is made and reads it
+  back (live, by hand: 6 of 6 attacks missed at AC 35, and 2 of 6 Sacred Flame saves were made). When the write
+  doesn't take, or the cast ends with no cast state seen, the cast fails and says it went without its roll. This
+  affects every earlier fight result: party attacks could not miss and party save spells always landed.
 
 ### Benchmark (`packages/bench`)
 

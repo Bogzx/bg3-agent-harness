@@ -211,25 +211,15 @@ end
 
 -- Forced hits (ops/logs/arena-dice.md "H4 cast path"; live 2026-11-03: Osi.UseSpell casts hit 8/8 at AC 35 and
 -- Sacred Flame never rolled a save, while the hotbar route missed 9/9): a cast an Osiris UseSpell /
--- UseSpellAtPosition starts carries IgnoreSpellRolls (0x4 of SpellCastOptions, bg3se Enumerations/ECS.inl), so its
--- SpellRoll (attack roll, saving throw) was skipped and its success applied. A player's cast rolls. The queued
--- Osiris task was never found live, so the bit is dropped where the cast carries it:
---   request  its esv::spell_cast::CastStartRequest (ServerSpellCastRequests.StartRequests), in the pre-update of the
---            ServerCastRequest system, before the cast is made from it
---   state    the cast's SpellCastState.CastOptions when the cast entity is made (when the request was missed)
--- and read back. A write that doesn't take, or a cast whose CastedSpell comes with neither seen, fails the job
--- saying the cast went without its roll; there is no unrolled fallback.
-A.IGNORE_SPELL_ROLLS = 0x4
+-- UseSpellAtPosition starts carries IgnoreSpellRolls in its SpellCastState.CastOptions, so its SpellRoll (attack
+-- roll, saving throw) was skipped and its success applied. A player's cast rolls. The order marks the caster, and
+-- when the cast entity is made (SpellCastState OnCreate, before the roll) the flag is dropped and read back. Live
+-- (cast-rolls probe rerun): CastOptions reads and writes as a Lua table of flag names, and the write there gave 6/6
+-- misses at AC 35 and 2/6 saves made; the cast's start request is too late. A write that doesn't take, or a
+-- CastedSpell with no cast state seen, fails the job saying the cast went without its roll; no unrolled fallback.
 A.roll_wait = A.roll_wait or {} -- caster guid -> the job whose cast must roll (one order per caster at a time)
 
--- A bitfield's integer (bg3se BitfieldValueMetatable __Value) or a plain number.
-local function bits(v)
-    if type(v) == "number" then return v end
-    local ok, n = pcall(function() return v.__Value end)
-    return ok and math.tointeger(tonumber(n)) or nil
-end
-
--- At the order (right after the Osiris call): the cast it becomes must lose IgnoreSpellRolls.
+-- At the order (right before the Osiris call): the cast it becomes must lose IgnoreSpellRolls.
 function A.cast_rolls(job, char, spell)
     job.roll = { spell = spell, state = "pending" }
     A.roll_wait[G.guid(char)] = job
@@ -242,60 +232,56 @@ local function roll_failed(job, why)
     RPC.finish_job(job, "failed", nil, "the game cast it without its roll (" .. why .. ")")
 end
 
--- Drop the bit from `obj.CastOptions` for the waiting job of `caster`; where = "request" | "state".
-function A.clear_roll_bit(caster, obj, where)
-    local job = caster and A.roll_wait[caster]
-    if not job or job.roll.state ~= "pending" or job.status ~= "running" then return end
-    local before = bits(obj.CastOptions)
-    if not before then return roll_failed(job, "its " .. where .. "'s CastOptions don't read") end
-    if before & A.IGNORE_SPELL_ROLLS ~= 0 then obj.CastOptions = before & ~A.IGNORE_SPELL_ROLLS end
-    local after = bits(obj.CastOptions)
-    if not after or after & A.IGNORE_SPELL_ROLLS ~= 0 then
-        return roll_failed(job, "IgnoreSpellRolls stayed set on its " .. where .. ": " .. tostring(after))
-    end
-    job.roll.state, job.roll.where, job.roll.options = "cleared", where, after
-    A.roll_wait[caster] = nil
+-- CastOptions as a list of flag names, or nil.
+local function flag_names(v)
+    if type(v) ~= "table" then return nil end
+    local out = {}
+    for _, n in ipairs(v) do out[#out + 1] = tostring(n) end
+    return out
 end
 
-local function entity_guid(h)
-    local ok, u = pcall(function() return h.Uuid.EntityUuid end)
-    return ok and G.guid(u) or nil
+local function has(names, flag)
+    for _, n in ipairs(names) do if n == flag then return true end end
+    return false
 end
 
-function A.roll_requests()
-    if not next(A.roll_wait) then return end
-    for _, e in ipairs(Ext.Entity.GetAllEntitiesWithComponent("ServerSpellCastRequests") or {}) do
-        for _, r in ipairs(e.ServerSpellCastRequests.StartRequests or {}) do
-            A.clear_roll_bit(entity_guid(r.Caster), r, "request")
-        end
-    end
-end
-
+-- SpellCastState OnCreate: the waiting job's cast loses IgnoreSpellRolls (the other flags kept).
 function A.roll_cast_state(entity)
     if not next(A.roll_wait) then return end
     local st = entity.SpellCastState
-    if st then A.clear_roll_bit(entity_guid(st.Caster), st, "cast state") end
+    local ok, u = pcall(function() return st.Caster.Uuid.EntityUuid end)
+    local caster = ok and G.guid(u) or nil
+    local job = caster and A.roll_wait[caster]
+    if not job or job.roll.state ~= "pending" or job.status ~= "running" then return end
+    local names = flag_names(st.CastOptions)
+    if not names then return roll_failed(job, "its CastOptions don't read as flag names") end
+    if has(names, "IgnoreSpellRolls") then
+        local keep = {}
+        for _, n in ipairs(names) do if n ~= "IgnoreSpellRolls" then keep[#keep + 1] = n end end
+        st.CastOptions = keep
+    end
+    local after = flag_names(st.CastOptions)
+    if not after or has(after, "IgnoreSpellRolls") then
+        return roll_failed(job, "IgnoreSpellRolls stayed set: " .. (after and table.concat(after, ",") or "unread"))
+    end
+    job.roll.state, job.roll.options = "cleared", after
+    A.roll_wait[caster] = nil
 end
 
--- CastedSpell of the job's cast: a cast whose request and state were never seen went without the clear.
+-- CastedSpell of the job's cast: a cast whose state was never seen went without the clear.
 function A.roll_checked(job)
     if job.roll and job.roll.state == "pending" then
-        roll_failed(job, "the mod saw neither its cast request nor its cast state")
+        roll_failed(job, "the mod saw no cast state for it")
         return false
     end
     return not (job.roll and job.roll.state == "failed")
 end
 
-local function roll_hook(what, fn)
-    return function(...)
-        local ok, err = pcall(fn, ...)
-        if not ok then Ext.Utils.PrintWarning("[BG3AI] cast roll " .. what .. ": " .. tostring(err)) end
-    end
-end
-A.roll_hooks = A.roll_hooks or {}
-if A.roll_hooks.request == nil then
-    A.roll_hooks.request = pcall(Ext.Entity.OnSystemUpdate, "ServerCastRequest", roll_hook("request", A.roll_requests))
-    A.roll_hooks.state = pcall(Ext.Entity.OnCreate, "SpellCastState", roll_hook("state", A.roll_cast_state))
+if A.roll_hook == nil then
+    A.roll_hook = pcall(Ext.Entity.OnCreate, "SpellCastState", function(e)
+        local ok, err = pcall(A.roll_cast_state, e)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] cast roll: " .. tostring(err)) end
+    end)
 end
 
 -- After UseSpell(first pick): a two-step cast's second pick goes into the queued task. Revivify: the spot beside
