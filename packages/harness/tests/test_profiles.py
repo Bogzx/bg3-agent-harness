@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from typing import Any
@@ -285,11 +286,18 @@ class Digest(unittest.TestCase):
     def test_the_wire_format_and_tiers_left_the_digests_runs_recorded(self):
         # the digests these profiles had before endpoint.api and cost tiers existed (their runs' manifests hold them)
         before = {
-            "deepseek-flash.toml": "51d6940f00d73dc3b38941cf1336b96f41bce7107c4224d2a66b49cb9fece7b9",
             "opus-5.5-pi.toml": "ac1f29915f46e30eef54d152e180adad61ebf1b9aad84c43db71368d05464d7a",
             "codex.toml": "0511448169675f7e5888506a5dfa6f742fd224ea65e8a380230d72f1c6275488",
         }
         self.assertEqual({n: pr.digest(pr.load(EXAMPLES / n)) for n in before}, before)
+        # deepseek-flash.toml declares effort "high" since bench-v0.10 (an intentional change: pi served high to every
+        # launch-v1 run, which declared "medium"; validator C04, REVIEW-4), so its digest moved. The profile as those
+        # runs played it still hashes to the digest their manifests hold; no check compares a manifest's profile
+        # digest with the repo's profile.
+        flash = pr.load(EXAMPLES / "deepseek-flash.toml")
+        self.assertEqual(pr.digest(flash), "8b19320075f3caad8fb0df023ba99f8ea45ca9ad81ae882b5392c8dd9ac12a02")
+        launch = pr.parse({**tomllib.loads((EXAMPLES / "deepseek-flash.toml").read_text()), "effort": "medium"})
+        self.assertEqual(pr.digest(launch), "51d6940f00d73dc3b38941cf1336b96f41bce7107c4224d2a66b49cb9fece7b9")
 
 
 class ToolsOff(unittest.TestCase):
