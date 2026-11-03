@@ -4,7 +4,7 @@
 -- button's command when a page has one (as End Turn's), else clicks the button hover-checked, then answers the box.
 -- The command and element names were not read live yet: both are found by "flee" in their names.
 --
---   ui.flee_probe {} -> {commands = {{widget, name, can}}, button = {widget, name, over, enabled} | nil}
+--   ui.flee_probe {button_only?} -> {commands = {{widget, name, can}}, button = {widget, name, over, enabled} | nil}
 --   ui.flee {name, widget} -> {pressed = name} (the command; error when it cannot execute)
 
 BG3AI = BG3AI or {}
@@ -46,17 +46,33 @@ function FL.commands()
     return out
 end
 
+-- The button found last, reused while its page shows and it still has its name: the bridge's hover search probes
+-- once per cursor spot, and each probe searched every visible page again (up to BUTTON_SEARCH_MAX elements each).
+-- launch-v1: a flee that found no spot over the button took ~49 s, of a 6 s hover budget.
+FL.found = nil
+
 function FL.button()
-    for _, w in ipairs(visiblePages()) do
+    local f, shown = FL.found, visiblePages()
+    if f and UI.name(f.el) == f.name then
+        for _, w in ipairs(shown) do
+            if w.el == f.page then return f end
+        end
+    end
+    FL.found = nil
+    for _, w in ipairs(shown) do
         local el = UI.find(w.el, function(e) return isFlee(UI.name(e)) end, { max = FL.BUTTON_SEARCH_MAX })
-        if el then return { widget = w.name, name = UI.name(el), el = el } end
+        if el then
+            FL.found = { widget = w.name, name = UI.name(el), el = el, page = w.el }
+            return FL.found
+        end
     end
     return nil
 end
 
-RPC.register("ui.flee_probe", function()
+-- button_only: the button's state only (the hover search's probe), without the commands scan
+RPC.register("ui.flee_probe", function(args)
     local cmds = {}
-    for _, c in ipairs(FL.commands()) do
+    for _, c in ipairs((args or {}).button_only and {} or FL.commands()) do
         cmds[#cmds + 1] = { widget = c.widget, name = c.name, can = (UI.execute(c.cmd, nil, true)) == true }
     end
     local b = FL.button()

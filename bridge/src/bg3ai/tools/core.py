@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -89,8 +90,26 @@ _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 # plumbing
 # ---------------------------------------------------------------------------
 
+# Per thread: how many records _log wrote (reporting._guard logs a tool that returned without one) and the numbers a
+# tool left for its record (metrics_extra), e.g. flee's probe count and ms.
+_logged = threading.local()
+
+
+def metrics_extra(**kw: Any) -> None:
+    """Numbers for this call's metrics record (not for the agent's text): merged into the next _log on this thread."""
+    d = getattr(_logged, "extra", None) or {}
+    d.update(kw)
+    _logged.extra = d
+
+
 def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = None) -> None:
-    # Every tool result passes here (via _finish): one latency record per call (metrics.py).
+    # Every tool result passes here (via _finish, or reporting._guard for a return without it): one latency record
+    # per call (metrics.py).
+    _logged.n = getattr(_logged, "n", 0) + 1
+    left = getattr(_logged, "extra", None)
+    if left:
+        _logged.extra = None
+        extra = {**left, **(extra or {})}
     METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not tool_classes.failed(result, tool), extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)

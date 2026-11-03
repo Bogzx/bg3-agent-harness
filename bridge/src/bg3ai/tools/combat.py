@@ -527,14 +527,26 @@ def flee(who: str | None = None) -> str:
         who_near = near[2] or overview._name_of(near[1])
         return (f"REFUSED: enemy too close: {core.H.get(near[1])} {who_near} at {near[0]:.1f} m; "
                 f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip). Get farther first.")
-    rpc = lambda op, a: core.game.rpc(op, a, context="client")  # noqa: E731
+    # The metrics record's flee numbers (not the agent's text), filled in place up to the record's write: client op ->
+    # [calls, ms], and the hover search's tries and outcome
+    ops: dict[str, list] = {}
+    hover: dict = {}
+    core.metrics_extra(flee={"ops": ops, "hover": hover})
+
+    def rpc(op: str, a: dict) -> Any:
+        t = time.monotonic()
+        try:
+            return core.game.rpc(op, a, context="client")
+        finally:
+            n = ops.setdefault(op, [0, 0.0])
+            n[0], n[1] = n[0] + 1, round(n[1] + (time.monotonic() - t) * 1000, 1)
     inp = world_tools._inp()
     if inp is None:
         return "FAILED: no mouse input to answer the flee question (the input helper is not running)"
     with plumbing._InputHeld():
         if not uitools._hud_has(char):   # the HUD's Flee is the selected character's
             core.game.run_job("act.select", {"char": char}, wait_s=5)
-        how = _flee_press(rpc, inp)
+        how = _flee_press(rpc, inp, hover)
         if not how.startswith("pressed"):
             return f"FAILED: {how}"
         ans = boxclick.click_box(rpc, inp, "yes")
@@ -569,9 +581,10 @@ def _nearest_hostile(cs: dict, char: str) -> tuple[float, str, str] | None:
     return min(out) if out else None
 
 
-def _flee_press(rpc, inp) -> str:
+def _flee_press(rpc, inp, hover: dict | None = None) -> str:
     """Press the HUD's Flee until the game asks "Do you want to flee from combat?": its command when a page has one
-    (as End Turn's), else a hover-checked click on the button (a command can do nothing, as Steal's did)."""
+    (as End Turn's), else a hover-checked click on the button (a command can do nothing, as Steal's did).
+    hover: filled with the hover search's tries and outcome (for the metrics record)."""
     no_ask = "the game didn't ask to flee (an enemy within 27 m, maybe one you can't see)"
     probe = rpc("ui.flee_probe", {}) or {}
     ran = False
@@ -589,10 +602,13 @@ def _flee_press(rpc, inp) -> str:
             return "the game won't flee now (Flee is greyed out: an enemy within 27 m, maybe one you can't see)"
         return "no Flee button on the HUD"
 
-    def button() -> dict:
-        b = (rpc("ui.flee_probe", {}) or {}).get("button")
+    def button() -> dict:  # button_only: no commands scan per cursor spot (FleeOps.lua keeps the found element)
+        b = (rpc("ui.flee_probe", {"button_only": True}) or {}).get("button")
         return {"open": bool(b), "over": bool(b and b.get("over")), "enabled": bool(b and b.get("enabled") is not False)}
     click = hoverclick.hover_click(button, inp, "flee", FLEE_SEED)
+    if hover is not None:
+        hover.update(tries=click.get("tries"), outcome="clicked" if click.get("clicked") else
+                     (click.get("error") or "gone"))
     if not click.get("clicked"):
         return f"couldn't click Flee ({click.get('error') or 'the button went away'})"
     if _box_shows(rpc):

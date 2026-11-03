@@ -180,5 +180,63 @@ class Flee(unittest.TestCase):
         self.assertIn("FAILED: pressed Flee (RequestFlee) and answered Yes, but Claude is still in the fight", out)
 
 
+class FleeRecords(Flee):
+    """Every flee call writes its metrics record, a FAILED one with the flee numbers (launch-v1: two ~49 s flee
+    failures left no record, so their time couldn't be split between probes, the box wait and the hover search)."""
+
+    def setUp(self):
+        super().setUp()
+        self.recs: list[dict] = []
+
+        def tool_done(tool, ms, nested=False, ok=True, t1=None, extra=None):
+            self.recs.append({"tool": tool, "ok": ok, **(extra or {})})
+
+        patcher = mock.patch.object(core.METRICS, "tool_done", tool_done)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_missed_hover_search_has_its_record(self):
+        self.command_works = False
+        self.button = {"over_at": (5, 5)}  # nowhere near FLEE_SEED: the search never finds it
+        with mock.patch.object(hoverclick, "PROBE_GAP_S", 0.0):
+            out = combat.flee()
+        self.assertIn("FAILED: couldn't click Flee (no cursor position over the button found)", out)
+        self.assertEqual(len(self.recs), 1, self.recs)
+        rec = self.recs[0]
+        self.assertEqual((rec["tool"], rec["ok"]), ("flee", False))
+        tries = rec["flee"]["hover"]["tries"]
+        self.assertEqual(rec["flee"]["hover"]["outcome"], "no cursor position over the button found")
+        self.assertEqual(rec["flee"]["ops"]["ui.flee_probe"][0], tries + 2)  # the first probe, hover's own, each spot
+        self.assertNotIn("tries", out)  # numbers for the record, not the agent's text
+        probes = [a for op, a in self.ops if op == "ui.flee_probe"]
+        self.assertEqual(probes[0], {})  # commands and button
+        self.assertTrue(all(a == {"button_only": True} for a in probes[1:]))
+
+    def test_refused_early_return_has_its_record(self):
+        self.gob_m = 10.0
+        self.assertIn("REFUSED: enemy too close", combat.flee())
+        self.assertEqual([(r["tool"], r["ok"]) for r in self.recs], [("flee", False)])
+
+    def test_any_guarded_tool_writes_one_record(self):
+        from bg3ai.tools import reporting
+
+        @reporting._guard
+        def plain() -> str:
+            return "REFUSED: not now"
+
+        @reporting._guard
+        def finished() -> str:
+            return reporting._finish("finished", {}, "done", 0.0, events=False)
+
+        plain()
+        finished()
+        self.assertEqual([r["tool"] for r in self.recs], ["plain", "finished"])
+
+    def test_success_writes_one_record(self):
+        self.assertIn("fled: Claude", combat.flee())
+        self.assertEqual(len(self.recs), 1)
+        self.assertEqual(self.recs[0]["flee"]["ops"]["ui.flee_probe"][0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
