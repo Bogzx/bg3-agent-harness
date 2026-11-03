@@ -13,17 +13,18 @@
 # (05981389, combat), the game-menu refusal of long_rest (14a5b5bf, needs the menu open), recovered_launches
 # (d76d1f5e/558e2146, needs a launch to die), known ground's camera range numbers.
 # Cell by cell (order = "cell"): models in the groups' order, act3_gold_max last in each group, so Opus's
-# act3_gold_max is the last job: runtime/budget-v010-pilot.json's cap picks the option. Cap $14.21 (option 1) stops
-# the matrix before it (its $22.33 reserve doesn't fit); cap $32.45 (option 2) plays it too.
+# act3_gold_max is the last job: runtime/budget-v010-pilot.json's cap picks the option. Cap $17.12 (option 1) stops
+# the matrix before it (its $22.33 reserve doesn't fit); cap $35.34 (option 2) plays it too.
 # max_cost per model and scenario: the most one launch-v1 attempt of it cost (runtime/matrix/launch-v1-*/queue.jsonl)
 # x 1.5, at least $0.50. It is the run's cap (over_budget past it) and what the budgets hold back while it plays.
 # Budgets: runtime/budget-v010-pilot.json for every job; each model's group adds its own files: DeepSeek
 # runtime/budget-deepseek.json, a Claude model its share (runtime/budget-<haiku|sonnet|opus>.json) and
 # runtime/budget-anthropic.json, as fights-v09. A job starts only if its max_cost fits every one of its files, and
 # its cost goes into each.
-# Estimate (mean launch-v1 attempt cost and queue minutes per model and scenario): DeepSeek $0.41 / 77 min, Haiku
-# $2.22 / 87 min, Sonnet $3.24 / 41 min, Opus $3.61 / 27 min without act3_gold_max ($12.15 / 48 min with it).
-# Option 1 (15 runs): $9.47, 231 min, cap $14.21. Option 2 (16 runs): $21.63, 279 min, cap $32.45. v0.10's
+# Estimate per job: the cost and queue minutes of all launch-v1 attempts of that model and scenario (retries of
+# invalid runs included, as the matrix reruns them) / its 3 jobs. DeepSeek $0.67 / 119 min, Haiku $3.38 / 130 min,
+# Sonnet $3.77 / 49 min, Opus $3.59 / 27 min without act3_gold_max ($12.15 / 48 min with it).
+# Option 1 (15 runs): $11.41, ~324 min, cap $17.12. Option 2 (16 runs): $23.56, ~372 min, cap $35.34. v0.10's
 # blocking walks and minimap block change the per-call tokens, so these are launch-v1 (bench-v0.8) costs.
 name = "v010-pilot"
 order = "cell"

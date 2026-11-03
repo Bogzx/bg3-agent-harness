@@ -169,7 +169,7 @@ def test_the_v010_pilot_plays_each_model_once_with_opus_act3_last_so_the_cap_pic
         share = [] if j["model"] == "deepseek-flash" else [f"budget-{j['model'].split('-')[1]}.json"]
         assert sorted(names) == sorted(share + api), j["id"]
         assert j["max_cost"] >= 0.5 and j["client"] == "pi" and j["condition"] == "rules"
-    # option 1 (cap $14.21) never starts the last job, Opus act3_gold_max; option 2 (cap $32.45) can
+    # option 1 (cap $17.12) never starts the last job, Opus act3_gold_max; option 2 (cap $35.34) can
     *rest, last = jobs
     assert (last["model"], last["scenario"]) == ("claude-opus-5-5", "act3_gold_max")
-    assert max(j["max_cost"] for j in rest) <= 14.21 < last["max_cost"] <= 32.45
+    assert max(j["max_cost"] for j in rest) <= 17.12 < last["max_cost"] <= 35.34
