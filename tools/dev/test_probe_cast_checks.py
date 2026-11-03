@@ -54,23 +54,32 @@ class ProbeTest(unittest.TestCase):
         self.assertEqual(probe.verdict("use_ability: FAILED — target is out of range (6.1 m, range 1.5 m)"), "guard")
         self.assertEqual(probe.verdict("REFUSED: enemy too close"), "guard")
 
-    def test_summary_says_what_each_case_means(self):
+    def test_switch_per_mode(self):
+        self.assertEqual(probe.switch("off"), "false")
+        self.assertEqual(probe.switch("all"), "true")
+        self.assertEqual(probe.switch("IgnoreTargetChecks"), '{"IgnoreTargetChecks"}')
+        with self.assertRaises(ValueError):
+            probe.switch("on")
+
+    def test_summary_per_mode_reads_cases_only_when_the_control_casts(self):
         rows = [
             {"case": "control", "mode": "off", "verdict": "cast"},
-            {"case": "control", "mode": "on", "verdict": "cast"},
+            {"case": "control", "mode": "IgnoreTargetChecks", "verdict": "cast"},
+            {"case": "control", "mode": "IgnoreCastChecks", "verdict": "refused"},
             {"case": "hold_person", "mode": "off", "verdict": "cast"},
-            {"case": "hold_person", "mode": "on", "verdict": "refused"},
+            {"case": "hold_person", "mode": "IgnoreTargetChecks", "verdict": "refused"},
+            {"case": "hold_person", "mode": "IgnoreCastChecks", "verdict": "refused"},
             {"case": "rage_ooc", "mode": "off", "verdict": "cast"},
-            {"case": "rage_ooc", "mode": "on", "verdict": "cast"},
-            {"case": "surge_ooc", "mode": "on", "verdict": "not run"},
+            {"case": "rage_ooc", "mode": "IgnoreTargetChecks", "verdict": "cast"},
         ]
         lines = probe.summary(rows)
-        self.assertIn("OK: still works", lines[0])
-        self.assertIn("the engine re-checks once the flags are gone", lines[1])
-        self.assertIn("needs the Lua check", lines[2])
-        self.assertIn("inconclusive", lines[3])
-        broken = probe.summary([{"case": "control", "mode": "on", "verdict": "refused"}])
-        self.assertIn("BROKEN", broken[0])
+        self.assertEqual(lines[0], "mode IgnoreTargetChecks: control cast -> usable")
+        self.assertIn("the engine re-checks once IgnoreTargetChecks is gone", lines[1])
+        self.assertIn("the guard's Lua check is the fix", lines[2])
+        self.assertEqual(
+            lines[3], "mode IgnoreCastChecks: control refused -> can't be dropped (it stops a normal cast)"
+        )
+        self.assertIn("not read (the mode isn't usable)", lines[4])
 
 
 if __name__ == "__main__":
