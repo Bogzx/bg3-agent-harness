@@ -491,10 +491,23 @@ function G.combat_gate(char, mode)
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
 end
 
+-- In an arena, a side's action once the match has ended (the mod's own end or the runner's arena.end): refused as a
+-- fact. Window 6 seed-5 m2: B cast a Sneak Attack on downed Ash 9 s after arena_end, and it rolled.
+function G.match_over_gate()
+    if not U.side() then return end
+    local st = BG3AI.Arena and BG3AI.Arena.state
+    local e = st and st.ended
+    if e then
+        G.refuse("the match is over (" .. tostring(e.reason) .. (e.winner and (", side " .. e.winner .. " won") or "")
+            .. ")")
+    end
+end
+
 -- In an arena, a side's op while the other side acts: refused with the side that acts (never the actor's name: S10).
 function G.side_gate()
     local side = U.side()
     if not side then return end
+    G.match_over_gate()
     local Ar = BG3AI.Arena
     local acting = Ar.acting_side()
     if acting and acting ~= side then

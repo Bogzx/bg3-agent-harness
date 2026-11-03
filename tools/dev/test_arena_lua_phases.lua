@@ -103,6 +103,23 @@ test("a held member's end_turn under its side: 'not your turn (side A is acting)
     eq(enc(r):find("not your turn (side A is acting)", 1, true) ~= nil, true, "B ends held B1: " .. enc(r))
 end)
 
+-- Window 6 seed-5 m2: B's Sneak Attack on downed Ash ran 9 s after arena_end (and rolled)
+test("once the match has ended, every action a side asks is refused as over; the harness's still runs", function()
+    begin()
+    order = { { B1, A1 } } -- B acting: without the gate its cast would run
+    openAll({ A1, B1 })
+    Ar.finish("A", "wipe")
+    for _, c in ipairs({ { "act.cast", "{char=" .. string.format("%q", B1) .. ",spell=\"Target_SneakAttack\"}" },
+        { "act.end_turn", "{char=" .. string.format("%q", B1) .. "}" },
+        { "act.move_to", "{char=" .. string.format("%q", B1) .. ",pos={1,0,1}}" } }) do
+        local r = rpc(c[1], c[2], "B")
+        eq(enc(r):find("the match is over (wipe, side A won)", 1, true) ~= nil, true, c[1] .. ": " .. enc(r))
+    end
+    refused(function() as("A", G.side_gate) end, "the match is over (wipe, side A won)")
+    local r = rpc("act.end_turn", "{char=" .. string.format("%q", B1) .. "}")
+    eq(enc(r):find("the match is over", 1, true), nil, "the harness's end_turn: " .. enc(r))
+end)
+
 test("a phase change is a turn boundary: a side all down ends the match, no arena_turn after", function()
     begin()
     order = { { A1, B1 } }

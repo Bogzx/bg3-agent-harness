@@ -668,6 +668,7 @@ local function guarded(kind, fn)
         local outer = A.call_now
         A.call_now = { run = run, args = args } -- start() parks it for a stand-up and runs it again after
         local ok, res = pcall(function()
+            G.match_over_gate() -- a side's action after the match's end
             A.tb_gate(kind, args)
             return fn(args)
         end)
