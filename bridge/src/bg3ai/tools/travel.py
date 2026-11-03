@@ -685,7 +685,8 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
             # (1.6 s). Stop short of him on the way in: the talk job walks the last metres itself.
             k = (d - WALK_UP_SHORT_M) / d
             dest = [here[0] + (dest[0] - here[0]) * k, dest[1], here[2] + (dest[2] - here[2]) * k]
-        out = travel_macro.travel_to(x=dest[0], y=dest[1], z=dest[2], who=core.H.get(char))   # who: a handle; runs async
+        # wait=False: the trip runs as a queue entry and the wait_for below waits for it (one wait, within its 60 s)
+        out = travel_macro.travel_to(x=dest[0], y=dest[1], z=dest[2], who=core.H.get(char), wait=False)
         if "started" in out:
             batch.wait_for(target="idle", timeout_s=60, lead_s=0)
         first = out.splitlines()[0] if out else ""

@@ -131,6 +131,23 @@ class FarMoves(Base):
         self.assertEqual(self.g.ops("act.talk"), [])
 
 
+    def test_a_walk_up_waits_for_its_trip_once(self):
+        # review-v010-final #2: travel_to blocks by default (bench-v0.10); _walk_up_to (swap_party) let it block up
+        # to 90 s and then waited for idle up to 60 s more, past the clients' 110 s. One wait: the wait_for's.
+        waits: list[str] = []
+        real = batch._wait
+
+        def spy(tgt, *a, **kw):
+            waits.append(tgt)
+            return real(tgt, *a, **kw)
+
+        self.enterContext(mock.patch.object(batch, "_wait", spy))
+        out = travel._walk_up_to(P1, P2, "Lae'zel", [80.0, 0.0, 0.0])
+        self.assertIn("walked to Lae'zel (80m)", out)
+        self.assertEqual(waits, ["idle"])
+        self.assertEqual([a["pos"][0] for _, a in self.g.ops("act.move_to")], [30.0, 60.0, 78.0])
+
+
 class LastSeen(FarMoves):
     """S025/S026: travel_to/route/talk_to on someone out of sight refused "not visible" (10x in two sessions); the
     party remembers where it saw them on this level, so those calls go there instead."""
