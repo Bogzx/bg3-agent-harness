@@ -404,6 +404,100 @@ do
     check("UI-4 text check: same text (case/punctuation) passes", okc and pressed[1] == 3, err)
     okc, err = choose(7, "answer 9")
     check("UI-4 text check: another text is refused", not okc and tostring(err):find("the list changed") and #pressed == 0, err)
+
+    -- 13b. dialogue-click (v010 live windows 1 and 3, launch-v1 Lae'zel's cage / Gimblebock): the job after a choose.
+    --   (a) the bridge wheels the list during the job: the same node, not "done" (window 3: done 0.5 s after the
+    --   bridge's ui.answer_list, node unchanged); (b) the game ignores SelectAnswerCommand: after 3 s the answer's
+    --   bound number key is pressed once and the result says so; (c) a command the game takes: no key.
+    local A = BG3AI.UIActions
+    local t, job, fin, keys = 0, nil, nil, {}
+    BG3AI.RPC.now_ms = function() return t end
+    BG3AI.RPC.start_job = function(_, spec) job = spec job.id = 1 job.started = t return job end
+    BG3AI.RPC.finish_job = function(_, status, res) fin = { status, res } end
+    BG3AI.UI.isVisible = function() return true end
+    BG3AI.UI.frame = 0
+    Ext.Utils.PrintWarning = function() end
+    Ext.Input.InjectKeyPress = function(k) keys[#keys + 1] = k end
+    for k = 1, 10 do vms[k]._props.BoundEvent = "UISelectSlot" .. k end
+    local function node(first, n, total, extra)
+        local d = { speaker = "Lae'zel", text = "Tsk'va. Get rid of them.", options = {} }
+        for k = first, first + n - 1 do d.options[#d.options + 1] = { i = k, text = "answer " .. k } end
+        if first > 1 then d.more_above = first - 1 end
+        if total > first + n - 1 then d.more_below = total - (first + n - 1) end
+        for k, v in pairs(extra or {}) do d[k] = v end
+        return d
+    end
+    local now
+    S2.dialogue = function() return now end
+    local function start(i)
+        t, fin, keys, job = 0, nil, {}, nil
+        now = node(1, 5, 6)
+        shown, counts = rows(1, 5, false), { below = 1, above = 0, by_position = true }
+        local okc2, e2 = pcall(ops["ui.dialogue_choose"], { i = i })
+        return okc2, e2
+    end
+    local function tick(ms, d)
+        t, now = ms, d or now
+        BG3AI.UI.frame = BG3AI.UI.frame + 20
+        job.next_check = 0
+        job.on_tick(job)
+    end
+
+    check("dialogue-click: UISelectSlot3 -> NUM_3", A.answerSlotKey("UISelectSlot3") == "NUM_3")
+    check("dialogue-click: other bindings -> no key",
+        A.answerSlotKey("UIAccept") == nil and A.answerSlotKey(nil) == nil)
+    check("dialogue-click: a wheeled window is the same node", A.sameNode(node(2, 5, 6), node(1, 5, 6)))
+    check("dialogue-click: another answer at the same number is another node",
+        not A.sameNode(node(1, 5, 6, { options = { { i = 1, text = "Attack." } } }), node(1, 5, 6)))
+    check("dialogue-click: another list length is another node", not A.sameNode(node(1, 5, 5), node(1, 5, 6)))
+
+    local okc3, e3 = start(3)
+    check("dialogue-click: choose starts a job", okc3 and job ~= nil, e3)
+    tick(1000, node(2, 5, 6))   -- (a) the bridge scrolled the list down one row
+    check("dialogue-click (a): a wheeled list is not a new decision point", fin == nil, fin and fin[1])
+    tick(2900)
+    check("dialogue-click (b): no key before 3 s", #keys == 0)
+    tick(3100)
+    check("dialogue-click (b): ignored 3 s -> the answer's own number key, once", #keys == 1 and keys[1] == "NUM_3",
+        table.concat(keys, ","))
+    tick(4000)
+    check("dialogue-click (b): pressed only once", #keys == 1 and fin == nil)
+    tick(4500, { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } })
+    check("dialogue-click (b): the next node ends the job, the result says the key was pressed",
+        fin and fin[1] == "done" and tostring(fin[2].note):find("pressed its key 3 instead"),
+        fin and tostring(fin[2].note))
+
+    start(2)
+    tick(500, { speaker = "Lae'zel", text = "Tsk'va. Get rid of them.", listening = true })
+    tick(3500)
+    check("dialogue-click (c): a command the game took presses no key", #keys == 0 and fin == nil)
+    tick(5000, { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } })
+    check("dialogue-click (c): done, no note", fin and fin[1] == "done" and fin[2].note == nil)
+
+    -- (d) orchestrator's merge condition: the node moves between the tick's first read and the press (a late
+    --     command lands): the read right before InjectKeyPress sees it and nothing is pressed.
+    start(3)
+    tick(1000)
+    local nextNode = { speaker = "Lae'zel", text = "Then we fight.", options = { { i = 1, text = "Next." } } }
+    local reads = 0
+    S2.dialogue = function()
+        reads = reads + 1
+        if reads == 1 then return node(1, 5, 6) end   -- the tick's first read: still the same answers
+        return nextNode                                 -- the read right before the press: the next node
+    end
+    tick(3100)
+    check("dialogue-click (d): the node moved before the press -> no key", #keys == 0 and reads == 2,
+        table.concat(keys, ",") .. " reads=" .. reads)
+    S2.dialogue = function() return now end
+    tick(3500, nextNode)
+    check("dialogue-click (d): the job ends on the next node with no note", fin and fin[1] == "done"
+        and fin[2].note == nil)
+
+    vms[4]._props.BoundEvent = nil
+    start(4)
+    tick(3100)
+    check("dialogue-click: no bound key -> nothing pressed, the partial says so",
+        #keys == 0 and tostring(job.partial.note):find("no number key"), job.partial and job.partial.note)
 end
 
 -- A25 (S088 06:16:18): the reaction prompt's rows as shown. Gale's Shield at levels I-VI; the decision VMs carried no
