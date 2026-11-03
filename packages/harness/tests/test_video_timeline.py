@@ -335,6 +335,20 @@ def test_a_blocking_walk_shows_its_outcome_not_its_start_line(name: str, tool: s
     assert (res.kind, res.text) == (kind, line)
 
 
+def test_a_stopped_trip_shows_its_stop_line_not_its_start():
+    # review-v010-final §7, its probe's travel_to text: a hostile in view stops the trip's queue. A stop isn't a
+    # failure the bridge reports (triage: STOPPED lines are consequences), so it is the outcome line, kind result.
+    stop = "queue e4 Claude: STOPPED: hostile in view: e1 Goblin"
+    logs = {
+        "S001": [
+            ev(0, 1.0, "tool_call", tool="travel_to", args={}, call_id="c1"),
+            ev(1, 2.0, "tool_result", text=f"travel_to (50,0,0): started (50m)\n{stop}", call_id="c1"),
+        ]
+    }
+    res = T.panel_items(logs, T0)[1]
+    assert (res.kind, res.text) == ("result", stop)
+
+
 def test_a_companions_failure_in_events_is_not_the_walks_and_a_failed_roll_is_no_tool_failure():
     arrived = (
         "move_to: done — @(1,2,3)\nEVENTS\n  queue e5 Lae'zel: STOPPED: step 2 loot failed\n"
