@@ -188,7 +188,7 @@ reg("interact", function(args)
     end
     if G.b(G.q("IsCharacter", target)) then
         if G.is_dead(target) then
-            G.refuse("interact doesn't loot corpses (loot_corpse does)")
+            G.refuse_ui("looting corpses is not supported by this action yet")
         end
         G.refuse("interact doesn't talk to characters (talk_to does)")
     end

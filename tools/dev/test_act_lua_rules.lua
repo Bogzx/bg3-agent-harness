@@ -318,7 +318,8 @@ end)
 test("tool facts stay facts: loot_corpse loots a corpse, a give in a fight needs the UI tools", function()
     osiv[key("IsCharacter", NPC)], osiv[key("IsDead", NPC)] = 1, 1
     local j = job(op("interact", { char = P1, target = NPC }))
-    eq(j.error, "interact doesn't loot corpses (loot_corpse does)", "corpse")
+    -- arena: the corpse refusal stays arena/int's G.refuse_ui (a side gets its no-UI note)
+    assert(j.error:find("looting corpses is not supported by this action yet (", 1, true), j.error)
     osiv[key("IsDead", NPC)] = 0
     party_rows = { P1, NPC }
     osiv[key("GetInventoryOwner", GEM)] = P1
