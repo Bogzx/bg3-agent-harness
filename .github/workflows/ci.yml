@@ -61,7 +61,9 @@ jobs:
       # bench's Inspect export (test_export_inspect.py) and scipy (test_stats.py's cross-check) skip without them
       - run: uv sync --locked --extra inspect --group crosscheck
       - name: ffmpeg (test_recorder.py and test_video_render.py encode with it)
-        run: command -v ffmpeg || (sudo apt-get update -q && sudo apt-get install -y --no-install-recommends ffmpeg)
+        run: |
+          command -v ffmpeg && exit 0
+          sudo apt-get update -q && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: pytest -m "not live and not e2e"
         run: uv run pytest -m "not live and not e2e" --cov --cov-report=
       - name: Coverage per package, with the floors of pyproject [tool.bg3ci.coverage-min]

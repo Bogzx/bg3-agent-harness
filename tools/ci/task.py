@@ -13,8 +13,8 @@
 `quick` is no CI job: it runs the cheap steps that break CI most often (an unformatted file; two test files pytest
 imports under one module name, which stops the whole root run at collection while per-directory runs pass). Every
 other task runs the commands of ci.yml (tools/ci/test_task.py fails when the two drift apart). Not run here: CI's
-`playwright install-deps chromium` and the ffmpeg install (system packages that need sudo; the e2e job's tests say
-what is missing). The test and e2e jobs are heavy: on a shared machine cap them, for example
+`playwright install-deps chromium` and the test and e2e jobs' ffmpeg installs (system packages that need sudo; the
+tests say what is missing). The test and e2e jobs are heavy: on a shared machine cap them, for example
 `systemd-run --user --scope -p MemoryMax=8G nice -n 15 uv run tools/ci/task.py test`.
 """
 
@@ -63,7 +63,8 @@ JOBS: dict[str, tuple[Step, ...]] = {
         uv("python", "tools/ci/scrub.py", "--no-local-terms"),
     ),
     "test": (
-        Step(("uv", "sync", "--locked", "--extra", "inspect")),  # bench's Inspect export (test_export_inspect.py)
+        # bench's Inspect export (test_export_inspect.py) and scipy (test_stats.py's cross-check)
+        Step(("uv", "sync", "--locked", "--extra", "inspect", "--group", "crosscheck")),
         uv("pytest", "-m", "not live and not e2e", "--cov", "--cov-report="),
         uv("python", "tools/ci/coverage_gate.py"),
     ),
