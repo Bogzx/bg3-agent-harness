@@ -717,15 +717,19 @@ function V.lastSeen(uuid)
     return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
 end
 
--- A character the party saw on this level that is invisible now (not revealed):
--- a player saw it vanish. S030 Soft-Step Trial: a Shadow 1.8 m away answered
--- "target is not visible; last seen 2s ago: travel_to that spot" 3x.
+-- A character the party saw on this level that is invisible now (not revealed), where the party would see it if it
+-- weren't (in a member's sight range and line of sight): a player saw it vanish. S030 Soft-Step Trial: a Shadow 1.8 m
+-- away answered "target is not visible; last seen 2s ago: travel_to that spot" 3x. Out of sight it is the plain
+-- last-seen hint: fairness audit S2-4, a side was told "it turned invisible" of an enemy that went invisible out of
+-- its view. ctx: the asker's context (default V.context(), the side's).
 V.INVISIBLE_SEEN_S = 120
-function V.vanished(uuid)
-    if not uuid or not U.comp(V.entity(uuid), "ServerCharacter") then return false end
+function V.vanished(uuid, ctx)
+    local e = uuid and V.entity(uuid)
+    if not e or not U.comp(e, "ServerCharacter") then return false end
     local m = V.lastSeen(uuid)
     if not m or m.ago_s > V.INVISIBLE_SEEN_S then return false end
-    return truthy(V.osi(Osi.IsInvisible, uuid)) and not truthy(V.osi(Osi.IsDead, uuid)), m
+    if not truthy(V.osi(Osi.IsInvisible, uuid)) or truthy(V.osi(Osi.IsDead, uuid)) then return false end
+    return V.perceived(ctx or V.context(), uuid, V.pos(e)), m
 end
 
 function V.recall(exclude, around, radius)
