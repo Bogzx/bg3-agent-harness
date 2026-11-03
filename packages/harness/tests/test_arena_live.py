@@ -176,6 +176,21 @@ def test_each_side_s_server_env(tmp_path):
     assert env["BG3AI_MEMORY_DIR"] == str(tmp_path / "run1" / "memory-B")
 
 
+@pytest.mark.parametrize(("name", "cap"), [("arena-v0", "90"), ("crash-companions-v1", "60")])
+def test_a_sides_rules_state_its_arenas_turn_cap(tmp_path, name, cap):
+    # arena-builds C4: the per-turn cap is a fact in the match rules, the arena file's own number
+    from bg3harness import prompts
+
+    a = json.loads((Path(__file__).resolve().parents[2] / "bench" / "arenas" / f"{name}.json").read_text())
+    a.pop("draft", None)  # crash-companions-v1 is a draft (its spawns' heights); the cap is what this reads
+    env = live.side_env(ArenaSpec.from_dict(a), "A", None, tmp_path)
+    assert env["BG3AI_ARENA_TURN_CAP_S"] == cap
+    text = " ".join(prompts().assemble("rules", arena=True, turn_cap_s=float(cap)).text.split())
+    assert f"A turn gets {cap} s of model time per character in it" in text and "{turn_cap_s}" not in text
+    with pytest.raises(ValueError, match="turn_cap_s"):
+        prompts().assemble("rules", arena=True)
+
+
 def test_a_scripted_side_gets_the_scripted_client_its_sides_env_and_no_profile(tmp_path):
     from bg3harness.arena import scripted_client
 

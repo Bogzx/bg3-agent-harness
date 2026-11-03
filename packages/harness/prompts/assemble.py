@@ -33,6 +33,7 @@ CLAUDE_MD = REPO / "play" / "CLAUDE.md"
 
 RULES = ("rules/core.md", "rules/game-and-tools.md", "rules/fairness.md", "rules/clock.md")
 ARENA = "rules/arena.md"  # after the capability files, in a session that plays one side of a two-team match
+TURN_CAP = "{turn_cap_s}"  # in ARENA: the arena's per-turn cap (its turn_cap_s), filled in when the text is built
 # The tool groups of bridge/src/bg3ai/capabilities.py (BG3AI_TOOLS): a group's rules file, and the tools a rules
 # text may name only when that group is on. "reload" has no rules file: nothing in the rules mentions reloading.
 CAPABILITIES: dict[str, tuple[str, ...]] = {
@@ -119,15 +120,20 @@ def assemble(
     caps: frozenset[str] | set[str] = ALL_CAPS,
     root: Path = HERE,
     arena: bool = False,
+    turn_cap_s: float | None = None,
 ) -> Assembly:
     """The system text of a condition for a client: its parts joined by a blank line, trailing newline. arena: a
-    session playing one side of a two-team match (rules/arena.md)."""
+    session playing one side of a two-team match (rules/arena.md); turn_cap_s: that arena's per-turn cap, written
+    into its rules (required with arena). A part's sha256 is its file's; the text's is of the filled text."""
+    if arena and turn_cap_s is None:
+        raise ValueError("a two-team match's rules need its turn_cap_s (the per-turn cap they state)")
     parts: list[dict[str, str]] = []
     texts: list[str] = []
     for f in part_files(condition, client, caps, arena):
         data = (root / f).read_bytes()
         parts.append({"file": f, "sha256": _sha(data)})
-        texts.append(data.decode("utf-8").strip())
+        text = data.decode("utf-8").strip()
+        texts.append(text.replace(TURN_CAP, f"{turn_cap_s:g}") if f == ARENA else text)
     text = "\n\n".join(texts) + "\n"
     return Assembly(text, _sha(text.encode("utf-8")), parts)
 
