@@ -169,7 +169,7 @@ game unless it says so.
   bench-v0.10 (bg3bench 0.10.0, harness 0.3.0, 2026-11-02): `releases/bench-v0.9.json` is frozen as it was for the
   fights-v09 re-run (a test pins its sha256). The scenarios and graders are bench-v0.9's; results.py adds the
   optional `recovered_launches` to result.json (below; no score effect), so bench-v0.10 pins its own suite digest.
-  Its own release file (`releases/bench-v0.10.json`: mod tree 06480674, the same 81 bg3 tools, new prompt hashes for
+  Its own release file (`releases/bench-v0.10.json`: mod tree 6ec901b5, the same 81 bg3 tools, new prompt hashes for
   pi, claude and pi without screenshots) and start save keys (`saves/bench-v0.10/`, the same save files). Its
   conditions also pin the served tool definitions, `tools.defs_sha256` (release v1, optional; release.defs_digest:
   each served tool's tools/list entry, whole, canonical JSON), and C02 rejects a bundle whose `bg3-tools.json` hashes
@@ -221,14 +221,31 @@ game unless it says so.
     Nearby rows, party rows and CHANGES say who starts or stops concentrating (`concentrating on Cloudkill`).
   - An answer the game ignores for 3 s is pressed once with its bound number key, and the result says so (`note=`);
     the settle after an answer compares the whole node, so a list scrolled during the wait isn't taken as answered.
-    Answer rows pair with the game's answers by the number each row shows, so a list with a wrapped row is answered
-    with its tags (window 4: Lae'zel's cage counted 7 rows of 6 and the press was ignored); with no readable bound
-    key, the ignored answer gets the number key it shows.
+    Answer rows pair with the game's answers by the answer index each row carries (its AnswerIdx; window 5: the
+    number a row shows read only '.'), so a list with a wrapped row is answered with its tags (window 4: Lae'zel's
+    cage counted 7 rows of 6 and the press was ignored); with no readable bound key, the ignored answer gets the
+    number key it shows.
   - `flee` fails at once with the reason the greyed-out Flee button's tooltip shows (`FAILED: the game won't flee
     now (Flee is greyed out: Enemy too close! (10.6/27 m))`), with no command or cursor search, and runs each Flee
-    command name once (window 4: 48 s before failing).
+    command name once (window 4: 48 s before failing). When the tooltip's own fields are empty, the reason comes from
+    the game's flee state (FleeCapability: the flags in words, nearest enemy / distance needed: `Enemy too close!
+    (2.3/27 m)`; window 5 said `the game gives no reason`).
   - Attacks and saving throws cast by the harness roll their dice (above, under Harness): before, they never
     rolled, so bench-v0.10 results are not comparable with bench-v0.8 or v0.9 results for scenarios with fights.
+    rolls.jsonl gains a row per attack-roll cast with its `cast_roll` (d20, total, DC; a saving throw's goes to the
+    saver's row), kept out of `natural`/`dc` so the luck covariate is unchanged; a death or concentration save has no
+    skill. A cast that went through without its roll is done with `unrolled`, and the referee records `cast_unrolled`.
+  - Harness casts are checked by the game's own rules, and melee reach is measured with the creatures' Hit bounds
+    (both above, under Harness): a cast the game refuses says the game's reason, a check flag that stays set gives
+    `unchecked` and a `cast_unchecked` referee record. facts v1 has the `cast_unrolled` and `cast_unchecked` events
+    (compatible extension), so F03 accepts bundles that have them. A cast whose cast state was made counts as
+    started; one the game holds paused for a reaction is reported interrupted (paused), not purged as never started.
+  - `react(use=true)` on a prompt with one interruptor and one row (Reckless Attack after a natural 1) clicks the row,
+    as a player does (window 6: Accept closed it without the reaction; window 7: the row's command left it up).
+  - `ui_action` refuses commands that would change the difficulty, its settings (Karmic Dice ...), the ruleset or the
+    game options; every attempt is a `rule_change` referee record (facts v1 compatible extension; REVIEW-5 F8).
+  - The game's mouse is the harness's from a run's start (`gio.take_input`): the operator's pointer no longer reaches
+    the game or edge-scrolls the camera (window 7).
   - A fall down a drop link of the walk's own route is no longer failed as an engine teleport, and `end_turn`'s End
     Turn press refused by the busy UI is asked again after the cooldown instead of failing at once.
   Metric definition change: a tool call counts as async only when its own background job is still running when the
