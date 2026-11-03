@@ -50,6 +50,26 @@ class Blocking(Base):
         self.assertTrue(out.startswith("heading N toward N: 20m\nwalk_toward: done — @(0,0,20)\nOBJECTIVES "), out)
         self.assertEqual(plumbing._async, {})
 
+    def test_the_budget_counts_from_the_tool_call(self):
+        # review-v010-human-gap #5: the 90 s budget started in _act_run, after move_to's far-move check and
+        # walk_toward's path search (a cold one took seconds, NAV-6); they now count too.
+        seen: list[float | None] = []
+        real = plumbing._act_run
+
+        def spy(*a, **k):
+            seen.append(a[11] if len(a) > 11 else k.get("t0"))
+            return real(*a, **k)
+
+        self.g.reach = {"reachable": True, "pos": [0.0, 0.0, 20.0], "straight_m": 20.0, "dir": "N"}
+        slow_far = lambda *a: time.sleep(0.3)  # noqa: E731
+        with mock.patch.object(plumbing, "_act_run", spy), mock.patch.object(world_tools, "_far_move", slow_far):
+            for call in (lambda: world_tools.move_to(x=5.0, y=0.0, z=0.0), lambda: observe.walk_toward(direction="N")):
+                start = time.monotonic()
+                call()
+                t0 = seen[-1]
+                self.assertIsNotNone(t0)
+                self.assertLess(t0 - start, 0.1)  # the call's start, not after the 0.3 s pre-step
+
     def test_wait_false_still_returns_at_once(self):
         self.g.dur["act.move_to"] = 1.0
         t0 = time.monotonic()
