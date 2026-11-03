@@ -298,3 +298,35 @@ test("a side's camera centre: its own member whose turn is open, else its first 
     b = as("B", V.context)
     eq(b.leader and b.leader[1], world[B2].pos[1], "B's camera with B1 dead: B2")
 end)
+
+-- Door links (NavigationDoors.lua): a door that took its user far. They went into the save's level store only, so
+-- side B's route named a door only side A went through (round-1503 16:35).
+local DOOR = "dddddddd-0000-0000-0000-0000000000d1"
+local function aUsesTheDoor()
+    PersistentVars = nil
+    world[DOOR] = { pos = { 0, 0, 2 }, comps = {} }
+    N.uses = {}
+    N.noteUse(A1, DOOR, 1)
+    world[A1].pos = { 0, 0, 100 } -- the door took A1 98 m
+    N.linkWatch(clock)
+end
+
+test("door links: B routes through no door only A used; A and the harness have it", function()
+    begin()
+    aUsesTheDoor()
+    local from, goal = { 0, 0, 10 }, { 0, 0, 120 }
+    eq(as("B", N.doorLink, "ARENA_Level", from, goal), nil, "B's door link")
+    local a = as("A", N.doorLink, "ARENA_Level", from, goal)
+    eq(a and a.uuid, DOOR, "A's door link")
+    local h = N.doorLink("ARENA_Level", from, goal)
+    eq(h and h.uuid, DOOR, "no side: the save's links, as today")
+    RPC.clear_sides()
+    eq(as("A", N.doorLink, "ARENA_Level", from, goal), nil, "A's link after the match's end")
+end)
+
+test("door links, normal play (no arena): one store, as before", function()
+    env = {}
+    aUsesTheDoor()
+    local l = N.doorLink("ARENA_Level", { 0, 0, 10 }, { 0, 0, 120 })
+    eq(l and l.uuid, DOOR, "the link")
+end)
