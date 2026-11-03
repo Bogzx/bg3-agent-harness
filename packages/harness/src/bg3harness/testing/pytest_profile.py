@@ -16,11 +16,12 @@ import pytest
 
 import bg3harness
 from bg3harness.testing import liveport
-from bg3harness.testing.profile import PORT_VAR, leaks, temp_profile
+from bg3harness.testing.profile import PORT_VAR, SHELL_PORT_VAR, leaks, temp_profile
 
 ACTIVE = bg3harness.SOURCE_TREE or os.environ.get("BG3HARNESS_TEMP_PROFILE") == "1"
 if ACTIVE:
-    liveport.install(liveport.guarded_ports(os.environ.get(PORT_VAR)))  # before temp_profile replaces the port
+    # the shell's port: kept by an earlier temp_profile (the root conftest with plugin autoload off), else still here
+    liveport.install(liveport.guarded_ports(os.environ.get(SHELL_PORT_VAR) or os.environ.get(PORT_VAR)))
     temp_profile()
 
 
