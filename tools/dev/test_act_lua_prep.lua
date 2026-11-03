@@ -485,6 +485,7 @@ test("interact on a pulled-up ladder from below: says it hangs out of reach (S05
     BG3AI.Visibility, BG3AI.Nav.ladderRaised = savedV, savedR
     eq(ok, false, "refused")
     eq(tostring(err):find("pulled up: its foot hangs 5.7m", 1, true) ~= nil, true, "names the raised foot: " .. tostring(err))
+    assert(tostring(err):find("route connectors=true and get_frontier list the other ways up", 1, true), tostring(err))
     eq(ok2, false, "door refused too"); eq(tostring(err2):find("pulled up", 1, true), nil, "the door: no ladder text")
     eq(ok3, true, "from above: no refusal")
 end)

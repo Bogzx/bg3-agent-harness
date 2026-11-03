@@ -123,6 +123,8 @@ function A.cast_failed_why(char, target, spell, job)
         return why .. ": " .. shown .. " is a two-step cast (the body, then the spot they stand up on)"
             .. (A.last_place_why and (" and the spot could not be given (" .. A.last_place_why .. ")") or "")
             .. (playable and "" or "; this one is not a party member: only party members come back")
+            .. "; a Scroll of Revivify through use_ability (ability=\"Scroll of Revivify\", target=<the body>) gives"
+            .. " both picks (the body, then the ground beside it); Withers revives at camp"
     end
     local ok, txt = pcall(function()
         if G.is_dead(target) then return "the target was already dead when it fired" end
