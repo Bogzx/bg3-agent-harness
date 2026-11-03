@@ -121,7 +121,8 @@ round's turn_ended), `round_started`, `damage{source?,target,amount,type}`,
 `level_up_available{uuid}`, `item_added{owner,name,count}`, `gold_changed`, `level_changed{level}`,
 `teleported`, `rest`, `approval{npc,delta}` (as the toast shows), `used{char,item}`, `opened{item}`,
 `spotted{uuid}` (a hidden thing revealed to the party), `cast{caster,spell,target?}` for visible
-casters, and `moved_done{uuid,move_id}`.
+casters, and `moved_done{uuid,move_id}`. In an arena, `turn_forced{uuid, name, why}` goes to the side whose
+turn the arena runner ended at a cap (`act.end_turn {forced}`: why = which cap), once per phase.
 
 ### Navigation (`Server/Navigation.lua` + `NavigationSides.lua`, `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`; owner: **vis**)
 | op | ctx | args | result (sketch) |

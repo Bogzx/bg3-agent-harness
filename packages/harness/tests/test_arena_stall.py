@@ -322,3 +322,29 @@ def test_a_cap_end_done_at_15_s_is_forced_once_it_is_done(tmp_path):
     forced = [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
     assert forced and log[:2] and log[1][0] == "done"
     assert forced[0]["t"] >= log[1][1] >= log[0][1] + 15
+
+
+def test_the_caps_end_turn_says_which_cap_ended_the_turn(tmp_path):
+    """Review C4: the runner's cap ends carry `forced` (the mod's turn_forced event for the side and its
+    out-of-phase refusals name it): the model-time cap with its seconds, the stall cap with its idle time."""
+    sent: list[str] = []
+
+    def watch(game: Game) -> None:
+        rpc = game.rpc
+
+        def w(op, args, side=None, context="server"):
+            if op == "act.end_turn" and "forced" in args:
+                sent.append(args["forced"])
+            return rpc(op, args, side)
+
+        game.rpc = w  # type: ignore[method-assign]
+
+    _m, game, clock, agents, spec = setup({"A": staller, "B": passer})
+    watch(game)
+    am.run_arena(spec, SIDES, game, agents, tmp_path / "cap", clock)
+    assert sent[0] == f"the per-turn time cap ({spec.turn_cap_s:g} s of model time)"
+    sent.clear()
+    _m, game, clock, agents, spec = setup({"A": looper, "B": passer})
+    watch(game)
+    am.run_arena(spec, SIDES, game, agents, tmp_path / "stall", clock)
+    assert sent[0].startswith("the stall cap (no progress for 30") and sent[0].endswith(" s)"), sent

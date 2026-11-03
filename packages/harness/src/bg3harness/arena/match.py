@@ -44,7 +44,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    ended the match after this tick's read), the mod's end is the one written, its `detail` naming the runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
    began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
-   `act.end_turn` for each of its members in turn order, sent as that side, one at a time (each job polled until it
+   `act.end_turn {char, forced}` for each of its members in turn order, sent as that side (forced: the cap as the
+   mod tells the side, "the per-turn time cap (N s of model time)" or "the stall cap (...)"), one at a time (each
+   job polled until it
    settles, at most END_SETTLE_S, which outlasts the mod's own wait for a group's last end; a member whose turn is
    no longer open is refused), then `arena_turn_forced {side, character}` once an end went through and every
    other member's was refused as not open (ENDED_REFUSALS). An end the game ignored, one still running at
@@ -427,11 +429,12 @@ def _last_calls(path: Path, n: int = STALL_CALLS) -> list[dict[str, Any]]:
     return calls[-n:]
 
 
-def _end_turn(game: ArenaGame, clock: Clock, uuid: str, side: str) -> str | None:
-    """act.end_turn for `uuid` as `side`, its job polled until it settles (at most END_SETTLE_S); None when it is
+def _end_turn(game: ArenaGame, clock: Clock, uuid: str, side: str, forced: str) -> str | None:
+    """act.end_turn for `uuid` as `side` at a cap (`forced`: which one, as the mod tells the side: its turn_forced
+    event and its out-of-phase refusals), its job polled until it settles (at most END_SETTLE_S); None when it is
     done, else the refusal, the failure or "still <status>" (not settled: not an end)."""
     try:
-        job = game.rpc("act.end_turn", {"char": uuid}, side) or {}
+        job = game.rpc("act.end_turn", {"char": uuid, "forced": forced}, side) or {}
         deadline = clock.now() + END_SETTLE_S
         while job.get("status") not in ("done", "failed") and clock.now() < deadline:
             clock.sleep(END_POLL_S)
@@ -508,16 +511,16 @@ def run_arena(
     def model(side: str) -> float:
         return closed_model[side] + runs[side].model_s()
 
-    def cap_phase(turn: Turn, why: str) -> None:
-        """End the phase at a cap (`why`): its side's forfeit when it is the FORFEIT_TURNS-th in a row, else
-        act.end_turn for each member and arena_turn_forced once one went through."""
+    def cap_phase(turn: Turn, why: str, told: str) -> None:
+        """End the phase at a cap (`why`; `told`: the cap as its side is told): its side's forfeit when it is the
+        FORFEIT_TURNS-th in a row, else act.end_turn for each member and arena_turn_forced once they went through."""
         turn.capped = True
         if ref.forfeits():
             ref.forced()
             log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {why}")
             raise _Ended("forfeit", winner=other(turn.side), forfeit=turn.side, cause="forced_turns")
         turn.cap_tries += 1
-        errors = [_end_turn(game, clock, u, turn.side) for u in turn.members]
+        errors = [_end_turn(game, clock, u, turn.side, told) for u in turn.members]
         failed = [e for e in errors if e is not None and not _ended_refusal(e)]
         if failed or all(errors):
             log(f"arena {spec.name}: ending {turn.name}'s turn at the {why} failed: {'; '.join(map(str, errors))}")
@@ -626,7 +629,11 @@ def run_arena(
                     raise _Ended("fault", detail=f"{stall}, the game holds the turn" + (f" ({why})" if why else ""))
                 ref.event("arena_stall", stall="held", **record)
                 turn.stalled = True
-                cap_phase(turn, f"stall ({stall}, side {turn.side} holds it)")
+                cap_phase(
+                    turn,
+                    f"stall ({stall}, side {turn.side} holds it)",
+                    f"the stall cap (no progress for {record['idle_s']:.0f} s)",
+                )
                 continue
             if turn is None or turn.forced or turn.cap_tries >= CAP_TRIES:
                 continue
@@ -636,7 +643,7 @@ def run_arena(
             cap = spec.turn_cap_s * len(turn.members)
             if model(turn.side) - turn_mark[1] < cap:
                 continue
-            cap_phase(turn, f"{cap:g} s cap")
+            cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
             e = status["ended"]
             outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})

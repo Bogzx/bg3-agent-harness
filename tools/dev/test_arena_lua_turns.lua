@@ -345,3 +345,38 @@ test("a character on no team in the turn order ends the match at the next phase 
     tick()
     eq(Ar.state.ended and Ar.state.ended.detail, "Goblin (not on a team) joined the fight", "the goblin")
 end)
+
+-- Review C4 (arena-fight-analysis.md): a slow side whose turn the runner ended at its cap sent its next action into
+-- the other side's phase and read only "not your turn". The side is told, as a fact, and only that side.
+test("the runner's cap end: the side gets turn_forced; its refusals name the cap until its next phase", function()
+    begin()
+    order = { A1, B1 }
+    setTurn(A1, true, false)
+    tick()
+    local why = "the per-turn time cap (90 s of model time)"
+    local r = rpc("act.end_turn", "{char=" .. string.format("%q", A1) .. ",forced=" .. string.format("%q", why) .. "}",
+        "A")
+    eq(r.ok, true, "the end starts: " .. enc(r))
+    local a = kinds(rpc("events.since", "{seq=0}", "A"), "turn_forced")
+    eq(#a, 1, "side A told once")
+    eq(a[1].data.name, "Ana", "whose turn")
+    eq(a[1].data.why, why, "which cap")
+    eq(#kinds(rpc("events.since", "{seq=0}", "B"), "turn_forced"), 0, "side B is not told")
+    setTurn(A1, true, true) -- A1 ended: B's phase
+    setTurn(B1, true, false)
+    tick()
+    refused(function() as("A", G.combat_gate, A1, "turn") end,
+        "not your turn (side B is acting): Ana's turn was ended at " .. why)
+    as("B", G.combat_gate, B1, "turn") -- B acts
+    setTurn(B1, true, true) -- B's phase over: A's next one
+    setTurn(A1, false, false)
+    setTurn(A2, true, false)
+    order = { A2, B2 }
+    tick()
+    setTurn(A2, true, true)
+    setTurn(B2, true, false)
+    tick()
+    local ok, err = pcall(as, "A", G.combat_gate, A2, "turn")
+    eq(ok, false, "refused")
+    eq(err.reason, "not your turn (side B is acting)", "A's new phase: the forced one is over")
+end)

@@ -381,12 +381,25 @@ function Ar.phase_check()
     local n = nextPhase(st, round, p)
     st.phase = { round = round, group = p.group, side = p.side, phase = n, character = p.character,
         members = p.members }
+    if st.forced then st.forced[p.side] = nil end -- its new phase: the forced one is over
     Ar.check_end()
     if st.ended then return end
     local names = {}
     for i, u in ipairs(p.members) do names[i] = V.name(u) end
     record("arena_turn", { side = p.side, character = p.character, members = p.members, names = names, round = round,
         phase = n, group = p.group, shared = p.shared })
+end
+
+-- The runner ended a side's turn at its cap (act.end_turn {forced = which cap}): the side is told once per phase, as
+-- a fact, by a turn_forced {uuid, name, why} event of its own, and its out-of-phase refusals name it until its next
+-- phase (Guard.side_gate).
+function Ar.note_forced(char, why)
+    local st, s = Ar.state, Ar.side_of(char)
+    if not (st and s) then return end
+    st.forced = st.forced or {}
+    if st.forced[s] then return end
+    st.forced[s] = { name = V.name(char), why = why }
+    U.with_side(s, RPC.push, "turn_forced", { uuid = char, name = V.name(char), why = why })
 end
 
 -- A shared turn group's last end that the game ignored (act.end_turn, arena only): live 14 (2026-11-02, 2v2 twins in

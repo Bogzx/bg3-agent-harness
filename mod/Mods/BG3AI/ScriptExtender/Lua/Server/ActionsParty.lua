@@ -34,6 +34,9 @@ reg("end_turn", function(args)
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+    -- the arena runner's end at its cap (args.forced: which cap, as the side is told; the bridge never sends it)
+    local Ar = BG3AI.Arena
+    if args.forced and Ar and Ar.active() then Ar.note_forced(char, tostring(args.forced)) end
     -- The round this turn is in. A group's last end can settle after the game started the next round (live
     -- 2026-11-02: CombatRoundStarted and the new TurnStarted before the old TurnEnded): the members open then are the
     -- new round's, not this group's still to act.
@@ -93,7 +96,6 @@ reg("end_turn", function(args)
         if #resent > 0 then res.ended_again = resent end
         RPC.finish_job(job, "done", res)
     end
-    local Ar = BG3AI.Arena
     local arena = Ar and Ar.active()
     return start("end_turn", char, {
         timeout_ms = arena and A.END_LAST_WAIT_MS + 1000 or 10000,

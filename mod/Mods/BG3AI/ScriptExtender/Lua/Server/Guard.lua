@@ -495,8 +495,14 @@ end
 function G.side_gate()
     local side = U.side()
     if not side then return end
-    local acting = BG3AI.Arena.acting_side()
-    if acting and acting ~= side then G.refuse("not your turn (side " .. acting .. " is acting)") end
+    local Ar = BG3AI.Arena
+    local acting = Ar.acting_side()
+    if acting and acting ~= side then
+        -- the side's last turn was ended at the runner's cap (Arena.note_forced): say so
+        local f = Ar.state and Ar.state.forced and Ar.state.forced[side]
+        local why = f and (": " .. tostring(f.name) .. "'s turn was ended at " .. f.why) or ""
+        G.refuse("not your turn (side " .. acting .. " is acting)" .. why)
+    end
 end
 
 function G.not_in_dialogue(char)
