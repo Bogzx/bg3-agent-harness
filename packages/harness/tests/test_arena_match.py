@@ -39,9 +39,10 @@ SIDES = {"A": Side("A", "pi/model-x"), "B": Side("B", "pi/model-y")}
 
 
 def wrong_context(ctx: str, op: str) -> dict[str, Any] | None:
-    """The mod's refusal of an op sent to a context that doesn't register it (Client/: ui.* and autoskip.*; Shared/:
-    events, job, sys, hotbar, in both; Server/: the rest), else None."""
-    shared, client = op.startswith(("events.", "job.", "sys.", "hotbar.")), op.startswith(("ui.", "autoskip."))
+    """The mod's refusal of an op sent to a context that doesn't register it (Client/: ui.*, autoskip.*, arena.camera;
+    Shared/:    events, job, sys, hotbar, in both; Server/: the rest), else None."""
+    shared = op.startswith(("events.", "job.", "sys.", "hotbar."))
+    client = op.startswith(("ui.", "autoskip.")) or op == "arena.camera"
     if shared or (ctx == "client") == client:
         return None
     return unknown(ctx, op)
@@ -81,6 +82,8 @@ class ArenaModel(GameModel):
         self.refuse_end: str | None = None
         self.combat_error: str | None = None
         self.held_ends: set[str] = set()  # the uuids whose end the game took while holding
+        self.cameras = 0  # arena.camera calls (no side)
+        self.camera_error: str | None = None  # arena.camera fails with it
 
     def team_uuids(self) -> dict[str, list[str]]:
         """Each team's uuids as arena.setup's result and arena.status give them (Ar.state.teams: no summons)."""
@@ -210,6 +213,9 @@ class ArenaModel(GameModel):
             self.ends.append(dict(args))
             self.finish(args.get("winner"), args["reason"])
             return {"ok": True, "result": {"ended": self.ended}}
+        if op == "arena.camera":
+            self.cameras += 1
+            return {"ok": False, "error": self.camera_error} if self.camera_error else {"ok": True, "result": {}}
         if op == "ui.state" and self.reaction is not None and self.arena is not None:
             ui = super().reply(ctx, op, args)
             assert ui is not None
