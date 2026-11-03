@@ -55,12 +55,25 @@ def match(winner="A", reason="wipe", hp=(0.75, 0.0), rounds=2, start=None, turns
 
 def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
     files = sorted((PKG / "arenas").glob("*.json"))
-    assert [p.stem for p in files] == ["arena-v0", "crash-companions-v1", "crash-mirror-v1", "draft_open_field"]
+    assert [p.stem for p in files] == [
+        "arena-v0-seed3",
+        "arena-v0",
+        "crash-companions-v1",
+        "crash-mirror-v1",
+        "draft_open_field",
+    ]
     for p in files:
         a = json.loads(p.read_text())
         jsonschema.validate(a, ARENA_SCHEMA)
         assert arena.validate(a, p.stem) == []
     assert "draft" in arena.load_named("draft_open_field")
+
+
+def test_arena_v0_seed3_is_arena_v0_with_seed_3():
+    # window 5's DeepSeek pairing (ops/logs/live.md 'DeepSeek pairing inputs'): only the name and the seed differ
+    a, b = arena.load_named("arena-v0"), arena.load_named("arena-v0-seed3")
+    assert (b["name"], b["seed"]) == ("arena-v0-seed3", 3)
+    assert {**b, "name": a["name"], "seed": a["seed"]} == a
 
 
 # The site search's fine reads at site 2 (2026-11-03, ops/logs/live.md '# arena site search'): where each member
