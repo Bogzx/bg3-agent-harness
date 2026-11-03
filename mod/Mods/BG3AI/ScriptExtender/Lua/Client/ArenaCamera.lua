@@ -9,7 +9,7 @@ local RPC = BG3AI.RPC
 local C = BG3AI.ArenaCamera or {}
 BG3AI.ArenaCamera = C
 
-C.SHIFT_M = 2.0        -- re-write when the fighters' centroid moved more than this from the last written target
+C.SHIFT_M = 2.0        -- re-write when the camera's target is more than this from the fighters' centroid
 C.MIN_D, C.MAX_D = 8, 12 -- distance range (12: the clamp outside the combat-focus mode)
 C.SPREAD_PAD_M = 6     -- distance = the fighters' spread (farthest from the centroid) + this, within the range
 C.INPUT_QUIET_MS = 2000 -- no write this soon after a side's last click step (RPC.sideInputAt)
@@ -74,12 +74,14 @@ RPC.register("arena.camera", function()
     local spread = 0
     for _, p in ipairs(pts) do spread = math.max(spread, dist(p, c)) end
     local d = math.min(C.MAX_D, math.max(C.MIN_D, spread + C.SPREAD_PAD_M))
-    local held = cam.PlayerInControl == true and C.last ~= nil and dist(c, C.last) <= C.SHIFT_M
-    if held then return { moved = false, target = C.last, distance = d } end
+    -- Held only while the view is ours and on the fighters: the camera's own target, not our last write, is
+    -- compared (live window 6 run 7: with PlayerInControl true the view slid 51 m off along its axis and stayed).
+    local ok, td = pcall(function() local t = cam.TargetDestination return { t[1], t[2], t[3] } end)
+    local on = ok and tonumber(td[1]) and tonumber(td[2]) and tonumber(td[3]) and dist(c, td) <= C.SHIFT_M
+    if cam.PlayerInControl == true and on then return { moved = false, target = c, distance = d } end
     cam.TargetDestination = c
     cam.DistanceDestination = d
     cam.PlayerInControl = true
-    C.last = c
     return { moved = true, target = c, distance = d }
 end)
 
