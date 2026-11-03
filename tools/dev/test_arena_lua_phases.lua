@@ -319,9 +319,12 @@ test("live round change: new TurnStarted before the old TurnEnded: round 2's fir
         eq(j.result and j.result.requested, true, x[1] .. "'s end pending")
     end
     local j = endTurn(B2, "B") -- the group's last end
-    ticks(math.floor(16900 / Ar.PHASE_EVERY_MS))
-    eq(j.status, "running", "the game walks the group (16.9 s)")
+    -- live smoke 2026-11-03 (L4): every round waited 18 s for the write; now ~1 s after the last end
+    ticks(math.floor(1250 / Ar.PHASE_EVERY_MS))
+    eq(#refs("arena_group_end_written"), 1, "the group's ends written within 1.25 s (every other end was the mod's)")
+    eq(j.status, "running", "waits for the game to close the group")
     fire("CombatRoundStarted", "combat1", 2)
+    openAll({ A1, B1, A2, B2 }) -- the new round's turns open, the written flags cleared (live 14 after the write)
     burst({ A1, B1, A2, B2 })
     clock = clock + 6
     for _, u in ipairs({ A1, B1, A2, B2 }) do fire("TurnEnded", "S_Player_" .. u) end -- the game shows all open again
@@ -329,7 +332,7 @@ test("live round change: new TurnStarted before the old TurnEnded: round 2's fir
     eq(j.status, "done", "B2's end: " .. tostring(j.error))
     eq(j.result.still_to_act, nil, "round 2's open members are not this group's still to act")
     eq(enc(j.result.round_moved_on), enc({ from = 1, to = 2 }), "round_moved_on")
-    eq(#replicated + #refs("arena_group_end_written"), 0, "the game's own 16.9 s close: no write")
+    eq(#refs("arena_group_end_written"), 1, "one write")
     for _, u in ipairs({ A1, B1, A2, B2 }) do eq(G.turn_is_over(u), false, u .. "'s new turn not over") end
     eq(G.is_my_turn(A1), true, "A1 acts")
     local r = refs("arena_turn")

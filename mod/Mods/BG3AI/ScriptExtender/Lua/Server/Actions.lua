@@ -46,10 +46,12 @@ A.END_IGNORED_MS = 3000 -- end_turn: the game ignored EndTurn (no group pending)
 A.END_IGNORED = "the game ignored the end-turn order"
 A.END_LAST_WAIT_MS = 20000 -- arena: a turn group's last end waits this long for the game to close it (S087: 18 s)
 -- arena: a shared group's last end the game hasn't closed this long gets the group's ends written once
--- (Arena.write_group_end), inside END_LAST_WAIT_MS (the bridge waits 22 s). After the slowest close the game made on
--- its own: phases4 (companions, a group of 8) walked the group one member every ~2.1 s and closed it 16.88-17.00 s
--- after the last end, every round; after the write the group closed within ~40 ms (live 14).
-A.END_WRITE_AFTER_MS = 18000
+-- (Arena.write_group_end: only when every other member's end is the mod's), inside END_LAST_WAIT_MS (the bridge
+-- waits 22 s). After the write the group closed within ~40 ms (live 14). Until 2026-11-03 this was 18 s, past the
+-- slowest close the game made on its own (phases4, companions in a group of 8: one member every ~2.1 s, 16.88-17.00 s
+-- after the last end); the live smoke (2026-11-03, L4) showed the twins' group never closes on its own, so every
+-- round waited 18 s for the write. 1 s leaves a group the game closes at once (TurnEnded) to it.
+A.END_WRITE_AFTER_MS = 1000
 -- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine
 -- dropped UseSpellAtPosition without CastSpellFailed. No CastSpell and no step this long after the order: fail.
 A.CAST_NO_START_MS = 8000
