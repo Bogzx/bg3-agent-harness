@@ -202,6 +202,20 @@ game unless it says so.
   Evidence video and panel: a blocking walk's timeline entry shows the walk's outcome, not its start line; results the
   bridge reports as failed (FAILED/REFUSED lines, bg3harness triage.failed_lines) are marked as fails; the local
   panel's results list shows a run's recovered launches.
+  What a valid bundle is (REVIEW-4, 2026-11-03; bench-v0.10 and later: the job validates a suite at its released
+  commit, so bench-v0.8 and v0.9 submissions keep their rules):
+  - P02 also requires the code the release pins: release pins `code_sha1` (optional in release v1;
+    bg3harness.pins.code_digest, the git blobs at HEAD of bridge/src, runner, packages/harness/src, play, tools/pi
+    and uv.lock, tests left out) and the run's `pins.repo.code_sha1` must equal it. packages/harness/src and uv.lock
+    are dirty-checked now too. The release is rebuilt whenever that code changes (the release test says so).
+  - New check C04 (reject, panel and job): every process's session_start and init name the manifest's model slug,
+    and the effort the usage/result events say was served is the declared `reasoning_effort`. launch-v1's 36
+    DeepSeek runs declared `medium` and pi served `high` (profiles/deepseek-flash.toml has no medium level), so
+    such a run is rejected until the profile declares what it is served.
+  - X03 rejects a save start whose first load mark is not the release's start save folder.
+  - results: a leaderboard row is (client, model, reasoning effort, condition); runs, groups and the ranking's
+    models carry `effort` (results v1, optional). The suite digest is re-pinned under bench-v0.10 (no score moves
+    for runs of one effort per model).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
