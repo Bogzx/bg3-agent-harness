@@ -88,7 +88,7 @@ class StaleSighting(unittest.TestCase):
         trips = self.use(Fake(camp_pos=spot))
         out = self.walk_first()
         self.assertEqual(trips, [{"who": None, "x": -1466.0, "y": 9.1, "z": -2640.5, "trespass": True}])
-        self.assertIn("is at camp (the camp roster) (-1466,9.1,-2640.5): walking there first; then talk_to", out)
+        self.assertIn("is at camp (the camp roster) (-1466,9.1,-2640.5): walking there first", out)
         self.assertNotIn("walk around the camp", out)
 
     def test_away_from_camp_it_says_camp(self):

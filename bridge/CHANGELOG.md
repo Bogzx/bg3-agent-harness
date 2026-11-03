@@ -27,6 +27,21 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   sat on the party and the agent learnt of it only as `+Cloudkill` on whoever it had hit; v09 Moonrise lost turns to
   the teleport and busy failures.
 
+## 2026-11-03: a walk there ends in its talk or use on arrival; do_actions' walk end has the minimap block; a walk a conversation ended says so
+
+- `talk_to` / `interact` on a target past reach or out of sight walk there first (travel_to, blocking) and then talk
+  or use it in the same call, its result in that result (`e7 is 50m away: walking there first; arrived, then
+  interact e7`). A walk there that stops short (a hostile in view, damage, a prompt) does nothing more and says
+  `interact e7: not run (the walk there stopped before arriving)`; it was queued after the trip and ran where the
+  walk had stopped. A walk still going at the ~90 s walk budget queues the talk/use for the arrival, as before. The
+  two tools' descriptions say so. review-v010-final #1.
+- `do_actions` that ends with its walk step ends with the minimap block (OBJECTIVES, WAYS, LEADS) as every other walk
+  end; so does `wait_for('queue')` when the steps after a conditional walk are listed as not run. review-v010-final #4.
+- A blocking walk whose wait a dialogue screen ended starts with the walk's own result when the conversation ended
+  the walk (`move_to: INTERRUPTED — a conversation started`); it said `wait_for('j1') keeps waiting for it` for a
+  walk that was over. A conversation that doesn't stop the walk (someone else's) still gives the id to wait on.
+  review-v010-final #6.
+
 ## 2026-11-03: travel_to doesn't take along a member who is far away at the start
 
 - The leader's `travel_to` no longer re-chains or waits for a member more than 24 m away when the trip starts

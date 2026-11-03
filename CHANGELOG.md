@@ -173,6 +173,12 @@ game unless it says so.
     game menu is open.
   - `use_ability` on a spell container lists the variants that read as a spell's stats entry and says how many
     entries didn't (after one more read); with none that reads it refuses without names. The raw text is never shown.
+  - `talk_to` / `interact` on a target past reach or out of sight walk there and then talk or use it in the same
+    call; a walk there that stops short runs no step and says so (`not run (the walk there stopped before
+    arriving)`); one still walking at the ~90 s budget queues it for the arrival. `do_actions` ending at its walk step
+    carries the minimap block too, and a blocking walk that its walker's own conversation ended says it ended. A
+    travel_to inside another call (route go=true, a far move_to, a walk there) counts its budget from that call's
+    start.
   - Combat output lists the harmful clouds and surfaces a party member sees within 12 m (`HAZARD` lines, as `look`):
     `get_combat_state` every call; the turn block and a combat action's result when the patches in view changed.
     Nearby rows, party rows and CHANGES say who starts or stops concentrating (`concentrating on Cloudkill`).

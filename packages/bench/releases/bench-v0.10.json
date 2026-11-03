@@ -839,7 +839,7 @@
      "walk_toward",
      "zoom"
     ],
-    "defs_sha256": "d41f7d8374616d22d0cf2af67c49c86b6d0b339b4f7fcb904506f0bb62057b33"
+    "defs_sha256": "0823a184b04f53ff6ef67cfe1373a67882c4122aa0639da5cac33d2e194ae71b"
    },
    "prompts": {
     "claude": {
@@ -937,7 +937,7 @@
        "wait_for",
        "walk_toward"
       ],
-      "defs_sha256": "9d49111e164a71ed18300491b5bb7385e949a1d797388a1a6d6bf43eca9fb044"
+      "defs_sha256": "3ce1f96ad05ce07a40a380b03b7e2be5f63c5eb34bbf6502206d700449abf8fc"
      },
      "prompts": {
       "pi": {

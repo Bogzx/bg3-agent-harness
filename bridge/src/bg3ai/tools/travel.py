@@ -18,7 +18,7 @@ from . import camp_night, core, overview, plumbing, reporting, world_tools
 @core.mcp.tool()
 @reporting._guard
 def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
-    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first and talks on arrival (queued)."""
+    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first (travel_to) and talks on arrival, the conversation in the same result; a walk there that stops short doesn't talk (says not run), one still going after ~90 s talks on arrival (queued)."""
     char = plumbing._who(who)
     out = plumbing._act("talk_to", "act.talk", {"char": char, "npc": plumbing._uuid(npc)}, wait_s=30, wait=wait)
     # S026: 7 refusals out of sight (Mattis, e511, e720); S028: 2 "too far away (47-50m, max 40m)" at camp.
@@ -66,8 +66,9 @@ def _stale_trip_line(target: str, seen: tuple[list, int | None], here: list, d: 
 def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, step) -> str | None:
     """A refusal that a walk fixes, as a player clicks it and the character walks there: the target is past the
     act range (S023 interact 75 m, S028 talk_to 47/50 m and interact 40 m at camp) or out of sight but seen on this
-    level (S026 talk_to 7x). Starts travel_to there and queues `step` for the arrival; None when it doesn't apply
-    (inside do_actions, in combat, another refusal, never seen)."""
+    level (S026 talk_to 7x). Walks there (travel_to) and on arrival runs `step` (talk_to or interact) in the same call;
+    a trip still going at its walk budget gets it queued for the arrival, a trip that stopped short doesn't run it.
+    None when it doesn't apply (inside do_actions, in combat, another refusal, never seen)."""
     if reporting._batch["active"]:
         return None
     far = _TOO_FAR_RX.search(out)
@@ -102,8 +103,28 @@ def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, st
     trip = travel_macro.travel_to(who=who, trespass=True, **dest)  # to the one they mean, as a click on them (their guard too)
     if "FAILED" in trip or "REFUSED" in trip:
         return out + "\n" + trip
-    queued = batch._enqueue(char, [step], ignore=None)
-    return f"{line}; then {tool} {target} on arrival ({queued})\n{trip}"
+    if queueing._queues().busy(char):  # still walking at the walk budget: the step waits in the queue for the arrival
+        queued = batch._enqueue(char, [step], ignore=None)
+        return f"{line}; then {tool} {target} on arrival ({queued})\n{trip}"
+    # The trip blocked to its end (bench-v0.10). review-v010-final #1: the step was queued after it whatever the end, so
+    # an interact/talk_to ran after a trip that stopped short (a hostile in view, damage, a prompt): only on arrival
+    # now, here, its result in this call, as a queue entry after the trip did.
+    q = queueing._queues().queues.get(char)
+    rep = q.last_report if q is not None else None
+    if rep is None or rep.stopped:
+        return f"{line}\n{trip}\n{tool} {target}: not run (the walk there stopped before arriving)"
+    return f"{line}; arrived, then {tool} {target}\n{trip}\n{_step_now(step, char)}"
+
+
+def _step_now(step, char: str) -> str:
+    """_walk_first's step (talk_to or interact) after the arrival, in the same call (its time limits from its start)."""
+    t0 = reporting.call_t0()
+    if step.tool == "talk_to":
+        return plumbing._act("talk_to", "act.talk", {"char": char, "npc": plumbing._uuid(step.args["npc"])}, wait_s=30,
+                             t0=t0)
+    return plumbing._act("interact", "act.interact",
+                         {"char": char, "target": plumbing._interact_uuid(step.args["target"])},
+                         wait_s=world_tools.INTERACT_WAIT_S, t0=t0)
 
 
 @core.mcp.tool()
@@ -685,7 +706,8 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
             # (1.6 s). Stop short of him on the way in: the talk job walks the last metres itself.
             k = (d - WALK_UP_SHORT_M) / d
             dest = [here[0] + (dest[0] - here[0]) * k, dest[1], here[2] + (dest[2] - here[2]) * k]
-        out = travel_macro.travel_to(x=dest[0], y=dest[1], z=dest[2], who=core.H.get(char))   # who: a handle; runs async
+        # wait=False: the trip runs as a queue entry and the wait_for below waits for it (one wait, within its 60 s)
+        out = travel_macro.travel_to(x=dest[0], y=dest[1], z=dest[2], who=core.H.get(char), wait=False)
         if "started" in out:
             batch.wait_for(target="idle", timeout_s=60, lead_s=0)
         first = out.splitlines()[0] if out else ""
