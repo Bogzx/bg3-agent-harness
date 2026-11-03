@@ -11,8 +11,8 @@ a digest pinned for the current version. The fix is one of:
   version's list, and bump only the patch version.
 
 A new version whose score moves outside these files (the mod or the bg3 tools its release pins changed) pins the
-same digest as the version before it; suite.json's `shared` names that pair ({new: old}), and only versions linked
-by named pairs may share a digest (a chain counts: with vC -> vB and vB -> vA, all three may pin vA's digest).
+same digest as the version before it; suite.json's `shared` names that pair ({new: old}), and only a named pair may
+share a digest.
 
 Never edit an existing entry: an entry is what a published result was graded with.
 """
@@ -73,17 +73,6 @@ def load_shared(path: Path = PINS) -> dict[str, str]:
     return shared
 
 
-def _shares(a: str, b: str, shared: dict[str, str]) -> bool:
-    """a reaches b through `shared` pairs ({new: old}), or b reaches a."""
-    for x, y in ((a, b), (b, a)):
-        seen = {x}
-        while (x := shared.get(x, "")) and x not in seen:
-            if x == y:
-                return True
-            seen.add(x)
-    return False
-
-
 def check(
     root: Path = PACKAGE_ROOT,
     pins: dict[str, list[str]] | None = None,
@@ -107,7 +96,7 @@ def check(
     seen: dict[str, str] = {}
     for v, ds in pins.items():
         for d in ds:
-            if d in seen and seen[d] != v and not _shares(v, seen[d], shared):
+            if d in seen and seen[d] != v and seen[d] != shared.get(v) and v != shared.get(seen[d]):
                 errors.append(f"digest {d} is pinned for both {seen[d]} and {v}")
             seen.setdefault(d, v)
     return errors
