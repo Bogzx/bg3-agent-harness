@@ -154,6 +154,7 @@ class Server(unittest.TestCase):
         by_name = set(SPEC_ARENA_V1.split())
         self.assertEqual(off, {t for g in groups for t in capabilities.GROUPS[g]} | by_name)
         self.assertEqual(set(capabilities.LISTS["arena-v1"]), set(groups) | by_name)
+        self.assertIn("ui_action", off)  # a named UI command on the shared client has no side check
         kept = {
             "interact",
             "set_party",
@@ -209,9 +210,9 @@ class Server(unittest.TestCase):
 
 
 # The by-name part of the arena tools-off list in the spec (§3.5), verbatim.
-SPEC_ARENA_V1 = """fast_travel camp swap_party long_rest short_rest rest_if_needed travel_to talk_to choose_dialogue
-dialogue_advance get_dialogue roll_check trade pickpocket lockpick disarm loot loot_corpse loot_area pick_up feed_gale
-insert_item read_all place_marker delete_marker new_game character_creation_options create_character
+SPEC_ARENA_V1 = """ui_action fast_travel camp swap_party long_rest short_rest rest_if_needed travel_to talk_to
+choose_dialogue dialogue_advance get_dialogue roll_check trade pickpocket lockpick disarm loot loot_corpse loot_area
+pick_up feed_gale insert_item read_all place_marker delete_marker new_game character_creation_options create_character
 get_level_up_options level_up prepare_spells get_journal get_map"""
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "bg3ai"

@@ -23,7 +23,7 @@ perceive. The other player's calls and text never reach you, only their effects 
 - Spells cast through a second pick (Dimension Door's landing, the Revivify spell) are refused, and a cast takes at
   most two targets.
 - This match removes these tools, though the rules above may name them: the memory and note tools, the wiki, saves
-  and reloads, screenshots, raw input, `fast_travel`, `camp`, `swap_party`, `long_rest`, `short_rest`,
+  and reloads, screenshots, raw input, `ui_action`, `fast_travel`, `camp`, `swap_party`, `long_rest`, `short_rest`,
   `rest_if_needed`, `travel_to`, `talk_to`, `choose_dialogue`, `dialogue_advance`, `get_dialogue`, `roll_check`,
   `trade`, `pickpocket`, `lockpick`, `disarm`, `loot`, `loot_corpse`, `loot_area`, `pick_up`, `feed_gale`,
   `insert_item`, `read_all`, `place_marker`, `delete_marker`, `new_game`, `character_creation_options`,

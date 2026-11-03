@@ -34,10 +34,11 @@ GROUPS: dict[str, tuple[str, ...]] = {
 GAME = "game"
 
 # Named lists for BG3AI_TOOLS_OFF (only there): a name stands for its groups and tools. "arena-v1": a two-team match,
-# one fight from its first turn to its last, played by two models on one game client. Off: memory across sessions,
-# the wiki, saves and reloads, screenshots and raw input (the one client's screen and input show both teams),
-# travel, camp and rest, conversations and rolls, trade and the out-of-fight world actions, looting, character
-# creation and levelling, the journal and map. confirm and dismiss_popups stay: a popup can come up mid-fight.
+# one fight from its first turn to its last, played by two models on one game client. Off: memory across sessions, the
+# wiki, saves and reloads, screenshots and raw input (the one client's screen and input show both teams), ui_action (a
+# named UI command on the one client's screen carries no side check), travel, camp and rest, conversations and rolls,
+# trade and the out-of-fight world actions, looting, character creation and levelling, the journal and map. confirm and
+# dismiss_popups stay: a popup can come up mid-fight.
 LISTS: dict[str, tuple[str, ...]] = {
     "arena-v1": (
         "memory",
@@ -46,6 +47,7 @@ LISTS: dict[str, tuple[str, ...]] = {
         "saves",
         "screenshots",
         "raw_input",
+        "ui_action",
         "fast_travel",
         "camp",
         "swap_party",
