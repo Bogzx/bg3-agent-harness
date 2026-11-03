@@ -123,7 +123,8 @@ def side_client(
 
 
 def start_game(r: Any, spec: ArenaSpec) -> None:
-    """The game up with the arena's save loaded, the seed and the settings applied and checked."""
+    """The game up with the arena's save loaded, the seed and the settings applied and checked, and the game's mouse
+    the harness's (gio.take_input; live window 7: the real pointer on the window's edge panned the view)."""
     agent_group.reap_leftover(renv.RUNTIME / agent_group.FILE, renv.log)
     try:
         r.refresh_mod_snapshot()
@@ -134,6 +135,7 @@ def start_game(r: Any, spec: ArenaSpec) -> None:
         raise ArenaSetupError(f"the arena's save {spec.save} didn't load (loaded: {r.state['loaded_save']})")
     r.hot_reload_mod()
     r.check_settings()
+    renv.log(gio.take_input())
 
 
 def budget_refusal(sides: Mapping[str, Side], max_cost: float | None = None) -> str | None:

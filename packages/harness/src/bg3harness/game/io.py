@@ -277,6 +277,26 @@ def press_menu_key(log: Callable[[str], None] = _quiet) -> str:
     return "InjectKeyPress SPACE"
 
 
+def take_input() -> str:
+    """The game's mouse is the harness's from the start of a run: the input shim's agent mode on (the real pointer and
+    focus-loss events no longer reach the game) and its virtual cursor at the window's centre. Before, agent mode came
+    only with a run's first shim mouse command (a scripted arena match sends none), so the operator's real pointer
+    drove the game, and agent mode alone leaves the virtual cursor at (0, 0): a cursor on the window's edge scrolls a
+    player-controlled camera (live window 7: the real pointer on the bottom row panned the arena's view 51 m away).
+    Best effort: returns what happened, for the log. $BG3AI_INPUT_SOCKET names another shim socket (the test profile:
+    a dead one)."""
+    try:
+        from bg3ai.input import DEFAULT_SOCKET, InputClient
+
+        with InputClient(os.environ.get("BG3AI_INPUT_SOCKET") or DEFAULT_SOCKET, timeout=3.0) as inp:
+            inp.agent(True)
+            w, h = inp.window_size()
+            inp.move(w // 2, h // 2)
+        return f"input shim: agent mode on, cursor at the window's centre ({w // 2}, {h // 2})"
+    except Exception as e:
+        return f"input shim: agent mode or cursor not set ({type(e).__name__}: {e})"
+
+
 def read_progress(log: Callable[[str], None] = _quiet) -> dict | None:
     ops = available_ops("server")
     status = journal = None

@@ -28,11 +28,13 @@ RUNTIME_VAR = "BG3AI_RUNTIME"
 PORT_VAR = "BG3LE_DEBUG_PORT"
 DEAD_PORT = "1"  # tcpmux: nothing listens, and an unprivileged fake can't bind it
 SHELL_PORT_VAR = "BG3AI_TEST_SHELL_PORT"  # the port the shell named before it was replaced (liveport guards it)
+SHIM_VAR = "BG3AI_INPUT_SOCKET"  # the input shim's socket name for gio.take_input (default bg3ai-input)
+DEAD_SHIM = "bg3ai-input-dead"  # nothing listens on it
 
 
 def temp_profile(environ: MutableMapping[str, str] = os.environ) -> Path:
     """The process's temp profile root (made on the first call); points the three profile env vars and the runtime
-    dir into it, and the game's debug port at a dead one."""
+    dir into it, and the game's debug port and input shim socket at dead ones."""
     root = Path(environ.get(ENV) or tempfile.mkdtemp(prefix="bg3ai-test-profile-"))
     environ[ENV] = str(root)
     environ["BG3AI_SAVE_DIR"] = str(root / "saves")
@@ -42,6 +44,7 @@ def temp_profile(environ: MutableMapping[str, str] = os.environ) -> Path:
     if environ.get(PORT_VAR) not in (None, "", DEAD_PORT):
         environ.setdefault(SHELL_PORT_VAR, environ[PORT_VAR])
     environ[PORT_VAR] = DEAD_PORT
+    environ[SHIM_VAR] = DEAD_SHIM
     return root
 
 

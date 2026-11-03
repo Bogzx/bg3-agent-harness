@@ -1,4 +1,5 @@
-"""No test reaches the real game's Lua debug port unless it is marked `live` (2026-11-02, D385).
+"""No test reaches the real game's Lua debug port (or its input shim's socket) unless it is marked `live` (2026-11-02,
+D385; the shim since 2026-11-03: the runner takes the shim's input at a game's start, gio.take_input).
 
 bg3le listens on 127.0.0.1:9998 ($BG3LE_DEBUG_PORT, bridge settings.py) and the test machine (dev2) runs the live
 game there while tests run. A plain TestCase that used the bridge's real core.game sent act.watch to the live game of
@@ -19,6 +20,7 @@ from typing import Any, cast
 from bg3harness.testing.profile import DEAD_PORT
 
 LIVE_PORT = 9998  # bg3le's default (bg3ai.luadebug.DEFAULT_PORT)
+SHIM_SOCKET = "\0bg3ai-input"  # the live game's input shim (bg3ai.input.DEFAULT_SOCKET, an abstract unix socket)
 
 
 class LivePortError(ConnectionRefusedError):
@@ -48,11 +50,17 @@ def _host_port(address: object) -> tuple[object, object] | None:
 
 
 def blocked(address: object) -> bool:
+    if address == SHIM_SOCKET:  # a test moving the live game's cursor or pressing its keys
+        return not allowed
     hp = _host_port(address)
     return not allowed and hp is not None and hp[1] in ports
 
 
 def _refuse(address: object) -> str:
+    if address == SHIM_SOCKET:
+        msg = "connect to @bg3ai-input refused: a test reached the real game's input shim (mark it live to opt in)"
+        hits.append(msg)
+        return msg
     host, port = _host_port(address) or ("?", "?")
     msg = f"connect to {host}:{port} refused: a test reached the real game's debug port (mark it live to opt in)"
     hits.append(msg)

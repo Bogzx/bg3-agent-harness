@@ -243,3 +243,33 @@ def test_the_live_game_sends_an_op_to_the_context_asked_for(monkeypatch):
     game.rpc("arena.status", {})
     game.rpc("act.end_turn", {"char": "u1"}, "B")
     assert sent == [("ui.state", "client"), ("arena.status", "server"), ("act.end_turn", "server")]
+
+
+def test_the_matchs_game_takes_the_mouse_after_its_settings(monkeypatch):
+    """Live window 7: the shim's agent mode and a centred cursor before the match (the scripted sides send no mouse
+    command; the real pointer on the window's bottom row edge-scrolled the view). After the settings check."""
+    done: list[str] = []
+
+    class R:
+        def __init__(self) -> None:
+            self.state = {"loaded_save": "Tav-1__SCN-arena_test"}
+
+        def refresh_mod_snapshot(self) -> None:
+            done.append("snapshot")
+
+        def ensure_game(self, first: bool) -> None:
+            done.append("ensure")
+
+        def hot_reload_mod(self) -> None:
+            done.append("reload")
+
+        def check_settings(self) -> None:
+            done.append("settings")
+
+    monkeypatch.setattr(live.agent_group, "reap_leftover", lambda *a: None)
+    monkeypatch.setattr(gio, "take_input", lambda: done.append("take_input") or "input shim: taken")
+    logs: list[str] = []
+    monkeypatch.setattr(live.renv, "log", logs.append)
+    live.start_game(R(), ArenaSpec.from_dict(ARENA))
+    assert done == ["snapshot", "ensure", "reload", "settings", "take_input"]
+    assert "input shim: taken" in logs
