@@ -232,7 +232,7 @@ def client_state(game) -> str | None:
 
 # Memory samples (S038 20:48: the game's RSS went 5 -> 13 GB in ~30 s and the OOM kill took every agent down; the
 # per-minute ramwatch line could not say whether it was our Lua or the engine):
-#   {"type":"mem", "t", "rss_mb", "lua_server_mb"?, "lua_client_mb"?, "high"?, "why"?}
+#   {"type":"mem", "t", "rss_mb", "lua_server_mb"?, "lua_client_mb"?, "high"?, "why"?, "hit_radius_fallbacks"?}
 # every MEM_EVERY_S, and at once (why="rss_jump") when the game's RSS grew MEM_JUMP_MB since the last one; the RSS
 # is read from /proc every sample (one small file read), the Lua heaps from sys.mem in both contexts.
 MEM_EVERY_S = 60.0
@@ -317,6 +317,9 @@ class MemSampler:
                 rec[f"lua_{ctx}_mb"] = m["lua_mb"]
                 if m.get("high"):
                     rec["high"] = True
+                hf = m.get("hit_fallbacks")
+                if isinstance(hf, (int, float)) and hf > 0:  # server: melee reach on an assumed Hit radius
+                    rec["hit_radius_fallbacks"] = hf
                 nz = m.get("noesis")
                 if isinstance(nz, dict):  # client: bg3le's Noesis release counters (BACKLOG "parked" watch)
                     for k in ("parked", "leaked", "gen"):
