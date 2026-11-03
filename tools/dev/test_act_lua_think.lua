@@ -193,7 +193,8 @@ test("cast: the engine's CastSpellFailed says why (S024-S041 'the action failed'
     assert(A.cast_failed_why(P1, GOB):find("already dead", 1, true))
     stats.Teleportation_Revivify = { SpellType = "Teleportation", OriginTargetConditions = "Dead()", TargetRadius = "9" }
     local w = A.cast_failed_why(P1, GOB, "Teleportation_Revivify")
-    assert(w:find("two-step cast", 1, true) and not w:find("Scroll of Revivify", 1, true), w)
+    assert(w:find("two-step cast", 1, true) and w:find("a Scroll of Revivify through use_ability", 1, true), w)
+    assert(w:find("Withers revives at camp", 1, true) and not w:find("Read a", 1, true), w) -- the tool fact, no order
     assert(w:find("not a party member", 1, true), w) -- GOB has no PLAYABLE tag
     osiv[key("IsDead", GOB)] = 0
 end)
@@ -262,7 +263,7 @@ test("cast (ACT-9): with the TargetPos2 write off (default), a two-step spell is
         local msg = (not ok) and (G.is_refusal(r) and r.reason or tostring(r)) or tostring(job(r).error)
         assert(msg:find(pat, 1, true), msg)
     end
-    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "can't give its second pick yet")
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "gives both picks (the body, then the ground")
     eq(#called("UseSpell"), 0, "no UseSpell")
     local ok, why = A.set_task_pos2(P1, "Teleportation_Revivify", { 1, 0, 1 })
     eq(ok, nil, "no write"); assert(why:find("ACT-9", 1, true), why)
@@ -349,7 +350,8 @@ test("cast: Dimension Door landing checks: range from AreaRadius, a landing in t
     nav.unseen = function(p) return p[2] > -1 and p[3] > 4 end
     fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "in view")
     nav.unseen = function(p) return p[2] ~= 7 end
-    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } }, "no floor within 2 m of that height")
+    fails({ char = P1, spell = "Teleportation_DimensionDoor", pos = { 0, 7, 5 } },
+        "no floor within 2 m of that height; a landing's y is a floor's own height")
     nav.unseen = nil
     Ext.Level.GetHeightsAt = heights
     fails({ char = P1, spell = "Teleportation_DimensionDoor", targets = { GOB, NPC }, pos = { 0, 0, 5 } }, "one who goes")
@@ -453,6 +455,7 @@ test("cast: a creature/object-only Target spell is refused at a ground point; ar
     local j = job(op("cast", { char = P1, spell = "Target_END_Mindflayer_CrownDomination", pos = { 3, 0, 3 } }))
     eq(j.status, "failed", "at a point")
     assert(j.error:find("takes a creature or an object as its target, not a ground point", 1, true), j.error)
+    assert(j.error:find("it takes target=<its id> (get_nearby lists objects too)", 1, true), j.error)
     eq(#called("UseSpellAtPosition"), 0, "nothing cast at the point")
     eq(A.needs_entity("Target_MageHand"), false, "summon"); eq(A.needs_entity("Target_FogCloud"), false, "area")
     eq(A.needs_entity("Target_Grease"), false, "GROUND context")
@@ -522,7 +525,7 @@ test("cast ui=true (ACT-9 player route): Revivify clicks one body; the result sa
     eq(j.result.via, "hotbar", "via"); eq(j.result.teleported, nil, "not a teleport")
     -- without ui, still ACT-9's refusal
     osiv[key("IsDead", NPC)] = 1
-    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "can't give its second pick yet")
+    fails({ char = P1, spell = "Teleportation_Revivify", target = NPC }, "gives both picks (the body, then the ground")
     world[P1].comps.ServerCharacter = nil
 end)
 
@@ -725,6 +728,7 @@ test("target not visible: one that turned invisible says so (S030 Soft-Step Shad
     }
     local ok, err = pcall(function()
         refused(function() G.target_visible(NPC) end, "target is not visible; it turned invisible 2s ago")
+        refused(function() G.target_visible(NPC) end, "Faerie Fire or an area attack on that spot reveal it")
         assert(not G.last_seen_hint(NPC):find("travel_to"), "no walk advice for an invisible one")
         BG3AI.Visibility.vanished = function() return false end
         eq(G.last_seen_hint(NPC):find("travel_to", 1, true), nil, "a plain out-of-sight one: the fact only")

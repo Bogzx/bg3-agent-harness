@@ -314,3 +314,19 @@ test("interact on a living character states what interact does, no 'use talk_to'
     local j = job(op("interact", { char = P1, target = NPC }))
     eq(j.status, "failed", "refused"); eq(j.error, "interact doesn't talk to characters (talk_to does)", "words")
 end)
+
+test("tool facts stay facts: loot_corpse loots a corpse, a give in a fight needs the UI tools", function()
+    osiv[key("IsCharacter", NPC)], osiv[key("IsDead", NPC)] = 1, 1
+    local j = job(op("interact", { char = P1, target = NPC }))
+    eq(j.error, "interact doesn't loot corpses (loot_corpse does)", "corpse")
+    osiv[key("IsDead", NPC)] = 0
+    party_rows = { P1, NPC }
+    osiv[key("GetInventoryOwner", GEM)] = P1
+    osiv[key("IsInCombat", P1)] = 1
+    j = job(op("transfer", { item = GEM, to = NPC }))
+    -- arena: G.refuse_ui adds its own note (arena/int's "(use the UI)" without a side)
+    assert(j.error:find("not available during combat through this action (", 1, true), j.error)
+    osiv[key("IsInCombat", P1)] = 0
+    j = job(op("pickup", { char = P1, item = GEM }))
+    eq(j.error, "that item is inside a container (loot takes items out of a container)", "in a container")
+end)

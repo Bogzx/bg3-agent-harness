@@ -143,7 +143,7 @@ local WALK_OSI = {
         if c.dir and c.dir ~= dir then
             RPC.push("loop_stopped", { uuid = job.char, item = item, reversal = true, job = job.id })
             interrupt(job, "stuck: the walk took ladder " .. item .. " " .. c.dir .. " and then back " .. dir
-                .. " (the game's route loops through it)")
+                .. " (the game's route loops through it); interact on " .. item .. " climbs it")
             return
         end
         c.dir, c.y = dir, here[2]

@@ -150,6 +150,7 @@ function A.landing_ok(char, spell, dest)
     end
     G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height",
         dest[1], dest[2], dest[3], A.LANDING_FLOOR_SLACK_M)
+        .. "; a landing's y is a floor's own height"
         .. (best and string.format(" (the nearest floor there is at y=%.1f)", best)
             or void and string.format(" (the only floor there is the void's bottom at y=%.1f, a Chasm: a fall there"
                 .. " is fatal)", void)
@@ -388,7 +389,10 @@ reg("cast", function(args)
     if A.two_step_spell(base) and not targets[2] and not A.TASK_POS2 and not ui then
         if A.revive_spell(base) then
             G.refuse(tostring(base) .. " is a two-step cast (the body, then the spot they stand up on) and this"
-                .. " action can't give its second pick yet")
+                .. " action can't give its second pick yet"
+                .. "; a Scroll of Revivify through use_ability (ability=\"Scroll of Revivify\","
+                .. " target=<the body>) gives both picks (the body, then the ground beside it); Withers revives"
+                .. " at camp")
         end
         G.refuse(tostring(base) .. " is a two-step teleport (who goes, then the landing) and this action can't give"
             .. " its landing yet")
@@ -403,7 +407,7 @@ reg("cast", function(args)
     end
     if pos and #targets == 0 and not ui and A.needs_entity(base) then
         G.refuse(tostring(base) .. " takes a creature or an object as its target, not a ground point (cast at the"
-            .. " point it does nothing)")
+            .. " point it does nothing): it takes target=<its id> (get_nearby lists objects too)")
     end
 
     -- Upcasting to the spell's own level is just a normal cast.

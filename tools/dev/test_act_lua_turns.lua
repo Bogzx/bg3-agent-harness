@@ -822,6 +822,7 @@ test("walk: the approach going up a ladder and back down it stops at the reversa
     eq(j.status, "interrupted", "stopped at the reversal")
     assert(j.error:find("the walk took ladder " .. LADDER2 .. " up and then back down", 1, true), j.error)
     assert(not j.error:find("climb it yourself", 1, true), j.error)
+    assert(j.error:find("interact on " .. LADDER2 .. " climbs it", 1, true), j.error)
     eq(#called("PurgeOsirisQueue"), 1, "purged once (the watchdog does not fire after it)")
     restore()
 end)

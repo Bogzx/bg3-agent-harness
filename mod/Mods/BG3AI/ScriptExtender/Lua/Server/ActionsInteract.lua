@@ -188,7 +188,7 @@ reg("interact", function(args)
     end
     if G.b(G.q("IsCharacter", target)) then
         if G.is_dead(target) then
-            G.refuse_ui("looting corpses is not supported by this action yet")
+            G.refuse("interact doesn't loot corpses (loot_corpse does)")
         end
         G.refuse("interact doesn't talk to characters (talk_to does)")
     end
@@ -511,7 +511,7 @@ reg("pickup", function(args)
     end
     if not item or not G.b(G.q("IsItem", item)) then G.refuse("that is not an item") end
     if G.q("GetInventoryOwner", item) ~= nil then
-        G.refuse("that item is inside a container")
+        G.refuse("that item is inside a container (loot takes items out of a container)")
     end
     -- launch-v1 act3_gold_max r1: Pickup on a wall Iron Torch (CanBePickedUp false, listed <usable>) never ran, and
     -- the game raised no PickupFailed: the job re-sent the order twice and timed out after 40 s, twice.

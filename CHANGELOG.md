@@ -114,7 +114,9 @@ game unless it says so.
   Attack at 1.0 m into the same refusal twice. The other refusals and failures in the mod's actions and guard state
   facts only: the advice after them ("move closer first", "travel_to that spot first", "climb it yourself first",
   "pick a landing ...", "Read a Scroll of Revivify ...", "Never jump there again ...") is gone. A tool option is
-  still named as what it does ("force=true casts anyway", "trespass=true walks in anyway", "its variants (which=)").
+  still named as what it does ("force=true casts anyway", "trespass=true walks in anyway", "its variants (which=)"),
+  and facts about the game and the tools stay ("a Scroll of Revivify through use_ability gives both picks ...;
+  Withers revives at camp", "it takes target=<its id>", "loot_corpse does", "interact on <ladder> climbs it").
   A status in a spell's conditions reads with the game's name: "the caster has the Flanked status" (it said "the
   caster has flanked"). A check flag that stays set is recorded: the done result carries `unchecked`, and the
   referee gets a `cast_unchecked` row with the flags and any rule terms the guard couldn't read for that cast.

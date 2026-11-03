@@ -580,7 +580,9 @@ function G.last_seen_hint(target)
     if type(V) ~= "table" or type(V.lastSeen) ~= "function" then return "" end
     local okv, gone, mv = pcall(V.vanished or function() return false end, G.guid(target))
     if okv and gone and type(mv) == "table" and type(mv.pos) == "table" then
-        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f))", mv.ago_s or 0,
+        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f)); See Invisibility,"
+            .. " Faerie Fire or an area attack on that spot reveal it, and it shows itself when it attacks",
+            mv.ago_s or 0,
             mv.pos[1], mv.pos[2], mv.pos[3])
     end
     local ok, m = pcall(V.lastSeen, G.guid(target))
@@ -699,7 +701,8 @@ function G.raised_ladder_refuse(target, from)
     local okr, gap = pcall(N.ladderRaised, p)
     if not okr or type(gap) ~= "number" then return end
     G.refuse(string.format("this ladder is pulled up: its foot hangs %.1fm above the floor, out of reach from below"
-        .. " (a player can't climb it from here; it is lowered from above, often by a lever up there)", gap))
+        .. " (a player can't climb it from here; it is lowered from above, often by a lever up there); route"
+        .. " connectors=true and get_frontier list the other ways up", gap))
 end
 
 function G.closest_hint(char, goal)
