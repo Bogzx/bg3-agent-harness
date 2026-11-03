@@ -190,6 +190,7 @@ def run_files(
             served,
             {"game_settings": {"seed": seed}, "timing": timing},
             instructions.read_text(encoding="utf-8"),
+            run_manifest.arena_cap(environ),
         )
         prompt = f"prompt {condition} sha256 {manifest['prompt']['sha256'][:12]}"
     except ValueError as e:
