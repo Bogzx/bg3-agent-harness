@@ -91,11 +91,12 @@ def test_below_the_pairing_floor_every_model_is_a_pilot_row():
     assert [row["player"] for row in r["models"]] == ["x", "y", "z"]  # by points per match
 
 
-def test_side_a_rate_counts_every_valid_match_and_resamples_pairings():
+def test_side_a_rate_counts_every_valid_match_but_a_self_pairs_replay_and_resamples_pairings():
+    # REVIEW-7 f2: a self-pairing's second match (same seed, mirror twins, same model) replays the first: one sample
     r = arena.results(MIXED, seed=3, b=200)
-    a_points = sum(arena._points(x, "A") for x in MIXED)
-    assert (r["side_a"]["n_matches"], r["side_a"]["n_pairings"]) == (13, 7)
-    assert r["side_a"]["rate"] == pytest.approx(a_points / 13)
+    a_points = sum(arena._points(x, "A") for x in MIXED[:-1])
+    assert (r["side_a"]["n_matches"], r["side_a"]["n_pairings"]) == (12, 7)
+    assert r["side_a"]["rate"] == pytest.approx(a_points / 12)
     lo, hi = r["side_a"]["ci"]
     assert lo <= r["side_a"]["rate"] <= hi
     skewed = arena.results(league(seed=4, n=60, side_a=0.3), seed=1, b=200)["side_a"]
@@ -175,3 +176,86 @@ def test_side_a_rate_by_round_1_pattern_with_n():
         "B1|A2|B1": {"n_matches": 2, "rate": 0.75},
         "none": {"n_matches": 1, "rate": 1.0},
     }
+
+
+def test_side_a_by_pattern_and_favoured_count_a_self_pairs_replay_once():
+    ms = [
+        dict(m("s", "x", "x", "B"), r1_pattern="A1|B2|A1"),
+        dict(m("s", "x", "x", "B"), r1_pattern="A1|B2|A1"),  # the replay
+        dict(m("s", "x", "x", "A", valid=False), r1_pattern="A1|B2|A1"),
+    ]
+    r = arena.results(ms, seed=1, b=10)
+    assert r["side_a_by_pattern"] == {"A1|B2|A1": {"n_matches": 1, "rate": 0.0}}
+    assert (r["favoured"]["n_matches"], r["favoured"]["rate"]) == (1, 1.0)
+
+
+def test_the_favoured_sides_win_rate_overall_and_by_why():
+    # REVIEW-7 (a): the six DeepSeek self-matches of 2026-11-03, as pairings (each self-pair's replay left out)
+    ms = [
+        dict(m("s1", "d", "d", "B"), r1_pattern="A1|B2|A1"),
+        dict(m("s1", "d", "d", "B"), r1_pattern="A1|B2|A1"),
+        dict(m("s3", "d", "d", "A"), r1_pattern="B1|A2|B1"),
+        dict(m("s3", "d", "d", "A"), r1_pattern="B1|A2|B1"),
+        dict(m("s5", "d", "d", "B"), r1_pattern="B1|A1|B1|A1"),
+        dict(m("s5", "d", "d", "B"), r1_pattern="B1|A1|B1|A1"),
+        dict(m("p", "x", "y", "draw"), r1_pattern="A1|B1|A1|B1"),  # the first actor gets half a point
+        m("q", "x", "y", "A"),  # no pattern: not counted
+    ]
+    fav = arena.results(ms, seed=1, b=10)["favoured"]
+    assert (fav["n_matches"], fav["rate"]) == (4, pytest.approx(3.5 / 4))
+    assert fav["wilson"] == list(stats.wilson(3.5, 4))  # pyright: ignore[reportArgumentType]
+    assert fav["by"]["pair"]["n_matches"] == 2 and fav["by"]["pair"]["rate"] == 1.0
+    assert fav["by"]["first"]["n_matches"] == 2 and fav["by"]["first"]["rate"] == 0.75
+
+
+def test_bradley_terry_with_a_seat_meets_its_score_equations():
+    # REVIEW-7 f1: the favoured player's strength counts times the seat factor g in its game
+    games = [("x", "y", 1.0, 1), ("y", "x", 1.0, 1), ("x", "y", 0.0, -1), ("x", "z", 0.5, 0), ("z", "y", 1.0, 1)]
+    theta, lg = arena.bradley_terry_seat(games)
+    p, g = {k: math.exp(v) for k, v in theta.items()}, math.exp(lg)
+
+    def win(i, j, f):  # i's expected points
+        ci, cj = (g if f > 0 else 1.0), (g if f < 0 else 1.0)
+        return ci * p[i] / (ci * p[i] + cj * p[j])
+
+    for k, pk in p.items():
+        pts = 0.5 + sum(s if i == k else 1 - s for i, j, s, _ in games if k in (i, j))
+        exp = pk / (pk + 1) + sum(win(i, j, f) if i == k else 1 - win(i, j, f) for i, j, _, f in games if k in (i, j))
+        assert pts == pytest.approx(exp, rel=1e-8)
+    seat_pts = 0.5 + sum(s if f > 0 else 1 - s for _, _, s, f in games if f)
+    seat_exp = g / (g + 1) + sum(win(i, j, f) if f > 0 else 1 - win(i, j, f) for i, j, _, f in games if f)
+    assert seat_pts == pytest.approx(seat_exp, rel=1e-8)
+
+
+def test_without_a_favoured_side_the_seat_fit_is_the_plain_fit():
+    games = [("x", "y", 1.0), ("x", "y", 1.0), ("y", "x", 1.0), ("x", "z", 0.5)]
+    theta, lg = arena.bradley_terry_seat(games)
+    assert lg == pytest.approx(0.0)
+    assert theta == pytest.approx(arena.bradley_terry(games))
+
+
+def league_seat(seed, n, seat):
+    """Pairings of two equal players where the favoured side (from the pattern) wins with probability seat."""
+    rng, out = random.Random(seed), []
+    for k in range(n):
+        pattern = rng.choice(["A1|B2|A1", "B1|A2|B1", "A1|B1|A1|B1"])
+        fav = (arena.favoured(pattern) or {})["side"]
+        for on_a, on_b in (("x", "y"), ("y", "x")):
+            won = fav if rng.random() < seat else ("B" if fav == "A" else "A")
+            out.append(dict(m(f"q{k:03d}", on_a, on_b, won), r1_pattern=pattern))
+    return out
+
+
+def test_results_report_the_seat_with_its_bootstrap_interval_and_keep_equal_models_level():
+    r = arena.results(league_seat(seed=7, n=40, seat=0.8), seed=1, b=200)
+    seat = r["seat"]
+    assert seat["n_games"] == 80
+    assert seat["ci"][0] > 0.6 and seat["ci"][0] <= seat["p_favoured"] <= seat["ci"][1]
+    assert seat["p_favoured"] == pytest.approx(0.8, abs=0.08)
+    always = arena.results(league_seat(seed=7, n=20, seat=1.0), seed=1, b=50)  # every pairing splits 1-1 by seat
+    assert [row["elo"] for row in always["models"]] == pytest.approx([1500.0, 1500.0])  # the seat is not skill
+    assert always["seat"]["p_favoured"] > 0.95
+    assert (
+        arena.results(league(seed=2, n=20), seed=1, b=10, min_pairings=1)["seat"]["n_games"] == 0
+    )  # no pattern, no seat games
+    assert arena.results([m("p", "x", "y", "A")], seed=1, b=10)["seat"] is None  # nothing rated

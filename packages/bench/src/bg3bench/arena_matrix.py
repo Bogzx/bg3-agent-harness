@@ -9,6 +9,7 @@ relative to the repo):
     pairs = [["profiles/a.toml", "profiles/a.toml"]]  # or: the pairs to play, instead of every pair of models
     arenas = ["open_field"]                           # packages/bench/arenas/<name>.json
     repeats = 1
+    single = false                                    # true: a self-pair plays one match per repeat, not two
     allow_unverified = false                          # true: profiles whose status is "offline"
 
     [budget]
@@ -21,7 +22,10 @@ relative to the repo):
     [budget.max_cost_models]                          # optional: USD per side per match for that model's side,
     "profiles/a.toml" = 2.0                           # in place of its arena's max_cost (a dear model, a cheap one)
 
-Give `models` or `pairs`. A pair may name one profile twice (a self-match: graded, never rated). The jobs are
+Give `models` or `pairs`. A pair may name one profile twice (a self-match: graded, never rated). With `single`, a
+self-pair's pairing is its m1 only: its m2 would play the same model on the same seed with mirror twins, a replay of
+m1 (fight analysis seed-5 m1/m2: the same naturals in the same order; REVIEW-7 f2), so a seat calibration run plays
+one match per seed (repeats = the seeds). The jobs are
 matches, repeat-major, the two matches of a pairing one after the other (match 1: the pair's first model on side A,
 match 2: on side B), so a stopped matrix leaves whole pairings. Each job's `seed` is its arena's seed + repeat - 1:
 a pairing's two matches share it, each repeat rolls its own dice (fairness audit S1-4: one seed for every repeat
@@ -119,11 +123,12 @@ def plan(
     condition: Mapping[str, str] | None = None,
     max_cost_models: Mapping[str, float] | None = None,
     seeds: Mapping[str, int],
+    single: bool = False,
 ) -> list[dict[str, Any]]:
     """The matches. A model is matrix_cli.load_profile's {"slug", "client", "effort", "profile"}; budgets: profile
     -> its model budget files; condition: arena -> its condition id (default rules); max_cost_models: profile -> its
     side's cap in place of the arena's (each side's in sides.<A|B>.max_cost; the arena's stays in max_cost); seeds:
-    arena -> its seed (a job's `seed` is it + repeat - 1)."""
+    arena -> its seed (a job's `seed` is it + repeat - 1); single: a self-pair (one profile twice) plays m1 only."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
     if over := sorted(a for a in arenas if seeds[a] + repeats - 1 > scenario.SEED_MAX):
@@ -139,7 +144,8 @@ def plan(
         for x, y in pairs:
             for a in arenas:
                 pid = f"{matrix._slug(player(x))}~vs~{matrix._slug(player(y))}~{a}~r{r}"
-                for n, (first, second) in enumerate(((x, y), (y, x)), 1):
+                swaps = ((x, y),) if single and x["profile"] == y["profile"] else ((x, y), (y, x))
+                for n, (first, second) in enumerate(swaps, 1):
                     jobs.append(
                         {
                             "id": f"{pid}~m{n}",
@@ -221,7 +227,9 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise MatrixFileError(f"{path}: {e}") from None
-    if unknown := sorted(set(raw) - {"name", "models", "pairs", "arenas", "repeats", "allow_unverified", "budget"}):
+    if unknown := sorted(
+        set(raw) - {"name", "models", "pairs", "arenas", "repeats", "single", "allow_unverified", "budget"}
+    ):
         raise MatrixFileError(f"{path}: unknown keys: {', '.join(unknown)}")
     name = raw.get("name")
     if not isinstance(name, str) or not name or name != matrix._slug(name):
@@ -229,6 +237,9 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
     repeats = raw.get("repeats", 1)
     if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
         raise MatrixFileError(f"{path}: repeats must be an integer >= 1")
+    single = raw.get("single", False)
+    if not isinstance(single, bool):
+        raise MatrixFileError(f"{path}: single must be true or false")
     names: list[str] = raw.get("arenas") or []
     if not _strs(names) or len(set(names)) != len(names):
         raise MatrixFileError(f"{path}: arenas must list arena names once each")
@@ -255,6 +266,7 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
             condition={a: arenas[a]["condition"] for a in playable},
             max_cost_models=budget["max_cost_models"],
             seeds={a: arenas[a]["seed"] for a in playable},
+            single=single,
         )
     except ValueError as e:
         raise MatrixFileError(f"{path}: {e}") from None
@@ -266,7 +278,9 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
 
 
 def print_plan(m: Mapping[str, Any], out: TextIO) -> None:
-    out.write(f"arena matrix {m['name']}: {len(m['jobs'])} matches, {len(m['jobs']) // 2} pairings\n")
+    out.write(
+        f"arena matrix {m['name']}: {len(m['jobs'])} matches, {len({j['pairing'] for j in m['jobs']})} pairings\n"
+    )
     out.writelines(f"  skipped {a}: {why}\n" for a, why in sorted(m["skipped"].items()))
     for j in m["jobs"]:
         res = ", ".join(f"{f} ${r:.2f}" for f, r in sorted(reserves(j).items()))

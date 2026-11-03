@@ -123,6 +123,31 @@ def test_explicit_pairs_allow_a_self_match_and_take_the_arenas_condition(tmp_pat
     assert arena_matrix.reserves(jobs[0]) == {"runtime/budget-arena.json": 1.0, "runtime/budget-deepseek.json": 1.0}
 
 
+def test_single_plays_a_self_pair_once_per_repeat_and_other_pairs_twice(tmp_path):
+    # REVIEW-7 f2: a self-pair's m2 replays its m1 (same seed, mirror twins, same model)
+    body = BODY.replace(
+        'models = ["profiles/opus.toml", "profiles/flash.toml", "profiles/claude.toml"]',
+        'pairs = [["profiles/flash.toml", "profiles/flash.toml"], ["profiles/flash.toml", "profiles/opus.toml"]]',
+    ).replace('arenas = ["field", "draft_open_field"]', 'arenas = ["field"]\nsingle = true')
+    m = load(tmp_path, body)
+    ids = [j["id"] for j in m["jobs"]]
+    assert ids == [
+        f"{p}~field~r{r}~m{n}"
+        for r in (1, 2)
+        for p, ns in (
+            ("pi_deepseek-flash~vs~pi_deepseek-flash", (1,)),
+            ("pi_deepseek-flash~vs~pi_anthropic_claude-opus-5.5", (1, 2)),
+        )
+        for n in ns
+    ]
+    assert [j["seed"] for j in m["jobs"] if "vs~pi_deepseek-flash~" in j["id"]] == [1001, 1002]
+    out = io.StringIO()
+    arena_matrix.print_plan(m, out)
+    assert out.getvalue().startswith("arena matrix arena-test: 6 matches, 4 pairings\n")
+    with pytest.raises(MatrixFileError):
+        load(tmp_path / "x", body.replace("single = true", 'single = "yes"'))
+
+
 def test_reserves_and_charges_go_to_both_models_files(tmp_path):
     jobs = load(tmp_path)["jobs"]
     opus_flash = jobs[0]
