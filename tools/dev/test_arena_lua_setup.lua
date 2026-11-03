@@ -320,6 +320,36 @@ test_setup("arena.setup: anyone on no team in the fight fails setup, named: a pa
     eq(j.error, "not on a team and in the fight: Axe", "an origin on no team")
 end)
 
+-- fairness audit S1-3 / live 14: a Nautiloid Tank and a Cartilaginous Chest took turns in the combat
+test_setup("arena.setup: an item in the fight fails setup, named as an item", function()
+    local TANK = "dddddddd-0000-0000-0000-000000000001"
+    game({ combat = { A1, A2, A3, A4, B1, B2, B3, B4, TANK } })
+    world[TANK], NAMES[TANK] = { pos = { 5, 0, 5 }, comps = { ServerItem = {} } }, "Nautiloid Tank"
+    local _, j = setup(arena())
+    run(j)
+    world[TANK], NAMES[TANK] = nil, nil
+    eq(j.status, "failed", "an item joined")
+    eq(j.error, "not on a team and in the fight: Nautiloid Tank (an item)", "error")
+    eq(Ar.state, nil, "no match begun")
+end)
+
+-- fairness audit S1-3: the sitters are bodies in the field; none may stand near one team's line
+test_setup("arena.setup: a sitter under 10 m from a member of either line fails setup, named; 10 m passes", function()
+    game()
+    world[SH].pos = { 12, 0, 10.5 } -- Bree, B's 4th, lands at (2.25, 10.5): 9.75 m
+    local _, j = setup(arena())
+    run(j)
+    eq(j.status, "failed", "Sha 9.75 m from B's line")
+    eq(j.error, "the sitter Sha stands 9.8 m from Bree (team B's line); a sitter must stand 10 m or more from both "
+        .. "lines", "error")
+    eq(#named("RestoreParty"), 0, "stopped before RestoreParty")
+    game()
+    world[SH].pos = { 12.3, 0, 10.5 } -- 10.05 m
+    _, j = setup(arena())
+    run(j)
+    eq(j.status, "done", "10.05 m: " .. tostring(j.error))
+end)
+
 test_setup("arena.setup: the names are the display names after joining the party; one that differs fails setup",
     function()
     local got = {}

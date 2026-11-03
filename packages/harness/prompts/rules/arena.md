@@ -8,6 +8,8 @@ perceive. The other player's calls and text never reach you, only their effects 
 - A side acts only when one of its characters is acting. An action at another time is refused at once, naming the
   side that is acting ("side B is acting"), and nothing is done. `end_turn` and `wait_for` with `my_turn` wait until
   one of your characters is acting.
+- `set_reactions` selects the character first, so it works only while one of your characters is acting; at another
+  time it is refused: "<name> could not be selected: not your turn (side B is acting)".
 - An action with a character of the other team is refused: "<name> is not on your side". A job of the other side
   can't be polled or cancelled: "not your job".
 - Both sides share one game screen. A reaction prompt of the other side's character is that side's to answer: while

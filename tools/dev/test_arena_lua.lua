@@ -85,9 +85,9 @@ local function entity(u, bare)
     return e
 end
 
-local function characters()
+local function characters(comp)
     local out = {}
-    for u, w in pairs(world) do if w.comps.ServerCharacter then out[#out + 1] = entity(u, true) end end
+    for u, w in pairs(world) do if w.comps[comp or "ServerCharacter"] then out[#out + 1] = entity(u, true) end end
     table.sort(out, function(a, b) return a.Uuid.EntityUuid < b.Uuid.EntityUuid end)
     return out
 end
@@ -100,7 +100,9 @@ Ext = {
     Events = { Tick = { Subscribe = function(_, fn) tickers[#tickers + 1] = fn end },
         StatsLoaded = { Subscribe = function(_, fn) statsLoaded[#statsLoaded + 1] = fn end } },
     Entity = { Get = function(u) return entity(u) end,
-        GetAllEntitiesWithComponent = function(c) return c == "ServerCharacter" and characters() or {} end },
+        GetAllEntitiesWithComponent = function(c)
+            return (c == "ServerCharacter" or c == "ServerItem") and characters(c) or {}
+        end },
     Stats = { Get = function(n) return n == "Projectile_FireBolt" and { DisplayName = "Fire Bolt" } or nil end },
     StaticData = { Get = function(uuid) return { Name = uuid } end },
     Loca = { GetTranslatedString = function(h) return h end },
