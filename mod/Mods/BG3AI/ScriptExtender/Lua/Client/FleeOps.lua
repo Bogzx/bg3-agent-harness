@@ -93,7 +93,8 @@ end
 
 -- The game's own flee state of `char` (eoc::FleeCapabilityComponent, what the HUD is built from): Flags
 -- (FleeErrorFlags: Region, EnemyTooClose, CantMove, Downed, Incapacitated, Condition, Summon, PartyFollower),
--- FleeDistance and CurrentFleeDistance, into st.flags / st.need / st.at. v010 live window 5 (Balthazar's fight,
+-- FleeDistance (the nearest enemy) and CurrentFleeDistance (the distance needed), into st.flags / st.at / st.need.
+-- v010 live window 5 (Balthazar's fight,
 -- enemy at 1.4 m): CanFlee false but the VM's FleeBlockCause empty and FleeDistance -1/-1, so flee said "the game
 -- gives no reason".
 function FL.capability(char, st)
@@ -103,8 +104,10 @@ function FL.capability(char, st)
     pcall(function() for _, f in pairs(cap.Flags or {}) do flags[#flags + 1] = tostring(f) end end)
     table.sort(flags)
     st.flags = flags
-    local okn, need = pcall(function() return cap.FleeDistance end)
-    local oka, at = pcall(function() return cap.CurrentFleeDistance end)
+    -- bg3se's names are the legacy field_1C / field_20 guesses; live (window 5, enemy at 2.3 m): FleeDistance 2.26189
+    -- (the nearest enemy), CurrentFleeDistance 27 (the distance needed)
+    local oka, at = pcall(function() return cap.FleeDistance end)
+    local okn, need = pcall(function() return cap.CurrentFleeDistance end)
     st.need, st.at = okn and tonumber(need) or nil, oka and tonumber(at) or nil
 end
 

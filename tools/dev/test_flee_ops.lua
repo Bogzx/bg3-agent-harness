@@ -118,12 +118,14 @@ r = ops["ui.flee_probe"]({})
 ok(r.flee and r.flee.can == true and r.flee.cause == nil, "flee_probe: CanFlee true, an empty cause is none")
 -- v010 live window 5: the HUD's cause and distance empty (-1/-1); the game's FleeCapability of the fleeing character
 pcp.CanFlee, pcp.FleeBlockCause, pcp.FleeDistance = false, nil, { Value = -1, Max = -1 }
-local caps = { ["claude-uuid"] = { FleeCapability = { Flags = { "EnemyTooClose" }, FleeDistance = 27.0,
-    CurrentFleeDistance = 1.42 } } }
+-- the live window-5 values (load 7): FleeDistance is the nearest enemy, CurrentFleeDistance the distance needed
+local caps = { ["claude-uuid"] = { FleeCapability = { Flags = { "EnemyTooClose", "Region" }, FleeDistance = 2.26189,
+    CurrentFleeDistance = 27.0 } } }
 Ext = { Entity = { Get = function(u) return caps[u] end } }
 r = ops["ui.flee_probe"]({ char = "claude-uuid" })
 ok(r.flee and r.flee.can == false and r.flee.cause == nil and r.flee.flags and r.flee.flags[1] == "EnemyTooClose"
-    and r.flee.need == 27.0 and r.flee.at == 1.42, "flee_probe {char}: the game's FleeCapability flags and distances")
+    and r.flee.flags[2] == "Region" and r.flee.need == 27.0 and r.flee.at == 2.26189,
+    "flee_probe {char}: the game's FleeCapability flags; at = FleeDistance (enemy), need = CurrentFleeDistance (27)")
 r = ops["ui.flee_probe"]({})
 ok(r.flee and r.flee.flags == nil, "flee_probe without char: no component read")
 r = ops["ui.flee_probe"]({ char = "nobody" })
