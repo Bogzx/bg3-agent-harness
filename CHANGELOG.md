@@ -146,6 +146,10 @@ game unless it says so.
     on. `wait=false` keeps the old pipelining.
   - travel_to and regroup name what the trip passed: a PASSED line before CHANGES (what came into view at a leg's
     end and is out of view at the trip's end, not in the agent's last view; nearest first, up to 6).
+  - The leader's `travel_to` doesn't take along a member more than 24 m away at the trip's start (not re-chained,
+    not waited for; said once: `not with you: e1 Shadowheart 77m (unchained, stays there)`), checks for stragglers
+    only after legs that don't arrive, gives a straggler's walk back 30-60 s for the gap (was a flat 30 s), and a
+    stop on a straggler says how its walk back ended (was a guessed "stuck on a ladder, gap or door?").
   - Out of combat a batch ends with its first walk step: `do_actions` runs (`queue_actions` queues) the steps up to
     and with the first `move_to`/`walk_toward`/`travel_to`/`jump_to` and lists the rest as not run (not queued);
     batches without a walk, or with the walk last, are unchanged. A walk step with `if`/`unless` ends the batch only

@@ -5,6 +5,21 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-03: travel_to doesn't take along a member who is far away at the start
+
+- The leader's `travel_to` no longer re-chains or waits for a member more than 24 m away when the trip starts
+  (party.FOLLOW_M). Its first lines say so once: `not with you: e1 Shadowheart 77m (unchained, stays there)` (a
+  chained one: `(not waited for)`). Members within 24 m are re-chained and waited for as before.
+- No straggler check after the leg that arrives: the trip ends `arrived` and its queued steps run.
+- A straggler's walk back gets time for the gap: max(30 s, gap / 2 m/s + 10 s), at most 60 s (party.walk_back_s);
+  it was a flat 30 s.
+- The stop gives how the walk back ended instead of a guessed cause: `e1 Shadowheart 57m behind can't keep up — its
+  walk back: no walkable ground leads further toward it (57m left); route(who=...) for their way, regroup(), or
+  stay(who) to leave them on purpose` (was `... can't keep up (stuck on a ladder, gap or door?): ...`).
+- Why (ops/logs/keep-up-v010.md): the bench saves start with Shadowheart 77-86 m off; the trip re-chained her, her
+  walk back didn't fit in 30 s and the leader's trip stopped at once, in 10 of 171 launch-v1 runs and every bp-live
+  v0.10 probe walk from those saves. A trip that still stops on a straggler stays as it was (owner decision).
+
 ## 2026-11-03: a walk step its condition skips doesn't end the batch
 
 - `do_actions` / `queue_actions`: a walk step with `if`/`unless` no longer drops the steps after it before anything

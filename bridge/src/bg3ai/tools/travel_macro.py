@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -224,7 +225,9 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             if why:
                 stop = why + ": try get_frontier, a door, or a jump"
                 break
-            if crew:
+            # not after the leg that arrives (launch-v1 deepseek act3 r3: an arrived trip stopped on a member 19 m
+            # behind and dropped its queued talk_to)
+            if crew and macros.dist(here, dest) > macros.TRAVEL_ARRIVE_M:
                 note, behind = _wait_for_stragglers(char, here, crew, outer)
                 if note:
                     lines.append(note)
@@ -359,10 +362,16 @@ def _trip_crew(char: str, lines: list) -> set | None:
         # stopped "e4 Karlach 37m … can't keep up" after a 15 s walk back. A camp walk is the leader's own.
         return set()
     rows = party.apart(st, stay=overview._stay)
+    far = [r for r in rows if r["dist"] is not None and r["dist"] > party.FOLLOW_M and not r["stay"]]
+    if far:
+        lines.append("not with you: " + ", ".join(
+            f"{queueing._label(r['uuid'])} {render.num(round(r['dist']))}m"
+            + (" (unchained, stays there)" if r["unchained"] else " (not waited for)") for r in far))
+    rows = [r for r in rows if r not in far]
     took = overview._rechain(party.rechain_candidates(rows, overview._member_busy), char)
     if took:
         lines.append("chained to follow: " + ", ".join(queueing._label(u) for u in took))
-    other = {r["uuid"] for r in rows if r["other_level"]}
+    other = {r["uuid"] for r in rows if r["other_level"]} | {r["uuid"] for r in far}
     return {r.get("uuid") for r in st.get("party") or []
             if r.get("uuid") != char and (r.get("chained") is True or r.get("uuid") in took)
             and r.get("uuid") not in overview._stay and r.get("uuid") not in other
@@ -471,7 +480,8 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
     for u, _d in behind:
         queueing._queue_ignore[u] = set()
         queueing._queues().add(u, [actq.Step("travel_to", {"x": x, "y": y, "z": z})], replace=True)
-    end = time.monotonic() + 30.0
+    cap = party.walk_back_s(max(d for _, d in behind))
+    end = time.monotonic() + cap
     while any(queueing._queues().busy(u) for u, _ in behind) and time.monotonic() < end and not stopped():
         time.sleep(0.2)
     rows = {r.get("uuid"): r.get("pos") for r in (queueing._watch_conn().try_rpc("act.watch") or {}).get("party") or []}
@@ -479,10 +489,21 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
     still = [(u, d) for u, d in still if d > party.STRAGGLER_M]
     if not still:
         return f"{names} fell behind: walked back to {queueing._label(char)}", None
-    left = ", ".join(f"{queueing._label(u)} {render.num(round(d))}m behind" for u, d in still)
+    left = "; ".join(f"{queueing._label(u)} {render.num(round(d))}m behind can't keep up — {_walk_back_end(u, cap)}"
+                     for u, d in still)
     return (f"{names} fell behind; the walk back failed",
-            f"{left} can't keep up (stuck on a ladder, gap or door?): route(who=...) for their way, regroup(), "
-            "or stay(who) to leave them on purpose")
+            f"{left}; route(who=...) for their way, regroup(), or stay(who) to leave them on purpose")
+
+
+def _walk_back_end(u: str, cap: float) -> str:
+    """How a straggler's walk back ended, as its queue said it: 'its walk back: still walking after 52s' or
+    'its walk back: no walkable ground leads further toward it (...)'."""
+    if queueing._queues().busy(u):
+        return f"its walk back: still walking after {render.num(round(cap))}s"
+    q = queueing._queues().queues.get(u)
+    rep = q.last_report if q is not None else None
+    why = re.sub(r"^step \d+ travel_to [^:]*: ?", "", str(rep.stopped or "")) if rep is not None else ""
+    return f"its walk back: {queueing._label(why)}" if why else "its walk back ended there"
 
 
 _ladder_ends, _rank_ways = route_text.ladder_ends, route_text.rank_ways
