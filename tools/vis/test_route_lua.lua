@@ -634,6 +634,36 @@ test("combat: an undiscovered trap in the turn order is not listed; a discovered
     if not ok then error(err, 0) end
 end)
 
+test("combat order: a concentration name that doesn't read is the id on the party's row, 'a spell' on a foe's",
+    function()
+        local V = BG3AI.Visibility
+        local CK = "Target_SHA_Necromancer_Cloudkill"
+        local heroE = { CombatParticipant = {}, Concentration = { SpellId = { Prototype = "Target_Own_Spell" } } }
+        local foeE = { CombatParticipant = {}, Concentration = { SpellId = { Prototype = CK } } }
+        local ce = { TurnOrder = { Round = 1, CurrentGroups = { { Members = { { Entity = heroE }, { Entity = foeE } } } } } }
+        heroE.CombatParticipant.CombatHandle = ce
+        local saved = { V.entity, V.entityUuid, V.characterVisible, Ext.Stats }
+        V.entity = function(u) return u == P1 and heroE or (u == "foe-1" and foeE) or nil end
+        V.entityUuid = function(e) return e == heroE and P1 or (e == foeE and "foe-1" or nil) end
+        V.characterVisible = function() return true end
+        Ext.Stats = { Get = function() return nil end } -- no name reads (REVIEW-18m)
+        local oldOsi = Osi
+        Osi = setmetatable({ IsInCombat = function() return 1 end }, { __index = oldOsi })
+        local ok, err = pcall(function()
+            local ctx = V.context()
+            ctx.observers = {}
+            ctx.rules = {}
+            local conc = {}
+            for _, o in ipairs(S.combat(ctx).order) do conc[o.uuid] = o.concentration end
+            eq(conc[P1], "Target_Own_Spell", "the party's row: the id")
+            eq(conc["foe-1"], "a spell", "a foe's row: not the id")
+        end)
+        Osi = oldOsi
+        V.entity, V.entityUuid, V.characterVisible, Ext.Stats = saved[1], saved[2], saved[3], saved[4]
+        S.nameMiss = {}
+        if not ok then error(err, 0) end
+    end)
+
 -- ---- look_at on carried items (State.lua state.entity) ------------------------------
 
 test("look_at: an item the party carries (also in a bag) is inspectable; another's is not", function()

@@ -506,7 +506,7 @@ function S.combat(ctx)
                                 if okd then o.disabled = d end
                             end
                         end
-                        o.concentration = concentration(me)
+                        o.concentration = concentration(me, ctx.is_party[u])
                         if o.concentration then noteConcentration(ctx, u, me) end
                         out.order[#out.order + 1] = o
                     end
@@ -756,7 +756,7 @@ function S.nearby(ctx, args)
                         statuses = V.statuses(e) }
                     if #o.statuses == 0 then o.statuses = nil end
                     -- the concentration icon over a visible creature (bridge CHANGES: "concentrating on Cloudkill")
-                    o.concentration = concentration(e)
+                    o.concentration = concentration(e, false) -- not the party's (the loop's own check)
                     if o.concentration then noteConcentration(ctx, u, e) end
                     local dead = truthy(osi(Osi.IsDead, u))
                     if dead then o.dead = true end

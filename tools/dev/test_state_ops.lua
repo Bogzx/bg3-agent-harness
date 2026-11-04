@@ -229,5 +229,16 @@ test("a concentration name that doesn't read says why in the log, once (w14 L1 t
     if not ok then error(err, 0) end
 end)
 
+test("the character sheet of a party member whose concentration name doesn't read shows the id (REVIEW-18m)",
+    function()
+        local savedStats, CK = Ext.Stats, "Target_SHA_Necromancer_Cloudkill"
+        ents[GALE].Concentration = { SpellId = { Prototype = CK } }
+        Ext.Stats = { Get = function() return nil end }
+        local ok, r = pcall(handlers["state.character"], { uuid = GALE, sections = {} })
+        Ext.Stats, ents[GALE].Concentration, S.nameMiss = savedStats, nil, {}
+        if not ok then error(r, 0) end
+        eq(r.concentration, CK, "the reader's own: the id")
+    end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end
