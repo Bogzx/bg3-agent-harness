@@ -68,15 +68,18 @@ class GameMovedText(unittest.TestCase):
                                "theirs now")
         self.assertNotIn("not allowed", out)
         self.assertTrue(follow.startswith("PARTY LEFT BEHIND: e1 Karlach 23m, 10m above; e2 Wyll 24m"), follow)
-        self.assertIn("→ regroup(leader=e4) walks them to e4 Claude", follow)
+        self.assertNotIn("→", follow)  # D630: who is left and where; no 'regroup(leader=e4) walks them'
+        self.assertNotIn("regroup", follow)
 
     def test_sealed_area_and_combat(self):
         behind = party.moved_left_behind(s066_status(), CLAUDE)
         sealed = party.game_moved_text("move_to", BY_GAME, CLAUDE, label, None, behind, KARLACH)
         self.assertIn("no walkable way from e1 Karlach to e4 Claude (a sealed story area?)", sealed)
         self.assertNotIn("regroup", sealed)
+        self.assertNotIn("reload", sealed)  # facts only (D630)
         fight = party.game_moved_text("move_to", BY_GAME, CLAUDE, label, None, behind, None, in_combat=True)
-        self.assertIn("in combat: move them toward e4 Claude on their turns", fight)
+        self.assertTrue(fight.rstrip().endswith("; the party is in combat"), fight)  # D630: no 'move_to who=e4 ...'
+        self.assertNotIn("move_to who=", fight)
 
     def test_nobody_left_behind(self):
         st = s066_status()
@@ -117,7 +120,7 @@ class JobText(unittest.TestCase):
         self.assertIn("the game moved " + queueing._label(CLAUDE) + " 22m", out)
         self.assertIn("into Bhaal Temple", out)
         self.assertIn("PARTY LEFT BEHIND", out)
-        self.assertIn("regroup(leader=", out)
+        self.assertNotIn("regroup(leader=", out)  # D630
         paths = [a for op, a in fake.calls if op == "nav.path"]
         self.assertEqual(len(paths), 1)
         self.assertEqual(paths[0]["char"], KARLACH)  # the nearest one (22.9 m)

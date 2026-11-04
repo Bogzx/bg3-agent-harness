@@ -216,6 +216,8 @@ class Confirm(Base):
         self.assertIn("doesn't allow a long rest", out)
         self.assertIn("Karlach: turn-based mode is on", out)
         self.assertNotIn("Gale", out)  # Location alone only explains a failure
+        self.assertEqual(inventory._rest_reasons({"blocked": [{"name": "Gale", "flags": ["Dialog"]}]}),
+                         "Gale: in a conversation")  # D630: no "(finish it first)"
         self.assertEqual(seen, [])
         # only soft flags (Location, supplies): the rest goes on
         self.g.try_rpc = lambda op, args=None, **kw: (
@@ -329,6 +331,7 @@ class Confirm(Base):
             out = inventory.long_rest()
         self.assertIn("gather_failed", out)
         self.assertIn("DEAD: Wyll — the game won't gather a dead party member", out)
+        self.assertIn("at camp, revives them; swap_party takes them out of the party)", out)
         self.assertNotIn("Spiritual Weapon", out)
         dead[0] = False
         with mock.patch.object(time, "sleep"):

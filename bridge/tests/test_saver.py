@@ -247,7 +247,7 @@ class SaverTest(unittest.TestCase):
         s = rig.saver()
         s.save("a")
         self.assertIn("already being saved", s.save("a"))
-        self.assertIn("REFUSED", s.save("b"))
+        self.assertIn("is still being saved (menu); another save is refused until it says SAVED", s.save("b"))  # D630
         self.assertTrue(wait_until(lambda: s.pending is None))
 
     def test_settle_drops_a_queued_save(self):

@@ -208,8 +208,7 @@ def _travel_async(char: str, w: dict, marker: str, objective: str, target: str, 
         return reporting._finish("travel_to", {"to": what}, body + "\n" + out, t0)
     prog = _trip_progress(char)
     body += (f"; {prog}" if prog else "") + f"; {queued}."
-    hint = reporting._next_walk_hint()
-    return reporting._finish("travel_to", {"to": what}, body + ("\n" + hint if hint else ""), t0, issued=True)
+    return reporting._finish("travel_to", {"to": what}, body, t0, issued=True)
 
 
 def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str, float | None] | None:
@@ -343,9 +342,7 @@ def _notes_window() -> str:
         return ""
     _notes_shown.add(lr[0])
     plan = overview._LEVEL_NUDGE.plan_hint(core.MEMORY)
-    return (f"NOTES WINDOW: ~{render.num(round(lr[1]))}s of walking left: note() what happened / plan now "
-            "(not after it ends, when the character would stand idle); queue_actions the arrival first"
-            + ("\n" + plan if plan else ""))
+    return f"NOTES WINDOW: ~{render.num(round(lr[1]))}s of walking left" + ("\n" + plan if plan else "")
 
 
 @core.mcp.tool()
@@ -505,7 +502,7 @@ def _early_wake(low: str, lead_s: float, view: dict) -> str | None:
     left = max(0.0, max(w[2] for w in walks))
     who = sorted({queueing._label(w[1]) for w in walks if w[1]})
     return (f"{', '.join(w[3] for w in walks)}: arriving, ETA ~{render.num(round(left, 1))}s (early wake, "
-            f"lead_s={render.num(lead_s)}): plan the next step now. What you issue"
+            f"lead_s={render.num(lead_s)}). What is issued"
             + (f" for {', '.join(who)}" if who else "") + " runs after the walk arrives (it does not cancel it).")
 
 
@@ -627,8 +624,7 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
             if not quiet:
                 busy_seen = now
             elif not kinds & WORLD_EVENT_KINDS and now - busy_seen >= EVENT_GRACE_S:
-                body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt): "
-                        "act instead (talk_to, move_to, queue_actions)")
+                body = f"nothing is running that would cause {tgt} (no job, no queue, no prompt)"
                 noop = "cannot_happen" if busy_seen == 0.0 else None
                 break
             elif quiet and busy_seen == 0.0 and reporting._noop_waits["n"] >= 1:
@@ -643,7 +639,7 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
                 # S009: 'dialogue_started' after a finished 3 m walk waited its full 10 s, and the last minutes
                 # went to 45+30+40 s waits with nothing running. Nothing of ours can cause it: say so now.
                 body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt) after "
-                        f"{render.num(round(now - t0, 1))}s: act instead (talk_to, move_to, queue_actions)")
+                        f"{render.num(round(now - t0, 1))}s")
                 break
         first = False
         if now > deadline:

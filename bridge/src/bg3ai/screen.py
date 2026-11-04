@@ -40,7 +40,10 @@ def shot_lock(path: Path, timeout: float = 10.0) -> Iterator[None]:
                 break
             except BlockingIOError:
                 if time.monotonic() > deadline:
-                    raise TimeoutError("another process is capturing the screen; try again") from None
+                    raise TimeoutError(
+                        f"another process held the screen capture lock for {timeout:g}s (waited the whole time; "
+                        "no frame was taken)"
+                    ) from None
                 time.sleep(0.05)
         yield
     finally:

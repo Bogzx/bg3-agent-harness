@@ -252,7 +252,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     """The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.
     Says how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with
     fire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
-    help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.
+    help (which way a ladder climbs, which ladders the way up or down takes). connectors=true lists ladders/doors even when a path exists.
     A goal on ground the party hasn't seen or walked gets only its distance and direction.
     go=true: check and go in one call: travel_to the goal when a path exists, else to the closest walkable spot (it returns at the trip's end, as travel_to does)."""
     t0 = time.monotonic()
@@ -348,7 +348,7 @@ def path_preview(target: str = "", x: float | None = None, y: float | None = Non
 
 def _route_hint(args: dict) -> str:
     """nav.route for a failed walk toward a pos/target: the height gap, the closest spot, the best ladder/door,
-    and one NEXT step (route.hint_text). '' if it can't be had."""
+    and the route fact the rest doesn't state (route.hint_text). '' if it can't be had."""
     q = {k: args[k] for k in ("char", "pos", "target") if k in args}
     res = core.game.try_rpc("nav.route", q) if ("pos" in q or "target" in q) else None
     if not isinstance(res, dict):
@@ -413,9 +413,8 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
         if hz:
-            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}. Go around it"
-                           " (another direction, get_frontier) or "
-                           f"{macros.hazard_way_out(res.get('hazard'))}.", t0)
+            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz} "
+                           f"({macros.hazard_fact(res.get('hazard'))}).", t0)
         body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
                 + (f" ({n} spots checked)" if n is not None else ""))
         note = render.opened_note(res, core.H)
@@ -425,8 +424,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
         if not hint and not others:
             hint = _wedged_hint(args.get("char"), args.get("pos")).lstrip("; ")
-        return reporting._finish("walk_toward", args, body + ("\n" + hint if hint else others + "." if others else
-                                                    ". Try another direction, get_frontier, or a door."), t0)
+        return reporting._finish("walk_toward", args, body + ("\n" + hint if hint else others + "."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
     if res.get("path_m") is not None:
         head += f" (path {render.num(res['path_m'])}m{', winding' if res.get('winding') else ''})"

@@ -77,8 +77,10 @@ class Pure(unittest.TestCase):
         self.assertEqual(longnav.stop_note(ends[1], None), "")  # once is no pattern yet
         note = longnav.stop_note(e, None, "Karlach")
         self.assertIn("tried 2x: blocked 2x at (101.8,22.2,481.3)", note)
-        self.assertIn("Don't try this approach again", note)
-        self.assertIn('travel_to waypoint="Road"', longnav.stop_note(e, {"name": "Road", "to_goal_m": 84.8}))
+        self.assertTrue(note.endswith(")"), note)  # D630: the stops, no "Don't try this approach again"
+        self.assertNotIn("Don't", note)
+        self.assertTrue(longnav.stop_note(e, {"name": "Road", "to_goal_m": 84.8}).endswith(
+            "; the Road waypoint is 84.8m from it"))
 
     def test_a_ladder_to_a_dead_end(self):
         d = longnav.DeadEnds(clock_seq("01:11"))
@@ -135,7 +137,8 @@ class RouteText(unittest.TestCase):
         self.assertIn("NO WALKABLE PATH from here: the engine finds no way there from this side", out)
         self.assertIn("CLOSEST YOU HAVE BEEN: (102,22,482), 34.8m from it", out)
         self.assertIn("WAYPOINTS (unlocked, nearest the goal first): Emerald Grove Environs 170.3m from it (you: 59.7m)", out)
-        self.assertIn("NEXT: interact", out)  # the rock is no known dead end yet
+        self.assertTrue(out.endswith("then 47m from the goal (closer)"), out)  # the rock is no known dead end yet
+        self.assertNotIn("NEXT", out)  # D630: the "(closer)" ladder row is the fact
 
     def test_after_two_stops_the_side_is_closed_and_the_rock_is_flagged(self):
         d = longnav.DeadEnds(clock_seq("01:11", "01:15"))
@@ -145,21 +148,23 @@ class RouteText(unittest.TestCase):
         self.assertIn("BLOCKED BEFORE (this session): blocked 2x at (101.8,22.2,481.3)", out)
         self.assertIn("Cragged Rock <ladder>", out)
         self.assertIn("LEADS TO A DEAD END", out)
-        self.assertIn("NEXT: this side is closed", out)
-        self.assertNotIn("NEXT: interact", out)
+        self.assertNotIn("NEXT", out)  # D630: BLOCKED BEFORE is the fact; no "don't walk it again ..."
+        self.assertNotIn("don't walk it again", out)
 
     def test_a_waypoint_much_nearer_the_goal_is_the_next_step(self):
         res = {**FAR_NO_PATH, "waypoints": [{"name": "The Risen Road", "pos": [82.0, 33.3, 597.6], "to_goal_m": 84.8,
                                              "dist": 200.0}]}
         out = route.render_route(res, render.Handles(), "objective Karlach")
-        self.assertIn('NEXT: travel_to waypoint="The Risen Road" (84.8m from the goal, you are 125m), then route again', out)
+        self.assertIn("WAYPOINTS (unlocked, nearest the goal first): The Risen Road 84.8m from it (you: 200m)", out)
+        self.assertNotIn("NEXT", out)  # D630
+        self.assertIn("waypoint The Risen Road is 84.8m from the goal (you are 125m)", route.hint_text(res, render.Handles()))
 
     def test_far_path_found_is_a_path(self):
         res = {"from": [0, 0, 0], "goal": [150, 0, 0], "straight_m": 150.0, "dir": "E", "dy": 0, "far": True,
                "reachable": True, "length_m": 310.0, "legs": [{"to": [150, 0, 0], "at_m": 310, "m": 310, "dir": "E"}]}
         out = route.render_route(res, render.Handles(), "it")
         self.assertIn("PATH 310m (a long way round: 2.1x the straight line)", out)
-        self.assertIn("NEXT: travel_to/move_to walks it", out)
+        self.assertTrue(out.endswith("PATH 310m (a long way round: 2.1x the straight line)\n  1. 310m E"), out)  # D630
 
 
 class RouteJump(unittest.TestCase):
@@ -172,7 +177,9 @@ class RouteJump(unittest.TestCase):
                "closest": {"pos": [-697.9, 8.1, -799], "to_goal_m": 17.7, "dy_to_goal": -14.1, "path_m": 1.2}}
         out = route.render_route(res, render.Handles(), "it")
         self.assertIn("JUMP ACROSS: from (-689,1.3,-786) (walk 16.4m) over a 3m gap, 2.5m down to (-686,-1.2,-786)", out)
-        self.assertIn("NEXT: travel_to x,y,z = (-689,1.3,-786) (the edge), then jump_to x,y,z = (-686,-1.2,-786)", out)
+        self.assertNotIn("NEXT", out)  # D630: the JUMP ACROSS line is the fact
+        self.assertIn("a jump across from (-689,1.3,-786) over a 3m gap reaches (-686,-1.2,-786), 9.2m from the goal",
+                      route.hint_text(res, render.Handles()))
 
     def test_lower_ground_listed_beyond_a_jump(self):
         """S038/S039 Nightsong's Prison: the islands 21 m below, 14 m out; route said only 'find a ladder/ledge'."""
@@ -187,12 +194,14 @@ class RouteJump(unittest.TestCase):
         self.assertNotIn("then jump_to x,y,z = (-455.5", out)  # out of reach: no jump suggested
         res["lower"][0]["reach_m"] = 30.0
         out = route.render_route(res, render.Handles(), "objective Balthazar")
-        self.assertIn("jumping down from there reaches ~30m: move_to the edge, then jump_to (-455.5,-27.8,-1408.8)", out)
+        self.assertIn("156.8m from the goal; within a jump down from there (~30m) (a 21.1m fall", out)  # D630
+        self.assertNotIn("move_to the edge", out)
         self.assertIn("(a 21.1m fall: fall damage unless the jumper has Feather Fall)", out)
         res["feather_fall"] = True  # FEATHER_FALL on the jumper: no fall damage, no warning
         self.assertNotIn("fall damage", route.render_route(res, render.Handles(), "objective Balthazar"))
-        self.assertIn("NEXT: move_to x,y,z = (-443.5,-6.7,-1416.3) (the edge), then jump_to x,y,z = (-455.5,-27.8,-1408.8)",
-                      out)
+        self.assertNotIn("NEXT", out)
+        self.assertIn("a floor 21.1m below at (-455.5,-27.8,-1408.8) is within a jump from the edge at "
+                      "(-443.5,-6.7,-1416.3)", route.hint_text(res, render.Handles()))
 
     def test_teleport_hint_for_lower_ground_beyond_a_jump(self):
         """S039: Scrolls of Misty Step / Dimension Door in the bags while the agent looked for a jump off the island."""
@@ -217,7 +226,8 @@ class RouteJump(unittest.TestCase):
         res = {"from": [-413, 1.1, -1441], "goal": [-516, -60, -1397], "straight_m": 127.3, "dir": "NW", "dy": -61.1,
                "far": True, "unknown_reason": "no floor under the character (mid-jump or falling)"}
         out = route.render_route(res, render.Handles(), "it")
-        self.assertIn("path unknown: no floor under the character (mid-jump or falling); step onto plain ground", out)
+        self.assertIn("path unknown: no floor under the character (mid-jump or falling)", out)
+        self.assertNotIn("step onto plain ground", out)  # D630
 
     def test_no_path_to_the_void_says_so(self):
         """S039 21:44 route (-516,-60,-1397): a goal with no ground at all is 'no ground there', not 'unknown'."""
@@ -253,9 +263,10 @@ class TravelTrips(Base):
         self.assertNotIn("tried", first)
         second = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("tried 2x: blocked 2x at (0,0,0) 60m short", second)
-        self.assertIn("Don't try this approach again", second)
+        self.assertNotIn("Don't try this approach again", second)  # D630
         third = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("KNOWN DEAD END toward it: blocked 2x", third)
+        self.assertNotIn("take another approach", third)
         self.assertIn("tried 3x", third)
 
     def test_dead_ends_carry_the_level_and_a_load_clears_them(self):
@@ -390,7 +401,7 @@ class TravelTrips(Base):
         finally:
             self.g.try_rpc, self.g.run_job = orig_try, orig_job
         self.assertIn("FAILED — can't fast travel now (Location)", out)
-        self.assertIn("Way out: walk out the way you came", out)
+        self.assertTrue(out.endswith(" No spot on this level where travel worked is known."), out)  # D630: a fact
         self.assertNotIn("ui.fast_travel", seen)
 
     def test_route_tool_shows_this_sessions_dead_ends(self):

@@ -181,12 +181,13 @@ class TravelProgress:
         return None
 
 
-def hazard_way_out(h: dict | None) -> str:
-    """The advice after 'go around it': a chasm or lava never burns out, so offer a jump or a ladder instead."""
+def hazard_fact(h: dict | None) -> str:
+    """Whether the surface in the way lasts: a chasm or lava never burns out, other surfaces do (D630: the fact, no
+    'go around it / wait for it')."""
     s = str((h or {}).get("surface") or "").lower() if isinstance(h, dict) else ""
     if "chasm" in s or "lava" in s or "void" in s:
-        return "jump_to across it (if it is narrow) or take a ladder/door (get_frontier)"
-    return "wait for it to burn out"
+        return "it does not burn out"
+    return "a surface like it burns out in time"
 
 
 def hazard_text(h: dict | None) -> str:

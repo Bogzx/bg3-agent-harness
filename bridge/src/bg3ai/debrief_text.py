@@ -61,8 +61,7 @@ def _trust(r: dict) -> dict:
 
 
 
-REVIVE_HINT = ("revive now: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members; "
-               "or reload before the fight")
+REVIVE_HINT = "revives: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members"
 
 
 def _enemy_list(rec: dict, n: int = 4) -> str:
@@ -309,75 +308,20 @@ def fuller(rec: dict, history: list[dict]) -> dict | None:
                  and not thin(r) and not fled(r) and r.get("key_facts")), None)
 
 
-def _fled_tips(rec: dict) -> list[str]:
-    """A flight's plan: don't set the fight off again; if it starts, get out cleaner (no kill order)."""
-    tips = ["avoid it: don't repeat what started it (or be gone before it starts)"]
-    hard = max(rec.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
-    if hard and hard.get("dmg_to_us") and not _unseen_top(rec):
-        tips.append(f"if it starts again, leave by a way out of {hard['name']}'s reach")
-    if (rec.get("pos") or {}).get("surrounded"):
-        tips.append("Disengage first when in melee")
-    unused = (rec.get("consumables") or {}).get("unused") or []
-    if unused:
-        scroll = any(re.search(r"(?i)\bscroll\b", x) for x in unused)
-        tips.append("an unused scroll/potion may cover the escape"
-                    + (" (in combat a scroll costs its spell's action)" if scroll else ""))
-    return tips
-
-
-def capped_enemies(rec: dict, history: list[dict] | None = None) -> set:
-    """Enemies a per-hit cap (dmg_cap) was measured on in this record or any record in history: the cap is the
-    enemy's own (Orin's Unstoppable), so one measure holds for every attempt (S066: 19:17 measured it, the solo
-    19:12 try and the 1-round tests could not)."""
-    return {c["enemy"] for r in [rec, *(history or [])] for c in r.get("dmg_cap") or [] if c.get("enemy")}
-
-
 def last_attempt(rec: dict, history: list[dict] | None = None) -> str:
+    """What the last attempt was: its summary (grade, enemies, rounds, key facts) and, when it measured little
+    (thin), the fuller attempt vs the same enemies. Facts only (D630, orchestrator 2026-11-04): the harness's own
+    tips ('focus X first', 'pre-buff ...') are gone; the agent's own lessons ride next to it (reporting)."""
     if fled(rec):
-        return (f"LAST ATTEMPT: {rec.get('summary')} — an escape, not a fight: plan the way out or avoid it: "
-                + "; ".join(_fled_tips(rec)[:4]))
+        return f"LAST ATTEMPT: {rec.get('summary')} — an escape, not a fight"
     why = thin(rec)
     src = fuller(rec, history or []) if why else None
-    base = src or rec
-    tips = []
-    if rec.get("allies_died"):
-        tips.append(f"keep {rec['allies_died'][0]['name']} alive (heal/shield first, pull the enemies off them)")
-    downs = base.get("downed") or []
-    if downs:
-        tips.append(f"protect {downs[0]['name']} (pre-buff, keep back, heal first)")
-    hard = max(base.get("enemies") or [], key=lambda e: e.get("dmg_to_us", 0), default=None)
-    capped = capped_enemies(rec, history)
-    if _unseen_top(base):
-        tips.append("find what hits you unseen (traps, hidden attackers) or fight out of its reach")
-    elif hard and hard.get("dmg_to_us") and hard["name"] in capped:
-        tips.append(f"{hard['name']} often took 1 per hit: many small hits, or end what shields it first")
-    elif hard and hard.get("dmg_to_us"):
-        down = _gone(base)
-        if hard["name"] not in down:
-            tips.append(f"focus {hard['name']} first")
-        else:   # never a focus on an enemy the record shows down: the hardest hitter still standing
-            up = max((e for e in base.get("enemies") or [] if e["name"] not in down), default=None,
-                     key=lambda e: e.get("dmg_to_us", 0))
-            if up and up.get("dmg_to_us"):
-                tips.append(f"after {hard['name']} ({down[hard['name']]}), focus {up['name']} first")
-    if any(t.get("low") for t in base.get("dmg_types") or []):
-        tips.append("switch damage types")
-    unused = (rec.get("consumables") or {}).get("unused") or []
-    if unused:
-        # BG3 reads a scroll in combat for the spell's action cost (our tools' S061 "not available during combat"
-        # refusal was a harness gap, act A7), so no "out of combat only" here
-        scroll = any(re.search(r"(?i)\bscroll\b", x) for x in unused)
-        tips.append("use the unused scroll/potion" + (" (in combat a scroll costs its spell's action)" if scroll else ""))
-    pos = base.get("pos") or {}
-    if pos.get("surrounded") or (pos.get("elev_m") or 0) >= ELEV_M:
-        tips.append("open from range / high ground, fight at a chokepoint")
-    tips = tips or ["pre-buff, open from range or high ground, focus one target"]
     thin_note = ""
     if why:
         thin_note = f" — {why}, so it measured little" + (
             f"; the fuller attempt vs them ({_outcome(src)}, {src.get('session') or 'earlier'}{_hhmm(src)}): "
             + "; ".join((src.get("key_facts") or [])[:3]) if src else "")
-    return f"LAST ATTEMPT: {rec.get('summary')}{thin_note} — plan a different approach: " + "; ".join(tips[:4])
+    return f"LAST ATTEMPT: {rec.get('summary')}{thin_note}"
 
 
 def fight_note(rec: dict) -> str:

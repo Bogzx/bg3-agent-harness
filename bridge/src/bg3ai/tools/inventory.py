@@ -193,8 +193,7 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
         if why == "Interrupted":
             # Live 2026-10-10 17:5x (S031-pre-riddle): the game answers Interrupted to a real mouse drag + Insert click
             # too, the same game-side block as long_rest's missing ready check. Retrying or hand clicks won't help.
-            body += ("\nthe game interrupted the insert (a real drag and click get the same answer now): don't retry "
-                     "by hand; note it and play on elsewhere")
+            body += "\nthe game interrupted the insert (a real drag and click get the same answer now)"
     else:
         # S037 20:17/20:20: "the panel is still open: ESCAPE closes it" after a story insert that closed it (the
         # pedestal vanished) → the ESCAPE was REFUSED. Look once before saying so.
@@ -352,7 +351,7 @@ def short_rest() -> str:
     act = core.game.try_rpc("nav.activity")
     if isinstance(act, dict) and (act.get("in_combat") or act.get("in_dialogue")):
         why = "in combat" if act.get("in_combat") else \
-            "a party member is in a conversation (finish it first; it may be one you haven't selected)"
+            "a party member is in a conversation (it may be one you haven't selected)"
         return note + "short_rest: FAILED — not pressed: " + why
     # live N4, N7, N11 (C1 replays): a short rest during a revived member's stand-up (act.end_standup) left them in an
     # unfinished action for good, every later walk of theirs travelled=0; N10's stand-up with nothing else running ended
@@ -447,7 +446,7 @@ def _rest_flow_answer(wait_s: float = 8.0, since: Callable[[], int] = lambda: 20
 # "rest screen didn't open" failures, 8 s each, with screenshots, HUD clicks and a save reload to work around.
 _REST_FLAG_TEXT = {
     "Combat": "in combat",
-    "Dialog": "in a conversation (finish it first)",
+    "Dialog": "in a conversation",
     "FTB": "turn-based mode is on (set_party(action=\"turn_based_off\"))",
     "Script": "a story event blocks resting right now",
     "GlobalDisabled": "resting is disabled here",
@@ -627,8 +626,8 @@ def _rest_dead_note(can: Any) -> str:
         if isinstance(can, dict) else set()
     hit = [n for n in dead if n in blocked] or dead
     return (f"\nDEAD: {', '.join(hit)} — the game won't gather a dead party member at camp, so the rest fails on "
-            "them: revive them first (Revivify or a Scroll of Revivify aimed at the character, or Withers at camp), "
-            "or swap them out of the party (swap_party)")
+            "them (Revivify or a Scroll of Revivify aimed at the character, or Withers at camp, revives them; "
+            "swap_party takes them out of the party)")
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

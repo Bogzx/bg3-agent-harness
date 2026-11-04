@@ -675,10 +675,6 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "", bloc
                                  + ("\n" + note if note else ""), t0)
     if note:
         body += "\n" + note
-    if tool in _WALKS:
-        hint = reporting._next_walk_hint()
-        if hint:
-            body += "\n" + hint
     reporting._batch["last"] = "done"
     return reporting._finish(tool, args, body, t0, issued=True)
 

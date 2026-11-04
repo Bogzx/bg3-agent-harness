@@ -27,7 +27,6 @@ from .debrief_text import (  # noqa: F401  (re-exported: callers use debrief.<na
     _outcome,
     _trust,
     append,
-    capped_enemies,
     fight_note,
     fled,
     fuller,
@@ -454,7 +453,7 @@ class Tracker:
                 f.warned.add(("down", who))
                 by = downs[0].get("by")
                 return [f"WARNING: {who} went down first again (last time vs these enemies too: r{downs[0].get('round')}"
-                        + (f", by {by}" if by else "") + "): keep them back, heal or shield them first"]
+                        + (f", by {by}" if by else "") + ")"]
             break
         return []
 
@@ -466,7 +465,7 @@ class Tracker:
                 if t.get("enemy") == enemy and t.get("type") == dtype and t.get("low"):
                     f.warned.add(("type", enemy, dtype))
                     return [f"WARNING: {dtype} did little to {enemy} last time too ({_low_why(t)}, "
-                            f"{r.get('session') or 'earlier'}): use another damage type on it"]
+                            f"{r.get('session') or 'earlier'})"]
         return []
 
     def last_time_rec(self, cs: dict) -> dict | None:
