@@ -69,13 +69,17 @@ RPC.register("nav.path", function(args)
         return { unknown_goal = true, straight_m = round(U.dist(cp, target), 1), dir = N.direction(cp, target),
             dy = round(target[2] - cp[2], 1) }
     end
-    local r0 = N.path(char, target)
+    -- A target id takes the entity path (as move_to and the guard do): no end tolerance, the approach ring when the
+    -- centre can't be walked to. A path to a creature ends at its edge, and a large one's edge is > 2 m from its
+    -- centre (REVIEW-17 F1: the point path's end tolerance said NOT REACHED for a foe in reach).
+    local r0 = N.path(char, args.pos and target or args.target)
     if not r0 then error("no path", 0) end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
     -- A found path with no nodes ends on the walker's own spot (readResult flags a short end only from a node): to a
-    -- point farther than the walker's end tolerance it reaches nothing, as a path that ends short does (w12 L1a)
-    if r.reachable and r.nodes == 0 and not r.partial and cp and U.dist(cp, target) > N.PATH_END_TOL_M then
+    -- point farther than the walker's end tolerance it reaches nothing, as a path that ends short does (w12 L1a).
+    -- Not for a target id: standing next to a large creature is a 0-node path to its centre > 2 m away.
+    if args.pos and r.reachable and r.nodes == 0 and not r.partial and cp and U.dist(cp, target) > N.PATH_END_TOL_M then
         r.partial, r.end_pos, r.end_off = true, U.vec(cp, 1), round(U.dist(cp, target), 1)
     end
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end

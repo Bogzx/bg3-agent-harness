@@ -634,6 +634,32 @@ test("nav.path: a path whose last node is by the walker stays partial (readResul
     eq(r.partial, true, "ends short"); near(r.end_off, 3.4, "short by"); near(r.length_m, 0.1, "walk")
 end)
 
+-- REVIEW-17 F1: path_preview(target=<creature>) took the point path (end tolerance 2 m) and the 0-node rule, so a
+-- large foe (an Apostate Destroyer) read NOT REACHED from next to it, and the path to its edge read partial
+test("nav.path to a creature id: a path to a large foe's edge, or none from next to it, reaches it", function()
+    local FOE = "ffffffff-0000-0000-0000-000000000009"
+    local V = BG3AI.Visibility
+    local entity, visible = V.entity, V.characterVisible
+    V.entity = function(u) local e = entity(u); if e and u == FOE then e.ServerCharacter = {} end return e end
+    V.characterVisible = function() return true end
+    local ok, err = pcall(function()
+        world[FOE] = { -2.5, 0, 0 }
+        nodesFor = function() return {} end -- next to it: the engine's path has no nodes
+        local r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.reachable, true, "reachable"); eq(r.partial, nil, "next to it: not short")
+        world[FOE] = { -8, 0, 0 }
+        N.frame = N.frame + 1
+        nodesFor = function() return { { -3, 0, 0 }, { -5.5, 0, 0 } } end -- ends at its edge, 2.5 m from its centre
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.reachable, true, "reachable"); eq(r.partial, nil, "the edge: not short"); near(r.length_m, 5.5, "walk")
+        -- the same spot as a coordinate is still judged by the walker's end tolerance
+        r = RPC.ops["nav.path"]({ pos = { -8, 0, 0 } })
+        eq(r.partial, true, "a point 2.5 m past the path's end")
+    end)
+    V.entity, V.characterVisible, world[FOE] = entity, visible, nil
+    if not ok then error(err, 0) end
+end)
+
 test("nav.activity reports a harmful surface under a party member", function()
     Osi.IsOnStage = function() return 1 end
     fire = function() return true end
