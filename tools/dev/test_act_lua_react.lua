@@ -212,8 +212,8 @@ test("path_provokes: a visible enemy with its reaction whose reach the path leav
         osiv[key("CanSee", GOB, P1)] = nil
         eq(#G.path_provokes(P1, path), 0, "the goblin can't see the mover: nothing")
         osiv[key("CanSee", GOB, P1)] = 1
-        eq(#G.path_provokes(P1, path, { 2 }), 0, "the reach left on a jump/climb link (points[2] ends one): nothing")
-        eq(#G.path_provokes(P1, path, { 3 }), 1, "a link elsewhere on the path: still provoked")
+        -- a jump/climb link is no IgnoreAoO spell (Interrupt_AttackOfOpportunity's conditions): it provokes too
+        eq(#G.path_provokes(P1, path, { 2 }), 1, "the reach left on a jump/climb link (points[2] ends one): provoked")
     end)
     BG3AI.Visibility = saved
     if not ok then error(err, 0) end
