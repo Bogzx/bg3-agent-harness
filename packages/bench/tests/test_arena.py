@@ -319,7 +319,9 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "turns": {"A": 2, "B": 1},
         "forced": {"A": 0, "B": 0},
         "r1_pattern": "A1|B1",
-        "favoured": {"side": "A", "why": "first"},
+        "first_actor": "A",
+        "favoured": None,  # no pair in round 1
+        "round_first": [{"round": 1, "first": "A", "how": None}, {"round": 2, "first": "A", "how": None}],
         "luck": None,
     }
 
@@ -329,15 +331,46 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
     [
         ("A1|B2|A1", {"side": "B", "why": "pair"}),  # seed 1: B's twins back to back
         ("B1|A2|B1", {"side": "A", "why": "pair"}),  # seed 3
-        ("B1|A1|B1|A1", {"side": "B", "why": "first"}),  # seed 5: no pair, B acted first
-        ("A2|B2", {"side": "A", "why": "first"}),  # both have a pair: the first actor
+        ("B1|A1|B1|A1", None),  # seed 5: no pair (an alternation rule's every round 1)
+        ("A2|B2", None),  # both have a pair
         (None, None),
         ("", None),
     ],
 )
-def test_the_favoured_side_is_read_from_round_1s_order_alone(pattern, want):
-    # REVIEW-7 (a): the pair side when only one side has a pair, else the first actor; fixed before any result
+def test_the_favoured_side_is_the_pair_side_read_from_round_1s_order_alone(pattern, want):
+    # REVIEW-7 (a) / seat fix: the pair side when only one side has a pair, else none; fixed before any result
     assert arena.favoured(pattern) == want
+
+
+@pytest.mark.parametrize(
+    ("pattern", "want"), [("A1|B2|A1", "A"), ("B1|A1|B1|A1", "B"), ("B2|A2", "B"), (None, None), ("", None)]
+)
+def test_the_first_actor_is_round_1s_first_phase_side(pattern, want):
+    assert arena.first_actor(pattern) == want
+
+
+def test_round_first_reads_the_mods_arena_round_records_else_each_rounds_first_arena_turn():
+    # seat fix O3/O3a audit: seed-7 m1 r2 began with A's phase passed whole (Cedar down), B's arena_turn first
+    def turn(side, rnd):
+        return ev(1, "arena_turn", side=side, character="x", members=["x"], names=["x"], round=rnd)
+
+    marked = [
+        ev(1, "arena_round", round=1, first="A", how="turn"),
+        turn("A", 1),
+        turn("B", 1),
+        ev(2, "arena_round", round=2, first="A", how="passed"),
+        turn("B", 2),
+    ]
+    assert arena.round_first(marked) == [
+        {"round": 1, "first": "A", "how": "turn"},
+        {"round": 2, "first": "A", "how": "passed"},
+    ]
+    old = [r for r in marked if r["ev"] != "arena_round"]  # recorded before the mod wrote arena_round
+    assert arena.round_first(old) == [
+        {"round": 1, "first": "A", "how": None},
+        {"round": 2, "first": "B", "how": None},
+    ]
+    assert arena.round_first([]) == []
 
 
 def test_round_1s_phase_pattern_counts_each_phases_characters_in_order():

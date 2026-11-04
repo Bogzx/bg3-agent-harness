@@ -171,11 +171,18 @@ def test_side_a_rate_by_round_1_pattern_with_n():
         dict(m("p3", "x", "y", "A", valid=False), r1_pattern="A1|B2|A1"),  # invalid: not counted
         m("p3", "y", "x", "A"),  # no pattern (graded before it existed)
     ]
-    assert arena.results(ms, seed=1, b=10)["side_a_by_pattern"] == {
-        "A1|B2|A1": {"n_matches": 2, "rate": 0.0},
-        "B1|A2|B1": {"n_matches": 2, "rate": 0.75},
-        "none": {"n_matches": 1, "rate": 1.0},
+    by = arena.results(ms, seed=1, b=10)["by_pattern"]
+    assert {k: (v["n_matches"], v["side_a"]["rate"]) for k, v in by.items()} == {
+        "A1|B2|A1": (2, 0.0),
+        "B1|A2|B1": (2, 0.75),
+        "none": (1, 1.0),
     }
+    # seat fix: the first actor's rate per pattern too, each with its Wilson interval
+    assert by["A1|B2|A1"]["first_actor"]["rate"] == 0.0  # A acted first, B won both
+    assert by["B1|A2|B1"]["first_actor"]["rate"] == 0.25
+    assert by["none"]["first_actor"] is None
+    assert by["B1|A2|B1"]["side_a"]["wilson"] == list(stats.wilson(1.5, 2))  # pyright: ignore[reportArgumentType]
+    assert by["A1|B2|A1"]["first_actor"]["wilson"] == list(stats.wilson(0, 2))
 
 
 def test_side_a_by_pattern_and_favoured_count_a_self_pairs_replay_once():
@@ -185,11 +192,12 @@ def test_side_a_by_pattern_and_favoured_count_a_self_pairs_replay_once():
         dict(m("s", "x", "x", "A", valid=False), r1_pattern="A1|B2|A1"),
     ]
     r = arena.results(ms, seed=1, b=10)
-    assert r["side_a_by_pattern"] == {"A1|B2|A1": {"n_matches": 1, "rate": 0.0}}
+    assert r["by_pattern"]["A1|B2|A1"]["n_matches"] == 1
     assert (r["favoured"]["n_matches"], r["favoured"]["rate"]) == (1, 1.0)
+    assert (r["first_actor"]["n_matches"], r["first_actor"]["rate"]) == (1, 0.0)
 
 
-def test_the_favoured_sides_win_rate_overall_and_by_why():
+def test_the_pair_sides_and_the_first_actors_win_rates():
     # REVIEW-7 (a): the six DeepSeek self-matches of 2026-11-03, as pairings (each self-pair's replay left out)
     ms = [
         dict(m("s1", "d", "d", "B"), r1_pattern="A1|B2|A1"),
@@ -201,11 +209,13 @@ def test_the_favoured_sides_win_rate_overall_and_by_why():
         dict(m("p", "x", "y", "draw"), r1_pattern="A1|B1|A1|B1"),  # the first actor gets half a point
         m("q", "x", "y", "A"),  # no pattern: not counted
     ]
-    fav = arena.results(ms, seed=1, b=10)["favoured"]
-    assert (fav["n_matches"], fav["rate"]) == (4, pytest.approx(3.5 / 4))
-    assert fav["wilson"] == list(stats.wilson(3.5, 4))  # pyright: ignore[reportArgumentType]
-    assert fav["by"]["pair"]["n_matches"] == 2 and fav["by"]["pair"]["rate"] == 1.0
-    assert fav["by"]["first"]["n_matches"] == 2 and fav["by"]["first"]["rate"] == 0.75
+    r = arena.results(ms, seed=1, b=10)
+    fav, first = r["favoured"], r["first_actor"]
+    assert (fav["n_matches"], fav["rate"]) == (2, 1.0)  # only the matches with a pair: s1, s3
+    assert fav["wilson"] == list(stats.wilson(2, 2))
+    # every match with a pattern: s1 A first, B won; s3 B first, A won; s5 B first, B won; p A first, a draw
+    assert (first["n_matches"], first["rate"]) == (4, pytest.approx(1.5 / 4))
+    assert first["wilson"] == list(stats.wilson(1.5, 4))  # pyright: ignore[reportArgumentType]
 
 
 def test_bradley_terry_with_a_seat_meets_its_score_equations():
@@ -239,7 +249,7 @@ def league_seat(seed, n, seat):
     rng, out = random.Random(seed), []
     for k in range(n):
         pattern = rng.choice(["A1|B2|A1", "B1|A2|B1", "A1|B1|A1|B1"])
-        fav = (arena.favoured(pattern) or {})["side"]
+        fav = (arena.favoured(pattern) or {}).get("side") or arena.first_actor(pattern)
         for on_a, on_b in (("x", "y"), ("y", "x")):
             won = fav if rng.random() < seat else ("B" if fav == "A" else "A")
             out.append(dict(m(f"q{k:03d}", on_a, on_b, won), r1_pattern=pattern))

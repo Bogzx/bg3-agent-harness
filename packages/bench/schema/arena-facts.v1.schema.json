@@ -58,7 +58,8 @@
         "arena_stall",
         "arena_end_written",
         "arena_group_end_written",
-        "arena_turn_readmitted"
+        "arena_turn_readmitted",
+        "arena_round"
       ]
     }
   },
@@ -648,6 +649,41 @@
           },
           "how": {
             "const": "requested_end_write"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_round"
+          }
+        }
+      },
+      "then": {
+        "description": "A round's first phase, once per round (the seat audit for a turn-order rule that sets who moves first, ops/briefs/arena/seat-fix.md): first is its side; how is turn when that phase was recorded as an arena_turn, passed when every member of it couldn't act and was passed. Not a turn: results read it as round_first.",
+        "required": [
+          "round",
+          "first",
+          "how"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "enum": [
+              "A",
+              "B"
+            ]
+          },
+          "how": {
+            "enum": [
+              "turn",
+              "passed"
+            ]
           }
         }
       }
