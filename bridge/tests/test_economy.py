@@ -290,6 +290,17 @@ class RenderInventory(unittest.TestCase):
         self.assertNotIn("Potion of Healing", out)
         self.assertRegex(out, r"JUNK 5 items ~\d+g")
 
+    def test_junk_in_bags_is_marked_and_counted(self):
+        # w11 L1 act3_gold_max: the junk preview listed 23 items, 22 inside Claude's Pouch / Alchemy Pouch, and
+        # trade sell=junk sold 1: the trade screen shows a bag, not what is in it
+        out = render.render_inventory(bag_junk_inventory(), self.H, "junk")
+        self.assertRegex(out, r"Amethyst in Pouch")
+        self.assertRegex(out, r"Pearl in Alchemy Pouch")
+        self.assertRegex(out, r"JUNK 7 items ~\d+g [\d.]+kg: trade sell=junk at a trader, or manage_inventory op=camp "
+                              r"item=junk; 2 of them are in bags \(Alchemy Pouch, Pouch\), which the trade screen "
+                              r"shows as the bag only")
+        self.assertNotIn("in bags", render.render_inventory(s026_inventory(), self.H, "junk"))
+
     def test_name_filter_alternatives_and_no_match_line(self):
         # S039 21:43: filter "leap,misty,jump,dimension,feather" was one word and matched nothing, silently
         out = render.render_inventory(s026_inventory(), self.H, "misty,potion healing,cup")
@@ -305,6 +316,18 @@ class RenderInventory(unittest.TestCase):
         out = render.render_inventory(s026_inventory(), self.H, "")
         self.assertIn("BETTER GEAR IN BAGS (equip_best equips all):", out)
         self.assertIn("Sentinel Shield → MeleeOffHand", out)
+
+
+def bag_junk_inventory() -> dict:
+    """s026 plus two junk items read inside Claude's bags (state.inventory expand=true: `in` = the bag's name)."""
+    inv = s026_inventory()
+    inv["items"] += [
+        {"uuid": _u(40), "name": "Pouch", "owner": CLAUDE, "container": True},
+        {"uuid": _u(41), "name": "Amethyst", "owner": CLAUDE, "cat": "Gem", "tab": "Misc", "value": 40, "in": "Pouch"},
+        {"uuid": _u(42), "name": "Alchemy Pouch", "owner": CLAUDE, "container": True},
+        {"uuid": _u(43), "name": "Pearl", "owner": CLAUDE, "cat": "Gem", "tab": "Misc", "value": 30,
+         "in": "Alchemy Pouch"}]
+    return inv
 
 
 def lantern_inventory() -> dict:
@@ -429,6 +452,37 @@ class Tools(unittest.TestCase):
         self.assertIn("sold 2 junk items, ~31 g", out)
         self.assertIn("1 more left", out)
         self.assertGreaterEqual(g.trade_reads[0].get("max", 0), 500)  # every slot, not the screen's first 60
+
+    def test_sell_junk_reads_bags_and_says_what_it_left_in_them(self):
+        # w11 L1: preview 23 junk, sell=junk sold 1 and said nothing of the 22 inside the Pouch / Alchemy Pouch
+        g = self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 500, "your_items": [
+            {"uuid": _u(5), "name": "Skull", "price": 2}, {"uuid": _u(40), "name": "Pouch", "price": 1}]}))
+        reads = []
+        rpc = g.rpc
+        g.rpc = lambda op, args=None, *a, **k: (reads.append((op, args)), rpc(op, args, *a, **k))[1]
+        out = progression.trade(sell="junk")
+        self.assertIn(("state.inventory", {"expand": True}), reads)
+        self.assertIn("sold 1 junk items", out)
+        self.assertTrue(out.endswith("\nLEFT IN BAGS 2 junk items (Alchemy Pouch, Pouch): the trade screen shows the "
+                                     "bag, not what is in it"), out)
+        g.trade = {"trader_gold": 500, "your_items": [{"uuid": _u(40), "name": "Pouch", "price": 1}]}
+        out = progression.trade(sell="junk")
+        self.assertIn("nothing sold (none of the junk is on this trade screen)\nLEFT IN BAGS 2 junk items", out)
+
+    def test_sell_junk_left_in_bags_never_counts_what_it_sold_or_what_the_screen_listed(self):
+        # if a trade screen ever lists a bag's contents, a sold one is not "left in bags"
+        self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 500, "your_items": [
+            {"uuid": _u(41), "name": "Amethyst", "price": 40}]}))
+        out = progression.trade(sell="junk")
+        self.assertIn("SOLD Amethyst 40 g", out)
+        self.assertTrue(out.endswith("\nLEFT IN BAGS 1 junk items (Alchemy Pouch): the trade screen shows the bag, "
+                                     "not what is in it"), out)
+        # nothing sold (the trader is broke): an in-bag item the screen listed is not counted as hidden in a bag
+        self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 0, "your_items": [
+            {"uuid": _u(41), "name": "Amethyst", "price": 40}]}))
+        out = progression.trade(sell="junk")
+        self.assertIn("nothing sold", out)
+        self.assertIn("\nLEFT IN BAGS 1 junk items (Alchemy Pouch)", out)
 
     def test_sell_junk_names_what_it_sold_and_counts_what_it_kept(self):
         # human-gap research 2026-11-02: 430 items sold in launch-v1 behind "(sold 30 junk items, ~277 g ...)",

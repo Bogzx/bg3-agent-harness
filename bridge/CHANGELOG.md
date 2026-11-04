@@ -5,14 +5,33 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: junk inside bags is marked as such
+
+- `get_inventory` lists with bags expanded (any filter but equipped/notable) mark an item inside a bag `in <bag>`,
+  and the JUNK line adds `; 22 of them are in bags (Alchemy Pouch, Pouch), which the trade screen shows as the bag
+  only`. w11 L1: the junk preview counted 23 items, 22 of them in Claude's Pouch / Alchemy Pouch, and `trade(sell=
+  "junk")` sold 1.
+- `trade(sell="junk")` reads bag contents too and ends with `LEFT IN BAGS 22 junk items (Alchemy Pouch, Pouch): the
+  trade screen shows the bag, not what is in it` when there are any. When all the junk is in bags it says "nothing
+  sold (none of the junk is on this trade screen)" (before: "no junk in the bags").
+
+## 2026-11-04: trade(npc) follows the conversation to the shop
+
+- `trade(npc=...)` picks the trade answer again when the answer it picked leads to another node that offers one (one
+  pick per node, at most 3). w11 L1: Tolna Tome-Monger's "What do you have on offer?" leads to a whispered node whose
+  answers include "(What do you have on offer?)"; the call failed "no trade screen opened (screen=dialogue)". The
+  result names every pick: `(opened: picked 'What do you have on offer?' then '(What do you have on offer?)')`. When
+  it stops on a node with no trade answer (or after 3), the failure names that node's answers.
+
 ## 2026-11-04: walk_toward goes where the engine's path ends; a short stop at its own point says so
 
 - `walk_toward(direction=...)` walks to where the engine's path to the farthest walkable sample ends (within 2.0 m of
   it), not to the sample itself. launch-v1: 113 direction walks stopped 2-5.4 m short of the sample, at the edge of the
   walkable ground, and failed "could not get closer to the destination".
 - When a walk to walk_toward's own point (a direction, or an objective's way) still stops short, the failure reads
-  `stopped 3.3 m short of the spot walk_toward picked (the farthest walkable point toward N): the walkable ground ends
-  about there; walked 6.2 m`. A point the agent named (move_to, walk_toward target=) keeps "could not get closer to
+  `stopped 3.3 m short of the spot walk_toward picked (the farthest walkable point toward N): <the pathfinder's reason,
+  e.g. the rest of the way needs a jump>; walked 6.2 m` (REVIEW-13 #2: at the engine path's end a short stop is
+  often a creature, door or jump, not the end of the ground). A point the agent named (move_to, walk_toward target=) keeps "could not get closer to
   the destination". The 2.0 m arrival tolerance is unchanged.
 
 ## 2026-11-04: trade counts items already on the table as moved
