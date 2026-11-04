@@ -176,9 +176,11 @@ class Caps(TmpDir):
         for mid, i, o in (("m1", 10, 5), ("m1", 10, 90), ("m2", 100, 0)):
             log.write(runs.clients.Event("usage", message_id=mid, tokens=runs.clients.tokens(i, o, 0, 0)))
         self.assertEqual(runs.claude_totals(self.tmp, 0)["turns"], 5 + 1)
+        self.assertEqual(runs.claude_totals(self.tmp, 0)["open_streams"], 1)  # S003: its cost isn't in the total
         log.end("cap", -2, time.time())
         rate = 1.0 / (541502 + 1000)  # the run's dollars per token before S003
         tot = runs.claude_totals(self.tmp, 0)
+        self.assertEqual(tot["open_streams"], 0)
         self.assertEqual(tot["turns"], 5 + 1 + 2)
         self.assertEqual(tot["tokens"]["input"], 27990 + 1000 + 110)
         self.assertAlmostEqual(tot["cost_usd"], 0.500185 + 1.0 + 200 * rate * (0.500185 + 1.0))
