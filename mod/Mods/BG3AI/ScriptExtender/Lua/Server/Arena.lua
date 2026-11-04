@@ -252,7 +252,10 @@ function Ar.wiped(side)
 end
 
 -- A mirror arena's surfaces read again, report-only (does a cleared fire come back mid-match? cross-review 7828a6f8):
--- the setup's grid out to the clear's reach, recorded as arena_surfaces {when, round, points, read, off, tiles}.
+-- the setup's grid out to the clear's reach, recorded as arena_surfaces {when, round, tiles_total, tiles_read,
+-- radius, off, tiles, appeared, appeared_tiles}: off/tiles = mismatches setup already read (outside the checked
+-- radius), appeared/appeared_tiles = tiles whose mirror reads otherwise only since setup (a fire or grease made in the
+-- fight, or one that came back), not a setup mismatch.
 function Ar.reread_surfaces(when)
     local st = Ar.state
     local sf = st and st.surfaces
@@ -262,8 +265,13 @@ function Ar.reread_surfaces(when)
         record("arena_surfaces", { when = when, round = st.round, error = tostring(r) })
         return
     end
-    record("arena_surfaces", { when = when, round = st.round, points = r.points, read = r.read, radius = r.radius,
-        off = #r.off, tiles = { table.unpack(r.off, 1, 5) } })
+    local old, new = {}, {}
+    for i, t in ipairs(r.off) do
+        if (sf.setup_keys or {})[r.off_keys[i]] then old[#old + 1] = t else new[#new + 1] = t end
+    end
+    record("arena_surfaces", { when = when, round = st.round, tiles_total = r.points, tiles_read = r.read,
+        radius = r.radius, off = #old, tiles = { table.unpack(old, 1, 5) }, appeared = #new,
+        appeared_tiles = { table.unpack(new, 1, 5) } })
 end
 
 function Ar.finish(winner, reason, detail)

@@ -156,7 +156,21 @@
           },
           "surfaces": {
             "type": "object",
-            "description": "a mirror arena's setup surface check: points, read (pairs both read), radius m, off (mismatches; setup fails on any), wide (report-only, out to the clear's reach)"
+            "required": [
+              "tiles_total",
+              "tiles_read"
+            ],
+            "description": "a mirror arena's setup surface check: tiles_total, tiles_read (pairs both read; setup fails under half), radius m, off (mismatches; setup fails on any), wide (report-only, out to the clear's reach)",
+            "properties": {
+              "tiles_total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tiles_read": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
           }
         }
       }
@@ -666,7 +680,7 @@
         }
       },
       "then": {
-        "description": "A mirror arena's surfaces read again, report-only, at round 2's start and at the match's end: off = tiles whose mirror reads another surface, tiles = the first five. Not a turn: results ignore it.",
+        "description": "A mirror arena's surfaces read again, report-only, at round 2's start and at the match's end: off/tiles = mismatches setup already read (outside its checked radius), appeared/appeared_tiles = tiles unmirrored only since setup (made in the fight, or come back), not a setup mismatch. Not a turn: results ignore it.",
         "required": [
           "when"
         ],
@@ -676,14 +690,6 @@
               "integer",
               "null"
             ]
-          },
-          "points": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "read": {
-            "type": "integer",
-            "minimum": 0
           },
           "radius": {
             "type": "number"
@@ -706,6 +712,24 @@
               "round 2",
               "end"
             ]
+          },
+          "tiles_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tiles_read": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "appeared": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "appeared_tiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
