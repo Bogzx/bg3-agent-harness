@@ -469,6 +469,21 @@ class Tools(unittest.TestCase):
         out = progression.trade(sell="junk")
         self.assertIn("nothing sold (none of the junk is on this trade screen)\nLEFT IN BAGS 2 junk items", out)
 
+    def test_sell_junk_left_in_bags_never_counts_what_it_sold_or_what_the_screen_listed(self):
+        # if a trade screen ever lists a bag's contents, a sold one is not "left in bags"
+        self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 500, "your_items": [
+            {"uuid": _u(41), "name": "Amethyst", "price": 40}]}))
+        out = progression.trade(sell="junk")
+        self.assertIn("SOLD Amethyst 40 g", out)
+        self.assertTrue(out.endswith("\nLEFT IN BAGS 1 junk items (Alchemy Pouch): the trade screen shows the bag, "
+                                     "not what is in it"), out)
+        # nothing sold (the trader is broke): an in-bag item the screen listed is not counted as hidden in a bag
+        self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 0, "your_items": [
+            {"uuid": _u(41), "name": "Amethyst", "price": 40}]}))
+        out = progression.trade(sell="junk")
+        self.assertIn("nothing sold", out)
+        self.assertIn("\nLEFT IN BAGS 1 junk items (Alchemy Pouch)", out)
+
     def test_sell_junk_names_what_it_sold_and_counts_what_it_kept(self):
         # human-gap research 2026-11-02: 430 items sold in launch-v1 behind "(sold 30 junk items, ~277 g ...)",
         # with the sale's item events dropped: the agent never learned what went. Every sold item is named now.

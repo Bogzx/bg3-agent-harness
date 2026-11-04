@@ -430,7 +430,7 @@ def _sell_junk(keep: str = "") -> str:
                 f"the trader has only {budget} gold, less than any one junk item") if on_screen
                else "none of the junk is on this trade screen")
         return reporting._finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})"
-                                 + _bag_junk_line(junk), t0)
+                                 + _bag_junk_line(junk, {it["uuid"] for it in on_screen}), t0)
     core._EV_DROP.update(items={core.H._bare(u) for u in picked}, gold=True, until=0.0)
     # Barters of SELL_CHUNK items: the job moves one item per tick (~0.2 s each, a stack's quantity box more), so
     # acceptance 01:07's 72 junk items ran into the 15 s job timeout with nothing sold. A failed barter stops the rest.
@@ -453,12 +453,13 @@ def _sell_junk(keep: str = "") -> str:
         out += f"\n({len(chunks)} barters of up to {SELL_CHUNK} items)"
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
         f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
-    return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set) + _bag_junk_line(junk)
+    return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set) + _bag_junk_line(junk, set(picked))
 
 
-def _bag_junk_line(junk: dict) -> str:
-    """'\nLEFT IN BAGS 22 junk items (Alchemy Pouch, Pouch): the trade screen shows the bag, not what is in it'."""
-    inside = [it for it in junk.values() if it.get("in")]
+def _bag_junk_line(junk: dict, out_of_it: set[str]) -> str:
+    """'\nLEFT IN BAGS 22 junk items (Alchemy Pouch, Pouch): the trade screen shows the bag, not what is in it'.
+    out_of_it: uuids not to count (the ones sold; with nothing sold, the ones the screen listed)."""
+    inside = [it for it in junk.values() if it.get("in") and it.get("uuid") not in out_of_it]
     if not inside:
         return ""
     bags = ", ".join(sorted({str(it["in"]) for it in inside}))
