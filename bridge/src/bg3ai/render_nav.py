@@ -147,6 +147,11 @@ def render_path(res: Any, H: Handles) -> str:
                     + f" movement left {num(res.get('movement_left', '?'))}m")
     if res.get("hazard"):
         bits.append(f"hazard on the way: {compact(res['hazard'], H, 1)}")
+    for p in res.get("provokes") or []:  # the game's preview mark (window 9 MR2): leaving a reach with its reaction left
+        if isinstance(p, dict) and p.get("uuid"):
+            bits.append(f"| provokes an attack of opportunity from {H.get(p['uuid'], p.get('name'))} "
+                        f"{p.get('name') or ''}".rstrip()
+                        + f" where it leaves its reach @{pos(p.get('at'))}, {num(p.get('along_m', '?'))}m along")
     return " ".join(bits)
 
 
