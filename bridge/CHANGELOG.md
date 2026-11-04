@@ -5,6 +5,23 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: walk_toward goes where the engine's path ends; a short stop at its own point says so
+
+- `walk_toward(direction=...)` walks to where the engine's path to the farthest walkable sample ends (within 2.0 m of
+  it), not to the sample itself. launch-v1: 113 direction walks stopped 2-5.4 m short of the sample, at the edge of the
+  walkable ground, and failed "could not get closer to the destination".
+- When a walk to walk_toward's own point (a direction, or an objective's way) still stops short, the failure reads
+  `stopped 3.3 m short of the spot walk_toward picked (the farthest walkable point toward N): the walkable ground ends
+  about there; walked 6.2 m`. A point the agent named (move_to, walk_toward target=) keeps "could not get closer to
+  the destination". The 2.0 m arrival tolerance is unchanged.
+
+## 2026-11-04: trade counts items already on the table as moved
+
+- `trade(offer=<ids>, confirm=true)` after `trade(offer=<the same ids>)` no longer fails "not confirmed: some items
+  couldn't be moved": an item this trade already put on its own side of the table is not moved again (a second move
+  would take it back off) and is listed `ALREADY ON THE TABLE: e83 Scroll of Revivify, ...`. An id on no side still
+  fails the confirm (NOT MOVED). launch-v1: 67 such failures in 19 runs (haiku act3_gold_max r2 seq 16-21).
+
 ## 2026-11-04: screenshot waits where the running game writes
 
 - `screenshot` looks for the PNG in the folder the game's capture layer writes to (the output_dir in the running

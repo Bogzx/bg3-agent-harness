@@ -225,5 +225,53 @@ do
     ok(j.result and j.result.moved and j.result.moved[1] and j.result.moved[1].count == 3, "moved count 3")
 end
 
+-- launch-v1 haiku act3_gold_max r2 seq 16-21 (67 times in 19 runs): trade(offer=a,b) put both on the table, then
+-- trade(offer=a,b,c, confirm=true) found a and b "not on this side of the trade screen" and refused the confirm.
+-- Items already on our side of the table count as moved (no second MoveTradeItem, which would take them back off);
+-- an id on no side still fails the confirm.
+do
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+    local party = dc.PartyCharacterInventories.list[1].Inventory.Slots.list
+    local moves, origCmd = {}, BG3AI.UI.command
+    BG3AI.UI.command = function(d, name, param)
+        if name == "MoveTradeItem" then
+            moves[#moves + 1] = param
+            for _, sl in ipairs(party) do if sl.Object == param then sl.Object = nil end end -- off the inventory
+            for _, sl in ipairs(d.CharacterOffer.Slots.list) do
+                if not sl.Object then sl.Object = param; break end
+            end
+        end
+        if name == "BalanceTrade" then balance(d) end
+        if name == "FinishBarter" then d.CharacterOffer, d.TraderOffer = vmInv({}), vmInv({}) end
+        return true
+    end
+    Ext.Entity.Get = function(u) local i = tonumber(u:match("^p%-(%d+)$")); return i and partyItems[i] or nil end
+    for i = 2, 4 do partyItems[i].InventoryMember = { Inventory = partyInv, EquipmentSlot = i } end
+    local function run(args)
+        local j = jobs[ops["ui.trade"](args).job]
+        for _ = 1, 100 do
+            clock = clock + 50
+            if j.status ~= "running" then break end
+            j.on_tick(j)
+        end
+        return j
+    end
+    local j1 = run({ offer = { "p-2", "p-3" } })
+    ok(j1.status == "done" and #moves == 2, "offer put both on the table: " .. tostring(j1.error) .. " moves " .. #moves)
+    local dry = ops["ui.trade"]({ offer = { "p-2", "p-3", "p-4" }, dry = true })
+    ok(dry.can == true and dry.already and #dry.already == 2, "dry: two already on the table, can confirm")
+    local j2 = run({ offer = { "p-2", "p-3", "p-4" }, confirm = true })
+    ok(j2.status == "done", "confirm with the same ids again: " .. tostring(j2.status) .. " " .. tostring(j2.error))
+    ok(#moves == 3, "only the new item moved (no second move of an item on the table): " .. #moves)
+    local al = j2.result and j2.result.already or {}
+    ok(#al == 2 and al[1].uuid == "p-2" and al[1].name == "PartyThing2" and al[2].uuid == "p-3",
+        "already on the table: p-2, p-3")
+    ok(j2.result and j2.result.moved and #j2.result.moved == 1 and j2.result.moved[1].uuid == "p-4", "moved p-4")
+    local j3 = run({ offer = { "p-9x" }, confirm = true }) -- on no side: not in an inventory
+    ok(j3.status == "failed" and tostring(j3.error):find("couldn't be moved", 1, true)
+        and j3.result and j3.result.problems and #j3.result.problems == 1, "an id on no side still fails")
+    BG3AI.UI.command = origCmd
+end
+
 print(string.format("%d/%d passed", passes, passes + fails))
 if fails > 0 then os.exit(1) end

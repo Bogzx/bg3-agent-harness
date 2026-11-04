@@ -655,6 +655,11 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         else:
             lines.append("TRADER HAS NO GOLD: selling would give your items away; swap for wares of equal value "
                          "(offer=<ids>, request=<ids>) or sell elsewhere")
+    # launch-v1 haiku act3_gold_max r2 seq 16-21: an offer re-sent with confirm named items the first call had put on
+    # the table; they count as moved, and the line says which
+    already = [f"{h(it)} {it.get('name') or '?'}" for it in res.get("already") or [] if isinstance(it, dict)]
+    if already:
+        lines.append("ALREADY ON THE TABLE: " + ", ".join(already))
     probs = [str(p) for p in res.get("problems") or [] if p]
     if probs:  # S028 15:48: "some items couldn't be moved" said nothing about which or why (an equipped hammer)
         lines.append("NOT MOVED: " + "; ".join(probs))

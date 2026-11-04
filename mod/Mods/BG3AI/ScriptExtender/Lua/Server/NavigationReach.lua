@@ -479,6 +479,17 @@ end
 -- harmful surface; the farthest safe sample wins. If every sample is unsafe
 -- the result is {reachable=false, hazard={surface,pos,at_m}}.
 N.DETOUR = 1.5
+-- A direction walk has no goal point of its own: it goes to where the engine's path to the chosen sample ends (within
+-- PATH_END_TOL_M of the sample, else the path is partial and the sample isn't chosen). launch-v1: 113
+-- walk_toward(direction) walks were sent to the sample itself, at the edge of the walkable ground, stopped 2-5.4 m
+-- short of it and failed "could not get closer to the destination" (haiku crash_site_grove r1-r5: 42).
+-- The sample stays when the route is cut (more than ROUTE_MAX_NODES nodes) or its end is on unknown ground.
+local function pathEnd(ctx, r, sample)
+    local pts = r.points
+    local p = pts and #pts >= 2 and r.nodes and r.nodes <= N.ROUTE_MAX_NODES and pts[#pts]
+    if p and N.known(ctx, p) then return U.vec(p, 1) end
+    return sample
+end
 N.DETOUR_LOOSE = 3.0 -- loose: a winding walk still counts (walk_toward)
 N.LOOSE_TRIES = 5
 -- deadline (MonotonicTime ms, optional, NAV-5): no new search past it; what was found so far is the answer
@@ -548,7 +559,8 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
                 avoided = avoided + 1
                 if not firstHazard or c.dd > firstHazard.dd then firstHazard = hz; firstHazard.dd = c.dd end
             else
-                ok = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1), needs_jump = r.needs_jump }
+                ok = { pos = toward and c.pos or pathEnd(ctx, r, c.pos), path_m = r.length_m, straight_m = round(dd, 1),
+                    needs_jump = r.needs_jump }
             end
         end
         memo[i] = ok
@@ -586,7 +598,8 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
                 if r and r.reachable and not r.partial and not r.needs_jump and not r.drop
                     and r.length_m <= math.max(N.DETOUR_LOOSE * dd, dd + 6.0)
                     and not (avoid and (N.surfaceNear(c.pos) or N.routeHazard(r.points))) then
-                    best = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1) }
+                    best = { pos = toward and c.pos or pathEnd(ctx, r, c.pos), path_m = r.length_m,
+                        straight_m = round(dd, 1) }
                     winding = true
                     break
                 end
