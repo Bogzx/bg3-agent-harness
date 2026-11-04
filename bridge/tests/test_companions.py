@@ -229,6 +229,7 @@ class FakeGame:
         self.swapped = False
         self.far = False
         self.block: dict = {}  # ui.travel_block's answer
+        self.can_rest: dict | None = None  # camp.can_rest's answer (None: the op gave nothing)
         self.talking = at_camp  # at_camp tests: a dialogue already up is the companion's (test sets it so)
         self.jobs: list[tuple[str, dict]] = []
 
@@ -246,6 +247,8 @@ class FakeGame:
             return {"party": self.party(), "camp": [dict(c) for c in CAMP]}
         if op == "ui.travel_block":
             return dict(self.block)
+        if op == "camp.can_rest":
+            return self.can_rest
         if op == "ui.state":
             if self.dialogue and self.talking:
                 return {"screen": "dialogue", "dialogue": self.dialogue[0], "region": "Campsite" if self.at_camp else "x"}
@@ -606,6 +609,15 @@ class SwapParty(unittest.TestCase):
         self.assertIn("FAILED at go to camp — cannot travel right now", out)
         self.assertIn("(Location): this area does not let the party go to camp", out)
         self.assertNotIn("act.go_to_camp", [j[0] for j in fake.jobs])
+        self.assertNotIn("short", out)  # camp.can_rest unread: no claim about short rest
+
+    def test_camp_block_states_short_rest_as_read(self):
+        fake = FakeGame([])
+        fake.block = {"hud": True, "error": "Location"}
+        fake.can_rest = {"short_read": True, "short_global_disabled": 0, "short_blocked": []}
+        self.use(fake)
+        out = travel.swap_party(into="Halsin", out="Gale")
+        self.assertIn("fast travel is blocked too; short_rest is open here.", out)
 
     def test_camp_job_failure_appends_the_reason(self):
         fake = FakeGame([])
