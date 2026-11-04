@@ -5,6 +5,28 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: in a fight EVENTS shows the whole batch; casts and party rows are never cut
+
+- While a fight is open (or the drained batch has fight events), a result's EVENTS shows every row of the batch, up
+  to 200 after the folds; out of combat it stays the newest 25. REVIEW-14: 264 of launch-v1's 283 cut results were
+  inside a fight (median 14 rows cut, p90 51, max 150), the enemies' turns the agent could not see.
+- On top of spell_info, every `cast` row and every row whose target or roller is a party member is shown even when
+  the cap cuts the rows around it. A folded row (status group, zero-damage run) is kept when any of its rows would be.
+  `(+N earlier events)` counts only the rows not shown. No tool or tool description changed.
+- Arena: a side's server (BG3AI_SIDE) plays one match, a fight from start to end, so every batch is shown whole (up
+  to 200) whichever turn events of the shared turn group reach that side; its pinned party is its own team, the same
+  rule for A and B. The events are that side's own (the mod filters them per side before the bridge drains them).
+
+## 2026-11-04: the EVENTS tail keeps spell_info; back-to-back zero-damage rows share one
+
+- A `spell_info` line is shown even when it falls before the 25 newest events: it comes once per spell per fight, so
+  a cut one never came back. w11 L4: one end_turn + wait_for (44.6 s) showed `(+56 earlier events)` and Balthazar's
+  Cloudkill spell_info was among them. `(+N earlier events)` counts only what is not shown.
+- Back-to-back `damage ... amount=0` rows that differ only in their target share one row, each target with its count:
+  `damage source={e7 name=Balthazar} type= amount=0 x9 on 5: Apostate Defender e9, Apostate Defender e12 x2, ...`.
+  Only consecutive rows: a damage event names no spell, and a miss is a zero row next to its cast, so the order is
+  unchanged. A single zero row reads as before.
+
 ## 2026-11-04: screenshot waits where the running game writes
 
 - `screenshot` looks for the PNG in the folder the game's capture layer writes to (the output_dir in the running

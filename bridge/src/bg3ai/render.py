@@ -25,6 +25,8 @@ from .render_base import (  # noqa: F401  (re-exported: callers use render.<name
 )
 from .render_events import (  # noqa: F401
     ECHO,
+    EVENT_CEILING,
+    EVENT_LIMIT,
     FLAP,
     STALE_ENDS,
     STATUS_GROUP_MIN,

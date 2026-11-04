@@ -340,6 +340,19 @@ def _drop_events(evs: list | None) -> list:
     return [e for e in evs if not noise(e)]
 
 
+_FIGHT_KINDS = {"combat_started", "round_started", "turn_started", "turn_ended", "combat_ended"}
+
+
+def _event_limit(evs: list) -> int:
+    """The EVENTS cap for one drained batch: the whole batch (up to render.EVENT_CEILING rows) while a fight is open
+    (the fight tracker's, fed after this render) or the batch itself has fight events; else render.EVENT_LIMIT.
+    A side's server (SETTINGS.side) plays one match, a fight from its start to its end: every batch, A's and B's
+    alike, whichever turn events of the shared turn group reach that side."""
+    fight = (SETTINGS.side is not None or reporting._fights().cur is not None
+             or any(e.get("kind") in _FIGHT_KINDS for e in evs))
+    return render.EVENT_CEILING if fight else render.EVENT_LIMIT
+
+
 def _events_text(body: str = "", job: str | None = None, max_wait: float | None = None) -> str:
     """Drained events, minus those the result's own text (body) already reports."""
     def drain(ctx):
@@ -360,7 +373,7 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
             reporting._note_dialogue_speaker(evs)
             reporting.OFFLIMITS.feed(evs)
             parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=turn_plan._party_cached(),
-                                              echo=render.ECHO, turn_ends=render.STALE_ENDS))
+                                              echo=render.ECHO, turn_ends=render.STALE_ENDS, limit=_event_limit(evs)))
     fight = reporting._fight_feed(seen)
     if fight:
         parts.append(fight)
