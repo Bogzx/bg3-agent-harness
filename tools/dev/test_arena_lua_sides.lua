@@ -378,3 +378,42 @@ test("spell_info from a row's concentration: the reading side's, never the harne
     world[B1].comps.Concentration = nil
     if not ok then error(err, 0) end
 end)
+
+-- spell-info-2 in a mirror match: "an action every party member has" is the reading side's own members' spellbooks.
+-- Both teams have Main Hand Attack (no spell_info either way); only B's members have Cleave, so B1's Cleave is new to
+-- A, and an A member's Main Hand Attack is nothing new to B.
+test("spell_info: common actions are judged by the reading side's own spellbooks", function()
+    begin()
+    local realGet = Ext.Stats.Get
+    Ext.Stats.Get = function(n)
+        if n == "Target_MainHandAttack" then
+            return { DisplayName = "Main Hand Attack", SpellFlags = { "IsAttack", "IsMelee" } }
+        elseif n == "Target_Cleave" then
+            return { DisplayName = "Cleave", SpellFlags = { "IsAttack", "IsMelee" } }
+        end
+        return realGet(n)
+    end
+    local function book(...)
+        local s = {}
+        for _, p in ipairs({ ... }) do s[#s + 1] = { Id = { Prototype = p } } end
+        return { Spells = s }
+    end
+    for _, u in ipairs({ A1, A2 }) do world[u].comps.SpellBook = book("Target_MainHandAttack") end
+    for _, u in ipairs({ B1, B2 }) do world[u].comps.SpellBook = book("Target_MainHandAttack", "Target_Cleave") end
+    local ok, err = pcall(function()
+        osiv[key("CanSee", A1, B1)] = 1
+        osiv[key("CanSee", B1, A1)] = 1
+        local s0 = RPC.eventSeq
+        fire("CastedSpell", B1, "Target_MainHandAttack", "Target", "", 1)
+        eq(#infos("A", s0), 0, "B1's Main Hand Attack: on every A hotbar too")
+        fire("CastedSpell", B1, "Target_Cleave", "Target", "", 1)
+        local a = infos("A", s0)
+        eq(#a, 1, "B1's Cleave: no A member has it")
+        eq(a[1] and a[1].data, "Cleave:", "by its shown name")
+        fire("CastedSpell", A1, "Target_MainHandAttack", "Target", "", 1)
+        eq(#infos("B", s0), 0, "A1's Main Hand Attack: on every B hotbar too")
+    end)
+    Ext.Stats.Get = realGet
+    for _, u in ipairs({ A1, A2, B1, B2 }) do world[u].comps.SpellBook = nil end
+    if not ok then error(err, 0) end
+end)
