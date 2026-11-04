@@ -126,10 +126,10 @@ def render_path(res: Any, H: Handles) -> str:
     no path; error_cause is the engine's opaque code, so it is left out."""
     if not isinstance(res, dict):
         return compact(res, H)
-    if res.get("reachable") is False:
+    if res.get("reachable") is False:  # no tool named (night 2026-11-04: 'a jump (jump_to)' pointed at the next call)
         note = opened_note(res, H)
         return (f"UNREACHABLE: no walkable path ({num(res.get('straight_m', '?'))}m straight line): "
-                "it may need a ladder, a jump (jump_to), a door, or another route" + (f"\n{note}" if note else ""))
+                "it may need a ladder, a jump, a door, or another route" + (f"\n{note}" if note else ""))
     if res.get("unknown_goal"):
         return (f"not seen or walked yet: {num(res.get('straight_m', '?'))}m {res.get('dir') or ''} straight line only "
                 "(path_preview checks ground the party has seen or walked)").replace("  ", " ")
