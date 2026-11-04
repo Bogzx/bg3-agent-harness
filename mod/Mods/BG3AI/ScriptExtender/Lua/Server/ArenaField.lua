@@ -1,7 +1,9 @@
 -- A mirror arena's field, cleaned before any twin spawns (arena.setup steps -2 and -1; research R1,
 -- ops/research/arena-mods.md in the website repo: one side could start next to an explosive barrel, a lever, a
 -- pickable potion or a usable object, since only the surfaces were cleared). Every loose item (in no inventory, on
--- stage) within `radius` of the spawns' midpoint (the surface clear's reach, Setup.surface_reach) is made inert:
+-- stage) within `radius` of the spawns' midpoint (the surface clear's reach, Setup.surface_reach), and every item a
+-- dead body there carries (its loot, bags included: w10 L3, two dead mind flayers held a Potion of Speed and a bulb
+-- each, 8.7 m on B's half and 19.1 m on A's; the clean saw neither), is made inert (loot at the body's spot):
 --   pickable          RequestDelete (a story item: SetCanPickUp 0, never deleted)
 --   an armed trap     SetTrapArmed 0
 --   locked            Unlock; closed (doors, lids): Open
@@ -32,20 +34,46 @@ local function q(fn, ...)
     return r
 end
 
--- The loose items within radius (horizontal) of mid, on stage: {u, x, z} each, by uuid. A list that doesn't read is
--- an error (fails setup: a clean that saw nothing cleaned nothing).
+-- The items an entity's inventories hold, bags opened (InventoryOwner.Inventories -> InventoryContainer.Items);
+-- none without an InventoryOwner. Errors when an inventory doesn't read.
+local function carried(e, out, depth)
+    local owner = e.InventoryOwner
+    if not owner or depth > 4 then return out end
+    for _, inv in pairs(owner.Inventories) do
+        for _, slot in pairs(inv.InventoryContainer.Items) do
+            local it = slot.Item
+            out[#out + 1] = it.Uuid.EntityUuid
+            carried(it, out, depth + 1)
+        end
+    end
+    return out
+end
+
+-- The items within radius (horizontal) of mid, on stage: the loose ones at their spot, a dead body's loot at the
+-- body's ({u, x, z, body}); by uuid. A list that doesn't read is an error (fails setup: a clean that saw nothing
+-- cleaned nothing), and so is a body's inventory.
 function F.items(mid, radius)
     local list = Ext.Entity.GetAllEntitiesWithComponent("ServerItem")
     if type(list) ~= "table" then error("the game's items don't read (ServerItem)", 0) end
+    local function near(p) return (p[1] - mid[1]) ^ 2 + (p[3] - mid[3]) ^ 2 <= radius * radius end
     local out = {}
     for _, e in ipairs(list) do
         local ok, u, p = pcall(function()
             if e.InventoryMember then return nil end
             return e.Uuid.EntityUuid, e.Transform.Transform.Translate
         end)
-        if ok and u and p and (p[1] - mid[1]) ^ 2 + (p[3] - mid[3]) ^ 2 <= radius * radius
-            and V.osi(Osi.IsOnStage, u) ~= 0 then
+        if ok and u and p and near(p) and V.osi(Osi.IsOnStage, u) ~= 0 then
             out[#out + 1] = { u = u, x = p[1], z = p[3] }
+        end
+    end
+    local chars = Ext.Entity.GetAllEntitiesWithComponent("ServerCharacter")
+    if type(chars) ~= "table" then error("the game's characters don't read (ServerCharacter)", 0) end
+    for _, e in ipairs(chars) do
+        local ok, u, p = pcall(function() return e.Uuid.EntityUuid, e.Transform.Transform.Translate end)
+        if ok and u and p and near(p) and V.osi(Osi.IsDead, u) == 1 and V.osi(Osi.IsOnStage, u) ~= 0 then
+            local okc, loot = pcall(carried, e, {}, 0)
+            if not okc then error(("a dead body's inventory doesn't read (%s)"):format(tostring(V.name(u))), 0) end
+            for _, it in ipairs(loot) do out[#out + 1] = { u = it, x = p[1], z = p[3], body = u } end
         end
     end
     table.sort(out, function(a, b) return a.u < b.u end)
@@ -119,7 +147,8 @@ function F.check(spawns, radius)
                 local key = table.concat(kinds, "+") .. " " .. tostring(V.osi(Osi.GetTemplate, it.u))
                 local l = keep[side]
                 l[key] = l[key] or {}
-                table.insert(l[key], ("%s at (%.1f, %.1f)"):format(tostring(V.name(it.u)), it.x, it.z))
+                table.insert(l[key], ("%s at (%.1f, %.1f)%s"):format(tostring(V.name(it.u)), it.x, it.z,
+                    it.body and (" on " .. tostring(V.name(it.body)) .. "'s body") or ""))
             end
         end
     end
