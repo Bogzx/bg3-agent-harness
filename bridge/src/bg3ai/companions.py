@@ -5,7 +5,7 @@ S.campRoster, the engine's CampPresence component) and state.camp the same with 
 party's skills. get_status/look print one PARTY line when it changes (a new region, quest, party or camp
 roster), e.g.
 
-    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse" → swap_party(out="Gale", into="Halsin") | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4 → level_up(who="Wyll") swaps in, levels, swaps back
+    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse": <why> | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4 → level_up(who="Wyll") swaps in, levels, swaps back
 
 The ties come from play/knowledge/companions.md (one table row per companion: regions; quest keywords).
 """
@@ -128,17 +128,14 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
     composition holes, skill gaps, camp level-ups."""
     bits = []
     live = [r for r in party if not r.get("dead") and not r.get("summon")]
-    swappable = [r for r in live if not r.get("avatar")]
-    # (a) a camp companion tied to this region or an active quest; a party member tied too is kept.
-    tied_party = {r.get("uuid") for r in live if (t := tie_for(r.get("name"), table)) and matches(t, region, quests)}
+    # (a) a camp companion tied to this region or an active quest: the tie, no call to make (w12 L2: '… arcane AoE
+    # → swap_party' was the facts-text rule's leftover advice pointer)
     for c in camp:
         t = tie_for(c.get("name"), table)
         why = matches(t, region, quests) if t else []
         if not why:
             continue
-        out_pick = swap_out(live, swappable, c, keep=tied_party)
-        call = f'swap_party(out="{out_pick.get("name")}", into="{c.get("name")}")' if out_pick else "swap_party"
-        bits.append(f"{c.get('name')} (camp, {class_text(c)}) is tied to {' / '.join(why)}: {t.get('why')} → {call}")
+        bits.append(f"{c.get('name')} (camp, {class_text(c)}) is tied to {' / '.join(why)}: {t.get('why')}")
     # (b) composition holes the camp could fill
     have = set().union(*(roles_of(r) for r in live)) if live else set()
     for role in ("healer", "tank", "ranged", "aoe"):

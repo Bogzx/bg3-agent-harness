@@ -242,16 +242,22 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
         args["offer"] = [plumbing._uuid(i) for i in offer.split(",") if i.strip()]
     if request:
         args["request"] = [plumbing._uuid(i) for i in request.split(",") if i.strip()]
-    handover = False
-    if confirm and offer and not request:
-        handover = economy.handover(core.game.try_rpc("ui.trade", {}, context="client"))
-        donate = donate or handover
+    handover, before = False, None
+    if confirm:  # the screen before the barter: a hand-over, and the prices the deal is said at (deal_lines)
+        before = core.game.try_rpc("ui.trade", {}, context="client")
+        if offer and not request:
+            handover = economy.handover(before)
+            donate = donate or handover
+        before = before if isinstance(before, dict) else {}
     if donate:
         args["donate"] = True
-    _trade_view.update(listing=not (offer or request or confirm), full=full)
+    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before)
     if full:
         args["max"] = 500
-    out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
+    try:
+        out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
+    finally:
+        _trade_view["before"] = None  # sell=junk renders through the same view and says SOLD itself
     res = reporting._batch.get("result")
     if _trade_view["listing"]:
         for _ in range(TRADE_FILL_TRIES):
@@ -367,11 +373,14 @@ def _open_trade(npc: str) -> str:
         picked.append(str(pick.get("text")))
         # The choose job settles on the next decision point: the trade screen, or a new node's answers (Tolna, w11 L1:
         # 'What do you have on offer?' leads to a whispered node that offers '(What do you have on offer?)' again).
+        # A node with no trade answer can still give way to the shop by itself: w12 L2, Gloomy Fentonson's 'Let me
+        # take a look at what you have.' settled on his line with '1. Continue.' and the trade screen came < 0.5 s
+        # later, after the call had failed. Only a node that offers the trade answer again is answered at once.
         res = r.result if isinstance(r.result, dict) else {}
-        if res.get("screen") == "dialogue" and (res.get("dialogue") or {}).get("options"):
+        if res.get("screen") == "dialogue" and economy.trade_answer((res.get("dialogue") or {}).get("options") or []):
             u = res
         else:
-            u = wait(lambda x: x.get("screen") == "trade", 4.0)
+            u = wait(lambda x: x.get("screen") == "trade", TRADE_SCREEN_S)
         if u.get("screen") == "trade":
             break
         d = u.get("dialogue") or {}
@@ -386,6 +395,7 @@ def _open_trade(npc: str) -> str:
     return f"(opened: {'talked to ' + npc + ', ' if npc else ''}picked {said})"
 
 
+TRADE_SCREEN_S = 4.0  # after a trade answer: how long the shop may take to come up
 TRADE_NODES = 3  # trade answers _open_trade picks along one conversation, one per node, before it reports where it stopped
 
 
@@ -393,7 +403,7 @@ def _answers_text(d: dict) -> str:
     return "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
 
 
-_trade_view: dict[str, bool] = {"listing": True, "full": False}  # how the next trade result is rendered
+_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None}  # how the next trade result is rendered
 
 
 def _item_handle(it: dict) -> str:
