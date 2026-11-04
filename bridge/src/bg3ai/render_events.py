@@ -263,6 +263,47 @@ def _group_statuses(evs: list[dict], H: Handles) -> list[dict]:
     return out
 
 
+def _group_zero_damage(evs: list[dict], H: Handles) -> list[dict]:
+    """Back-to-back zero-damage hits that differ only in their target share one row, every target listed with its
+    count (w11 L4: 9 rows of 'damage source=Balthazar type= amount=0', Cloudkill on its immune skeletons, filled the
+    tail): 'source={e7 name=Balthazar} type= amount=0 x9 on 5: Apostate Defender e9, ... e12 x2, ...'. Only a run:
+    the event carries no spell, and a miss is a zero row next to its cast, so the order stays as it was."""
+    out: list[dict] = []
+    run: list[dict] = []
+    key = None
+
+    def flush() -> None:
+        if len(run) < 2:
+            out.extend(run)
+            return
+        hits: dict[str, int] = {}
+        for e in run:
+            t = _target_text(e["data"]["target"], H)
+            hits[t] = hits.get(t, 0) + 1
+        who = ", ".join(t + (f" x{n}" if n > 1 else "") for t, n in hits.items())
+        out.append({"seq": run[-1].get("seq"), "kind": "damage", "data": f"{key} x{len(run)} on {len(hits)}: {who}"})
+
+    for e in evs:
+        d = e.get("data")
+        k = None
+        if e.get("kind") == "damage" and isinstance(d, dict) and d.get("amount") == 0 and d.get("target"):
+            k = compact({x: v for x, v in d.items() if x != "target"}, H)
+        if k is None or k != key:
+            flush()
+            run, key = [], k
+        if k is None:
+            out.append(e)
+        else:
+            run.append(e)
+    flush()
+    return out
+
+
+# Kinds shown even when the cap cuts the events before them: spell_info comes once per spell per fight (Events.lua
+# E.note_spell), so a cut one never comes back (w11 L4: Cloudkill's line behind '(+56 earlier events)').
+_PINNED_EVENTS = {"spell_info"}
+
+
 def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None,
                   flap: StatusFlap | None = None, party: set | None = None, echo: EventEcho | None = None,
                   turn_ends: StaleTurnEnds | None = None) -> str:
@@ -274,13 +315,15 @@ def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", 
     evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, job)]
     evs = echo.filter(evs) if echo is not None else evs
     evs = _drop_flicker(flap.filter(evs, party) if flap is not None else evs)
-    evs = _group_statuses(evs, H)
+    evs = _group_zero_damage(_group_statuses(evs, H), H)
     if not evs:
         return ""
-    shown = evs[-limit:]
+    early = evs[:-limit] if len(evs) > limit else []
+    pinned = [e for e in early if e.get("kind") in _PINNED_EVENTS]
+    shown = pinned + evs[-limit:]
     out = []
-    if len(evs) > limit:
-        out.append(f"(+{len(evs) - limit} earlier events)")
+    if len(early) > len(pinned):
+        out.append(f"(+{len(early) - len(pinned)} earlier events)")
     prev = None
     for e in shown:
         data = e.get("data")
