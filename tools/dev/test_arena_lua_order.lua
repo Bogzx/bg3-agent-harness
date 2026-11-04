@@ -65,6 +65,25 @@ test("arena_round's first is the round's opening side, also when that side has n
     eq(enc({ #rounds, rounds[2].round, rounds[2].first, rounds[2].how }), enc({ 2, 2, "B", "turn" }), "opening B")
 end)
 
+test("a read between two turn starts of the round (B1's in, A1's not yet) doesn't fix the opening on B", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    order = { { A1, B1, B2, A2 } } -- rolled: A1 first
+    setTurn(B1, true, false)
+    fire("TurnStarted", "S_Player_" .. B1)
+    Ar.acting_side() -- the side gate / Ar.held / a state read, before the server tick
+    Ar.held(B1)
+    for _, u in ipairs({ A1, B2, A2 }) do
+        setTurn(u, true, false)
+        fire("TurnStarted", "S_Player_" .. u)
+    end
+    tick()
+    local r = refs("arena_turn")
+    eq(enc({ #r, r[1].side, r[1].character, r[1].opening, r[1].rule }), enc({ 1, "A", A1, "A", "opening" }),
+        "the round opens with A1, the rolled order's first")
+    eq(refs("arena_round")[1].first, "A", "arena_round")
+end)
+
 test("a side with nobody open left plays its members on in order (only_side_left)", function()
     begin()
     osiv[key("IsDead", B2)] = 1

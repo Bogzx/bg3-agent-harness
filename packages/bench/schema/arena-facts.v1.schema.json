@@ -159,7 +159,7 @@
               "alternate",
               "snake"
             ],
-            "description": "the arena's turn order (added 2026-11-04): inside a shared group the sides alternate one character a phase; alternate opens each round with the side of its first open member in the rolled order, snake swaps the opening side every round"
+            "description": "the arena's turn order (added 2026-11-04): inside a shared group the sides alternate one character a phase; alternate opens each round with the side of its first living member in the rolled order, snake swaps the opening side every round"
           }
         }
       }

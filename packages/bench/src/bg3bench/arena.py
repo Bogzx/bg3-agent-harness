@@ -97,7 +97,7 @@ KEYS = {
     "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off", "mirror", "turn_order",
 }  # fmt: skip
 # Inside a shared turn group the sides alternate one character at a time (seat fix, owner D643): "alternate" opens
-# every round with the side of the group's first open member in the rolled order, "snake" swaps the opening side
+# every round with the side of the group's first living member in the rolled order, "snake" swaps the opening side
 # each round. Read by the mod (Server/Arena.lua) and recorded in arena_start / arena_turn.
 TURN_ORDERS, TURN_ORDER = ("alternate", "snake"), "alternate"
 PAIR_KEYS = {"class", "template", "race", "stats", "names", "kit"}  # a mirror pair (class: informational)

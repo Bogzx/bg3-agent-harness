@@ -251,7 +251,7 @@
         "snake"
       ],
       "default": "alternate",
-      "description": "inside a shared turn group the sides alternate one character a phase; alternate: each round opens with the side of the group's first open member in the rolled order; snake: the opening side swaps every round"
+      "description": "inside a shared turn group the sides alternate one character a phase; alternate: each round opens with the side of the group's first living member in the rolled order; snake: the opening side swaps every round"
     },
     "condition": {
       "type": "string",

@@ -8,7 +8,7 @@
 -- group in phases of one character each, the sides alternating (seat fix, owner D643, Fable REVIEW-8 O1): the round's
 -- opening side's first open member in the rolled order, then the other side's, and so on (B|AA|B plays B1|A1|B2|A2).
 -- A side with nobody open left plays its members on in order. The arena file's turn_order picks the opening side:
--- "alternate" (default) the side of the round's first open member in the rolled order; "snake" that for the match's
+-- "alternate" (default) the side of the round's first living member in the rolled order; "snake" that for the match's
 -- first round, then the other side each round. Every other open member is held until its phase. One arena_turn
 -- record per phase (Ar.phase_check on the server tick), not per TurnStarted, which fires once per member of a group.
 
@@ -175,12 +175,12 @@ end
 -- One group's acting phase from its open members ({u, s} in turn order): the last phase's character while its turn
 -- is still open; else, after a phase of this round and group, the other side's first open member; else (the group's
 -- first phase this round) the opening side's. A side with nobody open: the other side's first open member. rule:
--- "opening" | "alternate" | "only_side_left".
-local function pick(open, group, shared, round)
+-- "opening" | "alternate" | "only_side_left". first: the side the group's rolled order opens with (Ar.phase).
+local function pick(open, group, shared, round, first)
     local st = Ar.state
     local last = st.phase
     local same = last ~= nil and last.round == round and last.group == group
-    local opening = openingSide(round, group, open[1].s)
+    local opening = openingSide(round, group, first)
     local function phase(x, rule)
         return { side = x.s, character = x.u, members = { x.u }, group = group, shared = shared, rule = rule,
             opening = opening }
@@ -200,20 +200,25 @@ end
 
 -- The acting phase: in the first turn group holding an open team member, one character (pick). Without such a group
 -- in the turn order (it doesn't read): the open members by the team tables, the side tie_fallback picks first when
--- both have one, group nil. nil when no team member's turn is open.
+-- both have one, group nil. nil when no team member's turn is open. The group's opening side comes from its rolled
+-- order (its first team member not dead; a downed one keeps its slot), not from whose turn is open at the read: a
+-- read from the side gate, Ar.held or a state read can come between two of the round's TurnStarted events.
 function Ar.phase(gs)
     gs = gs or turnGroups()
     local round = Ar.state.round or 1
     for _, g in ipairs(gs or {}) do
-        local open, sides = {}, {}
+        local open, sides, first = {}, {}, nil
         for _, u in ipairs(g.members) do
             local s = u and Ar.side_of(u)
             if s then
                 sides[s] = true
                 if Ar.open(u) then open[#open + 1] = { u = u, s = s } end
+                if not first and not truthy(osi(Osi.IsDead, u)) then first = s end
             end
         end
-        if #open > 0 then return pick(open, g.team or g.members[1], (sides.A and sides.B) == true, round) end
+        if #open > 0 then
+            return pick(open, g.team or g.members[1], (sides.A and sides.B) == true, round, first or open[1].s)
+        end
     end
     local open, by = {}, {}
     for _, s in ipairs(Ar.SIDES) do
@@ -228,7 +233,7 @@ function Ar.phase(gs)
     for _, s in ipairs({ first, other(first) }) do
         for _, u in ipairs(by[s]) do list[#list + 1] = { u = u, s = s } end
     end
-    return pick(list, nil, #by.A > 0 and #by.B > 0, round)
+    return pick(list, nil, #by.A > 0 and #by.B > 0, round, first)
 end
 
 -- The side acting now: the acting phase's side; with no team member's turn open, the side of the last team member
