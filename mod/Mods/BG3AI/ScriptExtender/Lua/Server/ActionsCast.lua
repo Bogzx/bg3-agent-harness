@@ -547,6 +547,10 @@ reg("cast", function(args)
         local wrote, err = pcall(function()
             e.WeaponSet.WeaponSet = want
             e:Replicate("WeaponSet")
+            -- the write selects the set but leaves the drawn weapons (live w10 L4): sheathe and draw again, so the
+            -- game draws the selected set (Osiris SetWeaponUnsheathed, bg3le osi-api 4.8.400 :948)
+            G.osi("SetWeaponUnsheathed", char, 0, 1)
+            G.osi("SetWeaponUnsheathed", char, 1, 1)
         end)
         if not wrote then
             return RPC.finish_job(job, "failed", nil, "the switch to the " .. want:lower() .. " weapons failed ("
