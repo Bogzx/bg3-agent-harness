@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: trade(npc) follows the conversation to the shop
+
+- `trade(npc=...)` picks the trade answer again when the answer it picked leads to another node that offers one (one
+  pick per node, at most 3). w11 L1: Tolna Tome-Monger's "What do you have on offer?" leads to a whispered node whose
+  answers include "(What do you have on offer?)"; the call failed "no trade screen opened (screen=dialogue)". The
+  result names every pick: `(opened: picked 'What do you have on offer?' then '(What do you have on offer?)')`. When
+  it stops on a node with no trade answer (or after 3), the failure names that node's answers.
+
 ## 2026-11-04: walk_toward goes where the engine's path ends; a short stop at its own point says so
 
 - `walk_toward(direction=...)` walks to where the engine's path to the farthest walkable sample ends (within 2.0 m of

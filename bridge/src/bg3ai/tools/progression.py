@@ -356,18 +356,42 @@ def _open_trade(npc: str) -> str:
     d = u.get("dialogue") or {}
     pick = economy.trade_answer(d.get("options") or [])
     if pick is None:
-        opts = "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
+        opts = _answers_text(d)
         return (f"trade: no trade answer in the conversation with {npc} yet ({opts or 'no answers shown'})\n"
                 + (talked + "\n" if talked else "")
                 + "STOPPED: pick an answer with choose_dialogue (the trade one may come later), then trade()")
-    r = core.game.run_job("ui.dialogue_choose", {"i": pick["i"]}, context="client", wait_s=20)
-    if r.status != "done":
-        return f"trade: FAILED — picking '{pick.get('text')}': " + plumbing._job_text("choose_dialogue", r)
-    u = wait(lambda x: x.get("screen") == "trade", 4.0)
-    if u.get("screen") != "trade":
-        return (f"trade: FAILED — picked '{pick.get('text')}' but no trade screen opened (screen={u.get('screen')})\n"
-                + "\n".join(reporting._render_ui(u)))
-    return f"(opened: {'talked to ' + npc + ', ' if npc else ''}picked '{pick.get('text')}')"
+    picked: list[str] = []
+    while True:
+        r = core.game.run_job("ui.dialogue_choose", {"i": pick["i"]}, context="client", wait_s=20)
+        if r.status != "done":
+            return f"trade: FAILED — picking '{pick.get('text')}': " + plumbing._job_text("choose_dialogue", r)
+        picked.append(str(pick.get("text")))
+        # The choose job settles on the next decision point: the trade screen, or a new node's answers (Tolna, w11 L1:
+        # 'What do you have on offer?' leads to a whispered node that offers '(What do you have on offer?)' again).
+        res = r.result if isinstance(r.result, dict) else {}
+        if res.get("screen") == "dialogue" and (res.get("dialogue") or {}).get("options"):
+            u = res
+        else:
+            u = wait(lambda x: x.get("screen") == "trade", 4.0)
+        if u.get("screen") == "trade":
+            break
+        d = u.get("dialogue") or {}
+        pick = economy.trade_answer(d.get("options") or []) if u.get("screen") == "dialogue" else None
+        if pick is None or len(picked) >= TRADE_NODES:
+            said = " then ".join(f"'{t}'" for t in picked)
+            at = (f"; it stopped at a node with the answers: {_answers_text(d) or 'none shown'}"
+                  if u.get("screen") == "dialogue" else "")
+            return (f"trade: FAILED — picked {said} but no trade screen opened (screen={u.get('screen')}){at}\n"
+                    + "\n".join(reporting._render_ui(u)))
+    said = " then ".join(f"'{t}'" for t in picked)
+    return f"(opened: {'talked to ' + npc + ', ' if npc else ''}picked {said})"
+
+
+TRADE_NODES = 3  # trade answers _open_trade picks along one conversation, one per node, before it reports where it stopped
+
+
+def _answers_text(d: dict) -> str:
+    return "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
 
 
 _trade_view: dict[str, bool] = {"listing": True, "full": False}  # how the next trade result is rendered

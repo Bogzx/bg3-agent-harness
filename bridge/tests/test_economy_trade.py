@@ -486,5 +486,59 @@ class TradeNoGold(unittest.TestCase):
         self.assertIn("the trader has no gold left", out)
 
 
+class TradeAcrossNodes(unittest.TestCase):
+    """w11 L1 (Tolna Tome-Monger): 'What do you have on offer?' leads to a whispered node whose answers offer
+    '(What do you have on offer?)' again; picking that opens the shop. trade(npc) follows it as a player does."""
+
+    ROOT = [{"i": 1, "text": "What do you have on offer?"}, {"i": 2, "text": "Leave."}]
+    WHISHT = [{"i": 1, "text": "(I'd be interested in any especially rare tomes...)"},
+              {"i": 2, "text": "IS THAT TRUE, BOOKS? ..."}, {"i": 3, "text": "(What do you have on offer?)"},
+              {"i": 4, "text": "Leave."}]
+
+    def _open(self, nodes):
+        """nodes: the answers each pick leads to, in order; None = the trade screen."""
+        test = self
+        self.picks: list = []
+        state = {"screen": "dialogue", "dialogue": {"options": self.ROOT}}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return dict(state) if op == "ui.state" else default
+
+            def run_job(self, op, args, context="server", wait_s=25.0):
+                test.picks.append(args["i"])
+                nxt = nodes[len(test.picks) - 1]
+                state.clear()
+                if nxt is None:
+                    state.update(screen="trade")
+                    return JobResult("done", {"screen": "trade", "lines": []})
+                state.update(screen="dialogue", dialogue={"options": nxt})
+                return JobResult("done", {"screen": "dialogue", "lines": [], "dialogue": {"options": nxt}})
+
+        saved = (core.game, plumbing.POLL_S)
+        core.game, plumbing.POLL_S = G(), 0.0
+        try:
+            return progression._open_trade("")
+        finally:
+            core.game, plumbing.POLL_S = saved
+
+    def test_the_trade_answer_on_the_next_node_is_picked_too(self):
+        out = self._open([self.WHISHT, None])
+        self.assertEqual(self.picks, [1, 3])
+        self.assertEqual(out, "(opened: picked 'What do you have on offer?' then '(What do you have on offer?)')")
+
+    def test_a_next_node_with_no_trade_answer_names_its_answers(self):
+        out = self._open([[{"i": 1, "text": "Who are you?"}, {"i": 2, "text": "Leave."}]])
+        self.assertEqual(self.picks, [1])
+        self.assertIn("trade: FAILED — picked 'What do you have on offer?' but no trade screen opened (screen=dialogue);"
+                      " it stopped at a node with the answers: 1. Who are you?; 2. Leave.", out)
+
+    def test_bounded_by_nodes_walked(self):
+        out = self._open([self.WHISHT] * 5)
+        self.assertEqual(self.picks, [1, 3, 3])
+        self.assertEqual(len(self.picks), progression.TRADE_NODES)
+        self.assertIn("it stopped at a node with the answers: 1. (I'd be interested", out)
+
+
 if __name__ == "__main__":
     unittest.main()
