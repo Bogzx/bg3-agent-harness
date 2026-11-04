@@ -298,7 +298,7 @@ def _close_trade_after_deal() -> str:
     if uitools._ui_screen()[0] != "trade":
         return ""
     if plumbing._close_left_trade(TRADE_CLOSE_S) and uitools._ui_screen()[0] == "game":
-        return "(closed the trade window: back in the game; trade(npc=<trader>) opens it again)"
+        return "(closed the trade window: back in the game)"  # night 2026-11-04: no 'trade(npc=...) opens it again'
     u = core.game.try_rpc("ui.state", context="client") or {}
     return "\n".join([f"(closing the trade window: screen={u.get('screen') or '?'} after ESCAPE)"] + reporting._render_ui(u))
 

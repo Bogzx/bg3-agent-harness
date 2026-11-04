@@ -357,6 +357,9 @@ class TradeConfirmCloses(unittest.TestCase):
         out, calls = self._trade({"confirmed": True, "moved": []}, confirm=True)
         self.assertEqual([a for op, a in calls if op == "ui.key"], [{"key": "ESCAPE"}])
         self.assertIn("closed the trade window: back in the game", out)
+        # night 2026-11-04: what happened, with no call to open it again
+        self.assertIn("(closed the trade window: back in the game)", out)
+        self.assertNotIn("trade(npc=", out)
 
     def test_no_confirm_keeps_it_open(self):
         out, calls = self._trade({"moved": []})
