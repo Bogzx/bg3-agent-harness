@@ -293,9 +293,9 @@ BG3AI.UI = {
             closePage()
             if page.chain then  -- the game opens the next member's page by itself, in its intro (S029)
                 local spec = page.spec
-                local chain = page.chain
+                local chain, sticky = page.chain, page.chain_sticky
                 openPage(spec)
-                page.chain = chain
+                page.chain, page.sticky = chain, sticky   -- chain_sticky: the new page ignores the close too
                 dc._p.LevelUpStep = "Started"
                 dc._p.LevelUpCharacter = chain
             end
@@ -672,6 +672,24 @@ page.chain = other
 j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
 check(j.status == "done" and widget == nil and j.result.next_page_closed and not j.result.page_still_open,
       "chained page after the finish: closed")
+-- REVIEW-17b G2: what was closed and what is pending, with no level_up call to make
+check(j.result.next_page_closed == "the game opened another character's level-up page: closed it (that character "
+      .. "keeps its level up)", "chained page: the closed page said as a fact ("
+      .. tostring(j.result.next_page_closed) .. ")")
+-- 33b. the same character's page comes back in its intro after the finish (its next level): closed after 4 s
+openPage(PAL)
+page.chain = portrait
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and j.result.next_page_closed == "the game opened a new level-up page: closed it (a level "
+      .. "up it showed is still pending)", "own new page after the finish: closed, said as a fact ("
+      .. tostring(j.result.next_page_closed) .. ")")
+-- 33c. ... and a page that ignores the close: done, another level up may be pending (no call named)
+openPage(PAL)
+page.chain = portrait
+page.chain_sticky = true
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and j.result.page_still_open == "another level up may be pending",
+      "own page that stays after the finish: pending, said as a fact (" .. tostring(j.result.page_still_open) .. ")")
 
 -- 34. S032 Wyll L6 (Warlock, no feat): the multiclass items show "Lv 2" / nothing; options name the class from the
 --     character, drop the unnamed list, and the run never selects (or reports) the feat tab.

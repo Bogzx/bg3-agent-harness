@@ -231,5 +231,26 @@ test("state.inventory: a warm rebuild still shows what changed: stack, name, bin
     eq(#out.items, 241, "241 carried items")
 end)
 
+test("state.inventory: a dye is marked by its stats entry, the Dye Remover too (no ObjectCategory)", function()
+    -- w14 L2: the Dye Remover's row read cat none, tab Misc, value 1 (Object.txt: OBJ_Dye_Remover, using _Dyes,
+    -- ObjectCategory ""), so the bridge's junk rule sold it
+    S.statsFactsMemo, S.itemFactsMemo = {}, {}
+    entries.OBJ_Dye_Remover = { ModifierList = "Object", InventoryTab = "Misc" }
+    entries.OBJ_Dye_Azure = { ModifierList = "Object", InventoryTab = "Misc", ObjectCategory = "DyeVeryRare" }
+    local list = ents[members[3]].InventoryOwner.PrimaryInventory.InventoryContainer.Items
+    local rem, azure = "99999999-1111-0000-0000-000000000004", "99999999-1111-0000-0000-000000000005"
+    list[#list + 1] = { Item = item(rem, "OBJ_Dye_Remover") }
+    list[#list + 1] = { Item = item(azure, "OBJ_Dye_Azure") }
+    local out = rebuild()
+    list[#list], list[#list - 1] = nil, nil
+    local rows = {}
+    for _, it in ipairs(out.items) do rows[it.uuid] = it end
+    eq(rows[rem].dye, true, "the remover"); eq(rows[rem].cat, nil, "no category")
+    eq(rows[azure].dye, true, "a colour"); eq(rows[azure].cat, "DyeVeryRare", "its category")
+    local plain = 0
+    for _, it in ipairs(out.items) do if it.dye then plain = plain + 1 end end
+    eq(plain, 2, "nothing else is a dye")
+end)
+
 print(string.format("%d/%d passed", count - failures, count))
 if failures > 0 then os.exit(1) end

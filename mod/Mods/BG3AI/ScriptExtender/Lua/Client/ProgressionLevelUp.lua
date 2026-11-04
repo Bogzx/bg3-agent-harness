@@ -632,8 +632,10 @@ RPC.register("ui.level_up", function(args)
             local late = RPC.now_ms() - ctx.closeWait > (step == "Finishing" and 9000 or 4000)
             if step == "Started" and (owner == "other" or late) and not ctx.closedNext then
                 ctx.closedNext = true
-                ctx.result.next_page_closed = owner == "other" and "the game opened another character's level-up page: closed it (level_up(who) opens it again)"
-                    or "the game opened a new level-up page: closed it; if this character has another level, call level_up again"
+                -- what was closed and what is still pending, no call to make (REVIEW-17b G2)
+                ctx.result.next_page_closed = owner == "other"
+                    and "the game opened another character's level-up page: closed it (that character keeps its level up)"
+                    or "the game opened a new level-up page: closed it (a level up it showed is still pending)"
                 P.closeLevelUp()
                 ctx.closeWait = RPC.now_ms() - 2500  -- 1.5 s more for it to close, then ESCAPE below
                 return "wait", 300
@@ -644,7 +646,7 @@ RPC.register("ui.level_up", function(args)
                 return "wait", 300
             end
             if late and (not ctx.closedNext or RPC.now_ms() - ctx.closeWait > 5500) then
-                ctx.result.page_still_open = "another level up may be pending: call level_up again"
+                ctx.result.page_still_open = "another level up may be pending"
                 ctx.result.close_step = step
                 return "done"
             end

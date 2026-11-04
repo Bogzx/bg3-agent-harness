@@ -92,6 +92,9 @@ local function itemStats(ie, o)
         if not st then return false end
         f = {}
         statsFacts(st, f)
+        -- A dye by its stats entry (OBJ_Dye_<colour>, OBJ_Dye_Remover: all from _Dyes): the Dye Remover blanks its
+        -- ObjectCategory, so `cat` can't tell it (w14 L2: cat none, tab Misc, value 1, sold as junk)
+        if tostring(sid):find("^OBJ_Dye_") then f.dye = true end
         S.statsFactsMemo[tostring(sid)] = f
     end
     for k, v in pairs(f) do o[k] = v end
