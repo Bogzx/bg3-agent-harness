@@ -398,5 +398,41 @@ do
     Ext.StaticData, Ext.Entity, Osi.GetEquippedItem = nil, nil, nil
 end
 
+-- w11 L1 trade: a +52 g sale gave "item_added Gold count=402" (the stack after the merge), paying 48 g gave
+-- "item_added Gold count=48" (the split-off coins). Gold comes from GoldChanged as the change of the party's total.
+do
+    local gold, realGold = 410, Osi.PartyGetGold
+    Osi.PartyGetGold = function() return gold end
+    Osi.GetStackAmount = function() return 402 end
+    E.lastGold = nil
+    local function kinds(from)
+        local out = {}
+        for i = from, #pushed do out[#out + 1] = pushed[i].kind end
+        return table.concat(out, ",")
+    end
+    local n = #pushed + 1
+    listeners.AddedTo("LOOT_Gold_A_dddddddd-0000-0000-0000-000000000001", "S_Player_" .. HOST, "Regular")
+    check("a gold stack's AddedTo is no item_added", kinds(n) == "", kinds(n))
+    gold = 462
+    listeners.GoldChanged("Trader_cccccccc-0000-0000-0000-000000000003", -52) -- the trader's side
+    listeners.GoldChanged("S_Player_" .. HOST, 52)
+    local d = last("gold_changed")
+    check("sale: one gold_changed", kinds(n) == "gold_changed", kinds(n))
+    check("sale: +52 -> 462", d and d.gold == 462 and d.delta == 52, d and (tostring(d.gold) .. " " .. tostring(d.delta)))
+    n = #pushed + 1
+    Osi.GetStackAmount = function() return 48 end
+    gold = 414
+    listeners.AddedTo("LOOT_Gold_A_dddddddd-0000-0000-0000-000000000002", "S_Player_" .. HOST, "Regular")
+    listeners.GoldChanged("S_Player_" .. HOST, -48)
+    d = last("gold_changed")
+    check("payment: only gold_changed", kinds(n) == "gold_changed", kinds(n))
+    check("payment: -48 -> 414", d and d.gold == 414 and d.delta == -48, d and (tostring(d.gold) .. " " .. tostring(d.delta)))
+    n = #pushed + 1
+    listeners.GoldChanged("S_Player_" .. HOST, -10) -- a move between members: the total stays 414
+    listeners.GoldChanged("S_Player_" .. SH, 10)
+    check("move between members: nothing", kinds(n) == "", kinds(n))
+    Osi.PartyGetGold, Osi.GetStackAmount = realGold, nil
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end
