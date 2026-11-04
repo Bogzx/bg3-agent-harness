@@ -154,6 +154,19 @@ class Hint(unittest.TestCase):
         self.assertTrue(bits[0].endswith(": " + TABLE["halsin"]["why"]), bits)
         self.assertIn("camp level-ups: Wyll L3→4 (level_up(who=\"Wyll\") swaps in", bits[-1])
 
+    def test_tie_reads_as_one_fact(self):
+        # w13 L2: '... Elminster and the Netherese orb scenes need him; arcane AoE' ended in the role half of the old
+        # "Why bring them" cell, which used to lead into '→ swap_party(...)'. The role is a Note, not printed.
+        bits = companions.hint(PARTY[:1], [row(GALE, "Gale", "Wizard", 6)], "Lower City", [], TABLE)
+        self.assertEqual(bits[:1], ["Gale (camp, Wizard 6) is tied to Lower City: Elminster and the Netherese orb scenes "
+                                "need him"])
+        bits = companions.hint(PARTY[:1], [row(SH, "Shadowheart", "Cleric")], "Gauntlet of Shar", [], TABLE)
+        self.assertEqual(bits[:1], ["Shadowheart (camp, Cleric 5) is tied to Gauntlet of Shar: the Gauntlet of Shar and "
+                                "the Nightsong are her story"])
+        # a row with no "Tied by" text says the tie alone
+        bits = companions.hint(PARTY[:1], [row(WYLL, "Minsc", "Ranger")], "Lower City", [], TABLE)
+        self.assertEqual(bits[:1], ["Minsc (camp, Ranger 5) is tied to Lower City"])
+
     def test_nothing_in_the_wilderness_but_level_ups(self):
         bits = companions.hint(PARTY, [row(HALSIN, "Halsin", "Druid")], "Wilderness", [], TABLE)
         self.assertEqual(bits, [])

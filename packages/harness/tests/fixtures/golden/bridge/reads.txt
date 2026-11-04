@@ -25,4 +25,4 @@ EVENTS
   item_added e1 Tav: e7 Ring of Protection
 === status_again (client:ui.rest_info client:ui.state server:act.prepared server:nav.markers server:nav.set_subregion server:state.inventory server:state.status)
 GOLD 100->125
-ALERTS camp supplies 0/40 (0 carried + 0 in the camp chest) (pick up/buy food before a long rest) | gold 125 < 200 reserve
+ALERTS camp supplies 0/40 (0 carried + 0 in the camp chest) | gold 125 < 200 reserve

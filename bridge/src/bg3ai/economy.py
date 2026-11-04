@@ -31,7 +31,10 @@ _KEEP_NAME = re.compile(r"key|thieves' tools|trap disarm|torch|shovel|rope|camp 
 _CONSUMABLE_NAME = re.compile(r"potion|elixir|scroll|arrow|bolt|grenade|alchemist's fire|acid vial|bomb|oil of|"
                               r"poison|salve|grease|smokepowder|runepowder|water", re.I)
 _CONSUMABLE_CAT = re.compile(r"^(Potion|MagicScroll|Arrow|Throwable|Poison|Ingredient)")
-_JUNK_CAT = re.compile(r"^(Junk|Luxury|RottenFood|Dye|PreciousGem)")
+_JUNK_CAT = re.compile(r"^(Junk|Luxury|RottenFood|PreciousGem)")
+# Dyes (ObjectCategory Dye/DyeRare/..., the game lets you use them on armour): not junk. w13 L2: sell=junk sold back a
+# Dye Remover x10 bought a moment earlier (20 g -> 10 g) because "Dye" was in _JUNK_CAT.
+_DYE_CAT = re.compile(r"^Dye")
 _SLOT_ALIASES = {"Ring2": "Ring"}
 _ARMOR_PROF = {"Light": "LightArmor", "Leather": "LightArmor", "Padded": "LightArmor", "StuddedLeather": "LightArmor",
                "Hide": "MediumArmor", "ChainShirt": "MediumArmor", "ScaleMail": "MediumArmor",
@@ -101,7 +104,7 @@ def _equipable(it: dict) -> bool:
 
 def is_junk(it: dict, keep: set[str] | None = None, wanted: set[str] | None = None) -> bool:
     """Sell/stash candidates: what a skilled player sells at every trader. Never: equipped, story, bags,
-    food, consumables (potions, scrolls, arrows, throwables), keys/tools/light, kept items (keep), gear
+    food, consumables (potions, scrolls, arrows, throwables), keys/tools/light, dyes, kept items (keep), gear
     someone should wear (wanted), magic gear (rarity >= uncommon: the agent decides)."""
     return keep_kind(it, keep, wanted) is None
 
@@ -129,6 +132,8 @@ def keep_kind(it: dict, keep: set[str] | None = None, wanted: set[str] | None = 
         return "gear to wear"
     if it.get("tab") == "BooksAndKeys" or _KEEP_NAME.search(it.get("name") or ""):
         return "books, keys and tools"
+    if _DYE_CAT.match(it.get("cat") or ""):
+        return "dyes"
     if _rar(it) > 0 and (_equipable(it) or not _JUNK_CAT.match(it.get("cat") or "")):
         return "magic or rare"
     if _equipable(it) or _JUNK_CAT.match(it.get("cat") or ""):
