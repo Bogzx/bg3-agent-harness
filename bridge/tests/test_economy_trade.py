@@ -233,6 +233,14 @@ class TradeHandover(unittest.TestCase):
                                  lambda it: "e9", listing=False)
         self.assertIn("NOT MOVED: item Hammer isn't on this side", out)
 
+    def test_items_already_on_the_table_named(self):
+        # launch-v1 haiku act3_gold_max r2 seq 16-21: the confirm re-sent ids the offer had put on the table
+        res = {"already": [{"uuid": "u83", "name": "Scroll of Revivify", "side": "you"},
+                           {"uuid": "u183", "name": "Scroll of Cone of Cold", "side": "you"}]}
+        out = economy.trade_text(res, lambda it: {"u83": "e83", "u183": "e183"}[it["uuid"]], listing=False)
+        self.assertIn("ALREADY ON THE TABLE: e83 Scroll of Revivify, e183 Scroll of Cone of Cold", out)
+        self.assertNotIn("NOT MOVED", out)
+
     def test_equipped_offer_named(self):
         inv = {"items": [{"uuid": "u1", "name": "Ceremonial Warhammer", "equipped_slot": "Melee Main Weapon",
                           "owner": "c1"}, {"uuid": "u2", "name": "Mace"}]}

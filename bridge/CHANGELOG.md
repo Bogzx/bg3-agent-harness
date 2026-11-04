@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: trade counts items already on the table as moved
+
+- `trade(offer=<ids>, confirm=true)` after `trade(offer=<the same ids>)` no longer fails "not confirmed: some items
+  couldn't be moved": an item this trade already put on its own side of the table is not moved again (a second move
+  would take it back off) and is listed `ALREADY ON THE TABLE: e83 Scroll of Revivify, ...`. An id on no side still
+  fails the confirm (NOT MOVED). launch-v1: 67 such failures in 19 runs (haiku act3_gold_max r2 seq 16-21).
+
 ## 2026-11-04: screenshot waits where the running game writes
 
 - `screenshot` looks for the PNG in the folder the game's capture layer writes to (the output_dir in the running
