@@ -583,9 +583,10 @@ function G.disabling_info(id)
             -- turn-based play (OnRemoveFunctors UseActionResource(Movement, 50%), :17). KNOCKED_DOWN (:49-60) has no
             -- RemoveEvents: it stays down until the status ends.
             local prone = (typ == "KNOCKED_DOWN" or groups.SG_Prone) or nil
+            local half
             if prone then
                 local onTurn = flagset(field("RemoveEvents")).OnTurn
-                local half = tostring(field("RemoveConditions") or ""):find("HasActionResource('Movement', 50", 1, true)
+                half = tostring(field("RemoveConditions") or ""):find("HasActionResource('Movement', 50", 1, true)
                 effect = onTurn and half and "stands up at its turn start for half its movement"
                     or onTurn and "may stand up at its turn start" or "stays down until the status ends"
             elseif typ == "INCAPACITATED" and not G.ACTING_STATUSES[id] then
@@ -606,7 +607,8 @@ function G.disabling_info(id)
             if tostring(field("RemoveConditions") or ""):find("Saving", 1, true) then
                 fix[#fix + 1] = "it saves again each turn"
             end
-            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil, prone = prone }
+            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil, prone = prone,
+                prone_half = prone and half and true or nil }
         end
     end
     G._disabling[id] = c
@@ -623,7 +625,8 @@ function G.disabling(char)
         local ok, info = pcall(G.disabling_info, s.id)
         if ok and info then
             out = out or {}
-            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix, prone = info.prone }
+            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix, prone = info.prone,
+                prone_half = info.prone_half }
         end
     end
     return out
@@ -732,7 +735,13 @@ function G.check_cast(char, spell, target, pos, upcast, force)
             .. G.disabling_fix(char, blk.name))
     end
     local down = G.prone_now(char)
-    if down then G.refuse("cannot act while " .. tostring(down.name) .. " (it " .. down.effect .. ")") end
+    -- Still down in its own turn: a status that stands up at the turn start for half the movement didn't, so its
+    -- rule is not restated; the reason it stayed down is (REVIEW-13 #4). Other prone statuses: their own effect.
+    if down then
+        G.refuse("cannot act while " .. tostring(down.name) .. " ("
+            .. (down.prone_half and "it did not stand up this turn: standing needs half its movement"
+                or ("it " .. down.effect)) .. ")")
+    end
 
     -- Resources.
     local snap = G.resources(char)

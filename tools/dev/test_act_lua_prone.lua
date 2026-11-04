@@ -28,7 +28,8 @@ test("prone in its own turn: a cast is refused before any order, with the game's
         local n0 = #called("UseSpell")
         local j = job(op("cast", { char = P1, spell = "Projectile_PG", target = NPC }))
         eq(j.status, "failed", "refused " .. tostring(j.error))
-        eq(j.error, "cannot act while Prone (it stands up at its turn start for half its movement)")
+        -- REVIEW-13 #4: still down in its own turn = it didn't stand up; the stand-up rule isn't restated
+        eq(j.error, "cannot act while Prone (it did not stand up this turn: standing needs half its movement)")
         eq(#called("UseSpell"), n0, "no order")
     end)
 end)
@@ -40,6 +41,16 @@ test("prone in its own turn: move_to is refused before any walk", function()
         eq(j.status, "failed", "refused " .. tostring(j.error))
         eq(j.error, "cannot move while Prone (the status keeps it in place this turn)")
         eq(#called("CharacterMoveToPosition"), n0, "no walk ordered")
+    end)
+end)
+
+test("prone in its own turn with no half-movement condition: the cast refusal gives the status's own effect",
+    function()
+    withProne(true, function()
+        spell("PRONE_GREASE", { StatusType = "KNOCKED_DOWN", StatusGroups = { "SG_Prone" }, RemoveEvents = {},
+            RemoveConditions = "" })
+        local j = job(op("cast", { char = P1, spell = "Projectile_PG", target = NPC }))
+        eq(j.error, "cannot act while Prone (it stays down until the status ends)")
     end)
 end)
 
