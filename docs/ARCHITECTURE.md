@@ -280,7 +280,7 @@ A lesson is shown once per fight, and once per region entry (on a region change 
 re-read when its mtime changes.
 
 **4. LAST ATTEMPT (act).** After a reload within ~10 min of a bad fight, load_game's result and the first
-get_status carry `LAST ATTEMPT: <summary> — plan a different approach (…)`. The first turn of the retried fight
+get_status carry `LAST ATTEMPT: <summary>` (facts only since 2026-11-04, D630: no harness tips). The first turn of the retried fight
 repeats 2-3 key facts. setup's LESSONS line is separate and comes from the store.
 
 **act implementation (2026-10-10 19:50):** debrief.py + server.py hooks, as specified above, with act's extra fields
