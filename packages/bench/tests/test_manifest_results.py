@@ -133,6 +133,19 @@ def test_manifest_pins_the_recording_encoder_the_run_used():
     assert not validator("manifest.v1.schema.json").is_valid({**man, "record_encoder": 264})
 
 
+def test_manifest_carries_the_referee_rings_health():
+    """REVIEW-16 A1: the run record's referee health (ring_lost, never_fired) is the manifest's; null when the run
+    polled no ring or its record predates the field."""
+    series, records = load_series()
+    health = {"ring_lost": 0, "never_fired": ["Osiris:ShortRested"]}
+    man = manifest.from_series(series, {**records[0], "referee": health})
+    assert man["referee"] == health
+    assert_valid("manifest.v1.schema.json", man)
+    assert manifest.from_series(series, records[0])["referee"] is None
+    assert_valid("manifest.v1.schema.json", {k: x for k, x in man.items() if k != "referee"})  # before 2026-11-05
+    assert not validator("manifest.v1.schema.json").is_valid({**man, "referee": {"ring_lost": -1}})
+
+
 def test_manifest_rejects_mismatched_inputs(tmp_path):
     series, records = load_series()
     with pytest.raises(ValueError, match="series"):

@@ -1,5 +1,4 @@
 BG3AI = BG3AI or {}
-BG3AI.VERSION = "0.1.0"
 Ext.Require("Shared/RPC.lua")
 Ext.Require("Shared/Util.lua")
 Ext.Require("Shared/Mem.lua")
@@ -25,4 +24,4 @@ for _, path in ipairs({
     U.require(path)
 end
 
-Ext.Utils.Print("[BG3AI] client context ready, v" .. BG3AI.VERSION)
+Ext.Utils.Print("[BG3AI] client context ready")

@@ -25,6 +25,13 @@
       "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}, "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"}}
     },
     "record_encoder": {"type": ["string", "null"], "description": "the encoder the run's recording used (bg3harness recorder.bench_encoder: BG3AI_BENCH_RECORD_ENCODER, else the machine's record-encoder setting); null: not recorded; absent in manifests written before 2026-11-04"},
+    "referee": {
+      "type": ["object", "null"],
+      "description": "the referee ring's health at the run's end (bg3harness facts.RingFeed.health): ring_lost = records the ring dropped before a poll read them (null: never read), never_fired = listeners that registered and never fired (null: ref.snapshot didn't answer); null: no poll ran; absent in manifests written before 2026-11-05. The facts' referee_down/referee_up marks say when it was down.",
+      "additionalProperties": false,
+      "properties": {"ring_lost": {"type": ["integer", "null"], "minimum": 0},
+                     "never_fired": {"type": ["array", "null"], "items": {"type": "string"}}}
+    },
     "series": {"type": "string", "minLength": 1},
     "run": {"type": "integer", "minimum": 1},
     "scenario": {

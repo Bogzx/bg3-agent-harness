@@ -65,13 +65,18 @@ class FakeRing:
         self.ref = [{"seq": n, "t": 100 * n, "ev": "crime", "type": "old"} for n in (1, 2, 3)]
         self.rolls = [{"seq": 1, "t": 50, "roller": "old"}]
         self.fail = False
+        self.first = 1  # the oldest seq the referee ring still holds
+        self.fired = {"Osiris:Died": 2, "Osiris:ShortRested": 0}  # ref.snapshot's listener counts
 
     def __call__(self, op, args):
         if self.fail:
             raise OSError("no game")
+        if op == "ref.snapshot":
+            return {"fired": self.fired}
         ring = self.ref if op == "ref.since" else self.rolls
         evs = [r for r in ring if r["seq"] > args["seq"]][: args["limit"]]
-        return {"boot": "b1", "now": 10_000, "first": 1, "latest": ring[-1]["seq"], "events": evs}
+        first = self.first if op == "ref.since" else 1
+        return {"boot": "b1", "now": 10_000, "first": first, "latest": ring[-1]["seq"], "events": evs}
 
 
 class Facts(unittest.TestCase):
@@ -331,6 +336,45 @@ class Facts(unittest.TestCase):
         self.assertFalse(self.w.referee_live)
         r["status"]["gold"] = 50
         self.assertEqual([x["ev"] for x in self.w.observe(r, INV, now=2100.0)], ["gold"])
+
+    def test_ring_feed_marks_its_outages_and_reports_its_health(self):
+        # REVIEW-16 A1: a failing poll only flipped referee_live; facts.jsonl had no trace of the window in which
+        # trade, theft, crime, kill, loot and approval events were missing
+        ring = FakeRing()
+        feed = F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl"), wall=lambda: 2000.0)
+        self.w.mark("run_start", now=1000.0)
+        feed.poll()
+        ring.fail = True
+        feed.poll()
+        feed.poll()  # still down: one mark per change
+        ring.fail = False
+        feed.poll()
+        feed.poll()
+        marks = [(r["mark"], r.get("detail")) for r in self.records() if r["kind"] == "mark"]
+        self.assertEqual(
+            marks, [("run_start", None), ("referee_down", {"error": "OSError: no game"}), ("referee_up", None)]
+        )
+        # the ring dropped seq 4-9 before a poll read them; one listener never fired
+        ring.ref = [{"seq": n, "t": 9_000, "ev": "crime", "type": "x"} for n in (10, 11)]
+        ring.first = 10
+        feed.poll()
+        self.assertEqual(feed.health(), {"ring_lost": 6, "never_fired": ["Osiris:ShortRested"]})
+        ring.fail = True
+        self.assertEqual(feed.health(), {"ring_lost": 6, "never_fired": None})
+        self.assertEqual(F.RingFeed(ring, self.w, self.path).health(), {"ring_lost": None, "never_fired": None})
+        try:
+            import jsonschema
+        except ImportError:
+            return
+        v = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text()))
+        for r in self.records():
+            v.validate(r)
+
+    def test_ring_feed_down_from_the_first_poll_is_marked(self):
+        ring = FakeRing()
+        ring.fail = True
+        F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl")).poll()
+        self.assertEqual([r["mark"] for r in self.records() if r["kind"] == "mark"], ["referee_down"])
 
     def test_schema(self):
         try:
