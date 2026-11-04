@@ -407,7 +407,7 @@ SELL_CHUNK = 25
 
 def _sell_junk(keep: str = "") -> str:
     t0 = time.monotonic()
-    inv = core.game.rpc("state.inventory", {})
+    inv = core.game.rpc("state.inventory", {"expand": True})  # bag contents too: the junk left in bags is counted
     plumbing._remember_names(inv)
     keep_set = inventory._keep_set(keep)
     junk = {it["uuid"]: it for it in economy.junk(inv, keep_set)}
@@ -429,7 +429,8 @@ def _sell_junk(keep: str = "") -> str:
                 "(offer=<ids>, request=<ids>)" if not budget else
                 f"the trader has only {budget} gold, less than any one junk item") if on_screen
                else "none of the junk is on this trade screen")
-        return reporting._finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})", t0)
+        return reporting._finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})"
+                                 + _bag_junk_line(junk), t0)
     core._EV_DROP.update(items={core.H._bare(u) for u in picked}, gold=True, until=0.0)
     # Barters of SELL_CHUNK items: the job moves one item per tick (~0.2 s each, a stack's quantity box more), so
     # acceptance 01:07's 72 junk items ran into the 15 s job timeout with nothing sold. A failed barter stops the rest.
@@ -452,7 +453,16 @@ def _sell_junk(keep: str = "") -> str:
         out += f"\n({len(chunks)} barters of up to {SELL_CHUNK} items)"
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
         f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
-    return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set)
+    return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set) + _bag_junk_line(junk)
+
+
+def _bag_junk_line(junk: dict) -> str:
+    """'\nLEFT IN BAGS 22 junk items (Alchemy Pouch, Pouch): the trade screen shows the bag, not what is in it'."""
+    inside = [it for it in junk.values() if it.get("in")]
+    if not inside:
+        return ""
+    bags = ", ".join(sorted({str(it["in"]) for it in inside}))
+    return f"\nLEFT IN BAGS {len(inside)} junk items ({bags}): the trade screen shows the bag, not what is in it"
 
 
 def _sold_lines(items: list[dict], junk: dict) -> str:

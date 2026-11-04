@@ -144,6 +144,16 @@ def junk(inv: dict, keep: set[str] | None = None) -> list[dict]:
     return [it for it in items if is_junk(it, keep, wanted)]
 
 
+def junk_in_bags(items: list[dict]) -> str:
+    """'; 22 of them are in bags (Alchemy Pouch, Pouch), which the trade screen shows as the bag only' for junk read
+    inside bags (an expanded inventory's `in`), '' when none (w11 L1: preview 23 junk, sell=junk sold 1)."""
+    inside = [it for it in items if it.get("in")]
+    if not inside:
+        return ""
+    bags = ", ".join(sorted({str(it["in"]) for it in inside}))
+    return f"; {len(inside)} of them are in bags ({bags}), which the trade screen shows as the bag only"
+
+
 # --- gear ---------------------------------------------------------------------------------------------
 
 def _dice_avg(d: str | None) -> float:

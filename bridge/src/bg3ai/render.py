@@ -593,6 +593,8 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
             if it.get("supply"):
                 b.append(f"supply={it['supply']}" + (f" (x{it['count']}={it['supply'] * it['count']})"
                                                       if it.get("count", 1) not in (1, None) else ""))
+            if it.get("in"):  # read with bags expanded: inside this bag (the trade screen shows only the bag)
+                b.append(f"in {it['in']}")
             return " ".join(b)
 
         if f == "equipped":
@@ -643,7 +645,7 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
         js = [it for it in items if it["uuid"] in junk_ids]
         lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
                      f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg: trade sell=junk at a "
-                     "trader, or manage_inventory op=camp item=junk")
+                     "trader, or manage_inventory op=camp item=junk" + economy.junk_in_bags(js))
     if by_name and not matched:
         lines.append(f"No item in the party's bags matches {filter.strip()!r} (names; separate alternatives with "
                      "commas: 'misty,scroll').")

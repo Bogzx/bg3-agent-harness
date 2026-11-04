@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: junk inside bags is marked as such
+
+- `get_inventory` lists with bags expanded (any filter but equipped/notable) mark an item inside a bag `in <bag>`,
+  and the JUNK line adds `; 22 of them are in bags (Alchemy Pouch, Pouch), which the trade screen shows as the bag
+  only`. w11 L1: the junk preview counted 23 items, 22 of them in Claude's Pouch / Alchemy Pouch, and `trade(sell=
+  "junk")` sold 1.
+- `trade(sell="junk")` reads bag contents too and ends with `LEFT IN BAGS 22 junk items (Alchemy Pouch, Pouch): the
+  trade screen shows the bag, not what is in it` when there are any. When all the junk is in bags it says "nothing
+  sold (none of the junk is on this trade screen)" (before: "no junk in the bags").
+
 ## 2026-11-04: trade(npc) follows the conversation to the shop
 
 - `trade(npc=...)` picks the trade answer again when the answer it picked leads to another node that offers one (one
