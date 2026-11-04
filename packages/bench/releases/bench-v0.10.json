@@ -11,7 +11,7 @@
   "game_build": "25605617",
   "bg3le_sha256": "43efad6edc549f878e3ab8b5a24fe56aee3fc36f0e1116bd259f5ae17e5260fc",
   "mod_sha1": "b1e5176e41473563b3ccc10d195af9033d612581",
-  "code_sha1": "4232a0670a0909b9b4a3dc31de6eac2728a9ff62"
+  "code_sha1": "504873714e0a9a3c03decd5adbc2c157c4fb0837"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
