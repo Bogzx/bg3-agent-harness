@@ -1,4 +1,4 @@
--- State, part 2 of 3 (State.lua loads the parts in order; split for the 1000-line cap):
+-- State, part 2 of 4 (State.lua loads the parts in order; split for the 1000-line cap):
 -- inventory, combat, journal, map, nearby and the targeting preview.
 local U = BG3AI.Util
 local V = BG3AI.Visibility
