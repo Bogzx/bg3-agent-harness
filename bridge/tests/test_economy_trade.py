@@ -449,6 +449,12 @@ class TradeDealSaid(unittest.TestCase):
         out = economy.trade_text(self.AFTER, lambda it: "e2", listing=False)  # before=None: _sell_junk's view
         self.assertEqual(out, "TRADE your gold 411 · trader gold 1857 · prices 25% of value (price = the whole stack)")
 
+    def test_tool_description_says_a_confirmed_deal_is_named(self):
+        # the description said confirm calls "show the table and the balance only": false since the deal is named
+        doc = core.mcp._tool_manager.get_tool("trade").description
+        self.assertIn("a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT)", doc)
+        self.assertNotIn("offer/request/confirm calls show the table", doc)
+
     def test_view_is_cleared_after_the_call(self):
         self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
         self.assertIsNone(progression._trade_view["before"])  # sell=junk renders through it next

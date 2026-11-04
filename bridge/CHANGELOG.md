@@ -22,7 +22,10 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   the `→ swap_party(...)` pointer.
 - path_preview to a point whose engine path ends > 2 m short of it (the mod's `partial`) reads `NOT REACHED: the
   walkable path ends @(x,y,z), 3.4m short of the target: walk 0.1m` instead of `reachable: walk 0.1m` (w12 L1a, a
-  3.5 m landing). No tool description changed.
+  3.5 m landing).
+- trade's description: "offer/request calls show the table and the balance only; a confirmed deal names each item
+  sold and bought with its price (SOLD/BOUGHT)" (it said confirm calls show the table only). Golden regenerated;
+  the release's tools.defs_sha256 moves.
 
 ## 2026-11-04: tool results state facts, not advice or the next call
 

@@ -570,8 +570,8 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
 # Trade screen as text. S023-S026: every trade call (open, offer, request, confirm) returned one 4-6.6 KB line
 # (60 wares + 60 own items, unsorted, as compact() renders dicts); the agent scanned it for food by name. Now:
 # wares grouped (food with its supply value, consumables, gear by rarity, other), sorted, capped per group, with
-# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/confirm
-# calls show the table and the balance only.
+# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/request
+# calls show the table and the balance only, a confirmed deal its items (deal_lines).
 # ---------------------------------------------------------------------------
 
 TRADE_GROUP_MAX = 10
