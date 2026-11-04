@@ -370,29 +370,19 @@ do
     check("... their cast events stay", #pushed == c1 + 2 and last("cast").name == "Dash")
     party[#party], isParty[SUM], V.entity = nil, nil, entityNoSummon
 
-    listeners.CastedSpell("S_Skeleton_" .. RANGER, "Target_Skeleton_Cleave", "target", "", 0)
-    got = infos()
-    check("a monster action: the weapon's dice + STR as the tooltip shows, and its type",
-        got[#got] == "Cleave: Swing through two foes. (melee weapon attack, 1d8+3 Slashing damage)", got[#got])
-    combat = "combat-L2f"
-    listeners.CastedSpell("S_Skeleton_" .. FENCER, "Target_Skeleton_Cleave", "target", "", 0)
-    got = infos()
-    check("a +1 finesse weapon: the higher of STR/DEX plus the enchantment",
-        got[#got] == "Cleave: Swing through two foes. (melee weapon attack, 1d8+4 Piercing damage)", got[#got])
-    combat = "combat-L2n"
-    listeners.CastedSpell("S_Skeleton_" .. NOSTATS, "Target_Skeleton_Cleave", "target", "", 0)
-    got = infos()
-    check("ability scores unreadable: the damage is left out, not shown without its modifier",
-        got[#got] == "Cleave: Swing through two foes. (melee weapon attack)", got[#got])
+    -- REVIEW-13 item 1: weapon tokens are never resolved (off-hand, versatile two-handed and the caster's own damage
+    -- boosts change the tooltip's number): a longsword, a +1 finesse rapier and no weapon all leave the part out
     local p0 = #printed
-    combat = "combat-L2c" -- once per spell per fight: the unarmed one in another fight
-    listeners.CastedSpell("S_Skeleton_" .. BARE, "Target_Skeleton_Cleave", "target", "", 0)
-    got = infos()
-    check("no weapon to read: the damage part is left out, never the token",
-        got[#got] == "Cleave: Swing through two foes. (melee weapon attack)" and not got[#got]:find("Weapon"),
-        got[#got])
-    check("... and one log line names it", #printed == p0 + 1 and printed[#printed]:find("MainMeleeWeapon", 1, true),
-        printed[#printed])
+    for i, who in ipairs({ RANGER, FENCER, NOSTATS, BARE }) do
+        combat = "combat-L2w" .. i -- once per spell per fight: each caster in its own fight
+        listeners.CastedSpell("S_Skeleton_" .. who, "Target_Skeleton_Cleave", "target", "", 0)
+        got = infos()
+        check("weapon formula left out (" .. i .. ")",
+            got[#got] == "Cleave: Swing through two foes. (melee weapon attack)" and not got[#got]:find("Weapon"),
+            got[#got])
+    end
+    check("... one log line per caster names the token", #printed == p0 + 4
+        and printed[#printed]:find("MainMeleeWeapon", 1, true), printed[#printed])
 
     -- a description whose parameter stays a formula is left out whole (no "[1]" or a cut sentence)
     entries.Target_Skeleton_Chill = { DisplayName = "hRoF;1", Description = "hRoFd;3",
