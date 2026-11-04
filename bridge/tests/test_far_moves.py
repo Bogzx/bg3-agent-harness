@@ -280,7 +280,8 @@ class NotesWindow(Base):
         self.g.reach = lambda a: {"reachable": True, "pos": [30.0, 0.0, 0.0]}
         (self.tmp / "markers.json").write_text('[{"id": "m1", "label": "Far", "pos": [60, 0, 0], "level": "TUT"}]')
         out = travel_macro.travel_to(marker="m1", wait=False)
-        self.assertIn("NOTES WINDOW: ~30s of walking left", out)  # 60 m at TRIP_MPS before the speed is known
+        self.assertIn("NOTES WINDOW: ~30s of walking left\n", out + "\n")  # 60 m at TRIP_MPS before the speed is known
+        self.assertNotIn("note() what happened", out)  # D630: the time left is the fact
         again = session.session_clock()
         self.assertNotIn("NOTES WINDOW", again)  # once per trip
         batch.cancel_queue()

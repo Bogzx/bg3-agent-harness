@@ -18,7 +18,7 @@ from unittest import mock
 from test_turn_macros import CHEST, P1, Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
 from bg3ai import metrics  # noqa: E402
-from bg3ai.tools import (core, plumbing, observe, world_tools, batch, queueing, reporting,  # noqa: E402
+from bg3ai.tools import (core, plumbing, observe, world_tools, batch, queueing,  # noqa: E402
                          travel_macro, session)
 
 
@@ -130,7 +130,7 @@ class AsyncTravel(Base):
         self.assertNotIn("ignored", out)
         self.assertIn(f"RUNNING queue {who()}: travel_to", out)
         self.assertIn("(queue_actions appends after it)", out)
-        self.assertIn("NEXT: queue_actions", out)
+        self.assertNotIn("NEXT", out)  # D630: no 'NEXT: queue_actions what to do on arrival ...'
 
     def test_a_trip_that_ends_in_the_settle_window_reports_now(self):
         plumbing.SETTLE_S = 3.0
@@ -173,7 +173,9 @@ class EarlyWake(Base):
         out = batch.wait_for(h, timeout_s=5, lead_s=2)
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertIn(f"{h} move_to: arriving, ETA ~", out)
+        self.assertIn("). What is issued for ", out)  # D630: no 'plan the next step now'
         self.assertIn("runs after the walk arrives", out)
+        self.assertNotIn("plan the next step", out)
         self.assertNotIn("blocks to the end", out)  # ACT-P4: it invited an immediate re-wait
         walk = self.g.jobs[int(h[1:])]
         self.assertEqual(walk["status"], "running")
@@ -506,7 +508,9 @@ class SettleAndPace(Base):
     def test_pace_hint_when_waiting_right_after_issuing(self):
         self.g.dur["act.move_to"] = 0.6
         world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
-        self.assertIn("PACE:", batch.wait_for("j1", timeout_s=2))
+        out = batch.wait_for("j1", timeout_s=2)
+        self.assertRegex(out, r"PACE: this wait_for came [\d.]+s after the last issued action, with no other call in "
+                              r"between\.")  # D630: the fact, no 'Next time first do independent work'
         world_tools.move_to(x=6.0, y=0.0, z=0.0, wait=False)
         observe.get_events()  # independent work in between: no nudge
         self.assertNotIn("PACE:", batch.wait_for("j2", timeout_s=2))
@@ -517,22 +521,13 @@ class SettleAndPace(Base):
         world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False)
         self.assertNotIn("PACE:", batch.wait_for("j1", timeout_s=2))
 
-    def test_next_hint_three_times_then_after_a_nudge(self):
+    def test_a_running_walk_has_no_next_line(self):
+        """D630 (orchestrator 2026-11-04): the NEXT line after a started walk told the agent what to do; the RUNNING
+        line is the fact. The coaching condition (set for this class) gets none either."""
         self.g.dur["act.move_to"] = 5.0
-        seen = []
-        for i in range(5):
-            seen.append("NEXT:" in world_tools.move_to(x=float(i), y=0.0, z=0.0, wait=False))
-            observe.get_events()
-        self.assertEqual(seen, [True, True, True, False, False])
-        world_tools.move_to(x=9.0, y=0.0, z=0.0, wait=False)
-        batch.wait_for("idle", timeout_s=0.1)  # right after issuing: nudged
-        self.assertIn("NEXT:", world_tools.move_to(x=10.0, y=0.0, z=0.0, wait=False))
-
-    def test_rules_only_condition_has_no_next_hint(self):
-        self.enterContext(mock.patch.dict(os.environ, {"BG3AI_PROMPT_CONDITION": "rules"}))
-        self.g.dur["act.move_to"] = 5.0
-        self.assertNotIn("NEXT:", world_tools.move_to(x=5.0, y=0.0, z=0.0, wait=False))
-        self.assertEqual(reporting._pace["next_shown"], 0)  # the 3 showings stay for a coaching session
+        out = world_tools.move_to(x=1.0, y=0.0, z=0.0, wait=False)
+        self.assertIn("RUNNING", out)
+        self.assertNotIn("NEXT", out)
 
     def test_queue_result_shows_what_runs(self):
         self.g.dur["act.interact"] = 2.0

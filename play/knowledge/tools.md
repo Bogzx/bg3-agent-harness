@@ -7,10 +7,8 @@ j12, ETA 3s` (async: a `job_finished` event follows; `wait_for("j12")` to block)
 Lines a result may end with:
 - `RUNNING j3 move_to ~2s left | queue Claude: travel_to m1 (31m left, ETA ~7s) then interact …` → what is
   still walking or queued right now. Don't wait on it: append with `queue_actions`, then plan or write notes.
-- `NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; …` → after a walk that is
-  still running: the order to work in (shown the first few times).
-- `PACE: you waited right after issuing…` → on a `wait_for` called <1.5 s after starting something: next
-  time do independent work first and `wait_for` last.
+- `PACE: this wait_for came 0.4s after the last issued action, with no other call in between.` → on a `wait_for`
+  called <1.5 s after starting something.
 
 ## Observe
 - `look(full=false)` → **what changed since your last look**, a few lines: `PARTY moved 12m W`, `e4 Gale HP 8->3/12, +Burning`,

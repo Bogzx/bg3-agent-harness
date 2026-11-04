@@ -143,7 +143,7 @@ class Nudge:
             return ""
         self.last = now
         who = ", ".join(f"{r['name']} ({r['to']})" for r in self.rows)
-        return f"LEVEL UP pending: {who}. Do it now while out of combat: level_up(who), one call each."
+        return f"LEVEL UP pending: {who}."
 
     def done(self, uuid: str) -> None:
         self.rows = [r for r in self.rows if r.get("uuid") != uuid]
@@ -166,12 +166,6 @@ ROLES = {
     "healer": {"cleric", "druid"},
     "arcane": {"wizard", "warlock", "sorcerer"},
     "skills": {"rogue", "bard", "ranger"},
-}
-ROLE_FIX = {
-    "frontline": "frontline tank (Lae'zel, Karlach)",
-    "healer": "healer (Shadowheart, Jaheira, Halsin)",
-    "arcane": "arcane control (Gale, Wyll)",
-    "skills": "skills/locks/traps (Astarion)",
 }
 
 
@@ -219,15 +213,13 @@ def hint_text(memory: Path, levels: list[dict]) -> str:
     has_comp = re.search(r"^##\s*Party composition", text, re.M | re.I) is not None
     bits = []
     if missing:
-        bits.append("no plan line yet for " + ", ".join(missing) + ' (write "- Gale L4: {json}" lines under '
-                    "## Level-up plans, from knowledge/builds.md)")
+        bits.append("no plan line under ## Level-up plans for " + ", ".join(missing))
     if gaps and not has_comp:
-        bits.append("party lacks " + ", ".join(ROLE_FIX[g] for g in gaps)
-                    + ": note who fills it under ## Party composition")
+        bits.append("no ## Party composition section, and the party has no "
+                    + ", ".join(f"{g} ({'/'.join(sorted(ROLES[g]))})" for g in gaps))
     if not bits:
         return ""
-    return "PARTY PLAN (party-build.md, now while walking): " + "; ".join(bits) + \
-        " (knowledge/playbooks/party-and-leveling.md)"
+    return "PARTY PLAN (party-build.md): " + "; ".join(bits)
 
 
 # ---- spell picks on the level-up page (mouse clicks) ----
