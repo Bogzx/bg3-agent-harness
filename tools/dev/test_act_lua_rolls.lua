@@ -296,8 +296,13 @@ test("check flags (audit S2-1): one that stays set is a done cast marked uncheck
     eq(#rows, 1, "one referee row"); eq(rows[1].ev, "cast_unchecked", "event")
     eq(rows[1].d.uuid, G.guid(P1), "uuid"); eq(rows[1].d.spell, "Projectile_Odd", "spell")
     eq(rows[1].d.flags, "IgnoreTargetChecks", "flags")
-    eq(rows[1].d.rules_unread, "TargetConditions: MysteryTerm", "the guard couldn't read it either")
-    assert(warned[#warned]:find("IgnoreTargetChecks stayed set", 1, true), warned[#warned])
+    -- the guard leaves TargetConditions to the engine (window 9 R3): with IgnoreTargetChecks kept, nothing checked
+    -- them; the row carries the guard's reading of them at that target
+    eq(rows[1].d.rules_unread, nil, "no caster terms unread")
+    eq(rows[1].d.target_rules, "Projectile_Odd needs, at this target: MysteryTerm() (not read)", "target_rules")
+    local said = table.concat(warned, "\n")
+    assert(said:find("IgnoreTargetChecks stayed set", 1, true), said)
+    assert(said:find("Projectile_Odd TargetConditions: term MysteryTerm not read", 1, true), said) -- the fallback read
     -- a late cast whose flags won't clear: both rows
     rows = {}
     local late = setmetatable({ Caster = { Uuid = { EntityUuid = P1 } }, SpellId = { Prototype = "Projectile_Odd" } },
@@ -323,6 +328,50 @@ test("engine refusal (window 7): CastSpellFailed says the game's own reason when
     j = job(op("cast", { char = P1, spell = "Projectile_Bolt", target = NPC }))
     A.dispatch("CastSpellFailed", { P1, "Projectile_Bolt" })
     assert(j.error:find("the game refused the cast (no reason given)", 1, true), j.error)
+end)
+
+test("R3 fail closed: IgnoreTargetChecks stuck + the guard reads the target as ruled out -> the cast is stopped",
+    function()
+    local rows = {}
+    local pw, ref = Ext.Utils.PrintWarning, BG3AI.Referee
+    Ext.Utils.PrintWarning = function() end
+    BG3AI.Referee = { record = function(ev, d) rows[#rows + 1] = { ev = ev, d = d } end }
+    cast_sticky = { "IgnoreTargetChecks" }
+    osiv[key("IsDead", NPC)] = 1
+    spell("Projectile_Odd", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0,
+        TargetConditions = "not Dead()" })
+    local j = job(op("cast", { char = P1, spell = "Projectile_Odd", target = NPC }))
+    eq(#called("UseSpell"), 1, "ordered: the guard doesn't pre-check targets")
+    eq(#called("PurgeOsirisQueue"), 1, "stopped at the cast state: the engine won't check the target")
+    eq(rows[1].ev, "cast_unchecked", "row"); eq(rows[1].d.flags, "IgnoreTargetChecks", "flags")
+    eq(rows[1].d.target_refused, "Projectile_Odd can't target that: the target is dead", "the guard's verdict")
+    tick(math.ceil(A.ROLL_STOP_MS / 60) + 2)
+    eq(j.status, "failed", "nothing came of it")
+    eq(j.error, "Projectile_Odd can't target that: the target is dead (the game wouldn't check the target:"
+        .. " IgnoreTargetChecks stayed set): stopped, nothing cast (the queue purged, no cast in 2.5 s)", "words")
+    -- the purge didn't stop it: the game cast it anyway; said in the result and recorded
+    reset()
+    rows = {}
+    cast_sticky = { "IgnoreTargetChecks" }
+    osiv[key("IsDead", NPC)] = 1
+    spell("Projectile_Odd", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0,
+        TargetConditions = "not Dead()" })
+    j = job(op("cast", { char = P1, spell = "Projectile_Odd", target = NPC }))
+    A.dispatch("CastedSpell", { P1, "Projectile_Odd" })
+    tick(math.ceil(A.PROJECTILE_SETTLE_MS / 60) + 5)
+    eq(j.status, "done", "it went: " .. tostring(j.error))
+    assert(j.result.target_unchecked:find("the target is dead", 1, true), j.result.target_unchecked)
+    eq(rows[#rows].ev, "cast_target_unchecked", "recorded")
+    -- the target read as allowed (or unread): the cast goes on, only the row
+    reset()
+    rows = {}
+    cast_sticky = { "IgnoreTargetChecks" }
+    osiv[key("IsDead", NPC)] = 0
+    spell("Projectile_Odd", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0,
+        TargetConditions = "not Dead()" })
+    job(op("cast", { char = P1, spell = "Projectile_Odd", target = NPC }))
+    eq(#called("PurgeOsirisQueue"), 0, "not stopped"); eq(rows[1].d.target_refused, nil, "no verdict")
+    Ext.Utils.PrintWarning, BG3AI.Referee, cast_sticky = pw, ref, false
 end)
 
 test("self-check: a hook that doesn't register is said loudly at load (REVIEW-5)", function()

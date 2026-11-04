@@ -1,14 +1,15 @@
 -- Part of Server/Guard.lua (split for the 1000-line cap): a spell's own rules that a harness cast skips.
 --
--- REVIEW-5 F1/F3: a cast the harness orders keeps IgnoreCastChecks and IgnoreTargetChecks (window 6: dropping them at
--- the cast state refuses every cast, the control too), so the engine checks neither the stats Requirements /
--- RequirementConditions nor TargetConditions. Live (window 6) Jump went through while ENSNARED. A human's hotbar
--- greys such an action or the cursor refuses the target. Here they are read from the stats and refused before the
--- order, with the plain game fact:
+-- REVIEW-5 F1/F3: the engine doesn't check a harness cast's stats Requirements / RequirementConditions (live: window 6
+-- Jump went through while ENSNARED, window 8 Hide while FLANKED). A human's hotbar greys such an action. Here they are
+-- read from the stats and refused before the order, with the plain game fact:
 --   Requirements           Combat / !Combat / !Immobile
 --   RequirementConditions  on the caster: HasStatus, Immobilized, WearingArmor, Combat, Tagged
---   TargetConditions       on the target: Tagged, Dead, IsDowned, Ally, Enemy, Character, Item, Self, Summon,
---                          HasStatus, CanShoveWeight
+-- TargetConditions (and a two-step spell's OriginTargetConditions) are NOT refused here: the engine refuses a target
+-- they rule out (window 9 R3, guard off: Sleep on 48 HP, Healing Word on an undead, a swing at a corpse, Help on a
+-- healthy ally, all InvalidTarget, nothing spent), so a misread term could only refuse a legal cast. After the
+-- engine's InvalidTarget, G.explain_target says which terms the guard reads as unmet (Actions.lua cast_failed_why).
+-- A term goes back to a pre-check only with a live case of the engine letting an illegal target through.
 -- Three-valued: a term that can't be read (an unknown function, an argument form not handled, a query that answers
 -- nothing) is unknown; only a condition that is false whatever the unknown terms are is refused. Unknown terms are
 -- logged once per spell and term, never refused.
@@ -457,20 +458,28 @@ function G.check_rules(char, spell, st, target)
         subject = char })
     log_unread(spell, "RequirementConditions", unread, last)
     if v == false then G.refuse(name .. " can't be used now: " .. why) end
-    -- A Shout, a Zone or an area spell (AreaRadius / ExplodeRadius) applies its TargetConditions to each creature it
-    -- reaches, not to the pick: Turn Undead's "Tagged('UNDEAD')" filters who flees, the caster isn't checked
-    -- (launch-v1 replay: Aid with targets given, Prayer of Healing, Turn Undead would be refused).
+end
+
+-- The pick's TargetConditions (OriginTargetConditions for a two-step spell) read as false: "<spell> can't target
+-- that: <fact>", else nil (met, unread, or not the pick's: a Shout, a Zone, an area spell). Not a pre-check (the
+-- engine checks targets, window 9 R3): used only when IgnoreTargetChecks stayed set on the cast (ActionsRolls.lua,
+-- fail closed), and its unread terms are logged as the old pre-check's were.
+function G.target_refusal(char, spell, target)
+    local st = spell and Ext.Stats.Get(spell)
+    if not st or not target or G.RULES_OFF then return nil end
+    local function field(k)
+        local ok, v = pcall(function() return st[k] end)
+        return ok and v or nil
+    end
     local st_type = tostring(field("SpellType") or "")
     local area = (tonumber(field("AreaRadius")) or 0) > 0 or (tonumber(field("ExplodeRadius")) or 0) > 0
-    if target and st_type ~= "Shout" and st_type ~= "Zone" and st_type ~= "Wall" and not area then
-        -- a two-step spell (Revivify, Dimension Door) checks its first pick against OriginTargetConditions; its
-        -- TargetConditions are the second pick's (the landing)
-        local which = st_type == "Teleportation" and "OriginTargetConditions"
-            or "TargetConditions"
-        v, why, unread = G.rule_eval(field(which), { source = char, target = target, subject = target })
-        log_unread(spell, which, unread, last)
-        if v == false then G.refuse(name .. " can't target that: " .. why) end
-    end
+    if st_type == "Shout" or st_type == "Zone" or st_type == "Wall" or area then return nil end
+    local which = st_type == "Teleportation" and "OriginTargetConditions" or "TargetConditions"
+    local v, why, unread = G.rule_eval(field(which), { source = char, target = target, subject = target })
+    log_unread(spell, which, unread, {})
+    if v ~= false then return nil end
+    local name = G.spell_facts(spell)
+    return (name and name.name or spell) .. " can't target that: " .. why
 end
 
 ------------------------------------------------------------------------

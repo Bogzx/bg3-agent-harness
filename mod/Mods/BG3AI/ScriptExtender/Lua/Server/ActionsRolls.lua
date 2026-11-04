@@ -28,18 +28,19 @@ A.roll_wait = A.roll_wait or {} -- caster guid -> {job, spell, t}: the last orde
 -- CAST_DROP_EXTRA: check flags the cast loses as well, so the engine checks the spell's own rules as for a player
 -- (Requirements, RequirementConditions, TargetConditions). Default CAST_DROP_CHECKS (window 7 per-flag probe: with
 -- either one dropped the control cast still went, and without IgnoreCastChecks the engine refused Rage out of
--- combat itself). IgnoreHasSpell stays: dropping it refused every cast (window 6/7). The guard's own rule check
--- (GuardRules.lua) still runs first: a clear text and no wasted action. A check flag that won't clear only warns
--- (the guard covered it). Probe switch (tools/dev/probe_cast_checks.py): false = none, a list = those flags, true =
--- all of CAST_DROP_PROBE.
+-- combat itself). IgnoreHasSpell stays: dropping it refused every cast (window 6/7). The guard's own rule check of
+-- the caster (GuardRules.lua: Requirements, RequirementConditions) still runs first; TargetConditions are the
+-- engine's alone (window 9 R3). A check flag that won't clear only warns and is recorded for the referee (with the
+-- guard's reading of the target conditions when IgnoreTargetChecks stayed). Probe switch
+-- (tools/dev/probe_cast_checks.py): false = none, a list = those flags, true = all of CAST_DROP_PROBE.
 A.CAST_DROP = { "IgnoreSpellRolls" }
 A.CAST_DROP_CHECKS = { "IgnoreCastChecks", "IgnoreTargetChecks" }
 A.CAST_DROP_PROBE = { "IgnoreCastChecks", "IgnoreTargetChecks", "IgnoreHasSpell" }
 if A.CAST_DROP_EXTRA == nil then A.CAST_DROP_EXTRA = A.CAST_DROP_CHECKS end
 
 -- At the order (right before the Osiris call): the cast it becomes must lose IgnoreSpellRolls.
-function A.cast_rolls(job, char, spell)
-    job.roll = { spell = spell, state = "pending" }
+function A.cast_rolls(job, char, spell, target)
+    job.roll = { spell = spell, state = "pending", target = target }
     A.roll_wait[G.guid(char)] = { job = job, spell = spell, t = RPC.now_ms() }
 end
 
@@ -64,19 +65,45 @@ local function roll_failed(job, why, resolved)
     job.roll.failed_ms = RPC.now_ms()
 end
 
+-- Fail closed (R3): IgnoreTargetChecks stayed set, so the engine won't check this cast's target, and the guard's
+-- reading of its TargetConditions is false: the cast is stopped as a failed roll clear is (purged, reported once
+-- nothing came of it). why = the guard's refusal words.
+local function target_stop(job, why)
+    job.roll.state, job.roll.why, job.roll.target_stop = "failed", why, true
+    job.stopping = true
+    pcall(G.osi, "PurgeOsirisQueue", job.char)
+    job.roll.failed_ms = RPC.now_ms()
+end
+
+-- A cast stopped by target_stop that the game cast all the same (the purge didn't stop it): said, and recorded.
+local function target_went(r, uuid)
+    r.went = true
+    referee("cast_target_unchecked", { uuid = uuid, spell = r.spell, why = r.why })
+end
+
 -- A job's on_tick, first: while its clear has failed and nothing came of it yet, nothing else of it runs.
 -- went: the job's own sign that the cast resolved (sneak: SNEAKING came); a cast's sign is its CastedSpell.
 function A.roll_stop_tick(job, went)
     local r = job.roll
-    if not r or r.state ~= "failed" or r.unrolled or job.status ~= "running" then return false end
+    if not r or r.state ~= "failed" or r.unrolled or r.went or job.status ~= "running" then return false end
     if went then
+        if r.target_stop then
+            target_went(r, job.char)
+            return false
+        end
         r.unrolled = true
         referee("cast_unrolled", { uuid = job.char, spell = r.spell, why = r.why })
         return false
     end
     if RPC.now_ms() - r.failed_ms >= A.ROLL_STOP_MS then
-        RPC.finish_job(job, "failed", nil, "the game would have cast it without its roll (" .. r.why .. "): stopped,"
-            .. string.format(" nothing cast (the queue purged, no cast in %.1f s)", A.ROLL_STOP_MS / 1000))
+        local stopped = string.format(" nothing cast (the queue purged, no cast in %.1f s)", A.ROLL_STOP_MS / 1000)
+        if r.target_stop then
+            RPC.finish_job(job, "failed", nil, r.why .. " (the game wouldn't check the target: IgnoreTargetChecks"
+                .. " stayed set): stopped," .. stopped)
+        else
+            RPC.finish_job(job, "failed", nil, "the game would have cast it without its roll (" .. r.why .. "):"
+                .. " stopped," .. stopped)
+        end
     end
     return true
 end
@@ -85,6 +112,10 @@ end
 function A.unrolled_result(job, res)
     if job.roll and job.roll.unrolled then
         res.unrolled = "the game cast it without its roll (" .. tostring(job.roll.why) .. ")"
+    end
+    if job.roll and job.roll.went then
+        res.target_unchecked = "the game cast it at a target the guard reads as not allowed (" .. job.roll.why
+            .. "): IgnoreTargetChecks stayed set and the stop didn't take"
     end
     if job.roll and job.roll.unchecked then
         res.unchecked = "the game cast it without checking its own rules (" .. table.concat(job.roll.unchecked, ",")
@@ -130,18 +161,31 @@ local function strip(st, names, drop)
     end
     if #kept > 0 then
         Ext.Utils.PrintWarning("[BG3AI] cast checks: " .. table.concat(kept, ",") .. " stayed set (the engine won't"
-            .. " check those rules for this cast; the guard's check ran before the order)")
+            .. " check those rules for this cast; the guard checked only the caster's before the order)")
     end
     return after, stuck, kept
 end
 
 -- Audit S2-1: a check flag that stayed set = a cast the engine didn't check. Not refused (a stuck write was never
 -- seen live, and a purge after the cast state exists doesn't surely stop it, audit S2 b): recorded for the referee
--- with the terms the guard couldn't read for it (nothing checked those), and the done result says it.
-local function unchecked(caster, spell, kept)
+-- with the caster's terms the guard couldn't read for it (nothing checked those), and the done result says it. With
+-- IgnoreTargetChecks kept, nothing checked the target conditions either (the guard leaves them to the engine, window
+-- 9 R3): target_rules is the guard's reading of them at that target (G.explain_target), for the referee.
+-- Returns the guard's refusal words when it reads the target conditions as false (R3: fail closed, the caller stops
+-- the cast), else nil.
+local function unchecked(caster, spell, kept, target)
     local last = G.rules_last and G.rules_last[caster]
+    local tc, refused
+    if target and has(kept, "IgnoreTargetChecks") then
+        local ok, w = pcall(G.explain_target, caster, spell, target)
+        tc = ok and w or nil
+        local okr, r = pcall(G.target_refusal, caster, spell, target)
+        refused = okr and r or nil
+    end
     referee("cast_unchecked", { uuid = caster, spell = spell, flags = table.concat(kept, ","),
-        rules_unread = last and last.spell == spell and #last.terms > 0 and table.concat(last.terms, "; ") or nil })
+        rules_unread = last and last.spell == spell and #last.terms > 0 and table.concat(last.terms, "; ") or nil,
+        target_rules = tc, target_refused = refused })
+    return refused
 end
 
 -- The roll flag plus the check flags of CAST_DROP_EXTRA.
@@ -201,9 +245,14 @@ function A.roll_cast_state(entity)
         if not names then return roll_failed(job, "its CastOptions don't read as flag names") end
         job.cast_entity = entity -- its SpellCastOutcome says why the engine refused it (A.engine_refusal)
         local after, stuck, kept = strip(st, names, drop_list())
+        local refused
         if #kept > 0 then
             job.roll.unchecked = kept
-            unchecked(caster, w.spell, kept)
+            refused = unchecked(caster, w.spell, kept, job.roll.target)
+        end
+        if refused and #stuck == 0 then
+            job.cast_entity = entity
+            return target_stop(job, refused)
         end
         if #stuck > 0 then
             return roll_failed(job, table.concat(stuck, ",") .. " stayed set: "
@@ -247,6 +296,8 @@ function A.roll_checked(job)
     local r = job.roll
     if r and r.state == "pending" then
         roll_failed(job, "the mod saw no cast state for it", true)
+    elseif r and r.target_stop then
+        if not r.went then target_went(r, job.char) end
     elseif r and r.state == "failed" and not r.unrolled then
         r.unrolled = true
         referee("cast_unrolled", { uuid = job.char, spell = r.spell, why = r.why })
