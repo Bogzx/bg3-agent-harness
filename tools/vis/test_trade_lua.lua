@@ -316,6 +316,69 @@ do
     ok(#got == 2 and #(SV.splits or {}) == 0, "a2: two table items, no part left pending: " .. #got)
 end
 
+-- REVIEW-18k: a part moved at trader A in a trade never confirmed (its part not read before the screen went) stayed in
+-- SV.splits and named a same-count, similar-price part at trader B ('BOUGHT e127 Muddy Red Dye' for another item).
+-- A part is named only in its own trade session, with its stack's props and price; another session's parts are
+-- dropped, and so are all when the screen is found closed.
+do
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+    local stack = vmItem(501, 48, 8)
+    local wareSlot = dc.TraderInventory.Slots.list[2]
+    local was = wareSlot.Object
+    wareSlot.Object = stack
+    local split = { CurrentPlayer = { UIData = { SplitItemData = { ItemCount = 8, TargetCount = 1 } } } }
+    local sw = { DataContext = split, visible = false }
+    local origW, origCmd, closing = BG3AI.UI.widget, BG3AI.UI.command, nil
+    BG3AI.UI.widget = function(n) if n == "SplitItem" then return sw end return origW(n) end
+    BG3AI.UI.command = function(d, name)
+        if name == "MoveTradeItem" then sw.visible = true end
+        if name == "ApplySplitCommand" then closing = split.CurrentPlayer.UIData.SplitItemData.TargetCount end
+        return true
+    end
+    Ext.Entity.Get = function(u) return u == "t-1" and traderItems[1] or nil end
+    local j = jobs[ops["ui.trade"]({ npc = "trader-A", request = { "t-1" }, count = 2 }).job] -- no confirm
+    for _ = 1, 100 do
+        clock = clock + 50
+        if closing then sw.visible, closing = false, nil end -- the part never shows before the agent leaves
+        if j.status ~= "running" then break end
+        j.on_tick(j)
+    end
+    BG3AI.UI.widget, BG3AI.UI.command = origW, origCmd
+    wareSlot.Object = was
+    ok(j.status == "done" and #SV.splits == 1, "18k: A's part pending after the unconfirmed move: " .. #SV.splits)
+    local function partOn(d, item)
+        d.TraderOffer = vmInv({ [0] = item })
+        return SV.tradeState(d).offer.trader.items[1] or {}
+    end
+    -- trader B: another screen (DataContext) and trader; a same-count part at the same price
+    local dcB = { Mode = "Barter", TradePartyGold = 300, TraderInventoryGold = 900, PriceModifierPercentage = 100,
+        PartyCharacterInventories = dc.PartyCharacterInventories, TraderInventory = vmInv({}),
+        CharacterOffer = vmInv({}), TraderOffer = vmInv({}), TradeButtonsEnabled = true }
+    local origDC = widget.DataContext
+    widget.DataContext = dcB
+    SV.trader = "trader-B"
+    local b = partOn(dcB, vmItem(900, 12, 2))
+    ok(b.uuid == nil and b.name == nil, "18k: B's part is never A's: " .. tostring(b.uuid) .. " " .. tostring(b.name))
+    -- back at A: only a part with the stack's props and its price is A's
+    widget.DataContext, SV.trader = origDC, "trader-A"
+    local stolen = vmItem(900, 12, 2)
+    stolen.IsStolen = true
+    ok(partOn(dc, stolen).uuid == nil, "18k: a stolen part isn't the part of a stack that wasn't")
+    ok(partOn(dc, vmItem(900, 13, 2)).uuid == nil, "18k: a part at 13 g isn't the 12 g part")
+    ok(partOn(dc, vmItem(900, 12, 2)).uuid == "t-1", "18k: A's part is still named after its move")
+    SV.splits[1] = { uuid = "t-1", name = "Ware1", side = "trader", count = 2, price = 12, props = {} }
+    widget.DataContext, SV.trader = dcB, "trader-B"
+    ops["ui.trade"]({ npc = "trader-B" })
+    ok(#SV.splits == 0, "18k: a trade call at B drops A's parts: " .. #SV.splits)
+    -- the part pending, the screen found closed drops it
+    widget.DataContext, SV.trader = origDC, "trader-A"
+    SV.splits[1] = { uuid = "t-1", name = "Ware1", side = "trader", count = 2, price = 12, props = {} }
+    widget.visible = false
+    ok(not pcall(ops["ui.trade"], {}) and #SV.splits == 0, "18k: no trade screen open drops the parts")
+    widget.visible = true
+    dc.TraderOffer = vmInv({})
+end
+
 -- launch-v1 haiku act3_gold_max r2 seq 16-21 (67 times in 19 runs): trade(offer=a,b) put both on the table, then
 -- trade(offer=a,b,c, confirm=true) found a and b "not on this side of the trade screen" and refused the confirm.
 -- Items already on our side of the table count as moved (no second MoveTradeItem, which would take them back off);
