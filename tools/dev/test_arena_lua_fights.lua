@@ -172,3 +172,26 @@ test("a move's reactions as the mover's side sees them: an unseen reactor isn't 
     eq(r[1].by and r[1].by.uuid, B1, "a seen reactor is named")
     eq(r[1].name, "Fire Bolt", "and its spell")
 end)
+
+-- Window 9 MR1: a foe's ReactionInterruptUsed during a move holds it until the foe's cast starts. In a match the foe
+-- is the other team (Ar.side_of), whatever the party says: both teams are one party.
+test("a move held by an interrupt in a match: the other team's holds it until its cast starts, a teammate's doesn't",
+    function()
+    local A = BG3AI.Actions
+    reset()
+    begin()
+    osiv[key("IsInCombat", A1)] = 1
+    local job = RPC.start_job("act.move_to", { char = A1 })
+    job.side = "A"
+    A.casts, A.hits, A.interrupts = {}, {}, {}
+    A.note_interrupt(A2)
+    eq(as("A", A.reaction_hold, job), false, "a teammate's interrupt holds nothing")
+    A.note_interrupt(B1)
+    eq(as("A", A.reaction_hold, job), true, "the other team's interrupt holds the move")
+    A.track_cast("CastSpell", B1, "Target_MainHandAttack")
+    A.track_cast("CastedSpell", B1, "Target_MainHandAttack")
+    clock = clock + A.CAST_REACT_SETTLE_MS
+    eq(as("A", A.reaction_hold, job), false, "its cast resolved and settled: released")
+    osiv[key("IsInCombat", A1)] = nil
+    RPC.finish_job(job, "done", {})
+end)
