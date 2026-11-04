@@ -19,8 +19,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   it), not to the sample itself. launch-v1: 113 direction walks stopped 2-5.4 m short of the sample, at the edge of the
   walkable ground, and failed "could not get closer to the destination".
 - When a walk to walk_toward's own point (a direction, or an objective's way) still stops short, the failure reads
-  `stopped 3.3 m short of the spot walk_toward picked (the farthest walkable point toward N): the walkable ground ends
-  about there; walked 6.2 m`. A point the agent named (move_to, walk_toward target=) keeps "could not get closer to
+  `stopped 3.3 m short of the spot walk_toward picked (the farthest walkable point toward N): <the pathfinder's reason,
+  e.g. the rest of the way needs a jump>; walked 6.2 m` (REVIEW-13 #2: at the engine path's end a short stop is
+  often a creature, door or jump, not the end of the ground). A point the agent named (move_to, walk_toward target=) keeps "could not get closer to
   the destination". The 2.0 m arrival tolerance is unchanged.
 
 ## 2026-11-04: trade counts items already on the table as moved
