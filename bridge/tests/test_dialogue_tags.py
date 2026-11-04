@@ -104,6 +104,21 @@ class MergeDialogueTags(unittest.TestCase):
         self.assertTrue(all("tags" not in o for o in opts))
         self.assertEqual(len(logged), 1)
 
+    def test_a_row_whose_runs_did_not_read_gives_no_labels(self):
+        u = ui()
+        u["dialogue"]["options"][2]["runs"] = None  # S.tagRuns failed on the Persuasion row (try -> nil)
+        opts, _, logged = self.merge(u)
+        self.assertTrue(all("tags" not in o for o in opts))
+        self.assertEqual(logged, ["no labels: answer 3: idx 2, tag runs None (unread on the row)"])
+
+    def test_a_row_without_index_or_runs_gives_no_labels_and_no_crash(self):
+        u = ui()
+        del u["dialogue"]["options"][4]["idx"]
+        u["dialogue"]["options"][4]["runs"] = None
+        opts, _, logged = self.merge(u)
+        self.assertTrue(all("tags" not in o for o in opts))
+        self.assertEqual(logged, ["no labels: answer 5: idx None, tag runs None (unread on the row)"])
+
     def test_the_ops_refusal_is_logged_once(self):
         opts, _, logged = self.merge(ui(), {"why": "no open dialogue"})
         self.assertTrue(all("tags" not in o for o in opts))

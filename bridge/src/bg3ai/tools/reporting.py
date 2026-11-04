@@ -264,7 +264,10 @@ def _merge_dialogue_tags(ui: dict) -> dict:
     for (idx, runs), o in zip(keys, opts, strict=True):
         if why:
             break
-        a = srv.get(idx) if idx is not None and runs is not None else None
+        if idx is None or runs is None:  # the row's AnswerIdx or tag runs didn't read: nothing to check against
+            why = f"answer {o.get('i')}: idx {idx}, tag runs {runs} (unread on the row)"
+            break
+        a = srv.get(idx)
         n = len(a.get("tags") or []) + (1 if a.get("roll") else 0) if a else None
         if n != runs:
             why = f"answer {o.get('i')}: idx {idx}, {runs} tag runs on the row, {n} labels in the game's selection"
