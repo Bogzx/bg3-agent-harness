@@ -325,17 +325,9 @@ class HandoffAndSaves(unittest.TestCase):
         from bg3bench import matrix_cli  # play puts packages/bench/src on sys.path
 
         started: list[str] = []
-        # this machine's encoder setting out of reach: a recording command needs the variable, status none
-        none_set = {"BG3AI_CONFIG_DIR": tempfile.mkdtemp(prefix="bg3ai-test-config-")}
-        with mock.patch.dict(os.environ, none_set), mock.patch.object(matrix_cli, "main", return_value=0):
-            for k in ("BG3AI_BENCH_RECORD_ENCODER", "BG3AI_BENCH_RECORD"):  # BG3AI_BENCH_RECORD=0: test_session_host's
-                os.environ.pop(k, None)
-            self.assertEqual(P.lcli.cmd_bench(["status", "--matrix", "m.toml"]), 0)
-            with self.assertRaisesRegex(ValueError, "no bench recording encoder set"):
-                P.lcli.cmd_bench(["run", "--matrix", "m.toml"])
-        for cmd in ("start-states", "run", "status"):
+        for cmd in ("start-states", "run", "status"):  # test_bench_encoder: without an encoder set
             started.clear()
-            with mock.patch.dict(os.environ, {**none_set, "BG3AI_BENCH_RECORD_ENCODER": "libx264"}), \
+            with mock.patch.dict(os.environ, {"BG3AI_BENCH_RECORD_ENCODER": "libx264"}), \
                     mock.patch.object(P.lcli, "acquire_lock", lambda: started.append("lock")), \
                     mock.patch("bg3ai.skipper.start_background", lambda *a: started.append("skipper")), \
                     mock.patch.object(P.lcli.ramwatch, "start_background", lambda *a: started.append("ramwatch")), \
