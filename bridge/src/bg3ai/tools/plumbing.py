@@ -369,7 +369,9 @@ def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
         return _game_moved_text(name, r.result, char)
     if isinstance(r.result, dict) and r.result.get("by_trip") and r.status == "done":
         return party.trip_moved_text(name, r.result, char or _active(), queueing._label)
-    if name == "trade" and isinstance(r.result, dict) and ("wares" in r.result or "offer" in r.result):
+    # a confirmed deal too: the screen that closed during the finish returns no offer/wares (REVIEW-17 F2)
+    if name == "trade" and isinstance(r.result, dict) and ("wares" in r.result or "offer" in r.result
+                                                           or r.result.get("confirmed")):
         head = f"trade: done" if r.status == "done" else f"trade: {r.status.upper()}" + (f" — {r.error}" if r.error else "")
         return head + "\n" + economy.trade_text(r.result, progression._item_handle, **progression._trade_view)
     if r.status == "done":

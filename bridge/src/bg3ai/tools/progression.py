@@ -206,7 +206,7 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
           keep: str = "", full: bool = False, donate: bool = False, count: int = 0) -> str:
     """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
     sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; the result names everything sold (SOLD, by name with count and gold) and counts what was kept back by kind (KEPT); get_inventory(filter="junk") previews it.
-    Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request calls show the table and the balance only; a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT).
+    Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request calls show the table and the balance only; a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT; GAVE/GOT for a donate=true deal, which the trader may not have paid in full).
     confirm refuses an uneven table before the barter (a trader with no gold swaps items only); donate=true gives the offered items (or an overpay's difference) for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
     if sell:
         if sell.strip().lower() != "junk":
@@ -252,13 +252,13 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
             before = got if isinstance(got, dict) else {}
     if donate:
         args["donate"] = True
-    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before)
+    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before, donate=bool(donate))
     if full:
         args["max"] = 500
     try:
         out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
     finally:
-        _trade_view["before"] = None  # sell=junk renders through the same view and says SOLD itself
+        _trade_view["before"], _trade_view["donate"] = None, False  # sell=junk renders through the same view and says SOLD itself
     res = reporting._batch.get("result")
     if _trade_view["listing"]:
         for _ in range(TRADE_FILL_TRIES):
@@ -404,7 +404,7 @@ def _answers_text(d: dict) -> str:
     return "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
 
 
-_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None}  # how the next trade result is rendered
+_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None, "donate": False}  # how the next trade result is rendered
 
 
 def _item_handle(it: dict) -> str:

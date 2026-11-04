@@ -468,12 +468,55 @@ class TradeDealSaid(unittest.TestCase):
     def test_tool_description_says_a_confirmed_deal_is_named(self):
         # the description said confirm calls "show the table and the balance only": false since the deal is named
         doc = core.mcp._tool_manager.get_tool("trade").description
-        self.assertIn("a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT)", doc)
+        self.assertIn("a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT; GAVE/GOT for a "
+                      "donate=true deal, which the trader may not have paid in full)", doc)  # REVIEW-17 F5
         self.assertNotIn("offer/request/confirm calls show the table", doc)
 
     def test_view_is_cleared_after_the_call(self):
         self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
         self.assertIsNone(progression._trade_view["before"])  # sell=junk renders through it next
+
+    def test_a_donate_overpay_says_given_and_got_not_sold(self):
+        # REVIEW-17 F5: donate=true lets an overpay through (52 g of goods for a 30 g potion, no gold back); 'SOLD e1
+        # Backpack 52 g' read as 52 g received. The deal says what went each way. The moved records carry the price
+        # and count they showed (F3: a confirm with a request reads no screen first).
+        after = {**self.AFTER, "moved": [{"uuid": self.BIG, "name": "Backpack", "side": "you", "count": 1,
+                                          "price": 52},
+                                         {"uuid": self.POTION, "name": "Potion of Healing", "side": "trader",
+                                          "count": 2, "price": 30}]}
+        out, _ = self._trade(after, self.BEFORE, offer="e1", request="e3", count=2, confirm=True, donate=True)
+        self.assertIn("\nGAVE e1 Backpack 52 g\nGOT e3 Potion of Healing x2 30 g", out)
+        self.assertNotIn("SOLD", out)
+        self.assertNotIn("BOUGHT", out)
+        self.assertFalse(progression._trade_view["donate"])  # the next result (sell=junk) is not a donate
+        out, _ = self._trade(after, self.BEFORE, offer="e1", request="e3", count=2, confirm=True)
+        self.assertIn("\nSOLD e1 Backpack 52 g\nBOUGHT e3 Potion of Healing x2 30 g", out)
+
+    def test_table_items_with_no_uuid_are_each_named(self):
+        # REVIEW-17 F4: the first table item with no uuid put None in `seen` and every later one was skipped
+        before = {**self.BEFORE, "offer": {"you": {"items": [{"name": "Backpack", "price": 52},
+                                                             {"name": "Scroll of Grease", "price": 20}]},
+                                           "trader": {"items": []}}}
+        lines = economy.deal_lines({"confirmed": True, "moved": []}, before, lambda it: "(no id)")
+        self.assertEqual(lines, ["SOLD (no id) Backpack 52 g | (no id) Scroll of Grease 20 g"])
+
+    def test_a_deal_whose_screen_closed_while_finishing_is_named(self):
+        # REVIEW-17 F2: the mod's closed-screen answer has no offer/wares, so plumbing printed the generic compact of
+        # `moved` (no prices, the earlier calls' table items left out) and no SOLD line
+        closed = {"confirmed": True, "moved": [{"uuid": self.SMALL, "name": "Backpack", "side": "you"}],
+                  "note": "trade screen closed"}
+        saved = (core.H, dict(progression._trade_view))
+        core.H = Handles()
+        for u, n in ((self.BIG, "Backpack"), (self.SMALL, "Backpack")):
+            core.H.get(u, n)
+        progression._trade_view.update(listing=False, full=False, before=self.BEFORE)
+        try:
+            out = plumbing._job_text("trade", JobResult("done", closed, None, [], 900))
+        finally:
+            core.H = saved[0]
+            progression._trade_view.clear()
+            progression._trade_view.update(saved[1])
+        self.assertEqual(out, "trade: done\n(trade screen closed)\nSOLD e2 Backpack 1 g")
 
 
 _HALF = {"unmatched": 1, "wares": [{"price": 1040}, {"price": 832}]}
