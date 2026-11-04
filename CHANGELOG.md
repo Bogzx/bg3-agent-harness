@@ -47,6 +47,12 @@ game unless it says so.
 
 ### Harness
 
+- The bench recording's encoder no longer defaults to `h264_nvenc` (on dev1, an AMD machine, every recorded run died
+  at recorder start). It is `BG3AI_BENCH_RECORD_ENCODER`, else the machine's `~/.config/bg3ai/record-encoder`, which
+  `bg3harness.doctor` writes once with the first of `h264_nvenc` and `libx264` that encodes a test frame. With
+  neither set, `play.py bench` refuses before any run and names the fix.
+  The run record and its manifest (`record_encoder`, manifest v1, optional) name the encoder the recording used;
+  null when the run wasn't recorded.
 - Every play process writes `Sxxx.events.jsonl`, one normalized event log for all clients; triage, the judge,
   model time, fairness flags and run totals read sessions through it.
 - The bg3 server switches tools off per session (`BG3AI_TOOLS`, `BG3AI_TOOLS_OFF`) and refuses `note=` when memory

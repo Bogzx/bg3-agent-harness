@@ -146,15 +146,45 @@ class TestDoctor(DoctorFixture):
         self.encoders = (0, " V....D h264_nvenc   NVENC\n")
         self.assertEqual(self.checks()["ffmpeg"].status, FAIL)
 
-    def test_the_recording_encoder_must_encode(self):
+    def setting(self) -> Path:
+        return self.home / ".config/bg3ai/record-encoder"
+
+    def test_the_recording_encoder_set_must_encode(self):
         self.encode["h264_nvenc"] = (1, "[h264_nvenc] Cannot load libcuda.so.1\nError while opening encoder")
-        c = self.checks()["record"]
+        c = self.checks(**{doctor.RECORD_ENCODER_ENV: "h264_nvenc"})["record"]
         self.assertEqual(c.status, FAIL)
         self.assertIn("Error while opening encoder", c.detail)
-        self.assertIn(f"{doctor.RECORD_ENCODER_ENV}=libx264", c.fix)
+        self.assertIn(doctor.RECORD_ENCODER_ENV, c.fix)
         self.assertEqual(self.checks(**{doctor.RECORD_ENCODER_ENV: "libx264"})["record"].status, PASS)
+        self.assertFalse(self.setting().exists())  # the variable set: nothing written
+        self.setting().parent.mkdir(parents=True)
+        self.setting().write_text("h264_nvenc\n")
+        c = self.checks()["record"]
+        self.assertEqual(c.status, FAIL)
+        self.assertIn(str(self.setting()), c.detail)
+        self.assertIn(f"delete {self.setting()}", c.fix)
         self.encoders = (0, " V....D libx264   x264\n")  # no NVENC in this ffmpeg build
         self.assertIn("lists no h264_nvenc", self.checks()["record"].detail)
+
+    def test_with_no_encoder_set_the_doctor_writes_the_one_that_encodes_once(self):
+        self.encode["h264_nvenc"] = (1, "[h264_nvenc] Cannot load libcuda.so.1\nError while opening encoder")  # dev1
+        c = self.checks()["record"]
+        self.assertEqual(c.status, PASS)
+        self.assertIn(f"wrote it to {self.setting()}", c.detail)
+        self.assertEqual(self.setting().read_text(), "libx264\n")
+        self.encode["h264_nvenc"] = (0, "")  # once written, the setting stays whatever encodes later
+        self.assertEqual(self.checks()["record"].status, PASS)
+        self.assertEqual(self.setting().read_text(), "libx264\n")
+        self.setting().unlink()
+        self.checks()
+        self.assertEqual(self.setting().read_text(), "h264_nvenc\n")  # an NVIDIA machine: the GPU's encoder
+
+    def test_with_no_encoder_that_encodes_nothing_is_written(self):
+        self.encode.update({"h264_nvenc": (1, "no libcuda"), "libx264": (1, "broken x264")})
+        c = self.checks()["record"]
+        self.assertEqual(c.status, FAIL)
+        self.assertIn("h264_nvenc: no libcuda; libx264: broken x264", c.detail)
+        self.assertFalse(self.setting().exists())
 
     def test_the_encoder_variable_is_the_bench_hosts(self):
         from bg3harness.runner import run_host
