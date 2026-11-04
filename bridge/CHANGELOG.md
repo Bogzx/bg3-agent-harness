@@ -5,6 +5,18 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04 (night): REVIEW-17 F1/F2/F4/F5
+
+- path_preview(target=<id>) takes the entity path (as move_to and the guard do; the approach ring when the centre
+  can't be walked to) and judges its end against the target's footprint (Bound.AIBounds Stand) plus the walker's
+  2 m: a large foe next to the walker, or a path to its edge, is reached; a foe on a ledge whose path ends 5 m short
+  reads `NOT REACHED: the walkable path ends @..., 5m short of the target`. A coordinate is judged as before (mod).
+- A confirmed trade whose screen closed while the barter finished now says `(trade screen closed)` and the deal
+  (SOLD/BOUGHT) instead of the raw `moved` list.
+- The deal names every table item without an id (only the first was named).
+- A `donate=true` deal says `GAVE ... | GOT ...` instead of SOLD/BOUGHT: an overpay the trader paid nothing for read
+  as sold at full value. The trade description still says SOLD/BOUGHT (left as pinned).
+
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 
 - get_status/look PARTY: the tie text comes from the new "Tied by" column of play/knowledge/companions.md; the role
