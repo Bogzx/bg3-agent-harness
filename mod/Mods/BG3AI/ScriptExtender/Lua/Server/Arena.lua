@@ -251,11 +251,27 @@ function Ar.wiped(side)
     return true
 end
 
+-- A mirror arena's surfaces read again, report-only (does a cleared fire come back mid-match? cross-review 7828a6f8):
+-- the setup's grid out to the clear's reach, recorded as arena_surfaces {when, round, points, read, off, tiles}.
+function Ar.reread_surfaces(when)
+    local st = Ar.state
+    local sf = st and st.surfaces
+    if not (sf and Ar.Setup) then return end
+    local ok, r = pcall(Ar.Setup.check_surfaces, sf.spawns, sf.n, nil, Ar.Setup.surface_reach(sf.spawns))
+    if not ok then
+        record("arena_surfaces", { when = when, round = st.round, error = tostring(r) })
+        return
+    end
+    record("arena_surfaces", { when = when, round = st.round, points = r.points, read = r.read, radius = r.radius,
+        off = #r.off, tiles = { table.unpack(r.off, 1, 5) } })
+end
+
 function Ar.finish(winner, reason, detail)
     local st = Ar.state
     if st.ended then return st.ended end
     st.ended = { winner = winner, reason = reason, rounds = st.round, hp_left_A = hpLeft("A"), hp_left_B = hpLeft("B"),
         detail = detail, t = now_ms() }
+    Ar.reread_surfaces("end") -- before arena_end: the runner's reader takes no arena record after it
     record("arena_end", { winner = winner, reason = reason, rounds = st.round, hp_left_A = st.ended.hp_left_A,
         hp_left_B = st.ended.hp_left_B, detail = detail })
     return st.ended
@@ -539,6 +555,10 @@ function Ar.round_started(combat, round)
         return
     end
     st.round = round
+    if round == 2 and not st.reread_round2 then
+        st.reread_round2 = true
+        Ar.reread_surfaces("round 2")
+    end
 end
 
 -- The arena's combat ends: a wipe ends the match; any other end is recorded for the runner (it ends the match).
@@ -598,6 +618,7 @@ end
 -- client gets the team uuids and display names. opts.round_cap: the rounds a match lasts at most (a draw after).
 -- opts.sitters: {uuid = its CanJoinCombat before setup} for the characters setup kept out of the fight; arena.reset
 -- gives them that back. opts.positions: {uuid = {x, y, z}} where setup's members stand, recorded in arena_start.
+-- opts.surfaces: a mirror arena's {spawns, n} for the report-only surface re-reads (Ar.reread_surfaces).
 function Ar.begin(teams, opts)
     if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
     local t, names = {}, {}
@@ -614,7 +635,7 @@ function Ar.begin(teams, opts)
     local combat = osi(Osi.CombatGetGuidFor, t.A[1])
     Ar.state = { teams = t, names = names, combat = combat, round = combat and roundNow(t.A[1]) or nil,
         started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters,
-        seed = opts and tonumber(opts.seed) or nil }
+        seed = opts and tonumber(opts.seed) or nil, surfaces = opts and opts.surfaces or nil }
     broadcast({ teams = t, names = names })
     record("arena_start", { teams = t, positions = opts and opts.positions or nil })
     return Ar.status()

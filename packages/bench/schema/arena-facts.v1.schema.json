@@ -59,7 +59,8 @@
         "arena_end_written",
         "arena_group_end_written",
         "arena_turn_readmitted",
-        "arena_round"
+        "arena_round",
+        "arena_surfaces"
       ]
     }
   },
@@ -153,6 +154,10 @@
               }
             },
             "description": "each side's character uuids (arena.status teams): the luck covariate attributes rolls.jsonl rows by their roller"
+          },
+          "surfaces": {
+            "type": "object",
+            "description": "a mirror arena's setup surface check: points, read (pairs both read), radius m, off (mismatches; setup fails on any), wide (report-only, out to the clear's reach)"
           }
         }
       }
@@ -683,6 +688,59 @@
             "enum": [
               "turn",
               "passed"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_surfaces"
+          }
+        }
+      },
+      "then": {
+        "description": "A mirror arena's surfaces read again, report-only, at round 2's start and at the match's end: off = tiles whose mirror reads another surface, tiles = the first five. Not a turn: results ignore it.",
+        "required": [
+          "when"
+        ],
+        "properties": {
+          "round": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "points": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "read": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "radius": {
+            "type": "number"
+          },
+          "off": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          },
+          "when": {
+            "enum": [
+              "round 2",
+              "end"
             ]
           }
         }
