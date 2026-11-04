@@ -43,13 +43,24 @@ local function activeChar(ctx)
     return V.selected(ctx.party) or ctx.party[1]
 end
 
+-- A creature's footprint (Bound.AIBounds Stand, the bounds the engine's AiPath uses; Move when Stand doesn't read; a
+-- medium creature's 0.5 m otherwise): the same read as Guard's G.radius, which loads after this file.
+local function footprint(e)
+    local ok, r = pcall(function()
+        local b = e.Bound.Bound.AIBounds
+        return (b.Stand and b.Stand.Radius) or (b.Move and b.Move.Radius)
+    end)
+    if ok and type(r) == "number" and r > 0 and r < 5 then return r end
+    return 0.5
+end
+
 RPC.register("nav.path", function(args)
     local ctx = V.context()
     local char = args.char or activeChar(ctx)
     if not ctx.is_party[char] then error("not a party member", 0) end
-    local target = args.pos
+    local target, te = args.pos, nil
     if not target and args.target then
-        local te = V.entity(args.target)
+        te = V.entity(args.target)
         if not te then error("unknown target", 0) end
         local tp = V.pos(te)
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
@@ -81,6 +92,16 @@ RPC.register("nav.path", function(args)
     -- Not for a target id: standing next to a large creature is a 0-node path to its centre > 2 m away.
     if args.pos and r.reachable and r.nodes == 0 and not r.partial and cp and U.dist(cp, target) > N.PATH_END_TOL_M then
         r.partial, r.end_pos, r.end_off = true, U.vec(cp, 1), round(U.dist(cp, target), 1)
+    end
+    -- A target id: the path's end (the walker's spot when it has no nodes) against the target's footprint plus the
+    -- walker's end tolerance (REVIEW-17c: a foe on a ledge whose path ends 5 m short read reachable). A route longer
+    -- than the kept points (ROUTE_MAX_NODES) has no end to judge.
+    local pts = r0.points
+    if te and r.reachable and pts and #pts >= 1 and (r.nodes or 0) <= N.ROUTE_MAX_NODES then
+        local last = pts[#pts]
+        if U.dist(last, target) > footprint(te) + N.PATH_END_TOL_M then
+            r.partial, r.end_pos, r.end_off = true, U.vec(last, 1), round(U.dist(last, target), 1)
+        end
     end
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
     local Gd = BG3AI.Guard -- loaded after Navigation in the game; the nav-only tests run without it

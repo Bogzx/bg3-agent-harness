@@ -640,7 +640,14 @@ test("nav.path to a creature id: a path to a large foe's edge, or none from next
     local FOE = "ffffffff-0000-0000-0000-000000000009"
     local V = BG3AI.Visibility
     local entity, visible = V.entity, V.characterVisible
-    V.entity = function(u) local e = entity(u); if e and u == FOE then e.ServerCharacter = {} end return e end
+    V.entity = function(u)
+        local e = entity(u)
+        if e and u == FOE then
+            e.ServerCharacter = {}
+            e.Bound = { Bound = { AIBounds = { Stand = { Radius = 1.2 } } } } -- a large creature
+        end
+        return e
+    end
     V.characterVisible = function() return true end
     local ok, err = pcall(function()
         world[FOE] = { -2.5, 0, 0 }
@@ -655,6 +662,18 @@ test("nav.path to a creature id: a path to a large foe's edge, or none from next
         -- the same spot as a coordinate is still judged by the walker's end tolerance
         r = RPC.ops["nav.path"]({ pos = { -8, 0, 0 } })
         eq(r.partial, true, "a point 2.5 m past the path's end")
+        -- REVIEW-17c: on a ledge, the path ends 5 m short of its centre (past its 1.2 m footprint + 2 m): short
+        world[FOE] = { -10, 0, 0 }
+        N.frame = N.frame + 1
+        nodesFor = function() return { { -3, 0, 0 }, { -5, 0, 0 } } end
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.partial, true, "ends short of the foe"); near(r.end_off, 5, "short by"); eq(r.end_pos[1], -5, "end")
+        -- no nodes, 4 m from it (past 3.2 m): short, from the walker's spot
+        world[FOE] = { -4, 0, 0 }
+        N.frame = N.frame + 1
+        nodesFor = function() return {} end
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.partial, true, "no path toward it"); eq(r.end_pos[1], 0, "at the walker")
     end)
     V.entity, V.characterVisible, world[FOE] = entity, visible, nil
     if not ok then error(err, 0) end
