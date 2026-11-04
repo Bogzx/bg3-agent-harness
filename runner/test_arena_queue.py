@@ -165,6 +165,42 @@ def test_a_match_the_matrix_runner_died_in_is_charged_its_reserves_and_played_ag
     assert ends == ["interrupted", None, None]
 
 
+def usage(path: Path, *rows: tuple[str, float]) -> None:
+    """A side's events: a usage event per (process, its running cost)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines_ = [{"v": 1, "seq": i, "t": 1.0 + i, "src": "client", "kind": "usage", "session_id": p, "cost_usd": c}
+              for i, (p, c) in enumerate(rows)]  # fmt: skip
+    path.write_text("".join(json.dumps(r, separators=(",", ":")) + "\n" for r in lines_))  # as EventLog writes
+
+
+# D192 (seat run r3 a1): the matrix runner was killed while the match's game loaded, before either side's first model
+# call; its reserve stayed charged to budget-arena-v0.json though nothing was spent.
+def test_a_match_killed_before_any_model_call_is_charged_nothing(tmp_path, pilot):
+    budgets(tmp_path)
+    player = Player(tmp_path, "kill")
+    with pytest.raises(KeyboardInterrupt):
+        queue(pilot, tmp_path, player, sessions=tmp_path / "sessions").run()
+    (tmp_path / "sessions" / f"arena-pilot~{M1}~a1" / "A").mkdir(parents=True)  # run files written, no process yet
+    assert queue(pilot, tmp_path, player, sessions=tmp_path / "sessions").run() == "finished"
+    ends = [r["result"] for r in lines(tmp_path) if r["type"] == "end"]
+    assert (ends[0]["invalid_reason"], ends[0]["costs"]) == ("interrupted", {"A": 0.0, "B": 0.0})
+    assert spent(tmp_path) == pytest.approx({"arena": 1.0, "deepseek": 0.5, "haiku": 0.5, "anthropic": 0.5})
+
+
+def test_a_match_killed_mid_fight_is_charged_what_its_sides_billed(tmp_path, pilot):
+    budgets(tmp_path)
+    player = Player(tmp_path, "kill")
+    with pytest.raises(KeyboardInterrupt):
+        queue(pilot, tmp_path, player, sessions=tmp_path / "sessions").run()
+    run = tmp_path / "sessions" / f"arena-pilot~{M1}~a1"
+    usage(run / "A.events.jsonl", ("p1", 0.01), ("p1", 0.04), ("p2", 0.02))  # p1 resumed as p2: 0.04 + 0.02
+    usage(run / "B.events.jsonl", ("q1", 0.05))
+    assert queue(pilot, tmp_path, player, sessions=tmp_path / "sessions").run() == "finished"
+    end = next(r["result"] for r in lines(tmp_path) if r["type"] == "end")
+    assert end["costs"] == {"A": 0.06, "B": 0.05}
+    assert spent(tmp_path)["arena"] == pytest.approx(1.0 + 0.11)
+
+
 def test_an_over_budget_match_is_not_rerun_and_an_invalid_one_is(tmp_path, pilot):
     budgets(tmp_path)
     player = Player(tmp_path, "over_budget", "invalid")
