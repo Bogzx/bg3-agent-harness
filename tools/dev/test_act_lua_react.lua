@@ -43,6 +43,68 @@ test("combat move_to: answers after the opportunity attack its walk provoked, na
     if not ok then error(err, 0) end
 end)
 
+-- Window 9 MR1 (live.md), times from the move's arrival: the Destroyer's ReactionInterruptUsed -1.30 s, its
+-- CastSpell Target_MainHandAttack +0.93 s, AttackedBy +1.07 s, CastedSpell +1.40 s (no REACTIONS: the move had
+-- answered at its arrival, before the cast began).
+test("combat move_to: a foe's reaction that starts its cast after the arrival is waited for from its interrupt (W9 "
+    .. "MR1)", function()
+    combat_setup(12)
+    local restore = seen_stub()
+    local ok, err = pcall(function()
+        local j = job(op("move_to", { char = P1, target = NPC }))
+        tick()
+        A.dispatch("ReactionInterruptUsed", { NPC, "Interrupt_AttackOfOpportunity", 1 })
+        tick(16) -- ~1.0 s of the walk
+        arrive(j, { 8.5, 0, 0 }) -- +0.3 s: the interrupt 1.3 s before the arrival
+        eq(j.status, "running", "arrived, no cast yet: held by the interrupt")
+        tick(15)
+        eq(j.status, "running", "+0.9 s: still no cast, still held")
+        A.dispatch("CastSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(2)
+        A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 9, "Attack", 0 })
+        tick(6)
+        A.dispatch("CastedSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(4)
+        eq(j.status, "running", "its damage settles")
+        tick(6)
+        eq(j.status, "done", "then the move answers " .. tostring(j.error))
+        local r = j.result.reactions or {}
+        eq(#r, 1, "one reaction")
+        eq(r[1].by.uuid, NPC, "by the Destroyer"); eq(r[1].name, "Main Hand Attack", "what")
+        eq(r[1].damage, 9, "damage"); eq(r[1].resolved, true, "resolved")
+    end)
+    restore()
+    if not ok then error(err, 0) end
+end)
+
+test("combat move_to: an interrupt whose cast never starts holds MOVE_INTERRUPT_WAIT_MS from it; an ally's or an "
+    .. "earlier one holds nothing", function()
+    combat_setup(12)
+    local restore = seen_stub()
+    local ok, err = pcall(function()
+        A.dispatch("ReactionInterruptUsed", { NPC, "Interrupt_AttackOfOpportunity", 1 }) -- before the move
+        tick()
+        local j = job(op("move_to", { char = P1, target = NPC }))
+        party_rows = { P1, P2 }
+        A.dispatch("ReactionInterruptUsed", { P2, "Interrupt_AttackOfOpportunity", 1 }) -- an ally's
+        arrive(j, { 8.5, 0, 0 })
+        eq(j.status, "done", "no foe's interrupt during it: at once " .. tostring(j.error))
+        reset()
+        combat_setup(12)
+        j = job(op("move_to", { char = P1, target = NPC }))
+        A.dispatch("ReactionInterruptUsed", { NPC, "Interrupt_AttackOfOpportunity", 1 })
+        arrive(j, { 8.5, 0, 0 }) -- 0.3 s after the interrupt
+        local left = math.floor((A.MOVE_INTERRUPT_WAIT_MS - 300) / 60)
+        tick(left - 1)
+        eq(j.status, "running", "held while the cast may still come")
+        tick(3)
+        eq(j.status, "done", "released once the wait from the interrupt is over")
+        eq(j.result.reactions, nil, "no cast, no reaction")
+    end)
+    restore()
+    if not ok then error(err, 0) end
+end)
+
 test("combat move_to reactions: none = no wait; an ally's or an old cast holds nothing; an unresolved one is cut at "
     .. "MOVE_REACT_HOLD_MS", function()
     combat_setup(12)
