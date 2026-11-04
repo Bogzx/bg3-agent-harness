@@ -599,6 +599,7 @@ def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
     """Picture of the game screen exactly as the player sees it. Costly: use only when text tools can't answer (layout, puzzles, unknown popups). scale: 0.25-1.0 of 2560px width. map=true: opens the map, takes the picture and closes the map again, in one call (no M / ESCAPE by hand)."""
     from ..screen import ScreenCapture
 
+    t0 = time.monotonic()  # the record covers the capture (it was a 0 ms record after it: survey 2026-11-04)
     if core._screen is None:
         core._screen = ScreenCapture(_shots_dir())
     width = int(2560 * max(0.25, min(scale, 1.0)))
@@ -616,7 +617,7 @@ def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
         if opened:
             core.game.try_rpc("ui.map_close", context="client")
     core._last_full_frame = full
-    core._log("screenshot", {"scale": scale, "map": map}, f"{full.size}", 0)
+    core._log("screenshot", {"scale": scale, "map": map}, f"{full.size}", (time.monotonic() - t0) * 1000)
     return Image(data=jpg, format="jpeg")
 
 

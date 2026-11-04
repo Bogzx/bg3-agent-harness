@@ -430,6 +430,25 @@ _noop_waits = {"n": 0}
 _READ_TOOLS = tool_classes.READ_TOOLS
 
 
+# Tools whose metrics record splits _finish into stages (_Stages): talk_to's 1.5 s median bridge-side time had no
+# owner in the records (latency survey 2026-11-04 §5.4).
+_STAGED = {"talk_to": "talk"}  # tool -> the record's field
+
+
+class _Stages:
+    """Per-stage ms of one _finish, for the metrics record: `act` is the call's start to _finish (the job, its text and
+    CHANGES), then each mark() since the previous one."""
+
+    def __init__(self, t0: float):
+        self.last = time.monotonic()
+        self.ms = {"act_ms": round((self.last - t0) * 1000, 1)}
+
+    def mark(self, name: str) -> None:
+        now = time.monotonic()
+        self.ms[name + "_ms"] = round((now - self.last) * 1000, 1)
+        self.last = now
+
+
 def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False,
             extra: dict | None = None) -> str:
     if _batch["active"]:
@@ -444,16 +463,23 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     elif tool not in _READ_TOOLS:
         _noop_waits["n"] = 0
     out = [body.rstrip()]
+    stage = _Stages(t0) if tool in _STAGED else None
     if events:
         job = str(args.get("target") or "").strip().lower() if tool == "wait_for" else ""
         ev = core._events_text(body, job if re.fullmatch(r"j\d+", job) else None,
                           max_wait=core.DIALOGUE_DRAIN_MAX_S if tool in core._DIALOGUE_TOOLS else None)
+        if stage:
+            stage.mark("events")
         if ev:
             out.append(ev)
         auto = _auto_dialogue(tool, body, ev, t0)
+        if stage:
+            stage.mark("auto_dialogue")
         if auto:
             out.append(auto)
             ev = core._events_text()
+            if stage:
+                stage.mark("events2")
             if ev:
                 out.append(ev)
         core._fight_seen(tool, ev)
@@ -492,6 +518,9 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     if c:
         out.append(c)
     text = core.H.scrub("\n".join(x for x in out if x))
+    if stage:
+        stage.mark("rest")
+        extra = {**(extra or {}), _STAGED[tool]: stage.ms}
     core._log(tool, args, text, (time.monotonic() - t0) * 1000, extra)
     if issued:
         _pace["issued_at"], _pace["calls_since"] = time.monotonic(), 0
@@ -632,9 +661,14 @@ def _guard(fn):
         outer = getattr(_call, "t0", None) is not None
         if not outer:
             _call.t0 = time.monotonic()
+        # The guard's entry time and its save wait, for this call's metrics record (core._log): the time before a
+        # tool's own t0 was in no record (latency survey 2026-11-04: 1.03 h before the records' t0)
+        prev = getattr(core._logged, "guard", None)
+        core._logged.guard = {"guard_t0": round(time.time(), 3)}
         try:
             return run(*a, **kw)
         finally:
+            core._logged.guard = prev
             if not outer:
                 _call.t0 = None
 
@@ -654,7 +688,10 @@ def _guard(fn):
         getattr(core.game, "begin_tool", lambda: None)()
         gated = fn.__name__ not in _SAVE_UNGATED
         if gated:
-            saving.SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
+            waited_s = saving.SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
+            g = getattr(core._logged, "guard", None)
+            if g is not None:
+                g["save_wait_ms"] = round(waited_s * 1000, 1)
         who_prev = getattr(plumbing._who_tl, "note", "")
         plumbing._who_tl.note = ""
         logged = getattr(core._logged, "n", 0)

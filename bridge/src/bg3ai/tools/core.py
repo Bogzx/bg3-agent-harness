@@ -110,6 +110,10 @@ def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = Non
     if left:
         _logged.extra = None
         extra = {**left, **(extra or {})}
+    guard = getattr(_logged, "guard", None)  # reporting._guard's entry time and save wait: the call's first record
+    if guard:
+        _logged.guard = None
+        extra = {**guard, **(extra or {})}
     METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not tool_classes.failed(result, tool), extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
