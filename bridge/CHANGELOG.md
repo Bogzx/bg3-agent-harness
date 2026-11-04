@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04 (w15): one record per partial-stack move; path_preview to a creature asks the spots around it
+
+- A partial-stack trade (count=N of a bigger stack) names the deal once: `BOUGHT e127 Muddy Red Dye x2 12 g` (w15 a2
+  read `BOUGHT (no id) ? x2 12 g | e127 Muddy Red Dye x2 12 g`: the game puts the part on the table as a new item,
+  which the mod now names after its move; mod).
+- path_preview(target=<id>): when the path to the target's centre ends farther than its footprint + 2 m, the free
+  spots around it (nearest first) are asked before `NOT REACHED`; a reached spot reads `reachable: walk Xm ... ends
+  @<spot>` (w15 b2: a Destroyer 5.4 m away on the same floor read NOT REACHED, 3 m short). A foe on a ledge stays
+  NOT REACHED (mod).
+
 ## 2026-11-05: a confirmed deal is priced by the mod (REVIEW-17 F3)
 
 - `trade(..., confirm=true)` says SOLD/BOUGHT at the prices the mod read when it moved each item and from the table
