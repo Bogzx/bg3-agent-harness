@@ -364,7 +364,7 @@ do
     local stolen = vmItem(900, 12, 2)
     stolen.IsStolen = true
     ok(partOn(dc, stolen).uuid == nil, "18k: a stolen part isn't the part of a stack that wasn't")
-    ok(partOn(dc, vmItem(900, 13, 2)).uuid == nil, "18k: a part at 13 g isn't the 12 g part")
+    ok(partOn(dc, vmItem(900, 14, 2)).uuid == nil, "18k: a part at 14 g isn't the 12 g part")
     ok(partOn(dc, vmItem(900, 12, 2)).uuid == "t-1", "18k: A's part is still named after its move")
     SV.splits[1] = { uuid = "t-1", name = "Ware1", side = "trader", count = 2, price = 12, props = {} }
     widget.DataContext, SV.trader = dcB, "trader-B"
@@ -377,6 +377,48 @@ do
     ok(not pcall(ops["ui.trade"], {}) and #SV.splits == 0, "18k: no trade screen open drops the parts")
     widget.visible = true
     dc.TraderOffer = vmInv({})
+end
+
+-- REVIEW-18n NOTE 1: the part's price is the stack's pro rata here (2 of 3 at 10 g: 7) and the game's may round per
+-- unit (6 or 8): within the trade session, with the stack's props, +-1 g is the same part, named once.
+for _, partPrice in ipairs({ 6, 8 }) do
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+    local stack = vmItem(501, 10, 3)
+    local wareSlot = dc.TraderInventory.Slots.list[2]
+    local was = wareSlot.Object
+    wareSlot.Object = stack
+    local split = { CurrentPlayer = { UIData = { SplitItemData = { ItemCount = 3, TargetCount = 1 } } } }
+    local sw = { DataContext = split, visible = false }
+    local origW, origCmd, closing = BG3AI.UI.widget, BG3AI.UI.command, nil
+    BG3AI.UI.widget = function(n) if n == "SplitItem" then return sw end return origW(n) end
+    BG3AI.UI.command = function(d, name)
+        if name == "MoveTradeItem" then sw.visible = true end
+        if name == "ApplySplitCommand" then closing = split.CurrentPlayer.UIData.SplitItemData.TargetCount end
+        if name == "BalanceTrade" then balance(d) end
+        if name == "FinishBarter" then d.CharacterOffer, d.TraderOffer = vmInv({}), vmInv({}) end
+        return true
+    end
+    Ext.Entity.Get = function(u) return u == "t-1" and traderItems[1] or nil end
+    local j = jobs[ops["ui.trade"]({ request = { "t-1" }, count = 2, confirm = true }).job]
+    for _ = 1, 100 do
+        clock = clock + 50
+        if closing then
+            sw.visible = false
+            stack.Count, stack.TradePrice = 3 - closing, 10 - partPrice
+            dc.TraderOffer.Slots.list[1].Object = vmItem(501, partPrice, closing)
+            closing = nil
+        end
+        if j.status ~= "running" then break end
+        j.on_tick(j)
+    end
+    BG3AI.UI.widget, BG3AI.UI.command = origW, origCmd
+    wareSlot.Object = was
+    local res = j.result or {}
+    local got = ((res.deal or {}).trader or {}).items or {}
+    local named = 0
+    for _, it in ipairs(got) do if it.uuid == "t-1" then named = named + 1 end end
+    ok(j.status == "done" and res.confirmed and named == 1 and got[1].count == 2 and got[1].price == partPrice,
+        "18n: 2 of 3 at 10 g, the part at " .. partPrice .. " g is t-1, once: " .. named .. " " .. tostring(j.error))
 end
 
 -- launch-v1 haiku act3_gold_max r2 seq 16-21 (67 times in 19 runs): trade(offer=a,b) put both on the table, then

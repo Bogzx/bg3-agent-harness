@@ -409,14 +409,15 @@ local function sameProps(a, b)
 end
 
 -- A table item we don't know on `side` of the trade screen `dc` that is a stack part we moved in this trade session
--- (SV.splits: same count and stack props, the price its share when both are known): it is that item now
--- (SV.offered), and the part leaves SV.splits.
+-- (SV.splits: same count and stack props, the price its share +-1 g when both are known: pro rata vs the game's
+-- per-unit rounding, 2 of 3 at 10 g is 7 here and 6 or 8 there, REVIEW-18n): it is that item now (SV.offered), and
+-- the part leaves SV.splits.
 local function claimSplit(key, p, side, dc)
     if p.ItemType == "Gold" or not SV.splits[1] then return nil end
     local n, price, at = tonumber(p.Count) or 1, tonumber(p.TradePrice), splitSession(dc)
     for i, sp in ipairs(SV.splits) do
         if sp.at == at and sp.side == side and sp.count == n and sameProps(sp.props, p)
-            and (not sp.price or not price or sp.price == price) then
+            and (not sp.price or not price or math.abs(sp.price - price) <= 1) then
             table.remove(SV.splits, i)
             SV.offered[key] = { uuid = sp.uuid, name = sp.name }
             return SV.offered[key]
