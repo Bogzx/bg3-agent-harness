@@ -238,16 +238,52 @@ local function weapon(caster, slot)
     return sid and osi(Ext.Stats.Get, sid) or nil
 end
 
+-- The caster's ability modifier (Stats.Abilities: [1] None, then Strength, Dexterity, ... as State.lua reads them).
+local function abilityMod(u, i)
+    local e = u and V.entity(u)
+    local ok, score = pcall(function() return e.Stats.Abilities[i + 1] end)
+    score = ok and tonumber(score) or nil
+    return score and math.floor((score - 10) / 2) or nil
+end
+
+local function hasProperty(st, prop)
+    local wp = field(st, "Weapon Properties")
+    if type(wp) == "table" or type(wp) == "userdata" then
+        local yes = false
+        pcall(function() for _, x in pairs(wp) do if x == prop then yes = true end end end)
+        return yes
+    end
+    return tostring(wp or ""):find(prop, 1, true) ~= nil
+end
+
+-- A weapon token as the tooltip shows it (effd173a review): the weapon's dice plus the ability modifier the game
+-- adds (melee: Strength; finesse: the higher of Strength and Dexterity; ranged: Dexterity) plus its
+-- WeaponEnchantment(n). nil when any of those can't be read: no number rather than a wrong one.
+local function weaponDamage(t, c)
+    local st = WEAPON_SLOTS[t] and weapon(c.uuid, WEAPON_SLOTS[t])
+    local dice = st and field(st, "Damage")
+    if type(dice) ~= "string" or not dice:match("^%d+d%d+$") then return nil end
+    local str, dex = abilityMod(c.uuid, 1), abilityMod(c.uuid, 2)
+    local mod
+    if t:find("Ranged", 1, true) then
+        mod = dex
+    elseif hasProperty(st, "Finesse") then
+        mod = str and dex and math.max(str, dex) or nil
+    else
+        mod = str
+    end
+    if not mod then return nil end
+    local boosts = tostring(field(st, "Boosts") or "") .. ";" .. tostring(field(st, "DefaultBoosts") or "")
+    mod = mod + (tonumber(boosts:match("WeaponEnchantment%((%d+)%)")) or 0)
+    return dice .. (mod > 0 and ("+" .. mod) or (mod < 0 and tostring(mod) or ""))
+end
+
 -- A damage/heal amount with the caster's numbers, or nil (the part is left out) when anything stays a formula.
 local function amount(x, c)
     local out = tostring(x or ""):gsub("LevelMapValue%(%s*([%w_]+)%s*%)", function(n)
         return levelMapValue(n, c.level) or "?"
     end)
-    out = out:gsub("(%a+Weapon)", function(t)
-        local st = WEAPON_SLOTS[t] and weapon(c.uuid, WEAPON_SLOTS[t])
-        local dmg = st and field(st, "Damage")
-        return (type(dmg) == "string" and dmg ~= "") and dmg or "?"
-    end)
+    out = out:gsub("(%a+Weapon)", function(t) return weaponDamage(t, c) or "?" end)
     out = out:gsub("%s+", "")
     return (out:find("%d") and out:match("^[%dd%+%-]+$")) and out or nil
 end

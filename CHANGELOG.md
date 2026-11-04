@@ -300,7 +300,8 @@ game unless it says so.
     `spell_info` line with what its tooltip shows: the game's description with its numbers filled in, then level,
     concentration, range, area, save or attack, damage and duration from its stats (act2-fights-analysis fix 4).
     Its damage uses the caster's numbers, as the tooltip does: `LevelMapValue(...)` at the caster's level, a weapon
-    formula as the caster's weapon's damage and type; a part that stays a formula is left out (one log line). No
+    formula as the caster's weapon's dice plus the ability modifier the game adds (STR; finesse: the higher of STR/DEX;
+    ranged: DEX) and its enchantment, and the weapon's damage type; a part that stays a formula is left out (one log line). No
     spell_info for an action every party member has in its own spellbook and that isn't a spell (Main Hand Attack,
     Ranged Attack, Jump, Dash), and a Shout no longer fails it (w10 L2).
   Metric definition change: a tool call counts as async only when its own background job is still running when the

@@ -264,6 +264,9 @@ do
     local RANGER = "dddddddd-0000-0000-0000-000000000011" -- a skeleton with a longsword, level 3
     local BARE = "dddddddd-0000-0000-0000-000000000012"   -- nothing equipped
     local SWORD = "ffffffff-0000-0000-0000-000000000001"
+    local NOSTATS = "dddddddd-0000-0000-0000-000000000013" -- a longsword, ability scores unreadable
+    local RAPIER = "ffffffff-0000-0000-0000-000000000002"
+    local FENCER = "dddddddd-0000-0000-0000-000000000014" -- a +1 rapier (finesse): the higher of STR/DEX
     local combat = "combat-L2"
     Osi.CombatGetGuidFor = function() return combat end
     local realGet, realEntity, realPrint = Ext.Stats.Get, V.entity, Ext.Utils.Print
@@ -293,6 +296,8 @@ do
         Shout_Dash = strict({ DisplayName = "hDash;1", Description = "hDashd;1", SpellRoll = { Default = "" },
             SpellFlags = { "IgnoreSilence" } }),
         WPN_Longsword = { Damage = "1d8", ["Damage Type"] = "Slashing" },
+        WPN_Rapier_1 = { Damage = "1d8", ["Damage Type"] = "Piercing", ["Weapon Properties"] = { "Finesse", "Light" },
+            DefaultBoosts = "WeaponEnchantment(1);WeaponProperty(Magical)" },
     }
     Ext.Stats.Get = function(id) return entries[id] or realGet(id) end
     local loca = { hRoF = "Ray of Frost", hRoFd = "Reduces the target's movement speed by [1].",
@@ -311,14 +316,20 @@ do
         end }
     local book = { { Id = { Prototype = "Target_MainHandAttack" } }, { Id = { Prototype = "Shout_Dash" } } }
     V.entity = function(u)
+        -- Abilities: [1] None, Strength 16 (+3), Dexterity 12 (+1)
         return { ServerCharacter = {}, _u = u, EocLevel = { Level = (u == RANGER or u == GOB) and 3 or 1 },
+            Stats = u ~= NOSTATS and { Abilities = { 0, 16, 12, 10, 10, 10, 10 } } or nil,
             SpellBook = isParty[u] and { Spells = book } or nil,
-            Data = u == SWORD and { StatsId = "WPN_Longsword" } or nil }
+            Data = (u == SWORD and { StatsId = "WPN_Longsword" }) or (u == RAPIER and { StatsId = "WPN_Rapier_1" })
+                or nil }
     end
     Ext.Entity = { Get = function(u) return V.entity(u) end }
-    Osi.GetEquippedItem = function(u, slot) return (u == RANGER and slot == "Melee Main Weapon") and SWORD or nil end
+    Osi.GetEquippedItem = function(u, slot)
+        if slot ~= "Melee Main Weapon" then return nil end
+        return ((u == RANGER or u == NOSTATS) and SWORD) or (u == FENCER and RAPIER) or nil
+    end
     local realVisible = V.characterVisible
-    V.characterVisible = function(_, u) return u == GOB or u == RANGER or u == BARE end
+    V.characterVisible = function(_, u) return u == GOB or u == RANGER or u == BARE or u == NOSTATS or u == FENCER end
     local function infos()
         local out = {}
         for _, p in ipairs(pushed) do if p.kind == "spell_info" then out[#out + 1] = p.data end end
@@ -351,8 +362,18 @@ do
 
     listeners.CastedSpell("S_Skeleton_" .. RANGER, "Target_Skeleton_Cleave", "target", "", 0)
     got = infos()
-    check("a monster action: the caster's weapon damage and type",
-        got[#got] == "Cleave: Swing through two foes. (melee weapon attack, 1d8 Slashing damage)", got[#got])
+    check("a monster action: the weapon's dice + STR as the tooltip shows, and its type",
+        got[#got] == "Cleave: Swing through two foes. (melee weapon attack, 1d8+3 Slashing damage)", got[#got])
+    combat = "combat-L2f"
+    listeners.CastedSpell("S_Skeleton_" .. FENCER, "Target_Skeleton_Cleave", "target", "", 0)
+    got = infos()
+    check("a +1 finesse weapon: the higher of STR/DEX plus the enchantment",
+        got[#got] == "Cleave: Swing through two foes. (melee weapon attack, 1d8+4 Piercing damage)", got[#got])
+    combat = "combat-L2n"
+    listeners.CastedSpell("S_Skeleton_" .. NOSTATS, "Target_Skeleton_Cleave", "target", "", 0)
+    got = infos()
+    check("ability scores unreadable: the damage is left out, not shown without its modifier",
+        got[#got] == "Cleave: Swing through two foes. (melee weapon attack)", got[#got])
     local p0 = #printed
     combat = "combat-L2c" -- once per spell per fight: the unarmed one in another fight
     listeners.CastedSpell("S_Skeleton_" .. BARE, "Target_Skeleton_Cleave", "target", "", 0)
