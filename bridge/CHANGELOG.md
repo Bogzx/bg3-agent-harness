@@ -13,6 +13,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - On top of spell_info, every `cast` row and every row whose target or roller is a party member is shown even when
   the cap cuts the rows around it. A folded row (status group, zero-damage run) is kept when any of its rows would be.
   `(+N earlier events)` counts only the rows not shown. No tool or tool description changed.
+- Arena: a side's server (BG3AI_SIDE) plays one match, a fight from start to end, so every batch is shown whole (up
+  to 200) whichever turn events of the shared turn group reach that side; its pinned party is its own team, the same
+  rule for A and B. The events are that side's own (the mod filters them per side before the bridge drains them).
 
 ## 2026-11-04: the EVENTS tail keeps spell_info; back-to-back zero-damage rows share one
 

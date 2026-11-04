@@ -345,8 +345,11 @@ _FIGHT_KINDS = {"combat_started", "round_started", "turn_started", "turn_ended",
 
 def _event_limit(evs: list) -> int:
     """The EVENTS cap for one drained batch: the whole batch (up to render.EVENT_CEILING rows) while a fight is open
-    (the fight tracker's, fed after this render) or the batch itself has fight events; else render.EVENT_LIMIT."""
-    fight = reporting._fights().cur is not None or any(e.get("kind") in _FIGHT_KINDS for e in evs)
+    (the fight tracker's, fed after this render) or the batch itself has fight events; else render.EVENT_LIMIT.
+    A side's server (SETTINGS.side) plays one match, a fight from its start to its end: every batch, A's and B's
+    alike, whichever turn events of the shared turn group reach that side."""
+    fight = (SETTINGS.side is not None or reporting._fights().cur is not None
+             or any(e.get("kind") in _FIGHT_KINDS for e in evs))
     return render.EVENT_CEILING if fight else render.EVENT_LIMIT
 
 

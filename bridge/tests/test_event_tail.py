@@ -7,6 +7,7 @@ Run: cd bridge && uv run python -m unittest tests.test_event_tail
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from unittest import mock
 
@@ -159,9 +160,8 @@ def pinned_rows() -> list[dict]:
     ]
 
 
-class BatchCap(unittest.TestCase):
-    """REVIEW-14: in a fight the whole drained batch is shown (up to EVENT_CEILING rows after the folds); out of one
-    the newest 25, with casts and party-targeted rows pinned. Through core._events_text, as every result renders."""
+class _Batch(unittest.TestCase):
+    """Drained batches through core._events_text, as every result renders (no tests of its own)."""
 
     def setUp(self):
         reporting._FIGHTS["tr"] = None  # a fresh fight tracker: no fight open
@@ -192,6 +192,11 @@ class BatchCap(unittest.TestCase):
 
     def rows(self, out: str) -> list[str]:
         return [ln.strip() for ln in out.split("FIGHT")[0].split("\n") if ln.startswith("  ")]
+
+
+class BatchCap(_Batch):
+    """REVIEW-14: in a fight the whole drained batch is shown (up to EVENT_CEILING rows after the folds); out of one
+    the newest 25, with casts and party-targeted rows pinned."""
 
     def test_in_a_fight_a_60_row_batch_is_shown_whole(self):
         evs = [{"kind": "turn_started", "data": ref(150, "Ghoul Boss")}, *npc_rows(59)]
@@ -234,6 +239,52 @@ class BatchCap(unittest.TestCase):
         rows = self.rows(self.text(zero + npc_rows(40)))
         self.assertEqual(rows[0], "(+15 earlier events)")  # 41 rows after the fold - 25 - 1 pinned
         self.assertIn("amount=0 x2 on 2: Claude e", rows[1])
+
+
+TEAM = {"A": {_u(1), _u(2)}, "B": {_u(3), _u(4)}}
+
+
+class SideCap(_Batch):
+    """The arena: a side's server plays one match, a fight from start to end, so the whole batch shows whichever turn
+    events of the shared turn group reach it; its pinned 'party' is its own team, the same rule for A and B. The
+    events are the side's own already (the mod tags each with its side; events.since gives a side only its own)."""
+
+    def as_side(self, side: str) -> None:
+        for p in (
+            mock.patch.object(core, "SETTINGS", dataclasses.replace(core.SETTINGS, side=side)),
+            mock.patch.object(turn_plan, "_party_cached", lambda: TEAM[side]),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def hits(self) -> list[dict]:
+        """A hit on each side's first member, then a roll by each side's second."""
+        boss = ref(150, "Ghoul Boss")
+        return [
+            {"kind": "damage", "data": {"source": boss, "type": "Fire", "amount": 5, "target": ref(1, "Ash")}},
+            {"kind": "damage", "data": {"source": boss, "type": "Fire", "amount": 6, "target": ref(3, "Birch")}},
+            {"kind": "roll_result", "data": {"success": True, "roller": ref(2, "Cedar")}},
+            {"kind": "roll_result", "data": {"success": True, "roller": ref(4, "Dune")}},
+        ]
+
+    def check_side(self, side: str, own: tuple[str, str], other: tuple[str, str]) -> None:
+        self.as_side(side)
+        out = self.text(npc_rows(60))  # no fight event in the batch, no fight open in the tracker
+        self.assertNotIn("earlier events", out)
+        self.assertEqual(len(self.rows(out)), 60)
+        rows = self.rows(self.text([*self.hits(), *npc_rows(250, start=400)]))
+        self.assertEqual(rows[0], f"(+{254 - render.EVENT_CEILING - 2} earlier events)")
+        pinned = "\n".join(rows[1:3])
+        for name in own:
+            self.assertIn(name, pinned)
+        for name in other:
+            self.assertNotIn(name, pinned)
+
+    def test_side_a_whole_batch_and_its_own_team_pinned(self):
+        self.check_side("A", ("Ash", "Cedar"), ("Birch", "Dune"))
+
+    def test_side_b_whole_batch_and_its_own_team_pinned(self):
+        self.check_side("B", ("Birch", "Dune"), ("Ash", "Cedar"))
 
 
 if __name__ == "__main__":
