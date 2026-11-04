@@ -213,6 +213,23 @@ function G.resources(char)
     return out
 end
 
+-- char's Movement: amount, max (nil when unread).
+function G.movement(char)
+    local e = G.entity(char)
+    local ar = e and U.comp(e, "ActionResources")
+    local amount, max
+    pcall(function()
+        for uuid, list in pairs(ar.Resources) do
+            if resource_name(uuid) == "Movement" then
+                for _, r in ipairs(list) do
+                    if (r.Level or 0) == 0 then amount, max = tonumber(r.Amount), tonumber(r.MaxAmount) end
+                end
+            end
+        end
+    end)
+    return amount, max
+end
+
 -- Parse a stats UseCosts string ("ActionPoint:1;SpellSlotsGroup:1:1:2").
 -- Returns a list of {name, amount, level}. Spell slot groups become
 -- {name="SpellSlotsGroup", amount, level}.

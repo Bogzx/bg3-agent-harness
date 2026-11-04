@@ -167,7 +167,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     eq(d[1].name, "Sleeping"); eq(d[1].turns, 7); eq(d[1].effect, "cannot act")
     eq(d[1].fix, "an adjacent ally's Help (an action) ends it; any damage ends it", "sleep fix")
     eq(d[2].effect, "cannot act"); eq(d[2].fix, "it saves again each turn", "hold fix")
-    eq(d[3].effect, "stands up at its turn start for half its movement")
+    eq(d[3].effect, G.PRONE_EFFECT); eq(d[3].prone, true, "prone")
     eq(d[3].fix, "an adjacent ally's Help (an action) ends it", "prone fix")
     eq(d[4].effect, "cannot move"); eq(d[4].fix, nil, "fear: no fix")
     eq(d[5].name, "Lethargic")
@@ -176,7 +176,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     -- the movement figure / walk guard: whatever "cannot act" or "cannot move"
     eq(G.move_blocked(P1), "Sleeping", "move_blocked: the first that stops a walk")
     on = { { id = "PRONE", name = "Prone" }, { id = "BLEEDING", name = "Bleeding" } }
-    eq(G.move_blocked(P1), nil, "prone stands up and walks")
+    eq(G.move_blocked(P1), "Prone", "prone: no walk until it stands up (REVIEW-5 F4)")
     on = { { id = "HASTE_LETHARGY", name = "Lethargic" } }
     eq(G.move_blocked(P1), "Lethargic", "lethargic")
     -- S065 11:51: Claude's FEARED turn: the game moved him and ended it while end_turn said "now e4's turn"

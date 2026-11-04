@@ -132,6 +132,12 @@ class Lint(unittest.TestCase):
         # a two-team match: rules only, the match's file last; its backticked words are tools or known terms
         text = A.assemble("rules", caps=frozenset(), arena=True, turn_cap_s=75, turn_order="snake").text
         self.assertIn("75 s of model time per character", " ".join(text.split()))
+        # REVIEW-12 (a): the arena's house rule for durations, and prone as the mod plays it
+        for words in (
+            "an N-turn status lasts the rest of its round plus N-1 rounds",
+            "it stands up at its turn start for half its movement",
+        ):
+            self.assertIn(words, " ".join(text.split()))
         self.assertNotIn("{turn_cap_s}", text)
         self.assertEqual(A.part_files("rules", caps=frozenset(), arena=True)[-1], A.ARENA)
         self.assertTrue(text.startswith(A.assemble("rules", caps=frozenset()).text.rstrip("\n")))
