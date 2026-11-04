@@ -55,6 +55,31 @@ def launch_env(output_dir: Path, socket_name: str = DEFAULT_SOCKET) -> dict[str,
     }
 
 
+CONFIG_VAR = b"VK_LAYER_MESA_SCREENSHOT_CONFIG="
+
+
+def layer_output_dir(socket_name: str = DEFAULT_SOCKET, proc: Path = Path("/proc")) -> Path | None:
+    """The folder the running game's capture layer writes into: output_dir in the VK_LAYER_MESA_SCREENSHOT_CONFIG of
+    the processes whose layer listens on `socket_name` (the game and its launcher wrappers carry the same value).
+    None when no process carries it, or when two disagree (two games). v010 window 9: a bridge from another checkout
+    (w8-fixes) waited 5 s in its own runtime/shots while the game, launched from w9-fixes, wrote every PNG there."""
+    found: set[str] = set()
+    for env in proc.glob("[0-9]*/environ"):
+        try:
+            data = env.read_bytes()
+        except OSError:  # gone, or another user's
+            continue
+        for var in data.split(b"\0"):
+            if not var.startswith(CONFIG_VAR):
+                continue
+            opts = dict(
+                kv.split("=", 1) for kv in var[len(CONFIG_VAR) :].decode(errors="replace").split(";") if "=" in kv
+            )
+            if opts.get("control") == socket_name and opts.get("output_dir"):
+                found.add(opts["output_dir"])
+    return Path(found.pop()) if len(found) == 1 else None
+
+
 class ScreenCapture:
     def __init__(self, output_dir: Path, socket_name: str = DEFAULT_SOCKET):
         self.output_dir = Path(output_dir)
@@ -109,7 +134,7 @@ class ScreenCapture:
                     if target.exists():
                         return target
                     time.sleep(0.02)
-                raise TimeoutError("game did not present a frame in time (minimized or loading?)")
+                raise TimeoutError(f"game did not present a frame in time (minimized or loading?): no {target}")
             finally:
                 # Never keep the layer's single control slot between captures.
                 self._drop()
