@@ -121,9 +121,12 @@ end
 
 -- A concentration spell whose shown name didn't read, and why, logged once per spell and reason. w14 L1 try 1
 -- (2026-11-04): Balthazar's row read concentration=Target_SHA_Necromancer_Cloudkill once, `Cloudkill` in tries 2-3;
--- the cause isn't known (no log). The id stays the fallback until the log says which step failed.
+-- the cause isn't known (no log). The id stays the fallback for the reader's own characters (`own`: its party, a
+-- side's team); for anyone else it is OTHER_CONCENTRATION, the id only in the log: an id can carry hints the name
+-- doesn't (Target_SHA_Necromancer_Cloudkill vs Cloudkill; REVIEW-18c, as for an enemy's cast in Events.lua).
 S.nameMiss = S.nameMiss or {}
-local function concentration(e)
+S.OTHER_CONCENTRATION = "a spell" -- the bridge shows "concentrating on a spell"
+local function concentration(e, own)
     local c = comp(e, "Concentration")
     if not c then return nil end
     local ok, sid = pcall(function() return c.SpellId.Prototype end)
@@ -138,7 +141,7 @@ local function concentration(e)
         S.nameMiss[tostring(sid) .. "|" .. why] = true
         pcall(Ext.Utils.PrintWarning, "[BG3AI] concentration name of " .. tostring(sid) .. " didn't read: " .. why)
     end
-    return sid
+    return own and sid or S.OTHER_CONCENTRATION
 end
 
 local function selectedCharacter(party)
@@ -301,7 +304,7 @@ function S.examine(ctx, uuid, e)
     if ok then out.initiative = ini end
     local okd, dv = pcall(function() return e.Sight.DarkvisionRange end)
     if okd and dv and dv > 0 then out.darkvision_m = round(dv, 1) end
-    out.concentration = concentration(e)
+    out.concentration = concentration(e, ctx.is_party[uuid])
     return out
 end
 
@@ -321,7 +324,7 @@ local function partyBrief(ctx, uuid, active)
     if inCombat(uuid) then o.in_combat = true end
     if uuid == active then o.active = true end
     if not truthy(osi(Osi.IsOnStage, uuid)) then o.off_stage = true end
-    o.concentration = concentration(e)
+    o.concentration = concentration(e, true)
     o.level_up = levelUpTo(e)  -- bridge: "LEVEL UP: Gale (2)"
     -- The "!" the game shows over a companion who wants to talk (eoc::tag::HasExclamationDialog; live
     -- 2026-10-10: Wyll at camp). Bridge: "TALK: Wyll wants to talk" (S023 Gale, S026 Withers took screenshots).

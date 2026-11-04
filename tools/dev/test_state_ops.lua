@@ -205,12 +205,17 @@ test("a concentration name that doesn't read says why in the log, once (w14 L1 t
         local CK = "Target_SHA_Necromancer_Cloudkill"
         Ext.Stats = { Get = function(id) return { DisplayName = id == CK and "hCK" } end }
         names.hCK = "Cloudkill"
-        eq(conc(e), "Cloudkill", "the shown name")
+        eq(conc(e, true), "Cloudkill", "the shown name")
+        eq(conc(e, false), "Cloudkill", "the shown name, anyone's")
         eq(#warned, 0, "no log when it reads")
         names.hCK = nil
-        eq(conc(e), "Target_SHA_Necromancer_Cloudkill", "the id (fallback)")
-        eq(conc(e), "Target_SHA_Necromancer_Cloudkill", "again")
+        eq(conc(e, true), "Target_SHA_Necromancer_Cloudkill", "the id (fallback) for the reader's own")
+        eq(conc(e, true), "Target_SHA_Necromancer_Cloudkill", "again")
         eq(#warned, 1, "logged once")
+        -- anyone else's: a neutral fact, the id only in the log (REVIEW-18c)
+        eq(conc(e, false), "a spell", "not the id for another's")
+        eq(conc(e), "a spell", "nor without `own`")
+        eq(#warned, 1, "the same miss: no second log")
         assert(warned[1]:find("Target_SHA_Necromancer_Cloudkill didn't read: no string for DisplayName hCK", 1, true),
             warned[1])
         Ext.Stats = { Get = function() error("stats not ready") end }
