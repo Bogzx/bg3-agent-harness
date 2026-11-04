@@ -376,13 +376,21 @@ def _render_ui(ui: dict, brief: bool = False) -> list[str]:
         ui = _complete_answers(ui)
     except Exception:  # best effort: the visible window still renders
         pass
-    ui = _merge_dialogue_tags(ui)
+    ui = _label_dialogue(ui)
     _note_listed(ui)
+    return render.render_ui(ui, core.H, brief=brief)
+
+
+def _label_dialogue(ui: Any) -> Any:
+    """The answer rows' tags (state.dialogue_tags) and check notes, for every tool that renders the dialogue: look's
+    full status and its change lines rendered the raw read (w11 L4: talk_to showed '5. [PALADIN] She is a person...',
+    look right after the same row without the label)."""
+    ui = _merge_dialogue_tags(ui)
     try:
         ui = _annotate_checks(ui)
     except Exception:  # best effort: a missing sheet never hides the dialogue itself
         pass
-    return render.render_ui(ui, core.H, brief=brief)
+    return ui
 
 
 def _keep_read(ui: Any) -> None:
