@@ -431,19 +431,24 @@ class ServerSave(Base):
         self.assertEqual(self.rig.menus, ["x"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SaveMenusNoShim(unittest.TestCase):
     def test_no_input_shim_says_why_with_no_call(self):
-        # REVIEW-17b G2: '...; save_game(label="quicksave") needs no typed name' named the next call
+        # REVIEW-17b G2 / REVIEW-18b NOTE 1: the fact only (what the shim was needed for), no other route to take
         from bg3ai.game import JobResult
         from bg3ai.tools import core, world_tools
 
         game = unittest.mock.Mock()
-        game.run_job.return_value = JobResult("done", {"needs_text": True})
         with unittest.mock.patch.object(core, "game", game), unittest.mock.patch.object(world_tools, "_inp", lambda: None):
+            game.run_job.return_value = JobResult("done", {"needs_text": True})
             ok, detail = saving._save_menus("S001-start")
-        self.assertFalse(ok)
-        self.assertEqual(detail, "the save menus need the input shim (needs_text); a quicksave needs no typed name")
+            self.assertFalse(ok)
+            self.assertEqual(detail, "the save menus need the input shim to type the save's name")
+            game.run_job.return_value = JobResult("failed", {"needs_key": "RETURN"}, "the key didn't land")
+            ok, detail = saving._save_menus("S001-start")
+            self.assertFalse(ok)
+            self.assertEqual(detail, "the save menus need the input shim to press RETURN (the key didn't land)")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
