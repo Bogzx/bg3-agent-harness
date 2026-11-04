@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from bg3ai import render
 from bg3ai.game import JobResult
 from bg3ai.tools import core, plumbing
 
@@ -61,6 +62,28 @@ class MoveReactions(unittest.TestCase):
     def test_no_reactions_no_block(self):
         text = plumbing._job_text("move_to", JobResult("done", {"dist": 1}), ASH)
         self.assertNotIn("REACTIONS", text)
+
+
+class PathPreviewProvokes(unittest.TestCase):
+    """Window 9 MR2: the game's path preview marks where the path leaves an enemy's reach ring ("Provokes Attack of
+    Opportunity"), nothing once that enemy's reaction is spent; path_preview says the same fact (nav.path provokes)."""
+
+    def test_path_preview_names_each_enemy_whose_reach_the_path_leaves(self):
+        h = render.Handles()
+        res = {
+            "reachable": True,
+            "length_m": 6.0,
+            "within_movement": True,
+            "movement_left": 9.0,
+            "provokes": [{"uuid": BIRCH, "name": "Birch", "at": [-0.1, 0.0, 0.0], "along_m": 1.1}],
+        }
+        out = render.render_path(res, h)
+        self.assertEqual(
+            out,
+            "reachable: walk 6m fits movement left 9m | provokes an attack of opportunity from "
+            "e1 Birch where it leaves its reach @(-0.1,0,0), 1.1m along",
+        )
+        self.assertNotIn("provokes", render.render_path({"reachable": True, "length_m": 6.0}, h))
 
 
 if __name__ == "__main__":

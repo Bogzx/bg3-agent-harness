@@ -195,3 +195,27 @@ test("a move held by an interrupt in a match: the other team's holds it until it
     osiv[key("IsInCombat", A1)] = nil
     RPC.finish_job(job, "done", {})
 end)
+
+-- Window 9 MR2: path_preview's attack-of-opportunity fact (G.path_provokes) in a match: the other team's member whose
+-- reach the path leaves (both teams are one party, so not the party rule), never a teammate, nor one the side can't
+-- see.
+test("path_provokes in a match: the other team's reach, not a teammate's, only when the side sees it", function()
+    reset()
+    begin()
+    world[B1].pos = { 2.4, 0, 0 }
+    for _, u in ipairs({ A2, B1 }) do
+        world[u].comps.ActionResources = { Resources = { ReactionActionPoint = { { Level = 0, Amount = 1 } } } }
+    end
+    local path = { { 1, 0, 0 }, { -2, 0, 0 }, { -5, 0, 0 } }
+    osiv[key("CanSee", A1, B1)], osiv[key("CanSee", A2, B1)] = 1, 1
+    V.ctxCache, V.sideCtx = nil, nil
+    local r = as("A", G.path_provokes, A1, path)
+    eq(#r, 1, "one")
+    eq(r[1].uuid, B1, "B1, not the teammate A2 in reach too")
+    local reach = G.melee_reach(B1, A1, G.DEFAULT_MELEE_M) -- B1 at x 2.4: the path (from x 1, west) leaves it here
+    eq(r[1].along_m, U.round(1 - (2.4 - reach), 1), "where it leaves B1's reach")
+    osiv[key("CanSee", A1, B1)], osiv[key("CanSee", A2, B1)] = nil, nil
+    V.ctxCache, V.sideCtx = nil, nil
+    N.frame = N.frame + 1
+    eq(#as("A", G.path_provokes, A1, path), 0, "B1 unseen by side A: nothing")
+end)

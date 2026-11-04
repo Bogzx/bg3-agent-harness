@@ -143,3 +143,55 @@ test("out of combat a move_to doesn't wait for anyone's cast", function()
     restore()
     eq(j.status, "done", "at once " .. tostring(j.error))
 end)
+
+-- Window 9 MR2 (live.md): the game's path preview marks where a path leaves an enemy's reach ring ("Provokes Attack
+-- of Opportunity"), and shows nothing once that enemy's reaction is spent (0/1). G.path_provokes is the same fact.
+test("path_provokes: a visible enemy with its reaction whose reach the path leaves, where and how far along; none "
+    .. "for a spent reaction, an unseen enemy, a non-enemy, or out of combat", function()
+    combat_setup(12)
+    osiv[key("IsEnemy", P1, GOB)], osiv[key("IsInCombat", GOB)] = 1, 1
+    world[GOB].comps.ActionResources = { Resources = { ReactionActionPoint = { { Level = 0, Amount = 1 } } } }
+    local seen = true
+    local saved = BG3AI.Visibility
+    BG3AI.Visibility = {
+        context = function() return { is_party = { [P1] = true } } end,
+        charactersNear = function(centers, radius)
+            local out = {}
+            for _, u in ipairs({ GOB, P1 }) do
+                local p = world[u].pos
+                for _, c in ipairs(centers) do
+                    local d = math.sqrt((p[1] - c[1]) ^ 2 + (p[2] - c[2]) ^ 2 + (p[3] - c[3]) ^ 2)
+                    if d <= radius then out[#out + 1] = { { u = u }, p, d }; break end
+                end
+            end
+            return out
+        end,
+        entityUuid = function(e) return e.u end,
+        name = function(u) return u == GOB and "Goblin" or "Ash" end,
+        characterVisible = function(_, u) return u ~= GOB or seen end,
+    }
+    local ok, err = pcall(function()
+        -- the goblin at 2.4 m on x; the path from x 1 to x -5 leaves its reach (G.melee_reach) on the way
+        local path = { { 1, 0, 0 }, { -2, 0, 0 }, { -5, 0, 0 } }
+        local r = G.path_provokes(P1, path)
+        eq(#r, 1, "one")
+        eq(r[1].uuid, GOB, "the goblin"); eq(r[1].name, "Goblin", "named")
+        local reach = G.melee_reach(GOB, P1, G.DEFAULT_MELEE_M) -- the goblin at x 2.4, the path from x 1 west
+        eq(r[1].along_m, U.round(1 - (2.4 - reach), 1), "how far along")
+        eq(string.format("%.1f", r[1].at[1]), string.format("%.1f", 2.4 - reach), "where it leaves the reach")
+        eq(#G.path_provokes(P1, { { -5, 0, 0 }, { -9, 0, 0 } }), 0, "a path never in its reach")
+        world[GOB].comps.ActionResources.Resources.ReactionActionPoint[1].Amount = 0
+        eq(#G.path_provokes(P1, path), 0, "its reaction spent: nothing, as the game's preview")
+        world[GOB].comps.ActionResources.Resources.ReactionActionPoint[1].Amount = 1
+        seen = false
+        eq(#G.path_provokes(P1, path), 0, "unseen: nothing")
+        seen = true
+        osiv[key("IsEnemy", P1, GOB)] = nil
+        eq(#G.path_provokes(P1, path), 0, "not an enemy: nothing")
+        osiv[key("IsEnemy", P1, GOB)] = 1
+        osiv[key("IsInCombat", P1)] = nil
+        eq(G.path_provokes(P1, path), nil, "out of combat: no claim")
+    end)
+    BG3AI.Visibility = saved
+    if not ok then error(err, 0) end
+end)

@@ -345,6 +345,62 @@ function G.in_blast(char, pt, r, skip)
     return out
 end
 
+-- Window 9 MR2 (live.md): in combat the game's path preview marks the point where a path leaves an enemy's reach
+-- ring ("Provokes Attack of Opportunity" in its tooltip) and shows nothing for an enemy whose reaction is spent. The
+-- same facts for a path (its points): each enemy the mover's side can see, in combat, standing, with its reaction
+-- left, whose melee reach (its main hand's, edge to edge) the path leaves: {{uuid, name, at, along_m}} by along_m,
+-- nil out of combat. An enemy is the other team in a match, else one the game calls the mover's enemy.
+G.AOO_NEAR_M = 5.0 -- only characters this near a path point can have it in reach
+local function foe_of(char, u)
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active and Ar.active() and Ar.side_of then
+        local x, y = Ar.side_of(char), Ar.side_of(u)
+        if x and y then return x ~= y end
+    end
+    return not G.is_party(u) and b(G.q("IsEnemy", char, u))
+end
+
+local function reaction_left(u)
+    local r = G.resources(u).ReactionActionPoint
+    return r ~= nil and (r[0] or 0) > 0
+end
+
+function G.path_provokes(char, points)
+    local V = BG3AI.Visibility
+    if not (char and G.in_combat(char)) or type(points) ~= "table" or #points < 2 then return nil end
+    local me, ctx, out = G.guid(char), V.context(), {}
+    local attack = Ext.Stats.Get("Target_MainHandAttack")
+    for _, row in ipairs(V.charactersNear(points, G.AOO_NEAR_M)) do
+        local u = G.guid(V.entityUuid(row[1]) or "")
+        if u and u ~= me and not G.is_dead(u) and not G.is_downed(u) and G.in_combat(u) and foe_of(me, u)
+            and V.characterVisible(ctx, u, row[1], row[2]) and reaction_left(u) then
+            local ep = G.pos(u)
+            local reach = G.melee_reach(u, me, G.spell_range(attack, u) or G.DEFAULT_MELEE_M)
+            local along, inside = 0, U.dist(points[1], ep) <= reach
+            for i = 2, #points do
+                local p, q = points[i - 1], points[i]
+                local seg, qin = U.dist(p, q), U.dist(q, ep) <= reach
+                if inside and not qin then -- the crossing, by halving the segment
+                    local lo, hi = 0, 1
+                    for _ = 1, 12 do
+                        local m = (lo + hi) / 2
+                        local pt = { p[1] + (q[1] - p[1]) * m, p[2] + (q[2] - p[2]) * m, p[3] + (q[3] - p[3]) * m }
+                        if U.dist(pt, ep) <= reach then lo = m else hi = m end
+                    end
+                    local t = (lo + hi) / 2
+                    local at = { p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t, p[3] + (q[3] - p[3]) * t }
+                    out[#out + 1] = { uuid = u, name = V.name(u), along_m = U.round(along + seg * t, 1),
+                        at = U.vec(at, 1) }
+                    break
+                end
+                inside, along = qin, along + seg
+            end
+        end
+    end
+    table.sort(out, function(x, y) return x.along_m < y.along_m end)
+    return out
+end
+
 local function fmt_pos(p) return string.format("(%.1f,%.1f,%.1f)", p[1], p[2], p[3]) end
 
 function G.blast_risk(char, st, flags, spell, target, pos)
