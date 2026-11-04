@@ -81,11 +81,11 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
 
 
 def other_dirs_text(others: Any) -> str:
-    """'. Walkable instead: S 18m, N 12m (winding) → walk_toward(direction="S")' or ''."""
+    """'. Walkable instead: S 18m, N 12m (winding)' or ''."""
     if not isinstance(others, list) or not others:
         return ""
     parts = [f"{o['dir']} {N(o.get('m', '?'))}m" + (" (winding)" if o.get("winding") else "")
              for o in others if isinstance(o, dict) and o.get("dir")]
     if not parts:
         return ""
-    return f". Walkable instead: {', '.join(parts)} → walk_toward(direction=\"{others[0]['dir']}\")"
+    return f". Walkable instead: {', '.join(parts)}"

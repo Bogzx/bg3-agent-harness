@@ -627,8 +627,7 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
             if not quiet:
                 busy_seen = now
             elif not kinds & WORLD_EVENT_KINDS and now - busy_seen >= EVENT_GRACE_S:
-                body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt): "
-                        "act instead (talk_to, move_to, queue_actions)")
+                body = f"nothing is running that would cause {tgt} (no job, no queue, no prompt)"
                 noop = "cannot_happen" if busy_seen == 0.0 else None
                 break
             elif quiet and busy_seen == 0.0 and reporting._noop_waits["n"] >= 1:
@@ -643,7 +642,7 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
                 # S009: 'dialogue_started' after a finished 3 m walk waited its full 10 s, and the last minutes
                 # went to 45+30+40 s waits with nothing running. Nothing of ours can cause it: say so now.
                 body = (f"nothing is running that would cause {tgt} (no job, no queue, no prompt) after "
-                        f"{render.num(round(now - t0, 1))}s: act instead (talk_to, move_to, queue_actions)")
+                        f"{render.num(round(now - t0, 1))}s")
                 break
         first = False
         if now > deadline:

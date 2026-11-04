@@ -155,7 +155,7 @@ class Saver:
                 if self.pending["label"] == label:
                     return f"save_game: '{name}' is already being saved ({self.pending['phase']})"
                 return (f"save_game: REFUSED — '{self.pending['label'] or 'quicksave'}' is still being saved "
-                        f"({self.pending['phase']}); call again once it says SAVED")
+                        f"({self.pending['phase']}); another save is refused until it says SAVED")
         ok, why = self.can_save()
         job = {"label": label, "t0": time.monotonic(), "wall": time.time(), "phase": "menu" if ok else "queued"}
         if sync:

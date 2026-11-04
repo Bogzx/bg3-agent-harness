@@ -247,7 +247,8 @@ class WalkTowardAlternatives(Base):
                         "others": [{"dir": "SW", "m": 18.0, "path_m": 19.0}, {"dir": "NW", "m": 12.0, "winding": True}]}
         out = observe.walk_toward(direction="W", max_m=30)
         self.assertIn("no walkable ground toward W within 30m (7 spots checked). Walkable instead: SW 18m, "
-                      "NW 12m (winding) → walk_toward(direction=\"SW\").", out)
+                      "NW 12m (winding).", out)
+        self.assertNotIn("→ walk_toward", out)  # D630: the directions are facts, a suggested call is advice
         args = self.g.ops("nav.reach_toward")[0][1]
         self.assertTrue(args["loose"]); self.assertTrue(args["alts"])
 

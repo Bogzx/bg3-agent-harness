@@ -177,6 +177,7 @@ class CreateCharacter(Base):
             out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
         self.assertEqual(saved, ["S001-start"])
         self.assertLess(out.index("FIRST LOOK"), out.index("first save (no save_game needed)"))
+        self.assertIn("FIRST LOOK (this is get_status + look):\n", out)  # D630: no "don't read again"
         self.assertIn("PARTY e", out)                          # look(full=True)'s status block
         self.assertIn("NEXT: issue the first move now", out)
         # nested: the look's own metric record is marked nested (not a separate agent read)
@@ -207,7 +208,7 @@ class CreateCharacter(Base):
         g, _ = self.use(FakePage())
         g.world_screen = "loading"
         out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
-        self.assertIn("hadn't loaded yet", out)
+        self.assertIn("hadn't loaded yet to check it; get_status shows the name once it has)", out)  # D630: no "don't call"
         self.assertNotIn("FIRST LOOK", out)
 
     def test_first_look_switch_off(self):
@@ -290,12 +291,13 @@ class CreateCharacter(Base):
         newgame.create_character(json.dumps({"name": "Ilse"}))
         out = newgame.create_character(json.dumps({"name": "Ilse"}))
         self.assertIn("REFUSED: character creation isn't open: the character is already created ('Ilse'", out)
+        self.assertNotIn("Don't call", out)  # D630
 
     def test_no_cc_and_no_world_points_to_new_game(self):
         g, _ = self.use(FakePage(), world_name=None)
         g.cc_open = False
         out = newgame.create_character(json.dumps({"name": "Ilse"}))
-        self.assertIn("new_game first", out)
+        self.assertIn("REFUSED: character creation isn't open (new_game opens it from the main menu)", out)
 
     def test_origin_without_name_takes_the_world_name(self):
         g, inp = self.use(FakePage(can_edit=False), world_name="Lae'zel")

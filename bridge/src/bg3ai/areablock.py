@@ -90,7 +90,7 @@ class AreaBlock:
             return ""
         first = b["tools"][0] if b.get("tools") else tool
         return (f" Same story-area block as {first} at {time.strftime('%H:%M:%S', time.localtime(b['t']))}: "
-                f"{TOOLS} are all refused here, so don't try the others.")
+                f"{TOOLS} are all refused here.")
 
     def alert(self, level: Any, pos: Any) -> str:
         """The ALERTS phrase while a block is remembered ('' when none)."""
