@@ -304,14 +304,12 @@ def _answer_donate(res: dict, handover: bool) -> str:
     after (nothing else can happen there) so the conversation goes on."""
     gave = ", ".join(f"{_item_handle(m)} {m.get('name') or '?'}" for m in res.get("moved") or []
                      if isinstance(m, dict) and m.get("side") == "you") or "the offered items"
-    box = None
-    end = time.monotonic() + 3.0
-    while time.monotonic() < end:
-        box = core.game.try_rpc("ui.confirm", {"answer": "Yes", "dry": True}, context="client")
-        if isinstance(box, dict) and box.get("buttons"):
-            break
-        box = None
-        time.sleep(0.2)
+    def shown(b: Any) -> bool:
+        return isinstance(b, dict) and bool(b.get("buttons"))
+
+    box = plumbing.poll_until(lambda: core.game.try_rpc("ui.confirm", {"answer": "Yes", "dry": True}, context="client"),
+                              shown, 3.0)
+    box = box if shown(box) else None
     if box is None:
         return (f"trade: FAILED — gave {gave} with Barter, but no 'Donate these items?' box came up\n"
                 + "\n".join(reporting._render_ui(core.game.try_rpc("ui.state", context="client") or {})))
@@ -342,11 +340,7 @@ def _open_trade(npc: str) -> str:
         return core.game.try_rpc("ui.state", context="client") or {}
 
     def wait(pred, s: float) -> dict:
-        end, u = time.monotonic() + s, ui()
-        while not pred(u) and time.monotonic() < end:
-            time.sleep(0.2)
-            u = ui()
-        return u
+        return plumbing.poll_until(ui, pred, s)
 
     u = ui()
     if u.get("screen") == "trade":

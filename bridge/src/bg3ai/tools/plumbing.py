@@ -587,18 +587,31 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
     return reporting._finish(tool, args, body, t0)
 
 
+POLL_S = 0.05  # a wait whose end the game shows is read this often, its old fixed sleep or loop the cap (naming.py)
+
+
+def poll_until(read, done, cap_s: float, every: float = POLL_S):
+    """read() until done(value) or cap_s passes (latency survey 2026-11-04 §5.5: 0.2-0.5 s sleeps between reads of
+    a readable condition). -> the last value read."""
+    end = time.monotonic() + cap_s
+    v = read()
+    while not done(v) and time.monotonic() < end:
+        time.sleep(every)
+        v = read()
+    return v
+
+
 def _close_left_trade(wait_s: float = 2.0) -> bool:
     """A trade screen left open blocks every action as "in a conversation": close it with ESCAPE (the trade
     screen's own close) and wait for it to go. True = it was open and is closed now."""
     if uitools._ui_screen()[0] != "trade":
         return False
     core.game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
-    end = time.monotonic() + wait_s
-    while time.monotonic() < end:
-        time.sleep(0.2)
-        if uitools._ui_screen()[0] not in ("trade", "dialogue"):
-            return True
-    return False
+
+    def gone(screen: str) -> bool:
+        return screen not in ("trade", "dialogue")
+
+    return gone(poll_until(lambda: uitools._ui_screen()[0], gone, wait_s))
 
 
 # Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.

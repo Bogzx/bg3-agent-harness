@@ -250,16 +250,23 @@ def _fast_travel_first(char: str, dest: list, dist_m: float | None) -> tuple[str
         return (f"fast travel to {wp['name']} failed ({r.error or r.status}): walking instead", None)
     travel._trip_arrived()
     overview.trip_arrived(sub, f"the trip to {wp['name']}")
-    now = None
-    for _ in range(20):  # the party reappears at the waypoint after the load
-        p = (queueing._watch_conn().try_rpc("act.watch") or {}).get("party") or []
-        now = next((q.get("pos") for q in p if q.get("uuid") == char), None)
-        if now and macros.dist(now, wp["pos"]) < 40:
-            break
-        time.sleep(0.5)
+    now = _ft_arrival(char, wp["pos"])
     left = macros.dist(now, dest) if now else None
     return (f"fast travel to {wp['name']} first ({render.num(wp['to_goal_m'])}m from it; you were "
             f"{render.num(round(dist_m))}m away): done", left)
+
+
+FT_ARRIVE_S = 10.0  # the party reappears at the waypoint within this after the load (was 20 reads 0.5 s apart)
+
+
+def _ft_arrival(char: str, at: list) -> list | None:
+    """Where `char` stands once the party reappears within 40 m of the waypoint `at` after a fast travel's load
+    (the last position read at FT_ARRIVE_S, or None)."""
+    def pos() -> list | None:
+        p = (queueing._watch_conn().try_rpc("act.watch") or {}).get("party") or []
+        return next((q.get("pos") for q in p if q.get("uuid") == char), None)
+
+    return plumbing.poll_until(pos, lambda now: bool(now) and macros.dist(now, at) < 40, FT_ARRIVE_S)
 
 
 _trips: dict[str, dict] = {}  # char -> {dest, d0, t0} of the travel_to its queue is running (live progress)
