@@ -110,10 +110,18 @@ def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = Non
     if left:
         _logged.extra = None
         extra = {**left, **(extra or {})}
-    guard = getattr(_logged, "guard", None)  # reporting._guard's entry time and save wait: the call's first record
+    # reporting._guard's entry: every record this call writes carries its guard_t0 (it names the call: pickpocket's
+    # _click_act step writes one before the call's own, w11 L6 (a)); the save wait only the first, so sums count it
+    # once. A record starts no earlier than its own guard: a tool called by another (route go=true -> travel_to) times
+    # its walk budget from the outer call's start (reporting.call_t0), not its record (w11 L6 (b): t0 70 ms early).
+    guard = getattr(_logged, "guard", None)
     if guard:
-        _logged.guard = None
-        extra = {**guard, **(extra or {})}
+        ms = min(ms, (time.monotonic() - guard["_m"]) * 1000)
+        mine = {"guard_t0": guard["guard_t0"]}
+        if not guard.get("_used") and "save_wait_ms" in guard:
+            mine["save_wait_ms"] = guard["save_wait_ms"]
+        guard["_used"] = True
+        extra = {**mine, **(extra or {})}
     METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not tool_classes.failed(result, tool), extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)

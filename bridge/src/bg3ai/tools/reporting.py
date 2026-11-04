@@ -664,7 +664,7 @@ def _guard(fn):
         # The guard's entry time and its save wait, for this call's metrics record (core._log): the time before a
         # tool's own t0 was in no record (latency survey 2026-11-04: 1.03 h before the records' t0)
         prev = getattr(core._logged, "guard", None)
-        core._logged.guard = {"guard_t0": round(time.time(), 3)}
+        core._logged.guard = {"guard_t0": round(time.time(), 3), "_m": time.monotonic()}
         try:
             return run(*a, **kw)
         finally:
