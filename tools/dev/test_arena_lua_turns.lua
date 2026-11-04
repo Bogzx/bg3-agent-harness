@@ -119,8 +119,8 @@ test("interact on an object in combat with a side: the refusal names no click to
     eq(r:find("click_on " .. DOOR, 1, true) ~= nil, true, "without a side, click_on as before: " .. r)
 end)
 
--- The same for the refusals that said "(use the UI)": a side has no UI either.
-test("'(use the UI)' refusals with a side say no clicks or key presses are made; without a side unchanged", function()
+-- The same for the refusals that name the UI tools: a side has no UI either.
+test("UI-tools refusals with a side say no clicks or key presses are made; without a side the UI tools", function()
     begin()
     local GEM = "dddddddd-0000-0000-0000-000000000007"
     world[GEM] = { pos = { 0, 0, 0 }, comps = {} }
@@ -136,10 +136,11 @@ test("'(use the UI)' refusals with a side say no clicks or key presses are made;
     for _, op in ipairs({ "act.equip", "act.transfer" }) do -- the combat gate; give in combat
         local w = why(op, item, "A")
         eq(w:find("not available during combat through this action " .. NO_UI, 1, true) ~= nil, true, op .. ": " .. w)
-        eq(w:find("use the UI", 1, true), nil, op .. ": no UI named")
+        eq(w:find("UI tools", 1, true), nil, op .. ": no UI named")
     end
     local w = why("act.equip", item)
-    eq(w:find("not available during combat through this action (use the UI)", 1, true) ~= nil, true, "no side: " .. w)
+    eq(w:find("not available during combat through this action (the UI tools can do it)", 1, true) ~= nil, true,
+        "no side: " .. w)
     osiv[key("IsInCombat", A1)] = 0 -- looting, out of combat
     osiv[key("IsDead", A2)], osiv[key("IsInCombat", A2)] = 1, 0 -- a teammate's corpse (party: visible)
     w = why("act.interact", "{char=" .. string.format("%q", A1) .. ",target=" .. string.format("%q", A2) .. "}", "A")

@@ -469,11 +469,12 @@ function G.actor(char)
     return g
 end
 
--- A refusal whose way out is the game's UI: "(use the UI)". A match side has none (both sides share one game screen,
--- so the bridge makes no clicks or key presses with a side): with a side the text says that instead.
+-- A refusal the UI tools can get past: "(the UI tools can do it)", a fact about the tools (D630: no advice). A match
+-- side has none (both sides share one game screen, so the bridge makes no clicks or key presses with a side): with a
+-- side the text says that instead.
 G.SIDE_NO_UI = "(in a two-team match no clicks or key presses are made: both sides share one game screen)"
 function G.refuse_ui(text)
-    G.refuse(text .. " " .. (U.side() and G.SIDE_NO_UI or "(use the UI)"))
+    G.refuse(text .. " " .. (U.side() and G.SIDE_NO_UI or "(the UI tools can do it)"))
 end
 
 -- Combat gating.
