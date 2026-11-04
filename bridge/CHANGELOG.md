@@ -5,6 +5,12 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-05: fairness: nothing about a character or marker the screen doesn't show
+
+- `loot_corpse` / `pickpocket` on a character out of the party's sight answer `target is not visible` (with the
+  last-seen hint) before any dead/alive check. Before, a stale id answered `they are not dead` or `nobody to
+  pickpocket`, which told the agent whether an unseen character was alive (fairness audit 2026-10-10 #18).
+
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 
 - get_status/look PARTY: the tie text comes from the new "Tied by" column of play/knowledge/companions.md; the role
