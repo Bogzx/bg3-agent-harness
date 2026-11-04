@@ -529,10 +529,11 @@ end
 -- phase of the same round would lie through its own phase (REVIEW-12 (a); Guard refuses its casts and walks, F4): the
 -- mod stands it up at its phase start instead. PRONE_DEDUCT: whether the mod takes the half itself when removing the
 -- status leaves the movement as it was; false if live w10 ST-P5(f) shows the engine's own spend (the status's
--- OnRemove) comes after that read, which would take it twice.
+-- OnRemove) comes after that read, which would take it twice. Each stand-up: one arena_stood_up {side, character,
+-- name, round, status, movement_before, movement_after, movement_max, deducted (what the mod took), game_took}.
 Ar.PRONE_DEDUCT = true
 
-local function standUp(u)
+local function standUp(u, round)
     local G = BG3AI.Guard
     local prone = G.in_combat(u) and G.prone(u)
     if not prone then return end
@@ -545,11 +546,12 @@ local function standUp(u)
     end
     for _, d in ipairs(prone) do pcall(Osi.RemoveStatus, u, d.id) end
     local after = G.movement(u)
-    local took = after and amount - after >= half - 0.01
-    if Ar.PRONE_DEDUCT and not took then G.deduct(u, "Movement", 0, half) end
-    Ext.Utils.Print(string.format("[BG3AI] arena: %s stands up from %s (movement %s of %s, %s)", tostring(V.name(u)),
-        tostring(prone[1].name), tostring(amount), tostring(max),
-        took and "the game took half" or (Ar.PRONE_DEDUCT and "half deducted" or "nothing deducted")))
+    local took = after ~= nil and amount - after >= half - 0.01
+    local deducted = 0
+    if Ar.PRONE_DEDUCT and not took and G.deduct(u, "Movement", 0, half) then deducted = half end
+    record("arena_stood_up", { side = Ar.side_of(u), character = u, name = V.name(u), round = round,
+        status = prone[1].name, movement_before = amount, movement_after = G.movement(u), movement_max = max,
+        deducted = deducted, game_took = took })
 end
 
 function Ar.phase_check()
@@ -588,7 +590,7 @@ function Ar.phase_check()
     noteRoundFirst(st, round, p.opening, "turn")
     record("arena_turn", { side = p.side, character = p.character, members = p.members, names = names, round = round,
         phase = n, group = p.group, shared = p.shared, order = st.turn_order, opening = p.opening, rule = p.rule })
-    standUp(p.character)
+    standUp(p.character, round)
 end
 
 -- The runner ended a side's turn at its cap (act.end_turn {forced = which cap}): the side is told once per phase, as

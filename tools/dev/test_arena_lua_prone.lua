@@ -55,6 +55,11 @@ test("a prone member's phase start stands it up for half its movement; the guard
         eq(table.concat(removed, ","), A1 .. ":PRONE_GREASE", "stood up")
         eq(movement(A1), 4.5, "half its movement taken")
         eq(G.move_blocked(A1), nil, "walks now")
+        local r = refs("arena_stood_up")
+        eq(#r, 1, "one arena_stood_up")
+        eq(enc({ r[1].side, r[1].character, r[1].name, r[1].round, r[1].status, r[1].movement_before,
+            r[1].movement_after, r[1].movement_max, r[1].deducted, r[1].game_took }),
+            enc({ "A", A1, "Ana", 2, "Prone", 9, 4.5, 9, 4.5, false }), "the record")
         tick()
         eq(#removed, 1, "once per phase")
     end)
@@ -67,6 +72,7 @@ test("a prone member with less than half its movement stays down at its phase st
         eq(refs("arena_turn")[1].character, A1, "phase 1 A1")
         eq(#removed, 0, "stays prone")
         eq(movement(A1), 4, "nothing taken")
+        eq(#refs("arena_stood_up"), 0, "no stand-up record")
     end)
 end)
 
@@ -76,6 +82,8 @@ test("the game's own removal took half: the mod takes nothing more (no double de
         tick()
         eq(#removed, 1, "stood up")
         eq(movement(A1), 4.5, "half once")
+        local r = refs("arena_stood_up")[1]
+        eq(enc({ r.movement_after, r.deducted, r.game_took }), enc({ 4.5, 0, true }), "the game took it")
     end, true)
 end)
 
@@ -86,6 +94,8 @@ test("PRONE_DEDUCT off: the status goes, the mod deducts nothing", function()
         tick()
         eq(#removed, 1, "stood up")
         eq(movement(A1), 9, "nothing deducted")
+        local r = refs("arena_stood_up")[1]
+        eq(enc({ r.movement_after, r.deducted, r.game_took }), enc({ 9, 0, false }), "switch off")
     end)
 end)
 

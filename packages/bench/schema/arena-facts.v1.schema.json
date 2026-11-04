@@ -60,7 +60,8 @@
         "arena_group_end_written",
         "arena_turn_readmitted",
         "arena_round",
-        "arena_surfaces"
+        "arena_surfaces",
+        "arena_stood_up"
       ]
     }
   },
@@ -882,6 +883,63 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_stood_up"
+          }
+        }
+      },
+      "then": {
+        "description": "A prone member stood up at its own phase start (the mod's, REVIEW-12 (a): in a shared group the game's turn-start stand-up comes before the phase), for half its movement: movement_before/after/max in metres, deducted what the mod took itself (0 when the status removal already took it, game_took true, or the mod's switch is off). character is named as in arena_turn. Not a turn: results ignore it.",
+        "required": [
+          "side",
+          "character",
+          "round",
+          "movement_before",
+          "deducted",
+          "game_took"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "movement_before": {
+            "type": "number",
+            "minimum": 0
+          },
+          "movement_after": {
+            "type": "number",
+            "minimum": 0
+          },
+          "movement_max": {
+            "type": "number",
+            "minimum": 0
+          },
+          "deducted": {
+            "type": "number",
+            "minimum": 0
+          },
+          "game_took": {
+            "type": "boolean"
           }
         }
       }

@@ -23,7 +23,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    opening, rule}` (the mod ended the turn of a member that can't act, its slot in the turn order taken;
    `death_save` for a downed one) is written with `character` named as in
    arena_turn, and its `arena_turn_readmitted {side, character, name, round, why}` (a passed member stood up with its
-   turn back) the same way, the member no longer passed. Its `arena_round {round, first, how}` (a round's first
+   turn back) the same way, the member no longer passed, and its `arena_stood_up {side, character, name, round,
+   status, movement_before, movement_after, movement_max, deducted, game_took}` (a prone member stood up at its phase
+   start by the mod) the same way. Its `arena_round {round, first, how}` (a round's first
    phase: the round's opening side, and whether it acted or was passed whole; once per round) is written as it is.
    A mirror arena's `arena_surfaces {when, round, tiles_total, tiles_read, radius, off, tiles, appeared,
    appeared_tiles}` (the mod's report-only re-read of the surfaces at round 2's start and at the end, a runner's end
@@ -303,6 +305,9 @@ class Referee:
             if turn is not None and fact.get("side") == turn.side and fact.get("round") == turn.round:
                 turn.passed.add(u.lower())
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
+        if ev == "arena_stood_up":  # a prone member stood up at its phase start (the mod's): named as in arena_turn
+            u = str(fact.get("character") or "")
+            return {**fact, "character": self._named(u, str(fact.get("name") or u))}
         if ev == "arena_turn_readmitted":  # a passed member stood up with its turn back: it can act again
             u = str(fact.get("character") or "")
             t = self.names.get(u.lower())
