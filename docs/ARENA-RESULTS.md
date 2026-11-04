@@ -24,6 +24,31 @@ picked for its outcome.
    Ratings are provisional below 50 pairings, carry rank ranges from the bootstrap, and are refit with 0.5 and 2
    virtual draws. A rating that moves by more than half its interval under those priors is flagged.
 
+## Dice: per seat, the same in both matches of a pairing (decided 2026-11-04)
+
+Every match of an arena applies the arena's seed before the fight (ArenaSetup -> `Scenario.set_seed`: one base seed,
+each dice stream reset to its start). A face depends on its position in the stream, not on the action that rolls it.
+So the two matches of a pairing open with the same dice for each seat (side and character), even when the models
+act differently: in window 8, seed 7, the first five attack naturals of m2 were m1's, in the same order. The replay
+lasts as long as the rolls come in the same order. A matrix's repeats use different seeds (seed + repeat - 1).
+
+This is kept as a paired design (orchestrator, 2026-11-04, harness survey #4). It has these consequences:
+
+- **Between models, luck cancels within a pairing.** Each model plays each seat once with that seat's dice, so a seat
+  with lucky dice helps both models once. The pairing is the resampled unit in every bootstrap and the unit of the
+  sign test, so nothing treats a pairing's two matches as two independent samples there.
+- **Match-level Wilson intervals are approximate.** A pair's `win_rate` interval counts its matches as independent.
+  Shared dice make a model's two results move in opposite directions, so for luck this interval is, if anything,
+  too wide. `first_actor`, `favoured` and `by_pattern` also count both matches of a model pairing. There the shared
+  initiative and the shared dice stay with the same side, so the two matches lean the same way and those intervals
+  are too narrow. `side_a`'s interval resamples pairings and is not affected.
+- **The seat term can't tell seat from luck within one seed.** The seat side keeps its dice in both matches, so a
+  seed whose dice favour the seat side counts as seat advantage twice. Seeds are independent, so luck averages out
+  only across seeds, and the seat interval (a bootstrap over pairings) reflects that.
+- **Self-matches count once per seed.** A self-pairing's second match replays the first one (same model, same twins,
+  same dice), so only its first valid match is used (`_distinct`, REVIEW-7 f2). The seat measurement plays one match
+  per seed (`single = true` in the matrix). Its n is the number of seeds.
+
 ## Output
 
 `results(matches, seed, b=2000, alpha=0.05, min_pairings=15, attempts=None)` returns one JSON-ready dict. Rates
