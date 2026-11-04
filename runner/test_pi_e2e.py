@@ -363,7 +363,8 @@ class Conditions(PiE2EBase):
         self.assertNotIn(coaching, rules_only)
         out = self.results()
         self.assertIn("NOTES WINDOW: ~30s of walking left", out["move_to"])
-        self.assertIn("PACE: you waited right after issuing", out["wait_for"])
+        # 7e23f2f6 (D630): PACE states how soon the wait_for came after the last issued action
+        self.assertRegex(out["wait_for"], r"PACE: this wait_for came [\d.]+s after the last issued action")
 
 
 class TextOnly(PiE2EBase):
