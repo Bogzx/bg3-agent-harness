@@ -110,9 +110,10 @@ the difficulty is the only thing that differs, so the pair measures it.
 How the difficulty is set: it lives in the save (the Ruleset component), and the mod only reads it (`scn.difficulty`
 refuses a write: the game sets it through its Options flow). So each variant needs its own start save: load the
 base's start moment, switch the game options' difficulty from Balanced to Tactician, then save as SCN-<name>. The
-run's settings check compares `game_settings.difficulty` with the game's readout and refuses a contradiction, but the
-harness readout doesn't read `scn.difficulty` yet (bg3harness/game_settings.py: always null), so today a wrong save
-is only logged as `settings_unverified`.
+run's settings check reads the loaded game's difficulty back through `scn.difficulty` (as its Options name:
+bg3harness/game_settings.py `difficulty`) and compares it with `game_settings.difficulty`. A save at another
+difficulty stops the run (`settings_mismatch`); a readout that can't tell (the mod doesn't answer) is recorded as
+`settings_unverified`. Both are harness failures (bg3harness/runs.py `HARNESS_EVENTS`), so the run doesn't count.
 
 No Honour variants: BG3 can't switch a running game to Honour (it is picked at a new game, with one save slot and
 no reloads), so an Honour fight needs an Honour playthrough to that point, and the bench's save starts and reruns
