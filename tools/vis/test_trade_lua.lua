@@ -266,6 +266,56 @@ do
         .. tostring(m.count) .. " " .. tostring(m.price) .. " " .. tostring(j.error))
 end
 
+-- w15 a2 (Muddy Red Dye x8 at 48 g, request count=2, confirm): the game puts the 2 on the table as a new VMItem (the
+-- part), not the moved one, so the deal's table read named nothing: 'BOUGHT (no id) ? x2 12 g | e127 Muddy Red Dye x2
+-- 12 g' in the bridge. The part is the moved item; an unknown item that is no part we moved stays unnamed.
+do
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+    local stack = vmItem(501, 48, 8)
+    local wareSlot = dc.TraderInventory.Slots.list[2]  -- slot 1: t-1 by its weight
+    local was = wareSlot.Object
+    wareSlot.Object = stack
+    local stranger = vmItem(900, 30, 1)  -- on the table already, not moved by this trade (put there by hand)
+    dc.TraderOffer.Slots.list[1].Object = stranger
+    local split = { CurrentPlayer = { UIData = { SplitItemData = { ItemCount = 8, TargetCount = 1 } } } }
+    local sw = { DataContext = split, visible = false }
+    local origW, origCmd, closing = BG3AI.UI.widget, BG3AI.UI.command, nil
+    BG3AI.UI.widget = function(n) if n == "SplitItem" then return sw end return origW(n) end
+    BG3AI.UI.command = function(d, name, param)
+        if name == "MoveTradeItem" then sw.visible = true end
+        if name == "ApplySplitCommand" then closing = split.CurrentPlayer.UIData.SplitItemData.TargetCount end
+        if name == "BalanceTrade" then balance(d) end
+        if name == "FinishBarter" then d.CharacterOffer, d.TraderOffer = vmInv({}), vmInv({}) end
+        return true
+    end
+    Ext.Entity.Get = function(u) return u == "t-1" and traderItems[1] or nil end
+    local j = jobs[ops["ui.trade"]({ request = { "t-1" }, count = 2, confirm = true }).job]
+    for _ = 1, 100 do
+        clock = clock + 50
+        if closing then  -- the box closes; the part (a new VMItem) lands on the table, the rest stays a ware
+            sw.visible = false
+            stack.Count, stack.TradePrice = 8 - closing, 6 * (8 - closing)
+            dc.TraderOffer.Slots.list[2].Object = vmItem(501, 6 * closing, closing)
+            closing = nil
+        end
+        if j.status ~= "running" then break end
+        j.on_tick(j)
+    end
+    BG3AI.UI.widget, BG3AI.UI.command = origW, origCmd
+    wareSlot.Object = was
+    local res = j.result or {}
+    local m = res.moved and res.moved[1] or {}
+    ok(j.status == "done" and res.confirmed and m.uuid == "t-1" and m.count == 2 and m.price == 12,
+        "a2: moved t-1 x2 12 g: " .. tostring(m.count) .. " " .. tostring(m.price) .. " " .. tostring(j.error))
+    local got = ((res.deal or {}).trader or {}).items or {}
+    local part, other
+    for _, it in ipairs(got) do if it.count == 2 then part = it elseif it.price == 30 then other = it end end
+    ok(part and part.uuid == "t-1" and part.name == "Ware1" and part.price == 12,
+        "a2: the part on the table is the moved item: " .. tostring(part and part.uuid) .. " " .. tostring(part and part.name))
+    ok(other and other.uuid == nil and other.name == nil, "a2: an item no move put there stays unnamed")
+    ok(#got == 2 and #(SV.splits or {}) == 0, "a2: two table items, no part left pending: " .. #got)
+end
+
 -- launch-v1 haiku act3_gold_max r2 seq 16-21 (67 times in 19 runs): trade(offer=a,b) put both on the table, then
 -- trade(offer=a,b,c, confirm=true) found a and b "not on this side of the trade screen" and refused the confirm.
 -- Items already on our side of the table count as moved (no second MoveTradeItem, which would take them back off);

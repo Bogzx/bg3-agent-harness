@@ -85,6 +85,31 @@ RPC.register("nav.path", function(args)
     -- centre (REVIEW-17 F1: the point path's end tolerance said NOT REACHED for a foe in reach).
     local r0 = N.path(char, args.pos and target or args.target)
     if not r0 then error("no path", 0) end
+    -- A target id: a path's end (the walker's spot with 0 nodes) > its footprint + 2 m away is short (REVIEW-17c)
+    local tol = te and footprint(te) + N.PATH_END_TOL_M
+    local function off(res)
+        local p = res and res.reachable and res.points
+        if p and #p >= 1 and (res.nodes or 0) <= N.ROUTE_MAX_NODES then return U.dist(p[#p], target) end
+    end
+    -- The engine's path to an occupied centre stops where its own goal handling does, not at the target's edge (w15
+    -- b2: 2.95 m from a Destroyer it then walked 1.7 m closer to): the free spots around it, nearest first, decide.
+    if te and (off(r0) or 0) > tol then
+        local ring, rad = {}, tol - N.PATH_END_TOL_M + 1.0
+        for _, d in ipairs(I.RING) do
+            local q = { target[1] + d[1] * rad, target[2], target[3] + d[2] * rad }
+            ring[#ring + 1] = { q, cp and U.dist(cp, q) or 0 }
+        end
+        table.sort(ring, function(a, b) return a[2] < b[2] end)
+        for _, it in ipairs(ring) do
+            local fy = floorAt and floorAt(it[1][1], it[1][3], target[2]) or target[2]
+            local r2 = N.path(char, { it[1][1], fy, it[1][3] })
+            if (off(r2) or math.huge) <= tol then -- a copy: r2 is the path cache's
+                r0 = { approach_pos = U.vec({ it[1][1], fy, it[1][3] }, 1) }
+                for k, v in pairs(r2) do r0[k] = r0[k] or v end
+                break
+            end
+        end
+    end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
     -- A found path with no nodes ends on the walker's own spot (readResult flags a short end only from a node): to a
@@ -93,15 +118,10 @@ RPC.register("nav.path", function(args)
     if args.pos and r.reachable and r.nodes == 0 and not r.partial and cp and U.dist(cp, target) > N.PATH_END_TOL_M then
         r.partial, r.end_pos, r.end_off = true, U.vec(cp, 1), round(U.dist(cp, target), 1)
     end
-    -- A target id: the path's end (the walker's spot when it has no nodes) against the target's footprint plus the
-    -- walker's end tolerance (REVIEW-17c: a foe on a ledge whose path ends 5 m short read reachable). A route longer
-    -- than the kept points (ROUTE_MAX_NODES) has no end to judge.
-    local pts = r0.points
-    if te and r.reachable and pts and #pts >= 1 and (r.nodes or 0) <= N.ROUTE_MAX_NODES then
-        local last = pts[#pts]
-        if U.dist(last, target) > footprint(te) + N.PATH_END_TOL_M then
-            r.partial, r.end_pos, r.end_off = true, U.vec(last, 1), round(U.dist(last, target), 1)
-        end
+    if te then -- the verdict is the footprint's (a spot's own point path may end > 2 m from that spot)
+        local last = (off(r0) or 0) > tol and r0.points[#r0.points]
+        r.partial, r.end_pos, r.end_off = nil, nil, nil
+        if last then r.partial, r.end_pos, r.end_off = true, U.vec(last, 1), round(U.dist(last, target), 1) end
     end
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
     local Gd = BG3AI.Guard -- loaded after Navigation in the game; the nav-only tests run without it
