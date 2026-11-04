@@ -45,5 +45,15 @@ class NextCallImperatives(unittest.TestCase):
         self.assertEqual(text, "move_to: still running")
 
 
+class Review15(unittest.TestCase):
+    def test_4_2_force_sits_in_the_reach_parenthesis(self):
+        out = navhints.jump_refusal({"safe": False, "surface": "Fire", "reach_m": 8}, [0.0, 0.0, 0.0])
+        self.assertTrue(out.endswith("is in reach (8m; force=true jumps anyway)."), out)
+
+    def test_4_2_chasm_never_offers_force(self):
+        out = navhints.jump_refusal({"safe": False, "surface": "Chasm", "reach_m": 8}, [0.0, 0.0, 0.0])
+        self.assertNotIn("force=true", out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -645,8 +645,8 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     if junk_ids and f in ("", "notable", "junk"):
         js = [it for it in items if it["uuid"] in junk_ids]
         lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
-                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg (trade sell=junk sells it at a "
-                     "trader; manage_inventory op=camp item=junk sends it to camp)" + economy.junk_in_bags(js))
+                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg (trade sell=junk sells it to a "
+                     "trader with gold; manage_inventory op=camp item=junk sends it to camp)" + economy.junk_in_bags(js))
     if by_name and not matched:
         lines.append(f"No item in the party's bags matches {filter.strip()!r} (names; separate alternatives with "
                      "commas: 'misty,scroll').")

@@ -111,7 +111,7 @@ def _enemy_turn_why(char: str) -> str:
     cs = core.game.try_rpc("state.combat") or {}
     if not cs.get("active") or turn.party_acting(cs, turn_plan._party_set()):
         return ""
-    return (". It is the enemies' turn: the HUD doesn't switch members until a party member's turn comes")
+    return (". It is the enemies' turn: the HUD doesn't switch members until a party member's turn comes (the selected member's can be set now)")
 
 
 def _reaction_prompt_block(char: str) -> None:

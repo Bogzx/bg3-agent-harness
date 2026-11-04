@@ -296,7 +296,7 @@ class RenderInventory(unittest.TestCase):
         out = render.render_inventory(bag_junk_inventory(), self.H, "junk")
         self.assertRegex(out, r"Amethyst in Pouch")
         self.assertRegex(out, r"Pearl in Alchemy Pouch")
-        self.assertRegex(out, r"JUNK 7 items ~\d+g [\d.]+kg \(trade sell=junk sells it at a trader; manage_inventory op=camp "
+        self.assertRegex(out, r"JUNK 7 items ~\d+g [\d.]+kg \(trade sell=junk sells it to a trader with gold; manage_inventory op=camp "
                               r"item=junk sends it to camp\); 2 of them are in bags \(Alchemy Pouch, Pouch\), which the trade screen "
                               r"shows as the bag only")
         self.assertNotIn("in bags", render.render_inventory(s026_inventory(), self.H, "junk"))

@@ -69,9 +69,10 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
             tail = (" A Chasm has no floor in jumping height: a forced jump there is a fatal fall. route lists"
                     " LOWER GROUND (floors below you can jump down to); get_layout shows ledges in reach and ladders.")
         else:
-            tail = " (force=true jumps anyway)"
+            tail = ""
+        force = "" if plan or lnd.get("surface") == "Chasm" else "; force=true jumps anyway"
         return (f"jump_to: FAILED — the landing {P(asked)} {landing_bad_text(lnd)} and no clear spot within 3m of it "
-                f"is in reach ({N(lnd.get('reach_m') or lnd.get('reliable_m', '?'))}m).{alt}{tail}")
+                f"is in reach ({N(lnd.get('reach_m') or lnd.get('reliable_m', '?'))}m{force}).{alt}{tail}")
     if lnd.get("too_far") and not lnd.get("suggest"):
         tail = plan or " No walk gets within jumping distance of it."
         return (f"jump_to: FAILED — too far to jump ({N(lnd.get('dist_m', '?'))} m, this character can jump "

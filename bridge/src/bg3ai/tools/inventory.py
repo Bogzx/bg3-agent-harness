@@ -140,7 +140,7 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
         out = plumbing._act("interact", "act.interact", {"char": char, "target": plumbing._uuid(into)}, wait_s=40)
         walked = travel._walk_first("interact", out, char, who, into, actq.Step("interact", {"target": into}))
         if walked:  # far / out of sight: the walk runs, the interact is queued for the arrival
-            return reporting._finish("insert_item", args, walked + "\nthe panel is not open yet", t0)
+            return reporting._finish("insert_item", args, walked + "\nthe panel opens on arrival; the insert itself is not queued", t0)
         r = _insert_poll(out)
         others = _colocated_usables(plumbing._uuid(into)) if r.status == "failed" and "no Insert Item panel" in str(r.error) else []
         if others and not _opened_dialogue(out):
@@ -160,7 +160,7 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
             alt = "; ".join(f"{core.H.get(h)} {nm}" for h, nm in others)
             if _opened_dialogue(out):
                 body = (f"insert_item: FAILED — no Insert Item panel: using it opened a conversation instead\n{out}"
-                        + (f"\nthe slot may be on what stands at the same spot ({alt}): {core.H.get(others[0][0])}"
+                        + (f"\nthe slot may be on what stands at the same spot ({alt})"
                            if others else ""))
             else:
                 body = (f"insert_item: FAILED — no Insert Item panel opened ({out.splitlines()[0] if out else 'interact'})"
@@ -499,10 +499,9 @@ def _rest_not_at_camp(can: Any) -> str:
     behind = [r for r in party.camp_behind(st) if str(r.get("name")) in loc]
     if not behind:
         return ""
-    fix = "; ".join(f"set_party select {overview._name_of(r['uuid'])}, then camp()" for r in behind)
     return (f"long_rest: FAILED — not pressed: not everyone is at camp: {party.behind_text(behind, queueing._label)} (the "
-            f"game's rest check: not at a place where you can rest). {fix} brings them (S065 12:02: that "
-            "brought Wyll and the rest went through).")
+            f"game's rest check: not at a place where you can rest); the camp travel takes only the selected "
+            "member's group (S065 12:02: selecting Wyll, then camp(), brought him).")
 
 
 def _woke_here() -> str:

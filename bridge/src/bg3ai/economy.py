@@ -560,7 +560,7 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
     if j:
         val = sum((it.get("value") or 0) * _count(it) for it in j)
         kg = sum((it.get("weight") or 0) * _count(it) for it in j)
-        lines.append(f"- junk: {len(j)} items, ~{val} g, {kg:.1f} kg (trade sell=junk sells it at any trader)")
+        lines.append(f"- junk: {len(j)} items, ~{val} g, {kg:.1f} kg (trade sell=junk sells it to a trader with gold)")
     if supplies_text(inv):
         lines.append(f"- camp supplies: {supplies_text(inv)}")
     return lines
@@ -804,7 +804,7 @@ def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
             + (f" | +{more} more" if more else "")
             + (" (odds ?: the window had not shown that item's odds when it was read)"
                if any(odds_unread(it) for it in items) else "")
-            + ' (pickpocket(npc, take="<name or id>") steals one; leave=true leaves with nothing). The odds assume'
+            + ' (pickpocket(npc, take="<name or id>") tries one (a Sleight of Hand roll); leave=true leaves with nothing). The odds assume'
             + " nobody sees the thief: in the owner's sight a steal fails whatever they say")
 
 

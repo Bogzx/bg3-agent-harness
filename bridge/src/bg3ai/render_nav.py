@@ -66,7 +66,7 @@ def render_frontier(res: Any, H: Handles) -> str:
     if ways:
         out.append(ways)
     if isinstance(res, dict) and res.get("ways_off"):  # NAV-2: a killed level searches 2 directions per read
-        out.append("(WAYS partial: path searches are throttled on this level)")
+        out.append("(WAYS partial: a throttled level searches up to 2 directions per read)")
     out.extend(render_hazards(res.get("hazards") if isinstance(res, dict) else None, limit=6))
     return "\n".join(out)
 
