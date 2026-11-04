@@ -206,7 +206,7 @@ def _cc_first_look() -> str:
     try:
         fl = overview.look(full=True)
     except Exception as e:
-        fl = f"(first look failed: {type(e).__name__}: {e}; call look)"
+        fl = f"(first look failed: {type(e).__name__}: {e})"  # night 2026-11-04: no '; call look'
     finally:
         reporting._batch["active"], reporting._batch["last"] = prev
     out.append("FIRST LOOK (this is get_status + look):\n" + fl)
@@ -217,7 +217,8 @@ def _cc_first_look() -> str:
             saving._enable_save_gates()
             out.append("first save (no save_game needed): " + saving.SAVER.save(f"{sess}-start"))
         except Exception as e:
-            out.append(f"first save not started ({type(e).__name__}: {e}): save_game(label=\"{sess}-start\")")
+            # night 2026-11-04: the save that wasn't made, not the save_game call to make it
+            out.append(f"first save not started ({type(e).__name__}: {e}): no '{sess}-start' save was made")
     return "\n" + "\n".join(out)
 
 
