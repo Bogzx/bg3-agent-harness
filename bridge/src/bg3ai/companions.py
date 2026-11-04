@@ -31,8 +31,10 @@ SKILL_NEEDS = [("SleightOfHand", "Sleight of Hand (locks/traps)", 4),
                ("Perception", "Perception (traps/secrets)", 4)]
 SKILL_GAIN = 3  # a camp member fills a skill gap when it beats the party's best by this much
 
+# Columns: Companion | Class | Regions | Quests / keywords | Tied by (`why`, printed) | Notes (role, recruiting: not
+# printed; w13 L2: the old single "Why bring them" cell ended the PARTY line in a bare '; arcane AoE').
 KNOWLEDGE_ROW = re.compile(r"^\|\s*(?P<name>[^|]+?)\s*\|\s*(?P<cls>[^|]*?)\s*\|\s*(?P<regions>[^|]*?)\s*\|"
-                           r"\s*(?P<quests>[^|]*?)\s*\|\s*(?P<why>[^|]*?)\s*\|\s*$")
+                           r"\s*(?P<quests>[^|]*?)\s*\|\s*(?P<why>[^|]*?)\s*\|\s*(?P<notes>[^|]*?)\s*\|\s*$")
 
 
 def load_ties(text: str) -> dict[str, dict]:
@@ -135,7 +137,8 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
         why = matches(t, region, quests) if t else []
         if not why:
             continue
-        bits.append(f"{c.get('name')} (camp, {class_text(c)}) is tied to {' / '.join(why)}: {t.get('why')}")
+        bits.append(f"{c.get('name')} (camp, {class_text(c)}) is tied to {' / '.join(why)}"
+                    + (f": {t['why']}" if t.get("why") else ""))
     # (b) composition holes the camp could fill
     have = set().union(*(roles_of(r) for r in live)) if live else set()
     for role in ("healer", "tank", "ranged", "aoe"):

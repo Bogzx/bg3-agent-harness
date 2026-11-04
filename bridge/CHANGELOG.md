@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
+
+- get_status/look PARTY: the tie text comes from the new "Tied by" column of play/knowledge/companions.md; the role
+  and recruiting notes moved to a "Notes" column that is not printed. w13 L2 read `... is tied to Lower City:
+  Elminster and the Netherese orb scenes need him; arcane AoE` (the role half used to lead into `→ swap_party`); it
+  now ends at `need him`. A row with no "Tied by" text (Minsc, Minthara) says the tie alone.
+- The junk rule (sell="junk", get_inventory filter="junk", manage_inventory item="junk") keeps dyes (ObjectCategory
+  `Dye*`): KEPT counts them as `dyes`. w13 L2: sell=junk sold back a Dye Remover x10 bought a moment earlier (20 g ->
+  10 g).
+
 ## 2026-11-04: w12 fixes: a late trade screen opens; a deal names what it traded; PARTY ties without a call
 
 - `trade(npc=...)`: after the trade answer, a node with no trade answer on it waits up to 4 s for the trade screen

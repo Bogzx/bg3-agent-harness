@@ -109,6 +109,20 @@ class Junk(unittest.TestCase):
         self.assertNotIn("Cup", names)
         self.assertNotIn("Chain Mail", names)  # AC 16 beats Claude's AC 14: an upgrade, not junk
 
+    def test_dyes_are_not_junk(self):
+        # w13 L2: sell=junk sold back a Dye Remover x10 bought a moment earlier (20 g -> 10 g). Shapes as the mod
+        # reads them (night-live n14b: Bloody Plum Dye cat DyeRare, tab Misc, usable).
+        inv = s026_inventory()
+        inv["items"] += [
+            {"uuid": _u(30), "name": "Dye Remover", "owner": CLAUDE, "cat": "Dye", "tab": "Misc", "value": 8,
+             "count": 10, "usable": True, "weight": 0.1},
+            {"uuid": _u(31), "name": "Bloody Plum Dye", "owner": CLAUDE, "cat": "DyeRare", "tab": "Misc", "value": 6,
+             "count": 4, "rarity": "rare", "usable": True, "weight": 0.1}]
+        names = {it["name"] for it in economy.junk(inv)}
+        self.assertEqual(names, {"Cup", "Skull", "Longsword", "Silver Candlestick", "Spear"})
+        self.assertEqual(economy.keep_kind(inv["items"][-2]), "dyes")
+        self.assertEqual(economy.keep_kind(inv["items"][-1]), "dyes")
+
 
 class Upgrades(unittest.TestCase):
     def ups(self, inv=None):
