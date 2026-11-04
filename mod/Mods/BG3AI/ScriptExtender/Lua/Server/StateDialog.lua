@@ -62,6 +62,14 @@ local function tagName(uuid)
     return s ~= nil and s ~= "" and s or nil
 end
 
+-- An enum field's label: bg3le gives Roll.Skill / Roll.Ability as enum userdata whose tostring is the label
+-- (w11 L3: Persuasion / Charisma); a string passes; anything else (or a bare "userdata: 0x..") is unread.
+local function enumName(v)
+    if type(v) == "userdata" then v = try(tostring, v) end
+    if type(v) ~= "string" or v == "" or v == "None" or v:find("^userdata") then return nil end
+    return v
+end
+
 -- {roll, tags} of one presented answer node, or nil, why.
 local function labels(nodes, node)
     local cid = get(node, "ConstructorID")
@@ -75,9 +83,8 @@ local function labels(nodes, node)
     local out = { tags = {} }
     if cid == "ActiveRoll" then
         local r = get(typed(node, "dlg::ActiveRollNode"), "Roll")
-        local skill = get(r, "Skill")
-        out.roll = (type(skill) == "string" and skill ~= "" and skill ~= "None") and skill or get(r, "Ability")
-        if type(out.roll) ~= "string" then return nil, "roll unread" end
+        out.roll = enumName(get(r, "Skill")) or enumName(get(r, "Ability"))
+        if not out.roll then return nil, "roll unread" end
     end
     for kind, arr in pairs(get(get(node, "CheckFlags"), "Flags") or {}) do
         if kind == "Tag" then
