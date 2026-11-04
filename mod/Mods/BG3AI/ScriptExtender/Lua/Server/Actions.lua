@@ -72,6 +72,12 @@ A.react_seen = nil -- {t, done?, caster, spell}: the last cast by a character ou
 -- it have resolved (their CastedSpell + CAST_REACT_SETTLE_MS for its damage), at most MOVE_REACT_HOLD_MS after the
 -- move ended, and names them in its result as reactions (who, what, the damage it did to the mover).
 A.MOVE_REACT_HOLD_MS = 8000
+-- Window 9 MR1 (live.md): an opportunity attack's CastSpell starts only after the walk arrived (+0.33 s, +0.93 s),
+-- so a cast alone never held the move; the reactor's ReactionInterruptUsed fired before the arrival (-0.63 s,
+-- -1.30 s). A foe's interrupt during the move holds it until that foe's cast starts, at most this long after the
+-- interrupt (live: 0.97 s and 2.23 s), then the cast holds it as above.
+A.MOVE_INTERRUPT_WAIT_MS = 4000
+A.interrupts = A.interrupts or {} -- reactor guid -> when it last used a reaction (ReactionInterruptUsed)
 A.casts = A.casts or {} -- caster guid -> {t, done?, spell}: its last cast (CastSpell, its CastedSpell)
 A.hits = A.hits or {} -- defender guid -> {{t, by, amount, type}...}: the damage it took (AttackedBy), the last 20
 -- act.cast {ui=true} (audit ACT-8, the hotbar N-target route): the bridge clicks the hotbar cell and each target as a
@@ -334,6 +340,16 @@ function A.track_cast(event, caster, spell)
     A.casts[g] = { t = now, done = event == "CastedSpell" and now or nil, spell = tostring(spell) }
 end
 
+function A.note_interrupt(reactor)
+    local g = G.guid(reactor)
+    if not g then return end
+    if not A.interrupts[g] then
+        A.interrupt_n = (A.interrupt_n or 0) + 1
+        if A.interrupt_n > 500 then A.interrupts, A.interrupt_n = {}, 1 end
+    end
+    A.interrupts[g] = G.now_ms()
+end
+
 function A.note_hit(defender, owner, attacker, dtype, amount)
     local d = G.guid(defender)
     if not d then return end
@@ -367,7 +383,8 @@ local function move_reactions(job)
     return out
 end
 
--- RPC job hold for a move in combat: true while a foe's cast that began during it is unresolved or just resolved.
+-- RPC job hold for a move in combat: true while a foe's cast that began during it is unresolved or just resolved, or
+-- a foe that used a reaction during it hasn't started its cast yet (up to MOVE_INTERRUPT_WAIT_MS after the interrupt).
 function A.reaction_hold(job)
     if not (job.char and G.in_combat(job.char)) then return false end
     local now = G.now_ms()
@@ -378,6 +395,13 @@ function A.reaction_hold(job)
     end
     for _, c in pairs(move_reactions(job)) do
         if not c.done or now - c.done < A.CAST_REACT_SETTLE_MS then return true end
+    end
+    local me = G.guid(job.char)
+    for g, t in pairs(A.interrupts) do
+        if g ~= me and t >= job.started and now - t < A.MOVE_INTERRUPT_WAIT_MS and foe_of(me, g) then
+            local c = A.casts[g]
+            if not (c and c.t >= t) then return true end
+        end
     end
     return false
 end
@@ -446,6 +470,8 @@ function A.dispatch(event, args)
         A.track_cast(event, args[1], args[2])
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
+    elseif event == "ReactionInterruptUsed" and args[1] then
+        A.note_interrupt(args[1])
     elseif (event == "Unlocked" or event == "Opened") and args[1] then
         A.unlock_seen(args[1])
     elseif event == "StatusRemoved" and args[1] then
@@ -494,7 +520,7 @@ for event, arity in pairs({
     UseFinished = 3, Opened = 1, Closed = 1, Unlocked = 3,
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
     CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
-    AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
+    AttackedBy = 7, ReactionInterruptUsed = 3, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
     CharacterSelectedForUser = 2, AttachedToPartyGroup = 1, DetachedFromPartyGroup = 1,
