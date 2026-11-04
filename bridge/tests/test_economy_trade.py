@@ -424,12 +424,25 @@ class TradeDealSaid(unittest.TestCase):
         self.assertIn("TRADE your gold 411", out)
 
     def test_bought_part_of_a_stack_and_sold_an_item_put_on_the_table_before(self):
-        before = dict(self.BEFORE, offer={"you": {"items": [{"uuid": self.SCROLL, "name": "Scroll of Grease",
-                                                              "price": 20}]}, "trader": {"items": []}})
+        # REVIEW-17 F3: the mod keeps the table FinishBarter took (deal), each item at its shown price; no screen read
         after = dict(self.AFTER, moved=[{"uuid": self.POTION, "name": "Potion of Healing", "side": "trader",
-                                         "count": 2}])
-        out, _ = self._trade(after, before, request="e3", count=2, confirm=True)
+                                         "count": 2, "price": 30}],
+                     deal={"you": {"items": [{"uuid": self.SCROLL, "name": "Scroll of Grease", "price": 20},
+                                             {"count": 10, "price": 10, "gold": True}]},
+                           "trader": {"items": [{"uuid": self.POTION, "name": "Potion of Healing", "count": 2,
+                                                 "price": 30}]}})
+        out, calls = self._trade(after, self.BEFORE, request="e3", count=2, confirm=True)
         self.assertIn("\nSOLD e4 Scroll of Grease 20 g\nBOUGHT e3 Potion of Healing x2 30 g", out)
+        self.assertNotIn("ui.trade", calls)  # F3: no full screen read before a confirm that isn't a hand-over
+
+    def test_an_item_past_the_screen_read_is_said_at_the_price_it_moved_at(self):
+        # REVIEW-17 F3: the hand-over read lists 60 items per side; the 61st sold at '? g'. The moved record has it.
+        before = dict(self.BEFORE, your_items=[])
+        after = dict(self.AFTER, moved=[{"uuid": self.BIG, "name": "Backpack", "side": "you", "count": 1,
+                                         "price": 52}])
+        out, calls = self._trade(after, before, offer="e1", confirm=True)
+        self.assertIn("\nSOLD e1 Backpack 52 g", out)
+        self.assertEqual(calls.count("ui.trade"), 1)  # offer without request: the hand-over check still reads it
 
     def test_unread_screen_names_the_items_without_a_price(self):
         out, _ = self._trade(self.AFTER, None, offer="e2", confirm=True)

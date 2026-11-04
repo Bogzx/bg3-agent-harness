@@ -243,12 +243,13 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
     if request:
         args["request"] = [plumbing._uuid(i) for i in request.split(",") if i.strip()]
     handover, before = False, None
-    if confirm:  # the screen before the barter: a hand-over, and the prices the deal is said at (deal_lines)
-        before = core.game.try_rpc("ui.trade", {}, context="client")
+    if confirm:  # {} = say the deal (deal_lines: the mod's priced table); the screen is read only for a hand-over
+        before = {}
         if offer and not request:
-            handover = economy.handover(before)
+            got = core.game.try_rpc("ui.trade", {}, context="client")
+            handover = economy.handover(got)
             donate = donate or handover
-        before = before if isinstance(before, dict) else {}
+            before = got if isinstance(got, dict) else {}
     if donate:
         args["donate"] = True
     _trade_view.update(listing=not (offer or request or confirm), full=full, before=before)

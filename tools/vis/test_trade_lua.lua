@@ -160,6 +160,16 @@ end
 ok(job.status == "done", "trade done: " .. tostring(job.status) .. " " .. tostring(job.error))
 ok(job.result and job.result.confirmed == true, "confirmed")
 ok(fullReads == 1, "one full screen read in the job, got " .. fullReads)
+-- REVIEW-17 F3: the deal is priced in the mod. The moved record carries the price and count the screen showed when it
+-- moved, and the result keeps the table FinishBarter took (the bridge read the whole screen before every confirm).
+local mv = job.result and job.result.moved and job.result.moved[1] or {}
+ok(mv.uuid == "t-1" and mv.side == "trader" and mv.price == 51 and mv.count == 1,
+    "moved priced: " .. tostring(mv.price) .. " x" .. tostring(mv.count))
+local deal = job.result and job.result.deal or {}
+local got, gave = (deal.trader or {}).items or {}, (deal.you or {}).items or {}
+ok(#got == 1 and got[1].uuid == "t-1" and got[1].name == "Ware1" and got[1].price == 51,
+    "deal: the ware at its table price: " .. tostring(got[1] and got[1].price))
+ok(#gave == 1 and gave[1].gold == true and gave[1].count == 51, "deal: our side was the Balance's 51 gold")
 
 -- S028 15:48 hand-over (Wulbren: no wares, no gold): a one-sided offer is refused unless donate=true, which presses
 -- Barter and stops for the bridge to answer "Donate these items?"
@@ -223,6 +233,37 @@ do
     ok(applies == 1, "Confirm pressed once: " .. applies)
     ok(closedWith == 3, "whole stack chosen: " .. tostring(closedWith))
     ok(j.result and j.result.moved and j.result.moved[1] and j.result.moved[1].count == 3, "moved count 3")
+end
+
+-- REVIEW-17 F3: part of a stack (count=2 of a Supply Pack x3 at 156 g): the moved record is the part, at its share
+do
+    dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+    local pack = vmItem(501, 156, 3)
+    local wareSlot = dc.TraderInventory.Slots.list[2]  -- slot 1: t-1 by its weight
+    local was = wareSlot.Object
+    wareSlot.Object = pack
+    local split = { CurrentPlayer = { UIData = { SplitItemData = { ItemCount = 3, TargetCount = 1 } } } }
+    local sw = { DataContext = split, visible = false }
+    local origW, origCmd, closing = BG3AI.UI.widget, BG3AI.UI.command, nil
+    BG3AI.UI.widget = function(n) if n == "SplitItem" then return sw end return origW(n) end
+    BG3AI.UI.command = function(d, name, param)
+        if name == "MoveTradeItem" then sw.visible = true end
+        if name == "ApplySplitCommand" then closing = true end
+        return true
+    end
+    Ext.Entity.Get = function(u) return u == "t-1" and traderItems[1] or nil end
+    local j = jobs[ops["ui.trade"]({ request = { "t-1" }, count = 2 }).job]
+    for _ = 1, 100 do
+        clock = clock + 50
+        if closing then sw.visible, closing = false, nil end
+        if j.status ~= "running" then break end
+        j.on_tick(j)
+    end
+    BG3AI.UI.widget, BG3AI.UI.command = origW, origCmd
+    wareSlot.Object = was
+    local m = j.result and j.result.moved and j.result.moved[1] or {}
+    ok(j.status == "done" and m.count == 2 and m.price == 104, "part of a stack: 2 of 3 at 104 g: "
+        .. tostring(m.count) .. " " .. tostring(m.price) .. " " .. tostring(j.error))
 end
 
 -- launch-v1 haiku act3_gold_max r2 seq 16-21 (67 times in 19 runs): trade(offer=a,b) put both on the table, then

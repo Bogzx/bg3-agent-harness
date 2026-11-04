@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-05: a confirmed deal is priced by the mod (REVIEW-17 F3)
+
+- `trade(..., confirm=true)` says SOLD/BOUGHT at the prices the mod read when it moved each item and from the table
+  it bartered (ui.trade's `moved[].price/count` and `deal`), not from a full screen read before the confirm. That
+  read listed 60 items per side, so an item past slot 60 sold at `? g`; it also added a whole screen read
+  (400-750 ms) to every confirm. The screen is still read first for an offer without a request (the hand-over
+  check). Part of a stack is priced at its share of the stack's shown price.
+
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 
 - get_status/look PARTY: the tie text comes from the new "Tied by" column of play/knowledge/companions.md; the role

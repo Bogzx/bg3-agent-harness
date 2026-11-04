@@ -773,11 +773,14 @@ def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str]) -> list
     'BOUGHT e40 Potion of Healing x3 45 g']. w12 L2: trade(offer=e159, confirm=true) showed the emptied table and
     'gold_changed delta=1' only; the Backpack had sold for 1 g (the other one was worth 52). The items are the ones
     on the table before the call (before.offer) and the ones this call moved (res.moved); the gold the Balance adds
-    is in EVENTS (gold_changed). before=None: no lines (sell=junk says SOLD itself); {} = the read failed, so the
-    items moved are named without a price."""
+    is in EVENTS (gold_changed). before=None: no lines (sell=junk says SOLD itself). REVIEW-17 F3: the mod prices
+    the deal itself: res.deal is the table FinishBarter took (before.offer's shape, every item at its shown price)
+    and each moved record carries the price/count it showed when it moved, so before is {} unless the screen was
+    read for a hand-over; with neither, the item is named without a price."""
     if before is None:
         return []
-    off = before.get("offer") or {}
+    deal = res.get("deal")
+    off = deal if isinstance(deal, dict) else (before.get("offer") or {})
     shown: dict[str, dict] = {}  # uuid -> the screen's record (price = the whole stack)
     for it in [*(before.get("your_items") or []), *(before.get("wares") or []),
                *((off.get("you") or {}).get("items") or []), *((off.get("trader") or {}).get("items") or [])]:
@@ -793,7 +796,7 @@ def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str]) -> list
     for m in res.get("moved") or []:
         if isinstance(m, dict) and m.get("side") in went and m.get("uuid") not in seen:
             seen.add(m.get("uuid"))
-            rec = shown.get(m.get("uuid")) or {}
+            rec = shown.get(m.get("uuid")) or m  # the mod's record: price/count as the item showed when it moved
             it = {"uuid": m.get("uuid"), "name": m.get("name") or rec.get("name"), "count": _count(rec),
                   "price": rec.get("price")}
             if isinstance(m.get("count"), int) and 0 < m["count"] < _count(rec):  # part of a stack (count=N)

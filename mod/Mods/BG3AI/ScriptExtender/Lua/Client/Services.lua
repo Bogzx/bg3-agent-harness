@@ -618,6 +618,10 @@ RPC.register("ui.trade", function(args)
     local phase, waitUntil, balanceTries, lastTable, lastMove = "mode", 0, 0, nil, nil
     SV.splitTries, SV.splitApplied, SV.splitCount = 0, nil, nil
     local moved, problems, confirmed, queue, already = {}, {}, false, {}, {}
+    -- deal: the table as FinishBarter took it ({you = {items}, trader = {items}}, offerView rows: uuid/name of what
+    -- this trade moved, count, price as shown, gold): what the bridge names SOLD/BOUGHT at (REVIEW-17 F3: it read
+    -- the whole screen before every confirm for the prices, and items past the first 60 slots had none).
+    local deal
     if UI.prop(dc, "Mode") ~= "Barter" then
         check(UI.command(dc, "SetTradeMode", nil, false))
     end
@@ -629,7 +633,7 @@ RPC.register("ui.trade", function(args)
         if not live then
             if phase == "finishing" then
                 return "done", { confirmed = true, moved = moved, problems = #problems > 0 and problems or nil,
-                                 already = already[1] and already or nil,
+                                 already = already[1] and already or nil, deal = deal,
                                  note = "trade screen closed" }
             end
             return "failed", nil, "the trade screen closed"
@@ -656,7 +660,13 @@ RPC.register("ui.trade", function(args)
                 return nil
             end
             if SV.splitCount then  -- the box closed after its Confirm: that many of the last stack moved
-                if moved[#moved] then moved[#moved].count = SV.splitCount end
+                local m = moved[#moved]
+                if m then
+                    if m.price and m.count and SV.splitCount > 0 and SV.splitCount < m.count then
+                        m.price = math.floor(m.price * SV.splitCount / m.count + 0.5) -- the stack's price, pro rata
+                    end
+                    m.count = SV.splitCount
+                end
                 SV.splitCount = nil
             end
             local q = table.remove(queue, 1)
@@ -674,7 +684,11 @@ RPC.register("ui.trade", function(args)
                 if ok then
                     lastMove = { key = tostring(it), side = q.side }
                     SV.offered[tostring(it)] = { uuid = q.u, name = nameOf(e) }
-                    moved[#moved + 1] = { uuid = q.u, name = nameOf(e), side = q.side }
+                    -- price/count as the screen showed the item when it moved (TradePrice = the whole stack's)
+                    local p = UI.pick(it, ITEM_PROPS)
+                    moved[#moved + 1] = { uuid = q.u, name = nameOf(e), side = q.side,
+                        count = tonumber(p.Count) or 1,
+                        price = (tonumber(p.TradePrice) or -1) >= 0 and tonumber(p.TradePrice) or nil }
                 else
                     problems[#problems + 1] = (nameOf(e) or q.u) .. ": " .. tostring(err3)
                 end
@@ -753,6 +767,7 @@ RPC.register("ui.trade", function(args)
                     .. " donate=true", n, has > 0 and "the Balance didn't add the trader's gold"
                         or "the trader has no gold to pay the difference: items only", n)
             end
+            deal = { you = { items = yours }, trader = { items = theirs } }
             local param = UI.prop(live, "ActionCommandParameter")
             if not isNoesis(param) then param = nil end
             local ok, err = UI.command(live, "FinishBarter", param, false)
@@ -766,7 +781,7 @@ RPC.register("ui.trade", function(args)
             -- game ask "Donate these items?"; the bridge answers that box (trade donate=true), so stop here.
             if args.donate and #yours > 0 and #theirs == 0 then
                 local st = SV.tradeState(live)
-                st.moved, st.donate_box = moved, true
+                st.moved, st.donate_box, st.deal = moved, true, deal
                 st.already = already[1] and already or nil
                 return "done", st
             end
@@ -786,7 +801,7 @@ RPC.register("ui.trade", function(args)
             if #st.offer.you.items == 0 and #st.offer.trader.items == 0 then
                 confirmed = true
                 SV.offered = {}
-                st.confirmed = confirmed
+                st.confirmed, st.deal = confirmed, deal
                 return "done", st
             end
             return nil
