@@ -278,6 +278,29 @@ do -- A13 S069 20:37:23 (Vicar Humbletoes, trader gold 0): request Mantle 819g +
     ok(j.status == "failed" and tostring(j.error):find("the trader has no gold left", 1, true)
         and count("FinishBarter") == 0, "sell to a 0-gold trader: " .. tostring(j.error))
 
+    -- an item whose price can't be read (TradePrice < 0) counted 0: with the Balance's 1 coin the table read even and
+    -- the item went for 1 g. Fail closed, naming it; a gold stack's own TradePrice doesn't matter (count).
+    local bag = { Count = 1, TradePrice = -1 }
+    local coin = { Count = 1, TradePrice = -1, ItemType = "Gold" }
+    setup({ bag }, { coin }, 1858)
+    BG3AI.Services.offered[tostring(bag)] = { name = "Backpack" }
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and j.error == "not confirmed: the price of Backpack on the table could not be read"
+        and count("FinishBarter") == 0, "unreadable price: not confirmed: " .. tostring(j.status) .. " "
+        .. tostring(j.error) .. " FB=" .. count("FinishBarter"))
+    setup({ { Count = 1, TradePrice = 1 } }, { bag }, 1858)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and tostring(j.error):find("could not be read", 1, true) and count("FinishBarter") == 0,
+        "unreadable price on the trader's side: not confirmed: " .. tostring(j.error))
+    setup({ { Count = 1, TradePrice = 1 } }, { coin }, 1858)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "done" and count("FinishBarter") == 1, "1 g item for a 1-coin stack: bartered: "
+        .. tostring(j.error))
+    setup({ bag }, {}, 1858)
+    j = run(ops["ui.trade"]({ confirm = true, donate = true }).job, 6000)
+    ok(count("FinishBarter") == 1, "donate gives our side whatever its price: bartered: " .. tostring(j.error))
+    BG3AI.Services.offered = {}
+
     for k, f in pairs(saved) do UIt[k] = f end
     Ext.Entity = _entity
 end
