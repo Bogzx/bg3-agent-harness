@@ -41,7 +41,7 @@ BG3AI = {
         prop = function(o, k) return o and o._props and o._props[k] end,
         clean = clean,
         items = function(c, max)
-            local i, n = 0, math.min(#c._items, max or 1e9)
+            local i, n = 0, math.min(c and #c._items or 0, max or 1e9)  -- nil: none (UI.items reads its Count)
             return function() i = i + 1 if i <= n then return i, c._items[i] end end
         end,
         count = function(c) return #c._items end,
@@ -66,6 +66,7 @@ BG3AI = {
 }
 
 dofile(LUA .. "/Client/UIState.lua")
+dofile(LUA .. "/Client/UIStateDialogue.lua")
 local S = BG3AI.UIState
 
 local failures, passed = 0, 0
@@ -677,6 +678,34 @@ do
     check("no story timer when collapsed", S.storyTimer() == nil)
     U.cachedByName = function() return nil end
     check("no story timer without the minimap", S.storyTimer() == nil)
+end
+
+-- v010 window 10 L1 (ans5-client.json): a tagged row's AnswerText is one Span whose children are one ls.LSRun per tag
+-- (Text unreadable) and an ls.LSSpan with the line; options carry the game's AnswerIdx (idx) and that run count
+-- (runs) for state.dialogue_tags' merge in the bridge.
+do
+    local function span(kids) return { Type = "Span", _props = { Inlines = coll(kids) } } end
+    local function lsrun() return { Type = "ls.LSRun", _props = {} } end
+    local line = { Type = "ls.LSSpan", _props = { Inlines = coll({ run("x") }) } }
+    local function row(kids, text)
+        local tb = { Type = "TextBlock", _name = "AnswerText", _tostring = text,
+            _props = { Inlines = coll({ span(kids) }) } }
+        return { Type = "ls.LSListBoxItem", _children = { tb } }
+    end
+    dofile(LUA .. "/Client/UIState.lua")  -- the blocks above replaced S.dialogue / S.dialogueAnswers on this table
+    dofile(LUA .. "/Client/UIStateDialogue.lua")
+    local items = { row({ line }, "Leave."), row({ lsrun(), lsrun(), line }, "Your quarry looks dangerous.") }
+    local v1, v2 = vm({ { Text = "Leave." } }), vm({ { Text = "Your quarry looks dangerous." } })
+    v1._props.AnswerIdx, v2._props.AnswerIdx = 4, 3
+    check("tag runs: plain row 0", S.tagRuns(items[1]._children[1]) == 0)
+    check("tag runs: [PALADIN] [DECEPTION] row 2", S.tagRuns(items[2]._children[1]) == 2)
+    check("tag runs: no element", S.tagRuns(nil) == 0)
+    local dlg = { _children = { { _name = "answerList", _children = items } }, DataContext = {} }
+    BG3AI.UI.path = function() return ad({ v1, v2 }) end
+    local d = S.dialogue({ Dialogue = { el = dlg } })
+    local o = d and d.options or {}
+    check("tag runs: options carry idx and runs", #o == 2 and o[1].idx == 4 and o[1].runs == 0
+        and o[2].idx == 3 and o[2].runs == 2, #o .. " " .. tostring(o[2] and o[2].runs))
 end
 
 print(string.format("%d passed, %d failed", passed, failures))

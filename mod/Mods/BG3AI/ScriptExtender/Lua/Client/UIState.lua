@@ -300,7 +300,7 @@ function S.dialogueAnswers(widget, ad)
             local vm = try(vms.At, vms, idx)
             local tags, body = S.splitTags(text)
             local ai = vm and tonumber(props(vm).AnswerIdx)
-            local a = { i = #out + 1, text = body, vm = vm, num = ai and ai + 1 }
+            local a = { i = #out + 1, text = body, vm = vm, num = ai and ai + 1, runs = try(S.tagRuns, textEl) }
             if #tags > 0 then a.tags = tags end
             if vm then addTags(a, try(S.answerTags, vm)) end
             if vm and props(vm).Enabled == false then a.off = true end
@@ -384,7 +384,7 @@ function S.pairRenderedWithVMs(items, vms, n)
         if not hit then return nil end
         local vm = table.remove(pool, hit).vm
         local tags, body = S.splitTags(text)
-        local a = { i = #out + 1, text = body, vm = vm }
+        local a = { i = #out + 1, text = body, vm = vm, runs = try(S.tagRuns, textEl) }
         if #tags > 0 then a.tags = tags end
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
@@ -432,7 +432,7 @@ function S.pairRenderedByPosition(items, vms, first)
         local vm = try(vms.At, vms, idx)
         if not vm then return nil end
         local tags, body = S.splitTags(text)
-        local a = { i = idx, text = body, vm = vm, row = k }
+        local a = { i = idx, text = body, vm = vm, row = k, runs = try(S.tagRuns, textEl) }
         if #tags > 0 then a.tags = tags end
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
@@ -491,7 +491,7 @@ function S.pairRenderedByNumber(items, vms, n)
         local text = textEl and answerText(textEl) or UI.allText(item)
         if not (vm and clean(text)) then return nil end
         local tags, body = S.splitTags(text)
-        local a = { i = num, text = body, vm = vm, row = k, num = num }
+        local a = { i = num, text = body, vm = vm, row = k, num = num, runs = try(S.tagRuns, textEl) }
         if #tags > 0 then a.tags = tags end
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
@@ -538,7 +538,9 @@ function S.dialogue(wmap)
         if #answers > 0 then
             d.options = {}
             for _, a in ipairs(answers) do
-                d.options[#d.options + 1] = { i = a.i, text = a.text, tags = a.tags, off = a.off }
+                -- idx (the game's AnswerIdx) and runs (tag runs on the row): state.dialogue_tags' merge keys
+                d.options[#d.options + 1] = { i = a.i, text = a.text, tags = a.tags, off = a.off, runs = a.runs,
+                    idx = a.vm and tonumber(props(a.vm).AnswerIdx) }
             end
         end
     end
@@ -976,23 +978,5 @@ end
 
 RPC.register("ui.state", function(args) return S.state(args or {}) end)
 RPC.register("ui.story_timer", function() return S.storyTimer() or { none = true } end)
-
--- ui.answer_list -> {over, first, total, offset, scrollable} of the open dialogue's answer list: the bridge
--- finds the list under the cursor (over) and wheels it to read the rows below the fold (a player scrolls).
-RPC.register("ui.answer_list", function()
-    local w = UI.widgetMap().Dialogue
-    local list = w and UI.isVisible(w.el) and UI.byName(w.el, "answerList")
-    if not list then return { open = false } end
-    local items = UI.findAll(list, function(e)
-        local ty = UI.typeName(e)
-        return ty == "ls.LSListBoxItem" or ty == "ListBoxItem"
-    end, { prune = true })
-    local out = { open = true, over = UI.get(list, "IsMouseOver") == true, rows = #items }
-    local win = #items > 0 and S.listWindow(list, items)
-    if win then
-        out.first, out.total, out.offset, out.scrollable = win.first, win.total, win.offset, win.scrollable
-    end
-    return out
-end)
 
 return S

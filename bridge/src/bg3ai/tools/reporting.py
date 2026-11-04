@@ -240,6 +240,45 @@ def _signed(v: int) -> str:
     return f"+{v}" if v >= 0 else str(v)
 
 
+def _merge_dialogue_tags(ui: dict) -> dict:
+    """The answer rows' "[PALADIN] [DECEPTION] " tags, which the client sees only as unreadable runs (one per tag), from
+    state.dialogue_tags (the game's NodeSelection; the label rule is in Server/StateDialog.lua). Merged by the game's
+    answer index (an option's idx = AnswerIdx = the NodeSelection index; REVIEW-10 change 1), only when the two reads
+    agree: as many answers as the list has (shown + scrolled away), and per answer as many labels as tag runs on its
+    row. Anything else (an option without idx/runs, a stale or changed list, the op's refusal): no labels and one log
+    line. An option whose tags the client already read keeps them. The merge keys never reach the agent."""
+    d = ui.get("dialogue") if isinstance(ui, dict) else None
+    if not d or not d.get("options"):
+        return ui
+    opts = [dict(o) for o in d["options"] if isinstance(o, dict)]  # copies: _complete_answers caches its options
+    ui = dict(ui, dialogue=dict(d, options=opts))
+    keys = [(o.pop("idx", None), o.pop("runs", None)) for o in opts]
+    if not any(r for _, r in keys):
+        return ui  # no row shows a tag run: nothing to label (and no RPC)
+    total = len(opts) + int(d.get("more_above") or 0) + int(d.get("more_below") or 0)
+    res = core.game.try_rpc("state.dialogue_tags") or {}
+    srv = {a.get("idx"): a for a in res.get("answers") or [] if isinstance(a, dict)}
+    why = res.get("why") or ("" if res.get("answers") is not None else "no answer from state.dialogue_tags")
+    if not why and len(srv) != total:
+        why = f"{len(srv)} answers in the game's selection, {total} in the list"
+    for (idx, runs), o in zip(keys, opts, strict=True):
+        if why:
+            break
+        a = srv.get(idx) if idx is not None and runs is not None else None
+        n = len(a.get("tags") or []) + (1 if a.get("roll") else 0) if a else None
+        if n != runs:
+            why = f"answer {o.get('i')}: idx {idx}, {runs} tag runs on the row, {n} labels in the game's selection"
+    if why:
+        core._log("dialogue_tags", {}, f"no labels: {why}", 0)
+        return ui
+    for (idx, _), o in zip(keys, opts, strict=True):
+        a = srv[idx]
+        labels = [str(t).upper() for t in a.get("tags") or []] + ([str(a["roll"]).upper()] if a.get("roll") else [])
+        if labels and not o.get("tags"):
+            o["tags"] = labels
+    return ui
+
+
 def _annotate_checks(ui: dict) -> dict:
     """Add 'check' to each tagged dialogue option: 'Persuasion: Claude +5 (party best: Shadowheart +6)'."""
     d = ui.get("dialogue") if isinstance(ui, dict) else None
@@ -334,6 +373,7 @@ def _render_ui(ui: dict, brief: bool = False) -> list[str]:
         ui = _complete_answers(ui)
     except Exception:  # best effort: the visible window still renders
         pass
+    ui = _merge_dialogue_tags(ui)
     _note_listed(ui)
     try:
         ui = _annotate_checks(ui)

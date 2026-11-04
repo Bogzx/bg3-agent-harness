@@ -171,7 +171,10 @@ local function speaker_is(sp, g)
     return ok and type(u) == "string" and u:lower() == g
 end
 
-function G.dialogue_info(uuid)
+-- The live dialog instances uuid speaks in (its DialogState.DialogId first, then any instance listing it as a
+-- speaker), the first that is not ambient banter, and what dialogue_info's fallbacks read: (inst or nil, whether any
+-- live instance was found, ServerCharacter.InDialog, the Dialogs map, the guid).
+local function speaker_dialog(uuid)
     local g = G.guid(uuid) or uuid
     local e = G.entity(g)
     local flag
@@ -202,16 +205,26 @@ function G.dialogue_info(uuid)
             end
         end)
     end
-    local live = #insts > 0
     for _, inst in ipairs(insts) do
         local ambient = inst_field(inst, "AutomatedDialog") == true
         if flag == false and not ambient then
             ambient = inst_field(inst, "IsWorld") == true or inst_field(inst, "IsBehaviour") == true
         end
-        if not ambient then
-            return true, ("dialog %s res=%s"):format(tostring(inst_field(inst, "DialogId")),
-                tostring(inst_field(inst, "DialogResourceUUID")))
-        end
+        if not ambient then return inst, true, flag, dialogs, g end
+    end
+    return nil, #insts > 0, flag, dialogs, g
+end
+
+-- The party member's open (not ambient) dialog instance, or nil (state.dialogue_tags reads its answers).
+function G.dialogue_instance(uuid)
+    return (speaker_dialog(uuid))
+end
+
+function G.dialogue_info(uuid)
+    local inst, live, flag, dialogs, g = speaker_dialog(uuid)
+    if inst then
+        return true, ("dialog %s res=%s"):format(tostring(inst_field(inst, "DialogId")),
+            tostring(inst_field(inst, "DialogResourceUUID")))
     end
     if flag == true then return true, "InDialog" end
     if live or flag == false or dialogs ~= nil then return false end

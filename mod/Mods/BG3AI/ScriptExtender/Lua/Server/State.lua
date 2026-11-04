@@ -625,7 +625,7 @@ S.inner = { ABBR = ABBR, now = now, pos1 = pos1, classes = classes, level = leve
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads S and the
 -- helpers in S.inner.
-for _, part in ipairs({ "Server/StateWorld.lua", "Server/StateOps.lua" }) do
+for _, part in ipairs({ "Server/StateWorld.lua", "Server/StateOps.lua", "Server/StateDialog.lua" }) do
     Ext.Require(part)
 end
 
