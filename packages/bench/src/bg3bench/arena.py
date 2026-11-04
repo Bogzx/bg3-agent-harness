@@ -40,7 +40,10 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
 - `pairs`: per model pair over complete pairings (both matches valid; a pairing short of one is `incomplete` and left
   out, its side advantage doesn't cancel): pairings won / split / lost by the first model (more, equal or fewer of
   the pairing's two points: a 2-0 is won, a 1-1 split), matches w/d/l, the match win rate (a draw = half a win) with
-  its Wilson interval, n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row).
+  its Wilson interval, n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row);
+  `pentanomial` counts the pairings by the first model's points ("2", "1.5", "1", "0.5", "0"), `draws` the cap
+  draws by reason, `sign_p` is the exact two-sided sign test on won vs lost pairings, and `provisional` marks a
+  rated row under PROVISIONAL_PAIRINGS.
 - `side_a`: side A's win rate over every valid match (a model against itself too) with a bootstrap interval over
   pairings: an interval that excludes 0.5 says the arena favours a side. A self-pair's second valid match in a
   pairing is left out here and in the next two (same seed, mirror twins, same model: a replay, REVIEW-7 f2).
@@ -53,7 +56,10 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
   back-to-back pair (`favoured`; REVIEW-7 a: from the order alone, never the result); none under an alternation rule.
 - `seat`: the order advantage the rating fits (below): the seat side's win probability between equal models (the
   seat side: round 1's pair side, else its first actor) with its bootstrap interval, and n_games (rated games with
-  a pattern); None with no rated pair.
+  a pattern, plus `n_self_games`: each self-pairing's first valid match with a pattern, pure seat evidence since
+  the strengths cancel, pre-registered in docs/ARENA-RESULTS.md); None with no rated pair.
+- `prior`: the priors of the refits (PRIORS virtual draws) and the largest Elo shift any rated model takes from
+  them; None with no rated pair.
 - `failures`: per model, over every graded match it played a side of (valid or not), the matches its own client
   failed (`client_fault` with `failed` = its side): n_matches, client_faults, rate and the causes counted.
 - `models`: per model its matches and points over complete pairings; a model in a rated pair has a Bradley-Terry
@@ -61,7 +67,10 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
   reference player keeps an undefeated model finite; a first-seat factor multiplies the seat side's strength in
   each game that has a pattern, chess's white advantage, with one virtual draw of its own: REVIEW-7 f1) with a percentile bootstrap interval over those pairings
   (seeded), shown on the Elo scale (400 log10 strength, centred on 1500 over the rated models); any other model is a
-  pilot row with no rating. A match a model plays against itself is graded but never rated.
+  pilot row with no rating. A rated model also has `provisional` (fewer than PROVISIONAL_PAIRINGS rated pairings),
+  `rank` with `rank_ci` (its rank's percentile range over the bootstrap replicates), `prior_shift` (its largest Elo
+  move under PRIORS) and `prior_flag` (that move is over half its interval). A match a model plays against itself is
+  graded but never rated. docs/ARENA-RESULTS.md documents every field for the site.
 """
 
 from __future__ import annotations
@@ -90,6 +99,9 @@ ROUND_CAP, WALL_CAP_MIN = 20, 30
 LEVEL, LEVEL_MAX = 2, 12  # every member's character level after arena.setup
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MIN_PAIRINGS = 15  # a pair's pairings before its models are rated; below it, a pilot row
+PROVISIONAL_PAIRINGS = 50  # a rated pair or model's pairings before its rating is no longer provisional
+PRIORS = (0.5, 2.0)  # the virtual-draw counts the prior-sensitivity refits use (the rating's own is 1)
+PENTANOMIAL = ("2", "1.5", "1", "0.5", "0")  # a pairing's points for the first model
 FORFEIT_TURNS = 3  # forced turns in a row that forfeit the match
 TOOLS_OFF_LISTS = ("arena-v1",)  # the bridge's named arena tools-off lists (BG3AI_TOOLS_OFF values)
 KEYS = {
@@ -585,38 +597,48 @@ def pairings(matches: Iterable[Mapping[str, Any]]) -> tuple[dict[str, list[dict]
 
 
 def bradley_terry_seat(
-    games: Sequence[tuple[str, str, float] | tuple[str, str, float, int]], tol: float = 1e-10, max_iter: int = 10000
+    games: Sequence[tuple[str, str, float] | tuple[str, str, float, int]],
+    tol: float = 1e-10,
+    max_iter: int = 10000,
+    prior: float = 1.0,
 ) -> tuple[dict, float]:
     """({player: log strength}, log seat factor) from (i, j, i's points[, f]) games by Hunter's MM iteration. f: 1 when
     i had the favoured side, -1 when j had it, 0 or absent when neither; the favoured player's strength counts times
-    the seat factor in that game. Each player has one virtual draw against a reference player of strength 1, and the
-    seat factor one virtual draw of its own (so every value is finite and the scale is fixed). Without any f the
-    strengths are the plain fit and the factor is 1."""
-    players = sorted({g[k] for g in games for k in (0, 1)})
-    wins = {p: 0.5 for p in players}  # the virtual draw's half point
-    seat_pts = 0.5  # the seat's virtual draw
+    the seat factor in that game. Each player has `prior` virtual draws against a reference player of strength 1, and
+    the seat factor `prior` virtual draws of its own (so every value is finite and the scale is fixed). A game of a
+    player against itself (i == j) is seat evidence only: the two strengths cancel, so it moves the seat factor and no
+    player's strength, and a player seen only there gets none. Without any f the strengths are the plain fit and the
+    factor is 1."""
+    players = sorted({g[k] for g in games if g[0] != g[1] for k in (0, 1)})
+    wins = {p: prior / 2 for p in players}  # the virtual draws' half points
+    seat_pts = prior / 2  # the seat's virtual draws
     rows = []
     for g in games:
         i, j, s = g[0], g[1], g[2]
         f = g[3] if len(g) > 3 else 0
-        wins[i] += s
-        wins[j] += 1.0 - s
+        if i != j:
+            wins[i] += s
+            wins[j] += 1.0 - s
+        elif not f:
+            continue
         if f:
             seat_pts += s if f > 0 else 1.0 - s
         rows.append((i, j, f))
-    mine = {k: [r for r in rows if k in r[:2]] for k in players}
+    mine = {k: [r for r in rows if k in r[:2] and r[0] != r[1]] for k in players}
     p, gamma = dict.fromkeys(players, 1.0), 1.0
     for _ in range(max_iter):
         new = {}
         for k in players:
-            den = 1.0 / (p[k] + 1.0)  # the virtual game
+            den = prior / (p[k] + 1.0)  # the virtual games
             for i, j, f in mine[k]:
                 ci, cj = (gamma if f > 0 else 1.0), (gamma if f < 0 else 1.0)
                 den += (ci if k == i else cj) / (ci * p[i] + cj * p[j])
             new[k] = wins[k] / den
-        den = 1.0 / (gamma + 1.0)
+        den = prior / (gamma + 1.0)
         for i, j, f in rows:
-            if f:
+            if i == j:
+                den += 1.0 / (gamma + 1.0)
+            elif f:
                 fav, oth = (new[i], new[j]) if f > 0 else (new[j], new[i])
                 den += fav / (gamma * fav + oth)
         g_new = seat_pts / den
@@ -647,7 +669,7 @@ def _seat_flag(m: Mapping[str, Any]) -> int:
     return 0 if seat is None else 1 if seat == "A" else -1
 
 
-def _games(pairs: Iterable[list[dict]]) -> list[tuple[str, str, float, int]]:
+def _games(pairs: Iterable[Sequence[Mapping[str, Any]]]) -> list[tuple[str, str, float, int]]:
     return [(m["sides"]["A"], m["sides"]["B"], _points(m, "A"), _seat_flag(m)) for ms in pairs for m in ms]
 
 
@@ -725,23 +747,50 @@ def _by_pattern(matches: list[Mapping[str, Any]]) -> dict[str, dict]:
     return out
 
 
+def sign_test(won: int, lost: int) -> float:
+    """The exact two-sided sign test's p-value for won vs lost pairings (split pairings left out): the chance under
+    equal models of a split at least this lopsided; 1.0 with none."""
+    n = won + lost
+    return min(1.0, 2 * sum(math.comb(n, i) for i in range(min(won, lost) + 1)) / 2**n) if n else 1.0
+
+
 def _pair_rows(complete: dict[str, list[dict]], min_pairings: int) -> dict[tuple[str, str], dict]:
     rows: dict[tuple[str, str], dict] = {}
     for ms in complete.values():
         x, y = sorted(_score(ms[0]))
-        row = rows.setdefault((x, y), {"won": 0, "split": 0, "lost": 0, "w": 0, "d": 0, "l": 0, "ids": []})
+        row = rows.setdefault(
+            (x, y),
+            {"won": 0, "split": 0, "lost": 0, "pentanomial": dict.fromkeys(PENTANOMIAL, 0), "w": 0, "d": 0, "l": 0,
+             "draws": dict.fromkeys(CAP_REASONS, 0), "ids": []},
+        )  # fmt: skip
         pts = sum(_score(m)[x] for m in ms)
         row["won" if pts > 1 else "split" if pts == 1 else "lost"] += 1
+        row["pentanomial"][f"{pts:g}"] += 1
         row["ids"].append(ms[0]["pairing"])
         for m in ms:
             s = _score(m)[x]
             row["w" if s == 1.0 else "d" if s == 0.5 else "l"] += 1
+            if s == 0.5 and m.get("reason") in CAP_REASONS:
+                row["draws"][m["reason"]] += 1
     for row in rows.values():
         n = row["w"] + row["d"] + row["l"]
         k = row["w"] + row["d"] / 2
         row.update(n_matches=n, n_pairings=len(row["ids"]), win_rate=k / n, wilson=list(stats.wilson(k, n)))  # pyright: ignore[reportArgumentType]
+        row["sign_p"] = sign_test(row["won"], row["lost"])
         row["rated"] = row["n_pairings"] >= min_pairings
+        row["provisional"] = row["rated"] and row["n_pairings"] < PROVISIONAL_PAIRINGS
     return rows
+
+
+def _ranks(elo: Mapping[str, float]) -> dict[str, int]:
+    """{player: rank}: 1 for the highest Elo."""
+    return {p: k + 1 for k, p in enumerate(sorted(elo, key=lambda q: -elo[q]))}
+
+
+def _rank_ci(ranks: list[int], alpha: float) -> list[int] | None:
+    """The alpha/2 and 1 - alpha/2 quantiles of a model's bootstrap ranks, rounded outward to whole ranks."""
+    ci = _ci([float(r) for r in ranks], alpha)
+    return [math.floor(ci[0]), math.ceil(ci[1])] if ci else None
 
 
 def results(
@@ -773,15 +822,27 @@ def results(
                 row["w" if s == 1.0 else "d" if s == 0.5 else "l"] += 1
     rated = sorted(pid for row in rows.values() if row["rated"] for pid in row["ids"])
     rated_games = _games(complete[i] for i in rated)
-    theta, lg = bradley_terry_seat(rated_games) if rated else ({}, 0.0)
+    # pre-registered (docs/ARENA-RESULTS.md): each self-pairing's first valid match with a pattern is seat evidence
+    self_games = [g for g in _games([m] for m in distinct if m["sides"]["A"] == m["sides"]["B"]) if g[3]]
+    theta, lg = bradley_terry_seat(rated_games + self_games) if rated else ({}, 0.0)
     elo = _elo(theta) if theta else {}
     draws: dict[str, list[float]] = {p: [] for p in theta}
+    rank_draws: dict[str, list[int]] = {p: [] for p in theta}
     seat_draws: list[float] = []
     for _ in range(b if rated else 0):
-        boot_theta, boot_lg = bradley_terry_seat(_games(complete[i] for i in rng.choices(rated, k=len(rated))))
-        for p, e in _elo(boot_theta).items():  # a model whose every pairing missed this draw has no rating in it
+        picked = _games(complete[i] for i in rng.choices(rated, k=len(rated)))
+        picked += rng.choices(self_games, k=len(self_games)) if self_games else []
+        boot_theta, boot_lg = bradley_terry_seat(picked)
+        boot_elo = _elo(boot_theta)
+        for p, e in boot_elo.items():  # a model whose every pairing missed this draw has no rating in it
             draws[p].append(e)
+        for p, k in _ranks(boot_elo).items():
+            rank_draws[p].append(k)
         seat_draws.append(_seat_p(boot_lg))
+    ranks = _ranks(elo)
+    refits = [_elo(bradley_terry_seat(rated_games + self_games, prior=q)[0]) for q in PRIORS] if rated else []
+    shift = {p: max(abs(e[p] - elo[p]) for e in refits) for p in theta}
+    rated_n = {p: sum(1 for i in rated if p in _score(complete[i][0])) for p in theta}
     models = [
         {
             "player": p,
@@ -794,7 +855,12 @@ def results(
             "rated": p in theta,
             "bt": theta.get(p),
             "elo": elo.get(p),
-            "elo_ci": _ci(draws[p], alpha) if p in theta else None,
+            "elo_ci": (ci := _ci(draws[p], alpha) if p in theta else None),
+            "provisional": p in theta and rated_n[p] < PROVISIONAL_PAIRINGS,
+            "rank": ranks.get(p),
+            "rank_ci": _rank_ci(rank_draws[p], alpha) if p in theta else None,
+            "prior_shift": shift.get(p),
+            "prior_flag": bool(ci and shift[p] > (ci[1] - ci[0]) / 2),  # moves more than half its interval
         }
         for p, row in per.items()
     ]
@@ -816,10 +882,12 @@ def results(
             "log_factor": lg,
             "p_favoured": _seat_p(lg),
             "ci": _ci(seat_draws, alpha),
-            "n_games": sum(1 for g in rated_games if g[3]),
+            "n_games": sum(1 for g in rated_games if g[3]) + len(self_games),
+            "n_self_games": len(self_games),
         }
         if rated
         else None,
+        "prior": {"priors": list(PRIORS), "max_shift": max(shift.values())} if rated else None,
         "failures": failures(matches if attempts is None else attempts),
         "models": models,
     }
