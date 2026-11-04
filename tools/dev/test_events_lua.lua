@@ -354,11 +354,21 @@ do
         got[#got] == "Ray of Frost: Reduces the target's movement speed by 3m. (range 18m, ranged spell attack,"
             .. " 1d8 Cold damage, lasts 1 turn)", got[#got])
 
+    -- the party has a summon (no Main Hand Attack in its own short spellbook): still on every member's hotbar
+    local SUM = "aaaaaaaa-0000-0000-0000-0000000000f1"
+    party[#party + 1], isParty[SUM] = SUM, true
+    local entityNoSummon = V.entity
+    V.entity = function(u)
+        if u == SUM then return { ServerCharacter = {}, IsSummon = { Owner = HOST }, SpellBook = { Spells = {} } } end
+        return entityNoSummon(u)
+    end
+    Ext.Utils.MonotonicTime = function() return 1900000 end -- Events' ctx() cache: the party with the summon
     local n1, c1 = #infos(), #pushed
     listeners.CastedSpell("S_Skeleton_" .. RANGER, "Target_MainHandAttack", "target", "", 0)
     listeners.CastedSpell("S_Skeleton_" .. RANGER, "Shout_Dash", "shout", "", 0)
     check("Main Hand Attack and Dash (on every party hotbar): no spell_info", #infos() == n1, infos()[#infos()])
     check("... their cast events stay", #pushed == c1 + 2 and last("cast").name == "Dash")
+    party[#party], isParty[SUM], V.entity = nil, nil, entityNoSummon
 
     listeners.CastedSpell("S_Skeleton_" .. RANGER, "Target_Skeleton_Cleave", "target", "", 0)
     got = infos()

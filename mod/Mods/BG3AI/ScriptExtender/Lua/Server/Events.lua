@@ -350,20 +350,23 @@ end
 
 -- An action every party member has in its own spellbook, and not a spell (w10 L2: Main Hand Attack, Ranged Attack,
 -- Jump; Dash): the player reads that tooltip on each hotbar, so an enemy's use of it brings nothing new.
+-- Summons are left out (they have their own short spellbooks: a party with a summon would show every common action).
 local function everyoneHas(id, st)
     if hasFlag(st, "IsSpell") then return false end
-    local party = ctx().party or {}
-    if #party == 0 then return false end
-    for _, u in ipairs(party) do
+    local n = 0
+    for _, u in ipairs(ctx().party or {}) do
         local e, has = V.entity(u), false
-        pcall(function()
-            for _, sp in ipairs(e.SpellBook.Spells) do
-                if sp.Id.Prototype == id or sp.Id.OriginatorPrototype == id then has = true break end
-            end
-        end)
-        if not has then return false end
+        if not (U.comp(e, "IsSummon") or truthy(osi(Osi.IsSummon, u))) then
+            n = n + 1
+            pcall(function()
+                for _, sp in ipairs(e.SpellBook.Spells) do
+                    if sp.Id.Prototype == id or sp.Id.OriginatorPrototype == id then has = true break end
+                end
+            end)
+            if not has then return false end
+        end
     end
-    return true
+    return n > 0
 end
 
 local function casterLevel(u)
