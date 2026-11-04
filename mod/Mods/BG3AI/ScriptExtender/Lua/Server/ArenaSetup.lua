@@ -6,15 +6,16 @@
 -- Nightwarden Minthara is Minthara once she joins): setup fails when it differs, listing both. Every party member on
 -- no team (the avatar too) sits out. The steps are the arena spike's, which the probe ran by hand
 -- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
---  -2. a mirror arena: the field cleaned (Server/ArenaField.lua: within the surface clear's reach, pickable items
+--  -3. a mirror arena: the field cleaned (Server/ArenaField.lua: within the surface clear's reach, pickable items
 --      deleted, traps disarmed, locks opened, doors opened, usable objects disabled, destructibles invulnerable),
---      read back a tick later in step -1: the items still active must be the same set on both halves (else setup
+--      read back a tick later in step -2: the items still active must be the same set on both halves (else setup
 --      fails naming them, before any twin spawns); the counts are the result's and arena_start's `field`
 --   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
 --      entries' grants nor the kit's boosts: live check 12 step 13): every spot cleared of Ground and Cloud surfaces
 --      (RemoveSurfaceLayerAtPosition over the arena, then SURFACE_CLEAR_M at each spot) and the surfaces read
---      mirrored across the midplane (Setup.check_surfaces; the result's surfaces), then each pair
+--      mirrored across the midplane (Setup.check_surfaces; the result's surfaces; read again until they do, at most
+--      SURFACE_WAIT_MS after the clear, which lands after its call), then each pair
 --      arena.mirror_spawn + arena.mirror_kit
 --      (Server/ArenaMirror.lua), pair i's side Setup.spawn_order(seed, n)[i] made first (recorded as spawn_order);
 --      once every kit is done, each twin must read its own name and StatsId within
@@ -73,6 +74,12 @@ Setup.SURFACE_REACH_M = 18.0
 -- The checked radius must read at least this fraction of its tile pairs, else setup fails (a check that read a few
 -- tiles checked little). 0.5 until the first live counts give a better floor (cross-review af5b2a91).
 Setup.SURFACE_READ_MIN = 0.5
+-- RemoveSurfaceLayerAtPosition lands after the call returns (live w10 L3: the check in the clear's own tick read 14
+-- unmirrored pairs of 168, Fire and BloodSilver within the checked radius; the same load's setup 40 s later read them
+-- cleared). The check reads again every SURFACE_EVERY_MS until it reads and mirrors, for at most SURFACE_WAIT_MS after
+-- the clear, then fails closed with the counts.
+Setup.SURFACE_WAIT_MS = 5000
+Setup.SURFACE_EVERY_MS = 250
 Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike stood up
 -- Spawn geometry (both sides stand on the same terms): the spawns at most this far apart in height, and every distance
 -- across the lines the same both ways (A's member i to B's member j = B's i to A's j) within this
@@ -566,18 +573,16 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
 end
 
 -- A mirror arena: the field's items made inert before the surfaces are cleared (a burning barrel makes a surface).
-STEPS[-2] = function(job)
+STEPS[-3] = function(job)
     local mid, radius = {}, Setup.surface_reach(job.spawns)
     for k = 1, 3 do mid[k] = (job.spawns.A[k] + job.spawns.B[k]) / 2 end
     job.field = Ar.Field.clean(mid, radius, job.host)
     return Ar.Field.SETTLE_MS
 end
 
--- A mirror arena: the field read back, the surfaces cleared, then the twins, spawned and given their kits (their kit
--- jobs run on their own).
-STEPS[-1] = function(job)
-    local mi, M = job.mirror, Ar.Mirror
-    job.kits = {}
+-- A mirror arena: the field read back, then the surfaces cleared (read back from SURFACE_EVERY_MS on: step -1).
+STEPS[-2] = function(job)
+    local mi = job.mirror
     local mid, radius = {}, Setup.surface_reach(job.spawns)
     for k = 1, 3 do mid[k] = (job.spawns.A[k] + job.spawns.B[k]) / 2 end
     job.field.left = Ar.Field.check(job.spawns, radius)
@@ -599,20 +604,37 @@ STEPS[-1] = function(job)
             end
         end
     end
+    job.cleared_at = now_ms()
+    return Setup.SURFACE_EVERY_MS
+end
+
+-- A mirror arena: the surfaces read until they read and mirror (at most SURFACE_WAIT_MS after the clear), then the
+-- twins, spawned and given their kits (their kit jobs run on their own).
+STEPS[-1] = function(job)
+    local mi, M = job.mirror, Ar.Mirror
+    local radius = Setup.surface_reach(job.spawns)
     local sc = Setup.check_surfaces(job.spawns, #mi.pairs)
+    local short = sc.read < Setup.SURFACE_READ_MIN * sc.points
+    local waited = now_ms() - job.cleared_at
+    if (short or #sc.off > 0) and waited < Setup.SURFACE_WAIT_MS then
+        job.step = job.step - 1 -- read again
+        return Setup.SURFACE_EVERY_MS
+    end
+    job.kits = {}
     local wide = Setup.check_surfaces(job.spawns, #mi.pairs, sc.radius, radius) -- report-only
     job.surfaces = { tiles_total = sc.points, tiles_read = sc.read, radius = sc.radius, off = #sc.off,
         wide = { tiles_total = wide.points, tiles_read = wide.read, radius = wide.radius, off = #wide.off,
             tiles = { table.unpack(wide.off, 1, 5) } } }
     job.surface_keys = wide.keys -- the re-reads tell these setup mismatches from surfaces made during the match
-    if sc.read < Setup.SURFACE_READ_MIN * sc.points then -- fails closed: a check that read little checked little
+    if short then -- fails closed: a check that read little checked little
         error(("only %d of %d tile pairs on A's half within %.1f m of the arena's midpoint read their surfaces (under "
-            .. "%d%%)"):format(sc.read, sc.points, sc.radius, Setup.SURFACE_READ_MIN * 100), 0)
+            .. "%d%%) %.1f s after the clear"):format(sc.read, sc.points, sc.radius, Setup.SURFACE_READ_MIN * 100,
+            waited / 1000), 0)
     end
     if #sc.off > 0 then
         local shown = { table.unpack(sc.off, 1, 5) }
-        error(("the surfaces don't mirror after the clear (%d of %d tiles read within %.1f m): %s"):format(#sc.off,
-            sc.read, sc.radius, table.concat(shown, "; ")), 0)
+        error(("the surfaces don't mirror %.1f s after the clear (%d of the %d tile pairs read within %.1f m differ): "
+            .. "%s"):format(waited / 1000, #sc.off, sc.read, sc.radius, table.concat(shown, "; ")), 0)
     end
     for i, p in ipairs(mi.pairs) do
         local spots = {}
@@ -748,7 +770,7 @@ function Setup.start(args)
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
         teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
-        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -2 or 1, next_at = 0,
+        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -3 or 1, next_at = 0,
         before = {}, calls = {}, mirror = mirror, spawn_order = spawnOrder })
     job.partial = { teams = teams, calls = job.calls, spawn_order = spawnOrder }
     return { job = job.id, status = job.status }
