@@ -638,8 +638,7 @@ def _wait(tgt: str, deadline: float, lead_s: float = 0.0, t0: float | None = Non
                 # S023 06:47-06:53: 20 waits for combat_started in a row with only reads (look_at, session_clock)
                 # between them, 4 s + a model turn each. The second one in a row answers at once.
                 body = (f"nothing is running that would cause {tgt} — again: only reads ran since the last wait said "
-                        "so, and waiting never starts a fight or a conversation. Act: move_to/walk_toward, talk_to, "
-                        "interact, or queue_actions")
+                        "so, and waiting never starts a fight or a conversation")
                 noop = "repeat"
                 break
             elif quiet and now - max(t0, busy_seen) >= queueing.IDLE_EVENT_WAIT_S:

@@ -61,7 +61,7 @@ def _nearby_miss_text(full: dict, words: list[str], radius: float) -> str:
         out += " Characters in view: " + ", ".join(shown) + (f" (+{len(chars) - 8} more)" if len(chars) > 8 else "")
     else:
         out += " No characters in view."
-    return out + " Someone out of sight: get_map / the journal for where they went, or route to their last place."
+    return out
 
 
 def _nearby_party_lines(words: list[str]) -> list[str]:
@@ -559,9 +559,9 @@ def _light_note(cs: Any) -> str:
         u, light = o.get("uuid"), o.get("light_in_hand")
         if light and u and u not in _light_noted:
             _light_noted.add(u)
-            out.append(f"LIGHT: {queueing._label(u)} fights with the {light} in the main hand (torch damage). Keep it held "
-                       "in the Shadow Curse (its aura is the party's Moonshield); after the fight equip_best gives "
-                       "it to a caster and puts a real weapon back in this hand.")
+            out.append(f"LIGHT: {queueing._label(u)} fights with the {light} in the main hand (torch damage); in the Shadow "
+                       "Curse its aura is the party's Moonshield; equip_best gives it to a caster and a weapon to "
+                       "this hand.")
     return "".join("\n" + x for x in out)
 
 
@@ -632,7 +632,7 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
     import io
 
     if core._last_full_frame is None:
-        return "Take a screenshot first."
+        return "No screenshot taken yet."
     W, Hh = core._last_full_frame.size
     box = (int(x * W), int(y * Hh), int((x + w) * W), int((y + h) * Hh))
     crop = core._last_full_frame.crop(box)

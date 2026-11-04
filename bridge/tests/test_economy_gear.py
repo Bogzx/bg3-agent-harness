@@ -385,7 +385,7 @@ class ScrollUse(unittest.TestCase):
         out, calls, clicks = self._run("Gale", "Invisibility", owner=self.SH)
         self.assertTrue(out.startswith("ERR") or "FAILED" in out)
         self.assertIn("carries Scroll of Invisibility", out)
-        self.assertIn('who="Shadowheart"', out)
+        self.assertIn("e1 Shadowheart carries Scroll of Invisibility", out)
         self.assertEqual(calls, [])
 
     def test_a_book_opens_for_reading_and_nothing_is_clicked(self):

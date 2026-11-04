@@ -281,8 +281,7 @@ def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_
         notes.append(boxclick.describe(c) + (f" (the question: {q})" if q and "[ForceUpdate]" not in str(q) else ""))
         if c.get("transition") == "a conversation started":
             # S086: the Yes started a camp scene; the agent answers it (no client read of the rest screen meanwhile)
-            out = (f"{tool}: STOPPED — {notes.pop()}; a conversation started (a camp scene): finish it (get_dialogue, "
-                   f"dialogue_advance / choose_dialogue), then {tool} again")
+            out = (f"{tool}: STOPPED — {notes.pop()}; a conversation started (a camp scene)")
             break
         if tool in ("confirm", "fast_travel") or not (c.get("closed") or c.get("shown") or c.get("gone")):
             if tool != "long_rest" and tool != "short_rest" and not c.get("error"):
@@ -591,8 +590,7 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     name = str(it.get("name"))
     if it.get("owner") and it.get("owner") != char:
         raise GameError(f"{queueing._label(char)} has no action called that; {queueing._label(it['owner'])} carries {name} "
-                        f"({core.H.get(it['uuid'])}): use_ability(who=\"{overview._name_of(it['owner'])}\", ability=\"{name}\", "
-                        f"target=...) or give it over first")
+                        f"({core.H.get(it['uuid'])})")
     tgt0 = plumbing._uuid(target) if target else char
     # live N4 (2026-10-28): read on a living Claude it answered "Claude REVIVED": the revive check only asked "not
     # dead" after the read. Live N7 2d: on the reader herself (who=target, alive) it skipped this check and read "done
@@ -749,7 +747,7 @@ def _scroll_ground(inp, name: str, char: str, pos: list[float]) -> str:
         why = res.detail.get("why") or res.reason
         back = ("the spell left the hand without a cast" if res.reason == "dropped"
                 else "the spell was put back" if res.detail.get("cancelled") or res.stage == "arm"
-                else "the spell may still be in hand (press_key ESCAPE)")
+                else "the spell may still be in hand (press_key ESCAPE puts it back)")
         out = f"; {name}: the ground at {where} was not taken ({queueing._label(why)}); {back}, nothing cast"
         if looks:
             out += f" [{queueing._label(looks)}]"
@@ -811,8 +809,8 @@ def _body_far(char: str, tgt: str) -> str | None:
     d = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
     if d <= REVIVE_REACH_M:
         return None
-    return (f"{overview._name_of(tgt)}'s body is {d:.0f} m away (it stays where they died; camp doesn't have it): walk within "
-            f"{REVIVE_REACH_M:.0f} m first (move_to target={queueing._label(tgt)} within=3), then read the scroll. Not read")
+    return (f"{overview._name_of(tgt)}'s body is {d:.0f} m away (it stays where they died; camp doesn't have it); the scroll reaches "
+            f"{REVIVE_REACH_M:.0f} m. Not read")
 
 
 def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
@@ -827,12 +825,11 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
         looks = twostep.looks_brief(res.detail.get("looks") or [])
         back = ("the spell left the hand without a cast" if res.reason == "dropped"
                 else "the spell was put back" if res.detail.get("cancelled")
-                else "the spell may still be in hand (press_key ESCAPE)")
+                else "the spell may still be in hand (press_key ESCAPE puts it back)")
         return (f"; {name}: the body {queueing._label(tgt)} was clicked, but no ground beside it was taken to stand them up "
                 f"on ({queueing._label(why)})" + (f" [{queueing._label(looks)}]" if looks else "")
                 + f"; {back}, nothing cast (the scroll is still in the bags). The spot must be floor right beside the "
-                "body with nobody on it (a burning patch there is fine: S090): move the party off the ground around "
-                "the body, or read it from another side")
+                "body with nobody on it (a burning patch there is fine: S090)")
     end = time.monotonic() + REVIVE_WAIT_S
     dead = _is_dead(tgt)
     while dead and time.monotonic() < end:
@@ -842,7 +839,7 @@ def _revive_spot(inp, name: str, char: str, tgt: str) -> str:
            else f"clicked the body {queueing._label(tgt)}; no spell in hand after it")
     if res.detail.get("spot_in"):
         how += (f"; they stand up in {res.detail['spot_in']} (the spot beside the body the game took): it can put them "
-                "down again at once (S090), so heal them now (Lay on Hands, a potion: Help gives 1 HP) and get them out")
+                "down again at once (S090; Help gives 1 HP)")
     if dead is None:
         return f" ({name} read: {how}; not a party member, so not checked)"
     if dead:
@@ -902,7 +899,7 @@ def click_on(target: str, button: str = "left") -> str:
         if near and core.game.run_job("act.select", {"char": near}, wait_s=4).status == "done":
             head = f"selected {queueing._label(near)} first (next to it; the camera follows the selected character)\n"
             cr = click_entity(core.game, inp, u, btn)
-    tail = f"\nthe {cr.screen} screen covers the world: press_key ESCAPE first" if cr.reason == "covered" else ""
+    tail = f"\nthe {cr.screen} screen covers the world (press_key ESCAPE closes it)" if cr.reason == "covered" else ""
     return reporting._finish("click_on", {"target": target}, head + ("clicked" if cr.ok else f"FAILED: {cr.reason}") + " — " + render.compact(cr.as_dict(), core.H) + tail, t0)
 
 

@@ -568,8 +568,7 @@ def _auto_dialogue(tool: str, body: str, ev: str, t0: float | None = None) -> st
         if tool == "talk_to" and head.startswith("talk_to: done") and "dialogue_line" not in ev:
             # S028 15:50 (Wulbren, Lia at the dock): "talk_to: done — dialogue" and nothing else; the agent read
             # get_dialogue (screen=game) to find out. Say it: the game started a talk that never showed a window.
-            return ("(no conversation window opened: they only had a passing remark, nothing to answer; "
-                    "talk to them again later or follow the journal)")
+            return ("(no conversation window opened: they only had a passing remark, nothing to answer)")
         return ""  # no dialogue on screen (ambient banter, a plain door): nothing to add
     return "\n".join(([f"auto-advanced {n} opening filler line(s):"] if n else []) + lines
                      + ([f"STOPPED: {stop}"] if stop else []))

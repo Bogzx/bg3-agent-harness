@@ -37,8 +37,7 @@ def _choose_text(option: int, want: str, rows: list | None = None) -> JobResult:
         if i is None:
             i, why = clicker.scroll_to_answer(core.game, inp, _visible_answers, want, up=True)
         if i is None:
-            raise GameError(f"option {option} ('{want}') is not in the answer list now ({why}): call get_dialogue "
-                            "and choose again")
+            raise GameError(f"option {option} ('{want}') is not in the answer list now ({why})")
     return core.game.run_job("ui.dialogue_choose", {"i": i, "text": want}, context="client", wait_s=20)
 
 
@@ -76,7 +75,7 @@ def _choose_answer(option: int) -> JobResult:
     opts = ((full.get("dialogue") or {}) if isinstance(full, dict) else {}).get("options") or []
     want = next((o.get("text") for o in opts if isinstance(o, dict) and o.get("i") == option and o.get("text")), None)
     if not want:
-        raise GameError(f"{first}; its text could not be read by scrolling: call get_dialogue and choose again")
+        raise GameError(f"{first}; its text could not be read by scrolling")
     inp = world_tools._inp()
     if inp is None:
         raise GameError(f"{first}; scrolling the list needs the input shim")
@@ -228,7 +227,7 @@ def react(use: bool, which: str = "") -> str:
             # S092 08:46:43 / 08:47:47 (two hand clicks) and 08:55:23 (the command): Do Not React left Gale's
             # multi-level Shield prompt up every time; only a row click answered it
             out += ("\nthe prompt is still up: Do Not React has never closed a prompt with one row per level (S092: by"
-                    " command and by hand); answer it with a row, react(use=true, which=<number or level>), and"
+                    " command and by hand); a row closes it (react(use=true, which=<number or level>)), and"
                     " set_reactions {\"<name>\": \"never\"} stops these prompts")
     return out
 
@@ -246,7 +245,7 @@ def _react_click(args: dict, which: int, t0: float) -> str:
     if c.get("closed") or c.get("gone"):
         text = "react: done — " + reactclick.describe(c)
     elif c.get("shown"):
-        text = "react: clicked — " + reactclick.describe(c) + ": look before answering again (EVENTS say if it cast)"
+        text = "react: clicked — " + reactclick.describe(c) + " (EVENTS say if it cast)"
     else:
         text = "react: FAILED — " + reactclick.describe(c)
     return reporting._finish("react", args, text, t0)
@@ -276,7 +275,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
             return int(o.get("i") or 1)
     if level is not None and any(want in str(o.get("name") or "").lower() for o in opts):
         shown = ", ".join(f"{o.get('i')}={o.get('name')} (level {o.get('level') or 1})" for o in opts)
-        return (f"no reaction option {name!r} on this prompt ({shown}); answer with its number, or the name alone for "
+        return (f"no reaction option {name!r} on this prompt ({shown}); which= takes its number, or the name alone for "
                 "the first")
     toks = [t.strip() for t in str(r.get("prompt") or "").split("|")]
     if any("choose how to react" in t.lower() for t in toks):
@@ -289,7 +288,7 @@ def _reaction_index(r: dict | None, name: str) -> int | str:
         return hits[0] + 1
     shown = ", ".join(f"{k + 1}={t}" for k, t in enumerate(names)) or "no names shown"
     return (f"no reaction option {name!r} on this prompt ({len(opts)} options: {shown}); "
-            "answer with its number, react(use=true, which=\"1\"), or react(use=false)")
+            "which= takes its number; use=false declines")
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

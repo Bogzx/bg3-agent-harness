@@ -31,7 +31,7 @@ class CombatTools(CombatTurnBase):
             "prompt": "Sharran Fidelian Lamona cast Bone Chill on Claude. | Choose how to react. | 108/160 | Counterspell"}}
         out = uitools.set_reactions(who=core.H.get(P1), settings='{"Counterspell": "never"}')
         self.assertIn("a reaction prompt is on screen (Sharran Fidelian Lamona cast Bone Chill on Claude.)", out)
-        self.assertIn("react(use=true|false)", out)
+        self.assertNotIn("react(use=true|false)", out)
         self.assertEqual(self.g.ops("act.select"), [])
         self.assertEqual(self.g.ops("ui.reactions"), [])
 

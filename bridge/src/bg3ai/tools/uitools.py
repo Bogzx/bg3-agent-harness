@@ -111,9 +111,7 @@ def _enemy_turn_why(char: str) -> str:
     cs = core.game.try_rpc("state.combat") or {}
     if not cs.get("active") or turn.party_acting(cs, turn_plan._party_set()):
         return ""
-    return (f". It is the enemies' turn: the HUD doesn't switch members until a party member's turn comes. Set "
-            f"{queueing._label(char)}'s reactions on a party turn (its own, or after selecting it then), or the selected "
-            "member's now")
+    return (". It is the enemies' turn: the HUD doesn't switch members until a party member's turn comes")
 
 
 def _reaction_prompt_block(char: str) -> None:
@@ -126,8 +124,7 @@ def _reaction_prompt_block(char: str) -> None:
     rx = ui.get("reaction") if isinstance(ui.get("reaction"), dict) else {}
     prompt = core.H.scrub(str(rx.get("prompt") or "").replace(" | Choose how to react.", "").split(" | ")[0])
     raise GameError(f"a reaction prompt is on screen{f' ({prompt})' if prompt else ''}: the HUD can't select "
-                    f"{queueing._label(char)} until it is answered. Answer it with react(use=true|false), then set the "
-                    "reactions again")
+                    f"{queueing._label(char)} until it is answered")
 
 
 def _job_reply(res: Any, wait_s: float = 5.0) -> Any:
@@ -239,7 +236,7 @@ def _press_escape() -> str:
             out += ("\nthe ESCAPE opened the game menu (what it was meant to close had already closed): "
                     + ("closed it again" if closed else "it is STILL OPEN (press_key ESCAPE once more closes it)"))
             if before == "dialogue":
-                out += "\n(ESCAPE does not leave a conversation: pick its Leave/exit answer with choose_dialogue)"
+                out += "\n(ESCAPE does not leave a conversation; its Leave/exit answer does)"
     return out
 
 
