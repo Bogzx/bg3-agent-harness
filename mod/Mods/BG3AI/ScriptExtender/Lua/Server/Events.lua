@@ -495,10 +495,24 @@ local function questTitle(questId)
     return nil
 end
 
+-- The game fires QuestAccepted / QuestUpdateUnlocked once per party member, all in the same tick (w12 L1a: a party
+-- of 4 put one quest_update 4 times in a talk_to's EVENTS). The journal shows one entry: one row per quest (and
+-- step) per tick. E.tickN counts ticks (the Tick handler below).
+local function firstThisTick(key)
+    local seen = E.questSeen
+    if not seen or seen.tick ~= E.tickN then
+        seen = { tick = E.tickN, keys = {} }
+        E.questSeen = seen
+    end
+    if seen.keys[key] then return false end
+    seen.keys[key] = true
+    return true
+end
+
 listen("QuestAccepted", 2, function(char, quest)
     if not ctx().is_party[V.uuid(char) or ""] then return end
     local title = questTitle(quest)
-    if title then RPC.push("quest_added", { title = title }) end
+    if title and firstThisTick("accepted|" .. tostring(quest)) then RPC.push("quest_added", { title = title }) end
 end)
 
 -- Only a step whose text the journal shows (State.journal skips the others).
@@ -508,7 +522,12 @@ listen("QuestUpdateUnlocked", 3, function(char, quest, step)
     if not title then return end
     for _, st in ipairs(q.steps) do
         local text = st.id == step and U.loca(st.desc)
-        if text then return RPC.push("quest_update", { title = title, text = text }) end
+        if text then
+            if firstThisTick("update|" .. tostring(quest) .. "|" .. tostring(step)) then
+                RPC.push("quest_update", { title = title, text = text })
+            end
+            return
+        end
     end
 end)
 
@@ -734,6 +753,7 @@ end
 if not E.tickSubscribed then
     E.tickSubscribed = true
     Ext.Events.Tick:Subscribe(function()
+        E.tickN = (E.tickN or 0) + 1
         local ok, err = pcall(poll)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] events poll: " .. tostring(err)) end
     end)

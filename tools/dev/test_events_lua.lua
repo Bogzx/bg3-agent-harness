@@ -167,6 +167,29 @@ do
     local d = last("quest_update")
     check("shown step: quest_update with title and text", count("quest_update") == qu + 1 and d.title == "Find the Relic"
         and d.text == "A step.")
+    -- w12 L1a: the game fires these once per party member in the same tick; talk_to showed one quest_update 4 times
+    tick()
+    BG3AI.State = { loadQuests = function() return {
+        { id = "Q_A", title = "hQ", visible = true,
+            steps = { { id = "S1", desc = "hS1" }, { id = "S2", desc = "hS1" } } },
+        { id = "Q_B", title = "hQ", visible = true, steps = { { id = "S1", desc = "hS1" } } },
+    } end }
+    qa, qu = count("quest_added"), count("quest_update")
+    for _, who in ipairs({ HOST, SH, HOST, SH }) do
+        listeners.QuestAccepted("S_Player_" .. who, "Q_A")
+        listeners.QuestUpdateUnlocked("S_Player_" .. who, "Q_A", "S1")
+    end
+    check("per-member fan-out in one tick: one quest_added", count("quest_added") == qa + 1, count("quest_added") - qa)
+    check("per-member fan-out in one tick: one quest_update", count("quest_update") == qu + 1,
+        count("quest_update") - qu)
+    listeners.QuestUpdateUnlocked("S_Player_" .. SH, "Q_A", "S2")
+    listeners.QuestUpdateUnlocked("S_Player_" .. SH, "Q_B", "S1")
+    listeners.QuestAccepted("S_Player_" .. SH, "Q_B")
+    check("another update or quest in the same tick: its own row", count("quest_update") == qu + 3
+        and count("quest_added") == qa + 2, count("quest_update") - qu)
+    tick()
+    listeners.QuestUpdateUnlocked("S_Player_" .. HOST, "Q_A", "S1")
+    check("a later tick: the update is said again", count("quest_update") == qu + 4, count("quest_update") - qu)
     Ext.Loca.GetTranslatedString = realLoca
 end
 

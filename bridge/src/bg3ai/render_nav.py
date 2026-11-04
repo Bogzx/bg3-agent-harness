@@ -136,6 +136,9 @@ def render_path(res: Any, H: Handles) -> str:
     if res.get("reachable") is None:
         return compact({k: v for k, v in res.items() if k != "points"}, H)
     bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]
+    if res.get("partial"):  # w12 L1a: a 3.5 m landing read "reachable: walk 0.1m"; the engine's path ended by the walker
+        bits = [f"NOT REACHED: the walkable path ends @{pos(res.get('end_pos'))}, {num(res.get('end_off', '?'))}m short "
+                f"of the target: walk {num(res.get('length_m', '?'))}m"]
     if res.get("needs_jump"):
         bits.append("(route uses a jump/climb link)")
     if res.get("estimate"):

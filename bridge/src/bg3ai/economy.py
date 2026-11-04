@@ -570,8 +570,8 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
 # Trade screen as text. S023-S026: every trade call (open, offer, request, confirm) returned one 4-6.6 KB line
 # (60 wares + 60 own items, unsorted, as compact() renders dicts); the agent scanned it for food by name. Now:
 # wares grouped (food with its supply value, consumables, gear by rarity, other), sorted, capped per group, with
-# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/confirm
-# calls show the table and the balance only.
+# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/request
+# calls show the table and the balance only, a confirmed deal its items (deal_lines).
 # ---------------------------------------------------------------------------
 
 TRADE_GROUP_MAX = 10
@@ -628,9 +628,11 @@ def _overpay(n: int, trader_gold: int | None) -> str:
             "(confirm refuses; donate=true gives it)")
 
 
-def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False) -> str:
+def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False,
+               before: dict | None = None) -> str:
     """The trade screen for the agent. h(item) -> its handle (e12). listing: show wares and your items (opening or
-    trade() with no args); else only the table/balance. full: no caps."""
+    trade() with no args); else only the table/balance. full: no caps. before: the screen read before a confirm
+    (deal_lines prices the deal from it)."""
     gmax = 10 ** 6 if full else TRADE_GROUP_MAX
     lines = []
     head = []
@@ -651,7 +653,9 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
                  f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} {_price(it)}g"
                  for it in s.get("items") or [] if isinstance(it, dict)]
         return ", ".join(items) or "nothing"
-    if you.get("items") or them.get("items") or you.get("gold") or them.get("gold") or not listing:
+    # after a confirmed barter the table is empty and the window closes: the deal is said instead (deal_lines)
+    done = bool(res.get("confirmed"))
+    if (you.get("items") or them.get("items") or you.get("gold") or them.get("gold") or not listing) and not done:
         give, get = bal.get("you_give") or 0, bal.get("you_get") or 0
         lines.append(f"TABLE you give: {side(you)} (={give}g) | you get: {side(them)} (={get}g) | "
                      + (f"short by {get - give}g (add items/gold or barter)" if get > give else
@@ -675,10 +679,10 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         lines.append(f"TRADER says: {res['feedback']}")
     if res.get("declined"):
         lines.append("DECLINED: the trader refuses this deal")
-    if res.get("can_confirm") is False:
+    if res.get("can_confirm") is False and not done:
         lines.append("(the Trade button is disabled)")
     if not listing:
-        lines.append("(wares/your items unchanged: trade() lists them)")
+        lines += deal_lines(res, before, h) if done else ["(wares/your items unchanged: trade() lists them)"]
         return "\n".join(lines)
 
     wares = [w for w in res.get("wares") or [] if isinstance(w, dict)]
@@ -757,6 +761,48 @@ def equipped_offers(inv: dict | None, uuids: list[str], name_of: Callable[[str],
             out.append(f"{it.get('name') or '?'} is equipped by {who} ({it['equipped_slot']}): the trade screen lists "
                        "only unequipped items")
     return out
+
+
+def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str]) -> list[str]:
+    """A confirmed barter's items, each at the price the screen showed before it: ['SOLD e159 Backpack 1 g',
+    'BOUGHT e40 Potion of Healing x3 45 g']. w12 L2: trade(offer=e159, confirm=true) showed the emptied table and
+    'gold_changed delta=1' only; the Backpack had sold for 1 g (the other one was worth 52). The items are the ones
+    on the table before the call (before.offer) and the ones this call moved (res.moved); the gold the Balance adds
+    is in EVENTS (gold_changed). before=None: no lines (sell=junk says SOLD itself); {} = the read failed, so the
+    items moved are named without a price."""
+    if before is None:
+        return []
+    off = before.get("offer") or {}
+    shown: dict[str, dict] = {}  # uuid -> the screen's record (price = the whole stack)
+    for it in [*(before.get("your_items") or []), *(before.get("wares") or []),
+               *((off.get("you") or {}).get("items") or []), *((off.get("trader") or {}).get("items") or [])]:
+        if isinstance(it, dict) and it.get("uuid"):
+            shown.setdefault(it["uuid"], it)
+    went: dict[str, list[dict]] = {"you": [], "trader": []}
+    seen: set = set()
+    for side in ("you", "trader"):
+        for it in (off.get(side) or {}).get("items") or []:
+            if isinstance(it, dict) and not it.get("gold") and it.get("uuid") not in seen:
+                seen.add(it.get("uuid"))
+                went[side].append(dict(it))
+    for m in res.get("moved") or []:
+        if isinstance(m, dict) and m.get("side") in went and m.get("uuid") not in seen:
+            seen.add(m.get("uuid"))
+            rec = shown.get(m.get("uuid")) or {}
+            it = {"uuid": m.get("uuid"), "name": m.get("name") or rec.get("name"), "count": _count(rec),
+                  "price": rec.get("price")}
+            if isinstance(m.get("count"), int) and 0 < m["count"] < _count(rec):  # part of a stack (count=N)
+                it["count"] = m["count"]
+                if isinstance(it["price"], (int, float)):
+                    it["price"] = round(it["price"] * m["count"] / _count(rec))
+            went[m["side"]].append(it)
+
+    def row(it: dict) -> str:
+        p = it.get("price")
+        return (f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} "
+                f"{p if isinstance(p, (int, float)) else '?'} g")
+    return [f"{word} " + " | ".join(row(it) for it in went[side])
+            for word, side in (("SOLD", "you"), ("BOUGHT", "trader")) if went[side]]
 
 
 def trade_answer(options: list) -> dict | None:

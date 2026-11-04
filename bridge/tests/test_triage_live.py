@@ -19,6 +19,16 @@ class RenderPathTest(unittest.TestCase):
         self.assertIn("walk 7.2m", out)
         self.assertIn("does NOT fit movement left 3.9m", out)
 
+    def test_w12_path_that_ends_short_of_the_target_says_so(self):
+        # w12 L1a: Karlach @(-601.29,-142.08,-1431.14), landing (-601.94,-142.08,-1434.58) 3.5 m away: "reachable:
+        # walk 0.1m". The mod's nav.path flagged the path partial (its end > 2 m from the target); it wasn't shown.
+        out = render.render_path({"reachable": True, "length_m": 0.1, "partial": True, "end_off": 3.4,
+                                  "end_pos": [-601.3, -142.1, -1431.2], "within_movement": True,
+                                  "movement_left": 12}, self.H)
+        self.assertEqual(out, "NOT REACHED: the walkable path ends @(-601.3,-142.1,-1431.2), 3.4m short of the target: "
+                              "walk 0.1m fits movement left 12m")
+        self.assertNotIn("reachable", out)
+
 
 class HazardWayOutTest(unittest.TestCase):
     def test_chasm_never_burns_out(self):

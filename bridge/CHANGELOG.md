@@ -5,6 +5,33 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: w12 fixes: a late trade screen opens; a deal names what it traded; PARTY ties without a call
+
+- `trade(npc=...)`: after the trade answer, a node with no trade answer on it waits up to 4 s for the trade screen
+  (`TRADE_SCREEN_S`) before failing. w12 L2: Gloomy Fentonson's 'Let me take a look at what you have.' settled on his
+  line with `1. Continue.`, the call answered `trade: FAILED — ... no trade screen opened (screen=dialogue)` and the
+  screen was up < 0.5 s later. A node that offers the trade answer again (Tolna, w11 L1) is still answered at once.
+- A confirmed `trade(offer/request, confirm=true)` names the deal: `SOLD e159 Backpack 1 g` / `BOUGHT e40 Potion of
+  Healing x2 30 g`, each item at the price the screen showed before the barter (items put on the table by earlier
+  calls included; part of a stack at its share of the stack's price; `? g` when that screen could not be read). The
+  emptied `TABLE ... even`, `(the Trade button is disabled)` and `(wares/your items unchanged: trade() lists them)`
+  lines are gone from a confirmed result (w12 L2: the Backpack sold for 1 g, and the result said only `gold_changed
+  delta=1`). Every confirm now reads the screen once before the barter (before: only offer-only confirms did, for the
+  hand-over check). `sell="junk"` is unchanged apart from those three lines (its own SOLD line stays).
+- get_status/look PARTY: a camp companion's tie reads `Gale (camp, Wizard 6) is tied to Lower City: <why>` without
+  the `→ swap_party(...)` pointer.
+- path_preview to a point whose engine path ends > 2 m short of it (the mod's `partial`) reads `NOT REACHED: the
+  walkable path ends @(x,y,z), 3.4m short of the target: walk 0.1m` instead of `reachable: walk 0.1m` (w12 L1a, a
+  3.5 m landing). The mod's nav.path now also flags a found path with no nodes (it ends on the walker's own spot)
+  to a point more than 2 m away, so it reads `NOT REACHED: ... ends @<walker>, 3.5m short of the target: walk 0m`
+  instead of `reachable: walk 0m` (NavigationReach.lua; readResult flags a short end only from a node).
+- EVENTS: one `quest_update` per quest and step, one `quest_added` per quest, when the game fires the event once per
+  party member in the same tick (w12 L1a: talk_to showed `quest_update ... title=Find the Nightsong` 4 times, a party
+  of 4). Different quests or steps keep their own rows (mod Events.lua).
+- trade's description: "offer/request calls show the table and the balance only; a confirmed deal names each item
+  sold and bought with its price (SOLD/BOUGHT)" (it said confirm calls show the table only). Golden regenerated;
+  the release's tools.defs_sha256 moves.
+
 ## 2026-11-04: tool results state facts, not advice or the next call
 
 - facts-text-3 (website ops/logs/facts-text-3.md, rows A1-A26 and B1-B48): about 100 result texts lost their gameplay

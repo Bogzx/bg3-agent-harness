@@ -148,10 +148,10 @@ class Hint(unittest.TestCase):
     def test_halsin_tied_to_scl(self):
         bits = companions.hint(PARTY, CAMP, "Shadow-Cursed Lands", ["Lift the Shadow Curse"], TABLE)
         self.assertTrue(bits[0].startswith("Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands"), bits)
-        # Shadowheart is tied to the SCL too (Gauntlet of Shar) and Claude is the avatar: not suggested out.
-        self.assertNotIn('out="Shadowheart"', bits[0])
-        self.assertNotIn('out="Claude"', bits[0])
-        self.assertIn('into="Halsin"', bits[0])
+        # w12 L2: '... arcane AoE → swap_party' was advice; the tie is said as a fact, with no call to make
+        self.assertNotIn("→", bits[0])
+        self.assertNotIn("swap_party", bits[0])
+        self.assertTrue(bits[0].endswith(": " + TABLE["halsin"]["why"]), bits)
         self.assertIn("camp level-ups: Wyll L3→4 (level_up(who=\"Wyll\") swaps in", bits[-1])
 
     def test_nothing_in_the_wilderness_but_level_ups(self):

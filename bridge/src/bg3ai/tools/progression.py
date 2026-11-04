@@ -206,7 +206,7 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
           keep: str = "", full: bool = False, donate: bool = False, count: int = 0) -> str:
     """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
     sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; the result names everything sold (SOLD, by name with count and gold) and counts what was kept back by kind (KEPT); get_inventory(filter="junk") previews it.
-    Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only.
+    Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request calls show the table and the balance only; a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT).
     confirm refuses an uneven table before the barter (a trader with no gold swaps items only); donate=true gives the offered items (or an overpay's difference) for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
     if sell:
         if sell.strip().lower() != "junk":
@@ -242,16 +242,22 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
         args["offer"] = [plumbing._uuid(i) for i in offer.split(",") if i.strip()]
     if request:
         args["request"] = [plumbing._uuid(i) for i in request.split(",") if i.strip()]
-    handover = False
-    if confirm and offer and not request:
-        handover = economy.handover(core.game.try_rpc("ui.trade", {}, context="client"))
-        donate = donate or handover
+    handover, before = False, None
+    if confirm:  # the screen before the barter: a hand-over, and the prices the deal is said at (deal_lines)
+        before = core.game.try_rpc("ui.trade", {}, context="client")
+        if offer and not request:
+            handover = economy.handover(before)
+            donate = donate or handover
+        before = before if isinstance(before, dict) else {}
     if donate:
         args["donate"] = True
-    _trade_view.update(listing=not (offer or request or confirm), full=full)
+    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before)
     if full:
         args["max"] = 500
-    out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
+    try:
+        out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
+    finally:
+        _trade_view["before"] = None  # sell=junk renders through the same view and says SOLD itself
     res = reporting._batch.get("result")
     if _trade_view["listing"]:
         for _ in range(TRADE_FILL_TRIES):
@@ -367,11 +373,14 @@ def _open_trade(npc: str) -> str:
         picked.append(str(pick.get("text")))
         # The choose job settles on the next decision point: the trade screen, or a new node's answers (Tolna, w11 L1:
         # 'What do you have on offer?' leads to a whispered node that offers '(What do you have on offer?)' again).
+        # A node with no trade answer can still give way to the shop by itself: w12 L2, Gloomy Fentonson's 'Let me
+        # take a look at what you have.' settled on his line with '1. Continue.' and the trade screen came < 0.5 s
+        # later, after the call had failed. Only a node that offers the trade answer again is answered at once.
         res = r.result if isinstance(r.result, dict) else {}
-        if res.get("screen") == "dialogue" and (res.get("dialogue") or {}).get("options"):
+        if res.get("screen") == "dialogue" and economy.trade_answer((res.get("dialogue") or {}).get("options") or []):
             u = res
         else:
-            u = wait(lambda x: x.get("screen") == "trade", 4.0)
+            u = wait(lambda x: x.get("screen") == "trade", TRADE_SCREEN_S)
         if u.get("screen") == "trade":
             break
         d = u.get("dialogue") or {}
@@ -386,6 +395,7 @@ def _open_trade(npc: str) -> str:
     return f"(opened: {'talked to ' + npc + ', ' if npc else ''}picked {said})"
 
 
+TRADE_SCREEN_S = 4.0  # after a trade answer: how long the shop may take to come up
 TRADE_NODES = 3  # trade answers _open_trade picks along one conversation, one per node, before it reports where it stopped
 
 
@@ -393,7 +403,7 @@ def _answers_text(d: dict) -> str:
     return "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
 
 
-_trade_view: dict[str, bool] = {"listing": True, "full": False}  # how the next trade result is rendered
+_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None}  # how the next trade result is rendered
 
 
 def _item_handle(it: dict) -> str:

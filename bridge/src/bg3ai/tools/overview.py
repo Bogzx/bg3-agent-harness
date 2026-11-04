@@ -323,7 +323,7 @@ COMPANIONS_MD = core.PLAY_DIR / "knowledge" / "companions.md"
 
 
 def _party_hint_line(st: Any, markers: Any, force: bool = False) -> str:
-    """'PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands … → swap_party(…) | …' (companions.hint):
+    """'PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands: … | …' (companions.hint):
     out of combat/dialogue, printed when it changes or with a full view. The skill read (state.camp) runs
     only when the party or camp roster changed. Never raises: an observation must not fail on it."""
     try:
