@@ -218,8 +218,7 @@ def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
         else:
             tail += (f"hotbar: the two-step route failed at {res.stage} ({d.get('why') or res.reason}); nothing was"
                     " cast" + ("" if landing is not None else
-                               "; a Scroll of Revivify through use_ability (ability=\"Scroll of Revivify\","
-                               " target=<the body>) gives both picks; Withers revives at camp"))
+                               "; a Scroll of Revivify also revives; Withers revives at camp"))
         _log_hotbar(spell, res)
     return _with_tail(out, "\n".join(x for x in (tail, hand) if x), note)
 

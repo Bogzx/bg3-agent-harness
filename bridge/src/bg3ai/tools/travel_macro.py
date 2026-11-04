@@ -134,7 +134,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             if isinstance(r, dict) and not r.get("reachable") and r.get("hazard"):
                 stop = (f"the way on crosses {macros.hazard_text(r['hazard'])} ({render.num(round(d, 1))}m left)"
                         + (": no way around or across it found" if policy != "strict" else "")
-                        + f" ({macros.hazard_fact(r['hazard'])})")
+                        + (f" ({fact})" if (fact := macros.hazard_fact(r["hazard"])) else ""))
                 break
             # A leg along the engine's route may head away from the goal first (S029: a 325 m route, 2.4x the
             # straight line, began SE of a NW goal): it gains route metres, not straight-line ones.

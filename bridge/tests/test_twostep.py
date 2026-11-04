@@ -597,8 +597,9 @@ class TwoStepRoute(Base):
         self.assertEqual(len(self.cast_args()), 1)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
         self.assertIn("the two-step route failed at ground (ground_refused (fake)); nothing was cast", out)
-        self.assertIn('a Scroll of Revivify through use_ability (ability="Scroll of Revivify", target=<the body>) gives '
-                      "both picks; Withers revives at camp", out)
+        # REVIEW-13 item 11: the fact, no how-to with the call's arguments
+        self.assertIn("nothing was cast; a Scroll of Revivify also revives; Withers revives at camp", out)
+        self.assertNotIn("ability=", out)
 
     def test_error_in_the_route_cancels_too(self):
         twostep.TWOSTEP_ENABLED = True
