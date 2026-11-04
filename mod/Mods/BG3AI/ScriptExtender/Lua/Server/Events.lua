@@ -192,24 +192,113 @@ local function splitTop(s) -- "DealDamage(5d8,Poison);Distance(3)" -> its top-le
     return out
 end
 
--- One tooltip parameter as the tooltip shows it: DealDamage(5d8,Poison) "5d8 Poison damage", Distance(3) "3m",
--- RegainHitPoints(2d4) "2d4 hit points"; any other kept as written.
-local function param(p)
-    local fn, args = tostring(p):match("^%s*([%w_]+)%((.*)%)%s*$")
-    if not fn then return (tostring(p):gsub("^%s+", ""):gsub("%s+$", "")) end
-    local a = {}
-    for x in (args .. ","):gmatch("([^,]*),") do a[#a + 1] = (x:gsub("^%s+", ""):gsub("%s+$", "")) end
-    if fn == "DealDamage" then return a[1] .. (a[2] and a[2] ~= "" and (" " .. a[2]) or "") .. " damage" end
-    if fn == "Distance" then return a[1] .. "m" end
-    if fn == "RegainHitPoints" then return a[1] .. " hit points" end
-    return tostring(p)
+-- The caster's numbers in a damage formula, as the tooltip shows them (w10 L2: "MainMeleeWeapon
+-- MainMeleeWeaponDamageType damage" and "LevelMapValue(D8Cantrip) Cold damage" reached the agent raw).
+-- LevelMapValue(name): the game's level map (Ext.StaticData "LevelMap", by its Name) at the caster's level.
+-- <Slot>Weapon / <Slot>WeaponDamageType: the caster's weapon in that slot, its stats' Damage and Damage Type.
+local WEAPON_SLOTS = { MainMeleeWeapon = "Melee Main Weapon", MainRangedWeapon = "Ranged Main Weapon",
+    OffhandMeleeWeapon = "Melee Offhand Weapon", OffhandRangedWeapon = "Ranged Offhand Weapon" }
+local DAMAGE_TYPES = { Acid = true, Bludgeoning = true, Cold = true, Fire = true, Force = true, Lightning = true,
+    Necrotic = true, Piercing = true, Poison = true, Psychic = true, Radiant = true, Slashing = true, Thunder = true }
+local DICE = { "4", "6", "8", "10", "12", "20", "100" } -- bg3se DiceSizeId D4 .. D100, in its order
+
+local function field(o, k) local ok, v = pcall(function() return o[k] end) if ok then return v end return nil end
+
+E.levelMaps = E.levelMaps or nil -- level map Name -> its resource (one scan of the bank; static data doesn't change)
+local function levelMap(name)
+    if not E.levelMaps then
+        local all = osi(Ext.StaticData.GetAll, "LevelMap")
+        local maps = {}
+        for _, g in ipairs(type(all) == "table" and all or {}) do
+            local r = osi(Ext.StaticData.Get, g, "LevelMap")
+            local n = r and field(r, "Name")
+            if n then maps[tostring(n)] = r end
+        end
+        E.levelMaps = maps
+    end
+    return E.levelMaps[name]
 end
 
-local function tooltipText(handle, params)
+local function levelMapValue(name, lvl)
+    local r = levelMap(name)
+    if not (r and lvl) then return nil end
+    local v = field(field(r, "LevelMaps") or {}, lvl)
+    if v == nil then v = field(r, "FallbackValue") end
+    if type(v) == "number" then return tostring(math.floor(v)) end
+    if v == nil then return nil end
+    local n, d = tonumber(field(v, "AmountOfDices")), field(v, "DiceValue")
+    local die = type(d) == "number" and DICE[d + 1] or tostring(d or ""):match("^D(%d+)$")
+    return n and die and (n .. "d" .. die) or nil
+end
+
+local function weapon(caster, slot)
+    local it = caster and osi(Osi.GetEquippedItem, caster, slot)
+    local ie = it and osi(Ext.Entity.Get, it)
+    local sid = ie and field(field(ie, "Data") or {}, "StatsId")
+    return sid and osi(Ext.Stats.Get, sid) or nil
+end
+
+-- A damage/heal amount with the caster's numbers, or nil (the part is left out) when anything stays a formula.
+local function amount(x, c)
+    local out = tostring(x or ""):gsub("LevelMapValue%(%s*([%w_]+)%s*%)", function(n)
+        return levelMapValue(n, c.level) or "?"
+    end)
+    out = out:gsub("(%a+Weapon)", function(t)
+        local st = WEAPON_SLOTS[t] and weapon(c.uuid, WEAPON_SLOTS[t])
+        local dmg = st and field(st, "Damage")
+        return (type(dmg) == "string" and dmg ~= "") and dmg or "?"
+    end)
+    out = out:gsub("%s+", "")
+    return (out:find("%d") and out:match("^[%dd%+%-]+$")) and out or nil
+end
+
+local function damageType(x, c)
+    x = tostring(x or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if DAMAGE_TYPES[x] then return x end
+    local t = x:match("^(%a+Weapon)DamageType$")
+    local st = t and WEAPON_SLOTS[t] and weapon(c.uuid, WEAPON_SLOTS[t])
+    local dt = st and field(st, "Damage Type")
+    return DAMAGE_TYPES[tostring(dt)] and tostring(dt) or nil
+end
+
+-- One tooltip parameter as the tooltip shows it: DealDamage(5d8,Poison) "5d8 Poison damage", Distance(3) "3m",
+-- RegainHitPoints(2d4) "2d4 hit points", a bare number or dice as written; nil for anything that stays a formula
+-- (its token goes to c.left, which E.spell_info logs once).
+local function param(p, c)
+    local raw = tostring(p):gsub("^%s+", ""):gsub("%s+$", "")
+    local fn, args = raw:match("^([%w_]+)%((.*)%)$")
+    local out
+    if not fn then
+        out = raw:match("^[%d%.%%d%+%-]+$") and raw or nil
+    else
+        local a = {}
+        for x in (args .. ","):gmatch("([^,]*),") do a[#a + 1] = (x:gsub("^%s+", ""):gsub("%s+$", "")) end
+        if fn == "DealDamage" then
+            local n = amount(a[1], c)
+            local t = (a[2] == nil or a[2] == "") and "" or damageType(a[2], c)
+            out = n and t and (n .. (t ~= "" and (" " .. t) or "") .. " damage") or nil
+        elseif fn == "Distance" then
+            out = tonumber(a[1]) and (a[1] .. "m") or nil
+        elseif fn == "RegainHitPoints" then
+            local n = amount(a[1], c)
+            out = n and (n .. " hit points") or nil
+        end
+    end
+    if not out then c.left[#c.left + 1] = raw end
+    return out
+end
+
+-- The description with its [n] filled in; nil when a parameter stays a formula (the sentence would be cut).
+local function tooltipText(handle, params, c)
     local t = U.loca(handle)
     if not t then return nil end
-    local ps = splitTop(params)
-    t = t:gsub("%[(%d+)%]", function(i) local x = ps[tonumber(i)] return x and param(x) or nil end)
+    local ps, whole = splitTop(params), true
+    t = t:gsub("%[(%d+)%]", function(i)
+        local x = ps[tonumber(i)] and param(ps[tonumber(i)], c)
+        if not x then whole = false end
+        return x or ""
+    end)
+    if not whole then return nil end
     t = t:gsub("<br%s*/?>", " "):gsub("<[^>]+>", ""):gsub("%s+", " ")
     return (t:gsub("^%s+", ""):gsub("%s+$", ""))
 end
@@ -217,26 +306,58 @@ end
 local SAVES = { Strength = true, Dexterity = true, Constitution = true, Intelligence = true, Wisdom = true,
     Charisma = true }
 
-E.spellInfo = E.spellInfo or {} -- spell id -> its text, or false (no shown name): stats don't change in a game
-function E.spell_info(id)
-    local c = E.spellInfo[id]
+local function hasFlag(st, flag)
+    local yes = false
+    pcall(function() for _, fl in ipairs(st.SpellFlags) do if fl == flag then yes = true end end end)
+    return yes
+end
+
+-- An action every party member has in its own spellbook, and not a spell (w10 L2: Main Hand Attack, Ranged Attack,
+-- Jump; Dash): the player reads that tooltip on each hotbar, so an enemy's use of it brings nothing new.
+local function everyoneHas(id, st)
+    if hasFlag(st, "IsSpell") then return false end
+    local party = ctx().party or {}
+    if #party == 0 then return false end
+    for _, u in ipairs(party) do
+        local e, has = V.entity(u), false
+        pcall(function()
+            for _, sp in ipairs(e.SpellBook.Spells) do
+                if sp.Id.Prototype == id or sp.Id.OriginatorPrototype == id then has = true break end
+            end
+        end)
+        if not has then return false end
+    end
+    return true
+end
+
+local function casterLevel(u)
+    local e = u and V.entity(u)
+    local ok, l = pcall(function() return e.EocLevel.Level end)
+    return ok and tonumber(l) or nil
+end
+
+E.spellInfo = E.spellInfo or {} -- spell id .. "|" .. caster -> its text, or false (nothing to show)
+function E.spell_info(id, caster)
+    local key = tostring(id) .. "|" .. tostring(caster)
+    local c = E.spellInfo[key]
     if c ~= nil then return c or nil end
     c = false
     local st = osi(Ext.Stats.Get, id)
-    local function f(k) local ok, v = pcall(function() return st[k] end) if ok and v ~= "" then return v end end
+    -- a field the entry's type lacks (Shout_Dash: no TargetRadius) raises; it reads as absent (w10 L2's
+    -- "bad argument #1 to 'tonumber'" on every Dash)
+    local function f(k) local v = st and field(st, k) if v ~= nil and v ~= "" then return v end return nil end
     local name = st and U.loca(f("DisplayName"))
-    if name then
+    if name and not everyoneHas(id, st) then
+        local cx = { uuid = caster, level = casterLevel(caster), left = {} }
         local text = { name .. ":" }
-        local d = tooltipText(f("Description"), f("DescriptionParams"))
+        local d = tooltipText(f("Description"), f("DescriptionParams"), cx)
         if d then text[#text + 1] = d end
-        local x = tooltipText(f("ExtraDescription"), f("ExtraDescriptionParams"))
+        local x = tooltipText(f("ExtraDescription"), f("ExtraDescriptionParams"), cx)
         if x then text[#text + 1] = x end
         local facts = {}
         local lvl = tonumber(f("Level"))
         if lvl and lvl > 0 then facts[#facts + 1] = "level " .. lvl end
-        local conc = false
-        pcall(function() for _, fl in ipairs(st.SpellFlags) do if fl == "IsConcentration" then conc = true end end end)
-        if conc then facts[#facts + 1] = "concentration" end
+        if hasFlag(st, "IsConcentration") then facts[#facts + 1] = "concentration" end
         local range, area = tonumber(f("TargetRadius")), tonumber(f("AreaRadius"))
         local function m(v)
             v = U.round(v, 1)
@@ -249,7 +370,7 @@ function E.spell_info(id)
             facts[#facts + 1] = SAVES[sv] and (sv .. " save")
                 or tostring(sv):gsub("(%l)(%u)", "%1 %2"):lower()
         end
-        for _, dmg in ipairs(splitTop(f("TooltipDamageList"))) do facts[#facts + 1] = param(dmg) end
+        for _, dmg in ipairs(splitTop(f("TooltipDamageList"))) do facts[#facts + 1] = param(dmg, cx) end
         for _, a in ipairs(splitTop(f("TooltipStatusApply"))) do
             local turns = tonumber(tostring(a):match("^%s*ApplyStatus%([^,]*,[^,]*,%s*(-?%d+)"))
             if turns and turns > 0 then
@@ -258,8 +379,12 @@ function E.spell_info(id)
         end
         if #facts > 0 then text[#text + 1] = "(" .. table.concat(facts, ", ") .. ")" end
         c = table.concat(text, " ")
+        if #cx.left > 0 then
+            Ext.Utils.Print("[BG3AI] spell_info " .. tostring(id) .. ": left out (unresolved): "
+                .. table.concat(cx.left, "; "))
+        end
     end
-    E.spellInfo[id] = c
+    E.spellInfo[key] = c
     return c or nil
 end
 
@@ -271,7 +396,7 @@ function E.note_spell(caster, id)
     local seen = E.spellSeen[combat] or {}
     E.spellSeen[combat] = seen
     if seen[id] then return end
-    local text = E.spell_info(id)
+    local text = E.spell_info(id, caster)
     if not text then return end
     seen[id] = true
     RPC.push("spell_info", text)
