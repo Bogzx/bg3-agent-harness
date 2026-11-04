@@ -26,7 +26,7 @@ Nobody will answer questions while you play: decide yourself.
 `short_rest`/`long_rest`, `camp`, `level_up`, `trade`, and so on. For a screen no tool covers, `ui_action` acts on it.
 - **A walk returns at its end.** `move_to`, `walk_toward` and `travel_to` (a marker, objective or waypoint, as
   chained walks) return when the walk is over, arrived or stopped, with what changed and the minimap block:
-  `OBJECTIVES` (distance, direction, height), `WAYS` and the nearest unvisited `LEADS`. A prompt, a conversation or
+  `OBJECTIVES` (distance, direction), `WAYS` and the nearest unvisited `LEADS`. A prompt, a conversation or
   a fight that starts ends the wait early and says so. A trip still going after ~90 s returns its progress, and
   `wait_for` keeps waiting. Out of combat `wait=false` returns at once instead (`started j12, ETA 3s`, or the trip as
   the first entry of the character's queue); a `job_finished`/`queue_done` event in a later result says it arrived.

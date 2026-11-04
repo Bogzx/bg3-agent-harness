@@ -84,8 +84,8 @@ class Render(unittest.TestCase):
         out = minimap.block({"status": STATUS, "markers": MARKERS, "frontier": FRONTIER}, h).splitlines()
         self.assertEqual(
             out[0],
-            "OBJECTIVES o1 Escape the ship 16m W (3.4m down) [Escape the Nautiloid] | o2/o3 Find "
-            "the helm 40.2m N (11.6m up) [Escape the Nautiloid] | o4 Rescue the Trapped Woman 55m E"
+            "OBJECTIVES o1 Escape the ship 16m W [Escape the Nautiloid] | o2/o3 Find "
+            "the helm 40.2m N [Escape the Nautiloid] | o4 Rescue the Trapped Woman 55m E"
             " | +1 more (get_map lists all)",
         )
         self.assertEqual(out[1], "WAYS walkable: N 20m+, E 8m | blocked: S")
@@ -99,11 +99,11 @@ class Render(unittest.TestCase):
 
     def test_another_area_and_none(self):
         self.assertEqual(
-            minimap.objectives_line([{"label": "Find a healer", "quest": "Find a Cure", "oid": 5}], None),
+            minimap.objectives_line([{"label": "Find a healer", "quest": "Find a Cure", "oid": 5}]),
             "OBJECTIVES o5 Find a healer (another area) [Find a Cure]",
         )
-        self.assertEqual(minimap.objectives_line([], None), "OBJECTIVES none on the map")
-        self.assertEqual(minimap.objectives_line(None, None), "")  # not read: no line
+        self.assertEqual(minimap.objectives_line([]), "OBJECTIVES none on the map")
+        self.assertEqual(minimap.objectives_line(None), "")  # not read: no line
         self.assertEqual(
             minimap.leads_line({"leads": [FRONTIER["leads"][1]]}, Handles()),
             "LEADS (unvisited; get_frontier lists all): none",
@@ -218,15 +218,13 @@ class WalkEnds(Base):
         out = macro_tools._macro_finish("regroup", {}, ["regroup at e4 Claude: 1 walking"], None, [], 0.0, walked=True)
         self.assert_block(out)
 
-    def test_height_from_the_active_member(self):
+    def test_an_objective_has_no_height(self):
+        # The HUD's compass and minimap show a quest diamond's direction and distance, never up/down (live window
+        # 2026-11-03: a marker 7.7 m down showed no arrow or number), so the line gives no height either.
         st = {"active": P1, "party": [{"uuid": P1, "pos": [0.0, 0.0, 0.0]}]}
-        self.assertEqual(
-            minimap.objectives_line(
-                [{"label": "X", "here": True, "dist": 9.0, "dir": "N", "pos": [0.0, -4.0, 9.0], "oid": 1}],
-                minimap.here(st),
-            ),
-            "OBJECTIVES o1 X 9m N (4m down)",
-        )
+        out = minimap.block({"status": st, "markers": [{"label": "X", "here": True, "dist": 9.0, "dir": "N",
+                                                        "pos": [0.0, -4.0, 9.0], "oid": 1}]}, Handles())
+        self.assertEqual(out.splitlines()[0], "OBJECTIVES o1 X 9m N")
 
 
 if __name__ == "__main__":

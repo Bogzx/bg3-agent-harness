@@ -10,6 +10,10 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - `loot_corpse` / `pickpocket` on a character out of the party's sight answer `target is not visible` (with the
   last-seen hint) before any dead/alive check. Before, a stale id answered `they are not dead` or `nobody to
   pickpocket`, which told the agent whether an unseen character was alive (fairness audit 2026-10-10 #18).
+- The minimap block's OBJECTIVES line gives no height: `o1 Escape the ship 16m W [Escape the Nautiloid]`, no
+  `(3m down)`. The HUD's compass and minimap show a quest marker's direction and distance only (live window
+  2026-11-03: a marker 7.7 m down showed no arrow or number). LEADS, WAYS and PASSED keep their heights (seen
+  ground). `look`'s description and the rules text say "(distance, direction)".
 
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 
