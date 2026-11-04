@@ -16,6 +16,13 @@ Facts stay; the call the agent might make next goes (no-coaching rule). Tool des
   <trader>) opens it again`).
 - create_character's first look and first save failures: `(first look failed: <error>)` (was `...; call look`) and
   `first save not started (<error>): no 'S001-start' save was made` (was `...: save_game(label="S001-start")`).
+- level_up: a camp member with no room says why (`'Halsin' is not in the party` / `the party is full and no member
+  but the avatar is alive`; was `level_up(who=..., out=<companion>)`); a level-up page the game opens after the
+  finish is said as closed with its level up still pending, and a page that stays as `another level up may be
+  pending` (mod; was `level_up(who) opens it again` / `call level_up again`).
+- save_game without the input shim: `...; a quicksave needs no typed name` (was `save_game(label="quicksave") ...`).
+- The junk rule keeps the Dye Remover (w14 L2: sold by sell=junk): state.inventory marks `dye` from the stats entry
+  (OBJ_Dye_*; OBJ_Dye_Remover blanks its ObjectCategory, so `cat` was empty) (mod + bridge).
 
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 
