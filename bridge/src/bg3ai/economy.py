@@ -132,7 +132,7 @@ def keep_kind(it: dict, keep: set[str] | None = None, wanted: set[str] | None = 
         return "gear to wear"
     if it.get("tab") == "BooksAndKeys" or _KEEP_NAME.search(it.get("name") or ""):
         return "books, keys and tools"
-    if _DYE_CAT.match(it.get("cat") or ""):
+    if it.get("dye") or _DYE_CAT.match(it.get("cat") or ""):  # dye: its stats entry (the Dye Remover has no cat)
         return "dyes"
     if _rar(it) > 0 and (_equipable(it) or not _JUNK_CAT.match(it.get("cat") or "")):
         return "magic or rare"

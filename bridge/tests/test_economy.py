@@ -123,6 +123,15 @@ class Junk(unittest.TestCase):
         self.assertEqual(economy.keep_kind(inv["items"][-2]), "dyes")
         self.assertEqual(economy.keep_kind(inv["items"][-1]), "dyes")
 
+    def test_the_dye_remover_with_no_category_is_not_junk(self):
+        # w14 L2: the real row (OBJ_Dye_Remover blanks its ObjectCategory): no cat, tab Misc, value 1; the mod marks
+        # it a dye from its stats entry
+        inv = s026_inventory()
+        inv["items"].append({"uuid": _u(32), "name": "Dye Remover", "owner": CLAUDE, "tab": "Misc", "value": 1,
+                             "count": 10, "usable": True, "weight": 0.1, "dye": True})
+        self.assertNotIn("Dye Remover", {it["name"] for it in economy.junk(inv)})
+        self.assertEqual(economy.keep_kind(inv["items"][-1]), "dyes")
+
 
 class Upgrades(unittest.TestCase):
     def ups(self, inv=None):
