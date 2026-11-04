@@ -361,6 +361,24 @@ class Rendering(unittest.TestCase):
         self.assertIn("e1 Stone Wall opened 2s ago and may still be moving: the answer can change in the next seconds", out)
         self.assertEqual(render.render_path({"reachable": False, "straight_m": 6.8}, H).count("\n"), 0)
 
+    def test_path_preview_ring_past_its_deadline_keeps_not_reached(self):
+        # REVIEW-18n: the free-spot ring hit its deadline; the centre path's short end is the answer, said as such
+        res = {"reachable": True, "partial": True, "end_pos": [-602.7, -142.3, -1430.2], "end_off": 2.95,
+               "length_m": 2.9, "free_spots_unchecked": True, "ms": 412, "within_movement": True,
+               "movement_left": 9.0}
+        self.assertEqual(render.render_path(res, render.Handles()),
+                         "NOT REACHED: the walkable path ends @(-602.7,-142.3,-1430.2), 3m short of the target "
+                         "(the free spots around it were not all checked in time): walk 2.9m fits movement left 9m")
+
+    def test_path_preview_reachable_unknown_is_a_plain_line(self):
+        # REVIEW-18n: a result with reachable unknown printed the raw dict ('unfinished=true ms=412 ...')
+        H = render.Handles()
+        self.assertEqual(render.render_path({"reachable": None, "unfinished": True, "ms": 412}, H),
+                         "reachable unknown: the path search ran out of time")
+        self.assertEqual(render.render_path({"reachable": None, "budget": True, "unfinished": True, "straight_m": 7.24,
+                                             "reason": "path search budget for this frame spent", "ms": 0}, H),
+                         "reachable unknown: path search budget for this frame spent (7.2m straight line)")
+
     def test_path_preview_unseen_spot_is_the_straight_line_only(self):
         out = render.render_path({"unknown_goal": True, "straight_m": 20.0, "dir": "W", "dy": 0.0}, render.Handles())
         self.assertEqual(out, "not seen or walked yet: 20m W straight line only "

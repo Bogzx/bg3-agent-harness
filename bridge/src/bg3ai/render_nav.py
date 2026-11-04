@@ -133,12 +133,17 @@ def render_path(res: Any, H: Handles) -> str:
     if res.get("unknown_goal"):
         return (f"not seen or walked yet: {num(res.get('straight_m', '?'))}m {res.get('dir') or ''} straight line only "
                 "(path_preview checks ground the party has seen or walked)").replace("  ", " ")
-    if res.get("reachable") is None:
-        return compact({k: v for k, v in res.items() if k != "points"}, H)
+    if res.get("reachable") is None:  # REVIEW-18n: a plain line, never the raw result
+        why = res.get("reason") or ("the path search ran out of time" if res.get("unfinished") else "no path searched")
+        far = res.get("straight_m", res.get("length_m"))
+        return f"reachable unknown: {why}" + (f" ({num(far)}m straight line)" if far is not None else "")
     bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]
     if res.get("partial"):  # w12 L1a: a 3.5 m landing read "reachable: walk 0.1m"; the engine's path ended by the walker
         bits = [f"NOT REACHED: the walkable path ends @{pos(res.get('end_pos'))}, {num(res.get('end_off', '?'))}m short "
                 f"of the target: walk {num(res.get('length_m', '?'))}m"]
+        if res.get("free_spots_unchecked"):  # REVIEW-18n: the ring around the target hit its deadline
+            bits[0] = bits[0].replace(" of the target:", " of the target (the free spots around it were not all "
+                                      "checked in time):")
     if res.get("needs_jump"):
         bits.append("(route uses a jump/climb link)")
     if res.get("estimate"):

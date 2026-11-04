@@ -721,7 +721,8 @@ test("nav.path to a creature id: a centre path that stops short of a foe it reac
 end)
 
 -- REVIEW-18k: the free-spot ring runs up to 8 engine searches on the server thread with no deadline. Past
--- N.FREE_RING_MS no new spot is asked: reachable unknown (unfinished), and the ring's time is in the result's ms.
+-- N.FREE_RING_MS no new spot is asked, and the ring's time is in the result's ms. REVIEW-18n: the centre path's
+-- NOT REACHED and its short end stand then (it read a bare `unfinished=true`), marked free_spots_unchecked.
 test("nav.path to a creature id: the free-spot ring stops at its deadline, its time in ms (REVIEW-18k)", function()
     local FOE = "ffffffff-0000-0000-0000-00000000000b"
     local V = BG3AI.Visibility
@@ -747,8 +748,9 @@ test("nav.path to a creature id: the free-spot ring stops at its deadline, its t
         local t0 = clock
         local r = RPC.ops["nav.path"]({ target = FOE })
         eq(spots, 2, "no spot asked past the deadline (0 and 200 ms in; at 400 ms it stops)")
-        eq(r.reachable, nil, "reachable unknown"); eq(r.unfinished, true, "unfinished")
-        eq(r.partial, nil, "not NOT REACHED")
+        eq(r.reachable, true, "the centre path stands"); eq(r.unfinished, nil, "not unfinished")
+        eq(r.partial, true, "NOT REACHED"); near(r.end_off, 2.95, "short by", 0.05)
+        eq(r.free_spots_unchecked, true, "the free spots weren't all checked")
         eq(r.ms ~= nil and r.ms >= clock - t0, true, "the ring's 400 ms are in ms: " .. tostring(r.ms))
     end)
     V.entity, V.characterVisible, world[FOE] = entity, visible, nil
