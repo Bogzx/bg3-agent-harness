@@ -1,0 +1,22 @@
+# Seat measurement after O1 (owner D637/D643: strict alternation inside the shared turn group; plan in the website
+# repo's ops/logs/arena-fight-analysis.md "Measurement plan after O1"). DeepSeek flash against itself on arena-v0, one
+# match per seed (`single`: a self-pair's m2 replays its m1), seeds 1..20 (the arena's seed 1 + repeat - 1), so each
+# seed's match pairs with the before-run's match on the same seed. A self-pair is graded, never rated: the table's
+# first_actor, by_pattern and side_a are the measurement. Played by `runner/play.py arena-matrix --matrix
+# packages/bench/matrices/arena-v0-seat-o1.toml` (--plan prints the 20 matches and the reserves).
+# Money: the seat measurement's $1.50 covers the before and the after run together. Before this run, set
+# runtime/budget-arena-v0.json's cap to its spent + what is left of the $1.50 (at most +0.75 when the before-run
+# also ran this size). The per-match quote is $0.033 (6 DeepSeek self-matches, 2026-11-03/04: $0.018-0.069), so 20
+# matches are ~$0.66; each side is capped at $0.15 per match (seed-7 m2, 6 rounds: $0.032 / $0.037 a side).
+name = "arena-v0-seat-o1"
+pairs = [["profiles/deepseek-flash.toml", "profiles/deepseek-flash.toml"]]
+arenas = ["arena-v0"]
+repeats = 20
+single = true
+
+[budget]
+file = "runtime/budget-arena-v0.json"
+max_cost = { arena-v0 = 0.15 }               # USD per side per match: a paid side's reserve and cap
+
+[budget.models]
+"profiles/deepseek-flash.toml" = ["runtime/budget-deepseek.json"]
