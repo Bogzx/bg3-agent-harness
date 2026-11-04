@@ -165,8 +165,9 @@ game unless it says so.
   turn start (Shared Status_KNOCKED_DOWN.txt PRONE: RemoveEvents OnTurn, RemoveConditions half its movement). w10 L6
   ST-P5(d): a harness move_to stood a prone character up at no cost beyond the metres walked. The guard refuses both
   before any order ("cannot move while Prone (the status keeps it in place this turn)", "cannot act while Prone (it
-  stands up at its turn start for half its movement)"), and the movement figure shows 0. The effect text is read from
-  the status's RemoveEvents/RemoveConditions. Outside its own turn nothing changes.
+  did not stand up this turn: standing needs half its movement)"), and the movement figure shows 0. A knocked-down
+  status without that condition gives its own effect, read from its RemoveEvents/RemoveConditions. Outside its own
+  turn nothing changes.
 
 ### Benchmark (`packages/bench`)
 
