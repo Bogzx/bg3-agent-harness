@@ -19,8 +19,10 @@
   (arena_matrix.charges). A match refused before it played (live.play's ArenaSetupError: an API key unset,
   runtime/budget.json short, a game up the runner didn't launch, ...) is recorded, isn't an attempt, and stops the
   matrix (`refused: <why>`). A match the matrix runner died in (started, never ended) is closed as `interrupted` on
-  the next start, each paid side charged its whole reserve (what it spent is unknown), and played again; the
-  process that died leaves progress.json `stopped` ("aborted: ..."), never `running`. A match that ended
+  the next start, each paid side charged what its events in the attempt's run dir read (read_costs: what each pi
+  process billed before it died; $0 for a side whose process never started, as when it was killed while the game
+  loaded), and played again; without a sessions dir to read, each paid side's whole reserve. The process that died
+  leaves progress.json `stopped` ("aborted: ..."), never `running`. A match that ended
   over_budget is not rerun (`over_budget`: a rerun would spend as much again). A paid side's cost unknown (the
   harness failed mid-match) stops the matrix (`cost unknown`).
 - `--table` grades every played match (the last attempt of each, its facts and rolls) and prints bg3bench.arena's
@@ -46,7 +48,7 @@ import _harness  # noqa: F401  (packages/harness/src, packages/bench/src and bri
 from bg3bench import arena as barena
 from bg3bench import arena_matrix, matrix
 from bg3bench.matrix_cli import MatrixFileError
-from bg3harness import diskguard, spend
+from bg3harness import diskguard, events, spend
 from bg3harness.arena import ArenaSpec, Side
 from bg3harness.arena.match import ArenaSetupError
 from bg3harness.runner import env as renv
@@ -124,14 +126,20 @@ class ArenaQueue:
         disk: Callable[[dict[str, Any]], str | None] = lambda job: None,
         log: Callable[[str], None] = lambda msg: None,
         global_budget: Path | None = None,
+        sessions: Path | None = None,
     ):
         self.m, self.root, self.base, self.play = m, root, base, play  # base: the budget files' paths start there
         self.global_budget = global_budget  # runtime/budget.json: live.play checks and charges it; checked here too
         self.now, self.stopped, self.disk, self.log = now, stopped, disk, log
+        self.sessions = sessions  # where an attempt's run dir is (<sessions>/<its name>): an interrupted one's costs
         self.q = arena_matrix.open_queue(root, base / m["budget"]["file"], now)
 
     def path(self, f: str) -> Path:
         return self.base / f
+
+    def name(self, job: Mapping[str, Any], attempt: int) -> str:
+        """The attempt's run name (its run dir's name under the sessions dir)."""
+        return f"{self.m['name']}~{job['id']}~a{attempt}"
 
     def _append(self, rec: dict) -> None:  # bench.matrix's queue line
         with (self.root / "queue.jsonl").open("a", encoding="utf-8") as f:
@@ -223,7 +231,11 @@ class ArenaQueue:
         for st in self.state().values():
             if st["status"] == "interrupted":
                 job, attempt = st["job"], st["attempts"][-1]["attempt"]
-                costs = {s: side_caps(job).get(s, 0.0) for s in SIDES}  # unknown: each paid side's whole reserve
+                run_dir = self.sessions / self.name(job, attempt) if self.sessions is not None else None
+                if run_dir is not None:  # what each side billed before the runner died (D192: $0, killed at load)
+                    costs = {s: c if s in side_caps(job) else 0.0 for s, c in read_costs(run_dir).items()}
+                else:  # unknown: each paid side's whole reserve
+                    costs = {s: side_caps(job).get(s, 0.0) for s in SIDES}
                 result = {"valid": False, "invalid_reason": "interrupted", "costs": costs, "run_dir": None}
                 if why := self._end(job, attempt, result):
                     return self._stop(why)
@@ -254,7 +266,7 @@ class ArenaQueue:
             attempt = len(st["attempts"]) + 1
             self._append({"type": "start", "job": job["id"], "attempt": attempt, "t": self.now()})
             self._progress("running", current={"id": job["id"], "attempt": attempt})
-            name = f"{self.m['name']}~{job['id']}~a{attempt}"
+            name = self.name(job, attempt)
             assert self.play is not None, "a queue opened to read can't play"
             try:
                 played = self.play(job, name)
@@ -307,6 +319,20 @@ class ArenaQueue:
                 if a["result"] and a["result"].get("run_dir"):
                     out.append(graded(job, self.m["arenas"][job["arena"]], Path(a["result"]["run_dir"])))
         return out
+
+
+def read_costs(run_dir: Path) -> dict[str, float]:
+    """Each side's cost as its events in run_dir read (<side>.events.jsonl): per process, the running cost of its
+    last usage or result event (spend.ProcessCost), summed; $0 for a side with no events (its process never started)."""
+    out = {}
+    for s in SIDES:
+        per: dict[str, float] = {}
+        for ev in events.load_events(run_dir / s, kinds=("usage", "result")):
+            if ev.cost_usd is not None:
+                k = ev.session_id or ""
+                per[k] = max(per.get(k, 0.0), float(ev.cost_usd))
+        out[s] = round(float(sum(per.values())), 6)
+    return out
 
 
 def print_estimate(m: Mapping[str, Any], repo: Path, out: TextIO) -> None:
@@ -398,6 +424,7 @@ def main(argv: list[str], repo: Path | None = None, play: Play | None = None, ou
         disk=disk,
         log=renv.log,
         global_budget=renv.RUNTIME / "budget.json",
+        sessions=renv.RUNTIME / "sessions",
     )
     try:
         stop = q.run()
