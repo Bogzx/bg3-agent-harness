@@ -285,6 +285,26 @@ class LongRestNotAtCamp(Case):
 
 
 class StoryAreaBlock(Case):
+    def test_short_rest_state_only_as_read(self):  # REVIEW-13 item 12: GlobalDisabled made the old claim false
+        cases = [
+            ({"short_read": True, "short_global_disabled": 0, "short_blocked": []}, "fast travel is blocked too; "
+             "short_rest is open here."),
+            ({"short_read": True, "short_global_disabled": 1, "short_blocked": []}, "fast travel is blocked too; "
+             "short rest is disabled here too."),
+            ({"short_read": True, "short_global_disabled": 0, "short_blocked": [
+                {"name": "Karlach", "flags": ["NotEnoughResources"]}]},
+             "fast travel is blocked too; short rest is blocked too (Karlach: NotEnoughResources)."),
+            ({"short_read": False, "short_global_disabled": 0, "short_blocked": []}, "fast travel is blocked too."),
+            ({"short_read": True, "short_global_disabled": -1, "short_blocked": []}, "fast travel is blocked too."),
+        ]
+        for can, want in cases:
+            fake = self.s065()
+            fake.can = can
+            out = travel.camp()
+            self.assertIn(want, out, can)
+            self.assertNotIn("potions", out)
+
+
     def s065(self) -> Fake:
         fake = self.use(s064_status())
         for r in fake.status["party"][1:]:
@@ -300,7 +320,8 @@ class StoryAreaBlock(Case):
         self.assertIn("(Location): this area does not let the party go to camp", out)
         self.assertIn("fast travel is blocked too", out)
         self.assertNotIn("fast_travel to a waypoint", out)  # the S065 text sent the agent to fast_travel
-        self.assertIn("short_rest, potions and healing spells still work here.", out)
+        self.assertIn("fast travel is blocked too.", out)  # REVIEW-13 item 12: camp.can_rest gave no short side: no claim
+        self.assertNotIn("potions", out)
         self.assertIn(" The nearest waypoint is Temple of Bhaal at ", out)  # D630: the exit as a fact
         self.assertNotIn("Way out", out)
         self.assertNotIn("Same story-area block", out)
