@@ -63,10 +63,13 @@ LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setu
 # no progression in the game data grants it (live check 12 step 10).
 PLAYER_PASSIVES = ("DeathSavingThrows",)
 STATIC = Path(__file__).resolve().parent / "arena_static.json"
-# Character creation's items a kit leaves out: the Revivify scroll (orchestrator D300) and what plays no part in a
-# fight.
+# Character creation's items a kit leaves out: the Revivify scroll (orchestrator D300), what plays no part in a fight,
+# and the knock-down sources (Fable REVIEW-12 option (d), 2026-11-04: Prone can cost a whole phase in the shared turn
+# group, and no turn order fixes it; the Rogue's grease bottles and the Ranger's Arrow of Ice make PRONE surfaces).
 EXCLUDED = (
     "OBJ_Scroll_Revivify",
+    "OBJ_GreaseBottle",
+    "OBJ_ArrowOfIce",
     "OBJ_Keychain",
     "OBJ_Bag_AlchemyPouch",
     "ARM_Camp_Body",
