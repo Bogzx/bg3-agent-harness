@@ -209,7 +209,8 @@ class ServerTools(unittest.TestCase):
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][0]
         self.assertEqual(reach["dir"], "W")
         self.assertEqual(reach["char"], PARTY)
-        self.assertEqual(self.fake.jobs, [("act.move_to", {"char": PARTY, "pos": [-14.0, 0.0, 0.0], "run": True})])
+        self.assertEqual(self.fake.jobs, [("act.move_to", {"char": PARTY, "pos": [-14.0, 0.0, 0.0], "run": True,
+                                                           "picked": "toward W"})])
         self.assertTrue(out.startswith("heading W toward W: 14m (path 14.5m)"), out)
         self.assertIn("walk_toward: done", out)
 

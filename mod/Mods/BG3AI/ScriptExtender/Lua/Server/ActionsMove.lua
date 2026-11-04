@@ -32,7 +32,7 @@ local function begin_walk(job, opts)
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
         last_pos = G.pos(job.char), y0 = (G.pos(job.char) or {})[2], still_ms = 0, travelled = 0,
         tolerance = opts.tolerance or 1.5, reach = opts.reach, melee = opts.melee, on_arrive = opts.on_arrive,
-        stop_at = opts.stop_at,
+        stop_at = opts.stop_at, picked = opts.picked,
         move_id = opts.move_id or job.id, combat = G.in_combat(job.char),
     }
     local p = opts.pos
@@ -92,8 +92,15 @@ local function walk_arrived(job)
     end
     if not walk_close_enough(job, d, de) then
         res.reached = false
-        RPC.finish_job(job, "failed", res, w.stop_at and de and string.format("the walk ended %.1f m from the target,"
-            .. " beyond the %.1f m range", de, w.melee) or "could not get closer to the destination")
+        local why = "could not get closer to the destination"
+        if w.stop_at and de then
+            why = string.format("the walk ended %.1f m from the target, beyond the %.1f m range", de, w.melee)
+        elseif w.picked and d then
+            -- walk_toward's own point (the farthest walkable one it found), not one the agent named
+            why = string.format("stopped %.1f m short of the spot walk_toward picked (the farthest walkable point %s):"
+                .. " the walkable ground ends about there; walked %.1f m", d, w.picked, w.travelled)
+        end
+        RPC.finish_job(job, "failed", res, why)
     else
         RPC.push("moved_done", { uuid = job.char, move_id = job.id })
         RPC.finish_job(job, "done", res)
@@ -863,6 +870,7 @@ reg("move_to", function(args)
     end
     local final = { pos = pos, target = not plate and target or nil, speed = speed, tolerance = plate and 0.5 or 1.5,
         reach = reach, melee = melee, stop_at = stop_at,
+        picked = not target and type(args.picked) == "string" and args.picked or nil, -- walk_toward's own point
         on_arrive = plate and on_plate or nil }
 
     return start("move_to", char, {

@@ -68,3 +68,17 @@ test("legs: directLeg checks the 0.1 m point it hands out (a route node at 9.96 
     N.verifyPoint = saved
     if d then guardOk(d.pos, "direct leg") end
 end)
+
+-- launch-v1: 113 walk_toward(direction) walks went to the farthest sample itself, at the edge of the walkable ground,
+-- stopped 2-5.4 m short of it and failed "could not get closer" (haiku crash_site_grove r1-r5: 42). The engine's
+-- path to that sample ended inside PATH_END_TOL_M (not partial), and the walk goes where that path ends.
+test("walk_toward by direction: the destination is where the engine's path to the chosen sample ends", function()
+    nodesFor = function(_, t) return { { t[1] - 1.8, 0, t[3] } } end -- every path ends 1.8 m short (< 2.0)
+    local r = RPC.ops["nav.reach_toward"]({ dir = "E", max_m = 10, loose = true, alts = true })
+    eq(r.reachable, true, "reachable")
+    eq(r.straight_m, 10, "the farthest sample chosen")
+    near(r.pos[1], 8.2, "the path's end, not the sample (10,0,0)"); near(r.pos[3], 0, "z")
+    -- toward a point (travel_to, walk_toward objective/target): the sample, verified, as before
+    local r2 = RPC.ops["nav.reach_toward"]({ pos = { 10, 0, 0 }, max_m = 10 })
+    eq(r2.pos[1], 10, "a goal point keeps its sample")
+end)

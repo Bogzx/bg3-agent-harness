@@ -120,6 +120,16 @@ class WalkTowardClip(Fight):
         self.assertEqual(len(self.moves()), 1)
 
 
+class WalkTowardPick(Base):
+    def test_its_own_point_is_marked_for_the_walk(self):
+        # launch-v1 (113 walks): a short stop at walk_toward's own pick read "could not get closer to the destination";
+        # act.move_to gets picked= so its failure says the point was the tool's and the ground ends about there
+        self.g.reach = {"reachable": True, "pos": [9.0, 0.0, 0.0], "straight_m": 9.0, "path_m": 9.6}
+        observe.walk_toward(direction="n", wait=True)
+        observe.walk_toward(target=GOB, wait=True)
+        self.assertEqual([a.get("picked") for _, a in self.g.ops("act.move_to")], ["toward N", None])
+
+
 class DoActionsDoc(unittest.TestCase):
     def test_travel_to_is_listed(self):
         # ACT-P5: _BATCHABLE has travel_to; the docstring's "Allowed:" list didn't say so
