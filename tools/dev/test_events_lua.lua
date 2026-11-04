@@ -418,7 +418,8 @@ do
     listeners.GoldChanged("S_Player_" .. HOST, 52)
     local d = last("gold_changed")
     check("sale: one gold_changed", kinds(n) == "gold_changed", kinds(n))
-    check("sale: +52 -> 462", d and d.gold == 462 and d.delta == 52, d and (tostring(d.gold) .. " " .. tostring(d.delta)))
+    local function got(x) return x and (tostring(x.gold) .. " " .. tostring(x.delta)) end
+    check("sale: +52 -> 462", d and d.gold == 462 and d.delta == 52, got(d))
     n = #pushed + 1
     Osi.GetStackAmount = function() return 48 end
     gold = 414
@@ -426,7 +427,7 @@ do
     listeners.GoldChanged("S_Player_" .. HOST, -48)
     d = last("gold_changed")
     check("payment: only gold_changed", kinds(n) == "gold_changed", kinds(n))
-    check("payment: -48 -> 414", d and d.gold == 414 and d.delta == -48, d and (tostring(d.gold) .. " " .. tostring(d.delta)))
+    check("payment: -48 -> 414", d and d.gold == 414 and d.delta == -48, got(d))
     n = #pushed + 1
     listeners.GoldChanged("S_Player_" .. HOST, -10) -- a move between members: the total stays 414
     listeners.GoldChanged("S_Player_" .. SH, 10)
