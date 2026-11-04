@@ -144,7 +144,9 @@ game unless it says so.
   mover's foes have resolved, at most 8 s after the move ended, and its result names them under REACTIONS (who,
   what, the damage to the mover). Arena window 8, seed 7 m1: `move_to` answered "done, hp 20/20" 0.6 s before the
   opportunity attack it provoked landed (critical, 13), and the agent read it a call later as an ordinary enemy
-  cast. Offline only: whether the engine starts such a reaction's cast before the walk ends is not checked live.
+  cast. Window 9 checked it live: the opportunity attack's cast starts only after the walk arrives (+0.33 s,
+  +0.93 s), while the reactor's ReactionInterruptUsed fires before (-0.63 s, -1.30 s); so a foe's interrupt during
+  the move holds it until that foe's cast starts (at most 4 s after the interrupt), then the cast holds it.
 
 ### Benchmark (`packages/bench`)
 
