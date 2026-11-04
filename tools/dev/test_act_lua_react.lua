@@ -173,6 +173,7 @@ test("path_provokes: a visible enemy with its reaction whose reach the path leav
     .. "for a spent reaction, an unseen enemy, a non-enemy, or out of combat", function()
     combat_setup(12)
     osiv[key("IsEnemy", P1, GOB)], osiv[key("IsInCombat", GOB)] = 1, 1
+    osiv[key("IsEnemy", GOB, P1)], osiv[key("CanSee", GOB, P1)] = 1, 1 -- the engine's view: hostile, sees the mover
     world[GOB].comps.ActionResources = { Resources = { ReactionActionPoint = { { Level = 0, Amount = 1 } } } }
     local seen = true
     local saved = BG3AI.Visibility
@@ -214,6 +215,28 @@ test("path_provokes: a visible enemy with its reaction whose reach the path leav
         osiv[key("IsEnemy", P1, GOB)] = 1
         osiv[key("IsInCombat", P1)] = nil
         eq(G.path_provokes(P1, path), nil, "out of combat: no claim")
+        osiv[key("IsInCombat", P1)] = 1
+        -- what stops the attack, as the engine reads it (each alone; the rest as above)
+        stats.DISENGAGE = { Boosts = "IgnoreLeaveAttackRange()" }
+        stats.SLEEPING = { StatusType = "INCAPACITATED" }
+        stats.SHOCKING_GRASP = { StatusType = "BOOST", Boosts = "ActionResourceBlock(ReactionActionPoint)" }
+        eq(#G.path_provokes(P1, path), 1, "the baseline still provokes")
+        world[P1].comps.StatusContainer = { Statuses = { h1 = "DISENGAGE" } }
+        eq(#G.path_provokes(P1, path), 0, "the mover Disengaged (IgnoreLeaveAttackRange): nothing")
+        world[P1].comps.StatusContainer = nil
+        for _, id in ipairs({ "SLEEPING", "SHOCKING_GRASP" }) do
+            world[GOB].comps.StatusContainer = { Statuses = { h1 = id } }
+            eq(#G.path_provokes(P1, path), 0, id .. " on the goblin: it can't react, nothing")
+        end
+        world[GOB].comps.StatusContainer = nil
+        osiv[key("IsEnemy", GOB, P1)] = nil
+        eq(#G.path_provokes(P1, path), 0, "the game doesn't call the goblin hostile to the mover: nothing")
+        osiv[key("IsEnemy", GOB, P1)] = 1
+        osiv[key("CanSee", GOB, P1)] = nil
+        eq(#G.path_provokes(P1, path), 0, "the goblin can't see the mover: nothing")
+        osiv[key("CanSee", GOB, P1)] = 1
+        eq(#G.path_provokes(P1, path, { 2 }), 0, "the reach left on a jump/climb link (points[2] ends one): nothing")
+        eq(#G.path_provokes(P1, path, { 3 }), 1, "a link elsewhere on the path: still provoked")
     end)
     BG3AI.Visibility = saved
     if not ok then error(err, 0) end
