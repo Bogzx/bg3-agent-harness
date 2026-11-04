@@ -136,7 +136,9 @@ def render_path(res: Any, H: Handles) -> str:
     if res.get("reachable") is None:  # REVIEW-18n: a plain line, never the raw result
         why = res.get("reason") or ("the path search ran out of time" if res.get("unfinished") else "no path searched")
         far = res.get("straight_m", res.get("length_m"))
-        return f"reachable unknown: {why}" + (f" ({num(far)}m straight line)" if far is not None else "")
+        note = opened_note(res, H)  # REVIEW-18p: nav.path's geoNote, as the reachable=False line has it
+        return (f"reachable unknown: {why}" + (f" ({num(far)}m straight line)" if far is not None else "")
+                + (f"\n{note}" if note else ""))
     bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]
     if res.get("partial"):  # w12 L1a: a 3.5 m landing read "reachable: walk 0.1m"; the engine's path ended by the walker
         bits = [f"NOT REACHED: the walkable path ends @{pos(res.get('end_pos'))}, {num(res.get('end_off', '?'))}m short "
