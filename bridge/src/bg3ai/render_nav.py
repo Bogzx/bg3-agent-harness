@@ -61,12 +61,12 @@ def render_frontier(res: Any, H: Handles) -> str:
     if isinstance(res, dict) and res.get("more"):
         out.append(f"(+{res['more']} more leads)")
     if not out:
-        out.append("No leads in view. Try another direction, a door, or get_map.")
+        out.append("No leads in view.")
     ways = render_ways(res.get("ways") if isinstance(res, dict) else None)
     if ways:
         out.append(ways)
     if isinstance(res, dict) and res.get("ways_off"):  # NAV-2: a killed level searches 2 directions per read
-        out.append("(WAYS partial: path searches are throttled on this level; read again for more directions)")
+        out.append("(WAYS partial: path searches are throttled on this level)")
     out.extend(render_hazards(res.get("hazards") if isinstance(res, dict) else None, limit=6))
     return "\n".join(out)
 
@@ -102,7 +102,7 @@ def render_ways(ways: Any, far: float = 20.0) -> str:
             jumps.append(f"{w['dir']} gap {num(j.get('gap_m', '?'))}m from {pos(j.get('from'))} to {pos(j['to'])}"
                          + (f" ({num(abs(dy))}m {'up' if dy > 0 else 'down'})" if isinstance(dy, (int, float)) else ""))
     if jumps:
-        line += " | jump: " + "; ".join(jumps) + " (jump_to the far side from the edge)"
+        line += " | jump: " + "; ".join(jumps) + " (a jump from the edge reaches the far side)"
     return line
 
 

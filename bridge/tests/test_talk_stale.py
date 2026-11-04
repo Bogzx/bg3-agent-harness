@@ -78,7 +78,7 @@ class StaleSighting(unittest.TestCase):
         out = self.walk_first()
         self.assertEqual(trips, [])
         self.assertTrue(out.startswith(REFUSED), out)
-        self.assertIn("is at camp now (the camp roster), not where the party last saw them: walk around the camp", out)
+        self.assertIn("is at camp now (the camp roster), not where the party last saw them; the party is at camp", out)
         self.assertNotIn("going to where you last saw them", out)
 
     def test_s080_69_at_camp_it_walks_to_the_camp_roster_spot(self):
@@ -89,13 +89,13 @@ class StaleSighting(unittest.TestCase):
         out = self.walk_first()
         self.assertEqual(trips, [{"who": None, "x": -1466.0, "y": 9.1, "z": -2640.5, "trespass": True}])
         self.assertIn("is at camp (the camp roster) (-1466,9.1,-2640.5): walking there first", out)
-        self.assertNotIn("walk around the camp", out)
+        self.assertNotIn("the party is at camp", out)
 
     def test_away_from_camp_it_says_camp(self):
         trips = self.use(Fake(here=[-14.0, -46.0, 1003.0]))
         out = self.walk_first()
         self.assertEqual(trips, [])
-        self.assertIn("camp() takes the party there", out)
+        self.assertIn("is at camp now (the camp roster)", out)
 
     def test_a_far_sighting_is_asked_not_travelled(self):
         trips = self.use(Fake(camp=False))   # anyone not on the camp roster, last seen 3870 m away
@@ -103,7 +103,8 @@ class StaleSighting(unittest.TestCase):
         self.assertEqual(trips, [])
         self.assertIn("NOT TRAVELLED: " + core.H.get(GALE) + " is out of sight; the party last saw them 201s ago "
                       "(40.7,-49.2,989.9), 3878m away (a fast travel to Temple of Bhaal + a 100m walk)", out)
-        self.assertIn("To go anyway: travel_to x=40.7, y=-49.2, z=989.9, then talk_to", out)
+        self.assertIn("(40.7,-49.2,989.9), 3878m away", out)
+        self.assertNotIn("travel_to x=", out)
 
     def test_a_near_sighting_still_walks_there(self):
         trips = self.use(Fake(camp=False, here=[0.0, -49.2, 989.9]))   # 40.7 m off

@@ -23,10 +23,10 @@ def jump_plan_text(plan: Any) -> str:
     near = f" ({N(off)}m from what you asked)" if off else ""
     if plan.get("walk"):
         how = ", the route has a jump link: out of combat move_to takes it" if plan.get("needs_jump") else ""
-        return f" It is walkable: move_to {P(plan['land'])}{near} (path {N(plan.get('path_m', '?'))}m{how})."
+        return f" It is walkable to {P(plan['land'])}{near} (path {N(plan.get('path_m', '?'))}m{how})."
     if plan.get("stand"):
-        return (f" Do it in two steps: move_to {P(plan['stand'])} (walk {N(plan.get('walk_m', '?'))}m), then "
-                f"jump_to {P(plan['land'])}{near}, a {N(plan.get('jump_m', '?'))}m jump.")
+        return (f" A walk to {P(plan['stand'])} ({N(plan.get('walk_m', '?'))}m) then a {N(plan.get('jump_m', '?'))}m "
+                f"jump to {P(plan['land'])}{near} gets there.")
     return ""
 
 
@@ -54,7 +54,7 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
         return None
     plan = jump_plan_text(lnd.get("plan"))
     if not plan and lnd.get("plan_skipped"):  # the level's kill switch (S038 OOM): no search for a plan here
-        plan = f" No jump plan: {lnd['plan_skipped']}; pick the landing from get_layout / a screenshot."
+        plan = f" No jump plan: {lnd['plan_skipped']}."
     elif not plan and lnd.get("level_off"):  # S039 21:53: the 2nd crash on this level
         plan = (f" No jump plan: jump planning is off on this level ({lnd['level_off']}); land only on a floor you can"
                 f" see (get_layout '.'/'_'), within jump reach.")
@@ -66,15 +66,14 @@ def jump_refusal(lnd: Any, asked: list[float]) -> str | None:
         elif lnd.get("surface") == "Chasm":
             # S035 19:38 / S038 20:44: force=true into a Chasm was a fatal fall both times (the Chasm is the void
             # around the floors; Feather Fall did not save it): never offer force for it.
-            tail = (" A Chasm has no floor in jumping height: a forced jump there is a fatal fall. Find the crossing"
-                    " with route (its LOWER GROUND lines: floors below you can jump down to) / get_layout (a ledge in reach, a"
-                    " ladder, the story's own way across).")
+            tail = (" A Chasm has no floor in jumping height: a forced jump there is a fatal fall. route lists"
+                    " LOWER GROUND (floors below you can jump down to); get_layout shows ledges in reach and ladders.")
         else:
-            tail = " Pick another landing (get_frontier lists HAZARD patches) or force=true."
+            tail = " (force=true jumps anyway)"
         return (f"jump_to: FAILED — the landing {P(asked)} {landing_bad_text(lnd)} and no clear spot within 3m of it "
                 f"is in reach ({N(lnd.get('reach_m') or lnd.get('reliable_m', '?'))}m).{alt}{tail}")
     if lnd.get("too_far") and not lnd.get("suggest"):
-        tail = plan or " No walk gets within jumping distance of it: route() for a ladder or another way."
+        tail = plan or " No walk gets within jumping distance of it."
         return (f"jump_to: FAILED — too far to jump ({N(lnd.get('dist_m', '?'))} m, this character can jump "
                 f"{N(lnd.get('max_m', '?'))} m).{tail}")
     return None
