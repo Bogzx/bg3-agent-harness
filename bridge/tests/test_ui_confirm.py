@@ -437,8 +437,7 @@ class Confirm(Base):
                                   "popup": {"title": "Supply Pack", "text": "/3", "buttons": ["Cancel", "Confirm"],
                                             "decision": True, "split": True}}, core.H)
         line = next(x for x in lines if x.startswith("POPUP"))
-        self.assertIn("Supply Pack (1-3)", line)
-        self.assertIn('confirm("yes", amount=N)', line)
+        self.assertIn("Supply Pack (1-3; confirm takes amount=N)", line)
         seen = []
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (
             seen.append(args) or JobResult("done", {"pressed": "Confirm"}))
@@ -448,7 +447,7 @@ class Confirm(Base):
     def test_popup_line_says_how_to_answer(self):
         lines = render.render_ui({"screen": "popup", "popup": {"title": "[ForceUpdate]", "buttons": ["Yes", "No"],
                                                                "decision": True}}, core.H)
-        self.assertTrue(any(line.startswith("POPUP") and "confirm(" in line for line in lines), lines)
+        self.assertTrue(any(line.startswith("POPUP") and "(confirm answers it" in line for line in lines), lines)
         lines = render.render_ui({"screen": "popup", "popup": {"title": "Info", "buttons": ["OK"],
                                                                "dismissable": True}}, core.H)
         self.assertFalse(any("confirm(" in line for line in lines), lines)

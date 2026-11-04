@@ -348,7 +348,7 @@ class InTheWay(Base):
         self.g.try_rpc = fake
         out = travel_macro.travel_to(x=30.0, y=-12.0, z=0.0, wait=True)
         self.assertIn("STOPPED", out)
-        self.assertIn("12m below you: climb with interact on a ladder", out)
+        self.assertIn("12m below you; ladders/stairs/hatches: ", out)
         self.assertIn("Ladder <ladder> 13m N", out)
 
     def test_failed_legs_toward_a_lower_floor_name_the_ladder(self):
@@ -363,7 +363,7 @@ class InTheWay(Base):
             return real(op, args, context, default)
         self.g.try_rpc = fake
         out = travel_macro.travel_to(x=10.0, y=-11.0, z=0.0, wait=True)
-        self.assertIn("11m below you: climb with interact on a ladder", out)
+        self.assertIn("11m below you; ladders/stairs/hatches: ", out)
         self.assertGreater(len(self.g.ops("act.move_to")), 1)  # retried another way first
 
 

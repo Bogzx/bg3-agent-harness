@@ -49,7 +49,7 @@ def _retry_after_dialogue(watcher: actq.Watcher, who: str | None, step: actq.Ste
     end = time.monotonic() + CONVO_WAIT_S
     while True:
         if _dialogue_needs_answer():
-            return rep, text, "a conversation is open: answer it (choose_dialogue), then run this again"
+            return rep, text, "a conversation is open"
         if time.monotonic() >= end:
             return rep, text, (f"still in a conversation after {CONVO_WAIT_S:g}s with no dialogue on screen "
                                f"({text.split(': ', 1)[-1]})")
@@ -264,8 +264,7 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
                     stuck_check = now + 1.0
                     stuck = _line_stuck(now - t_start)
                     if stuck:
-                        stop = (f"{why} ({stuck}; it wants no input: wait_for dialogue_ended or level_changed, "
-                                f"or act on what else you can)")
+                        stop = (f"{why} ({stuck}; it wants no input)")
                         lines.extend(reporting._render_ui(ui, brief=True))
                         break
                 time.sleep(0.3)
@@ -312,7 +311,7 @@ def _travel_dest(marker: str, objective: str, x, y, z) -> tuple[list, str]:
         if m is None or not m.get("pos"):
             raise ValueError(f"no marker '{marker}' (get_map lists your markers)")
         if m.get("level") and st.get("level") and m["level"] != st["level"]:
-            raise ValueError(f"marker {m['id']} is in {m.get('region') or m['level']}: fast_travel there first")
+            raise ValueError(f"marker {m['id']} is in {m.get('region') or m['level']} (another region)")
         return list(m["pos"]), f"marker {m['id']} {m.get('label', '')}"
     if objective:
         m = render.find_objective(overview._objective_markers(overview.MARKERS_TTL_S), objective)
@@ -333,7 +332,7 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
         return None
     what = r.get("standing_in") or "a harmful surface"
     if not (r.get("found") and r.get("pos")):
-        return f"standing in {what} and no clear ground within 8m: get out another way (jump_to, an exit)"
+        return f"standing in {what} and no clear ground within 8m"
     px, py, pz = r["pos"]
     watcher = actq.Watcher(queueing._watch_conn(), ignore={"surface", "damage", "hp", "hostile"})
     watcher.baseline()

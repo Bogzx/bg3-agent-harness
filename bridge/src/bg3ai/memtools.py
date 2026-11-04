@@ -172,7 +172,7 @@ class Sandbox:
             raise Refused("REFUSED: give a file path under memory/")
         top = rel.split("/", 1)[0]
         if top == "snapshots":
-            raise Refused("REFUSED: memory/snapshots/ is generated from the live game; never edit it")
+            raise Refused("REFUSED: memory/snapshots/ is generated from the live game; edits are refused")
         if rel == "markers.json":
             raise Refused("REFUSED: markers.json changes only through place_marker / delete_marker")
         if not rel.endswith(WRITE_SUFFIXES):
@@ -396,7 +396,7 @@ def edit_file(sb: Sandbox, path: str, old_text: str, new_text: str, replace_all:
     n = old.count(old_text)
     if n == 0:
         raise Refused(f"FAILED: old_text not found in memory/{rel} (it must match exactly, whitespace included; "
-                      f"memory_read it first)")
+                      f"memory_read shows the exact text)")
     if n > 1 and not replace_all:
         raise Refused(f"FAILED: old_text occurs {n} times in memory/{rel}: add surrounding text to make it unique, "
                       f"or replace_all=true")

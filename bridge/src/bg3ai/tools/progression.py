@@ -112,8 +112,7 @@ def _level_camp_member(row: dict, plan: str, out: str, st: dict) -> str:
         # Live 11:14: Wyll L4 needs a cantrip + a spell the stored plan lacked. Swapping back now would make the
         # retry swap in again (~30 s): keep him in with the page up; the retry is the normal one-member call.
         keep = (f"{name} stays in the party" + (f" ({outname} at camp)" if outname else "") +
-                f" with the level-up page open: call level_up(who=\"{name}\", plan=...) with the picks below"
-                + (f", then swap_party(into=\"{outname}\", out=\"{name}\") to bring {outname} back" if outname else ""))
+                " with the level-up page open (picks below)")
         ndone = sum(1 for r in results if ": level_up: done" in r)   # live 12:2x: L4 done, L5 lacked picks → said FAILED
         head = f"level_up: partly done ({ndone} of {len(results)} levels)" if ndone else "level_up: FAILED"
         return f"{head} — {name} (camp member): " + "; ".join(steps + [keep]) + "\n" + "\n".join(results)
@@ -315,7 +314,7 @@ def _answer_donate(res: dict, handover: bool) -> str:
                 + "\n".join(reporting._render_ui(core.game.try_rpc("ui.state", context="client") or {})))
     q = f"{box.get('title') or ''} {box.get('text') or ''}".strip()
     if not re.search(r"donat|give", q, re.I):
-        return f"trade: STOPPED — the game asks: {q} {box.get('buttons')}; answer with confirm"
+        return f"trade: STOPPED — the game asks: {q} {box.get('buttons')}"
     c = world_tools._box_act("confirm", "ui.confirm", {"answer": "Yes"}, wait_s=8)
     if "confirm: done" not in c:
         return f"trade: FAILED — gave {gave} with Barter; the donate box: {c}"
@@ -359,7 +358,7 @@ def _open_trade(npc: str) -> str:
         opts = _answers_text(d)
         return (f"trade: no trade answer in the conversation with {npc} yet ({opts or 'no answers shown'})\n"
                 + (talked + "\n" if talked else "")
-                + "STOPPED: pick an answer with choose_dialogue (the trade one may come later), then trade()")
+                + "STOPPED (the trade answer may come on a later node)")
     picked: list[str] = []
     while True:
         r = core.game.run_job("ui.dialogue_choose", {"i": pick["i"]}, context="client", wait_s=20)
@@ -425,8 +424,7 @@ def _sell_junk(keep: str = "") -> str:
         total += p
     if not picked:
         why = ("no junk in the bags" if not junk else
-               ("the trader has no gold left: sell at another trader, or swap junk for wares of equal value "
-                "(offer=<ids>, request=<ids>)" if not budget else
+               ("the trader has no gold left" if not budget else
                 f"the trader has only {budget} gold, less than any one junk item") if on_screen
                else "none of the junk is on this trade screen")
         return reporting._finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})"
@@ -452,7 +450,7 @@ def _sell_junk(keep: str = "") -> str:
     if len(chunks) > 1:
         out += f"\n({len(chunks)} barters of up to {SELL_CHUNK} items)"
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
-        f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
+        f"; {left} more left: the trader ran out of gold)" if left else ")")
     return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set) + _bag_junk_line(junk, set(picked))
 
 

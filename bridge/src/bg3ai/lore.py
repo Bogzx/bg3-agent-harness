@@ -92,8 +92,8 @@ def search(memory: Path, query: str, journal: Any = None, max_chars: int = 3000)
             if s:
                 hits.append((s, "JOURNAL", str(q.get("title") or ""), "", str(st)))
     if not hits:
-        return (f"Nothing you have read or noted in the journal mentions {query!r}. Read the books/notes near the "
-                "puzzle (interact), look at the scene (get_nearby kinds=props for names of paintings/statues).")
+        return (f"Nothing you have read or noted in the journal mentions {query!r} (get_nearby kinds=props lists "
+                "paintings/statues by name).")
     hits.sort(key=lambda h: -h[0])
     out, used = [], 0
     for _, kind, title, where, text in hits:

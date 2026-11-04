@@ -144,7 +144,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                     macros.dist(r["pos"], dest) > d - 1.0 and not along):
                 stop = (f"no walkable ground leads further toward it ({render.num(round(d, 1))}m left"
                         + (", no other leg either" if failed_end is not None else "")
-                        + "): try get_frontier, a door, or a jump")
+                        + ")")
                 stop += observe._wedged_hint(char, dest)
                 if isinstance(r, dict):
                     stop += macros.direct_why_text(r.get("direct_why"), d)
@@ -200,7 +200,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
                 here = _pos_now(char) or here
                 why = prog.leg(here, True)
                 if why:
-                    stop = why + ": try get_frontier, a door, or a jump"
+                    stop = why
                     break
                 continue
             if not rep.done:
@@ -224,7 +224,7 @@ def travel_to(marker: str = "", objective: str = "", waypoint: str = "", target:
             short = macros.leg_stopped_short(res)
             why = prog.leg(here, short, route_left=r.get("route_left_m") if r.get("direct") and not short else None)
             if why:
-                stop = why + ": try get_frontier, a door, or a jump"
+                stop = why
                 break
             # not after the leg that arrives (launch-v1 deepseek act3 r3: an arrived trip stopped on a member 19 m
             # behind and dropped its queued talk_to)
@@ -297,8 +297,7 @@ def _through_door(char: str, dl: dict, outer: actq.Executor | None, policy: str)
             if outer is not None and (outer.interrupt or outer.stop.is_set()):
                 return lines, (outer.interrupt or ("cancel", "cancelled"))[1]
             if macros.dist(here, door) > DOOR_WALK_M:
-                return lines, (f"the door {h} {name} is still {render.num(round(macros.dist(here, door), 1))}m away: "
-                               f"route() to it, then interact {h}")
+                return lines, (f"the door {h} {name} is still {render.num(round(macros.dist(here, door), 1))}m away")
         w = actq.Watcher(queueing._watch_conn(), ignore=set(ignore))
         w.baseline()
         rep, text = turn_plan._run_one(w, char, actq.Step("interact", {"target": h}), outer)
@@ -309,8 +308,8 @@ def _through_door(char: str, dl: dict, outer: actq.Executor | None, policy: str)
         reporting._batch["door_trip"] = saved
     after = _pos_now(char)
     if not after or macros.dist(after, door) < DOOR_MOVED_M:
-        return lines, (f"used {h} {name}, but it did not take the party through (still @{render.pos(after)}): is it "
-                       "locked, or used from the other side? route() again")
+        return lines, (f"used {h} {name}, but it did not take the party through (still @{render.pos(after)}): locked, "
+                       "or one-way?")
     lines.append(f"through {h} {name}: now @{render.pos(after)}")
     return lines, None
 
@@ -322,12 +321,12 @@ OBJECTIVE_MOVED_M = 5.0
 
 
 def _objective_moved_note(objective: str, dest: list) -> str:
-    """'o1 Escape Route moved on: now 66.8m W: travel_to(objective="o1") again' when the objective walked to now
+    """'o1 Escape Route moved on: now 66.8m W' when the objective walked to now
     stands elsewhere, a 'done or gone' line when it vanished, else ''."""
     try:
         m = render.find_objective(overview._objective_markers(), objective)
     except ValueError:
-        return f"objective {objective} is gone now (done, or the quest moved on): get_map"
+        return f"objective {objective} is gone now (done, or the quest moved on)"
     except Exception:
         return ""
     if not (m.get("here") and m.get("pos") and m.get("dist") is not None):
@@ -335,8 +334,7 @@ def _objective_moved_note(objective: str, dest: list) -> str:
     if macros.dist(m["pos"], dest) < OBJECTIVE_MOVED_M or float(m["dist"]) < OBJECTIVE_MOVED_M:
         return ""
     ref = f"o{m['oid']}" if m.get("oid") else objective
-    return (f"{ref} {render.objective_label(m)} moved on: now {render.num(m['dist'])}m {m.get('dir') or ''}".rstrip()
-            + f': travel_to(objective="{ref}") again')
+    return (f"{ref} {render.objective_label(m)} moved on: now {render.num(m['dist'])}m {m.get('dir') or ''}".rstrip())
 
 
 def _dead_end_note(char: str, here: Any, dest: list, what: str) -> str:
@@ -441,8 +439,7 @@ def _clear_blocker(char: str, here: list, toward: list, outer: actq.Executor | N
         near = (core.game.try_rpc("state.nearby", {"radius": BLOCKER_AHEAD_M + 2, "kinds": ["characters"]}) or {}).get("characters") or []
         if not _in_the_way(here, toward, [r for r in near if r.get("uuid") in first], char):
             return f"in the way: {names}: waited {render.num(round(BLOCKER_WAIT_S - (end - time.monotonic()), 1))}s for them to move, walking on", True
-    return (f"in the way: {names} (stands in the path, didn't move in {render.num(BLOCKER_WAIT_S)}s): "
-            "talk_to them, go around (walk_toward another direction) or wait"), False
+    return (f"in the way: {names} (stands in the path, didn't move in {render.num(BLOCKER_WAIT_S)}s)"), False
 
 
 def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor | None) -> tuple[str, str | None]:
@@ -493,7 +490,7 @@ def _wait_for_stragglers(char: str, here: Any, crew: set, outer: actq.Executor |
     left = "; ".join(f"{queueing._label(u)} {render.num(round(d))}m behind can't keep up — {_walk_back_end(u, cap)}"
                      for u, d in still)
     return (f"{names} fell behind; the walk back failed",
-            f"{left}; route(who=...) for their way, regroup(), or stay(who) to leave them on purpose")
+            left)
 
 
 def _walk_back_end(u: str, cap: float) -> str:
@@ -561,8 +558,8 @@ def _climb_hint(here: list | None, dest: list | None) -> str:
     side = "above" if dest[1] > here[1] else "below"
     hint = f"; it is {render.num(round(abs(dest[1] - here[1]), 1))}m {side} you"
     if not ups:
-        return hint + ": find a ladder or stairs (get_frontier) or jump_to"
-    return hint + f": climb with interact on a ladder/stairs/hatch ({_ways_text(res, ups, here)}), then travel_to again"
+        return hint
+    return hint + f"; ladders/stairs/hatches: {_ways_text(res, ups, here)}"
 
 
 FLOOR_DY_M = 6.0      # travel_to: a goal this far above/below gets one route probe before the trip starts
@@ -597,17 +594,16 @@ def _other_floor(char: str, here: list | None, dest: list | None) -> str | None:
     if not ups:
         return None
     side = "above" if dest[1] > here[1] else "below"
-    first = core.H.get(ups[0]["uuid"], ups[0].get("name"))
     if len(chain) == 2:
         # naut2 run 2: the queued [interact e56, interact e57] is the helm's way up from the lower deck
         a, b = (core.H.get(l["uuid"], l.get("name")) for l in chain)
-        how = f"interact {a}, then interact {b} (or queue_actions [interact {a}, interact {b}, travel_to ...])"
+        how = f" It takes two: {a}, then {b}."
     else:
-        how = f"interact {first} (or queue_actions [interact {first}, travel_to ...])"
+        how = ""
     why = ("no walk on this floor reaches it (inside/under/over something)" if r.get("reachable") is False
            else f"{render.num(round(macros.dist(here, dest)))}m off and too far to preview: likely inside an interior")
-    return (f"REFUSED: the goal is {render.num(round(dy))}m {side} you and {why}. The way there is likely: {_ways_text(res, ups, here)}. "
-            f"{how}, then travel_to again")
+    return (f"REFUSED: the goal is {render.num(round(dy))}m {side} you and {why}. The way there is likely: {_ways_text(res, ups, here)}."
+            + how)
 
 
 def _floor_detour_note(r: dict, here: list, dest: list, dy: float) -> str | None:
@@ -626,8 +622,7 @@ def _floor_detour_note(r: dict, here: list, dest: list, dy: float) -> str | None
         return None
     side = "above" if dest[1] > here[1] else "below"
     return (f"note: the goal is {render.num(round(dy))}m {side} you and the walk there winds {render.num(round(length))}m "
-            f"for {render.num(round(straight))}m straight; shorter: {_ways_text(res, ups, here)} "
-            f"(cancel, interact {core.H.get(ups[0]['uuid'], ups[0].get('name'))}, then travel_to again)")
+            f"for {render.num(round(straight))}m straight; shorter: {_ways_text(res, ups, here)}")
 
 
 def _pos_now(char: str) -> list | None:
@@ -662,12 +657,12 @@ def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, ch
         overview._stay.discard(u)
         reg = (info.get(u) or {}).get("region")
         if reg and lreg and reg != lreg:
-            lines.append(f"{queueing._label(u)}: on another level ({reg}): walk {queueing._label(lead)} there or fast_travel")
+            lines.append(f"{queueing._label(u)}: on another level ({reg})")
             skip.add(u)
             continue
         d = macros.dist(r.get("pos"), lp)
         if r.get("downed"):
-            lines.append(f"{queueing._label(u)}: downed, {render.num(round(d, 1))}m away (help them up)")
+            lines.append(f"{queueing._label(u)}: downed, {render.num(round(d, 1))}m away")
             skip.add(u)
         elif d > near_m:
             far.append((u, d))
@@ -679,8 +674,7 @@ def regroup(leader: str | None = None, near_m: float = macros.REGROUP_NEAR_M, ch
     # found no walkable way ("no walkable ground leads further"). A member already on its own queue keeps it.
     own = [(u, d) for u, d in far if queueing._queues().busy(u)]
     for u, d in own:
-        lines.append(f"{queueing._label(u)} ({render.num(round(d, 1))}m): left on its own queue (it is still running); "
-                     "regroup again once it ends")
+        lines.append(f"{queueing._label(u)} ({render.num(round(d, 1))}m): left on its own queue (it is still running)")
     far = [(u, d) for u, d in far if (u, d) not in own]
     skip.update(u for u, _ in own)   # no chain mid-queue either (a chained follower walks after the leader)
     if not far and not (chain and unchained):
@@ -823,7 +817,7 @@ def rest_if_needed(threshold: float = 50.0, allow_long: bool = False) -> str:
                                                                actq.Step("long_rest", {})])])
         lines += more
     elif not rested and not stop:
-        lines.append("no short rest worked: long rest at camp (camp, long_rest) or heal with potions/spells")
+        lines.append("no short rest worked")
     return macro_tools._macro_finish("rest_if_needed", {}, [f"low: {who_low}"] + lines, stop, left, t0)
 
 

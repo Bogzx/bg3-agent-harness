@@ -208,7 +208,8 @@ class InsertItem(unittest.TestCase):
         self.assertLess(time.monotonic() - t, 2.0)   # no 4 s poll for a panel once a conversation is up
         self.assertIn("opened a conversation instead", out)
         self.assertIn("1. Examine the altar.", out)
-        self.assertIn(f"insert_item(into={core.H.get(self.AltarFake.ALTAR)})", out)
+        self.assertIn(f"at the same spot ({core.H.get(self.AltarFake.ALTAR)} ", out)
+        self.assertTrue(out.rstrip().endswith(")"), out)  # no trailing ': <id>' after the list (REVIEW-15 4.1)
         self.assertEqual([a.get("target") for o, a, _ in fake.jobs if o == "act.interact"], [self.AltarFake.PED])
 
     def test_insert_that_closes_the_panel_says_closed(self):

@@ -140,7 +140,7 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
         out = plumbing._act("interact", "act.interact", {"char": char, "target": plumbing._uuid(into)}, wait_s=40)
         walked = travel._walk_first("interact", out, char, who, into, actq.Step("interact", {"target": into}))
         if walked:  # far / out of sight: the walk runs, the interact is queued for the arrival
-            return reporting._finish("insert_item", args, walked + "\ncall insert_item again when the panel is open", t0)
+            return reporting._finish("insert_item", args, walked + "\nthe panel opens on arrival; the insert itself is not queued", t0)
         r = _insert_poll(out)
         others = _colocated_usables(plumbing._uuid(into)) if r.status == "failed" and "no Insert Item panel" in str(r.error) else []
         if others and not _opened_dialogue(out):
@@ -160,12 +160,12 @@ def insert_item(item: str | None = None, into: str | None = None, who: str | Non
             alt = "; ".join(f"{core.H.get(h)} {nm}" for h, nm in others)
             if _opened_dialogue(out):
                 body = (f"insert_item: FAILED — no Insert Item panel: using it opened a conversation instead\n{out}"
-                        + (f"\nthe slot may be on what stands at the same spot ({alt}): end the conversation, then "
-                           f"insert_item(into={core.H.get(others[0][0])})" if others else ""))
+                        + (f"\nthe slot may be on what stands at the same spot ({alt})"
+                           if others else ""))
             else:
                 body = (f"insert_item: FAILED — no Insert Item panel opened ({out.splitlines()[0] if out else 'interact'})"
                         + (f"; tried {core.H.get(others[0][0])} {others[0][1]} at the same spot too" if others else "")
-                        + "; not every pedestal takes items: look at it (get_nearby / screenshot)")
+                        + "; not every pedestal takes items")
             return reporting._finish("insert_item", args, body, t0)
         note = "; ".join(x for x in (note, f"opened the panel by {overview._name_of(char)}") if x)
     elif r.status == "failed":
@@ -283,7 +283,7 @@ def equip_best(who: str | None = None) -> str:
         # S034 19:15: called as a Displacer Beast ambush began; every give failed "… (use the UI)", which invites a
         # hand click. In combat a swap costs an action and gives are refused: say so, do nothing.
         return reporting._finish("equip_best", {"who": who}, "equip_best: NOT NOW — in combat (gear swaps cost actions and "
-                       "items can't change hands mid-fight). Call it again once the fight ends; nothing was moved.", t0)
+                       "items can't change hands mid-fight); nothing was moved.", t0)
     inv = core.game.rpc("state.inventory", {})
     plumbing._remember_names(inv)
     done, failed = [], []
@@ -447,7 +447,7 @@ def _rest_flow_answer(wait_s: float = 8.0, since: Callable[[], int] = lambda: 20
 _REST_FLAG_TEXT = {
     "Combat": "in combat",
     "Dialog": "in a conversation",
-    "FTB": "turn-based mode is on (set_party(action=\"turn_based_off\"))",
+    "FTB": "turn-based mode is on (set_party(action=\"turn_based_off\") turns it off)",
     "Script": "a story event blocks resting right now",
     "GlobalDisabled": "resting is disabled here",
     "DropInCCActive": "a character editor is open",
@@ -499,10 +499,9 @@ def _rest_not_at_camp(can: Any) -> str:
     behind = [r for r in party.camp_behind(st) if str(r.get("name")) in loc]
     if not behind:
         return ""
-    fix = "; ".join(f"set_party select {overview._name_of(r['uuid'])}, then camp()" for r in behind)
     return (f"long_rest: FAILED — not pressed: not everyone is at camp: {party.behind_text(behind, queueing._label)} (the "
-            f"game's rest check: not at a place where you can rest). Bring them first: {fix} (S065 12:02: that "
-            "brought Wyll and the rest went through), then long_rest.")
+            f"game's rest check: not at a place where you can rest); the camp travel takes only the selected "
+            "member's group (S065 12:02: selecting Wyll, then camp(), brought him).")
 
 
 def _woke_here() -> str:
@@ -516,8 +515,8 @@ def _woke_here() -> str:
     if not (isinstance(woke, int) and woke > 0):  # -1: the DB couldn't be read
         return ""
     return ("long_rest: FAILED — not pressed: the party woke up from a long rest at this camp and hasn't left it since; "
-            "the game doesn't answer another rest request until it has. Leave camp (camp(action=\"leave\")), come "
-            "back with camp(), then long_rest")
+            "the game doesn't answer another rest request until it has (camp(action=\"leave\") leaves, camp() "
+            "comes back)")
 
 
 def _rest_blocked() -> str:
@@ -562,7 +561,7 @@ _REST_FLOW_TEXT = {
     "gathered": "the party gathered but the game didn't go on to end the day (S030: it answered no ~10 s later)",
     "end_day_failed": "the game refused to end the day after gathering the party (its own rest check; reloading a "
                       "save didn't help in S030)",
-    "end_day_ok": "the game started the night: the rest screen should follow (call long_rest again)",
+    "end_day_ok": "the game started the night: the rest screen should follow",
     "rest_start_failed": "the game could not start the rest",
     "rest_cancelled": "the rest was cancelled",
     "rest_denied": "the game denied the rest",

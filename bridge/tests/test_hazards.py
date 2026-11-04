@@ -231,14 +231,14 @@ class JumpLanding(Base):
                                    "land_off_m": 0, "jump_m": 3.5}}
         out = travel.jump_to(74.8, 22.8, 507.3)
         self.assertIn("jump_to: FAILED — too far to jump (9.6 m, this character can jump 4 m)", out)
-        self.assertIn("move_to (78.1,22.9,506) (walk 7.4m), then jump_to (74.8,22.8,507.3), a 3.5m jump", out)
+        self.assertIn("A walk to (78.1,22.9,506) (7.4m) then a 3.5m jump to (74.8,22.8,507.3) gets there.", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     def test_too_far_but_walkable(self):
         self.g.landing = {"safe": True, "too_far": True, "dist_m": 9.0, "max_m": 4.0,
                           "plan": {"walk": True, "land": [-9.0, 0.0, 0.0], "land_off_m": 0, "path_m": 9.4}}
         out = travel.jump_to(-9.0, 0.0, 0.0)
-        self.assertIn("It is walkable: move_to (-9,0,0) (path 9.4m)", out)
+        self.assertIn("It is walkable to (-9,0,0) (path 9.4m)", out)
 
     def test_blocked_landing_plan_replaces_pick_another(self):
         self.g.landing = {"safe": False, "blocked": True, "dist_m": 4.4, "reliable_m": 4.0,
@@ -246,7 +246,7 @@ class JumpLanding(Base):
                                    "land_off_m": 1.0, "jump_m": 2.5}}
         out = travel.jump_to(-6.0, 35.0, 493.0)
         self.assertIn("is on a blocked tile (wall or hole)", out)
-        self.assertIn("then jump_to (-9.4,33.6,492.4) (1m from what you asked), a 2.5m jump", out)
+        self.assertIn("then a 2.5m jump to (-9.4,33.6,492.4) (1m from what you asked) gets there", out)
         self.assertNotIn("Pick another landing", out)
 
     def test_landing_in_the_air(self):
@@ -286,7 +286,7 @@ class HazardLines(unittest.TestCase):
 
     def test_frontier_lists_hazards_after_leads(self):
         out = render.render_frontier({"leads": [], "hazards": PATCHES[:1]}, core.H)
-        self.assertEqual(out.splitlines(), ["No leads in view. Try another direction, a door, or get_map.",
+        self.assertEqual(out.splitlines(), ["No leads in view.",
                                             "HAZARD Fire 3m W (2x4m)"])
 
     def test_look_delta_shows_them_only_when_they_change(self):

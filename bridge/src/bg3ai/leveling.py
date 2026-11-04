@@ -88,9 +88,9 @@ def line(status: dict | None, label: Callable[[str], str], memory: Path | None =
         bits.append(f"{label(r['uuid']) if r.get('uuid') else r['name']} ({r['to']}{', at camp' if r.get('camp') else ''})")
         if memory is not None and plan_for(memory, r["name"], r["to"]) is None:
             missing.append(f"{r['name']} L{r['to']}")
-    tail = " → level_up(who) now, one call each, from your plan in memory/party-build.md"
+    tail = " (level_up(who) levels one member per call)"
     if missing:
-        tail += f"; no plan yet for {', '.join(missing)}: write it there first (knowledge/playbooks/party-and-leveling.md)"
+        tail += f"; memory/party-build.md has no plan for {', '.join(missing)}"
     return "LEVEL UP: " + ", ".join(bits) + tail
 
 

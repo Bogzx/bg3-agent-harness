@@ -471,17 +471,17 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
                 fix = (f"no short rests left: long rest needs {SUPPLIES_FULL_REST} supplies, have "
                        f"{sup if isinstance(sup, (int, float)) else '?'}")
             else:
-                fix = "short_rest/heal before a fight or puzzle"
-            out.append("low HP " + ", ".join(low) + f" ({fix})")
+                fix = ""
+            out.append("low HP " + ", ".join(low) + (f" ({fix})" if fix else ""))
     if partial_rest:
         out.append(partial_rest)
     if isinstance(inv, dict) and "items" in inv:
         sup = total_supplies(inv)
         if sup is not None and sup < SUPPLIES_FULL_REST:
-            out.append(f"camp supplies {supplies_text(inv)} (pick up/buy food before a long rest)")
+            out.append(f"camp supplies {supplies_text(inv)}")
         gold = inv.get("gold")
         if isinstance(gold, (int, float)) and gold < GOLD_RESERVE:
-            out.append(f"gold {gold} < {GOLD_RESERVE} reserve (sell junk: trade sell=junk)")
+            out.append(f"gold {gold} < {GOLD_RESERVE} reserve")
         for u, m in (inv.get("members") or {}).items():
             if (m or {}).get("enc"):
                 kg = ""
@@ -490,12 +490,11 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
                     if m["enc"] < 2 and isinstance(m.get("heavy"), (int, float)):
                         kg += f"; Heavily at {m['heavy']}kg"
                     kg += ")"
-                out.append(f"{name(u)} {'Heavily ' if m['enc'] >= 2 else ''}Encumbered{kg} "
-                           "(sell or stash junk: manage_inventory op=camp item=junk)")
+                out.append(f"{name(u)} {'Heavily ' if m['enc'] >= 2 else ''}Encumbered{kg}")
         lp = lantern_plan(inv)
         if lp:
             out.append(f"{name(lp['frm'])} fights with the {lp['name']} in the main hand: {name(lp['to'])} (caster) "
-                       "can hold the light for everyone (equip_best moves it and arms "
+                       "can hold it: its aura covers the party from any holder (equip_best moves it and arms "
                        f"{name(lp['frm'])})")
         ups = upgrades(inv)
         if ups:
@@ -552,8 +551,8 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
     lines = []
     lp = lantern_plan(inv)
     if lp:
-        lines.append(f"- {name(lp['to'])}: hold the {lp['name']} (its aura covers the party from any holder); "
-                     f"{name(lp['frm'])} fights with a weapon (equip_best)")
+        lines.append(f"- {lp['name']}: its aura covers the party from any holder; equip_best gives it to "
+                     f"{name(lp['to'])} and a weapon to {name(lp['frm'])}")
     for o in upgrades(inv):
         held = "" if o["holder"] == o["who"] else f" (in {name(o['holder'])}'s bag)"
         lines.append(f"- {name(o['who'])}: equip {o['name']}{held} in {o['slot']}: {o['why']}")
@@ -561,7 +560,7 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
     if j:
         val = sum((it.get("value") or 0) * _count(it) for it in j)
         kg = sum((it.get("weight") or 0) * _count(it) for it in j)
-        lines.append(f"- junk to sell: {len(j)} items, ~{val} g, {kg:.1f} kg (trade sell=junk at any trader)")
+        lines.append(f"- junk: {len(j)} items, ~{val} g, {kg:.1f} kg (trade sell=junk sells it to a trader with gold)")
     if supplies_text(inv):
         lines.append(f"- camp supplies: {supplies_text(inv)}")
     return lines
@@ -663,8 +662,7 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
             lines.append("HAND-OVER: they have no wares and no gold (a quest give, not a shop): "
                          "trade(offer=<id>, confirm=true) gives the item")
         else:
-            lines.append("TRADER HAS NO GOLD: selling would give your items away; swap for wares of equal value "
-                         "(offer=<ids>, request=<ids>) or sell elsewhere")
+            lines.append("TRADER HAS NO GOLD: selling would give your items away")
     # launch-v1 haiku act3_gold_max r2 seq 16-21: an offer re-sent with confirm named items the first call had put on
     # the table; they count as moved, and the line says which
     already = [f"{h(it)} {it.get('name') or '?'}" for it in res.get("already") or [] if isinstance(it, dict)]
@@ -757,7 +755,7 @@ def equipped_offers(inv: dict | None, uuids: list[str], name_of: Callable[[str],
         if isinstance(it, dict) and it.get("uuid") in uuids and it.get("equipped_slot"):
             who = name_of(it["owner"]) if it.get("owner") else "someone"
             out.append(f"{it.get('name') or '?'} is equipped by {who} ({it['equipped_slot']}): the trade screen lists "
-                       "only unequipped items; equip something else in that slot first, or offer another item")
+                       "only unequipped items")
     return out
 
 
@@ -806,7 +804,7 @@ def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
             + (f" | +{more} more" if more else "")
             + (" (odds ?: the window had not shown that item's odds when it was read)"
                if any(odds_unread(it) for it in items) else "")
-            + ' → pickpocket(npc, take="<name or id>"); pickpocket(npc, leave=true) leaves with nothing. The odds assume'
+            + ' (pickpocket(npc, take="<name or id>") tries one (a Sleight of Hand roll); leave=true leaves with nothing). The odds assume'
             + " nobody sees the thief: in the owner's sight a steal fails whatever they say")
 
 
@@ -816,8 +814,8 @@ def steal_text(res: dict, h: Callable[[dict], str]) -> str:
     if res.get("pending"):
         return f"stole? {what}: the roll had not finished after 5 s (get_inventory shows if it came)"
     if res.get("closed"):
-        return (f"CAUGHT? the pickpocket window closed right after Steal on {what}: a failed steal ends it (look for a "
-                f"dialogue or a crime; get_inventory shows whether it came)")
+        return (f"CAUGHT? the pickpocket window closed right after Steal on {what}: a failed steal ends it (a "
+                f"dialogue or a crime can follow; get_inventory shows whether it came)")
     roll = f"rolled {res.get('rolled')} vs DC {res.get('dc')}" if res.get("rolled") is not None else ""
     odds = f"{res.get('chance')}% chance" if res.get("chance") is not None else ""
     tail = ", ".join(x for x in (odds, roll) if x)

@@ -34,7 +34,7 @@ def _objective_ref(ref: str) -> str:
         return _uuid(label)
     except ValueError:
         raise ValueError(f"{ref} is the objective marker '{label}', not something in view by that name: "
-                         f"route(objective='{ref}', go=true) to get there, then use the eN from get_nearby") from None
+                         f"route(objective='{ref}', go=true) walks there") from None
 
 
 TELEPORT_SCROLLS = {"misty step": 18.0, "dimension door": 18.0}  # BG3 ranges (m, 3D)
@@ -68,7 +68,7 @@ def _teleport_hint(res: Any) -> str:
         if d3 <= rng(best):
             lines.append(f"TELEPORT: {core.H.get(best['uuid'], best.get('name'))} {best.get('name')} ({render.num(rng(best))}m)"
                          f" reaches the floor {lo.get('dir') or ''} from the edge {render.pos(lo['from'])}"
-                         f" ({render.num(round(d3, 1))}m): move_to the edge, then use the scroll at {render.pos(lo['to'])}")
+                         f" ({render.num(round(d3, 1))}m), landing at {render.pos(lo['to'])}")
         else:
             lines.append(f"TELEPORT: the carried {best.get('name')} reaches {render.num(rng(best))}m; the floor "
                          f"{lo.get('dir') or ''} is {render.num(round(d3, 1))}m from the edge: too far")
@@ -377,7 +377,7 @@ def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
         if r.result not in (None, {}, []):
             s += " — " + render.compact(r.result, core.H)
     elif r.status == "still_running":
-        s = f"{name}: still running (use wait to keep watching)"
+        s = f"{name}: still running"
     else:
         s = f"{name}: {r.status.upper()}"
         if r.error:
@@ -456,9 +456,9 @@ def _leave_turn_based_for_walk() -> str:
     ok, how = _set_turn_based(False)
     if ok:
         return (f"(the game had put the party in turn-based mode outside combat; left it first: {how}. In the "
-                "Shadow-Cursed Lands it comes back while anyone is cursed: keep everyone in the light)")
+                "Shadow-Cursed Lands it comes back while anyone is cursed)")
     return (f"STILL IN TURN-BASED MODE outside combat ({how}): walks get only the turn's movement; "
-            "click the Exit TB button (bottom right of the hotbar) or end_turn to get movement back")
+            "the Exit TB button (bottom right of the hotbar) or end_turn gives movement back")
 
 
 def _log_stage_ms(op: str, r: JobResult) -> None:
@@ -634,7 +634,7 @@ def _follow_on(tool: str, r: JobResult, args: dict) -> tuple[JobResult, str]:
     _async[h] = {"ctx": "server", "id": jid, "tool": tool, "t0": time.monotonic(), "eta": None,
                  "char": args.get("char")}
     core.METRICS.bg_start(h, None)
-    return r, (f"it goes on as {h}: its end shows as job_finished in a later result; wait_for('{h}') waits for it "
+    return r, (f"it goes on as {h}: its end shows as job_finished in a later result "
                f"(sending {tool} again would supersede it)")
 
 

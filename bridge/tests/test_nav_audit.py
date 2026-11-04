@@ -35,7 +35,7 @@ class KilledLevelWays(unittest.TestCase):
         out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}], "ways_off": "slow"},
                                      core.H)
         self.assertIn("WAYS walkable: N 20m+", out)
-        self.assertIn("WAYS partial: path searches are throttled on this level", out)
+        self.assertIn("WAYS partial: a throttled level searches up to 2 directions per read", out)
 
     def test_no_line_on_a_healthy_level(self):
         out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}]}, core.H)

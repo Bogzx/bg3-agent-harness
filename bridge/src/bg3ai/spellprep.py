@@ -101,7 +101,7 @@ def _unasked(plan: dict, after: dict | None, want_in: set[str], want_out: set[st
     if not bits:
         return ""
     return ("ALSO CHANGED (not asked: the spellbook cells carry no names and a look-alike's cell was clicked): "
-            + "; ".join(bits) + " — prepare_spells again to put it back")
+            + "; ".join(bits) + " (prepare_spells can put it back)")
 
 
 def prepare(game, char: str, add: list[str], remove: list[str], select: Callable[[str], str] | None = None) -> str:

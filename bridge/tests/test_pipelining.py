@@ -400,7 +400,7 @@ class HelmLadders(Base):
         self.assertIn("REFUSED: the goal is 11m above you", out)
         self.assertIn(f"likely: {self.e57} Arterial Mesh <ladder> 6m N (climbs 10.1m up), {self.e56} ", out)
         self.assertIn(f"{self.e56} Arterial Mesh <ladder> 3.1m S (climbs 2.9m down)", out)
-        self.assertIn(f"interact {self.e57} (or queue_actions [interact {self.e57}, travel_to ...])", out)
+        self.assertIn(f"The way there is likely: {self.e57} ", out)
 
     def test_from_the_lower_deck_names_both_climbs_in_order(self):
         self.leads = [{"uuid": self.E57, "name": "Arterial Mesh", "kind": "ladder", "dist": 8.6, "dir": "N",
@@ -410,8 +410,7 @@ class HelmLadders(Base):
         out = travel_macro._other_floor(P1, [-43.0, 5.0, -362.0], self.HELM)
         self.assertIn(f"likely: {self.e56} Arterial Mesh <ladder> 1.1m N (climbs 2.9m up), "
                       f"{self.e57} Arterial Mesh <ladder> 8.6m N (climbs 10.1m up, from a floor 2.7m above you)", out)
-        self.assertIn(f"interact {self.e56}, then interact {self.e57} (or queue_actions [interact {self.e56}, "
-                      f"interact {self.e57}, travel_to ...]), then travel_to again", out)
+        self.assertIn(f"It takes two: {self.e56}, then {self.e57}.", out)
 
     def test_ranking_without_a_goal_or_climb_data_stays_nearest_first(self):
         far = {"uuid": "x1", "kind": "stairs", "dist": 9.0}

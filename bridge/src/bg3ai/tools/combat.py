@@ -147,7 +147,7 @@ def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) 
                 or (isinstance(r.result, dict) and r.result.get("began")):
             # review M3: past the cell (targets clicked) the cast may have started: never a second cast
             hb["tail"] = (f"hotbar: the route failed at {res.stage} ({res.detail.get('why') or res.reason}); "
-                          "not cast again by Osiris (the cast may have started: check the NOW line / CHANGES)")
+                          "not cast again by Osiris (the cast may have started: the NOW line / CHANGES show it)")
             return None
         two = {k: v for k, v in args.items() if k not in ("target", "targets")}
         two.update(target=picks[0], **({} if _one_pick(picks) else {"targets": picks[1:2]}))
@@ -233,7 +233,7 @@ def _hand_back(char: str) -> str:
     try:
         how = hotbar.cancel(core.game, inp, char)
     except GameError as e:
-        return f"the spell in hand could not be put back ({e}): press_key ESCAPE"
+        return f"the spell in hand could not be put back ({e}); press_key ESCAPE puts it back"
     return f"the spell was still in hand after the cast: put back ({how})" if how else ""
 
 
@@ -314,7 +314,7 @@ def _opener_combat(tu: str, res: Any, talk_before: bool = False) -> str:
     dmg = res.get("total_damage") if isinstance(res, dict) else None
     if isinstance(dmg, (int, float)) and dmg > 0:
         return (f"combat: NOT started — {queueing._label(tu)} took {render.num(dmg)} damage but no fight began "
-                "(dormant or unaware; it acts only once combat starts): attack again or move on")
+                "(dormant or unaware; it acts only once combat starts)")
     return f"combat: not started (no hit on {queueing._label(tu)} seen)"
 
 
@@ -384,7 +384,7 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
         return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {busy}", r.events,
                          r.elapsed_ms)
     return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn didn't end it either (a cutscene or line "
-                     "may be holding the turn: wait_for, then end_turn again)", r.events, r.elapsed_ms)
+                     "may be holding the turn)", r.events, r.elapsed_ms)
 
 
 @core.mcp.tool()
@@ -512,7 +512,7 @@ def _wait_for_party_turn(max_s: float) -> str:
             return f"waiting stopped: {ui.get('screen')} on screen\n" + "\n".join(reporting._render_ui(ui))
         if time.monotonic() > deadline:
             reporting._batch["last"] = "interrupted"
-            return "other combatants are still acting (use wait or get_combat_state)"
+            return "other combatants are still acting"
         time.sleep(turn_slots.TURN_POLL_S)
 
 
@@ -537,7 +537,7 @@ def flee(who: str | None = None) -> str:
         # live4 §5: _name_of gives the handle for a hostile never named in a result ("e7 e7"); state.combat names it
         who_near = near[2] or overview._name_of(near[1])
         return (f"REFUSED: enemy too close: {core.H.get(near[1])} {who_near} at {near[0]:.1f} m; "
-                f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip). Get farther first.")
+                f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip).")
     # The metrics record's flee numbers (not the agent's text), filled in place up to the record's write: client op ->
     # [calls, ms], and the hover search's tries and outcome
     ops: dict[str, list] = {}
@@ -681,7 +681,7 @@ def end_combat_report(what_worked: str, what_to_change: str, next_goal: str) -> 
     if path:
         with open(path, "a") as f:
             f.write(f"- {time.strftime('%H:%M')} COMBAT REPORT worked: {what_worked} | change: {what_to_change} | next: {next_goal}\n")
-    return reporting._finish("end_combat_report", {}, f"Logged to {path.name if path else '(no session log)'}. Now loot and heal up.", t0)
+    return reporting._finish("end_combat_report", {}, f"Logged to {path.name if path else '(no session log)'}.", t0)
 
 
 _NOTE_TIME = re.compile(r"^(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)\s+")

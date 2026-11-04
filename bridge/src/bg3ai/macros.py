@@ -296,6 +296,6 @@ def crossing_ok(ex: dict, hp: Any, max_hp: Any, policy: str = "auto") -> tuple[b
     worst = crossing_worst(ex)
     if isinstance(hp, (int, float)) and isinstance(max_hp, (int, float)) and max_hp > 0 and worst > 0:
         if hp - worst < max(3.0, max_hp * CROSS_HP_RESERVE_PCT / 100.0):
-            return False, (f"HP {hp:g}/{max_hp:g} is too low for the worst case (~{worst:g} dmg): heal first "
-                           "(potion, restoration pod, short rest) or travel_to(avoid_hazards='cross')")
+            return False, (f"HP {hp:g}/{max_hp:g} is too low for the worst case (~{worst:g} dmg); "
+                           "travel_to(avoid_hazards='cross') crosses anyway")
     return True, ""

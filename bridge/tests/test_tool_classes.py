@@ -24,9 +24,9 @@ _CHECKS = {"startswith", "endswith", "replace", "split", "compile", "match", "se
 # Strings in the tool code that name a failure but are no call's outcome (file, text as rendered by _render).
 NOT_OUTCOMES = {
     ("dialogue.py", " → FAILED"),  # the roll failed; roll_check worked
-    ("saver.py", "⚠ SAVE FAILED 'x': x; call save_game again"),  # a background save's note, on any later result
-    ("saver.py", "⚠ SAVE FAILED 'x': no save folder appeared within xs (x). On disk: x. Call save_game again"),
-    ("saver.py", "⚠ SAVE FAILED 'x': the game could not save for x min (x); call save_game again"),
+    ("saver.py", "⚠ SAVE FAILED 'x': x"),  # a background save's note, on any later result
+    ("saver.py", "⚠ SAVE FAILED 'x': no save folder appeared within xs (x). On disk: x."),
+    ("saver.py", "⚠ SAVE FAILED 'x': the game could not save for x min (x)"),
     ("inventory.py", "\nFAILED: x"),  # manage_inventory / equip_best: the items that failed, under "partly done"
     ("progression.py", "swap back FAILED: x"),  # level_up's line after the levels it did
 }

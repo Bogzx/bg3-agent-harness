@@ -136,7 +136,7 @@ class SaverTest(unittest.TestCase):
         s.save("x")
         self.assertTrue(wait_until(lambda: s.pending is None))
         self.assertFalse(s.ui_busy)
-        self.assertIn("SAVE FAILED 'x': save page did not open; call save_game again", s.take_notes())
+        self.assertIn("SAVE FAILED 'x': save page did not open", s.take_notes())
 
     def test_a_conversation_during_the_menus_queues_it_once_more(self):
         # S067 #77: Orin died, the Emperor's conversation took the screen at the menus' accept step: SAVE FAILED
@@ -171,7 +171,7 @@ class SaverTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: s.pending is not None and s.pending["phase"] == "queued"))
         rig.can = True
         self.assertTrue(wait_until(lambda: s.pending is None))
-        self.assertIn("SAVE FAILED 'x': save page did not open; call save_game again", s.take_notes())
+        self.assertIn("SAVE FAILED 'x': save page did not open", s.take_notes())
 
     def test_no_folder_on_disk_is_a_failure(self):
         saver.DISK_WAIT_S = 0.3

@@ -116,7 +116,7 @@ class PressEscape(unittest.TestCase):
         self.assertEqual(fake.keys, ["ESCAPE", "RESUME:Resume", "ESCAPE"])
         self.assertIn("STILL OPEN", out)
         self.assertNotIn("closed it again", out)
-        self.assertIn("choose_dialogue", out)
+        self.assertIn("ESCAPE does not leave a conversation; its Leave/exit answer does", out)
 
     def test_escape_on_game_menu_closes_it_once(self):
         fake = self.use(["game_menu", "game"])

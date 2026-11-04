@@ -36,9 +36,8 @@ STALE_TRIP_M = longnav.FT_MIN_M
 def _at_camp_line(uuid: str) -> str:
     """A camp member out of sight: where the game says they are (the camp), not a last sighting."""
     here = overview._at_camp(core.game.try_rpc("ui.state", context="client"))
-    return (f"{queueing._label(uuid)} is at camp now (the camp roster), not where the party last saw them: "
-            + ("walk around the camp to find them (look / get_nearby), then talk_to again" if here else
-               "camp() takes the party there; then find them in the camp (look / get_nearby)"))
+    return (f"{queueing._label(uuid)} is at camp now (the camp roster), not where the party last saw them"
+            + ("; the party is at camp" if here else ""))
 
 
 def _camp_pos(uuid: str) -> list | None:
@@ -56,10 +55,8 @@ def _stale_trip_line(target: str, seen: tuple[list, int | None], here: list, d: 
     wp = longnav.pick_waypoint(here, seen[0], wps)
     trip = (f"a fast travel to {wp['name']} + a {render.num(round(wp['to_goal_m']))}m walk" if wp
             else f"a {render.num(round(d))}m walk")
-    x, y, z = (render.num(round(v, 1)) for v in seen[0])
     return (f"NOT TRAVELLED: {target} is out of sight; the party last saw them{ago} {render.pos(seen[0])}, "
-            f"{render.num(round(d))}m away ({trip}). They may have moved since. To go anyway: "
-            f"travel_to x={x}, y={y}, z={z}, then talk_to {target}")
+            f"{render.num(round(d))}m away ({trip}). They may have moved since.")
 
 
 def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, step) -> str | None:
@@ -347,8 +344,7 @@ def fast_travel(waypoint: str) -> str:
         return reporting._finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + (
             f"fast_travel: FAILED — the game's party ready check for the trip failed ({inventory._ready_label(watch.failed)}); stopped "
             f"waiting at once (S032: 66 s each). A broken ready check comes with a long-lived game process (the "
-            f"runner relaunches the game between sessions); until then walk (travel_to) or try a waypoint in this "
-            f"region"), time.monotonic())
+            f"runner relaunches the game between sessions)"), time.monotonic())
     if out.rstrip().endswith("travelling"):
         # The box needed a mouse click (region change): the mod's job had stopped there, so nothing watched the
         # trip. Live 11:4x: "travelling" came back mid-load and the next reads saw the loading screen.
@@ -799,8 +795,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
         # reason. Same area pre-check as camp(): a greyed camp button (Location) answers at once, with the way out.
         b = _travel_block()
         if b.get("error") == "Location":
-            return done("swap_party: FAILED at go to camp — cannot travel right now —" + _camp_block_text(b)
-                        + " Swap once camp() works again.")
+            return done("swap_party: FAILED at go to camp — cannot travel right now —" + _camp_block_text(b))
         r = core.game.run_job("act.go_to_camp", {}, wait_s=60)
         if r.status != "done" and "already at camp" not in str(r.error or ""):
             # (live 11:14: with the level-up page up the UI didn't say "camp" while the story's DB did: not a failure)
@@ -813,8 +808,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
         time.sleep(1.0)
         ui = core.game.try_rpc("ui.state", context="client") or {}
         if ui.get("screen") == "dialogue":
-            return done("\n".join(steps + ["STOPPED: a camp scene started on arrival: answer it (choose_dialogue), "
-                                            f"then swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again"]
+            return done("\n".join(steps + ["STOPPED: a camp scene started on arrival"]
                                    + reporting._render_ui(ui)))
         # state.camp gives a companion's camp spot only while the party is at camp (vis V22): read it on arrival
         info = core.game.try_rpc("state.camp") or {}
@@ -838,7 +832,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
             return done("\n".join(steps + [
                 f"swap_party: NOT YET — {inc.get('name')} hasn't come back to its camp spot since the long rest "
                 f"(still where the rest's scene left it, {waited:.0f} s waited: {plumbing._job_text('talk_to', r)}). Not a "
-                f"refusal: swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again in a minute"]))
+                f"refusal"]))
         steps.append(f"waited {waited:.0f} s for {inc.get('name')} to return to its camp spot after the long rest")
         inc = moved
         steps.append(_walk_up_to(talker, inc["uuid"], str(inc.get("name")), inc.get("pos")))
@@ -901,7 +895,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
                         f"The game decides when (story/quest state, e.g. after a camp scene or a quest step). Left the "
                         f"conversation; the PARTY hint skips {name} in this region."]))
             if i is None:
-                stop = "no join/swap answer recognised: pick it with choose_dialogue (then camp(action='leave'), regroup)"
+                stop = "no join/swap answer recognised"
                 break
             if what != "continue":
                 txt = next((str(o.get("text")) for o in opts if int(o.get("i") or 0) == i), "")
@@ -953,7 +947,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
     left = outr is None or outr["uuid"] not in now
     if not joined:
         return done("\n".join(steps + [f"swap_party: FAILED — {inc.get('name')} did not join (party: "
-                                        + ", ".join(queueing._label(u) for u in now) + "). Talk to it: talk_to(\"" + str(inc.get("name")) + "\")"]))
+                                        + ", ".join(queueing._label(u) for u in now) + ")"]))
     steps.append(f"{queueing._label(inc['uuid'])} joined" + (f", {outr.get('name')} waits at camp" if outr is not None and left else ""))
     if outr is not None and not left:
         steps.append(f"WARNING: {outr.get('name')} is still in the party")

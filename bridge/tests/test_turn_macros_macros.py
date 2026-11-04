@@ -202,7 +202,7 @@ class LootArea(Base):
         self._in_convo(99)
         self.g.ui = {"screen": "dialogue"}
         out = macro_tools.loot_area()
-        self.assertIn("STOPPED: a conversation is open: answer it (choose_dialogue)", out)
+        self.assertIn("STOPPED: a conversation is open; not reached", out)
         self.assertIn(f"not reached: {self.chest} Chest, {self.gob} Goblin", out)
         self.assertEqual(len(self.g.ops("act.interact")), 1)
         self.assertEqual(self.corpses, [])
@@ -279,7 +279,7 @@ class DialogueAdvance(Base):
             out = macro_tools.dialogue_advance()
             self.assertLess(time.monotonic() - t, 2.5)  # not DIALOGUE_LINE_WAIT_S (15 s)
             self.assertIn("STOPPED: line still playing (a line playing 4s, " + says, out)
-            self.assertIn("wait_for dialogue_ended or level_changed", out)
+            self.assertIn("it wants no input)", out)
         self.g.autoskip = {"on": True, "line": {"id": 7, "notext": True, "tries": 60, "age": 61000, "blocked": "tries"}}
         self.assertIn("a cinematic shot playing 61s", macro_tools.dialogue_advance())
         self.g.autoskip = {"on": False}
@@ -488,7 +488,7 @@ class TravelTo(Base):
         self.addCleanup(setattr, overview, "_objective_markers", orig)
         out = travel_macro.travel_to(objective="o1", wait=True)
         self.assertIn("arrived", out)
-        self.assertIn('o1 Escape Route moved on: now 66.8m N: travel_to(objective="o1") again', out)
+        self.assertIn("o1 Escape Route moved on: now 66.8m N", out)
         self.assertEqual(calls[-1], 0.0)  # a fresh read on arrival, not the cached markers
 
     def test_no_way_further(self):
@@ -576,7 +576,7 @@ class TravelTo(Base):
     def test_marker_on_another_level(self):
         (self.tmp / "markers.json").write_text(json.dumps([{"id": "m1", "label": "x", "pos": [1, 0, 0],
                                                              "level": "WLD", "region": "Wilderness"}]))
-        self.assertIn("fast_travel there first", travel_macro.travel_to(marker="m1", wait=True))
+        self.assertIn("is in Wilderness (another region)", travel_macro.travel_to(marker="m1", wait=True))
 
 
 class Regroup(Base):
@@ -644,7 +644,7 @@ class RestIfNeeded(Base):
         self.g.watch["party"][0]["hp"] = 2
         self.g.refuse_if = lambda op, a: "no short rests left" if op == "ui.short_rest" else None
         out = travel_macro.rest_if_needed()
-        self.assertIn("long rest at camp", out)
+        self.assertIn("no short rest worked", out)
         self.assertEqual(self.g.ops("ui.long_rest"), [])
         travel_macro.rest_if_needed(allow_long=True)
         self.assertEqual(len(self.g.ops("act.go_to_camp")), 1)

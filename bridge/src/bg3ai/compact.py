@@ -170,8 +170,6 @@ HINT_RULES: list[tuple[str, str, str]] = [
      ": send its combat_turn now"),
     ("combat_started", r"COMBAT STARTED \(no get_combat_state needed\):", "COMBAT STARTED:"),
     ("no_change", r"No change since your last look \(full=true shows everything\)\.", "No change since your last look."),
-    ("saving", r" in the background \(~2 s with the game's save freeze; your next call waits for them\)\. Keep playing; "
-               r"SAVED shows on a later result\.", " in the background; SAVED shows later."),
     ("shared_turn", r" can all act now, in any order \((?:who=<member> on each action, end_turn for each|combat_turn who=\.\.\., "
                     r"end each one's turn)\)",
      " can all act now, any order"),
@@ -180,7 +178,6 @@ HINT_RULES: list[tuple[str, str, str]] = [
     ("plan_them", r" — plan them from this state \(combat_turn again\)\.", " — plan them (combat_turn again)."),
     ("retarget", r" \(retarget:false keeps it\)", ""),
     ("climb", r" \[interact to climb\]", ""),
-    ("sell_junk", r" \(sell junk: trade sell=junk\)", ""),
     ("combat_over", r"combat is over: loot, heal, then end_combat_report", "combat is over"),
     ("floors_rel", r" \(m, relative to you\)", ""),
     ("walks_it", r"^NEXT: travel_to/move_to walks it$", ""),

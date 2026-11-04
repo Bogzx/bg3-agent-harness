@@ -227,8 +227,8 @@ class Game:
                     # Pass 4 (10:29, 10:43): right after a load/boot the mod's Lua isn't up yet ("attempt to
                     # index a nil value (field 'BG3AI')", "server context runs once a save is loaded"); the raw
                     # Lua text reached the agent. Same NotReady as a load in progress.
-                    raise NotReady("the game is still loading, or at the main menu (the mod isn't up yet): retry in a few "
-                                   "seconds") from e
+                    raise NotReady("the game is still loading, or at the main menu (the mod isn't up yet): the mod answers "
+                                   "once the game has loaded") from e
                 raise GameError(msg) from e
             finally:
                 self._release(client, ok)

@@ -166,7 +166,7 @@ class PrepareSpells(Base):
         out = self.call(who="Claude", add=["Bless"])
         self.assertIn("prepare_spells: FAILED — Bless not prepared", out)
         self.assertIn("ALSO CHANGED (not asked: the spellbook cells carry no names and a look-alike's cell was "
-                      "clicked): unprepared Shield of Faith — prepare_spells again to put it back", out)
+                      "clicked): unprepared Shield of Faith (prepare_spells can put it back)", out)
 
     def test_refusal_is_said_and_nothing_is_clicked(self):
         self.g.refused = ("over the limit: Claude can prepare 3 spells and has 3 prepared (Bless, Cure Wounds, "
