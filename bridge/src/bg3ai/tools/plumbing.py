@@ -744,7 +744,8 @@ def _combat_changes(tool: str, ended: bool = True) -> str:
     if not (isinstance(w, dict) and w.get("combat")):
         return batch.walk_end_tail().lstrip("\n") if ended and tool in batch.ARRIVAL_LEAD_TOOLS else ""
     got: dict = {}  # the clouds and surfaces in view ride in the same read: HAZARD lines when they changed
-    changes = delta.changes_text(core.game, core.H, (*delta.ACTION_PARTS, "hazards"), got=got)
+    # events=True: the result's EVENTS drain (_finish) rides in this read's evals, not one more tick after it
+    changes = delta.changes_text(core.game, core.H, (*delta.ACTION_PARTS, "hazards"), got=got, events=True)
     return "\n".join([x for x in (changes,) if x] + overview._hazard_lines(got.get("hazards")))
 
 

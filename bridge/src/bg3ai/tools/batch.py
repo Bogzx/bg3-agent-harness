@@ -664,7 +664,8 @@ def walk_end_tail(walked: bool = True, got: dict | None = None) -> str:
     out of combat and dialogue, the minimap block, both from one read (the frontier in the same eval). ''/lines
     each starting with a newline. got: filled with what the read fetched (regroup's PASSED line reads it)."""
     got = {} if got is None else got
-    changes = delta.changes_text(core.game, core.H, delta.ACTION_PARTS + (("frontier",) if walked else ()), got=got)
+    changes = delta.changes_text(core.game, core.H, delta.ACTION_PARTS + (("frontier",) if walked else ()), got=got,
+                                 events=True)  # the result's EVENTS drain rides in this read's evals
     block = ""
     st = got.get("status")
     if walked and not (isinstance(st, dict) and (st.get("in_combat") or st.get("in_dialogue"))):

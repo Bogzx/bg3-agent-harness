@@ -691,13 +691,14 @@ def snapshot_of(H: Handles, got: dict) -> dict:
 
 
 def changes_text(game: Any, H: Handles, parts: tuple = ACTION_PARTS, tracker: Tracker | None = None,
-                 got: dict | None = None) -> str:
+                 got: dict | None = None, events: bool = False) -> str:
     """For action tools: "CHANGES\\n  <lines>" since the agent's last look, or "" if nothing changed.
     got: filled with what was fetched (the minimap block reads its parts from the same read).
+    events: drain both contexts' events in the same evals (fetch), for the result's EVENTS section that follows.
     Never raises (an action result must not fail because the observation did)."""
     tr = tracker or TRACKER.bind(H)
     try:
-        fetched = fetch(game, parts)
+        fetched = fetch(game, parts, events=events)
         if got is not None:
             got.update(fetched)
         lines = tr.observe(snapshot_of(H, fetched))
