@@ -38,8 +38,10 @@ dependencies, in one uv workspace (root `pyproject.toml`, one `uv.lock`; members
 
 The benchmark and the app import only the harness, never each other, and the harness imports neither. This is
 checked by import-linter contracts (`tools/ci/import_contracts.py`) and a boundary test (`tools/ci/test_boundaries.py`).
-`runner/play.py` (4,933 lines, on the line-cap allowlist and shrinking) still drives play sessions; the modules
-already moved out of `runner/` are one-line shims (`runner/_harness.py`, `tools/ci/runner_shims.py` checks them).
+`runner/play.py` (346 lines, the CLI) still drives play sessions through `runner/legacy_cli.py` (632) and
+`runner/legacy_series.py` (658); the session host is `bg3harness/runner/run_host.py` (994). None is on the line-cap
+allowlist. The modules already moved out of `runner/` are one-line shims (`runner/_harness.py`,
+`tools/ci/runner_shims.py` checks them).
 
 ```
 ┌──────────── agent client (one play process; Claude Code by default) ─────────┐
@@ -48,7 +50,7 @@ already moved out of `runner/` are one-line shims (`runner/_harness.py`, `tools/
 └───────────────┬──────────────────────────────────────────────────────────────┘
                 │ MCP (stdio; streamable HTTP for a client in a container)
 ┌───────────────▼──────────── bridge/ : bg3 MCP server (bg3ai) ────────────────┐
-│ server.py (165 lines) + tools/*.py: 95 tools in 23 group modules             │
+│ server.py (166 lines) + tools/*.py: 94 tools in 22 group modules             │
 │ BG3AI_TOOLS / BG3AI_TOOLS_OFF remove tool groups at startup (capabilities.py)│
 │ short handles (e12) instead of GUIDs · narrated text · event deltas ·        │
 │ blocking actions with interrupts · session clock · wiki · screenshots ·      │
@@ -133,12 +135,12 @@ The bridge reads the rings through `bridge/src/bg3ai/referee.py`; the harness's 
 (`bg3harness.facts.RingFeed`) drains them into `facts.jsonl` and `rolls.jsonl` in the run's directory.
 
 ### The bridge (`bridge/`, package `bg3ai`)
-`server.py` is now 165 lines: it builds the server and keeps the memory keeper's separate server
+`server.py` is now 166 lines: it builds the server and keeps the memory keeper's separate server
 (`BG3AI_KEEPER_MODE=1`). The tools live in `bridge/src/bg3ai/tools/`, one module per group (`core`, `reporting`,
 `plumbing`, `overview`, `observe`, `world_tools`, `travel`, `dialogue`, `combat`, `memory`, `inventory`,
-`progression`, `uitools`, `newgame`, `batch`, `queueing`, `turn_plan`, `turn_slots`, `turn_tool`, `macro_tools`,
+`progression`, `uitools`, `newgame`, `batch`, `queueing`, `turn_plan`, `turn_slots`, `macro_tools`,
 `travel_macro`, `saving`, `session`), registered in the `MODULES` order of `tools/__init__.py`. The full registry
-is 95 tools; `play/knowledge/tools.md` lists them.
+is 94 tools (`bridge/tests/golden/tools_list.json`); `play/knowledge/tools.md` lists them.
 
 **Capabilities.** `bridge/src/bg3ai/capabilities.py` groups the optional tools: `memory` (the memory tools, `note`,
 `session_start`, `end_session`, `recall`), `wiki`, `reload` (`load_game`), `saves`, `screenshots` and `raw_input`
