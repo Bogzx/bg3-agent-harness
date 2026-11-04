@@ -152,6 +152,9 @@ def render_path(res: Any, H: Handles) -> str:
             bits.append(f"| provokes an attack of opportunity from {H.get(p['uuid'], p.get('name'))} "
                         f"{p.get('name') or ''}".rstrip()
                         + f" where it leaves its reach @{pos(p.get('at'))}, {num(p.get('along_m', '?'))}m along")
+    if any(isinstance(p, dict) and p.get("uuid") for p in res.get("provokes") or []):
+        # window 11 J1b: the engine cancels a jump that draws one (the attack still comes, nothing of the jump spent)
+        bits.append("| a jump that draws an attack of opportunity is cancelled by the game (the attack still comes)")
     return " ".join(bits)
 
 

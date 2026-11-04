@@ -241,3 +241,47 @@ test("path_provokes: a visible enemy with its reaction whose reach the path leav
     BG3AI.Visibility = saved
     if not ok then error(err, 0) end
 end)
+
+-- Window 11 J1b (live.md L7 (e)): Karlach's jump out of the Destroyer's reach: ReactionInterruptUsed and the jump's
+-- CastSpellFailed (outcome Canceled) in the same ms, interrupt first; the AoO's CastSpell +1.97 s, CastedSpell +2.44 s.
+test("combat jump: the game's cancel when it draws an opportunity attack is said as that; a Canceled without a "
+    .. "foe's interrupt (or after an ally's) keeps the engine's words (W11 J1b)", function()
+    local function jump(interrupter)
+        reset()
+        combat_setup(12)
+        stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+        stats.Target_MainHandAttack = { DisplayName = "Main Hand Attack" } -- reset() cleared seen_stub's
+        world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+        osiv[key("GetAbility", P1, "Strength")] = 16
+        party_rows = { P1, P2 }
+        cast_outcome = "Canceled"
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 3.5, 0, 0 } }))
+        eq(j.status, "running", "ordered " .. tostring(j.error))
+        tick()
+        if interrupter then A.dispatch("ReactionInterruptUsed", { interrupter, "Interrupt_AttackOfOpportunity", 1 }) end
+        A.dispatch("CastSpellFailed", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+        return j
+    end
+    local restore = seen_stub()
+    local ok, err = pcall(function()
+        local j = jump(NPC)
+        eq(j.status, "running", "held for the attack it drew")
+        tick(32)
+        A.dispatch("CastSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(8)
+        A.dispatch("CastedSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(12)
+        eq(j.status, "failed", "status")
+        eq(j.error, "the jump didn't happen: the game cancelled it when it drew the attack of opportunity; movement "
+            .. "and bonus action not spent", "why")
+        eq(#(j.result and j.result.reactions or {}), 1, "the attack listed")
+        for _, who in ipairs({ false, P2 }) do
+            j = jump(who)
+            tick(80)
+            eq(j.status, "failed", "status")
+            eq(j.error, "the game refused the cast: the cast was cancelled (the game's Canceled)", tostring(who))
+        end
+    end)
+    restore()
+    if not ok then error(err, 0) end
+end)
