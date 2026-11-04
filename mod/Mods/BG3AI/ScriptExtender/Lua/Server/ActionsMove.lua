@@ -97,8 +97,10 @@ local function walk_arrived(job)
             why = string.format("the walk ended %.1f m from the target, beyond the %.1f m range", de, w.melee)
         elseif w.picked and d then
             -- walk_toward's own point (the farthest walkable one it found), not one the agent named
+            -- res.reason is the pathfinder's own (set above: d > 2.0, no target); the pick is the engine path's
+            -- end, so a short stop there is often a creature, door or jump, not the end of the ground (REVIEW-13 #2)
             why = string.format("stopped %.1f m short of the spot walk_toward picked (the farthest walkable point %s):"
-                .. " the walkable ground ends about there; walked %.1f m", d, w.picked, w.travelled)
+                .. " %s; walked %.1f m", d, w.picked, tostring(res.reason), w.travelled)
         end
         RPC.finish_job(job, "failed", res, why)
     else
