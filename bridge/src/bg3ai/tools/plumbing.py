@@ -68,7 +68,7 @@ def _teleport_hint(res: Any) -> str:
         if d3 <= rng(best):
             lines.append(f"TELEPORT: {core.H.get(best['uuid'], best.get('name'))} {best.get('name')} ({render.num(rng(best))}m)"
                          f" reaches the floor {lo.get('dir') or ''} from the edge {render.pos(lo['from'])}"
-                         f" ({render.num(round(d3, 1))}m), at {render.pos(lo['to'])}")
+                         f" ({render.num(round(d3, 1))}m), landing at {render.pos(lo['to'])}")
         else:
             lines.append(f"TELEPORT: the carried {best.get('name')} reaches {render.num(rng(best))}m; the floor "
                          f"{lo.get('dir') or ''} is {render.num(round(d3, 1))}m from the edge: too far")
