@@ -7,7 +7,7 @@ import math
 import pytest
 from test_arena_ratings import MIXED, league, m, pairing
 
-from bg3bench import arena
+from bg3bench import arena, stats
 
 
 def test_each_pair_counts_its_pairings_by_points_and_its_cap_draws():
@@ -120,3 +120,39 @@ def test_results_fit_the_seat_on_each_self_pairings_first_match():
         [(x["player"], x["elo"]) for x in plain["models"]]
     )  # the ratings don't move
     assert {x["player"]: x["rated"] for x in r["models"]} == {"x": True, "y": True}  # d: no complete pairing
+
+
+def test_a_pairs_interval_resamples_its_pairings():
+    # each model wins its side-A match: the shared dice and order cancel inside every pairing, so the rate is 0.5 in
+    # every resample; a Wilson interval over the 40 matches as if independent spans about 0.35-0.65
+    splits = [x for k in range(20) for x in pairing(f"t{k:02d}", "x", "y", "A", "A")]
+    (row,) = arena.results(splits, seed=1, b=200)["pairs"]
+    assert (row["win_rate"], row["n_pairings"]) == (0.5, 20)
+    assert row["ci"] == [0.5, 0.5]
+
+
+def leaning(pattern):
+    """10 pairings of x and y with one round-1 pattern in both matches (the seed fixes it): side A wins both matches of
+    the first five pairings, side B both of the rest; plus a self-pairing and its replay."""
+    out = []
+    for k in range(10):
+        won = "A" if k < 5 else "B"
+        out += [dict(x, r1_pattern=pattern) for x in pairing(f"q{k}", "x", "y", won, won)]
+    return out + [dict(m("s", "d", "d", "A"), r1_pattern=pattern), dict(m("s", "d", "d", "B"), r1_pattern=pattern)]
+
+
+def test_seat_rates_count_pairings_not_matches():
+    # a pairing's two matches share the seed's order and its dice per seat, so a seat that wins one tends to win both:
+    # 21 matches but 11 samples, and the interval is wider than a Wilson interval over the matches
+    r = arena.results(leaning("A1|B1|A1|B1"), seed=1, b=500)
+    first, by = r["first_actor"], r["by_pattern"]["A1|B1|A1|B1"]
+    wilson = stats.wilson(11, 21)  # side A acts first; the self-match's side A wins too: 11 of 21
+    assert (first["n_matches"], first["n_pairings"], first["rate"]) == (21, 11, pytest.approx(11 / 21))
+    assert first["ci"][0] < wilson[0] and first["ci"][1] > wilson[1]
+    assert (by["n_matches"], by["n_pairings"]) == (21, 11)
+    for rate in (by["first_actor"], by["side_a"]):
+        assert rate["ci"][0] < wilson[0] and rate["ci"][1] > wilson[1]
+    fav = arena.results(leaning("A1|B2|A1"), seed=1, b=500)["favoured"]  # side B holds the pair: 10 of 21
+    wilson = stats.wilson(10, 21)
+    assert (fav["n_matches"], fav["n_pairings"], fav["rate"]) == (21, 11, pytest.approx(10 / 21))
+    assert fav["ci"][0] < wilson[0] and fav["ci"][1] > wilson[1]

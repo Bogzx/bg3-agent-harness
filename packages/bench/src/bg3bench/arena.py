@@ -40,7 +40,8 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
 - `pairs`: per model pair over complete pairings (both matches valid; a pairing short of one is `incomplete` and left
   out, its side advantage doesn't cancel): pairings won / split / lost by the first model (more, equal or fewer of
   the pairing's two points: a 2-0 is won, a 1-1 split), matches w/d/l, the match win rate (a draw = half a win) with
-  its Wilson interval, n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row);
+  its `ci` (a bootstrap over the pair's pairings, like every rate interval here: a pairing's two matches share the
+  seed's initiative and its dice per seat, docs/ARENA-RESULTS.md "Dice", so the pairing is one sample), n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row);
   `pentanomial` counts the pairings by the first model's points ("2", "1.5", "1", "0.5", "0"), `draws` the cap
   draws by reason, `sign_p` is the exact two-sided sign test on won vs lost pairings, and `provisional` marks a
   rated row under PROVISIONAL_PAIRINGS.
@@ -48,9 +49,9 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
   pairings: an interval that excludes 0.5 says the arena favours a side. A self-pair's second valid match in a
   pairing is left out here and in the next two (same seed, mirror twins, same model: a replay, REVIEW-7 f2).
 - `by_pattern`: per round-1 phase pattern (grade's `r1_pattern`, e.g. "A1|B2|A1"; "none" without one): n_matches,
-  side A's win rate and round 1's first actor's win rate, each {rate, wilson} (a draw = half):
+  n_pairings, side A's win rate and round 1's first actor's win rate, each {rate, ci} (a draw = half):
   if one pattern decides most matches, the seed's initiative order outweighs the models' play.
-- `first_actor`: round 1's first actor's win rate (a draw = half) with its Wilson interval and n, over valid matches
+- `first_actor`: round 1's first actor's win rate (a draw = half) with its ci, n_matches and n_pairings, over valid matches
   with a pattern: the seat measure for any turn order, an alternation rule's too (seat fix O3/O3a).
 - `favoured`: the pair side's win rate the same way, over the matches whose round 1 gives one side alone a
   back-to-back pair (`favoured`; REVIEW-7 a: from the order alone, never the result); none under an alternation rule.
@@ -689,20 +690,31 @@ def _distinct(matches: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return out
 
 
-def _rate(ms: list[tuple[str, Mapping[str, Any]]]) -> dict:
-    """{n_matches, rate, wilson}: the named side's win rate (a draw = half) over (side, match) pairs."""
-    k = sum(_points(m, side) for side, m in ms)
-    return {"n_matches": len(ms), "rate": k / len(ms) if ms else None, "wilson": list(stats.wilson(k, len(ms)))}  # pyright: ignore[reportArgumentType]
+def _rate(ms: Sequence[tuple[str, Mapping[str, Any]]], rng: random.Random, b: int, alpha: float) -> dict:
+    """{n_matches, n_pairings, rate, ci}: the named side's win rate (a draw = half) over (side, match) pairs, its
+    interval from a bootstrap over the matches' pairings: a pairing's two matches share the seed's initiative and its
+    dice per seat (docs/ARENA-RESULTS.md, "Dice"), so the pairing is the sample, not the match."""
+    by: dict[str, list[float]] = {}
+    for side, m in ms:
+        by.setdefault(m["pairing"], []).append(_points(m, side))
+    ids = sorted(by)
+    n = sum(len(v) for v in by.values())
+    rate = sum(sum(v) for v in by.values()) / n if n else None
+    draws = []
+    for _ in range(b if ids else 0):
+        picked = [by[i] for i in rng.choices(ids, k=len(ids))]
+        draws.append(sum(sum(v) for v in picked) / sum(len(v) for v in picked))
+    return {"n_matches": n, "n_pairings": len(ids), "rate": rate, "ci": _ci(draws, alpha)}
 
 
-def _favoured(matches: list[Mapping[str, Any]]) -> dict:
+def _favoured(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict:
     """The pair side's win rate over matches whose round 1 gives one side alone a pair."""
-    return _rate([(fav["side"], m) for m in matches if (fav := favoured(m.get("r1_pattern")))])
+    return _rate([(fav["side"], m) for m in matches if (fav := favoured(m.get("r1_pattern")))], rng, b, alpha)
 
 
-def _first_actor(matches: list[Mapping[str, Any]]) -> dict:
+def _first_actor(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict:
     """Round 1's first actor's win rate over matches with a pattern."""
-    return _rate([(side, m) for m in matches if (side := first_actor(m.get("r1_pattern")))])
+    return _rate([(side, m) for m in matches if (side := first_actor(m.get("r1_pattern")))], rng, b, alpha)
 
 
 def _seat_p(log_gamma: float) -> float:
@@ -716,33 +728,25 @@ def _ci(draws: list[float], alpha: float) -> list[float] | None:
 
 def _side_a(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict:
     """Side A's win rate over valid matches, its interval from a bootstrap over their pairings."""
-    by: dict[str, list[float]] = {}
-    for m in matches:
-        by.setdefault(m["pairing"], []).append(_points(m, "A"))
-    ids = sorted(by)
-    n = sum(len(v) for v in by.values())
-    rate = sum(sum(v) for v in by.values()) / n if n else None
-    draws = []
-    for _ in range(b if ids else 0):
-        picked = [by[i] for i in rng.choices(ids, k=len(ids))]
-        draws.append(sum(sum(v) for v in picked) / sum(len(v) for v in picked))
-    return {"n_matches": n, "n_pairings": len(ids), "rate": rate, "ci": _ci(draws, alpha)}
+    return _rate([("A", m) for m in matches], rng, b, alpha)
 
 
-def _by_pattern(matches: list[Mapping[str, Any]]) -> dict[str, dict]:
-    """Per round-1 phase pattern ("none" without one): n_matches, side A's and the first actor's win rate (a draw =
-    half), each {rate, wilson}; first_actor None under "none"."""
+def _by_pattern(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict[str, dict]:
+    """Per round-1 phase pattern ("none" without one): n_matches, n_pairings, side A's and the first actor's win rate
+    (a draw = half), each {rate, ci} (bootstrap over pairings); first_actor None under "none"."""
     by: dict[str, list[Mapping[str, Any]]] = {}
     for m in matches:
         by.setdefault(m.get("r1_pattern") or "none", []).append(m)
     out = {}
     for k, ms in sorted(by.items()):
         first = first_actor(k if k != "none" else None)
-        a, f = _rate([("A", m) for m in ms]), _rate([(first, m) for m in ms]) if first else None
+        a = _rate([("A", m) for m in ms], rng, b, alpha)
+        f = _rate([(first, m) for m in ms], rng, b, alpha) if first else None
         out[k] = {
             "n_matches": len(ms),
-            "side_a": {"rate": a["rate"], "wilson": a["wilson"]},
-            "first_actor": {"rate": f["rate"], "wilson": f["wilson"]} if f else None,
+            "n_pairings": a["n_pairings"],
+            "side_a": {"rate": a["rate"], "ci": a["ci"]},
+            "first_actor": {"rate": f["rate"], "ci": f["ci"]} if f else None,
         }
     return out
 
@@ -775,7 +779,7 @@ def _pair_rows(complete: dict[str, list[dict]], min_pairings: int) -> dict[tuple
     for row in rows.values():
         n = row["w"] + row["d"] + row["l"]
         k = row["w"] + row["d"] / 2
-        row.update(n_matches=n, n_pairings=len(row["ids"]), win_rate=k / n, wilson=list(stats.wilson(k, n)))  # pyright: ignore[reportArgumentType]
+        row.update(n_matches=n, n_pairings=len(row["ids"]), win_rate=k / n)
         row["sign_p"] = sign_test(row["won"], row["lost"])
         row["rated"] = row["n_pairings"] >= min_pairings
         row["provisional"] = row["rated"] and row["n_pairings"] < PROVISIONAL_PAIRINGS
@@ -803,8 +807,8 @@ def results(
 ) -> dict:
     """Matches (grade's dicts, each with its `pairing` id) -> {seed, b, alpha, min_pairings, counts, pairs, side_a,
     by_pattern, first_actor, favoured, seat, failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
-    too) for `failures`; without it, `matches`. The bootstraps (side A's rate, then the ratings) draw from one
-    random.Random(seed)."""
+    too) for `failures`; without it, `matches`. The bootstraps (side A's rate, then the ratings, then the
+    pairs', patterns', first actor's and favoured side's rates) draw from one random.Random(seed)."""
     matches = list(matches)
     complete, counts = pairings(matches)
     rng = random.Random(seed)
@@ -839,6 +843,9 @@ def results(
         for p, k in _ranks(boot_elo).items():
             rank_draws[p].append(k)
         seat_draws.append(_seat_p(boot_lg))
+    for (x, _), row in sorted(rows.items()):  # the rate intervals draw after the ratings, which keep their numbers
+        ms = [("A" if m["sides"]["A"] == x else "B", m) for i in row["ids"] for m in complete[i]]
+        row["ci"] = _rate(ms, rng, b, alpha)["ci"]
     ranks = _ranks(elo)
     refits = [_elo(bradley_terry_seat(rated_games + self_games, prior=q)[0]) for q in PRIORS] if rated else []
     shift = {p: max(abs(e[p] - elo[p]) for e in refits) for p in theta}
@@ -875,9 +882,9 @@ def results(
             {"a": x, "b": y, **{k: v for k, v in row.items() if k != "ids"}} for (x, y), row in sorted(rows.items())
         ],
         "side_a": side_a,
-        "by_pattern": _by_pattern(distinct),
-        "first_actor": _first_actor(distinct),
-        "favoured": _favoured(distinct),
+        "by_pattern": _by_pattern(distinct, rng, b, alpha),
+        "first_actor": _first_actor(distinct, rng, b, alpha),
+        "favoured": _favoured(distinct, rng, b, alpha),
         "seat": {
             "log_factor": lg,
             "p_favoured": _seat_p(lg),

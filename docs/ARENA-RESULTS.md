@@ -37,11 +37,12 @@ This is kept as a paired design (orchestrator, 2026-11-04, harness survey #4). I
 - **Between models, luck cancels within a pairing.** Each model plays each seat once with that seat's dice, so a seat
   with lucky dice helps both models once. The pairing is the resampled unit in every bootstrap and the unit of the
   sign test, so nothing treats a pairing's two matches as two independent samples there.
-- **Match-level Wilson intervals are approximate.** A pair's `win_rate` interval counts its matches as independent.
-  Shared dice make a model's two results move in opposite directions, so for luck this interval is, if anything,
-  too wide. `first_actor`, `favoured` and `by_pattern` also count both matches of a model pairing. There the shared
-  initiative and the shared dice stay with the same side, so the two matches lean the same way and those intervals
-  are too narrow. `side_a`'s interval resamples pairings and is not affected.
+- **Every rate interval resamples pairings.** A pairing's two matches are not independent. For a pair's
+  `win_rate`, shared dice push a model's two results in opposite directions, so an interval that counted matches
+  would be too wide. For `first_actor`, `favoured` and `by_pattern`, the shared initiative and dice stay with the
+  same side and both matches lean the same way, so an interval that counted matches would be too narrow. Each of
+  these intervals, like `side_a`'s, is a percentile bootstrap over pairings: a pairing's matches in the subset are
+  drawn together. With one pairing the interval is that pairing's rate.
 - **The seat term can't tell seat from luck within one seed.** The seat side keeps its dice in both matches, so a
   seed whose dice favour the seat side counts as seat advantage twice. Seeds are independent, so luck averages out
   only across seeds, and the seat interval (a bootstrap over pairings) reflects that.
@@ -60,8 +61,8 @@ count a draw as half a win. Intervals are `[lo, hi]` at `1 - alpha`.
 | `counts` | `matches`, `invalid`, `self`, `incomplete`, `pairings` (complete pairings) |
 | `pairs[]` | one row per model pair over complete pairings, below |
 | `side_a` | side A's win rate over valid matches: `n_matches`, `n_pairings`, `rate`, `ci` (bootstrap over pairings) |
-| `by_pattern{}` | per round-1 pattern (`"none"` without one): `n_matches`, `side_a {rate, wilson}`, `first_actor {rate, wilson}` or null |
-| `first_actor`, `favoured` | `{n_matches, rate, wilson}`: round 1's first actor's and pair side's win rate |
+| `by_pattern{}` | per round-1 pattern (`"none"` without one): `n_matches`, `n_pairings`, `side_a {rate, ci}`, `first_actor {rate, ci}` or null |
+| `first_actor`, `favoured` | `{n_matches, n_pairings, rate, ci}`: round 1's first actor's and pair side's win rate |
 | `seat` | `log_factor`, `p_favoured` (the seat side's win chance between equal models), `ci`, `n_games`, `n_self_games`; null with no rated pair |
 | `prior` | `priors` ([0.5, 2.0] virtual draws), `max_shift` (largest Elo move of any rated model); null with no rated pair |
 | `failures[]` | per model: `player`, `n_matches`, `client_faults`, `rate`, `causes {cause: n}` |
@@ -76,7 +77,7 @@ A `pairs[]` row, from the first model's (`a`, alphabetical) side:
 | `pentanomial` | pairings by points: `{"2", "1.5", "1", "0.5", "0"}`; "1" holds both a split by wins and two draws |
 | `w`, `d`, `l` | matches won, drawn, lost |
 | `draws` | cap draws by reason: `{round_cap, wall_cap}` |
-| `win_rate`, `wilson` | the match win rate and its Wilson interval |
+| `win_rate`, `ci` | the match win rate and its interval (bootstrap over the pair's pairings) |
 | `sign_p` | exact two-sided sign test on `won` vs `lost` (splits left out); 1.0 with neither |
 | `n_pairings`, `n_matches` | sizes |
 | `rated` | `n_pairings >= min_pairings`; else a pilot row |

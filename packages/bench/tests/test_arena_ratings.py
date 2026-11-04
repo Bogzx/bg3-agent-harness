@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from bg3bench import arena, stats
+from bg3bench import arena
 
 
 def m(pairing, a, b, result, valid=True, arena_name="open_field"):
@@ -75,7 +75,7 @@ def test_the_pairwise_table():
     assert (xy["won"], xy["split"], xy["lost"]) == (1, 1, 1)
     assert (xy["w"], xy["d"], xy["l"], xy["n_matches"], xy["n_pairings"]) == (3, 1, 2, 6, 3)
     assert xy["win_rate"] == pytest.approx(3.5 / 6)
-    assert xy["wilson"] == pytest.approx(list(stats.wilson(3.5, 6)))  # pyright: ignore[reportArgumentType]
+    assert xy["ci"][0] <= xy["win_rate"] <= xy["ci"][1]  # a bootstrap over its pairings (test_arena_results)
     assert (xz["won"], xz["n_pairings"], xz["win_rate"]) == (1, 1, 1.0)
     assert (yz["a"], yz["b"], yz["won"], yz["d"]) == ("y", "z", 1, 1)
     assert not any(row["rated"] for row in r["pairs"])  # under 15 pairings: pilot rows
@@ -181,8 +181,9 @@ def test_side_a_rate_by_round_1_pattern_with_n():
     assert by["A1|B2|A1"]["first_actor"]["rate"] == 0.0  # A acted first, B won both
     assert by["B1|A2|B1"]["first_actor"]["rate"] == 0.25
     assert by["none"]["first_actor"] is None
-    assert by["B1|A2|B1"]["side_a"]["wilson"] == list(stats.wilson(1.5, 2))  # pyright: ignore[reportArgumentType]
-    assert by["A1|B2|A1"]["first_actor"]["wilson"] == list(stats.wilson(0, 2))
+    assert by["B1|A2|B1"]["side_a"]["ci"] == [0.75, 0.75]  # one pairing: its interval is the pairing itself
+    assert by["A1|B2|A1"]["first_actor"]["ci"] == [0.0, 0.0]
+    assert by["A1|B2|A1"]["n_pairings"] == 1
 
 
 def test_side_a_by_pattern_and_favoured_count_a_self_pairs_replay_once():
@@ -212,10 +213,11 @@ def test_the_pair_sides_and_the_first_actors_win_rates():
     r = arena.results(ms, seed=1, b=10)
     fav, first = r["favoured"], r["first_actor"]
     assert (fav["n_matches"], fav["rate"]) == (2, 1.0)  # only the matches with a pair: s1, s3
-    assert fav["wilson"] == list(stats.wilson(2, 2))
+    assert (fav["n_pairings"], fav["ci"]) == (2, [1.0, 1.0])
     # every match with a pattern: s1 A first, B won; s3 B first, A won; s5 B first, B won; p A first, a draw
     assert (first["n_matches"], first["rate"]) == (4, pytest.approx(1.5 / 4))
-    assert first["wilson"] == list(stats.wilson(1.5, 4))  # pyright: ignore[reportArgumentType]
+    assert first["n_pairings"] == 4
+    assert first["ci"][0] <= first["rate"] <= first["ci"][1]
 
 
 def test_bradley_terry_with_a_seat_meets_its_score_equations():
