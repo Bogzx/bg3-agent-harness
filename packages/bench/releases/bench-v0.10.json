@@ -10,8 +10,8 @@
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "b7ecfd06da11f0c34f599cf360b850a258b542a17f9f2eb50010bae799ab8b3b",
-  "mod_sha1": "825778fb2ff61637f12c667ba033a5830c6956ea",
-  "code_sha1": "fae8c5cb66e63999e7814f85e0e50475ff453123"
+  "mod_sha1": "dfb3e6fc9583377b2ab0571e53682f1e92f2497e",
+  "code_sha1": "586c06fae3007a4e4a202e94ee16d615799be29d"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
@@ -840,7 +840,7 @@
      "walk_toward",
      "zoom"
     ],
-    "defs_sha256": "0143acf9e33d6c372df43c785d9086ee10abd08cd39bb90e6fc59575fbb086e4"
+    "defs_sha256": "369ea84a1a455416ccb3a3fcfa9905c9da2a71a19a3e20de8ab794ad32981bf8"
    },
    "prompts": {
     "claude": {
@@ -938,7 +938,7 @@
        "wait_for",
        "walk_toward"
       ],
-      "defs_sha256": "f8154c3271bdbe9f3822882d42206c6cf8737d769f4b040ad5f95c993e6a8f31"
+      "defs_sha256": "314d461b87d2c03151fc49670e57b098a2e2a849efe8f6ccf4a3b3f181210b82"
      },
      "prompts": {
       "pi": {
