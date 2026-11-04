@@ -412,3 +412,14 @@ do
     ok(r.open == false and r.events == 0, "react_probe: gone")
     for k, f in pairs(saved) do UIt[k] = f end
 end
+
+-- w11 L7: the trader's Balance gold read TradePrice 0 ({price 0, count 52, gold true}): a gold stack is worth its count
+do
+    local SV = BG3AI.Services
+    local yours = { { name = "Backpack", price = 52 } }
+    local theirs = { { price = 0, count = 52, gold = true } }
+    ok(SV.tableValue(theirs) == 52, "gold stack at its count: " .. tostring(SV.tableValue(theirs)))
+    ok(SV.tradeImbalance(SV.tableValue(yours), SV.tableValue(theirs)) == nil, "the Backpack sale is even")
+    ok(SV.tableValue({ { price = 1, gold = true } }) == 1, "a 1-coin gold stack (count unset) is worth 1")
+    ok(SV.tableValue({ { name = "Candle", price = 12, count = 12 } }) == 12, "an item stack: its whole-stack price")
+end

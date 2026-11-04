@@ -405,12 +405,15 @@ local function offerView(vmOffer)
     return out
 end
 
-local function sumPrices(items)
+-- What a side of the table is worth: TradePrice is the whole stack's price (live 10:50 Talli: Supply Pack x3 = 156,
+-- Potion of Healing x5 = 40); a gold stack is worth its count (w11 L7: the trader's Balance stack read TradePrice 0,
+-- {price 0, count 52, gold true}, so every sale was refused "you would give 52g more").
+function SV.tableValue(items)
     local t = 0
-    -- TradePrice is the whole stack's price (live 10:50 Talli: Supply Pack x3 = 156, Potion of Healing x5 = 40)
-    for _, it in ipairs(items) do t = t + (it.price or 0) end
+    for _, it in ipairs(items) do t = t + (it.gold and (it.count or 1) or it.price or 0) end
     return t
 end
+local sumPrices = SV.tableValue
 
 local function goldOn(items)
     local g = 0
