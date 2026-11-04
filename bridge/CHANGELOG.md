@@ -5,6 +5,18 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04 (night): result texts name no next call
+
+Facts stay; the call the agent might make next goes (no-coaching rule). Tool descriptions are unchanged (golden too).
+- get_status/look PARTY: `camp level-ups: Wyll L3→4` ends there (was `... (level_up(who="Wyll") swaps in, levels,
+  swaps back)`; level_up's description already says it levels a camp member); `dead: e6 Wyll` names who is dead
+  (was `... (Scroll of Revivify, or Withers at camp)`).
+- path_preview UNREACHABLE: `it may need a ladder, a jump, a door, or another route` (was `a jump (jump_to)`).
+- trade's window close after a confirmed deal: `(closed the trade window: back in the game)` (was `...; trade(npc=
+  <trader>) opens it again`).
+- create_character's first look and first save failures: `(first look failed: <error>)` (was `...; call look`) and
+  `first save not started (<error>): no 'S001-start' save was made` (was `...: save_game(label="S001-start")`).
+
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 
 - get_status/look PARTY: the tie text comes from the new "Tied by" column of play/knowledge/companions.md; the role
