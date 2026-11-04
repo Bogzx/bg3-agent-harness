@@ -628,8 +628,8 @@ test("a mirror setup clears Ground and Cloud surfaces at every spot before the f
         end
     end
     eq(enc(got), enc(want), "both layers over the arena, then at all 4 spots, before any CreateAt")
-    eq(enc(j.surfaces), enc({ points = 207, read = 207, radius = 11.75, off = 0,
-        wide = { points = 596, read = 596, radius = 23.0, off = 0, tiles = {} } }),
+    eq(enc(j.surfaces), enc({ tiles_total = 207, tiles_read = 207, radius = 11.75, off = 0,
+        wide = { tiles_total = 596, tiles_read = 596, radius = 23.0, off = 0, tiles = {} } }),
         "every tile pair read: checked within 11.75 m, report-only out to 23 m")
 end))
 
@@ -654,8 +654,8 @@ test("surfaces that mirror after the clear pass; no tile that reads fails", guar
     game({ no_tiles = true })
     j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
-    eq(tostring(j.error), "no tile pair on A's half within 11.8 m of the arena's midpoint reads its surfaces "
-        .. "(207 tried)", "fails closed")
+    eq(tostring(j.error), "only 0 of 207 tile pairs on A's half within 11.8 m of the arena's midpoint read their "
+        .. "surfaces (under 50%)", "fails closed")
     eq(#named("CreateAt"), 0, "no twin")
 end))
 
@@ -670,9 +670,21 @@ test("surface tiles are read on their own ground; a tile that doesn't read leave
         end })
     local j = mirrorSetup(mirrorArena())
     eq(j.step, 1, "at the party step: " .. tostring(j.error))
-    eq(j.surfaces.points, 207, "tiles on A's half")
-    eq(j.surfaces.read, 206, "every pair read but the hole's")
+    eq(j.surfaces.tiles_total, 207, "tiles on A's half")
+    eq(j.surfaces.tiles_read, 206, "every pair read but the hole's")
     eq(j.surfaces.off, 0, "the fires mirror")
+end))
+
+-- Cross-review af5b2a91 (1): a check that reads few tiles checks little: under SURFACE_READ_MIN of the pairs read,
+-- setup fails with the counts.
+test("a surface check that reads under half its tile pairs fails setup with the counts", guarded(function()
+    restore()
+    game({ ground = function(x, z) return (z < 5 and x <= 1) and {} or { 0.0 } end }) -- no floor on most of A's half
+    local j = mirrorSetup(mirrorArena())
+    eq(j.status, "failed", "failed")
+    eq(tostring(j.error):match("^only (%d+) of 207 tile pairs") ~= nil, true, tostring(j.error))
+    eq(tostring(j.error):find("(under 50%)", 1, true) ~= nil, true, "the floor named")
+    eq(#named("CreateAt"), 0, "no twin")
 end))
 
 -- Cross-review 7828a6f8 (2): seed-7 m2's later fights ran into Fire 14.6-20 m from the midpoint. Out there the read
@@ -688,18 +700,23 @@ test("a surface that doesn't mirror beyond the checked radius is reported, not a
 end))
 
 -- Cross-review 7828a6f8 (3): does a cleared fire come back mid-match? The grid read again at round 2 and at the end.
+-- af5b2a91 (2): a tile setup already read unmirrored (outside the checked radius) is a setup mismatch; one only since
+-- setup (a fire or grease made in the fight) is 'appeared', not a mirror mismatch.
 test("a mirror arena's surfaces are read again at round 2's start and at the end, before arena_end", guarded(function()
     restore()
-    game({ tiles = { { 3, 1, "Fire", stays = true } } })
+    game({ tiles = { { 3, 1, "Fire", stays = true }, { 0, -12, "Fire", stays = true } } })
     reset()
-    begin({ surfaces = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10 } }, n = 2 } })
+    begin({ surfaces = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10 } }, n = 2,
+        setup_keys = { ["0.0,-12.0"] = true } } }) -- setup read the far fire unmirrored already
     fire("CombatRoundStarted", "combat1", 2)
     fire("CombatRoundStarted", "combat1", 2) -- once only
     Ar.finish(nil, "aborted")
     local r = refs("arena_surfaces")
     eq(#r, 2, "round 2 and the end")
-    eq(enc({ r[1].when, r[1].round, r[1].off, r[1].points, r[1].read }), enc({ "round 2", 2, 1, 803, 803 }), "round 2")
-    eq(r[1].tiles[1], "(3.0, 1.0) on A's half reads Fire/None, its mirror (3.0, 9.0) None/None", "the fire named")
+    eq(enc({ r[1].when, r[1].round, r[1].off, r[1].appeared, r[1].tiles_total, r[1].tiles_read }),
+        enc({ "round 2", 2, 1, 1, 803, 803 }), "round 2: one from setup, one since")
+    eq(r[1].tiles[1], "(0.0, -12.0) on A's half reads Fire/None, its mirror (0.0, 22.0) None/None", "setup's")
+    eq(r[1].appeared_tiles[1], "(3.0, 1.0) on A's half reads Fire/None, its mirror (3.0, 9.0) None/None", "since")
     eq(r[2].when, "end", "the end")
     local ring = BG3AI.Referee.ring
     eq(ring[#ring].ev, "arena_end", "arena_end last")

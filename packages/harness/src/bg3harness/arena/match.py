@@ -23,9 +23,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    arena_turn, and its `arena_turn_readmitted {side, character, name, round, why}` (a passed member stood up with its
    turn back) the same way, the member no longer passed. Its `arena_round {round, first, how}` (a round's first
    phase: its side, and whether it acted or was passed whole; once per round) is written as it is. A mirror arena's
-   `arena_surfaces {when, round, points, read, radius, off, tiles}` (the mod's report-only re-read of the surfaces at
-   round 2's start and at the end) is written as it is, after the end too; `arena_start` carries the setup's surface
-   check (`surfaces`). Its
+   `arena_surfaces {when, round, tiles_total, tiles_read, radius, off, tiles, appeared, appeared_tiles}` (the mod's
+   report-only re-read of the surfaces at round 2's start and at the end, a runner's end included: arena.end, then the
+   last poll) is written as it is, after the end too; `arena_start` carries the setup's surface check (`surfaces`). Its
    `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
    after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
    match's) is written with `character` and `members`

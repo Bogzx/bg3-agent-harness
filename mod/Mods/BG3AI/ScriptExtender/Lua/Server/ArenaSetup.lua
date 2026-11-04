@@ -66,6 +66,9 @@ Setup.SURFACE_GRID_M = 1.0
 -- Between the checked radius and this the surfaces are read too, report-only (the result's surfaces.wide), and the
 -- whole grid again at round 2's start and at the match's end (Ar.reread_surfaces: arena_surfaces records).
 Setup.SURFACE_REACH_M = 18.0
+-- The checked radius must read at least this fraction of its tile pairs, else setup fails (a check that read a few
+-- tiles checked little). 0.5 until the first live counts give a better floor (cross-review af5b2a91).
+Setup.SURFACE_READ_MIN = 0.5
 Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike stood up
 -- Spawn geometry (both sides stand on the same terms): the spawns at most this far apart in height, and every distance
 -- across the lines the same both ways (A's member i to B's member j = B's i to A's j) within this
@@ -209,7 +212,7 @@ end
 -- Whether the arena's surfaces mirror across the plane halfway between the spawns: every grid point p on A's half
 -- with from < |p - midpoint| <= to (from: -1 = all) against p's reflection, each on its own ground (tile_surfaces).
 -- A pair where either tile doesn't read is unread, not a mismatch. {points, read (pairs both read), radius = to,
--- off = {text}}.
+-- off = {text}, off_keys = {"x,z" of A's tile} (off's order), keys = {"x,z" = true}}.
 function Setup.check_surfaces(spawns, n, from, to)
     local a, b = spawns.A, spawns.B
     local mx, mz = (a[1] + b[1]) / 2, (a[3] + b[3]) / 2
@@ -217,7 +220,7 @@ function Setup.check_surfaces(spawns, n, from, to)
     local ux, uz = (b[1] - a[1]) / d, (b[3] - a[3]) / d
     local r, step = to or Setup.surface_radius(spawns, n), Setup.SURFACE_GRID_M
     local r0 = from or -1
-    local points, read, off = 0, 0, {}
+    local points, read, off, offk, keys = 0, 0, {}, {}, {}
     local k = math.floor(r / step)
     for i = -k, k do
         for j = -k, k do
@@ -230,13 +233,15 @@ function Setup.check_surfaces(spawns, n, from, to)
                 points = points + 1
                 if sa and sb then read = read + 1 end
                 if sa and sb and sa ~= sb then
+                    offk[#off + 1] = ("%.1f,%.1f"):format(x, z)
+                    keys[offk[#off + 1]] = true
                     off[#off + 1] = ("(%.1f, %.1f) on A's half reads %s, its mirror (%.1f, %.1f) %s"):format(x, z,
                         sa, x2, z2, sb)
                 end
             end
         end
     end
-    return { points = points, read = read, radius = r, off = off }
+    return { points = points, read = read, radius = r, off = off, off_keys = offk, keys = keys }
 end
 
 -- Refuses positions a (team A, by member) and b (team B) where a distance across the teams differs both ways (A's
@@ -546,7 +551,8 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
         if ok and type(x) == "number" then positions[u] = { x, y, z } end
     end
     local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions,
-        seed = job.arena.seed, surfaces = job.mirror and { spawns = job.spawns, n = #job.mirror.pairs } or nil })
+        seed = job.arena.seed, surfaces = job.mirror and { spawns = job.spawns, n = #job.mirror.pairs,
+            setup_keys = job.surface_keys or {} } or nil })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,
@@ -580,12 +586,13 @@ STEPS[-1] = function(job)
     end
     local sc = Setup.check_surfaces(job.spawns, #mi.pairs)
     local wide = Setup.check_surfaces(job.spawns, #mi.pairs, sc.radius, radius) -- report-only
-    job.surfaces = { points = sc.points, read = sc.read, radius = sc.radius, off = #sc.off,
-        wide = { points = wide.points, read = wide.read, radius = wide.radius, off = #wide.off,
+    job.surfaces = { tiles_total = sc.points, tiles_read = sc.read, radius = sc.radius, off = #sc.off,
+        wide = { tiles_total = wide.points, tiles_read = wide.read, radius = wide.radius, off = #wide.off,
             tiles = { table.unpack(wide.off, 1, 5) } } }
-    if sc.read == 0 then -- fails closed: a check that read nothing checked nothing
-        error(("no tile pair on A's half within %.1f m of the arena's midpoint reads its surfaces (%d tried)"):format(
-            sc.radius, sc.points), 0)
+    job.surface_keys = wide.keys -- the re-reads tell these setup mismatches from surfaces made during the match
+    if sc.read < Setup.SURFACE_READ_MIN * sc.points then -- fails closed: a check that read little checked little
+        error(("only %d of %d tile pairs on A's half within %.1f m of the arena's midpoint read their surfaces (under "
+            .. "%d%%)"):format(sc.read, sc.points, sc.radius, Setup.SURFACE_READ_MIN * 100), 0)
     end
     if #sc.off > 0 then
         local shown = { table.unpack(sc.off, 1, 5) }

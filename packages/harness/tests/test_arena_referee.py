@@ -8,7 +8,7 @@ import json
 
 from bg3harness import facts as hfacts
 from bg3harness.arena import match as am
-from test_arena_match import SIDES, passer, setup
+from test_arena_match import SIDES, arena_events, chip_once, passer, setup
 
 
 def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
@@ -71,11 +71,11 @@ def test_a_mirror_arenas_surface_reads_reach_the_facts_report_only(tmp_path):
     path = tmp_path / "f.jsonl"
     ref = am.Referee(spec, SIDES, hfacts.FactsWriter(path, clock=clock.now))
     checked = {
-        "points": 207,
-        "read": 206,
+        "tiles_total": 207,
+        "tiles_read": 206,
         "radius": 10.75,
         "off": 0,
-        "wide": {"points": 596, "read": 590, "radius": 22.0, "off": 1, "tiles": ["(0.0, -12.0) ..."]},
+        "wide": {"tiles_total": 596, "tiles_read": 590, "radius": 22.0, "off": 1, "tiles": ["(0.0, -12.0) ..."]},
     }
     ref.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]}, checked)
     [start] = [r for r in map(json.loads, path.read_text().splitlines()) if r.get("ev") == "arena_start"]
@@ -84,11 +84,13 @@ def test_a_mirror_arenas_surface_reads_reach_the_facts_report_only(tmp_path):
         "ev": "arena_surfaces",
         "when": "round 2",
         "round": 2,
-        "points": 803,
-        "read": 803,
+        "tiles_total": 803,
+        "tiles_read": 803,
         "radius": 22.0,
-        "off": 1,
-        "tiles": ["(3.0, 1.0) on A's half reads Fire/None, its mirror (3.0, 9.0) None/None"],
+        "off": 0,
+        "tiles": [],
+        "appeared": 1,
+        "appeared_tiles": ["(3.0, 1.0) on A's half reads Fire/None, its mirror (3.0, 9.0) None/None"],
     }
     assert ref.translate(reread) == reread
     ref.translate({"ev": "arena_end", "winner": "A", "reason": "wipe"})
@@ -102,3 +104,33 @@ def test_a_mirror_arenas_surface_reads_reach_the_facts_report_only(tmp_path):
     plain.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]})
     rows = [json.loads(line) for line in (tmp_path / "g.jsonl").read_text().splitlines()]
     assert "surfaces" not in next(r for r in rows if r.get("ev") == "arena_start")
+
+
+def test_a_runner_ended_match_still_gets_the_mods_end_surface_read(tmp_path):
+    """Cross-review af5b2a91 (3): a match the runner ends (here its round cap over a mod without one) sends arena.end;
+    the mod's Ar.finish reads the surfaces before its arena_end, and the runner's last poll writes that read."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer}, caps=False)
+    clock.tick_hooks.insert(0, chip_once(model))
+    finish = model.finish
+
+    def finish_with_read(winner, reason):  # as Arena.lua's Ar.finish: the end read, then arena_end
+        if model.ended is None:
+            model.ref_record(
+                "arena_surfaces",
+                when="end",
+                round=model.mod_round,
+                tiles_total=803,
+                tiles_read=803,
+                radius=22.0,
+                off=0,
+                tiles=[],
+                appeared=0,
+                appeared_tiles=[],
+            )
+        finish(winner, reason)
+
+    model.finish = finish_with_read
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "round_cap" and model.ends == [{"reason": "round_cap"}]
+    reads = [e for e in arena_events(tmp_path) if e["ev"] == "arena_surfaces"]
+    assert [(r["when"], r["tiles_read"]) for r in reads] == [("end", 803)]
