@@ -719,9 +719,9 @@ end
 
 -- A character the party saw vanish on this level, still invisible (not revealed) and alive: a player saw it go. S030
 -- Soft-Step Trial: a Shadow 1.8 m away answered "target is not visible; last seen 2s ago: travel_to that spot" 3x.
--- The vanish is noted as it happens (V.noteVanish, on StatusApplied), per side, only where that side sees the spot
--- then (a member's sight range and line of sight): fairness audit S2-4, and its residual (arena A7): judged at the
--- query from where it stands now, one that vanished out of view and walked in unseen was "seen to vanish".
+-- The vanish is noted as it happens (V.noteVanish, on StatusApplied), only where the party sees the spot then (a
+-- member's sight range and line of sight): fairness audit S2-4, and its residual (arena A7): judged at the query from
+-- where it stands now, one that vanished out of view and walked in unseen was "seen to vanish".
 -- -> true, {pos = where it vanished, ago_s}; else false (the plain last-seen hint).
 V.INVISIBLE_SEEN_S = 120
 V.VANISH_CAP = 200
@@ -736,33 +736,57 @@ function V.vanished(uuid)
     return true, { pos = U.vec(v.pos, 1), ago_s = ago }
 end
 
--- A character turned invisible (a status was applied and it reads invisible): each side (no side outside an arena)
--- that perceives it where it stands at that moment notes the vanish there.
-function V.noteVanish(target)
+-- A status of the game's invisibility type (StatusType INVISIBLE: Invisibility, Greater Invisibility, the potion).
+local function invisibilityStatus(status)
+    if status == nil then return false end
+    local ok, typ = pcall(function() return Ext.Stats.Get(tostring(status)).StatusType end)
+    return ok and tostring(typ) == "INVISIBLE"
+end
+
+-- The transition to invisible (StatusApplied: the target reads invisible, or the applied status is an invisibility
+-- one) while it wasn't (V.invisibleNow): if the party perceives the spot then, the vanish is noted there; if not,
+-- any older record of it goes. Any other status on a creature already invisible (WET, Bless, a refresh) notes nothing,
+-- so the record never follows it (REVIEW-18e).
+V.invisibleNow = V.invisibleNow or {}
+function V.noteVanish(target, status)
     local uuid = V.uuid(target)
     local e = uuid and V.entity(uuid)
-    if not e or not U.comp(e, "ServerCharacter") or not truthy(V.osi(Osi.IsInvisible, uuid)) then return end
-    local pos, now, lvl = V.pos(e), Ext.Utils.MonotonicTime(), currentLevel()
-    local function note()
-        if not V.perceived(V.context(), uuid, pos) then return end
-        local list = V.vanishes
-        if not list[uuid] then -- bounded: the ones past the hint's window go, and all of them at the cap
-            local n = 0
-            for u, x in pairs(list) do
-                if (now - x.t) / 1000 > V.INVISIBLE_SEEN_S then list[u] = nil else n = n + 1 end
-            end
-            if n >= V.VANISH_CAP then for u in pairs(list) do list[u] = nil end end
-        end
-        list[uuid] = { pos = pos, t = now, level = lvl }
+    if not e or not U.comp(e, "ServerCharacter") then return end
+    if not (truthy(V.osi(Osi.IsInvisible, uuid)) or invisibilityStatus(status)) then
+        V.invisibleNow[uuid] = nil
+        return
     end
-    local RPC = BG3AI.RPC
-    if RPC and RPC.each_side then RPC.each_side(note) else note() end
+    if V.invisibleNow[uuid] then return end
+    V.invisibleNow[uuid] = true
+    local pos, now, list = V.pos(e), Ext.Utils.MonotonicTime(), V.vanishes
+    if not V.perceived(V.context(), uuid, pos) then
+        list[uuid] = nil
+        return
+    end
+    if not list[uuid] then -- bounded: the ones past the hint's window go, and all of them at the cap
+        local n = 0
+        for u, x in pairs(list) do
+            if (now - x.t) / 1000 > V.INVISIBLE_SEEN_S then list[u] = nil else n = n + 1 end
+        end
+        if n >= V.VANISH_CAP then for u in pairs(list) do list[u] = nil end end
+    end
+    list[uuid] = { pos = pos, t = now, level = currentLevel() }
+end
+
+-- StatusRemoved: once the target reads visible again, its next invisibility is a new vanish.
+function V.noteVisible(target)
+    local uuid = V.uuid(target)
+    if uuid and not truthy(V.osi(Osi.IsInvisible, uuid)) then V.invisibleNow[uuid] = nil end
 end
 V.vanishes = V.vanishes or {}
 if Ext.Osiris and not V.vanishSubscribed then
     V.vanishSubscribed = true
-    pcall(Ext.Osiris.RegisterListener, "StatusApplied", 4, "after", function(target)
-        local ok, err = pcall(V.noteVanish, target)
+    pcall(Ext.Osiris.RegisterListener, "StatusApplied", 4, "after", function(target, status)
+        local ok, err = pcall(V.noteVanish, target, status)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] vanish: " .. tostring(err)) end
+    end)
+    pcall(Ext.Osiris.RegisterListener, "StatusRemoved", 4, "after", function(target)
+        local ok, err = pcall(V.noteVisible, target)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] vanish: " .. tostring(err)) end
     end)
 end

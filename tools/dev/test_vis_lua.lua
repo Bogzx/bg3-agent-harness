@@ -409,30 +409,42 @@ test("S2-4/A7: the 'turned invisible' hint needs the side's sight of the spot as
     local invisible = false
     Osi.IsInvisible = function(u) return (u == WITHERS and invisible) and 1 or 0 end
     local home = ents[WITHERS].pos
+    local function vanish() invisible = true; V.noteVanish(WITHERS, "INVISIBILITY") end
+    local function reappear() invisible = false; V.noteVisible(WITHERS) end
     local ok, err = pcall(function()
-        V.vanishes[WITHERS] = nil
-        invisible = true
+        V.vanishes[WITHERS], V.invisibleNow[WITHERS] = nil, nil
         los = true
-        V.noteVanish(WITHERS)
+        vanish()
         local gone, m = V.vanished(WITHERS)
         eq(gone, true, "seen to vanish in sight range and line of sight")
         eq(m and m.ago_s, 0, "when")
         eq(m and m.pos[1], BG3AI.Util.vec(home, 1)[1], "where it vanished")
         ents[WITHERS].pos = { -1450.0, 8.0, -2620.0 }
         eq((V.vanished(WITHERS)), true, "it walked off invisible: still the vanish the side saw, at that spot")
-        V.vanishes[WITHERS] = nil
+        -- REVIEW-18e: a later status on the invisible creature (WET, Bless, a refresh) at Y, in view, is no vanish:
+        -- the record stays at X
+        ents[WITHERS].pos = { -1420.0, 8.3, -2586.0 }
+        V.noteVanish(WITHERS, "WET")
+        V.noteVanish(WITHERS, "INVISIBILITY")
+        local _, m2 = V.vanished(WITHERS)
+        eq(m2 and m2.pos[1], BG3AI.Util.vec(home, 1)[1], "a second status at Y: the record stays at X")
+        -- REVIEW-18e: visible again, then a re-vanish out of the side's view: the old record goes
+        reappear()
         los = false
+        vanish()
+        eq((V.vanished(WITHERS)), false, "an unseen re-vanish clears the old record")
+        -- vanished out of view, walked into view still invisible, a status lands on it there: not seen to vanish (A7)
+        los = true
         ents[WITHERS].pos = home
-        V.noteVanish(WITHERS)
-        eq((V.vanished(WITHERS)), false, "out of line of sight as it vanished: not seen to vanish")
-        los = true -- it walks into the side's view, still invisible: a player sees nothing (A7)
         eq((V.vanished(WITHERS)), false, "in view now, unseen as it vanished: the plain last-seen hint")
-        invisible = false
-        V.noteVanish(WITHERS)
-        eq(V.vanishes[WITHERS], nil, "a status that leaves it visible notes nothing")
+        V.noteVanish(WITHERS, "BURNING")
+        eq((V.vanished(WITHERS)), false, "a status in view on one that vanished unseen notes nothing")
+        reappear()
+        V.noteVanish(WITHERS, "WET")
+        eq(V.vanishes[WITHERS], nil, "a status on a visible creature notes nothing")
     end)
     Osi.IsInvisible, ents[WITHERS].pos = realInvisible, home
-    V.vanishes[WITHERS] = nil
+    V.vanishes[WITHERS], V.invisibleNow[WITHERS] = nil, nil
     if not ok then error(err, 0) end
 end)
 
