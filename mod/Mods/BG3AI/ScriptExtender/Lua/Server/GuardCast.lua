@@ -397,13 +397,15 @@ local function cant_react(u)
     return has_boost(u, "ActionResourceBlock(ReactionActionPoint)")
 end
 
-function G.path_provokes(char, points, portals)
+-- A jump or climb link on the path provokes like the walk around it: the game's Interrupt_AttackOfOpportunity fires
+-- OnLeaveAttackRange and is skipped only for a move whose spell has SpellFlags IgnoreAoO (Shared.pak
+-- Public/Shared/Stats/Generated/Data/Interrupt.txt:451-464); Projectile_Jump's flags have none (Spell_Projectile.txt
+-- :1469-1499; only Projectile_Jump_Cloaker and Projectile_Fly_TempestuousMagic carry it), and a link is no spell.
+function G.path_provokes(char, points)
     local V = BG3AI.Visibility
     if not (char and G.in_combat(char)) or type(points) ~= "table" or #points < 2 then return nil end
     local me, ctx, out = G.guid(char), V.context(), {}
     if has_boost(me, "IgnoreLeaveAttackRange()") then return out end -- Disengaged: no one's reach provokes
-    local link = {}
-    for _, i in ipairs(portals or {}) do link[i] = true end
     local attack = Ext.Stats.Get("Target_MainHandAttack")
     for _, row in ipairs(V.charactersNear(points, G.AOO_NEAR_M)) do
         local u = G.guid(V.entityUuid(row[1]) or "")
@@ -416,7 +418,7 @@ function G.path_provokes(char, points, portals)
             for i = 2, #points do
                 local p, q = points[i - 1], points[i]
                 local seg, qin = U.dist(p, q), U.dist(q, ep) <= reach
-                if inside and not qin and not link[i] then -- the crossing (a jump/climb provokes none), halved
+                if inside and not qin then -- the crossing, halved
                     local lo, hi = 0, 1
                     for _ = 1, 12 do
                         local m = (lo + hi) / 2
