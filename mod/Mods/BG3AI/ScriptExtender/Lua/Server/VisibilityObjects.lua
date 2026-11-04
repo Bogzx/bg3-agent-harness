@@ -717,19 +717,54 @@ function V.lastSeen(uuid)
     return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
 end
 
--- A character the party saw on this level that is invisible now (not revealed), where the party would see it if it
--- weren't (in a member's sight range and line of sight): a player saw it vanish. S030 Soft-Step Trial: a Shadow 1.8 m
--- away answered "target is not visible; last seen 2s ago: travel_to that spot" 3x. Out of sight it is the plain
--- last-seen hint: fairness audit S2-4, a side was told "it turned invisible" of an enemy that went invisible out of
--- its view. ctx: the asker's context (default V.context(), the side's).
+-- A character the party saw vanish on this level, still invisible (not revealed) and alive: a player saw it go. S030
+-- Soft-Step Trial: a Shadow 1.8 m away answered "target is not visible; last seen 2s ago: travel_to that spot" 3x.
+-- The vanish is noted as it happens (V.noteVanish, on StatusApplied), per side, only where that side sees the spot
+-- then (a member's sight range and line of sight): fairness audit S2-4, and its residual (arena A7): judged at the
+-- query from where it stands now, one that vanished out of view and walked in unseen was "seen to vanish".
+-- -> true, {pos = where it vanished, ago_s}; else false (the plain last-seen hint).
 V.INVISIBLE_SEEN_S = 120
-function V.vanished(uuid, ctx)
+V.VANISH_CAP = 200
+function V.vanished(uuid)
     local e = uuid and V.entity(uuid)
     if not e or not U.comp(e, "ServerCharacter") then return false end
-    local m = V.lastSeen(uuid)
-    if not m or m.ago_s > V.INVISIBLE_SEEN_S then return false end
+    local v = V.vanishes[uuid]
+    if not v or v.level ~= currentLevel() then return false end
+    local ago = math.floor((Ext.Utils.MonotonicTime() - v.t) / 1000)
+    if ago > V.INVISIBLE_SEEN_S then return false end
     if not truthy(V.osi(Osi.IsInvisible, uuid)) or truthy(V.osi(Osi.IsDead, uuid)) then return false end
-    return V.perceived(ctx or V.context(), uuid, V.pos(e)), m
+    return true, { pos = U.vec(v.pos, 1), ago_s = ago }
+end
+
+-- A character turned invisible (a status was applied and it reads invisible): each side (no side outside an arena)
+-- that perceives it where it stands at that moment notes the vanish there.
+function V.noteVanish(target)
+    local uuid = V.uuid(target)
+    local e = uuid and V.entity(uuid)
+    if not e or not U.comp(e, "ServerCharacter") or not truthy(V.osi(Osi.IsInvisible, uuid)) then return end
+    local pos, now, lvl = V.pos(e), Ext.Utils.MonotonicTime(), currentLevel()
+    local function note()
+        if not V.perceived(V.context(), uuid, pos) then return end
+        local list = V.vanishes
+        if not list[uuid] then -- bounded: the ones past the hint's window go, and all of them at the cap
+            local n = 0
+            for u, x in pairs(list) do
+                if (now - x.t) / 1000 > V.INVISIBLE_SEEN_S then list[u] = nil else n = n + 1 end
+            end
+            if n >= V.VANISH_CAP then for u in pairs(list) do list[u] = nil end end
+        end
+        list[uuid] = { pos = pos, t = now, level = lvl }
+    end
+    local RPC = BG3AI.RPC
+    if RPC and RPC.each_side then RPC.each_side(note) else note() end
+end
+V.vanishes = V.vanishes or {}
+if Ext.Osiris and not V.vanishSubscribed then
+    V.vanishSubscribed = true
+    pcall(Ext.Osiris.RegisterListener, "StatusApplied", 4, "after", function(target)
+        local ok, err = pcall(V.noteVanish, target)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] vanish: " .. tostring(err)) end
+    end)
 end
 
 function V.recall(exclude, around, radius)
