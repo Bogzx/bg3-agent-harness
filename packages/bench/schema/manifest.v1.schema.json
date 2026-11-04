@@ -24,6 +24,7 @@
       "additionalProperties": false,
       "properties": {"harness": {"$ref": "#/$defs/str_or_null"}, "bench": {"type": "string", "minLength": 1}, "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"}}
     },
+    "record_encoder": {"type": ["string", "null"], "description": "the encoder the run's recording used (bg3harness recorder.bench_encoder: BG3AI_BENCH_RECORD_ENCODER, else the machine's record-encoder setting); null: not recorded; absent in manifests written before 2026-11-04"},
     "series": {"type": "string", "minLength": 1},
     "run": {"type": "integer", "minimum": 1},
     "scenario": {

@@ -120,6 +120,19 @@ def test_manifest_takes_the_versions_the_run_recorded():
     assert man["versions"] == {"harness": "0.5.0", "bench": "1.0.2", "suite": "bench-v1.0"}
 
 
+def test_manifest_pins_the_recording_encoder_the_run_used():
+    """runs.jsonl's record_encoder (run_host: the recording's encoder) is the manifest's; null when the run wasn't
+    recorded or its record predates the field."""
+    series, records = load_series()
+    man = manifest.from_series(series, {**records[0], "record_encoder": "libx264"})
+    assert man["record_encoder"] == "libx264"
+    assert_valid("manifest.v1.schema.json", man)
+    assert manifest.from_series(series, records[0])["record_encoder"] is None
+    old = {k: x for k, x in man.items() if k != "record_encoder"}  # a manifest written before 2026-11-04
+    assert_valid("manifest.v1.schema.json", old)
+    assert not validator("manifest.v1.schema.json").is_valid({**man, "record_encoder": 264})
+
+
 def test_manifest_rejects_mismatched_inputs(tmp_path):
     series, records = load_series()
     with pytest.raises(ValueError, match="series"):

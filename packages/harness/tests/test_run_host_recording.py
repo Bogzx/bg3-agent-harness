@@ -37,7 +37,11 @@ class FakeProc:
 
 
 def recording_on(
-    rig: Rig, window: str | None = "0x5", exit_after: str | None = None, spawn_error: OSError | None = None
+    rig: Rig,
+    window: str | None = "0x5",
+    exit_after: str | None = None,
+    spawn_error: OSError | None = None,
+    encoder: str = "h264_nvenc",
 ) -> list[list[str]]:
     """Recording on for rig's host: the game's window is `window`; ffmpeg exits once rig.calls has `exit_after`."""
     spawned: list[list[str]] = []
@@ -50,7 +54,7 @@ def recording_on(
         return FakeProc(rig.calls, exit_after)
 
     def recording(out: Path) -> hrec.RunRecording:
-        spec = hrec.RecordSpec(out, live=False)
+        spec = hrec.RecordSpec(out, live=False, encoder=encoder)
         probe = (lambda: hrec.Capture(":1", window)) if window else (lambda: None)
         return hrec.RunRecording(hrec.Recorder(spec, probe, lambda: 1000.0, spawn=spawn), interval=1e9)
 
@@ -93,6 +97,15 @@ def test_a_run_whose_recorder_isnt_recording_doesnt_start(rig: Rig, kw: dict, wh
     assert rig.calls[-2:] == ["scenario_undo", "end_run_game(start failed)"]
     assert ("ffmpeg start" in rig.calls) == ("ffmpeg stop" in rig.calls)
     assert (rig.h.runs, rig.h.recordings) == ({}, {})
+
+
+def test_the_run_record_names_the_encoder_its_recording_used(rig: Rig):
+    recording_on(rig, encoder="libx264")
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())["record_encoder"] == "libx264"
+    rig.h.recording = None  # BG3AI_BENCH_RECORD=0
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())["record_encoder"] is None
 
 
 def test_an_abort_stops_the_recording(rig: Rig):

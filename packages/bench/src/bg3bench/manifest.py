@@ -93,6 +93,7 @@ def from_series(
         "price_sheet": price_sheet,
         "sandbox": series.get("sandbox"),
         "judge": {"model": judge} if (judge := judge_model(series, record)) else None,
+        "record_encoder": record.get("record_encoder"),
     }
 
 

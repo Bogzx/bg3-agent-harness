@@ -921,6 +921,7 @@ class LiveRunHost:
             w.stop()
         foreign: str | None = None
         reloads = 0
+        encoder = rec.rec.spec.encoder if (rec := self.recordings.get(run_dir)) else None  # the one the run used
         if (sw := self.saves.pop(run_dir, None)) is not None:
             sw.stop()
             sw.check(final=True)  # with the game up: a load seen since the last poll is decided now
@@ -984,6 +985,7 @@ class LiveRunHost:
                 "unknown_failures": counts[runs.UNKNOWN],
                 "failures": failures,
                 "recovered_launches": relaunched,  # launches relaunched before run_start: noted, not failures
+                "record_encoder": encoder,  # the manifest's: what the recording encoded with (None: not recorded)
             }
             | ({"verdict": goal["verdict"]} if goal else {})
             | ({FOREIGN_SAVE: foreign} if foreign else {})
