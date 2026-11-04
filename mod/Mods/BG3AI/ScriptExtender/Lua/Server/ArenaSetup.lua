@@ -9,7 +9,9 @@
 --   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
 --      entries' grants nor the kit's boosts: live check 12 step 13): every spot cleared of Ground and Cloud surfaces
---      (RemoveSurfaceLayerAtPosition, SURFACE_CLEAR_M), then each pair arena.mirror_spawn + arena.mirror_kit
+--      (RemoveSurfaceLayerAtPosition over the arena, then SURFACE_CLEAR_M at each spot) and the surfaces read
+--      mirrored across the midplane (Setup.check_surfaces; the result's surfaces), then each pair
+--      arena.mirror_spawn + arena.mirror_kit
 --      (Server/ArenaMirror.lua), pair i's side Setup.spawn_order(seed, n)[i] made first (recorded as spawn_order);
 --      once every kit is done, each twin must read its own name and StatsId within
 --      NAME_WAIT_MS of the spawn (both land after the spawn tick) and arena.symmetry over the pairs must find
@@ -53,6 +55,12 @@ Setup.TIMEOUT_MS = 60000
 -- spawned on a surface at spot A and read INSURFACE, Dune not: the pair's statuses differed)
 Setup.SURFACE_CLEAR_M = 2.0
 Setup.SURFACE_LAYERS = { "Ground", "Cloud" } -- bg3se SurfaceLayer8
+-- ... and the whole arena first: one clear per layer at the spawns' midpoint, out to half the spawns' distance plus a
+-- line's half-length plus this (fairness audit, site 2: every match opened with Fire 2 m from B's line, 8 m from A's).
+-- Then the surfaces must mirror across the midplane: a SURFACE_GRID_M grid on A's half within that radius, each tile
+-- against its reflection on B's half, else setup fails naming them.
+Setup.SURFACE_MARGIN_M = 6.0
+Setup.SURFACE_GRID_M = 1.0
 Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike stood up
 -- Spawn geometry (both sides stand on the same terms): the spawns at most this far apart in height, and every distance
 -- across the lines the same both ways (A's member i to B's member j = B's i to A's j) within this
@@ -166,6 +174,51 @@ function Setup.check_geometry(spawns, n)
             Setup.SPAWN_DY_MAX_M), 0)
     end
     Setup.check_cross(Setup.line(spawns.A, n), Setup.line(spawns.B, n), "location.spawns")
+end
+
+-- The ground and cloud surface names of the tile at p ("None" for none), or nil when the tile doesn't read.
+local function tile_surfaces(p)
+    local ok, g, c = pcall(function()
+        local t = Ext.Level.GetTileDebugInfo({ p[1], p[2], p[3] })
+        return tostring(t.GroundSurface), tostring(t.CloudSurface)
+    end)
+    if not ok then return nil end
+    return g .. "/" .. c
+end
+
+-- The radius around the spawns' midpoint that the surface clear covers and the mirror check reads, for n per line.
+function Setup.surface_radius(spawns, n)
+    return dist(spawns.A, spawns.B) / 2 + (n - 1) / 2 * Setup.LINE_GAP_M + Setup.SURFACE_MARGIN_M
+end
+
+-- Whether the arena's surfaces mirror across the plane halfway between the spawns: every grid point p on A's half
+-- within the radius (read at A's height) against p's reflection (read at B's height). {points, read (A's tiles that
+-- read), radius, off = {text}}.
+function Setup.check_surfaces(spawns, n)
+    local a, b = spawns.A, spawns.B
+    local mx, mz = (a[1] + b[1]) / 2, (a[3] + b[3]) / 2
+    local d = math.sqrt((b[1] - a[1]) ^ 2 + (b[3] - a[3]) ^ 2)
+    local ux, uz = (b[1] - a[1]) / d, (b[3] - a[3]) / d
+    local r, step = Setup.surface_radius(spawns, n), Setup.SURFACE_GRID_M
+    local points, read, off = 0, 0, {}
+    local k = math.floor(r / step)
+    for i = -k, k do
+        for j = -k, k do
+            local x, z = mx + i * step, mz + j * step
+            local along = (x - mx) * ux + (z - mz) * uz
+            if along < 0 and (x - mx) ^ 2 + (z - mz) ^ 2 <= r * r then
+                local x2, z2 = x - 2 * along * ux, z - 2 * along * uz
+                local sa, sb = tile_surfaces({ x, a[2], z }), tile_surfaces({ x2, b[2], z2 })
+                points = points + 1
+                if sa then read = read + 1 end
+                if sa ~= sb then
+                    off[#off + 1] = ("(%.1f, %.1f) on A's half reads %s, its mirror (%.1f, %.1f) %s"):format(x, z,
+                        sa or "no tile", x2, z2, sb or "no tile")
+                end
+            end
+        end
+    end
+    return { points = points, read = read, radius = r, off = off }
 end
 
 -- Refuses positions a (team A, by member) and b (team B) where a distance across the teams differs both ways (A's
@@ -479,7 +532,7 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,
-        positions = positions,
+        positions = positions, surfaces = job.surfaces,
         calls = job.calls, status = status })
 end
 
@@ -487,6 +540,14 @@ end
 STEPS[-1] = function(job)
     local mi, M = job.mirror, Ar.Mirror
     job.kits = {}
+    local mid, radius = {}, Setup.surface_radius(job.spawns, #mi.pairs)
+    for k = 1, 3 do mid[k] = (job.spawns.A[k] + job.spawns.B[k]) / 2 end
+    for _, layer in ipairs(Setup.SURFACE_LAYERS) do -- the whole arena, then each spot (in case the radius is capped)
+        if not call(job, "RemoveSurfaceLayerAtPosition", { mid[1], mid[2], mid[3], layer, radius }) then
+            error(("RemoveSurfaceLayerAtPosition %s over the arena (%.1f m): %s"):format(layer, radius,
+                tostring(job.calls[#job.calls].error)), 0)
+        end
+    end
     for i = 1, #mi.pairs do -- every spot free of surfaces first: a pair stands on the same ground
         for _, s in ipairs(Ar.SIDES) do
             local p = Setup.line(job.spawns[s], #mi.pairs)[i]
@@ -498,6 +559,17 @@ STEPS[-1] = function(job)
                 end
             end
         end
+    end
+    local sc = Setup.check_surfaces(job.spawns, #mi.pairs)
+    job.surfaces = { points = sc.points, radius = sc.radius, off = #sc.off }
+    if sc.read == 0 then -- fails closed: a check that read nothing checked nothing
+        error(("no tile on A's half within %.1f m of the arena's midpoint reads its surfaces (%d tried)"):format(
+            sc.radius, sc.points), 0)
+    end
+    if #sc.off > 0 then
+        local shown = { table.unpack(sc.off, 1, 5) }
+        error(("the surfaces don't mirror after the clear (%d of %d tiles within %.1f m): %s"):format(#sc.off,
+            sc.points, sc.radius, table.concat(shown, "; ")), 0)
     end
     for i, p in ipairs(mi.pairs) do
         local spots = {}
