@@ -159,8 +159,8 @@ r = json.loads(sys.stdin.read())
 if not r.get("ok"): sys.exit(1)
 i = r["result"]
 g = lambda k: i.get(k, "?")
-print("mod %s, bg3le %s, game %s, state %s, %d ops (%s context)" % (g("version"), g("extender_version"),
-      g("game_version"), g("game_state"), len(i.get("ops") or []), g("context")))'
+print("bg3le %s, game %s, state %s, %d ops (%s context)" % (g("extender_version"), g("game_version"),
+      g("game_state"), len(i.get("ops") or []), g("context")))'
 }
 until info="$(luaeval 10 'return Mods.BG3AI.BG3AI.rpc([[{"op":"sys.info"}]])' 2>&1)" && summary="$(sysinfo <<<"$info" 2>/dev/null)"; do
     [ $((SECONDS - t0)) -lt "$MOD_TIMEOUT" ] ||
