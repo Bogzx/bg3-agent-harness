@@ -398,5 +398,36 @@ do
     Ext.StaticData, Ext.Entity, Osi.GetEquippedItem = nil, nil, nil
 end
 
+-- REVIEW-13 item 12: camp.can_rest reads the short-rest side too (CanDoRest.ShortRestErrorFlags,
+-- GlobalShortRestDisabled), so a blocked camp trip states short rest's state only as read.
+do
+    local V = BG3AI.Visibility
+    local realEntity, realCtx, realEnt = V.entity, V.context, Ext.Entity
+    local comps = {
+        [HOST] = { CanDoRest = { LongRestErrorFlags = { "Location" }, ShortRestErrorFlags = {} } },
+        [SH] = { CanDoRest = { LongRestErrorFlags = {}, ShortRestErrorFlags = { "NotEnoughResources" } } },
+    }
+    V.entity = function(u) return comps[u] end
+    V.context = function()
+        return { party = { HOST, SH }, is_party = { [HOST] = true, [SH] = true }, observers = {} }
+    end
+    local globalShort = {}
+    Ext.Entity = { GetAllEntitiesWithComponent = function(name)
+        if name == "GlobalShortRestDisabled" then return globalShort end
+        return {}
+    end }
+    local c = E.canRest()
+    check("short side read", c.short_read == true, tostring(c.short_read))
+    check("short rest blocked for Shadowheart only", c.short_blocked and #c.short_blocked == 1
+        and c.short_blocked[1].name == "Shadowheart" and c.short_blocked[1].flags[1] == "NotEnoughResources")
+    check("no global short-rest disable", c.short_global_disabled == 0, tostring(c.short_global_disabled))
+    globalShort = { {} }
+    check("GlobalShortRestDisabled counted", E.canRest().short_global_disabled == 1)
+    comps[SH].CanDoRest = setmetatable({ LongRestErrorFlags = {} }, { __index = function(_, k)
+        error("no field " .. k) end })
+    check("an unreadable short-rest field: short_read false", E.canRest().short_read == false)
+    V.entity, V.context, Ext.Entity = realEntity, realCtx, realEnt
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end

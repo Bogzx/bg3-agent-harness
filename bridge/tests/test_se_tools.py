@@ -446,8 +446,8 @@ class NightCamp(unittest.TestCase):
         fake.err = "Unavailable"
         out = go()
         self.assertIn("(Unavailable): this area does not let the party go to camp", out)
-        self.assertTrue(out.endswith("(a dungeon or story area); short_rest, potions and healing spells still work "
-                                     "here."), out)  # D630: no 'Ways out: walk back ...'
+        self.assertTrue(out.endswith("(a dungeon or story area)."), out)  # D630: no 'Ways out: walk back ...'
+        self.assertNotIn("short_rest", out)  # REVIEW-13 item 12: no short-rest read here, no claim
         fake.err = "DangerZone"
         self.assertNotIn("walk away", go())
         fake.err = "Unavailable"
