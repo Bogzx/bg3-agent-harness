@@ -429,8 +429,113 @@ local function announce(g)
     end
 end
 
+------------------------------------------------------------------------
+-- Status timing probe (website ops/research/status-tick-timing.md section 5): with BG3AI_STATUS_LOG=1 in the game's
+-- environment, every status applied or removed on a character (technical, hidden ones too) and every TurnStarted,
+-- TurnEnded and CombatRoundStarted go into this ring with the game's monotonic ms (`ms`; the ring's `t` becomes
+-- wall time in facts, as the arena's arena_turn records' does).
+-- The ring is the harness's (facts, probe logs), never a side's results: hidden statuses never reach the event stream
+-- (Events.lua pushes shown ones only). Each status record carries the status's runtime fields (R.status_fields).
+------------------------------------------------------------------------
+
+R.STATUS_LOG_SWITCH = "BG3AI_STATUS_LOG"
+function R.status_log_on()
+    local Ar = BG3AI.Arena
+    local get = Ar and Ar.getenv
+    local v
+    if get then v = get(R.STATUS_LOG_SWITCH) elseif os and os.getenv then v = os.getenv(R.STATUS_LOG_SWITCH) end
+    return v == "1"
+end
+
+-- A flag set as bg3se hands it (a list of names, or a name -> bool map) as a sorted list of names.
+local function flag_names(v)
+    local out = {}
+    pcall(function()
+        for k, x in pairs(v) do
+            if type(k) == "string" and x == true then
+                out[#out + 1] = k
+            elseif type(x) == "string" then
+                out[#out + 1] = x
+            end
+        end
+    end)
+    table.sort(out)
+    return out
+end
+
+R.STATUS_FIELDS = { "TurnTimer", "LifeTime", "CurrentLifeTime", "TickType" }
+R.STATUS_FLAGS = { "Flags", "Flags2", "Flags3", "Flags4" }
+
+-- The runtime fields of u's statuses (all, or the one with id), as bg3se reads them from the character's status
+-- machine (ServerCharacter.StatusManager.Statuses): {{id, TurnTimer, LifeTime, CurrentLifeTime, TickType, flags,
+-- RequestDeleteAtTurnEnd, Started}}; a field that doesn't read is left out. Probe only.
+function R.status_fields(u, id)
+    local out = {}
+    local e = V.entity(u)
+    local list
+    pcall(function() list = e.ServerCharacter.StatusManager.Statuses end)
+    if not list then return out end
+    pcall(function()
+        for _, st in pairs(list) do
+            local sid
+            pcall(function() sid = tostring(st.StatusId) end)
+            if sid and (id == nil or sid == id) then
+                local row = { id = sid }
+                for _, f in ipairs(R.STATUS_FIELDS) do
+                    local ok, v = pcall(function() return st[f] end)
+                    if ok and v ~= nil then row[f] = type(v) == "number" and v or tostring(v) end
+                end
+                local flags = {}
+                for _, f in ipairs(R.STATUS_FLAGS) do
+                    local ok, v = pcall(function() return st[f] end)
+                    if ok and v ~= nil then
+                        for _, n in ipairs(flag_names(v)) do flags[#flags + 1] = n end
+                    end
+                end
+                if #flags > 0 then row.flags = flags end
+                local set = {}
+                for _, n in ipairs(flags) do set[n] = true end
+                row.RequestDeleteAtTurnEnd, row.Started = set.RequestDeleteAtTurnEnd or nil, set.Started or nil
+                out[#out + 1] = row
+            end
+        end
+    end)
+    return out
+end
+
+local function status_log(on, obj, status, cause)
+    if not R.status_log_on() then return end
+    local u = uuid(obj)
+    if not u or not truthy(osi(Osi.IsCharacter, u)) then return end
+    local info = V.statusInfo and V.statusInfo(tostring(status))
+    local by = uuid(cause)
+    if by == "00000000-0000-0000-0000-000000000000" then by = nil end -- the game's NULL: no cause
+    R.record("status_log", { ms = Ext.Utils.MonotonicTime(), on = on, char = u, name = name(u), id = tostring(status),
+        shown = info and info.name or nil, cause = by,
+        fields = on == "applied" and R.status_fields(u, tostring(status)) or nil })
+end
+
+local function turn_log(what, char, round)
+    if not R.status_log_on() then return end
+    local u = uuid(char)
+    R.record("turn_log", { ms = Ext.Utils.MonotonicTime(), what = what, char = u, name = name(u),
+        round = tonumber(round),
+        statuses = u and R.status_fields(u) or nil })
+end
+
+listen("StatusApplied", 4, function(obj, status, cause) status_log("applied", obj, status, cause) end)
+listen("StatusRemoved", 4, function(obj, status, cause) status_log("removed", obj, status, cause) end)
+listen("TurnStarted", 1, function(char) turn_log("TurnStarted", char) end)
+listen("TurnEnded", 1, function(char) turn_log("TurnEnded", char) end)
+
 listen("CombatStarted", 1, function(g) announce(g) end)
-listen("CombatRoundStarted", 2, function(g) announce(g) end)
+listen("CombatRoundStarted", 2, function(g, round)
+    announce(g)
+    if R.status_log_on() then
+        R.record("turn_log", { ms = Ext.Utils.MonotonicTime(), what = "CombatRoundStarted", combat = g,
+            round = tonumber(round) })
+    end
+end)
 
 listen("EnteredCombat", 2, function(entity, g)
     local u = uuid(entity)
@@ -491,6 +596,17 @@ RPC.register("ref.snapshot", function()
     return { boot = RPC.BOOT, now = now_ms(), gt = game_s(), latest = R.seq, fired = R.fired, never = never,
         registered = R.registered, trade = R.trade and { npc = R.trade.npc } or nil,
         pickpocket = R.pickpocket and { npc = R.pickpocket.npc } or nil, combats = combats }
+end)
+
+-- A status's runtime fields now (R.status_fields): {char, id?}. Probe only: with BG3AI_STATUS_LOG=1, never a side's.
+RPC.register("ref.status_fields", function(args)
+    if not R.status_log_on() then
+        error("ref.status_fields is a probe op: start the game with BG3AI_STATUS_LOG=1", 0)
+    end
+    if U.side() then error("probe ops are the harness's (no side)", 0) end
+    local u = uuid(args.char)
+    if not u then error("ref.status_fields needs char", 0) end
+    return { char = u, now = now_ms(), statuses = R.status_fields(u, args.id) }
 end)
 
 RPC.QUIET_OPS["ref.since"] = true

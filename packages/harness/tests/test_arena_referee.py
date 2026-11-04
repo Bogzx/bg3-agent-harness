@@ -165,3 +165,40 @@ def test_a_mirror_arenas_field_clean_reaches_arena_start_and_fits_the_schemas(tm
         for bad in ({**field, "items": "6"}, {k: v for k, v in field.items() if k != "left"}):
             with pytest.raises(jsonschema.ValidationError):
                 jsonschema.validate({**start, "field": bad}, schema)
+
+
+def test_the_status_probes_ring_records_are_facts_events():
+    """status-tick-timing.md section 5: with BG3AI_STATUS_LOG=1 the mod's ring carries status_log / turn_log records
+    (Referee.lua); they reach facts through to_fact with the game's ms and the runtime fields, valid facts v1 events."""
+    import jsonschema
+    from bg3ai import referee
+    from test_arena_match import FACTS_SCHEMA
+
+    ring = [
+        {
+            "seq": 1,
+            "t": 1.5,
+            "gt": 3.0,
+            "ev": "status_log",
+            "ms": 229480471,
+            "on": "applied",
+            "char": "u-gob",
+            "name": "Goblin",
+            "id": "DAZED",
+            "fields": [{"id": "DAZED", "TurnTimer": 6.0, "Started": True}],
+        },
+        {
+            "seq": 2,
+            "t": 1.6,
+            "gt": 3.1,
+            "ev": "turn_log",
+            "ms": 229480600,
+            "what": "CombatRoundStarted",
+            "combat": "c1",
+            "round": 2,
+        },
+    ]
+    for rec in ring:
+        fact = referee.to_fact(rec)
+        assert fact["ms"] == rec["ms"] and fact["ev"] == rec["ev"]
+        jsonschema.validate(fact, FACTS_SCHEMA)
