@@ -78,3 +78,37 @@ test("state.actions and the guard agree on cooldowns (w10 CD1's -1 UntilShortRes
     end
     world[P1].comps.SpellBook, world[P1].comps.SpellBookCooldowns = nil, nil
 end)
+
+-- REVIEW-17c: get_actions reads the same fail-closed rule: with the cooldown rows unread, a spell that can have a
+-- cooldown is listed UNAVAILABLE with the guard's fact, one without a Cooldown stays available, and the guard refuses
+-- exactly what is listed so.
+test("state.actions lists a spell UNAVAILABLE when its cooldown rows don't read, as the guard refuses it", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    if not BG3AI.State or not BG3AI.State.actions then dofile(LUA .. "/Server/State.lua") end
+    stats.Target_PommelStrike = { SpellType = "Target", UseCosts = "BonusActionPoint:1", Cooldown = "OncePerShortRest" }
+    stats.Target_Trip = { SpellType = "Target", UseCosts = "BonusActionPoint:1", Cooldown = "" }
+    local function book(id) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = "Unknown" } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_PommelStrike"), book("Target_Trip") } }
+    world[P1].comps.SpellBookCooldowns = false -- no component
+    BG3AI.State.spellCache = {}
+    local ok, list = pcall(BG3AI.State.actions, P1)
+    BG3AI.Visibility = savedV
+    eq(ok, true, "actions read: " .. tostring(list))
+    local by = {}
+    for _, a in ipairs(list) do
+        by[a.spell] = a
+        local gok, gerr = pcall(G.known_spell, P1, a.spell)
+        local why = not gok and tostring(G.is_refusal(gerr) and gerr.reason or gerr) or ""
+        eq(why:find("could not be read") ~= nil, (a.reason or ""):find("^the cooldown state of") ~= nil,
+            a.spell .. ": guard refusal vs get_actions")
+    end
+    eq(by.Target_PommelStrike.available, false, "Pommel unavailable")
+    eq(by.Target_PommelStrike.reason, "the cooldown state of Target_PommelStrike could not be read", "Pommel's reason")
+    eq((by.Target_Trip.reason or ""):find("cooldown"), nil, "Trip (no Cooldown): no cooldown reason")
+    world[P1].comps.SpellBook, world[P1].comps.SpellBookCooldowns = nil, nil
+    stats.Target_PommelStrike, stats.Target_Trip = nil, nil
+end)

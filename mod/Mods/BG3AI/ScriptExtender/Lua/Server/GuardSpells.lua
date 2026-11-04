@@ -317,6 +317,18 @@ local function has_cooldown(spell)
     return cd ~= "" and cd ~= "None"
 end
 
+-- The one cooldown rule: G.known_spell refuses what this blocks and state.actions lists it UNAVAILABLE (cds, read =
+-- G.cooldowns(e)). nil: free; the running row's CooldownType and the refusal; or false and the fact when the rows
+-- didn't read and the spell can have a cooldown (fail closed: unread rows can't show a running one).
+function G.cooldown_block(spell, cds, read)
+    if cds[spell] then return cds[spell], G.cooldown_text(cds[spell]) end
+    if not read and has_cooldown(spell) then
+        local f = G.spell_facts(spell)
+        return false, "the cooldown state of " .. (f and f.name or spell) .. " could not be read"
+    end
+    return nil
+end
+
 -- How long the cooldown lasts, as a fact (bg3se SpellCooldownType).
 local COOLDOWN_UNTIL = { OncePerTurn = "until its next turn", OncePerTurnNoRealtime = "until its next turn",
     OncePerCombat = "for the rest of this combat", UntilRest = "until a long rest",
@@ -361,13 +373,8 @@ function G.known_spell(char, spell)
     if G.unprepared(found, G.prepared_ids(e)) then G.refuse("that spell is not prepared") end
 
     -- Cooldown (once per turn / combat / short rest / long rest): the rule get_actions shows (G.cooldowns)
-    -- Fail closed: unread rows can't show a running cooldown, so a spell that can have one is refused.
-    local cds, read = G.cooldowns(e)
-    if cds[spell] then G.refuse(G.cooldown_text(cds[spell])) end
-    if not read and has_cooldown(spell) then
-        local f = G.spell_facts(spell)
-        G.refuse("the cooldown state of " .. (f and f.name or spell) .. " could not be read")
-    end
+    local kind, text = G.cooldown_block(spell, G.cooldowns(e))
+    if kind ~= nil then G.refuse(text) end
     local key = G.item_cd_key(char, spell)
     if key and G.item_uses()[key] then
         G.refuse("that action is used up until the next " .. (G.item_uses()[key] == "short" and "short or long rest"
