@@ -2,7 +2,7 @@
   "schema": "arena.v1",
   "name": "arena-v0",
   "title": "Arena v0: crash site, Fighter and Rogue mirror twins, two against two",
-  "about": "The crash_site_grove start save. Each side plays two twins that arena.setup makes for every match from the mirror pairs (pairs 1-2 of tools/dev/make_arena_save.py mirror on ops/briefs/arena/live-mirror-3-spec.json): a Fighter and a Rogue, one hireling template, Half-Elf, the same kit and gear on both sides, level 2. Side A plays Ash and Cedar, side B their twins Birch and Dune. The spawns are site 2 of the arena site search (2026-11-03, tools/dev/probe_arena_site.py, ops/logs/live.md '# arena site search'), as landed: the members (x 212.25 and 213.75, Setup.line) landed at the asked x/z with y A 10.975 / 10.980, B 11.019 / 10.949 (all four within 0.069 m), lines 8 m apart, no one-sided high ground within 9 m, no character or prop that can join a fight within 26 m, the sitters 10 m or more off. The crash-site strip live 15 used favours side A (the wreck's deck, the Nautiloid Tank).",
+  "about": "The crash_site_grove start save. Each side plays two twins that arena.setup makes for every match from the mirror pairs (pairs 1-2 of tools/dev/make_arena_save.py mirror on ops/briefs/arena/live-mirror-3-spec.json): a Fighter and a Rogue, one hireling template, Half-Elf, the same kit and gear on both sides, level 2. Side A plays Ash and Cedar, side B their twins Birch and Dune. The spawns are site 2 of the arena site search (2026-11-03, tools/dev/probe_arena_site.py, ops/logs/live.md '# arena site search'), as landed: the members (x 212.25 and 213.75, Setup.line) landed at the asked x/z with y A 10.975 / 10.980, B 11.019 / 10.949 (all four within 0.069 m), lines 8 m apart, no one-sided high ground within 9 m, no character or prop that can join a fight within 26 m, the sitters 10 m or more off. The crash-site strip live 15 used favours side A (the wreck's deck, the Nautiloid Tank). The kits hold no knock-down source: character creation's grease bottles and Arrow of Ice are left out (Fable REVIEW-12 option (d), 2026-11-04: Prone can cost a whole phase in the shared turn group).",
   "save": {
     "name": "Tav-34221263934__SCN-crash_site_grove",
     "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
@@ -212,12 +212,6 @@
               "item": "OBJ_Kit_ThievesTools",
               "root": "e32a200c-5b63-414d-ae57-00e7b38f125b",
               "count": 1,
-              "equip": false
-            },
-            {
-              "item": "OBJ_GreaseBottle",
-              "root": "e2968a2e-bc83-4d50-99ef-39ce78d2d630",
-              "count": 2,
               "equip": false
             },
             {

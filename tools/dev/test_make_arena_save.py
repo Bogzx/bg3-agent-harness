@@ -50,8 +50,6 @@ KITS: dict[str, dict[str, Any]] = {
             "ARM_Leather_Body_Rogue",
             "ARM_Boots_Leather",
             "OBJ_Kit_ThievesTools",
-            "OBJ_GreaseBottle",
-            "OBJ_GreaseBottle",
             *POTIONS,
         ],
     },
@@ -66,7 +64,6 @@ KITS: dict[str, dict[str, Any]] = {
             "WPN_Shortsword",
             "ARM_Leather_Body",
             "ARM_Boots_Leather",
-            {"item": "OBJ_ArrowOfIce", "equip": False},
             *POTIONS,
         ],
     },
@@ -260,6 +257,13 @@ class KitTest(unittest.TestCase):
                 "not that: OBJ_Scroll_Revivify",
             ),
             ("Fighter", kit("Fighter", items=KITS["Fighter"]["items"][:-1]), "missing: OBJ_Potion_Healing"),
+            # REVIEW-12 (d): no knock-down source in a mirror kit (grease and ice surfaces knock prone)
+            ("Rogue", kit("Rogue", items=[*KITS["Rogue"]["items"], "OBJ_GreaseBottle"]), "not that: OBJ_GreaseBottle"),
+            (
+                "Ranger",
+                kit("Ranger", items=[*KITS["Ranger"]["items"], {"item": "OBJ_ArrowOfIce", "equip": False}]),
+                "not that: OBJ_ArrowOfIce",
+            ),
         ]
         for cls, k, want in bad:
             with self.subTest(want=want), self.assertRaisesRegex(mas.SpecError, re.escape(want)):
