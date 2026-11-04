@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: screenshot waits where the running game writes
+
+- `screenshot` looks for the PNG in the folder the game's capture layer writes to (the output_dir in the running
+  game's VK_LAYER_MESA_SCREENSHOT_CONFIG), before BG3AI_SHOTS_DIR or runtime/shots. v010 window 9: a bridge from
+  another checkout waited 5 s in its own folder while the game wrote each PNG elsewhere in 0.5 s. Its timeout now
+  names the file it waited for: `game did not present a frame in time (minimized or loading?): no <path>`.
+
 ## 2026-11-03: dialogue rows pair with their answers by the number shown; flee says why the game won't
 
 - Answer rows pair with the live answer VMs by the number each row shows (the game's AnswerTextPrefix, AnswerIdx + 1)

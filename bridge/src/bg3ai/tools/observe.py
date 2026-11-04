@@ -584,9 +584,13 @@ def get_events() -> str:
 
 
 def _shots_dir() -> Path:
-    """Where the game's capture layer writes (its output_dir, set at launch from the launcher's runtime). A bridge
-    with its own BG3AI_RUNTIME (acceptance.py) waited in the wrong folder: "did not present a frame in time"."""
-    return Path(os.environ.get("BG3AI_SHOTS_DIR") or core.RUNTIME / "shots")
+    """Where the game's capture layer writes: its output_dir, read from the running game's environment, else
+    BG3AI_SHOTS_DIR, else runtime/shots (both only guess what the launcher passed). A bridge with its own
+    BG3AI_RUNTIME (acceptance.py) or from another checkout (v010 window 9: w8-fixes' call.py, the game from
+    w9-fixes) waited in the wrong folder: "did not present a frame in time"."""
+    from ..screen import layer_output_dir
+
+    return layer_output_dir() or Path(os.environ.get("BG3AI_SHOTS_DIR") or core.RUNTIME / "shots")
 
 
 @core.mcp.tool()
