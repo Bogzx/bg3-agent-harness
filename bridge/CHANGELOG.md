@@ -22,7 +22,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   the `→ swap_party(...)` pointer.
 - path_preview to a point whose engine path ends > 2 m short of it (the mod's `partial`) reads `NOT REACHED: the
   walkable path ends @(x,y,z), 3.4m short of the target: walk 0.1m` instead of `reachable: walk 0.1m` (w12 L1a, a
-  3.5 m landing).
+  3.5 m landing). The mod's nav.path now also flags a found path with no nodes (it ends on the walker's own spot)
+  to a point more than 2 m away, so it reads `NOT REACHED: ... ends @<walker>, 3.5m short of the target: walk 0m`
+  instead of `reachable: walk 0m` (NavigationReach.lua; readResult flags a short end only from a node).
 - trade's description: "offer/request calls show the table and the balance only; a confirmed deal names each item
   sold and bought with its price (SOLD/BOUGHT)" (it said confirm calls show the table only). Golden regenerated;
   the release's tools.defs_sha256 moves.

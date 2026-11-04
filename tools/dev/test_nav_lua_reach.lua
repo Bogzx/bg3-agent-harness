@@ -617,6 +617,23 @@ test("nav.path reply drops the route points and adds the hazard", function()
     eq(r.points, nil, "points"); eq(r.hazard.surface, "Fire", "hazard")
 end)
 
+-- w12 L1a: path_preview read "reachable: walk 0.1m" for a landing 3.5 m away (the path ended by the walker: partial,
+-- now rendered); a found path with NO nodes ends on the walker's own spot and readResult flags nothing for it
+test("nav.path: a found path with no nodes to a point farther than the end tolerance ends short of it", function()
+    nodesFor = function() return {} end
+    local r = RPC.ops["nav.path"]({ pos = { -3.5, 0, 0 } })
+    eq(r.reachable, true, "the engine's answer"); eq(r.nodes, 0, "no nodes")
+    eq(r.partial, true, "ends short"); near(r.end_off, 3.5, "short by"); eq(r.end_pos[1], 0, "at the walker")
+    local close = RPC.ops["nav.path"]({ pos = { -1.5, 0, 0 } })
+    eq(close.partial, nil, "within the end tolerance: the walker is there")
+end)
+
+test("nav.path: a path whose last node is by the walker stays partial (readResult)", function()
+    nodesFor = function() return { { -0.1, 0, 0 } } end
+    local r = RPC.ops["nav.path"]({ pos = { -3.5, 0, 0 } })
+    eq(r.partial, true, "ends short"); near(r.end_off, 3.4, "short by"); near(r.length_m, 0.1, "walk")
+end)
+
 test("nav.activity reports a harmful surface under a party member", function()
     Osi.IsOnStage = function() return 1 end
     fire = function() return true end

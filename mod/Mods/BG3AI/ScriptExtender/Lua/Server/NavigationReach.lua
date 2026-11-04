@@ -73,6 +73,11 @@ RPC.register("nav.path", function(args)
     if not r0 then error("no path", 0) end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
+    -- A found path with no nodes ends on the walker's own spot (readResult flags a short end only from a node): to a
+    -- point farther than the walker's end tolerance it reaches nothing, as a path that ends short does (w12 L1a)
+    if r.reachable and r.nodes == 0 and not r.partial and cp and U.dist(cp, target) > N.PATH_END_TOL_M then
+        r.partial, r.end_pos, r.end_off = true, U.vec(cp, 1), round(U.dist(cp, target), 1)
+    end
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
     local Gd = BG3AI.Guard -- loaded after Navigation in the game; the nav-only tests run without it
     if r0.points and r.reachable and Gd then -- the game's path preview: where the walk provokes an opportunity attack
