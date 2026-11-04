@@ -247,10 +247,11 @@ class RouteTool(Base):
         self.assertNotIn("NEXT", out)
         self.assertNotIn("Try another direction", out)
 
-    def test_walk_toward_direction_failure_keeps_the_old_advice(self):
+    def test_walk_toward_direction_failure_says_the_blocking_fact(self):
         self.g.reach = {"reachable": False, "samples": 1}
         out = observe.walk_toward(direction="SE")
-        self.assertIn("Try another direction, get_frontier, or a door.", out)
+        self.assertIn("FAILED: no walkable ground toward SE within 30m (1 spots checked).", out)
+        self.assertNotIn("Try another direction", out)  # D630
         self.assertEqual(self.g.ops("nav.route"), [])
 
 

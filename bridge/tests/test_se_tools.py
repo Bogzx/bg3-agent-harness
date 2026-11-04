@@ -446,7 +446,16 @@ class NightCamp(unittest.TestCase):
         fake.err = "Unavailable"
         out = go()
         self.assertIn("(Unavailable): this area does not let the party go to camp", out)
-        self.assertIn("walk back out the way you came", out)
+        self.assertTrue(out.endswith("(a dungeon or story area); short_rest, potions and healing spells still work "
+                                     "here."), out)  # D630: no 'Ways out: walk back ...'
+        fake.err = "DangerZone"
+        self.assertNotIn("walk away", go())
+        fake.err = "Unavailable"
+        self.assertEqual(travel._CAMP_BLOCKS, {  # D630: the game's reason only, no 'finish it first, then camp()'
+            "Combat": "a fight is on", "Dialog": "a conversation is open",
+            "Condition": "a party member's condition blocks it (asleep after a rest, downed, ...)",
+            "DangerZone": "this is a danger zone (enemies or a hostile area around)",
+            "InDanger": "the party is in danger (hostiles close or aware of you)"})
         fake.err = None
         self.assertIn("The game gave no reason", go())
 

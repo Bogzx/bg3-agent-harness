@@ -35,13 +35,13 @@ class Pure(unittest.TestCase):
     def test_far_and_other_level(self):
         st = status({"pos": [34, 0, 0]}, {"region": "TUT", "pos": [900, 0, 0]})
         line = party.apart_line(party.apart(st), self.label)
-        self.assertEqual(line, "PARTY APART: e2 Lae'zel 34m, e3 Gale other level → regroup()")
+        self.assertEqual(line, "PARTY APART: e2 Lae'zel 34m, e3 Gale other level")  # D630: no '→ regroup()'
 
     def test_unchained_near_and_staying(self):
         st = status({"chained": False}, {"pos": [40, 0, 0]})
         rows = party.apart(st, stay={P3})
         self.assertEqual(party.apart_line(rows, self.label),
-                         "PARTY APART: e2 Lae'zel near, unchained, e3 Gale 40m (staying) → regroup()")
+                         "PARTY APART: e2 Lae'zel near, unchained, e3 Gale 40m (staying)")
         self.assertEqual(party.rechain_candidates(rows, lambda u: False), [P2])
         self.assertEqual(party.rechain_candidates(rows, lambda u: True), [])
 
@@ -53,9 +53,9 @@ class Pure(unittest.TestCase):
         # S015: Claude jumped 5 m down from a ledge; Gale stayed up there 7 m away with no path down
         st = status({"pos": [5, 5.2, 4]}, {"pos": [2, 1.5, 0]})
         line = party.apart_line(party.apart(st), self.label)
-        self.assertEqual(line, "PARTY APART: e2 Lae'zel 8m, 5m above → regroup()")
+        self.assertEqual(line, "PARTY APART: e2 Lae'zel 8m, 5m above")
         st = status({"pos": [30, -6, 0]})
-        self.assertEqual(party.apart_line(party.apart(st), self.label), "PARTY APART: e2 Lae'zel 31m, 6m below → regroup()")
+        self.assertEqual(party.apart_line(party.apart(st), self.label), "PARTY APART: e2 Lae'zel 31m, 6m below")
 
     def test_a_walk_back_gets_time_for_the_gap(self):
         # deepseek grove r3: Shadowheart 83 m behind walked 26 m in a flat 30 s, then "the walk back failed"

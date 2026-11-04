@@ -89,6 +89,13 @@ class TravelCrossing(Base):
         out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True, avoid_hazards="strict")
         self.assertNotIn("avoid", self.g.ops("nav.reach_toward")[0][1])
         self.assertIn("STOPPED: the way on crosses Fire 5m ahead", out)
+        self.assertIn("(50m left) (a surface like it burns out in time)", out)  # D630: no 'go around it ... or wait'
+        self.assertNotIn("go around it", out)
+
+    def test_walk_toward_into_a_chasm_says_it_lasts(self):
+        self.g.reach = {"reachable": False, "hazard": {"surface": "Chasm", "pos": [5, 0, 0], "at_m": 5}}
+        out = observe.walk_toward(direction="E", max_m=20)
+        self.assertIn("FAILED: the way toward E crosses Chasm 5m ahead @(5,0,0) (it does not burn out).", out)  # D630
 
     def test_detour_is_named(self):
         self.g.reach = lambda a: ({"reachable": True, "pos": [50.0, 0.0, -8.0], "detour": True, "dir": "SE",

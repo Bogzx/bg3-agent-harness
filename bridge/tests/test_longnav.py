@@ -77,8 +77,10 @@ class Pure(unittest.TestCase):
         self.assertEqual(longnav.stop_note(ends[1], None), "")  # once is no pattern yet
         note = longnav.stop_note(e, None, "Karlach")
         self.assertIn("tried 2x: blocked 2x at (101.8,22.2,481.3)", note)
-        self.assertIn("Don't try this approach again", note)
-        self.assertIn('travel_to waypoint="Road"', longnav.stop_note(e, {"name": "Road", "to_goal_m": 84.8}))
+        self.assertTrue(note.endswith(")"), note)  # D630: the stops, no "Don't try this approach again"
+        self.assertNotIn("Don't", note)
+        self.assertTrue(longnav.stop_note(e, {"name": "Road", "to_goal_m": 84.8}).endswith(
+            "; the Road waypoint is 84.8m from it"))
 
     def test_a_ladder_to_a_dead_end(self):
         d = longnav.DeadEnds(clock_seq("01:11"))
@@ -261,9 +263,10 @@ class TravelTrips(Base):
         self.assertNotIn("tried", first)
         second = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("tried 2x: blocked 2x at (0,0,0) 60m short", second)
-        self.assertIn("Don't try this approach again", second)
+        self.assertNotIn("Don't try this approach again", second)  # D630
         third = travel_macro.travel_to(x=60.0, y=0.0, z=0.0)
         self.assertIn("KNOWN DEAD END toward it: blocked 2x", third)
+        self.assertNotIn("take another approach", third)
         self.assertIn("tried 3x", third)
 
     def test_dead_ends_carry_the_level_and_a_load_clears_them(self):
@@ -398,7 +401,7 @@ class TravelTrips(Base):
         finally:
             self.g.try_rpc, self.g.run_job = orig_try, orig_job
         self.assertIn("FAILED — can't fast travel now (Location)", out)
-        self.assertIn("Way out: walk out the way you came", out)
+        self.assertTrue(out.endswith(" No spot on this level where travel worked is known."), out)  # D630: a fact
         self.assertNotIn("ui.fast_travel", seen)
 
     def test_route_tool_shows_this_sessions_dead_ends(self):
