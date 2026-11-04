@@ -280,6 +280,22 @@ def test_recorder_disk_cap_deletes_oldest(tmp_path: Path, fake_env):
     rec.stop()
 
 
+def test_recorder_does_not_call_a_segment_the_cap_deleted_empty(tmp_path: Path, fake_env):
+    # REVIEW-17 F7: the segment list still names the deleted files; they have no size because they are gone
+    fake_env.setenv("FAKE_SEGMENTS", "4")
+    fake_env.setenv("FAKE_BYTES", "1000")
+    warned: list[str] = []
+    clock, game = Clock(1000.0), {"cap": Capture()}
+    rec = make(tmp_path, clock, game, cap_bytes=2500, warn=warned.append)
+    rec.poll()
+    rec.live.get(after=0, timeout=10)
+    rec.poll()
+    rec.poll()
+    rec.stop()
+    assert sorted(f.name for f in (tmp_path / "video").glob("*.mp4")) == ["rec-1000-0002.mp4", "rec-1000-0003.mp4"]
+    assert warned == []
+
+
 def test_recorder_guard_stops_and_cools_down(tmp_path: Path, fake_env):
     clock, game, guard = Clock(1000.0), {"cap": Capture()}, {"why": None}
     rec = make(tmp_path, clock, game, guard)

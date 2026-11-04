@@ -660,7 +660,8 @@ class Recorder:
                 sizes[f] = 0
         rows = run_segments(run.prefix, run.t0, listed, files, sizes, run.ended_at)
         for r in rows:
-            if r["end"] is not None and not r["bytes"] and r["file"] not in self.empty_warned:
+            # a listed segment the size cap deleted has no size either: only a file still on disk is empty
+            if r["end"] is not None and not r["bytes"] and r["file"] in files and r["file"] not in self.empty_warned:
                 self.empty_warned.add(r["file"])
                 self.warn(f"recorder: segment {r['file']} is empty (0 bytes; see {self.out / 'ffmpeg.log'})")
         self.segments = [s for s in self.segments if s["run"] != run.prefix] + rows
