@@ -25,6 +25,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   3.5 m landing). The mod's nav.path now also flags a found path with no nodes (it ends on the walker's own spot)
   to a point more than 2 m away, so it reads `NOT REACHED: ... ends @<walker>, 3.5m short of the target: walk 0m`
   instead of `reachable: walk 0m` (NavigationReach.lua; readResult flags a short end only from a node).
+- EVENTS: one `quest_update` per quest and step, one `quest_added` per quest, when the game fires the event once per
+  party member in the same tick (w12 L1a: talk_to showed `quest_update ... title=Find the Nightsong` 4 times, a party
+  of 4). Different quests or steps keep their own rows (mod Events.lua).
 - trade's description: "offer/request calls show the table and the balance only; a confirmed deal names each item
   sold and bought with its price (SOLD/BOUGHT)" (it said confirm calls show the table only). Golden regenerated;
   the release's tools.defs_sha256 moves.
