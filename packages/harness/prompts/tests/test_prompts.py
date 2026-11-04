@@ -130,7 +130,9 @@ class Lint(unittest.TestCase):
 
     def test_arena_rules(self):
         # a two-team match: rules only, the match's file last; its backticked words are tools or known terms
-        text = A.assemble("rules", caps=frozenset(), arena=True).text
+        text = A.assemble("rules", caps=frozenset(), arena=True, turn_cap_s=75).text
+        self.assertIn("75 s of model time per character", " ".join(text.split()))
+        self.assertNotIn("{turn_cap_s}", text)
         self.assertEqual(A.part_files("rules", caps=frozenset(), arena=True)[-1], A.ARENA)
         self.assertTrue(text.startswith(A.assemble("rules", caps=frozenset()).text.rstrip("\n")))
         self.assertLessEqual(len(text), MAX_RULES)
