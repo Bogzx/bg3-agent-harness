@@ -18,6 +18,7 @@ G.ALLOW = {
     DialogStartRequested = true, -- raising the engine's own "player clicked NPC" event
     RequestPickpocket = true,    -- raising the engine's own "player clicked to pickpocket" event
     OpenCharacterLootUI = true,  -- loot UI on a corpse, only where the story would answer "yes" (see act.loot_corpse)
+    SetWeaponUnsheathed = true, -- sheathe and draw again after a weapon-set switch (a player toggles freely)
 }
 
 -- Never allowed, whatever the reason (research/03-actions.md §7).
