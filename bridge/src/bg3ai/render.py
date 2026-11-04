@@ -305,10 +305,9 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     if p and p.get("split"):
         # SplitItem (text "/3" = the stack size): S028 the agent clicked its arrow + Confirm by hand.
         size = re.sub(r"\D", "", str(p.get("text") or "")) or "?"
-        lines.append(f"POPUP how many of the stack: {p.get('title') or '?'} (1-{size}) → confirm(\"yes\", amount=N) "
-                     "or confirm(\"no\")")
+        lines.append(f"POPUP how many of the stack: {p.get('title') or '?'} (1-{size}; confirm takes amount=N)")
     elif p:
-        lines.append("POPUP " + compact(p, H) + (" → answer with confirm(\"yes\"|\"no\"|label)"
+        lines.append("POPUP " + compact(p, H) + (" (confirm answers it: \"yes\"|\"no\"|label)"
                                                  if p.get("decision") else ""))
     c = ui.get("container")
     if c:
@@ -646,8 +645,8 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     if junk_ids and f in ("", "notable", "junk"):
         js = [it for it in items if it["uuid"] in junk_ids]
         lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
-                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg: trade sell=junk at a "
-                     "trader, or manage_inventory op=camp item=junk" + economy.junk_in_bags(js))
+                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg (trade sell=junk sells it at a "
+                     "trader; manage_inventory op=camp item=junk sends it to camp)" + economy.junk_in_bags(js))
     if by_name and not matched:
         lines.append(f"No item in the party's bags matches {filter.strip()!r} (names; separate alternatives with "
                      "commas: 'misty,scroll').")

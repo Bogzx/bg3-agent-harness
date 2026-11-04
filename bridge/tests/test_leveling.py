@@ -57,10 +57,10 @@ class Leveling(unittest.TestCase):
 
     def test_line(self):
         line = LV.line(ST, label, self.mem)
-        self.assertTrue(line.startswith("LEVEL UP: e3 Gale (2) → level_up(who) now"), line)
-        self.assertNotIn("no plan yet", line)
+        self.assertTrue(line.startswith("LEVEL UP: e3 Gale (2) (level_up(who) levels one member per call)"), line)
+        self.assertNotIn("has no plan", line)
         (self.mem / "party-build.md").write_text("")
-        self.assertIn("no plan yet for Gale L2", LV.line(ST, label, self.mem))
+        self.assertIn("memory/party-build.md has no plan for Gale L2", LV.line(ST, label, self.mem))
         self.assertEqual(LV.line(dict(ST, in_combat=True), label, self.mem), "")   # not in combat
         self.assertEqual(LV.line({"party": [{"uuid": "a", "name": "A", "level": 3}]}, label), "")
         camp = LV.line({"party": [], "camp": [{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}]}, label)
@@ -398,7 +398,7 @@ class ServerWiring(unittest.TestCase):
             self.assertEqual(overview._LEVEL_NUDGE.rows, [])            # done: no more nudging for Gale
             progression.level_up("Gale", plan='{"subclass": "Divination"}')  # an explicit plan wins
             self.assertEqual(sent["args"]["plan"], {"subclass": "Divination"})
-            self.assertTrue(overview._level_up_line(ST).startswith("LEVEL UP: u-gale (2) → level_up(who)"))
+            self.assertTrue(overview._level_up_line(ST).startswith("LEVEL UP: u-gale (2) (level_up(who)"))
         finally:
             core.game, plumbing._act, core.MEMORY, plumbing._who = saved
 
@@ -734,7 +734,7 @@ class ServerWiring(unittest.TestCase):
         self.assertEqual(swaps, [("Wyll", "Gale")])  # no swap back
         self.assertEqual(jobs, [])                   # no leave camp with the page up
         self.assertIn("Wyll stays in the party (Gale at camp) with the level-up page open", out)
-        self.assertIn('swap_party(into="Gale", out="Wyll")', out)
+        self.assertNotIn('swap_party(into="Gale", out="Wyll")', out)
         self.assertIn("can pick: Booming Blade", out)
 
     def test_camp_member_swap_failure_is_reported(self):

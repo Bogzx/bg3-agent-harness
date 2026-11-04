@@ -164,7 +164,7 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
     lv = [c for c in camp if c.get("level_up")]
     if lv:
         bits.append("camp level-ups: " + ", ".join(f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in lv)
-                    + " → level_up(who=\"" + str(lv[0].get("name")) + "\") swaps in, levels, swaps back")
+                    + " (level_up(who=\"" + str(lv[0].get("name")) + "\") swaps in, levels, swaps back)")
     return bits
 
 
@@ -240,7 +240,7 @@ class TalkTracker:
     def line(self, st: Any, label: Callable[[str], str], force: bool = False, extra: tuple[str, ...] = ()) -> str:
         bits = talk_bits(st, label)
         # extra (the night camp's '!'): facts only, without the companion scenes' suffix (a required talk waits)
-        parts = ([" | ".join(bits) + " → talk_to(<id>) now (a companion's own scene; it may not wait)"] if bits
+        parts = ([" | ".join(bits) + " (a companion's own scene; it may not wait)"] if bits
                  else []) + [x for x in extra if x]
         text = ("TALK: " + " | ".join(parts)) if parts else ""
         if text == self.text and not force:

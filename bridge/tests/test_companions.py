@@ -132,7 +132,7 @@ class NightTalk(Base):
         companions.talk_bits = lambda st, label: bits
         self.addCleanup(setattr, companions, "talk_bits", orig)
         line = t.line({}, str, extra=("night at camp: the '!' over e5 Shadowheart",))
-        self.assertEqual(line, "TALK: e9 Gale wants to talk (the '!' over them) → talk_to(<id>) now (a companion's own "
+        self.assertEqual(line, "TALK: e9 Gale wants to talk (the '!' over them) (a companion's own "
                          "scene; it may not wait) | night at camp: the '!' over e5 Shadowheart")
 
     def test_nothing_by_day_or_away_from_camp(self) -> None:
@@ -152,7 +152,7 @@ class Hint(unittest.TestCase):
         self.assertNotIn('out="Shadowheart"', bits[0])
         self.assertNotIn('out="Claude"', bits[0])
         self.assertIn('into="Halsin"', bits[0])
-        self.assertIn("camp level-ups: Wyll L3→4 → level_up(who=\"Wyll\")", bits[-1])
+        self.assertIn("camp level-ups: Wyll L3→4 (level_up(who=\"Wyll\") swaps in", bits[-1])
 
     def test_nothing_in_the_wilderness_but_level_ups(self):
         bits = companions.hint(PARTY, [row(HALSIN, "Halsin", "Druid")], "Wilderness", [], TABLE)
