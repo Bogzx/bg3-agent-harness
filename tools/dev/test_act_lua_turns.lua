@@ -312,6 +312,31 @@ test("turn pushes carry the round the turn started in; the old round's late Turn
     restore()
 end)
 
+test("REVIEW-18h §3: a turn open at its combat's end: the next fight's quick TurnEnded is not late", function()
+    local restore = group_setup()
+    osiv[key("CombatGetGuidFor", P1)] = "C1"
+    A.dispatch("CombatRoundStarted", { "C1", "3" })
+    A.dispatch("TurnStarted", { P1 })
+    clock = clock + 5000
+    A.dispatch("CombatEnded", { "C1" })            -- the last foe died in P1's turn: no TurnEnded for it
+    eq(G.turn_open[P1], nil, "fight 1's open turn dropped")
+    eq(G.combat_round.C1, nil, "fight 1's round dropped")
+    clock = clock + 60000
+    osiv[key("CombatGetGuidFor", P1)] = "C2"
+    A.dispatch("CombatRoundStarted", { "C2", "1" })
+    A.dispatch("TurnStarted", { P1 })
+    eq(G.end_owed[P1], nil, "nothing owed from fight 1")
+    clock = clock + 200                              -- a skipped turn (Surprised) ends at once
+    A.dispatch("TurnEnded", { P1 })
+    eq(G.turn_is_over(P1), true, "fight 2's turn ended")
+    eq(turn_pushes[#turn_pushes][3], 1, "turn_ended says fight 2's round")
+    -- another combat's end leaves an open turn alone
+    A.dispatch("TurnStarted", { P1 })
+    A.dispatch("CombatEnded", { "C9" })
+    eq(G.turn_open[P1] ~= nil, true, "C2's turn still open")
+    restore()
+end)
+
 test("turn pushes: no round seen for the combat (a save loaded mid-combat): round nil, until the next round", function()
     local restore = group_setup()
     osiv[key("CombatGetGuidFor", P1)] = "C1"

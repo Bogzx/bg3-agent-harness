@@ -495,17 +495,20 @@ function A.dispatch(event, args)
         BG3AI.Events.turn("turn_ended", args[1], round)
     elseif event == "TurnStarted" and args[1] then
         local g = G.guid(args[1]) or args[1]
-        local round = g and G.round_of(g)
+        local c = g and G.combat_of(g)
+        local round = c and G.combat_round[c] or nil
         if g then
             local open = G.turn_open[g]
             G.end_owed[g] = open and { t = G.now_ms(), round = open.round } or nil
-            G.turn_open[g] = { round = round }
+            G.turn_open[g] = { round = round, combat = c }
             G.turn_over[g] = nil; G.end_requested[g] = nil
         end
         G.note_turn_started(args[1])
         BG3AI.Events.turn("turn_started", args[1], round)
     elseif event == "CombatRoundStarted" and args[1] then
         G.combat_round[args[1]] = tonumber(args[2])
+    elseif event == "CombatEnded" and args[1] then
+        G.combat_ended(args[1])
     elseif event == "AttackedBy" and args[1] then
         A.stirred(args[1], "a hit on the caster")
         A.note_hit(args[1], args[2], args[3], args[4], args[5])
@@ -565,7 +568,7 @@ for event, arity in pairs({
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
     CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
     AttackedBy = 7, ReactionInterruptUsed = 3, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
-    CombatRoundStarted = 2,
+    CombatRoundStarted = 2, CombatEnded = 1,
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
     CharacterSelectedForUser = 2, AttachedToPartyGroup = 1, DetachedFromPartyGroup = 1,

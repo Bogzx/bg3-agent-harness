@@ -316,13 +316,26 @@ G.TURN_OVER_TTL_MS = 90000
 -- while the character's previous turn has had no TurnEnded leaves that TurnEnded owed (g -> the start's time); the
 -- next TurnEnded within TURN_BURST_MS of it is the older turn's and leaves the new turn open. In order (start, end,
 -- start, end) nothing is ever owed.
-G.turn_open = G.turn_open or {} -- g -> {round = the round it started in} from its TurnStarted to its TurnEnded
+-- A combat that ends during a turn may leave that turn without a TurnEnded (REVIEW-18h §3: the bench plays many fights
+-- per session, most ending in the party's turn): G.combat_ended drops that combat's open turns, so the next fight's
+-- first quick TurnEnded is not taken as the old turn's.
+G.turn_open = G.turn_open or {} -- g -> {round = the round it started in, combat = its combat guid} until its TurnEnded
 G.end_owed = G.end_owed or {}   -- g -> {t, round} of a TurnStarted that came with the previous turn's end to come
 -- combat guid -> its round, from CombatRoundStarted (fired before the round's TurnStarted burst; live 2026-11-02)
 G.combat_round = G.combat_round or {}
+function G.combat_of(g)
+    return G.q("CombatGetGuidFor", g)
+end
 function G.round_of(g)
-    local c = G.q("CombatGetGuidFor", g)
+    local c = G.combat_of(g)
     return c and G.combat_round[c] or nil
+end
+-- CombatEnded(c): the turns still open in c, the TurnEnded they owe and c's round are forgotten.
+function G.combat_ended(c)
+    for g, o in pairs(G.turn_open) do
+        if o.combat == c then G.turn_open[g], G.end_owed[g] = nil, nil end
+    end
+    G.combat_round[c] = nil
 end
 function G.turn_is_over(uuid)
     local g = G.guid(uuid) or uuid
