@@ -6,6 +6,10 @@
 -- Nightwarden Minthara is Minthara once she joins): setup fails when it differs, listing both. Every party member on
 -- no team (the avatar too) sits out. The steps are the arena spike's, which the probe ran by hand
 -- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
+--  -2. a mirror arena: the field cleaned (Server/ArenaField.lua: within the surface clear's reach, pickable items
+--      deleted, traps disarmed, locks opened, doors opened, usable objects disabled, destructibles invulnerable),
+--      read back a tick later in step -1: the items still active must be the same set on both halves (else setup
+--      fails naming them, before any twin spawns); the counts are the result's and arena_start's `field`
 --   0. a mirror arena (arena.mirror {pairs = [{template, race, stats, names = {A, B}, kit}]}, made by
 --      tools/dev/make_arena_save.py mirror): the twins are made for this match (a save keeps neither our stat
 --      entries' grants nor the kit's boosts: live check 12 step 13): every spot cleared of Ground and Cloud surfaces
@@ -546,20 +550,31 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
         if ok and type(x) == "number" then positions[u] = { x, y, z } end
     end
     local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions,
-        seed = job.arena.seed, surfaces = job.mirror and { spawns = job.spawns, n = #job.mirror.pairs } or nil })
+        seed = job.arena.seed, surfaces = job.mirror and { spawns = job.spawns, n = #job.mirror.pairs } or nil,
+        field = job.field })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,
-        positions = positions, surfaces = job.surfaces,
+        positions = positions, surfaces = job.surfaces, field = job.field,
         calls = job.calls, status = status })
 end
 
--- A mirror arena: the twins, spawned and given their kits (their kit jobs run on their own).
+-- A mirror arena: the field's items made inert before the surfaces are cleared (a burning barrel makes a surface).
+STEPS[-2] = function(job)
+    local mid, radius = {}, Setup.surface_reach(job.spawns)
+    for k = 1, 3 do mid[k] = (job.spawns.A[k] + job.spawns.B[k]) / 2 end
+    job.field = Ar.Field.clean(mid, radius, job.host)
+    return Ar.Field.SETTLE_MS
+end
+
+-- A mirror arena: the field read back, the surfaces cleared, then the twins, spawned and given their kits (their kit
+-- jobs run on their own).
 STEPS[-1] = function(job)
     local mi, M = job.mirror, Ar.Mirror
     job.kits = {}
     local mid, radius = {}, Setup.surface_reach(job.spawns)
     for k = 1, 3 do mid[k] = (job.spawns.A[k] + job.spawns.B[k]) / 2 end
+    job.field.left = Ar.Field.check(job.spawns, radius)
     for _, layer in ipairs(Setup.SURFACE_LAYERS) do -- the whole arena, then each spot (in case the radius is capped)
         if not call(job, "RemoveSurfaceLayerAtPosition", { mid[1], mid[2], mid[3], layer, radius }) then
             error(("RemoveSurfaceLayerAtPosition %s over the arena (%.1f m): %s"):format(layer, radius,
@@ -723,7 +738,7 @@ function Setup.start(args)
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
         teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
-        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -1 or 1, next_at = 0,
+        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -2 or 1, next_at = 0,
         before = {}, calls = {}, mirror = mirror, spawn_order = spawnOrder })
     job.partial = { teams = teams, calls = job.calls, spawn_order = spawnOrder }
     return { job = job.id, status = job.status }

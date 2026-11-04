@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from bg3harness import facts as hfacts
 from bg3harness.arena import match as am
 from test_arena_match import SIDES, passer, setup
@@ -102,3 +103,33 @@ def test_a_mirror_arenas_surface_reads_reach_the_facts_report_only(tmp_path):
     plain.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]})
     rows = [json.loads(line) for line in (tmp_path / "g.jsonl").read_text().splitlines()]
     assert "surfaces" not in next(r for r in rows if r.get("ev") == "arena_start")
+
+
+def test_a_mirror_arenas_field_clean_reaches_arena_start_and_fits_the_schemas(tmp_path):
+    """Research R1: arena_start carries the setup's field clean (items made inert, what stays active per half)."""
+    import jsonschema
+    from test_arena_match import BENCH_FACTS_SCHEMA, FACTS_SCHEMA
+
+    _model, _game, clock, _agents, spec = setup({"A": passer, "B": passer})
+    path = tmp_path / "f.jsonl"
+    ref = am.Referee(spec, SIDES, hfacts.FactsWriter(path, clock=clock.now))
+    field = {
+        "radius": 23.0,
+        "items": 6,
+        "removed": 1,
+        "disabled": 4,
+        "disarmed": 1,
+        "unlocked": 1,
+        "opened": 1,
+        "invulnerable": 1,
+        "errors": 0,
+        "left": {"A": 0, "B": 0},
+    }
+    ref.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]}, None, field)
+    [start] = [r for r in map(json.loads, path.read_text().splitlines()) if r.get("ev") == "arena_start"]
+    assert start["field"] == field and "surfaces" not in start
+    for schema in (FACTS_SCHEMA, BENCH_FACTS_SCHEMA):
+        jsonschema.validate(start, schema)
+        for bad in ({**field, "items": "6"}, {k: v for k, v in field.items() if k != "left"}):
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate({**start, "field": bad}, schema)
