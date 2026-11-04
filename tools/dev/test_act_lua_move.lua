@@ -210,6 +210,58 @@ test("move_to: teleport is detected and purged", function()
     assert(ev and ev.data.m == 30, "teleport_blocked m")
 end)
 
+-- act2-fights-analysis fix 3 (launch-v1 haiku grove_gate r1, round 4): Shadowheart's move to (212,30,415) went 4.5 m,
+-- 3.7 m of it down, landing 4.3 m from the point, and failed "engine teleported the character": the walk fell.
+test("a fall of the walk (3.7 m down, 2.7 m across, short of its point) is no teleport: the walk goes on", function()
+    local seq = RPC.eventSeq
+    world[P1].pos = { 211.0, 29.5, 412.8 }
+    local j = job(op("move_to", { char = P1, pos = { 212, 30, 415 } }))
+    world[P1].pos = { 211.4, 29.5, 413.3 }
+    tick()
+    world[P1].pos = { 212.3, 25.8, 415.8 }
+    tick()
+    settle()
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(last_event("teleport_blocked", seq), nil, "not blocked")
+    local ev = last_event("walk_fell", seq)
+    eq(ev and ev.data.m, 3.7, "walk_fell m")
+    world[P1].pos = { 0, 0, 0 }
+end)
+
+test("opus crash_site_grove: 5 m straight down mid-walk is the walk falling; a fall onto its point still settles",
+    function()
+    local seq = RPC.eventSeq
+    world[P1].pos = { 290.3, 23.9, 349.7 }
+    local j = job(op("move_to", { char = P1, pos = { 294, 19, 349.7 } }))
+    tick()
+    world[P1].pos = { 290.3, 18.9, 349.7 }
+    tick()
+    settle()
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(last_event("teleport_blocked", seq), nil, "not blocked")
+    seq = RPC.eventSeq
+    world[P1].pos = { 0, 5, 0 }
+    local j2 = job(op("move_to", { char = P1, pos = { 0.5, 0, 0 } }))
+    tick()
+    world[P1].pos = { 0.5, 0, 0 } -- 5 m down onto the point itself: the engine's snap is judged as before
+    tick()
+    settle()
+    eq(last_event("walk_fell", seq), nil, "no fall")
+    eq(j2.status, "failed", "onto its point: " .. tostring(j2.error))
+    world[P1].pos = { 0, 0, 0 }
+end)
+
+test("haiku goblin_camp r2: the engine's no-path snap (18.4 m across, 1.4 m from the leg's end) is still blocked",
+    function()
+    world[P1].pos = { -101.1, 10, 383.4 }
+    local j = job(op("move_to", { char = P1, pos = { -102.6, 9.9, 403.6 } }))
+    world[P1].pos = { -101.1, 10, 383.9 }
+    tick()
+    world[P1].pos = { -102.2, 9.9, 402.3 }
+    tick()
+    settle()
+    eq(j.status, "failed", "status"); assert(j.error:find("engine teleported"), j.error)
+    world[P1].pos = { 0, 0, 0 }
+end)
+
 test("V9 S066: a jump onto the walk's spot + the walker pulled into a conversation = the game moved it", function()
     local seq = RPC.eventSeq
     local j = job(op("move_to", { char = P1, pos = { 21.7, -1, 0 } }))

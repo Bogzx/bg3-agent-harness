@@ -133,6 +133,36 @@ class CombatTools(CombatTurnBase):
         self.assertEqual(r.status, "done", r.error)
         self.assertIn("the game, slowly (10 s after the order", r.result["via"])
 
+    def test_a_busy_answer_after_the_hud_press_checks_the_turn(self):
+        """act2-fights-analysis fix 3 (launch-v1 deepseek windmill r3, balthazar r1, act3_gold_max r1): the press
+        answered "bg3le: UI busy ... met it after a UI call ran" and end_turn failed at once, though the press may have
+        run. Now the turn is checked as after any press; refused at the gate (nothing pressed), it fails at once."""
+        from bg3ai.game import GameError
+
+        after = ("bg3le: UI busy: the game's UI is busy (a rest/travel/load transition); met it after a UI call ran; "
+                 "retry in a moment")
+        before = "bg3le: UI busy: the game's UI is busy; refused before its first UI call; retry in a moment"
+        for answer, moved, want in ((after, True, "done"), (after, False, "failed"), (before, True, "failed")):
+            reads = []
+
+            def rpc(op, args=None, context="server", timeout=12.0, answer=answer, moved=moved, reads=reads):
+                if op == "state.combat":
+                    reads.append(1)
+                    return combat(current=GOB) if moved and len(reads) > 1 else combat()
+                raise GameError(answer)
+            g = type("G", (), {"rpc": staticmethod(rpc), "try_rpc": staticmethod(rpc)})()
+            saved, combat_tools.END_HUD_WAIT_S = combat_tools.END_HUD_WAIT_S, 0.3
+            try:
+                with mock.patch.object(core, "game", g), mock.patch.object(uitools, "_hud_has", lambda u: u == P1):
+                    r = combat_tools._end_turn_by_hud(P1, JobResult("failed", None, combat_tools.END_IGNORED))
+            finally:
+                combat_tools.END_HUD_WAIT_S = saved
+            self.assertEqual(r.status, want, (answer, moved, r.error))
+            if want == "failed":
+                self.assertIn("the HUD's End Turn failed too: bg3le: UI busy", r.error)
+            if answer == before:
+                self.assertEqual(len(reads), 1, "nothing pressed: no turn check")
+
     def test_downed_member_is_not_who_acts(self):
         p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
         p1.update(hp_pct=0, downed=True)
