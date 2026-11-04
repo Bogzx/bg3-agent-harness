@@ -15,7 +15,7 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   (SOLD/BOUGHT) instead of the raw `moved` list.
 - The deal names every table item without an id (only the first was named).
 - A `donate=true` deal says `GAVE ... | GOT ...` instead of SOLD/BOUGHT: an overpay the trader paid nothing for read
-  as sold at full value. The trade description still says SOLD/BOUGHT (left as pinned).
+  as sold at full value. The trade description says so (golden regenerated).
 
 ## 2026-11-04: w13 fixes: the PARTY tie is one fact; dyes are not junk
 

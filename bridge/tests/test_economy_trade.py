@@ -452,7 +452,8 @@ class TradeDealSaid(unittest.TestCase):
     def test_tool_description_says_a_confirmed_deal_is_named(self):
         # the description said confirm calls "show the table and the balance only": false since the deal is named
         doc = core.mcp._tool_manager.get_tool("trade").description
-        self.assertIn("a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT)", doc)
+        self.assertIn("a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT; GAVE/GOT for a "
+                      "donate=true deal, which the trader may not have paid in full)", doc)  # REVIEW-17 F5
         self.assertNotIn("offer/request/confirm calls show the table", doc)
 
     def test_view_is_cleared_after_the_call(self):
