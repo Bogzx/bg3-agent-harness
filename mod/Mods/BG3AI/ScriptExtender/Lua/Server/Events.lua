@@ -367,11 +367,16 @@ function E.spell_info(id, caster)
         end
         if range and range > 0 then facts[#facts + 1] = "range " .. m(range) end
         if area and area > 0 then facts[#facts + 1] = "area " .. m(area) end
-        local sv = f("TooltipAttackSave")
-        if sv then
-            facts[#facts + 1] = SAVES[sv] and (sv .. " save")
-                or tostring(sv):gsub("(%l)(%u)", "%1 %2"):lower()
+        -- a ';' list (Ray of Sickness "RangedSpellAttack;Constitution"): each roll as the tooltip names it, in the
+        -- data's order, joined by "; " (the data says nothing about which comes first in play)
+        local rolls = {}
+        for sv in tostring(f("TooltipAttackSave") or ""):gmatch("[^;]+") do
+            sv = sv:match("^%s*(.-)%s*$")
+            if sv ~= "" then
+                rolls[#rolls + 1] = SAVES[sv] and (sv .. " save") or (sv:gsub("(%l)(%u)", "%1 %2"):lower())
+            end
         end
+        if #rolls > 0 then facts[#facts + 1] = table.concat(rolls, "; ") end
         for _, dmg in ipairs(splitTop(f("TooltipDamageList"))) do facts[#facts + 1] = param(dmg, cx) end
         for _, a in ipairs(splitTop(f("TooltipStatusApply"))) do
             local turns = tonumber(tostring(a):match("^%s*ApplyStatus%([^,]*,[^,]*,%s*(-?%d+)"))
