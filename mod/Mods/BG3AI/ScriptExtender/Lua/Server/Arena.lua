@@ -693,6 +693,7 @@ end
 -- opts.sitters: {uuid = its CanJoinCombat before setup} for the characters setup kept out of the fight; arena.reset
 -- gives them that back. opts.positions: {uuid = {x, y, z}} where setup's members stand, recorded in arena_start.
 -- opts.surfaces: a mirror arena's {spawns, n} for the report-only surface re-reads (Ar.reread_surfaces).
+-- opts.field: a mirror arena's field clean counts (Server/ArenaField.lua), recorded in arena_start.
 function Ar.begin(teams, opts)
     if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
     local t, names = {}, {}
@@ -713,7 +714,8 @@ function Ar.begin(teams, opts)
         started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters,
         seed = opts and tonumber(opts.seed) or nil, surfaces = opts and opts.surfaces or nil, turn_order = order }
     broadcast({ teams = t, names = names })
-    record("arena_start", { teams = t, positions = opts and opts.positions or nil, turn_order = order })
+    record("arena_start", { teams = t, positions = opts and opts.positions or nil, turn_order = order,
+        field = opts and opts.field or nil })
     return Ar.status()
 end
 

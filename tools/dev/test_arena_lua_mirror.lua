@@ -751,3 +751,28 @@ test("mirror arena refusals: a pair short of a field, one name twice, teams that
     start(a)
     eq(#named("CreateAt"), 0, "nothing made")
 end))
+
+-- Research R1: the field's items are made inert before any twin spawns, and what stays active must mirror.
+test("a mirror setup cleans the field first; an item one half keeps fails setup before any twin, naming it",
+    guarded(function()
+        world.potion = { pos = { 1, 0, 2 }, comps = { ServerItem = {} } }
+        osiv[key("GetCanPickUp", "potion")] = 1
+        stub("RequestDelete", function(u) calls[#calls + 1] = { "RequestDelete", u } world[u] = nil end)
+        local j = mirrorSetup(mirrorArena())
+        eq(j.step, 1, "at the party step: " .. tostring(j.error))
+        eq(enc({ j.field.items, j.field.removed, j.field.left }), enc({ 1, 1, { A = 0, B = 0 } }),
+            "counts, nothing left")
+        eq(calls[1][1], "RequestDelete", "the field before the surfaces")
+        restore()
+        game()
+        world.potion = { pos = { 1, 0, 2 }, comps = { ServerItem = {} } }
+        osiv[key("GetCanPickUp", "potion")] = 1
+        NAMES.potion, osiv[key("GetTemplate", "potion")] = "Potion of Healing", "POT_Healing"
+        stub("RequestDelete", function(u) calls[#calls + 1] = { "RequestDelete", u } end) -- the delete never lands
+        j = mirrorSetup(mirrorArena())
+        eq(j.status, "failed", "failed")
+        eq(tostring(j.error), "the field doesn't mirror after the clean (1 item(s) within 23.0 m): A's half keeps "
+            .. "Potion of Healing at (1.0, 2.0) (pickable POT_Healing)", tostring(j.error))
+        eq(#named("CreateAt"), 0, "no twin")
+        NAMES.potion = nil
+    end))

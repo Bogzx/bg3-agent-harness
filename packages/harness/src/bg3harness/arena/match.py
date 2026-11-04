@@ -28,7 +28,7 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    A mirror arena's `arena_surfaces {when, round, tiles_total, tiles_read, radius, off, tiles, appeared,
    appeared_tiles}` (the mod's report-only re-read of the surfaces at round 2's start and at the end, a runner's end
    included: arena.end, then the last poll) is written as it is, after the end too; `arena_start` carries the setup's
-   surface check (`surfaces`). Its
+   surface check (`surfaces`) and field clean (`field`). Its
    `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
    after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
    match's) is written with `character` and `members`
@@ -243,9 +243,10 @@ class Referee:
     def round(self) -> int:
         return self.turn.round if self.turn else 0
 
-    def start(self, teams: Mapping[str, list[str]], surfaces: Any = None) -> None:
+    def start(self, teams: Mapping[str, list[str]], surfaces: Any = None, field: Any = None) -> None:
         """arena_start; `teams`: the teams' uuids (_teams), in the arena file's team order; `surfaces`: a mirror
-        arena's surface check from the setup result ({points, read, radius, off, wide}), when it has one."""
+        arena's surface check from the setup result ({points, read, radius, off, wide}), when it has one; `field`:
+        its field clean's counts ({radius, items, removed, ..., left {A, B}}), when it has one."""
         for s in SIDES:
             if len(teams.get(s) or []) != len(self.spec.teams[s]):
                 raise ArenaSetupError(
@@ -265,6 +266,7 @@ class Referee:
             sides={s: self.sides[s].player for s in SIDES},
             uuids={s: list(teams[s]) for s in SIDES},
             **({"surfaces": surfaces} if isinstance(surfaces, dict) else {}),
+            **({"field": field} if isinstance(field, dict) else {}),
         )
 
     def translate(self, fact: dict) -> dict | None:
@@ -549,7 +551,7 @@ def run_arena(
     try:
         feed.poll()  # the rings' readers start here: the setup's records are the match's
         result, status = _setup(spec, game, clock)
-        ref.start(_teams(spec, result, status), result.get("surfaces"))
+        ref.start(_teams(spec, result, status), result.get("surfaces"), result.get("field"))
     except Exception as e:  # no match: nothing to grade, the rerun sets up again
         outcome.invalid = f"setup: {type(e).__name__}: {e}"
         log(f"arena {spec.name}: {outcome.invalid}")

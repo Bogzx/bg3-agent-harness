@@ -5,7 +5,8 @@
 -- changes nothing. test_arena_lua_client.lua has the client half (reaction prompt, HUD selection).
 -- Ext, Osi and the game world are stubbed; Shared/RPC.lua, Util.lua, Arena.lua and Server/Visibility.lua, State.lua,
 -- Events.lua, Guard.lua, Navigation.lua, Actions.lua, Referee.lua, RollLog.lua,
--- Arena.lua, ArenaSetup.lua, ArenaSymmetry.lua, ArenaMirror.lua and Shared/ArenaStats.lua are the real ones.
+-- Arena.lua, ArenaSetup.lua, ArenaField.lua, ArenaSymmetry.lua, ArenaMirror.lua and Shared/ArenaStats.lua are the real
+-- ones.
 -- Run: tools/dev/test_arena_lua.sh  (Lua 5.3 + 5.4 in Docker)
 
 LUA = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
@@ -152,6 +153,7 @@ dofile(LUA .. "/Server/Referee.lua")
 dofile(LUA .. "/Server/RollLog.lua")
 dofile(LUA .. "/Server/Arena.lua")
 dofile(LUA .. "/Server/ArenaSetup.lua")
+dofile(LUA .. "/Server/ArenaField.lua")
 dofile(LUA .. "/Server/ArenaSymmetry.lua")
 dofile(LUA .. "/Server/ArenaMirror.lua")
 U, RPC, Ar, V, G, N = BG3AI.Util, BG3AI.RPC, BG3AI.Arena, BG3AI.Visibility, BG3AI.Guard, BG3AI.Nav
@@ -256,7 +258,8 @@ end
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua",
     "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua", "test_arena_lua_setup.lua",
-    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua", "test_arena_lua_order.lua" }) do
+    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua", "test_arena_lua_order.lua",
+    "test_arena_lua_field.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 
