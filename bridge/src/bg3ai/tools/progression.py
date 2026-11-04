@@ -89,7 +89,9 @@ def _level_camp_member(row: dict, plan: str, out: str, st: dict) -> str:
         outr = None
     outname = str((outr or {}).get("name") or "")
     if len(party) >= 4 and not outname:
-        return f"level_up: FAILED — {name} is in camp and nobody can make room: level_up(who=\"{name}\", out=<companion>)"
+        # why, not the call to make (REVIEW-17b G2: was 'level_up(who="Wyll", out=<companion>)')
+        why = f"'{out}' is not in the party" if out else "the party is full and no member but the avatar is alive"
+        return f"level_up: FAILED — {name} is in camp and nobody can make room: {why}"
     was_at_camp = overview._at_camp(core.game.try_rpc("ui.state", context="client"))
     steps = []
     sw = travel.swap_party(into=name, out=outname, leave_camp=False)

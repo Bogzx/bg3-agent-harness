@@ -754,6 +754,29 @@ class ServerWiring(unittest.TestCase):
             core.game, plumbing._who, travel.swap_party = saved
         self.assertIn("level_up: FAILED — Wyll is in camp and the swap-in did not finish", out)
 
+    def test_camp_member_with_no_room_says_why_with_no_call(self):
+        # REVIEW-17b G2: 'nobody can make room: level_up(who="Wyll", out=<companion>)' named the next call
+        from bg3ai.tools import core, plumbing, progression
+        party = [{"uuid": "u-claude", "name": "Claude", "level": 5, "avatar": True}] + [
+            {"uuid": f"u-{n}", "name": n.title(), "level": 5, "dead": True} for n in ("gale", "karlach", "sh")]
+        st = {"in_combat": False, "party": party, "camp": [{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}]}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return st if op == "state.status" else {"region": "Campsite"}
+
+        saved = (core.game, plumbing._who)
+        core.game, plumbing._who = G(), (lambda ref: "u-wyll")
+        try:
+            out = progression.level_up("Wyll")
+            named = progression.level_up("Wyll", out="Halsin")
+        finally:
+            core.game, plumbing._who = saved
+        self.assertEqual(out, "level_up: FAILED — Wyll is in camp and nobody can make room: the party is full and no "
+                              "member but the avatar is alive")
+        self.assertEqual(named, "level_up: FAILED — Wyll is in camp and nobody can make room: 'Halsin' is not in the "
+                                "party")
+
     def test_level_up_clicks_spells_then_reruns(self):
         from bg3ai.tools import plumbing, progression, reporting, world_tools
 
