@@ -414,3 +414,68 @@ test("engine refusal (audit S3-2): at a ground point, target reasons are said ne
     A.dispatch("CastSpellFailed", { P1, "Target_Spot" })
     assert(j.error:find("(the game's CantCast)", 1, true), j.error)
 end)
+
+-- Weapon sets (live w10 "Sneak cast probe load"): Sneak Attack (Melee) ordered by Osiris with the bow drawn was
+-- refused InvalidTarget; the hotbar pick draws the melee weapons first. The stub game draws the set the WeaponSet
+-- write names only when the test says so (draw()).
+local function sneak(sheathing)
+    spell("Target_Sneak", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        Sheathing = sheathing })
+end
+local function armed(set, drawn)
+    world[P1].comps.WeaponSet = { WeaponSet = set }
+    world[P1].comps.Unsheath = { State = drawn }
+end
+local function draw(state) world[P1].comps.Unsheath.State = state end
+
+test("weapon set: a melee spell with the bow drawn switches to the melee set, then is ordered once it is drawn",
+    function()
+    sneak("Melee")
+    armed("Ranged", "Ranged")
+    local j = job(op("cast", { char = P1, spell = "Target_Sneak", target = NPC }))
+    eq(j.status, "running", "status " .. tostring(j.error))
+    eq(world[P1].comps.WeaponSet.WeaponSet, "Melee", "the set switched, as the player's toggle does")
+    eq(#called("UseSpell"), 0, "not ordered while the bow is still drawn")
+    tick(2)
+    eq(#called("UseSpell"), 0, "still not")
+    draw("Melee")
+    tick(2)
+    eq(#called("UseSpell"), 1, "ordered once the melee weapons are drawn")
+    eq(j.status, "running", "the cast runs on " .. tostring(j.error))
+end)
+
+test("weapon set: the reverse, a ranged spell with the swords drawn switches to the ranged set", function()
+    sneak("Ranged")
+    armed("Melee", "Melee")
+    local j = job(op("cast", { char = P1, spell = "Target_Sneak", target = NPC }))
+    eq(world[P1].comps.WeaponSet.WeaponSet, "Ranged", "switched")
+    draw("Ranged")
+    tick(2)
+    eq(#called("UseSpell"), 1, "ordered")
+    eq(j.status, "running", "runs")
+end)
+
+test("weapon set: a switch that doesn't take fails the cast with what was read, nothing ordered", function()
+    sneak("Melee")
+    armed("Ranged", "Ranged")
+    local j = job(op("cast", { char = P1, spell = "Target_Sneak", target = NPC }))
+    tick(math.ceil(A.WEAPON_SWITCH_MS / 60) + 2)
+    eq(j.status, "failed", "status")
+    eq(j.error, "the switch to the melee weapons didn't take (weapon set Melee, Ranged drawn after 1.5 s): not cast",
+        "why")
+    eq(#called("UseSpell"), 0, "never ordered")
+end)
+
+test("weapon set: the right set, a sheathed caster on the right set, a spell naming no set or a caster without "
+    .. "weapon sets: ordered at once, nothing written", function()
+    for _, c in ipairs({ { "Melee", "Melee", "Melee" }, { "Melee", "Melee", "Sheathed" },
+        { "DontChange", "Ranged", "Ranged" }, { "Melee" } }) do
+        reset()
+        sneak(c[1])
+        if c[2] then armed(c[2], c[3]) end
+        local before = c[2]
+        op("cast", { char = P1, spell = "Target_Sneak", target = NPC })
+        eq(#called("UseSpell"), 1, c[1] .. "/" .. tostring(c[2]) .. "/" .. tostring(c[3]) .. ": ordered at once")
+        eq(world[P1].comps.WeaponSet and world[P1].comps.WeaponSet.WeaponSet, before, "the set left as it was")
+    end
+end)
