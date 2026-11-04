@@ -107,3 +107,26 @@ test("a member not prone at its phase start: nothing removed or deducted", funct
         eq(#removed, 0, "nothing"); eq(movement(A1), 9, "movement as it was")
     end)
 end)
+
+test("the round's burst already stood it up (the game took half, L6 ST-P5(e)): the mod takes nothing more", function()
+    withProne(4.5, function(on, removed)
+        on[A1] = {} -- the game's own stand-up at the burst: no longer prone, 4.5 of 9 left
+        startRound(A1)
+        tick()
+        eq(refs("arena_turn")[1].character, A1, "phase 1 A1")
+        eq(#removed, 0, "nothing removed"); eq(movement(A1), 4.5, "no second half")
+        eq(#refs("arena_stood_up"), 0, "no stand-up record")
+    end)
+end)
+
+test("the rule's own Lua stand-up costs nothing by itself (w10 L6 ST-P5(f)): the mod takes the half", function()
+    withProne(9, function(_, removed)
+        startRound(A1)
+        tick()
+        eq(#removed, 1, "stood up by the mod")
+        eq(Ar.PRONE_DEDUCT, true, "the switch is on")
+        eq(movement(A1), 4.5, "half taken by G.deduct")
+        local r = refs("arena_stood_up")[1]
+        eq(enc({ r.deducted, r.game_took }), enc({ 4.5, false }), "the mod took it")
+    end)
+end)

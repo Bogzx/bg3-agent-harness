@@ -527,10 +527,11 @@ end
 -- BG3 stands a prone creature up at the start of its turn for half its movement (it stays down with less). In a
 -- shared group every member's turn starts in the round's burst, before any phase, so one knocked down by an earlier
 -- phase of the same round would lie through its own phase (REVIEW-12 (a); Guard refuses its casts and walks, F4): the
--- mod stands it up at its phase start instead. PRONE_DEDUCT: whether the mod takes the half itself when removing the
--- status leaves the movement as it was; false if live w10 ST-P5(f) shows the engine's own spend (the status's
--- OnRemove) comes after that read, which would take it twice. Each stand-up: one arena_stood_up {side, character,
--- name, round, status, movement_before, movement_after, movement_max, deducted (what the mod took), game_took}.
+-- mod stands it up at its phase start instead. PRONE_DEDUCT: the mod takes the half itself, because the Lua removal
+-- costs nothing (w10 L6 ST-P5(f): Osi.RemoveStatus left 9/9 at +0.4, +1.4 and +3.5 s), while the game's own stand-up
+-- in the round's burst leaves 4.5/9 (ST-P5(e)). A member the burst already stood up is not prone at its phase start:
+-- nothing is taken twice. Each stand-up: one arena_stood_up {side, character, name, round, status, movement_before,
+-- movement_after, movement_max, deducted (what the mod took), game_took}.
 Ar.PRONE_DEDUCT = true
 
 local function standUp(u, round)
