@@ -154,6 +154,13 @@ game unless it says so.
   cast. Window 9 checked it live: the opportunity attack's cast starts only after the walk arrives (+0.33 s,
   +0.93 s), while the reactor's ReactionInterruptUsed fires before (-0.63 s, -1.30 s); so a foe's interrupt during
   the move holds it until that foe's cast starts (at most 4 s after the interrupt), then the cast holds it.
+- A prone character (KNOCKED_DOWN or SG_Prone) in combat can't cast or walk through the harness, as BG3 lets it do
+  nothing until it stands up (REVIEW-5 F4): the guard refuses both before any order, and the movement figure shows
+  0. In a match, where every member's turn starts in the round's burst before any phase, the mod stands a prone
+  member up at its own phase start for half its movement when it has that much (REVIEW-12 (a)); it takes that half
+  itself unless the status's removal already did. The arena rules state the house rule for durations (an N-turn
+  status lasts the rest of its round plus N-1 rounds) and the prone rule. Not run live: whether the game's removal
+  of the status spends the half itself is w10 ST-P5(f) (`Ar.PRONE_DEDUCT` switches the mod's half off).
 
 ### Benchmark (`packages/bench`)
 

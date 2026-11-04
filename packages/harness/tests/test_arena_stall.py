@@ -305,6 +305,42 @@ def test_the_mods_round_first_side_reaches_the_facts_as_given(tmp_path):
     jsonschema.validate(r, BENCH_FACTS_SCHEMA)
 
 
+def test_the_mods_stand_up_reaches_the_facts_named(tmp_path):
+    """arena_stood_up (a prone member stood up at its phase start by the mod, REVIEW-12 (a)) is written with
+    `character` named as in arena_turn and fits both facts schemas."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+    sent: list[bool] = []
+
+    def stood() -> None:
+        if model.arena is not None and not sent:
+            sent.append(True)
+            u = model.match().member("Karlach").uuid
+            model.ref_record(
+                "arena_stood_up",
+                side="A",
+                character=u,
+                name="Karlach (0)",
+                round=2,
+                status="Prone",
+                movement_before=9,
+                movement_after=4.5,
+                movement_max=9,
+                deducted=4.5,
+                game_took=False,
+            )
+
+    clock.tick_hooks.append(stood)
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    [r] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_stood_up"]
+    assert (r["character"], r["round"], r["deducted"], r["game_took"]) == ("Karlach", 2, 4.5, False)
+    jsonschema.validate(r, FACTS_SCHEMA)
+    jsonschema.validate(r, BENCH_FACTS_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({k: v for k, v in r.items() if k != "deducted"}, FACTS_SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({k: v for k, v in r.items() if k != "deducted"}, BENCH_FACTS_SCHEMA)
+
+
 def test_translate_readmitted_takes_the_member_out_of_the_phases_passed_set():
     ref = am.Referee.__new__(am.Referee)
     ref.names, ref.done = {"uk": ("A", "Karlach")}, False

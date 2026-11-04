@@ -367,8 +367,8 @@ def sec_vis() -> None:
     )
     want = (
         "cannot act/an adjacent ally's Help (an action) ends it; any damage ends it|cannot act/it saves again "
-        "each turn|stands up at its turn start for half its movement/an adjacent ally's Help (an action) ends "
-        "it|cannot move/nil|-"
+        "each turn|cannot act or move; stands up at its turn start for half its movement, if it has that much/an "
+        "adjacent ally's Help (an action) ends it|cannot move/nil|-"
     )
     item("vis: V18 disabling statuses read from the stats", "PASS" if v == want else "FAIL", v[:400])
     # 20. V10: Mystra's statue in get_nearby (loads its own save)

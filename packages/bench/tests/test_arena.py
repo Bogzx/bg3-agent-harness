@@ -468,6 +468,31 @@ def test_a_pass_with_its_death_save_and_a_readmission_fit_both_schemas():
             jsonschema.validate(bad, FACTS_SCHEMA)
 
 
+def test_a_stand_up_fits_both_schemas():
+    # arena/prone-rule: a prone member stood up at its phase start by the mod (REVIEW-12 (a))
+    up = ev(
+        1,
+        "arena_stood_up",
+        side="B",
+        character="Birch",
+        round=2,
+        status="Prone",
+        movement_before=9,
+        movement_after=4.5,
+        movement_max=9,
+        deducted=4.5,
+        game_took=False,
+    )
+    for rec in (up, {**up, "deducted": 0, "game_took": True}):
+        jsonschema.validate(rec, EVENT_SCHEMA)
+        jsonschema.validate(rec, FACTS_SCHEMA)
+    for bad in ({**up, "game_took": "no"}, {k: v for k, v in up.items() if k != "movement_before"}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, EVENT_SCHEMA)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, FACTS_SCHEMA)
+
+
 def test_the_event_schema_takes_a_declined_unowned_prompt_and_an_end_the_runner_came_after():
     phase = {"members": ["Karlach", "Gale"], "names": ["Karlach", "Gale"], "round": 1, "phase": 2, "shared": True}
     jsonschema.validate(ev(1, "arena_turn", side="A", character="Karlach", **phase), EVENT_SCHEMA)

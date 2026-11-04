@@ -563,6 +563,10 @@ local function flagset(v)
     return out
 end
 
+-- Prone (KNOCKED_DOWN, SG_Prone): BG3 lets a prone creature do nothing until it stands up at its turn start, which
+-- costs half its movement (REVIEW-5 F4; in a match Arena.lua's phase start does the standing up, REVIEW-12 (a)).
+G.PRONE_EFFECT = "cannot act or move; stands up at its turn start for half its movement, if it has that much"
+
 G._disabling = G._disabling or {}  -- status id -> {effect, fix} or false (stats don't change in a session)
 
 function G.disabling_info(id)
@@ -578,8 +582,9 @@ function G.disabling_info(id)
         for g in pairs(groups) do hit = hit or G.DISABLING_GROUPS[g] end
         if hit and typ ~= "DOWNED" then  -- downed members have their own line (turn.downed; SG_Incapacitated too)
             local effect
-            if typ == "KNOCKED_DOWN" or groups.SG_Prone then
-                effect = "stands up at its turn start for half its movement"
+            local prone = typ == "KNOCKED_DOWN" or groups.SG_Prone or nil
+            if prone then
+                effect = G.PRONE_EFFECT
             elseif typ == "INCAPACITATED" and not G.ACTING_STATUSES[id] then
                 effect = "cannot act"
             elseif G.ACTING_STATUSES[id] then
@@ -598,7 +603,7 @@ function G.disabling_info(id)
             if tostring(field("RemoveConditions") or ""):find("Saving", 1, true) then
                 fix[#fix + 1] = "it saves again each turn"
             end
-            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil }
+            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil, prone = prone }
         end
     end
     G._disabling[id] = c
@@ -615,18 +620,29 @@ function G.disabling(char)
         local ok, info = pcall(G.disabling_info, s.id)
         if ok and info then
             out = out or {}
-            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix }
+            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix, prone = info.prone,
+                id = s.id }
         end
     end
     return out
 end
 
--- What keeps char from walking: the name of a disabling status that says "cannot act" or "cannot move …", or nil.
+-- char's prone statuses ({{name, id, ...}, ...} as G.disabling's), or nil.
+function G.prone(char)
+    local out
+    for _, d in ipairs(G.disabling(char) or {}) do
+        if d.prone then out = out or {}; out[#out + 1] = d end
+    end
+    return out
+end
+
+-- What keeps char from walking: the name of a disabling status that says "cannot act" or "cannot move …" or is
+-- prone, or nil.
 -- The movement figure (State.lua moveView) and the combat walk guard (Actions.lua combat_budget) use it.
 function G.move_blocked(char)
     for _, d in ipairs(G.disabling(char) or {}) do
         local eff = d.effect or ""
-        if eff == "cannot act" or eff:find("^cannot move") then return d.name end
+        if eff == "cannot act" or eff:find("^cannot move") or d.prone then return d.name end
     end
     return nil
 end
@@ -710,6 +726,11 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     if blk and blk.type == "INCAPACITATED" then
         G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn)"
             .. G.disabling_fix(char, blk.name))
+    end
+    local prone = G.in_combat(char) and G.prone(char)
+    if prone then
+        G.refuse("cannot act while " .. tostring(prone[1].name) .. " (it " .. G.PRONE_EFFECT:match("; (.*)$") .. ")"
+            .. G.disabling_fix(char, prone[1].name))
     end
 
     -- Resources.
