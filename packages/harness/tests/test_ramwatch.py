@@ -171,10 +171,18 @@ class RamWatchTest(unittest.TestCase):
         self.assertEqual((R.cap_mb("8192M"), R.cap_mb("6000m")), (8192, 6000))
         self.assertEqual(R.kill_limits(R.cap_mb("6000m")), (5500, 5500))
 
-    def test_kill_limits_keep_the_10g_numbers_without_a_g_or_m_cap(self):
-        for cap in (None, "", "infinity", "80%", "8589934592"):
+    def test_kill_limits_keep_the_10g_numbers_without_a_numeric_cap(self):
+        for cap in (None, "", "infinity", "80%", "8X", "0"):
             self.assertIsNone(R.cap_mb(cap), cap)
         self.assertEqual(R.kill_limits(None), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))
+
+    def test_cap_mb_reads_bytes_and_k_t_like_systemd(self):
+        # REVIEW-18d NOTE 2: launch_game.sh passes BG3AI_GAME_MEMORY_MAX to MemoryMax as given
+        self.assertEqual(R.cap_mb("8589934592"), 8192)
+        self.assertEqual(R.cap_mb("8388608K"), 8192)
+        self.assertEqual(R.cap_mb("8388608k"), 8192)
+        self.assertEqual(R.cap_mb("1T"), 1024 * 1024)
+        self.assertEqual(R.kill_limits(R.cap_mb("8589934592")), (7692, 7692))
 
     def _watch(self, env: dict) -> R.RamWatch:
         with mock.patch.dict(R.os.environ, env):
@@ -211,6 +219,27 @@ class RamWatchTest(unittest.TestCase):
             rec = w.sample(100.0, 6000, 6000, [100], anon_swap=7692)
         self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (7692, 7692))
         self.assertEqual((rec["kind"], k.call_args_list), ("kill", [mock.call(100, R.signal.SIGKILL)]))
+
+    def test_the_cap_is_the_smallest_memory_max_of_the_scope_and_its_ancestors(self):
+        # REVIEW-18d NOTE 1: the scope's processes run under every ancestor's limit too (app.slice, user@.service, ...)
+        cg = self.scope_tree(memory_max="max")
+        app, user = cg.parent, cg.parent.parent
+        (app / "memory.max").write_text(f"{8 * 2**30}\n")
+        (user / "memory.max").write_text("max\n")
+        (self.w.cgroup_root / "memory.max").write_text("1048576\n")   # the root itself is not a limit read here
+        self.assertEqual(R.scope_cap_mb(cg, self.w.cgroup_root), 8192)
+        (cg / "memory.max").write_text(f"{10 * 2**30}\n")                # a higher scope cap under the 8G slice
+        self.assertEqual(R.scope_cap_mb(cg, self.w.cgroup_root), 8192)
+        (cg / "memory.max").write_text(f"{6 * 2**30}\n")
+        self.assertEqual(R.scope_cap_mb(cg, self.w.cgroup_root), 6144)
+        (app / "memory.max").write_text("max\n")
+        (cg / "memory.max").write_text("max\n")
+        self.assertIsNone(R.scope_cap_mb(cg, self.w.cgroup_root))
+        w = self._watch({})
+        (app / "memory.max").write_text(f"{8 * 2**30}\n")
+        w.proc, w.cgroup_root = self.w.proc, self.w.cgroup_root
+        w.sample(100.0, 5000, 6000, [100], anon_swap=5000)
+        self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (7692, 7692))
 
     def test_the_scope_memory_max_wins_over_the_env_and_max_falls_back_to_it(self):
         w = self._watch({R.GAME_CAP_ENV: "6G"})

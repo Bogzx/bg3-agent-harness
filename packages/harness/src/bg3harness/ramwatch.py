@@ -66,8 +66,8 @@ KILL_ANON_SWAP_MB = 9000
 # Both are the 10G cap's numbers. Under a smaller cap C (MiB, as rss_mb counts) each is min(its 10G number,
 # C - KILL_UNDER_CAP_MB) (REVIEW-16 A4, D880: 8G -> 7692/7692; an 8G cgroup OOM-kills the game before 9500, while a
 # healthy game's anon+swap reached 7102 on 2026-10-28, so a margin that scales down further kills healthy games).
-# C is the game scope's cgroup memory.max when readable, else $BG3AI_GAME_MEMORY_MAX (launch_game.sh's MemoryMax,
-# G = 1024 MiB), else 10G.
+# C is the smallest numeric memory.max of the game scope and its ancestor cgroups when one reads, else
+# $BG3AI_GAME_MEMORY_MAX (launch_game.sh's MemoryMax: bytes or K/M/G/T, 1024-based), else 10G.
 GAME_CAP_ENV = "BG3AI_GAME_MEMORY_MAX"
 KILL_UNDER_CAP_MB = 500
 KILL_AVAIL_MB = 700            # … or when RAM available drops below this and no test run is left to kill
@@ -471,20 +471,28 @@ def read_heat(path: Path = THERMAL_LOG, now: float | None = None, limits: dict |
 
 
 def cap_mb(cap: str | None) -> int | None:
-    """MiB of a MemoryMax as systemd reads it ('8G', '8192M'); None when unset or another form (bytes, %, infinity)."""
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([GM])\s*", cap or "", re.IGNORECASE)
+    """MiB of a MemoryMax as systemd reads it: bytes, or K/M/G/T (1024-based; '8G', '8192M', '8589934592'); None
+    when unset or another form (%, infinity)."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([KMGT]?)\s*", cap or "", re.IGNORECASE)
     if not m:
         return None
-    return int(float(m.group(1)) * (1024 if m.group(2).upper() == "G" else 1))
+    return int(float(m.group(1)) * 1024 ** "_KMGT".index(m.group(2).upper() or "_")) // 2**20 or None
 
 
-def scope_cap_mb(cg: Path) -> int | None:
-    """MiB of a cgroup's memory.max; None when it is unreadable or 'max' (no cap)."""
-    try:
-        v = (cg / "memory.max").read_text().strip()
-    except OSError:
-        return None
-    return int(v) // 2**20 if v.isdigit() else None
+def scope_cap_mb(cg: Path, root: Path = CGROUP_ROOT) -> int | None:
+    """MiB of the memory limit the scope's processes run under: the smallest numeric memory.max of the scope and its
+    ancestors below `root` (a scope with 'max' under a capped slice is capped by the slice); None when none reads."""
+    caps = []
+    for d in (cg, *cg.parents):
+        if d == root or root not in d.parents:
+            break
+        try:
+            v = (d / "memory.max").read_text().strip()
+        except OSError:
+            continue
+        if v.isdigit():
+            caps.append(int(v) // 2**20)
+    return min(caps, default=None)
 
 
 def kill_limits(cap: int | None) -> tuple[int, int]:
@@ -567,7 +575,7 @@ class RamWatch:
         cap = None
         for pid in pids:
             cg = game_scope_cgroup(pid, self.proc, self.cgroup_root)
-            cap = cap or (scope_cap_mb(cg) if cg else None)
+            cap = cap or (scope_cap_mb(cg, self.cgroup_root) if cg else None)
             mem = cgroup_mem(cg) if cg else ""
             if cg and mem:
                 break
