@@ -147,47 +147,37 @@ def rank_ways(ways: list[dict], here: list | None, dest: list | None) -> tuple[l
     return chain + [l for l in ranked if l not in chain], chain
 
 
-def _next(res: dict, H: Handles, ends: list | None = None) -> str:
-    """One concrete suggestion."""
+def _next(res: dict, H: Handles, ends: list | None = None, full: bool = True) -> str:
+    """The route fact the rest of the text doesn't state yet ('' when none): which ladders the way up/down takes, and
+    for hint_text (full=False, the short failure version) the jump, lower floor, waypoint or closest-spot facts that
+    only render_route lists. Facts only (D630, orchestrator 2026-11-04): this was a NEXT: line naming the calls to
+    make; what to do is the agent's."""
+    if res.get("reachable"):
+        return ""  # the PATH line, its legs and DROPS say it
+    if res.get("unknown_goal"):
+        return "travel_to and walk_toward legs each end on ground in view"
     wd = res.get("wedged")
     if res.get("reachable") is False and isinstance(wd, dict) and wd.get("to"):
-        return f"NEXT: jump_to x,y,z = {pos(wd['to'])} (out of the nook), then route again"
+        return ""  # the WEDGED line / wedged_text says it
     jx = res.get("jump")
     if res.get("reachable") is False and isinstance(jx, dict) and jx.get("to"):
-        return (f"NEXT: travel_to x,y,z = {pos(jx['from'])} (the edge), then jump_to x,y,z = {pos(jx['to'])}, "
-                f"then route again")
+        return "" if full else (f"a jump across from {pos(jx['from'])} over a {_m(jx.get('gap_m'))} gap reaches "
+                                f"{pos(jx['to'])}, {_m(jx.get('to_goal_m'))} from the goal")
     lo = next((x for x in res.get("lower") or [] if isinstance(x, dict) and x.get("toward") and x.get("to")
                and isinstance(x.get("reach_m"), (int, float)) and (x.get("gap_m") or 0) <= x["reach_m"]), None)
     if res.get("reachable") is False and lo:
-        return (f"NEXT: move_to x,y,z = {pos(lo['from'])} (the edge), then jump_to x,y,z = {pos(lo['to'])} "
-                f"({_m(lo.get('drop_m'))} down: a fall that deep hurts without Feather Fall), then route again")
-    door = _door(res.get("door_link"), H)
-    if door:
-        return f"NEXT: travel_to x,y,z = {pos(res['door_link']['door'])} (the door), interact {door[0]}, then route again"
+        return "" if full else (f"a floor {_m(lo.get('drop_m'))} below at {pos(lo['to'])} is within a jump from the "
+                                f"edge at {pos(lo['from'])} (a fall that deep hurts without Feather Fall)")
+    if _door(res.get("door_link"), H):
+        return ""  # the BEHIND A DOOR line says it
     wp = route_waypoint(res)
-    if wp and (res.get("reachable") is False or res.get("unknown_goal")
-               or (res.get("length_m") or 0) > (wp.get("to_goal_m") or 0) + 60):
-        return (f"NEXT: travel_to waypoint=\"{wp['name']}\" ({_m(wp.get('to_goal_m'))} from the goal, you are "
-                f"{_m(res.get('straight_m'))}), then route again")
-    if res.get("unknown_goal"):
-        return "NEXT: travel_to/walk_toward it (each leg ends on ground in view), then route again from there"
-    dr = res.get("drop")
-    if res.get("reachable") and isinstance(dr, dict) and dr.get("pos"):
-        return (f"NEXT: travel_to x,y,z = {pos(dr['pos'])} (the edge of the {_m(dr.get('m'))} drop), then jump_to the "
-                f"floor below (jump_to checks the landing), or find a ladder/stairs")
-    if res.get("reachable"):
-        links = res.get("links") or []
-        if links:
-            l = links[0]
-            return (f"NEXT: travel_to/move_to walks it; if the walk stops at the {l.get('kind')} ({_m(l.get('at_m'))} in), "
-                    f"interact with the ladder there or jump_to {pos(l.get('to'))}")
-        return "NEXT: travel_to/move_to walks it"
+    if wp and res.get("reachable") is False:
+        return "" if full else (f"waypoint {wp['name']} is {_m(wp.get('to_goal_m'))} from the goal (you are "
+                                f"{_m(res.get('straight_m'))})")
     c = res.get("closest")
     dead = longnav.near_in(ends or [], c.get("pos")) if isinstance(c, dict) and c.get("pos") else None
     if res.get("reachable") is False and (dead or res.get("far")) and any(e.count >= longnav.DEAD_REPEAT for e in ends or []):
-        return ("NEXT: this side is closed (" + longnav.dead_end_text(max(ends, key=lambda e: e.count))
-                + "): don't walk it again. Come from another side: explore along the roads (get_map), "
-                  "wiki_search how to reach it, or another objective first")
+        return ""  # the BLOCKED BEFORE lines say it
     cons = [c for c in res.get("connectors") or [] if not c.get("unreachable") and not c.get("locked")
             and not (c.get("raised_m") and c.get("leads") == "up")  # pulled up out of reach (S059 e683)
             and not longnav.connector_dead(c, ends or [])]
@@ -200,27 +190,21 @@ def _next(res: dict, H: Handles, ends: list | None = None) -> str:
         ranked, chain = rank_ways(lads, res.get("from"), res.get("goal"))
         if len(chain) == 2:
             a, b = (H.get(c["uuid"], c.get("name")) for c in chain)
-            return (f"NEXT: interact {a} (ladder {want}), then interact {b} (ladder {want}) "
-                    f"(one call: queue_actions [interact {a}, interact {b}]), then route again")
+            return f"the way {want}: ladder {a}, then ladder {b} from its landing"
         lad = chain[0] if chain else (ranked[0] if ranked else None)
         if lad:
-            return f"NEXT: interact {H.get(lad['uuid'], lad.get('name'))} (ladder {want}), then route again"
+            return f"the way {want}: ladder {H.get(lad['uuid'], lad.get('name'))}"
     helper = next((c for c in cons if c.get("helps")), None)
     if helper:
-        verb = "interact" if helper.get("kind") == "ladder" else "open"
-        return f"NEXT: {verb} {H.get(helper['uuid'], helper.get('name'))} ({helper.get('kind')}), then route again"
-    c = res.get("closest")
-    if isinstance(c, dict) and c.get("pos"):
-        tail = ""
-        if abs(c.get("dy_to_goal") or 0) >= 2.5:
-            tail = "; from there it is " + _height(c["dy_to_goal"]).replace(" you", "") + ": find a ladder/ledge (get_frontier) or jump_to"
-        elif res.get("straight_hazard"):
-            tail = "; the rest crosses " + macros.exposure_text(res["straight_hazard"]) + ": travel_to crosses short patches"
-        return f"NEXT: travel_to x,y,z = {pos(c['pos'])} (the closest walkable spot){tail}"
+        return "" if full else _connector(helper, H, ends).strip()
+    if full:
+        return ""
+    if isinstance(c, dict) and c.get("pos") and abs(c.get("dy_to_goal") or 0) >= 2.5:
+        return "from the closest walkable spot the goal is " + _height(c["dy_to_goal"]).replace(" you", "")
     if res.get("straight_hazard"):
-        return ("NEXT: travel_to (it crosses short patches on purpose) or jump_to over "
-                + macros.exposure_text(res["straight_hazard"]))
-    return "NEXT: get_frontier for doors/exits, or walk_toward another direction"
+        return ("the straight line crosses " + macros.exposure_text(res["straight_hazard"])
+                + " (travel_to crosses short patches)")
+    return ""
 
 
 def wedged_text(w: Any) -> str:
@@ -248,7 +232,7 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
         head += f", {hd}"
     out = [head]
     if res.get("standing_in"):
-        out.append(f"you stand in {res['standing_in']}: step out first")
+        out.append(f"you stand in {res['standing_in']}")
     if res.get("too_far"):
         out.append("too far to preview the walk: travel_to goes in 30 m legs")
     elif res.get("unknown_goal"):
@@ -265,8 +249,8 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
         out.extend(_legs(res.get("legs")))
         dr = res.get("drop")
         if isinstance(dr, dict) and dr.get("pos"):  # S053 05:49: PATH shown, then travel_to's leg refused the drop
-            out.append(f"  DROPS {_m(dr.get('m'))} at {pos(dr['pos'])} (fall damage): walks stop there; take a ladder/"
-                       f"stairs (get_frontier), or move_to that edge and jump_to the floor below on purpose")
+            out.append(f"  DROPS {_m(dr.get('m'))} at {pos(dr['pos'])} (fall damage): walks stop there; jump_to from "
+                       f"that edge checks the landing")
         if res.get("exposure"):
             ex = res["exposure"]
             out.append(f"  crosses {macros.exposure_text(ex)} at {_m(ex.get('at_m'))} @{pos(ex.get('pos'))}")
@@ -307,7 +291,7 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
                 line += f", {_m(lo['to_goal_m'])} from the goal"
             reach = lo.get("reach_m")
             if isinstance(reach, (int, float)) and isinstance(lo.get("gap_m"), (int, float)):
-                line += (f"; jumping down from there reaches ~{_m(reach)}: move_to the edge, then jump_to {pos(lo['to'])}"
+                line += (f"; within a jump down from there (~{_m(reach)})"
                          if lo["gap_m"] <= reach else f"; beyond a jump from there (~{_m(reach)})")
                 # the drop extends the reach (S040), but a long fall hurts unless the jumper has Feather Fall
                 if lo["gap_m"] <= reach and isinstance(lo.get("drop_m"), (int, float)) and lo["drop_m"] >= 6 \
@@ -323,9 +307,7 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
             out.append("WEDGED? " + wt.lstrip("; "))
     else:
         why = res.get("unknown_reason")  # S039 21:44: after a jump onto a rock off the walkable grid ("midair")
-        out.append(f"path unknown: {why}" + ("; step onto plain ground (move_to a floor near you) and route again"
-                                             if "no floor under" in str(why) else "")
-                   if why else "path unknown (pathfinding unavailable)")
+        out.append(f"path unknown: {why}" if why else "path unknown (pathfinding unavailable)")
     vn = res.get("visited_near")
     if isinstance(vn, dict) and vn.get("pos") and (vn.get("to_goal_m") or 0) < (res.get("straight_m") or 0) - 5:
         out.append(f"CLOSEST YOU HAVE BEEN: {pos(vn['pos'])}, {_m(vn.get('to_goal_m'))} from it")
@@ -342,7 +324,9 @@ def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = Non
     if cons:
         out.append("LADDERS/DOORS in view (best first):")
         out.extend(_connector(c, H, ends) for c in cons)
-    out.append(_next(res, H, ends))
+    nxt = _next(res, H, ends)
+    if nxt:
+        out.append(nxt)
     return "\n".join(out)
 
 
@@ -367,5 +351,7 @@ def hint_text(res: Any, H: Handles) -> str:
     best = next((x for x in res.get("connectors") or [] if not x.get("unreachable")), None)
     if best:
         out.append(_connector(best, H).strip())
-    out.append(_next(res, H))
+    nxt = _next(res, H, full=False)
+    if nxt:
+        out.append(nxt)
     return "\n".join(out)

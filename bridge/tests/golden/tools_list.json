@@ -350,7 +350,7 @@
  {
   "name": "route",
   "title": null,
-  "description": "The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.\nSays how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with\nfire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they\nhelp (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.\nA goal on ground the party hasn't seen or walked gets only its distance and direction.\ngo=true: check and go in one call: travel_to the goal when a path exists, else to the closest walkable spot (it returns at the trip's end, as travel_to does).",
+  "description": "The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.\nSays how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with\nfire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they\nhelp (which way a ladder climbs, which ladders the way up or down takes). connectors=true lists ladders/doors even when a path exists.\nA goal on ground the party hasn't seen or walked gets only its distance and direction.\ngo=true: check and go in one call: travel_to the goal when a path exists, else to the closest walkable spot (it returns at the trip's end, as travel_to does).",
   "input_schema": {
    "properties": {
     "objective": {

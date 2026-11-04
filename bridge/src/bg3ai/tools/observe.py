@@ -252,7 +252,7 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     """The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.
     Says how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with
     fire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
-    help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.
+    help (which way a ladder climbs, which ladders the way up or down takes). connectors=true lists ladders/doors even when a path exists.
     A goal on ground the party hasn't seen or walked gets only its distance and direction.
     go=true: check and go in one call: travel_to the goal when a path exists, else to the closest walkable spot (it returns at the trip's end, as travel_to does)."""
     t0 = time.monotonic()
@@ -348,7 +348,7 @@ def path_preview(target: str = "", x: float | None = None, y: float | None = Non
 
 def _route_hint(args: dict) -> str:
     """nav.route for a failed walk toward a pos/target: the height gap, the closest spot, the best ladder/door,
-    and one NEXT step (route.hint_text). '' if it can't be had."""
+    and the route fact the rest doesn't state (route.hint_text). '' if it can't be had."""
     q = {k: args[k] for k in ("char", "pos", "target") if k in args}
     res = core.game.try_rpc("nav.route", q) if ("pos" in q or "target" in q) else None
     if not isinstance(res, dict):
