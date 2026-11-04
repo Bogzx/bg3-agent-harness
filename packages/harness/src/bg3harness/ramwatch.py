@@ -8,7 +8,8 @@
   - samples the game's RSS every SAMPLE_S; growth > SPIKE_MB within SPIKE_WINDOW_S is logged with the last tool
     calls (runtime/actions.jsonl) to ram.log, the runner log and runtime/ram_spikes.jsonl (OOM attribution:
     20:48 the game went 5.0 → 13.3 GB in < 40 s after loading the Shadowfell, between two 60 s samples);
-  - samples every FAST_SAMPLE_S while the RSS climbs fast, and SIGKILLs bg3 above KILL_GAME_MB RSS or below
+  - samples every FAST_SAMPLE_S while the RSS climbs fast, and SIGKILLs bg3 above KILL_GAME_MB RSS (both kill
+    thresholds move with the game's cap: its scope's memory.max, else $BG3AI_GAME_MEMORY_MAX: kill_limits) or below
     KILL_AVAIL_MB available (test runs go first), logging the last bg3le log lines and tool calls
     (runtime/ram_kills.jsonl); our own kill is no OOM event, so systemd stops no unit for it;
   - no longer lowers the game's oom_score_adj (it used to set -500): the game runs in its own capped systemd scope
@@ -44,6 +45,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from bg3harness.recorder import find_window
+
 RUNTIME = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[4] / "runtime"))
 LOG = RUNTIME / "ram.log"
 INTERVAL_S = 60
@@ -60,6 +63,13 @@ KILL_GAME_MB = 9500
 # runaway's pages out (MemorySwapMax=2G), so the RSS never reached 9.5 GB. Normal play: anon ~5.4 GB + swap ~0.2 GB;
 # the scope's memory.current (~9.2 GB) is mostly reclaimable file cache, so it is no kill signal.
 KILL_ANON_SWAP_MB = 9000
+# Both are the 10G cap's numbers. Under a smaller cap C (MiB, as rss_mb counts) each is min(its 10G number,
+# C - KILL_UNDER_CAP_MB) (REVIEW-16 A4, D880: 8G -> 7692/7692; an 8G cgroup OOM-kills the game before 9500, while a
+# healthy game's anon+swap reached 7102 on 2026-10-28, so a margin that scales down further kills healthy games).
+# C is the smallest numeric memory.max of the game scope and its ancestor cgroups when one reads, else
+# $BG3AI_GAME_MEMORY_MAX (launch_game.sh's MemoryMax: bytes or K/M/G/T, 1024-based), else 10G.
+GAME_CAP_ENV = "BG3AI_GAME_MEMORY_MAX"
+KILL_UNDER_CAP_MB = 500
 KILL_AVAIL_MB = 700            # … or when RAM available drops below this and no test run is left to kill
 KILLS = RUNTIME / "ram_kills.jsonl"   # the runner's OOM crash-loop guard counts these like kernel OOM kills
 SPIKE_MB = 2048                # RSS growth within SPIKE_WINDOW_S that gets logged with the last tool calls
@@ -88,6 +98,14 @@ HEAT_ENV = {"pause_cpu_c": ("BG3AI_HEAT_PAUSE_CPU_C", 92), "pause_gpu_c": ("BG3A
             "pause_s": ("BG3AI_HEAT_PAUSE_S", 60),
             "kill_cpu_c": ("BG3AI_HEAT_KILL_CPU_C", 97), "kill_gpu_c": ("BG3AI_HEAT_KILL_GPU_C", 92),
             "kill_s": ("BG3AI_HEAT_KILL_S", 20)}
+# The game's own scope (runner/launch_game.sh, --collect): its memory.events/memory.stat go into every tick and sample;
+# when it ends, its Result from the user journal goes to ram.log and the runner log with the last snapshot (r13 a1:
+# the game died with nothing logged about how)
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+SCOPE_PREFIX = "bg3ai-game-"
+STAT_KEYS = ("anon", "file", "kernel", "shmem", "file_mapped")   # memory.stat bytes, logged in MB
+SCOPE_END_WAIT_S = 30          # how long a gone scope's end lines may take to reach the journal
+MAP_STATES = {"Viewable": "viewable", "UnMapped": "unmapped", "Unviewable": "unviewable"}
 
 
 def meminfo(path: Path = Path("/proc/meminfo")) -> dict[str, int]:
@@ -230,6 +248,71 @@ def last_tick(path: Path = LOG, tail_bytes: int = 16384) -> tuple[float, str] | 
             except ValueError:
                 continue
     return None
+
+
+def game_scope_cgroup(pid: int, proc: Path = Path("/proc"), root: Path = CGROUP_ROOT) -> Path | None:
+    """The cgroup dir of the game's own scope (bg3ai-game-<stamp>.scope), or None (no scope, cgroup v1, gone)."""
+    try:
+        lines = (proc / str(pid) / "cgroup").read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        rel = line[3:].strip() if line.startswith("0::") else ""
+        if Path(rel).name.startswith(SCOPE_PREFIX) and rel.endswith(".scope"):
+            return root / rel.lstrip("/")
+    return None
+
+
+def cgroup_mem(cg: Path) -> str:
+    """'events[low=0 high=0 max=0 oom=0 oom_kill=0 …] stat[anon=5400MB …]' of a cgroup ('' once it is gone)."""
+    try:
+        events = (cg / "memory.events").read_text().split()
+        stat = dict(ln.split(" ", 1) for ln in (cg / "memory.stat").read_text().splitlines() if " " in ln)
+    except (OSError, ValueError):
+        return ""
+    ev = " ".join(f"{k}={v}" for k, v in zip(events[::2], events[1::2], strict=False))
+    st = " ".join(f"{k}={int(stat[k]) // 2**20}MB" for k in STAT_KEYS if stat.get(k, "").strip().isdigit())
+    return f"events[{ev}] stat[{st}]"
+
+
+def scope_journal(unit: str, run=subprocess.run) -> list[str]:
+    """systemd's lines about the unit from the user journal, unit prefix cut ("Failed with result 'oom-kill'.",
+    "Consumed …"); [] when journalctl isn't usable."""
+    try:
+        r = run(["journalctl", "--user", "--no-pager", "-q", "-o", "cat", "-u", unit],
+                capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [ln[len(unit) + 2:] for ln in (r.stdout or "").splitlines() if ln.startswith(unit + ": ")]
+
+
+def scope_result(lines: list[str]) -> str | None:
+    """The ended scope's Result ('success' unless systemd says "Failed with result '…'"), None while not ended."""
+    for ln in lines:
+        m = re.search(r"Failed with result '([^']+)'", ln)
+        if m:
+            return m.group(1)
+    return "success" if any(ln.startswith(("Consumed ", "Deactivated")) for ln in lines) else None
+
+
+def game_window(display: str, run=subprocess.run) -> str:
+    """'viewable 1408x792' | 'unmapped WxH' | 'unviewable WxH' | 'none': the game window's map state and size
+    (xwininfo -id on recorder.find_window's id)."""
+    try:
+        tree = run(["xwininfo", "-root", "-tree", "-display", display], capture_output=True, text=True, timeout=5,
+                   check=False).stdout
+        wid = find_window(tree or "")
+        if not wid:
+            return "none"
+        info = run(["xwininfo", "-id", wid, "-display", display], capture_output=True, text=True, timeout=5,
+                   check=False).stdout or ""
+    except (OSError, subprocess.TimeoutExpired):
+        return "none"
+    m = re.search(r"Map State:\s*Is(\w+)", info)
+    w, h = re.search(r"Width:\s*(\d+)", info), re.search(r"Height:\s*(\d+)", info)
+    if not m:
+        return "none"
+    return f"{MAP_STATES.get(m.group(1), m.group(1).lower())} {w.group(1) if w else '?'}x{h.group(1) if h else '?'}"
 
 
 def heat_limits(env=None) -> dict[str, float]:
@@ -387,12 +470,46 @@ def read_heat(path: Path = THERMAL_LOG, now: float | None = None, limits: dict |
     return heat_state(samples, time.time() if now is None else now, limits)
 
 
+def cap_mb(cap: str | None) -> int | None:
+    """MiB of a MemoryMax as systemd reads it: bytes, or K/M/G/T (1024-based; '8G', '8192M', '8589934592'); None
+    when unset or another form (%, infinity)."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([KMGT]?)\s*", cap or "", re.IGNORECASE)
+    if not m:
+        return None
+    return int(float(m.group(1)) * 1024 ** "_KMGT".index(m.group(2).upper() or "_")) // 2**20 or None
+
+
+def scope_cap_mb(cg: Path, root: Path = CGROUP_ROOT) -> int | None:
+    """MiB of the memory limit the scope's processes run under: the smallest numeric memory.max of the scope and its
+    ancestors below `root` (a scope with 'max' under a capped slice is capped by the slice); None when none reads."""
+    caps = []
+    for d in (cg, *cg.parents):
+        if d == root or root not in d.parents:
+            break
+        try:
+            v = (d / "memory.max").read_text().strip()
+        except OSError:
+            continue
+        if v.isdigit():
+            caps.append(int(v) // 2**20)
+    return min(caps, default=None)
+
+
+def kill_limits(cap: int | None) -> tuple[int, int]:
+    """(RSS, anon+swap) kill thresholds in MiB under a game cap of `cap` MiB; None keeps the 10G numbers."""
+    if cap is None:
+        return KILL_GAME_MB, KILL_ANON_SWAP_MB
+    return min(KILL_GAME_MB, cap - KILL_UNDER_CAP_MB), min(KILL_ANON_SWAP_MB, cap - KILL_UNDER_CAP_MB)
+
+
 class RamWatch:
     def __init__(self, log=None, logfile: Path = LOG, warn_mb: int = WARN_MB, kill_mb: int = KILL_MB,
                  exclude: set[int] | None = None):
         self.log = log or (lambda m: None)
         self.logfile = logfile
         self.warn_mb, self.kill_mb = warn_mb, kill_mb
+        self.env_cap_mb = cap_mb(os.environ.get(GAME_CAP_ENV))   # the fallback when no scope's memory.max reads
+        self.kill_game_mb, self.kill_anon_swap_mb = kill_limits(self.env_cap_mb)
         self.exclude = exclude or set()
         self.low = False
         self.samples: collections.deque[tuple[float, int]] = collections.deque()   # (t, game RSS MB)
@@ -406,6 +523,9 @@ class RamWatch:
         self.heat: collections.deque[tuple[float, int | None, int | None]] = collections.deque(maxlen=64)
         self.limits = heat_limits()
         self.next_thermal = 0.0
+        self.proc, self.cgroup_root, self.run = Path("/proc"), CGROUP_ROOT, subprocess.run
+        self.display = os.environ.get("DISPLAY") or ":1"
+        self.scope: dict | None = None   # the game scope's last snapshot: {"unit", "t", "mem"}, + "gone" once ended
 
     def _write(self, line: str) -> None:
         try:
@@ -424,6 +544,8 @@ class RamWatch:
                "game_rss_mb": sum(rss_mb(p) for p in games),
                "game_anon_swap_mb": sum(anon_swap_mb(p) for p in games), "game_adj": [get_adj(p) for p in games],
                "action": ""}
+        snap = self.scope_snapshot(games)
+        win = f" win={game_window(self.display, self.run)}" if games else ""
         tests = test_pids(procs, self.exclude) if avail < self.warn_mb else []
         if avail < self.kill_mb and tests:
             for pid in tests:
@@ -443,8 +565,50 @@ class RamWatch:
         self.low = avail < self.warn_mb
         self._write(f"avail={avail}MB swap_free={out['swap_free_mb']}MB game_rss={out['game_rss_mb']}MB "
                     f"anon+swap={out['game_anon_swap_mb']}MB "
-                    f"game_adj={out['game_adj']} {out['action']}".rstrip())
+                    f"game_adj={out['game_adj']}{win}{f' scope={snap[0]} {snap[1]}' if snap else ''} "
+                    f"{out['action']}".rstrip())
         return out
+
+    def scope_snapshot(self, pids: list[int]) -> tuple[str, str] | None:
+        """(unit, cgroup_mem) of the game's scope, or None. Sets the kill thresholds from the scope's memory.max (else
+        the env's cap): a ramwatch started without $BG3AI_GAME_MEMORY_MAX still follows the real cap."""
+        cap = None
+        for pid in pids:
+            cg = game_scope_cgroup(pid, self.proc, self.cgroup_root)
+            cap = cap or (scope_cap_mb(cg, self.cgroup_root) if cg else None)
+            mem = cgroup_mem(cg) if cg else ""
+            if cg and mem:
+                break
+        else:
+            cg = None
+        self.kill_game_mb, self.kill_anon_swap_mb = kill_limits(cap if cap is not None else self.env_cap_mb)
+        return (cg.name, mem) if cg else None
+
+    def watch_scope(self, now: float, pids: list[int]) -> None:
+        """Keeps the game scope's newest snapshot; once it is gone (no game, or another scope), logs its end."""
+        snap = self.scope_snapshot(pids) if pids else None
+        if self.scope is not None and ((pids and snap is None) or (snap and snap[0] != self.scope["unit"])):
+            self.scope_ended(now, wait=False)    # a new game already: the old one's end with what the journal has
+        if snap:
+            self.scope = {"unit": snap[0], "t": now, "mem": snap[1]}
+        elif self.scope is not None and not pids:
+            self.scope_ended(now)
+
+    def scope_ended(self, now: float, wait: bool = True) -> None:
+        """Logs the ended scope's Result (user journal) and its last memory.events/memory.stat, once; waits up to
+        SCOPE_END_WAIT_S for systemd's end lines."""
+        sc = self.scope
+        if sc is None:
+            return
+        lines = scope_journal(sc["unit"], self.run)
+        result = scope_result(lines)
+        if result is None and wait and now - sc.setdefault("gone", now) < SCOPE_END_WAIT_S:
+            return
+        self.scope = None
+        msg = (f"game scope {sc['unit']} ended: Result={result or 'unknown (no end line in the user journal)'}; "
+               f"last memory {sc.get('gone', now) - sc['t']:.0f} s before it was gone: {sc['mem']}; journal: {' | '.join(lines[-4:]) or 'none'}")
+        self._write(msg)
+        self.log(f"ramwatch: {msg}")
 
     def _append(self, path: Path, rec: dict) -> None:
         try:
@@ -455,7 +619,7 @@ class RamWatch:
 
     def sample(self, now: float | None = None, rss: int | None = None, avail: int | None = None,
                pids: list[int] | None = None, anon_swap: int | None = None) -> dict | None:
-        """One game RSS sample. Kills bg3 (SIGKILL) above KILL_GAME_MB RSS or KILL_ANON_SWAP_MB anon+swap, or below
+        """One game RSS sample. Kills bg3 (SIGKILL) above kill_game_mb RSS or kill_anon_swap_mb anon+swap, or below
         KILL_AVAIL_MB available once no test run is left to kill; logs growth > SPIKE_MB within SPIKE_WINDOW_S (once per window). Returns the kill
         record ({"kind": "kill", …}), the spike record ({"kind": "spike", …}) or None."""
         now = time.time() if now is None else now
@@ -465,6 +629,7 @@ class RamWatch:
             rss = sum(rss_mb(p) for p in pids)
         if anon_swap is None:
             anon_swap = sum(anon_swap_mb(p) for p in pids)
+        self.watch_scope(now, pids if rss > 0 else [])
         q = self.samples
         if rss <= 0:          # no game (or it just died): a new game starts a new baseline
             q.clear()
@@ -482,8 +647,8 @@ class RamWatch:
         while q and q[0][0] < now - SPIKE_WINDOW_S:
             q.popleft()
         t0, low = min(q, key=lambda s: s[1])
-        if rss >= KILL_GAME_MB or avail < KILL_AVAIL_MB:
-            if rss < KILL_GAME_MB and now - self.tests_killed_at > 10:   # still short soon after: the game
+        if rss >= self.kill_game_mb or avail < KILL_AVAIL_MB:
+            if rss < self.kill_game_mb and now - self.tests_killed_at > 10:   # still short soon after: the game
                 tests = test_pids(exclude=self.exclude)
                 if tests:      # RAM is short but the game is in bounds: test runs go first
                     for pid in tests:
@@ -496,7 +661,7 @@ class RamWatch:
                     self._write(f"only {avail} MB available (game {rss} MB): SIGTERM to test runs {tests[:8]}")
                     return None
             return self._kill_game(now, pids, rss, avail, low, t0)
-        if anon_swap >= KILL_ANON_SWAP_MB:
+        if anon_swap >= self.kill_anon_swap_mb:
             return self._kill_game(now, pids, rss, avail, low, t0, anon_swap)
         if rss - low <= SPIKE_MB or now - self.spike_at < SPIKE_WINDOW_S:
             return None
@@ -513,8 +678,8 @@ class RamWatch:
 
     def _kill_game(self, now: float, pids: list[int], rss: int, avail: int, low: int, t0: float,
                    anon_swap: int | None = None) -> dict:
-        why = (f"game RSS {rss} MB >= {KILL_GAME_MB} MB" if rss >= KILL_GAME_MB
-               else f"game anon+swap {anon_swap} MB >= {KILL_ANON_SWAP_MB} MB (RSS {rss} MB; the rest is swapped out)"
+        why = (f"game RSS {rss} MB >= {self.kill_game_mb} MB" if rss >= self.kill_game_mb
+               else f"game anon+swap {anon_swap} MB >= {self.kill_anon_swap_mb} MB (RSS {rss} MB; the rest is swapped out)"
                if anon_swap is not None
                else f"only {avail} MB RAM available (< {KILL_AVAIL_MB} MB, game {rss} MB)")
         for pid in pids:

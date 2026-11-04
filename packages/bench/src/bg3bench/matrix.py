@@ -4,9 +4,12 @@
 Files in the matrix folder (runtime/matrix/<name>/):
 
 - `queue.jsonl`: append-only. Line 1 is the plan `{"type": "plan", "schema": 1, "name", "created", "jobs": [...]}`;
-  then `{"type": "start", "job", "attempt", "t"}` and `{"type": "end", "job", "attempt", "t", "result"}` per attempt.
+  then `{"type": "start", "job", "attempt", "t", "run_dir"?}` and `{"type": "end", "job", "attempt", "t", "result"}`
+  per attempt (run_dir: the directory the run plays in, when run_one names it: `run_one.run_dir(job)`).
   The state is the fold of the file, so a crash of the matrix runner itself loses nothing: on the next start an
-  attempt that started and never ended is closed as invalid (`interrupted`) and the job is run again.
+  attempt that started and never ended is closed as invalid (`interrupted`) and the job is run again. A paid one is
+  charged what its run dir's agent streams spent (bg3harness.runs.claude_totals since the start), else (no run dir,
+  a stream never closed, a cost unknown) its whole max_cost.
 - `progress.json`: rewritten after every change, for the dashboard.
 
 The budget file is the harness's (bg3harness.spend, which reads and updates it here too): one per machine,
@@ -46,7 +49,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from bg3harness import spend
+from bg3harness import runs, spend
 
 SCHEMA = 1
 MAX_RERUNS = 2
@@ -201,7 +204,9 @@ class Matrix:
             if st is None:
                 continue
             if rec["type"] == "start":
-                st["attempts"].append({"attempt": rec["attempt"], "result": None})
+                st["attempts"].append(
+                    {"attempt": rec["attempt"], "result": None, "t": rec.get("t"), "run_dir": rec.get("run_dir")}
+                )
             elif rec["type"] == "end" and st["attempts"] and st["attempts"][-1]["attempt"] == rec["attempt"]:
                 st["attempts"][-1]["result"] = rec["result"]
         for st in jobs.values():
@@ -282,11 +287,15 @@ class Matrix:
         jobs = self.state()
         for st in jobs.values():
             if st["status"] == "interrupted":
-                # the matrix runner died mid-run: what a paid run spent is unknown unless the job has a reserve
-                job, att = st["job"], st["attempts"][-1]["attempt"]
-                paid = job["client"] in PAID_CLIENTS
-                cost = job["max_cost"] if paid else None
-                if not self._end(job, att, RunResult(None, False, False, cost, "interrupted", charged=not paid)):
+                # the matrix runner died mid-run: a paid run's spend from its run dir, else its reserve (or unknown)
+                job, last = st["job"], st["attempts"][-1]
+                att, paid = last["attempt"], job["client"] in PAID_CLIENTS
+                cost, why = (job["max_cost"] if paid else None), "interrupted"
+                if paid and last["run_dir"]:
+                    tot = runs.claude_totals(Path(last["run_dir"]), last["t"] or 0.0)
+                    if not tot["cost_unknown"] and not tot["open_streams"]:
+                        cost, why = tot["cost_usd"], f"interrupted (cost from {last['run_dir']})"
+                if not self._end(job, att, RunResult(None, False, False, cost, why, charged=not paid)):
                     self._progress(self.state(), "stopped", stop=BUDGET)
                     return BUDGET
                 if paid and cost is None:
@@ -318,7 +327,10 @@ class Matrix:
                 self._progress(jobs, "stopped", stop=f"{GUARD}: {why}")
                 return f"{GUARD}: {why}"
             attempt = len(st["attempts"]) + 1
-            self._append({"type": "start", "job": job["id"], "attempt": attempt, "t": self.now()})
+            start = {"type": "start", "job": job["id"], "attempt": attempt, "t": self.now()}
+            if (run_dir := getattr(self.run_one, "run_dir", None)) is not None:
+                start["run_dir"] = str(run_dir(job))
+            self._append(start)
             self._progress(jobs, "running", current={**job, "attempt": attempt})
             try:
                 result = self.run_one(job)

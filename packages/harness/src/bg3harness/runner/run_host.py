@@ -455,7 +455,7 @@ def bench_recording(env: Mapping[str, str]) -> Callable[[Path], hrec.RunRecordin
     if env.get(RECORD_ENV, "1") == "0":
         return None
     encoder = hrec.bench_encoder(env)
-    return lambda out: hrec.run_recording(out, env, renv.RUNTIME, encoder)
+    return lambda out: hrec.run_recording(out, env, renv.RUNTIME, encoder, warn=renv.log)
 
 
 def owner_of(sc: Json) -> str:

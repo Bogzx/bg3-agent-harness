@@ -264,6 +264,51 @@ def test_resumes_after_its_own_crash(tmp_path):
     assert json.loads(budget.read_text())["spent"] == 1.0 + 2.5 + 1.0
 
 
+class DirRun(FakeRun):
+    """run_one that names its run dir (SessionRun.run_dir): the matrix keeps it in the start record."""
+
+    def __init__(self, root, script=None):
+        super().__init__(script)
+        self.root = root
+
+    def run_dir(self, job):
+        return self.root / f"{job['id']}-{self.calls.count(job['id']) + 1}"
+
+
+def _pi_stream(run_dir, cost, closed=True):
+    """A pi stream in the run dir: its usage events' running (billed) cost; closed: the runner's session_end."""
+    from bg3harness import runs
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "S001.jsonl").write_text(json.dumps({"type": "session"}) + "\n")
+    log = runs.events.EventLog(run_dir / "S001.events.jsonl")
+    log.write(runs.clients.Event("usage", message_id="m1", cost_usd=cost, tokens=runs.clients.tokens(100)))
+    if closed:
+        log.end("killed", -9, 1.0)
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_an_interrupted_paid_run_is_charged_what_its_run_dir_spent(tmp_path, closed):
+    # D822: an interrupted paid run was charged its whole max_cost; its run dir's streams say what it spent. A stream
+    # never closed (the runner killed with it) may have spent more than it logged: the reserve then
+    jobs = matrix.plan(MODELS[1:], ["grove"], ["rules"], 1, max_cost={"grove": 2.5})
+    crash = f"{PI}~grove~rules~r1"
+    m, budget, _ = make(tmp_path, DirRun(tmp_path / "runs", {(crash, 1): KeyboardInterrupt()}), jobs=jobs)
+    with pytest.raises(KeyboardInterrupt):
+        m.run()
+    starts = [json.loads(ln) for ln in (tmp_path / "m" / "queue.jsonl").read_text().splitlines()][1:]
+    assert [r["run_dir"] for r in starts] == [str(tmp_path / "runs" / f"{crash}-1")]
+    _pi_stream(tmp_path / "runs" / f"{crash}-1", 0.42, closed)
+    m2, _, _ = make(tmp_path, DirRun(tmp_path / "runs"), jobs=jobs)
+    assert m2.run() == matrix.FINISHED
+    first = m2.state()[crash]["attempts"][0]["result"]
+    assert json.loads(budget.read_text())["spent"] == pytest.approx((0.42 if closed else 2.5) + 1.0)
+    assert first["cost_usd"] == pytest.approx(0.42 if closed else 2.5)
+    assert first["invalid_reason"] == (
+        f"interrupted (cost from {tmp_path / 'runs' / f'{crash}-1'})" if closed else "interrupted"
+    )
+
+
 def test_an_interrupted_run_without_a_reserve_stops_once(tmp_path):
     jobs = matrix.plan(MODELS[1:], ["nautiloid"], ["rules"], 1)
     m, _, _ = make(tmp_path, FakeRun({(f"{PI}~nautiloid~rules~r1", 1): KeyboardInterrupt()}), jobs=jobs)

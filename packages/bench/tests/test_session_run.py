@@ -197,6 +197,9 @@ def test_the_matrix_reruns_a_crashed_job_and_settles_paid_costs(tmp_path):
     (st,) = mx.state().values()
     assert st["status"] == "done" and [a["result"]["valid"] for a in st["attempts"]] == [False, True]
     assert json.loads(budget.read_text())["spent"] == 0.8  # both runs billed, by the matrix
+    # each start record names the run dir the run played in (an interrupted run's spend is read there, D822)
+    starts = [json.loads(ln) for ln in (tmp_path / "mx" / "queue.jsonl").read_text().splitlines()][1:]
+    assert [r["run_dir"] for r in starts if r["type"] == "start"] == [str(s[2]) for s in host.started]
 
 
 def test_a_subscription_run_is_not_billed(tmp_path):

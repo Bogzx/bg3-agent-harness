@@ -575,9 +575,12 @@ def claude_totals(state_dir: Path, since: float) -> dict:
     per token so far (claude reports cost only in its result). A process whose cost can't be known (a codex/gemini
     model without a price, a first process stopped before any result priced a token) adds no cost and sets
     cost_unknown: the cost_usd is then a lower bound, never a run's true cost (H4: it read $0 with 208k tokens).
-    served: what the endpoints served (pi's thinking levels and providers), a stopped process's from its last usage."""
+    served: what the endpoints served (pi's thinking levels and providers), a stopped process's from its last usage.
+    open_streams: streams with neither a result nor the runner's session_end (still running, or killed with the
+    runner): not in cost_usd."""
     cost, turns, tokens = 0.0, 0, {k: 0 for k, _ in TOKEN_FIELDS}
     unknown = False
+    open_streams = 0
     try:
         files = list(state_dir.iterdir()) if state_dir.is_dir() else []
     except OSError:
@@ -598,6 +601,7 @@ def claude_totals(state_dir: Path, since: float) -> dict:
         reported = bool(evs) and process_client(base) in clients.RUNNING_COST
         if not evs and (usage := stopped_usage(base)) is not None:
             evs = [unfinished_result(usage, cost, token_total(tokens))]
+        open_streams += not evs
         for ev in evs:
             unknown = unknown or (ev.cost_usd is None and token_total(ev.tokens) > 0)
             cost += float((own_cost(ev, running) if reported else ev.cost_usd) or 0)
@@ -613,6 +617,7 @@ def claude_totals(state_dir: Path, since: float) -> dict:
         "cost_unknown": unknown,
         "served": served or None,
         "running": running,
+        "open_streams": open_streams,
     }
 
 
