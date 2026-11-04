@@ -77,7 +77,7 @@ end
 local function game(opts)
     opts = opts or {}
     saved, calls, created, inv = { ext = { Ext.Stats, Ext.StaticData.Get, Ext.Template,
-        Ext.Level.GetTileDebugInfo } }, {}, {}, {}
+        Ext.Level.GetTileDebugInfo, Ext.Level.GetHeightsAt } }, {}, {}, {}
     stats = {}
     Ext.Stats = { Get = function(n) return stats[n] end,
         Create = function(n, typ, from)
@@ -108,10 +108,16 @@ local function game(opts)
         stub(n, function(...) calls[#calls + 1] = { n, ... } end)
     end
     -- The ground's surfaces: opts.tiles {x, z, ground surface, stays = the clear doesn't remove it} (a tile per metre;
-    -- every other tile reads None); opts.no_tiles: no tile reads.
+    -- every other tile reads None); opts.no_tiles: no tile reads. opts.ground(x, z): the floor heights there (default
+    -- {0}); a tile reads only at one of them.
     local tiles = opts.tiles or {}
+    local ground = opts.ground or function() return { 0.0 } end
+    Ext.Level.GetHeightsAt = function(x, z) return ground(x, z) end
     Ext.Level.GetTileDebugInfo = function(p)
         if opts.no_tiles then error("no tile there") end
+        local on = false
+        for _, h in ipairs(ground(p[1], p[3])) do on = on or math.abs(h - p[2]) < 0.01 end
+        if not on then error("no tile at that height") end
         for _, t in ipairs(tiles) do
             if math.abs(p[1] - t[1]) < 0.5 and math.abs(p[3] - t[2]) < 0.5 then
                 return { GroundSurface = t[3], CloudSurface = "None" }
@@ -165,7 +171,7 @@ local function restore()
         if name ~= "ext" and name ~= "ticker" then rawset(Osi, name, v or nil) end
     end
     Ext.Stats, Ext.StaticData.Get, Ext.Template = saved.ext[1], saved.ext[2], saved.ext[3]
-    Ext.Level.GetTileDebugInfo = saved.ext[4]
+    Ext.Level.GetTileDebugInfo, Ext.Level.GetHeightsAt = saved.ext[4], saved.ext[5]
     NAMES[T1], NAMES[T2], NAMES[T3], NAMES[T4] = nil, nil, nil, nil
 end
 
@@ -610,9 +616,9 @@ test("a mirror setup clears Ground and Cloud surfaces at every spot before the f
         if c[1] == "CreateAt" then break end
         if c[1] == "RemoveSurfaceLayerAtPosition" then got[#got + 1] = c end
     end
-    local want = { -- the whole arena first: midpoint (0, 0, 5), radius 10/2 + a line's half 0.75 + 6
-        { "RemoveSurfaceLayerAtPosition", 0.0, 0.0, 5.0, "Ground", 11.75 },
-        { "RemoveSurfaceLayerAtPosition", 0.0, 0.0, 5.0, "Cloud", 11.75 } }
+    local want = { -- the whole arena first: midpoint (0, 0, 5), radius 10/2 + two Dashes 18
+        { "RemoveSurfaceLayerAtPosition", 0.0, 0.0, 5.0, "Ground", 23.0 },
+        { "RemoveSurfaceLayerAtPosition", 0.0, 0.0, 5.0, "Cloud", 23.0 } }
     for i = 1, 2 do
         for _, s in ipairs({ "A", "B" }) do
             local p = Ar.Setup.line(({ A = { 0, 0, 0 }, B = { 0, 0, 10 } })[s], 2)[i]
@@ -622,7 +628,9 @@ test("a mirror setup clears Ground and Cloud surfaces at every spot before the f
         end
     end
     eq(enc(got), enc(want), "both layers over the arena, then at all 4 spots, before any CreateAt")
-    eq(enc(j.surfaces), enc({ points = 207, radius = 11.75, off = 0 }), "every tile on A's half read")
+    eq(enc(j.surfaces), enc({ points = 207, read = 207, radius = 11.75, off = 0,
+        wide = { points = 596, read = 596, radius = 23.0, off = 0, tiles = {} } }),
+        "every tile pair read: checked within 11.75 m, report-only out to 23 m")
 end))
 
 -- Fairness audit, site 2: every match opened with Fire 2 m from B's line (outside the 2 m spot clears), 8 m from A's.
@@ -631,7 +639,7 @@ test("surfaces the clear leaves that don't mirror fail setup naming them, before
     game({ tiles = { { 1, 8, "Fire", stays = true }, { 2, 8, "Fire", stays = true }, { 3, 3, "Water" } } })
     local j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
-    eq(tostring(j.error), "the surfaces don't mirror after the clear (2 of 207 tiles within 11.8 m): "
+    eq(tostring(j.error), "the surfaces don't mirror after the clear (2 of 207 tiles read within 11.8 m): "
         .. "(1.0, 2.0) on A's half reads None/None, its mirror (1.0, 8.0) Fire/None; "
         .. "(2.0, 2.0) on A's half reads None/None, its mirror (2.0, 8.0) Fire/None", "names each (the water cleared)")
     eq(#named("CreateAt"), 0, "no twin")
@@ -646,9 +654,59 @@ test("surfaces that mirror after the clear pass; no tile that reads fails", guar
     game({ no_tiles = true })
     j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
-    eq(tostring(j.error), "no tile on A's half within 11.8 m of the arena's midpoint reads its surfaces (207 tried)",
-        "fails closed")
+    eq(tostring(j.error), "no tile pair on A's half within 11.8 m of the arena's midpoint reads its surfaces "
+        .. "(207 tried)", "fails closed")
     eq(#named("CreateAt"), 0, "no twin")
+end))
+
+-- Cross-review 7828a6f8 (1): site 2 is not flat (A's back line lower). A tile is read on its own ground, not at its
+-- side's spawn height; a pair where one tile doesn't read (no floor there) is unread, not a mismatch.
+test("surface tiles are read on their own ground; a tile that doesn't read leaves its pair unread", guarded(function()
+    restore()
+    game({ tiles = { { 1, 2, "Fire", stays = true }, { 1, 8, "Fire", stays = true } },
+        ground = function(x, z)
+            if x == 2 and z == 2 then return {} end -- a hole on A's half
+            return { z < 5 and -2.0 or 0.0 } -- A's half 2 m lower than its spawn
+        end })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.step, 1, "at the party step: " .. tostring(j.error))
+    eq(j.surfaces.points, 207, "tiles on A's half")
+    eq(j.surfaces.read, 206, "every pair read but the hole's")
+    eq(j.surfaces.off, 0, "the fires mirror")
+end))
+
+-- Cross-review 7828a6f8 (2): seed-7 m2's later fights ran into Fire 14.6-20 m from the midpoint. Out there the read
+-- is report-only: the result names it, setup goes on.
+test("a surface that doesn't mirror beyond the checked radius is reported, not a setup failure", guarded(function()
+    restore()
+    game({ tiles = { { 0, -12, "Fire", stays = true } } }) -- 17 m from the midpoint, on A's half
+    local j = mirrorSetup(mirrorArena())
+    eq(j.step, 1, "at the party step: " .. tostring(j.error))
+    eq(j.surfaces.off, 0, "nothing within the checked radius")
+    eq(j.surfaces.wide.off, 1, "one tile out to the clear's reach")
+    eq(j.surfaces.wide.tiles[1], "(0.0, -12.0) on A's half reads Fire/None, its mirror (0.0, 22.0) None/None", "named")
+end))
+
+-- Cross-review 7828a6f8 (3): does a cleared fire come back mid-match? The grid read again at round 2 and at the end.
+test("a mirror arena's surfaces are read again at round 2's start and at the end, before arena_end", guarded(function()
+    restore()
+    game({ tiles = { { 3, 1, "Fire", stays = true } } })
+    reset()
+    begin({ surfaces = { spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10 } }, n = 2 } })
+    fire("CombatRoundStarted", "combat1", 2)
+    fire("CombatRoundStarted", "combat1", 2) -- once only
+    Ar.finish(nil, "aborted")
+    local r = refs("arena_surfaces")
+    eq(#r, 2, "round 2 and the end")
+    eq(enc({ r[1].when, r[1].round, r[1].off, r[1].points, r[1].read }), enc({ "round 2", 2, 1, 803, 803 }), "round 2")
+    eq(r[1].tiles[1], "(3.0, 1.0) on A's half reads Fire/None, its mirror (3.0, 9.0) None/None", "the fire named")
+    eq(r[2].when, "end", "the end")
+    local ring = BG3AI.Referee.ring
+    eq(ring[#ring].ev, "arena_end", "arena_end last")
+    reset()
+    begin()
+    Ar.finish(nil, "aborted")
+    eq(#refs("arena_surfaces"), 0, "an arena without mirror surfaces: no re-read")
 end))
 
 test("a surface clear the game refuses fails setup naming it, before any twin spawns", guarded(function()
@@ -656,7 +714,7 @@ test("a surface clear the game refuses fails setup naming it, before any twin sp
     game({ surface_call_fails = true })
     local j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
-    eq(tostring(j.error):find("RemoveSurfaceLayerAtPosition Ground over the arena (11.8 m): ", 1, true) ~= nil, true,
+    eq(tostring(j.error):find("RemoveSurfaceLayerAtPosition Ground over the arena (23.0 m): ", 1, true) ~= nil, true,
         tostring(j.error))
     eq(#named("CreateAt"), 0, "no twin")
 end))

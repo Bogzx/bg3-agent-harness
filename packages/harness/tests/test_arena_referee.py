@@ -59,3 +59,46 @@ def test_ring_records_of_the_mod_are_translated_or_left_out(tmp_path):
     ref.write_end()  # once
     written = [json.loads(line) for line in (tmp_path / "f.jsonl").read_text().splitlines()]
     assert [w["reason"] for w in written if w.get("ev") == "arena_end"] == ["round_cap"]
+
+
+def test_a_mirror_arenas_surface_reads_reach_the_facts_report_only(tmp_path):
+    """Cross-review 7828a6f8: arena_start carries the setup's surface check; the mod's arena_surfaces re-reads (round 2,
+    the end) are written as they are, the end's after the match's end too; both fit the facts schemas."""
+    import jsonschema
+    from test_arena_match import BENCH_FACTS_SCHEMA, FACTS_SCHEMA
+
+    _model, _game, clock, _agents, spec = setup({"A": passer, "B": passer})
+    path = tmp_path / "f.jsonl"
+    ref = am.Referee(spec, SIDES, hfacts.FactsWriter(path, clock=clock.now))
+    checked = {
+        "points": 207,
+        "read": 206,
+        "radius": 10.75,
+        "off": 0,
+        "wide": {"points": 596, "read": 590, "radius": 22.0, "off": 1, "tiles": ["(0.0, -12.0) ..."]},
+    }
+    ref.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]}, checked)
+    [start] = [r for r in map(json.loads, path.read_text().splitlines()) if r.get("ev") == "arena_start"]
+    assert start["surfaces"] == checked
+    reread = {
+        "ev": "arena_surfaces",
+        "when": "round 2",
+        "round": 2,
+        "points": 803,
+        "read": 803,
+        "radius": 22.0,
+        "off": 1,
+        "tiles": ["(3.0, 1.0) on A's half reads Fire/None, its mirror (3.0, 9.0) None/None"],
+    }
+    assert ref.translate(reread) == reread
+    ref.translate({"ev": "arena_end", "winner": "A", "reason": "wipe"})
+    assert ref.done
+    end = {**reread, "when": "end"}
+    assert ref.translate(end) == end
+    for rec in (start, {**reread, "v": 1, "kind": "event", "t": 1.0}):
+        jsonschema.validate(rec, FACTS_SCHEMA)
+        jsonschema.validate(rec, BENCH_FACTS_SCHEMA)
+    plain = am.Referee(spec, SIDES, hfacts.FactsWriter(tmp_path / "g.jsonl", clock=clock.now))
+    plain.start({"A": ["UA1", "UA2"], "B": ["UB1", "UB2"]})
+    rows = [json.loads(line) for line in (tmp_path / "g.jsonl").read_text().splitlines()]
+    assert "surfaces" not in next(r for r in rows if r.get("ev") == "arena_start")

@@ -21,7 +21,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
    ended the turn of a member that can't act; `death_save` for a downed one) is written with `character` named as in
    arena_turn, and its `arena_turn_readmitted {side, character, name, round, why}` (a passed member stood up with its
-   turn back) the same way, the member no longer passed. Its
+   turn back) the same way, the member no longer passed. A mirror arena's `arena_surfaces {when, round, points, read,
+   radius, off, tiles}` (the mod's report-only re-read of the surfaces at round 2's start and at the end) is written
+   as it is, after the end too; `arena_start` carries the setup's surface check (`surfaces`). Its
    `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
    after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
    match's) is written with `character` and `members`
@@ -235,8 +237,9 @@ class Referee:
     def round(self) -> int:
         return self.turn.round if self.turn else 0
 
-    def start(self, teams: Mapping[str, list[str]]) -> None:
-        """arena_start; `teams`: the teams' uuids (_teams), in the arena file's team order."""
+    def start(self, teams: Mapping[str, list[str]], surfaces: Any = None) -> None:
+        """arena_start; `teams`: the teams' uuids (_teams), in the arena file's team order; `surfaces`: a mirror
+        arena's surface check from the setup result ({points, read, radius, off, wide}), when it has one."""
         for s in SIDES:
             if len(teams.get(s) or []) != len(self.spec.teams[s]):
                 raise ArenaSetupError(
@@ -254,11 +257,12 @@ class Referee:
             teams=self.spec.names(),
             sides={s: self.sides[s].player for s in SIDES},
             uuids={s: list(teams[s]) for s in SIDES},
+            **({"surfaces": surfaces} if isinstance(surfaces, dict) else {}),
         )
 
     def translate(self, fact: dict) -> dict | None:
         ev = str(fact.get("ev") or "")
-        if not ev.startswith("arena_"):
+        if not ev.startswith("arena_") or ev == "arena_surfaces":  # report-only re-reads: the end's comes with it
             return fact
         if self.done:
             return None
@@ -536,7 +540,7 @@ def run_arena(
     try:
         feed.poll()  # the rings' readers start here: the setup's records are the match's
         result, status = _setup(spec, game, clock)
-        ref.start(_teams(spec, result, status))
+        ref.start(_teams(spec, result, status), result.get("surfaces"))
     except Exception as e:  # no match: nothing to grade, the rerun sets up again
         outcome.invalid = f"setup: {type(e).__name__}: {e}"
         log(f"arena {spec.name}: {outcome.invalid}")
