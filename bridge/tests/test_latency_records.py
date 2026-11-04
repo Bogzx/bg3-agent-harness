@@ -80,6 +80,43 @@ class GuardTimes(Records):
         self.assertLessEqual(by["outer"]["guard_t0"], by["outer"]["t0"] + 0.001)
 
 
+class CallsWithTwoRecords(Records):
+    """w11 L6: (a) pickpocket's _click_act step writes a 'pickpocket' record before the call's own, and the call's
+    own record had no guard_t0 / save_wait_ms; (b) route(go=true)'s travel_to timed its record from route's start
+    (reporting.call_t0, its walk budget), 70 ms before its own guard."""
+
+    def test_every_record_of_one_call_has_its_guard_t0_and_the_save_wait_once(self):
+        @reporting._guard
+        def pickpocket() -> str:
+            t0 = time.monotonic()
+            reporting._finish("pickpocket", {}, "pickpocket: done — opened", time.monotonic(), events=False)  # step
+            time.sleep(0.02)
+            return reporting._finish("pickpocket", {}, "pickpocket: done", t0, events=False)
+
+        with mock.patch.object(saving.SAVER, "enter", lambda timeout=None: 0.0):
+            pickpocket()
+        step, call = self.recs[-2:]
+        self.assertEqual(step["guard_t0"], call["guard_t0"])
+        self.assertEqual(step["save_wait_ms"], 0.0)
+        self.assertNotIn("save_wait_ms", call)
+
+    def test_a_record_never_starts_before_its_own_guard(self):
+        @reporting._guard
+        def travel_to() -> str:
+            return reporting._finish("travel_to", {}, "travel_to: done", reporting.call_t0(), events=False)
+
+        @reporting._guard
+        def route() -> str:
+            reporting._finish("route", {}, "ROUTE", time.monotonic(), events=False)
+            time.sleep(0.07)
+            return travel_to()
+
+        route()
+        rec = next(r for r in self.recs if r["tool"] == "travel_to")
+        self.assertGreaterEqual(rec["t0"] + 0.002, rec["guard_t0"])
+        self.assertLess(rec["ms"], 60.0)  # its own time, not route's 70 ms before it
+
+
 class ScreenshotTime(Records):
     def test_the_record_covers_the_capture(self):
         class Cap:
