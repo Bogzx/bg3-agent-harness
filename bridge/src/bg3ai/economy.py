@@ -787,15 +787,21 @@ def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str]) -> list
         if isinstance(it, dict) and it.get("uuid"):
             shown.setdefault(it["uuid"], it)
     went: dict[str, list[dict]] = {"you": [], "trader": []}
-    seen: set = set()
+    seen: set = set()  # real uuids only: table items with no uuid (REVIEW-17 F4) are each their own item
+
+    def new(it: dict) -> bool:
+        u = it.get("uuid")
+        if u and u in seen:
+            return False
+        if u:
+            seen.add(u)
+        return True
     for side in ("you", "trader"):
         for it in (off.get(side) or {}).get("items") or []:
-            if isinstance(it, dict) and not it.get("gold") and it.get("uuid") not in seen:
-                seen.add(it.get("uuid"))
+            if isinstance(it, dict) and not it.get("gold") and new(it):
                 went[side].append(dict(it))
     for m in res.get("moved") or []:
-        if isinstance(m, dict) and m.get("side") in went and m.get("uuid") not in seen:
-            seen.add(m.get("uuid"))
+        if isinstance(m, dict) and m.get("side") in went and new(m):
             rec = shown.get(m.get("uuid")) or {}
             it = {"uuid": m.get("uuid"), "name": m.get("name") or rec.get("name"), "count": _count(rec),
                   "price": rec.get("price")}

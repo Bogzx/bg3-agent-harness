@@ -459,6 +459,14 @@ class TradeDealSaid(unittest.TestCase):
         self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
         self.assertIsNone(progression._trade_view["before"])  # sell=junk renders through it next
 
+    def test_table_items_with_no_uuid_are_each_named(self):
+        # REVIEW-17 F4: the first table item with no uuid put None in `seen` and every later one was skipped
+        before = {**self.BEFORE, "offer": {"you": {"items": [{"name": "Backpack", "price": 52},
+                                                             {"name": "Scroll of Grease", "price": 20}]},
+                                           "trader": {"items": []}}}
+        lines = economy.deal_lines({"confirmed": True, "moved": []}, before, lambda it: "(no id)")
+        self.assertEqual(lines, ["SOLD (no id) Backpack 52 g | (no id) Scroll of Grease 20 g"])
+
     def test_a_deal_whose_screen_closed_while_finishing_is_named(self):
         # REVIEW-17 F2: the mod's closed-screen answer has no offer/wares, so plumbing printed the generic compact of
         # `moved` (no prices, the earlier calls' table items left out) and no SOLD line
