@@ -74,6 +74,11 @@ RPC.register("nav.path", function(args)
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
+    local Gd = BG3AI.Guard -- loaded after Navigation in the game; the nav-only tests run without it
+    if r0.points and r.reachable and Gd then -- the game's path preview: where the walk provokes an opportunity attack
+        local pv = Gd.path_provokes(char, r0.points)
+        if pv and #pv > 0 then r.provokes = pv end
+    end
     local mv = movementLeft(char)
     if mv and r.reachable then r.within_movement = r.length_m <= mv + 0.05; r.movement_left = round(mv, 1) end
     if not r.reachable then r.opened = N.geoNote(cp) end
