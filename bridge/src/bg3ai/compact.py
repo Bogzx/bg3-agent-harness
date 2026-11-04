@@ -161,9 +161,9 @@ HINT_RULES: list[tuple[str, str, str]] = [
                      r"ends, when the character would stand idle\); queue_actions the arrival first",
      r"NOTES WINDOW: ~\g<s>s of walking left: note/plan now"),
     ("appends", r" \(queue_actions appends after it\)", ""),
-    ("pace", r"PACE: you waited right after issuing\. Next time first do independent work \(queue the arrival steps, "
-             r"look, plan, notes\): the character acts while you think\.",
-     "PACE: you waited right after issuing (do independent work first)."),
+    # reporting.py's PACE line since 7e23f2f6 (D630); the old instruction text it replaced is never produced
+    ("pace", r"PACE: this wait_for came (?P<s>[\d.]+)s after the last issued action, with no other call in between\.",
+     r"PACE: wait_for \g<s>s after the last issued action, no call between."),
     ("actions_before", r"\(other actions as listed before for (?P<h>e\d+); get_combat_state lists them all\)",
      r"(other actions of \g<h> as before)"),
     ("plan_while", r"\. Plan it while they act and send its combat_turn now \(it waits for the turn\)",
