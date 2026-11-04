@@ -131,7 +131,7 @@ def test_the_bench_encoder_is_the_env_else_the_machine_setting(monkeypatch: pyte
     monkeypatch.setattr(hrec, "run_recording", run_recording)
     cfg = {"BG3AI_CONFIG_DIR": str(tmp_path / "cfg")}
     (tmp_path / "cfg").mkdir()
-    (tmp_path / "cfg/record-encoder").write_text("libx264\n")  # bg3harness.doctor wrote it (dev1: no NVENC)
+    (tmp_path / "cfg/record-encoder").write_text("libx264\n")  # bg3harness.doctor wrote it (AMD: no NVENC)
     for env in (cfg, {**cfg, "BG3AI_BENCH_RECORD_ENCODER": "h264_nvenc"}):
         make = H.bench_recording(env)
         assert make is not None
@@ -145,7 +145,7 @@ def test_the_bench_encoder_is_the_env_else_the_machine_setting(monkeypatch: pyte
 
 
 def test_no_encoder_set_is_refused_before_any_run_naming_the_fix(tmp_path: Path):
-    env = {"BG3AI_CONFIG_DIR": str(tmp_path)}  # no variable, no setting: no h264_nvenc default (dev1 has no NVENC)
+    env = {"BG3AI_CONFIG_DIR": str(tmp_path)}  # no variable, no setting: no h264_nvenc default (AMD: no NVENC)
     with pytest.raises(ValueError) as e:
         H.bench_recording(env)
     assert "bg3harness.doctor" in str(e.value) and str(tmp_path / "record-encoder") in str(e.value)

@@ -1,7 +1,7 @@
 """No test reaches the real game's Lua debug port (or its input shim's socket) unless it is marked `live` (2026-11-02,
 D385; the shim since 2026-11-03: the runner takes the shim's input at a game's start, gio.take_input).
 
-bg3le listens on 127.0.0.1:9998 ($BG3LE_DEBUG_PORT, bridge settings.py) and the test machine (dev2) runs the live
+bg3le listens on 127.0.0.1:9998 ($BG3LE_DEBUG_PORT, bridge settings.py) and the test machine runs the live
 game there while tests run. A plain TestCase that used the bridge's real core.game sent act.watch to the live game of
 a paid run (test_batch_args SameText, 295748bc), and much code connects to 9998 by default without reading the env
 (skipper.start_background, bg3play BridgeStatus, snapshots.run, port probes). So the guard is at the socket:

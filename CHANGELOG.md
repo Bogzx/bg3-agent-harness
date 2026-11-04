@@ -47,7 +47,7 @@ game unless it says so.
 
 ### Harness
 
-- The bench recording's encoder no longer defaults to `h264_nvenc` (on dev1, an AMD machine, every recorded run died
+- The bench recording's encoder no longer defaults to `h264_nvenc` (on an AMD machine without NVENC, every recorded run died
   at recorder start). It is `BG3AI_BENCH_RECORD_ENCODER`, else the machine's `~/.config/bg3ai/record-encoder`, which
   `bg3harness.doctor` writes once with the first of `h264_nvenc` and `libx264` that encodes a test frame. With
   neither set, `play.py bench` refuses before any run and names the fix.

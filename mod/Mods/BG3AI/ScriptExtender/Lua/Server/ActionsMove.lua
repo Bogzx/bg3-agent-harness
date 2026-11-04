@@ -206,7 +206,7 @@ A.TELEPORT_MIN_DT_MS = 50
 A.TELEPORT_DEST_M = 3.0
 A.TELEPORT_GAME_M = 8.0
 A.TELEPORT_SETTLE_MS = 1500
--- A fall of our own walk is no teleport (act2-fights-analysis fix 3, launch-v1 dev1 logs): the engine's no-path snap
+-- A fall of our own walk is no teleport (act2-fights-analysis fix 3, launch-v1 logs): the engine's no-path snap
 -- moves the walker across (9.7-18.4 m at its own height, landing 0.8-1.5 m from the leg's end: opus act3_gold_max
 -- r2, haiku goblin_camp r2, deepseek act3_gold_max r5), while haiku grove_gate r1 went 4.5 m, 3.7 m of it down,
 -- landing 4.3 m short of its point, and opus crash_site_grove 5 m straight down: the walk stepping off a ledge,

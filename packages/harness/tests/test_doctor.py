@@ -167,7 +167,7 @@ class TestDoctor(DoctorFixture):
         self.assertIn("lists no h264_nvenc", self.checks()["record"].detail)
 
     def test_with_no_encoder_set_the_doctor_writes_the_one_that_encodes_once(self):
-        self.encode["h264_nvenc"] = (1, "[h264_nvenc] Cannot load libcuda.so.1\nError while opening encoder")  # dev1
+        self.encode["h264_nvenc"] = (1, "[h264_nvenc] Cannot load libcuda.so.1\nError while opening encoder")  # AMD
         c = self.checks()["record"]
         self.assertEqual(c.status, PASS)
         self.assertIn(f"wrote it to {self.setting()}", c.detail)
