@@ -104,21 +104,36 @@ def test_an_abort_stops_the_recording(rig: Rig):
 
 
 def test_play_py_bench_records_every_run_unless_turned_off():
-    assert H.bench_recording({}) is not None and H.bench_recording({"BG3AI_BENCH_RECORD": "1"}) is not None
+    on = {"BG3AI_BENCH_RECORD_ENCODER": "libx264"}
+    assert H.bench_recording(on) is not None and H.bench_recording({**on, "BG3AI_BENCH_RECORD": "1"}) is not None
     assert H.bench_recording({"BG3AI_BENCH_RECORD": "0"}) is None
 
 
-def test_the_bench_encoder_comes_from_the_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_the_bench_encoder_is_the_env_else_the_machine_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     seen: list[str] = []
 
     def run_recording(out: Path, env: object, runtime: Path, encoder: str) -> None:
         seen.append(encoder)
 
     monkeypatch.setattr(hrec, "run_recording", run_recording)
-    for env in ({}, {"BG3AI_BENCH_RECORD_ENCODER": "libx264"}):
+    cfg = {"BG3AI_CONFIG_DIR": str(tmp_path / "cfg")}
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg/record-encoder").write_text("libx264\n")  # bg3harness.doctor wrote it (dev1: no NVENC)
+    for env in (cfg, {**cfg, "BG3AI_BENCH_RECORD_ENCODER": "h264_nvenc"}):
         make = H.bench_recording(env)
         assert make is not None
         make(tmp_path)
-    assert seen == ["h264_nvenc", "libx264"]
+    assert seen == ["libx264", "h264_nvenc"]
     with pytest.raises(ValueError, match="BG3AI_BENCH_RECORD_ENCODER='vp9'"):
-        H.bench_recording({"BG3AI_BENCH_RECORD_ENCODER": "vp9"})
+        H.bench_recording({**cfg, "BG3AI_BENCH_RECORD_ENCODER": "vp9"})
+    (tmp_path / "cfg/record-encoder").write_text("vp9\n")
+    with pytest.raises(ValueError, match="record-encoder='vp9'"):
+        H.bench_recording(cfg)
+
+
+def test_no_encoder_set_is_refused_before_any_run_naming_the_fix(tmp_path: Path):
+    env = {"BG3AI_CONFIG_DIR": str(tmp_path)}  # no variable, no setting: no h264_nvenc default (dev1 has no NVENC)
+    with pytest.raises(ValueError) as e:
+        H.bench_recording(env)
+    assert "bg3harness.doctor" in str(e.value) and str(tmp_path / "record-encoder") in str(e.value)
+    assert "BG3AI_BENCH_RECORD_ENCODER=libx264" in str(e.value)
