@@ -278,12 +278,16 @@ function E.spell_info(id)
 end
 
 -- The first sight of a spell in a fight (keyed by the caster's combat; out of combat, "none"): push spell_info.
+-- In an arena it is a side's own (its listener run or its op: the event is tagged with that side, and each side's
+-- first sight is its own); the harness's no-side run reads both teams, which no side sees, so it pushes none.
 E.spellSeen = E.spellSeen or {}
 function E.note_spell(caster, id)
     if not id or id == "" then return end
+    if RPC.arena_active and RPC.arena_active() and not RPC.side() then return end
     local combat = tostring(osi(Osi.CombatGetGuidFor, caster) or "none")
-    local seen = E.spellSeen[combat] or {}
-    E.spellSeen[combat] = seen
+    local fights = U.sided(E, "spellSeen")
+    local seen = fights[combat] or {}
+    fights[combat] = seen
     if seen[id] then return end
     local text = E.spell_info(id)
     if not text then return end

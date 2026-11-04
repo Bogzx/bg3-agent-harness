@@ -330,3 +330,51 @@ test("door links, normal play (no arena): one store, as before", function()
     local l = N.doorLink("ARENA_Level", { 0, 0, 10 }, { 0, 0, 120 })
     eq(l and l.uuid, DOOR, "the link")
 end)
+
+-- act2-fights-analysis fix 4 in a match: an enemy spell's tooltip (spell_info) is a side's own first sight, of a
+-- caster that side sees; its own team's spell gives none, and the harness's no-side run (both teams) never names one.
+local function infos(side, s0)
+    return kinds(rpc("events.since", "{seq=" .. s0 .. "}", side), "spell_info")
+end
+
+test("spell_info: an unseen caster's spell isn't named to the other side; a seen one is, once a fight", function()
+    begin()
+    osiv[key("HasActiveStatus", B1, "SNEAKING")] = 1 -- A's sight doesn't reach B1
+    local s0 = RPC.eventSeq
+    fire("CastedSpell", B1, "Projectile_FireBolt", "Projectile", "Fire", 1)
+    eq(#infos("A", s0), 0, "A doesn't see the caster: nothing named")
+    eq(#infos("B", s0), 0, "B's own spell: none")
+    eq(#infos(nil, s0), 0, "the harness's run: none")
+    osiv[key("HasActiveStatus", B1, "SNEAKING")] = nil
+    osiv[key("CanSee", A1, B1)] = 1
+    s0 = RPC.eventSeq
+    fire("CastedSpell", B1, "Projectile_FireBolt", "Projectile", "Fire", 1)
+    fire("CastedSpell", B1, "Projectile_FireBolt", "Projectile", "Fire", 1)
+    local a = infos("A", s0)
+    eq(#a, 1, "A sees it cast: one spell_info for two casts")
+    eq(a[1] and a[1].data:sub(1, 10), "Fire Bolt:", "by its shown name")
+    eq(#infos("B", s0) + #infos(nil, s0), 0, "B and the harness: none")
+end)
+
+test("spell_info from a row's concentration: the reading side's, never the harness's read", function()
+    begin()
+    order = { A1, B1, A2, B2 }
+    world[B1].comps.Concentration = { SpellId = { Prototype = "Projectile_FireBolt" } }
+    local ok, err = pcall(function()
+        local s0 = RPC.eventSeq
+        rpc("state.combat", "{}") -- the harness reads both teams
+        eq(#infos(nil, s0) + #infos("A", s0) + #infos("B", s0), 0, "the harness's read: none")
+        rpc("state.combat", "{}", "A") -- A doesn't see B1
+        eq(#infos("A", s0), 0, "unseen by A: none")
+        osiv[key("CanSee", A1, B1)] = 1
+        local rows = rpc("state.combat", "{}", "A").result.order
+        local seen
+        for _, o in ipairs(rows) do if o.uuid == B1 then seen = o.concentration end end
+        eq(seen, "Fire Bolt", "A's row of B1: concentrating")
+        eq(#infos("A", s0), 1, "A sees B1 concentrating: one")
+        rpc("state.combat", "{}", "B")
+        eq(#infos("B", s0), 0, "B's own member: none")
+    end)
+    world[B1].comps.Concentration = nil
+    if not ok then error(err, 0) end
+end)
