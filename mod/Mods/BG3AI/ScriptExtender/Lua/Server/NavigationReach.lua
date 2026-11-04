@@ -76,7 +76,7 @@ RPC.register("nav.path", function(args)
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
     local Gd = BG3AI.Guard -- loaded after Navigation in the game; the nav-only tests run without it
     if r0.points and r.reachable and Gd then -- the game's path preview: where the walk provokes an opportunity attack
-        local pv = Gd.path_provokes(char, r0.points, r0.portals)
+        local pv = Gd.path_provokes(char, r0.points)
         if pv and #pv > 0 then r.provokes = pv end
     end
     local mv = movementLeft(char)
