@@ -265,11 +265,11 @@ def reset_handles() -> None:
     h._n = 0
 
 
-def no_changes(game, H, parts=delta.ACTION_PARTS, tracker=None, got=None) -> str:
+def no_changes(game, H, parts=delta.ACTION_PARTS, tracker=None, got=None, events=False) -> str:
     """Base's delta.changes_text: no CHANGES lines (the fake world would fill them), but the read itself still
     happens for a caller that takes what it fetched (got=: the minimap block after a walk)."""
     if got is not None:
-        got.update(delta.fetch(game, parts))
+        got.update(delta.fetch(game, parts, events=events))
     return ""
 
 

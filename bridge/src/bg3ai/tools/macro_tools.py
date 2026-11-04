@@ -114,7 +114,7 @@ def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, lef
     if walked and not reporting._batch["active"]:
         tail = batch.walk_end_tail(got=got).lstrip("\n")
     else:
-        tail = delta.changes_text(core.game, core.H, got=got)
+        tail = delta.changes_text(core.game, core.H, got=got, events=True)
     if sightings is not None:
         views: tuple = ()
         st = got.get("status")

@@ -512,6 +512,16 @@ local function onTable(dc, uuid, side)
     return nil
 end
 
+-- The item a MoveTradeItem just moved ({key = tostring(VMItem), side}) shows on that side's table: the next move
+-- needn't wait out its tick (the 200 ms stays the cap; latency survey 2026-11-04: >= 5 s of fixed ticks per 25 items).
+local function landed(dc, p)
+    if not p then return false end
+    for _, s in ipairs(vmSlots(UI.prop(dc, p.side == "trader" and "TraderOffer" or "CharacterOffer"), 60)) do
+        if tostring(s.item) == p.key then return true end
+    end
+    return false
+end
+
 -- The game's quantity box (SplitItem.xaml) for a stack moved on the trade screen: DataContext
 -- CurrentPlayer.UIData.SplitItemData {ItemCount, TargetCount}; Confirm runs the widget's ApplySplitCommand.
 -- S028 15:51: trade(request=Supply Pack x3) opened it, the tool moved nothing and said done; the agent clicked
@@ -592,7 +602,7 @@ RPC.register("ui.trade", function(args)
     if not wantsChange then return SV.tradeState(dc, nil, tonumber(args.max)) end
 
     -- Barter mode shows both offers and keeps the deal explicit until confirm.
-    local phase, waitUntil, balanceTries, lastTable = "mode", 0, 0, nil
+    local phase, waitUntil, balanceTries, lastTable, lastMove = "mode", 0, 0, nil, nil
     SV.splitTries, SV.splitApplied, SV.splitCount = 0, nil, nil
     local moved, problems, confirmed, queue, already = {}, {}, false, {}, {}
     if UI.prop(dc, "Mode") ~= "Barter" then
@@ -611,7 +621,8 @@ RPC.register("ui.trade", function(args)
             end
             return "failed", nil, "the trade screen closed"
         end
-        if RPC.now_ms() < waitUntil then return nil end
+        if RPC.now_ms() < waitUntil and not (phase == "moving" and landed(live, lastMove)) then return nil end
+        lastMove = nil
         if phase == "mode" then
             if UI.prop(live, "Mode") ~= "Barter" then return nil end
             local layout = tradeLayout(live)
@@ -648,6 +659,7 @@ RPC.register("ui.trade", function(args)
             elseif it then
                 local ok, err3 = UI.command(live, "MoveTradeItem", it, false)
                 if ok then
+                    lastMove = { key = tostring(it), side = q.side }
                     SV.offered[tostring(it)] = { uuid = q.u, name = nameOf(e) }
                     moved[#moved + 1] = { uuid = q.u, name = nameOf(e), side = q.side }
                 else

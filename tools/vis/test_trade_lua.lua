@@ -273,5 +273,53 @@ do
     BG3AI.UI.command = origCmd
 end
 
+-- latency survey 2026-11-04: one move per 200 ms tick (>= 5 s per 25 items). The next item moves once the last one
+-- shows on the table; the 200 ms stays the cap for a move whose item doesn't show.
+do
+    local function run(landsAfter, first) -- offers p-<first> .. p-<first+2>
+        dc.TraderInventoryGold, dc.CharacterOffer, dc.TraderOffer = 900, vmInv({}), vmInv({})
+        local party = dc.PartyCharacterInventories.list[1].Inventory.Slots.list
+        local at, origCmd, landing = {}, BG3AI.UI.command, {}
+        BG3AI.UI.command = function(d, name, param)
+            if name == "MoveTradeItem" then
+                at[#at + 1] = clock
+                landing[#landing + 1] = { item = param, t = clock + landsAfter }
+            end
+            return true
+        end
+        Ext.Entity.Get = function(u) local i = tonumber(u:match("^p%-(%d+)$")); return i and partyItems[i] or nil end
+        local ids = {}
+        for i = first, first + 2 do
+            partyItems[i].InventoryMember = { Inventory = partyInv, EquipmentSlot = i }
+            ids[#ids + 1] = "p-" .. i
+        end
+        local j = jobs[ops["ui.trade"]({ offer = ids }).job]
+        for _ = 1, 200 do
+            clock = clock + 16 -- a frame
+            for _, l in ipairs(landing) do
+                if not l.done and clock >= l.t then
+                    l.done = true
+                    for _, sl in ipairs(party) do if sl.Object == l.item then sl.Object = nil end end
+                    for _, sl in ipairs(dc.CharacterOffer.Slots.list) do
+                        if not sl.Object then sl.Object = l.item; break end
+                    end
+                end
+            end
+            if j.status ~= "running" then break end
+            j.on_tick(j)
+        end
+        BG3AI.UI.command = origCmd
+        return j, at
+    end
+    local j, at = run(16, 5) -- the item shows on the table the next frame
+    ok(j.status == "done" and #at == 3, "fast trade done: " .. tostring(j.status) .. " moves " .. #at)
+    ok(at[2] - at[1] <= 32 and at[3] - at[2] <= 32,
+        "next move once the last shows (<= 2 frames): " .. tostring(at[2] - at[1]) .. ", " .. tostring((at[3] or 0) - at[2]))
+    local j2, at2 = run(10000, 8) -- never shows in time: the old 200 ms tick
+    ok(j2.status == "done" and #at2 == 3, "slow trade done: " .. tostring(j2.status) .. " moves " .. #at2)
+    ok(at2[2] - at2[1] >= 200 and at2[3] - at2[2] >= 200,
+        "a move whose item doesn't show waits the 200 ms cap: " .. tostring(at2[2] - at2[1]))
+end
+
 print(string.format("%d/%d passed", passes, passes + fails))
 if fails > 0 then os.exit(1) end
