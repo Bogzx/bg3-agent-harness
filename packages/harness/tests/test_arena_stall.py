@@ -285,6 +285,25 @@ def test_a_readmitted_member_reaches_the_facts_named_and_is_no_longer_passed(tmp
         jsonschema.validate(e, BENCH_FACTS_SCHEMA)
 
 
+def test_the_mods_round_first_side_reaches_the_facts_as_given(tmp_path):
+    """arena_round (a round's first phase: its side, turn or passed; the seat audit) is written to the facts as the mod
+    gave it and fits both facts schemas."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+    sent: list[bool] = []
+
+    def first_side() -> None:
+        if model.arena is not None and not sent:
+            sent.append(True)
+            model.ref_record("arena_round", round=2, first="A", how="passed")
+
+    clock.tick_hooks.append(first_side)
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    [r] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_round"]
+    assert (r["round"], r["first"], r["how"]) == (2, "A", "passed")
+    jsonschema.validate(r, FACTS_SCHEMA)
+    jsonschema.validate(r, BENCH_FACTS_SCHEMA)
+
+
 def test_translate_readmitted_takes_the_member_out_of_the_phases_passed_set():
     ref = am.Referee.__new__(am.Referee)
     ref.names, ref.done = {"uk": ("A", "Karlach")}, False

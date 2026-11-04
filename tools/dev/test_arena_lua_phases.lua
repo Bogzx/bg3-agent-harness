@@ -34,6 +34,9 @@ test("a group B|AA|B: 3 phases in order, one arena_turn each, none from the Turn
     eq(r[1].round, 2, "round")
     eq(r[1].group, B1, "group: its first member (no Team read)")
     eq(r[1].shared, true, "shared")
+    local rounds = refs("arena_round") -- seat audit: the round's first side, once
+    eq(#rounds, 1, "one arena_round")
+    eq(rounds[1].round .. rounds[1].first .. rounds[1].how, "2Bturn", "round 2 opened by B's phase")
     eq(Ar.held(A1), true, "A1 waits")
     eq(Ar.held(B2), true, "B2, a later run of B, waits")
     refused(function() as("B", G.combat_gate, B2, "turn") end, "it is not this character's turn")
@@ -61,6 +64,41 @@ test("a group B|AA|B: 3 phases in order, one arena_turn each, none from the Turn
     eq(r[3].phase, 3, "phase 3 index")
     eq(Ar.held(B2), false, "B2 acts")
     as("B", G.combat_gate, B2, "turn")
+    eq(#refs("arena_round"), 1, "still one arena_round in round 2")
+end)
+
+test("a round whose first phase is passed whole: arena_round names that side, how passed; the next round its own",
+    function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 2)
+        order = { { A1, B1, B2, A2 } }
+        openAll({ A1, B1, B2, A2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1 -- seed-7 m1 r2: Cedar down, his phase passed whole
+        world[A1].comps.Health.Hp = 0
+        burst({ A1, B1, B2, A2 })
+        deathSave(A1, true)
+        tick()
+        local turns = refs("arena_turn")
+        eq(#turns, 1, "B's phase recorded")
+        eq(turns[1].side, "B", "the first arena_turn is B's")
+        local rounds = refs("arena_round")
+        eq(#rounds, 1, "one arena_round")
+        eq(rounds[1].round .. rounds[1].first .. rounds[1].how, "2Apassed", "round 2's first phase was A's, passed")
+        fire("CombatRoundStarted", "combat1", 3)
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = nil
+        world[A1].comps.Health.Hp = 5
+        openAll({ A1, B1, B2, A2 })
+        burst({ A1, B1, B2, A2 })
+        tick()
+        rounds = refs("arena_round")
+        eq(#rounds, 2, "round 3 has its own")
+        eq(rounds[2].round .. rounds[2].first .. rounds[2].how, "3Aturn", "round 3 opened by A's phase")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
 end)
 
 test("single-side groups: one phase each, not shared; the next group starts at phase 1", function()

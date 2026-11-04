@@ -21,7 +21,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
    ended the turn of a member that can't act; `death_save` for a downed one) is written with `character` named as in
    arena_turn, and its `arena_turn_readmitted {side, character, name, round, why}` (a passed member stood up with its
-   turn back) the same way, the member no longer passed. Its
+   turn back) the same way, the member no longer passed. Its `arena_round {round, first, how}` (a round's first
+   phase: its side, and whether it acted or was passed whole; once per round) is written as it is. Its
    `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
    after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
    match's) is written with `character` and `members`
@@ -296,6 +297,8 @@ class Referee:
             if self.turn is not None:
                 self.turn.passed.discard(u.lower())
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
+        if ev == "arena_round":  # a round's first phase, its side (seat audit): written as the mod gave it
+            return fact
         if ev == "arena_end":
             # the ring leaves a nil winner (a draw) out
             self.mod_end = {"winner": None, **fact, **self.invalid()}
