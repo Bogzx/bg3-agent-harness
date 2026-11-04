@@ -119,14 +119,26 @@ local function relation(ctx, uuid)
     return "neutral"
 end
 
+-- A concentration spell whose shown name didn't read, and why, logged once per spell and reason. w14 L1 try 1
+-- (2026-11-04): Balthazar's row read concentration=Target_SHA_Necromancer_Cloudkill once, `Cloudkill` in tries 2-3;
+-- the cause isn't known (no log). The id stays the fallback until the log says which step failed.
+S.nameMiss = S.nameMiss or {}
 local function concentration(e)
     local c = comp(e, "Concentration")
     if not c then return nil end
     local ok, sid = pcall(function() return c.SpellId.Prototype end)
     if not ok or not sid or sid == "" then return nil end
-    local st = osi(Ext.Stats.Get, sid)
+    local oks, st = pcall(Ext.Stats.Get, sid)
     local okn, dn = pcall(function() return st.DisplayName end)
-    return (okn and U.loca(dn)) or sid
+    local name = okn and U.loca(dn)
+    if name then return name end
+    local why = not oks and ("Ext.Stats.Get raised: " .. tostring(st)) or st == nil and "no stats entry"
+        or not okn and ("DisplayName raised: " .. tostring(dn)) or ("no string for DisplayName " .. tostring(dn))
+    if not S.nameMiss[tostring(sid) .. "|" .. why] then
+        S.nameMiss[tostring(sid) .. "|" .. why] = true
+        pcall(Ext.Utils.PrintWarning, "[BG3AI] concentration name of " .. tostring(sid) .. " didn't read: " .. why)
+    end
+    return sid
 end
 
 local function selectedCharacter(party)

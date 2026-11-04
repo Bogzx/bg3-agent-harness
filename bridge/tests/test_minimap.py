@@ -1,5 +1,5 @@
 """Offline tests: the minimap block (human-gap research 2026-11-02, item 2). Every walk end out of combat and every
-look carry the objectives (distance, direction, height), the WAYS line and the nearest unvisited leads, always, from
+look carry the objectives (distance, direction), the WAYS line and the nearest unvisited leads, always, from
 the read the result makes anyway.
 
 Run: cd bridge && uv run python -m unittest discover -s tests -p 'test_minimap.py'
