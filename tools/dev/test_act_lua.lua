@@ -21,6 +21,9 @@ function entity(u)
     if not w then error("no entity " .. tostring(u)) end
     local e = {}
     for k, v in pairs(w.comps or {}) do e[k] = v end
+    -- as the game: a spellbook comes with its SpellBookCooldowns, empty until a cooldown runs (live: Cedar's n=0);
+    -- a test sets it false for a component that doesn't read
+    if e.SpellBook and e.SpellBookCooldowns == nil then e.SpellBookCooldowns = { Cooldowns = {} } end
     function e:Replicate() end
     if w.comp_names then -- a test's component name list (otherwise the read errors, as other tests expect)
         e.GetAllComponentNames = function() return w.comp_names end

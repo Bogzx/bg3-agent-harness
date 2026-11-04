@@ -19,9 +19,32 @@ test("known_spell: a cooldown row refuses whatever its Cooldown value, saying un
     refused(function() G.known_spell(P1, "Target_Riposte") end, "on cooldown until its next turn (OncePerTurn)")
     refused(function() G.known_spell(P1, "Shout_SecondWind") end, "for the rest of this combat (OncePerCombat)")
     eq(G.known_spell(P1, "Target_MainHandAttack").Id.Prototype, "Target_MainHandAttack", "no row: casts")
-    world[P1].comps.SpellBookCooldowns = nil
+    world[P1].comps.SpellBookCooldowns = { Cooldowns = {} }
     eq(G.known_spell(P1, "Target_PommelStrike").Id.Prototype, "Target_PommelStrike", "row gone: casts")
     world[P1].comps.SpellBook = nil
+end)
+
+-- The cooldown state fails closed: with the rows unread (no SpellBookCooldowns component, or a row that doesn't read)
+-- the guard can't see a running cooldown, so a spell whose stats give it one is refused with that fact; a spell
+-- without a Cooldown in its stats still casts. Before, an unread state read as "no cooldown" and cast.
+test("known_spell: unread cooldown rows refuse a spell that can have a cooldown (fail closed)", function()
+    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Target_PommelStrike" } },
+        { Id = { Prototype = "Target_MainHandAttack" } }, { Id = { Prototype = "Target_Unlisted" } } } }
+    stats.Target_PommelStrike = { Cooldown = "OncePerShortRest" }
+    stats.Target_MainHandAttack = { Cooldown = "" }
+    local unread = "the cooldown state of Target_PommelStrike could not be read"
+    world[P1].comps.SpellBookCooldowns = false -- no component
+    refused(function() G.known_spell(P1, "Target_PommelStrike") end, unread)
+    refused(function() G.known_spell(P1, "Target_Unlisted") end, "the cooldown state of Target_Unlisted")
+    eq(G.known_spell(P1, "Target_MainHandAttack").Id.Prototype, "Target_MainHandAttack", "no cooldown in its stats")
+    world[P1].comps.SpellBookCooldowns = { Cooldowns = { { CooldownType = "OncePerTurn" } } } -- SpellId unread
+    refused(function() G.known_spell(P1, "Target_PommelStrike") end, unread)
+    stats.Target_MainHandAttack.Cooldown = "None"
+    eq(G.known_spell(P1, "Target_MainHandAttack").Id.Prototype, "Target_MainHandAttack", "Cooldown None")
+    world[P1].comps.SpellBookCooldowns = { Cooldowns = {} }
+    eq(G.known_spell(P1, "Target_PommelStrike").Id.Prototype, "Target_PommelStrike", "rows read, none: casts")
+    world[P1].comps.SpellBook, world[P1].comps.SpellBookCooldowns = nil, nil
+    stats.Target_PommelStrike, stats.Target_MainHandAttack = nil, nil
 end)
 
 -- w10 CD1: get_actions and the guard read one cooldown rule: what state.actions lists UNAVAILABLE for a cooldown,
