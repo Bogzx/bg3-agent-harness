@@ -429,5 +429,21 @@ do
     V.entity, V.context, Ext.Entity = realEntity, realCtx, realEnt
 end
 
+-- w11 L4: a two-roll TooltipAttackSave printed raw ("ranged spell attack;constitution", Ray of Sickness).
+do
+    local realGet, realLoca = Ext.Stats.Get, Ext.Loca.GetTranslatedString
+    Ext.Stats.Get = function(id)
+        return id == "Projectile_RayOfSickness" and { DisplayName = "hRoS;1", Level = 1, TargetRadius = "18",
+            TooltipAttackSave = "RangedSpellAttack;Constitution", SpellRoll = { Default = "Attack(x)" },
+            SpellFlags = { "IsSpell", "IsHarmful" } } or realGet(id)
+    end
+    Ext.Loca.GetTranslatedString = function(h) return h == "hRoS" and "Ray of Sickness" or realLoca(h) end
+    E.spellInfo = {}
+    local s = E.spell_info("Projectile_RayOfSickness", HOST)
+    check("two rolls as the tooltip names them", s == "Ray of Sickness: (level 1, range 18m, ranged spell attack; "
+        .. "Constitution save)", s)
+    Ext.Stats.Get, Ext.Loca.GetTranslatedString, E.spellInfo = realGet, realLoca, {}
+end
+
 print(string.format("%d passed, %d failed", passed, failures))
 if failures > 0 then os.exit(1) end
