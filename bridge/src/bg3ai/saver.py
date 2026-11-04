@@ -174,9 +174,9 @@ class Saver:
         self.thread.start()
         if ok:
             return (f"save_game: saving '{name}' in the background (~2 s with the game's save freeze; your next call waits for "
-                    "them). Keep playing; SAVED shows on a later result.")
+                    "them). SAVED shows on a later result.")
         return (f"save_game: queued '{name}': the game can't save right now ({why}). It saves at the next "
-                "moment it can, between your calls; keep playing.")
+                "moment it can, between your calls.")
 
     def _run(self, job: dict) -> None:
         name = job["label"] or "quicksave"
@@ -213,7 +213,7 @@ class Saver:
                               "requeued": why})
                     return self._run(job)
             if not ok:
-                self._note(f"⚠ SAVE FAILED '{name}': {detail}; call save_game again")
+                self._note(f"⚠ SAVE FAILED '{name}': {detail}")
                 self.log({"save": name, "ok": False, "menu_s": round(menu_s, 2), "detail": detail})
                 return
             job["phase"] = "writing"
@@ -240,16 +240,14 @@ class Saver:
                 rec["overwrote"] = stray.name
                 self.log({"save": name, "overwrote": stray.name})
                 self._note(f"⚠ OVERWROTE AN EXISTING SAVE: '{name}' was written over the older save '{shown}' (a "
-                           f"selected save took the save); '{shown}' now holds this moment, its old state is gone. "
-                           f"save_game('{name}') again for a save under the name")
+                           f"selected save took the save); '{shown}' now holds this moment, its old state is gone.")
             elif stray is not None:
                 shown = stray.name.split("__", 1)[-1]
                 self._note(f"⚠ SAVED UNDER ANOTHER NAME: '{name}' was written as '{shown}' (the game's default name: "
-                           f"the typed name didn't take). It is a good save: load_game(save=\"{shown}\") loads it; "
-                           f"save_game('{name}') again if you want the name")
+                           f"the typed name didn't take). It is a good save: load_game(save=\"{shown}\") loads it")
             else:
                 self._note(f"⚠ SAVE FAILED '{name}': no save folder appeared within {DISK_WAIT_S:.0f}s "
-                           f"({detail}). On disk: {rec['seen']}. Call save_game again")
+                           f"({detail}). On disk: {rec['seen']}.")
         finally:
             with self.cv:
                 self.ui_busy = False
@@ -277,7 +275,7 @@ class Saver:
         if job.get("cancel"):
             return False
         self._note(f"⚠ SAVE FAILED '{job['label'] or 'quicksave'}': the game could not save for "
-                   f"{DEFER_MAX_S / 60:.0f} min ({why}); call save_game again")
+                   f"{DEFER_MAX_S / 60:.0f} min ({why})")
         return False
 
     def _wait_on_disk(self, job: dict) -> Path | None:
