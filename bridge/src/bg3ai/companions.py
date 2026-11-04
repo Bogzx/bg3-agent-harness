@@ -147,8 +147,8 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
         fit = [c for c in camp if role in roles_of(c)]
         bits.append(f"no {ROLE_TEXT[role]} in the party" + (f": {', '.join(c.get('name') for c in fit)} (camp)" if fit else ""))
     dead = [r for r in party if r.get("dead")]
-    if dead:
-        bits.append("dead: " + ", ".join(label(r["uuid"]) for r in dead) + " (Scroll of Revivify, or Withers at camp)"
+    if dead:  # who is dead, not how to revive them (night 2026-11-04: '(Scroll of Revivify, or Withers at camp)')
+        bits.append("dead: " + ", ".join(label(r["uuid"]) for r in dead)
                     + (f"; camp can stand in: {', '.join(c.get('name') for c in camp)}" if camp else ""))
     # (c) skill gaps a camp member fills
     if skills:
