@@ -184,7 +184,7 @@ timed("state.character", function(args)
         local ok, lu = pcall(function() return e.CanLevelUp ~= nil end)
         if ok and lu then out.can_level_up = true end
     end
-    out.concentration = concentration(e)
+    out.concentration = concentration(e, ctx.is_party[u])
     pcall(function() out.darkvision_m = round(e.Sight.DarkvisionRange, 1) end)
     pcall(function() out.weight = round(e.EncumbranceState and 0 or 0, 1) end)
     out.weight = nil

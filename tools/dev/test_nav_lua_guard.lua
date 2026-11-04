@@ -725,3 +725,30 @@ test("lower ground / jumps (C14/C15): only floors the party sees", function()
     Ext.Level.GetHeightsAt, Ext.Level.GetTileDebugInfo = savedH, savedT
     if not ok then error(err, 0) end
 end)
+
+test("known: ground seen earlier stays known when the seen set fills (FAIRNESS: remembered once seen)", function()
+    -- review-v010-harness-parts #4: at SEEN_MAX the whole set was cleared, so ground seen a while ago and out of view
+    -- now was unknown again (a walk there refused), though a player remembers it.
+    local saved = N.SEEN_MAX
+    N.SEEN_MAX = 4
+    local ok, err = pcall(function()
+        eq(N.known(nil, { 1, 0, 1 }), true, "seen")
+        for i = 2, 6 do eq(N.known(nil, { i, 0, 1 }), true, "seen " .. i) end -- fills the set past its cap
+        seen = function() return false end -- out of view now
+        eq(N.known(nil, { 1, 0, 1 }), true, "the first spot is still remembered")
+        seen = function() return true end
+        for i = 7, 9 do N.known(nil, { i, 0, 7 }) end -- one more rollover: the set it was in is dropped
+        seen = function() return false end
+        eq(N.known(nil, { 1, 0, 1 }), true, "a spot used again stays young")
+        local n = 0
+        local t = N.seenPts
+        while t do
+            for _ in pairs(t) do n = n + 1 end
+            local mt = getmetatable(t)
+            t = mt and mt.__index
+        end
+        assert(n <= 2 * N.SEEN_MAX, "bounded: two generations at most, got " .. n)
+    end)
+    N.SEEN_MAX = saved
+    if not ok then error(err, 0) end
+end)

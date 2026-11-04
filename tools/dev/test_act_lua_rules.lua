@@ -378,3 +378,16 @@ test("tool facts stay facts: loot_corpse loots a corpse, a give in a fight needs
     j = job(op("pickup", { char = P1, item = GEM }))
     eq(j.error, "that item is inside a container (loot takes items out of a container)", "in a container")
 end)
+
+test("audit #18: loot_corpse/pickpocket on an out-of-sight character say 'not visible', alive or dead", function()
+    osiv[key("CanSee", P1, NPC)] = 0 -- a stale handle: the character left the party's sight
+    for _, dead in ipairs({ 0, 1 }) do
+        osiv[key("IsDead", NPC)] = dead
+        local j = job(op("loot_corpse", { char = P1, target = NPC }))
+        eq(j.status, "failed", "loot status, dead=" .. dead)
+        assert(j.error:find("target is not visible", 1, true), "loot, dead=" .. dead .. ": " .. j.error)
+        j = job(op("pickpocket", { char = P1, npc = NPC }))
+        eq(j.status, "failed", "pickpocket status, dead=" .. dead)
+        assert(j.error:find("target is not visible", 1, true), "pickpocket, dead=" .. dead .. ": " .. j.error)
+    end
+end)

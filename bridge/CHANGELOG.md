@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-05: fairness: nothing about a character or marker the screen doesn't show
+
+- `loot_corpse` / `pickpocket` on a character out of the party's sight answer `target is not visible` (with the
+  last-seen hint) before any dead/alive check. Before, a stale id answered `they are not dead` or `nobody to
+  pickpocket`, which told the agent whether an unseen character was alive (fairness audit 2026-10-10 #18).
+- The minimap block's OBJECTIVES line gives no height: `o1 Escape the ship 16m W [Escape the Nautiloid]`, no
+  `(3m down)`. The HUD's compass and minimap show a quest marker's direction and distance only (live window
+  2026-11-03: a marker 7.7 m down showed no arrow or number). LEADS, WAYS and PASSED keep their heights (seen
+  ground). `look`'s description and the rules text say "(distance, direction)".
+
 ## 2026-11-04 (w15): one record per partial-stack move; path_preview to a creature asks the spots around it
 
 - A partial-stack trade (count=N of a bigger stack) names the deal once: `BOUGHT e127 Muddy Red Dye x2 12 g` (w15 a2

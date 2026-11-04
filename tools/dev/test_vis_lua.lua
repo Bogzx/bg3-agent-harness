@@ -422,6 +422,10 @@ test("get_nearby: a visible creature's concentration (act2 Balthazar's Cloudkill
         for _, p in ipairs(pushed) do if p.kind == "spell_info" then infos[#infos + 1] = p.data end end
         eq(#infos, 1, "one spell_info for two reads")
         eq(infos[1] and infos[1]:sub(1, 10), "Cloudkill:", "its name first")
+        -- a name that doesn't read (w14: Target_SHA_Necromancer_Cloudkill): a creature not of the party shows a
+        -- neutral fact, never the id (REVIEW-18c)
+        ents[GOB].Concentration = { SpellId = { Prototype = "Target_SHA_Necromancer_Cloudkill" } }
+        eq(conc(), "009=a spell,352=nil", "another's spell whose name doesn't read: not its id")
         onStage[GOB] = false
         eq(conc(), "352=nil", "not visible: no row, so no concentration")
     end)
