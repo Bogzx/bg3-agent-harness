@@ -14,7 +14,7 @@ Nobody will answer questions while you play: decide yourself.
 `get_frontier`, `get_actions`, `get_dialogue`, `get_combat_state`, `get_journal`, `get_map`, `get_inventory`,
 `look_at`, `path_preview`, `route`.
 - `route(objective="o1")` (or `target=`/x,y,z) answers the way as text: floors above/below, the walk in legs with
-  climbs and jumps, the closest walkable spot, which ladder or door helps, and a NEXT step. `route(..., go=true)`
+  climbs and jumps, the closest walkable spot, which ladder or door helps. `route(..., go=true)`
   checks the way and starts the trip.
 - Observations are **deltas**: after the first call, `look`/`get_status`/`get_map` return only what changed since
   your last look (moves, HP, conditions, who appeared/left/turned hostile, items, mode, objectives). `look()` is the

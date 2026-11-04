@@ -128,7 +128,7 @@ class RouteTool(Base):
         self.assertIn("not seen or walked yet: straight line only", out)
         for word in ("PATH", "CLOSEST walkable", "FLOORS", "path unknown"):
             self.assertNotIn(word, out)
-        self.assertIn("NEXT: travel_to/walk_toward it (each leg ends on ground in view)", out)
+        self.assertTrue(out.endswith("\ntravel_to and walk_toward legs each end on ground in view"), out)  # D630
         self.assertIn("GO travel_to: started", observe.route(x=-60.0, y=-8.0, z=0.0, go=True))
         self.assertEqual(seen[-1], {"who": None, "x": -60.0, "y": -8.0, "z": 0.0})
 
@@ -188,8 +188,8 @@ class RouteTool(Base):
         lad = core.H.get(LADDER, "Arterial Mesh")
         self.assertIn(f"{lad} Arterial Mesh <ladder> 2.5m N climbs 9.4m up PULLED UP: its foot hangs 5.7m above the "
                       "floor, can't be climbed from below (lowered from above) walk 2.7m", out)
-        self.assertNotIn(f"NEXT: interact {lad}", out)
-        self.assertIn("NEXT: open", out)  # the door that helps
+        self.assertNotIn(f"the way up: ladder {lad}", out)
+        self.assertNotIn("NEXT", out)  # D630: the door that helps is in the LADDERS/DOORS list ("(closer)")
         fr = {"leads": [{"uuid": LADDER, "name": "Ladder", "kind": "ladder", "dist": 9.3, "dir": "S", "dy": 5.8,
                          "height_m": 6.5, "leads": "up", "to": [-23, 73.2, 190.1], "raised_m": 5.7}]}
         self.assertIn("climbs 6.5m up to (-23,73.2,190.1) PULLED UP: its foot hangs 5.7m",
@@ -207,7 +207,7 @@ class RouteTool(Base):
         lad = core.H.get(LADDER, "Arterial Mesh")
         self.assertIn(f"{lad} Arterial Mesh <ladder> 2.5m N climbs 9.4m up [interact to climb] walk 2.7m", out)
         self.assertIn("LOCKED", out)
-        self.assertIn(f"NEXT: interact {lad} (ladder up), then route again", out)
+        self.assertTrue(out.endswith(f"\nthe way up: ladder {lad}"), out)  # D630: the fact, no 'interact ..., route again'
 
     def test_objective_by_words_and_target_id(self):
         observe.route(objective="helm")
@@ -225,13 +225,15 @@ class RouteTool(Base):
         self.assertIn("  1. 4m N", out)
         self.assertIn("  2. CLIMB 9.2m up to (-38,18.2,-357.5)", out)
         self.assertIn("  3. 3.1m E", out)
-        self.assertIn("jump_to (-38,18.2,-357.5)", out)
+        self.assertNotIn("NEXT", out)  # D630: the legs say the climb; no 'interact ... or jump_to'
+        self.assertNotIn("jump_to", out)
 
     def test_fire_maze_points_to_the_closest_spot_and_crossing(self):
         self.reply = FIRE_MAZE
         out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("NO WALKABLE PATH (the straight line crosses 3m of Fire (~1-4 dmg + Burning) at 6m)", out)
-        self.assertIn("NEXT: travel_to x,y,z = (-24,18,-428) (the closest walkable spot); the rest crosses 3m of Fire", out)
+        self.assertIn("CLOSEST walkable spot (-24,18,-428)", out)
+        self.assertNotIn("NEXT", out)  # D630: the NO WALKABLE PATH line says the crossing
 
     def test_no_goal_is_a_readable_failure(self):
         self.assertTrue(observe.route().startswith("FAILED: give objective=o1"))
@@ -241,7 +243,8 @@ class RouteTool(Base):
         out = observe.walk_toward(objective="o1")
         self.assertIn("FAILED: no walkable ground toward objective Helm within 30m (6 spots checked)", out)
         self.assertIn("ROUTE: the goal is 9.2m above you; closest walkable spot (-33,9,-356) is 9.3m from it", out)
-        self.assertIn("NEXT: interact", out)
+        self.assertIn(f"\nthe way up: ladder {core.H.get(LADDER, 'Arterial Mesh')}", out)  # D630: no 'NEXT: interact'
+        self.assertNotIn("NEXT", out)
         self.assertNotIn("Try another direction", out)
 
     def test_walk_toward_direction_failure_keeps_the_old_advice(self):
@@ -260,7 +263,9 @@ class RouteTool(Base):
         self.reply = dict(WITH_CLIMB, drop={"pos": [-227.6, 13.5, -114.0], "m": 8.4})
         out = observe.route(x=HELM[0], y=HELM[1], z=HELM[2], go=True)
         self.assertIn("  DROPS 8.4m at (-227.6,13.5,-114) (fall damage): walks stop there", out)
-        self.assertIn("NEXT: travel_to x,y,z = (-227.6,13.5,-114) (the edge of the 8.4m drop), then jump_to", out)
+        self.assertIn("  DROPS 8.4m at (-227.6,13.5,-114) (fall damage): walks stop there; jump_to from that edge checks "
+                      "the landing", out)
+        self.assertNotIn("NEXT", out)  # D630
         self.assertEqual(seen[-1], {"who": None, "x": -227.6, "y": 13.5, "z": -114.0})
 
     def test_wedged_route_names_the_nearest_landing_next_to_a_member(self):
@@ -269,8 +274,8 @@ class RouteTool(Base):
                           wedged={"wedged": True, "to": [21.0, 46.4, 228.5], "near": "Wyll", "dist_m": 3.1})
         out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("WEDGED: no walkable ground leads out from where you stand; the nearest landing is x,y,z = "
-                      "(21,46.4,228.5) next to Wyll (3.1m)\n", out)
-        self.assertIn("NEXT: jump_to x,y,z = (21,46.4,228.5) (out of the nook), then route again", out)
+                      "(21,46.4,228.5) next to Wyll (3.1m)", out)
+        self.assertNotIn("NEXT", out)  # D630: the WEDGED line is the fact
         self.assertIn("you are wedged", route.hint_text(self.reply, core.H))
 
     def test_walk_toward_direction_failure_when_wedged(self):
@@ -306,13 +311,12 @@ class HelmRoute(Base):
         """naut2 r1/r2: from the lower deck NEXT said "interact e57 (ladder up)"; e57's foot is on the deck 2.7 m up."""
         out = route.render_route(_helm_from([-43.0, 5.0, -362.2], "up"), core.H, "objective Helm")
         a, b = core.H.get(E56, "Arterial Mesh"), core.H.get(E57, "Arterial Mesh")
-        self.assertIn(f"NEXT: interact {a} (ladder up), then interact {b} (ladder up) "
-                      f"(one call: queue_actions [interact {a}, interact {b}]), then route again", out)
+        self.assertTrue(out.endswith(f"\nthe way up: ladder {a}, then ladder {b} from its landing"), out)  # D630
 
     def test_from_the_short_ladders_top_names_the_long_one(self):
         out = route.render_route(_helm_from([-43.0, 7.6, -363.1], "down"), core.H, "objective Helm")
         b = core.H.get(E57, "Arterial Mesh")
-        self.assertIn(f"NEXT: interact {b} (ladder up), then route again", out)
+        self.assertTrue(out.endswith(f"\nthe way up: ladder {b}"), out)  # D630
 
     def test_wedged_with_only_a_landing_away_from_the_goal_says_so(self):
         """naut2 run 3: right after e44's climb "jump_to (-42.3,4.5,…) next to Lae'zel": back down the ladder (+60 s)."""
@@ -383,9 +387,8 @@ class Rendering(unittest.TestCase):
         h = H.get(oak, "Heavy Oak Doors")
         self.assertIn(f"BEHIND A DOOR: {h} Heavy Oak Doors @(-108,10.8,460) (21.6m N of you) took you to "
                       "(297.2,40.3,-78.2) before, 81m from the goal: the way is through it", out)
-        self.assertTrue(out.endswith(f"NEXT: travel_to x,y,z = (-108,10.8,460) (the door), interact {h}, "
-                                     "then route again"), out)
-        self.assertNotIn('NEXT: travel_to waypoint="Overgrown Ruins"', out)  # S037: the walk that got blocked
+        self.assertNotIn("NEXT", out)  # D630: the BEHIND A DOOR line is the fact
+        self.assertNotIn('travel_to waypoint="Overgrown Ruins"', out)  # S037: the walk that got blocked
         self.assertIn("BEHIND A DOOR", route.hint_text(res, H))
         res["door_link"]["door_m"] = 1.5
         self.assertIn("(next to you)", route.render_route(res, H, "objective Volo"))
