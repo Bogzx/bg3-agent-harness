@@ -125,13 +125,14 @@ class Build(unittest.TestCase):
         self.assertIn("carried, unused: Scroll of Fireball", txt)
         la = debrief.last_attempt(rec)
         self.assertTrue(la.startswith("LAST ATTEMPT: costly vs "))
-        self.assertIn("protect Wyll", la)
-        self.assertIn("focus Justiciar Soulhunter first", la)
+        self.assertEqual(la, f"LAST ATTEMPT: {rec['summary']}")  # D630: what happened, no harness tips
+        self.assertNotIn("protect Wyll", la)  # D630: no harness tip
+        self.assertNotIn("focus Justiciar Soulhunter first", la)  # D630: no harness tip
         # vis V7: a scroll works in combat in BG3 (an action, like the spell); V6's "out of combat only" was wrong
-        self.assertIn("use the unused scroll/potion (in combat a scroll costs its spell's action)", la)
+        self.assertNotIn("use the unused scroll/potion (in combat a scroll costs its spell's action)", la)  # D630: no harness tip
         self.assertNotIn("out of combat", la)
         rec["consumables"]["unused"] = ["Potion of Healing"]
-        self.assertIn("use the unused scroll/potion;", debrief.last_attempt(rec) + ";")
+        self.assertNotIn("use the unused scroll/potion;", debrief.last_attempt(rec) + ";")  # D630: no harness tip
         note = debrief.fight_note(rec)
         self.assertTrue(note.startswith("costly @SCL vs Justiciar Soulhunter, Justiciar Avenger (Human), Umbral Tremor | "), note)
         self.assertIn("| rounds 2 | downed: Wyll by Justiciar Soulhunter | dealt 68 / taken 96 |", note)
@@ -204,7 +205,7 @@ class Build(unittest.TestCase):
         self.assertIn("ally DIED: Jaheira (r3)", rec["key_facts"][0])
         out = debrief.render(rec)
         self.assertIn("DIED: Jaheira (ally, r3) — revives: Scroll of Revivify", out.splitlines()[1])
-        self.assertIn("keep Jaheira alive", debrief.last_attempt(rec))
+        self.assertNotIn("keep Jaheira alive", debrief.last_attempt(rec))  # D630: no harness tip
         self.assertEqual([a["name"] for a in tr.dead_allies], ["Jaheira"])   # for the ALERTS line
         tr.feed([ev("revived", **ref(J, "Jaheira"))], PARTY)                  # revived outside a fight
         self.assertEqual(tr.dead_allies, [])
@@ -309,6 +310,7 @@ class Warnings(unittest.TestCase):
                        PARTY)
         self.assertEqual(len(w), 1)
         self.assertIn("WARNING: Wyll went down first again", w[0])
+        self.assertTrue(w[0].endswith(")"), w[0])  # D630: no 'keep them back, heal or shield them first'
 
     def test_no_warning_against_other_enemies(self):
         _, past, _ = Build().run_fight()
@@ -385,7 +387,7 @@ class Act3Retries(unittest.TestCase):
         self.assertEqual([d["name"] for d in rec["downed"]], ["Shadowheart"])           # not our Spiritual Weapon
         self.assertNotIn("dmg_cap", rec)
         la = debrief.last_attempt(rec)
-        self.assertIn("find what hits you unseen", la)
+        self.assertNotIn("find what hits you unseen", la)  # D630: no harness tip
         self.assertNotIn("drink", la)                                                    # a scroll only
         self.assertNotIn("switch damage types", la)
         self.assertIn("(from no visible source: 186)", debrief.render(rec))
@@ -426,7 +428,7 @@ class Act3Retries(unittest.TestCase):
             "most damage to us: Orin (Slay) 90, left at 33% (was down to 21%)",
             "9 of 10 hits on Orin did 1 per damage type (any type; on it: Slayer Form, Unstoppable)"])
         la = debrief.last_attempt(rec)
-        self.assertIn("Orin often took 1 per hit: many small hits, or end what shields it first", la)
+        self.assertNotIn("Orin often took 1 per hit: many small hits, or end what shields it first", la)  # D630: no harness tip
         self.assertNotIn("switch damage types", la)
         self.assertNotIn("focus Orin first", la)
         txt = debrief.render(rec)
@@ -506,11 +508,11 @@ class ThinAttempts(unittest.TestCase):
         for i in (2, 3, 4):
             la = debrief.last_attempt(self.s066[i], self.old + self.s066[:i + 1])
             self.assertNotIn("focus Orin first", la, i)
-            self.assertIn("Orin often took 1 per hit", la, i)
+            self.assertNotIn("Orin often took 1 per hit", la, i)  # D630: no harness tip
             self.assertIn("it lasted 1 round, so it measured little; the fuller attempt vs them (reloaded, was costly, "
                           "S066 19:17): Wyll went down first", la, i)
-            self.assertIn("protect Wyll", la, i)   # the fuller attempt's first down, not this test's
-        self.assertIn("focus Orin first", debrief.last_attempt(self.s066[2]))   # (HEAD: no history to read)
+            self.assertNotIn("protect Wyll", la, i)   # the fuller attempt's first down, not this test's
+        self.assertNotIn("focus Orin first", debrief.last_attempt(self.s066[2]))   # (HEAD: no history to read)
 
     def test_the_solo_try_plans_from_the_last_full_fight(self):
         # 19:14: only S065's v1 records existed (no cap measurable in them), so the tip stays `focus Orin first`,
@@ -518,16 +520,16 @@ class ThinAttempts(unittest.TestCase):
         la = debrief.last_attempt(self.s066[0], self.old + self.s066[:1])
         self.assertIn("Claude fought alone, so it measured little; the fuller attempt vs them (reloaded, was near_wipe, "
                       "S065 11:50): DIED: Karlach", la)
-        self.assertIn("protect Wyll", la)
+        self.assertNotIn("protect Wyll", la)  # D630: no harness tip
         # once any attempt measured the cap it holds for the solo try too
         la = debrief.last_attempt(self.s066[0], self.old + self.s066)
         self.assertNotIn("focus Orin first", la)
-        self.assertIn("Orin often took 1 per hit", la)
+        self.assertNotIn("Orin often took 1 per hit", la)  # D630: no harness tip
 
     def test_a_full_attempt_reads_as_before(self):
         la = debrief.last_attempt(self.s066[1], self.old + self.s066[:2])
         self.assertNotIn("measured little", la)
-        self.assertIn("Orin often took 1 per hit", la)
+        self.assertNotIn("Orin often took 1 per hit", la)  # D630: no harness tip
 
 
 S069 = Path(__file__).parent / "golden" / "fights_s069.jsonl"   # real v2 record: S069 20:25 Sorcerous Sundries escape
@@ -555,10 +557,10 @@ class FledFights(unittest.TestCase):
     def test_its_last_attempt_has_no_kill_order(self):
         la = debrief.last_attempt(self.rec, [self.rec])
         self.assertNotIn("focus", la)
-        self.assertIn("an escape, not a fight: plan the way out or avoid it: avoid it: don't repeat what started it", la)
-        self.assertIn("leave by a way out of Water Elemental's reach", la)
-        self.assertIn("Disengage first when in melee", la)
-        self.assertIn("an unused scroll/potion may cover the escape (in combat a scroll costs its spell's action)", la)
+        self.assertEqual(la, f"LAST ATTEMPT: {self.rec['summary']} — an escape, not a fight")  # D630: no plan/tips
+        self.assertNotIn("leave by a way out of Water Elemental's reach", la)  # D630: no harness tip
+        self.assertNotIn("Disengage first when in melee", la)  # D630: no harness tip
+        self.assertNotIn("an unused scroll/potion may cover the escape", la)  # D630: no harness tip
 
     def test_a_thin_attempt_does_not_plan_from_a_flight(self):
         test = dict(self.rec, rounds=1, abilities=[{"caster": "Claude", "name": "Main Hand Attack", "casts": 1,
@@ -587,7 +589,7 @@ class FledFights(unittest.TestCase):
         tr.feed(evs[:2] + [cast(C, "Claude", "Dash")] + evs[2:], PARTY, now=100.0)
         rec = tr.close(ROWS, [], {"session": "S999"}, now=160.0)
         self.assertFalse(debrief.fled(rec))
-        self.assertIn("focus Justiciar Soulhunter first", debrief.last_attempt(rec))
+        self.assertNotIn("focus Justiciar Soulhunter first", debrief.last_attempt(rec))  # D630: no harness tip
 
 
 S074_REC = Path(__file__).parent / "golden" / "fights_s074.jsonl"   # the real v2 record of Cazador try 1 (S074 23:04)
@@ -798,7 +800,7 @@ class S077DidLittle(unittest.TestCase):
         tr2.feed([ev("combat_started"), ev("round_started", round=1)], PARTY_G)
         w, _ = tr2.feed(hit(SH, "Shadowheart", WW2, "Predator Werewolf", ("Radiant", 4)), PARTY_G)
         self.assertEqual(w, [("WARNING: Radiant did little to Predator Werewolf last time too (3 hits, avg 3.3 vs 13.5 "
-                              "from the same attacks on other enemies, S999): use another damage type on it")])
+                              "from the same attacks on other enemies, S999)")])  # D630: no 'use another damage type'
 
 
 CB = "u-cambion"
@@ -898,7 +900,7 @@ class S080Viconia(unittest.TestCase):
         rec = self.fight()
         la = debrief.last_attempt(rec)
         self.assertNotIn("focus Viconia DeVir first", la)
-        self.assertIn("after Viconia DeVir (killed r4), focus Justiciar Crusader Owltalon first", la)
+        self.assertNotIn("after Viconia DeVir (killed r4), focus Justiciar Crusader Owltalon first", la)  # D630: no harness tip
         self.assertIn("most damage to us: Viconia DeVir (Spirit Guardians) 60, killed r4", rec["key_facts"])
 
     def test_the_stored_s080_try_7_record(self):
@@ -912,10 +914,10 @@ class S080Viconia(unittest.TestCase):
                 "party": [{"name": "Gale", "dealt": 172, "taken": 217}, {"name": "Wyll", "dealt": 67, "taken": 262}]}
         la = debrief.last_attempt(try7)
         self.assertNotIn("focus Viconia DeVir first", la)
-        self.assertIn("focus Justiciar Crusader Owltalon first", la)
+        self.assertNotIn("focus Justiciar Crusader Owltalon first", la)  # D630: no harness tip
         try8 = {**try7, "enemies": [{**try7["enemies"][0], "killed": 0}] + try7["enemies"][1:],
                 "kills": try7["kills"][:1], "left": [{"name": "Viconia DeVir", "pct": 21, "low_pct": 21}]}
-        self.assertIn("focus Viconia DeVir first", debrief.last_attempt(try8))
+        self.assertNotIn("focus Viconia DeVir first", debrief.last_attempt(try8))  # D630: no harness tip
         self.assertIn("most damage to us: Viconia DeVir 308, left at 21%", debrief.key_facts(try8))
 
     def test_a_knocked_out_enemy_is_down(self):
@@ -927,9 +929,9 @@ class S080Viconia(unittest.TestCase):
         self.assertIn(" + knocked out Viconia DeVir r4", txt)
         la = debrief.last_attempt(rec)
         self.assertNotIn("focus Viconia DeVir first", la)
-        self.assertIn("after Viconia DeVir (knocked out r4), focus Justiciar Crusader Owltalon first", la)
+        self.assertNotIn("after Viconia DeVir (knocked out r4), focus Justiciar Crusader Owltalon first", la)  # D630: no harness tip
 
     def test_a_knocked_out_enemy_back_up_counts_again(self):
         rec = self.fight(viconia_dies=False, knocked_out_rows=[self.rows(0, "neutral"), self.rows(30)])
         self.assertNotIn("out", rec)
-        self.assertIn("focus Viconia DeVir first", debrief.last_attempt(rec))
+        self.assertNotIn("focus Viconia DeVir first", debrief.last_attempt(rec))  # D630: no harness tip
