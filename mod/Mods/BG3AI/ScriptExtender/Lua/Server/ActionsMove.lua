@@ -197,6 +197,14 @@ A.TELEPORT_MIN_DT_MS = 50
 A.TELEPORT_DEST_M = 3.0
 A.TELEPORT_GAME_M = 8.0
 A.TELEPORT_SETTLE_MS = 1500
+-- A fall of our own walk is no teleport (act2-fights-analysis fix 3, launch-v1 dev1 logs): the engine's no-path snap
+-- moves the walker across (9.7-18.4 m at its own height, landing 0.8-1.5 m from the leg's end: opus act3_gold_max
+-- r2, haiku goblin_camp r2, deepseek act3_gold_max r5), while haiku grove_gate r1 went 4.5 m, 3.7 m of it down,
+-- landing 4.3 m short of its point, and opus crash_site_grove 5 m straight down: the walk stepping off a ledge,
+-- failed as "engine teleported the character". A step at least FALL_MIN_M down, no longer across than down, within
+-- TELEPORT_GAME_M (a longer drop is a story move: S063) and not onto the walk's end is the walk falling: event
+-- walk_fell, the walk goes on, its horizontal part counted as travelled.
+A.FALL_MIN_M = 1.5
 -- A fast travel's arrival (the bridge calls act.trip_arrived when ui.fast_travel is done). S073 22:33:39: 9 s after
 -- the arrival at Lower City Central Wall, 19 m into a walk from the waypoint, Claude jumped the last 29.8 m (7.8 m
 -- down) onto the walk's own end (dest_m 0) with no story signal, while the save menus were up. A jump in the first
@@ -335,6 +343,14 @@ local function teleport_check(job, track, armed)
         and (not armed or armed(prev)) and not on_route(job, track, prev, here) then
         -- where this walk was going (none once it has ended: Use/Pickup's own walk from the approach point)
         local dest = job.walk and not job.walk.done and job.walk.pos
+        local drop = prev[2] - here[2]
+        local across = math.sqrt((here[1] - prev[1]) ^ 2 + (here[3] - prev[3]) ^ 2)
+        if drop >= A.FALL_MIN_M and across <= drop and step <= A.TELEPORT_GAME_M
+            and not (dest and U.dist(here, dest) <= A.TELEPORT_DEST_M) then
+            RPC.push("walk_fell", { uuid = job.char, from = pos_view(prev), to = pos_view(here), m = U.round(drop, 1) })
+            track.last_pos, track.last_t = here, t
+            return here, across, dt
+        end
         if job.walk then job.walk.done = true end
         pcall(G.osi, "PurgeOsirisQueue", job.char)
         local dest_m = dest and U.dist(here, dest) or nil
