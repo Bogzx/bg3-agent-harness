@@ -527,7 +527,7 @@ reg("cast", function(args)
             G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
                 { char, spell, pos[1], pos[2], pos[3] })
         else
-            A.cast_rolls(job, char, spell)
+            A.cast_rolls(job, char, spell, targets[1])
             G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
             A.give_second_pick(job, char, spell, targets, landing)
         end
@@ -819,7 +819,7 @@ reg("cast", function(args)
                     j.walked = U.round(walk_m, 1)
                     j.osi_task = "spell"
                     j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
-                    A.cast_rolls(j, char, spell)
+                    A.cast_rolls(j, char, spell, targets[1])
                     G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
                     A.give_second_pick(j, char, spell, targets, landing)
                 end)

@@ -100,9 +100,12 @@ game unless it says so.
   also drops IgnoreCastChecks and IgnoreTargetChecks; IgnoreHasSpell stays, because dropping it refused every cast.
   Before this, a harness cast skipped the spell's Requirements, RequirementConditions and TargetConditions.
   Window 7 showed Rage cast out of combat and Jump cast while Ensnared; with IgnoreCastChecks dropped, the game
-  refused Rage out of combat by itself. The guard still checks the readable rules before the order
-  (Server/GuardRules.lua: Combat/!Combat/!Immobile and the cheap condition terms), so the agent gets a plain refusal
-  and loses no action. When the game refuses a cast, the result now gives the game's own reason
+  refused Rage out of combat by itself. The guard still checks the caster's readable rules before the order
+  (Server/GuardRules.lua: the Requirements Combat/!Combat/!Immobile and the RequirementConditions terms, which the
+  game skips: window 8, Hide while Flanked), so the agent gets a plain refusal and loses no action. TargetConditions
+  are left to the game: with the guard off it refused all four targets they rule out (window 9: Sleep at 48 HP,
+  Healing Word on an undead, a swing at a corpse, Help on a healthy ally; InvalidTarget, nothing spent), so the
+  guard no longer refuses on them, and a term it misreads can't refuse a legal cast. When the game refuses a cast, the result now gives the game's own reason
   (`SpellCastOutcome.Result`, e.g. "it can't be cast now (its requirements aren't met) (the game's CantCast)")
   instead of "no reason given", when the cast entity has one. At a ground point, the game's target reasons
   (MissingTarget, TooFewTargets, InvalidTarget) read "it can't be cast at that spot", because they can depend on
@@ -119,7 +122,8 @@ game unless it says so.
   Withers revives at camp", "it takes target=<its id>", "loot_corpse does", "interact on <ladder> climbs it").
   A status in a spell's conditions reads with the game's name: "the caster has the Flanked status" (it said "the
   caster has flanked"). A check flag that stays set is recorded: the done result carries `unchecked`, and the
-  referee gets a `cast_unchecked` row with the flags and any rule terms the guard couldn't read for that cast.
+  referee gets a `cast_unchecked` row with the flags, any rule terms the guard couldn't read for that cast, and,
+  when IgnoreTargetChecks stayed set, the guard's reading of the target conditions at that target.
 - Melee reach is now measured with the creatures' Move bounds (`AIBounds.Move`, 0.25 m for a medium creature), not
   their Stand footprint (0.5 m). One measure (`G.melee_reach`) serves the guard's range check, move_to's stop and its
   already-there test, and the walk into range before a cast. Window 8 (the engine checking): a 1.5 m greataxe swing

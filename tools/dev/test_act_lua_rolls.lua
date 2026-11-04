@@ -296,7 +296,10 @@ test("check flags (audit S2-1): one that stays set is a done cast marked uncheck
     eq(#rows, 1, "one referee row"); eq(rows[1].ev, "cast_unchecked", "event")
     eq(rows[1].d.uuid, G.guid(P1), "uuid"); eq(rows[1].d.spell, "Projectile_Odd", "spell")
     eq(rows[1].d.flags, "IgnoreTargetChecks", "flags")
-    eq(rows[1].d.rules_unread, "TargetConditions: MysteryTerm", "the guard couldn't read it either")
+    -- the guard leaves TargetConditions to the engine (window 9 R3): with IgnoreTargetChecks kept, nothing checked
+    -- them; the row carries the guard's reading of them at that target
+    eq(rows[1].d.rules_unread, nil, "no caster terms unread")
+    eq(rows[1].d.target_rules, "Projectile_Odd needs, at this target: MysteryTerm() (not read)", "target_rules")
     assert(warned[#warned]:find("IgnoreTargetChecks stayed set", 1, true), warned[#warned])
     -- a late cast whose flags won't clear: both rows
     rows = {}

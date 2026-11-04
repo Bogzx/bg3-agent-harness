@@ -1,11 +1,25 @@
 -- Part of test_act_lua.lua (split for the 1000-line cap): REVIEW-5 F1/F3, a spell's own rules the harness cast skips
--- (IgnoreCastChecks / IgnoreTargetChecks stay: window 6, dropping them refused every cast). Server/GuardRules.lua
--- reads Requirements, RequirementConditions and TargetConditions and refuses what a greyed hotbar or the cursor
--- refuses; a term it can't read is logged, never refused. test_act_lua.lua runs it after its stubs and helpers.
+-- (the engine skips Requirements / RequirementConditions on a harness cast). Server/GuardRules.lua reads them and
+-- refuses what a greyed hotbar refuses; a term it can't read is logged, never refused. TargetConditions are the
+-- engine's to refuse (window 9 R3); the guard's reading of them explains the engine's InvalidTarget. test_act_lua.lua
+-- runs it after its stubs and helpers.
 
 local function rules(spell_name, st, target)
     spell(spell_name, st)
     return function() G.check_rules(P1, spell_name, Ext.Stats.Get(spell_name), target) end
+end
+-- The guard's reading of a pick's TargetConditions (OriginTargetConditions for a two-step spell), in the words the
+-- pre-check used to refuse with: what G.explain_target builds on after the engine's InvalidTarget.
+local function tc(spell_name, st, target)
+    return function()
+        local which = st.SpellType == "Teleportation" and "OriginTargetConditions" or "TargetConditions"
+        local v, why = G.rule_eval(st[which], { source = P1, target = target, subject = target })
+        if v == false then G.refuse(spell_name .. " can't target that: " .. why) end
+    end
+end
+local function explains(spell_name, st, target)
+    spell(spell_name, st)
+    return G.explain_target(P1, spell_name, target)
 end
 local function passes(fn)
     local ok, err = pcall(fn)
@@ -57,7 +71,8 @@ test("rules: RequirementConditions on the caster (Rage twice; a Rage-only action
         "the caster doesn't have the Rage status")
 end)
 
-test("rules: TargetConditions (Hold Person on an undead, a heal on a dead target, an item)", function()
+test("rules: TargetConditions as the guard reads them (Hold Person on an undead, a heal on a dead target, an item)",
+    function()
     Ext.StaticData = { GetAll = function() return { "t-hum", "t-und" } end,
         Get = function(id) return { Name = ({ ["t-hum"] = "HUMANOID", ["t-und"] = "UNDEAD" })[id] } end }
     G._tag_ids = nil
@@ -65,36 +80,36 @@ test("rules: TargetConditions (Hold Person on an undead, a heal on a dead target
         TargetConditions = "Character() and not Self() and Tagged('HUMANOID') and not Tagged('UNDEAD')" }
     osiv[key("IsCharacter", NPC)] = 1
     osiv[key("IsTagged", NPC, "t-und")] = 1
-    refused(rules("Target_HoldPerson", hold, NPC), "Target_HoldPerson can't target that: the target is undead")
+    refused(tc("Target_HoldPerson", hold, NPC), "Target_HoldPerson can't target that: the target is undead")
     -- a humanoid: HUMANOID read true, UNDEAD false -> allowed
     osiv[key("IsTagged", NPC, "t-und")] = 0
     osiv[key("IsTagged", NPC, "t-hum")] = 1
-    passes(rules("Target_HoldPerson", hold, NPC))
+    passes(tc("Target_HoldPerson", hold, NPC))
     -- tags unreadable (no answer): not refused
     osiv[key("IsTagged", NPC, "t-hum")] = nil
     osiv[key("IsTagged", NPC, "t-und")] = nil
-    passes(rules("Target_HoldPerson", hold, NPC))
+    passes(tc("Target_HoldPerson", hold, NPC))
     osiv[key("IsDead", NPC)] = 1
-    refused(rules("Target_HealingWord", { SpellType = "Target", TargetConditions = "not Dead() and Character()" }, NPC),
+    refused(tc("Target_HealingWord", { SpellType = "Target", TargetConditions = "not Dead() and Character()" }, NPC),
         "the target is dead")
     osiv[key("IsCharacter", NPC)] = 0
-    passes(rules("Target_X", { SpellType = "Target", TargetConditions = "Character() or Item()" }, NPC)) -- Item unread
+    passes(tc("Target_X", { SpellType = "Target", TargetConditions = "Character() or Item()" }, NPC)) -- Item unread
     osiv[key("IsItem", NPC)] = 0
-    refused(rules("Target_X", { SpellType = "Target", TargetConditions = "Character() or Item()" }, NPC),
+    refused(tc("Target_X", { SpellType = "Target", TargetConditions = "Character() or Item()" }, NPC),
         "it is not a character and it is not an item")
     G._tag_ids = nil
 end)
 
-test("rules: Shove weight (CanShoveWeight: Strength x 12 kg >= the target's weight)", function()
+test("rules: Shove weight read (CanShoveWeight: Strength x 12 kg >= the target's weight)", function()
     local shove = { SpellType = "Target", TargetConditions = "not Self() and CanShoveWeight()" }
     osiv[key("GetAbility", P1, "Strength")] = 10
     world[NPC].comps.Data = { Weight = 200000 } -- 200 kg > 120
-    refused(rules("Target_Shove", shove, NPC), "Target_Shove can't target that: it is too heavy to shove")
+    refused(tc("Target_Shove", shove, NPC), "Target_Shove can't target that: it is too heavy to shove")
     world[NPC].comps.Data = { Weight = 80000 }
-    passes(rules("Target_Shove", shove, NPC))
+    passes(tc("Target_Shove", shove, NPC))
     osiv[key("HasActiveStatus", P1, "ENLARGE")] = 1 -- x 28.2 = 282 kg
     world[NPC].comps.Data = { Weight = 200000 }
-    passes(rules("Target_Shove", shove, NPC))
+    passes(tc("Target_Shove", shove, NPC))
 end)
 
 test("rules: an unread term is logged once, never refused; a false known term still refuses", function()
@@ -102,25 +117,26 @@ test("rules: an unread term is logged once, never refused; a false known term st
     local pw = Ext.Utils.PrintWarning
     Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
     G.rules_unread = {}
-    local st = { SpellType = "Target", TargetConditions = "Player(context.Source) and MysteryTerm() or Dead()" }
-    osiv[key("IsDead", NPC)] = 0
-    passes(rules("Target_Odd", st, NPC))
-    passes(rules("Target_Odd", st, NPC))
+    local st = { SpellType = "Shout", RequirementConditions = "Player(context.Source) and MysteryTerm() or Dead()" }
+    osiv[key("IsDead", P1)] = 0
+    passes(rules("Shout_Odd", st))
+    passes(rules("Shout_Odd", st))
     eq(#warned, 2, "Player and MysteryTerm, once each")
-    assert(warned[1]:find("Target_Odd TargetConditions: term Player not read", 1, true), warned[1])
-    passes(rules("Target_Ops", { SpellType = "Target", TargetConditions = "HasHPPercentageLessThan(50) >= 1" }, NPC))
+    assert(warned[1]:find("Shout_Odd RequirementConditions: term Player not read", 1, true), warned[1])
+    passes(tc("Target_Ops", { SpellType = "Target", TargetConditions = "HasHPPercentageLessThan(50) >= 1" }, NPC))
     -- unknown AND false = false
     osiv[key("IsCharacter", NPC)] = 0
-    refused(rules("Target_Y", { SpellType = "Target", TargetConditions = "MysteryTerm() and Character()" }, NPC),
+    refused(tc("Target_Y", { SpellType = "Target", TargetConditions = "MysteryTerm() and Character()" }, NPC),
         "it is not a character")
     Ext.Utils.PrintWarning = pw
-    -- a two-step spell checks its first pick against OriginTargetConditions
+    -- a two-step spell's first pick is read against OriginTargetConditions
     osiv[key("IsCharacter", NPC)] = 1
-    passes(rules("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Character()",
+    passes(tc("Teleportation_Revivify", { SpellType = "Teleportation", OriginTargetConditions = "Character()",
         TargetConditions = "not Character()" }, NPC))
 end)
 
-test("rules: a Shout, Zone or area spell's TargetConditions filter who it reaches, not the pick (launch-v1 replay)",
+test("rules: a Shout, Zone or area spell's TargetConditions filter who it reaches, not the pick: never explained"
+    .. " as the pick's (launch-v1 replay)",
     function()
     Ext.StaticData = { GetAll = function() return { "t-und" } end, Get = function() return { Name = "UNDEAD" } end }
     G._tag_ids = nil
@@ -128,21 +144,54 @@ test("rules: a Shout, Zone or area spell's TargetConditions filter who it reache
     osiv[key("IsCharacter", P1)] = 1
     osiv[key("HasActiveStatus", P1, "LOW_GHOST_POSSESSED")] = 0
     -- Turn Undead: the harness passes the caster as a Shout's target; the caster is not undead
-    passes(rules("Shout_TurnUndead", { SpellType = "Shout", AreaRadius = 9,
-        TargetConditions = "Character() and Tagged('UNDEAD') or HasStatus('LOW_GHOST_POSSESSED')" }, P1))
+    eq(explains("Shout_TurnUndead", { SpellType = "Shout", AreaRadius = 9,
+        TargetConditions = "Character() and Tagged('UNDEAD') or HasStatus('LOW_GHOST_POSSESSED')" }, P1), nil,
+        "Turn Undead")
     -- Aid (Self()) with an ally named as the target
-    passes(rules("Shout_MAG_Aid_Self", { SpellType = "Shout", TargetConditions = "Self()" }, NPC))
+    eq(explains("Shout_MAG_Aid_Self", { SpellType = "Shout", TargetConditions = "Self()" }, NPC), nil, "Aid")
     osiv[key("IsDead", NPC)] = 1
-    passes(rules("Zone_Thunderwave", { SpellType = "Zone", TargetConditions = "not Dead()" }, NPC))
-    passes(rules("Target_Shatter", { SpellType = "Target", AreaRadius = 3, TargetConditions = "not Dead()" }, NPC))
-    passes(rules("Projectile_Fireball", { SpellType = "Projectile", ExplodeRadius = 4,
-        TargetConditions = "not Dead()" }, NPC))
-    -- the Requirements still hold for a Shout; a single-target spell still checks its pick
+    eq(explains("Zone_Thunderwave", { SpellType = "Zone", TargetConditions = "not Dead()" }, NPC), nil, "Zone")
+    eq(explains("Target_Shatter", { SpellType = "Target", AreaRadius = 3, TargetConditions = "not Dead()" }, NPC),
+        nil, "area")
+    eq(explains("Projectile_Fireball", { SpellType = "Projectile", ExplodeRadius = 4,
+        TargetConditions = "not Dead()" }, NPC), nil, "explode")
+    -- the Requirements still hold for a Shout; a single-target spell's pick is explained
     combat_setup(9)
     refused(rules("Shout_PrayerOfHealing", { SpellType = "Shout", AreaRadius = 9, Requirements = "!Combat" }, P1),
         "can't be used in combat")
-    refused(rules("Target_MainHandAttack", { SpellType = "Target", TargetConditions = "not Dead()" }, NPC),
-        "the target is dead")
+    local w = explains("Target_MainHandAttack", { SpellType = "Target", TargetConditions = "not Dead()" }, NPC)
+    assert(w and w:find("(no: the target is dead)", 1, true), tostring(w))
+end)
+
+test("rules: TargetConditions don't refuse; the engine's InvalidTarget is explained and costs nothing (window 9 R3)",
+    function()
+    -- window 9 R3, guard off: the engine refused Sleep on 48 HP, Healing Word on an undead, a swing at a corpse and
+    -- Help on a healthy ally (InvalidTarget), and spent nothing. The guard no longer refuses them before the order.
+    combat_setup(30)
+    Ext.StaticData = { GetAll = function() return { "t-und" } end, Get = function() return { Name = "UNDEAD" } end }
+    G._tag_ids = nil
+    osiv[key("IsCharacter", GOB)], osiv[key("IsDead", GOB)] = 1, 0
+    osiv[key("IsTagged", GOB, "t-und")] = 1
+    osiv[key("HasLineOfSight", P1, GOB)] = 1
+    world[GOB].pos = { 3, 0, 0 }
+    local heal = { SpellType = "Target", TargetRadius = "18", UseCosts = "BonusActionPoint:1", Level = 0,
+        TargetConditions = "not Dead() and not Tagged('UNDEAD')" }
+    passes(rules("Target_HealingWord", heal, GOB))
+    world[P1].comps.ActionResources.Resources.BonusActionPoint = { { Level = 0, Amount = 1 } }
+    cast_outcome = "InvalidTarget"
+    local j = job(op("cast", { char = P1, spell = "Target_HealingWord", target = GOB }))
+    eq(j.status, "running", "ordered: " .. tostring(j.error))
+    eq(#called("UseSpell"), 1, "the order went to the engine")
+    A.dispatch("CastSpellFailed", { P1, "Target_HealingWord" })
+    tick(10)
+    eq(j.status, "failed", "the engine refused")
+    assert(j.error:find("the game refused the cast: the target isn't a valid target for it", 1, true), j.error)
+    assert(j.error:find("Target_HealingWord needs, at this target: ", 1, true), j.error)
+    assert(j.error:find("(no: the target is undead)", 1, true), j.error)
+    -- the guard's cost audit runs only after a cast the engine made: nothing charged for the refusal
+    eq(world[P1].comps.ActionResources.Resources.BonusActionPoint[1].Amount, 1, "bonus action kept")
+    eq(type(j.result) == "table" and j.result.charged_by_guard or nil, nil, "no charged_by_guard")
+    Ext.StaticData, G._tag_ids = nil, nil
 end)
 
 test("rules: Hide is refused while FLANKED, through act.cast and sneak; the guard's rules are on by default (w8)",
@@ -170,7 +219,7 @@ end)
 test("rules: the helper terms read from the game (Sleep HP, Help, Knock, Mobile Shooting, proficiency, Grease)",
     function()
     local function tr(spell_name, cond, target)
-        return rules(spell_name, { SpellType = "Target", TargetConditions = cond }, target)
+        return tc(spell_name, { SpellType = "Target", TargetConditions = cond }, target)
     end
     -- Sleep: not HasHPMoreThan(24) (thoth: entity.HP > value, the target by default)
     osiv[key("GetHitpoints", NPC)] = 30
@@ -285,7 +334,7 @@ test("rules: a status requirement reads as a fact with the game's status name (w
     Ext.Loca.GetTranslatedString = function(h) return h == "h-hunt" and "Hunter's Mark" or nil end
     stats.HUNTERS_MARK = { DisplayName = "h-hunt;1" }
     osiv[key("HasActiveStatus", NPC, "HUNTERS_MARK")] = 0
-    refused(rules("Target_X", { SpellType = "Target", TargetConditions = "HasStatus('HUNTERS_MARK')" }, NPC),
+    refused(tc("Target_X", { SpellType = "Target", TargetConditions = "HasStatus('HUNTERS_MARK')" }, NPC),
         "Target_X can't target that: the target doesn't have the Hunter's Mark status")
     Ext.Loca.GetTranslatedString = loca
     -- a group: what kind of status, not a verb's object
