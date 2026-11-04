@@ -427,6 +427,7 @@ local function armed(set, drawn)
     world[P1].comps.Unsheath = { State = drawn }
 end
 local function draw(state) world[P1].comps.Unsheath.State = state end
+Osi.SetWeaponUnsheathed = record("SetWeaponUnsheathed")
 
 test("weapon set: a melee spell with the bow drawn switches to the melee set, then is ordered once it is drawn",
     function()
@@ -435,12 +436,33 @@ test("weapon set: a melee spell with the bow drawn switches to the melee set, th
     local j = job(op("cast", { char = P1, spell = "Target_Sneak", target = NPC }))
     eq(j.status, "running", "status " .. tostring(j.error))
     eq(world[P1].comps.WeaponSet.WeaponSet, "Melee", "the set switched, as the player's toggle does")
+    local un = called("SetWeaponUnsheathed")
+    eq(#un, 2, "sheathed and drawn again"); eq(un[1][3], 0, "sheathe first"); eq(un[2][3], 1, "then draw")
     eq(#called("UseSpell"), 0, "not ordered while the bow is still drawn")
     tick(2)
     eq(#called("UseSpell"), 0, "still not")
     draw("Melee")
     tick(2)
     eq(#called("UseSpell"), 1, "ordered once the melee weapons are drawn")
+    eq(j.status, "running", "the cast runs on " .. tostring(j.error))
+end)
+
+test("weapon set: the redraw after the set write draws the selected set, so the cast is ordered (live w10 L4: the "
+    .. "write alone left the bow drawn)", function()
+    -- the stub plays the engine as L4 read it: the WeaponSet write alone leaves Unsheath on the old set; drawing again
+    -- (SetWeaponUnsheathed(C, 1, _)) draws the selected set
+    local plain = Osi.SetWeaponUnsheathed
+    Osi.SetWeaponUnsheathed = function(c, on, instant)
+        record("SetWeaponUnsheathed")(c, on, instant)
+        if on == 1 then draw(world[c].comps.WeaponSet.WeaponSet) end
+    end
+    sneak("Melee")
+    armed("Ranged", "Ranged")
+    local j = job(op("cast", { char = P1, spell = "Target_Sneak", target = NPC }))
+    tick(2)
+    Osi.SetWeaponUnsheathed = plain
+    eq(world[P1].comps.Unsheath.State, "Melee", "the melee weapons drawn")
+    eq(#called("UseSpell"), 1, "ordered without anything else drawing the swords")
     eq(j.status, "running", "the cast runs on " .. tostring(j.error))
 end)
 
