@@ -274,6 +274,11 @@ class ChecksSide:
                                                  self.facts_writer(), self.state.dir / "rolls.jsonl")
         return f
 
+    def ring_health(self) -> dict | None:
+        """The referee ring's health for the run record (RingFeed.health); None when no poll ran this run."""
+        f = getattr(self, "_ring_feed", None)
+        return f.health() if f is not None else None
+
     def write_choices(self, sid: str, base: Path) -> None:
         """The process's dialogue choices (scene, options, pick, stated reason) into facts.jsonl."""
         try:

@@ -154,6 +154,9 @@ class FakeRunner:
             raise RuntimeError("the game stopped answering")
         return self.clock if self.end_at is None else self.end_at
 
+    def ring_health(self) -> dict | None:
+        return None  # no referee ring polled (test_run_host_referee.py gives one)
+
     def scenario_undo(self) -> None:
         self.calls.append("scenario_undo")
 

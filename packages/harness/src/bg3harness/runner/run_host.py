@@ -937,8 +937,10 @@ class LiveRunHost:
             name = "reached" if goal["verdict"] == "passed" else "failed"  # the live verdict ended the run
         else:
             name = "reached" if hit else "over_budget" if r.cap_hit else "timeout"
+        referee_health = None
         try:
             ended = r.end_facts(name)
+            referee_health = r.ring_health()  # with the game up (ref.snapshot)
         finally:
             try:
                 if (rec := self.recordings.pop(run_dir, None)) is not None:
@@ -975,6 +977,7 @@ class LiveRunHost:
                 # an until run that the live verdict passed reached its milestone (the bench's verdict is its goal)
                 "milestone": hit["id"] if hit else sc.get("until") if goal and goal["verdict"] == "passed" else None,
                 "game_settings": getattr(r, "game_settings", None),
+                "referee": referee_health,  # {ring_lost, never_fired}: the facts' referee ring (REVIEW-16 A1)
                 "manifest": r.opt.manifest,
                 "pins": pins,  # the bench adds the versions (bg3bench.pins.versions)
                 "reset": {"nav_files": moved, "restored": back, "saves": own_saves},
