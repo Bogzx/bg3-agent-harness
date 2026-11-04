@@ -269,7 +269,13 @@ game unless it says so.
   - Attacks and saving throws cast by the harness roll their dice (above, under Harness): before, they never
     rolled, so bench-v0.10 results are not comparable with bench-v0.8 or v0.9 results for scenarios with fights.
   - A fall down a drop link of the walk's own route is no longer failed as an engine teleport, and `end_turn`'s End
-    Turn press refused by the busy UI is asked again after the cooldown instead of failing at once.
+    Turn press refused by the busy UI is asked again after the cooldown instead of failing at once. Any fall of a walk
+    (at least 1.5 m down, no longer across than down, up to 8 m, not onto the walk's end) goes on as the walk
+    (`walk_fell` event); the engine's no-path snap across to the walk's end is still blocked. A busy answer that came
+    after the End Turn press ran checks whether the turn moved on, as after any press, before failing.
+  - An enemy's spell on first sight in a fight (cast in view, or a row showing it concentrating on it) gives a
+    `spell_info` line with what its tooltip shows: the game's description with its numbers filled in, then level,
+    concentration, range, area, save or attack, damage and duration from its stats (act2-fights-analysis fix 4).
   Metric definition change: a tool call counts as async only when its own background job is still running when the
   call returns (bridge metrics_record.py). A blocking walk's job starts and ends inside the call, and a walk that
   ended in the 0.3 s settle window no longer counts. Async % and the latency figures built on it are not 1:1 with

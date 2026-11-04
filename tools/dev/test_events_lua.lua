@@ -23,8 +23,19 @@ Ext = {
     Stats = { Get = function(id) return ({
         Target_FireBolt = { DisplayName = "hFire", SpellRoll = { Default = "Attack(AttackType.RangedSpellAttack)" } },
         Projectile_GOB_SecretHint = { DisplayName = "hScimitar", SpellRoll = { Default = "" } },
+        -- Cloudkill's stats entry (SharedDev Spell_Target.txt), its loca handles stubbed
+        Target_Cloudkill = { DisplayName = "hCK;2", Description = "hCKd;7",
+            DescriptionParams = "DealDamage(5d8,Poison)", ExtraDescription = "hCKx;5", Level = 5,
+            TargetRadius = "18", AreaRadius = "6",
+            TooltipAttackSave = "Constitution", TooltipDamageList = "DealDamage(5d8,Poison)",
+            TooltipStatusApply = "ApplyStatus(CLOUDKILL,100,10)", SpellRoll = { Default = "" },
+            SpellFlags = { "IsSpell", "IsHarmful", "IsConcentration" } },
+        Projectile_Unnamed = { DisplayName = "", SpellRoll = { Default = "" } },
     })[id] end },
-    Loca = { GetTranslatedString = function(h) return ({ hFire = "Fire Bolt", hScimitar = "Scimitar Slash" })[h] end },
+    Loca = { GetTranslatedString = function(h) return ({ hFire = "Fire Bolt", hScimitar = "Scimitar Slash",
+        hCK = "Cloudkill",
+        hCKd = "Create a cloud of poison that deals [1] each turn to creatures inside it.<br>It moves away from you.",
+        hCKx = "The cloud moves <LSTag Type=\"Tooltip\" Tooltip=\"Distance\">3m</LSTag> each turn." })[h] end },
 }
 Osi = {
     GetHostCharacter = function() return HOST end,
@@ -211,6 +222,38 @@ do
     check("no required talks: empty", t and #t == 0, t and #t)
     Osi.DB_Camp_RequiredTalks = nil
     check("unreadable DB: nil", E.requiredTalks() == nil)
+end
+
+-- act2-fights-analysis fix 4: an enemy's spell on first sight carries the tooltip a player reads by hovering it, once
+-- per spell per fight; the party's own casts and a repeat in the same fight add nothing.
+do
+    local combat = "combat-1"
+    Osi.CombatGetGuidFor = function() return combat end
+    local function infos()
+        local out = {}
+        for _, p in ipairs(pushed) do if p.kind == "spell_info" then out[#out + 1] = p.data end end
+        return out
+    end
+    local n0 = #infos()
+    listeners.CastedSpell("Balthazar_" .. GOB, "Target_Cloudkill", "", "", 0)
+    local got = infos()
+    check("first sight: one spell_info", #got == n0 + 1, #got - n0)
+    local want = "Cloudkill: Create a cloud of poison that deals 5d8 Poison damage each turn to creatures inside it."
+        .. " It moves away from you. The cloud moves 3m each turn. (level 5, concentration, range 18m, area 6m,"
+        .. " Constitution save, 5d8 Poison damage, lasts 10 turns)"
+    check("first sight: the tooltip's text and numbers", got[#got] == want, got[#got])
+    check("the cast event itself is unchanged", last("cast").name == "Cloudkill" and last("cast").spell == nil)
+    listeners.CastedSpell("Balthazar_" .. GOB, "Target_Cloudkill", "", "", 0)
+    check("same fight: not again", #infos() == n0 + 1, #infos() - n0)
+    E.note_spell(GOB, "Target_Cloudkill") -- a row showing it concentrating on Cloudkill, same fight
+    check("row in the same fight: not again", #infos() == n0 + 1)
+    combat = "combat-2"
+    E.note_spell(GOB, "Target_Cloudkill") -- the next fight: its row's concentration is its first sight there
+    check("next fight: again", #infos() == n0 + 2, #infos() - n0)
+    listeners.CastedSpell("S_Player_" .. SH, "Target_FireBolt", "", "", 0)
+    check("a party cast: no spell_info", #infos() == n0 + 2)
+    E.note_spell(GOB, "Projectile_Unnamed")
+    check("a spell with no shown name: no spell_info", #infos() == n0 + 2)
 end
 
 print(string.format("%d passed, %d failed", passed, failures))

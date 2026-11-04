@@ -21,6 +21,15 @@ local spellInfo, relation, standRadius = I.spellInfo, I.relation, I.standRadius
 -- What the item tooltip shows, from its stats entry: camp-supply value (food), category, armour class and
 -- type, weapon damage, the proficiency it needs. The bridge's economy.py uses these for supplies, junk
 -- selling and gear upgrades (S026: bags full of junk, Sentinel Shield unequipped, food unknown).
+-- An enemy row showing the concentration icon: that spell's tooltip on its first sight this fight (Events.note_spell).
+local function noteConcentration(ctx, u, e)
+    local E = BG3AI.Events
+    if ctx.is_party[u] or not (E and E.note_spell) then return end
+    local c = comp(e, "Concentration")
+    local ok, sid = pcall(function() return c.SpellId.Prototype end)
+    if c and ok and sid and sid ~= "" then E.note_spell(u, sid) end
+end
+
 local function statField(st, k)
     local ok, v = pcall(function() return st[k] end)
     if not ok or v == nil or v == "" then return nil end
@@ -507,6 +516,7 @@ function S.combat(ctx)
                             end
                         end
                         o.concentration = concentration(me)
+                        if o.concentration then noteConcentration(ctx, u, me) end
                         out.order[#out.order + 1] = o
                     end
                 end
@@ -756,6 +766,7 @@ function S.nearby(ctx, args)
                     if #o.statuses == 0 then o.statuses = nil end
                     -- the concentration icon over a visible creature (bridge CHANGES: "concentrating on Cloudkill")
                     o.concentration = concentration(e)
+                    if o.concentration then noteConcentration(ctx, u, e) end
                     local dead = truthy(osi(Osi.IsDead, u))
                     if dead then o.dead = true end
                     local h = health(e)
