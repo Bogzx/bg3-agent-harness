@@ -500,6 +500,17 @@ class TradeDealSaid(unittest.TestCase):
         lines = economy.deal_lines({"confirmed": True, "moved": []}, before, lambda it: "(no id)")
         self.assertEqual(lines, ["SOLD (no id) Backpack 52 g | (no id) Scroll of Grease 20 g"])
 
+    def test_w15_a2_part_of_a_stack_is_one_record(self):
+        # w15 a2: Muddy Red Dye x8 (48 g), request count=2, confirm. The mod now names the part the game put on the table
+        # after the moved item (Services.lua SV.splits), so the deal and the moved record are one item, said once.
+        u = "b20ab553-20b9-3423-06f8-1136413778b4"
+        res = {"confirmed": True,
+               "moved": [{"uuid": u, "name": "Muddy Red Dye", "side": "trader", "count": 2, "price": 12}],
+               "deal": {"you": {"items": [{"gold": True, "count": 12, "price": 12}]},
+                        "trader": {"items": [{"uuid": u, "name": "Muddy Red Dye", "count": 2, "price": 12}]}}}
+        lines = economy.deal_lines(res, {}, lambda it: "e127" if it.get("uuid") == u else "(no id)")
+        self.assertEqual(lines, ["BOUGHT e127 Muddy Red Dye x2 12 g"])
+
     def test_a_deal_whose_screen_closed_while_finishing_is_named(self):
         # REVIEW-17 F2: the mod's closed-screen answer has no offer/wares, so plumbing printed the generic compact of
         # `moved` (no prices, the earlier calls' table items left out) and no SOLD line
