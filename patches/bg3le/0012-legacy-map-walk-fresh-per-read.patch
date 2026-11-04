@@ -1,0 +1,44 @@
+bg3le component meta: walk a LegacyMap/LegacyRefMap again at entry 0, so a read never reuses a walk of freed nodes
+
+On top of 0001-0011. legacy_map_node kept one walk per thread, reused while the map's address and item count
+were unchanged. When an entry is replaced (one removed, another added: same count), the kept walk still names
+the removed node, which the game has freed. v010 live windows 8-9 (ops/logs/live.md, runtime/probes/v010w8-w9):
+Ext.Utils.GetDialogManager().Dialogs listed key 214 (an ended automated dialog) with DialogId -91782656
+(0xFA878000, freed memory) and Dialogs[215] nil, while the party's DialogState.DialogId was 215, and a raw walk
+of the same map (Peek, no cache) in the same kind of load found exactly one entry, key 215, whose instance reads
+DialogId 215. Guard.lua's dialogue_info reads the same map on every action (Bench B3: an instance reading
+DialogId 0 and a building mesh as its resource after the dialogue ended).
+
+- Every read of such a map starts at entry 0 (the Lua key scan `for i = 0, count - 1`, a value by its slot
+  `[i]`), so entry 0 now rebuilds the walk; entries 1..n of the same pass reuse it (still linear).
+
+Offline: tools/test_bg3le_legacy_map_walk.py compiles legacy_map_node from the patched source against a fake
+map and replaces its one entry at the same count. Against bg3le 3728a68 (v0.3.6) with 0001-0011. Applied by
+tools/build_bg3le.sh.
+---
+diff --git a/src/vendor/component_meta.cpp b/src/vendor/component_meta.cpp
+index 7c43101..9f9ab36 100644
+--- a/src/vendor/component_meta.cpp
++++ b/src/vendor/component_meta.cpp
+@@ -835,7 +835,11 @@ struct LegacyInternalsOf<LegacyMapBase<I>> {
+ // The node of entry index. The table and the chains are read fault-
+ // tolerantly, since a map reached through a pointer may not be where the
+ // pointer says; the walk is kept per thread for the last map, so reading its
+-// entries in turn walks it once.
++// entries in turn walks it once. Every read of a map starts at entry 0 (the
++// key scan, a value by its slot), so entry 0 walks it again: a walk kept from
++// an earlier read can name nodes the game has since freed even when the count
++// is the same (a dialog ended and the next one took its place: the stale walk
++// gave the freed node's key and value).
+ template <class M>
+ typename M::Node* legacy_map_node(void const* container, std::size_t index) {
+     using I = typename LegacyInternalsOf<M>::type;
+@@ -856,7 +860,7 @@ typename M::Node* legacy_map_node(void const* container, std::size_t index) {
+         std::vector<Node*> Nodes;
+     };
+     thread_local Walk walk;
+-    if (walk.Map != container || walk.Count != count) {
++    if (index == 0 || walk.Map != container || walk.Count != count) {
+         walk = Walk{container, count, {}};
+         std::vector<Node*> buckets(hashSize);
+         if (hashSize != 0
