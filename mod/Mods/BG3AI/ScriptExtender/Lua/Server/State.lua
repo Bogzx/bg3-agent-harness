@@ -489,16 +489,10 @@ local function spellInfo(id)
     return c or nil
 end
 
+-- The guard's own cooldown rule (Guard.cooldowns): what this lists UNAVAILABLE is what a cast is refused for.
 local function cooldowns(e)
-    local out = {}
-    local cd = comp(e, "SpellBookCooldowns")
-    if not cd then return out end
-    pcall(function()
-        for _, c in ipairs(cd.Cooldowns) do
-            out[c.SpellId.Prototype] = tostring(c.CooldownType)
-        end
-    end)
-    return out
+    local Gc = BG3AI.Guard
+    return Gc and Gc.cooldowns and Gc.cooldowns(e) or {}
 end
 
 -- Footprint radius (m), as Guard.radius: AIBounds.Stand, then Move, then 0.5.
