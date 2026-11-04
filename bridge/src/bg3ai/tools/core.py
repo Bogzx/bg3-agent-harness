@@ -320,8 +320,8 @@ _DIALOGUE_TOOLS = frozenset({"dialogue_advance", "choose_dialogue", "talk_to"})
 
 
 # Events a result already reports in its own words (set by the tool for its one call): item uuids whose item_added
-# is noise, and whether the gold stack's item_added is (sell=junk: the game moves each member's sold items to the
-# trading character first — acceptance 12:21: 5 "item_added … owner=Claude" lines + "Gold count=799").
+# is noise, and whether gold_changed is (sell=junk: the game moves each member's sold items to the trading character
+# first — acceptance 12:21: 5 "item_added … owner=Claude" lines; the SOLD line states the gold).
 # The window stays open ~10 s after the call ("until"): the game's AddedTo for a big sale (54 items) trickles in after
 # the trade job ends and would otherwise land in the next tool's result.
 _EV_DROP: dict[str, Any] = {"items": set(), "gold": False, "until": 0.0}
@@ -335,11 +335,15 @@ def _drop_events(evs: list | None) -> list:
     if not evs or not (items or gold):
         return evs or []
     def noise(e) -> bool:
-        if not isinstance(e, dict) or e.get("kind") != "item_added":
+        if not isinstance(e, dict):
+            return False
+        if e.get("kind") == "gold_changed":
+            return gold
+        if e.get("kind") != "item_added":
             return False
         it = (e.get("data") or {}).get("item") or {}
         u = it.get("uuid") if isinstance(it, dict) else it
-        return (isinstance(u, str) and H._bare(u) in items) or (gold and isinstance(it, dict) and it.get("name") == "Gold")
+        return isinstance(u, str) and H._bare(u) in items
     return [e for e in evs if not noise(e)]
 
 

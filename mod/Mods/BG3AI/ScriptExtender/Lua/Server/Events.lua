@@ -546,10 +546,13 @@ end)
 -- Items, containers, use
 ------------------------------------------------------------------------
 
--- AddedTo(item, holder, addType)
+-- AddedTo(item, holder, addType). Not for a gold stack: its count is the whole stack after the merge, and a
+-- payment adds the split-off coins to the payer first (w11 L1: a +52 g sale gave "item_added Gold count=402", paying
+-- 48 g "item_added Gold count=48"). GoldChanged below reports gold.
 listen("AddedTo", 3, function(item, holder, _)
     local h = V.uuid(holder)
     if not ctx().is_party[h or ""] then return end
+    if type(item) == "string" and item:find("^LOOT_Gold") then return end
     local u = V.uuid(item)
     local data = { owner = ref(h), item = ref(u) }
     local n = osi(Osi.GetStackAmount, u)
@@ -666,10 +669,28 @@ listen("ShortRested", 1, function(char)
 end)
 
 ------------------------------------------------------------------------
--- Polled facts: gold, newly spotted traps near the party.
+-- Gold: the game's GoldChanged(holder, delta), one event per change of the party's total (a move between party
+-- members nets out), pushed as it happens so the action's own result has it (the old 1 Hz poll of PartyGetGold
+-- was never seen in a result: w11 L1 trades showed only the gold stack's item_added).
 ------------------------------------------------------------------------
 
 E.lastGold = E.lastGold or nil
+
+listen("GoldChanged", 2, function(holder, delta)
+    local d = math.floor(tonumber(delta) or 0)
+    if d == 0 or not ctx().is_party[V.uuid(holder) or ""] then return end
+    local total = tonumber(osi(Osi.PartyGetGold, ctx().party[1]))
+    if not total then return end
+    total = math.floor(total)
+    local before = E.lastGold or (total - d)
+    E.lastGold = total
+    if total ~= before then RPC.push("gold_changed", { gold = total, delta = total - before }) end
+end)
+
+------------------------------------------------------------------------
+-- Polled facts: newly spotted traps near the party.
+------------------------------------------------------------------------
+
 E.knownTraps = E.knownTraps or {}
 E.lastPoll = 0
 
@@ -682,11 +703,6 @@ local function poll()
     ctxCache, ctxTime = c, t
     local host = c.party[1]
     if not host then return end
-    local gold = osi(Osi.PartyGetGold, host)
-    if gold and E.lastGold and gold ~= E.lastGold then
-        RPC.push("gold_changed", { gold = gold, delta = gold - E.lastGold })
-    end
-    E.lastGold = gold
     E.seedApproval(c)
     -- A trap became discovered near the party (the orange outline appears).
     local center = c.observers[1] and c.observers[1].pos

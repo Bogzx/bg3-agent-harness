@@ -511,17 +511,18 @@ class Tools(unittest.TestCase):
 
     def test_sell_junk_drops_the_sale_s_own_item_events(self):
         """Acceptance 12:21: every sold item of another member came back as 'item_added … owner=Claude' (the game
-        moves it to the trader-facing character first) plus 'Gold count=799'; other item events stay."""
+        moves it to the trader-facing character first); the SOLD line states the gold, so gold_changed goes too; other
+        item events stay."""
         trade = {"trader_gold": 40, "your_items": [{"uuid": _u(6), "price": 30}, {"uuid": _u(4), "price": 1}]}
         g = self.use(FakeGame(s026_inventory(), trade))
         claude = {"uuid": _u(1), "name": "Claude"}
         evs = [{"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(6), "name": "Crude Mace"}}},
-               {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(90), "name": "Gold"}, "count": 799}},
+               {"kind": "gold_changed", "data": {"gold": 799, "delta": 35}},
                {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(91), "name": "Strange Key"}}}]
         g.drain_events = lambda ctx: evs if ctx == "server" else []
         out = progression.trade(sell="junk")
         self.assertNotIn("Crude Mace", out)
-        self.assertNotIn("count=799", out)
+        self.assertNotIn("gold=799", out)
         self.assertIn("Strange Key", out)
         # late events of the sale are still dropped in the next call, then the window closes
         self.assertEqual(core._drop_events([evs[0]]), [])
