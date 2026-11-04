@@ -74,12 +74,13 @@ def options(spec: ArenaSpec, run_name: str) -> rstate.Options:
 
 def side_env(spec: ArenaSpec, side: str, prof: profiles.Profile | None, run_dir: Path) -> dict[str, str]:
     """The env a side's bg3 server gets on top of the runner's: its side, the arena's tools-off list (plus what the
-    profile's model can't use; no profile: the scripted client), the arena's per-turn cap (its rules state it), the
-    arena's prompt condition and its own memory dir (nothing fills it)."""
+    profile's model can't use; no profile: the scripted client), the arena's per-turn cap and turn order (its rules
+    state them), the arena's prompt condition and its own memory dir (nothing fills it)."""
     env = {
         "BG3AI_SIDE": side,
         "BG3AI_TOOLS_OFF": spec.tools_off,
         "BG3AI_ARENA_TURN_CAP_S": f"{spec.turn_cap_s:g}",  # the side's rules state it (rules/arena.md)
+        "BG3AI_ARENA_TURN_ORDER": spec.turn_order,  # so does its turn order
         "BG3AI_PROMPT_CONDITION": str(spec.arena.get("condition") or "rules"),
         "BG3AI_MEMORY_DIR": str(run_dir / f"memory-{side}"),
         "BG3AI_PLAYTHROUGH": f"{run_dir.name}-{side}",

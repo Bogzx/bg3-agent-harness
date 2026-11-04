@@ -9,8 +9,11 @@
 -- opening side's first open member in the rolled order, then the other side's, and so on (B|AA|B plays B1|A1|B2|A2).
 -- A side with nobody open left plays its members on in order. The arena file's turn_order picks the opening side:
 -- "alternate" (default) the side of the round's first living member in the rolled order; "snake" that for the match's
--- first round, then the other side each round. Every other open member is held until its phase. One arena_turn
--- record per phase (Ar.phase_check on the server tick), not per TurnStarted, which fires once per member of a group.
+-- first round, then the other side each round. With more than one turn group in a round (a summon, a split), the
+-- sides alternate inside each group only: alternate opens each group with its own first living member's side, snake
+-- opens every group of the round with the round's side, so A1 | A2 B1 B2 can happen (arena-v0 has played one group
+-- every round). Every other open member is held until its phase. One arena_turn record per phase (Ar.phase_check
+-- on the server tick), not per TurnStarted, which fires once per member of a group.
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -176,11 +179,18 @@ end
 -- is still open; else, after a phase of this round and group, the other side's first open member; else (the group's
 -- first phase this round) the opening side's. A side with nobody open: the other side's first open member. rule:
 -- "opening" | "alternate" | "only_side_left". first: the side the group's rolled order opens with (Ar.phase).
-local function pick(open, group, shared, round, first)
+-- members: all the group's members. The group is the last phase's while it holds that phase's character, whatever
+-- its id reads now (a Team that reads nil on one tick gives members[1]: O1 audit S3), and keeps that phase's opening.
+local function pick(open, group, shared, round, first, members)
     local st = Ar.state
     local last = st.phase
+    if last ~= nil and last.round == round and last.group ~= group then
+        for _, u in ipairs(members or {}) do
+            if u == last.character then group = last.group; break end
+        end
+    end
     local same = last ~= nil and last.round == round and last.group == group
-    local opening = openingSide(round, group, first)
+    local opening = same and last.opening or openingSide(round, group, first)
     local function phase(x, rule)
         return { side = x.s, character = x.u, members = { x.u }, group = group, shared = shared, rule = rule,
             opening = opening }
@@ -217,7 +227,8 @@ function Ar.phase(gs)
             end
         end
         if #open > 0 then
-            return pick(open, g.team or g.members[1], (sides.A and sides.B) == true, round, first or open[1].s)
+            return pick(open, g.team or g.members[1], (sides.A and sides.B) == true, round, first or open[1].s,
+                g.members)
         end
     end
     local open, by = {}, {}
@@ -233,7 +244,11 @@ function Ar.phase(gs)
     for _, s in ipairs({ first, other(first) }) do
         for _, u in ipairs(by[s]) do list[#list + 1] = { u = u, s = s } end
     end
-    return pick(list, nil, #by.A > 0 and #by.B > 0, round, first)
+    local all = {}
+    for _, s in ipairs(Ar.SIDES) do
+        for _, u in ipairs(Ar.state.teams[s]) do all[#all + 1] = u end
+    end
+    return pick(list, nil, #by.A > 0 and #by.B > 0, round, first, all) -- an unread tick keeps the last phase's group
 end
 
 -- The side acting now: the acting phase's side; with no team member's turn open, the side of the last team member

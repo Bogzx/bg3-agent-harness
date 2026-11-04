@@ -11,8 +11,7 @@ perceive. The other player's calls and text never reach you, only their effects 
 - Characters of both sides can share one turn group. Inside it the sides alternate one character at a time: the
   round's opening side's first character in the rolled initiative order, then the other side's first, then the
   opening side's second, and so on. A side with nobody left to act in the group: the other side's characters act on
-  in order. The opening side is set by the arena: either the side of the round's first character in the rolled
-  order, or the side that opened the match's first round, then the other side each round after.
+  in order. {turn_order}
 - `set_reactions` selects the character first, so it works only while one of your characters is acting; at another
   time it is refused: "<name> could not be selected: not your turn (side B is acting)".
 - An action with a character of the other team is refused: "<name> is not on your side". A job of the other side

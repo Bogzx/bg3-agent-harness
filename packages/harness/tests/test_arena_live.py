@@ -191,6 +191,26 @@ def test_a_sides_rules_state_its_arenas_turn_cap(tmp_path, name, cap):
         prompts().assemble("rules", arena=True)
 
 
+def test_a_sides_rules_state_its_arenas_turn_order(tmp_path):
+    """The auditor's O1 S3: the rules say which turn order the arena plays (a human is told the house rule), the
+    arena file's turn_order through the side's env; no placeholder is left and an unknown order is refused."""
+    from bg3harness import prompts, run_manifest
+
+    a = json.loads((Path(__file__).resolve().parents[2] / "bench" / "arenas" / "arena-v0.json").read_text())
+    texts = {}
+    for order in ("alternate", "snake"):
+        env = live.side_env(ArenaSpec.from_dict(dict(a, turn_order=order)), "B", None, tmp_path)
+        assert env["BG3AI_ARENA_TURN_ORDER"] == run_manifest.arena_turn_order(env) == order
+        asm = prompts().assemble("rules", arena=True, turn_cap_s=90.0, turn_order=env["BG3AI_ARENA_TURN_ORDER"])
+        texts[order] = " ".join(asm.text.split())
+        assert "{turn_order}" not in texts[order]
+    assert "each turn group opens, every round, with the side of its first living character" in texts["alternate"]
+    assert "the other side opens each round, in turn, in every turn group of that round" in texts["snake"]
+    assert run_manifest.arena_turn_order({}) == "alternate"
+    with pytest.raises(ValueError, match="turn_order"):
+        prompts().assemble("rules", arena=True, turn_cap_s=90.0, turn_order="initiative")
+
+
 def test_a_scripted_side_gets_the_scripted_client_its_sides_env_and_no_profile(tmp_path):
     from bg3harness.arena import scripted_client
 

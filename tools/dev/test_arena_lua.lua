@@ -27,7 +27,7 @@ osiv = {}         -- "Fn:a:b" -> value (queries)
 listeners = {}    -- Osiris event -> {fn}
 tickers = {}
 net = {}          -- Ext.Net broadcasts
-order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid...} (a turn group) each
+order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid..., team = id?} (a turn group) each
 partyRows = {}
 engineRound = 1  -- the combat's TurnOrder.Round
 replicated = {}   -- entity:Replicate calls, "uuid:Component" each
@@ -79,7 +79,7 @@ local function entity(u, bare)
         for _, m in ipairs(type(g) == "table" and g or { g }) do
             members[#members + 1] = { Entity = entity(m, true) }
         end
-        groups[#groups + 1] = { Members = members }
+        groups[#groups + 1] = { Members = members, Team = type(g) == "table" and g.team or nil }
     end
     e.CombatParticipant = { CombatHandle = { TurnOrder = { CurrentGroups = groups, Round = engineRound } } }
     return e

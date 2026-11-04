@@ -64,6 +64,11 @@ def arena_cap(environ: Mapping[str, str]) -> float | None:
     return float(cap)
 
 
+def arena_turn_order(environ: Mapping[str, str]) -> str:
+    """A side's turn order (its bridge serves the match's rules with it), the arena file's default when unset."""
+    return environ.get("BG3AI_ARENA_TURN_ORDER") or "alternate"
+
+
 def manifest_fields(
     client: str,
     version: str | None,
@@ -72,6 +77,7 @@ def manifest_fields(
     scenario: dict[str, Any] | None,
     instructions: str,
     arena_turn_cap_s: float | None = None,
+    arena_turn_order: str = "alternate",
 ) -> dict[str, Any]:
     """The run's manifest fields. tools: the bg3 tools every play process gets (the server's registry minus the
     session's BG3AI_TOOLS / BG3AI_TOOLS_OFF: client_setup.expected_tools' set); the prompt is assemble(condition,
@@ -82,8 +88,8 @@ def manifest_fields(
     serves it (bridge rules.load) and play/CLAUDE.md holds it (live9: a claude bench run with the memory tools off
     had an error instead of its hash). scenario: a v2 spec (packages/bench/scenarios); seed and timing are None
     without one. arena_turn_cap_s: a session playing one side of a two-team match (arena_cap of its env): the
-    match's rules come in as the side's bridge serves them, with that cap. Raises ValueError for an unknown condition
-    or client, as assemble does."""
+    match's rules come in as the side's bridge serves them, with that cap and arena_turn_order (arena_turn_order of
+    its env). Raises ValueError for an unknown condition or client, as assemble does."""
     on = set(tools)
     p = prompts()
     if p.CONDITIONS.get(condition):
@@ -92,7 +98,12 @@ def manifest_fields(
         caps = {c for c, names in p.CAPABILITIES.items() if set(names) <= on}
     arena = arena_turn_cap_s is not None
     asm = assemble(
-        condition, "mcp" if client not in p.CLIENTS else client, caps=caps, arena=arena, turn_cap_s=arena_turn_cap_s
+        condition,
+        "mcp" if client not in p.CLIENTS else client,
+        caps=caps,
+        arena=arena,
+        turn_cap_s=arena_turn_cap_s,
+        turn_order=arena_turn_order,
     )
     text = served_text(instructions, asm.text)
     parts = [{"file": INSTRUCTIONS_PART, "sha256": _sha(instructions.strip())}, *asm.parts]

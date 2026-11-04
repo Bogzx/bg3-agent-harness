@@ -172,3 +172,19 @@ test("a move's reactions as the mover's side sees them: an unseen reactor isn't 
     eq(r[1].by and r[1].by.uuid, B1, "a seen reactor is named")
     eq(r[1].name, "Fire Bolt", "and its spell")
 end)
+
+-- O1 audit S3 (REVIEW-8): one character a phase holds a side's second member until the other side's next phase;
+-- party_can_act listed it, so a side would try it ("it is not this character's turn").
+test("state.combat: a held own member isn't in party_can_act; the acting one is", function()
+    begin()
+    order = { { A1, B1, A2, B2 } }
+    for _, u in ipairs({ A1, B1, A2, B2 }) do
+        setTurn(u, true, false)
+        world[u].comps.TurnBased.CanActInCombat = true
+    end
+    tick()
+    eq(Ar.held(A2), true, "A2 waits for B1")
+    local ca, ra = combatAs("A")
+    eq(table.concat(ca.party_can_act or {}, ","), A1, "A's party_can_act: A1 only")
+    eq(enc({ ra[A1].can_act, ra[A2].can_act }), enc({ true, nil }), "the rows agree")
+end)

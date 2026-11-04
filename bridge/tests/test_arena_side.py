@@ -184,10 +184,16 @@ class Server(unittest.TestCase):
         self.assertFalse(off & set(served["batchable"]))
 
     def test_a_sides_server_serves_the_match_rules(self):
-        side = tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1", "BG3AI_ARENA_TURN_CAP_S": "60"})["instructions"]
+        from bg3ai import rules
+
+        env = {"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1", "BG3AI_ARENA_TURN_CAP_S": "60"}
+        side = tools(env)["instructions"]
         self.assertIn("## Two-team match", side)
+        orders = rules.prompts().TURN_ORDERS
         filled = ARENA_MD.read_text(encoding="utf-8").strip().replace("{turn_cap_s}", "60")
-        self.assertTrue(side.rstrip().endswith(filled))
+        self.assertTrue(side.rstrip().endswith(filled.replace("{turn_order}", orders["alternate"])))  # unset: default
+        snake = tools({**env, "BG3AI_ARENA_TURN_ORDER": "snake"})["instructions"]  # the arena's, from side_env
+        self.assertTrue(snake.rstrip().endswith(filled.replace("{turn_order}", orders["snake"])))
         self.assertIn("60 s of model time per character", " ".join(side.split()))
         with self.assertRaisesRegex(AssertionError, "BG3AI_ARENA_TURN_CAP_S"):  # no cap: no rules, no server
             tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1"})

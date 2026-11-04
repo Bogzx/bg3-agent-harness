@@ -84,6 +84,54 @@ test("a read between two turn starts of the round (B1's in, A1's not yet) doesn'
     eq(refs("arena_round")[1].first, "A", "arena_round")
 end)
 
+test("the group's Team reading nil on a tick mid-round (or no turn order): same group, the alternation goes on",
+    function()
+    begin({ turn_order = "snake" })
+    playRound(1, { A1, B1, B2, A2 })
+    fire("CombatRoundStarted", "combat1", 2)
+    order = { { A1, B1, B2, A2, team = "T1" } } -- round 2 opens with B (snake): B1, A1, B2, A2
+    openAll({ A1, B1, B2, A2 })
+    burst({ A1, B1, B2, A2 })
+    tick()
+    setTurn(B1, true, true)
+    order = { { A1, B1, B2, A2 } } -- Team nil: the group's id reads as its first member
+    tick()
+    local r = refs("arena_turn")
+    eq(enc({ r[#r].character, r[#r].phase, r[#r].rule, r[#r].group }), enc({ A1, 2, "alternate", "T1" }), "A1 next")
+    setTurn(A1, true, true)
+    order = {} -- the turn order doesn't read at all
+    tick()
+    r = refs("arena_turn")
+    eq(enc({ r[#r].character, r[#r].phase, r[#r].rule, r[#r].opening }), enc({ B2, 3, "alternate", "B" }), "B2 next")
+end)
+
+-- O1 audit S3 (d): more than one turn group in a round (arena-v0 has had one). Each group alternates on its own;
+-- alternate opens each with its own first living member's side, snake every group of the round with the round's.
+local function twoGroups(turn_order)
+    begin({ turn_order = turn_order })
+    playRound(1, { A1, B1, B2, A2 }) -- snake: A opened round 1
+    fire("CombatRoundStarted", "combat1", 2)
+    order = { { A1, B1 }, { A2, B2 } }
+    openAll({ A1, B1, A2, B2 })
+    burst({ A1, B1, A2, B2 })
+    local got, n0 = {}, #refs("arena_turn")
+    for _ = 1, 4 do
+        tick()
+        local r = refs("arena_turn")
+        got[#got + 1] = r[#r].side .. r[#r].phase .. ":" .. r[#r].opening .. ":" .. r[#r].rule
+        setTurn(r[#r].character, true, true)
+    end
+    eq(#refs("arena_turn") - n0, 4, turn_order .. ": four phases")
+    return table.concat(got, " ")
+end
+
+test("two turn groups in a round: alternate opens each by its own first member, snake both with the round's side",
+    function()
+    eq(twoGroups("alternate"), "A1:A:opening B2:A:alternate A1:A:opening B2:A:alternate", "alternate")
+    reset()
+    eq(twoGroups("snake"), "B1:B:opening A2:B:alternate B1:B:opening A2:B:alternate", "snake")
+end)
+
 test("a side with nobody open left plays its members on in order (only_side_left)", function()
     begin()
     osiv[key("IsDead", B2)] = 1
