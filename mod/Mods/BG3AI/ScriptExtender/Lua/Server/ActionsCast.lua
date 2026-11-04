@@ -292,6 +292,34 @@ function A.callers_near(p)
     return out
 end
 
+-- The weapon set a spell is cast with (live w10, live.md "Sneak cast probe load"): the hotbar pick of a melee action
+-- draws the melee weapons before the game checks the cast; an Osiris UseSpell checks it with the set as it is. Sneak
+-- Attack (Melee) with Cedar's bow drawn (WeaponSet / Unsheath "Ranged") was refused InvalidTarget, every time, and
+-- cast once a Main Hand Attack had drawn the swords. A spell whose Sheathing names a set (Melee, Ranged) switches the
+-- caster's WeaponSet to it first, as the player's weapon toggle does (free in BG3: no action, no resource), and is
+-- ordered once the set reads back with the other set no longer drawn; a switch that doesn't take fails the cast.
+A.WEAPON_SWITCH_MS = 1500
+local WEAPON_SETS = { Melee = "Melee", Ranged = "Ranged" }
+
+-- The set the spell needs when the caster's WeaponSet is another one, else nil (no set named, no weapon sets).
+function A.weapon_need(char, st)
+    local want = WEAPON_SETS[tostring(st and st.Sheathing or "")]
+    if not want then return nil end
+    local e = G.entity(char)
+    local ok, cur = pcall(function() return tostring(e.WeaponSet.WeaponSet) end)
+    if not ok or cur == want then return nil end
+    return want
+end
+
+-- The set reads want and the other set isn't drawn; and what was read.
+function A.weapon_ready(char, want)
+    local e = G.entity(char)
+    local _, set = pcall(function() return tostring(e.WeaponSet.WeaponSet) end)
+    local _, drawn = pcall(function() return tostring(e.Unsheath.State) end)
+    return set == want and drawn ~= (want == "Melee" and "Ranged" or "Melee"),
+        ("weapon set %s, %s drawn"):format(tostring(set), tostring(drawn))
+end
+
 local function resolve_spell(spell, upcast)
     if upcast then
         local variant = spell .. "_" .. tostring(upcast)
@@ -511,6 +539,21 @@ reg("cast", function(args)
         or A.CAST_NO_START_MS
     if ui then no_start_ms = A.CAST_UI_NO_START_MS end
     local walk_m = walk and walk.plan.length_m or 0
+    -- go(job) now, or once the weapon set the spell needs reads back (on_tick: job.switch)
+    local function with_weapons(job, go)
+        local want = A.weapon_need(char, bst)
+        if not want then return go(job) end
+        local e = G.entity(char)
+        local wrote, err = pcall(function()
+            e.WeaponSet.WeaponSet = want
+            e:Replicate("WeaponSet")
+        end)
+        if not wrote then
+            return RPC.finish_job(job, "failed", nil, "the switch to the " .. want:lower() .. " weapons failed ("
+                .. tostring(err) .. "): not cast")
+        end
+        job.switch = { want = want, t = RPC.now_ms(), go = go }
+    end
     local function order(job)
         job.osi_task = "spell"
         job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
@@ -601,6 +644,19 @@ reg("cast", function(args)
         }),
         on_tick = function(job)
             if A.roll_stop_tick(job) then return end
+            local sw = job.switch
+            if sw then
+                local ready, read = A.weapon_ready(char, sw.want)
+                if ready then
+                    job.switch = nil
+                    return sw.go(job)
+                end
+                if RPC.now_ms() - sw.t >= A.WEAPON_SWITCH_MS then
+                    RPC.finish_job(job, "failed", nil, ("the switch to the %s weapons didn't take (%s after %.1f s):"
+                        .. " not cast"):format(sw.want:lower(), read, A.WEAPON_SWITCH_MS / 1000))
+                end
+                return
+            end
             if job.phase == "approach" then return approach_tick(job) end
             if job.ui_failed and job.clicked_ms and not job.casted and not job.began
                 and RPC.now_ms() - job.clicked_ms >= A.CAST_UI_REFUSED_MS then
@@ -817,11 +873,13 @@ reg("cast", function(args)
                     end
                     check = c
                     j.walked = U.round(walk_m, 1)
-                    j.osi_task = "spell"
-                    j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
-                    A.cast_rolls(j, char, spell, targets[1])
-                    G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
-                    A.give_second_pick(j, char, spell, targets, landing)
+                    with_weapons(j, function(jj)
+                        jj.osi_task = "spell"
+                        jj.ordered_ms, jj.ordered_pos = RPC.now_ms(), G.pos(char)
+                        A.cast_rolls(jj, char, spell, targets[1])
+                        G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
+                        A.give_second_pick(jj, char, spell, targets, landing)
+                    end)
                 end)
             end
             if ui then
@@ -836,7 +894,7 @@ reg("cast", function(args)
             if pos and base == "Projectile_Jump" and BG3AI.Nav and BG3AI.Nav.inflight then
                 job.jump_marked = pcall(BG3AI.Nav.inflight, "jump", pos)
             end
-            order(job)
+            with_weapons(job, order)
         end,
         on_finish = function(job)
             if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker
