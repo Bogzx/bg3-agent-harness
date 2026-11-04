@@ -585,12 +585,12 @@ class ToolCheck(unittest.TestCase):
         r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
         self.assertEqual(r.status, "failed")
         self.assertIn("nobody in the party carries Thieves' Tools", r.error)
-        self.assertIn("force it", r.error)
+        self.assertIn("an attack on the lock or door", r.error)
         self.assertEqual(g.jobs, [])  # never walked up or clicked
 
     def test_other_member_has_tools(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U2", "in": "Pouch"}])
-        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does: run it again with who=Shadowheart",
+        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does (who=Shadowheart)",
                       clicker.tool_check(g, "act.lockpick", "U1"))
         r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
         self.assertEqual(g.jobs, ["act.lockpick"])  # the holder picks it instead

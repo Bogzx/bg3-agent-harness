@@ -344,7 +344,7 @@ class Watcher:
                 if hit:
                     del self._traps[tu]
                     return "trap", (f"TRAP spotted on the way: {tu} {d:.1f}m from {r.get('uuid')}; the walk stopped "
-                                    "short of it (disarm it, or walk around it)")
+                                    "short of it")
         return None
 
     def check(self, tool: str | None, next_tool: str | None, ui: bool | None = None) -> tuple[str, str] | None:
