@@ -107,6 +107,31 @@ test("an ability check (no skill) is labelled with the ability", function()
     eq(op({}).answers[3].roll, "Strength")
 end)
 
+-- w11 L3 D1: bg3le gives Roll.Skill / Roll.Ability as enum userdata (tostring = the label): "answer 3: roll unread".
+-- A real userdata (a temp file handle) gets its own metatable here, as plain Lua can't make one otherwise.
+local function enum(label)
+    local u = io.tmpfile()
+    debug.setmetatable(u, { __tostring = label and function() return label end or nil })
+    return u
+end
+
+test("Skill / Ability as enum userdata read through tostring", function()
+    local i, n = cage()
+    n.r3.Roll = { Skill = enum("Persuasion"), Ability = enum("Charisma") }
+    n.r4.Roll = { Skill = enum("None"), Ability = enum("Charisma") }
+    inst_of[P1] = i
+    local r = op({})
+    eq(r.why, nil)
+    eq(r.answers[3].roll, "Persuasion"); eq(r.answers[4].roll, "Charisma"); eq(r.answers[4].tags[1], "Paladin")
+end)
+
+test("a userdata with no label (bare 'userdata: 0x..') is still unread", function()
+    local i, n = cage()
+    n.r3.Roll = { Skill = enum(nil) }
+    inst_of[P1] = i
+    eq(op({}).why, "answer 3: roll unread")
+end)
+
 test("a tag whose name doesn't read refuses the whole answer list", function()
     local i, n = cage()
     n.r4.CheckFlags = flags("Tag", { { Uuid = "gUnknown", Value = true } })
