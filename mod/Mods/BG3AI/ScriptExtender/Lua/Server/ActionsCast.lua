@@ -320,6 +320,14 @@ function A.weapon_ready(char, want)
         ("weapon set %s, %s drawn"):format(tostring(set), tostring(drawn))
 end
 
+-- REVIEW-17 F6: a Canceled jump's words, decided A.JUMP_CANCEL_WINDOW_MS after its failure: the cancel for the attack
+-- it drew when a foe's interrupt came within that window of the failure (either order), else the engine's words.
+local function jump_cancel_why(job, why)
+    local jc = job.jump_cancel
+    if jc and A.foe_interrupted(job, jc.t) then return A.JUMP_AOO_CANCELLED end
+    return why
+end
+
 local function resolve_spell(spell, upcast)
     if upcast then
         local variant = spell .. "_" .. tostring(upcast)
@@ -614,15 +622,19 @@ reg("cast", function(args)
                     return
                 end
                 local why = A.cast_failed_why(char, targets[1], spell, job)
-                if base == "Projectile_Jump" and select(2, A.engine_refusal(job)) == "Canceled"
-                    and A.foe_interrupted(job) then
-                    why = A.JUMP_AOO_CANCELLED -- the engine's cancel, not a refusal of the landing (A.foe_interrupted)
+                if base == "Projectile_Jump" and select(2, A.engine_refusal(job)) == "Canceled" then
+                    -- maybe the engine's cancel for a drawn attack: decided in on_tick (jump_cancel_why)
+                    job.jump_cancel = job.jump_cancel or { t = G.now_ms() }
                 end
                 if job.ui and not job.clicked_ms and not job.began then
                     -- L8 23:59 (se, Dimension Door): picking the level in the upcast picker sent this 0.12 s
                     -- before the first target click, and the job failed while the bridge went on clicking. In the
                     -- hotbar route it is held until the bridge's clicks are done (act.ui_clicked).
                     job.ui_failed = job.ui_failed or why
+                    return
+                end
+                if job.jump_cancel then
+                    job.jump_cancel.why = job.jump_cancel.why or why
                     return
                 end
                 RPC.finish_job(job, "failed", nil, why)
@@ -651,6 +663,13 @@ reg("cast", function(args)
             end,
         }),
         on_tick = function(job)
+            local jc = job.jump_cancel
+            if jc and jc.why and not job.ui_failed then
+                if G.now_ms() - jc.t > A.JUMP_CANCEL_WINDOW_MS then
+                    RPC.finish_job(job, "failed", nil, jump_cancel_why(job, jc.why))
+                end
+                return
+            end
             if A.roll_stop_tick(job) then return end
             local sw = job.switch
             if sw then
@@ -668,7 +687,7 @@ reg("cast", function(args)
             if job.phase == "approach" then return approach_tick(job) end
             if job.ui_failed and job.clicked_ms and not job.casted and not job.began
                 and RPC.now_ms() - job.clicked_ms >= A.CAST_UI_REFUSED_MS then
-                RPC.finish_job(job, "failed", nil, job.ui_failed)
+                RPC.finish_job(job, "failed", nil, jump_cancel_why(job, job.ui_failed))
                 return
             end
             if job.state_ms and not job.began then job.began, job.hp0 = true, hp_of(char) end
