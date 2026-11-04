@@ -413,9 +413,8 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
         if hz:
-            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}. Go around it"
-                           " (another direction, get_frontier) or "
-                           f"{macros.hazard_way_out(res.get('hazard'))}.", t0)
+            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz} "
+                           f"({macros.hazard_fact(res.get('hazard'))}).", t0)
         body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
                 + (f" ({n} spots checked)" if n is not None else ""))
         note = render.opened_note(res, core.H)
@@ -425,8 +424,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
         if not hint and not others:
             hint = _wedged_hint(args.get("char"), args.get("pos")).lstrip("; ")
-        return reporting._finish("walk_toward", args, body + ("\n" + hint if hint else others + "." if others else
-                                                    ". Try another direction, get_frontier, or a door."), t0)
+        return reporting._finish("walk_toward", args, body + ("\n" + hint if hint else others + "."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
     if res.get("path_m") is not None:
         head += f" (path {render.num(res['path_m'])}m{', winding' if res.get('winding') else ''})"

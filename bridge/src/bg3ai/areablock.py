@@ -69,20 +69,20 @@ class AreaBlock:
         return bool(b and pos and b.get("pos") and macros.dist(pos, b["pos"]) >= RECHECK_M)
 
     def way_out(self, level: Any, pos: Any, offset: bool = True) -> str:
-        """'walk to (-45,-46,1006) 40m W (travel_to x,y,z), where travel last worked', else toward the nearest
-        unlocked waypoint of the level (the block's wps). offset=False: without the distance (the ALERTS phrase
-        must not change with every step, or it is reprinted on every look)."""
+        """The exit as a fact (D630): 'travel last worked at (-45,-46,1006) 40m W', else the level's nearest
+        unlocked waypoint (the block's wps), else that none is known. offset=False: without the distance (the
+        ALERTS phrase must not change with every step, or it is reprinted on every look)."""
         off = (lambda a, b: " " + _off(a, b)) if offset else (lambda a, b: "")
         ok = self.ok.get(str(level))
         if ok and pos:
-            return f"walk to {_xyz(ok)}{off(pos, ok)} (travel_to x,y,z), where travel last worked"
+            return f"travel last worked at {_xyz(ok)}{off(pos, ok)}"
         b = self.current(level) or {}
         near = [w for w in b.get("wps") or [] if isinstance(w, dict) and w.get("pos")]
         if near and pos:
             w = min(near, key=lambda w: macros.dist(b.get("pos") or pos, w["pos"]))
-            return (f"walk out the way you came, e.g. toward the {w.get('name')} waypoint {_xyz(w['pos'])}"
-                    f"{off(pos, w['pos'])} (travel_to x,y,z: travel_to waypoint= is a fast travel, refused too)")
-        return "walk out the way you came (travel_to x,y,z back to where camp or fast_travel last worked)"
+            return (f"the nearest waypoint is {w.get('name')} at {_xyz(w['pos'])}{off(pos, w['pos'])} (travel_to "
+                    "waypoint= is a fast travel, refused here too)")
+        return "no spot on this level where travel worked is known"
 
     def note(self, b: dict, tool: str) -> str:
         """The repeat note for a refusal: ' Same story-area block as camp at 12:00:01: ...' ('' on the first)."""
@@ -97,5 +97,5 @@ class AreaBlock:
         b = self.current(level)
         if b is None:
             return ""
-        return (f"travel blocked here (story area, {b['err']}): no {TOOLS}; way out: "
+        return (f"travel blocked here (story area, {b['err']}): no {TOOLS}; "
                 + self.way_out(level, pos, offset=False))

@@ -1259,7 +1259,7 @@
  {
   "name": "fast_travel",
   "title": null,
-  "description": "Travel to an unlocked waypoint (name or id from get_map). Not possible in combat. From camp it leaves camp\nfirst (everyone comes along), then travels. Only the selected member's group travels: members apart and unchained\nstay where they are (the result says LEFT BEHIND and the one call that travels each of them).",
+  "description": "Travel to an unlocked waypoint (name or id from get_map). Not possible in combat. From camp it leaves camp\nfirst (everyone comes along), then travels. Only the selected member's group travels: members apart and unchained\nstay where they are (the result says LEFT BEHIND, who and where).",
   "input_schema": {
    "properties": {
     "waypoint": {

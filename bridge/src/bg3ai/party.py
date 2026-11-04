@@ -101,19 +101,17 @@ def _where(r: dict, far_m: float = APART_M) -> str:
 
 
 def apart_line(rows: list[dict], label: Callable[[str], str], far_m: float = APART_M) -> str:
-    """'PARTY APART: e1 Lae'zel 34m, e3 Gale other level → regroup()' ('' when everyone is together).
-    Members told to stay are listed as such; an unchained member near the leader as 'unchained'."""
-    bits, fix = [], False
+    """'PARTY APART: e1 Lae'zel 34m, e3 Gale other level' ('' when everyone is together): who and where (D630: no
+    '→ regroup()'). Members told to stay are listed as such; an unchained member near the leader as 'unchained'."""
+    bits = []
     for r in rows:
         what = _where(r, far_m)
         if r["stay"]:
             what += " (staying)"
-        else:
-            fix = fix or r["other_level"] or (r["dist"] or 0) > far_m or r["unchained"] or bool(r.get("dy"))
         bits.append(f"{label(r['uuid'])} {what}")
     if not bits:
         return ""
-    return "PARTY APART: " + ", ".join(bits) + (" → regroup()" if fix else "")
+    return "PARTY APART: " + ", ".join(bits)
 
 
 def rechain_candidates(rows: list[dict], busy: Callable[[str], bool]) -> list[str]:
@@ -209,9 +207,6 @@ def game_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str],
         if sealed_from:
             line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?)")
         elif in_combat:
-            line += f" → in combat: move_to who={label(who).split(' ')[0]} moves each toward them on its own turn"
-        else:
-            line += (f" → regroup(leader={label(who).split(' ')[0]}) walks them to {label(who)} (their walks keep "
-                     "going through a conversation they are not in)")
+            line += "; the party is in combat"
         out.append(line)
     return "\n".join(out)

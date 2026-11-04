@@ -22,9 +22,9 @@ class RenderPathTest(unittest.TestCase):
 
 class HazardWayOutTest(unittest.TestCase):
     def test_chasm_never_burns_out(self):
-        self.assertNotIn("burn out", macros.hazard_way_out({"surface": "Chasm"}))
-        self.assertIn("burn out", macros.hazard_way_out({"surface": "Fire"}))
-        self.assertIn("burn out", macros.hazard_way_out(None))
+        self.assertEqual(macros.hazard_fact({"surface": "Chasm"}), "it does not burn out")  # D630: facts, no advice
+        self.assertEqual(macros.hazard_fact({"surface": "Fire"}), "a surface like it burns out in time")
+        self.assertEqual(macros.hazard_fact(None), "a surface like it burns out in time")
 
 
 if __name__ == "__main__":
