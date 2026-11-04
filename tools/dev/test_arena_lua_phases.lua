@@ -1,6 +1,6 @@
--- Part of test_arena_lua.lua (split for the 1000-line cap): team phases. The game puts adjacent player characters of
--- both teams into one shared turn group (live spike: all 8 in one group); the arena plays it as phases, one same-side
--- run of the group's open members each, one arena_turn record per phase from the server tick.
+-- Part of test_arena_lua.lua (split for the 1000-line cap): phases. The game puts adjacent player characters of both
+-- teams into one shared turn group (live spike: all 8 in one group); the arena plays it as phases of one character,
+-- the sides alternating (seat fix D643), one arena_turn record per phase from the server tick.
 -- test_arena_lua.lua runs it after its stubs and helpers, shared as globals.
 
 local function openAll(us)
@@ -17,7 +17,7 @@ end
 
 local function members(r) return table.concat(r.members, ",") end
 
-test("a group B|AA|B: 3 phases in order, one arena_turn each, none from the TurnStarted burst", function()
+test("a group B|AA|B plays B1|A1|B2|A2: one character a phase, sides alternating, one arena_turn each", function()
     begin()
     fire("CombatRoundStarted", "combat1", 2)
     order = { { B1, A1, A2, B2 } }
@@ -27,15 +27,11 @@ test("a group B|AA|B: 3 phases in order, one arena_turn each, none from the Turn
     tick()
     local r = refs("arena_turn")
     eq(#r, 1, "phase 1 recorded")
-    eq(r[1].side, "B", "phase 1 side")
-    eq(r[1].character, B1, "phase 1 character")
-    eq(members(r[1]), B1, "phase 1 members")
-    eq(r[1].phase, 1, "phase 1 index")
-    eq(r[1].round, 2, "round")
-    eq(r[1].group, B1, "group: its first member (no Team read)")
-    eq(r[1].shared, true, "shared")
+    eq(enc({ r[1].side, r[1].character, members(r[1]), r[1].phase, r[1].round, r[1].group, r[1].shared }),
+        enc({ "B", B1, B1, 1, 2, B1, true }), "phase 1: B1 alone")
+    eq(enc({ r[1].order, r[1].opening, r[1].rule }), enc({ "alternate", "B", "opening" }), "why B")
     eq(Ar.held(A1), true, "A1 waits")
-    eq(Ar.held(B2), true, "B2, a later run of B, waits")
+    eq(Ar.held(B2), true, "B2 waits")
     refused(function() as("B", G.combat_gate, B2, "turn") end, "it is not this character's turn")
     tick()
     eq(#refs("arena_turn"), 1, "no change, no record")
@@ -45,25 +41,23 @@ test("a group B|AA|B: 3 phases in order, one arena_turn each, none from the Turn
     eq(#refs("arena_turn"), 1, "throttled")
     tick()
     r = refs("arena_turn")
-    eq(#r, 2, "phase 2 recorded")
-    eq(r[2].side, "A", "phase 2 side")
-    eq(members(r[2]), A1 .. "," .. A2, "phase 2 members")
-    eq(r[2].phase, 2, "phase 2 index")
-    eq(Ar.held(B2), true, "B2 still waits")
-    refused(function() as("B", G.combat_gate, B2, "turn") end, "not your turn (side A is acting)")
+    eq(enc({ #r, r[2].side, members(r[2]), r[2].phase, r[2].rule }), enc({ 2, "A", A1, 2, "alternate" }),
+        "phase 2: A1, not A1+A2")
+    eq(Ar.held(A2), true, "A2 waits for B2")
+    refused(function() as("A", G.combat_gate, A2, "turn") end, "it is not this character's turn")
     setTurn(A1, true, true)
-    setTurn(A2, true, true)
     tick()
     r = refs("arena_turn")
-    eq(#r, 3, "phase 3 recorded")
-    eq(r[3].side, "B", "phase 3 side")
-    eq(members(r[3]), B2, "phase 3 members")
-    eq(r[3].phase, 3, "phase 3 index")
+    eq(enc({ #r, r[3].side, members(r[3]), r[3].phase }), enc({ 3, "B", B2, 3 }), "phase 3: B2")
     eq(Ar.held(B2), false, "B2 acts")
     as("B", G.combat_gate, B2, "turn")
+    setTurn(B2, true, true)
+    tick()
+    r = refs("arena_turn")
+    eq(enc({ #r, r[4].side, members(r[4]), r[4].phase }), enc({ 4, "A", A2, 4 }), "phase 4: A2")
 end)
 
-test("single-side groups: one phase each, not shared; the next group starts at phase 1", function()
+test("single-side groups: one character a phase, not shared; the next group starts at phase 1", function()
     begin()
     fire("CombatRoundStarted", "combat1", 1)
     order = { { A1, A2 }, B1, B2 }
@@ -77,7 +71,7 @@ test("single-side groups: one phase each, not shared; the next group starts at p
     tick()
     local r = refs("arena_turn")
     eq(#r, 2, "two records")
-    eq(members(r[1]), A1 .. "," .. A2, "A's group, both members")
+    eq(members(r[1]), A1, "A's group: A1 first, alone")
     eq(r[1].shared, false, "A's group not shared")
     eq(r[1].phase, 1, "A's phase")
     eq(r[2].side, "B", "B1's group")
@@ -135,27 +129,32 @@ test("a phase change is a turn boundary: a side all down ends the match, no aren
     eq(#refs("arena_turn"), 0, "no record after the end")
 end)
 
-test("a phase's names: each member's display name in members' order, a summon's included", function()
+test("a phase's names: its character's display name; a summon's turn is a phase of its side", function()
     begin()
     order = { { A1, SA, B1 } }
     openAll({ A1, SA, B1 })
     tick()
     local r = refs("arena_turn")
-    eq(#r, 1, "one record")
-    eq(members(r[1]), A1 .. "," .. SA, "A1 and its summon")
-    eq(table.concat(r[1].names, ","), "Ana,Aspect", "names")
+    eq(enc({ #r, members(r[1]), table.concat(r[1].names, ",") }), enc({ 1, A1, "Ana" }), "A1")
+    setTurn(A1, true, true)
+    tick()
+    setTurn(B1, true, true)
+    tick()
+    r = refs("arena_turn")
+    eq(enc({ #r, r[3].side, members(r[3]), table.concat(r[3].names, ","), r[3].rule }),
+        enc({ 3, "A", SA, "Aspect", "alternate" }), "the summon's phase after B1")
 end)
 
 test("a member without a display name: 'Unknown' in names, which stays as long as members", function()
     begin()
-    NAMES[A2] = nil
+    NAMES[A1] = nil
     order = { { A1, A2, B1 } }
     openAll({ A1, A2, B1 })
     tick()
-    NAMES[A2] = "Abe"
+    NAMES[A1] = "Ana"
     local r = refs("arena_turn")[1]
     eq(#r.names, #r.members, "as many names as members")
-    eq(table.concat(r.names, ","), "Ana,Unknown", "names")
+    eq(table.concat(r.names, ","), "Unknown", "names")
 end)
 
 -- act.end_turn as a side's bridge (or the harness, side nil) sends it; the job it started.
@@ -171,29 +170,27 @@ local function has(list, u)
     return false
 end
 
-test("live load2: a phase's last end is pending while the other phase is still to act; B's phase opens", function()
+test("live load2: each end is pending while the rest is still to act; A1|B1|A2|B2, the last end closes", function()
     begin()
     order = { { A1, A2, B1, B2 } }
     openAll({ A1, A2, B1, B2 })
     tick()
     local j = endTurn(A2, "A")
     ticks(2)
-    eq(j.status, "done", "A2's end")
-    eq(j.result.requested, true, "A2's end pending (A1 still to act)")
-    j = endTurn(A1, "A") -- the phase's last member: the game keeps the group open for B
-    ticks(2)
-    eq(j.status, "done", "A1's end: " .. tostring(j.error))
-    eq(j.result.requested, true, "A1's end pending")
-    eq(has(j.result.still_to_act, B1) and has(j.result.still_to_act, B2), true, "B still to act")
-    tick()
+    eq(j.status, "failed", "A2 is held: A1 opens") -- one character a phase: A2 after B1
+    for _, d in ipairs({ { A1, "A" }, { B1, "B" }, { A2, "A" } }) do
+        eq(Ar.acting_side(), d[2], "acting at " .. d[1])
+        j = endTurn(d[1], d[2])
+        ticks(2)
+        eq(j.status, "done", d[1] .. "'s end: " .. tostring(j.error))
+        eq(j.result.requested, true, d[1] .. "'s end pending")
+        eq(has(j.result.still_to_act, B2), true, "B2 still to act after " .. d[1])
+        tick()
+    end
     local r = refs("arena_turn")
-    eq(#r, 2, "phase 2 recorded")
-    eq(r[2].side, "B", "phase 2 side")
-    eq(members(r[2]), B1 .. "," .. B2, "phase 2 members")
-    eq(Ar.acting_side(), "B", "acting")
-    j = endTurn(B1, "B")
-    ticks(2)
-    eq(j.result and j.result.requested, true, "B1's end pending (B2 still to act)")
+    local got = {}
+    for _, x in ipairs(r) do got[#got + 1] = x.side .. ":" .. members(x) end
+    eq(table.concat(got, " "), "A:" .. A1 .. " B:" .. B1 .. " A:" .. A2 .. " B:" .. B2, "the phases")
     j = endTurn(B2, "B") -- the group's last end: nobody is still to act, the game closes the group
     tick()
     eq(j.status, "running", "B2's end waits for the game")
@@ -309,16 +306,16 @@ test("live load2 replay: ends 30.5 s apart, B held 35 s: no ended member reopens
         ticks(math.floor(30500 / Ar.PHASE_EVERY_MS))
     end
     drive(A1, "A")
-    drive(A2, "A")
     ticks(math.floor(35000 / Ar.PHASE_EVERY_MS)) -- B's first phase held
-    drive(B1, "B")                              -- A1's end is now over 120 s old
+    drive(B1, "B")
+    drive(A2, "A")                              -- A1's end is now over 120 s old
     eq(G.is_my_turn(A1), false, "A1 stays ended")
     local j = endTurn(B2, "B")                  -- the group's last end
     tick()
     eq(j.status, "running", "B2's end waits for the game")
-    for _, r in ipairs(refs("arena_turn")) do
-        if r.phase > 2 then eq(r.side, "B", "no phase back to A (phase " .. r.phase .. ")") end
-    end
+    local sides = ""
+    for _, r in ipairs(refs("arena_turn")) do sides = sides .. r.side end
+    eq(sides, "ABAB", "no reopened member's phase")
     for _, u in ipairs({ A1, A2, B1, B2 }) do setTurn(u, false, false) end
     for _, u in ipairs({ A1, A2, B1, B2 }) do fire("TurnEnded", "S_Player_" .. u) end
     tick()
@@ -441,27 +438,29 @@ test("a phase passed whole between two of the other side's: both recorded, the p
         world[A1].comps.Health.Hp = 0
         burst({ A1, A2, B1, A3, B2, B3 })
         deathSave(A1, false)
-        tick()
+        tick() -- A1 passed (phase 1), B1's phase 2
         clock = clock + Ar.DEATH_SAVE_WAIT_MS -- the phases take longer than the save's wait
-        setTurn(A2, true, true) -- Gale ends
-        tick()
-        osiv[key("HasActiveStatus", A3, "DOWNED")] = 1 -- Karlach downs Lae'zel, then ends
-        world[A3].comps.Health.Hp = 0
         setTurn(B1, true, true)
-        tick()
+        tick() -- A2's phase 3
+        osiv[key("HasActiveStatus", A3, "DOWNED")] = 1 -- Gale downs Lae'zel, then ends
+        world[A3].comps.Health.Hp = 0
+        setTurn(A2, true, true)
+        tick() -- B2's phase 4
+        setTurn(B2, true, true)
+        tick() -- A3 passed (phase 5), B3's phase 6
         local got = {}
         for _, r in ipairs(refs("arena_turn")) do got[#got + 1] = r.side .. r.phase .. "[" .. members(r) .. "]" end
-        eq(table.concat(got, " "), "A1[" .. A2 .. "] B2[" .. B1 .. "] B4[" .. B2 .. "," .. B3 .. "]", "the phases")
+        eq(table.concat(got, " "), "B2[" .. B1 .. "] A3[" .. A2 .. "] B4[" .. B2 .. "] B6[" .. B3 .. "]", "the phases")
         local passed = {}
         for _, r in ipairs(refs("arena_turn_passed")) do passed[#passed + 1] = r.character end
         eq(table.concat(passed, ","), A1 .. "," .. A3, "Astarion's and Lae'zel's turns passed")
-        eq(Ar.held(B2), false, "Minthara acts")
+        eq(Ar.held(B3), false, "B3 acts")
     end)
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end
 end)
 
-test("the rest of a recorded phase passed: still that phase, the next one takes the next number", function()
+test("a character passed in its own phase: that phase's number taken, the other side's next takes the next", function()
     rawset(Osi, "EndTurn", function() end)
     local ok, err = pcall(function()
         begin()
@@ -469,15 +468,17 @@ test("the rest of a recorded phase passed: still that phase, the next one takes 
         order = { { A1, A2, B1, B2 } }
         openAll({ A1, A2, B1, B2 })
         burst({ A1, A2, B1, B2 })
-        tick() -- A [A1, A2], phase 1
+        tick() -- A1, phase 1
         setTurn(A1, true, true)
         clock = clock + Ar.DEATH_SAVE_WAIT_MS -- its turn started long before: no save to wait for
-        osiv[key("HasActiveStatus", A2, "DOWNED")] = 1 -- downed in its own phase, before acting
+        tick() -- B1, phase 2
+        setTurn(B1, true, true)
+        osiv[key("HasActiveStatus", A2, "DOWNED")] = 1 -- downed before its phase
         world[A2].comps.Health.Hp = 0
-        tick()
+        tick() -- A2 passed (phase 3), B2's phase 4
         local r = refs("arena_turn")
         eq(#refs("arena_turn_passed"), 1, "A2 passed")
-        eq(enc({ r[2].side, members(r[2]), r[2].phase }), enc({ "B", B1 .. "," .. B2, 2 }), "B's phase is the 2nd")
+        eq(enc({ r[3].side, members(r[3]), r[3].phase }), enc({ "B", B2, 4 }), "B2's phase is the 4th")
     end)
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end
@@ -497,6 +498,7 @@ test("a member at 0 HP without DOWNED: its turn is passed as zero_hp and the nex
         burst({ A1, B1, A2, B2 })
         tick() -- A [A1]
         setTurn(A1, true, true)
+        tick() -- B [B1]
         setTurn(B1, true, true)
         world[A2].comps.Health.Hp = 0 -- no DOWNED, not dead
         tick()
@@ -645,20 +647,20 @@ test("the group's last open member passed: the group's ends written; no ended me
         openAll(grp)
         burst(grp)
         tick()
-        for _, d in ipairs({ { A1, "A" }, { B1, "B" }, { B2, "B" } }) do
+        for _, d in ipairs({ { A1, "A" }, { B1, "B" }, { A2, "A" } }) do -- one character a phase: A2 before B2
             local j = endTurn(d[1], d[2])
             ticks(2)
             eq(j.status, "done", d[1] .. "'s end: " .. tostring(j.error))
             eq(j.result.requested, true, d[1] .. "'s end pending")
         end
         local phases, sent = #refs("arena_turn"), #ended -- the three act.end_turn EndTurns
-        osiv[key("HasActiveStatus", A2, "DOWNED")] = 1 -- downed in B's phase
-        world[A2].comps.Health.Hp = 0
+        osiv[key("HasActiveStatus", B2, "DOWNED")] = 1 -- downed in A2's phase
+        world[B2].comps.Health.Hp = 0
         tick()
-        eq(enc({ #ended - sent, ended[#ended] }), enc({ 1, A2 }), "A2's turn passed")
+        eq(enc({ #ended - sent, ended[#ended] }), enc({ 1, B2 }), "B2's turn passed")
         ticks(math.floor((G.END_DROP_MS + 2000) / Ar.PHASE_EVERY_MS))
-        eq(#refs("arena_turn"), phases, "no phase after the pass (B1/B2 never reopen)")
-        for _, u in ipairs({ B1, B2 }) do eq(Ar.open(u), false, u .. " not open") end
+        eq(#refs("arena_turn"), phases, "no phase after the pass (B1/A2 never reopen)")
+        for _, u in ipairs({ B1, A2 }) do eq(Ar.open(u), false, u .. " not open") end
         local rep = {}
         for _, u in ipairs(grp) do rep[#rep + 1] = u .. ":TurnBased" end
         eq(table.concat(replicated, ","), table.concat(rep, ","), "the group's ends written once, at the pass")
@@ -673,17 +675,16 @@ test("a pass with a member still to act after it writes nothing: that member's t
         openAll(grp)
         burst(grp)
         tick()
-        for _, d in ipairs({ { B1, "B" }, { B2, "B" } }) do
-            local j = endTurn(d[1], d[2])
-            ticks(2)
-            eq(j.result and j.result.requested, true, d[1] .. "'s end pending")
-        end
+        local j = endTurn(B1, "B")
+        ticks(2)
+        eq(j.result and j.result.requested, true, "B1's end pending")
+        clock = clock + Ar.DEATH_SAVE_WAIT_MS
         osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
         world[A1].comps.Health.Hp = 0
         tick()
         eq(#refs("arena_turn_passed"), 1, "A1 passed")
-        eq(#replicated, 0, "no write: A2 is still to act")
-        eq(G.is_my_turn(A2), true, "A2 acts")
+        eq(#replicated, 0, "no write: B2 and A2 are still to act")
+        eq(G.is_my_turn(B2), true, "B2 acts (B after A1's passed turn)")
     end)
 end)
 
@@ -709,7 +710,7 @@ test("a downed member at its turn start: passed only after its death save; a thi
         tick()
         eq(#ended, 0, "not passed"); eq(#refs("arena_turn_passed"), 0, "no pass record")
         local r = refs("arena_turn")
-        eq(enc({ r[1].side, members(r[1]) }), enc({ "A", A1 .. "," .. A2 }), "A1 acts in A's phase")
+        eq(enc({ r[1].side, members(r[1]) }), enc({ "A", A1 }), "A1 acts in its phase")
         eq(Ar.held(A1), false, "A1 acts")
     end)
     rawset(Osi, "EndTurn", nil)
@@ -732,13 +733,13 @@ test("a downed member whose save doesn't come in DEATH_SAVE_WAIT_MS: passed, rec
         tick(); tick()
         eq(table.concat(ended, ","), A1, "passed after the bound")
         eq(refs("arena_turn_passed")[1].death_save, "none in time", "said")
-        eq(members(refs("arena_turn")[1]), A2, "A2's phase")
+        eq(members(refs("arena_turn")[1]), B1, "B1's phase (B after A1's passed turn)")
     end)
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end
 end)
 
-test("a member passed, then standing up with its turn reset (a late third success): readmitted to its phase",
+test("a member passed, then standing up with its turn reset (a late third success): readmitted, A's next phase",
     function()
     local ended = {}
     rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
@@ -760,9 +761,12 @@ test("a member passed, then standing up with its turn reset (a late third succes
         tick()
         local rr = refs("arena_turn_readmitted")
         eq(#rr, 1, "one record"); eq(enc({ rr[1].side, rr[1].character, rr[1].round }), enc({ "A", A1, 3 }), "A1's")
-        eq(Ar.open(A1), true, "its turn is open again"); eq(Ar.held(A1), false, "A1 acts in A's phase")
+        eq(Ar.open(A1), true, "its turn is open again"); eq(Ar.held(A1), true, "held: B1's phase")
         tick()
         eq(#refs("arena_turn_readmitted"), 1, "once")
+        setTurn(B1, true, true)
+        tick()
+        eq(Ar.held(A1), false, "A's next phase is A1's (before A2 in the order)")
     end)
     rawset(Osi, "EndTurn", nil)
     if not ok then error(err, 0) end

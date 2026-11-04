@@ -51,7 +51,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    mod's own (it ended the match after this tick's read), the mod's end is the one written, its `detail` naming the
    runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
-   began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
+   began reaching the arena's turn_cap_s ends that turn (a phase is one character: the mod's turn order, owner D643;
+   a record naming more members, from an older mod, gets the same turn_cap_s):
    `act.end_turn {char, forced}` for each of its members in turn order, sent as that side (forced: the cap as the
    mod tells the side, "the per-turn time cap (N s of model time)" or "the stall cap (...)"), one at a time (each
    job polled until it
@@ -711,7 +712,7 @@ def run_arena(
             idx = len(ref.turns) - 1
             if turn_mark is None or turn_mark[0] != idx:
                 turn_mark = (idx, model(turn.side))
-            cap = spec.turn_cap_s * len(turn.members)
+            cap = spec.turn_cap_s  # one character a phase (the mod's turn order, D643): turn_cap_s x 1
             if model(turn.side) - turn_mark[1] < cap:
                 continue
             cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")

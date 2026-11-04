@@ -91,8 +91,12 @@ FORFEIT_TURNS = 3  # forced turns in a row that forfeit the match
 TOOLS_OFF_LISTS = ("arena-v1",)  # the bridge's named arena tools-off lists (BG3AI_TOOLS_OFF values)
 KEYS = {
     "schema", "name", "title", "about", "draft", "save", "location", "teams", "level", "seed", "karmic",
-    "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off", "mirror",
+    "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off", "mirror", "turn_order",
 }  # fmt: skip
+# Inside a shared turn group the sides alternate one character at a time (seat fix, owner D643): "alternate" opens
+# every round with the side of the group's first open member in the rolled order, "snake" swaps the opening side
+# each round. Read by the mod (Server/Arena.lua) and recorded in arena_start / arena_turn.
+TURN_ORDERS, TURN_ORDER = ("alternate", "snake"), "alternate"
 PAIR_KEYS = {"class", "template", "race", "stats", "names", "kit"}  # a mirror pair (class: informational)
 SHA1_LEN = 40
 END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "client_fault", "over_budget")
@@ -278,6 +282,8 @@ def validate(a: Any, name: str) -> list[str]:
     tc = a.get("turn_cap_s")
     if not _num(tc) or tc <= 0:
         errs.append("turn_cap_s must be the model seconds a turn may take (> 0)")
+    if a.get("turn_order", TURN_ORDER) not in TURN_ORDERS:
+        errs.append(f"turn_order must be one of {', '.join(TURN_ORDERS)}")
     if a.get("karmic") is not False:
         errs.append("karmic must be false: Karmic Dice are off in every arena")
     try:
@@ -291,7 +297,14 @@ def validate(a: Any, name: str) -> list[str]:
 
 
 def with_defaults(a: Mapping[str, Any]) -> dict[str, Any]:
-    return {"level": LEVEL, "round_cap": ROUND_CAP, "wall_cap_min": WALL_CAP_MIN, "condition": "rules", **a}
+    return {
+        "level": LEVEL,
+        "round_cap": ROUND_CAP,
+        "wall_cap_min": WALL_CAP_MIN,
+        "condition": "rules",
+        "turn_order": TURN_ORDER,
+        **a,
+    }
 
 
 def load(path: str | Path) -> dict[str, Any]:

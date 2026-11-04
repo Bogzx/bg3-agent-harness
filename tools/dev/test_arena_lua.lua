@@ -256,7 +256,7 @@ end
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua",
     "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua", "test_arena_lua_setup.lua",
-    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua" }) do
+    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua", "test_arena_lua_order.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

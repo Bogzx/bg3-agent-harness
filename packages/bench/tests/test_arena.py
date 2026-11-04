@@ -143,6 +143,14 @@ def test_load_fills_the_defaults(tmp_path):
     (tmp_path / f"{bare['name']}.json").write_text(json.dumps(bare))
     a = arena.load(tmp_path / f"{bare['name']}.json")
     assert (a["round_cap"], a["wall_cap_min"], a["condition"], a["level"]) == (20, 30, "rules", 2)
+    assert a["turn_order"] == "alternate"
+
+
+def test_turn_order_alternate_or_snake():
+    assert arena.validate(_with(turn_order="snake"), READY["name"]) == []
+    assert arena.validate(_with(turn_order="alternate"), READY["name"]) == []
+    for bad in ("team", 1, "Snake"):
+        assert "turn_order must be one of alternate, snake" in arena.validate(_with(turn_order=bad), READY["name"])
 
 
 def _with(**kw):

@@ -37,6 +37,7 @@ class ArenaSpec:
     turn_cap_s: float  # model time per turn
     tools_off: str  # the bridge's named tools-off list (BG3AI_TOOLS_OFF)
     mirror: bool = False  # a mirror arena: arena.setup makes the twins, their uuids come from its result
+    turn_order: str = "alternate"  # one character a phase, sides alternating: "alternate" | "snake" (the mod's rule)
     arena: dict[str, Any] = field(default_factory=dict[str, Any], compare=False)  # what arena.setup gets
 
     @classmethod
@@ -68,6 +69,9 @@ class ArenaSpec:
                 errs.append(f"{key} is missing or not a {getattr(kind, '__name__', 'number')}")
         if a.get("karmic") is not False:
             errs.append("karmic must be false (Karmic Dice off)")
+        turn_order = a.get("turn_order", "alternate")
+        if turn_order not in ("alternate", "snake"):
+            errs.append("turn_order must be alternate or snake")
         if errs:
             raise ArenaSpecError(f"arena {name or '?'}: " + "; ".join(errs))
         return cls(
@@ -83,6 +87,7 @@ class ArenaSpec:
             turn_cap_s=float(a["turn_cap_s"]),
             tools_off=a["tools_off"],
             mirror="mirror" in a,
+            turn_order=str(turn_order),
             arena=dict(a),
         )
 

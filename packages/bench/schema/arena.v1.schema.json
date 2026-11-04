@@ -245,6 +245,14 @@
       "exclusiveMinimum": 0,
       "description": "model seconds a turn may take; at the cap the harness ends the turn (arena_turn_forced)"
     },
+    "turn_order": {
+      "enum": [
+        "alternate",
+        "snake"
+      ],
+      "default": "alternate",
+      "description": "inside a shared turn group the sides alternate one character a phase; alternate: each round opens with the side of the group's first open member in the rolled order; snake: the opening side swaps every round"
+    },
     "condition": {
       "type": "string",
       "default": "rules",

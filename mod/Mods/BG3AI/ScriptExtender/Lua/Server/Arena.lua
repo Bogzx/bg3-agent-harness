@@ -5,9 +5,12 @@
 --
 -- Turn ownership comes from the game's own turn flags and turn order (listener time: the team tables, not Ctx.side).
 -- The game puts adjacent player characters into one shared turn group whatever their side, so the arena plays every
--- group in phases: a phase is one same-side run of the group's open members in turn order (B|AAAA|BBB: 3 phases).
--- Its members act; every other open member is held until the phases before its own have ended. One arena_turn record
--- per phase (Ar.phase_check on the server tick), not per TurnStarted, which fires once per member of a group.
+-- group in phases of one character each, the sides alternating (seat fix, owner D643, Fable REVIEW-8 O1): the round's
+-- opening side's first open member in the rolled order, then the other side's, and so on (B|AA|B plays B1|A1|B2|A2).
+-- A side with nobody open left plays its members on in order. The arena file's turn_order picks the opening side:
+-- "alternate" (default) the side of the round's first open member in the rolled order; "snake" that for the match's
+-- first round, then the other side each round. Every other open member is held until its phase. One arena_turn
+-- record per phase (Ar.phase_check on the server tick), not per TurnStarted, which fires once per member of a group.
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -17,6 +20,7 @@ local Ar = BG3AI.Arena
 local truthy = U.truthy
 
 Ar.SIDES = { "A", "B" }
+Ar.TURN_ORDERS = { alternate = true, snake = true }
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -152,12 +156,54 @@ local function turnGroups()
     return nil
 end
 
--- The acting phase: the first turn group holding an open team member; its first open member's side; that side's run
--- of open members from there (in turn order, skipping members whose turn is not open). Without such a group in the
--- turn order (it doesn't read): the open members by the team tables, the side tie_fallback picks when both have one,
--- group nil. nil when no team member's turn is open.
+-- The round's opening side in a group whose rolled order opens with `first`'s side (turn_order): kept per round and
+-- group from the round's first phase on, so a read later in the round gives the same side.
+local function openingSide(round, group, first)
+    local st = Ar.state
+    st.openings = st.openings or {}
+    local k = tostring(round) .. "|" .. tostring(group)
+    if st.openings[k] then return st.openings[k] end
+    local o = first
+    if st.turn_order == "snake" then
+        if not st.snake then st.snake = { round = round, side = first } end
+        o = ((round - st.snake.round) % 2 == 0) and st.snake.side or other(st.snake.side)
+    end
+    st.openings[k] = o
+    return o
+end
+
+-- One group's acting phase from its open members ({u, s} in turn order): the last phase's character while its turn
+-- is still open; else, after a phase of this round and group, the other side's first open member; else (the group's
+-- first phase this round) the opening side's. A side with nobody open: the other side's first open member. rule:
+-- "opening" | "alternate" | "only_side_left".
+local function pick(open, group, shared, round)
+    local st = Ar.state
+    local last = st.phase
+    local same = last ~= nil and last.round == round and last.group == group
+    local opening = openingSide(round, group, open[1].s)
+    local function phase(x, rule)
+        return { side = x.s, character = x.u, members = { x.u }, group = group, shared = shared, rule = rule,
+            opening = opening }
+    end
+    if same then
+        for _, x in ipairs(open) do
+            if x.u == last.character then return phase(x, last.rule) end
+        end
+    end
+    local want, rule = opening, "opening"
+    if same then want, rule = other(last.side), "alternate" end
+    for _, x in ipairs(open) do
+        if x.s == want then return phase(x, rule) end
+    end
+    return phase(open[1], "only_side_left")
+end
+
+-- The acting phase: in the first turn group holding an open team member, one character (pick). Without such a group
+-- in the turn order (it doesn't read): the open members by the team tables, the side tie_fallback picks first when
+-- both have one, group nil. nil when no team member's turn is open.
 function Ar.phase(gs)
     gs = gs or turnGroups()
+    local round = Ar.state.round or 1
     for _, g in ipairs(gs or {}) do
         local open, sides = {}, {}
         for _, u in ipairs(g.members) do
@@ -167,15 +213,7 @@ function Ar.phase(gs)
                 if Ar.open(u) then open[#open + 1] = { u = u, s = s } end
             end
         end
-        if #open > 0 then
-            local side, members = open[1].s, {}
-            for _, x in ipairs(open) do
-                if x.s ~= side then break end
-                members[#members + 1] = x.u
-            end
-            return { side = side, character = members[1], members = members, group = g.team or g.members[1],
-                shared = (sides.A and sides.B) == true }
-        end
+        if #open > 0 then return pick(open, g.team or g.members[1], (sides.A and sides.B) == true, round) end
     end
     local open, by = {}, {}
     for _, s in ipairs(Ar.SIDES) do
@@ -184,9 +222,13 @@ function Ar.phase(gs)
             if Ar.open(u) then open[u] = true; by[s][#by[s] + 1] = u end
         end
     end
-    local side = (#by.A > 0 and #by.B > 0) and tie_fallback(open) or (#by.A > 0 and "A") or (#by.B > 0 and "B") or nil
-    if not side then return nil end
-    return { side = side, character = by[side][1], members = by[side], shared = #by.A > 0 and #by.B > 0 }
+    if #by.A == 0 and #by.B == 0 then return nil end
+    local first = (#by.A > 0 and #by.B > 0) and tie_fallback(open) or (#by.A > 0 and "A") or "B"
+    local list = {}
+    for _, s in ipairs({ first, other(first) }) do
+        for _, u in ipairs(by[s]) do list[#list + 1] = { u = u, s = s } end
+    end
+    return pick(list, nil, #by.A > 0 and #by.B > 0, round)
 end
 
 -- The side acting now: the acting phase's side; with no team member's turn open, the side of the last team member
@@ -309,10 +351,11 @@ function Ar.turn_started(char)
     Ar.check_end()
 end
 
--- The acting phase changed since the last check (another round, group or side): a turn boundary (a wipe ends the
--- match), then one arena_turn {side, character (its first open member), members, names (their display names, same
--- order), round, phase (1-based within the group), group (the group's Team guid, else its first member), shared (the
--- group holds both sides)}. On the server
+-- The acting phase changed since the last check (another round, group or character): a turn boundary (a wipe ends
+-- the match), then one arena_turn {side, character, members (that one character), names (its display name), round,
+-- phase (1-based within the group), group (the group's Team guid, else its first member), shared (the group holds
+-- both sides), order (turn_order), opening (the round's opening side), rule ("opening" | "alternate" |
+-- "only_side_left": why this side)}. On the server
 -- tick, at most every PHASE_EVERY_MS: the per-member TurnStarted burst of a group (all within a few ms) is over by
 -- then, and so is any change no listener sees (an end, a downing, a status). A phase shorter than that between two
 -- checks is not seen.
@@ -325,9 +368,10 @@ Ar.PHASE_EVERY_MS = 250
 -- cleared by its TurnEnded), which counts as ended for the phases and the group's last end. A phase passed whole is
 -- the match's phase all the same (its number taken, no arena_turn): live 2026-11-02 (live 7 rerun 2), round 2 B
 -- [Karlach] | A [Lae'zel] passed | B [Minthara, Wyll] read as one B phase, and the last one got no record.
-local function samePhase(st, round, p) -- p is the phase st.phase holds (the rest of its run)
+local function samePhase(st, round, p) -- p is the phase st.phase holds (its character still acting)
     local last = st.phase
     return last ~= nil and last.round == round and last.group == p.group and last.side == p.side
+        and last.character == p.character
 end
 
 local function nextPhase(st, round, p)
@@ -398,7 +442,7 @@ local function passCantAct(p, round)
     local st = Ar.state
     if n == #p.members and not samePhase(st, round, p) then
         st.phase = { round = round, group = p.group, side = p.side, phase = nextPhase(st, round, p),
-            character = p.character, members = p.members }
+            character = p.character, members = p.members, rule = p.rule, opening = p.opening }
     end
     return passed, waiting
 end
@@ -449,14 +493,14 @@ function Ar.phase_check()
     if samePhase(st, round, p) then return end
     local n = nextPhase(st, round, p)
     st.phase = { round = round, group = p.group, side = p.side, phase = n, character = p.character,
-        members = p.members }
+        members = p.members, rule = p.rule, opening = p.opening }
     if st.forced then st.forced[p.side] = nil end -- its new phase: the forced one is over
     Ar.check_end()
     if st.ended then return end
     local names = {}
     for i, u in ipairs(p.members) do names[i] = V.name(u) end
     record("arena_turn", { side = p.side, character = p.character, members = p.members, names = names, round = round,
-        phase = n, group = p.group, shared = p.shared })
+        phase = n, group = p.group, shared = p.shared, order = st.turn_order, opening = p.opening, rule = p.rule })
 end
 
 -- The runner ended a side's turn at its cap (act.end_turn {forced = which cap}): the side is told once per phase, as
@@ -599,11 +643,13 @@ function Ar.begin(teams, opts)
     end
     RPC.clear_sides()
     local combat = osi(Osi.CombatGetGuidFor, t.A[1])
+    local order = opts and opts.turn_order or "alternate"
+    if not Ar.TURN_ORDERS[order] then error("turn_order must be \"alternate\" or \"snake\"", 0) end
     Ar.state = { teams = t, names = names, combat = combat, round = combat and roundNow(t.A[1]) or nil,
         started = now_ms(), round_cap = opts and tonumber(opts.round_cap) or nil, sitters = opts and opts.sitters,
-        seed = opts and tonumber(opts.seed) or nil }
+        seed = opts and tonumber(opts.seed) or nil, turn_order = order }
     broadcast({ teams = t, names = names })
-    record("arena_start", { teams = t, positions = opts and opts.positions or nil })
+    record("arena_start", { teams = t, positions = opts and opts.positions or nil, turn_order = order })
     return Ar.status()
 end
 
