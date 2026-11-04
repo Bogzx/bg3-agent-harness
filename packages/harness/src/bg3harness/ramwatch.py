@@ -9,7 +9,7 @@
     calls (runtime/actions.jsonl) to ram.log, the runner log and runtime/ram_spikes.jsonl (OOM attribution:
     20:48 the game went 5.0 → 13.3 GB in < 40 s after loading the Shadowfell, between two 60 s samples);
   - samples every FAST_SAMPLE_S while the RSS climbs fast, and SIGKILLs bg3 above KILL_GAME_MB RSS (both kill
-    thresholds move with the game scope's cap, $BG3AI_GAME_MEMORY_MAX: kill_limits) or below
+    thresholds move with the game's cap: its scope's memory.max, else $BG3AI_GAME_MEMORY_MAX: kill_limits) or below
     KILL_AVAIL_MB available (test runs go first), logging the last bg3le log lines and tool calls
     (runtime/ram_kills.jsonl); our own kill is no OOM event, so systemd stops no unit for it;
   - no longer lowers the game's oom_score_adj (it used to set -500): the game runs in its own capped systemd scope
@@ -63,12 +63,13 @@ KILL_GAME_MB = 9500
 # runaway's pages out (MemorySwapMax=2G), so the RSS never reached 9.5 GB. Normal play: anon ~5.4 GB + swap ~0.2 GB;
 # the scope's memory.current (~9.2 GB) is mostly reclaimable file cache, so it is no kill signal.
 KILL_ANON_SWAP_MB = 9000
-# Both are the 10G cap's numbers: RamWatch moves them with the scope's cap, $BG3AI_GAME_MEMORY_MAX (launch_game.sh's
-# MemoryMax, default 10G; the pilot ran 8G), keeping these margins under it. systemd's G is 1024 MiB and rss_mb counts
-# MiB, so 10G = 10240: 740 and 1240 MiB under the cap (REVIEW-16 A4: an 8G cgroup OOM-killed the game before 9500).
+# Both are the 10G cap's numbers. Under a smaller cap C (MiB, as rss_mb counts) each is min(its 10G number,
+# C - KILL_UNDER_CAP_MB) (REVIEW-16 A4, D880: 8G -> 7692/7692; an 8G cgroup OOM-kills the game before 9500, while a
+# healthy game's anon+swap reached 7102 on 2026-10-28, so a margin that scales down further kills healthy games).
+# C is the game scope's cgroup memory.max when readable, else $BG3AI_GAME_MEMORY_MAX (launch_game.sh's MemoryMax,
+# G = 1024 MiB), else 10G.
 GAME_CAP_ENV = "BG3AI_GAME_MEMORY_MAX"
-KILL_GAME_UNDER_CAP_MB = 10240 - KILL_GAME_MB
-KILL_ANON_SWAP_UNDER_CAP_MB = 10240 - KILL_ANON_SWAP_MB
+KILL_UNDER_CAP_MB = 500
 KILL_AVAIL_MB = 700            # … or when RAM available drops below this and no test run is left to kill
 KILLS = RUNTIME / "ram_kills.jsonl"   # the runner's OOM crash-loop guard counts these like kernel OOM kills
 SPIKE_MB = 2048                # RSS growth within SPIKE_WINDOW_S that gets logged with the last tool calls
@@ -469,14 +470,28 @@ def read_heat(path: Path = THERMAL_LOG, now: float | None = None, limits: dict |
     return heat_state(samples, time.time() if now is None else now, limits)
 
 
-def kill_limits(cap: str | None) -> tuple[int, int]:
-    """(RSS, anon+swap) kill thresholds in MiB for the game scope's MemoryMax as systemd reads it ('8G', '8192M');
-    unset or another form (bytes, %, infinity) keeps KILL_GAME_MB / KILL_ANON_SWAP_MB."""
+def cap_mb(cap: str | None) -> int | None:
+    """MiB of a MemoryMax as systemd reads it ('8G', '8192M'); None when unset or another form (bytes, %, infinity)."""
     m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([GM])\s*", cap or "", re.IGNORECASE)
     if not m:
+        return None
+    return int(float(m.group(1)) * (1024 if m.group(2).upper() == "G" else 1))
+
+
+def scope_cap_mb(cg: Path) -> int | None:
+    """MiB of a cgroup's memory.max; None when it is unreadable or 'max' (no cap)."""
+    try:
+        v = (cg / "memory.max").read_text().strip()
+    except OSError:
+        return None
+    return int(v) // 2**20 if v.isdigit() else None
+
+
+def kill_limits(cap: int | None) -> tuple[int, int]:
+    """(RSS, anon+swap) kill thresholds in MiB under a game cap of `cap` MiB; None keeps the 10G numbers."""
+    if cap is None:
         return KILL_GAME_MB, KILL_ANON_SWAP_MB
-    mb = int(float(m.group(1)) * (1024 if m.group(2).upper() == "G" else 1))
-    return mb - KILL_GAME_UNDER_CAP_MB, mb - KILL_ANON_SWAP_UNDER_CAP_MB
+    return min(KILL_GAME_MB, cap - KILL_UNDER_CAP_MB), min(KILL_ANON_SWAP_MB, cap - KILL_UNDER_CAP_MB)
 
 
 class RamWatch:
@@ -485,7 +500,8 @@ class RamWatch:
         self.log = log or (lambda m: None)
         self.logfile = logfile
         self.warn_mb, self.kill_mb = warn_mb, kill_mb
-        self.kill_game_mb, self.kill_anon_swap_mb = kill_limits(os.environ.get(GAME_CAP_ENV))
+        self.env_cap_mb = cap_mb(os.environ.get(GAME_CAP_ENV))   # the fallback when no scope's memory.max reads
+        self.kill_game_mb, self.kill_anon_swap_mb = kill_limits(self.env_cap_mb)
         self.exclude = exclude or set()
         self.low = False
         self.samples: collections.deque[tuple[float, int]] = collections.deque()   # (t, game RSS MB)
@@ -546,13 +562,19 @@ class RamWatch:
         return out
 
     def scope_snapshot(self, pids: list[int]) -> tuple[str, str] | None:
-        """(unit, cgroup_mem) of the game's scope, or None."""
+        """(unit, cgroup_mem) of the game's scope, or None. Sets the kill thresholds from the scope's memory.max (else
+        the env's cap): a ramwatch started without $BG3AI_GAME_MEMORY_MAX still follows the real cap."""
+        cap = None
         for pid in pids:
             cg = game_scope_cgroup(pid, self.proc, self.cgroup_root)
+            cap = cap or (scope_cap_mb(cg) if cg else None)
             mem = cgroup_mem(cg) if cg else ""
             if cg and mem:
-                return cg.name, mem
-        return None
+                break
+        else:
+            cg = None
+        self.kill_game_mb, self.kill_anon_swap_mb = kill_limits(cap if cap is not None else self.env_cap_mb)
+        return (cg.name, mem) if cg else None
 
     def watch_scope(self, now: float, pids: list[int]) -> None:
         """Keeps the game scope's newest snapshot; once it is gone (no game, or another scope), logs its end."""

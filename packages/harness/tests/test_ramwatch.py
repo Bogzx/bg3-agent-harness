@@ -47,7 +47,7 @@ class RamWatchTest(unittest.TestCase):
             return SimpleNamespace(stdout=self.journal)
         return SimpleNamespace(stdout=self.windows if "-tree" in args else XWININFO_ID)
 
-    def scope_tree(self, unit: str = UNIT, oom_kill: int = 0) -> Path:
+    def scope_tree(self, unit: str = UNIT, oom_kill: int = 0, memory_max: str | None = None) -> Path:
         """A fake /proc/100/cgroup in the game's scope and that scope's memory files."""
         self.w.proc, self.w.cgroup_root = self.tmp / "proc", self.tmp / "cg"
         (self.w.proc / "100").mkdir(parents=True, exist_ok=True)
@@ -58,6 +58,8 @@ class RamWatchTest(unittest.TestCase):
         (cg / "memory.events").write_text(f"low 0\nhigh 0\nmax 12\noom 1\noom_kill {oom_kill}\noom_group_kill 0\n")
         (cg / "memory.stat").write_text(f"anon {5000 * 2**20}\nfile {3000 * 2**20}\nkernel {200 * 2**20}\n"
                                         "shmem 0\nfile_mapped 1048576\npgfault 99\n")
+        if memory_max is not None:
+            (cg / "memory.max").write_text(memory_max + "\n")
         return cg
 
     def tearDown(self):
@@ -158,33 +160,68 @@ class RamWatchTest(unittest.TestCase):
         self.assertEqual(rec["anon_swap_mb"], R.KILL_ANON_SWAP_MB + 100)
 
     def test_kill_limits_follow_a_cap_in_g(self):
-        # REVIEW-16 A4: the pilot's game ran at MemoryMax=8G; 9500 MB would have come after the cgroup's OOM kill
-        self.assertEqual(R.kill_limits("8G"), (8192 - 740, 8192 - 1240))
-        self.assertEqual(R.kill_limits("10G"), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))  # today's numbers
-        self.assertEqual(R.kill_limits("7.5g"), (7680 - 740, 7680 - 1240))
+        # REVIEW-16 A4 (D880): min(the 10G number, cap - 500 MiB); the pilot's game ran at MemoryMax=8G
+        self.assertEqual((R.cap_mb("8G"), R.cap_mb("7.5g")), (8192, 7680))
+        self.assertEqual(R.kill_limits(R.cap_mb("8G")), (7692, 7692))
+        self.assertEqual(R.kill_limits(R.cap_mb("9G")), (8716, 8716))
+        self.assertEqual(R.kill_limits(R.cap_mb("10G")), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))  # 9500/9000 stay
+        self.assertEqual(R.kill_limits(R.cap_mb("12G")), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))
 
     def test_kill_limits_follow_a_cap_in_m(self):
-        self.assertEqual(R.kill_limits("8192M"), R.kill_limits("8G"))
-        self.assertEqual(R.kill_limits("6000m"), (6000 - 740, 6000 - 1240))
+        self.assertEqual((R.cap_mb("8192M"), R.cap_mb("6000m")), (8192, 6000))
+        self.assertEqual(R.kill_limits(R.cap_mb("6000m")), (5500, 5500))
 
     def test_kill_limits_keep_the_10g_numbers_without_a_g_or_m_cap(self):
         for cap in (None, "", "infinity", "80%", "8589934592"):
-            self.assertEqual(R.kill_limits(cap), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB), cap)
+            self.assertIsNone(R.cap_mb(cap), cap)
+        self.assertEqual(R.kill_limits(None), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))
+
+    def _watch(self, env: dict) -> R.RamWatch:
+        with mock.patch.dict(R.os.environ, env):
+            if not env:
+                R.os.environ.pop(R.GAME_CAP_ENV, None)
+            w = R.RamWatch(self.logs.append, logfile=self.tmp / "ram.log")
+        w.actions, w.spikes, w.kills, w.logs, w.run = self.w.actions, self.w.spikes, self.w.kills, self.w.logs, self.w.run
+        w.proc, w.cgroup_root = self.tmp / "no-proc", self.tmp / "no-cg"   # no scope: the env's cap
+        return w
 
     def test_an_8g_game_is_killed_under_its_cap(self):
         self._kill_setup()
-        with mock.patch.dict(R.os.environ, {R.GAME_CAP_ENV: "8G"}):
-            w = R.RamWatch(self.logs.append, logfile=self.tmp / "ram.log")
-        w.actions, w.spikes, w.kills, w.logs, w.run = self.w.actions, self.w.spikes, self.w.kills, self.w.logs, self.w.run
+        w = self._watch({R.GAME_CAP_ENV: "8G"})
         with mock.patch.object(R.os, "kill") as k:
-            self.assertIsNone(w.sample(90.0, 5800, 6000, [100], anon_swap=6900))
-            rec = w.sample(91.0, 7000, 4000, [100], anon_swap=6952)
+            self.assertIsNone(w.sample(90.0, 5800, 6000, [100], anon_swap=7102))   # 2026-10-28's healthy max
+            self.assertIsNone(w.sample(91.0, 7000, 4000, [100], anon_swap=7691))
+            rec = w.sample(92.0, 7000, 4000, [100], anon_swap=7692)
         self.assertEqual(rec["kind"], "kill")
         self.assertEqual(k.call_args_list, [mock.call(100, R.signal.SIGKILL)])
-        self.assertIn("anon+swap 6952 MB >= 6952 MB", rec["why"])
+        self.assertIn("anon+swap 7692 MB >= 7692 MB", rec["why"])
         with mock.patch.object(R.os, "kill"):
-            rec = w.sample(200.0, 7452, 4000, [100], anon_swap=0)
-        self.assertIn("game RSS 7452 MB >= 7452 MB", rec["why"])
+            self.assertIsNone(w.sample(200.0, 7352, 4000, [100], anon_swap=0))  # the healthy RSS max
+            rec = w.sample(300.0, 7692, 4000, [100], anon_swap=0)
+        self.assertIn("game RSS 7692 MB >= 7692 MB", rec["why"])
+
+    def test_the_scope_memory_max_sets_the_cap_without_the_env(self):
+        # REVIEW-18 §4: a ramwatch started without $BG3AI_GAME_MEMORY_MAX follows the scope's real cap
+        self._kill_setup()
+        w = self._watch({})
+        self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))
+        self.scope_tree(memory_max=str(8 * 2**30))
+        w.proc, w.cgroup_root = self.w.proc, self.w.cgroup_root
+        with mock.patch.object(R.os, "kill") as k:
+            rec = w.sample(100.0, 6000, 6000, [100], anon_swap=7692)
+        self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (7692, 7692))
+        self.assertEqual((rec["kind"], k.call_args_list), ("kill", [mock.call(100, R.signal.SIGKILL)]))
+
+    def test_the_scope_memory_max_wins_over_the_env_and_max_falls_back_to_it(self):
+        w = self._watch({R.GAME_CAP_ENV: "6G"})
+        self.assertEqual(w.kill_anon_swap_mb, 5644)
+        cg = self.scope_tree(memory_max=str(8 * 2**30))
+        w.proc, w.cgroup_root = self.w.proc, self.w.cgroup_root
+        w.sample(100.0, 5000, 6000, [100], anon_swap=5000)
+        self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (7692, 7692))
+        (cg / "memory.max").write_text("max\n")                          # no cap on the scope: the env's
+        w.sample(110.0, 5000, 6000, [100], anon_swap=5000)
+        self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (5644, 5644))
 
     def test_anon_swap_from_proc_status(self):
         st = self.tmp / "status"
