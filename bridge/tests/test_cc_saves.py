@@ -179,7 +179,7 @@ class CreateCharacter(Base):
         self.assertLess(out.index("FIRST LOOK"), out.index("first save (no save_game needed)"))
         self.assertIn("FIRST LOOK (this is get_status + look):\n", out)  # D630: no "don't read again"
         self.assertIn("PARTY e", out)                          # look(full=True)'s status block
-        self.assertIn("NEXT: issue the first move now", out)
+        self.assertNotIn("NEXT", out)  # D630: no 'NEXT: issue the first move now; write PLAYTHROUGH.md ...'
         # nested: the look's own metric record is marked nested (not a separate agent read)
         self.assertFalse(reporting._batch["active"])
 
@@ -195,14 +195,15 @@ class CreateCharacter(Base):
         self.assertIn("(name checked in game)", out)
         self.assertIn("WHERE Nautiloid", out)
         self.assertNotIn("Character creation", out)
-        self.assertIn("NEXT: issue the first move now", out)
+        self.assertNotIn("NEXT", out)  # D630: no 'NEXT: issue the first move now; write PLAYTHROUGH.md ...'
 
     def test_first_look_in_the_opening_dialogue_says_advance_first(self):
         g, _ = self.use(FakePage())
         g.world_screen, g.in_dialogue = "dialogue", True
         out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
         self.assertIn("(name checked in game)", out)
-        self.assertIn("NEXT: issue dialogue_advance (the opening conversation is up), then the first move now", out)
+        self.assertIn("DIALOGUE", out)  # the first look shows the opening conversation; no NEXT line (D630)
+        self.assertNotIn("NEXT", out)
 
     def test_loading_screen_is_not_the_world(self):
         g, _ = self.use(FakePage())

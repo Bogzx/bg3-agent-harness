@@ -151,9 +151,8 @@ stopped walk: one blocking walk invites the next, and the character stands still
 `wait()` to pass time (use `wait_for` with a target: `my_turn`, `idle`, a job, an event kind); write long notes between two actions instead of during a walk; call `interact`/`move_to` directly on a
 character whose queue is running (a direct action supersedes the queue: append instead, or `cancel_queue` on
 purpose); make one tool call per step of a plan you already know. In dialogue, `dialogue_advance` for
-filler. Follow a result's `RUNNING …` (append, don't wait), `NEXT: …` and `PACE: …`.
-Results carry two pace hints: `NEXT: …` after a walk that still runs (what can be done while it runs) and `PACE: …`
-(a wait came before there was nothing else to do).
+filler. Follow a result's `RUNNING …` (append, don't wait) and `PACE: …`.
+`PACE: …` says a `wait_for` came right after issuing, with no other call in between.
 
 ## Efficiency (hard rule)
 - Read what the engine can tell you as text, and do what it can do with an action tool. For a screen no tool covers,

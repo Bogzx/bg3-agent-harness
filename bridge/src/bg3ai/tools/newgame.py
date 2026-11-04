@@ -218,11 +218,6 @@ def _cc_first_look() -> str:
             out.append("first save (no save_game needed): " + saving.SAVER.save(f"{sess}-start"))
         except Exception as e:
             out.append(f"first save not started ({type(e).__name__}: {e}): save_game(label=\"{sess}-start\")")
-    first = "the first move" if "DIALOGUE" not in fl.split("\n", 1)[0].upper() else \
-        "dialogue_advance (the opening conversation is up), then the first move"
-    out.append(f"NEXT: issue {first} now; write PLAYTHROUGH.md's Character line and the [decision] note "
-               "while it runs (fix CHARACTER.md's header only if the status above spells name/race/class "
-               "differently)")
     return "\n" + "\n".join(out)
 
 
