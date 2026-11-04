@@ -152,7 +152,8 @@ class Hint(unittest.TestCase):
         self.assertNotIn("→", bits[0])
         self.assertNotIn("swap_party", bits[0])
         self.assertTrue(bits[0].endswith(": " + TABLE["halsin"]["why"]), bits)
-        self.assertIn("camp level-ups: Wyll L3→4 (level_up(who=\"Wyll\") swaps in", bits[-1])
+        # night 2026-11-04: the level-ups are said as a fact, with no call to make
+        self.assertEqual(bits[-1], "camp level-ups: Wyll L3→4")
 
     def test_tie_reads_as_one_fact(self):
         # w13 L2: '... Elminster and the Netherese orb scenes need him; arcane AoE' ended in the role half of the old
