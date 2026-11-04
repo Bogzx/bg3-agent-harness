@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: the EVENTS tail keeps spell_info; back-to-back zero-damage rows share one
+
+- A `spell_info` line is shown even when it falls before the 25 newest events: it comes once per spell per fight, so
+  a cut one never came back. w11 L4: one end_turn + wait_for (44.6 s) showed `(+56 earlier events)` and Balthazar's
+  Cloudkill spell_info was among them. `(+N earlier events)` counts only what is not shown.
+- Back-to-back `damage ... amount=0` rows that differ only in their target share one row, each target with its count:
+  `damage source={e7 name=Balthazar} type= amount=0 x9 on 5: Apostate Defender e9, Apostate Defender e12 x2, ...`.
+  Only consecutive rows: a damage event names no spell, and a miss is a zero row next to its cast, so the order is
+  unchanged. A single zero row reads as before.
+
 ## 2026-11-04: walk_toward goes where the engine's path ends; a short stop at its own point says so
 
 - `walk_toward(direction=...)` walks to where the engine's path to the farthest walkable sample ends (within 2.0 m of
