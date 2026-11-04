@@ -64,9 +64,15 @@ def arena_cap(environ: Mapping[str, str]) -> float | None:
     return float(cap)
 
 
-def arena_turn_order(environ: Mapping[str, str]) -> str:
-    """A side's turn order (its bridge serves the match's rules with it), the arena file's default when unset."""
-    return environ.get("BG3AI_ARENA_TURN_ORDER") or "alternate"
+def arena_turn_order(environ: Mapping[str, str]) -> str | None:
+    """A side's turn order (its bridge serves the match's rules with it: bridge rules.load), None outside a match.
+    A side without one is a ValueError (its bridge doesn't start), as for the cap."""
+    if not environ.get("BG3AI_SIDE"):
+        return None
+    order = environ.get("BG3AI_ARENA_TURN_ORDER")
+    if not order:
+        raise ValueError("a side's rules state the arena's turn order: BG3AI_ARENA_TURN_ORDER is unset")
+    return order
 
 
 def manifest_fields(
@@ -77,7 +83,7 @@ def manifest_fields(
     scenario: dict[str, Any] | None,
     instructions: str,
     arena_turn_cap_s: float | None = None,
-    arena_turn_order: str = "alternate",
+    arena_turn_order: str | None = None,
 ) -> dict[str, Any]:
     """The run's manifest fields. tools: the bg3 tools every play process gets (the server's registry minus the
     session's BG3AI_TOOLS / BG3AI_TOOLS_OFF: client_setup.expected_tools' set); the prompt is assemble(condition,

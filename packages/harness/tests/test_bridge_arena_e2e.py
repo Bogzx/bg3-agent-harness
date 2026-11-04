@@ -28,7 +28,12 @@ def run[T](coro: Coroutine[Any, Any, T]) -> T:
 
 
 def env(side: str) -> dict[str, str]:
-    return {"BG3AI_SIDE": side, "BG3AI_TOOLS_OFF": "arena-v1", "BG3AI_ARENA_TURN_CAP_S": "90"}
+    return {
+        "BG3AI_SIDE": side,
+        "BG3AI_TOOLS_OFF": "arena-v1",
+        "BG3AI_ARENA_TURN_CAP_S": "90",
+        "BG3AI_ARENA_TURN_ORDER": "alternate",
+    }
 
 
 def waiting(fake: FakeMod, since: int) -> bool:

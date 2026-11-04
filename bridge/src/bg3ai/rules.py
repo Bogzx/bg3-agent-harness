@@ -55,7 +55,7 @@ def load(path: Path | None = None, condition: str | None = None, off: frozenset[
     a group with a tool off. The coaching conditions are the playthrough's text with every group (assemble.py).
     arena: the session plays one side of a two-team match (BG3AI_SIDE): the match's rules come last, with the
     arena's per-turn cap from $BG3AI_ARENA_TURN_CAP_S (the runner's side_env sets it; unset: RulesMissingError) and
-    its turn order from $BG3AI_ARENA_TURN_ORDER (unset: "alternate", the arena file's default)."""
+    its turn order from $BG3AI_ARENA_TURN_ORDER (side_env sets it too; unset: RulesMissingError)."""
     path = path or (Path(p) if (p := os.environ.get("BG3AI_RULES_PATH")) else None)
     try:
         if path is not None:
@@ -68,7 +68,9 @@ def load(path: Path | None = None, condition: str | None = None, off: frozenset[
         cap = os.environ.get("BG3AI_ARENA_TURN_CAP_S") if arena else None
         if arena and not cap:
             raise RulesMissingError("a side's rules state the arena's per-turn cap: BG3AI_ARENA_TURN_CAP_S is unset")
-        order = os.environ.get("BG3AI_ARENA_TURN_ORDER") or "alternate"  # the arena file's default
+        order = os.environ.get("BG3AI_ARENA_TURN_ORDER") if arena else None
+        if arena and not order:
+            raise RulesMissingError("a side's rules state the arena's turn order: BG3AI_ARENA_TURN_ORDER is unset")
         return mod.assemble(cond, caps=caps, arena=arena, turn_cap_s=float(cap) if cap else None,
                             turn_order=order).text.strip()
     except OSError as e:
