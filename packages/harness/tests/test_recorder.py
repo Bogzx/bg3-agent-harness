@@ -341,6 +341,35 @@ def test_recorder_logs_a_crash(tmp_path: Path, fake_env):
     assert rec.events[-1] == {"t": 1002.0, "ev": "exit", "code": 1, "restart_in": 5.0}
 
 
+def test_recorder_warns_the_runner_log_on_exit_restart_and_empty_segments(tmp_path: Path, fake_env):
+    # r13 a1 (2026-11-04): the x11grab capture broke 80 s before the game died; only index.json knew it
+    fake_env.setenv("FAKE_SEGMENTS", "2")
+    fake_env.setenv("FAKE_BYTES", "0")
+    fake_env.setenv("FAKE_EXIT", "1")
+    warned: list[str] = []
+    clock, game = Clock(1000.0), {"cap": Capture()}
+    rec = make(tmp_path, clock, game, warn=warned.append)
+    rec.poll()
+    rec.run.proc.wait(10)
+    clock.t = 1002.0
+    rec.poll()
+    video = tmp_path / "video"
+    assert warned == [
+        f"recorder: segment rec-1000-0000.mp4 is empty (0 bytes; see {video / 'ffmpeg.log'})",
+        f"recorder: segment rec-1000-0001.mp4 is empty (0 bytes; see {video / 'ffmpeg.log'})",
+        f"recorder: ffmpeg exited (1) after 2 s, restart in 5 s (see {video / 'ffmpeg.log'})",
+    ]
+    fake_env.delenv("FAKE_EXIT")
+    fake_env.setenv("FAKE_BYTES", "1000")
+    clock.t = 1007.0
+    rec.poll()
+    assert warned[3:] == ["recorder: ffmpeg restarted after it exited (1, 1 crash(es))"]
+    rec.live.get(after=1, timeout=10)
+    rec.poll()
+    rec.stop()  # a clean stop with full segments: no warning, and an empty one is reported once
+    assert len(warned) == 4
+
+
 def test_recorder_restarts_when_the_window_changes(tmp_path: Path, fake_env):
     clock, game = Clock(1000.0), {"cap": Capture(":1", "0x5")}
     rec = make(tmp_path, clock, game)
