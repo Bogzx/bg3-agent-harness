@@ -347,7 +347,11 @@ end
 -- ring ("Provokes Attack of Opportunity" in its tooltip) and shows nothing for an enemy whose reaction is spent. The
 -- same facts for a path (its points): each enemy the mover's side can see, in combat, standing, with its reaction
 -- left, whose melee reach (its main hand's, edge to edge) the path leaves: {{uuid, name, at, along_m}} by along_m,
--- nil out of combat. An enemy is the other team in a match, else one the game calls the mover's enemy.
+-- nil out of combat. An enemy is the other team in a match, else one the game calls the mover's enemy. Only what the
+-- engine would attack: none while the mover has a status with IgnoreLeaveAttackRange() (Disengage's boost); no enemy
+-- with an INCAPACITATED status (stunned, asleep, paralysed …) or one blocking its reaction
+-- (ActionResourceBlock(ReactionActionPoint)), that the game doesn't call the mover's enemy (Osi.IsEnemy) or that can't
+-- see the mover (Osi.CanSee); no leaving on a jump or climb link (portals: the points a link ends at).
 G.AOO_NEAR_M = 5.0 -- only characters this near a path point can have it in reach
 local function foe_of(char, u)
     local Ar = BG3AI.Arena
@@ -363,22 +367,57 @@ local function reaction_left(u)
     return r ~= nil and (r[0] or 0) > 0
 end
 
-function G.path_provokes(char, points)
+-- Every active status's stats entry (technical ones too: a boost can sit on a hidden status).
+local function status_stats(u)
+    local out = {}
+    local e = G.entity(u)
+    local sc = e and U.comp(e, "StatusContainer")
+    if not sc then return out end
+    pcall(function()
+        for _, id in pairs(sc.Statuses) do
+            local ok, st = pcall(Ext.Stats.Get, tostring(id))
+            if ok and st then out[#out + 1] = st end
+        end
+    end)
+    return out
+end
+
+local function has_boost(u, boost)
+    for _, st in ipairs(status_stats(u)) do
+        local ok, bs = pcall(function() return tostring(st.Boosts or "") end)
+        if ok and bs:find(boost, 1, true) then return true end
+    end
+    return false
+end
+
+local function cant_react(u)
+    for _, st in ipairs(status_stats(u)) do
+        local ok, typ = pcall(function() return tostring(st.StatusType or "") end)
+        if ok and typ == "INCAPACITATED" then return true end
+    end
+    return has_boost(u, "ActionResourceBlock(ReactionActionPoint)")
+end
+
+function G.path_provokes(char, points, portals)
     local V = BG3AI.Visibility
     if not (char and G.in_combat(char)) or type(points) ~= "table" or #points < 2 then return nil end
     local me, ctx, out = G.guid(char), V.context(), {}
+    if has_boost(me, "IgnoreLeaveAttackRange()") then return out end -- Disengaged: no one's reach provokes
+    local link = {}
+    for _, i in ipairs(portals or {}) do link[i] = true end
     local attack = Ext.Stats.Get("Target_MainHandAttack")
     for _, row in ipairs(V.charactersNear(points, G.AOO_NEAR_M)) do
         local u = G.guid(V.entityUuid(row[1]) or "")
         if u and u ~= me and not G.is_dead(u) and not G.is_downed(u) and G.in_combat(u) and foe_of(me, u)
-            and V.characterVisible(ctx, u, row[1], row[2]) and reaction_left(u) then
+            and V.characterVisible(ctx, u, row[1], row[2]) and reaction_left(u) and not cant_react(u)
+            and b(G.q("IsEnemy", u, me)) and b(G.q("CanSee", u, me)) then
             local ep = G.pos(u)
             local reach = G.melee_reach(u, me, G.spell_range(attack, u) or G.DEFAULT_MELEE_M)
             local along, inside = 0, U.dist(points[1], ep) <= reach
             for i = 2, #points do
                 local p, q = points[i - 1], points[i]
                 local seg, qin = U.dist(p, q), U.dist(q, ep) <= reach
-                if inside and not qin then -- the crossing, by halving the segment
+                if inside and not qin and not link[i] then -- the crossing (a jump/climb provokes none), halved
                     local lo, hi = 0, 1
                     for _ = 1, 12 do
                         local m = (lo + hi) / 2
