@@ -70,5 +70,17 @@ RPC.push("d", {})
 ok(seqs(since(RPC, 0)) == "41,42,43,44", "re-run over the array ring: " .. seqs(since(RPC, 0)))
 ok(since(RPC, 42).events[1].kind == "c", "and its events")
 
+-- 5. REVIEW-16 A6: the mod has no version number (BG3AI.VERSION "0.1.0" was never bumped or checked); its identity is
+--    the tree's sha1 (mod.sha1 in a release). sys.ping / sys.info carry what docs/PROTOCOL.md lists.
+BG3AI = { VERSION = "0.1.0" } -- what the bootstraps set before
+dofile(LUA .. "/Shared/RPC.lua")
+RPC = BG3AI.RPC
+Ext.Utils.Version = function() return 1 end
+local ping, info = RPC.ops["sys.ping"]({}), RPC.ops["sys.info"]({})
+ok(ping.version == nil and ping.boot ~= nil and ping.t ~= nil, "sys.ping: {context,t,boot}, no version")
+ok(info.version == nil and info.extender_version == 1 and type(info.ops) == "table", "sys.info: no version")
+local boots = io.open(LUA .. "/BootstrapServer.lua"):read("a") .. io.open(LUA .. "/BootstrapClient.lua"):read("a")
+ok(not boots:find("VERSION", 1, true), "the bootstraps set no BG3AI.VERSION")
+
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

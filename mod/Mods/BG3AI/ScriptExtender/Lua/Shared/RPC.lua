@@ -281,8 +281,9 @@ end
 local BOOT = string.format("%d-%d", math.floor(now_ms()), math.random(1, 1000000000))
 RPC.BOOT = BOOT
 
+-- No version field: the mod's identity is its tree's sha1 (mod.sha1 in a release; REVIEW-16 A6).
 RPC.register("sys.ping", function()
-    return { context = CONTEXT, t = now_ms(), version = BG3AI.VERSION, boot = BOOT }
+    return { context = CONTEXT, t = now_ms(), boot = BOOT }
 end)
 
 RPC.register("sys.info", function()
@@ -291,7 +292,6 @@ RPC.register("sys.info", function()
     table.sort(ops)
     return {
         context = CONTEXT,
-        version = BG3AI.VERSION,
         game_version = Ext.Utils.GameVersion and Ext.Utils.GameVersion() or nil,
         extender_version = Ext.Utils.Version(),
         game_state = tostring(Ext.Utils.GetGameState and Ext.Utils.GetGameState() or "?"),
