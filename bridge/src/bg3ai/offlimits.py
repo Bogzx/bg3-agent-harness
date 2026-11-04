@@ -118,7 +118,7 @@ class OffLimits:
         g = self.inside(level, goal)
         if g is not None and g is not start:
             return (f"OFF-LIMITS: the goal is inside {self.name(g)} you were warned about ({g['line']}): walks into"
-                    " it are refused; talk to its guard first (a pass, a check), or travel_to/move_to trespass=true")
+                    " it are refused (travel_to/move_to trespass=true walks in)")
         pts = [here] + [l.get("to") for l in legs or [] if isinstance(l, dict)]
         c = self.crossed(level, pts)
         if c is not None:

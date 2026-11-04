@@ -627,8 +627,8 @@ def _rest_dead_note(can: Any) -> str:
         if isinstance(can, dict) else set()
     hit = [n for n in dead if n in blocked] or dead
     return (f"\nDEAD: {', '.join(hit)} — the game won't gather a dead party member at camp, so the rest fails on "
-            "them: revive them first (Revivify or a Scroll of Revivify aimed at the character, or Withers at camp), "
-            "or swap them out of the party (swap_party)")
+            "them (Revivify or a Scroll of Revivify aimed at the character, or Withers at camp, revives them; "
+            "swap_party takes them out of the party)")
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

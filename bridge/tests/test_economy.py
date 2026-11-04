@@ -238,6 +238,7 @@ class Alerts(unittest.TestCase):
         self.assertIn("Withers at camp", al[0])
         self.assertTrue(al[1].startswith("ally DIED e9 Jaheira (revive: 5 Scroll(s) of Revivify"), al[1])
         self.assertIn("Withers can't raise an ally", al[1])
+        self.assertNotIn("reload", al[1])  # facts only (D630): no advice
         self.assertNotIn("DEAD", " | ".join(economy.alerts(STATUS, inv)))
 
     def test_dead_allies_reach_the_alerts_line(self):

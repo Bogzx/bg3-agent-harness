@@ -540,13 +540,12 @@ def _travel_block_text(b: dict) -> str:
     if not b:
         return ""
     if b.get("dialogue"):
-        return " A conversation is open: finish it first (choose_dialogue)."
+        return " A conversation is open (choose_dialogue answers it): the game doesn't travel during one."
     if b.get("night_camp"):
         return " It is night at camp: a long rest's night hasn't ended (long_rest goes to sleep and ends it)."
     if b.get("error"):
         return (f" The game blocks travel here ({b['error']}): the camp and map travel buttons are greyed out."
-                f" On screen: {b.get('screen') or '?'}. Talk to whoever waits nearby, finish the camp scene, or walk"
-                f" (travel_to) and try again.")
+                f" On screen: {b.get('screen') or '?'}.")
     return ""
 
 

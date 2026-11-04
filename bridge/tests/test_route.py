@@ -147,14 +147,14 @@ class RouteTool(Base):
         return {"uuid": self.WALL, "name": "Stone Wall", "how": "opened", "ago_s": 3 if settling else 12,
                 **({"settling": True} if settling else {})}
 
-    def test_no_path_right_after_a_wall_opened_says_try_again(self):
+    def test_no_path_right_after_a_wall_opened_says_it_may_still_be_moving(self):
         self.reply = dict(FIRE_MAZE, opened=self.opened(True))
         out = observe.route(x=-40.0, y=16.0, z=-431.0)
         self.assertIn("NO WALKABLE PATH", out)
-        self.assertRegex(out, r"e\d+ Stone Wall opened 3s ago and may still be moving: this passage just opened, "
-                              r"try again in a few seconds")
+        self.assertRegex(out, r"e\d+ Stone Wall opened 3s ago and may still be moving: the answer can change in the "
+                              r"next seconds")
         self.g.reach = {"reachable": False, "samples": 9, "opened": self.opened(True)}
-        self.assertIn("this passage just opened, try again", observe.walk_toward(direction="W"))
+        self.assertIn("may still be moving: the answer can change", observe.walk_toward(direction="W"))
         self.reply = dict(FIRE_MAZE, opened=self.opened(False))
         self.assertRegex(observe.route(x=-40.0, y=16.0, z=-431.0), r"\(searched after e\d+ Stone Wall opened 12s ago: up to date\)")
         self.reply = FIRE_MAZE
@@ -263,13 +263,13 @@ class RouteTool(Base):
         self.assertIn("NEXT: travel_to x,y,z = (-227.6,13.5,-114) (the edge of the 8.4m drop), then jump_to", out)
         self.assertEqual(seen[-1], {"who": None, "x": -227.6, "y": 13.5, "z": -114.0})
 
-    def test_wedged_route_says_jump_out_next_to_a_member(self):
+    def test_wedged_route_names_the_nearest_landing_next_to_a_member(self):
         """S058 08:00: Claude stuck in a nook after a pick_up: WAYS none, no closest spot; 6 calls to guess a jump."""
         self.reply = dict(FIRE_MAZE, closest=None, ways=[{"dir": d, "open_m": 0} for d in ("N", "E", "S", "W")],
                           wedged={"wedged": True, "to": [21.0, 46.4, 228.5], "near": "Wyll", "dist_m": 3.1})
         out = observe.route(x=-40.0, y=16.0, z=-431.0)
-        self.assertIn("WEDGED: no walkable ground leads out from where you stand: jump_to x,y,z = (21,46.4,228.5) "
-                      "next to Wyll (3.1m), then try again", out)
+        self.assertIn("WEDGED: no walkable ground leads out from where you stand; the nearest landing is x,y,z = "
+                      "(21,46.4,228.5) next to Wyll (3.1m)\n", out)
         self.assertIn("NEXT: jump_to x,y,z = (21,46.4,228.5) (out of the nook), then route again", out)
         self.assertIn("you are wedged", route.hint_text(self.reply, core.H))
 
@@ -278,8 +278,8 @@ class RouteTool(Base):
         self.wedged = {"wedged": True, "to": [21.0, 46.4, 228.5], "near": "Wyll", "dist_m": 3.1, "in_reach": False}
         out = observe.walk_toward(direction="N", max_m=6)
         self.assertIn("FAILED: no walkable ground toward N within 6m (3 spots checked)", out)
-        self.assertIn("you are wedged: no walkable ground leads out from where you stand: jump_to x,y,z = "
-                      "(21,46.4,228.5) next to Wyll (3.1m) if it is in reach, then try again", out)
+        self.assertIn("you are wedged: no walkable ground leads out from where you stand; the nearest landing is x,y,z = "
+                      "(21,46.4,228.5) next to Wyll (3.1m, beyond jump reach from here)", out)
         self.assertNotIn("Try another direction", out)
 
 
@@ -314,11 +314,12 @@ class HelmRoute(Base):
         b = core.H.get(E57, "Arterial Mesh")
         self.assertIn(f"NEXT: interact {b} (ladder up), then route again", out)
 
-    def test_wedged_with_only_a_landing_away_from_the_goal_says_dont_jump(self):
+    def test_wedged_with_only_a_landing_away_from_the_goal_says_so(self):
         """naut2 run 3: right after e44's climb "jump_to (-42.3,4.5,…) next to Lae'zel": back down the ladder (+60 s)."""
         w = {"wedged": True, "away": "Lae'zel", "away_dy": -2.9}
         txt = route.wedged_text(w)
-        self.assertIn("the only landing (next to Lae'zel) is 2.9m below, away from the goal: don't jump there", txt)
+        self.assertIn("the only landing (next to Lae'zel) is 2.9m below, away from the goal; right after a climb the "
+                      "ground can read blocked for a moment", txt)
         self.assertNotIn("jump_to", txt)
         res = dict(FIRE_MAZE, closest=None, wedged=w)
         out = route.render_route(res, core.H, "it")
@@ -352,7 +353,7 @@ class Rendering(unittest.TestCase):
                           "ago_s": 2, "settling": True}}
         out = render.render_path(res, H)
         self.assertTrue(out.startswith("UNREACHABLE: no walkable path (6.8m straight line)"))
-        self.assertIn("e1 Stone Wall opened 2s ago and may still be moving: this passage just opened, try again", out)
+        self.assertIn("e1 Stone Wall opened 2s ago and may still be moving: the answer can change in the next seconds", out)
         self.assertEqual(render.render_path({"reachable": False, "straight_m": 6.8}, H).count("\n"), 0)
 
     def test_path_preview_unseen_spot_is_the_straight_line_only(self):
