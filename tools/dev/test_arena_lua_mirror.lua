@@ -109,7 +109,7 @@ local function game(opts)
     end
     -- The ground's surfaces: opts.tiles {x, z, ground surface, stays = the clear doesn't remove it} (a tile per metre;
     -- every other tile reads None); opts.no_tiles: no tile reads. opts.ground(x, z): the floor heights there (default
-    -- {0}); a tile reads only at one of them.
+    -- {0}); a tile reads only at one of them. opts.clear_lag_ms: a clear lands this long after its call (live w10 L3).
     local tiles = opts.tiles or {}
     local ground = opts.ground or function() return { 0.0 } end
     Ext.Level.GetHeightsAt = function(x, z) return ground(x, z) end
@@ -129,12 +129,16 @@ local function game(opts)
         calls[#calls + 1] = { "RemoveSurfaceLayerAtPosition", ... }
         if opts.surface_call_fails then error("RemoveSurfaceLayerAtPosition: wrong arguments") end
         local x, _, z, layer, r = ...
-        for i = #tiles, 1, -1 do
-            local t = tiles[i]
-            if layer == "Ground" and not t.stays and (t[1] - x) ^ 2 + (t[2] - z) ^ 2 <= r * r then
-                table.remove(tiles, i)
+        local function clear()
+            for i = #tiles, 1, -1 do
+                local t = tiles[i]
+                if layer == "Ground" and not t.stays and (t[1] - x) ^ 2 + (t[2] - z) ^ 2 <= r * r then
+                    table.remove(tiles, i)
+                end
             end
         end
+        if not opts.clear_lag_ms then return clear() end
+        landing[#landing + 1] = { run = clear, at = clock + opts.clear_lag_ms }
     end)
     stub("SetStoryDisplayName", function(u, name)
         calls[#calls + 1] = { "SetStoryDisplayName", u, name }
@@ -150,7 +154,7 @@ local function game(opts)
         for _, l in ipairs(landing) do
             if clock >= l.at and not l.done then
                 l.done = true
-                if l.twin then twin(l.twin, { stats = l.stats }) else NAMES[l.u] = l.name end
+                if l.run then l.run() elseif l.twin then twin(l.twin, { stats = l.stats }) else NAMES[l.u] = l.name end
             end
         end
     end
@@ -639,7 +643,8 @@ test("surfaces the clear leaves that don't mirror fail setup naming them, before
     game({ tiles = { { 1, 8, "Fire", stays = true }, { 2, 8, "Fire", stays = true }, { 3, 3, "Water" } } })
     local j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
-    eq(tostring(j.error), "the surfaces don't mirror after the clear (2 of 207 tiles read within 11.8 m): "
+    eq(tostring(j.error), "the surfaces don't mirror 5.0 s after the clear (2 of the 207 tile pairs read within 11.8 m "
+        .. "differ): "
         .. "(1.0, 2.0) on A's half reads None/None, its mirror (1.0, 8.0) Fire/None; "
         .. "(2.0, 2.0) on A's half reads None/None, its mirror (2.0, 8.0) Fire/None", "names each (the water cleared)")
     eq(#named("CreateAt"), 0, "no twin")
@@ -655,7 +660,28 @@ test("surfaces that mirror after the clear pass; no tile that reads fails", guar
     j = mirrorSetup(mirrorArena())
     eq(j.status, "failed", "failed")
     eq(tostring(j.error), "only 0 of 207 tile pairs on A's half within 11.8 m of the arena's midpoint read their "
-        .. "surfaces (under 50%)", "fails closed")
+        .. "surfaces (under 50%) 5.0 s after the clear", "fails closed")
+    eq(#named("CreateAt"), 0, "no twin")
+end))
+
+-- Live w10 L3: the check in the clear's own tick read Fire and BloodSilver the clear then removed (14 pairs off of 168
+-- read); the same load's setup 40 s later read them cleared. The clear lands after its call: setup reads again.
+test("a clear that lands after its call: setup reads the surfaces again until they mirror", guarded(function()
+    restore()
+    game({ tiles = { { 1, 8, "Fire" }, { 2, 9, "BloodSilver" } }, clear_lag_ms = 1000 })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.step, 1, "at the party step: " .. tostring(j.error))
+    eq(j.surfaces.off, 0, "read cleared")
+    eq(#named("CreateAt"), 4, "the twins spawned after the read")
+end))
+
+test("surfaces still off when the wait ends fail setup, no twin spawned", guarded(function()
+    restore()
+    game({ tiles = { { 1, 8, "Fire" } }, clear_lag_ms = Ar.Setup.SURFACE_WAIT_MS + 1000 })
+    local j = mirrorSetup(mirrorArena())
+    eq(j.status, "failed", "failed")
+    local want = "^the surfaces don't mirror 5.0 s after the clear %(1 of the 207 tile pairs"
+    eq(tostring(j.error):find(want) ~= nil, true, tostring(j.error))
     eq(#named("CreateAt"), 0, "no twin")
 end))
 
