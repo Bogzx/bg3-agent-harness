@@ -679,6 +679,47 @@ test("nav.path to a creature id: a path to a large foe's edge, or none from next
     if not ok then error(err, 0) end
 end)
 
+-- w15 b2 (Balthazar fight): path_preview(target=Destroyer) from 5.4 m on the same floor read NOT REACHED: the engine's
+-- path to its occupied centre ended 2.95 m from it (Stand 0.499: footprint + 2 m = 2.5 m), and from that very end the
+-- next preview walked 1.7 m closer. A spot around it that the walker reaches decides.
+test("nav.path to a creature id: a centre path that stops short of a foe it reaches is not short (w15 b2)", function()
+    local FOE = "ffffffff-0000-0000-0000-00000000000b"
+    local V = BG3AI.Visibility
+    local entity, visible = V.entity, V.characterVisible
+    V.entity = function(u)
+        local e = entity(u)
+        if e and u == FOE then
+            e.ServerCharacter = {}
+            e.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.499 }, Move = { Radius = 0.249 } } } }
+        end
+        return e
+    end
+    V.characterVisible = function() return true end
+    local ok, err = pcall(function()
+        world[P1] = { -604.96, 0, -1431.71 }
+        world[FOE] = { -599.75, 0, -1430.25 }
+        local centre = 0
+        nodesFor = function(_, t)  -- the centre: the engine stops at (-602.7, -1430.2); a free spot: reached
+            if t[1] ~= -599.75 or t[3] ~= -1430.25 then return { t } end
+            centre = centre + 1
+            return { { -603.6, 0, -1430.9 }, { -602.7, 0, -1430.2 } }
+        end
+        local r = RPC.ops["nav.path"]({ target = FOE })
+        eq(centre > 0, true, "the centre path was asked first")
+        eq(r.reachable, true, "reachable"); eq(r.partial, nil, "not NOT REACHED")
+        eq(r.approach_pos ~= nil, true, "it ends at a spot next to it")
+        eq(U.dist(r.approach_pos, world[FOE]) <= 0.499 + 2.0, true, "within its footprint + 2 m")
+        -- the same foe with no free spot reached around it (every path stops where the centre one does): short
+        N.frame = N.frame + 1
+        nodesFor = function() return { { -603.6, 0, -1430.9 }, { -602.7, 0, -1430.2 } } end
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.partial, true, "no spot reached: NOT REACHED"); near(r.end_off, 2.95, "short by", 0.05)
+        eq(r.approach_pos, nil, "no spot")
+    end)
+    V.entity, V.characterVisible, world[FOE] = entity, visible, nil
+    if not ok then error(err, 0) end
+end)
+
 test("nav.activity reports a harmful surface under a party member", function()
     Osi.IsOnStage = function() return 1 end
     fire = function() return true end

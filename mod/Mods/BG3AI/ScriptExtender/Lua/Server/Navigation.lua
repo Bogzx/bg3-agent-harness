@@ -949,7 +949,7 @@ end
 -- File-local helpers the other parts use.
 N.inner = { store = store, mirror = mirror, levelStore = levelStore, currentLevel = currentLevel, DIRS = DIRS,
     DIR_VEC = DIR_VEC, floorAt = floorAt, readResult = readResult, rawPath = rawPath, gatedPath = gatedPath,
-    pathKey = pathKey,
+    pathKey = pathKey, RING = RING,
     helperBox = helperBox, inBox = inBox }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads N and the
