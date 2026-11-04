@@ -415,6 +415,16 @@ function SV.tableValue(items)
 end
 local sumPrices = SV.tableValue
 
+-- The names of the items on a side whose price could not be read (no TradePrice >= 0): tableValue counts them 0, so a
+-- confirm on such a table would trade them for nothing (a player sees a price).
+function SV.unpriced(items)
+    local out = {}
+    for _, it in ipairs(items) do
+        if not it.gold and not it.price then out[#out + 1] = it.name or it.uuid or "?" end
+    end
+    return out
+end
+
 local function goldOn(items)
     local g = 0
     for _, it in ipairs(items) do if it.gold then g = g + (it.count or 1) end end
@@ -700,6 +710,18 @@ RPC.register("ui.trade", function(args)
             -- (~25 s). Never finish an uneven deal: wait for the Balance (pressed again on a table that stopped
             -- changing), else say why. An overpay goes through only on purpose (donate).
             local yours, theirs = offerView(UI.prop(live, "CharacterOffer")), offerView(UI.prop(live, "TraderOffer"))
+            -- An item without a readable price would count 0 and pass as even: never barter it (a gift on purpose,
+            -- donate=true, gives our side away whatever its price).
+            local noPrice = SV.unpriced(theirs)
+            if not args.donate then
+                for _, n in ipairs(SV.unpriced(yours)) do noPrice[#noPrice + 1] = n end
+            end
+            if #noPrice > 0 then
+                local st = SV.tradeState(live)
+                st.moved, st.already = moved, already[1] and already or nil
+                return "failed", st, "not confirmed: the price of " .. table.concat(noPrice, ", ")
+                    .. " on the table could not be read"
+            end
             local give, get = sumPrices(yours), sumPrices(theirs)
             local side, n = SV.tradeImbalance(give, get)
             if side and not (side == "over" and args.donate) then
