@@ -414,7 +414,14 @@ test("get_nearby: a visible creature's concentration (act2 Balthazar's Cloudkill
             table.sort(out)
             return table.concat(out, ",")
         end
+        pushed = {}
         eq(conc(), "009=Cloudkill,352=nil", "the caster's spell, by its shown name")
+        -- act2-fights-analysis fix 4: its first sight in this fight gives the spell's tooltip, once
+        conc()
+        local infos = {}
+        for _, p in ipairs(pushed) do if p.kind == "spell_info" then infos[#infos + 1] = p.data end end
+        eq(#infos, 1, "one spell_info for two reads")
+        eq(infos[1] and infos[1]:sub(1, 10), "Cloudkill:", "its name first")
         onStage[GOB] = false
         eq(conc(), "352=nil", "not visible: no row, so no concentration")
     end)
