@@ -145,7 +145,8 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
         StatusGroups = { "SG_Unconscious", "SG_Condition", "SG_Sleeping", "SG_Sleeping_Magical" } })
     spell("HOLD_PERSON", { StatusType = "INCAPACITATED", RemoveEvents = { "OnTurn" },
         RemoveConditions = "SavingThrow(Ability.Wisdom, SourceSpellDC())" })
-    spell("PRONE", { StatusType = "KNOCKED_DOWN", RemoveEvents = { "OnTurn" } })
+    spell("PRONE", { StatusType = "KNOCKED_DOWN", RemoveEvents = { "OnTurn" },
+        RemoveConditions = "(HasActionResource('Movement', 50, 0, true) and not HasPassive('Athlete_StandUp'))" })
     spell("FRIGHTENED", { StatusType = "BOOST", StatusGroups = { "SG_Frightened", "SG_Condition" },
         Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll);ActionResourceBlock(Movement)" })
     spell("HASTE_LETHARGY", { StatusType = "INCAPACITATED" })
@@ -176,7 +177,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     -- the movement figure / walk guard: whatever "cannot act" or "cannot move"
     eq(G.move_blocked(P1), "Sleeping", "move_blocked: the first that stops a walk")
     on = { { id = "PRONE", name = "Prone" }, { id = "BLEEDING", name = "Bleeding" } }
-    eq(G.move_blocked(P1), nil, "prone stands up and walks")
+    eq(G.move_blocked(P1), "Prone", "prone in its own turn: down until its next turn start")
     on = { { id = "HASTE_LETHARGY", name = "Lethargic" } }
     eq(G.move_blocked(P1), "Lethargic", "lethargic")
     -- S065 11:51: Claude's FEARED turn: the game moved him and ended it while end_turn said "now e4's turn"

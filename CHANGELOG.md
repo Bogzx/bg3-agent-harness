@@ -160,6 +160,13 @@ game unless it says so.
   cast. Window 9 checked it live: the opportunity attack's cast starts only after the walk arrives (+0.33 s,
   +0.93 s), while the reactor's ReactionInterruptUsed fires before (-0.63 s, -1.30 s); so a foe's interrupt during
   the move holds it until that foe's cast starts (at most 4 s after the interrupt), then the cast holds it.
+- A character knocked down (StatusType KNOCKED_DOWN or SG_Prone: PRONE, PRONE_GREASE, ...) during its own combat turn
+  can't walk or cast through the harness, as a player can't: the game keeps it down until the status goes at its next
+  turn start (Shared Status_KNOCKED_DOWN.txt PRONE: RemoveEvents OnTurn, RemoveConditions half its movement). w10 L6
+  ST-P5(d): a harness move_to stood a prone character up at no cost beyond the metres walked. The guard refuses both
+  before any order ("cannot move while Prone (the status keeps it in place this turn)", "cannot act while Prone (it
+  stands up at its turn start for half its movement)"), and the movement figure shows 0. The effect text is read from
+  the status's RemoveEvents/RemoveConditions. Outside its own turn nothing changes.
 
 ### Benchmark (`packages/bench`)
 
