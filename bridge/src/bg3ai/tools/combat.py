@@ -9,7 +9,7 @@ import re
 import time
 from typing import Any, Callable
 
-from .. import boxclick, hotbar, hoverclick, render, turn, twostep
+from .. import boxclick, busywait, hotbar, hoverclick, render, turn, twostep
 from ..game import GameError, JobResult
 from . import core, observe, overview, plumbing, reporting, world_tools
 
@@ -364,13 +364,21 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
     cs = core.game.try_rpc("state.combat") or {}
     if not cs.get("active") or char not in turn.acting(cs):   # it ended after all (a late read): never press twice
         return JobResult("done", {"ended": True}, None, r.events, r.elapsed_ms)
+    busy = None
     try:
         with plumbing._InputHeld():  # M7: no click/select from the MCP thread between this select and the press
             if not uitools._hud_has(char):  # the press ends whoever the HUD has selected (A16)
                 core.game.run_job("act.select", {"char": char}, wait_s=5)
             core.game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
     except GameError as e:
-        return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events, r.elapsed_ms)
+        # act2-fights-analysis fix 3 (launch-v1 deepseek windmill r3, balthazar r1, act3_gold_max r1): a busy answer
+        # that came once a UI call ran ("met it after a UI call ran") may come after the press itself: the turn may
+        # have moved on, so it is checked as after any press. Refused at the gate (nothing pressed) or any other
+        # error: failed at once.
+        if not busywait.is_busy(str(e)) or busywait.BEFORE_MARK in str(e):
+            return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events,
+                             r.elapsed_ms)
+        busy = str(e)
     pressed = time.monotonic()
     deadline = pressed + END_HUD_WAIT_S
     while time.monotonic() < deadline:
@@ -382,6 +390,9 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
                    "End Turn was pressed too)")
             return JobResult("done", {"ended": True, "via": via}, None, r.events, r.elapsed_ms)
         time.sleep(0.2)
+    if busy:
+        return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {busy}", r.events,
+                         r.elapsed_ms)
     return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn didn't end it either (a cutscene or line "
                      "may be holding the turn: wait_for, then end_turn again)", r.events, r.elapsed_ms)
 

@@ -183,6 +183,118 @@ listen("StatusRemoved", 4, function(obj, status, _, _)
     if u then RPC.push("status_removed", { target = ref(u), name = V.statusInfo(status).name }) end
 end)
 
+------------------------------------------------------------------------
+-- An enemy's spell on first sight (act2-fights-analysis fix 4): what a player reads by hovering it, from the game's
+-- own data: its shown name and description with the description's numbers filled in (DescriptionParams), the extra
+-- description, then level / concentration, range, area, the save or attack, its damage (TooltipDamageList) and how
+-- long its status lasts (TooltipStatusApply). Facts only, the tooltip's own text. One spell_info event per spell per
+-- fight (E.spellSeen per combat), when an enemy casts it in view or a row shows it concentrating on it.
+------------------------------------------------------------------------
+
+local function splitTop(s) -- "DealDamage(5d8,Poison);Distance(3)" -> its top-level parts (commas inside parens kept)
+    local out, depth, cur = {}, 0, ""
+    for ch in tostring(s or ""):gmatch(".") do
+        if ch == "(" then depth = depth + 1 elseif ch == ")" then depth = depth - 1 end
+        if (ch == ";" or ch == ",") and depth == 0 then
+            if cur ~= "" then out[#out + 1] = cur end
+            cur = ""
+        else
+            cur = cur .. ch
+        end
+    end
+    if cur ~= "" then out[#out + 1] = cur end
+    return out
+end
+
+-- One tooltip parameter as the tooltip shows it: DealDamage(5d8,Poison) "5d8 Poison damage", Distance(3) "3m",
+-- RegainHitPoints(2d4) "2d4 hit points"; any other kept as written.
+local function param(p)
+    local fn, args = tostring(p):match("^%s*([%w_]+)%((.*)%)%s*$")
+    if not fn then return (tostring(p):gsub("^%s+", ""):gsub("%s+$", "")) end
+    local a = {}
+    for x in (args .. ","):gmatch("([^,]*),") do a[#a + 1] = (x:gsub("^%s+", ""):gsub("%s+$", "")) end
+    if fn == "DealDamage" then return a[1] .. (a[2] and a[2] ~= "" and (" " .. a[2]) or "") .. " damage" end
+    if fn == "Distance" then return a[1] .. "m" end
+    if fn == "RegainHitPoints" then return a[1] .. " hit points" end
+    return tostring(p)
+end
+
+local function tooltipText(handle, params)
+    local t = U.loca(handle)
+    if not t then return nil end
+    local ps = splitTop(params)
+    t = t:gsub("%[(%d+)%]", function(i) local x = ps[tonumber(i)] return x and param(x) or nil end)
+    t = t:gsub("<br%s*/?>", " "):gsub("<[^>]+>", ""):gsub("%s+", " ")
+    return (t:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local SAVES = { Strength = true, Dexterity = true, Constitution = true, Intelligence = true, Wisdom = true,
+    Charisma = true }
+
+E.spellInfo = E.spellInfo or {} -- spell id -> its text, or false (no shown name): stats don't change in a game
+function E.spell_info(id)
+    local c = E.spellInfo[id]
+    if c ~= nil then return c or nil end
+    c = false
+    local st = osi(Ext.Stats.Get, id)
+    local function f(k) local ok, v = pcall(function() return st[k] end) if ok and v ~= "" then return v end end
+    local name = st and U.loca(f("DisplayName"))
+    if name then
+        local text = { name .. ":" }
+        local d = tooltipText(f("Description"), f("DescriptionParams"))
+        if d then text[#text + 1] = d end
+        local x = tooltipText(f("ExtraDescription"), f("ExtraDescriptionParams"))
+        if x then text[#text + 1] = x end
+        local facts = {}
+        local lvl = tonumber(f("Level"))
+        if lvl and lvl > 0 then facts[#facts + 1] = "level " .. lvl end
+        local conc = false
+        pcall(function() for _, fl in ipairs(st.SpellFlags) do if fl == "IsConcentration" then conc = true end end end)
+        if conc then facts[#facts + 1] = "concentration" end
+        local range, area = tonumber(f("TargetRadius")), tonumber(f("AreaRadius"))
+        local function m(v)
+            v = U.round(v, 1)
+            return (v == math.floor(v) and string.format("%d", v) or tostring(v)) .. "m"
+        end
+        if range and range > 0 then facts[#facts + 1] = "range " .. m(range) end
+        if area and area > 0 then facts[#facts + 1] = "area " .. m(area) end
+        local sv = f("TooltipAttackSave")
+        if sv then
+            facts[#facts + 1] = SAVES[sv] and (sv .. " save")
+                or tostring(sv):gsub("(%l)(%u)", "%1 %2"):lower()
+        end
+        for _, dmg in ipairs(splitTop(f("TooltipDamageList"))) do facts[#facts + 1] = param(dmg) end
+        for _, a in ipairs(splitTop(f("TooltipStatusApply"))) do
+            local turns = tonumber(tostring(a):match("^%s*ApplyStatus%([^,]*,[^,]*,%s*(-?%d+)"))
+            if turns and turns > 0 then
+                facts[#facts + 1] = "lasts " .. turns .. (turns == 1 and " turn" or " turns")
+            end
+        end
+        if #facts > 0 then text[#text + 1] = "(" .. table.concat(facts, ", ") .. ")" end
+        c = table.concat(text, " ")
+    end
+    E.spellInfo[id] = c
+    return c or nil
+end
+
+-- The first sight of a spell in a fight (keyed by the caster's combat; out of combat, "none"): push spell_info.
+-- In an arena it is a side's own (its listener run or its op: the event is tagged with that side, and each side's
+-- first sight is its own); the harness's no-side run reads both teams, which no side sees, so it pushes none.
+E.spellSeen = E.spellSeen or {}
+function E.note_spell(caster, id)
+    if not id or id == "" then return end
+    if RPC.arena_active and RPC.arena_active() and not RPC.side() then return end
+    local combat = tostring(osi(Osi.CombatGetGuidFor, caster) or "none")
+    local fights = U.sided(E, "spellSeen")
+    local seen = fights[combat] or {}
+    fights[combat] = seen
+    if seen[id] then return end
+    local text = E.spell_info(id)
+    if not text then return end
+    seen[id] = true
+    RPC.push("spell_info", text)
+end
+
 -- CastedSpell(caster, spell, spellType, spellElement, storyActionID)
 listen("CastedSpell", 5, function(caster, spell, _, _, _)
     local u = visibleChar(caster)
@@ -200,6 +312,7 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
     -- spell: the engine id, only for our own casters (the hotbar's spell, what a plan names). An enemy's cast shows
     -- a player only its display name; its id can carry hints the name doesn't (audit ACT-14, as for status ids).
     RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll })
+    if not ctx().is_party[u] then E.note_spell(u, spell) end
 end)
 
 ------------------------------------------------------------------------
