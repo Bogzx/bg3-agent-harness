@@ -491,14 +491,46 @@ class ScreenshotMap(Base):
         made = []
         core._screen = None
         with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": "/game/runtime/shots"}), \
+                unittest.mock.patch("bg3ai.screen.layer_output_dir", return_value=None), \
                 unittest.mock.patch("bg3ai.screen.ScreenCapture", side_effect=lambda d: made.append(d)):
             try:
                 self.fn()
             except Exception:  # noqa: BLE001  (the fake capture object is None)
                 pass
         self.assertEqual(made, [Path("/game/runtime/shots")])
-        with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": ""}):
+        with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": ""}), \
+                unittest.mock.patch("bg3ai.screen.layer_output_dir", return_value=None):
             self.assertEqual(observe._shots_dir(), core.RUNTIME / "shots")
+
+    def test_captures_where_the_running_game_writes(self):
+        # v010 window 9: the wrapper ran w8-fixes' call.py (its runtime/shots) against a game launched from w9-fixes;
+        # the layer wrote every PNG into w9-fixes/runtime/shots within 0.5 s and the screenshot timed out after 5 s.
+        # The folder is the game's: its VK_LAYER_MESA_SCREENSHOT_CONFIG output_dir, over BG3AI_SHOTS_DIR and runtime.
+        import tempfile
+
+        from bg3ai import screen
+
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            cfg = "comms;control=bg3ai-shot;output_dir=/w9-fixes/runtime/shots;log_type=error"
+            for pid, env in (
+                ("100", f"HOME=/h\0VK_LAYER_MESA_SCREENSHOT_CONFIG={cfg}\0X=1"),  # the game
+                ("101", f"VK_LAYER_MESA_SCREENSHOT_CONFIG={cfg}"),  # its launcher wrapper: the same value
+                ("102", "VK_LAYER_MESA_SCREENSHOT_CONFIG=comms;control=other;output_dir=/elsewhere"),  # not ours
+                ("self", f"VK_LAYER_MESA_SCREENSHOT_CONFIG={cfg}"),  # not a pid
+            ):
+                (proc / pid).mkdir()
+                (proc / pid / "environ").write_bytes(env.encode())
+            self.assertEqual(screen.layer_output_dir(proc=proc), Path("/w9-fixes/runtime/shots"))
+            real = screen.layer_output_dir
+            with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": "/w8-fixes/runtime/shots"}), \
+                    unittest.mock.patch("bg3ai.screen.layer_output_dir", lambda: real(proc=proc)):
+                self.assertEqual(observe._shots_dir(), Path("/w9-fixes/runtime/shots"))
+            # two games writing to different folders: no guess, the configured folder as before
+            (proc / "103").mkdir()
+            (proc / "103" / "environ").write_bytes(cfg.replace("w9-fixes", "w7-fixes").join(
+                ["VK_LAYER_MESA_SCREENSHOT_CONFIG=", ""]).encode())
+            self.assertIsNone(screen.layer_output_dir(proc=proc))
 
 
 class DoorOpenState(unittest.TestCase):
