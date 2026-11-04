@@ -105,7 +105,10 @@ game unless it says so.
   game skips: window 8, Hide while Flanked), so the agent gets a plain refusal and loses no action. TargetConditions
   are left to the game: with the guard off it refused all four targets they rule out (window 9: Sleep at 48 HP,
   Healing Word on an undead, a swing at a corpse, Help on a healthy ally; InvalidTarget, nothing spent), so the
-  guard no longer refuses on them, and a term it misreads can't refuse a legal cast. When the game refuses a cast, the result now gives the game's own reason
+  guard no longer refuses on them, and a term it misreads can't refuse a legal cast. If IgnoreTargetChecks stays set
+  on a cast (the engine then won't check its target), the guard reads the target conditions at the cast state and,
+  when one reads false, stops the cast (fail closed) with "<spell> can't target that: <fact> (the game wouldn't check
+  the target ...): stopped"; a cast that goes through anyway says so in `target_unchecked`. When the game refuses a cast, the result now gives the game's own reason
   (`SpellCastOutcome.Result`, e.g. "it can't be cast now (its requirements aren't met) (the game's CantCast)")
   instead of "no reason given", when the cast entity has one. At a ground point, the game's target reasons
   (MissingTarget, TooFewTargets, InvalidTarget) read "it can't be cast at that spot", because they can depend on

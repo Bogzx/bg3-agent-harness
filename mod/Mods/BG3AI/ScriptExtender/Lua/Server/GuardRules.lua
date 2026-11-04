@@ -460,6 +460,28 @@ function G.check_rules(char, spell, st, target)
     if v == false then G.refuse(name .. " can't be used now: " .. why) end
 end
 
+-- The pick's TargetConditions (OriginTargetConditions for a two-step spell) read as false: "<spell> can't target
+-- that: <fact>", else nil (met, unread, or not the pick's: a Shout, a Zone, an area spell). Not a pre-check (the
+-- engine checks targets, window 9 R3): used only when IgnoreTargetChecks stayed set on the cast (ActionsRolls.lua,
+-- fail closed), and its unread terms are logged as the old pre-check's were.
+function G.target_refusal(char, spell, target)
+    local st = spell and Ext.Stats.Get(spell)
+    if not st or not target or G.RULES_OFF then return nil end
+    local function field(k)
+        local ok, v = pcall(function() return st[k] end)
+        return ok and v or nil
+    end
+    local st_type = tostring(field("SpellType") or "")
+    local area = (tonumber(field("AreaRadius")) or 0) > 0 or (tonumber(field("ExplodeRadius")) or 0) > 0
+    if st_type == "Shout" or st_type == "Zone" or st_type == "Wall" or area then return nil end
+    local which = st_type == "Teleportation" and "OriginTargetConditions" or "TargetConditions"
+    local v, why, unread = G.rule_eval(field(which), { source = char, target = target, subject = target })
+    log_unread(spell, which, unread, {})
+    if v ~= false then return nil end
+    local name = G.spell_facts(spell)
+    return (name and name.name or spell) .. " can't target that: " .. why
+end
+
 ------------------------------------------------------------------------
 -- After the game refused a cast at a creature (InvalidTarget): the spell's target conditions as the guard reads
 -- them, the parts not read as met only. Window 8 m2: Sneak Attack (Melee) at 1.0 m was refused twice; its
