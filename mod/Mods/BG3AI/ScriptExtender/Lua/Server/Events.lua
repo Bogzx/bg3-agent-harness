@@ -195,9 +195,9 @@ end
 -- The caster's numbers in a damage formula, as the tooltip shows them (w10 L2: "MainMeleeWeapon
 -- MainMeleeWeaponDamageType damage" and "LevelMapValue(D8Cantrip) Cold damage" reached the agent raw).
 -- LevelMapValue(name): the game's level map (Ext.StaticData "LevelMap", by its Name) at the caster's level.
--- <Slot>Weapon / <Slot>WeaponDamageType: the caster's weapon in that slot, its stats' Damage and Damage Type.
-local WEAPON_SLOTS = { MainMeleeWeapon = "Melee Main Weapon", MainRangedWeapon = "Ranged Main Weapon",
-    OffhandMeleeWeapon = "Melee Offhand Weapon", OffhandRangedWeapon = "Ranged Offhand Weapon" }
+-- <Slot>Weapon tokens are not resolved (REVIEW-13 item 1): the tooltip's number also depends on the off-hand rule,
+-- a versatile weapon held in two hands and the caster's own damage boosts (Rage, Dueling, ...), so any number built
+-- here could be wrong; the part is left out like any other formula and the combat log shows the real roll.
 local DAMAGE_TYPES = { Acid = true, Bludgeoning = true, Cold = true, Fire = true, Force = true, Lightning = true,
     Necrotic = true, Piercing = true, Poison = true, Psychic = true, Radiant = true, Slashing = true, Thunder = true }
 local DICE = { "4", "6", "8", "10", "12", "20", "100" } -- bg3se DiceSizeId D4 .. D100, in its order
@@ -231,70 +231,18 @@ local function levelMapValue(name, lvl)
     return n and die and (n .. "d" .. die) or nil
 end
 
-local function weapon(caster, slot)
-    local it = caster and osi(Osi.GetEquippedItem, caster, slot)
-    local ie = it and osi(Ext.Entity.Get, it)
-    local sid = ie and field(field(ie, "Data") or {}, "StatsId")
-    return sid and osi(Ext.Stats.Get, sid) or nil
-end
-
--- The caster's ability modifier (Stats.Abilities: [1] None, then Strength, Dexterity, ... as State.lua reads them).
-local function abilityMod(u, i)
-    local e = u and V.entity(u)
-    local ok, score = pcall(function() return e.Stats.Abilities[i + 1] end)
-    score = ok and tonumber(score) or nil
-    return score and math.floor((score - 10) / 2) or nil
-end
-
-local function hasProperty(st, prop)
-    local wp = field(st, "Weapon Properties")
-    if type(wp) == "table" or type(wp) == "userdata" then
-        local yes = false
-        pcall(function() for _, x in pairs(wp) do if x == prop then yes = true end end end)
-        return yes
-    end
-    return tostring(wp or ""):find(prop, 1, true) ~= nil
-end
-
--- A weapon token as the tooltip shows it (effd173a review): the weapon's dice plus the ability modifier the game
--- adds (melee: Strength; finesse: the higher of Strength and Dexterity; ranged: Dexterity) plus its
--- WeaponEnchantment(n). nil when any of those can't be read: no number rather than a wrong one.
-local function weaponDamage(t, c)
-    local st = WEAPON_SLOTS[t] and weapon(c.uuid, WEAPON_SLOTS[t])
-    local dice = st and field(st, "Damage")
-    if type(dice) ~= "string" or not dice:match("^%d+d%d+$") then return nil end
-    local str, dex = abilityMod(c.uuid, 1), abilityMod(c.uuid, 2)
-    local mod
-    if t:find("Ranged", 1, true) then
-        mod = dex
-    elseif hasProperty(st, "Finesse") then
-        mod = str and dex and math.max(str, dex) or nil
-    else
-        mod = str
-    end
-    if not mod then return nil end
-    local boosts = tostring(field(st, "Boosts") or "") .. ";" .. tostring(field(st, "DefaultBoosts") or "")
-    mod = mod + (tonumber(boosts:match("WeaponEnchantment%((%d+)%)")) or 0)
-    return dice .. (mod > 0 and ("+" .. mod) or (mod < 0 and tostring(mod) or ""))
-end
-
 -- A damage/heal amount with the caster's numbers, or nil (the part is left out) when anything stays a formula.
 local function amount(x, c)
     local out = tostring(x or ""):gsub("LevelMapValue%(%s*([%w_]+)%s*%)", function(n)
         return levelMapValue(n, c.level) or "?"
     end)
-    out = out:gsub("(%a+Weapon)", function(t) return weaponDamage(t, c) or "?" end)
     out = out:gsub("%s+", "")
     return (out:find("%d") and out:match("^[%dd%+%-]+$")) and out or nil
 end
 
-local function damageType(x, c)
+local function damageType(x)
     x = tostring(x or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    if DAMAGE_TYPES[x] then return x end
-    local t = x:match("^(%a+Weapon)DamageType$")
-    local st = t and WEAPON_SLOTS[t] and weapon(c.uuid, WEAPON_SLOTS[t])
-    local dt = st and field(st, "Damage Type")
-    return DAMAGE_TYPES[tostring(dt)] and tostring(dt) or nil
+    return DAMAGE_TYPES[x] and x or nil
 end
 
 -- One tooltip parameter as the tooltip shows it: DealDamage(5d8,Poison) "5d8 Poison damage", Distance(3) "3m",
@@ -311,7 +259,7 @@ local function param(p, c)
         for x in (args .. ","):gmatch("([^,]*),") do a[#a + 1] = (x:gsub("^%s+", ""):gsub("%s+$", "")) end
         if fn == "DealDamage" then
             local n = amount(a[1], c)
-            local t = (a[2] == nil or a[2] == "") and "" or damageType(a[2], c)
+            local t = (a[2] == nil or a[2] == "") and "" or damageType(a[2])
             out = n and t and (n .. (t ~= "" and (" " .. t) or "") .. " damage") or nil
         elseif fn == "Distance" then
             out = tonumber(a[1]) and (a[1] .. "m") or nil

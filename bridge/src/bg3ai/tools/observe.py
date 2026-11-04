@@ -413,8 +413,9 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
         if hz:
-            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz} "
-                           f"({macros.hazard_fact(res.get('hazard'))}).", t0)
+            fact = macros.hazard_fact(res.get("hazard"))
+            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}"
+                           + (f" ({fact})" if fact else "") + ".", t0)
         body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
                 + (f" ({n} spots checked)" if n is not None else ""))
         note = render.opened_note(res, core.H)

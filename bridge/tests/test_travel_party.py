@@ -407,8 +407,7 @@ class Stay(Case):
         fake, out = self.stay(JobResult("failed", None, "timeout"))
         self.assertEqual(fake.ops(), ["act.unchain"])
         self.assertIn("stay: FAILED — e3 Wyll is still chained to the group (timeout): it follows the next walk", out)
-        self.assertIn("it follows the next walk (set_party unchain who=<them> unchains another member, who then walks "
-                      "alone)", out)  # D630: what the tool does, no 'to leave it here, unchain ...'
+        self.assertNotIn("set_party", out)  # REVIEW-13 item 11: the fact only, no tool how-to
 
         self.assertNotIn(WYLL, overview._stay)
 

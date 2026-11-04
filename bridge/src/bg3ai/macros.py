@@ -182,12 +182,13 @@ class TravelProgress:
 
 
 def hazard_fact(h: dict | None) -> str:
-    """Whether the surface in the way lasts: a chasm or lava never burns out, other surfaces do (D630: the fact, no
-    'go around it / wait for it')."""
+    """'it does not burn out' for a chasm, lava or the void; '' for any other surface (REVIEW-13 item 3: Web, Grease,
+    ice, Spike Growth, Black Tentacles, vines, acid and brine don't burn out either, so no duration claim) (D630: the
+    fact, no 'go around it / wait for it')."""
     s = str((h or {}).get("surface") or "").lower() if isinstance(h, dict) else ""
     if "chasm" in s or "lava" in s or "void" in s:
         return "it does not burn out"
-    return "a surface like it burns out in time"
+    return ""
 
 
 def hazard_text(h: dict | None) -> str:

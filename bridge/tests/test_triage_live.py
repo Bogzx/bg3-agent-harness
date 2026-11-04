@@ -23,8 +23,10 @@ class RenderPathTest(unittest.TestCase):
 class HazardWayOutTest(unittest.TestCase):
     def test_chasm_never_burns_out(self):
         self.assertEqual(macros.hazard_fact({"surface": "Chasm"}), "it does not burn out")  # D630: facts, no advice
-        self.assertEqual(macros.hazard_fact({"surface": "Fire"}), "a surface like it burns out in time")
-        self.assertEqual(macros.hazard_fact(None), "a surface like it burns out in time")
+        # REVIEW-13 item 3: no duration claim for any other surface (Web, Grease, ice, Spike Growth don't burn out)
+        for s in ("Fire", "Web", "Grease", "WaterFrozen", "SpikeGrowth", "BlackTentacles", "Acid", "CausticBrine"):
+            self.assertEqual(macros.hazard_fact({"surface": s}), "", s)
+        self.assertEqual(macros.hazard_fact(None), "")
 
 
 if __name__ == "__main__":

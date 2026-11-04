@@ -431,7 +431,7 @@ def stay(who: str, on: bool = True) -> str:
             reporting._batch["last"] = "failed"
             return reporting._finish("stay", {"who": who}, (
                 f"stay: FAILED — {queueing._label(u)} is still chained to the group ({why}): it follows the next "
-                "walk (set_party unchain who=<them> unchains another member, who then walks alone)"), t0)
+                "walk"), t0)
         _stay.add(u)
         return reporting._finish("stay", {"who": who}, f"{queueing._label(u)} stays put (stay(who, on=false) or regroup brings it back)", t0)
     _stay.discard(u)
