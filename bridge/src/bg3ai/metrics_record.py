@@ -318,7 +318,7 @@ class MemSampler:
                 if m.get("high"):
                     rec["high"] = True
                 hf = m.get("hit_fallbacks")
-                if isinstance(hf, (int, float)) and hf > 0:  # server: melee reach on an assumed Hit radius
+                if isinstance(hf, (int, float)) and hf > 0:  # server: melee reach on an assumed Move radius
                     rec["hit_radius_fallbacks"] = hf
                 nz = m.get("noesis")
                 if isinstance(nz, dict):  # client: bg3le's Noesis release counters (BACKLOG "parked" watch)

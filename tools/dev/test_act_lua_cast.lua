@@ -854,25 +854,25 @@ test("cast: a harmful area spell says where it bursts and who is in the blast be
     if not ok then error(err, 0) end
 end)
 
-test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Hit radii; G.radius: Stand)", function()
+test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Move radii; G.radius: Stand)", function()
     combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.4 }, Hit = { Radius = 1.28 }, Stand = { Radius = 0.7 } } } }
     eq(G.radius(GOB), 0.7, "Stand radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.25 } } } }
     eq(G.radius(GOB), 0.25, "Move fallback")
-    world[GOB].comps.Bound = { Bound = { AIBounds = { Hit = { Radius = 0.7 }, Stand = { Radius = 0.9 } } } }
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.7 }, Stand = { Radius = 0.9 } } } }
     local warned, pw = {}, Ext.Utils.PrintWarning
     Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
     G.hit_fallback, G.hit_fallback_n = {}, 0
-    eq(G.hit_radius(GOB), 0.7, "Hit radius"); eq(G.hit_radius(P1), 0.2, "Hit fallback")
-    eq(G.hit_radius(P1), 0.2, "again"); eq(G.hit_radius(GOB), 0.7, "read")
+    eq(G.reach_radius(GOB), 0.7, "Move radius"); eq(G.reach_radius(P1), 0.25, "Move fallback")
+    eq(G.reach_radius(P1), 0.25, "again"); eq(G.reach_radius(GOB), 0.7, "read")
     Ext.Utils.PrintWarning = pw
     eq(#warned, 1, "the fallback warned once per entity"); eq(G.hit_fallback_n, 1, "counted for the mem metrics")
-    assert(warned[1]:find("no AIBounds.Hit radius for", 1, true) and warned[1]:find("0.2 m assumed", 1, true),
+    assert(warned[1]:find("no AIBounds.Move radius for", 1, true) and warned[1]:find("0.25 m assumed", 1, true),
         warned[1])
     spell("Target_Slash", { TargetRadius = "MeleeMainWeaponRange", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
-    local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m = 1.5 + 0.2 + 0.7
+    local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m < 1.5 + 0.25 + 0.7
     eq(j.status, "running", "status " .. tostring(j.error))
     world[GOB].pos = { 2.7, 0, 0 }
     j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB }))
@@ -882,7 +882,7 @@ end)
 test("melee reach, window 8 live: 2.1 m is out (guard and move_to agree), 1.4 m is in", function()
     -- Karlach, greataxe (WeaponRange 150), on an Apostate Destroyer, both checks dropped: the engine refused the swing
     -- from 2.1 m centres (InvalidTarget, 10/10) while the guard allowed it (Stand radii: 1.5 + 0.5 + 0.5 = 2.5) and
-    -- move_to said already_there; from 1.4 m it cast. By the Hit radii (medium 0.2) the reach is 1.9 m.
+    -- move_to said already_there; from 1.4 m it cast. By the Move radii (medium 0.25) the reach is 2.0 m.
     combat_setup(30)
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "AXE"
     osiv[key("GetStatString", "AXE")] = "WPN_Greataxe"

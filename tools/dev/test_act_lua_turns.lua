@@ -10,8 +10,8 @@ test("cast: melee keyword wins over the stats' Range 0 (live: Target_MainHandAtt
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "HAMMER"
     osiv[key("GetStatString", "HAMMER")] = "WPN_Warhammer"
     stats.WPN_Warhammer = { WeaponRange = 150 }
-    -- an imp; reach by the Hit bounds (window 8): 1.5 + 0.2 + 0.3 = 2.0 m centres
-    world[GOB].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.49 }, Hit = { Radius = 0.3 } } } }
+    -- an imp; reach by the Move bounds (window 9): 1.5 + 0.25 + 0.3 = 2.05 m centres
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.49 }, Move = { Radius = 0.3 } } } }
     for _, d in ipairs({ 1.8, 2.0 }) do -- the live refusals (1.8 m, 2.2 m) read Range 0; 2.2 m is now beyond 2.0
         world[GOB].pos = { d, 0, 0 }
         local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))

@@ -146,7 +146,7 @@ test("move_to entity: walks to a verified point, never CharacterMoveTo", functio
     eq(j.status, "running", "status")
     eq(#called("CharacterMoveTo"), 0, "CharacterMoveTo calls")
     local mv = called("CharacterMoveToPosition")
-    -- the mover's own melee reach (1.5 + 0.2 + 0.2 Hit radii) less the stop slack: 1.5 m -> the 1.0 m ring
+    -- the mover's own melee reach (1.5 + 0.25 + 0.25 Move radii) less the stop slack -> the 1.0 m ring
     eq(#mv, 1, "move calls"); near(mv[1][3], 9.0, "dest x")
     arrive(j, { 9.0, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error))
@@ -169,8 +169,8 @@ end)
 
 test("move_to entity within: stops inside the edge-to-edge melee reach (S025 Spiritual Weapon 2.4 m)", function()
     world[NPC].pos = { 2.0, 0, 0 }
-    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 }, Hit = { Radius = 0.15 } } } }
-    -- 2.0 m is outside 1.5 + 0.2 + 0.15 = 1.85 m (Hit radii); the walk stops 0.4 m inside it (1.45 m: the 1.0 m ring)
+    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 }, Move = { Radius = 0.15 } } } }
+    -- 2.0 m is outside 1.5 + 0.25 + 0.15 = 1.9 m (Move radii); the walk stops inside it (the 1.0 m ring)
     local j = job(op("move_to", { char = P1, target = NPC, within = 1.5 }))
     eq(j.status, "running", "status " .. tostring(j.error))
     local mv = called("CharacterMoveToPosition")

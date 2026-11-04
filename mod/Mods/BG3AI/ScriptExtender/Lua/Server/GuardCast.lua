@@ -61,35 +61,37 @@ function G.radius(uuid)
     return 0.5
 end
 
--- The bound the engine hits a creature by: AIBounds.Hit (live, Nautiloid: medium creatures 0.20, while Stand is
--- 0.50); a medium creature's 0.2 m when it doesn't read. A fallback is never silent: one bg3le warning per entity,
--- and the count goes into the bridge's mem metrics record (sys.mem hit_fallbacks -> hit_radius_fallbacks).
-G.HIT_RADIUS_M = 0.2
+-- The bound melee reach is measured by: AIBounds.Move (window 9: every creature in the Balthazar fight read Move
+-- 0.249, Hit 0.200, Stand 0.499); a medium creature's 0.25 m when it doesn't read. A fallback is never silent: one
+-- bg3le warning per entity, and the count goes into the bridge's mem metrics record (sys.mem hit_fallbacks ->
+-- hit_radius_fallbacks: names from the Hit model, kept so the metric stays one series).
+G.REACH_RADIUS_M = 0.25
 G.hit_fallback = G.hit_fallback or {} -- guid -> true: warned once
 G.hit_fallback_n = G.hit_fallback_n or 0
-function G.hit_radius(uuid)
+function G.reach_radius(uuid)
     local e = G.entity(uuid)
-    local ok, r = pcall(function() return e.Bound.Bound.AIBounds.Hit.Radius end)
+    local ok, r = pcall(function() return e.Bound.Bound.AIBounds.Move.Radius end)
     if ok and type(r) == "number" and r > 0 and r < 5 then return r end
     local k = G.guid(uuid) or tostring(uuid)
     if not G.hit_fallback[k] then
         G.hit_fallback[k] = true
         G.hit_fallback_n = G.hit_fallback_n + 1
         local okn, name = pcall(function() return U.loca(G.q("GetDisplayName", uuid)) end)
-        Ext.Utils.PrintWarning(string.format("[BG3AI] melee reach: no AIBounds.Hit radius for %s (%s): %.1f m assumed"
-            .. " (a medium creature's)", tostring(okn and name or "?"), k, G.HIT_RADIUS_M))
+        Ext.Utils.PrintWarning(string.format("[BG3AI] melee reach: no AIBounds.Move radius for %s (%s): %.2f m assumed"
+            .. " (a medium creature's)", tostring(okn and name or "?"), k, G.REACH_RADIUS_M))
     end
-    return G.HIT_RADIUS_M
+    return G.REACH_RADIUS_M
 end
 
--- Melee reach is edge to edge by the Hit bounds: the furthest centre distance at which a weapon (or Shove) with
+-- Melee reach is edge to edge by the Move bounds: the furthest centre distance at which a weapon (or Shove) with
 -- `range` m reaches `target`. The one measure for the guard's range check (check_cast), move_to's stop and its
 -- already-there test (ActionsMove), the cast's walk into range (ActionsCast) and the refusal text (Actions).
 -- Window 8 (both check flags dropped, the engine measures): Karlach's 1.5 m greataxe on an Apostate Destroyer was
 -- refused (InvalidTarget) from 2.1 m centres 10/10 and cast from 1.4 m; the Stand radii gave 2.5 m (1.5 + 0.5 +
--- 0.5), the Hit radii give 1.9 m.
+-- 0.5). Window 9 measured the edge: from 2.0 m (2.005 read) the engine cast, from 2.05 m it refused InvalidTarget;
+-- the Move radii give 1.5 + 0.249 + 0.249 = 1.998 m (the Hit radii's 1.9 m refused 2.0 m: 0.1 m too strict).
 function G.melee_reach(char, target, range)
-    return range + G.hit_radius(char) + G.hit_radius(target)
+    return range + G.reach_radius(char) + G.reach_radius(target)
 end
 
 -- The range of the character's own melee weapon (Main Hand Attack's), the default for a plain move_to.
