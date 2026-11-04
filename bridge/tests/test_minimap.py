@@ -222,8 +222,13 @@ class WalkEnds(Base):
         # The HUD's compass and minimap show a quest diamond's direction and distance, never up/down (live window
         # 2026-11-03: a marker 7.7 m down showed no arrow or number), so the line gives no height either.
         st = {"active": P1, "party": [{"uuid": P1, "pos": [0.0, 0.0, 0.0]}]}
-        out = minimap.block({"status": st, "markers": [{"label": "X", "here": True, "dist": 9.0, "dir": "N",
-                                                        "pos": [0.0, -4.0, 9.0], "oid": 1}]}, Handles())
+        out = minimap.block(
+            {
+                "status": st,
+                "markers": [{"label": "X", "here": True, "dist": 9.0, "dir": "N", "pos": [0.0, -4.0, 9.0], "oid": 1}],
+            },
+            Handles(),
+        )
         self.assertEqual(out.splitlines()[0], "OBJECTIVES o1 X 9m N")
 
 
