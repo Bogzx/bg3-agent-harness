@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from bg3harness import ramwatch as R
@@ -21,6 +22,12 @@ PROCS = [
     (302, "python3", "uv run --project bridge python -m bg3ai.server"),
 ]
 
+UNIT = "bg3ai-game-20261104-143000.scope"
+TREE = ('     0x1a00003 "Baldur\'s Gate 3 (1920x1080) - (Vulkan) - v4.1.1": ("bg3" "bg3")  1408x792+0+0  +0+0\n'
+        '     0x1a00001 "bg3": ("bg3" "bg3")  10x10+0+0  +0+0\n')
+XWININFO_ID = ('xwininfo: Window id: 0x1a00003 "Baldur\'s Gate 3 (1920x1080) - (Vulkan) - v4.1.1"\n\n'
+               "  Width: 1408\n  Height: 792\n  Depth: 24\n  Map State: IsUnMapped\n  Override Redirect State: no\n")
+
 
 class RamWatchTest(unittest.TestCase):
     def setUp(self):
@@ -30,6 +37,26 @@ class RamWatchTest(unittest.TestCase):
         patcher = mock.patch.object(R, "anon_swap_mb", return_value=0)   # never read the real game's /proc
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.journal, self.windows = "", ""   # fake journalctl / xwininfo output (never the real ones)
+        self.w.run = self.fake_run
+
+    def fake_run(self, args, **_kw):
+        if args[0] == "journalctl":
+            return SimpleNamespace(stdout=self.journal)
+        return SimpleNamespace(stdout=self.windows if "-tree" in args else XWININFO_ID)
+
+    def scope_tree(self, unit: str = UNIT, oom_kill: int = 0) -> Path:
+        """A fake /proc/100/cgroup in the game's scope and that scope's memory files."""
+        self.w.proc, self.w.cgroup_root = self.tmp / "proc", self.tmp / "cg"
+        (self.w.proc / "100").mkdir(parents=True, exist_ok=True)
+        rel = f"user.slice/user-1000.slice/app.slice/{unit}"
+        (self.w.proc / "100" / "cgroup").write_text(f"0::/{rel}\n")
+        cg = self.w.cgroup_root / rel
+        cg.mkdir(parents=True, exist_ok=True)
+        (cg / "memory.events").write_text(f"low 0\nhigh 0\nmax 12\noom 1\noom_kill {oom_kill}\noom_group_kill 0\n")
+        (cg / "memory.stat").write_text(f"anon {5000 * 2**20}\nfile {3000 * 2**20}\nkernel {200 * 2**20}\n"
+                                        "shmem 0\nfile_mapped 1048576\npgfault 99\n")
+        return cg
 
     def tearDown(self):
         import shutil
@@ -168,6 +195,83 @@ class RamWatchTest(unittest.TestCase):
         self.w._write("x")
         self.w.tick({"MemAvailable": 9000, "SwapFree": 100}, procs=[])   # the watchdog's own tick line parses
         self.assertLess(abs(R.last_tick(log)[0] - R.time.time()), 5)
+
+    @mock.patch.object(R, "rss_mb", return_value=5000)
+    @mock.patch.object(R, "get_adj", return_value=200)
+    def test_tick_logs_window_and_scope_memory(self, _adj, _rss):
+        # r13 a1 (2026-11-04 14:37): the game died with no word of its scope's memory or its window in ram.log
+        self.scope_tree(oom_kill=1)
+        self.windows = TREE
+        self.w.tick({"MemAvailable": 6000, "SwapFree": 100}, PROCS)
+        line = (self.tmp / "ram.log").read_text().splitlines()[-1]
+        self.assertIn(" win=unmapped 1408x792 ", line)
+        self.assertIn(f"scope={UNIT} events[low=0 high=0 max=12 oom=1 oom_kill=1 oom_group_kill=0] "
+                      "stat[anon=5000MB file=3000MB kernel=200MB shmem=0MB file_mapped=1MB]", line)
+        self.assertIsNotNone(R.last_tick(self.tmp / "ram.log"))
+        self.windows = ""                                            # no game window on the display
+        self.w.tick({"MemAvailable": 6000, "SwapFree": 100}, PROCS)
+        self.assertIn(" win=none ", (self.tmp / "ram.log").read_text().splitlines()[-1])
+        self.w.tick({"MemAvailable": 6000, "SwapFree": 100}, [])      # no game: no window, no scope
+        self.assertNotIn("win=", (self.tmp / "ram.log").read_text().splitlines()[-1])
+
+    def test_game_window_states(self):
+        run = lambda a, **_k: SimpleNamespace(stdout=TREE if "-tree" in a else XWININFO_ID.replace("UnMapped", "Viewable"))  # noqa: E731
+        self.assertEqual(R.game_window(":1", run), "viewable 1408x792")
+        self.assertEqual(R.game_window(":1", lambda a, **_k: SimpleNamespace(stdout="")), "none")
+
+        def no_xwininfo(a, **_k):
+            raise FileNotFoundError("xwininfo")
+        self.assertEqual(R.game_window(":1", no_xwininfo), "none")
+
+    def test_scope_end_logs_result_and_last_memory(self):
+        import shutil
+        cg = self.scope_tree(oom_kill=1)
+        self.w.sample(1000.0, 5000, 6000, [100])
+        self.assertEqual(self.w.scope["unit"], UNIT)
+        shutil.rmtree(cg)                                            # --collect: the scope's cgroup is gone
+        self.w.sample(1005.0, 0, 6000, [])                           # no end line in the journal yet: wait
+        self.assertFalse(any("ended" in m for m in self.logs))
+        self.journal = (f"Started {UNIT} - [systemd-run] /usr/bin/env ...\n"
+                        f"{UNIT}: A process of this unit has been killed by the OOM killer.\n"
+                        f"{UNIT}: Failed with result 'oom-kill'.\n"
+                        f"{UNIT}: Consumed 20min 40.069s CPU time, 9.9G memory peak.\n")
+        self.w.sample(1010.0, 0, 6000, [])
+        msg = [m for m in self.logs if "ended" in m]
+        self.assertEqual(len(msg), 1)
+        self.assertIn(f"game scope {UNIT} ended: Result=oom-kill; last memory 5 s before it was gone: events[", msg[0])
+        self.assertIn("oom_kill=1", msg[0])
+        self.assertIn("journal: A process of this unit has been killed", msg[0])
+        self.assertIn("Result=oom-kill", (self.tmp / "ram.log").read_text())
+        self.w.sample(1015.0, 0, 6000, [])                           # once
+        self.assertEqual(len([m for m in self.logs if "ended" in m]), 1)
+
+    def test_scope_end_without_journal_lines_and_a_new_scope(self):
+        import shutil
+        cg = self.scope_tree()
+        self.w.sample(1000.0, 5000, 6000, [100])
+        shutil.rmtree(cg)
+        self.w.sample(1005.0, 0, 6000, [])
+        self.w.sample(1005.0 + R.SCOPE_END_WAIT_S, 0, 6000, [])     # the journal never had it: logged anyway
+        self.assertIn("Result=unknown (no end line in the user journal)", self.logs[-1])
+        self.scope_tree()
+        self.w.sample(2000.0, 5000, 6000, [100])
+        shutil.rmtree(self.w.cgroup_root)
+        new = "bg3ai-game-20261104-150000.scope"
+        self.scope_tree(unit=new)                                    # the next game's scope, no gap seen
+        self.journal = f"{UNIT}: Killed unit cgroup with SIGKILL on client request.\n"
+        self.w.sample(2005.0, 5000, 6000, [100])
+        self.assertIn(f"game scope {UNIT} ended: Result=unknown", self.logs[-1])
+        self.assertIn("journal: Killed unit cgroup", self.logs[-1])
+        self.assertEqual(self.w.scope["unit"], new)
+
+    def test_scope_result(self):
+        self.assertEqual(R.scope_result(["Consumed 1s CPU time."]), "success")
+        self.assertEqual(R.scope_result(["Failed with result 'signal'.", "Consumed 1s CPU time."]), "signal")
+        self.assertIsNone(R.scope_result(["Killed unit cgroup with SIGKILL on client request."]))
+        no_scope = self.tmp / "p"
+        (no_scope / "7").mkdir(parents=True)
+        (no_scope / "7" / "cgroup").write_text("0::/user.slice/user-1000.slice/session-2.scope\n")
+        self.assertIsNone(R.game_scope_cgroup(7, no_scope, self.tmp))
 
     def test_lock_single_instance(self):
         a = R.take_lock(self.tmp / "l")
