@@ -10,13 +10,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - A partial-stack trade (count=N of a bigger stack) names the deal once: `BOUGHT e127 Muddy Red Dye x2 12 g` (w15 a2
   read `BOUGHT (no id) ? x2 12 g | e127 Muddy Red Dye x2 12 g`: the game puts the part on the table as a new item,
   which the mod now names after its move; mod). Only a part in the same trade session (screen and trader), with
-  the stack's rarity/stolen/story/type and its price, is named; a part left from an unconfirmed trade at another
-  trader stays unnamed (REVIEW-18k).
+  the stack's rarity/stolen/story/type and its price (+-1 g: the game may round per unit), is named; a part left
+  from an unconfirmed trade at another trader stays unnamed (REVIEW-18k, 18n).
 - path_preview(target=<id>): when the path to the target's centre ends farther than its footprint + 2 m, the free
   spots around it (nearest first) are asked before `NOT REACHED`; a reached spot reads `reachable: walk Xm ... ends
   @<spot>` (w15 b2: a Destroyer 5.4 m away on the same floor read NOT REACHED, 3 m short). A foe on a ledge stays
-  NOT REACHED (mod). No new spot is asked after 300 ms: the preview then reads reachable unknown (`unfinished`),
-  and its `ms` includes the spots' time (REVIEW-18k).
+  NOT REACHED (mod). No new spot is asked after 300 ms: the centre path's NOT REACHED stands, read as `... short
+  of the target (the free spots around it were not all checked in time): ...`, and its `ms` includes the spots'
+  time (REVIEW-18k, 18n).
+- path_preview with reachable unknown (a search budget, a ring deadline, an estimate) reads as one line,
+  `reachable unknown: <reason> (<n>m straight line)`, not the raw result (REVIEW-18n).
 
 ## 2026-11-05: a confirmed deal is priced by the mod (REVIEW-17 F3)
 

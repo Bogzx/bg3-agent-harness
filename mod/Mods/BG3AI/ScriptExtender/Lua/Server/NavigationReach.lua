@@ -92,15 +92,17 @@ RPC.register("nav.path", function(args)
         if p and #p >= 1 and (res.nodes or 0) <= N.ROUTE_MAX_NODES then return U.dist(p[#p], target) end
     end
     -- A centre path that ends short: the free spots around the target decide (w15 b2). ms: the centre's + the ring's
-    local ms
+    local ms, unchecked
     if te and (off(r0) or 0) > tol then
         local spot, ringMs = N.freeSpotPath(char, target, tol - N.PATH_END_TOL_M + 1.0, cp,
             function(res) return (off(res) or math.huge) <= tol end)
-        ms, r0 = (r0.ms or 0) + ringMs, spot or r0
+        ms = (r0.ms or 0) + ringMs
+        if spot and not spot.unfinished then r0 = spot end -- past the deadline the centre's end stands (REVIEW-18n)
+        unchecked = spot and spot.unfinished or nil
     end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
-    r.ms = ms or r.ms
+    r.ms, r.free_spots_unchecked = ms or r.ms, unchecked
     -- A found path with no nodes ends on the walker's own spot (readResult flags a short end only from a node): to a
     -- point farther than the walker's end tolerance it reaches nothing, as a path that ends short does (w12 L1a).
     -- Not for a target id: standing next to a large creature is a 0-node path to its centre > 2 m away.
