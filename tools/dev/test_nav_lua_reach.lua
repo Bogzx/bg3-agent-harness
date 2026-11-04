@@ -720,6 +720,41 @@ test("nav.path to a creature id: a centre path that stops short of a foe it reac
     if not ok then error(err, 0) end
 end)
 
+-- REVIEW-18k: the free-spot ring runs up to 8 engine searches on the server thread with no deadline. Past
+-- N.FREE_RING_MS no new spot is asked: reachable unknown (unfinished), and the ring's time is in the result's ms.
+test("nav.path to a creature id: the free-spot ring stops at its deadline, its time in ms (REVIEW-18k)", function()
+    local FOE = "ffffffff-0000-0000-0000-00000000000b"
+    local V = BG3AI.Visibility
+    local entity, visible = V.entity, V.characterVisible
+    V.entity = function(u)
+        local e = entity(u)
+        if e and u == FOE then
+            e.ServerCharacter = {}
+            e.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.499 }, Move = { Radius = 0.249 } } } }
+        end
+        return e
+    end
+    V.characterVisible = function() return true end
+    local ok, err = pcall(function()
+        world[P1] = { -604.96, 0, -1431.71 }
+        world[FOE] = { -599.75, 0, -1430.25 }
+        N.frame = N.frame + 1
+        local spots = 0
+        nodesFor = function(_, t)  -- every path stops where the centre one does; a spot's search takes 200 ms
+            if t[1] ~= -599.75 or t[3] ~= -1430.25 then spots = spots + 1; clock = clock + 200 end
+            return { { -603.6, 0, -1430.9 }, { -602.7, 0, -1430.2 } }
+        end
+        local t0 = clock
+        local r = RPC.ops["nav.path"]({ target = FOE })
+        eq(spots, 2, "no spot asked past the deadline (0 and 200 ms in; at 400 ms it stops)")
+        eq(r.reachable, nil, "reachable unknown"); eq(r.unfinished, true, "unfinished")
+        eq(r.partial, nil, "not NOT REACHED")
+        eq(r.ms ~= nil and r.ms >= clock - t0, true, "the ring's 400 ms are in ms: " .. tostring(r.ms))
+    end)
+    V.entity, V.characterVisible, world[FOE] = entity, visible, nil
+    if not ok then error(err, 0) end
+end)
+
 test("nav.activity reports a harmful surface under a party member", function()
     Osi.IsOnStage = function() return 1 end
     fire = function() return true end

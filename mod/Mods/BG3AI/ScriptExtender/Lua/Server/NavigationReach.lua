@@ -91,27 +91,16 @@ RPC.register("nav.path", function(args)
         local p = res and res.reachable and res.points
         if p and #p >= 1 and (res.nodes or 0) <= N.ROUTE_MAX_NODES then return U.dist(p[#p], target) end
     end
-    -- The engine's path to an occupied centre stops where its own goal handling does, not at the target's edge (w15
-    -- b2: 2.95 m from a Destroyer it then walked 1.7 m closer to): the free spots around it, nearest first, decide.
+    -- A centre path that ends short: the free spots around the target decide (w15 b2). ms: the centre's + the ring's
+    local ms
     if te and (off(r0) or 0) > tol then
-        local ring, rad = {}, tol - N.PATH_END_TOL_M + 1.0
-        for _, d in ipairs(I.RING) do
-            local q = { target[1] + d[1] * rad, target[2], target[3] + d[2] * rad }
-            ring[#ring + 1] = { q, cp and U.dist(cp, q) or 0 }
-        end
-        table.sort(ring, function(a, b) return a[2] < b[2] end)
-        for _, it in ipairs(ring) do
-            local fy = floorAt and floorAt(it[1][1], it[1][3], target[2]) or target[2]
-            local r2 = N.path(char, { it[1][1], fy, it[1][3] })
-            if (off(r2) or math.huge) <= tol then -- a copy: r2 is the path cache's
-                r0 = { approach_pos = U.vec({ it[1][1], fy, it[1][3] }, 1) }
-                for k, v in pairs(r2) do r0[k] = r0[k] or v end
-                break
-            end
-        end
+        local spot, ringMs = N.freeSpotPath(char, target, tol - N.PATH_END_TOL_M + 1.0, cp,
+            function(res) return (off(res) or math.huge) <= tol end)
+        ms, r0 = (r0.ms or 0) + ringMs, spot or r0
     end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
+    r.ms = ms or r.ms
     -- A found path with no nodes ends on the walker's own spot (readResult flags a short end only from a node): to a
     -- point farther than the walker's end tolerance it reaches nothing, as a path that ends short does (w12 L1a).
     -- Not for a target id: standing next to a large creature is a 0-node path to its centre > 2 m away.
