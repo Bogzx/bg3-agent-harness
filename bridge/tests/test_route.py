@@ -378,6 +378,13 @@ class Rendering(unittest.TestCase):
         self.assertEqual(render.render_path({"reachable": None, "budget": True, "unfinished": True, "straight_m": 7.24,
                                              "reason": "path search budget for this frame spent", "ms": 0}, H),
                          "reachable unknown: path search budget for this frame spent (7.2m straight line)")
+        # REVIEW-18p: the wall opened just before is said here too, as with a path that isn't there
+        res = {"reachable": None, "unfinished": True, "ms": 412,
+               "opened": {"uuid": "11111111-2222-3333-4444-000000000371", "name": "Stone Wall", "how": "opened",
+                          "ago_s": 2, "settling": True}}
+        self.assertEqual(render.render_path(res, H),
+                         "reachable unknown: the path search ran out of time\n"
+                         "e1 Stone Wall opened 2s ago and may still be moving: the answer can change in the next seconds")
 
     def test_path_preview_unseen_spot_is_the_straight_line_only(self):
         out = render.render_path({"unknown_goal": True, "straight_m": 20.0, "dir": "W", "dy": 0.0}, render.Handles())
