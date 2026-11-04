@@ -227,7 +227,8 @@ def _group_statuses(evs: list[dict], H: Handles) -> list[dict]:
         if i in big:
             (kind, rest), ix = big[i]
             who = ", ".join(_target_text(evs[j]["data"]["target"], H) for j in ix)
-            out.append({"seq": e.get("seq"), "kind": kind, "data": f"{rest} on {len(ix)}: {who}"})
+            out.append({"seq": e.get("seq"), "kind": kind, "data": f"{rest} on {len(ix)}: {who}",
+                        "_pin": any(evs[j].get("_pin") for j in ix)})
         else:
             out.append(e)
     return out
@@ -251,7 +252,8 @@ def _group_zero_damage(evs: list[dict], H: Handles) -> list[dict]:
             t = _target_text(e["data"]["target"], H)
             hits[t] = hits.get(t, 0) + 1
         who = ", ".join(t + (f" x{n}" if n > 1 else "") for t, n in hits.items())
-        out.append({"seq": run[-1].get("seq"), "kind": "damage", "data": f"{key} x{len(run)} on {len(hits)}: {who}"})
+        out.append({"seq": run[-1].get("seq"), "kind": "damage", "data": f"{key} x{len(run)} on {len(hits)}: {who}",
+                    "_pin": any(e.get("_pin") for e in run)})
 
     for e in evs:
         d = e.get("data")
@@ -270,11 +272,28 @@ def _group_zero_damage(evs: list[dict], H: Handles) -> list[dict]:
 
 
 # Kinds shown even when the cap cuts the events before them: spell_info comes once per spell per fight (Events.lua
-# E.note_spell), so a cut one never comes back (w11 L4: Cloudkill's line behind '(+56 earlier events)').
-_PINNED_EVENTS = {"spell_info"}
+# E.note_spell), so a cut one never comes back (w11 L4: Cloudkill's line behind '(+56 earlier events)'); every cast
+# (REVIEW-14). Rows whose target or roller is a party member are shown too (_party_row).
+_PINNED_EVENTS = {"spell_info", "cast"}
+# The cap: out of combat the newest EVENT_LIMIT rows (after the folds); in a fight (tools/core.py) the whole drained
+# batch up to EVENT_CEILING rows. REVIEW-14: the cut rows were the enemies' turns (264 of launch-v1's 283 cuts were in
+# combat, median 14 rows), the agent's only view of them.
+EVENT_LIMIT, EVENT_CEILING = 25, 200
 
 
-def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", job: str | None = None,
+def _party_row(e: dict, party: set | None) -> bool:
+    d = e.get("data")
+    if not party or not isinstance(d, dict):
+        return False
+    for k in ("target", "roller"):
+        v = d.get(k)
+        u = v.get("uuid") if isinstance(v, dict) else v
+        if isinstance(u, str) and u in party:
+            return True
+    return False
+
+
+def render_events(evs: list[dict], H: Handles, limit: int = EVENT_LIMIT, body: str = "", job: str | None = None,
                   flap: StatusFlap | None = None, party: set | None = None, echo: EventEcho | None = None) -> str:
     """EVENTS section. body: the tool result's own text, so events it already reports are left out
     (job: the job id a wait_for just returned). flap: the cross-call status mute (server passes FLAP).
@@ -282,11 +301,12 @@ def render_events(evs: list[dict], H: Handles, limit: int = 25, body: str = "", 
     evs = [e for e in evs if e.get("kind") not in _REDUNDANT_EVENTS and not _already_shown(e, H, body, job)]
     evs = echo.filter(evs) if echo is not None else evs
     evs = _drop_flicker(flap.filter(evs, party) if flap is not None else evs)
+    evs = [dict(e, _pin=True) if _party_row(e, party) else e for e in evs]  # marked before the folds merge rows
     evs = _group_zero_damage(_group_statuses(evs, H), H)
     if not evs:
         return ""
     early = evs[:-limit] if len(evs) > limit else []
-    pinned = [e for e in early if e.get("kind") in _PINNED_EVENTS]
+    pinned = [e for e in early if e.get("kind") in _PINNED_EVENTS or e.get("_pin")]
     shown = pinned + evs[-limit:]
     out = []
     if len(early) > len(pinned):
