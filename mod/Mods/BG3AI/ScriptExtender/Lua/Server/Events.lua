@@ -738,14 +738,21 @@ local function flagList(f)
 end
 E.flagList = flagList
 
+-- The short-rest side (REVIEW-13 item 12): CanDoRest.ShortRestErrorFlags per member and the GlobalShortRestDisabled
+-- component, what the HUD's greyed Short Rest button shows. short_read is false when any member's field didn't read.
 function E.canRest()
-    local blocked = {}
+    local blocked, shortBlocked, shortRead = {}, {}, true
     for _, u in ipairs(V.context().party) do
         local e = V.entity(u)
         local c = e and U.comp(e, "CanDoRest")
         local flags = c and flagList(c.LongRestErrorFlags) or {}
         if #flags > 0 then blocked[#blocked + 1] = { name = V.name(u), uuid = u, flags = flags } end
+        local okS, sf = pcall(function() return c.ShortRestErrorFlags end)
+        if not (c and okS and sf ~= nil) then shortRead = false end
+        local sflags = (c and okS) and flagList(sf) or {}
+        if #sflags > 0 then shortBlocked[#shortBlocked + 1] = { name = V.name(u), uuid = u, flags = sflags } end
     end
+    local okG, gs = pcall(Ext.Entity.GetAllEntitiesWithComponent, "GlobalShortRestDisabled")
     local ok, g = pcall(Ext.Entity.GetAllEntitiesWithComponent, "GlobalLongRestDisabled")
     local states = {}
     local ok2, ls = pcall(Ext.Entity.GetAllEntitiesWithComponent, "LongRestState")
@@ -755,10 +762,12 @@ function E.canRest()
                 MaxDepth = 2, IterateUserdata = true, AvoidRecursion = true }):sub(1, 300) end)
         end
     end
-    return { blocked = blocked, global_disabled = ok and #g or -1, long_rest_state = states }
+    return { blocked = blocked, global_disabled = ok and #g or -1, long_rest_state = states,
+        short_read = shortRead, short_blocked = shortBlocked, short_global_disabled = okG and #gs or -1 }
 end
 
--- camp.can_rest -> {blocked=[{name, flags}], global_disabled, long_rest_state}: asked before the rest button press.
+-- camp.can_rest -> {blocked=[{name, flags}], global_disabled, long_rest_state, short_read, short_blocked,
+-- short_global_disabled}: asked before the rest button press, and by a blocked camp trip (short rest's state).
 RPC.register("camp.can_rest", function() return E.canRest() end)
 
 -- Who the camp story still wants a talk with before the night can end (GLO_Camp.txt "Required talks":

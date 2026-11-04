@@ -641,6 +641,25 @@ _CAMP_BLOCKS = {  # the HUD's TravelError (camp button greyed) → why (D630: th
 }
 
 
+def _short_rest_fact() -> str:
+    """Short rest's state as the HUD's Short Rest button shows it, from camp.can_rest's short-rest side
+    (CanDoRest.ShortRestErrorFlags, GlobalShortRestDisabled); '' when it didn't read (REVIEW-13 item 12: the old
+    'short_rest, potions and healing spells still work here' was false where rest is disabled)."""
+    can = core.game.try_rpc("camp.can_rest")
+    if not isinstance(can, dict) or can.get("short_read") is not True:
+        return ""
+    g = can.get("short_global_disabled")
+    if not isinstance(g, int) or g < 0:
+        return ""
+    if g > 0:
+        return "; short rest is disabled here too"
+    rows = [r for r in can.get("short_blocked") or [] if isinstance(r, dict)]
+    if rows:
+        return "; short rest is blocked too (" + "; ".join(
+            f"{r.get('name') or '?'}: {', '.join(str(f) for f in r.get('flags') or [])}" for r in rows) + ")"
+    return "; short_rest is open here"
+
+
 def _camp_block_text(b: dict) -> str:
     """camp() go failed: the game's own reason (what the greyed camp button says). S030 16:46:
     'cannot travel right now' inside the Gauntlet of Shar with no reason, and the agent gave up on resting."""
@@ -653,14 +672,12 @@ def _camp_block_text(b: dict) -> str:
         # S065 12:00:01: the old text suggested fast_travel, refused (Location) too 37 s later: the HUD greys the
         # camp and map-travel buttons together.
         return (" The game blocks camp travel here (Location): this area does not let the party go to camp (a "
-                "dungeon or story area) and fast travel is blocked too; short_rest, potions and healing spells still "
-                "work here.")
+                "dungeon or story area) and fast travel is blocked too" + _short_rest_fact() + ".")
     if b.get("night_camp"):
         return " It is night at camp: a long rest's night hasn't ended (long_rest goes to sleep and ends it)."
     head = f" The game blocks camp travel here ({err})" if err else \
         " The game gave no reason (the camp button isn't greyed)"
-    return (head + ": this area does not let the party go to camp (a dungeon or story area); short_rest, potions and "
-            "healing spells still work here.")
+    return head + ": this area does not let the party go to camp (a dungeon or story area)" + _short_rest_fact() + "."
 
 
 SWAP_DIALOGUE_S = 25.0  # swap_party: the longest it drives the companion's dialogue
