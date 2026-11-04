@@ -183,6 +183,21 @@ class CreateCharacter(Base):
         # nested: the look's own metric record is marked nested (not a separate agent read)
         self.assertFalse(reporting._batch["active"])
 
+    def test_first_look_and_save_failures_say_what_failed_with_no_call(self):
+        # night 2026-11-04: '; call look' and ': save_game(label="S001-start")' pointed at the next call
+        self.use(FakePage())
+
+        def boom(*a, **k):
+            raise RuntimeError("down")
+
+        with mock.patch.dict(os.environ, {"BG3AI_SESSION": "S001"}), mock.patch.object(saving.SAVER, "save", boom), \
+                mock.patch.object(newgame.overview, "look", boom):
+            out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertIn("FIRST LOOK (this is get_status + look):\n(first look failed: RuntimeError: down)\n", out)
+        self.assertIn("first save not started (RuntimeError: down): no 'S001-start' save was made", out)
+        self.assertNotIn("call look", out)
+        self.assertNotIn("save_game(", out)
+
     def test_first_look_waits_out_the_cc_scene(self):
         # naut3 (3/3 runs): right after "Venture forth" the CC scene reads as screen=game with the dummy named; the
         # name was "checked" there and the FIRST LOOK said "WHERE Character creation", so the agent read again

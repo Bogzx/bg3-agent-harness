@@ -276,7 +276,8 @@ default; the legacy runner refuses every goal that isn't one milestone) and need
 
 - Every scenario but `nautiloid` in a bench run: 17 start saves are made and registered (research/ovh/live6.md §2),
   but no run has loaded one yet.
-- A Tactician scenario: its save is not made, and the harness doesn't read the game's difficulty yet.
+- A Tactician scenario: its save is not made. The run's settings check reads the game's difficulty back
+  (`scn.difficulty`) and stops a run whose save has another one, but no Tactician save has been through it.
 - `model_time` and `persona` in run records (both unit-tested on real session files).
 - Any non-Claude client in a series (section 3).
 - `tools/bench_preflight.py` on a machine other than the test machine (unit-tested with fixture Steam trees; its

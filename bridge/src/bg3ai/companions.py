@@ -5,7 +5,7 @@ S.campRoster, the engine's CampPresence component) and state.camp the same with 
 party's skills. get_status/look print one PARTY line when it changes (a new region, quest, party or camp
 roster), e.g.
 
-    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse": <why> | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4 → level_up(who="Wyll") swaps in, levels, swaps back
+    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse": <why> | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4
 
 The ties come from play/knowledge/companions.md (one table row per companion: regions; quest keywords).
 """
@@ -147,8 +147,8 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
         fit = [c for c in camp if role in roles_of(c)]
         bits.append(f"no {ROLE_TEXT[role]} in the party" + (f": {', '.join(c.get('name') for c in fit)} (camp)" if fit else ""))
     dead = [r for r in party if r.get("dead")]
-    if dead:
-        bits.append("dead: " + ", ".join(label(r["uuid"]) for r in dead) + " (Scroll of Revivify, or Withers at camp)"
+    if dead:  # who is dead, not how to revive them (night 2026-11-04: '(Scroll of Revivify, or Withers at camp)')
+        bits.append("dead: " + ", ".join(label(r["uuid"]) for r in dead)
                     + (f"; camp can stand in: {', '.join(c.get('name') for c in camp)}" if camp else ""))
     # (c) skill gaps a camp member fills
     if skills:
@@ -160,11 +160,11 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
             if cands and cands[0][0] >= best + SKILL_GAIN:
                 v, c = cands[0]
                 bits.append(f"party best {text} {best:+d}; {c.get('name')} (camp) {v:+d}")
-    # (d) camp members waiting for their level-ups (done once they rejoin)
+    # (d) camp members waiting for their level-ups (done once they rejoin); the members alone, no call to make
+    # (night 2026-11-04: '(level_up(who="Wyll") swaps in, levels, swaps back)' pointed at the next call)
     lv = [c for c in camp if c.get("level_up")]
     if lv:
-        bits.append("camp level-ups: " + ", ".join(f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in lv)
-                    + " (level_up(who=\"" + str(lv[0].get("name")) + "\") swaps in, levels, swaps back)")
+        bits.append("camp level-ups: " + ", ".join(f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in lv))
     return bits
 
 

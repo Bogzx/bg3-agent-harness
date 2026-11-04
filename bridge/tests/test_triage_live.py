@@ -12,6 +12,9 @@ class RenderPathTest(unittest.TestCase):
         out = render.render_path({"reachable": False, "straight_m": 18.9, "error_cause": 3, "ms": 1}, self.H)
         self.assertTrue(out.startswith("UNREACHABLE"))
         self.assertNotIn("error_cause", out)
+        # night 2026-11-04: what the path may need, with no tool named
+        self.assertEqual(out, "UNREACHABLE: no walkable path (18.9m straight line): it may need a ladder, a jump, "
+                              "a door, or another route")
 
     def test_reachable_with_movement(self):
         out = render.render_path({"reachable": True, "length_m": 7.2, "needs_jump": True,
