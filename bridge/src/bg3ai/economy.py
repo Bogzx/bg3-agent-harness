@@ -647,7 +647,10 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         head.append(f"trader gold {res['trader_gold']}")
     if res.get("price_modifier_pct") is not None:
         head.append(f"prices {res['price_modifier_pct']}% of value")
-    lines.append("TRADE " + " · ".join(head) + " (price = the whole stack)")
+    if head or "wares" in res or "offer" in res:  # a deal whose screen closed as it finished has no screen read
+        lines.append("TRADE " + " · ".join(head) + " (price = the whole stack)")
+    if res.get("note"):  # 'trade screen closed' (Services.lua: the window closed during the finish)
+        lines.append(f"({res['note']})")
     off = res.get("offer") or {}
     you, them = off.get("you") or {}, off.get("trader") or {}
     bal = res.get("balance") or {}

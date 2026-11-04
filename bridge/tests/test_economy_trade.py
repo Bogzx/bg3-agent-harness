@@ -459,6 +459,24 @@ class TradeDealSaid(unittest.TestCase):
         self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
         self.assertIsNone(progression._trade_view["before"])  # sell=junk renders through it next
 
+    def test_a_deal_whose_screen_closed_while_finishing_is_named(self):
+        # REVIEW-17 F2: the mod's closed-screen answer has no offer/wares, so plumbing printed the generic compact of
+        # `moved` (no prices, the earlier calls' table items left out) and no SOLD line
+        closed = {"confirmed": True, "moved": [{"uuid": self.SMALL, "name": "Backpack", "side": "you"}],
+                  "note": "trade screen closed"}
+        saved = (core.H, dict(progression._trade_view))
+        core.H = Handles()
+        for u, n in ((self.BIG, "Backpack"), (self.SMALL, "Backpack")):
+            core.H.get(u, n)
+        progression._trade_view.update(listing=False, full=False, before=self.BEFORE)
+        try:
+            out = plumbing._job_text("trade", JobResult("done", closed, None, [], 900))
+        finally:
+            core.H = saved[0]
+            progression._trade_view.clear()
+            progression._trade_view.update(saved[1])
+        self.assertEqual(out, "trade: done\n(trade screen closed)\nSOLD e2 Backpack 1 g")
+
 
 _HALF = {"unmatched": 1, "wares": [{"price": 1040}, {"price": 832}]}
 _NAMED = {"wares": [{"uuid": "11111111-2222-3333-4444-555555555701", "name": "Supply Pack", "price": 156,
