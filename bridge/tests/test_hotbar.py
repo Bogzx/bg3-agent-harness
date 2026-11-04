@@ -576,6 +576,7 @@ class HotbarCast(unittest.TestCase):
         self.w.screen = "dialogue"
         r, _ = _cast(self.w)
         self.assertEqual((r.stage, r.reason), ("slot", "covered"))
+        self.assertEqual(r.detail["why"], "the dialogue screen covers the hotbar (press_key ESCAPE closes it)")  # D630
         r = hotbar.hotbar_cast(self.w, None, "caster", "Target_Bless", ["a"])
         self.assertEqual(r.reason, "no_input")
 

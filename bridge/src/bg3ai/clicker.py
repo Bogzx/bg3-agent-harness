@@ -854,7 +854,7 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
     if not merged.get("click", {}).get("ok"):
         jr.status = "failed"
         reason = merged.get("click", {}).get("reason", "click failed")
-        jr.error = {"covered": f"the {merged.get('click', {}).get('screen')} screen covers the world (press_key ESCAPE first)",
+        jr.error = {"covered": f"the {merged.get('click', {}).get('screen')} screen covers the world (press_key ESCAPE closes it)",
                     "off_screen": "the target is not on screen",
                     "hover_miss": "could not point at the target",
                     "no_effect": "nothing happened",

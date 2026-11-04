@@ -305,7 +305,8 @@ class StoryAreaBlock(Case):
         out = travel.fast_travel("Temple of Bhaal")
         self.assertIn("can't fast travel now (Location)", out)
         self.assertIn("Same story-area block as camp at ", out)
-        self.assertIn("camp, fast_travel and travel_to(waypoint) are all refused here", out)
+        self.assertIn("camp, fast_travel and travel_to(waypoint) are all refused here.", out)
+        self.assertNotIn("don't try the others", out)  # D630: the refusals are facts, what to try is advice
         out = travel_macro.travel_to(waypoint="Temple of Bhaal")
         self.assertIn("Same story-area block as camp", out)
         self.assertNotIn("act.go_to_camp", fake.ops())
@@ -404,7 +405,9 @@ class Stay(Case):
         fake, out = self.stay(JobResult("failed", None, "timeout"))
         self.assertEqual(fake.ops(), ["act.unchain"])
         self.assertIn("stay: FAILED — e3 Wyll is still chained to the group (timeout): it follows the next walk", out)
-        self.assertIn("set_party unchain who=<them>", out)
+        self.assertIn("it follows the next walk (set_party unchain who=<them> unchains another member, who then walks "
+                      "alone)", out)  # D630: what the tool does, no 'to leave it here, unchain ...'
+
         self.assertNotIn(WYLL, overview._stay)
 
     def test_unchain_taken_stays(self):
