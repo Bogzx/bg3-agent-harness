@@ -251,13 +251,13 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
         before = before if isinstance(before, dict) else {}
     if donate:
         args["donate"] = True
-    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before)
+    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before, donate=bool(donate))
     if full:
         args["max"] = 500
     try:
         out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
     finally:
-        _trade_view["before"] = None  # sell=junk renders through the same view and says SOLD itself
+        _trade_view["before"], _trade_view["donate"] = None, False  # sell=junk renders through the same view and says SOLD itself
     res = reporting._batch.get("result")
     if _trade_view["listing"]:
         for _ in range(TRADE_FILL_TRIES):
@@ -403,7 +403,7 @@ def _answers_text(d: dict) -> str:
     return "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
 
 
-_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None}  # how the next trade result is rendered
+_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None, "donate": False}  # how the next trade result is rendered
 
 
 def _item_handle(it: dict) -> str:

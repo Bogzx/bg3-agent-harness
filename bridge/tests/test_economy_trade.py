@@ -459,6 +459,20 @@ class TradeDealSaid(unittest.TestCase):
         self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
         self.assertIsNone(progression._trade_view["before"])  # sell=junk renders through it next
 
+    def test_a_donate_overpay_says_given_and_got_not_sold(self):
+        # REVIEW-17 F5: donate=true lets an overpay through (52 g of goods for a 30 g potion, no gold back); 'SOLD e1
+        # Backpack 52 g' read as 52 g received. The deal says what went each way.
+        after = {**self.AFTER, "moved": [{"uuid": self.BIG, "name": "Backpack", "side": "you"},
+                                         {"uuid": self.POTION, "name": "Potion of Healing", "side": "trader",
+                                          "count": 2}]}
+        out, _ = self._trade(after, self.BEFORE, offer="e1", request="e3", count=2, confirm=True, donate=True)
+        self.assertIn("\nGAVE e1 Backpack 52 g\nGOT e3 Potion of Healing x2 30 g", out)
+        self.assertNotIn("SOLD", out)
+        self.assertNotIn("BOUGHT", out)
+        self.assertFalse(progression._trade_view["donate"])  # the next result (sell=junk) is not a donate
+        out, _ = self._trade(after, self.BEFORE, offer="e1", request="e3", count=2, confirm=True)
+        self.assertIn("\nSOLD e1 Backpack 52 g\nBOUGHT e3 Potion of Healing x2 30 g", out)
+
     def test_table_items_with_no_uuid_are_each_named(self):
         # REVIEW-17 F4: the first table item with no uuid put None in `seen` and every later one was skipped
         before = {**self.BEFORE, "offer": {"you": {"items": [{"name": "Backpack", "price": 52},

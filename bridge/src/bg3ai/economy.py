@@ -634,10 +634,10 @@ def _overpay(n: int, trader_gold: int | None) -> str:
 
 
 def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False,
-               before: dict | None = None) -> str:
+               before: dict | None = None, donate: bool = False) -> str:
     """The trade screen for the agent. h(item) -> its handle (e12). listing: show wares and your items (opening or
     trade() with no args); else only the table/balance. full: no caps. before: the screen read before a confirm
-    (deal_lines prices the deal from it)."""
+    (deal_lines prices the deal from it). donate: the call had donate=true (deal_lines says GAVE/GOT)."""
     gmax = 10 ** 6 if full else TRADE_GROUP_MAX
     lines = []
     head = []
@@ -690,7 +690,7 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
     if res.get("can_confirm") is False and not done:
         lines.append("(the Trade button is disabled)")
     if not listing:
-        lines += deal_lines(res, before, h) if done else ["(wares/your items unchanged: trade() lists them)"]
+        lines += deal_lines(res, before, h, donate) if done else ["(wares/your items unchanged: trade() lists them)"]
         return "\n".join(lines)
 
     wares = [w for w in res.get("wares") or [] if isinstance(w, dict)]
@@ -771,13 +771,14 @@ def equipped_offers(inv: dict | None, uuids: list[str], name_of: Callable[[str],
     return out
 
 
-def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str]) -> list[str]:
+def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str], donate: bool = False) -> list[str]:
     """A confirmed barter's items, each at the price the screen showed before it: ['SOLD e159 Backpack 1 g',
     'BOUGHT e40 Potion of Healing x3 45 g']. w12 L2: trade(offer=e159, confirm=true) showed the emptied table and
     'gold_changed delta=1' only; the Backpack had sold for 1 g (the other one was worth 52). The items are the ones
     on the table before the call (before.offer) and the ones this call moved (res.moved); the gold the Balance adds
     is in EVENTS (gold_changed). before=None: no lines (sell=junk says SOLD itself); {} = the read failed, so the
-    items moved are named without a price."""
+    items moved are named without a price. donate=True: GAVE/GOT, not SOLD/BOUGHT: a donate=true deal can be an
+    overpay the trader paid no gold for (REVIEW-17 F5: 'SOLD e2 Backpack 52 g' read as 52 g received)."""
     if before is None:
         return []
     off = before.get("offer") or {}
@@ -816,7 +817,8 @@ def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str]) -> list
         return (f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} "
                 f"{p if isinstance(p, (int, float)) else '?'} g")
     return [f"{word} " + " | ".join(row(it) for it in went[side])
-            for word, side in (("SOLD", "you"), ("BOUGHT", "trader")) if went[side]]
+            for word, side in ((("GAVE", "you"), ("GOT", "trader")) if donate else (("SOLD", "you"), ("BOUGHT", "trader")))
+            if went[side]]
 
 
 def trade_answer(options: list) -> dict | None:
