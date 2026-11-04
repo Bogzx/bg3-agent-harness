@@ -33,7 +33,9 @@ class RamWatchTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="bg3ai-test-ram"))
         self.logs = []
-        self.w = R.RamWatch(self.logs.append, logfile=self.tmp / "ram.log")
+        with mock.patch.dict(R.os.environ, clear=False):
+            R.os.environ.pop(R.GAME_CAP_ENV, None)  # the 10G numbers, whatever cap this shell's game runs at
+            self.w = R.RamWatch(self.logs.append, logfile=self.tmp / "ram.log")
         patcher = mock.patch.object(R, "anon_swap_mb", return_value=0)   # never read the real game's /proc
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -154,6 +156,35 @@ class RamWatchTest(unittest.TestCase):
         self.assertEqual(k.call_args_list[-1].args, (100, R.signal.SIGKILL))
         self.assertIn("anon+swap", rec["why"])
         self.assertEqual(rec["anon_swap_mb"], R.KILL_ANON_SWAP_MB + 100)
+
+    def test_kill_limits_follow_a_cap_in_g(self):
+        # REVIEW-16 A4: the pilot's game ran at MemoryMax=8G; 9500 MB would have come after the cgroup's OOM kill
+        self.assertEqual(R.kill_limits("8G"), (8192 - 740, 8192 - 1240))
+        self.assertEqual(R.kill_limits("10G"), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))  # today's numbers
+        self.assertEqual(R.kill_limits("7.5g"), (7680 - 740, 7680 - 1240))
+
+    def test_kill_limits_follow_a_cap_in_m(self):
+        self.assertEqual(R.kill_limits("8192M"), R.kill_limits("8G"))
+        self.assertEqual(R.kill_limits("6000m"), (6000 - 740, 6000 - 1240))
+
+    def test_kill_limits_keep_the_10g_numbers_without_a_g_or_m_cap(self):
+        for cap in (None, "", "infinity", "80%", "8589934592"):
+            self.assertEqual(R.kill_limits(cap), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB), cap)
+
+    def test_an_8g_game_is_killed_under_its_cap(self):
+        self._kill_setup()
+        with mock.patch.dict(R.os.environ, {R.GAME_CAP_ENV: "8G"}):
+            w = R.RamWatch(self.logs.append, logfile=self.tmp / "ram.log")
+        w.actions, w.spikes, w.kills, w.logs, w.run = self.w.actions, self.w.spikes, self.w.kills, self.w.logs, self.w.run
+        with mock.patch.object(R.os, "kill") as k:
+            self.assertIsNone(w.sample(90.0, 5800, 6000, [100], anon_swap=6900))
+            rec = w.sample(91.0, 7000, 4000, [100], anon_swap=6952)
+        self.assertEqual(rec["kind"], "kill")
+        self.assertEqual(k.call_args_list, [mock.call(100, R.signal.SIGKILL)])
+        self.assertIn("anon+swap 6952 MB >= 6952 MB", rec["why"])
+        with mock.patch.object(R.os, "kill"):
+            rec = w.sample(200.0, 7452, 4000, [100], anon_swap=0)
+        self.assertIn("game RSS 7452 MB >= 7452 MB", rec["why"])
 
     def test_anon_swap_from_proc_status(self):
         st = self.tmp / "status"

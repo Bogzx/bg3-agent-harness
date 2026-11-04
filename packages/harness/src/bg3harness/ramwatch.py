@@ -8,7 +8,8 @@
   - samples the game's RSS every SAMPLE_S; growth > SPIKE_MB within SPIKE_WINDOW_S is logged with the last tool
     calls (runtime/actions.jsonl) to ram.log, the runner log and runtime/ram_spikes.jsonl (OOM attribution:
     20:48 the game went 5.0 → 13.3 GB in < 40 s after loading the Shadowfell, between two 60 s samples);
-  - samples every FAST_SAMPLE_S while the RSS climbs fast, and SIGKILLs bg3 above KILL_GAME_MB RSS or below
+  - samples every FAST_SAMPLE_S while the RSS climbs fast, and SIGKILLs bg3 above KILL_GAME_MB RSS (both kill
+    thresholds move with the game scope's cap, $BG3AI_GAME_MEMORY_MAX: kill_limits) or below
     KILL_AVAIL_MB available (test runs go first), logging the last bg3le log lines and tool calls
     (runtime/ram_kills.jsonl); our own kill is no OOM event, so systemd stops no unit for it;
   - no longer lowers the game's oom_score_adj (it used to set -500): the game runs in its own capped systemd scope
@@ -62,6 +63,12 @@ KILL_GAME_MB = 9500
 # runaway's pages out (MemorySwapMax=2G), so the RSS never reached 9.5 GB. Normal play: anon ~5.4 GB + swap ~0.2 GB;
 # the scope's memory.current (~9.2 GB) is mostly reclaimable file cache, so it is no kill signal.
 KILL_ANON_SWAP_MB = 9000
+# Both are the 10G cap's numbers: RamWatch moves them with the scope's cap, $BG3AI_GAME_MEMORY_MAX (launch_game.sh's
+# MemoryMax, default 10G; the pilot ran 8G), keeping these margins under it. systemd's G is 1024 MiB and rss_mb counts
+# MiB, so 10G = 10240: 740 and 1240 MiB under the cap (REVIEW-16 A4: an 8G cgroup OOM-killed the game before 9500).
+GAME_CAP_ENV = "BG3AI_GAME_MEMORY_MAX"
+KILL_GAME_UNDER_CAP_MB = 10240 - KILL_GAME_MB
+KILL_ANON_SWAP_UNDER_CAP_MB = 10240 - KILL_ANON_SWAP_MB
 KILL_AVAIL_MB = 700            # … or when RAM available drops below this and no test run is left to kill
 KILLS = RUNTIME / "ram_kills.jsonl"   # the runner's OOM crash-loop guard counts these like kernel OOM kills
 SPIKE_MB = 2048                # RSS growth within SPIKE_WINDOW_S that gets logged with the last tool calls
@@ -462,12 +469,23 @@ def read_heat(path: Path = THERMAL_LOG, now: float | None = None, limits: dict |
     return heat_state(samples, time.time() if now is None else now, limits)
 
 
+def kill_limits(cap: str | None) -> tuple[int, int]:
+    """(RSS, anon+swap) kill thresholds in MiB for the game scope's MemoryMax as systemd reads it ('8G', '8192M');
+    unset or another form (bytes, %, infinity) keeps KILL_GAME_MB / KILL_ANON_SWAP_MB."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([GM])\s*", cap or "", re.IGNORECASE)
+    if not m:
+        return KILL_GAME_MB, KILL_ANON_SWAP_MB
+    mb = int(float(m.group(1)) * (1024 if m.group(2).upper() == "G" else 1))
+    return mb - KILL_GAME_UNDER_CAP_MB, mb - KILL_ANON_SWAP_UNDER_CAP_MB
+
+
 class RamWatch:
     def __init__(self, log=None, logfile: Path = LOG, warn_mb: int = WARN_MB, kill_mb: int = KILL_MB,
                  exclude: set[int] | None = None):
         self.log = log or (lambda m: None)
         self.logfile = logfile
         self.warn_mb, self.kill_mb = warn_mb, kill_mb
+        self.kill_game_mb, self.kill_anon_swap_mb = kill_limits(os.environ.get(GAME_CAP_ENV))
         self.exclude = exclude or set()
         self.low = False
         self.samples: collections.deque[tuple[float, int]] = collections.deque()   # (t, game RSS MB)
@@ -571,7 +589,7 @@ class RamWatch:
 
     def sample(self, now: float | None = None, rss: int | None = None, avail: int | None = None,
                pids: list[int] | None = None, anon_swap: int | None = None) -> dict | None:
-        """One game RSS sample. Kills bg3 (SIGKILL) above KILL_GAME_MB RSS or KILL_ANON_SWAP_MB anon+swap, or below
+        """One game RSS sample. Kills bg3 (SIGKILL) above kill_game_mb RSS or kill_anon_swap_mb anon+swap, or below
         KILL_AVAIL_MB available once no test run is left to kill; logs growth > SPIKE_MB within SPIKE_WINDOW_S (once per window). Returns the kill
         record ({"kind": "kill", …}), the spike record ({"kind": "spike", …}) or None."""
         now = time.time() if now is None else now
@@ -599,8 +617,8 @@ class RamWatch:
         while q and q[0][0] < now - SPIKE_WINDOW_S:
             q.popleft()
         t0, low = min(q, key=lambda s: s[1])
-        if rss >= KILL_GAME_MB or avail < KILL_AVAIL_MB:
-            if rss < KILL_GAME_MB and now - self.tests_killed_at > 10:   # still short soon after: the game
+        if rss >= self.kill_game_mb or avail < KILL_AVAIL_MB:
+            if rss < self.kill_game_mb and now - self.tests_killed_at > 10:   # still short soon after: the game
                 tests = test_pids(exclude=self.exclude)
                 if tests:      # RAM is short but the game is in bounds: test runs go first
                     for pid in tests:
@@ -613,7 +631,7 @@ class RamWatch:
                     self._write(f"only {avail} MB available (game {rss} MB): SIGTERM to test runs {tests[:8]}")
                     return None
             return self._kill_game(now, pids, rss, avail, low, t0)
-        if anon_swap >= KILL_ANON_SWAP_MB:
+        if anon_swap >= self.kill_anon_swap_mb:
             return self._kill_game(now, pids, rss, avail, low, t0, anon_swap)
         if rss - low <= SPIKE_MB or now - self.spike_at < SPIKE_WINDOW_S:
             return None
@@ -630,8 +648,8 @@ class RamWatch:
 
     def _kill_game(self, now: float, pids: list[int], rss: int, avail: int, low: int, t0: float,
                    anon_swap: int | None = None) -> dict:
-        why = (f"game RSS {rss} MB >= {KILL_GAME_MB} MB" if rss >= KILL_GAME_MB
-               else f"game anon+swap {anon_swap} MB >= {KILL_ANON_SWAP_MB} MB (RSS {rss} MB; the rest is swapped out)"
+        why = (f"game RSS {rss} MB >= {self.kill_game_mb} MB" if rss >= self.kill_game_mb
+               else f"game anon+swap {anon_swap} MB >= {self.kill_anon_swap_mb} MB (RSS {rss} MB; the rest is swapped out)"
                if anon_swap is not None
                else f"only {avail} MB RAM available (< {KILL_AVAIL_MB} MB, game {rss} MB)")
         for pid in pids:
