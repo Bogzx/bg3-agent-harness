@@ -87,7 +87,7 @@ class FakeGame:
         table = {"state.status": w["status"], "state.nearby": w["nearby"], "state.inventory": w["inventory"],
                  "state.journal": w["journal"], "nav.markers": {"markers": w["markers"]}, "state.map": w["map"],
                  "ui.state": w["ui"], "nav.set_subregion": {}, "nav.hazards": {"hazards": w.get("hazards", [])},
-                 "nav.frontier": w.get("frontier", {"leads": []})}
+                 "nav.frontier": w.get("frontier", {"leads": []}), "state.dialogue_tags": w.get("tags", {})}
         if op not in table:
             raise AssertionError(f"unexpected op {op}")
         return copy.deepcopy(table[op])
@@ -268,6 +268,19 @@ class LookTool(Base):
                                                   "(DIALOGUE still open, unchanged; full=true repeats it)"])
         self.assertTrue(again.splitlines()[2].startswith("OBJECTIVES o1 Escape the ship 16m W"), again)
         self.assertIn("2. [Intimidation] Back off.", overview.look(full=True))
+
+    def test_dialogue_row_tags_from_the_game_in_look(self):
+        """w11 L4: talk_to showed '5. [PALADIN] She is a person...', look right after showed row 5 without it: look's
+        full status and change lines rendered the raw read, without state.dialogue_tags' labels."""
+        overview.look()
+        dialogue(self.fake.w)
+        for k, o in enumerate(self.fake.w["ui"]["dialogue"]["options"]):
+            o.pop("tags", None)
+            o.update(idx=k, runs=1 if k == 1 else 0)
+        self.fake.w["tags"] = {"answers": [{"idx": 0, "tags": []}, {"idx": 1, "tags": ["Paladin"]},
+                                           {"idx": 2, "tags": []}]}
+        self.assertIn("  2. [PALADIN] Back off.", overview.look())
+        self.assertIn("  2. [PALADIN] Back off.", overview.look(full=True))
 
     def test_quest(self):
         overview.look()

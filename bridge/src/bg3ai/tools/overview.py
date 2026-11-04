@@ -127,7 +127,7 @@ def get_status(full: bool = False) -> str:
             body += "\n" + "\n".join(reporting._render_ui(ui))
         return reporting._finish("get_status", {}, body, t0, events=False)
     plumbing._remember_names(st)
-    ui, stale = _sub_since_trip(ui)
+    ui, stale = _sub_since_trip(reporting._label_dialogue(ui))
     sub = (ui or {}).get("region")
     if sub and sub != _last_subregion["name"]:
         # The minimap's subregion name only exists client-side; hand it to the server's breadcrumbs, off the
@@ -249,6 +249,8 @@ def look(full: bool = False) -> str:
         return get_status(full=True)
     for v in got.values():
         plumbing._remember_names(v)
+    if got.get("ui") is not None:
+        got["ui"] = reporting._label_dialogue(got["ui"])
     if got.get("markers") is not None:
         _set_objectives(got["markers"])
     first = not core.DELTA.has("party", "ents")
