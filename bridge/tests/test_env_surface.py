@@ -60,6 +60,8 @@ KNOWN = frozenset(
         "BG3AI_SESSION_DEADLINE",
         "BG3AI_SESSION_WRAPUP",
         "BG3AI_SHOTS_DIR",
+        "BG3AI_ARENA_TURN_CAP_S",  # a side's per-turn cap, stated in its rules (the arena runner sets it; the run
+        # manifest records it as arena_turn_cap_s)
         "BG3AI_SIDE",  # the side of a two-team match this server plays (the arena runner sets and records it)
         "BG3AI_START_SAVE",
         "BG3AI_STOP_GRACE_S",

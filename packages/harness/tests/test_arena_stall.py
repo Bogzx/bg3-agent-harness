@@ -290,9 +290,11 @@ def test_translate_readmitted_takes_the_member_out_of_the_phases_passed_set():
     ref.names, ref.done = {"uk": ("A", "Karlach")}, False
     ref.turns = [am.Turn("A", "uw", "Wyll", 1, ["uw", "uk"])]
     out = ref.translate({"ev": "arena_turn_passed", "side": "A", "character": "UK", "why": "downed", "round": 1})
-    assert out is not None and out["character"] == "Karlach" and ref.turn.passed == {"uk"}
+    turn = ref.turn
+    assert out is not None and out["character"] == "Karlach" and turn is not None and turn.passed == {"uk"}
     out = ref.translate({"ev": "arena_turn_readmitted", "side": "A", "character": "UK", "round": 1})
-    assert out is not None and out["character"] == "Karlach" and ref.turn.passed == set()
+    turn = ref.turn
+    assert out is not None and out["character"] == "Karlach" and turn is not None and turn.passed == set()
 
 
 def test_the_mods_group_end_write_reaches_the_facts_with_its_members_named(tmp_path):
