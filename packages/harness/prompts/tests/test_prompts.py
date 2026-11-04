@@ -67,7 +67,7 @@ GROUP_WORDS = {
     "raw_input": r"\bclick\b|press_key",
 }
 # The results' coaching nudges (bridge reporting.py, batch.py): served, and explained, only in rules+coaching.
-COACHING_MARKERS = ("NEXT:", "PACE:", "NOTES WINDOW")
+COACHING_MARKERS = ("PACE:", "NOTES WINDOW")  # NEXT: lines are gone from results (D630)
 MAX_PART = 6000
 MAX_RULES = 10000
 MAX_COACHED = 30000

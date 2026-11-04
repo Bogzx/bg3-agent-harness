@@ -97,7 +97,7 @@ class FightServer(Base):
             out = saving.load_game("S099-pre")
         self.assertIn("FIGHT DEBRIEF (reloaded", out)
         self.assertIn("LAST ATTEMPT: reloaded (was costly) vs Goblin", out)
-        self.assertIn("protect Lae'zel", out)
+        self.assertNotIn("protect Lae'zel", out)  # D630: no harness tip
         self.assertTrue(reporting._retry["status"])
         # the retried fight's first turn repeats the key facts once
         self.g.combat = combat()

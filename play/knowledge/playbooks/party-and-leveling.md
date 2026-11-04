@@ -8,7 +8,8 @@ A level up is free power: take it at the **next safe moment** (out of combat and
 fight. get_status/look print `LEVEL UP: e3 Gale (2) → level_up(who) now…` while one is pending; other tool
 results say `LEVEL UP pending` as soon as the bridge sees it (it checks about once a minute). In combat,
 finish the fight first. Write plans **ahead**, not at the level up: a `NOTES WINDOW` (walking time) may carry
-`PARTY PLAN: no plan line yet for Gale L4, …; party lacks skills/locks/traps (Astarion)`. Write those lines
+`PARTY PLAN (party-build.md): no plan line under ## Level-up plans for Gale L4, …; no ## Party composition section,
+and the party has no skills (bard/ranger/rogue)`. Write those lines
 then, so the level up itself is one instant call. Levels without required picks (a Paladin or Cleric level
 with no new subclass, feat, spell or passive) still go through with the game's defaults when no line exists,
 but the next feat or spell level will fail without one.

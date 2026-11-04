@@ -78,7 +78,8 @@ class Tracker(unittest.TestCase):
         inside = o.route_line(LEVEL, [-92.2, 5.7, -188.2], [-112.0, 4.0, -176.0], [])
         self.assertIn("OFF-LIMITS: the goal is inside the off-limits area by Cashguard Artillerist Dadger (-111,4,-177)"
                       " you were warned about", inside)
-        self.assertIn("trespass=true", inside)
+        self.assertIn("walks into it are refused (travel_to/move_to trespass=true walks in)", inside)
+        self.assertNotIn("guard first", inside)  # facts only (D630)
         legs = [{"to": [-111.0, 4.0, -177.0]}, {"to": [-122.0, 4.0, -177.0]}]
         self.assertIn("avoiding the off-limits area by Cashguard Artillerist Dadger (-111,4,-177) you were warned"
                       " about", o.route_line(LEVEL, [-100.0, 4.0, -177.0], [-122.0, 4.0, -177.0], legs))

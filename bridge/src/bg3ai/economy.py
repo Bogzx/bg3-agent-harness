@@ -446,7 +446,7 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
         if dead_allies:
             out.append("ally DIED " + ", ".join(f"{name(a['uuid'])}" if a.get("uuid") else str(a.get("name"))
                                                 for a in dead_allies)
-                       + f" (revive: {have} on the body before leaving; Withers can't raise an ally; or reload)")
+                       + f" (revive: {have} on the body; Withers can't raise an ally)")
     if not st.get("in_combat"):
         low = []
         for m in st.get("party") or []:

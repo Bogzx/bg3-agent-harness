@@ -92,7 +92,7 @@ def default_condition(env: Mapping[str, str] | None = None) -> str:
 
 def coaching(env: Mapping[str, str] | None = None) -> bool:
     """The session's condition has coaching (default_condition: rules+coaching): only then do results carry the
-    coaching nudges (NEXT:, PACE:, NOTES WINDOW). Rules-only (benchmark ranked runs) gets none."""
+    pace facts (PACE:, NOTES WINDOW). Rules-only (benchmark ranked runs) gets none."""
     return "coaching" in default_condition(env).strip().lower().split("+")
 
 

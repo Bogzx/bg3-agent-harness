@@ -607,6 +607,16 @@ class ToolCheck(unittest.TestCase):
         self.assertEqual(r.status, "failed")
         self.assertIn("the trap is still armed after Disarm", r.error)
 
+    def test_covered_says_which_screen_and_the_key_that_closes_it(self):
+        g = self.Inv([{"name": "Trap Disarm Toolkit", "owner": "U1"}])
+        g.run_job = lambda op, args, wait_s=40.0: clicker.JobResult(
+            "done", {"needs_click": "T", "expect": "roll", "button": "R", "menu": "Disarm"})
+        with mock.patch.object(clicker, "finish_needs_click", lambda game, inp, res: {
+                "expect": "roll", "click": {"ok": False, "reason": "covered", "screen": "book"}}):
+            r = clicker.run_click_action(g, object(), "act.disarm", {"char": "U1", "target": "T"})
+        self.assertEqual(r.status, "failed")
+        self.assertEqual(r.error, "the book screen covers the world (press_key ESCAPE closes it)")  # D630: a fact
+
     def test_actor_has_tools_runs_the_job(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U1", "count": 2}])
         r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})

@@ -28,8 +28,8 @@ class InsertFake:
     BOOK = "cccccccc-0000-0000-0000-0000000000b5"
     ME = "cccccccc-0000-0000-0000-0000000000a1"
 
-    def __init__(self, open_=False, state="Success"):
-        self.open, self.state, self.jobs = open_, state, []
+    def __init__(self, open_=False, state="Success", fail_reason="Invalid"):
+        self.open, self.state, self.jobs, self.fail_reason = open_, state, [], fail_reason
 
     def rpc(self, op, args=None, context="server"):
         if op == "state.inventory":
@@ -54,7 +54,7 @@ class InsertFake:
                 return JobResult(status="done", result={"panel": "Riddle of the Night", "state": "Empty", "slots": [False],
                                                          "items": [{"uuid": self.BOOK, "name": "Teachings of Loss: The Nightsinger"}]})
             return JobResult(status="done", result={"item": "Teachings of Loss: The Nightsinger", "state": self.state,
-                                                     "fail_reason": "Invalid" if self.state == "Fail" else None})
+                                                     "fail_reason": self.fail_reason if self.state == "Fail" else None})
         return JobResult(status="done", result={})
 
     def drain_events(self, ctx):
@@ -101,6 +101,12 @@ class InsertItem(unittest.TestCase):
         self.use(InsertFake(open_=True, state="Fail"))
         out = self.call(item=self.book)
         self.assertIn("FAILED — the panel refused Teachings of Loss: The Nightsinger (Invalid)", out)
+
+    def test_interrupted_insert_says_the_fact_only(self):
+        self.use(InsertFake(open_=True, state="Fail", fail_reason="Interrupted"))
+        out = self.call(item=self.book)
+        self.assertTrue(out.rstrip().endswith("the game interrupted the insert (a real drag and click get the same "
+                                              "answer now)"), out)  # D630: no "don't retry by hand; play on elsewhere"
 
     def test_insert_by_another_member_takes_control_first(self):
         # S037 20:15-20:17: who=Shadowheart while Claude was controlled: the interact "used" the pedestal, no panel

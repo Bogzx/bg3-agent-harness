@@ -274,6 +274,7 @@ class AsyncActions(Base):
             out = batch.wait_for("dialogue_started", timeout_s=5)
             self.assertLess(time.monotonic() - t0, 1.5)
             self.assertIn("nothing is running that would cause dialogue_started", out)
+            self.assertNotIn("act instead", out)  # D630: a fact; what to do next is the agent's
             self.g.dur["act.move_to"] = 0.6  # a walk is running: it could start one, so keep waiting
             world_tools.move_to(target=self.door, wait=False)
             out = batch.wait_for("dialogue_started", timeout_s=0.5)
@@ -608,6 +609,7 @@ class WaitForNoop(Base):
         self.assertLess(dt, 0.4 + batch.EVENT_GRACE_S + 0.6)
         self.assertIn("nothing is running that would cause dialogue_started", out)
         self.assertIsNone(self.last_noop())  # it really waited for the walk
+        self.assertNotIn("act instead", out)  # D630
 
     def test_world_events_keep_the_idle_fallback(self):
         old, queueing.IDLE_EVENT_WAIT_S = queueing.IDLE_EVENT_WAIT_S, 0.4

@@ -60,7 +60,7 @@ The server sends the rules of play four ways, so a client needs no files from th
 - `rules` (the default): how the game, the tools, fairness and the session clock work. This is the ranked
   benchmark's condition. The text leaves out the rules of a tool group that is switched off.
 - `rules+coaching`: the rules plus how to play well and the memory protocol, about three times as long. Only in
-  this condition do tool results carry the coaching nudges (`NEXT:`, `PACE:`, `NOTES WINDOW`).
+  this condition do tool results carry the pace facts (`PACE:`, `NOTES WINDOW`).
 
 `BG3AI_SERVE_RULES=0` takes the rules out of the instructions and the first result. The prompt and the resource
 still serve them. It is meant for Claude Code in `play/`, which reads the same text from `play/CLAUDE.md`, so with it

@@ -376,12 +376,10 @@ class _BatchState(threading.local):
 _batch = _BatchState()
 
 
-# Pace bookkeeping for the agent's own calls (MCP thread): when it last issued an async action, how many calls
-# came after it, and how often the NEXT hint was shown. Teaches pipelining in context (impl-setup part 5).
-_pace = {"issued_at": 0.0, "calls_since": 0, "next_shown": 0, "nudge": False}
+# Pace bookkeeping for the agent's own calls (MCP thread): when it last issued an async action and how many calls
+# came after it (the PACE fact, impl-setup part 5).
+_pace = {"issued_at": 0.0, "calls_since": 0}
 PACE_GAP_S = 1.5
-NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; "
-             "wait_for only when you are out of work")
 
 
 # Consecutive wait_for(<event kinds>) answers "nothing is running", with only these reads in between.
@@ -437,9 +435,8 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         queueing._running_memo["on"] = False
     if tool == "wait_for" and _pace["calls_since"] == 0 and _pace["issued_at"] \
             and t0 - _pace["issued_at"] < PACE_GAP_S and rules.coaching():
-        out.append("PACE: you waited right after issuing. Next time first do independent work (queue the arrival "
-                   "steps, look, plan, notes): the character acts while you think.")
-        _pace["nudge"] = True
+        out.append(f"PACE: this wait_for came {render.num(round(t0 - _pace['issued_at'], 1))}s after the last issued "
+                   "action, with no other call in between.")
     if tool not in ("get_status", "look", "level_up"):
         if overview._LEVEL_NUDGE.stale():  # XP arrives mid-play: one state.status read a minute finds the level up
             overview._LEVEL_NUDGE.seen_at = time.time()  # also when the read fails (loading): no retry on every call
@@ -550,16 +547,6 @@ def _with_statuses(rows: list[dict]) -> list[dict]:
     st_of = {c.get("uuid"): [x.get("name") for x in c.get("statuses") or [] if isinstance(x, dict) and x.get("name")]
              for c in nb.get("characters") or [] if isinstance(c, dict) and c.get("uuid")}
     return [{**o, "statuses": st_of.get(o.get("uuid")) or []} for o in rows]
-
-
-def _next_walk_hint() -> str:
-    """The NEXT line after a walk that is still running: the first 3 times, then only after a PACE nudge.
-    Coaching like PACE: (rules.coaching): rules-only gets none."""
-    if not rules.coaching() or (_pace["next_shown"] >= 3 and not _pace["nudge"]):
-        return ""
-    _pace["next_shown"] += 1
-    _pace["nudge"] = False
-    return NEXT_WALK
 
 
 def _par(*thunks) -> list:

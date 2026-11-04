@@ -374,7 +374,7 @@ test("tool facts stay facts: loot_corpse loots a corpse, a give in a fight needs
     osiv[key("GetInventoryOwner", GEM)] = P1
     osiv[key("IsInCombat", P1)] = 1
     j = job(op("transfer", { item = GEM, to = NPC }))
-    -- arena: G.refuse_ui adds its own note (arena/int's "(use the UI)" without a side)
+    -- arena: G.refuse_ui adds its own note ("(the UI tools can do it)" without a side)
     assert(j.error:find("not available during combat through this action (", 1, true), j.error)
     osiv[key("IsInCombat", P1)] = 0
     j = job(op("pickup", { char = P1, item = GEM }))
