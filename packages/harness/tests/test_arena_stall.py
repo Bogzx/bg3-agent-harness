@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import jsonschema
+import pytest
 from bg3harness.arena import match as am
 from test_arena_match import (
     BENCH_FACTS_SCHEMA,
@@ -285,6 +286,25 @@ def test_a_readmitted_member_reaches_the_facts_named_and_is_no_longer_passed(tmp
         jsonschema.validate(e, BENCH_FACTS_SCHEMA)
 
 
+def test_the_mods_round_first_side_reaches_the_facts_as_given(tmp_path):
+    """arena_round (a round's first phase: its side, turn or passed; the seat audit) is written to the facts as the mod
+    gave it and fits both facts schemas."""
+    model, game, clock, agents, spec = setup({"A": passer, "B": passer})
+    sent: list[bool] = []
+
+    def first_side() -> None:
+        if model.arena is not None and not sent:
+            sent.append(True)
+            model.ref_record("arena_round", round=2, first="A", how="passed")
+
+    clock.tick_hooks.append(first_side)
+    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    [r] = [e for e in arena_events(tmp_path) if e["ev"] == "arena_round"]
+    assert (r["round"], r["first"], r["how"]) == (2, "A", "passed")
+    jsonschema.validate(r, FACTS_SCHEMA)
+    jsonschema.validate(r, BENCH_FACTS_SCHEMA)
+
+
 def test_translate_readmitted_takes_the_member_out_of_the_phases_passed_set():
     ref = am.Referee.__new__(am.Referee)
     ref.names, ref.done = {"uk": ("A", "Karlach")}, False
@@ -438,3 +458,26 @@ def test_the_other_sides_reaction_prompt_is_not_the_acting_sides_stall(tmp_path)
     assert stalls(tmp_path) == []
     assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
     assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None
+
+
+def test_both_schemas_take_the_turn_order_fields_and_refuse_other_values():
+    """arena_start's turn_order; arena_turn's and arena_turn_passed's order, opening and rule (a passed slot counts in
+    the alternation, so it says where it stood)."""
+    base = {"v": 1, "kind": "event", "t": 1.0}
+    start = {**base, "ev": "arena_start", "arena": "a", "seed": 1, "teams": {"A": [], "B": []}}
+    start["sides"] = {"A": "pi/x", "B": "pi/y"}
+    turn = {**base, "ev": "arena_turn", "side": "B", "character": "Wyll", "members": ["Wyll"], "names": ["Wyll"]}
+    turn.update(round=1, phase=2, shared=True)
+    passed = {**base, "ev": "arena_turn_passed", "side": "A", "character": "Gale", "why": "downed", "round": 1}
+    why = {"order": "snake", "opening": "A", "rule": "alternate"}
+    goods = [{**start, "turn_order": "snake"}, {**turn, **why}, {**passed, **why}]
+    goods += [{**turn, **why, "rule": "only_side_left"}, {**passed, **why, "rule": "opening"}]
+    bads = [{**start, "turn_order": "initiative"}]
+    for rec in (turn, passed):
+        bads += [{**rec, **why, "order": "team"}, {**rec, **why, "opening": "C"}, {**rec, **why, "rule": "first"}]
+    for schema in (FACTS_SCHEMA, BENCH_FACTS_SCHEMA):
+        for good in goods:
+            jsonschema.validate(good, schema)
+        for bad in bads:
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(bad, schema)

@@ -379,6 +379,18 @@ local function nextPhase(st, round, p)
     return (last and last.round == round and last.group == p.group) and last.phase + 1 or 1
 end
 
+-- A round's first phase, once per round: arena_round {round, first (the round's opening side, turn_order's: the
+-- first phase's side unless that side had nobody open), how ("turn": it was recorded as an
+-- arena_turn; "passed": every member of it couldn't act and was passed)}. The audit for a turn-order rule that sets
+-- who moves first each round (seat fix O3/O3a, ops/briefs/arena/seat-fix.md); the first arena_turn of a round alone
+-- misses a first phase passed whole (seed-7 m1 r2: Cedar passed, B's arena_turn came first).
+local function noteRoundFirst(st, round, side, how)
+    st.round_first = st.round_first or {}
+    if st.round_first[round] then return end
+    st.round_first[round] = side
+    record("arena_round", { round = round, first = side, how = how })
+end
+
 -- A downed member's death save comes with its turn (window 8 seed 7: arena_turn_passed 146.4 s, the save 146.6 s;
 -- 0.2-0.6 s after the pass in every case). A third success removes DOWNED with 1 HP and the game resets the turn
 -- (Status_DOWNED OnRemoveFunctors ResetCombatTurn), so a pass sent first can take that turn away. A downed member is
@@ -428,7 +440,8 @@ local function passCantAct(p, round)
             G.end_requested[G.guid(u) or u] = now_ms()
             record("arena_turn_passed", { side = p.side, character = u, name = V.name(u), why = why, round = round,
                 error = (not ok) and tostring(err) or nil,
-                death_save = why == "downed" and (save and "rolled" or "none in time") or nil })
+                death_save = why == "downed" and (save and "rolled" or "none in time") or nil,
+                order = Ar.state.turn_order, opening = p.opening, rule = p.rule })
             Ar.state.passed = Ar.state.passed or {}
             Ar.state.passed[G.guid(u) or u] = round
             passed, n, last = true, n + 1, u
@@ -443,6 +456,7 @@ local function passCantAct(p, round)
     if n == #p.members and not samePhase(st, round, p) then
         st.phase = { round = round, group = p.group, side = p.side, phase = nextPhase(st, round, p),
             character = p.character, members = p.members, rule = p.rule, opening = p.opening }
+        noteRoundFirst(st, round, p.opening, "passed")
     end
     return passed, waiting
 end
@@ -499,6 +513,7 @@ function Ar.phase_check()
     if st.ended then return end
     local names = {}
     for i, u in ipairs(p.members) do names[i] = V.name(u) end
+    noteRoundFirst(st, round, p.opening, "turn")
     record("arena_turn", { side = p.side, character = p.character, members = p.members, names = names, round = round,
         phase = n, group = p.group, shared = p.shared, order = st.turn_order, opening = p.opening, rule = p.rule })
 end

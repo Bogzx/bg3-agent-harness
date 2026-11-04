@@ -51,6 +51,20 @@ test("turn_order snake: the opening side swaps every round, each side's own orde
     end
 end)
 
+test("arena_round's first is the round's opening side, also when that side has nobody open (snake)", function()
+    begin({ turn_order = "snake" })
+    playRound(1, { A1, B1, B2, A2 })
+    fire("CombatRoundStarted", "combat1", 2)
+    order = { { A1, A2 }, B1, B2 } -- round 2 opens with B (snake), but nobody of B is in A's group
+    openAll({ A1, A2 })
+    burst({ A1, A2 })
+    tick()
+    local r = refs("arena_turn")
+    eq(enc({ r[#r].side, r[#r].opening, r[#r].rule }), enc({ "A", "B", "only_side_left" }), "A1 acts")
+    local rounds = refs("arena_round")
+    eq(enc({ #rounds, rounds[2].round, rounds[2].first, rounds[2].how }), enc({ 2, 2, "B", "turn" }), "opening B")
+end)
+
 test("a side with nobody open left plays its members on in order (only_side_left)", function()
     begin()
     osiv[key("IsDead", B2)] = 1

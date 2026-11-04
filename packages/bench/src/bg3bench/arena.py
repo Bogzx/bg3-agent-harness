@@ -44,19 +44,22 @@ stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_
 - `side_a`: side A's win rate over every valid match (a model against itself too) with a bootstrap interval over
   pairings: an interval that excludes 0.5 says the arena favours a side. A self-pair's second valid match in a
   pairing is left out here and in the next two (same seed, mirror twins, same model: a replay, REVIEW-7 f2).
-- `side_a_by_pattern`: side A's win rate and n per round-1 phase pattern (grade's `r1_pattern`, e.g. "A1|B2|A1"):
+- `by_pattern`: per round-1 phase pattern (grade's `r1_pattern`, e.g. "A1|B2|A1"; "none" without one): n_matches,
+  side A's win rate and round 1's first actor's win rate, each {rate, wilson} (a draw = half):
   if one pattern decides most matches, the seed's initiative order outweighs the models' play.
-- `favoured`: the favoured side's win rate (a draw = half) with its Wilson interval, overall and per why ("pair",
-  "first"), over valid matches with a pattern. The favoured side comes from the round-1 pattern alone, never from
-  the result (`favoured`; REVIEW-7 a).
-- `seat`: the order advantage the rating fits (below): the favoured side's win probability between equal models
-  with its bootstrap interval, and n_games (rated games with a favoured side); None with no rated pair.
+- `first_actor`: round 1's first actor's win rate (a draw = half) with its Wilson interval and n, over valid matches
+  with a pattern: the seat measure for any turn order, an alternation rule's too (seat fix O3/O3a).
+- `favoured`: the pair side's win rate the same way, over the matches whose round 1 gives one side alone a
+  back-to-back pair (`favoured`; REVIEW-7 a: from the order alone, never the result); none under an alternation rule.
+- `seat`: the order advantage the rating fits (below): the seat side's win probability between equal models (the
+  seat side: round 1's pair side, else its first actor) with its bootstrap interval, and n_games (rated games with
+  a pattern); None with no rated pair.
 - `failures`: per model, over every graded match it played a side of (valid or not), the matches its own client
   failed (`client_fault` with `failed` = its side): n_matches, client_faults, rate and the causes counted.
 - `models`: per model its matches and points over complete pairings; a model in a rated pair has a Bradley-Terry
   strength fit over the rated pairs' pairings (a draw = half a win to each; one virtual draw against a fixed
-  reference player keeps an undefeated model finite; a first-seat factor multiplies the favoured side's strength in
-  each game that has one, chess's white advantage, with one virtual draw of its own: REVIEW-7 f1) with a percentile bootstrap interval over those pairings
+  reference player keeps an undefeated model finite; a first-seat factor multiplies the seat side's strength in
+  each game that has a pattern, chess's white advantage, with one virtual draw of its own: REVIEW-7 f1) with a percentile bootstrap interval over those pairings
   (seeded), shown on the Elo scale (400 log10 strength, centred on 1500 over the rated models); any other model is a
   pilot row with no rating. A match a model plays against itself is graded but never rated.
 """
@@ -369,17 +372,37 @@ def r1_pattern(records: Iterable[dict]) -> str | None:
                     if r["round"] == first)  # fmt: skip
 
 
+def _phases(pattern: str | None) -> list[tuple[str, int]]:
+    return [(x[:1], int(x[1:])) for x in (pattern or "").split("|") if x[:1] in SIDES and x[1:].isdigit()]
+
+
 def favoured(pattern: str | None) -> dict | None:
-    """{side, why} the round-1 pattern favours, None without a pattern: the side with a phase of two or more
-    characters when only one side has one (why "pair"), else the side that acted first (why "first"). Read from the
-    order alone, before any result (REVIEW-7 a: the rule is fixed, not fitted to who won)."""
-    phases = [(x[:1], int(x[1:])) for x in (pattern or "").split("|") if x[:1] in SIDES and x[1:].isdigit()]
-    if not phases:
-        return None
-    paired = {side for side, n in phases if n >= 2}
-    if len(paired) == 1:
-        return {"side": paired.pop(), "why": "pair"}
-    return {"side": phases[0][0], "why": "first"}
+    """{side, why "pair"}: the side the round-1 pattern gives a phase of two or more characters, when only one side has
+    one; None otherwise (no pattern, no pair, both sides paired). Read from the order alone, before any result
+    (REVIEW-7 a: the rule is fixed, not fitted to who won). The first actor is first_actor's."""
+    paired = {side for side, n in _phases(pattern) if n >= 2}
+    return {"side": paired.pop(), "why": "pair"} if len(paired) == 1 else None
+
+
+def first_actor(pattern: str | None) -> str | None:
+    """The side of round 1's first phase, None without a pattern."""
+    phases = _phases(pattern)
+    return phases[0][0] if phases else None
+
+
+def round_first(records: Iterable[dict]) -> list[dict]:
+    """Each round's first phase in round order, {round, first (its side), how}: the mod's arena_round records (how
+    "turn" or "passed", the seat audit for a rule that sets who moves first); a match without any (recorded before
+    them) from each round's first arena_turn, how None."""
+    records = list(records)
+    rounds = {r["round"]: r for r in _events(records, "arena_round") if isinstance(r.get("round"), int)}
+    if rounds:
+        return [{"round": k, "first": rounds[k].get("first"), "how": rounds[k].get("how")} for k in sorted(rounds)]
+    out: dict[int, dict] = {}
+    for r in _events(records, "arena_turn"):
+        if isinstance(r.get("round"), int) and r["round"] not in out:
+            out[r["round"]] = {"round": r["round"], "first": r.get("side"), "how": None}
+    return [out[k] for k in sorted(out)]
 
 
 def _forced_out(turns: list[dict]) -> str | None:
@@ -487,7 +510,7 @@ def grade(
     arena's seed) and its rolls.jsonl rows when given: {arena, valid, invalid_reason, sides {A, B: player}, result
     (A, B, draw; None when invalid), reason, forfeit {side, cause} or None, fault {side, cause} (a client_fault end:
     the side whose client failed) or None, rounds, hp_left {A, B}, turns {A, B}, forced {A, B}, r1_pattern (round 1's
-    phases: r1_pattern), favoured (favoured(r1_pattern)), luck (None without rolls or arena_start uuids)}."""
+    phases: r1_pattern), first_actor and favoured (of r1_pattern), round_first (round_first), luck (None without rolls or arena_start uuids)}."""
     records = list(records)
     valid, why = validity(dict(record), arena["seed"]) if record is not None else (True, None)
     if valid:
@@ -515,7 +538,9 @@ def grade(
         "turns": {s: sum(1 for turn in turns if turn["side"] == s) for s in SIDES},
         "forced": {s: sum(1 for turn in turns if turn["side"] == s and turn["forced"]) for s in SIDES},
         "r1_pattern": r1_pattern(records),
+        "first_actor": first_actor(r1_pattern(records)),
         "favoured": favoured(r1_pattern(records)),
+        "round_first": round_first(records),
         "luck": luck(rolls, uuids) if rolls is not None and isinstance(uuids, dict) else None,
     }
 
@@ -615,9 +640,11 @@ def _elo(theta: Mapping[str, float]) -> dict[str, float]:
 
 
 def _seat_flag(m: Mapping[str, Any]) -> int:
-    """1 when side A had the favoured side (from the match's r1_pattern), -1 when side B, 0 without a pattern."""
+    """1 when side A held the seat (from the match's r1_pattern: the pair side, else the first actor), -1 when side
+    B, 0 without a pattern."""
     fav = favoured(m.get("r1_pattern"))
-    return 0 if fav is None else 1 if fav["side"] == "A" else -1
+    seat = fav["side"] if fav else first_actor(m.get("r1_pattern"))
+    return 0 if seat is None else 1 if seat == "A" else -1
 
 
 def _games(pairs: Iterable[list[dict]]) -> list[tuple[str, str, float, int]]:
@@ -640,18 +667,20 @@ def _distinct(matches: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return out
 
 
+def _rate(ms: list[tuple[str, Mapping[str, Any]]]) -> dict:
+    """{n_matches, rate, wilson}: the named side's win rate (a draw = half) over (side, match) pairs."""
+    k = sum(_points(m, side) for side, m in ms)
+    return {"n_matches": len(ms), "rate": k / len(ms) if ms else None, "wilson": list(stats.wilson(k, len(ms)))}  # pyright: ignore[reportArgumentType]
+
+
 def _favoured(matches: list[Mapping[str, Any]]) -> dict:
-    """The favoured side's win rate (a draw = half) with its Wilson interval and n, overall and per why."""
+    """The pair side's win rate over matches whose round 1 gives one side alone a pair."""
+    return _rate([(fav["side"], m) for m in matches if (fav := favoured(m.get("r1_pattern")))])
 
-    def row(ms: list[tuple[str, Mapping[str, Any]]]) -> dict:
-        k = sum(_points(m, side) for side, m in ms)
-        return {"n_matches": len(ms), "rate": k / len(ms) if ms else None, "wilson": list(stats.wilson(k, len(ms)))}  # pyright: ignore[reportArgumentType]
 
-    picked = [(fav["side"], fav["why"], m) for m in matches if (fav := favoured(m.get("r1_pattern")))]
-    return {
-        **row([(side, m) for side, _, m in picked]),
-        "by": {why: row([(side, m) for side, w, m in picked if w == why]) for why in ("pair", "first")},
-    }
+def _first_actor(matches: list[Mapping[str, Any]]) -> dict:
+    """Round 1's first actor's win rate over matches with a pattern."""
+    return _rate([(side, m) for m in matches if (side := first_actor(m.get("r1_pattern")))])
 
 
 def _seat_p(log_gamma: float) -> float:
@@ -678,13 +707,22 @@ def _side_a(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha:
     return {"n_matches": n, "n_pairings": len(ids), "rate": rate, "ci": _ci(draws, alpha)}
 
 
-def _side_a_by_pattern(matches: list[Mapping[str, Any]]) -> dict[str, dict]:
-    """Side A's win rate (a draw = half) per round-1 phase pattern over valid matches, with n; a match with no pattern
-    under "none"."""
-    by: dict[str, list[float]] = {}
+def _by_pattern(matches: list[Mapping[str, Any]]) -> dict[str, dict]:
+    """Per round-1 phase pattern ("none" without one): n_matches, side A's and the first actor's win rate (a draw =
+    half), each {rate, wilson}; first_actor None under "none"."""
+    by: dict[str, list[Mapping[str, Any]]] = {}
     for m in matches:
-        by.setdefault(m.get("r1_pattern") or "none", []).append(_points(m, "A"))
-    return {k: {"n_matches": len(v), "rate": sum(v) / len(v)} for k, v in sorted(by.items())}
+        by.setdefault(m.get("r1_pattern") or "none", []).append(m)
+    out = {}
+    for k, ms in sorted(by.items()):
+        first = first_actor(k if k != "none" else None)
+        a, f = _rate([("A", m) for m in ms]), _rate([(first, m) for m in ms]) if first else None
+        out[k] = {
+            "n_matches": len(ms),
+            "side_a": {"rate": a["rate"], "wilson": a["wilson"]},
+            "first_actor": {"rate": f["rate"], "wilson": f["wilson"]} if f else None,
+        }
+    return out
 
 
 def _pair_rows(complete: dict[str, list[dict]], min_pairings: int) -> dict[tuple[str, str], dict]:
@@ -715,7 +753,7 @@ def results(
     attempts: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict:
     """Matches (grade's dicts, each with its `pairing` id) -> {seed, b, alpha, min_pairings, counts, pairs, side_a,
-    side_a_by_pattern, favoured, seat, failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
+    by_pattern, first_actor, favoured, seat, failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
     too) for `failures`; without it, `matches`. The bootstraps (side A's rate, then the ratings) draw from one
     random.Random(seed)."""
     matches = list(matches)
@@ -771,7 +809,8 @@ def results(
             {"a": x, "b": y, **{k: v for k, v in row.items() if k != "ids"}} for (x, y), row in sorted(rows.items())
         ],
         "side_a": side_a,
-        "side_a_by_pattern": _side_a_by_pattern(distinct),
+        "by_pattern": _by_pattern(distinct),
+        "first_actor": _first_actor(distinct),
         "favoured": _favoured(distinct),
         "seat": {
             "log_factor": lg,

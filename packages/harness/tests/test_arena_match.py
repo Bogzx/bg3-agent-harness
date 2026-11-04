@@ -394,6 +394,7 @@ def test_a_full_match_to_a_wipe(tmp_path):
     start = evs[0]
     assert start["ev"] == "arena_start" and start["teams"] == {"A": ["Karlach", "Gale"], "B": ["Wyll", "Halsin"]}
     assert start["sides"] == {"A": "pi/model-x", "B": "pi/model-y"} and start["seed"] == 7
+    assert start["turn_order"] == "alternate"  # the arena file's default, as the mod plays it
     assert start["uuids"]["A"] == [m.uuid for m in model.match().teams["A"]]
     turns = [(e["side"], e["character"], e["round"]) for e in evs if e["ev"] == "arena_turn"]
     assert turns == [("A", "Karlach", 1), ("B", "Wyll", 1), ("A", "Gale", 1), ("B", "Halsin", 1)]

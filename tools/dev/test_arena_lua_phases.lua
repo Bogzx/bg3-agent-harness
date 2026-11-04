@@ -30,6 +30,9 @@ test("a group B|AA|B plays B1|A1|B2|A2: one character a phase, sides alternating
     eq(enc({ r[1].side, r[1].character, members(r[1]), r[1].phase, r[1].round, r[1].group, r[1].shared }),
         enc({ "B", B1, B1, 1, 2, B1, true }), "phase 1: B1 alone")
     eq(enc({ r[1].order, r[1].opening, r[1].rule }), enc({ "alternate", "B", "opening" }), "why B")
+    local rounds = refs("arena_round") -- seat audit: the round's opening side, once
+    eq(#rounds, 1, "one arena_round")
+    eq(rounds[1].round .. rounds[1].first .. rounds[1].how, "2Bturn", "round 2 opened by B's phase")
     eq(Ar.held(A1), true, "A1 waits")
     eq(Ar.held(B2), true, "B2 waits")
     refused(function() as("B", G.combat_gate, B2, "turn") end, "it is not this character's turn")
@@ -55,6 +58,44 @@ test("a group B|AA|B plays B1|A1|B2|A2: one character a phase, sides alternating
     tick()
     r = refs("arena_turn")
     eq(enc({ #r, r[4].side, members(r[4]), r[4].phase }), enc({ 4, "A", A2, 4 }), "phase 4: A2")
+    eq(#refs("arena_round"), 1, "still one arena_round in round 2")
+end)
+
+test("a round whose first phase is passed whole: arena_round names that side, how passed; the next round its own",
+    function()
+    local ended = {}
+    rawset(Osi, "EndTurn", function(u) ended[#ended + 1] = u end)
+    local ok, err = pcall(function()
+        begin()
+        fire("CombatRoundStarted", "combat1", 2)
+        order = { { A1, B1, B2, A2 } }
+        openAll({ A1, B1, B2, A2 })
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = 1 -- seed-7 m1 r2: Cedar down, his phase passed whole
+        world[A1].comps.Health.Hp = 0
+        burst({ A1, B1, B2, A2 })
+        deathSave(A1, true)
+        tick()
+        local turns = refs("arena_turn")
+        eq(#turns, 1, "B's phase recorded")
+        eq(turns[1].side, "B", "the first arena_turn is B's")
+        local rounds = refs("arena_round")
+        eq(#rounds, 1, "one arena_round")
+        eq(rounds[1].round .. rounds[1].first .. rounds[1].how, "2Apassed", "round 2's first phase was A's, passed")
+        local p = refs("arena_turn_passed")[1] -- a passed slot counts in the alternation: the facts say where
+        eq(enc({ p.character, p.order, p.opening, p.rule }), enc({ A1, "alternate", "A", "opening" }), "passed slot")
+        eq(enc({ turns[1].character, turns[1].rule }), enc({ B1, "alternate" }), "B1 after A1's passed slot")
+        fire("CombatRoundStarted", "combat1", 3)
+        osiv[key("HasActiveStatus", A1, "DOWNED")] = nil
+        world[A1].comps.Health.Hp = 5
+        openAll({ A1, B1, B2, A2 })
+        burst({ A1, B1, B2, A2 })
+        tick()
+        rounds = refs("arena_round")
+        eq(#rounds, 2, "round 3 has its own")
+        eq(rounds[2].round .. rounds[2].first .. rounds[2].how, "3Aturn", "round 3 opened by A's phase")
+    end)
+    rawset(Osi, "EndTurn", nil)
+    if not ok then error(err, 0) end
 end)
 
 test("single-side groups: one character a phase, not shared; the next group starts at phase 1", function()
