@@ -260,7 +260,7 @@ class Cohesion(Base):
         out = self._trip(follower_moves=False, x=50.0, back_path=False)
         stop = next(ln for ln in out.splitlines() if ln.startswith("STOPPED"))
         self.assertNotIn("ladder", stop)
-        self.assertIn("29m behind can't keep up — its walk back: no walkable ground leads further toward it (29m left); route(", stop)
+        self.assertTrue(stop.endswith("29m behind can't keep up — its walk back: no walkable ground leads further toward it (29m left)"))
 
     def test_no_straggler_check_after_the_leg_that_arrives(self):
         # launch-v1 deepseek act3_gold_max r3: the leg arrived, then "e5 Tav 19m behind can't keep up" stopped the

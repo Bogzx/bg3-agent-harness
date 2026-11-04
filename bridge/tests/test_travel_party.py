@@ -276,7 +276,7 @@ class LongRestNotAtCamp(Case):
         self.assertNotIn("ui.long_rest", fake.ops())
         self.assertIn("long_rest: FAILED — not pressed: not everyone is at camp: ", out)
         self.assertIn("Wyll", out)
-        self.assertIn("set_party select Wyll, then camp()", out)
+        self.assertIn("(S065 12:02: selecting Wyll, then camp(), brought him)", out)
 
     def test_location_flag_on_a_member_at_camp_doesnt_refuse(self):
         fake = self.use(s065_camp_status(wyll_at_camp=True))

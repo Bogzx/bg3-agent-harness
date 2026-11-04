@@ -165,7 +165,7 @@ class CollectTest(unittest.TestCase):
         }
         out = snapshots.render_gear(inv, {GUID_A.lower(): "Tav"})
         self.assertIn("- Tav: equip Sentinel Shield in MeleeOffHand", out)
-        self.assertIn("junk to sell: 1 items", out)
+        self.assertIn("- junk: 1 items, ~1 g, 0.0 kg (trade sell=junk sells it to a trader with gold)", out)
         self.assertIn("camp supplies: 27/40 carried", out)
         self.assertIn("nothing to change", snapshots.render_gear({"items": [], "members": {}}))
 
