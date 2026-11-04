@@ -273,8 +273,9 @@ def _group_zero_damage(evs: list[dict], H: Handles) -> list[dict]:
 
 # Kinds shown even when the cap cuts the events before them: spell_info comes once per spell per fight (Events.lua
 # E.note_spell), so a cut one never comes back (w11 L4: Cloudkill's line behind '(+56 earlier events)'); every cast
-# (REVIEW-14). Rows whose target or roller is a party member are shown too (_party_row).
-_PINNED_EVENTS = {"spell_info", "cast"}
+# (REVIEW-14); events_lost, the mod's note that its ring dropped this reader's older events (arena fairness A8).
+# Rows whose target or roller is a party member are shown too (_party_row).
+_PINNED_EVENTS = {"spell_info", "cast", "events_lost"}
 # The cap: out of combat the newest EVENT_LIMIT rows (after the folds); in a fight (tools/core.py) the whole drained
 # batch up to EVENT_CEILING rows. REVIEW-14: the cut rows were the enemies' turns (264 of launch-v1's 283 cuts were in
 # combat, median 14 rows), the agent's only view of them.
