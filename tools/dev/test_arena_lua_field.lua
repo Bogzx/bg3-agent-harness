@@ -123,6 +123,59 @@ ftest("the game's item list that doesn't read fails the clean", function()
     eq(tostring(err), "the game's items don't read (ServerItem)", "says so")
 end)
 
+-- A dead body at (x, z) carrying items (their uuids; a nested list = a bag holding those): only what is still in the
+-- stub world is listed (a RequestDelete takes it out), as the game's inventory would.
+local function body(u, x, z, loot, alive)
+    local function slots(list)
+        local items = {}
+        for _, v in ipairs(list) do
+            local id = type(v) == "table" and v.u or v
+            item(id, x, z, { GetCanPickUp = 1 }, nil, { InventoryMember = {} })
+            local e = { Uuid = { EntityUuid = id } }
+            if type(v) == "table" then e.InventoryOwner = { Inventories = { slots(v) } } end
+            items[#items + 1] = { Item = e }
+        end
+        return { InventoryContainer = { Items = setmetatable({}, { __pairs = function()
+            local live = {}
+            for _, sl in ipairs(items) do if world[sl.Item.Uuid.EntityUuid] then live[#live + 1] = sl end end
+            return next, live, nil
+        end }) } }
+    end
+    local owner = { Inventories = { slots(loot) } }
+    world[u] = { pos = { x, 0, z }, comps = { ServerCharacter = {}, InventoryOwner = owner } }
+    NAMES[u] = u
+    osiv[key("IsDead", u)] = alive and 0 or 1
+end
+
+ftest("a dead body's loot in the field is removed like a loose item (w10 L3: two mind flayers' potions and bulbs, "
+    .. "one on each half); a living character's inventory and a far body are left", function()
+    field()
+    body("flayer-b", 1, 8.7, { "speed-b", { u = "pouch-b", "bulb-b" } })
+    body("flayer-a", 2, -14, { "speed-a", "bulb-a" })
+    body("living", -1, 3, { "kept" }, true)
+    body("far-body", 0, 30, { "far-loot" })
+    local n = F.clean(MID, REACH, A1)
+    eq(enc({ n.items, n.removed }), enc({ 5, 5 }), "counts")
+    local gone = {}
+    for _, c in ipairs(sent("RequestDelete")) do gone[#gone + 1] = c[2] end
+    table.sort(gone)
+    eq(enc(gone), enc({ "bulb-a", "bulb-b", "pouch-b", "speed-a", "speed-b" }), "both bodies' items, the bag's too")
+    eq(world.kept ~= nil and world["far-loot"] ~= nil, true, "a living carrier's and a far body's items stay")
+    eq(enc(F.check(SPAWNS, REACH)), enc({ A = 0, B = 0 }), "nothing left on either half")
+end)
+
+ftest("body loot that stays is counted at the body's spot and named with it; an unreadable body fails", function()
+    field({ refuse = { RequestDelete = true } })
+    body("flayer-b", 1, 8.7, { "speed-b" })
+    F.clean(MID, REACH, A1)
+    refused(function() F.check(SPAWNS, REACH) end, "B's half keeps speed-b at (1.0, 8.7) on flayer-b's body "
+        .. "(pickable TPL_speed-b)")
+    world.broken = { pos = { 0, 0, 4 }, comps = { ServerCharacter = {}, InventoryOwner = { Inventories = { {} } } } }
+    NAMES.broken = "broken"
+    osiv[key("IsDead", "broken")] = 1
+    refused(function() F.items(MID, REACH) end, "a dead body's inventory doesn't read (broken)")
+end)
+
 test("arena_start records the field clean's counts", function()
     begin({ field = { radius = 23.0, items = 3, removed = 1, left = { A = 0, B = 0 } } })
     eq(enc(refs("arena_start")[1].field), enc({ radius = 23.0, items = 3, removed = 1, left = { A = 0, B = 0 } }),
