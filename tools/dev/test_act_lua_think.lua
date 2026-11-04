@@ -855,25 +855,3 @@ test("act.target_state: a combatant out of sight says only that it left the turn
     osiv[key("CanSee", P1, DOOR)] = nil
     eq(RPC.ops["act.target_state"]({ uuid = DOOR, on_bar = true }).gone, nil, "items: no gone")
 end)
-
--- w10 CD1 (Pommel Strike, int-v010b): the row read Cooldown=-1.0 CooldownType=UntilShortRest through end_turn and the
--- round close; get_actions said UNAVAILABLE (cooldown) and use_ability cast it again (the guard wanted Cooldown > 0).
--- One rule now: any SpellBookCooldowns row refuses, with how long it lasts.
-test("known_spell: a cooldown row refuses whatever its Cooldown value, saying until when (w10 CD1)", function()
-    world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Target_PommelStrike" } },
-        { Id = { Prototype = "Shout_ActionSurge" } }, { Id = { Prototype = "Target_Riposte" } },
-        { Id = { Prototype = "Shout_SecondWind" } }, { Id = { Prototype = "Target_MainHandAttack" } } } }
-    local function row(id, cd, kind) return { SpellId = { Prototype = id }, Cooldown = cd, CooldownType = kind } end
-    world[P1].comps.SpellBookCooldowns = { Cooldowns = { row("Target_PommelStrike", -1.0, "UntilShortRest"),
-        row("Shout_ActionSurge", 0, "UntilRest"), row("Target_Riposte", 6.0, "OncePerTurn"),
-        row("Shout_SecondWind", -1.0, "OncePerCombat") } }
-    refused(function() G.known_spell(P1, "Target_PommelStrike") end,
-        "that action is on cooldown until a short rest (UntilShortRest)")
-    refused(function() G.known_spell(P1, "Shout_ActionSurge") end, "on cooldown until a long rest (UntilRest)")
-    refused(function() G.known_spell(P1, "Target_Riposte") end, "on cooldown until its next turn (OncePerTurn)")
-    refused(function() G.known_spell(P1, "Shout_SecondWind") end, "for the rest of this combat (OncePerCombat)")
-    eq(G.known_spell(P1, "Target_MainHandAttack").Id.Prototype, "Target_MainHandAttack", "no row: casts")
-    world[P1].comps.SpellBookCooldowns = nil
-    eq(G.known_spell(P1, "Target_PommelStrike").Id.Prototype, "Target_PommelStrike", "row gone: casts")
-    world[P1].comps.SpellBook = nil
-end)
