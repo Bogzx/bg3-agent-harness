@@ -120,12 +120,13 @@ game unless it says so.
   A status in a spell's conditions reads with the game's name: "the caster has the Flanked status" (it said "the
   caster has flanked"). A check flag that stays set is recorded: the done result carries `unchecked`, and the
   referee gets a `cast_unchecked` row with the flags and any rule terms the guard couldn't read for that cast.
-- Melee reach is now measured with the creatures' Hit bounds (`AIBounds.Hit`, 0.2 m for a medium creature), not their
-  Stand footprint (0.5 m). One measure (`G.melee_reach`) serves the guard's range check, move_to's stop and its
+- Melee reach is now measured with the creatures' Move bounds (`AIBounds.Move`, 0.25 m for a medium creature), not
+  their Stand footprint (0.5 m). One measure (`G.melee_reach`) serves the guard's range check, move_to's stop and its
   already-there test, and the walk into range before a cast. Window 8 (the engine checking): a 1.5 m greataxe swing
   was refused from 2.1 m centre to centre (10 of 10) and cast from 1.4 m. The guard had allowed 2.5 m, and
   `move_to target` said already_there at 2.1 m, so the agent could not close in. A plain `move_to target` now stops
-  inside the mover's own melee reach. A guard refusal on a Shout's caster names "the caster" (it said "the target
+  inside the mover's own melee reach. Window 9 measured the edge: the engine cast from 2.0 m and refused 2.05 m,
+  which fits the Move radii (1.5 + 0.249 + 0.249 = 1.998 m); the Hit radii (1.9 m) were 0.1 m too strict. A guard refusal on a Shout's caster names "the caster" (it said "the target
   has flanked" for Hide).
 - The guard's rule check reads the condition terms the launch-v1 casts use that it left unread before.
   - From the game's own helper scripts (Shared `CommonConditions.khn`): HasHelpableCondition (Help),
