@@ -208,12 +208,17 @@ test("path_provokes in a match: the other team's reach, not a teammate's, only w
     end
     local path = { { 1, 0, 0 }, { -2, 0, 0 }, { -5, 0, 0 } }
     osiv[key("CanSee", A1, B1)], osiv[key("CanSee", A2, B1)] = 1, 1
+    osiv[key("IsEnemy", B1, A1)], osiv[key("CanSee", B1, A1)] = 1, 1 -- the engine's view (setup's hostile matrix)
+    osiv[key("IsEnemy", A2, A1)], osiv[key("CanSee", A2, A1)] = 1, 1 -- even an engine relation gone wrong
     V.ctxCache, V.sideCtx = nil, nil
     local r = as("A", G.path_provokes, A1, path)
     eq(#r, 1, "one")
     eq(r[1].uuid, B1, "B1, not the teammate A2 in reach too")
     local reach = G.melee_reach(B1, A1, G.DEFAULT_MELEE_M) -- B1 at x 2.4: the path (from x 1, west) leaves it here
     eq(r[1].along_m, U.round(1 - (2.4 - reach), 1), "where it leaves B1's reach")
+    osiv[key("IsEnemy", B1, A1)] = nil
+    eq(#as("A", G.path_provokes, A1, path), 0, "the engine not calling B1 hostile to A1: nothing")
+    osiv[key("IsEnemy", B1, A1)] = 1
     osiv[key("CanSee", A1, B1)], osiv[key("CanSee", A2, B1)] = nil, nil
     V.ctxCache, V.sideCtx = nil, nil
     N.frame = N.frame + 1
