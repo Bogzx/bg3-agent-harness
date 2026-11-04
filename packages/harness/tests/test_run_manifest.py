@@ -79,6 +79,7 @@ class Fields(unittest.TestCase):
                 "BG3AI_SIDE": "A",
                 "BG3AI_TOOLS_OFF": "arena-v1",
                 "BG3AI_ARENA_TURN_CAP_S": "60",
+                "BG3AI_ARENA_TURN_ORDER": "snake",
                 "BG3AI_PROMPT_CONDITION": "rules",
             }
             files = {k: Path(d) / k for k in ("system", "tools", "instructions")}
@@ -101,7 +102,8 @@ class Fields(unittest.TestCase):
             self.assertIn("60 s of model time per character", " ".join(system.split()))
             tools = [t["name"] for t in json.loads(files["tools"].read_text())]
             instr = files["instructions"].read_text()
-            f = run_manifest.manifest_fields("pi", None, "rules", tools, None, instr, run_manifest.arena_cap(env))
+            cap, order = run_manifest.arena_cap(env), run_manifest.arena_turn_order(env)
+            f = run_manifest.manifest_fields("pi", None, "rules", tools, None, instr, cap, order)
             self.assertEqual(f["prompt"]["sha256"], sha(system))
             self.assertIn("rules/arena.md", [p["file"] for p in f["prompt"]["parts"]])
         with self.assertRaisesRegex(ValueError, "BG3AI_ARENA_TURN_CAP_S"):

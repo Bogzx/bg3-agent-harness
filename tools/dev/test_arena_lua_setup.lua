@@ -526,3 +526,16 @@ test_setup("arena.setup: a member not at the arena's level after joining fails s
         assert(enc(setup(a)):find("arena.level must be the members' character level", 1, true), "level " .. bad)
     end
 end)
+
+-- Seat fix (D643): the arena file's turn_order, "alternate" (default) or "snake"; anything else fails before a job.
+test_setup("arena.setup: turn_order other than alternate / snake is refused before any job", function()
+    game()
+    for _, bad in ipairs({ '"team"', "1", '"Snake"' }) do
+        local a = arena()
+        a.turn_order = load("return " .. bad)()
+        local r = setup(a)
+        assert(enc(r):find('turn_order must be \\"alternate\\" or \\"snake\\"', 1, true), bad .. ": " .. enc(r))
+    end
+    local r = setup(arena({ turn_order = "snake" }))
+    eq(r.result and r.result.status, "running", "snake: a job: " .. enc(r))
+end)

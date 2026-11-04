@@ -172,6 +172,13 @@
                 "minimum": 0
               }
             }
+          },
+          "turn_order": {
+            "enum": [
+              "alternate",
+              "snake"
+            ],
+            "description": "the arena's turn order (added 2026-11-04): inside a shared group the sides alternate one character a phase; alternate opens each round with the side of its first living member in the rolled order, snake swaps the opening side every round"
           }
         }
       }
@@ -185,7 +192,7 @@
         }
       },
       "then": {
-        "description": "A side's phase began: one same-side run of the rolled order inside a turn group (the game puts adjacent player characters of both teams into one shared group; the mod serialises it). A phase is the match's turn, a summon's too.",
+        "description": "A side's phase began: one character of a turn group, the sides alternating by the arena's turn_order (the game puts adjacent player characters of both teams into one shared group; the mod serialises it; before 2026-11-04 a phase was one same-side run of the rolled order). A phase is the match's turn, a summon's too.",
         "required": [
           "side",
           "character",
@@ -236,6 +243,25 @@
           "shared": {
             "type": "boolean",
             "description": "the group holds members of both sides"
+          },
+          "order": {
+            "enum": [
+              "alternate",
+              "snake"
+            ],
+            "description": "the arena's turn_order (added 2026-11-04; absent before)"
+          },
+          "opening": {
+            "$ref": "#/$defs/side",
+            "description": "the round's opening side in this group (turn_order's)"
+          },
+          "rule": {
+            "enum": [
+              "opening",
+              "alternate",
+              "only_side_left"
+            ],
+            "description": "why this side: the round's opening side (the group's first phase), the other side after the last phase, or the only side with anyone open"
           }
         }
       }
@@ -504,6 +530,25 @@
               "rolled",
               "none in time"
             ]
+          },
+          "order": {
+            "enum": [
+              "alternate",
+              "snake"
+            ],
+            "description": "the arena's turn_order (added 2026-11-04; absent before)"
+          },
+          "opening": {
+            "$ref": "#/$defs/side",
+            "description": "the round's opening side in this group (turn_order's)"
+          },
+          "rule": {
+            "enum": [
+              "opening",
+              "alternate",
+              "only_side_left"
+            ],
+            "description": "why this side: the round's opening side (the group's first phase), the other side after the last phase, or the only side with anyone open"
           }
         }
       }
@@ -681,7 +726,7 @@
         }
       },
       "then": {
-        "description": "A round's first phase, once per round (the seat audit for a turn-order rule that sets who moves first, ops/briefs/arena/seat-fix.md): first is its side; how is turn when that phase was recorded as an arena_turn, passed when every member of it couldn't act and was passed. Not a turn: results read it as round_first.",
+        "description": "A round's first phase, once per round (the seat audit for a turn-order rule that sets who moves first, ops/briefs/arena/seat-fix.md): first is the round's opening side (turn_order's: that phase's side unless the opening side had nobody open); how is turn when that phase was recorded as an arena_turn, passed when every member of it couldn't act and was passed. Not a turn: results read it as round_first.",
         "required": [
           "round",
           "first",

@@ -27,7 +27,7 @@ osiv = {}         -- "Fn:a:b" -> value (queries)
 listeners = {}    -- Osiris event -> {fn}
 tickers = {}
 net = {}          -- Ext.Net broadcasts
-order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid...} (a turn group) each
+order = {}        -- TurnOrder.CurrentGroups: a uuid (a group of one) or {uuid..., team = id?} (a turn group) each
 partyRows = {}
 engineRound = 1  -- the combat's TurnOrder.Round
 replicated = {}   -- entity:Replicate calls, "uuid:Component" each
@@ -79,7 +79,7 @@ local function entity(u, bare)
         for _, m in ipairs(type(g) == "table" and g or { g }) do
             members[#members + 1] = { Entity = entity(m, true) }
         end
-        groups[#groups + 1] = { Members = members }
+        groups[#groups + 1] = { Members = members, Team = type(g) == "table" and g.team or nil }
     end
     e.CombatParticipant = { CombatHandle = { TurnOrder = { CurrentGroups = groups, Round = engineRound } } }
     return e
@@ -256,7 +256,7 @@ end
 local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
 for _, part in ipairs({ "test_arena_lua_sides.lua", "test_arena_lua_turns.lua", "test_arena_lua_fights.lua",
     "test_arena_lua_listeners.lua", "test_arena_lua_phases.lua", "test_arena_lua_setup.lua",
-    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua" }) do
+    "test_arena_lua_symmetry.lua", "test_arena_lua_mirror.lua", "test_arena_lua_order.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

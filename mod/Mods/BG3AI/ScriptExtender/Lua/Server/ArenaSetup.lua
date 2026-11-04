@@ -29,8 +29,8 @@
 --      the combat call): every pair across the teams an enemy, none within, all members in one combat, else the job
 --      fails with the matrix; no character on no team in that combat (the job fails naming each)
 --   6. a mirror arena: arena.symmetry over the pairs again, statuses included (a twin on a surface reads INSURFACE)
---   7. Ar.begin(teams, {round_cap, positions, seed}): positions = where each member stands, in the result and
---      arena_start; seed = the arena's (Arena.lua tie_fallback's side)
+--   7. Ar.begin(teams, {round_cap, positions, seed, turn_order}): positions = where each member stands, in the result
+--      and arena_start; seed = the arena's (Arena.lua tie_fallback's side)
 -- Refused at the call: spawns whose heights differ by SPAWN_DY_MAX_M or more, or whose lines don't give each pair the
 -- same distances both ways (Setup.check_geometry).
 -- The result records each member's name, level, max HP and faction before and after (joining the party reset two
@@ -551,8 +551,8 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
         if ok and type(x) == "number" then positions[u] = { x, y, z } end
     end
     local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions,
-        seed = job.arena.seed, surfaces = job.mirror and { spawns = job.spawns, n = #job.mirror.pairs,
-            setup_keys = job.surface_keys or {} } or nil })
+        seed = job.arena.seed, turn_order = job.arena.turn_order, surfaces = job.mirror and { spawns = job.spawns,
+            n = #job.mirror.pairs, setup_keys = job.surface_keys or {} } or nil })
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,
@@ -722,6 +722,9 @@ function Setup.start(args)
     end
     Setup.check_geometry(spawns, mirror and #mirror.pairs or #teams.A)
     if args.round_cap ~= nil and not tonumber(args.round_cap) then error("round_cap must be a number", 0) end
+    if arena.turn_order ~= nil and not Ar.TURN_ORDERS[arena.turn_order] then
+        error("turn_order must be \"alternate\" or \"snake\"", 0)
+    end
     local level = arena.level
     if type(level) ~= "number" or level % 1 ~= 0 or level < 1 or level > 12 then
         error("arena.level must be the members' character level (an integer 1..12)", 0)

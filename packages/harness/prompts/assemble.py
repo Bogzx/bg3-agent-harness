@@ -34,6 +34,13 @@ CLAUDE_MD = REPO / "play" / "CLAUDE.md"
 RULES = ("rules/core.md", "rules/game-and-tools.md", "rules/fairness.md", "rules/clock.md")
 ARENA = "rules/arena.md"  # after the capability files, in a session that plays one side of a two-team match
 TURN_CAP = "{turn_cap_s}"  # in ARENA: the arena's per-turn cap (its turn_cap_s), filled in when the text is built
+# In ARENA: the arena's turn order (its turn_order, the mod's rule: Server/Arena.lua), stated as a fact.
+TURN_ORDER = "{turn_order}"
+TURN_ORDERS = {
+    "alternate": "Every round, each turn group opens with the side of its first living character in the rolled order.",
+    "snake": "The side of the first living character in the rolled order opens round 1; after that the sides take turns"
+    " opening rounds, in every turn group.",
+}
 # The tool groups of bridge/src/bg3ai/capabilities.py (BG3AI_TOOLS): a group's rules file, and the tools a rules
 # text may name only when that group is on. "reload" has no rules file: nothing in the rules mentions reloading.
 CAPABILITIES: dict[str, tuple[str, ...]] = {
@@ -121,19 +128,27 @@ def assemble(
     root: Path = HERE,
     arena: bool = False,
     turn_cap_s: float | None = None,
+    turn_order: str | None = None,
 ) -> Assembly:
     """The system text of a condition for a client: its parts joined by a blank line, trailing newline. arena: a
     session playing one side of a two-team match (rules/arena.md); turn_cap_s: that arena's per-turn cap, written
-    into its rules (required with arena). A part's sha256 is its file's; the text's is of the filled text."""
+    into its rules (required with arena); turn_order: that arena's turn order (the arena file's turn_order), stated
+    in its rules (required with arena). A part's sha256 is its file's; the text's is of the filled text."""
     if arena and turn_cap_s is None:
         raise ValueError("a two-team match's rules need its turn_cap_s (the per-turn cap they state)")
+    if arena and turn_order not in TURN_ORDERS:
+        raise ValueError(
+            f"a two-team match's rules state its turn_order, one of {', '.join(TURN_ORDERS)}: {turn_order!r}"
+        )
     parts: list[dict[str, str]] = []
     texts: list[str] = []
     for f in part_files(condition, client, caps, arena):
         data = (root / f).read_bytes()
         parts.append({"file": f, "sha256": _sha(data)})
         text = data.decode("utf-8").strip()
-        texts.append(text.replace(TURN_CAP, f"{turn_cap_s:g}") if f == ARENA else text)
+        if f == ARENA:
+            text = text.replace(TURN_CAP, f"{turn_cap_s:g}").replace(TURN_ORDER, TURN_ORDERS[str(turn_order)])
+        texts.append(text)
     text = "\n\n".join(texts) + "\n"
     return Assembly(text, _sha(text.encode("utf-8")), parts)
 

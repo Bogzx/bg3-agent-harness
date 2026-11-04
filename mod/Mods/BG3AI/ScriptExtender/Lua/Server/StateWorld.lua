@@ -487,10 +487,11 @@ function S.combat(ctx)
                                     end
                                 end
                                 if tb.ActedThisRoundInCombat then o.acted = true end
-                                -- a downed member doesn't act (CanActInCombat ignores it: arena C5)
+                                -- a downed member doesn't act (CanActInCombat ignores it: arena C5); nor, in an
+                                -- arena, one held for another's phase or whose turn moved on (O1 audit S3)
                                 local open_end = tb.IsActiveCombatTurn and (tb.RequestedEndTurn or pending)
                                 if ctx.is_party[u] and tb.CanActInCombat and not tb.ActedThisRoundInCombat
-                                    and not o.downed and not open_end then
+                                    and not o.downed and not open_end and not (over and U.side()) then
                                     o.can_act = true
                                     out.party_can_act = out.party_can_act or {}
                                     table.insert(out.party_can_act, u)

@@ -129,7 +129,13 @@ print(json.dumps({"game": core.game.side, "watch": queueing._watch_conn().side})
 class Server(unittest.TestCase):
     def test_every_game_of_the_server_has_the_side(self):
         for side, want in (("A", "A"), ("B", "B"), ("", None)):
-            env = {**os.environ, "BG3AI_SIDE": side, "BG3AI_ARENA_TURN_CAP_S": "90", "BG3LE_DEBUG_PORT": "1"}
+            env = {
+                **os.environ,
+                "BG3AI_SIDE": side,
+                "BG3AI_ARENA_TURN_CAP_S": "90",
+                "BG3AI_ARENA_TURN_ORDER": "alternate",
+                "BG3LE_DEBUG_PORT": "1",
+            }
             r = subprocess.run(
                 [sys.executable, "-c", PROBE_SIDE],
                 cwd=BRIDGE,
@@ -184,13 +190,27 @@ class Server(unittest.TestCase):
         self.assertFalse(off & set(served["batchable"]))
 
     def test_a_sides_server_serves_the_match_rules(self):
-        side = tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1", "BG3AI_ARENA_TURN_CAP_S": "60"})["instructions"]
+        from bg3ai import rules
+
+        env = {
+            "BG3AI_SIDE": "A",
+            "BG3AI_TOOLS_OFF": "arena-v1",
+            "BG3AI_ARENA_TURN_CAP_S": "60",
+            "BG3AI_ARENA_TURN_ORDER": "alternate",
+        }
+        side = tools(env)["instructions"]
         self.assertIn("## Two-team match", side)
+        orders = rules.prompts().TURN_ORDERS
         filled = ARENA_MD.read_text(encoding="utf-8").strip().replace("{turn_cap_s}", "60")
-        self.assertTrue(side.rstrip().endswith(filled))
+        self.assertTrue(side.rstrip().endswith(filled.replace("{turn_order}", orders["alternate"])))
+        snake = tools({**env, "BG3AI_ARENA_TURN_ORDER": "snake"})["instructions"]  # the arena's, from side_env
+        self.assertTrue(snake.rstrip().endswith(filled.replace("{turn_order}", orders["snake"])))
+        no_order = {k: v for k, v in env.items() if k != "BG3AI_ARENA_TURN_ORDER"}
+        with self.assertRaisesRegex(AssertionError, "BG3AI_ARENA_TURN_ORDER"):  # no order: no rules, no server
+            tools(no_order)
         self.assertIn("60 s of model time per character", " ".join(side.split()))
         with self.assertRaisesRegex(AssertionError, "BG3AI_ARENA_TURN_CAP_S"):  # no cap: no rules, no server
-            tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1"})
+            tools({"BG3AI_SIDE": "A", "BG3AI_TOOLS_OFF": "arena-v1", "BG3AI_ARENA_TURN_ORDER": "alternate"})
         self.assertNotIn("## Two-team match", tools({"BG3AI_TOOLS_OFF": "arena-v1"})["instructions"])
         self.assertNotIn("## Two-team match", tools({})["instructions"])
 

@@ -9,23 +9,26 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    setup makes them: the file names them only) are the setup job result's `teams` (pair i at index i), and
    arena.status must report the same. A result without them, short of a member, or disagreeing with arena.status
    starts no match (a setup error).
-2. The referee writes `arena_start {arena, seed, teams (names), sides (players), uuids (those teams)}` into the
-   match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side: the
-   harness's reads see both teams) carries the mod's arena records: its `arena_turn` (one per phase: a same-side
-   run of the rolled order inside one turn group, summons included, {side, character, members (its open members,
-   in turn order), names (their display names), round, phase, group (absent when the mod can't read the turn
-   order), shared}) is written with names: `members` = a team member's name from the arena file, a summon's from
-   the record; `character` = the first; `names` as the mod gave them. Its `arena_end` (the mod's own end: a wipe at
-   a turn boundary, the round cap at the start of round round_cap + 1) is written as it is; its `arena_start`, an
+2. The referee writes `arena_start {arena, seed, turn_order, teams (names), sides (players), uuids (those teams)}`
+   into the match's one facts.jsonl, and both agents start with the kickoff. The referee ring (RingFeed, no side:
+   the harness's reads see both teams) carries the mod's arena records: its `arena_turn` (one per phase: one
+   character of a turn group, the sides alternating, summons included, {side, character, members (that character;
+   an older mod's: the side's run of open members), names (their display names), round, phase, group (absent when
+   the mod can't read the turn order), shared, order, opening, rule}) is written with names: `members` = a team
+   member's name from the arena file, a summon's from the record; `character` = the first; `names` as the mod gave
+   them. Its `arena_end` (the mod's own end: a wipe at a turn boundary, the round cap at the start of round
+   round_cap + 1) is written as it is; its `arena_start`, an
    end the runner asked for and any arena record after the match's end are left out, as the referee writes those
-   itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?}` (the mod
-   ended the turn of a member that can't act; `death_save` for a downed one) is written with `character` named as in
+   itself. Its `arena_turn_passed {side, character, name, why (dead, downed or zero_hp), round, error?, order,
+   opening, rule}` (the mod ended the turn of a member that can't act, its slot in the turn order taken;
+   `death_save` for a downed one) is written with `character` named as in
    arena_turn, and its `arena_turn_readmitted {side, character, name, round, why}` (a passed member stood up with its
    turn back) the same way, the member no longer passed. Its `arena_round {round, first, how}` (a round's first
-   phase: its side, and whether it acted or was passed whole; once per round) is written as it is. A mirror arena's
-   `arena_surfaces {when, round, tiles_total, tiles_read, radius, off, tiles, appeared, appeared_tiles}` (the mod's
-   report-only re-read of the surfaces at round 2's start and at the end, a runner's end included: arena.end, then the
-   last poll) is written as it is, after the end too; `arena_start` carries the setup's surface check (`surfaces`). Its
+   phase: the round's opening side, and whether it acted or was passed whole; once per round) is written as it is.
+   A mirror arena's `arena_surfaces {when, round, tiles_total, tiles_read, radius, off, tiles, appeared,
+   appeared_tiles}` (the mod's report-only re-read of the surfaces at round 2's start and at the end, a runner's end
+   included: arena.end, then the last poll) is written as it is, after the end too; `arena_start` carries the setup's
+   surface check (`surfaces`). Its
    `arena_group_end_written {round, group, character, members, names, errors?, how}` (a shared group the game kept open
    after every member's end, in any round: the mod wrote the members' RequestedEndTurn; a turn group's end, not the
    match's) is written with `character` and `members`
@@ -55,7 +58,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    mod's own (it ended the match after this tick's read), the mod's end is the one written, its `detail` naming the
    runner's.
 4. Per-turn cap: a side's model time (Agents: from its client's stream, tool time excluded) since its team's turn
-   began reaching the arena's turn_cap_s times the turn's member count (summons included) ends that turn:
+   began reaching the arena's turn_cap_s ends that turn (a phase is one character: the mod's turn order, owner D643;
+   a record naming more members, from an older mod, gets the same turn_cap_s):
    `act.end_turn {char, forced}` for each of its members in turn order, sent as that side (forced: the cap as the
    mod tells the side, "the per-turn time cap (N s of model time)" or "the stall cap (...)"), one at a time (each
    job polled until it
@@ -256,6 +260,7 @@ class Referee:
             "arena_start",
             arena=self.spec.name,
             seed=self.spec.seed,
+            turn_order=self.spec.turn_order,
             teams=self.spec.names(),
             sides={s: self.sides[s].player for s in SIDES},
             uuids={s: list(teams[s]) for s in SIDES},
@@ -302,7 +307,7 @@ class Referee:
             if self.turn is not None:
                 self.turn.passed.discard(u.lower())
             return {**fact, "character": t[1] if t is not None else str(fact.get("name") or u)}
-        if ev == "arena_round":  # a round's first phase, its side (seat audit): written as the mod gave it
+        if ev == "arena_round":  # a round's first phase, its opening side (seat audit): written as the mod gave it
             return fact
         if ev == "arena_end":
             # the ring leaves a nil winner (a draw) out
@@ -719,7 +724,7 @@ def run_arena(
             idx = len(ref.turns) - 1
             if turn_mark is None or turn_mark[0] != idx:
                 turn_mark = (idx, model(turn.side))
-            cap = spec.turn_cap_s * len(turn.members)
+            cap = spec.turn_cap_s  # one character a phase (the mod's turn order, D643): turn_cap_s x 1
             if model(turn.side) - turn_mark[1] < cap:
                 continue
             cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")
