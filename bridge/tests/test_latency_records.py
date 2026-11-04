@@ -97,11 +97,15 @@ class ScreenshotTime(Records):
 
 class TalkStages(Records):
     def test_talk_to_has_per_stage_times(self):
-        choice = {"screen": "dialogue", "dialogue": {"text": "Choose.", "options": [
-            {"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]}}
-        self.g.ui_seq = [{"screen": "game"},
-                         {"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}},
-                         choice]
+        choice = {
+            "screen": "dialogue",
+            "dialogue": {"text": "Choose.", "options": [{"i": 1, "text": "Yes"}, {"i": 2, "text": "No"}]},
+        }
+        self.g.ui_seq = [
+            {"screen": "game"},
+            {"screen": "dialogue", "dialogue": {"text": "Hello there.", "continue": True}},
+            choice,
+        ]
         out = travel.talk_to(self.gob)
         self.assertIn("STOPPED: a real choice (2 options)", out)
         rec = next(r for r in self.recs if r["tool"] == "talk_to")

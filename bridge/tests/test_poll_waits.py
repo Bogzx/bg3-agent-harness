@@ -56,8 +56,10 @@ class Polls(Base):
         def screen():
             return ("trade" if self.waited() < 0.05 else "game"), {}
 
-        with mock.patch.object(uitools, "_ui_screen", screen), \
-                mock.patch.object(core.game, "try_rpc", lambda *a, **k: None):
+        with (
+            mock.patch.object(uitools, "_ui_screen", screen),
+            mock.patch.object(core.game, "try_rpc", lambda *a, **k: None),
+        ):
             self.assertTrue(plumbing._close_left_trade(2.0))
         self.assertLessEqual(self.waited(), 0.05)  # was the first read 0.2 s after the ESCAPE
 
@@ -67,8 +69,10 @@ class Polls(Base):
                 return {"title": "Donate these items?", "buttons": ["Yes", "No"]}
             return None
 
-        with mock.patch.object(core.game, "try_rpc", try_rpc), \
-                mock.patch.object(world_tools, "_box_act", lambda *a, **k: "confirm: done"):
+        with (
+            mock.patch.object(core.game, "try_rpc", try_rpc),
+            mock.patch.object(world_tools, "_box_act", lambda *a, **k: "confirm: done"),
+        ):
             out = progression._answer_donate({"moved": []}, handover=False)
         self.assertIn("trade: done", out)
         self.assertLessEqual(self.waited(), 0.05)  # was 0.2

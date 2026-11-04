@@ -29,11 +29,23 @@ class OneEval(Base):
         super().setUp()
         self.pos = [0.0, 0.0, 0.0]
         f = FakeBg3le(server_tick_s=0.005, client_tick_s=0.005)
-        f.op("state.status", lambda a, c: {"party": [{"uuid": P1, "name": "Claude", "hp": 10, "max_hp": 10,
-                                                       "pos": list(self.pos)}], "active": P1, "in_combat": True})
-        f.op("state.nearby", lambda a, c: {"characters": [{"uuid": GOB, "name": "Goblin", "pos": [5, 0, 5],
-                                                            "relation": "hostile", "hp": 7, "max_hp": 7}],
-                                            "items": []})
+        f.op(
+            "state.status",
+            lambda a, c: {
+                "party": [{"uuid": P1, "name": "Claude", "hp": 10, "max_hp": 10, "pos": list(self.pos)}],
+                "active": P1,
+                "in_combat": True,
+            },
+        )
+        f.op(
+            "state.nearby",
+            lambda a, c: {
+                "characters": [
+                    {"uuid": GOB, "name": "Goblin", "pos": [5, 0, 5], "relation": "hostile", "hp": 7, "max_hp": 7}
+                ],
+                "items": [],
+            },
+        )
         f.op("nav.markers", lambda a, c: {"markers": []})
         f.op("nav.hazards", lambda a, c: {"hazards": []})
         f.op("nav.frontier", lambda a, c: {"leads": []})
