@@ -61,8 +61,7 @@ def _trust(r: dict) -> dict:
 
 
 
-REVIVE_HINT = ("revive now: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members; "
-               "or reload before the fight")
+REVIVE_HINT = "revives: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members"
 
 
 def _enemy_list(rec: dict, n: int = 4) -> str:

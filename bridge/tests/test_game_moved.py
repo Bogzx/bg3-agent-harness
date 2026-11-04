@@ -75,8 +75,9 @@ class GameMovedText(unittest.TestCase):
         sealed = party.game_moved_text("move_to", BY_GAME, CLAUDE, label, None, behind, KARLACH)
         self.assertIn("no walkable way from e1 Karlach to e4 Claude (a sealed story area?)", sealed)
         self.assertNotIn("regroup", sealed)
+        self.assertNotIn("reload", sealed)  # facts only (D630)
         fight = party.game_moved_text("move_to", BY_GAME, CLAUDE, label, None, behind, None, in_combat=True)
-        self.assertIn("in combat: move them toward e4 Claude on their turns", fight)
+        self.assertIn("in combat: move_to who=e4 moves each toward them on its own turn", fight)
 
     def test_nobody_left_behind(self):
         st = s066_status()

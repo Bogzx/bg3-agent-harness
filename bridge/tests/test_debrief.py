@@ -203,7 +203,7 @@ class Build(unittest.TestCase):
         self.assertEqual(sum(e["killed"] for e in rec["enemies"]), 1)       # Jaheira is no kill
         self.assertIn("ally DIED: Jaheira (r3)", rec["key_facts"][0])
         out = debrief.render(rec)
-        self.assertIn("DIED: Jaheira (ally, r3) — revive now: Scroll of Revivify", out.splitlines()[1])
+        self.assertIn("DIED: Jaheira (ally, r3) — revives: Scroll of Revivify", out.splitlines()[1])
         self.assertIn("keep Jaheira alive", debrief.last_attempt(rec))
         self.assertEqual([a["name"] for a in tr.dead_allies], ["Jaheira"])   # for the ALERTS line
         tr.feed([ev("revived", **ref(J, "Jaheira"))], PARTY)                  # revived outside a fight
@@ -215,7 +215,7 @@ class Build(unittest.TestCase):
                  ev("combat_ended")], PARTY)
         rec = tr.close(ROWS)
         self.assertEqual(rec["key_facts"][0], "DIED: Shadowheart (r1)")
-        self.assertIn("DIED: Shadowheart (r1) — revive now", debrief.render(rec).splitlines()[1])
+        self.assertIn("DIED: Shadowheart (r1) — revives: Scroll of Revivify / Revivify on the body; Withers (camp) raises only party members", debrief.render(rec).splitlines()[1])
 
     def test_retry_window(self):
         tr, rec, _ = self.run_fight()

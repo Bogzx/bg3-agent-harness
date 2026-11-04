@@ -427,5 +427,16 @@ class PartyPure(unittest.TestCase):
         self.assertEqual(party.camp_behind(st), [])
 
 
+
+class TravelBlockText(unittest.TestCase):
+    def test_states_the_block_without_advice(self):
+        # D630: facts about the game and the tools stay, advice on what to do goes
+        txt = travel._travel_block_text({"error": "Condition", "screen": "a camp scene"})
+        self.assertEqual(txt, " The game blocks travel here (Condition): the camp and map travel buttons are greyed out."
+                              " On screen: a camp scene.")
+        self.assertEqual(travel._travel_block_text({"dialogue": True}),
+                         " A conversation is open (choose_dialogue answers it): the game doesn't travel during one.")
+
+
 if __name__ == "__main__":
     unittest.main()

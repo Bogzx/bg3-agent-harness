@@ -108,7 +108,7 @@ def render_ways(ways: Any, far: float = 20.0) -> str:
 
 def opened_note(res: Any, H: Handles) -> str:
     """A no-path reply soon after a door/wall the party can see opened or closed (nav `opened`, V13: S071's Wyrmway
-    Stone Wall): while it may still be moving the answer can change, so try again; later the answer was searched
+    Stone Wall): while it may still be moving the answer can change; later the answer was searched
     after it, so it is current. '' when there is none."""
     o = res.get("opened") if isinstance(res, dict) else None
     if not isinstance(o, dict) or not o.get("uuid"):
@@ -117,7 +117,7 @@ def opened_note(res: Any, H: Handles) -> str:
     how = "closed" if o.get("how") == "closed" else "opened"
     ago = f"{num(o.get('ago_s', 0))}s ago"
     if o.get("settling") and how == "opened":
-        return f"{what} opened {ago} and may still be moving: this passage just opened, try again in a few seconds"
+        return f"{what} opened {ago} and may still be moving: the answer can change in the next seconds"
     return f"(searched after {what} {how} {ago}: up to date)"
 
 

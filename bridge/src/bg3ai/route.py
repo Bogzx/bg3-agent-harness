@@ -229,13 +229,13 @@ def wedged_text(w: Any) -> str:
         # naut2 run 3: the only landing was next to Lae'zel at the foot of the ladder just climbed, away from the goal
         dy = w.get("away_dy") or 0
         return (f"; no walkable ground reads around you, and the only landing (next to {w['away']}) is "
-                f"{_m(abs(dy))} {'below' if dy < 0 else 'above'}, away from the goal: don't jump there; try again in a "
-                "moment (right after a climb the ground can read blocked), or route")
+                f"{_m(abs(dy))} {'below' if dy < 0 else 'above'}, away from the goal; right after a climb the ground "
+                "can read blocked for a moment")
     if not isinstance(w, dict) or not w.get("wedged") or not w.get("to"):
         return ""  # no member to land next to: maybe a small balcony whose way out is the ladder (S059 08:52)
-    return (f"; you are wedged: no walkable ground leads out from where you stand: jump_to x,y,z = {pos(w['to'])} "
-            f"next to {w.get('near') or 'a party member'} ({_m(w.get('dist_m'))})"
-            + (" if it is in reach" if w.get("in_reach") is False else "") + ", then try again")
+    reach = {True: ", within jump reach", False: ", beyond jump reach from here"}.get(w.get("in_reach"), "")
+    return (f"; you are wedged: no walkable ground leads out from where you stand; the nearest landing is x,y,z = "
+            f"{pos(w['to'])} next to {w.get('near') or 'a party member'} ({_m(w.get('dist_m'))}{reach})")
 
 
 def render_route(res: Any, H: Handles, what: str = "it", ends: list | None = None) -> str:

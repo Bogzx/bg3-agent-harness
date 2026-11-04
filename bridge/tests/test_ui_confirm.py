@@ -329,6 +329,7 @@ class Confirm(Base):
             out = inventory.long_rest()
         self.assertIn("gather_failed", out)
         self.assertIn("DEAD: Wyll — the game won't gather a dead party member", out)
+        self.assertIn("at camp, revives them; swap_party takes them out of the party)", out)
         self.assertNotIn("Spiritual Weapon", out)
         dead[0] = False
         with mock.patch.object(time, "sleep"):

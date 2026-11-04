@@ -207,10 +207,9 @@ def game_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str],
     if behind:
         line = "PARTY LEFT BEHIND: " + behind_text(behind, label)
         if sealed_from:
-            line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?): plan the "
-                     "scene without them, or reload before the approach and walk in together")
+            line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?)")
         elif in_combat:
-            line += f" → in combat: move them toward {label(who)} on their turns (move_to who=)"
+            line += f" → in combat: move_to who={label(who).split(' ')[0]} moves each toward them on its own turn"
         else:
             line += (f" → regroup(leader={label(who).split(' ')[0]}) walks them to {label(who)} (their walks keep "
                      "going through a conversation they are not in)")
