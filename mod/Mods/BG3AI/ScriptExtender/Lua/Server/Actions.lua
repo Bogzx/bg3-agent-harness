@@ -413,6 +413,19 @@ function A.reaction_hold(job)
     return false
 end
 
+-- Window 11 J1/J1b (live.md L4, L7 (e)): a jump ordered out of a foe's reach drew its opportunity attack, and the
+-- engine's CastSpellFailed for the jump came in the same ms as that foe's ReactionInterruptUsed (dispatched after
+-- it), outcome Canceled: the caster stayed, movement and bonus action unspent, the attack still came.
+A.JUMP_AOO_CANCELLED = "the jump didn't happen: the game cancelled it when it drew the attack of opportunity;"
+    .. " movement and bonus action not spent"
+function A.foe_interrupted(job)
+    local me = G.guid(job.char)
+    for g, t in pairs(A.interrupts) do
+        if g ~= me and t >= job.started and foe_of(me, g) then return true end
+    end
+    return false
+end
+
 -- The move's result with its reactions: {by = {uuid, name}, name = the spell's shown name, damage = what it did to
 -- the mover (AttackedBy since the move began), type, resolved = false when the hold ran out first}. Only casters the
 -- mover's side can see (the party always) are named; one it can't see is {unseen = true, damage, type} when it

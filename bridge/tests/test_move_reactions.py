@@ -81,7 +81,8 @@ class PathPreviewProvokes(unittest.TestCase):
         self.assertEqual(
             out,
             "reachable: walk 6m fits movement left 9m | provokes an attack of opportunity from "
-            "e1 Birch where it leaves its reach @(-0.1,0,0), 1.1m along",
+            "e1 Birch where it leaves its reach @(-0.1,0,0), 1.1m along | a jump that draws an attack of "
+            "opportunity is cancelled by the game (the attack still comes)",
         )
         self.assertNotIn("provokes", render.render_path({"reachable": True, "length_m": 6.0}, h))
 
