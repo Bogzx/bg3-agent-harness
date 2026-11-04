@@ -96,6 +96,17 @@ class EventTail(unittest.TestCase):
         self.assertIn("spell_info " + CLOUDKILL_INFO, out)
         self.assertIn("spell_info Misty Step", out)
 
+    def test_the_mods_events_lost_row_is_never_cut(self):
+        """Arena fairness A8: the mod's ring dropped this reader's older events and says so first (events_lost); a
+        long batch must not cut that note behind '(+N earlier events)'."""
+        lost = {
+            "seq": 0,
+            "kind": "events_lost",
+            "data": "some events before these were dropped (the game's event buffer was full) and can't be shown",
+        }
+        out = render.render_events([lost, *l4_batch()], Handles())
+        self.assertIn("events_lost some events before these were dropped", out)
+
     def test_back_to_back_zero_damage_rows_share_a_row_naming_every_target_and_count(self):
         out = render.render_events(l4_batch(), Handles())
         rows = [ln.strip() for ln in out.split("\n")]

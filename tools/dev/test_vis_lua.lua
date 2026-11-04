@@ -399,6 +399,55 @@ test("get_nearby can_trade: a non-hostile trader (Trader tag or Trade offered), 
     if not ok then error(err, 0) end
 end)
 
+-- Fairness audit S2-4 (2026-11-03): "it turned invisible" read the live IsInvisible of anyone the side saw within
+-- 120 s, wherever the change happened. Its residual (arena A7): the side's sight was tested where the enemy stands at
+-- the query, so one that vanished out of view and walked in unseen read as "seen to vanish". The vanish is noted as
+-- it happens (V.noteVanish), where the side sees the spot then; else the plain "last seen" hint.
+test("S2-4/A7: the 'turned invisible' hint needs the side's sight of the spot as it vanished, not where it is now",
+    function()
+    local realInvisible = Osi.IsInvisible
+    local invisible = false
+    Osi.IsInvisible = function(u) return (u == WITHERS and invisible) and 1 or 0 end
+    local home = ents[WITHERS].pos
+    local function vanish() invisible = true; V.noteVanish(WITHERS, "INVISIBILITY") end
+    local function reappear() invisible = false; V.noteVisible(WITHERS) end
+    local ok, err = pcall(function()
+        V.vanishes[WITHERS], V.invisibleNow[WITHERS] = nil, nil
+        los = true
+        vanish()
+        local gone, m = V.vanished(WITHERS)
+        eq(gone, true, "seen to vanish in sight range and line of sight")
+        eq(m and m.ago_s, 0, "when")
+        eq(m and m.pos[1], BG3AI.Util.vec(home, 1)[1], "where it vanished")
+        ents[WITHERS].pos = { -1450.0, 8.0, -2620.0 }
+        eq((V.vanished(WITHERS)), true, "it walked off invisible: still the vanish the side saw, at that spot")
+        -- REVIEW-18e: a later status on the invisible creature (WET, Bless, a refresh) at Y, in view, is no vanish:
+        -- the record stays at X
+        ents[WITHERS].pos = { -1420.0, 8.3, -2586.0 }
+        V.noteVanish(WITHERS, "WET")
+        V.noteVanish(WITHERS, "INVISIBILITY")
+        local _, m2 = V.vanished(WITHERS)
+        eq(m2 and m2.pos[1], BG3AI.Util.vec(home, 1)[1], "a second status at Y: the record stays at X")
+        -- REVIEW-18e: visible again, then a re-vanish out of the side's view: the old record goes
+        reappear()
+        los = false
+        vanish()
+        eq((V.vanished(WITHERS)), false, "an unseen re-vanish clears the old record")
+        -- vanished out of view, walked into view still invisible, a status lands on it there: not seen to vanish (A7)
+        los = true
+        ents[WITHERS].pos = home
+        eq((V.vanished(WITHERS)), false, "in view now, unseen as it vanished: the plain last-seen hint")
+        V.noteVanish(WITHERS, "BURNING")
+        eq((V.vanished(WITHERS)), false, "a status in view on one that vanished unseen notes nothing")
+        reappear()
+        V.noteVanish(WITHERS, "WET")
+        eq(V.vanishes[WITHERS], nil, "a status on a visible creature notes nothing")
+    end)
+    Osi.IsInvisible, ents[WITHERS].pos = realInvisible, home
+    V.vanishes[WITHERS], V.invisibleNow[WITHERS] = nil, nil
+    if not ok then error(err, 0) end
+end)
+
 test("get_nearby: a visible creature's concentration (act2 Balthazar's Cloudkill), none unseen", function()
     local realChars, gobPos = V.characters, ents[GOB].pos
     ents[GOB].pos = { -1419.0, 8.4, -2590.0 }

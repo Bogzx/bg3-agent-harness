@@ -42,9 +42,15 @@ ok(since(RPC, 0).events[2].data.i == 2, "the event's data")
 
 -- 2. past the cap: the oldest drop, seq stays continuous, the ring keeps exactly EVENT_CAP
 for i = 4, 12 do RPC.push("e", { i = i }) end
-ok(seqs(since(RPC, 0)) == "8,9,10,11,12", "from 0 past the cap: the newest 5: " .. seqs(since(RPC, 0)))
+-- A8 (audit S3-4): a reader whose cursor is older than the ring gets an events_lost row first (seq: the last dropped
+-- one, so its cursor moves past the loss and it is said once)
+ok(seqs(since(RPC, 0)) == "7,8,9,10,11,12", "from 0 past the cap: the loss, the newest 5: " .. seqs(since(RPC, 0)))
+ok(since(RPC, 0).events[1].kind == "events_lost", "the loss's row: " .. tostring(since(RPC, 0).events[1].kind))
+ok(since(RPC, 6).events[1].kind == "events_lost", "a cursor at 6: seq 7 was dropped too")
+ok(since(RPC, 7).events[1].seq == 8, "a cursor at the last dropped one: no loss")
 ok(seqs(since(RPC, 9)) == "10,11,12", "after 9")
-ok(seqs(since(RPC, 0, 2)) == "8,9", "limit from a seq older than the ring: the oldest kept: " .. seqs(since(RPC, 0, 2)))
+ok(seqs(since(RPC, 0, 2)) == "7,8", "limit from a seq older than the ring: the loss, the oldest kept: "
+    .. seqs(since(RPC, 0, 2)))
 ok(seqs(since(RPC, 8, 2)) == "9,10", "limit inside the ring")
 ok(seqs(since(RPC, 12)) == "" and since(RPC, 12).latest == 12, "caught up")
 ok(seqs(since(RPC, 99)) == "", "a seq from a future (a reset ring): nothing, latest says where it is")
