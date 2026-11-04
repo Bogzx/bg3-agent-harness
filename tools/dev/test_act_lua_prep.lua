@@ -996,3 +996,35 @@ test("move_to range: a normal path, its last node ~1 m from the point, is walked
     local mv = called("CharacterMoveToPosition")
     eq(#mv, 1, "one walk"); near(U.dist({ mv[1][3], 0, mv[1][5] }, world[NPC].pos), 2.5, "the first goal, 2.5 m past")
 end)
+
+-- w10 CD1: get_actions and the guard read one cooldown rule: what state.actions lists UNAVAILABLE for a cooldown,
+-- the guard refuses, and nothing else (the CD1 row: Cooldown=-1.0 UntilShortRest).
+test("state.actions and the guard agree on cooldowns (w10 CD1's -1 UntilShortRest row)", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    if not BG3AI.State or not BG3AI.State.actions then dofile(LUA .. "/Server/State.lua") end
+    for _, id in ipairs({ "Target_PommelStrike", "Shout_SecondWind", "Target_Trip" }) do
+        stats[id] = { SpellType = "Target", UseCosts = "BonusActionPoint:1" }
+    end
+    local function book(id) return { Id = { Prototype = id, OriginatorPrototype = id }, PrepareType = "Unknown" } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_PommelStrike"), book("Shout_SecondWind"),
+        book("Target_Trip") } }
+    world[P1].comps.SpellBookCooldowns = { Cooldowns = {
+        { SpellId = { Prototype = "Target_PommelStrike" }, Cooldown = -1.0, CooldownType = "UntilShortRest" },
+        { SpellId = { Prototype = "Shout_SecondWind" }, Cooldown = 0, CooldownType = "UntilShortRest" } } }
+    BG3AI.State.spellCache = {}
+    local ok, list = pcall(BG3AI.State.actions, P1)
+    BG3AI.Visibility = savedV
+    eq(ok, true, "actions read: " .. tostring(list))
+    for _, a in ipairs(list) do
+        local gok, gerr = pcall(G.known_spell, P1, a.spell)
+        local cd = (a.reason or ""):find("^cooldown") ~= nil
+        local refusedCd = not gok and tostring(G.is_refusal(gerr) and gerr.reason or gerr):find("on cooldown") ~= nil
+        eq(refusedCd, cd, a.spell .. ": guard refusal vs get_actions cooldown")
+        if a.spell == "Target_PommelStrike" then eq(a.reason, "cooldown (UntilShortRest)", "Pommel's reason") end
+    end
+    world[P1].comps.SpellBook, world[P1].comps.SpellBookCooldowns = nil, nil
+end)

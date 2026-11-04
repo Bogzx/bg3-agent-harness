@@ -292,6 +292,32 @@ function G.prep_plan(char, add, remove)
              prepared = info.prepared, always = info.always, add = adds, remove = removes, notes = notes }
 end
 
+-- Spell id -> its CooldownType, for every SpellBookCooldowns row. The one cooldown rule: state.actions lists such an
+-- action UNAVAILABLE and G.known_spell refuses its cast, whatever the row's Cooldown value (w10 CD1: Pommel Strike's
+-- row read Cooldown=-1 UntilShortRest through end_turn and the round close; the guard's old "Cooldown > 0" let
+-- use_ability cast it again while get_actions said UNAVAILABLE).
+function G.cooldowns(e)
+    local out = {}
+    local cd = e and U.comp(e, "SpellBookCooldowns")
+    if not cd then return out end
+    pcall(function()
+        for _, c in ipairs(cd.Cooldowns) do
+            out[c.SpellId.Prototype] = tostring(c.CooldownType)
+        end
+    end)
+    return out
+end
+
+-- How long the cooldown lasts, as a fact (bg3se SpellCooldownType).
+local COOLDOWN_UNTIL = { OncePerTurn = "until its next turn", OncePerTurnNoRealtime = "until its next turn",
+    OncePerCombat = "for the rest of this combat", UntilRest = "until a long rest",
+    UntilShortRest = "until a short rest", UntilPerRestPerItem = "until a long rest (once per rest, per item)",
+    OncePerShortRestPerItem = "until a short rest (once per short rest, per item)" }
+function G.cooldown_text(kind)
+    local u = COOLDOWN_UNTIL[tostring(kind)]
+    return "that action is on cooldown" .. (u and (" " .. u) or "") .. " (" .. tostring(kind) .. ")"
+end
+
 -- Is the spell on the character's hotbar/spellbook and usable (prepared if it
 -- needs preparing)? Returns the matching SpellBook entry or refuses.
 function G.known_spell(char, spell)
@@ -325,19 +351,9 @@ function G.known_spell(char, spell)
 
     if G.unprepared(found, G.prepared_ids(e)) then G.refuse("that spell is not prepared") end
 
-    -- Cooldown (once per turn / short rest / long rest)
-    local cds = e and U.comp(e, "SpellBookCooldowns")
-    if cds then
-        local ok, cooling = pcall(function()
-            for _, c in ipairs(cds.Cooldowns) do
-                if c.SpellId and c.SpellId.Prototype == spell and (c.Cooldown or 0) > 0 then
-                    return true
-                end
-            end
-            return false
-        end)
-        if ok and cooling then G.refuse("that action is on cooldown") end
-    end
+    -- Cooldown (once per turn / combat / short rest / long rest): the rule get_actions shows (G.cooldowns)
+    local kind = e and G.cooldowns(e)[spell]
+    if kind then G.refuse(G.cooldown_text(kind)) end
     local key = G.item_cd_key(char, spell)
     if key and G.item_uses()[key] then
         G.refuse("that action is used up until the next " .. (G.item_uses()[key] == "short" and "short or long rest"
