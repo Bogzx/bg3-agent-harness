@@ -418,10 +418,16 @@ end
 -- it), outcome Canceled: the caster stayed, movement and bonus action unspent, the attack still came.
 A.JUMP_AOO_CANCELLED = "the jump didn't happen: the game cancelled it when it drew the attack of opportunity;"
     .. " movement and bonus action not spent"
-function A.foe_interrupted(job)
+-- REVIEW-17 F6: the interrupt may be dispatched before or after the CastSpellFailed, and an earlier one (a walk-to
+-- phase's) is not the jump's. A Canceled jump is decided this long after its failure, from the foes' interrupts
+-- within this long of it.
+A.JUMP_CANCEL_WINDOW_MS = 50
+function A.foe_interrupted(job, at)
     local me = G.guid(job.char)
     for g, t in pairs(A.interrupts) do
-        if g ~= me and t >= job.started and foe_of(me, g) then return true end
+        if g ~= me and t >= job.started and math.abs(t - at) <= A.JUMP_CANCEL_WINDOW_MS and foe_of(me, g) then
+            return true
+        end
     end
     return false
 end

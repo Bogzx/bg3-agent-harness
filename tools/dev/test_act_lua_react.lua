@@ -245,8 +245,9 @@ end)
 -- Window 11 J1b (live.md L7 (e)): Karlach's jump out of the Destroyer's reach: ReactionInterruptUsed and the jump's
 -- CastSpellFailed (outcome Canceled) in the same ms, interrupt first; the AoO's CastSpell +1.97 s, CastedSpell +2.44 s.
 test("combat jump: the game's cancel when it draws an opportunity attack is said as that; a Canceled without a "
-    .. "foe's interrupt (or after an ally's) keeps the engine's words (W11 J1b)", function()
-    local function jump(interrupter)
+    .. "foe's interrupt (or after an ally's, or one not within the window of the failure) keeps the engine's words "
+    .. "(W11 J1b, REVIEW-17 F6)", function()
+    local function jump(interrupter, fail_first)
         reset()
         combat_setup(12)
         stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
@@ -258,23 +259,56 @@ test("combat jump: the game's cancel when it draws an opportunity attack is said
         local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 3.5, 0, 0 } }))
         eq(j.status, "running", "ordered " .. tostring(j.error))
         tick()
-        if interrupter then A.dispatch("ReactionInterruptUsed", { interrupter, "Interrupt_AttackOfOpportunity", 1 }) end
+        local function aoo()
+            A.dispatch("ReactionInterruptUsed", { interrupter, "Interrupt_AttackOfOpportunity", 1 })
+        end
+        if interrupter and not fail_first then aoo() end
         A.dispatch("CastSpellFailed", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+        if interrupter and fail_first then aoo() end
         return j
     end
-    local restore = seen_stub()
-    local ok, err = pcall(function()
-        local j = jump(NPC)
-        eq(j.status, "running", "held for the attack it drew")
+    local function attack()
         tick(32)
         A.dispatch("CastSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
         tick(8)
         A.dispatch("CastedSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
         tick(12)
-        eq(j.status, "failed", "status")
-        eq(j.error, "the jump didn't happen: the game cancelled it when it drew the attack of opportunity; movement "
-            .. "and bonus action not spent", "why")
-        eq(#(j.result and j.result.reactions or {}), 1, "the attack listed")
+    end
+    local restore = seen_stub()
+    local ok, err = pcall(function()
+        local aoo_why = "the jump didn't happen: the game cancelled it when it drew the attack of opportunity; "
+            .. "movement and bonus action not spent"
+        -- the interrupt dispatched first (J1b), or right after the CastSpellFailed in the same ms (REVIEW-17 F6 a)
+        for _, fail_first in ipairs({ false, true }) do
+            local j = jump(NPC, fail_first)
+            eq(j.status, "running", "held for the attack it drew")
+            attack()
+            eq(j.status, "failed", "status")
+            eq(j.error, aoo_why, "why, fail first " .. tostring(fail_first))
+            eq(#(j.result and j.result.reactions or {}), 1, "the attack listed")
+        end
+        -- REVIEW-17 F6 b: a foe's reaction earlier in the job (a walk-to phase's), resolved; then the jump is
+        -- Canceled with no interrupt near it: the engine's words
+        reset()
+        combat_setup(12)
+        stats.Projectile_Jump = { TargetRadius = "4.5", SpellType = "Projectile", UseCosts = "", Level = 0 }
+        stats.Target_MainHandAttack = { DisplayName = "Main Hand Attack" }
+        world[P1].comps.SpellBook = { Spells = { { Id = { Prototype = "Projectile_Jump" } } } }
+        osiv[key("GetAbility", P1, "Strength")] = 16
+        party_rows = { P1, P2 }
+        cast_outcome = "Canceled"
+        local j = job(op("cast", { char = P1, spell = "Projectile_Jump", pos = { 3.5, 0, 0 } }))
+        tick()
+        A.dispatch("ReactionInterruptUsed", { NPC, "Interrupt_AttackOfOpportunity", 1 })
+        A.dispatch("CastSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(2)
+        A.dispatch("CastedSpell", { NPC, "Target_MainHandAttack", "Target", "None", 0 })
+        tick(10)
+        eq(j.status, "running", "still running after the earlier reaction")
+        A.dispatch("CastSpellFailed", { P1, "Projectile_Jump", "Projectile", "None", 0 })
+        tick(12)
+        eq(j.status, "failed", "status (b)")
+        eq(j.error, "the game refused the cast: the cast was cancelled (the game's Canceled)", "why (b)")
         for _, who in ipairs({ false, P2 }) do
             j = jump(who)
             tick(80)
