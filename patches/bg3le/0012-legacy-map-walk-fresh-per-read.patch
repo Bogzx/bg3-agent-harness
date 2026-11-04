@@ -12,6 +12,12 @@ DialogId 0 and a building mesh as its resource after the dialogue ended).
 - Every read of such a map starts at entry 0 (the Lua key scan `for i = 0, count - 1`, a value by its slot
   `[i]`), so entry 0 now rebuilds the walk; entries 1..n of the same pass reuse it (still linear).
 
+Known gap (REVIEW-9, Low): in the component path a struct value comes back as a lazy path-based view, and
+each later field read re-resolves ElemAt(i). A caller that keeps such a view for slot i >= 1 across ticks
+reads it without a slot-0 read first, so it can still hit a kept walk whose node was replaced at the same
+count. The mod has no such caller (Guard re-reads DialogManager.Dialogs every call, through the object path,
+which snapshots the map); a test for it would fail by design, so there is none.
+
 Offline: tools/test_bg3le_legacy_map_walk.py compiles legacy_map_node from the patched source against a fake
 map and replaces its one entry at the same count. Against bg3le 3728a68 (v0.3.6) with 0001-0011. Applied by
 tools/build_bg3le.sh.
