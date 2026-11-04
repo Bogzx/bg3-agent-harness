@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: tool results state facts, not advice or the next call
+
+- facts-text-3 (website ops/logs/facts-text-3.md, rows A1-A26 and B1-B48): about 100 result texts lost their gameplay
+  advice ("heal first", "sell at another trader", "Get farther first", "Now loot and heal up") and their next-call
+  imperatives ("call save_game again", "then talk_to again", "try get_frontier, a door, or a jump"). What each text
+  said about the game stays; where the advice named a fact the code holds, the fact stays ("traders sell Trap Disarm
+  Toolkits", "travel_to(avoid_hazards='cross') crosses anyway", "the scroll reaches 9 m"). Session protocol and
+  argument-format errors are unchanged, and so are tools/list and the golden dump.
+- compact.py's `saving` and `sell_junk` patterns are gone with the texts they shortened.
+
 ## 2026-11-04: in a fight EVENTS shows the whole batch; casts and party rows are never cut
 
 - While a fight is open (or the drained batch has fight events), a result's EVENTS shows every row of the batch, up
