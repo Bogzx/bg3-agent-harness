@@ -185,6 +185,11 @@ game unless it says so.
   tick after Running (SIGSEGV at 0xa0 in `ThreadRegistry::RequestThreadIndex`); reproduced with `BG3LE_IMGUI=0`.
   bg3le with 0001-0013: sha256 e84d6044c057f3d8e3c4d8ce2259bac944fe873a18f6d5603d891a98e0be0f95, pinned by
   `releases/bench-v0.11.json` (was b7ecfd06, untagged and ungraded); `releases/bench-v0.10.json` is unchanged.
+- The play `claude` gets `play/.claude/settings.json` through `--settings` (the container sandbox already did).
+  Issue #101: Claude Code ignores a project's `permissions.allow` while its folder isn't trusted ("Ignoring 1
+  permissions.allow entry from .claude/settings.json: this workspace has not been trusted"), so in a clone nobody
+  had opened interactively every `mcp__bg3__*` call was refused and the session ended at once. The allow, the deny
+  list and `--tools ToolSearch` are the same as before; the bg3 tools served don't change.
 
 ### Benchmark (`packages/bench`)
 
