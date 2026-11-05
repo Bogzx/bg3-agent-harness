@@ -113,9 +113,11 @@ the server finishes gets every pending message appended, after the tool's own te
 OPERATOR MESSAGE (from the person running this playthrough, sent HH:MM:SS): <text>
 ```
 
-Each message goes out once. The block holds the message and the time it was sent, nothing else. A batch carries it
-in the batch's own end, not in a step. The call's metrics record lists the ids it carried (`operator`), and the
-session's `latency.json` counts them (`operator_messages`). When nothing changed, the check costs one `stat` per
+Each message goes out once. The block holds the message and the time it was sent, nothing else. Only the result the
+client gets takes messages (the MCP layer, after compaction): a tool that another tool calls inside itself, and a
+step of a batch, never does, so the batch carries it in its own end. A metrics record
+`{"type": "operator", "t", "tool", "ids"}` lists the ids a result carried, and the session's `latency.json` counts
+them (`operator_messages`). When nothing changed, the check costs one `stat` per
 call.
 
 The server of the memory keeper never takes operator messages, and neither does a bench run: the keeper and the

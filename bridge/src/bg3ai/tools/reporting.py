@@ -439,6 +439,17 @@ _READ_TOOLS = tool_classes.READ_TOOLS
 OPERATOR = operator.Outbox(core.SETTINGS.operator_dir)  # None without $BG3AI_OPERATOR_DIR: no file is opened
 
 
+def operator_told(tool: str) -> str:
+    """The app's operator messages for the result the client gets now (once each; "" when none), and a metrics record
+    of their ids. Only the MCP layer calls it (session._compacted): a tool another tool calls (swap_party's walk and
+    wait_for, level_up's swap_party, trade's talk_to) or a do_actions step never takes, so a caller that drops the
+    inner text can't lose a message (REVIEW-CHAT-INT #1)."""
+    told, ids = OPERATOR.take(os.environ.get("BG3AI_SESSION") or "", tool)
+    if ids:
+        core.METRICS.write({"type": "operator", "t": round(time.time(), 3), "tool": tool, "ids": ids})
+    return told
+
+
 # Tools whose metrics record splits _finish into stages (_Stages): talk_to's 1.5 s median bridge-side time had no
 # owner in the records (latency survey 2026-11-04 §5.4).
 _STAGED = {"talk_to": "talk"}  # tool -> the record's field
@@ -472,10 +483,6 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     elif tool not in _READ_TOOLS:
         _noop_waits["n"] = 0
     out = [body.rstrip()]
-    told, ids = OPERATOR.take(os.environ.get("BG3AI_SESSION") or "", tool)  # the app's operator messages, once
-    if told:
-        out.append(told)
-        core.metrics_extra(operator=ids)
     stage = _Stages(t0) if tool in _STAGED else None
     if events:
         job = str(args.get("target") or "").strip().lower() if tool == "wait_for" else ""

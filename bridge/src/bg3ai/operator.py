@@ -8,9 +8,10 @@ bench never has it. Without it nothing here opens a file. Two files there, one w
                               app's runner appends {id, t, redeliver: true} at a restart for a delivered message the
                               dead client's stream never showed (its model never saw it): it is pending again
 
-A message is pending until a delivered row names it, and again after a later redeliver row. `Outbox.take` (the
-result finisher, tools/reporting.py) adds every pending message to the result it finishes and marks them delivered,
-so each goes out once; one stat per call when nothing changed. The block states the message and its time only.
+A message is pending until a delivered row names it, and again after a later redeliver row. `Outbox.take` (the MCP
+layer, tools/session.py, via reporting.operator_told: the result the client gets, never a nested call's) adds every
+pending message to that result and marks them delivered, so each goes out once; one stat per call when nothing
+changed. The block states the message and its time only.
 """
 
 from __future__ import annotations

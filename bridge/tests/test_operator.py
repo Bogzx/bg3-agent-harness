@@ -1,6 +1,6 @@
 """Offline tests: the app's operator messages (bg3ai.operator) in tool results: pending/delivered/redeliver from the
-files, the block in the result finisher once and never again, not inside a batch step but in the batch's own end,
-nothing opened without $BG3AI_OPERATOR_DIR.
+files, the block once and never again in the result the client gets (never a nested call's, nor a batch step's: the
+batch's own end), nothing opened without $BG3AI_OPERATOR_DIR.
 
 Run: cd bridge && uv run python -m unittest tests.test_operator
 """
@@ -19,7 +19,7 @@ from test_turn_macros import Base  # sets BG3AI_RUNTIME before importing the ser
 # isort: split
 from bg3ai import operator as op
 from bg3ai import settings
-from bg3ai.tools import core, reporting
+from bg3ai.tools import batch, core, reporting, session
 
 T = 1_762_340_531.0  # a sent time
 
@@ -102,15 +102,7 @@ class InResults(Base):
         p.start()
         self.addCleanup(p.stop)
         self.recs: list[dict] = []
-        real = core.METRICS.tool_done
-
-        def tool_done(*a, **kw):
-            rec = real(*a, **kw)
-            if rec is not None:
-                self.recs.append(rec)
-            return rec
-
-        m = mock.patch.object(core.METRICS, "tool_done", tool_done)
+        m = mock.patch.object(core.METRICS, "write", self.recs.append)
         m.start()
         self.addCleanup(m.stop)
         e = mock.patch.dict("os.environ", {"BG3AI_SESSION": "S004"})
@@ -118,31 +110,68 @@ class InResults(Base):
         self.addCleanup(e.stop)
         write(self.dir / op.INBOX, {"id": "m1", "t": T, "text": "help Shadowheart first"})
 
+    def served(self, name: str, fn):
+        """`fn` as the client calls it (the MCP layer, session._compacted)."""
+        return session._compacted(name, fn)
+
     def finish(self, tool: str = "look") -> str:
-        return reporting._finish(tool, {}, "done", time.monotonic(), events=False)
+        return self.served(tool, lambda: reporting._finish(tool, {}, "done", time.monotonic(), events=False))()
+
+    def delivered(self) -> list[dict]:
+        return op.read_rows(self.dir / op.DELIVERED)
+
+    def told(self) -> list[dict]:
+        return [r for r in self.recs if r.get("type") == "operator"]
 
     def test_the_next_result_carries_it_once(self):
         out = self.finish("travel_to")
-        self.assertIn(op.line(T, "help Shadowheart first"), out)
-        self.assertTrue(out.startswith("done\n" + op.line(T, "help Shadowheart first")), out)
-        self.assertEqual(self.recs[-1]["operator"], ["m1"])
-        row = op.read_rows(self.dir / op.DELIVERED)[0]
+        self.assertTrue(out.endswith("\n" + op.line(T, "help Shadowheart first")), out)
+        self.assertEqual([(r["tool"], r["ids"]) for r in self.told()], [("travel_to", ["m1"])])
+        row = self.delivered()[0]
         self.assertEqual((row["id"], row["session"], row["tool"]), ("m1", "S004", "travel_to"))
         again = self.finish()
         self.assertNotIn("OPERATOR MESSAGE", again)
-        self.assertNotIn("operator", self.recs[-1])
+        self.assertEqual(len(self.told()), 1)
+
+    def test_a_nested_call_never_takes_it(self):
+        # REVIEW-CHAT-INT #1: swap_party's _walk_up_to drops its wait_for's result; when that wait took the message,
+        # the model never saw it and it was marked delivered
+        seen: list[list[dict]] = []
+
+        @reporting._guard
+        def swap_party_stub() -> str:
+            t0 = time.monotonic()
+            batch.wait_for(target="idle", timeout_s=1, lead_s=0)  # the inner result, dropped
+            seen.append(self.delivered())
+            return reporting._finish("swap_party", {}, "swapped", t0, events=False)
+
+        out = self.served("swap_party", swap_party_stub)()
+        self.assertEqual(seen, [[]])  # still pending after the inner call
+        self.assertIn(op.line(T, "help Shadowheart first"), out)
+        self.assertEqual([(r["tool"], r["session"]) for r in self.delivered()], [("swap_party", "S004")])
+
+    def test_a_return_without_finish_carries_it(self):
+        @reporting._guard
+        def flee_stub() -> str:
+            return "FAILED: no way out"
+
+        self.assertIn(op.line(T, "help Shadowheart first"), self.served("flee", flee_stub)())
 
     def test_not_in_a_batch_step_but_in_the_batch_end(self):
-        reporting._batch["active"] = True  # inside do_actions (per thread)
-        try:
-            step = self.finish("move_to")
-        finally:
-            reporting._batch["active"] = False
-        self.assertNotIn("OPERATOR MESSAGE", step)
-        self.assertEqual(op.read_rows(self.dir / op.DELIVERED), [])
-        end = self.finish("do_actions")
+        steps: list[tuple[str, list[dict]]] = []
+        real = reporting._finish
+
+        def finish(tool: str, *a, **kw) -> str:
+            r = real(tool, *a, **kw)
+            if reporting._batch["active"]:
+                steps.append((tool, self.delivered()))
+            return r
+
+        with mock.patch.object(reporting, "_finish", finish):
+            end = self.served("do_actions", batch.do_actions)(json.dumps([{"tool": "interact", "target": self.chest}]))
+        self.assertEqual(steps, [("interact", [])])
         self.assertIn(op.line(T, "help Shadowheart first"), end)
-        self.assertEqual(op.read_rows(self.dir / op.DELIVERED)[0]["tool"], "do_actions")
+        self.assertEqual(self.delivered()[0]["tool"], "do_actions")
 
 
 if __name__ == "__main__":
