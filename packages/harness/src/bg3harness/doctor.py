@@ -1,8 +1,10 @@
-"""Can a new machine run the harness? Every check a stranger's machine needs, each failure with the fix. Stdlib only and
-read-only but for one file: it reads files and runs version queries (and 0.1 s ffmpeg test encodes), never installs
-anything, and writes only the bench recording's encoder setting, once, when none is set (check_record).
+"""Can a new machine run the harness? Every check a stranger's machine needs, each failure with the fix. Stdlib only
+and, without --claude-probe, read-only but for one file: it reads files and runs version queries (and 0.1 s ffmpeg test
+encodes), never installs anything, and writes only the bench recording's encoder setting, once, when none is set
+(check_record). --claude-probe runs the bridge: uv may create bridge/.venv and bridge/uv.lock, and runtime/ files are
+written.
 
-    python3 tools/doctor.py [--json]          # or: uv run python -m bg3harness.doctor [--json]
+    python3 tools/doctor.py [--json] [--claude-probe]   # or: uv run python -m bg3harness.doctor [...]
 
 `doctor()` returns the checks as `Check(name, status, detail, fix)` (the bench panel calls it and `report()`); the
 CLI prints one PASS / WARN / FAIL line per check with its fix under it, and exits 1 on any FAIL.
@@ -19,21 +21,34 @@ this adds what a first install misses:
   disk       free space for the runtime dir: recordings take 1-2 GB per hour
   uv/python  uv on PATH and a Python >= 3.14 it can use (the packages require it)
   node/pi    Node.js >= 22.19 and tools/pi's pinned pi (only for the non-Claude clients: WARN, never FAIL)
+and, only with --claude-probe (it spends about $0.005 and needs a logged-in claude):
+  claude-probe  the real play command (clients.ClaudeClient, same flags and --settings) with haiku in play/, asked
+             to call mcp__bg3__session_clock (it answers without the game): FAIL when claude is missing, rejects the
+             command or isn't logged in, the bg3 MCP server doesn't connect, Claude Code denies a call, the
+             session_clock call errors, the run ends in an error (an API or usage-limit failure) or it times out.
+             preflight's claude check only finds the binary: #101's reporter passed it, then every bg3 call was
+             refused.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
+import time
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from bg3harness import bg3le_buildinfo, bg3le_prebuilt, display_env, preflight, steam_paths
+from bg3harness import bg3le_buildinfo, bg3le_prebuilt, clients, display_env, preflight, steam_paths
 from bg3harness import recorder as hrec
 from bg3harness.preflight import FAIL, PASS, WARN
 
@@ -44,6 +59,12 @@ DISK_WARN_GB, DISK_FAIL_GB = 20, 5
 LAYER = "VkLayer_MESA_screenshot.json"
 RECORD_ENCODER_ENV = hrec.ENCODER_ENV  # bg3harness.runner.run_host reads the same variable
 RECORD_PROBE = ("h264_nvenc", "libx264")  # the encoder check_record writes when none is set: the GPU's first
+PROBE = "claude-probe"
+PROBE_MODEL = "haiku"
+PROBE_TOOL = "session_clock"  # answers without the game (runs.GAME_FREE)
+PROBE_TIMEOUT_S = 60.0
+PROBE_KILL_WAIT_S = 5.0  # for claude's pipes to close after the kill
+PROBE_PROMPT = f"Call the {clients.MCP_PREFIX}{PROBE_TOOL} tool once, then reply with what it returned."
 
 
 @dataclass(frozen=True)
@@ -305,8 +326,136 @@ def check_node(ctx: Ctx) -> list[Check]:
     return checks
 
 
-def doctor(ctx: Ctx | None = None) -> list[Check]:
-    """Every check, in order; a check that crashes is a FAIL of its own, never an abort."""
+def _stderr(err: str) -> str:
+    one = " ".join(err.split())
+    return f" (claude's stderr: {one[-400:]})" if one else " (claude's stderr is empty)"
+
+
+def _denied_tool(denial: object) -> str:
+    match denial:
+        case {"tool_name": str(name)}:
+            return name
+        case _:
+            return str(denial)
+
+
+def check_claude_probe(ctx: Ctx, timeout: float = PROBE_TIMEOUT_S) -> Check:
+    """--claude-probe: one real play command (ClaudeClient().command, the runner's cwd play/ and client env) with
+    haiku, asked to call mcp__bg3__session_clock. Its stream decides; the fix line quotes claude's stderr."""
+    binary = ctx.which("claude")
+    if not binary:
+        return Check(PROBE, FAIL, "no claude on PATH", PREFLIGHT_FIXES["claude"](ctx, ""))
+    play = ctx.repo / "play"
+    client = clients.ClaudeClient(
+        mcp_config=play / ".mcp.json", binary=binary, settings=clients.play_settings(play / ".claude/settings.json")
+    )
+    req = clients.Request(prompt=PROBE_PROMPT, model=PROBE_MODEL, session_dir=play, session=str(uuid.uuid4()))
+    start = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            client.command(req), cwd=play, env={**ctx.env, **client.env(req)}, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+        )  # fmt: skip
+    except OSError as e:
+        return Check(PROBE, FAIL, f"can't start {binary}: {e}", PREFLIGHT_FIXES["claude"](ctx, ""))
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)  # claude and the MCP server it started
+        left = ""
+        try:
+            _, err = proc.communicate(timeout=PROBE_KILL_WAIT_S)
+        except subprocess.TimeoutExpired as e:  # a child that left the group: it can't be found, so stop reading
+            err = (e.stderr or b"").decode(errors="replace")  # bytes even with text=True
+            left = ", and a child outside its process group still holds its pipes"
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe:
+                    pipe.close()
+            proc.poll()
+        return Check(
+            PROBE, FAIL, f"claude didn't finish in {timeout:.0f} s{left}",
+            "run the command by hand in play/ (claude -p ... --mcp-config .mcp.json) to see where it hangs: a login "
+            "prompt, or the bg3 MCP server not starting (uv sync in bridge/)" + _stderr(err),
+        )  # fmt: skip
+    return judge_probe(client, out, err, proc.returncode, time.monotonic() - start)
+
+
+def judge_probe(client: clients.ClaudeClient, out: str, err: str, rc: int, secs: float) -> Check:
+    mcp: list[str] | None = None
+    calls: set[str] = set()  # the session_clock calls' ids: their results are the probe's answer
+    denials: list[Any] = []  # the result event's permission_denials
+    errors: list[str] = []  # the session_clock calls' errors
+    others: list[str] = []  # other tools' errors: harmless before a good session_clock call
+    results: list[str] = []  # the session_clock calls' results
+    end: clients.Event | None = None
+    for line in out.splitlines():
+        for ev in client.parse(line):
+            if ev.kind == "init":
+                mcp = ev.mcp or []
+            elif ev.kind == "tool_call" and ev.tool == PROBE_TOOL:
+                calls.add(ev.call_id or "")
+            elif ev.kind == "tool_result" and ev.call_id in calls:
+                (errors if ev.is_error else results).append(ev.text or "")
+            elif ev.kind == "tool_result" and ev.is_error:
+                others.append(ev.text or "")
+            elif ev.kind == "result":
+                end = ev
+                raw: dict[str, Any] = json.loads(line)  # parse() read it: a JSON object
+                denials = raw.get("permission_denials") or []
+    said = f": {' '.join(end.text.split())[:300]}" if end and end.text else ""
+    failed = end if end and end.is_error else None
+
+    def fail(detail: str, fix: str) -> Check:
+        return Check(PROBE, FAIL, detail, fix + _stderr(err))
+
+    if (failed and "login" in failed.text.lower()) or (mcp is None and "not logged in" in err.lower()):
+        return fail(
+            f"claude isn't logged in{said}",
+            "log in: run `claude` once and /login (CLAUDE_CONFIG_DIR picks the account), then rerun",
+        )
+    if mcp is None and not failed:
+        return fail(
+            f"claude exited {rc} without its init event{said}",
+            "see its stderr: an unknown option means this Claude Code is too old for the play command, update it",
+        )
+    if mcp is not None and "bg3:connected" not in mcp:
+        return fail(
+            f"the bg3 MCP server didn't connect (init: {mcp})",
+            "in play/, `uv run --project ../bridge bg3ai-mcp` must start and wait on stdin: fix what it prints "
+            "(uv sync in bridge/)",
+        )
+    if denials:
+        names = sorted({_denied_tool(d) for d in denials})
+        return fail(
+            f"Claude Code denied {', '.join(names)}: every bg3 call of a play session would be refused",
+            "play/.claude/settings.json must allow mcp__bg3__*; ClaudeClient passes it as --settings (#101): "
+            "update the checkout",
+        )
+    if errors:
+        return fail(f"{PROBE_TOOL} failed: {' '.join(errors[0].split())[:300]}", "see the error")
+    if failed:
+        return fail(
+            f"claude ended in an error ({failed.subtype}){said}",
+            "an API, auth or usage-limit failure: fix what it says (CLAUDE_CONFIG_DIR picks the account), then rerun",
+        )
+    if not calls or not results:
+        other = f", a tool failed: {' '.join(others[0].split())[:300]}" if others else ""
+        return fail(
+            f"{PROBE_MODEL} never called {clients.MCP_PREFIX}{PROBE_TOOL} "
+            f"(calls {len(calls)}, results {len(results)}{other}){said}",
+            "rerun; if it repeats, claude doesn't see the bg3 tools",
+        )
+    if rc != 0 or end is None:
+        return fail(f"claude exited {rc}{said}", "see the error")
+    cost = f"${end.cost_usd:.4f}" if end.cost_usd is not None else "$?"
+    shown = " ".join(results[0].split())[:120]
+    return Check(PROBE, PASS, f"claude {PROBE_MODEL} in play/ called {PROBE_TOOL}: {shown!r} ({cost}, {secs:.0f} s)")
+
+
+def doctor(ctx: Ctx | None = None, claude_probe: bool = False) -> list[Check]:
+    """Every check, in order; a check that crashes is a FAIL of its own, never an abort. claude_probe adds
+    check_claude_probe (it spends money: the CLI's --claude-probe only)."""
     ctx = ctx or default_ctx()
     out: list[Check] = []
     steps: list[tuple[str, Callable[[Ctx], Check | list[Check]]]] = [
@@ -319,6 +468,8 @@ def doctor(ctx: Ctx | None = None) -> list[Check]:
         ("uv", check_python),
         ("node", check_node),
     ]
+    if claude_probe:
+        steps.append((PROBE, check_claude_probe))
     for name, step in steps:
         try:
             got = step(ctx)
@@ -342,8 +493,14 @@ def report(checks: list[Check]) -> dict[str, Any]:
 def main(argv: list[str] | None = None, ctx: Ctx | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="print report() as JSON")
+    ap.add_argument(
+        "--claude-probe",
+        action="store_true",
+        help="also run one real play command (claude haiku in play/ calling mcp__bg3__session_clock): spends about "
+        "$0.005 and needs a logged-in claude",
+    )
     a = ap.parse_args(argv)
-    checks = doctor(ctx)
+    checks = doctor(ctx, claude_probe=a.claude_probe)
     rep = report(checks)
     if a.json:
         print(json.dumps(rep, indent=1))

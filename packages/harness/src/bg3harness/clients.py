@@ -235,7 +235,7 @@ class ClaudeClient:
     def write_config(self, req: Request) -> list[Path]:
         return []   # play/.mcp.json is the config (it sets BG3AI_SERVE_RULES=0: claude reads play/CLAUDE.md itself)
 
-    def env(self, req: Request) -> dict:
+    def env(self, req: Request) -> dict[str, str]:
         # The playthrough has its own memory system; Claude Code's auto-memory would add a second one.
         return {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 
@@ -605,7 +605,7 @@ def make(name: str, **kw) -> Client:
 SANDBOX_CWD = Path("/home/agent")
 
 
-def play_settings(path: Path = PLAY_DIR / ".claude" / "settings.json") -> dict:
+def play_settings(path: Path = PLAY_DIR / ".claude" / "settings.json") -> dict[str, Any]:
     """play/.claude/settings.json (allow mcp__bg3__*, deny every built-in tool) as a --settings JSON: every play
     claude gets it this way, in play/ (untrusted, its project allow doesn't apply) or where play/ isn't its project
     (the container sandbox)."""
