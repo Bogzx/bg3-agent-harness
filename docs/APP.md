@@ -96,8 +96,9 @@ it through `runner/play.py`.
 - **Story**: the chapter summaries (`memory/chapters/`), the overview and the party snapshot.
 - **Replay**: one session's events against its recorded video. Play at 1x to 64x, or step event by event. Sessions
   without video still step through their events.
-- **Launch**: pick a name, a client profile, a character brief, difficulty, session minutes, a cost cap and whether
-  to record; then Start (a new playthrough) or Resume (the next session of an existing one).
+- **Launch**: pick a name, a client profile, a character brief, difficulty, session minutes, a cost cap, whether
+  to record and whether the agent takes operator messages (below); then Start (a new playthrough) or Resume (the
+  next session of an existing one).
 - **Overlay** (`/overlay`): a transparent 1920x1080 page for OBS as a browser source: last action, goal, what the
   agent says, party HP, the clock and the billed cost. `?panels=` picks a subset of `goal,say,party,tool,clock,cost`
   (all of them if omitted); `?pt=` picks the playthrough.
@@ -178,6 +179,9 @@ height = 720
 
 [game]
 autoskip = true                  # skip movies, cinematics and voiced lines; false lets them play
+
+[operator]
+messages = false                 # the Watch screen may send the agent messages (below)
 ```
 
 **Autoskip.** `[game] autoskip` (default true) is the playthrough's cutscene switch: false reaches the runner and the
@@ -202,6 +206,46 @@ cap.
 starts with the followed playthrough's values and switches to a playthrough's own when it is started or resumed; a
 capture that is running in another format restarts in the new one.
 
+## Operator messages
+
+With `[operator] messages = true` (the Launcher's `operator_messages` field, off by default) the person running the
+playthrough can send its agent a short message from the Watch screen. The agent gets it once, appended to the next
+tool result its bg3 server finishes:
+
+```
+OPERATOR MESSAGE (from the person running this playthrough, sent 14:02:31): Check your quest log first.
+```
+
+- `POST /api/v1/playthroughs/<pt>/messages` with `{"text": "..."}` queues one. It needs no `--supervise` and has the
+  same write rules as Start and Stop (the `--token` off localhost). Answers: 201 `{id, t, status: "queued"}`; 404
+  no such playthrough; 409 the option is off, or the session dir is a bench run's; 400 a text that isn't a string,
+  is empty, or has more than 1000 characters; 429 less than 5 s after the last message, or 10 messages still
+  queued.
+- The Watch snapshot has `operator: {enabled, messages}`: each message `{id, t, text, status}`, `status` `queued`
+  or `delivered`, a delivered one with `delivered: {t, session, tool}`. The SSE stream sends an `operator` event
+  with the same row (and `playthrough`) for each new message and each delivery, and again with `queued` when a
+  message is queued again (below).
+- A session the option was on for has `operator: {enabled, sent, delivered}` in its `supervisor.json` row, its
+  `/sessions` row and its Timeline session (null when the option was off). `sent` counts the messages posted while
+  it ran, `delivered` the ones its results carried. Timeline, Replay, Story and Stats mark such a session
+  "guided (N messages)", with N = `delivered`. Replay shows `operator` events at the sent and delivered times, and
+  the session's `Sxxx.latency.json` has `operator_messages` (the delivered count, from the metrics records'
+  `operator` ids), so a reader can leave out the turns after a message.
+- The files are in `runtime/sessions/<pt>/`: `operator.jsonl` (the app appends `{id, t, text}`) and
+  `operator.delivered.jsonl` (the bg3 server appends `{id, t, session, tool}`). The runner gives the session's bg3
+  server `BG3AI_OPERATOR_DIR` (that folder) only when the option is on; a `BG3AI_OPERATOR_*` the app's own shell
+  exports never reaches a session, the memory keeper or a bench run.
+- When an agent restarts after a crash (`harness` runner), a delivered message that the dead client's stream log
+  never showed (so its model never read it) is queued again with a `redeliver` row and goes out in the restarted
+  session's next result.
+- The `legacy` runner passes `BG3AI_OPERATOR_DIR` to `play.py run`, whose bg3 server delivers messages in the same
+  way. play.py resumes a crashed client itself, so there is no redelivery: a message that was in the crashed
+  client's last result counts as delivered.
+- The memory keeper's bg3 server never takes operator messages. It reads the agent's tool results through
+  `actions.jsonl`, so it sees a delivered message the way the agent did.
+
+[MCP-SERVER.md](MCP-SERVER.md#operator-messages) has the server's side.
+
 An older playthrough with only a `profile.json` loads its character and difficulty from it.
 `bg3play.config.migrate` writes `playthrough.toml` from it and leaves `profile.json` in place, because the runner
 still reads it.
@@ -216,7 +260,8 @@ still reads it.
 | `runtime/actions.jsonl`, `runtime/metrics.jsonl` | every tool call; latency samples |
 | `runtime/sessions/<pt>/Sxxx.log` | one session's agent log |
 | `runtime/sessions/<pt>/runner.json` | per-session history (exit, reason, save owner) |
-| `runtime/sessions/<pt>/supervisor.json` | the Supervisor's history (outcome, progress per session) |
+| `runtime/sessions/<pt>/supervisor.json` | the Supervisor's history (outcome, progress, operator messages per session) |
+| `runtime/sessions/<pt>/operator.jsonl`, `operator.delivered.jsonl` | operator messages sent; their deliveries |
 | `runtime/sessions/<pt>/keeper_history.jsonl`, `Sxxx-keeper.*` | memory keeper passes and their logs |
 | `runtime/sessions/<pt>/Sxxx.fights.jsonl`, `positions.jsonl` | fights; party positions for the map |
 | `runtime/budget.json` | the global USD budget paid clients draw from |

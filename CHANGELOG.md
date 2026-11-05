@@ -192,6 +192,8 @@ game unless it says so.
   end, not in a step. Without the variable nothing is opened or added. No tool, description or rules text changes,
   so the served tool definitions and their digests stay the same. A bench run never has it: `LiveRunHost` drops
   every `BG3AI_OPERATOR_*` from the env a run gets, whatever the shell that started the bench exports.
+  The harness version stays: the block appears only with the playthrough's option on. A session's `latency.json`
+  has `operator_messages`: how many message ids its metrics records carried (0 without the option).
 
 ### Benchmark (`packages/bench`)
 
@@ -411,6 +413,10 @@ game unless it says so.
   `operator: {enabled, messages}`, the SSE stream an `operator` event per new row (with `playthrough`), Replay
   `operator` events at the sent and delivered times, and each session's `supervisor.json` row, `/sessions` row and
   Timeline session `operator: {enabled, sent, delivered}` (null when the option was off).
+- The operator messages' dir reaches a session only from the runner, for a playthrough with the option on: the
+  `harness` runner's agent and the `legacy` runner's `play.py run` drop a `BG3AI_OPERATOR_*` the app's shell
+  exports, and the `legacy` runner passes `BG3AI_OPERATOR_DIR` to `play.py` (its bg3 server delivers; no restart
+  redelivery there). The memory keeper's client and bg3 server never get one (`keeper.keeper_env`).
 
 ## Before the overhaul (`main` up to 471ee66)
 
