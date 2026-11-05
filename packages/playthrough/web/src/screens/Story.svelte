@@ -5,6 +5,7 @@
   import { api } from "../lib/api";
   import { href } from "../lib/route";
   import { hpPct } from "../lib/format";
+  import { guidedLine, guidedSessions } from "../lib/operator";
   import type { StoryItem, StoryPayload } from "../lib/types";
 
   let { pt }: { pt: string } = $props();
@@ -13,12 +14,14 @@
   let tab = $state<Tab>("chapters");
   let d = $state.raw<StoryPayload | null>(null);
   let error = $state<string | null>(null);
+  let guided = $state<string | null>(null); // the sessions with operator messages on: the story is partly guided
 
   onMount(() => {
     api
       .story(pt)
       .then((s) => (d = s))
       .catch((e: Error) => (error = e.message));
+    api.sessions(pt).then((r) => (guided = guidedLine(guidedSessions(r.sessions))), (e: Error) => (error = e.message));
   });
 
   const members = $derived(d ? [...d.status.party, ...d.others.map((o) => ({ ...o, camp: true }))] : []);
@@ -39,6 +42,7 @@
     <span class="faint count">{d.chapters.length} chapters ·
       <a href={href({ screen: "timeline", pt, file: null })}>{d.decisions.length} decisions on the timeline</a></span>
   </div>
+  {#if guided}<div class="guided">⚑ {guided}</div>{/if}
 
   {#if tab === "chapters"}
     {#each d.chapters.slice().reverse() as c (c.file)}
@@ -84,6 +88,7 @@
 {/if}
 
 <style>
+  .guided { color: var(--warn); font-size: 13px; margin: -6px 2px 12px; }
   .tabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; margin-bottom: 12px; }
   .tabs button { background: none; border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; color: var(--muted); }
   .tabs button.on { color: var(--text); border-color: var(--accent); }

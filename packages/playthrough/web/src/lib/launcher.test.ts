@@ -17,10 +17,19 @@ describe("launcher", () => {
     const f = formFrom(cfg);
     expect(f.difficulty).toBe("Explorer");
     expect(launchBody({ ...f, profile: "codex", brief: "  a bard " })).toEqual({
-      body: { profile: "codex", brief: "a bard", difficulty: "Explorer", session_minutes: 60, max_cost: 0, recording: true },
+      body: { profile: "codex", brief: "a bard", difficulty: "Explorer", session_minutes: 60, max_cost: 0, recording: true,
+              operator_messages: false },
     });
     expect(launchBody({ ...f, name: "../x" })).toEqual({ error: "Name: letters, digits, . _ - (max 64)" });
     expect(launchBody({ ...f, minutes: 0 })).toHaveProperty("error");
+  });
+
+  it("sends the operator messages option from the config, off by default", () => {
+    expect(formFrom(cfg).operator).toBe(false);
+    const on = formFrom({ ...cfg, operator: { messages: true } });
+    expect(on.operator).toBe(true);
+    expect(launchBody(on)).toMatchObject({ body: { operator_messages: true } });
+    expect(launchBody({ ...on, operator: false })).toMatchObject({ body: { operator_messages: false } });
   });
 
   it("labels client profiles and needs a cost cap for pi", () => {

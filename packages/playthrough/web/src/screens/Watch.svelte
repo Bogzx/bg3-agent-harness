@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, openStream } from "../lib/api";
+  import { api, ApiError, openStream } from "../lib/api";
+  import { TOKEN_KEY } from "../lib/auth";
   import { applyPosition, emptyPositions } from "../lib/breadcrumb";
   import { argLine, clock, hpPct, mmss, num, usd } from "../lib/format";
   import type { PositionRow, Positions } from "../lib/types";
+  import { canSend, MAX_TEXT, nextAction, sendError, sessionLive, statusText, textProblem } from "../lib/operator";
   import { applyEvent, fromSnapshot, says, screenSrc, secondsLeft, type WatchState } from "../lib/watch";
   import Breadcrumb from "./Breadcrumb.svelte";
 
@@ -18,6 +20,10 @@
   let pos = $state.raw<Positions>(emptyPositions());
   let liveVideo = $state(false);
   let close: (() => void) | null = null;
+  let draft = $state("");
+  let sending = $state(false);
+  let sendErr = $state<string | null>(null);
+  const sender = canSend(location.hostname, sessionStorage.getItem(TOKEN_KEY)); // else the list is read-only
 
   function checkRecorder() {
     api.recorder().then((r) => (liveVideo = Boolean(r.recorder?.recording)), () => (liveVideo = false));
@@ -47,6 +53,26 @@
     }
   }
 
+  async function send() {
+    const problem = textProblem(draft);
+    if (problem) {
+      sendErr = problem;
+      return;
+    }
+    sending = true;
+    try {
+      const text = draft;
+      const r = await api.message(pt, text);
+      draft = "";
+      sendErr = null;
+      if (s) s = applyEvent(s, "operator", { ...r, text, playthrough: pt }); // the stream's row replaces it
+    } catch (e) {
+      sendErr = e instanceof ApiError ? sendError(e.status, e.message) : (e as Error).message;
+    } finally {
+      sending = false;
+    }
+  }
+
   onMount(() => {
     void load();
     const tick = setInterval(() => (now = Date.now() / 1000), 1000);
@@ -64,6 +90,7 @@
     s ? s.actions.filter((a) => filter === "all" || (filter === "read" ? a.kind === "read" : a.kind !== "read")).slice(-60).reverse() : [],
   );
   const words = $derived(s ? says(s, 6) : []);
+  const playing = $derived(s ? sessionLive(s.live, s.runner) : false);
 </script>
 
 {#if error}
@@ -153,6 +180,38 @@
         </div>
       </section>
 
+      {#if s.operator.enabled}
+        <section class="panel o2 operator" aria-label="Operator messages">
+          <h2>Operator messages <span class="right faint">{playing ? "go out in the next tool result" : "go out next session"}</span></h2>
+          {#if sender}
+            <form class="send" onsubmit={(e) => { e.preventDefault(); void send(); }}>
+              <textarea rows="3" bind:value={draft} placeholder="A message for the agent" aria-label="Message for the agent"></textarea>
+              <div class="sendrow">
+                <span class="count faint" class:over={draft.length > MAX_TEXT}>{draft.length}/{MAX_TEXT}</span>
+                <button class="btn" type="submit" disabled={sending || !draft.trim()}>Send</button>
+              </div>
+              {#if sendErr}<div class="senderr">{sendErr}</div>{/if}
+            </form>
+          {/if}
+          {#if s.operator.messages.length}
+            <ul class="ops">
+              {#each s.operator.messages as m (m.id)}
+                {@const next = nextAction(m, s.actions, s.session)}
+                <li class:done={m.status === "delivered"}>
+                  <div class="text">{m.text}</div>
+                  <div class="meta faint">sent {clock(m.t)} · <span class="status">{statusText(m, playing)}</span></div>
+                  {#if next}
+                    <div class="next faint">then <span class="tool k-{next.kind}">{next.tool.replace("mcp__bg3__", "")}</span> {argLine(next.args, 60)}</div>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <div class="empty">No messages yet.</div>
+          {/if}
+        </section>
+      {/if}
+
       <section class="panel o3">
         <h2>Party <span class="right faint">{s.party ? `from ${s.party.source}` : ""}</span></h2>
         {#if s.party?.party.length}
@@ -240,6 +299,24 @@
   .bar div.low { background: var(--bad); }
   .party li.dead .name, .party li.downed .name { color: var(--bad); }
   .st { font-size: 11.5px; margin-top: 2px; }
+  .send { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 4px; }
+  .send textarea {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; color: var(--text);
+    font: inherit; width: 100%; resize: vertical;
+  }
+  .sendrow { display: flex; justify-content: space-between; align-items: center; }
+  .count { font: 11px var(--mono); }
+  .count.over { color: var(--bad); }
+  .btn { border: 1px solid var(--accent); background: var(--accent); color: #111; border-radius: 6px; padding: 4px 14px; cursor: pointer; font-weight: 600; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .senderr { color: var(--bad); font-size: 13px; }
+  .ops { list-style: none; margin: 0; padding: 4px 12px 10px; max-height: 360px; overflow-y: auto; }
+  .ops li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .ops li:last-child { border-bottom: 0; }
+  .ops .text { white-space: pre-wrap; word-break: break-word; }
+  .ops .meta, .ops .next { font-size: 11.5px; margin-top: 2px; }
+  .ops li:not(.done) .status { color: var(--warn); }
+  .ops li.done .status { color: var(--ok); }
   .mem { list-style: none; margin: 0; padding: 6px 12px 10px; font-size: 13px; }
   @media (max-width: 900px) {
     /* one column: the picture, then what it is doing and the party, then its words and calls */

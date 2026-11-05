@@ -97,6 +97,23 @@ describe("watch reducer", () => {
     expect(applyEvent(s, "unknown", {})).toBe(s);
   });
 
+  it("operator messages: the snapshot's, then this playthrough's stream rows", () => {
+    const row = { id: "m1", t: 5, text: "go north", status: "queued" as const };
+    expect(fromSnapshot(snap()).operator).toEqual({ enabled: false, messages: [] }); // a server without them
+    let s = fromSnapshot(snap({ operator: { enabled: true, messages: [row] } }));
+    expect(s.operator.enabled).toBe(true);
+    const done = { ...row, status: "delivered" as const, delivered: { t: 9, session: "S001", tool: "travel_to" } };
+    s = applyEvent(s, "operator", { ...done, playthrough: "pt" });
+    expect(s.operator.messages.map((m) => m.status)).toEqual(["delivered"]);
+    s = applyEvent(s, "operator", { ...row, playthrough: "pt" }); // the stream's replay of its queued row
+    expect(s.operator.messages.map((m) => m.status)).toEqual(["delivered"]);
+    const before = s;
+    expect(applyEvent(s, "operator", { ...row, id: "m2", playthrough: "other" })).toBe(before);
+    expect(applyEvent(s, "operator", { ...row, id: "m2" }).operator.messages.map((m) => m.id)).toEqual(["m2", "m1"]);
+    const idle = fromSnapshot(snap({ runner: null, operator: { enabled: true, messages: [] } }));
+    expect(applyEvent(idle, "operator", { ...row, id: "m2" })).toBe(idle); // no playthrough named: the live one's
+  });
+
   it("seconds left", () => {
     expect(secondsLeft({ playthrough: "pt", deadline: 1000 }, 940)).toBe(60);
     expect(secondsLeft({ playthrough: "pt", deadline: 1000, session_ended: 990 }, 940)).toBeNull();
