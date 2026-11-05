@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.3.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.4.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -86,6 +86,14 @@ game unless it says so.
   out of combat block by default, the minimap block, the PASSED line, a walk ends a batch, roll_check's reroll, trade's SOLD list, known ground to 16 m,
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
+- 0.4.0 (2026-11-05): what a maximise run's agent is told changed: the kickoff states the end rule (a stretch with
+  no acting call since a restart ends the run) and names the tools that are acting calls, and the resume message no
+  longer says the run goes on until its time cap. It also covers the bg3 tool changes of bench-v0.11 (bridge/CHANGELOG.md,
+  2026-11-04 night and 2026-11-05 entries). bench-v0.11's release cites it.
+- The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
+  `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
+  `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
+  10G as before. The relaunch reason names the kill the game really runs under, not always 9000.
 
 - Casts the harness starts now roll their dice. A cast an Osiris `UseSpell` or
   `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,
@@ -385,6 +393,10 @@ game unless it says so.
   file (`releases/bench-v0.11.json`) pins the night follow-up's mod tree, tool definitions and served prompts, and
   its start save keys are `saves/bench-v0.11/` (the same save files as bench-v0.10). What changed for the agent is
   in bridge/CHANGELOG.md (2026-11-04 night and 2026-11-05 entries).
+  A maximise run its end rule ended before the time cap is recorded as `ended_by_agent` (run record, facts' run_end,
+  result.v1 still, the render's ENDED BY AGENT ending), not `timeout`; its score is computed as before, and older
+  runs keep `timeout`. results.py lists the new outcome, so bench-v0.11 pins a second digest (no score moves; the
+  version stays 0.11.0, untagged and ungraded, as bench-v0.10's second digest did).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
