@@ -14,10 +14,22 @@ describe("bench", () => {
   it("gives the verdict: pass, fail with the outcome, invalid with the reason", () => {
     expect(verdict(claude)).toEqual({ text: "pass", level: "ok" });
     expect(verdict(pi)).toEqual({ text: "fail (over budget)", level: "bad" });
-    expect(verdict({ ...pi, outcome: "ended_by_agent" }).text).toBe("fail (ended by agent)");
     expect(verdict({ ...pi, valid: false, invalid_reason: "harness_failure" })).toEqual({
       text: "invalid (harness_failure)", level: "warn",
     });
+  });
+
+  it("gives a maximise run its score: it has no pass or fail, however it ended", () => {
+    const run = { ...pi, passed: null, outcome: "ended_by_agent" as const };
+    const score = { fact: "gold", start: 133, end: 650, gain: 517, peak: 900 };
+    expect(verdict({ ...run, score })).toEqual({ text: "+517 gold (ended by agent)", level: "info" });
+    expect(verdict({ ...run, outcome: "timeout", score: { ...score, gain: -40 } }).text).toBe("-40 gold (timeout)");
+    expect(verdict({ ...run, score: { ...score, gain: 0 } }).text).toBe("0 gold (ended by agent)");
+    expect(verdict({ ...run, score: { ...score, gain: null } })).toEqual({
+      text: "no gold read (ended by agent)", level: "info",
+    });
+    expect(verdict(run)).toEqual({ text: "no pass or fail (ended by agent)", level: "info" });
+    expect(verdict({ ...run, score, valid: false, invalid_reason: "harness_failure" }).level).toBe("warn");
   });
 
   it("formats durations, tokens and the think share of the wall clock", () => {

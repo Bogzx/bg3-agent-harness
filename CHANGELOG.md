@@ -414,6 +414,8 @@ game unless it says so.
 
 ### Playthrough app (`packages/playthrough`)
 
+- The grade card shows a maximise run's score and how it ended (`+517 gold (ended by agent)`), not "fail": such a run
+  has no pass or fail.
 - Config in `playthrough.toml`, migrated from `profile.json`.
 - A run store, a v1 JSON API and an SSE stream that resumes from `Last-Event-ID`.
 - A Svelte web app: Watch, Memory, Timeline, Launcher, Overlay (transparent 1920x1080 for streaming) and Replay.

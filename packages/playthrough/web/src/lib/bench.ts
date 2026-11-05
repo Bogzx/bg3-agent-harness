@@ -1,13 +1,21 @@
 // The benchmark grade card (screens/Bench.svelte) and the Replay ticks: pure helpers over a run's result.json.
 import type { BenchManifest, BenchResult, CurvePoint, Methods } from "./types";
 
-export type Level = "ok" | "bad" | "warn";
+export type Level = "ok" | "bad" | "warn" | "info";
 
-/** pass / fail (outcome) / invalid (reason): an invalid run is rerun and never scored. */
+/** pass / fail (outcome) / invalid (reason): an invalid run is rerun and never scored. A maximise run (passed null)
+ * has no pass or fail: its score and how it ended. */
 export function verdict(r: BenchResult): { text: string; level: Level } {
   if (!r.valid) return { text: `invalid${r.invalid_reason ? ` (${r.invalid_reason})` : ""}`, level: "warn" };
   if (r.passed) return { text: "pass", level: "ok" };
-  return { text: `fail (${r.outcome.replace(/_/g, " ")})`, level: "bad" };
+  const how = r.outcome.replace(/_/g, " ");
+  if (r.passed === null) {
+    const s = r.score;
+    if (!s) return { text: `no pass or fail (${how})`, level: "info" };
+    if (s.gain === null) return { text: `no ${s.fact} read (${how})`, level: "info" };
+    return { text: `${s.gain > 0 ? "+" : ""}${s.gain} ${s.fact} (${how})`, level: "info" };
+  }
+  return { text: `fail (${how})`, level: "bad" };
 }
 
 /** Seconds as "17m 23s" / "45s"; "–" for null. */

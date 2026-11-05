@@ -578,7 +578,8 @@ export interface BenchResult {
   outcome: "reached" | "timeout" | "ended_by_agent" | "over_budget" | "gave_up" | "runner_error";
   valid: boolean;
   invalid_reason: string | null;
-  passed: boolean;
+  passed: boolean | null; // null: a maximise run, which has a score instead
+  score?: { fact: string; start: number | null; end: number | null; gain: number | null; peak: number | null };
   t_pass_s: number | null;
   grade: { violations: { t_s: number; node?: unknown }[]; curve: { fact: string; points: CurvePoint[] }; progress: number | null } | null;
   methods: Methods | null;
