@@ -295,17 +295,38 @@ end
 -- Spell id -> its CooldownType, for every SpellBookCooldowns row. The one cooldown rule: state.actions lists such an
 -- action UNAVAILABLE and G.known_spell refuses its cast, whatever the row's Cooldown value (w10 CD1: Pommel Strike's
 -- row read Cooldown=-1 UntilShortRest through end_turn and the round close; the guard's old "Cooldown > 0" let
--- use_ability cast it again while get_actions said UNAVAILABLE).
+-- use_ability cast it again while get_actions said UNAVAILABLE). Second value: the rows read (false: no component,
+-- or a row didn't read; the map may then miss a running cooldown).
 function G.cooldowns(e)
     local out = {}
     local cd = e and U.comp(e, "SpellBookCooldowns")
-    if not cd then return out end
-    pcall(function()
+    if not cd then return out, false end
+    local ok = pcall(function()
         for _, c in ipairs(cd.Cooldowns) do
             out[c.SpellId.Prototype] = tostring(c.CooldownType)
         end
     end)
-    return out
+    return out, ok
+end
+
+-- Can the spell go on cooldown: its stats Cooldown is set (not "" or "None"); an unread stats entry counts as yes.
+local function has_cooldown(spell)
+    local ok, cd = pcall(function() return Ext.Stats.Get(spell).Cooldown end)
+    if not ok then return true end
+    cd = tostring(cd or "")
+    return cd ~= "" and cd ~= "None"
+end
+
+-- The one cooldown rule: G.known_spell refuses what this blocks and state.actions lists it UNAVAILABLE (cds, read =
+-- G.cooldowns(e)). nil: free; the running row's CooldownType and the refusal; or false and the fact when the rows
+-- didn't read and the spell can have a cooldown (fail closed: unread rows can't show a running one).
+function G.cooldown_block(spell, cds, read)
+    if cds[spell] then return cds[spell], G.cooldown_text(cds[spell]) end
+    if not read and has_cooldown(spell) then
+        local f = G.spell_facts(spell)
+        return false, "the cooldown state of " .. (f and f.name or spell) .. " could not be read"
+    end
+    return nil
 end
 
 -- How long the cooldown lasts, as a fact (bg3se SpellCooldownType).
@@ -352,8 +373,8 @@ function G.known_spell(char, spell)
     if G.unprepared(found, G.prepared_ids(e)) then G.refuse("that spell is not prepared") end
 
     -- Cooldown (once per turn / combat / short rest / long rest): the rule get_actions shows (G.cooldowns)
-    local kind = e and G.cooldowns(e)[spell]
-    if kind then G.refuse(G.cooldown_text(kind)) end
+    local kind, text = G.cooldown_block(spell, G.cooldowns(e))
+    if kind ~= nil then G.refuse(text) end
     local key = G.item_cd_key(char, spell)
     if key and G.item_uses()[key] then
         G.refuse("that action is used up until the next " .. (G.item_uses()[key] == "short" and "short or long rest"

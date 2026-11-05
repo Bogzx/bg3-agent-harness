@@ -499,10 +499,13 @@ local function spellInfo(id)
     return c or nil
 end
 
--- The guard's own cooldown rule (Guard.cooldowns): what this lists UNAVAILABLE is what a cast is refused for.
+-- The guard's own cooldown rule (Guard.cooldown_block over Guard.cooldowns): what this lists UNAVAILABLE is what a
+-- cast is refused for, unread rows included. id -> nil, or kind and the fact (kind false: the rows didn't read).
 local function cooldowns(e)
     local Gc = BG3AI.Guard
-    return Gc and Gc.cooldowns and Gc.cooldowns(e) or {}
+    if not (Gc and Gc.cooldowns and Gc.cooldown_block) then return function() return nil end end
+    local cds, read = Gc.cooldowns(e)
+    return function(id) return Gc.cooldown_block(id, cds, read) end
 end
 
 -- Footprint radius (m), as Guard.radius: AIBounds.Stand, then Move, then 0.5.
@@ -542,7 +545,7 @@ function S.actions(uuid)
     if not e then error("unknown character", 0) end
     local wranges = weaponRanges(e)
     local res = resources(e)
-    local cds = cooldowns(e)
+    local cooldown = cooldowns(e)
     local book = comp(e, "SpellBook")
     if not book then return {} end
     local byId, order, upcasts, variants = {}, {}, {}, {}
@@ -613,7 +616,8 @@ function S.actions(uuid)
             end
         end
         local ok, why = canPay(pay, res)
-        if cds[id] then ok, why = false, "cooldown (" .. cds[id] .. ")" end
+        local kind, fact = cooldown(id)
+        if kind then ok, why = false, "cooldown (" .. kind .. ")" elseif kind == false then ok, why = false, fact end
         local Gi = BG3AI.Guard
         local ik = Gi and Gi.item_cd_key and Gi.item_cd_key(uuid, id)
         if ik and Gi.item_uses()[ik] then ok, why = false, "used until the next rest (once per rest, its item)" end
