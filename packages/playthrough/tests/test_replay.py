@@ -95,3 +95,28 @@ def test_replay_of_running_session(store: RunStore, tmp_path: Path):
     r = replay.replay(store, PT, "S097", tmp_path / "video", start + 90)
     assert r is not None and (r["started"], r["ended"]) == (start, start + 90)
     assert [(e["kind"], e["t"]) for e in r["events"]] == [("action", start + 30)]
+    msg = {"id": "m1", "t": start + 20, "text": "rest first"}
+    (store.session_dir(PT) / "operator.jsonl").write_text(json.dumps(msg) + "\n")
+    r = replay.replay(store, PT, "S097", tmp_path / "video", start + 90)
+    assert r is not None
+    assert [(e["kind"], e["t"]) for e in r["events"]] == [("operator", start + 20), ("action", start + 30)]
+
+
+def test_operator_messages_on_the_replay_axis(tmp_path: Path):
+    rows = [{"id": "m1", "t": 90.0, "text": "before"}, {"id": "m2", "t": 110.0, "text": "rest first"}]
+    (tmp_path / "operator.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    done = [
+        {"id": "m1", "t": 101.0, "session": "S004", "tool": "look"},  # sent before the window, delivered in it
+        {"id": "m2", "t": 115.0, "session": "S004", "tool": "travel_to"},
+        {"id": "m2", "t": 120.0, "redeliver": True},  # no event: the screen's status comes from the snapshot
+        {"id": "m2", "t": 300.0, "session": "S005", "tool": "look"},  # after the window
+    ]
+    (tmp_path / "operator.delivered.jsonl").write_text("".join(json.dumps(r) + "\n" for r in done))
+    assert replay.operator_events(tmp_path, 100.0, 200.0) == [
+        {"t": 110.0, "kind": "operator", "id": "m2", "text": "rest first", "status": "queued"},
+        {"t": 101.0, "kind": "operator", "id": "m1", "text": "before", "status": "delivered",
+         "delivered": {"t": 101.0, "session": "S004", "tool": "look"}},
+        {"t": 115.0, "kind": "operator", "id": "m2", "text": "rest first", "status": "delivered",
+         "delivered": {"t": 115.0, "session": "S004", "tool": "travel_to"}},
+    ]  # fmt: skip
+    assert replay.operator_events(tmp_path / "none", 0.0, 1e12) == []

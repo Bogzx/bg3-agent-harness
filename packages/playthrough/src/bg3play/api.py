@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import bench, parse
+from . import bench, operator, parse
 from . import positions as pos
 from .store import RunStore
 
@@ -107,6 +107,11 @@ def watch(store: RunStore, pt: str, log_entries: int = 300, action_rows: int = 1
             },
             "latency": (last or {}).get("latency"),
             "screenshot": {"t": shot.stat().st_mtime, "name": shot.name} if shot else None,
+            # the operator messages: whether the playthrough takes them now, and every one sent with its status
+            "operator": {
+                "enabled": operator.enabled(store.playthroughs_dir / pt, store.session_dir(pt)),
+                "messages": operator.rows(store.session_dir(pt)),
+            },
         }
     )
 
@@ -148,7 +153,13 @@ def timeline(store: RunStore, pt: str) -> dict[str, Any]:
         {
             "playthrough": pt,
             "sessions": [
-                {"session": s["session"], "started": s["started"], "minutes": s["minutes"], "outcome": s["outcome"]}
+                {
+                    "session": s["session"],
+                    "started": s["started"],
+                    "minutes": s["minutes"],
+                    "outcome": s["outcome"],
+                    "operator": s.get("operator"),
+                }
                 for s in ss
             ],
             "decisions": cards,

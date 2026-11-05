@@ -276,3 +276,26 @@ def test_an_unreadable_status_is_not_a_new_session(rt: Path):
     events, _, _ = hub.read(None)
     assert "actions_reset" not in types(events)
     assert [e.data["result"] for e in events if e.type == "action"] == ["r1", "r2"]
+
+
+def test_operator_rows_stream_once_each_with_the_playthrough(rt: Path):
+    sdir = rt / "sessions" / PT
+    inbox, done = sdir / "operator.jsonl", sdir / "operator.delivered.jsonl"
+    append(inbox, json.dumps({"id": "m1", "t": 1.0, "text": "old"}))
+    hub = make_hub(rt)
+    hub.poll()
+    assert "operator" not in types(hub.read(None)[0])  # messages from before the hub started are not news
+    last = hub.last_id()
+    append(inbox, json.dumps({"id": "m2", "t": 2.0, "text": "rest first"}), '{"id": "m3", "t": 3')  # m3: half written
+    append(done, json.dumps({"id": "m2", "t": 4.0, "session": "S001", "tool": "look"}))
+    hub.poll()
+    hub.poll()  # nothing changed: nothing new
+    append(done, json.dumps({"id": "m2", "t": 5.0, "redeliver": True}), json.dumps({"id": "m9", "t": 5.0}))
+    hub.poll()
+    events, _, _ = hub.read(last)
+    assert [e.data for e in events if e.type == "operator"] == [
+        {"id": "m2", "t": 2.0, "text": "rest first", "status": "queued", "playthrough": PT},
+        {"id": "m2", "t": 2.0, "text": "rest first", "status": "delivered", "playthrough": PT,
+         "delivered": {"t": 4.0, "session": "S001", "tool": "look"}},
+        {"id": "m2", "t": 2.0, "text": "rest first", "status": "queued", "playthrough": PT},  # redelivered
+    ]  # fmt: skip

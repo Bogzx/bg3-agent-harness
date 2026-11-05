@@ -55,8 +55,12 @@ def test_a_session_that_never_started_and_one_with_game_deaths(tmp_path: Path):
         SessionResult("?", "error", detail="no client"),
         SessionResult("S001-r1", "crash", None, 1.0, 2.0, 0.3, game_deaths=("oom", ""), loaded="S001-x"),
     ]
-    sup.write_history(path, [asdict(r) for r in rows])
+    guided = dict(asdict(rows[1]), session="S002", operator={"enabled": True, "sent": 2, "delivered": 1})
+    sup.write_history(path, [asdict(r) for r in rows] + [dict(asdict(rows[1]), operator=None), guided])
     assert errors("supervisor.v1.schema.json", load(path)) == []
+
+
+ROW = asdict(SessionResult("S001", "ok", None, 1.0, 2.0))
 
 
 @pytest.mark.parametrize(
@@ -64,6 +68,7 @@ def test_a_session_that_never_started_and_one_with_game_deaths(tmp_path: Path):
     [
         ("supervisor.v1.schema.json", {"history": []}),  # no v
         ("supervisor.v1.schema.json", {"v": 1, "history": [{"session": "S001", "outcome": "won"}]}),
+        ("supervisor.v1.schema.json", {"v": 1, "history": [dict(ROW, operator={"sent": 1})]}),  # no enabled
         ("runner.schema.json", {"history": [{"kind": "play", "started": 1.0, "ended": 2.0}]}),  # no session
         ("runner-status.schema.json", {"session_ended": "yes"}),
     ],

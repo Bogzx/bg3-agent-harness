@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from . import parse
+from . import operator, parse
 from .jsontypes import Obj, is_obj, objs
 
 SESSION_LOG_RE = re.compile(r"^(S\d{3,})\.log$")
@@ -168,6 +168,10 @@ class RunStore:
         subtype (client_outcome, kept as is)."""
         d = self.session_dir(pt)
         running = self.running_session(pt)
+        # the guided mark: the supervisor's row of a session it ran ({enabled, sent, delivered} or null), else for the
+        # session running now with the option on, its counts so far
+        guided = {h.get("session"): h.get("operator") for h in objs(read_json(d / "supervisor.json").get("history"))}
+        live_on = running is not None and operator.enabled(self.playthroughs_dir / pt, d)
         hist = {
             h.get("session"): h
             for h in objs(read_json(d / "runner.json").get("history"))
@@ -193,6 +197,8 @@ class RunStore:
                 end["cost_usd"] = self.cost(d / sid)
             lat = read_json(d / f"{sid}.latency.json")
             prog = read_json(d / f"{sid}.progress.json")
+            if sid not in guided and live_on and live and running:
+                guided[sid] = operator.session_counts(d, sid, running[1], None)
             rows.append(
                 {
                     "session": sid,
@@ -206,6 +212,7 @@ class RunStore:
                     "latency": latency_summary(lat) if lat else None,
                     "points": prog.get("points"),
                     "points_per_hour": prog.get("per_hour"),
+                    "operator": guided.get(sid),
                 }
             )
         return rows

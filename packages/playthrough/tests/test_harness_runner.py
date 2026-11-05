@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from bg3ai import operator as op
 from bg3harness import client_setup
 from bg3harness.game.host import AppHost
 from bg3harness.game.io import Save
 from bg3harness.session import Recovery
-from bg3play import config
+from bg3play import config, operator
 from bg3play.adapters import harness_runner as hr
 from bg3play.adapters.agent_process import AgentCall, AgentRun
 from bg3play.config import PlaythroughConfig
@@ -184,6 +185,7 @@ def test_two_sessions_with_the_keeper_between_and_the_files_the_store_reads(tmp_
     # the condition and the clock reach the agent and the bg3 server; the memory's sid names the session
     assert first.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching" and first.env["BG3AI_SESSION"] == "S001"
     assert first.env["BG3AI_SESSION_DEADLINE"] == str(1000 + 30 * 60) and first.env["BG3_WRAP_MINUTES"] == "27.0"
+    assert "BG3AI_OPERATOR_DIR" not in first.env  # the option is off: the bg3 server never looks for messages
     # the game's save identity reaches the bg3 server (live9 S002: without it list_saves was empty)
     assert (first.env["BG3AI_SAVE_OWNER"], first.env["BG3AI_SAVE_PREFIX"]) == ("Ilse", "Ilse-")
     assert [k for k, _ in memory.log] == ["start", "stop", "end", "start", "stop", "end"]
@@ -233,6 +235,29 @@ def test_a_game_hang_the_game_recovers_from_resumes_the_session(tmp_path: Path):
     assert b.resume and b.conversation == a.conversation and "recovered (S001-end)" in b.prompt
     (h,) = sup.history(PT)
     assert (h["outcome"], h["progress"]) == ("ok", False)
+
+
+def test_a_guided_session_gives_the_bg3_server_the_dir_and_a_restart_queues_an_unseen_message_again(tmp_path: Path):
+    sdir = tmp_path / "runtime" / "sessions" / PT
+    seen: list[list[str]] = []
+
+    def during(n: int) -> None:
+        if n == 1:  # the bg3 server delivered m1 and m2 into results; the client's stream shows only m1's
+            for text in ("rest first", "then go north"):
+                assert operator.post(sdir, True, {"text": text}, 1000.0 + 10 * len(text))[0] == 201
+            rows = [{"id": m, "t": 1100.0, "session": "S001", "tool": "look"} for m in ("m1", "m2")]
+            (sdir / op.DELIVERED).write_text("".join(json.dumps(r) + "\n" for r in rows))
+            shown = {"type": "user", "content": op.line(1100.0, "rest first")}
+            (sdir / "S001.jsonl").write_text(json.dumps(shown) + "\n")
+        seen.append([r["status"] for r in operator.rows(sdir)])
+
+    sup, agent, *_ = make(tmp_path, [("hang", 5), ("exited", 25)], hours=0.5, recover_to="S001-end", during=during)
+    cfg = config.load(tmp_path / "playthroughs" / PT)
+    config.save(tmp_path / "playthroughs" / PT, dataclasses.replace(cfg, operator=config.Operator(messages=True)))
+    sup.start(PT, wait=True)
+    assert [c.env["BG3AI_OPERATOR_DIR"] for c in agent.calls] == [str(sdir)] * 2 and agent.calls[1].resume
+    assert seen == [["delivered", "delivered"], ["delivered", "queued"]]  # m2 is pending again for the restart
+    assert op.read_rows(sdir / op.DELIVERED)[-1] == {"id": "m2", "t": 1000.0 + 5 * 60, "redeliver": True}
 
 
 def test_faults_and_recoveries_reach_the_dashboards_event_log(tmp_path: Path):

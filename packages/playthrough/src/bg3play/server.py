@@ -28,6 +28,9 @@ Endpoints (GET, JSON unless noted, Cache-Control: no-store):
 
 Control (POST, JSON body; needs --supervise): /api/v1/playthroughs/<pt>/start|resume (body: the Launcher's fields,
 supervisor.LAUNCH_KEYS), /api/v1/playthroughs/<pt>/stop.
+POST /api/v1/playthroughs/<pt>/messages (body {"text": ...}; no --supervise needed): an operator message to the
+playthrough's agent (operator.py): 201 {id, t, status}, 409 when the playthrough's [operator] messages is off or the
+dir is a bench run's, 400 a bad text, 429 too soon or too many queued.
 GET /api/v1/supervisor (state + client profiles: client_profiles.py),
 GET /api/v1/playthroughs/<pt>/config. Writes are refused cross-origin; with --token every write needs it
 (Authorization: Bearer), from localhost too; without it a write must come from localhost and name a localhost
@@ -52,7 +55,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
-from . import api, client_profiles, config, replay
+from . import api, client_profiles, config, operator, replay
 from . import game as gm
 from . import positions as pos
 from . import recorder as rec
@@ -70,6 +73,7 @@ PT_ROUTE = re.compile(
 CONTROL_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/(start|stop|resume)$")
 REPLAY_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/replay/(S\d{3,})$")
 CONFIG_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/config$")
+MESSAGES_ROUTE = re.compile(r"^/api/v1/playthroughs/([^/]+)/messages$")
 MAX_BODY = 64 * 1024
 VIDEO_FILE = re.compile(r"^/api/v1/video/(rec-\d+-\d{4}\.mp4)$")
 KEEPALIVE_S = 15.0
@@ -175,6 +179,15 @@ class App:
         except sup.SupervisorError as e:
             return 409, {"v": v, "error": str(e)}
         return 200, {"v": v, "supervisor": s.view()}
+
+    def messages(self, pt: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """POST messages -> (HTTP code, payload): an operator message into the playthrough's inbox."""
+        s = self.store
+        if not (s.playthroughs_dir / pt).is_dir():
+            return 404, {"v": api.API_VERSION, "error": f"no playthrough {pt}"}
+        sdir = s.session_dir(pt)
+        code, payload = operator.post(sdir, operator.enabled(s.playthroughs_dir / pt, sdir), body, self.clock())
+        return code, {"v": api.API_VERSION, **payload}
 
     def route(self, path: str, q: dict[str, list[str]]) -> dict[str, Any] | None:
         """A JSON API path -> its payload (None: not found). Raises StoreError for a refused request."""
@@ -286,7 +299,7 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
             why = app.authorize(self.client_address[0], self.headers)
             if why:
                 return self._json({"v": api.API_VERSION, "error": why}, 403)
-            m = CONTROL_ROUTE.match(url.path)
+            m = CONTROL_ROUTE.match(url.path) or MESSAGES_ROUTE.match(url.path)
             if not m:
                 return self._json({"v": api.API_VERSION, "error": "not found"}, 404)
             try:
@@ -296,7 +309,10 @@ def make_handler(app: App, verbose: bool = False) -> type[BaseHTTPRequestHandler
                 pt = app.store.check_name(unquote(m.group(1)))
             except ValueError as e:  # StoreError is a ValueError
                 return self._json({"v": api.API_VERSION, "error": f"bad request: {e}"}, 400)
-            code, payload = app.control(pt, m.group(2), body)
+            if m.re is MESSAGES_ROUTE:
+                code, payload = app.messages(pt, body)
+            else:
+                code, payload = app.control(pt, m.group(2), body)
             return self._json(payload, code)
 
         def do_HEAD(self) -> None:
