@@ -5,12 +5,13 @@ bench never has it. Without it nothing here opens a file. Two files there, one w
 
     operator.jsonl            the app's server appends {id, t, text} (bg3play.operator)
     operator.delivered.jsonl  the bg3 server appends {id, t, session, tool} when a result carries the message; the
-                              app's runner appends {id, t, redeliver: true} at a restart for a delivered message the
-                              dead client's stream never showed (its model never saw it): it is pending again
+                              app's runner appends {id, t, redeliver: true} at an agent start for a delivered message
+                              a dead client's stream never showed (its model never saw it): it is pending again
 
-A message is pending until a delivered row names it, and again after a later redeliver row. `Outbox.take` (the
-result finisher, tools/reporting.py) adds every pending message to the result it finishes and marks them delivered,
-so each goes out once; one stat per call when nothing changed. The block states the message and its time only.
+A message is pending until a delivered row names it, and again after a later redeliver row. `Outbox.take` (the MCP
+layer, tools/session.py, via reporting.operator_told: the result the client gets, never a nested call's) adds every
+pending message to that result and marks them delivered, so each goes out once; one stat per call when nothing
+changed. The block states the message and its time only.
 """
 
 from __future__ import annotations
@@ -88,7 +89,8 @@ def _sig(path: Path) -> tuple[int, int] | None:
 
 
 class Outbox:
-    """The bg3 server's side: pending messages into a result, once."""
+    """The bg3 server's side: pending messages into a result, once. `_lock` is per process: two bg3 servers on one
+    dir (an orphaned one still finishing a walk after its client crashed) could each take the same message."""
 
     def __init__(self, directory: Path | None):
         self.dir = directory

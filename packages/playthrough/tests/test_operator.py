@@ -115,13 +115,24 @@ def test_redeliver_queues_a_message_the_dead_clients_stream_never_showed(tmp_pat
         tmp_path / op.DELIVERED,
         {"id": "m1", "t": T + 1, "session": "S004", "tool": "look"},
         {"id": "m2", "t": T + 7, "session": "S004", "tool": "travel_to"},
-        {"id": "m3", "t": T + 13, "session": "S003", "tool": "look"},  # another session's: not checked
+        {"id": "m3", "t": T + 13, "session": "S003", "tool": "look"},  # S003's stream shows it
     )
+    s3 = {"type": "user", "content": "You are at Y.\n" + op.line(T + 12, "c")}
+    (tmp_path / "S003.jsonl").write_text(json.dumps(s3) + "\n", encoding="utf-8")
     shown = {"type": "user", "message": {"content": [{"type": "tool_result", "content": [
         {"type": "text", "text": "You are at X.\n" + op.line(T, "a")}]}]}}  # fmt: skip
     (tmp_path / "S004.jsonl").write_text(json.dumps(shown) + "\nnot json\n", encoding="utf-8")
-    assert pop.redeliver(tmp_path, "S004", T + 60) == ["m2"]
+    assert pop.redeliver(tmp_path, T + 60) == ["m2"]
     assert op.read_rows(tmp_path / op.DELIVERED)[-1] == {"id": "m2", "t": T + 60, "redeliver": True}
     assert [r["status"] for r in pop.rows(tmp_path)] == ["delivered", "queued", "delivered"]
-    assert pop.redeliver(tmp_path, "S004", T + 61) == []  # m2 is pending now: nothing to check again
-    assert pop.redeliver(tmp_path / "none", "S004", T) == []
+    assert pop.redeliver(tmp_path, T + 61) == []  # m2 is pending now: nothing to check again
+    assert pop.redeliver(tmp_path / "none", T) == []
+
+
+def test_redeliver_checks_every_session_with_delivered_rows(tmp_path: Path):
+    # REVIEW-CHAT-INT #3: S003 took m1 into a result its stream never showed (killed at its cap); S004 starts fresh
+    write(tmp_path / op.INBOX, {"id": "m1", "t": T, "text": "a"})
+    write(tmp_path / op.DELIVERED, {"id": "m1", "t": T + 1, "session": "S003", "tool": "travel_to"})
+    (tmp_path / "S003.jsonl").write_text(json.dumps({"type": "user", "content": "walked"}) + "\n", encoding="utf-8")
+    assert pop.redeliver(tmp_path, T + 60) == ["m1"]
+    assert [r["status"] for r in pop.rows(tmp_path)] == ["queued"]

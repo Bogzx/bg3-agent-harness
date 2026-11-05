@@ -1,5 +1,5 @@
 """A session's <base>.latency.json counts the operator messages its results carried (operator_messages), from its
-metrics records' `operator` ids; 0 for a session without them."""
+metrics `operator` records' ids; 0 for a session without them."""
 
 from __future__ import annotations
 
@@ -15,13 +15,18 @@ def tool(t: float, **extra: object) -> dict[str, object]:
     return {"type": "tool", "tool": "look", "t0": t, "t1": t + 0.2, "ms": 200.0, **extra}
 
 
+def told(t: float, *ids: str) -> dict[str, object]:
+    return {"type": "operator", "t": t, "tool": "look", "ids": list(ids)}
+
+
 def write_session(base: Path, recs: list[dict[str, object]]) -> None:
     Path(f"{base}.metrics.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
 
 
 def test_latency_json_counts_the_delivered_operator_messages(tmp_path: Path):
     base = tmp_path / "S002"
-    write_session(base, [tool(T0), tool(T0 + 5, operator=["m1", "m2"]), tool(T0 + 9), tool(T0 + 20, operator=["m3"])])
+    recs = [tool(T0), tool(T0 + 5), told(T0 + 5.2, "m1", "m2"), tool(T0 + 9), told(T0 + 20.2, "m3")]
+    write_session(base, [*recs, tool(T0 + 30, operator=["m4"])])  # a tool record's field: not one
     logs: list[str] = []
     summary = session_summary.write_latency("S002", base, T0, T0 + 60, tmp_path, logs.append)
     assert summary is not None, logs

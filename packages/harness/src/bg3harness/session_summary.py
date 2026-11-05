@@ -25,10 +25,10 @@ Log = Callable[[str], None]
 
 
 def operator_messages(metrics_path: Path) -> int:
-    """The operator messages (the app's operator chat) the session's results carried: the distinct ids in its tool
-    records' `operator` (bg3ai.tools.reporting._finish). 0 for a session without the option."""
+    """The operator messages (the app's operator chat) the session's results carried: the distinct ids in its
+    `operator` records (bg3ai.tools.reporting.operator_told). 0 for a session without the option."""
     recs = latency.read_jsonl(metrics_path)
-    return len({i for r in recs if r.get("type") == "tool" for i in r.get("operator") or () if isinstance(i, str)})
+    return len({i for r in recs if r.get("type") == "operator" for i in r.get("ids") or () if isinstance(i, str)})
 
 
 def write_latency(

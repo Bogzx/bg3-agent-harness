@@ -260,6 +260,29 @@ def test_a_guided_session_gives_the_bg3_server_the_dir_and_a_restart_queues_an_u
     assert op.read_rows(sdir / op.DELIVERED)[-1] == {"id": "m2", "t": 1000.0 + 5 * 60, "redeliver": True}
 
 
+def test_a_message_the_last_sessions_stream_never_showed_goes_out_in_the_next_new_session(tmp_path: Path):
+    # REVIEW-CHAT-INT #3: S001's bg3 server took m1 into a result its client never got (killed at its cap); S002 is a
+    # new session, not a resume, and its start queues m1 again
+    sdir = tmp_path / "runtime" / "sessions" / PT
+    seen: list[list[str]] = []
+
+    def during(n: int) -> None:
+        if n == 1:
+            assert operator.post(sdir, True, {"text": "rest first"}, 1010.0)[0] == 201
+            row = {"id": "m1", "t": 1100.0, "session": "S001", "tool": "travel_to"}
+            (sdir / op.DELIVERED).write_text(json.dumps(row) + "\n")
+            (sdir / "S001.jsonl").write_text(json.dumps({"type": "user", "content": "walking"}) + "\n")
+        seen.append([r["status"] for r in operator.rows(sdir)])
+
+    sup, agent, *_ = make(tmp_path, sigs=[{"level": "TUT"}, {"level": "WLD"}] * 2, during=during)
+    cfg = config.load(tmp_path / "playthroughs" / PT)
+    config.save(tmp_path / "playthroughs" / PT, dataclasses.replace(cfg, operator=config.Operator(messages=True)))
+    sup.start(PT, wait=True)
+    assert [(c.sid, c.resume) for c in agent.calls] == [("S001", False), ("S002", False)]
+    assert seen == [["delivered"], ["queued"]]
+    assert op.Outbox(sdir).take("S002", "look") == (op.line(1010.0, "rest first"), ["m1"])  # S002's first result
+
+
 def test_faults_and_recoveries_reach_the_dashboards_event_log(tmp_path: Path):
     # live7 D.4b: the app wrote no runner_events.jsonl, so the dashboard counted no crash or recovery of an app run
     from bg3play.live import unattended_payload

@@ -228,16 +228,18 @@ OPERATOR MESSAGE (from the person running this playthrough, sent 14:02:31): Chec
 - A session the option was on for has `operator: {enabled, sent, delivered}` in its `supervisor.json` row, its
   `/sessions` row and its Timeline session (null when the option was off). `sent` counts the messages posted while
   it ran, `delivered` the ones its results carried. Timeline, Replay, Story and Stats mark such a session
-  "guided (N messages)", with N = `delivered`. Replay shows `operator` events at the sent and delivered times, and
-  the session's `Sxxx.latency.json` has `operator_messages` (the delivered count, from the metrics records'
-  `operator` ids), so a reader can leave out the turns after a message.
+  "guided (N messages)", with N = `delivered`: the messages delivered in that session. A message posted between
+  sessions counts in the next one's `delivered` and in no session's `sent`, and a redelivered message counts as
+  delivered in both sessions. Replay shows `operator` events at the sent and delivered times, and the session's
+  `Sxxx.latency.json` has `operator_messages` (the delivered count, from the ids in its metrics' `operator`
+  records), so a reader can leave out the turns after a message.
 - The files are in `runtime/sessions/<pt>/`: `operator.jsonl` (the app appends `{id, t, text}`) and
   `operator.delivered.jsonl` (the bg3 server appends `{id, t, session, tool}`). The runner gives the session's bg3
   server `BG3AI_OPERATOR_DIR` (that folder) only when the option is on; a `BG3AI_OPERATOR_*` the app's own shell
   exports never reaches a session, the memory keeper or a bench run.
-- When an agent restarts after a crash (`harness` runner), a delivered message that the dead client's stream log
-  never showed (so its model never read it) is queued again with a `redeliver` row and goes out in the restarted
-  session's next result.
+- At every agent start (`harness` runner: a new session or a restart after a crash), a delivered message that its
+  session's stream log never showed (the client died, or a cap or a stop killed it, before its model read the
+  result) is queued again with a `redeliver` row and goes out in the new agent's next result.
 - The `legacy` runner passes `BG3AI_OPERATOR_DIR` to `play.py run`, whose bg3 server delivers messages in the same
   way. play.py resumes a crashed client itself, so there is no redelivery: a message that was in the crashed
   client's last result counts as delivered.
