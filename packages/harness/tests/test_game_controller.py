@@ -153,6 +153,27 @@ class Waits(Base):
             self.ctl.wait_for("debug port", lambda: False, 60, 0)
         self.assertEqual(self.host.events[0][0], "bg3le_stale")
 
+    def test_launcher_other_build_exit_is_a_refusal(self) -> None:
+        (self.host.runtime / "launch-s1.out").write_text(
+            "launch_game: REFUSING TO LAUNCH: installed buildid 26000000 is not the pinned 25605617; bg3le was "
+            "verified on the pinned build only\n"
+        )
+        self.ctl.proc = mock.Mock(returncode=6, poll=lambda: 6)
+        self.host.state["game"] = {"launched": 1e12, "stamp": "s1"}  # just launched
+        with self.assertRaisesRegex(G.GameBuildRefused, r"^launcher refused: game build 26000000, pinned 25605617$"):
+            self.ctl.wait_for("debug port", lambda: False, 60, 0)
+        self.assertEqual(self.host.events, [("game_build_refused", {"why": "launcher refused: game build 26000000, "
+                                                                           "pinned 25605617"})])  # fmt: skip
+        self.assertEqual(self.host.statuses[0]["alert"]["kind"], "game_build_refused")
+        self.assertIn("BG3AI_ALLOW_OTHER_BUILD=1", self.host.logs[0])
+        self.assertNotIsInstance(G.GameBuildRefused("x"), G.GameDied)  # launch_and_load retries only deaths
+
+    def test_launcher_other_build_exit_without_its_line(self) -> None:
+        self.ctl.proc = mock.Mock(returncode=6, poll=lambda: 6)
+        self.host.state["game"] = {"launched": 1e12, "stamp": "s2"}
+        with self.assertRaisesRegex(G.GameBuildRefused, "launcher refused: another game build, see .*launch-s2.out"):
+            self.ctl.wait_for("debug port", lambda: False, 60, 0)
+
     def test_other_launcher_exit_is_a_death(self) -> None:
         self.ctl.proc = mock.Mock(returncode=1, poll=lambda: 1)
         with self.assertRaisesRegex(G.GameDied, "status 1"):

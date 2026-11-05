@@ -52,7 +52,9 @@ the other packages from the shared `.venv`.
 
 `tools/build_bg3le.sh` applies every patch in `patches/bg3le/` (crash fixes for this game build).
 `python3 tools/bg3le_buildinfo.py` says whether `build/bg3le/dist` has all of them, and `runner/launch_game.sh`
-refuses a stale build (exit 4) unless `BG3AI_ALLOW_STALE_BG3LE=1`.
+refuses a stale build (exit 4) unless `BG3AI_ALLOW_STALE_BG3LE=1`. It also refuses a game build other than the
+pinned one (exit 6; `tools/ci/game_build.py` compares them) unless `BG3AI_ALLOW_OTHER_BUILD=1`. When the game exits
+it prints the game log and bg3le log paths, and after a crash the first `crash:` and `WARNING: resolve` lines.
 
 Instead of the two builds, `python3 tools/bg3le_prebuilt.py fetch` installs a prebuilt package (bg3le into
 `build/bg3le/dist`, the input shim into `build/bg3sdl`) once `patches/bg3le-prebuilt.toml` names one (its URL and

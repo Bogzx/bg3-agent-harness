@@ -46,7 +46,8 @@ display, screenshot layer, ffmpeg, ...), each failure with what to do.
 - Automatic updates for BG3 set to "Only update this game when I launch it" in Steam (Properties > Updates).
   The preflight warns when the game's `AutoUpdateBehavior` lets Steam update it in the background.
 - Launch only through the runner (`runner/launch_game.sh` or `runner/play.py run`), never from Steam's Play
-  button while online.
+  button while online. `runner/launch_game.sh` runs the build check below and refuses another build (exit 6) unless
+  `BG3AI_ALLOW_OTHER_BUILD=1`; when it can't tell, or an update is pending, it only warns.
 - Check before every series: `python3 tools/bench_preflight.py [--series NAME]`. Its `install` line warns about
   a pending update and its `build` line fails when the installed buildid is not the pinned one (or, with
   `--series`, not the series' frozen one).

@@ -50,6 +50,10 @@
 #   BG3AI_ALLOW_STALE_BG3LE=1   launch even when the bg3le build lacks a patches/bg3le patch (default: refuse,
 #                      exit 4, also with --dry-run; tools/bg3le_buildinfo.py compares BUILDINFO next to the library,
 #                      and for a prebuilt from tools/bg3le_prebuilt.py fetch also every file with its PREBUILT.json)
+#   BG3AI_ALLOW_OTHER_BUILD=1   launch even when the installed game is not the pinned build (default: refuse, exit 6,
+#                      also with --dry-run; not checked with --no-bg3le). tools/ci/game_build.py compares Steam's
+#                      buildid (or the files' fingerprint) with WANT_BUILD in tools/dev/first_launch.sh; when it
+#                      can't tell, or Steam has an update pending, the launch only warns
 #   BG3AI_GAME_SCOPE   1 (default): run the game in its own systemd user scope bg3ai-game-<stamp>.scope with
 #                      OOMPolicy=continue and a memory cap, so an OOM kills only the game, never the caller's unit
 #                      (2026-10-10: the game hit 13.3 GB inside the agents' service unit, OOMPolicy=stop, and
@@ -139,6 +143,23 @@ if [ "$use_bg3le" = 1 ] && [ -f "$LIB" ]; then
         fi
     fi
 fi
+# bg3le was verified on the pinned game build only. On another one it switches off what it can't resolve
+# ("WARNING: resolve:" in its log) and the menu still works, but a save load can crash.
+if [ "$use_bg3le" = 1 ]; then
+    build_rc=0
+    build_line="$(python3 "$REPO/tools/ci/game_build.py" --game "$GAME")" || build_rc=$?
+    if [ "$build_rc" = 1 ] && [ -n "$build_line" ]; then   # its verdict (a Python error also exits 1, printing none)
+        if [ "${BG3AI_ALLOW_OTHER_BUILD:-0}" = 1 ]; then
+            echo "launch_game: WARNING !!! launching ANOTHER GAME BUILD (BG3AI_ALLOW_OTHER_BUILD=1): $build_line; bg3le was verified on the pinned build only !!!" >&2
+        else
+            echo "launch_game: REFUSING TO LAUNCH: $build_line; bg3le was verified on the pinned build only" >&2
+            echo "launch_game: install the pinned build (docs/GAME-UPDATES.md), or BG3AI_ALLOW_OTHER_BUILD=1 launches this one anyway" >&2
+            exit 6   # bg3harness.game.controller.OTHER_BUILD_EXIT
+        fi
+    elif [ "$build_rc" != 0 ]; then
+        echo "launch_game: warning: game build: ${build_line:-tools/ci/game_build.py failed (exit $build_rc)}" >&2
+    fi
+fi
 if [ "$use_input" = 1 ] && [ ! -f "$INPUT_LIB" ]; then
     [ "$dry_run" = 1 ] || die "no input shim at $INPUT_LIB; run native/bg3sdl/build.sh (or pass --no-input-shim)"
     echo "launch_game: warning: no input shim at $INPUT_LIB yet" >&2
@@ -179,6 +200,28 @@ stamp="${BG3AI_LAUNCH_STAMP:-$(date +%Y%m%d-%H%M%S)}"   # the runner passes its 
 SHOTS="${BG3AI_SHOTS_DIR:-$RUNTIME/shots}"   # the bridge reads the same variable (server._shots_dir)
 mkdir -p "$RUNTIME/logs" "$SHOTS"
 GAME_LOG="$RUNTIME/logs/game-$stamp.log"
+BG3LE_LOG="$RUNTIME/logs/bg3le-$stamp.log"
+
+# Where to look after the game exits: the game log, bg3le's <BG3LE_LOG>.<pid> files and, when the game exited
+# nonzero or bg3le logged a crash, their first crash:/WARNING: resolve lines. $1 = the game's exit status.
+report_exit() {
+    echo "launch_game: game log $GAME_LOG" >&2
+    [ "$use_bg3le" = 1 ] || return 0
+    local logs=() f n
+    for f in "$BG3LE_LOG".*; do [ -f "$f" ] && logs+=("$f"); done
+    if [ ${#logs[@]} = 0 ]; then
+        echo "launch_game: no bg3le log ($BG3LE_LOG.<pid>)" >&2
+        return 0
+    fi
+    echo "launch_game: bg3le logs: ${logs[*]}" >&2
+    [ "$1" != 0 ] || grep -aqs 'crash:' "${logs[@]}" || return 0
+    for f in "${logs[@]}"; do
+        n="$(grep -ac -E 'crash:|WARNING: resolve' "$f" || true)"
+        [ "$n" -gt 0 ] || continue
+        echo "launch_game: $f: $n crash:/WARNING: resolve lines, up to 8 shown:" >&2
+        grep -a -m 8 -E 'crash:|WARNING: resolve' "$f" | sed 's/^/launch_game:   /' >&2 || true
+    done
+}
 
 # Environment for the game process only. `env` runs inside the container, so none of this touches the runtime's
 # own launcher.
@@ -226,7 +269,7 @@ if [ "$use_bg3le" = 1 ]; then
         "BG3LE_DEBUG_PORT=$PORT"
         BG3LE_CONSOLE=0
         # bg3le writes <path>.<pid> for each process in the chain that loads it.
-        "BG3LE_LOG=$RUNTIME/logs/bg3le-$stamp.log"
+        "BG3LE_LOG=$BG3LE_LOG"
     )
     [ "${BG3AI_UI_STRICT:-0}" = 1 ] && env_args+=(BG3LE_UI_STRICT=1)
     [ -n "$mod_path" ] && env_args+=("BG3LE_MOD_PATH=$mod_path")
@@ -300,13 +343,17 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 if ! kill -0 "$pid" 2>/dev/null; then
     wait "$pid" && rc=0 || rc=$?
-    echo "launch_game: game exited within 10 s (status $rc); see $GAME_LOG" >&2
+    echo "launch_game: game exited within 10 s (status $rc)" >&2
     if grep -qiE 'forwarded|RestartApp' "$GAME_LOG"; then
         echo "launch_game: Steam relaunched the game itself, so bg3le is NOT loaded in it. The Steam API ignored" >&2
         echo "  SteamAppId; the fallback is a steam_appid.txt (content: 1086940) in the game dir, as" >&2
         echo "  bg3le's run-native.sh does. That writes into the Steam install, so ask before doing it." >&2
     fi
+    report_exit "$rc"
     exit "$rc"
 fi
 echo "$pid" > "$RUNTIME/game.pid"
-wait "$pid"
+wait "$pid" && rc=0 || rc=$?
+echo "launch_game: game exited (status $rc)" >&2
+report_exit "$rc"
+exit "$rc"

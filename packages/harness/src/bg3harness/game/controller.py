@@ -16,6 +16,7 @@ import contextlib
 import dataclasses
 import os
 import platform
+import re
 import signal
 import subprocess
 import sys
@@ -43,6 +44,8 @@ SPLASH_LOADMENU_S = 10  # LoadMenu this long without the main menu = the splash 
 MENU_TIMEOUT = 180  # debug port up → main menu (splash pressed past), else wait_menu fails
 MENU_POLL = 3  # seconds between menu/splash checks
 STALE_EXIT_WITHIN_S = 30  # launch_game.sh exiting STALE_EXIT this soon after the launch = its stale-bg3le refusal
+OTHER_BUILD_EXIT = 6  # launch_game.sh's exit status for a game build other than the pinned one (as soon after)
+BUILD_REFUSAL_RE = re.compile(r"REFUSING TO LAUNCH: installed buildid (\d+) is not the pinned (\d+)")
 
 
 class StateStore(Protocol):
@@ -354,6 +357,26 @@ class GameController:
         if game.port_open():
             raise RuntimeError(f"port {game.DEBUG_PORT} is still in use after the game was killed")
 
+    def refuse_other_build(self) -> None:
+        """launch_game.sh's exit 6: the installed game build isn't the pinned one. The build pair comes from its
+        refusal line in runtime/launch-<stamp>.out. Loud log, event, status alert, GameBuildRefused."""
+        h = self.host
+        out = h.runtime / f"launch-{(h.state['game'] or {}).get('stamp')}.out"
+        try:
+            m = BUILD_REFUSAL_RE.search(out.read_text(errors="replace"))
+        except OSError:
+            m = None
+        what = f"game build {m[1]}, pinned {m[2]}" if m else f"another game build, see {out}"
+        msg = f"launcher refused: {what}"
+        h.log(
+            f"!!!!! REFUSING TO LAUNCH BG3: {msg} (runner/launch_game.sh exited {OTHER_BUILD_EXIT}; bg3le was verified "
+            "on the pinned build only). Install the pinned build (docs/GAME-UPDATES.md), or set "
+            "BG3AI_ALLOW_OTHER_BUILD=1 for the runner. !!!!!"
+        )
+        h.event("game_build_refused", why=msg)
+        h.status(alert={"t": time.time(), "kind": "game_build_refused", "msg": msg[:600]})
+        raise game.GameBuildRefused(msg)
+
     def wait_for(self, what: str, pred: Callable[[], bool], timeout: float, interval: float = 2.0) -> bool:
         h = self.host
         start = time.time()
@@ -367,6 +390,8 @@ class GameController:
                     # launch_game.sh's own stale-build refusal (the backstop of the check in launch)
                     self.refuse_stale_bg3le([f"runner/launch_game.sh exited {h.stale_exit} "
                                              f"(stale bg3le build, see {h.runtime}/launch-*.out)"])  # fmt: skip
+                if self.proc.returncode == OTHER_BUILD_EXIT and time.time() - launched < STALE_EXIT_WITHIN_S:
+                    self.refuse_other_build()
                 raise game.GameDied(f"game exited (status {self.proc.returncode}) while waiting for {what}")
             if h.aborted():
                 raise RuntimeError(f"aborted while waiting for {what}")

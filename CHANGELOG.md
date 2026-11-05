@@ -168,6 +168,16 @@ game unless it says so.
   did not stand up this turn: standing needs half its movement)"), and the movement figure shows 0. A knocked-down
   status without that condition gives its own effect, read from its RemoveEvents/RemoveConditions. Outside its own
   turn nothing changes.
+- `runner/launch_game.sh` checks the game build (`tools/ci/game_build.py` against `WANT_BUILD`): another build is
+  refused, exit 6, also with `--dry-run`, unless `BG3AI_ALLOW_OTHER_BUILD=1`; when it can't tell, or an update is
+  pending, it warns. `--no-bg3le` skips it. When the game exits the launcher prints the game log and the bg3le log
+  paths and, after a nonzero exit or a logged crash, up to 8 `crash:`/`WARNING: resolve` lines per bg3le log; the
+  exit status stays the game's. Issue #101: a crash at a save load's end with no build, bg3le info or logs to go
+  on. The bug report template asks for `tools/bg3le_buildinfo.py`, `launch_game.sh --dry-run` and those logs.
+- The runner reads the launcher's exit 6 as a refusal, not a game death: `GameBuildRefused` (a `LaunchBlocked`, so the
+  run loop retries like a Steam or display refusal and the bench records no attempt), the log line, event and alert
+  say "launcher refused: game build X, pinned Y" from the launcher's refusal line. Before, it counted as a launch
+  that died and was retried until the crash-loop stop.
 
 ### Benchmark (`packages/bench`)
 
