@@ -68,6 +68,13 @@ def pilot_prompts(tmp: Path) -> Path:
     return root
 
 
+def v08_scenarios() -> dict:
+    """Today's scenarios less those bench-v0.8's frozen release shipped without a save: they got theirs in a later
+    suite, so its saves.json entries don't list them."""
+    shipped = json.loads((release.RELEASES / "bench-v0.8.json").read_text(encoding="utf-8"))["scenarios"]
+    return {n: sc for n, sc in pack.load_scenarios().items() if n not in shipped or shipped[n]["save"]}
+
+
 def test_served_matches_what_the_pilot_run_recorded(tmp_path, monkeypatch):
     """The release tool hashes what a real run hashed: the bench-v0.8 pilot's server dump and the rules it was
     served (not this tree's, which a later suite may change) build its manifest's tools and prompt hash, and so
@@ -78,9 +85,7 @@ def test_served_matches_what_the_pilot_run_recorded(tmp_path, monkeypatch):
     served = release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=fake_dump(fixture_files()))
     man = json.loads(fixture_files()["manifest.json"])
     assert man["client"]["name"] == "pi" and man["condition"] == "rules" and man["versions"]["suite"] == "bench-v0.8"
-    doc = release.build(
-        "bench-v0.8", VERSIONS, PINS, pack.load_scenarios(), saves.load()["bench-v0.8"], {"rules": served}
-    )
+    doc = release.build("bench-v0.8", VERSIONS, PINS, v08_scenarios(), saves.load()["bench-v0.8"], {"rules": served})
     cond = doc["conditions"]["rules"]
     assert cond["tools"]["allowlist_sha256"] == man["tools"]["allowlist_sha256"]
     assert cond["tools"]["count"] == man["tools"]["count"] == len(cond["tools"]["names"])
@@ -108,7 +113,7 @@ def test_session_env_turns_off_memory_and_the_conditions_tools():
 
 
 def test_release_document(served):
-    scenarios = pack.load_scenarios()
+    scenarios = v08_scenarios()
     index = saves.load()["bench-v0.8"]
     doc = release.build("bench-v0.8", VERSIONS, PINS, scenarios, index, {"rules": served})
     assert doc["schema"] == 1 and doc["kind"] == release.KIND and doc["about"]
@@ -124,9 +129,7 @@ def test_release_document(served):
 
 
 def test_release_file_shape_is_enforced(served):
-    doc = release.build(
-        "bench-v0.8", VERSIONS, PINS, pack.load_scenarios(), saves.load()["bench-v0.8"], {"rules": served}
-    )
+    doc = release.build("bench-v0.8", VERSIONS, PINS, v08_scenarios(), saves.load()["bench-v0.8"], {"rules": served})
     for broken in ({**doc, "schema": 2}, {k: v for k, v in doc.items() if k != "conditions"}, {**doc, "pins": {}}):
         assert release.errors(broken)
         with pytest.raises(ValueError, match="release.v1"):
@@ -134,7 +137,7 @@ def test_release_file_shape_is_enforced(served):
 
 
 def test_build_refuses_missing_pins_and_disagreeing_saves(served):
-    scenarios, index = pack.load_scenarios(), saves.load()["bench-v0.8"]
+    scenarios, index = v08_scenarios(), saves.load()["bench-v0.8"]
     with pytest.raises(release.ReleaseError, match="missing pins: mod_sha1"):
         release.build("bench-v0.8", VERSIONS, {**PINS, "mod_sha1": None}, scenarios, index, {"rules": served})
     name = next(iter(index))
@@ -223,7 +226,7 @@ def test_a_profile_variant_serves_fewer_tools_and_another_prompt(served):
         "bench-v0.8",
         VERSIONS,
         PINS,
-        pack.load_scenarios(),
+        v08_scenarios(),
         saves.load()["bench-v0.8"],
         {"rules": served},
         {"rules": {key: noshot}},
@@ -266,7 +269,7 @@ def test_build_refuses_what_breaks_the_schema():
             "bench-v0.8",
             VERSIONS,
             PINS,
-            pack.load_scenarios(),
+            v08_scenarios(),
             saves.load()["bench-v0.8"],
             {"rules": release.Served([], {})},
         )
