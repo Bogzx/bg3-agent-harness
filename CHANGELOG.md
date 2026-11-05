@@ -384,7 +384,10 @@ game unless it says so.
   always plays all its minutes, so a maximise score can move: bench-v0.11 pins its own suite digest. Its own release
   file (`releases/bench-v0.11.json`) pins the night follow-up's mod tree, tool definitions and served prompts, and
   its start save keys are `saves/bench-v0.11/` (the same save files as bench-v0.10). What changed for the agent is
-  in bridge/CHANGELOG.md (2026-11-04 night and 2026-11-05 entries).
+  in bridge/CHANGELOG.md (2026-11-04 night and 2026-11-05 entries). The five Tactician twins and
+  `fight_act3_sarevok` got their start saves before the suite was tagged: new scenarios to run, no existing score
+  moves, so the suite digest is appended under bench-v0.11. `fight_act1_gith_patrol_tactician` is a holdout, so its
+  save stays out of saves.json and the release.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

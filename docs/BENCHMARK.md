@@ -260,9 +260,9 @@ model's full set (Underdark at its caps) or 4-5 models' Nautiloid series.
 
 `packages/bench/matrices/variance-pilot.toml` (BENCHMARK-PLAN.md phase 2, not run): DeepSeek V4.1 Flash through pi
 and Opus 5.5 through Claude Code (account 2's subscription), 10 scenarios (two of each family but fights, four
-fights including `fight_act1_windmill` and its Tactician twin; no holdout), condition `rules`, 6 runs each. Two of
-the ten have no start save yet (`fight_act1_windmill_tactician`, `fight_act2_house_of_healing`: `start.not_ready`),
-so the plan skips them: 96 runs, 48 paid. Six runs per cell give each scenario's pass rate to about ±0.3 (a Wilson
+fights including `fight_act1_windmill` and its Tactician twin; no holdout), condition `rules`, 6 runs each. One of
+the ten has no start save yet (`fight_act2_house_of_healing`: `start.not_ready`), so the plan skips it: 108 runs,
+54 paid. Six runs per cell give each scenario's pass rate to about ±0.3 (a Wilson
 95% interval at 3/6 is 19-81%, at 0/6 0-39%), enough to see which scenarios are near 0 or 1 for both models (no
 spread: fewer runs) and which sit in between (the ones that need 5 or more). The run count per scenario is fixed
 from these rates before any published series.

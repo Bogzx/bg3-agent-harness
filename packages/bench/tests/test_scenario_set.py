@@ -60,12 +60,11 @@ HOLDOUT = {
     "fight_act1_gith_patrol", "fight_act3_cazador", "act1_get_item", "choice_act3_wyll_pact", "act2_last_light",
     "fight_act1_gith_patrol_tactician",
 }  # fmt: skip
-# Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector; the
-# Tactician variants wait for theirs.
-NOT_MADE = {"fight_act2_house_of_healing", *TACTICIAN}
+# Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector.
+NOT_MADE = {"fight_act2_house_of_healing"}
 # act1_gold_max plays act1_gold_1000's start save (the same start, without the target).
 SHARED_SAVE = {"act1_gold_max": "act1_gold_1000"}
-UNREGISTERED = {"fight_act2_ketheric", "fight_act3_sarevok", "choice_act3_wyll_pact", "fight_act3_cazador"}
+UNREGISTERED = {"fight_act2_ketheric", "choice_act3_wyll_pact", "fight_act3_cazador"}
 # Scenarios the legacy runner can play today: their goal is one milestone (scenario.resolve).
 RESOLVABLE = {"nautiloid", "crash_site_grove", "act2_last_light"}
 
@@ -271,9 +270,8 @@ def test_a_tactician_variant_is_its_base_at_tactician(name):
         "seed": var["game_settings"]["seed"],
     }
     vs, bs = var["start"], base["start"]
-    assert vs["note"] == bs["note"] and vs["save"] is None and bs["save"]  # made from the base's start save
-    assert f"its start save {bs['save']} (lsv sha1 {bs['save_sha1'][:12]})" in vs["needs_save"]
-    assert "difficulty switched from Balanced to Tactician" in vs["needs_save"]
+    assert vs["note"] == bs["note"]
+    assert vs["save"] != bs["save"] and vs["save_sha1"] != bs["save_sha1"]  # the difficulty lives in its own save
     vq, bq = (raw(SET / "quizzes" / f"{n}.json") for n in (name, TACTICIAN[name]))
     assert vq == {**bq, "scenario": name}
 

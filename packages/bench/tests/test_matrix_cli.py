@@ -403,8 +403,8 @@ def test_the_pilot_matrix_loads_in_this_repo():
 
 def test_the_variance_pilot_plan(tmp_path):
     """BENCHMARK-PLAN.md phase 2: 2 models x 10 scenarios x 6 runs; the paid half is bounded at $15 (play.py bench
-    plan's output through this repo's profiles and scenarios, against a budget file of its own). Two of the ten have
-    no start save yet (research/ovh/live6.md §2): they are skipped, so 8 scenarios play (96 jobs, $12.00)."""
+    plan's output through this repo's profiles and scenarios, against a budget file of its own). One of the ten has
+    no start save yet (research/ovh/live6.md §2): it is skipped, so 9 scenarios play (108 jobs, $13.50)."""
     real = Path(__file__).resolve().parents[3]
     repo = tmp_path / "repo"
     (repo / "runtime").mkdir(parents=True)
@@ -413,17 +413,17 @@ def test_the_variance_pilot_plan(tmp_path):
     (repo / "runtime" / "budget.json").write_text(json.dumps({"cap": 20.0, "spent": 2.0}))
     code, out = cli(repo, "plan", "--matrix", str(real / "packages" / "bench" / "matrices" / "variance-pilot.toml"))
     assert code == 0
-    rows = [ln.split() for ln in out.splitlines()[1:97]]
-    assert len(rows) == 96 and [r[0].rsplit("~", 1)[1] for r in rows] == [
-        f"r{i}" for i in range(1, 7) for _ in range(16)
+    rows = [ln.split() for ln in out.splitlines()[1:109]]
+    assert len(rows) == 108 and [r[0].rsplit("~", 1)[1] for r in rows] == [
+        f"r{i}" for i in range(1, 7) for _ in range(18)
     ]
     cells = {(r[1], r[4]) for r in rows}
-    assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 16  # every model plays every ready scenario
+    assert {c for c, _ in cells} == {"pi", "claude"} and len(cells) == 18  # every model plays every ready scenario
     # the efforts: deepseek-flash declares what pi serves it (high), Opus through Claude Code medium
     assert {(r[1], r[2]) for r in rows} == {("pi", "high"), ("claude", "medium")} and {r[5] for r in rows} == {"rules"}
     assert all(r[6:] == (["$0.25", "$0.25"] if r[1] == "pi" else ["-", "-"]) for r in rows)
-    assert "96 jobs (48 paid), reserve $12.00" in out
-    assert "scenario fight_act1_windmill_tactician: skipped, not ready: no start save yet" in out
+    assert "108 jobs (54 paid), reserve $13.50" in out
+    assert "fight_act1_windmill_tactician: skipped" not in out
     assert (
         "scenario fight_act2_house_of_healing: skipped, not ready: not made" in out
         and "budget " in out

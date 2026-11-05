@@ -9,9 +9,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 1, fight_act1_windmill's start moment: its start save Tav-26221264947__SCN-fight_act1_windmill (lsv sha1 ca8dae135db0) loaded with BG3AI_SCENARIO_SETUP=1, the game's difficulty switched from Balanced to Tactician (game menu > Difficulty > Change Difficulty > Tactician > Confirm) and nothing else done: party level 3, companions (Wyll, Gale, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-30512631021__SCN-fight_act1_windmill_tactician",
+  "save_sha1": "e6e6a815b3204ee5858cd205939fb8dd072ad21d",
   "note": {
    "where": "The Blighted Village, east of the windmill; goblins and worgs ahead, out of combat.",
    "objective": "Defeat the goblins at the windmill.",
