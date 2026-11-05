@@ -479,6 +479,13 @@ def cap_mb(cap: str | None) -> int | None:
     return int(float(m.group(1)) * 1024 ** "_KMGT".index(m.group(2).upper() or "_")) // 2**20 or None
 
 
+def default_swap_max(cap: str | None) -> str:
+    """launch_game.sh's MemorySwapMax when $BG3AI_GAME_SWAP_MAX is unset, for a MemoryMax of `cap`: 4G under a 10G cap
+    (owner 2026-11-05: act3_gold_max went past 2 GB of swap at 8G, and at 2G job 4's game stopped answering), else 2G."""
+    mb = cap_mb(cap)
+    return "4G" if mb is not None and mb < 10 * 1024 else "2G"
+
+
 def scope_cap_mb(cg: Path, root: Path = CGROUP_ROOT) -> int | None:
     """MiB of the memory limit the scope's processes run under: the smallest numeric memory.max of the scope and its
     ancestors below `root` (a scope with 'max' under a capped slice is capped by the slice); None when none reads."""

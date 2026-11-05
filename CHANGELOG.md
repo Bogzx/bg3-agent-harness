@@ -94,6 +94,8 @@ game unless it says so.
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
   10G as before. The relaunch reason names the kill the game really runs under, not always 9000.
+- The game's swap cap defaults to 4G under a `BG3AI_GAME_MEMORY_MAX` below 10G (`ramwatch.default_swap_max`): the v0.10
+  pilot's act3_gold_max runs went past 2 GB of swap at 8G. 10G keeps 2G, and `BG3AI_GAME_SWAP_MAX` always wins.
 
 - Casts the harness starts now roll their dice. A cast an Osiris `UseSpell` or
   `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,

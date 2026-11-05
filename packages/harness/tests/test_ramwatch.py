@@ -176,6 +176,13 @@ class RamWatchTest(unittest.TestCase):
             self.assertIsNone(R.cap_mb(cap), cap)
         self.assertEqual(R.kill_limits(None), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))
 
+    def test_a_cap_under_10g_defaults_the_swap_to_4g(self):
+        # owner 2026-11-05: act3_gold_max went past 2 GB of swap at 8G (2.2-2.6 GB), and at 2G job 4's game hung
+        for cap in ("8G", "8192M", "7.5g", "8589934592", "9.9G"):
+            self.assertEqual(R.default_swap_max(cap), "4G", cap)
+        for cap in ("10G", "10240M", "12G", "", "infinity", "80%"):
+            self.assertEqual(R.default_swap_max(cap), "2G", cap)
+
     def test_cap_mb_reads_bytes_and_k_t_like_systemd(self):
         # REVIEW-18d NOTE 2: launch_game.sh passes BG3AI_GAME_MEMORY_MAX to MemoryMax as given
         self.assertEqual(R.cap_mb("8589934592"), 8192)
