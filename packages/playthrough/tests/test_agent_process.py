@@ -166,3 +166,15 @@ def test_the_stream_is_timed_into_turns_jsonl(tmp_path: Path):
     a.run(call(tmp_path))
     turns = [json.loads(ln) for ln in (tmp_path / "S004.turns.jsonl").read_text().splitlines()]
     assert [r["type"] for r in turns] == ["assistant", "session_result"] and {r["t"] for r in turns} == {1000.0}
+
+
+def test_the_shells_operator_dir_never_reaches_the_agent(tmp_path: Path, monkeypatch: Any):
+    # Only the runner's session env names the operator messages' dir (a playthrough with the option on)
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", "/elsewhere/sessions/other")
+    monkeypatch.setenv("BG3AI_OPERATOR_X", "1")
+    a, spawned = agent([SAY])
+    a.run(call(tmp_path))
+    assert not [k for k in spawned[0][2] if k.startswith("BG3AI_OPERATOR_")] and spawned[0][2]["FAKE"] == "1"
+    a, spawned = agent([SAY])
+    a.run(call(tmp_path, env={"BG3AI_SESSION": "S004", "BG3AI_OPERATOR_DIR": str(tmp_path)}))
+    assert spawned[0][2]["BG3AI_OPERATOR_DIR"] == str(tmp_path)
